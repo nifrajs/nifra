@@ -1,0 +1,7 @@
+{
+  "name": "@nifrajs-internal/view-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Throwaway gate spike for a first-party view layer — see VIEW-SPIKE.md for the verdict."
+}

@@ -1,0 +1,63 @@
+import type { InferOutput, StandardSchemaV1 } from "../schema/standard.ts"
+import type { Params, RouteSchema } from "./context.ts"
+
+/**
+ * One route's input/output shape as the **client** will consume it. `query`/`body`
+ * are `never` when the route declares no schema for them, so the client can detect
+ * "this route takes no body" via `[body] extends [never]`. `output` is the
+ * handler's raw return type (the client applies `Jsonify` when reading it).
+ */
+export interface RouteInfo {
+  // `object` is the *bound*; each route stores its precise `Params<Path>` (e.g.
+  // `{ id: string }`), which a generic `Path` can't be proven to fit into
+  // `Record<string, string>`. The precise type survives in the accumulated
+  // registry, so exact param-key checking is preserved downstream.
+  readonly params: object
+  readonly query: unknown
+  readonly body: unknown
+  readonly output: unknown
+}
+
+/** The accumulated, type-level map of every route on a Server: path → method → RouteInfo. */
+export type Registry = Record<string, Record<string, RouteInfo>>
+
+/** The empty registry (no routes). `NonNullable<unknown>` is `{}` without tripping noBannedTypes. */
+export type EmptyRegistry = NonNullable<unknown>
+
+type RegistryBody<S extends RouteSchema> = S extends { body: infer B extends StandardSchemaV1 }
+  ? InferOutput<B>
+  : never
+
+type RegistryQuery<S extends RouteSchema> = S extends { query: infer Q extends StandardSchemaV1 }
+  ? InferOutput<Q>
+  : never
+
+/** The client-visible output: the declared `response` contract when present (so the client sees the
+ * contract, not the handler's incidental return), otherwise the inferred handler output. */
+type RegistryOutput<S extends RouteSchema, Output> = S extends {
+  response: infer R extends StandardSchemaV1
+}
+  ? InferOutput<R>
+  : Output
+
+/** Build a {@link RouteInfo} from a route's path, schema, and handler output type. */
+export type RouteInfoFor<Path extends string, S extends RouteSchema, Output> = {
+  readonly params: Params<Path>
+  readonly query: RegistryQuery<S>
+  readonly body: RegistryBody<S>
+  readonly output: RegistryOutput<S, Output>
+}
+
+/** The client-visible output of a handler: its awaited return, minus raw `Response`. */
+export type OutputOf<H extends (...args: never[]) => unknown> = Exclude<
+  Awaited<ReturnType<H>>,
+  Response
+>
+
+/** Merge a new route into the registry, combining methods that share a path. */
+export type AddRoute<
+  R extends Registry,
+  Method extends string,
+  Path extends string,
+  Info extends RouteInfo,
+> = R & { [P in Path]: { [M in Method]: Info } }

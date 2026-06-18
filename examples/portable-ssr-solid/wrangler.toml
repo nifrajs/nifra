@@ -1,0 +1,7 @@
+name = "nifra-portable-ssr-solid"
+main = "dist/cloudflare/cloudflare.js"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Workers Assets serves the hashed client bundle at /assets/*; the worker SSRs everything else.
+assets = { directory = "./public" }

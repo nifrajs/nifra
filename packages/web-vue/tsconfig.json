@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Frontend adapter: needs DOM types (client hydrate casts the container to `Element`).
+    // Excluded from the root typecheck; checked via the `typecheck` script.
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "paths": {
+      "@nifrajs/web": ["../web/src/index.ts"],
+      "@nifrajs/web/plugins/kit": ["../web/src/plugins/kit.ts"],
+      "@nifrajs/core": ["../core/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*", "test/**/*"]
+}

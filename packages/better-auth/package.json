@@ -1,0 +1,65 @@
+{
+  "name": "@nifrajs/better-auth",
+  "version": "0.1.0-alpha.1",
+  "description": "Mount better-auth into a nifra app — one app.use() wires /api/auth/*, plus typed getSession/requireSession guards. Structural typing: no hard dependency on better-auth.",
+  "keywords": [
+    "bun",
+    "typescript",
+    "nifra",
+    "web-framework",
+    "full-stack",
+    "edge",
+    "ssr",
+    "auth",
+    "authentication",
+    "sessions",
+    "oauth",
+    "better-auth"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@nifrajs/core": "workspace:*",
+    "better-auth": ">=1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "better-auth": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@nifrajs/client": "workspace:*",
+    "@nifrajs/core": "workspace:*",
+    "@nifrajs/test-utils": "workspace:*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/better-auth"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}

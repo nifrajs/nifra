@@ -1,0 +1,74 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.16/schema.json",
+  "assist": { "actions": { "source": { "organizeImports": "on" } } },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "correctness": {
+        "useHookAtTopLevel": "off"
+      },
+      "suspicious": {
+        "noExplicitAny": "error"
+      },
+      "style": {
+        "useImportType": "error",
+        "noNonNullAssertion": "off"
+      }
+    }
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "javascript": {
+    "formatter": {
+      "semicolons": "asNeeded",
+      "quoteStyle": "double"
+    }
+  },
+  "json": {
+    "parser": {
+      "allowComments": true
+    }
+  },
+  "files": {
+    "includes": [
+      "**",
+      "!**/node_modules",
+      "!**/coverage",
+      "!**/.nifra-vite-entry.tsx",
+      "!**/*.svelte",
+      "!**/*.vue",
+      "!**/dist",
+      "!**/dist-server",
+      "!**/dist-bun",
+      "!**/dist-node",
+      "!**/dist-deno",
+      "!**/dist-vercel",
+      "!**/migrations",
+      "!bench/ssr/**/server-bun.js",
+      "!**/.vercel",
+      "!**/.wrangler",
+      "!**/.nuxt",
+      "!**/.output",
+      "!**/.svelte-kit",
+      "!**/.vinxi",
+      "!**/public",
+      "!**/server-manifest.ts",
+      "!**/*.md",
+      "!**/docs",
+      "!**/.astro",
+      "!**/packages/create-nifra/template",
+      "!**/packages/create-nifra/template-site",
+      "!**/packages/create-nifra/template-site-*",
+      "!**/.next",
+      "!**/.react-router",
+      "!**/bench/ssr/**/*/build",
+      "!**/next-env.d.ts",
+      "!**/bench/ssr/next/tsconfig.json"
+    ]
+  }
+}

@@ -1,0 +1,33 @@
+---
+title: nifra
+description: A Bun-native, contract-first TypeScript web framework.
+template: splash
+hero:
+  tagline: Full-stack TypeScript with a graduation path — coupled & magical at v0, decoupled & versionable at scale. Same framework.
+  actions:
+    - text: Getting started
+      link: /getting-started/
+      icon: right-arrow
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid stagger>
+  <Card title="Zero-codegen, typed client" icon="seti:typescript">
+    The client's types flow from `typeof app`. Every call resolves to
+    `{ ok, status, data, error }`, so HTTP and network failures stay in the
+    result type instead of escaping as thrown client exceptions.
+  </Card>
+  <Card title="Validate + OpenAPI" icon="approve-check">
+    The built-in `t` builder validates at the boundary and generates OpenAPI for free.
+    Or bring any Standard Schema (zod / valibot / arktype).
+  </Card>
+  <Card title="Graduate without rewriting" icon="rocket">
+    Start inline; lift the same handlers into a versionable contract when you need it.
+    Solo joy at v0, enterprise rigor at scale.
+  </Card>
+  <Card title="Production-grade by default" icon="setting">
+    Graceful shutdown, request timeout, body caps, a redacting logger, CORS, security
+    headers, and rate limiting — built in or one `app.use()` away.
+  </Card>
+</CardGrid>

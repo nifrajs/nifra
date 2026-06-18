@@ -1,0 +1,26 @@
+{
+  "name": "ssr-bench-remix",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "react-router build",
+    "start": "react-router-serve ./build/server/index.js"
+  },
+  "dependencies": {
+    "@react-router/node": "^7.17.0",
+    "@react-router/serve": "^7.17.0",
+    "isbot": "^5.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router": "^7.17.0"
+  },
+  "devDependencies": {
+    "@react-router/dev": "^7.17.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.0"
+  },
+  "overrides": {
+    "typescript": "^6.0.3",
+    "vite": "^8.0.0"
+  }
+}

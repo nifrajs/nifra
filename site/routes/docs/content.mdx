@@ -1,0 +1,100 @@
+import { pageMeta } from "../../meta"
+import { CodeBlock } from "../../highlight"
+
+// Pure content page — no React interactivity (TOC/copy/search are the layout enhancer +
+// the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
+export const hydrate = false
+
+export const meta = pageMeta(
+  "Nifra — Content & MDX",
+  "Typed content collections + MDX — author docs and blogs in Markdown with embedded components.",
+)
+
+export const COLLECTION = `import { defineCollection } from "@nifrajs/content/fs"
+import { t } from "@nifrajs/schema"
+
+export const blog = defineCollection({
+  dir: "content/blog",
+  schema: t.object({ title: t.string(), date: t.string(), draft: t.boolean() }),
+})
+
+// in a loader — typed + validated entries (a typo'd field fails the build, not production):
+const posts = (await blog.all()).filter((p) => !p.frontmatter.draft)`
+
+export const WIRING = `import { mdxBunPlugin } from "@nifrajs/content/mdx"
+
+// build.ts — every routes/**/*.mdx file compiles to a component for your framework
+await buildClient({
+  routesDir: "./routes",
+  clientModule: "@nifrajs/web-react/client",
+  plugins: [mdxBunPlugin({ jsxImportSource: "react" })],
+})`
+
+export const PER_FRAMEWORK = `// React / Preact / Vue — one plugin, pick the JSX runtime:
+import { mdxBunPlugin } from "@nifrajs/content/mdx"
+mdxBunPlugin({ jsxImportSource: "react" }) // or "preact" | "vue"
+
+// Solid — compile-time transform + an intrinsics runtime:
+import { solidMdxBunPlugin } from "@nifrajs/web-solid/mdx"
+solidMdxBunPlugin("ssr") // "dom" for the client build
+
+// Svelte — through mdsvex (Svelte's own Markdown compiler):
+import { svelteMdxBunPlugin } from "@nifrajs/web-svelte/mdx"
+svelteMdxBunPlugin("ssr")`
+
+export function Callout({ children }) {
+  return (
+    <aside
+      style={{
+        borderLeft: "3px solid var(--accent, #7c3aed)",
+        padding: "0.75rem 1rem",
+        margin: "1.25rem 0",
+        background: "rgba(124,58,237,0.07)",
+        borderRadius: "0 6px 6px 0",
+      }}
+    >
+      {children}
+    </aside>
+  )
+}
+
+<div className="prose">
+
+# Content & MDX
+
+Nifra ships **typed content collections** and **MDX** — the backbone of a docs site, blog, or changelog,
+without hand-rolling `readdir` and a frontmatter parser.
+
+<Callout>
+**This very page is written in MDX.** The note you're reading is a real `<Callout>` React component
+embedded directly in the Markdown prose — server-rendered by nifra, then hydrated.
+</Callout>
+
+## Content collections
+
+`defineCollection` turns a folder of Markdown into a typed, schema-validated source. The frontmatter is
+validated against a `t` schema, so a typo'd or missing field fails the build — not production — and the
+entries are fully typed into your loaders:
+
+<CodeBlock code={COLLECTION} />
+
+## MDX routes
+
+Add the MDX plugin to your build and any `routes/**/*.mdx` file becomes a page — Markdown that can
+`import` and render components inline, and `export const meta`, exactly like a `.tsx` route:
+
+<CodeBlock code={WIRING} />
+
+## MDX on all five frameworks
+
+MDX is framework-agnostic in Nifra — same as everything else. Each framework gets a build plugin that
+compiles `.mdx` to *its* component model:
+
+<CodeBlock code={PER_FRAMEWORK} />
+
+React, Preact, and Vue share one plugin (their JSX runtimes differ only by `jsxImportSource`). Solid
+needs its compile-time transform, so `@nifrajs/web-solid/mdx` runs `babel-preset-solid` over the MDX and
+maps intrinsic tags through `<Dynamic>`. Svelte has no JSX, so `@nifrajs/web-svelte/mdx` routes MDX through
+`mdsvex` — Svelte's own Markdown compiler. All five server-render and hydrate.
+
+</div>

@@ -1,0 +1,16 @@
+{
+  "name": "ssr-bench-preact-ssr",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun run build.ts",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "preact": "^10.26.5",
+    "preact-render-to-string": "^6.5.13"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

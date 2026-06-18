@@ -1,0 +1,62 @@
+{
+  "name": "@nifrajs/content",
+  "version": "0.1.0-alpha.1",
+  "description": "Typed, schema-validated content collections for nifra — Markdown + frontmatter, framework-agnostic.",
+  "keywords": [
+    "bun",
+    "typescript",
+    "nifra",
+    "web-framework",
+    "full-stack",
+    "edge",
+    "ssr"
+  ],
+  "type": "module",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./fs": {
+      "bun": "./src/fs.ts",
+      "types": "./src/fs.ts",
+      "default": "./src/fs.ts"
+    },
+    "./mdx": {
+      "bun": "./src/mdx.ts",
+      "types": "./src/mdx.ts",
+      "default": "./src/mdx.ts"
+    }
+  },
+  "files": [
+    "src"
+  ],
+  "sideEffects": false,
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "marked": "^15.0.0",
+    "yaml": "^2.6.0"
+  },
+  "peerDependencies": {
+    "@mdx-js/mdx": "^3"
+  },
+  "peerDependenciesMeta": {
+    "@mdx-js/mdx": {
+      "optional": true
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/content"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}

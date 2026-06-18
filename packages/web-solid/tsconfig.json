@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Frontend adapter: needs DOM types (it casts the hydration container to `Element`).
+    // The backend packages stay DOM-free; this is why @nifrajs/web-solid has its own config
+    // and is excluded from the root typecheck.
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    // Resolve the workspace core to its source so typecheck needs no prior build.
+    "paths": {
+      "@nifrajs/web": ["../web/src/index.ts"],
+      "@nifrajs/core": ["../core/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*", "test/**/*"]
+}

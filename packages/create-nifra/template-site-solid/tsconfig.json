@@ -1,0 +1,38 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "dist-bun",
+    "dist-node",
+    "dist-deno",
+    "dist-vercel",
+    ".nifra",
+    ".wrangler",
+    ".vercel",
+    "server-manifest.ts",
+    "server-bun.ts",
+    "server-node.ts",
+    "server-deno.ts",
+    "server-vercel.ts",
+    "_worker.ts",
+    "build.ts",
+    "build-bun.ts",
+    "build-node.ts",
+    "build-deno.ts",
+    "build-vercel.ts"
+  ]
+}

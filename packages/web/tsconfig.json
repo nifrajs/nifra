@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // The browser navigation layer (src/client.ts) needs DOM types. The rest of @nifrajs/web is
+    // DOM-free and typechecked by the root config; this config covers only the client layer.
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "paths": {
+      "@nifrajs/core": ["../core/src/index.ts"]
+    }
+  },
+  "include": ["src/client.ts", "src/islands.ts", "test/islands.test.ts"]
+}

@@ -1,0 +1,13 @@
+name = "nifra-websocket-chat"
+main = "worker.ts"
+compatibility_date = "2024-09-01"
+
+# The hub Durable Object that holds every WebSocket connection and runs the app's pub/sub.
+# `createWebSocketHub(app)` is exported as `VeloWebSocketHub` from worker.ts.
+[[durable_objects.bindings]]
+name = "VELO_WS_HUB"
+class_name = "VeloWebSocketHub"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["VeloWebSocketHub"]

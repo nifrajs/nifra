@@ -1,0 +1,8 @@
+# Test runner configuration.
+# Coverage is on for every `bun test`. The 0.9 floor is the global gate
+# (≥90% line/function coverage per file); the router/validator/descriptor core is held to
+# 100% by review (the per-file report makes any regression visible immediately).
+[test]
+coverage = true
+coverageThreshold = 0.9
+pathIgnorePatterns = ["**/template/**", "**/template-*/**"]
