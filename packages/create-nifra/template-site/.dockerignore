@@ -1,0 +1,14 @@
+node_modules
+dist
+dist-node
+dist-bun
+dist-deno
+.vercel
+.build
+.build-node
+.build-bun
+.build-deno
+.build-vercel
+.wrangler
+.git
+*.log

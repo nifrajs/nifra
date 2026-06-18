@@ -1,0 +1,7 @@
+name = "nifra-workers-example"
+main = "worker.ts"
+compatibility_date = "2024-09-01"
+
+# Platform bindings reach handlers via `c.env`.
+[vars]
+GREETING = "hello from nifra on the edge"

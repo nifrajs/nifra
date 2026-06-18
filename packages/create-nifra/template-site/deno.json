@@ -1,0 +1,7 @@
+{
+  "tasks": {
+    "build": "bun run build-deno.ts",
+    "start": "deno run --allow-net --allow-read --allow-env dist-deno/server-deno.js"
+  },
+  "//": "Build with Bun (nifra's toolchain), run/deploy the self-contained bundle on Deno. Deploy to Deno Deploy: deployctl deploy --prod --entrypoint=dist-deno/server-deno.js"
+}

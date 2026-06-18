@@ -1,0 +1,20 @@
+name = "nifra-isr-react"
+main = "dist-server/worker.js"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Workers Assets: the content-hashed client bundle (buildClient → ./public/assets) is served by the
+# platform at /assets/*. Non-asset paths fall through to the worker (SSR + ISR).
+assets = { directory = "./public" }
+
+# The ISR page cache. `wrangler dev` provides a LOCAL (miniflare) KV automatically — no Cloudflare
+# account needed. For `wrangler deploy`, create a namespace and paste its id:
+#   bunx wrangler kv namespace create ISR_CACHE
+[[kv_namespaces]]
+binding = "ISR_CACHE"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+
+# The on-demand revalidation secret. This is a DEV placeholder — for production set a real one with
+# `bunx wrangler secret put REVALIDATE_SECRET` (a secret overrides this var).
+[vars]
+REVALIDATE_SECRET = "dev-secret"

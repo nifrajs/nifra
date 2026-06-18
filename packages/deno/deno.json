@@ -1,0 +1,6 @@
+{
+  "name": "@nifrajs/deno",
+  "exports": "./src/index.ts",
+  "lint": { "exclude": ["."] },
+  "fmt": { "exclude": ["."] }
+}

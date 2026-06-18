@@ -1,0 +1,314 @@
+[
+  {
+    "name": "CLIENT",
+    "topic": "Nifra — API & typed client",
+    "slug": "api",
+    "code": "import { client } from \"@nifrajs/client\"\nimport type { app } from \"./server\"\n\n// Infers the server's types directly — no codegen, no schema duplication.\nconst api = client<typeof app>(\"https://api.example.com\")\n\nconst { data } = await api.users({ id: \"1\" }).get()         // path param → /users/1\nawait api.users.post({ name: \"Ada\" })                       // POST body\nawait api.search.get({ query: { page: \"3\" } })              // query string\nawait api.users({ id: \"1\" }).posts({ postId: \"2\" }).get()   // nested params"
+  },
+  {
+    "name": "CONTRACT",
+    "topic": "Nifra — API & typed client",
+    "slug": "api",
+    "code": "import { defineContract, implement } from \"@nifrajs/core\"\nimport { z } from \"zod\"\n\n// 1. Declare the contract — methods, paths, and input schemas, no handlers.\n//    Share this object between server and (optionally) other services.\nexport const contract = defineContract({\n  listUsers: { method: \"GET\", path: \"/users\" },\n  getUser:   { method: \"GET\", path: \"/users/:id\" },\n  createUser:{ method: \"POST\", path: \"/users\", body: z.object({ name: z.string() }) },\n  search:    { method: \"GET\", path: \"/search\", query: z.object({ page: z.string() }) },\n})\n\n// 2. Implement it — handlers are checked against the contract (path params, body, query all typed).\nexport const app = implement(contract, {\n  listUsers: () => users.all(),\n  getUser:   (c) => users.find(c.params.id),\n  createUser:(c) => users.create(c.body.name),\n  search:    (c) => ({ page: c.query.page }),\n})"
+  },
+  {
+    "name": "INLINE",
+    "topic": "Nifra — API & typed client",
+    "slug": "api",
+    "code": "import { server } from \"@nifrajs/core\"\nimport { z } from \"zod\"   // any Standard Schema works: zod, valibot, arktype…\n\nexport const app = server()\n  .get(\"/users/:id\", (c) => ({ id: c.params.id }))                 // c.params is typed from the path\n  .post(\"/users\", { body: z.object({ name: z.string().min(1) }) }, // body validated at the boundary\n    (c) => ({ created: c.body.name }))                             // c.body is the validated type\n  .get(\"/search\", { query: z.object({ page: z.string() }) },       // query validated too\n    (c) => ({ page: c.query.page }))\n  .listen(3000)"
+  },
+  {
+    "name": "BETTERAUTH",
+    "topic": "Nifra — Auth & sessions",
+    "slug": "auth",
+    "code": "// auth.ts — your configured Better Auth instance (database, providers, …):\nimport { betterAuth as createBetterAuth } from \"better-auth\"\nexport const auth = createBetterAuth({ database: db, emailAndPassword: { enabled: true } })\n\n// server.ts — ONE use() mounts every Better Auth endpoint at /api/auth/*:\nimport { betterAuth, getSession, requireSession } from \"@nifrajs/better-auth\"\nconst app = server()\n  .use(betterAuth(auth))                                       // sign-in/up/out, OAuth, 2FA, session…\n  .get(\"/me\", async (c) => (await requireSession(auth, c.req)).user)  // typed; 401 when signed out\n\n// In a loader/action, read the session from the raw Request:\nexport async function loader({ request }) {\n  const session = await getSession(auth, request)              // { user, session } | null — typed\n  const { user } = await requireSession(auth, request, { redirectTo: \"/login\" })  // or guard it\n  return { user }\n}"
+  },
+  {
+    "name": "GUARD",
+    "topic": "Nifra — Auth & sessions",
+    "slug": "auth",
+    "code": "// A protected route's loader — reads the session and redirects when absent.\nimport { requireUser } from \"@nifrajs/auth\"   // browser-safe; OK to import in a route module\n\nexport async function loader({ request, api }) {\n  const sessions = api                       // the manager injected via createWebApp's `api`\n  const session = await sessions.read(request)\n  // requireUser throws a 302 to /login when there's no session; nifra returns the thrown Response.\n  const userId = requireUser(session, \"userId\", { redirectTo: \"/login\" })\n  return { userId }\n}"
+  },
+  {
+    "name": "SETUP",
+    "topic": "Nifra — Auth & sessions",
+    "slug": "auth",
+    "code": "// auth.ts — one session manager. LAZY so a route module can import it without shipping it to the\n// browser (see the warning below). Store mode keeps data server-side; cookie mode (no store) is stateless.\nimport { createSessions, MemorySessionStore, KVSessionStore } from \"@nifrajs/auth\"\n\nlet manager\nexport const getSessions = () => (manager ??= createSessions({\n  secret: process.env.SESSION_SECRET,           // ≥ 16 chars; rotating it invalidates all sessions\n  store: new MemorySessionStore(),              // prod: new KVSessionStore(env.SESSIONS)\n  // cookie: { secure: false },                 // local http dev only\n}))"
+  },
+  {
+    "name": "FRAMEWORK",
+    "topic": "Nifra — CLI",
+    "slug": "cli",
+    "code": "// framework.ts — the one place an app names its framework. The CLI reads these:\nimport react from \"@vitejs/plugin-react\"\nimport { reactAdapter } from \"@nifrajs/web-react\"\n\nexport const adapter = reactAdapter\nexport const clientModule = \"@nifrajs/web-react/client\"\nexport const vitePlugins = [react()]          // dev HMR (Fast Refresh)\n// Vue/Svelte/Solid also export:\n//   clientPlugins = [vueBunPlugin(\"dom\")]     // compile routes for the client build\n//   serverPlugins = [vueBunPlugin(\"ssr\")]     // compile routes for SSR (nifra start registers them)\n//   conditions    = [\"solid\"]                 // Solid: resolve solid-js to its source\n//   define        = { __VUE_OPTIONS_API__: \"true\", ... }   // Vue feature flags"
+  },
+  {
+    "name": "CONTENT",
+    "topic": "Nifra — Loaders & actions",
+    "slug": "data",
+    "code": "// content.config.ts — a typed, validated collection over a folder of Markdown.\nimport { defineCollection } from \"@nifrajs/content/fs\"\nimport { t } from \"@nifrajs/schema\"\n\nexport const blog = defineCollection({\n  dir: \"content/blog\",\n  schema: t.object({ title: t.string(), date: t.string(), draft: t.boolean() }),\n})\n\n// a loader — typed + validated entries, no manual fs/frontmatter parsing:\nexport async function loader() {\n  const posts = (await blog.all()).filter((p) => !p.frontmatter.draft)\n  return { posts: posts.sort((a, b) => b.frontmatter.date.localeCompare(a.frontmatter.date)) }\n}\n// posts[0].frontmatter is { title; date; draft } (typed); posts[0].html is the rendered Markdown"
+  },
+  {
+    "name": "DECORATE",
+    "topic": "Nifra — Databases",
+    "slug": "database",
+    "code": "import { server } from \"@nifrajs/core\"\nimport { desc } from \"drizzle-orm\"\nimport { db, notes } from \"./db\"   // your Drizzle client + schema (what the scaffold generates)\n\n// decorate() hangs the client on the context ONCE — every handler then reads it as `c.db`, fully typed.\nexport const app = server()\n  .decorate(\"db\", db)\n  .get(\"/notes\", async (c) => c.db.select().from(notes).orderBy(desc(notes.createdAt)))\n\nexport type App = typeof app"
+  },
+  {
+    "name": "EDGE",
+    "topic": "Nifra — Databases",
+    "slug": "database",
+    "code": "import { server } from \"@nifrajs/core\"\n\n// On Workers there's no raw TCP, so use an HTTP-based driver. D1 is a typed platform binding:\ninterface Env { DB: D1Database }\n\nconst app = server<Env>().get(\"/users/:id\", async (c) => {\n  const user = await c.env.DB.prepare(\"SELECT * FROM users WHERE id = ?\").bind(c.params.id).first()\n  return user ?? new Response(\"Not found\", { status: 404 })\n})"
+  },
+  {
+    "name": "POSTGRES",
+    "topic": "Nifra — Databases",
+    "slug": "database",
+    "code": "import { server } from \"@nifrajs/core\"\nimport { drizzle } from \"drizzle-orm/postgres-js\"   // or node-postgres / neon-http\nimport postgres from \"postgres\"\nimport { eq } from \"drizzle-orm\"\nimport { users } from \"./schema\"\n\nconst db = drizzle(postgres(process.env.DATABASE_URL!))\n\nexport const app = server().get(\"/users/:id\", async (c) => {\n  const [user] = await db.select().from(users).where(eq(users.id, Number(c.params.id)))\n  return user ?? new Response(\"Not found\", { status: 404 })\n})"
+  },
+  {
+    "name": "SQLITE",
+    "topic": "Nifra — Databases",
+    "slug": "database",
+    "code": "import { server } from \"@nifrajs/core\"\nimport { Database } from \"bun:sqlite\"        // Node: better-sqlite3 · edge: Turso/libSQL\n\n// Open the connection ONCE at module scope (the driver pools internally).\nconst db = new Database(\"app.db\")\nconst byId = db.query<{ id: number; name: string }>(\"SELECT * FROM users WHERE id = ?\")\n\nexport const app = server().get(\"/users/:id\", (c) =>\n  // Parameterized (?) — never interpolate user input into SQL.\n  byId.get(Number(c.params.id)) ?? new Response(\"Not found\", { status: 404 }),\n)"
+  },
+  {
+    "name": "CF",
+    "topic": "Nifra — Deployment",
+    "slug": "deployment",
+    "code": "// _worker.ts — the edge SSR entry\nimport { toFetchHandler } from \"@nifrajs/core\"\nimport { createWebApp } from \"@nifrajs/web\"\nimport { reactAdapter } from \"@nifrajs/web-react\"\nimport { clientEntry, manifest } from \"./server-manifest\"  // generated by buildServer\n\nconst app = createWebApp({ adapter: reactAdapter, manifest, clientEntry })\nexport default toFetchHandler(app)   // a Workers/Pages fetch handler\n\n// build.ts — buildClient (→ /assets) + buildServer (edge conditions → _worker.js)\nimport { buildClient, buildServer } from \"@nifrajs/web/build\""
+  },
+  {
+    "name": "BUN_DEV",
+    "topic": "Nifra — Dev & HMR",
+    "slug": "dev",
+    "code": "// dev.ts — Bun-native live reload\nimport { createDevServer } from \"@nifrajs/web/dev\"\n// builds the client on boot, serves SSR, watches routes, full-page live-reload on change.\nconst server = await createDevServer({ routesDir, outDir, clientModule, createApp })"
+  },
+  {
+    "name": "VITE_DEV",
+    "topic": "Nifra — Dev & HMR",
+    "slug": "dev",
+    "code": "// dev.ts — state-preserving HMR for supported UI adapters\nimport react from \"@vitejs/plugin-react\"            // your framework's official Vite plugin\nimport { createWebApp } from \"@nifrajs/web\"\nimport { discoverRoutes } from \"@nifrajs/web/fs\"\nimport { createViteDevServer } from \"@nifrajs/web/vite\"\nimport { reactAdapter } from \"@nifrajs/web-react\"\nimport { backend } from \"./backend\"\n\nconst routesDir = `${import.meta.dir}/routes`\nconst server = await createViteDevServer({\n  root: import.meta.dir,\n  routesDir,\n  clientModule: \"@nifrajs/web-react/client\",\n  plugins: [react()],                                // Vue: @vitejs/plugin-vue, Svelte: …, etc.\n  port: Number(Bun.env.PORT ?? 3000),\n  createApp: (clientEntry, importQuery) =>\n    createWebApp({\n      adapter: reactAdapter,\n      manifest: discoverRoutes(routesDir, { importQuery }),\n      clientEntry,\n      api: inProcessClient(backend),\n    }),\n})"
+  },
+  {
+    "name": "CRON",
+    "topic": "Nifra — Edge & bindings",
+    "slug": "edge",
+    "code": "import { toFetchHandler } from \"@nifrajs/core\"\nimport { app } from \"./app\"\n\n// Export fetch + a cron handler. Wire the schedule in wrangler.toml: [triggers] crons = [\"0 * * * *\"]\nexport default toFetchHandler(app, {\n  scheduled: (controller, { env, waitUntil }) =>\n    waitUntil(env.KV.put(\"last-run\", String(controller.scheduledTime))),\n})"
+  },
+  {
+    "name": "AUTOMATED",
+    "topic": "Nifra — Fonts",
+    "slug": "fonts",
+    "code": "// fonts.build.ts — run once at build time (a prebuild step). It hits the network.\nimport { loadGoogleFont } from \"@nifrajs/web/fonts\"\n\nconst inter = await loadGoogleFont(\n  { family: \"Inter\", weights: [400, 700], subsets: [\"latin\"], sizeAdjust: \"107%\" },\n  { outDir: \"public/fonts\", publicPath: \"/fonts\" },\n)\n\nawait Bun.write(\"app/fonts.css\", inter.css)                  // the @font-face stylesheet\nawait Bun.write(\"app/fonts.preloads.json\", JSON.stringify(inter.preloads))"
+  },
+  {
+    "name": "MANUAL",
+    "topic": "Nifra — Fonts",
+    "slug": "fonts",
+    "code": "// fonts.css — you dropped inter.woff2 into public/fonts/ yourself\nimport { fontFace } from \"@nifrajs/web\"\n\nexport default fontFace({\n  family: \"Inter\",\n  src: [{ url: \"/fonts/inter.woff2\" }],   // format() inferred from the extension\n  weight: \"100 900\",                       // a variable-font range\n  display: \"swap\",                         // the default — paints fallback text instantly\n  sizeAdjust: \"107%\",                      // metric override → no fallback→web-font shift\n})"
+  },
+  {
+    "name": "PRELOAD",
+    "topic": "Nifra — Fonts",
+    "slug": "fonts",
+    "code": "// a root layout's meta — becomes <link rel=\"preload\" as=\"font\" crossorigin> in <head>\nimport { fontPreload } from \"@nifrajs/web\"\n\nexport const meta = { link: [fontPreload({ href: \"/fonts/inter.woff2\" })] }"
+  },
+  {
+    "name": "SWAP",
+    "topic": "Nifra — Frameworks",
+    "slug": "frameworks",
+    "code": "// Server — pick an adapter. Everything else is identical across all five frameworks:\n// the same routes, loaders, actions, streaming, <Await>, fetchers, query cache.\nimport { createWebApp } from \"@nifrajs/web\"\nimport { reactAdapter } from \"@nifrajs/web-react\"   // ← or web-solid · web-vue · web-preact · web-svelte\n\nconst app = createWebApp({\n  adapter: reactAdapter,   // the one line that changes per framework\n  manifest,\n  clientEntry,             // the built client bundle (from buildClient's manifest)\n  api,\n})"
+  },
+  {
+    "name": "NEGOTIATE",
+    "topic": "Nifra — i18n",
+    "slug": "i18n",
+    "code": "// In a loader: resolve the locale + return only that catalog's messages.\nimport { negotiateLocale } from \"@nifrajs/i18n\"\nimport { catalogs, locales } from \"../catalogs\"\n\nexport async function loader({ request }) {\n  const q = new URL(request.url).searchParams.get(\"lang\")\n  const locale = q && locales.includes(q) ? q : negotiateLocale(request, { locales, defaultLocale: \"en\", cookie: \"lang\" })\n  return { locale, messages: catalogs[locale] }   // cookie → Accept-Language → default\n}"
+  },
+  {
+    "name": "BACKENDS",
+    "topic": "Nifra — images",
+    "slug": "images",
+    "code": "import { createImageHandler } from \"@nifrajs/image/server\"\nimport { sharpImageBackend, wasmImageBackend } from \"@nifrajs/image/backends\"\n\n// Node — libvips via sharp. Pass your own import (nifra never depends on it):\nimport sharp from \"sharp\"\ncreateImageHandler({ backend: sharpImageBackend(sharp), root: \"./public\" })\n\n// Edge (Workers / Vercel-Edge / Deno-Deploy) — pure-WASM codecs, e.g. jSquash:\nimport decodeJpeg from \"@jsquash/jpeg/decode\"\nimport resize from \"@jsquash/resize\"\nimport encodeWebp from \"@jsquash/webp/encode\"   // + @jsquash/png, @jsquash/jpeg encoders\ncreateImageHandler({\n  allowedOrigins: [\"https://cdn.example\"],\n  backend: wasmImageBackend({\n    decode: decodeJpeg,                                       // → { data, width, height } (RGBA)\n    resize: (img, width, height) => resize(img, { width, height }),\n    encode: async (img, format) => new Uint8Array(await encodeWebp(img)), // switch by format\n  }),\n})"
+  },
+  {
+    "name": "DIMENSIONS",
+    "topic": "Nifra — images",
+    "slug": "images",
+    "code": "import { imageDimensions, readImageDimensions } from \"@nifrajs/image\"\n\n// Pure-JS header read — PNG / JPEG / GIF / WebP. No decode, no codec, no deps.\nconst info = await readImageDimensions(Bun.file(\"public/hero.jpg\"))\n// → { width: 1200, height: 630, format: \"jpeg\" }   (null if unrecognized)\n\n// Build-time tooling: pre-read sizes into a manifest so <Image> is CLS-safe\n// without hardcoding width/height at every call site.\nimageDimensions(new Uint8Array(headerBytes))"
+  },
+  {
+    "name": "LOADERS",
+    "topic": "Nifra — images",
+    "slug": "images",
+    "code": "import type { ImageLoader } from \"@nifrajs/image\"\nimport { cloudflareLoader, identityLoader } from \"@nifrajs/image\"\n\n// Built-in: Cloudflare Images. `base` prepends an origin to bare paths.\nconst cf = cloudflareLoader({ base: \"https://assets.example.com\" })\n\n// The default when you pass no loader: no transform (still CLS-safe + lazy,\n// just no responsive variants).\nidentityLoader({ src: \"/a.png\", width: 800 })   // → \"/a.png\"\n\n// Any CDN is a pure (src, width, quality?) → URL builder:\nconst imgix: ImageLoader = ({ src, width, quality }) =>\n  `https://my.imgix.net${src}?w=${width}&auto=format${quality ? `&q=${quality}` : \"\"}`"
+  },
+  {
+    "name": "SIGNING",
+    "topic": "Nifra — images",
+    "slug": "images",
+    "code": "// Lock the endpoint to URLs YOU minted — kills resize-bombing (w/q enumeration).\n// SAME secret on loader + handler; it's server-only (inject from env, like a session secret).\nimport { selfHostedLoader, signImageUrl } from \"@nifrajs/image\"\nimport { createImageHandler } from \"@nifrajs/image/server\"\n\nconst resize = selfHostedLoader({ endpoint: \"/_image\", secret: env.IMAGE_SECRET })\n//  → /_image?src=…&w=800&s=<hmac>   (stable: an SSR-signed URL hydrates + caches identically)\n\nconst image = createImageHandler({ root: \"./public\", signing: { secret: env.IMAGE_SECRET } })\n//  any request without a valid &s= (forged / tampered / expired) → 403, before any fetch or decode\n\n// Time-limited links to private images (server-side only):\nconst url = signImageUrl(\"/_image\", { src: \"/private/a.jpg\", width: 800 }, {\n  secret: env.IMAGE_SECRET,\n  expiresIn: 300, // seconds → adds &exp=\n})"
+  },
+  {
+    "name": "CLIENT",
+    "topic": "Nifra — Getting started",
+    "slug": "index",
+    "code": "import { client } from \"@nifrajs/client\"\nimport type { app } from \"./server\"\n\n// The client infers the server's types — no codegen. Never throws: { data, error }.\nconst api = client<typeof app>(\"http://localhost:3000\")\nconst { data, error } = await api.users({ id: \"7\" }).get()\n//      ^? { id: string } | undefined"
+  },
+  {
+    "name": "HELLO",
+    "topic": "Nifra — Getting started",
+    "slug": "index",
+    "code": "import { server } from \"@nifrajs/core\"\n\nserver()\n  .get(\"/\", () => ({ hello: \"world\" }))\n  .get(\"/users/:id\", (c) => ({ id: c.params.id }))\n  .listen(3000)"
+  },
+  {
+    "name": "OPTIMISTIC",
+    "topic": "Nifra — Optimistic UI & fetchers",
+    "slug": "mutations",
+    "code": "import { useFetcher } from \"@nifrajs/web-react/fetcher\"\n\n// Optimistic UI: while a submit is in flight, read the expected value from the in-flight\n// submission's FormData; the real data takes over when the action resolves, and a failed\n// submit reverts automatically — no manual rollback.\nconst fetcher = useFetcher(\"todo:\" + id)\nconst pending = fetcher.submission?.formData.get(\"done\")        // the value you just submitted\nconst done = pending != null ? pending === \"true\" : todo.done   // optimistic value wins while pending\n\nfunction toggle() {\n  const fd = new FormData()\n  fd.set(\"id\", String(id))\n  fd.set(\"done\", String(!done))\n  fetcher.submit(\"/todos\", fd)   // submit(actionPath, body) — runs the route's action\n}"
+  },
+  {
+    "name": "AUTHN",
+    "topic": "Nifra — Plugins & middleware",
+    "slug": "plugins",
+    "code": "import { bearer, apiKey } from \"@nifrajs/middleware\"\n\n// Bearer tokens — verify returns your principal (its type is inferred), 401s missing/invalid:\nconst auth = bearer({ verify: (token) => lookupUser(token) })   // AuthPlugin<User>\napp\n  .use(auth)                                                    // guards routes defined after it\n  .get(\"/me\", (c) => auth.requirePrincipal(c.req))              // typed principal, or throws 401\n\n// API keys via a header (default x-api-key) — a fixed set compared in CONSTANT TIME…\napp.use(apiKey({ keys: [process.env.API_KEY!] }))              // matched key becomes the principal\n// …or custom (DB-backed) verification; 'optional' lets unauthenticated requests through:\napp.use(apiKey({ verify: (key) => db.apiKeys.find(key), optional: true }))"
+  },
+  {
+    "name": "CACHING",
+    "topic": "Nifra — Plugins & middleware",
+    "slug": "plugins",
+    "code": "import { cache, MemoryResponseCache, prettyJson } from \"@nifrajs/middleware\"\n\n// Full response cache: pluggable store, Vary-aware keys, byte cap. Bypasses Set-Cookie and respects\n// Cache-Control (no-store/private). MemoryResponseCache is per-instance — refuses prod unless opted in.\napp.use(cache({ store: new MemoryResponseCache(), ttlMs: 30_000, vary: [\"accept-language\"] }))\napp.use(prettyJson())   // pretty-print JSON responses (size-capped; optional ?pretty query toggle)"
+  },
+  {
+    "name": "IDENTITY",
+    "topic": "Nifra — Plugins & middleware",
+    "slug": "plugins",
+    "code": "import { defineIdentityPlugin, server } from \"@nifrajs/core\"\n\n// A plugin that registers routes/hooks but adds NO context type is a type-IDENTITY plugin.\n// defineIdentityPlugin keeps app.use()'s return type EXACTLY the caller's server, so routes added\n// after .use() keep their types — and the typed client derived from them stays intact.\nexport const audit = defineIdentityPlugin(\"audit\", (app) =>\n  app.onResponse((res) => res),\n)\n\n// /a AND /b stay fully typed across the .use():\nconst api = server().get(\"/a\", () => ({ a: 1 })).use(audit).get(\"/b\", () => ({ b: 2 }))"
+  },
+  {
+    "name": "JWT_BASIC",
+    "topic": "Nifra — Plugins & middleware",
+    "slug": "plugins",
+    "code": "import { jwt, jwks, basicAuth } from \"@nifrajs/middleware\"\n\n// JWT (WebCrypto): an explicit algorithm allowlist is REQUIRED; alg:none and RSA/HMAC confusion are rejected.\nconst auth = jwt({ key: process.env.JWT_SECRET!, algorithms: [\"HS256\"], issuer: \"my-app\" })\napp\n  .use(auth)                                       // 401s missing/invalid (optional:true lets them through)\n  .get(\"/me\", (c) => auth.requireClaims(c.req))    // typed claims, or throws 401; auth.claims(req) is nullable\n// Asymmetric (rotating keys): key: jwks({ url: \"https://issuer/.well-known/jwks.json\" }) — https-only, cached.\n\n// HTTP Basic — static creds compared in CONSTANT TIME (SHA-256 + timing-safe), or a verify callback.\napp.use(basicAuth({ username: \"admin\", password: process.env.PASS!, realm: \"staging\" }))"
+  },
+  {
+    "name": "MIDDLEWARE",
+    "topic": "Nifra — Plugins & middleware",
+    "slug": "plugins",
+    "code": "import { cors, rateLimit, securityHeaders } from \"@nifrajs/middleware\"\n\n// Hardening middleware is a hook bundle (context-agnostic) — same app.use():\napp\n  .use(securityHeaders())\n  .use(cors({ origins: [\"https://app.example\"] }))\n  .use(rateLimit({ limit: 100, windowMs: 60_000 }))"
+  },
+  {
+    "name": "OFFICIAL",
+    "topic": "Nifra — Plugins & middleware",
+    "slug": "plugins",
+    "code": "import { requestId, logger, etag } from \"@nifrajs/middleware\"\n\napp\n  .use(requestId())   // reuse/generate x-request-id → c.requestId (typed) + response header\n  .use(logger())      // one structured line/request: { method, path, status, ms }\n  .use(etag())        // content-hash ETag on GET 200s → 304 on matching If-None-Match"
+  },
+  {
+    "name": "OPS",
+    "topic": "Nifra — Plugins & middleware",
+    "slug": "plugins",
+    "code": "import { healthcheck, openapi } from \"@nifrajs/middleware\"\n\napp\n  // Liveness + readiness. /ready runs each check concurrently → 200 (all pass) or 503.\n  .use(healthcheck({ checks: { db: () => db.ping(), cache: () => redis.ping() } }))\n  // GET /openapi.json from your routes (paths, methods, params); ui adds a Scalar page at /reference.\n  .use(openapi({ info: { title: \"My API\", version: \"1.0.0\" }, ui: true }))"
+  },
+  {
+    "name": "PERF",
+    "topic": "Nifra — Plugins & middleware",
+    "slug": "plugins",
+    "code": "import { compression, cacheControl } from \"@nifrajs/middleware\"\n\napp\n  .use(compression())                                  // gzip compressible responses (Accept-Encoding)\n  .use(cacheControl(\"public, max-age=60\"))             // Cache-Control on GET/HEAD 2xx (won't clobber)\n  // …or a per-path policy — return undefined to leave a response untouched:\n  .use(cacheControl((req) =>\n    new URL(req.url).pathname.startsWith(\"/assets/\")\n      ? \"public, max-age=31536000, immutable\"\n      : undefined))"
+  },
+  {
+    "name": "PLUGIN",
+    "topic": "Nifra — Plugins & middleware",
+    "slug": "plugins",
+    "code": "import { definePlugin } from \"@nifrajs/core\"\n\n// A plugin is just (app) => app — call use/derive/decorate or register routes.\n// definePlugin adds a name so applying it twice (even transitively) is a no-op.\nexport const auth = definePlugin(\"auth\", (app) =>\n  app.derive((c) => ({ user: verify(c.req) })),  // adds c.user…\n)\n\napp\n  .use(auth)                                       // …threaded to every handler after this:\n  .get(\"/me\", (c) => ({ id: c.user.id }))          // c.user is fully typed\n\n// Inline plugins thread context too — no definePlugin needed for one-offs:\napp.use((a) => a.decorate(\"db\", db).derive((c) => ({ now: Date.now() })))"
+  },
+  {
+    "name": "RELIABILITY",
+    "topic": "Nifra — Plugins & middleware",
+    "slug": "plugins",
+    "code": "import { idempotency, MemoryIdempotencyStore } from \"@nifrajs/middleware\"\n\n// A retried POST with the same Idempotency-Key replays the first response instead of\n// re-running the side effect. Shared store in production (atomic claim); dev-only memory store.\napp.use(idempotency({ store: new MemoryIdempotencyStore() }))"
+  },
+  {
+    "name": "SHAPING",
+    "topic": "Nifra — Plugins & middleware",
+    "slug": "plugins",
+    "code": "import { methodOverride, trimTrailingSlash, language, timing, poweredBy, combine } from \"@nifrajs/middleware\"\n\napp\n  .use(methodOverride())     // POST + X-HTTP-Method-Override → PUT/PATCH/DELETE (a real pre-routing request rewrite)\n  .use(trimTrailingSlash())  // canonicalize URLs: 308 redirect (or rewrite), same-origin only, conservative methods\n  .use(language({ supported: [\"en\", \"fr\"], defaultLanguage: \"en\" }))  // Accept-Language → c.language + Content-Language\n  .use(timing())             // Server-Timing header + typed c.timing marks/measures\n// poweredBy() is opt-in (nifra emits no X-Powered-By by default). combine(a, b, c) bundles several into one plugin."
+  },
+  {
+    "name": "BUILD",
+    "topic": "Nifra — Rendering: SSG & ISR",
+    "slug": "rendering",
+    "code": "// build.ts — buildClient, then prerender opted-in routes to static HTML.\nimport { buildClient, prerenderRoutes, cloudflarePagesRoutes } from \"@nifrajs/web/build\"\nimport { discoverRoutes } from \"@nifrajs/web/fs\"\n\nawait buildClient({ routesDir: \"./routes\", outDir: \"./dist\", clientModule: \"@nifrajs/web-react/client\" })\nconst { app } = await import(\"./server\")\nconst { prerendered } = await prerenderRoutes({\n  app,\n  routes: discoverRoutes(\"./routes\").routes,\n  outDir: \"./dist\", // writes <path>/index.html + <path>/_data.json per prerendered route\n})\n\n// Hybrid deploy (Cloudflare Pages): serve prerendered HTML + _data.json from the CDN; everything\n// else falls through to the SSR worker.\nconst paths = prerendered.map((p) => p.path)\nBun.write(\"./dist/_routes.json\", JSON.stringify(cloudflarePagesRoutes({ prerendered: paths })))"
+  },
+  {
+    "name": "DRAFT",
+    "topic": "Nifra — Rendering: SSG & ISR",
+    "slug": "rendering",
+    "code": "// 1. A route you gate yourself flips draft mode on for the editor.\nimport { enableDraft, disableDraft } from \"@nifrajs/web\"\n\napp.get(\"/api/preview\", async (c) => {\n  if (c.query.token !== env.PREVIEW_TOKEN) return new Response(\"nope\", { status: 401 })\n  await enableDraft(c, env.DRAFT_SECRET) // signed, HttpOnly cookie\n  return redirect(String(c.query.to ?? \"/\"))\n})\napp.get(\"/api/preview/exit\", (c) => (disableDraft(c), redirect(\"/\")))\n\n// 2. Loaders branch on ctx.draft to load unpublished content.\nexport async function loader({ api, draft }: LoaderArgs<typeof app>) {\n  return { post: (await api.posts.get({ query: { slug, includeDrafts: draft } })).data }\n}\n\n// 3. Wire the SAME secret so loaders see ctx.draft + editors bypass the ISR cache.\ncreateWebApp({ adapter, manifest, clientEntry, api, draftSecret: env.DRAFT_SECRET })\nwithISR(app, { store, revalidate: 60, now: () => Date.now(), draftSecret: env.DRAFT_SECRET })"
+  },
+  {
+    "name": "FONTS",
+    "topic": "Nifra — Rendering: SSG & ISR",
+    "slug": "rendering",
+    "code": "// fonts.css — a CLS-safe @font-face for a self-hosted font (the pipeline bundles + hashes it).\nimport { fontFace } from \"@nifrajs/web\"\nexport default fontFace({\n  family: \"Inter\",\n  src: [{ url: \"/fonts/inter-var.woff2\" }], // self-host it — never hotlink a CDN\n  weight: \"100 900\",                        // variable font\n  sizeAdjust: \"100.06%\", ascentOverride: \"90%\", // optional: stop fallback->web-font layout shift\n})\n\n// a root layout — preload the file so it downloads WITH the document (not after CSS parse):\nimport { fontPreload } from \"@nifrajs/web\"\nexport const meta = { link: [fontPreload({ href: \"/fonts/inter-var.woff2\" })] }"
+  },
+  {
+    "name": "ISR",
+    "topic": "Nifra — Rendering: SSG & ISR",
+    "slug": "rendering",
+    "code": "// server.ts — wrap the app with Incremental Static Regeneration.\nimport { createWebApp, withISR, MemoryCacheStore } from \"@nifrajs/web\"\n\nconst app = createWebApp({ adapter, manifest, clientEntry, api })\nconst store = new MemoryCacheStore() // dev / single-instance only\n\n// GET text/html responses are cached + served stale-while-revalidate. Default freshness 60s.\nconst isr = withISR(app, { store, revalidate: 60, now: () => Date.now() })\nBun.serve({ fetch: (req) => isr(req) })"
+  },
+  {
+    "name": "KV",
+    "topic": "Nifra — Rendering: SSG & ISR",
+    "slug": "rendering",
+    "code": "// worker.ts — production uses a SHARED store so the cache + purges hold across instances.\nimport { withISR, KVCacheStore, revalidateEndpoint } from \"@nifrajs/web\"\n\nexport default {\n  async fetch(req: Request, env: Env, ctx: ExecutionContext) {\n    const store = new KVCacheStore(env.ISR_CACHE, { expirationTtl: 86_400 }) // Workers KV\n    if (new URL(req.url).pathname === \"/__nifra/revalidate\") {\n      return revalidateEndpoint({ store, secret: env.REVALIDATE_SECRET })(req)\n    }\n    const isr = withISR(app, { store, revalidate: 60, now: () => Date.now() })\n    // waitUntil keeps the worker alive while a stale page regenerates behind the response.\n    return isr(req, { env, waitUntil: (p) => ctx.waitUntil(p) })\n  },\n}"
+  },
+  {
+    "name": "BOUNDED",
+    "topic": "Nifra — security & hardening",
+    "slug": "security",
+    "code": "import { server, t } from \"@nifrajs/core\"\n\nconst app = server()\n\n// A schema route is ALREADY bounded — the validated read enforces `maxBodyBytes`.\n// But a raw-body / file / BYO-validation route reads the body directly, which\n// `maxBodyBytes` does not cover. `c.boundedBody` caps that read:\napp.post(\"/import\", async (c) => {\n  const bytes = await c.boundedBody(5 * 1024 * 1024) // cap THIS route at 5 MiB\n  // Over-cap throws a flat 413; a malformed Content-Length a 400 — as control-flow\n  // Responses (caught by the lifecycle like `throw redirect()`), so a handler can't\n  // accidentally ignore the cap. The over-cap length is rejected BEFORE buffering;\n  // a chunked / length-less body is aborted mid-stream once it crosses the cap.\n  return c.json({ received: bytes.byteLength })\n})\n\napp.post(\"/rpc\", async (c) => {\n  const body = await c.boundedJson<{ method: string }>() // default: the server's maxBodyBytes\n  // …bad JSON → 400. Then validate `body` with your schema before trusting it.\n})"
+  },
+  {
+    "name": "GATING",
+    "topic": "Nifra — security & hardening",
+    "slug": "security",
+    "code": "import { jwt, csrf, ipRestriction, bodyLimit } from \"@nifrajs/middleware\"\n\napp\n  // JWT: the algorithm allowlist is REQUIRED; alg:none and RSA/HMAC confusion are rejected; exp enforced.\n  .use(jwt({ key: env.JWT_SECRET, algorithms: [\"HS256\"], issuer: \"my-app\" }))\n  // Signed double-submit CSRF (HMAC) + Origin/Referer check on unsafe methods. Secret must be >= 32 bytes.\n  .use(csrf({ secret: env.CSRF_SECRET }))\n  // Allow/deny by IPv4/IPv6 + CIDR. FAILS CLOSED with no trusted client IP; X-Forwarded-For is ignored\n  // unless trustedProxies > 0 (set it to the number of proxies you actually run in front of the app).\n  .use(ipRestriction({ allow: [\"10.0.0.0/8\", \"::1\"], trustedProxies: 1 }))\n  // Reject oversized bodies at the EDGE by Content-Length, before routing — fails closed (411) on a\n  // length-less body. (The schema / c.boundedBody cap is the read-time guard; this is the cheap pre-filter.)\n  .use(bodyLimit({ maxBytes: 1_000_000 }))"
+  },
+  {
+    "name": "IDEMPOTENCY",
+    "topic": "Nifra — security & hardening",
+    "slug": "security",
+    "code": "import { idempotency, MemoryIdempotencyStore } from \"@nifrajs/middleware\"\n\n// Dev / single-instance. In production use a SHARED store (Redis, etc.) with an atomic\n// claim — MemoryIdempotencyStore throws under NODE_ENV=production unless you opt in.\napp.use(idempotency({ store: new MemoryIdempotencyStore() }))\n\napp.post(\"/charge\", async (c) => {\n  await chargeCard(/* … */) // the side effect\n  return c.json({ ok: true, id })\n})\n\n// A client retrying POST /charge with the same `Idempotency-Key` header gets the FIRST\n// response replayed (`Idempotent-Replayed: true`) — the charge runs once. A concurrent\n// retry, while the first is still in flight, gets 409 { error: \"idempotency_in_progress\" }.\n// Transient 5xx are NOT cached (a failed call stays retryable)."
+  },
+  {
+    "name": "LOGGING",
+    "topic": "Nifra — security & hardening",
+    "slug": "security",
+    "code": "import { server, jsonLogger, commonSecretPatterns } from \"@nifrajs/core\"\n\n// Key-name redaction is always on; valuePatterns adds opt-in value + message scanning.\nconst app = server({\n  logger: jsonLogger(undefined, { valuePatterns: commonSecretPatterns }),\n})\n\n// logger.error(\"auth failed for user@example.com with Bearer abc.def\")\n//   → { ...,\"message\":\"auth failed for [REDACTED] with [REDACTED]\" }\n// Add your own: { valuePatterns: [...commonSecretPatterns, /\\bord_[a-z0-9]+/g] }"
+  },
+  {
+    "name": "STRIP",
+    "topic": "Nifra — security & hardening",
+    "slug": "security",
+    "code": "import { stripImageMetadata } from \"@nifrajs/uploads\"\nimport { bunImageBackend } from \"@nifrajs/image/backends\"\n\n// Drop EXIF/GPS by re-encoding through any @nifrajs/image backend. @nifrajs/uploads keeps\n// ZERO dependency on @nifrajs/image — the backend is passed in (structural type), so this\n// also works with sharpImageBackend(sharp) on Node or wasmImageBackend(...) on the edge.\nconst clean = await stripImageMetadata(result.bytes, bunImageBackend())"
+  },
+  {
+    "name": "UPLOADS",
+    "topic": "Nifra — security & hardening",
+    "slug": "security",
+    "code": "import { validateUpload, signDownloadUrl } from \"@nifrajs/uploads\"\n\napp.post(\"/avatar\", async (c) => {\n  const form = await c.req.formData()\n  const file = form.get(\"file\")\n  if (!(file instanceof Blob)) return c.json({ ok: false, error: \"no_file\" }, 400)\n\n  // Size cap + REAL type by magic bytes — a .exe renamed .png (or a spoofed\n  // Content-Type) is caught, because the bytes win. An oversized Blob is rejected\n  // by its .size BEFORE it's buffered into memory.\n  const result = await validateUpload(file, {\n    maxBytes: 2_000_000,\n    accept: [\"image/png\", \"image/jpeg\"], // exact, or \"image/*\"\n  })\n  if (!result.ok) return c.json({ ok: false, error: result.reason }, 400)\n  //  reason: \"too_large\" | \"empty\" | \"unrecognized\" | \"type_not_allowed\"\n\n  await save(result.bytes, `${id}.${result.ext}`) // result.mime / .ext are trustworthy\n\n  // Hand back a short-TTL, tamper-evident URL (HMAC over path + expiry):\n  const url = await signDownloadUrl(`/files/${id}`, env.FILE_SECRET, { expiresInSeconds: 300 })\n  return c.json({ ok: true, url })\n})"
+  },
+  {
+    "name": "WEBHOOK",
+    "topic": "Nifra — security & hardening",
+    "slug": "security",
+    "code": "import { verifyWebhook } from \"@nifrajs/core\"\n\napp.post(\"/webhooks/stripe\", async (c) => {\n  // Reads the raw body BOUNDED (DoS guard), verifies the HMAC CONSTANT-TIME, and only\n  // then returns the payload. Never JSON.parse a webhook before the signature checks out.\n  const r = await verifyWebhook(c.req, env.STRIPE_WEBHOOK_SECRET, { provider: \"stripe\" })\n  if (!r.ok) return c.json({ ok: false, error: r.reason }, 400)\n  //  reason: \"missing_signature\" | \"invalid_signature\" | \"timestamp_out_of_tolerance\"\n  //        | \"malformed_signature\" | \"payload_too_large\" | \"invalid_content_length\"\n\n  const event = StripeEvent.parse(JSON.parse(r.payload)) // validate at the trust boundary\n  // …handle event… (pair with idempotency below so a redelivery doesn't double-process)\n  return c.json({ ok: true })\n})\n\n// GitHub (sha256=…hex), or any provider via the generic preset:\nawait verifyWebhook(c.req, env.GH_SECRET, { provider: \"github\" })\nawait verifyWebhook(c.req, [next, current], {            // an array accepts either during a rotation\n  header: \"x-signature\", encoding: \"base64\", prefix: \"v1=\",\n})"
+  },
+  {
+    "name": "SSE",
+    "topic": "Nifra — Streaming",
+    "slug": "streaming",
+    "code": "import { sse } from \"@nifrajs/core\"\n\n// A live feed — push events until the client disconnects.\napp.get(\"/notifications\", (c) =>\n  sse(c, (stream) => {\n    const off = notifications.subscribe((n) =>\n      stream.send({ event: \"notification\", id: n.id, data: JSON.stringify(n) }),\n    )\n    // Keep the connection open until the client leaves, then tear down.\n    return new Promise<void>((resolve) =>\n      stream.signal.addEventListener(\"abort\", () => { off(); resolve() }, { once: true }),\n    )\n  }, { keepAlive: 15_000 }),\n)"
+  }
+]

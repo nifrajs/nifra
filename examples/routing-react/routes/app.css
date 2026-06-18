@@ -1,0 +1,19 @@
+/* Global stylesheet, imported by _layout.tsx → bundled + content-hashed by buildClient (manifest.css)
+   and linked into every route's <head>. Proves nifra's CSS pipeline (global imports). */
+:root {
+  color-scheme: light dark;
+}
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  background: #0b1020;
+  color: #e8ecff;
+}
+#nav {
+  padding: 12px 16px;
+  border-bottom: 1px solid #26314f;
+}
+#nav a {
+  color: #7c9cff;
+  margin-right: 8px;
+}

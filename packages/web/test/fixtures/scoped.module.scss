@@ -1,0 +1,5 @@
+// Content is irrelevant for the stub-compiler unit tests (the stub returns canned CSS); this file
+// only needs to exist on disk because the plugin reads it before invoking the compiler.
+.title {
+  color: red;
+}

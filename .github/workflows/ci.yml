@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Typecheck (also runs the *.test-d.ts type-level tests)
+        run: bun run typecheck
+
+      - name: Test (scoped to the library test dirs; coverage + threshold via bunfig)
+        run: bun run test
+
+      - name: Build + publish-readiness (publint + arethetypeswrong)
+        run: bun run check:publish
+
+  deno:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Build @nifrajs/core (Deno loads its built dist)
+        run: bun run --filter '@nifrajs/core' build
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Typecheck + test @nifrajs/deno on Deno
+        run: bun run test:deno

@@ -1,0 +1,38 @@
+name: Release
+
+# PREPARE-ONLY. On push to main this opens/updates a "Version Packages" PR from any
+# pending changesets (bumping versions + writing CHANGELOGs). It does NOT publish to
+# npm. To go live later: uncomment the `publish` line below and add an `NPM_TOKEN`
+# secret — until then there is no code path that can publish by accident.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Version Packages PR (no publish)
+        uses: changesets/action@v1
+        with:
+          version: bun run changeset:version
+          # publish: bun run changeset:publish   # ← uncomment to publish (requires NPM_TOKEN)
+          commit: "chore: version packages"
+          title: "chore: version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # NPM_TOKEN: ${{ secrets.NPM_TOKEN }}   # ← required once `publish` is enabled

@@ -1,0 +1,12 @@
+.title {
+  font-size: 1.5rem;
+  color: rebeccapurple;
+}
+
+.card .title {
+  margin: 0;
+}
+
+:global(.no-scope) .body {
+  line-height: 1.5;
+}

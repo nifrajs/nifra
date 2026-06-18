@@ -1,0 +1,63 @@
+{
+  "name": "@nifrajs/core",
+  "version": "0.1.0-alpha.1",
+  "description": "Bun-native, contract-first HTTP framework — the router, server, and route descriptor.",
+  "keywords": [
+    "bun",
+    "typescript",
+    "nifra",
+    "web-framework",
+    "full-stack",
+    "edge",
+    "ssr",
+    "http",
+    "router",
+    "api",
+    "standard-schema",
+    "typesafe",
+    "backend"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./ws": {
+      "bun": "./src/ws.ts",
+      "types": "./dist/ws.d.ts",
+      "default": "./dist/ws.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": [
+    "./src/ws.ts",
+    "./dist/ws.js"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@nifrajs/test-utils": "workspace:*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/core"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}

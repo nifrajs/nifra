@@ -1,0 +1,15 @@
+{
+  "name": "ssr-bench-solid-ssr",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun run build.ts",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "solid-js": "^1.9.7"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

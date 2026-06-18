@@ -1,0 +1,58 @@
+{
+  "name": "@nifrajs/cli",
+  "version": "0.1.0-alpha.1",
+  "description": "The nifra CLI — zero-config dev/build/start for a nifra app (`nifra dev`, `nifra build`, `nifra start`).",
+  "keywords": [
+    "bun",
+    "typescript",
+    "nifra",
+    "web-framework",
+    "full-stack",
+    "edge",
+    "ssr",
+    "cli",
+    "mcp",
+    "ai-agent",
+    "codegen",
+    "dev-server"
+  ],
+  "type": "module",
+  "bin": {
+    "nifra": "./dist/cli.js"
+  },
+  "exports": {
+    "./mcp": {
+      "bun": "./src/mcp-http.ts",
+      "types": "./dist/mcp-http.d.ts",
+      "default": "./dist/mcp-http.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "docs"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@nifrajs/client": "workspace:*",
+    "@nifrajs/runner": "workspace:*",
+    "@nifrajs/schema": "workspace:*",
+    "@nifrajs/web": "workspace:*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}

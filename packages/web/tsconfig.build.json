@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.build.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    // `client.ts` is the browser navigation layer (DOM). DOM here only affects type checking
+    // during emit (not the output JS); the root typecheck keeps the server files DOM-free.
+    "lib": ["ESNext", "DOM", "DOM.Iterable"]
+  },
+  "include": ["src/**/*"]
+}
