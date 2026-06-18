@@ -1,0 +1,112 @@
+{
+  "name": "@nifrajs/web-solid",
+  "version": "0.1.0-alpha.1",
+  "description": "Solid render adapter for @nifrajs/web — SSR + hydration + the Solid Babel build plugin.",
+  "keywords": [
+    "bun",
+    "typescript",
+    "nifra",
+    "web-framework",
+    "full-stack",
+    "edge",
+    "ssr"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "bun": "./src/client.ts",
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    },
+    "./await": {
+      "bun": "./src/await.ts",
+      "types": "./dist/await.d.ts",
+      "default": "./dist/await.js"
+    },
+    "./fetcher": {
+      "bun": "./src/fetcher.ts",
+      "types": "./dist/fetcher.d.ts",
+      "default": "./dist/fetcher.js"
+    },
+    "./query": {
+      "bun": "./src/query.ts",
+      "types": "./dist/query.d.ts",
+      "default": "./dist/query.js"
+    },
+    "./i18n": {
+      "bun": "./src/i18n.ts",
+      "types": "./dist/i18n.d.ts",
+      "default": "./dist/i18n.js"
+    },
+    "./image": {
+      "bun": "./src/image.ts",
+      "types": "./dist/image.d.ts",
+      "default": "./dist/image.js"
+    },
+    "./content": {
+      "bun": "./src/content.ts",
+      "types": "./dist/content.d.ts",
+      "default": "./dist/content.js"
+    },
+    "./mdx": {
+      "bun": "./src/mdx.ts",
+      "types": "./dist/mdx.d.ts",
+      "default": "./dist/mdx.js"
+    },
+    "./mdx-runtime": {
+      "bun": "./src/mdx-runtime.ts",
+      "types": "./dist/mdx-runtime.d.ts",
+      "default": "./dist/mdx-runtime.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@babel/core": "^7.26.0",
+    "@babel/preset-typescript": "^7.26.0",
+    "@nifrajs/i18n": "workspace:*",
+    "@nifrajs/image": "workspace:*",
+    "@nifrajs/web": "workspace:*",
+    "babel-preset-solid": "^1.9.3"
+  },
+  "peerDependencies": {
+    "@mdx-js/mdx": "^3",
+    "solid-js": "^1.9.0"
+  },
+  "peerDependenciesMeta": {
+    "@mdx-js/mdx": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/babel__core": "^7.20.5",
+    "solid-js": "^1.9.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/web-solid"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}

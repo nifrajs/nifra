@@ -1,0 +1,62 @@
+# nifra
+
+> nifra is a Bun-native, contract-first, framework-agnostic full-stack TypeScript framework. The HTTP core (`@nifrajs/core`) is a radix-routed, fully type-inferred server whose handler types flow to a never-throwing client (`@nifrajs/client`) with zero codegen — and graduate to a versionable contract without rewriting handlers. The whole lifecycle is `app.fetch(Request): Response`, so the same app runs on Bun, Node, Deno, and Cloudflare Workers. `@nifrajs/web` adds a framework-agnostic SSR layer (file routing, loaders/actions, streaming, SSG/ISR) with React, Solid, Vue, Svelte, and Preact adapters.
+
+For an LLM implementing with nifra with no prior training data, read **[llms-full.txt](/llms-full.txt)** — it inlines every doc page, the package READMEs, and the complete export index in one file.
+
+## Docs
+
+- [Nifra — Getting started](/docs): Get started with Nifra: install, server, typed client, loaders, deploy.
+- [Nifra vs. other frameworks](/docs/comparison): How Nifra compares to the full-stack frameworks (Next.js, Nuxt, SvelteKit, Remix, TanStack Start) — and, as a standalone backend, to Hono and Elysia. Five UI frameworks, five runtimes, end-to-end types, and an AI-agent toolchain no competitor ships.
+- [Nifra — Routing](/docs/routing): File-based routing in Nifra: conventions, params, nested layouts.
+- [Nifra — API & typed client](/docs/api): Build a typed JSON API with server()/defineContract + validate inputs with any Standard Schema, then consume it from a zero-codegen, never-throwing typed client.
+- [Nifra — Loaders & actions](/docs/data): Typed loaders and actions in Nifra: data on the server, mutations, revalidation.
+- [Nifra — Optimistic UI & fetchers](/docs/mutations): Optimistic updates and concurrent fetchers in Nifra: instant feedback, row-level mutations.
+- [Nifra — Rendering: SSG & ISR](/docs/rendering): Prerender static routes, enumerate dynamic ones, and cache rendered pages with stale-while-revalidate — on every runtime including the edge.
+- [Nifra — Streaming](/docs/streaming): Streaming SSR, Suspense, and defer() in Nifra — on every runtime including the edge.
+- [Nifra — Query cache](/docs/query): Nifra's keyed query cache: useQuery / createQuery, dedup, staleness, invalidation.
+- [Nifra — Frameworks](/docs/frameworks): One agnostic core, five UI frameworks: React, Solid, Vue, Preact, and Svelte — same loaders, streaming, islands, and routing, unchanged.
+- [Nifra — Plugins & middleware](/docs/plugins): Extend Nifra with definePlugin (typed context, idempotent) + hook-bundle middleware. Official middleware: requestId, logger, etag, bearer, apiKey, basicAuth, jwt/jwks, csrf, ipRestriction, bodyLimit, cors, securityHeaders, rateLimit, compression, cacheControl, cache, prettyJson, timing, methodOverride, trailingSlash, language, poweredBy, combine, openapi, healthcheck, idempotency.
+- [Nifra — security & hardening](/docs/security): Bounded request bodies, magic-byte file-upload validation, constant-time webhook verification, and idempotency-key replay — the hardening primitives every production app needs, built in.
+- [Nifra — Auth & sessions](/docs/auth): Turnkey auth with @nifrajs/better-auth (OAuth, magic links, 2FA), or signed-cookie + server-store sessions, route guards, and CSRF with @nifrajs/auth.
+- [Nifra — images](/docs/images): A CLS-safe responsive <Image> with pluggable loaders — a CDN, or Nifra's self-hosted resize endpoint (Bun.Image, sharp, or WASM on the edge) with optional signed URLs.
+- [Nifra — i18n](/docs/i18n): Locale negotiation + a tiny ICU message formatter on the platform Intl, framework-agnostic.
+- [Nifra — Edge & bindings](/docs/edge): Typed platform bindings in Nifra: c.env, Platform<Env>, c.waitUntil, KV/D1 on the edge.
+- [Nifra — Deployment](/docs/deployment): One Nifra app, one command per target — Bun, Node (Docker), Deno Deploy, Cloudflare Pages, Vercel Edge.
+- [Nifra — CLI](/docs/cli): The zero-config Nifra CLI (`nifra dev`, `nifra build`, `nifra start`): true HMR, hashed client builds, and SSR serve.
+- [Nifra — Dev & HMR](/docs/dev): Use `nifra dev` for a Vite-backed state-preserving HMR loop, or `@nifrajs/web/dev` for a Bun-native live-reload loop. Production builds use Bun.
+- [Nifra — Databases](/docs/database): Nifra is database-agnostic: use SQLite, Postgres, or any ORM (Drizzle, Prisma, Kysely) from your handlers and loaders, on Bun, Node, Deno, and the edge.
+- [Nifra — Fonts](/docs/fonts): Self-host web fonts with zero layout shift: a build-time Google Fonts downloader (the next/font equivalent) plus CLS-safe @font-face + preload primitives.
+- [Nifra — Migrating from Express, Hono, Fastify & Elysia](/docs/migrate-backend): Move a backend to Nifra: routing, middleware, validation, and body parsing map directly from Express, Hono, Fastify, and Elysia — and you gain a typed client, multi-runtime deploy, and optional SSR.
+- [Nifra — Migrating from Next.js, Nuxt, SvelteKit & SolidStart](/docs/migrate-frontend): Move from a meta-framework to Nifra: file routes, data loading, API routes, layouts, and SSG/ISR map across React (Next), Vue (Nuxt), Svelte (SvelteKit), and Solid (SolidStart).
+
+## Packages
+
+- `@nifrajs/auth` — Session primitives for nifra — signed-cookie + server-store sessions, CSRF, and route guards. Bring your own identity (Better Auth / Lucia / OAuth); nifra owns the session.
+- `@nifrajs/better-auth` — Mount better-auth into a nifra app — one app.use() wires /api/auth/*, plus typed getSession/requireSession guards. Structural typing: no hard dependency on better-auth.
+- `@nifrajs/cli` — The nifra CLI — zero-config dev/build/start for a nifra app (`nifra dev`, `nifra build`, `nifra start`).
+- `@nifrajs/client` — Browser-safe, end-to-end-typed client for @nifrajs/core servers (Eden-style proxy).
+- `@nifrajs/content` — Typed, schema-validated content collections for nifra — Markdown + frontmatter, framework-agnostic.
+- `@nifrajs/core` — Bun-native, contract-first HTTP framework — the router, server, and route descriptor.
+- `@nifrajs/cron` — Runtime-agnostic in-process cron for nifra — standard 5-field expressions + @macros, overlap-safe, error-isolated, graceful stop. For long-running servers (Bun/Node/Deno); Workers use the platform scheduled trigger. Dependency-free.
+- `@nifrajs/deno` — Run a nifra app on Deno via Deno.serve — graceful stop() + opt-in signals.
+- `@nifrajs/env` — Typed, validated environment variables for nifra — define a schema, get a frozen typed object, fail loud at boot listing every problem. Coercing helpers (number/port/boolean/url/enum) + any Standard Schema. Dependency-free, edge-safe.
+- `@nifrajs/i18n` — Framework-agnostic i18n for nifra — locale negotiation + a tiny ICU message formatter on the platform Intl. Dependency-free.
+- `@nifrajs/image` — Image optimization for nifra — a CLS-safe responsive <Image> + pluggable loaders (CDN or self-hosted) + pure-JS dimension reading. Zero-dependency core; optional Bun.Image-backed resize endpoint at @nifrajs/image/server.
+- `@nifrajs/islets` — Fine-grained signals + declarative DOM bindings for nifra islands — interactivity in ~1 KB, no framework runtime. The client companion to @nifrajs/web-vanilla.
+- `@nifrajs/middleware` — Composable middleware for nifra — auth, CSRF, JWT/JWKS, IP restriction, CORS, body limits, response cache, timing, and operational helpers.
+- `@nifrajs/node` — Run a nifra app on Node's http server — a Request<->stream adapter with a graceful stop().
+- `@nifrajs/otel` — Distributed tracing for nifra — W3C traceparent/tracestate propagation + OpenTelemetry-semantic-convention spans via a pluggable exporter. Bridge to the OpenTelemetry SDK or log spans directly; no SDK bundled. Edge-safe.
+- `@nifrajs/runner` — Run requests through a nifra app's fetch and capture structured results — the engine behind the playground and the agent run/verify tool. Dependency-free; runs in the browser, Bun, Node, Deno, and on the edge.
+- `@nifrajs/schema` — Built-in schema builder `t` — TypeBox-backed (free JSON Schema + compiled validators), implements Standard Schema so nifra routes validate it natively.
+- `@nifrajs/uploads` — File-upload hardening for nifra — magic-byte MIME detection, size + type validation, short-TTL signed download URLs, and EXIF/metadata stripping. Dependency-free, edge-safe.
+- `@nifrajs/web` — Framework-agnostic SSR core for nifra — the render seam + HTML document orchestration.
+- `@nifrajs/web-preact` — Preact render adapter for @nifrajs/web — streaming SSR + hydration (no build plugin).
+- `@nifrajs/web-react` — React render adapter for @nifrajs/web — SSR + hydration (Bun-native JSX, no Babel).
+- `@nifrajs/web-solid` — Solid render adapter for @nifrajs/web — SSR + hydration + the Solid Babel build plugin.
+- `@nifrajs/web-svelte` — Svelte 5 render adapter for @nifrajs/web — SSR + hydration + the .svelte compiler Bun-plugin.
+- `@nifrajs/web-vanilla` — Zero-framework render adapter for @nifrajs/web — auto-escaping tagged-template HTML, ~0 KB client JS, interactivity via @nifrajs/web/islands.
+- `@nifrajs/web-vue` — Vue render adapter for @nifrajs/web — streaming SSR + hydration, with a .vue SFC compiler Bun plugin (@nifrajs/web-vue/plugin).
+- `@nifrajs/workers` — Cloudflare Workers helpers for nifra — a Durable Object hub for cross-connection WebSocket broadcast.
+- `create-nifra` — Scaffold a new nifra app — `bun create nifra <dir>`.
+- `nifra` — The nifra full-stack framework — unscoped meta-entry that re-exports @nifrajs/core, so `import { server } from "nifra"` works. Scaffold an app with `bun create nifra`; the rest of the framework lives under @nifrajs/*.

@@ -1,0 +1,174 @@
+{
+  "_note": "Canonical benchmark numbers the website renders. Generated/updated by the bench suite (bun run bench:http:update / bench:ssr / bench:size each merge their slice via bench/site-bench.ts). Hand-edits are allowed but will be overwritten on the next run.",
+  "heroSsr": [
+    {
+      "name": "Nifra + React (Bun)",
+      "reqs": 31800,
+      "you": true
+    },
+    {
+      "name": "Nifra + React (Node)",
+      "reqs": 22714,
+      "you": true
+    },
+    {
+      "name": "Next.js",
+      "reqs": 1038
+    }
+  ],
+  "frontend": [
+    {
+      "name": "Nifra + React (Bun)",
+      "reqs": 31800,
+      "you": true
+    },
+    {
+      "name": "Nifra + React (Node)",
+      "reqs": 22714,
+      "you": true
+    },
+    {
+      "name": "Next.js",
+      "reqs": 1038
+    },
+    {
+      "name": "Nifra + Solid (Bun)",
+      "reqs": 30400,
+      "you": true
+    },
+    {
+      "name": "Nifra + Solid (Node)",
+      "reqs": 21712,
+      "you": true
+    },
+    {
+      "name": "SolidStart",
+      "reqs": 6430
+    },
+    {
+      "name": "Nifra + Svelte (Bun)",
+      "reqs": 27200,
+      "you": true
+    },
+    {
+      "name": "Nifra + Svelte (Node)",
+      "reqs": 19418,
+      "you": true
+    },
+    {
+      "name": "SvelteKit",
+      "reqs": 6014
+    },
+    {
+      "name": "Nifra + Vue (Bun)",
+      "reqs": 21000,
+      "you": true
+    },
+    {
+      "name": "Nifra + Vue (Node)",
+      "reqs": 15017,
+      "you": true
+    },
+    {
+      "name": "Nuxt",
+      "reqs": 2090
+    }
+  ],
+  "multipliers": [
+    {
+      "fw": "React",
+      "mult": "22×",
+      "rival": "Next.js"
+    },
+    {
+      "fw": "Vue",
+      "mult": "7×",
+      "rival": "Nuxt"
+    },
+    {
+      "fw": "Solid",
+      "mult": "3.4×",
+      "rival": "SolidStart"
+    },
+    {
+      "fw": "Svelte",
+      "mult": "3.2×",
+      "rival": "SvelteKit"
+    }
+  ],
+  "httpRuntime": [
+    {
+      "runtime": "Bun",
+      "reqs": 120376,
+      "pctOfRaw": 103,
+      "you": true
+    },
+    {
+      "runtime": "Deno",
+      "reqs": 98576,
+      "pctOfRaw": 88,
+      "you": true
+    },
+    {
+      "runtime": "Node",
+      "reqs": 75749,
+      "pctOfRaw": 97,
+      "you": true
+    }
+  ],
+  "http": [
+    {
+      "name": "Nifra",
+      "reqs": 77561,
+      "you": true
+    },
+    {
+      "name": "Fastify",
+      "reqs": 77091,
+      "you": false
+    },
+    {
+      "name": "Express",
+      "reqs": 50996,
+      "you": false
+    },
+    {
+      "name": "Hono",
+      "reqs": 50727,
+      "you": false
+    }
+  ],
+  "bundle": [
+    {
+      "name": "Hono",
+      "kb": 8
+    },
+    {
+      "name": "Nifra",
+      "kb": 8.2,
+      "you": true
+    },
+    {
+      "name": "Elysia",
+      "kb": 104
+    }
+  ],
+  "proof": [
+    {
+      "value": "22×",
+      "label": "full-stack SSR vs Next.js (Node, dynamic, same machine)"
+    },
+    {
+      "value": "120k",
+      "label": "req/s on Bun — 103% of raw, ahead of Hono & 95% of Elysia"
+    },
+    {
+      "value": "5 + 4",
+      "label": "UI frameworks · runtimes, from one app"
+    },
+    {
+      "value": "8.2 KB",
+      "label": "gzipped server — cookies, logger & graceful shutdown included"
+    }
+  ]
+}

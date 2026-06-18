@@ -1,0 +1,88 @@
+{
+  "name": "nifra-monorepo",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "internal/*",
+    "bench",
+    "examples",
+    "site"
+  ],
+  "scripts": {
+    "test": "bun test packages/core/test packages/client/test packages/schema/test packages/env/test packages/cron/test packages/otel/test packages/middleware/test packages/auth/test packages/better-auth/test packages/i18n/test packages/image/test packages/uploads/test packages/node/test packages/workers/test packages/content/test packages/runner/test packages/web/test packages/web-solid/test packages/web-react/test packages/web-vue/test packages/web-preact/test packages/web-vanilla/test packages/islets/test packages/web-svelte/test packages/create-nifra/test",
+    "test:all": "bun run scripts/test-all.ts",
+    "test:deno": "cd packages/deno && deno check src/index.ts && deno test --allow-net --no-check test",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p packages/web/tsconfig.json && tsc --noEmit -p packages/web-solid/tsconfig.json && tsc --noEmit -p packages/web-react/tsconfig.json && tsc --noEmit -p packages/web-vue/tsconfig.json && tsc --noEmit -p packages/web-preact/tsconfig.json && tsc --noEmit -p packages/web-svelte/tsconfig.json && tsc --noEmit -p packages/web-vanilla/tsconfig.json && tsc --noEmit -p packages/islets/tsconfig.json",
+    "build": "bun run --filter '@nifrajs/core' build && bun run --filter '@nifrajs/client' --filter '@nifrajs/schema' --filter '@nifrajs/middleware' --filter '@nifrajs/auth' --filter '@nifrajs/better-auth' --filter '@nifrajs/i18n' --filter '@nifrajs/image' --filter '@nifrajs/uploads' --filter '@nifrajs/node' --filter '@nifrajs/runner' --filter '@nifrajs/env' --filter '@nifrajs/cron' --filter '@nifrajs/otel' --filter '@nifrajs/web' --filter '@nifrajs/cli' --filter 'create-nifra' --filter 'nifra' build && bun run --filter '@nifrajs/web-solid' --filter '@nifrajs/web-react' --filter '@nifrajs/web-vue' --filter '@nifrajs/web-preact' --filter '@nifrajs/web-svelte' --filter '@nifrajs/web-vanilla' --filter '@nifrajs/islets' build",
+    "check:publish": "bun run scripts/check-publish.ts",
+    "smoke": "bun run scripts/smoke.ts",
+    "bench": "bun run bench/index.ts",
+    "bench:http": "bun run bench/http/run.ts",
+    "bench:http:quick": "bun run bench/http/quick.ts",
+    "bench:http:update": "bun run bench/http/aggregate.ts --runs 5 --write",
+    "bench:ssr": "bun run bench/ssr/run.ts",
+    "bench:prerender": "bun run bench/ssr/prerender-ttfb.ts",
+    "bench:size": "bun run bench/size/run.ts",
+    "gen:llms": "bun run scripts/gen-llms.ts",
+    "gen:api": "bun run scripts/gen-api-reference.ts",
+    "check:docs": "bun run scripts/check-doc-samples.ts",
+    "check:api": "bun run scripts/gen-api-reference.ts --check",
+    "site:build": "bun run gen:llms && bun run gen:api && bun run site/build.ts",
+    "site:build:node": "bun run site/build-node.ts",
+    "site:build:deno": "bun run site/build-deno.ts",
+    "site:build:vercel": "bun run site/build-vercel.ts",
+    "bench:http:compare": "bun run bench/http/compare.ts",
+    "bench:realworld": "bun run bench/realworld/run.ts",
+    "bench:loadtest": "bun run bench/http/run.ts",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "check": "bun run lint && bun run typecheck && bun run test && bun run check:docs && bun run check:api",
+    "changeset": "changeset",
+    "changeset:version": "changeset version",
+    "changeset:publish": "bun run build && changeset publish",
+    "bench:p99": "bun run bench/ops/p99-mixed.ts",
+    "bench:soak": "bun run bench/ops/memory-soak.ts",
+    "bench:coldboot": "bun run bench/ops/cold-boot.ts"
+  },
+  "overrides": {
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.3",
+    "@biomejs/biome": "^2.4.16",
+    "@changesets/cli": "^2.31.0",
+    "@electric-sql/pglite": "^0.5.1",
+    "@elysiajs/node": "^1.4.5",
+    "@mdx-js/mdx": "^3",
+    "@mdx-js/rollup": "^3",
+    "@types/bun": "^1.3.14",
+    "@types/express": "^5.0.6",
+    "drizzle-kit": "^0.31.10",
+    "drizzle-orm": "^0.45.2",
+    "elysia": "^1.4.28",
+    "express": "^5.2.1",
+    "fast-check": "^4.8.0",
+    "fastify": "^5.8.5",
+    "hono": "^4.12.23",
+    "mdsvex": "^0.12",
+    "memoirist": "^1.0.3",
+    "publint": "^0.3.21",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "typescript": "6.0.3",
+    "ws": "^8.21.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}

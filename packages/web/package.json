@@ -1,0 +1,127 @@
+{
+  "name": "@nifrajs/web",
+  "version": "0.1.0-alpha.1",
+  "description": "Framework-agnostic SSR core for nifra — the render seam + HTML document orchestration.",
+  "keywords": [
+    "bun",
+    "typescript",
+    "nifra",
+    "web-framework",
+    "full-stack",
+    "edge",
+    "ssr",
+    "react",
+    "vue",
+    "svelte",
+    "solid",
+    "preact",
+    "file-routing",
+    "islands",
+    "streaming-ssr"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./fs": {
+      "bun": "./src/fs.ts",
+      "types": "./dist/fs.d.ts",
+      "default": "./dist/fs.js"
+    },
+    "./client": {
+      "bun": "./src/client.ts",
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    },
+    "./islands": {
+      "bun": "./src/islands.ts",
+      "types": "./dist/islands.d.ts",
+      "default": "./dist/islands.js"
+    },
+    "./build": {
+      "bun": "./src/build.ts",
+      "types": "./dist/build.d.ts",
+      "default": "./dist/build.js"
+    },
+    "./fonts": {
+      "bun": "./src/fonts-google.ts",
+      "types": "./dist/fonts-google.d.ts",
+      "default": "./dist/fonts-google.js"
+    },
+    "./dev": {
+      "bun": "./src/dev.ts",
+      "types": "./dist/dev.d.ts",
+      "default": "./dist/dev.js"
+    },
+    "./vite": {
+      "bun": "./src/vite.ts",
+      "types": "./dist/vite.d.ts",
+      "default": "./dist/vite.js"
+    },
+    "./plugins/kit": {
+      "bun": "./src/plugins/kit.ts",
+      "types": "./dist/plugins/kit.d.ts",
+      "default": "./dist/plugins/kit.js"
+    },
+    "./plugins/css-modules": {
+      "bun": "./src/plugins/css-modules.ts",
+      "types": "./dist/plugins/css-modules.d.ts",
+      "default": "./dist/plugins/css-modules.js"
+    },
+    "./plugins/scss": {
+      "bun": "./src/plugins/scss.ts",
+      "types": "./dist/plugins/scss.d.ts",
+      "default": "./dist/plugins/scss.js"
+    },
+    "./css-modules": {
+      "types": "./css-modules.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "css-modules.d.ts"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@nifrajs/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "sass": "^1.0.0",
+    "vite": "^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "sass": {
+      "optional": true
+    },
+    "vite": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "sass": "^1.77.0",
+    "vite": "^8.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/web"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}

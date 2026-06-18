@@ -1,0 +1,94 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    // No `baseUrl` (deprecated in TS 6.0): since TS 5.0 `paths` resolve relative to
+    // this tsconfig, and these entries are already `./packages/...`. Resolve workspace
+    // packages to their TS source so typecheck/dev needs no build step.
+    "paths": {
+      "@nifrajs/core": ["./packages/core/src/index.ts"],
+      "@nifrajs/core/ws": ["./packages/core/src/ws.ts"],
+      "@nifrajs/auth": ["./packages/auth/src/index.ts"],
+      "@nifrajs/i18n": ["./packages/i18n/src/index.ts"],
+      "@nifrajs/image": ["./packages/image/src/index.ts"],
+      "@nifrajs/image/server": ["./packages/image/src/server.ts"],
+      "@nifrajs/image/backends": ["./packages/image/src/backend.ts"],
+      "@nifrajs/node": ["./packages/node/src/index.ts"],
+      "@nifrajs/deno": ["./packages/deno/src/index.ts"],
+      "@nifrajs/workers": ["./packages/workers/src/index.ts"],
+      "@nifrajs/runner": ["./packages/runner/src/index.ts"],
+      "@nifrajs/client": ["./packages/client/src/index.ts"],
+      "@nifrajs/cron": ["./packages/cron/src/index.ts"],
+      "@nifrajs/otel": ["./packages/otel/src/index.ts"],
+      "@nifrajs/env": ["./packages/env/src/index.ts"],
+      "@nifrajs/schema": ["./packages/schema/src/index.ts"],
+      "@nifrajs/schema/openapi": ["./packages/schema/src/openapi.ts"],
+      "@nifrajs/middleware": ["./packages/middleware/src/index.ts"],
+      "@nifrajs/middleware/context-storage": ["./packages/middleware/src/context-storage.ts"],
+      "@nifrajs/better-auth": ["./packages/better-auth/src/index.ts"],
+      "@nifrajs/content": ["./packages/content/src/index.ts"],
+      "@nifrajs/content/fs": ["./packages/content/src/fs.ts"],
+      "@nifrajs/content/mdx": ["./packages/content/src/mdx.ts"],
+      "@nifrajs/test-utils": ["./internal/test-utils/src/index.ts"]
+    }
+  },
+  "include": [
+    "packages/*/src/**/*",
+    "packages/*/test/**/*",
+    "internal/*/src/**/*",
+    "bench/**/*",
+    "examples/**/*"
+  ],
+  // Excluded from the root (DOM-free, types: ["bun"]) program:
+  //  - packages/deno: uses the `Deno` global; typechecked by `deno check`.
+  //  - bench/http/serve-deno.ts: Deno-only benchmark entry; typechecked by `deno check`.
+  //  - packages/web-solid + examples/web-solid: frontend code needing DOM lib + Solid
+  //    JSX; typechecked by packages/web-solid/tsconfig.json (see the `typecheck` script).
+  //  - packages/web/src/client.ts: the browser navigation layer (DOM); typechecked by
+  //    packages/web/tsconfig.json. The rest of @nifrajs/web stays DOM-free here.
+  "exclude": [
+    "node_modules",
+    "dist",
+    "bench/ssr",
+    "bench/http/serve-deno.ts",
+    "site",
+    "packages/deno",
+    "packages/web/src/client.ts",
+    "packages/web/src/islands.ts",
+    "packages/web/test/islands.test.ts",
+    "packages/web-solid",
+    "packages/web-react",
+    "packages/web-vue",
+    "packages/web-preact",
+    "packages/web-vanilla",
+    "packages/islets",
+    "packages/web-svelte",
+    "examples/web-solid",
+    "examples/web-react",
+    "examples/web-vue",
+    "examples/web-preact",
+    "examples/web-svelte",
+    "examples/auth-react",
+    "examples/cli-react",
+    "examples/cli-vue",
+    "examples/hmr-react",
+    "examples/hmr-preact",
+    "examples/hmr-vue",
+    "examples/hmr-solid",
+    "examples/hmr-svelte",
+    "examples/i18n-react",
+    "examples/image-react",
+    "examples/isr-react",
+    "examples/routing-solid",
+    "examples/routing-react",
+    "examples/routing-preact",
+    "examples/routing-vue",
+    "examples/routing-vue-sfc",
+    "examples/routing-svelte",
+    "examples/workers-ssr-react",
+    "examples/workers-ssr-solid",
+    "examples/portable-ssr-react",
+    "examples/portable-ssr-solid",
+    "examples/mdx-blog",
+    "examples/fonts-google"
+  ]
+}

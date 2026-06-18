@@ -1,0 +1,863 @@
+/**
+ * `nifra mcp` — a Model Context Protocol server (stdio) that lets a coding agent (Claude, Cursor, …)
+ * act on a nifra project, not just read about it:
+ *
+ *   - `nifra_context` — this project's API routes + page routes + conventions (see {@link describeProject}).
+ *   - `nifra_run`     — run HTTP requests through the project's backend and return structured results
+ *     (status, body, errors). The write → run → see-the-failure → fix loop, powered by `@nifrajs/runner`.
+ *     Each call runs the backend in a FRESH subprocess, so it reflects the agent's latest edits.
+ *   - `nifra_render`  — SSR a page route through the project's web app; returns the rendered HTML (the
+ *     page half of `nifra_run`). Fresh subprocess per call; no build needed.
+ *   - `nifra_ws`      — verify a WebSocket route with a real Bun WebSocket round-trip.
+ *   - `nifra_docs`    — keyword-search the framework docs; returns only the matching sections.
+ *   - `nifra_example` — a verified, copy-pasteable snippet for a task (typechecked against the live API,
+ *     so it can't hallucinate a drifted nifra API).
+ *   - `nifra_scaffold`— map a URL path to the correct `routes/` file + a contract-correct page stub.
+ *   - `nifra_check`   — the drift gate (typecheck + lints, each with a structured fix), for an agent to fix against.
+ *   - `nifra_doctor`  — package.json dependency drift detector, with safe local-version auto-fix.
+ *
+ * Wire it into a client (e.g. Claude Desktop / Cursor) as: command `nifra`, args `["mcp"]`, run in the
+ * project root. The protocol is hand-rolled (newline-delimited JSON-RPC 2.0 over stdio), including
+ * standard MCP progress notifications and request cancellation — no SDK dependency, the same
+ * minimal-surface choice as the rest of nifra. The pure dispatch lives in `./mcp-protocol.ts`; this
+ * module is the I/O shell (stdin loop, tool wiring, the run subprocess).
+ */
+
+import { readFile, stat } from "node:fs/promises"
+import { basename, resolve, sep } from "node:path"
+import { fileURLToPath } from "node:url"
+import { Glob } from "bun"
+import { loadDocsCorpus } from "./docs-search.ts"
+import { loadExamplesCorpus } from "./examples.ts"
+import { describeProject } from "./introspect.ts"
+import type { LoadAppOptions, LoadedApp } from "./load.ts"
+import { docsTools } from "./mcp-docs-tools.ts"
+import {
+  createMcpProtocolState,
+  handleRpc,
+  type JsonRpcNotification,
+  type JsonRpcRequest,
+  type JsonRpcResponse,
+  type McpPrompt,
+  type McpResource,
+  type McpServerFeatures,
+  type McpTool,
+  type McpToolContext,
+  rpcError,
+} from "./mcp-protocol.ts"
+
+/** Path to a sibling child entry (`mcp-run` / `mcp-render` / `mcp-ws`), resolved next to this module (`.ts` in
+ * dev, `.js` once built). Each runs in a FRESH subprocess per call so the project's current code loads. */
+function childPath(name: "mcp-run" | "mcp-render" | "mcp-ws"): string {
+  return fileURLToPath(new URL(import.meta.url)).replace(/mcp\.(ts|js)$/, `${name}.$1`)
+}
+
+/** Spawn `bun <child> <cwd>`, pipe `input` to its stdin, return its stdout (or a stderr-backed error). */
+async function spawnChild(
+  child: "mcp-run" | "mcp-render" | "mcp-ws",
+  cwd: string,
+  input: unknown,
+  label: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  if (signal?.aborted) return `${label} cancelled before it started.`
+  const proc = Bun.spawn(["bun", childPath(child), cwd], {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  const abort = (): void => proc.kill()
+  signal?.addEventListener("abort", abort, { once: true })
+  try {
+    proc.stdin.write(JSON.stringify(input))
+    await proc.stdin.end()
+    const [out, err] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ])
+    await proc.exited
+    if (signal?.aborted) {
+      const reason = typeof signal.reason === "string" ? `: ${signal.reason}` : ""
+      return `${label} cancelled${reason}.`
+    }
+    return out.trim() || `${label} failed:\n${err.trim() || "(no output)"}`
+  } finally {
+    signal?.removeEventListener("abort", abort)
+  }
+}
+
+const WARM_RUN_GLOB = new Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,json}")
+const WARM_RUN_IGNORED =
+  /(^|\/)(node_modules|dist(-[a-z0-9]+)?|build|\.nifra|\.git|\.wrangler|coverage)\//
+const WARM_RUN_EXTRA_FILES = ["bun.lock", "bun.lockb"] as const
+
+async function warmRunFingerprint(cwd: string): Promise<string> {
+  const parts: string[] = []
+  for await (const rel of WARM_RUN_GLOB.scan({ cwd, dot: false })) {
+    if (WARM_RUN_IGNORED.test(rel)) continue
+    try {
+      const s = await stat(resolve(cwd, rel))
+      if (s.isFile()) parts.push(`${rel}:${s.mtimeMs}:${s.size}`)
+    } catch {
+      // A file can disappear while an agent is editing. The next call will rescan the settled tree.
+    }
+  }
+  for (const rel of WARM_RUN_EXTRA_FILES) {
+    parts.push(`${rel}:${await fileFingerprint(resolve(cwd, rel))}`)
+  }
+  return cacheToken(parts.sort().join("|"))
+}
+
+function boundedAppend(current: string, next: string, max = 12_000): string {
+  const combined = `${current}${next}`
+  return combined.length <= max ? combined : combined.slice(combined.length - max)
+}
+
+type PipeSubprocess = ReturnType<typeof Bun.spawn> & {
+  readonly stdin: { write(input: string | Uint8Array): unknown }
+  readonly stdout: ReadableStream<Uint8Array>
+  readonly stderr: ReadableStream<Uint8Array>
+}
+
+class WarmRunWorker {
+  private readonly proc: PipeSubprocess
+  private readonly pending = new Map<
+    number,
+    {
+      readonly resolve: (text: string) => void
+      readonly reject: (err: Error) => void
+      readonly cleanup: () => void
+    }
+  >()
+  private stdoutBuffer = ""
+  private stderrBuffer = ""
+  private nextId = 0
+  private closed = false
+
+  constructor(
+    cwd: string,
+    readonly fingerprint: string,
+  ) {
+    this.proc = Bun.spawn(["bun", childPath("mcp-run"), cwd, "--worker"], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    }) as PipeSubprocess
+    void this.readStdout()
+    void this.readStderr()
+    void this.proc.exited.then((code) => {
+      this.closed = true
+      const err = new Error(
+        `warm run worker exited (${code})${this.stderrBuffer ? `:\n${this.stderrBuffer}` : ""}`,
+      )
+      for (const pending of this.pending.values()) {
+        pending.cleanup()
+        pending.reject(err)
+      }
+      this.pending.clear()
+    })
+  }
+
+  stop(): void {
+    if (!this.closed) this.proc.kill()
+  }
+
+  async request(input: unknown, signal?: AbortSignal): Promise<string> {
+    if (this.closed) throw new Error("warm run worker is closed")
+    if (signal?.aborted) return "run cancelled before it started."
+    const id = ++this.nextId
+    return new Promise((resolve, reject) => {
+      const abort = (): void => {
+        this.pending.delete(id)
+        this.stop()
+        const reason = typeof signal?.reason === "string" ? `: ${signal.reason}` : ""
+        resolve(`run cancelled${reason}.`)
+      }
+      const cleanup = (): void => signal?.removeEventListener("abort", abort)
+      signal?.addEventListener("abort", abort, { once: true })
+      this.pending.set(id, { resolve, reject, cleanup })
+      try {
+        this.proc.stdin.write(`${JSON.stringify({ id, input })}\n`)
+      } catch (err) {
+        this.pending.delete(id)
+        cleanup()
+        reject(err instanceof Error ? err : new Error(String(err)))
+      }
+    })
+  }
+
+  private async readStdout(): Promise<void> {
+    const decoder = new TextDecoder()
+    const reader = this.proc.stdout.getReader()
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      this.stdoutBuffer += decoder.decode(value, { stream: true })
+      let nl = this.stdoutBuffer.indexOf("\n")
+      while (nl !== -1) {
+        const line = this.stdoutBuffer.slice(0, nl).trim()
+        this.stdoutBuffer = this.stdoutBuffer.slice(nl + 1)
+        nl = this.stdoutBuffer.indexOf("\n")
+        if (line !== "") this.handleLine(line)
+      }
+    }
+  }
+
+  private async readStderr(): Promise<void> {
+    const decoder = new TextDecoder()
+    const reader = this.proc.stderr.getReader()
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      this.stderrBuffer = boundedAppend(this.stderrBuffer, decoder.decode(value, { stream: true }))
+    }
+  }
+
+  private handleLine(line: string): void {
+    let message: { id?: unknown; output?: unknown }
+    try {
+      message = JSON.parse(line) as { id?: unknown; output?: unknown }
+    } catch {
+      this.stderrBuffer = boundedAppend(this.stderrBuffer, `invalid warm worker line: ${line}\n`)
+      return
+    }
+    if (typeof message.id !== "number") return
+    const pending = this.pending.get(message.id)
+    if (pending === undefined) return
+    this.pending.delete(message.id)
+    pending.cleanup()
+    pending.resolve(JSON.stringify(message.output, null, 2))
+  }
+}
+
+function createWarmRunHandler(
+  cwd: string,
+): (input: unknown, signal?: AbortSignal) => Promise<string> {
+  let worker: WarmRunWorker | undefined
+  return async (input, signal) => {
+    const fingerprint = await warmRunFingerprint(cwd)
+    if (worker === undefined || worker.fingerprint !== fingerprint) {
+      worker?.stop()
+      worker = new WarmRunWorker(cwd, fingerprint)
+    }
+    try {
+      return await worker.request(input, signal)
+    } catch {
+      worker.stop()
+      worker = undefined
+      if (signal?.aborted) {
+        const reason = typeof signal.reason === "string" ? `: ${signal.reason}` : ""
+        return `run cancelled${reason}.`
+      }
+      return spawnChild("mcp-run", cwd, input, "run", signal)
+    }
+  }
+}
+
+/** The `nifra_run` handler: run requests through the project's CURRENT backend, return structured results. */
+async function runHandler(
+  cwd: string,
+  args: Record<string, unknown>,
+  context: McpToolContext,
+  warmRun: (input: unknown, signal?: AbortSignal) => Promise<string>,
+): Promise<string> {
+  const requests = Array.isArray(args.requests) ? args.requests : []
+  if (requests.length === 0) {
+    return 'No requests provided. Pass { "requests": [{ "path": "/..." }] }.'
+  }
+  const input = { requests, entry: args.entry }
+  if ((args as { warm?: boolean }).warm === true) {
+    context.reportProgress(0.2, 1)
+    return warmRun(input, context.signal)
+  }
+  return spawnChild("mcp-run", cwd, input, "run", context.signal)
+}
+
+/** The `nifra_render` handler: SSR page routes through the project's CURRENT web app, return the HTML. */
+async function renderHandler(
+  cwd: string,
+  args: Record<string, unknown>,
+  context: McpToolContext,
+): Promise<string> {
+  const requests = Array.isArray(args.requests) ? args.requests : []
+  if (requests.length === 0) {
+    return 'No requests provided. Pass { "requests": [{ "path": "/..." }] }.'
+  }
+  return spawnChild("mcp-render", cwd, { requests }, "render", context.signal)
+}
+
+/** The `nifra_ws` handler: verify WebSocket routes through a fresh app subprocess. */
+async function wsHandler(
+  cwd: string,
+  args: Record<string, unknown>,
+  context: McpToolContext,
+): Promise<string> {
+  return spawnChild("mcp-ws", cwd, args, "websocket", context.signal)
+}
+
+function openApiFormat(args: Record<string, unknown>): "json" | "yaml" {
+  const format = args.format
+  return format === "yaml" ? "yaml" : "json"
+}
+
+type LoadAppForCache = (
+  cwd: string,
+  outDirName?: string,
+  options?: LoadAppOptions,
+) => Promise<LoadedApp>
+
+export interface CachedAppLoaderOptions {
+  readonly loadApp?: LoadAppForCache
+  readonly fingerprint?: (cwd: string) => Promise<string>
+}
+
+const APP_FINGERPRINT_FILES = ["nifra.config.ts", "framework.ts", "backend.ts"] as const
+
+function cacheToken(input: string): string {
+  let hash = 2166136261
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  return `mcp=${(hash >>> 0).toString(36)}`
+}
+
+async function fileFingerprint(path: string): Promise<string> {
+  try {
+    const s = await stat(path)
+    return `${s.mtimeMs}:${s.size}`
+  } catch (err) {
+    if (err && typeof err === "object" && (err as { code?: string }).code === "ENOENT") {
+      return "missing"
+    }
+    throw err
+  }
+}
+
+async function appFingerprint(cwd: string): Promise<string> {
+  return (
+    await Promise.all(
+      APP_FINGERPRINT_FILES.map(
+        async (file) => `${file}:${await fileFingerprint(resolve(cwd, file))}`,
+      ),
+    )
+  ).join("|")
+}
+
+/** Cache LoadedApp inside one MCP server process, invalidating when config/backend mtimes change. */
+export function createCachedAppLoader(
+  cwd: string,
+  options: CachedAppLoaderOptions = {},
+): (outDirName?: string) => Promise<LoadedApp> {
+  const loadAppCached =
+    options.loadApp ??
+    (async (root: string, outDirName?: string, loadOptions?: LoadAppOptions) => {
+      const mod = await import("./load.ts")
+      return mod.loadApp(root, outDirName, loadOptions)
+    })
+  const fingerprint = options.fingerprint ?? appFingerprint
+  let cached:
+    | {
+        readonly outDirName: string
+        readonly fingerprint: string
+        readonly app: LoadedApp
+      }
+    | undefined
+
+  return async (outDirName = "dist") => {
+    const nextFingerprint = await fingerprint(cwd)
+    if (
+      cached !== undefined &&
+      cached.outDirName === outDirName &&
+      cached.fingerprint === nextFingerprint
+    ) {
+      return cached.app
+    }
+    const app = await loadAppCached(cwd, outDirName, {
+      importQuery: cacheToken(nextFingerprint),
+    })
+    cached = { outDirName, fingerprint: nextFingerprint, app }
+    return app
+  }
+}
+
+async function openApiHandler(
+  args: Record<string, unknown>,
+  loadAppCached: (outDirName?: string) => Promise<LoadedApp>,
+): Promise<string> {
+  const { renderOpenApi } = await import("./openapi-tool.ts")
+  return renderOpenApi(await loadAppCached(), openApiFormat(args))
+}
+
+async function readProjectFile(
+  cwd: string,
+  relativeFile: string,
+  maxChars: number,
+): Promise<string> {
+  const target = resolve(cwd, relativeFile)
+  const root = resolve(cwd)
+  if (target !== root && !target.startsWith(`${root}${sep}`)) {
+    throw new Error(`refusing to read outside project root: ${relativeFile}`)
+  }
+  try {
+    const text = await readFile(target, "utf8")
+    return text.length <= maxChars
+      ? text
+      : `${text.slice(0, maxChars)}\n…(trimmed; read ${relativeFile} directly for the rest)`
+  } catch (err) {
+    if (err && typeof err === "object" && (err as { code?: string }).code === "ENOENT") {
+      return `No ${relativeFile} found in ${basename(cwd)}.`
+    }
+    throw err
+  }
+}
+
+function promptText(
+  text: string,
+): readonly [
+  { readonly role: "user"; readonly content: { readonly type: "text"; readonly text: string } },
+] {
+  return [{ role: "user", content: { type: "text", text } }]
+}
+
+export function projectResources(
+  cwd: string,
+  loadAppCached: (outDirName?: string) => Promise<LoadedApp> = createCachedAppLoader(cwd),
+): McpResource[] {
+  return [
+    {
+      uri: "nifra://routes",
+      name: "API routes",
+      description:
+        "Structured API routes with typed-client calls and compact request/response shapes.",
+      mimeType: "application/json",
+      read: async () => {
+        const { routesToJson } = await import("./introspect.ts")
+        return { text: JSON.stringify(routesToJson(await loadAppCached()), null, 2) }
+      },
+    },
+    {
+      uri: "nifra://openapi",
+      name: "OpenAPI 3.1",
+      description: "OpenAPI document generated from backend.ts using @nifrajs/schema.",
+      mimeType: "application/json",
+      read: async () => ({ text: await openApiHandler({ format: "json" }, loadAppCached) }),
+    },
+    {
+      uri: "nifra://package-json",
+      name: "package.json",
+      description: "Project package metadata and scripts.",
+      mimeType: "application/json",
+      read: async () => ({ text: await readProjectFile(cwd, "package.json", 40_000) }),
+    },
+    {
+      uri: "nifra://agents-md",
+      name: "AGENTS.md",
+      description: "Repository-specific agent instructions if the project has them.",
+      mimeType: "text/markdown",
+      read: async () => ({ text: await readProjectFile(cwd, "AGENTS.md", 40_000) }),
+    },
+  ]
+}
+
+export function projectPrompts(): McpPrompt[] {
+  return [
+    {
+      name: "nifra_new_route",
+      description:
+        "Implement a new file route with the right routes/ filename, examples, and checks.",
+      arguments: [
+        { name: "path", description: 'URL path, e.g. "/users/:id".', required: true },
+        { name: "goal", description: "What the page should do.", required: false },
+      ],
+      handler: async (args) =>
+        promptText(
+          [
+            `Create a nifra page route for ${JSON.stringify(args.path ?? "/new-route")}.`,
+            args.goal ? `Goal: ${String(args.goal)}` : undefined,
+            'Use `nifra_context` with `{ kind: "pages" }`, then `nifra_scaffold` for the exact file path.',
+            "If the stub is not writable for this framework, call `nifra_example` for a verified page/loader example before editing.",
+            "Verify with `nifra_render` for the route and finish with `nifra_check`.",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        ),
+    },
+    {
+      name: "nifra_add_endpoint",
+      description:
+        "Add or update a backend endpoint with schemas, typed-client usage, and verification.",
+      arguments: [
+        { name: "method", description: "HTTP method.", required: true },
+        { name: "path", description: 'API path, e.g. "/users/:id".', required: true },
+        { name: "goal", description: "What the endpoint should do.", required: false },
+      ],
+      handler: async (args) =>
+        promptText(
+          [
+            `Add a nifra backend endpoint: ${String(args.method ?? "GET").toUpperCase()} ${String(args.path ?? "/api")}.`,
+            args.goal ? `Goal: ${String(args.goal)}` : undefined,
+            "Read `nifra://routes` or call `nifra_routes` first so the new route fits the existing API shape.",
+            "Use route schemas for untrusted body/query input and declare `response` when the frontend consumes the shape.",
+            "Verify behavior with `nifra_run`, then run `nifra_check` and `nifra_test` for the touched area.",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        ),
+    },
+    {
+      name: "nifra_debug_drift",
+      description:
+        "Debug frontend/backend contract drift using the typed client and checker output.",
+      arguments: [
+        { name: "symptom", description: "The error or behavior to investigate.", required: false },
+      ],
+      handler: async (args) =>
+        promptText(
+          [
+            "Debug nifra contract drift.",
+            args.symptom ? `Symptom: ${String(args.symptom)}` : undefined,
+            "Start with `nifra_check`; use each diagnostic as the source of truth.",
+            "Read `nifra://routes` for the exact typed-client calls and compact body/query/response shapes.",
+            "Prefer `client<typeof app>` over hand-rolled internal `fetch`. Verify fixed endpoints with `nifra_run`.",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        ),
+    },
+  ]
+}
+
+export function projectFeatures(
+  cwd: string,
+  loadAppCached: (outDirName?: string) => Promise<LoadedApp> = createCachedAppLoader(cwd),
+): McpServerFeatures {
+  return { resources: projectResources(cwd, loadAppCached), prompts: projectPrompts() }
+}
+
+/** Build the project-scoped tools for `cwd`. */
+export function projectTools(
+  cwd: string,
+  loadAppCached: (outDirName?: string) => Promise<LoadedApp> = createCachedAppLoader(cwd),
+): McpTool[] {
+  const warmRun = createWarmRunHandler(cwd)
+  return [
+    {
+      name: "nifra_context",
+      description:
+        "Get this nifra project's surface: API routes (backend.ts) with compact TypeScript-shaped contracts, page routes (routes/), and the framework conventions. Call it once unfiltered to learn the project; afterwards pass `path` (a route prefix like /api/orders) and/or `kind` (api|pages) for a cheap, narrow slice instead of the full dump.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description: "Only routes whose path/pattern starts with this prefix.",
+          },
+          kind: {
+            type: "string",
+            enum: ["api", "pages"],
+            description: "Limit to API routes or page routes.",
+          },
+        },
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const filter = args as { path?: string; kind?: "api" | "pages" }
+        return describeProject(await loadAppCached(), filter)
+      },
+    },
+    {
+      name: "nifra_routes",
+      description:
+        "List this project's API routes as STRUCTURED JSON — each `{ method, path, call, body?, query?, response? }`, where `call` is the exact typed-client call form and the shapes are compact TS-typed contracts. For programmatic use (list_routes / get_route_schema) instead of parsing the nifra_context Markdown. No args = every route; pass `path` (a path or prefix like /api/orders) to narrow to those routes.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description: "Only routes whose path starts with this prefix (omit for all routes).",
+          },
+        },
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const { routesToJson } = await import("./introspect.ts")
+        const { path } = args as { path?: string }
+        return JSON.stringify(routesToJson(await loadAppCached(), path), null, 2)
+      },
+    },
+    {
+      name: "nifra_openapi",
+      description:
+        'Return this project\'s backend OpenAPI 3.1 document generated from backend.ts route schemas via @nifrajs/schema. Use `format:"json"` for machine edits (default) or `format:"yaml"` for humans. Frontend-only apps return a valid empty paths object.',
+      inputSchema: {
+        type: "object",
+        properties: {
+          format: {
+            type: "string",
+            enum: ["json", "yaml"],
+            description: "Output format (default: json).",
+          },
+        },
+        additionalProperties: false,
+      },
+      handler: (args) => openApiHandler(args, loadAppCached),
+    },
+    {
+      name: "nifra_run",
+      description:
+        "Run HTTP requests through this project's backend and return structured results (status, headers, parsed body, and any thrown error). Use it to verify code after editing: by default the backend is re-loaded in a fresh process each call. Pass warm:true to reuse a hot worker while source files are unchanged; it restarts automatically when files change. Each request: { method?, path, body?, headers? }.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          requests: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                method: { type: "string" },
+                path: { type: "string" },
+                body: {},
+                headers: { type: "object" },
+              },
+              required: ["path"],
+            },
+          },
+          entry: {
+            type: "string",
+            description: "Backend entry file (default: backend.ts | app.ts).",
+          },
+          warm: {
+            type: "boolean",
+            description:
+              "Reuse a hot backend worker while source files are unchanged. Default false for maximum isolation.",
+          },
+        },
+        required: ["requests"],
+        additionalProperties: false,
+      },
+      handler: (args, context) => runHandler(cwd, args, context, warmRun),
+    },
+    {
+      name: "nifra_render",
+      description:
+        "SSR a page route (routes/) through this project's CURRENT web app and return { status, headers, body: the rendered HTML }. The page half of nifra_run: use it to verify a page renders and its loader ran after an edit. No build needed (a placeholder client entry is used; the SSR HTML renders regardless). Each request: { path, headers? }. Re-loaded in a fresh process each call.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          requests: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                path: { type: "string" },
+                headers: { type: "object" },
+              },
+              required: ["path"],
+            },
+          },
+        },
+        required: ["requests"],
+        additionalProperties: false,
+      },
+      handler: (args, context) => renderHandler(cwd, args, context),
+    },
+    {
+      name: "nifra_ws",
+      description:
+        'Verify a WebSocket route against this project by starting the backend on an ephemeral localhost port, opening a real Bun WebSocket, sending string frames, and returning structured evidence: { ok, opened, sent, received, close?, error? }. Use after adding or editing app.ws() routes. Pass path including query, e.g. "/chat?token=secret". By default expects one message when no messages are sent, or one response per sent message; set expectMessages:0 to verify connect-only routes.',
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description:
+              'App-local WebSocket path, optionally with query, e.g. "/chat?token=secret".',
+          },
+          messages: {
+            type: "array",
+            items: { type: "string" },
+            description: "String frames to send after the socket opens (max 50).",
+          },
+          expectMessages: {
+            type: "number",
+            description:
+              "How many inbound messages must be observed before success (default: messages.length, or 1 with no sent messages; max 50).",
+          },
+          timeoutMs: {
+            type: "number",
+            description: "Bounded verification timeout in milliseconds (default 3000, max 30000).",
+          },
+          entry: {
+            type: "string",
+            description: "Backend entry file (default: backend.ts | app.ts).",
+          },
+        },
+        required: ["path"],
+        additionalProperties: false,
+      },
+      handler: (args, context) => wsHandler(cwd, args, context),
+    },
+    {
+      name: "nifra_test",
+      description:
+        "Run `bun test` for this project and return bounded structured results: { ok, command, durationMs, exitCode, timedOut, summary, stdout, stderr }. Pass `pattern` to narrow to a test file/path; pass `timeoutMs` (default 30000, max 300000). Use after editing code, alongside nifra_run/nifra_render for behavioral checks.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          pattern: {
+            type: "string",
+            description: "Optional test file/path pattern passed as an argv item to `bun test`.",
+          },
+          timeoutMs: {
+            type: "number",
+            description: "Timeout in milliseconds (default 30000, max 300000).",
+          },
+        },
+        additionalProperties: false,
+      },
+      handler: async (args, context) => {
+        const { collectTestResult } = await import("./test-tool.ts")
+        return JSON.stringify(
+          await collectTestResult(cwd, args, { signal: context.signal }),
+          null,
+          2,
+        )
+      },
+    },
+    // nifra_docs + nifra_example are project-independent (corpus-backed); the shared factory keeps their
+    // definitions identical to the CLI HTTP server and the site's edge worker.
+    ...docsTools(loadDocsCorpus, loadExamplesCorpus),
+    {
+      name: "nifra_scaffold",
+      description:
+        'Map a URL path to the CORRECT routes/ file and get a contract-correct page stub. Agents routinely place file routes wrong — this applies the convention for you: ":id"/"[id]" → [id], "*rest" → [...rest], "/" → index. Pass path (e.g. "/users/:id"). Returns the file to create + the route-module contract (loader/action/meta/default) + a stub (ready-to-write for react/preact/solid; path+contract for vue/svelte/vanilla — use nifra_example for those bodies).',
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description: 'The URL path for the new page route, e.g. "/users/:id" or "/blog/*slug".',
+          },
+          write: {
+            type: "boolean",
+            description:
+              "When true, create the file if a verified ready-to-write stub exists. Refuses overwrite.",
+          },
+        },
+        required: ["path"],
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const { path, write } = args as { path?: string; write?: boolean }
+        if (typeof path !== "string" || path.length === 0) return "scaffold: `path` is required."
+        const { frameworkFromClientModule, renderScaffold, writeScaffoldRoute } = await import(
+          "./scaffold.ts"
+        )
+        const app = await loadAppCached()
+        const framework = frameworkFromClientModule(app.framework.clientModule)
+        if (write !== true) return renderScaffold(path, framework)
+        const result = await writeScaffoldRoute(cwd, path, framework)
+        const status = result.written
+          ? `Written: \`${result.file}\``
+          : `Not written: ${result.reason ?? "no write performed"}`
+        return `${status}\n\n${renderScaffold(path, framework)}`
+      },
+    },
+    {
+      name: "nifra_check",
+      description:
+        'Run the project\'s drift gate and return a structured result { ok, typecheck, diagnostics[] }: typecheck (the frontend↔backend contract), plus lints for hand-rolled fetch() to your own API, untyped client("…") calls missing <typeof app>, and server-only imports in routes/. Pass lintsOnly:true for a near-instant lint pass while iterating; run the full gate (default) to confirm the work is done — fix every diagnostic before finishing.',
+      inputSchema: {
+        type: "object",
+        properties: {
+          lintsOnly: {
+            type: "boolean",
+            description: "Skip tsc; run only the near-instant source lints (inner-loop mode).",
+          },
+        },
+        additionalProperties: false,
+      },
+      handler: async (args, context) => {
+        const { collectCheckResult } = await import("./check.ts")
+        const opts = args as { lintsOnly?: boolean }
+        return JSON.stringify(
+          await collectCheckResult(cwd, {
+            lintsOnly: opts.lintsOnly ?? false,
+            signal: context.signal,
+          }),
+          null,
+          2,
+        )
+      },
+    },
+    {
+      name: "nifra_doctor",
+      description:
+        "Check this project for packages imported in source but NOT declared in package.json — the Bun-workspace trap where an import resolves at runtime (hoisting/workspace) so tests pass and `bun install` says no changes, yet tsc fails and a fresh/standalone install can't resolve it. Returns { ok, ran, findings[], fixed?, skippedFixes? }. Pass autoFix:true to update package.json only when the dependency version can be inferred locally from an ancestor package.json or installed package metadata; otherwise the tool returns the exact bun add command to run.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          autoFix: {
+            type: "boolean",
+            description:
+              "When true, write safe package.json fixes using only locally inferred versions. Does not run install or use the network.",
+          },
+        },
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const opts = args as { autoFix?: boolean }
+        const { applyDoctorAutoFix, collectDoctorResult } = await import("./doctor.ts")
+        return JSON.stringify(
+          opts.autoFix === true ? await applyDoctorAutoFix(cwd) : await collectDoctorResult(cwd),
+          null,
+          2,
+        )
+      },
+    },
+  ]
+}
+
+/** Run the stdio MCP server: read newline-delimited JSON-RPC from stdin, write responses to stdout. */
+export async function runMcpServer(cwd: string, version: string): Promise<void> {
+  const loadAppCached = createCachedAppLoader(cwd)
+  const tools = projectTools(cwd, loadAppCached)
+  const features = projectFeatures(cwd, loadAppCached)
+  const serverInfo = { name: "nifra", version }
+  const state = createMcpProtocolState()
+  const send = (message: JsonRpcResponse | JsonRpcNotification): void => {
+    process.stdout.write(`${JSON.stringify(message)}\n`)
+  }
+  const dispatch = async (message: JsonRpcRequest): Promise<void> => {
+    const response = await handleRpc(message, tools, serverInfo, features, {
+      state,
+      sendNotification: send,
+    })
+    if (response) send(response)
+  }
+
+  const decoder = new TextDecoder()
+  let buffer = ""
+  for await (const chunk of Bun.stdin.stream()) {
+    buffer += decoder.decode(chunk as Uint8Array, { stream: true })
+    let nl = buffer.indexOf("\n")
+    while (nl !== -1) {
+      const line = buffer.slice(0, nl).trim()
+      buffer = buffer.slice(nl + 1)
+      nl = buffer.indexOf("\n")
+      if (line === "") continue
+      let message: JsonRpcRequest
+      try {
+        message = JSON.parse(line)
+      } catch {
+        send(rpcError(null, -32700, "parse error"))
+        continue
+      }
+      void dispatch(message).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err)
+        send(rpcError(message.id ?? null, -32603, msg))
+      })
+    }
+  }
+}

@@ -1,0 +1,11 @@
+/* A CSS Module: class names are locally scoped + hashed at build (Bun) and in dev (Vite). Imported as
+   a typed object — `styles.box` → "box_<hash>". Bundled into the same stylesheet nifra links. */
+.box {
+  padding: 12px;
+  border: 2px solid #7c9cff;
+  border-radius: 8px;
+}
+.live {
+  color: #4ade80;
+  font-weight: 700;
+}

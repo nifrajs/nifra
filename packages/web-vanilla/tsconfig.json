@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "paths": {
+      "@nifrajs/web": ["../web/src/index.ts"],
+      "@nifrajs/core": ["../core/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*", "test/**/*"]
+}

@@ -1,0 +1,8 @@
+name = "nifra-workers-ssr-react"
+main = "dist-server/worker.js"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Workers Assets: the content-hashed client bundle (written by buildClient to ./public/assets) is
+# served by the platform at /assets/*. Non-asset paths fall through to the worker (SSR).
+assets = { directory = "./public" }

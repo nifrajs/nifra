@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ESNext"],
+    // TS 6.0 no longer auto-enumerates node_modules/@types. List ambient types
+    // explicitly — `@types/bun` supplies the `Bun` global, `process`, and the web
+    // globals (fetch/Request/Response/…) we rely on under `lib: ["ESNext"]` (no DOM).
+    "types": ["bun"],
+
+    // Incremental checking for faster CI rebuilds (caches analysis, 30-50% faster on 2nd+ runs).
+    "incremental": true,
+    "tsBuildInfoFile": ".tsbuildinfo",
+
+    // Strict by construction. A framework's types are a public contract;
+    // every flag here turns a class of silent bug into a compile error.
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+
+    // ESM hygiene: keep imports honest and erasable.
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "forceConsistentCasingInFileNames": true,
+
+    // We typecheck only; Bun runs TS directly. Build/emit config lands in Phase 8.
+    "noEmit": true,
+    "skipLibCheck": true
+  }
+}

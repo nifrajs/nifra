@@ -1,0 +1,25 @@
+{
+  "name": "@nifrajs/site",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun run build.ts",
+    "dev": "bunx wrangler pages dev"
+  },
+  "devDependencies": {
+    "@mdx-js/mdx": "^3",
+    "@nifrajs/client": "workspace:*",
+    "@nifrajs/cli": "workspace:*",
+    "@nifrajs/content": "workspace:*",
+    "@nifrajs/core": "workspace:*",
+    "@nifrajs/deno": "workspace:*",
+    "@nifrajs/node": "workspace:*",
+    "@nifrajs/runner": "workspace:*",
+    "@nifrajs/schema": "workspace:*",
+    "@nifrajs/web": "workspace:*",
+    "@nifrajs/web-react": "workspace:*",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  }
+}

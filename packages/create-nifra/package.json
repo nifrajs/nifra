@@ -1,0 +1,50 @@
+{
+  "name": "create-nifra",
+  "version": "0.1.0-alpha.1",
+  "description": "Scaffold a new nifra app — `bun create nifra <dir>`.",
+  "keywords": [
+    "bun",
+    "typescript",
+    "nifra",
+    "web-framework",
+    "full-stack",
+    "edge",
+    "ssr",
+    "scaffold",
+    "create",
+    "starter",
+    "template",
+    "cli"
+  ],
+  "type": "module",
+  "bin": {
+    "create-nifra": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "template",
+    "template-site",
+    "template-site-vue",
+    "template-site-preact",
+    "template-site-solid",
+    "template-site-svelte",
+    "template-isr"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/create-nifra"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}

@@ -1,0 +1,104 @@
+{
+  "name": "@nifrajs/web-vue",
+  "version": "0.1.0-alpha.1",
+  "description": "Vue render adapter for @nifrajs/web — streaming SSR + hydration, with a .vue SFC compiler Bun plugin (@nifrajs/web-vue/plugin).",
+  "keywords": [
+    "bun",
+    "typescript",
+    "nifra",
+    "web-framework",
+    "full-stack",
+    "edge",
+    "ssr"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "bun": "./src/client.ts",
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    },
+    "./plugin": {
+      "bun": "./src/plugin.ts",
+      "types": "./dist/plugin.d.ts",
+      "default": "./dist/plugin.js"
+    },
+    "./await": {
+      "bun": "./src/await.ts",
+      "types": "./dist/await.d.ts",
+      "default": "./dist/await.js"
+    },
+    "./fetcher": {
+      "bun": "./src/fetcher.ts",
+      "types": "./dist/fetcher.d.ts",
+      "default": "./dist/fetcher.js"
+    },
+    "./query": {
+      "bun": "./src/query.ts",
+      "types": "./dist/query.d.ts",
+      "default": "./dist/query.js"
+    },
+    "./i18n": {
+      "bun": "./src/i18n.ts",
+      "types": "./dist/i18n.d.ts",
+      "default": "./dist/i18n.js"
+    },
+    "./image": {
+      "bun": "./src/image.ts",
+      "types": "./dist/image.d.ts",
+      "default": "./dist/image.js"
+    },
+    "./content": {
+      "bun": "./src/content.ts",
+      "types": "./dist/content.d.ts",
+      "default": "./dist/content.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@nifrajs/i18n": "workspace:*",
+    "@nifrajs/image": "workspace:*",
+    "@nifrajs/web": "workspace:*"
+  },
+  "peerDependencies": {
+    "@vue/compiler-sfc": "^3.4.0",
+    "vue": "^3.4.0"
+  },
+  "peerDependenciesMeta": {
+    "@vue/compiler-sfc": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@vue/compiler-sfc": "^3.5.0",
+    "vue": "^3.5.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/web-vue"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}

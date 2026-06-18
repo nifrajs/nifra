@@ -1,0 +1,8 @@
+# Cloudflare Pages config for the nifra site. `pages_build_output_dir` points at the assembled
+# output (build.ts writes _worker.js + _routes.json + /assets there), so `wrangler pages dev`
+# and `wrangler pages deploy` both work with no extra flags. `nodejs_compat` is required by the
+# edge React SSR build (react-dom/server.edge).
+name = "nifra-site"
+pages_build_output_dir = "dist"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]

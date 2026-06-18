@@ -1,0 +1,17 @@
+{
+  "name": "ssr-bench-next-static",
+  "private": true,
+  "scripts": {
+    "build": "next build",
+    "start": "node .next/standalone/server.js"
+  },
+  "dependencies": {
+    "next": "^16.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.15",
+    "typescript": "^6.0.3"
+  }
+}
