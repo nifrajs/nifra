@@ -310,5 +310,29 @@
     "topic": "Nifra — Streaming",
     "slug": "streaming",
     "code": "import { sse } from \"@nifrajs/core\"\n\n// A live feed — push events until the client disconnects.\napp.get(\"/notifications\", (c) =>\n  sse(c, (stream) => {\n    const off = notifications.subscribe((n) =>\n      stream.send({ event: \"notification\", id: n.id, data: JSON.stringify(n) }),\n    )\n    // Keep the connection open until the client leaves, then tear down.\n    return new Promise<void>((resolve) =>\n      stream.signal.addEventListener(\"abort\", () => { off(); resolve() }, { once: true }),\n    )\n  }, { keepAlive: 15_000 }),\n)"
+  },
+  {
+    "name": "CLIENT",
+    "topic": "Nifra — Types-first architecture",
+    "slug": "types-first",
+    "code": "import { client } from \"@nifrajs/client\"\nimport type { app } from \"./server\"   // a TYPE import — server code never ships to the client\n\nconst api = client<typeof app>(\"https://api.example.com\")\n\nconst res = await api.users({ id: \"42\" }).get()   // path + params autocomplete, no codegen\nif (res.ok) {\n  res.data.name        // typed from the route's response schema\n} else {\n  res.error            // client-call failures are returned, never thrown\n}"
+  },
+  {
+    "name": "OPENAPI",
+    "topic": "Nifra — Types-first architecture",
+    "slug": "types-first",
+    "code": "import { openapi } from \"@nifrajs/middleware\"\n\n// Generates an OpenAPI 3.1 document from your registered routes — lazily, on first request.\nexport const app = server()\n  .use(openapi({ info: { title: \"My API\", version: \"1.0.0\" }, ui: true }))\n  .get(\"/users/:id\", GetUser, (c) => ({ id: c.params.id, name: \"Ada\", role: \"admin\" }))\n\n// → GET /openapi.json   (the spec, generated from your schemas)\n// → GET /reference      (a Scalar API-reference page, because `ui: true`)"
+  },
+  {
+    "name": "ROUTE",
+    "topic": "Nifra — Types-first architecture",
+    "slug": "types-first",
+    "code": "import { server } from \"@nifrajs/core\"\nimport { GetUser } from \"./schema\"\n\nexport const app = server().get(\"/users/:id\", GetUser, (c) => {\n  // c.params.id is typed `string` — parsed from the path and validated at the boundary.\n  return { id: c.params.id, name: \"Ada\", role: \"admin\" as const }\n  //     ^ the return is checked against GetUser.response — a wrong shape is a tsc error.\n})"
+  },
+  {
+    "name": "SCHEMA",
+    "topic": "Nifra — Types-first architecture",
+    "slug": "types-first",
+    "code": "import { t } from \"@nifrajs/schema\"\n\n// One contract, defined once. Everything below is derived from it.\nexport const GetUser = {\n  params: t.object({ id: t.string() }),\n  response: t.object({\n    id: t.string(),\n    name: t.string(),\n    role: t.union([t.literal(\"admin\"), t.literal(\"user\")]),\n  }),\n}"
   }
 ]

@@ -29,6 +29,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - [Nifra — Fonts](/docs/fonts): Self-host web fonts with zero layout shift: a build-time Google Fonts downloader (the next/font equivalent) plus CLS-safe @font-face + preload primitives.
 - [Nifra — Migrating from Express, Hono, Fastify & Elysia](/docs/migrate-backend): Move a backend to Nifra: routing, middleware, validation, and body parsing map directly from Express, Hono, Fastify, and Elysia — and you gain a typed client, multi-runtime deploy, and optional SSR.
 - [Nifra — Migrating from Next.js, Nuxt, SvelteKit & SolidStart](/docs/migrate-frontend): Move from a meta-framework to Nifra: file routes, data loading, API routes, layouts, and SSG/ISR map across React (Next), Vue (Nuxt), Svelte (SvelteKit), and Solid (SolidStart).
+- [Nifra — Types-first architecture](/docs/types-first): One schema is the single source of truth: it drives runtime validation, inferred TypeScript types, the no-codegen typed client, an OpenAPI document, and the MCP contract your agents read.
 
 ## Packages
 
