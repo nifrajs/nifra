@@ -6,3 +6,5 @@ name = "nifra-site"
 pages_build_output_dir = "dist"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
+# Opt out of Wrangler's anonymous telemetry for every environment (CI, CF builds, local).
+send_metrics = false
