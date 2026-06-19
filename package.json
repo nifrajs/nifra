@@ -31,7 +31,7 @@
     "gen:api": "bun run scripts/gen-api-reference.ts",
     "check:docs": "bun run scripts/check-doc-samples.ts",
     "check:api": "bun run scripts/gen-api-reference.ts --check",
-    "site:build": "bun run gen:llms && bun run gen:api && bun run site/build.ts",
+    "site:build": "bun run build && bun run gen:llms && bun run gen:api && bun run site/build.ts",
     "site:build:node": "bun run site/build-node.ts",
     "site:build:deno": "bun run site/build-deno.ts",
     "site:build:vercel": "bun run site/build-vercel.ts",
