@@ -18,6 +18,11 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
+      # Cross-package imports (e.g. cli → @nifrajs/web) resolve via each package's built
+      # .d.ts, not via tsconfig paths — so typecheck needs dist. check:publish re-packs later.
+      - name: Build
+        run: bun run build
+
       - name: Lint
         run: bun run lint
 
