@@ -167,9 +167,14 @@ const css = `
   nav.top { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; }
   nav.top a { color: var(--muted); font-size: 14px; font-weight: 600; padding: 8px 11px; border-radius: 7px; }
   nav.top a:hover { color: var(--fg); background: var(--hover); text-decoration: none; }
+  nav.top a.icon-link { display: inline-flex; align-items: center; padding: 8px; }
+  nav.top a.icon-link svg { width: 20px; height: 20px; display: block; }
 
   footer.site { border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
   footer.site .wrap { padding: 28px 0; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+  footer.site a { color: var(--muted); font-weight: 600; }
+  footer.site a:hover { color: var(--fg); }
+  .foot-links { display: inline-flex; gap: 16px; align-items: center; }
 
   /* ---- buttons / install ---- */
   .button {
@@ -1700,6 +1705,28 @@ export default function Layout(props: { children?: ReactNode }) {
             <a href="/benchmarks">Benchmarks</a>
             <a href="/docs/security">Security</a>
             <a href="/docs/frameworks">Frameworks</a>
+            <a
+              className="icon-link"
+              href="https://github.com/nifrajs/nifra"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Nifra on GitHub"
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M12 .5A11.5 11.5 0 0 0 .5 12a11.5 11.5 0 0 0 7.86 10.92c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.34-1.3-1.7-1.3-1.7-1.06-.72.08-.71.08-.71 1.17.08 1.79 1.2 1.79 1.2 1.04 1.79 2.73 1.27 3.4.97.1-.76.41-1.27.74-1.56-2.56-.29-5.26-1.28-5.26-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.43-2.7 5.41-5.27 5.69.42.36.8 1.08.8 2.18v3.23c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12 11.5 11.5 0 0 0 12 .5z" />
+              </svg>
+            </a>
+            <a
+              className="icon-link"
+              href="https://www.npmjs.com/package/nifra"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Nifra on npm"
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M0 7.334v8h6.666v1.334H12v-1.334h12v-8zm6.666 6.665H5.334v-4H3.999v4H1.335V8.667h5.331zm4 0v1.336H8.001V8.667h5.334v5.332h-2.669zm12.001 0h-1.33v-4h-1.336v4h-1.335v-4h-1.33v4h-2.671V8.667h8.002z" />
+              </svg>
+            </a>
             <button
               id="theme-toggle"
               className="theme-toggle"
@@ -1738,7 +1765,15 @@ export default function Layout(props: { children?: ReactNode }) {
       <footer className="site">
         <div className="wrap">
           <span>Proudly built with Nifra — server-rendered on Cloudflare Pages.</span>
-          <span>MIT</span>
+          <span className="foot-links">
+            <a href="https://github.com/nifrajs/nifra" target="_blank" rel="noopener noreferrer">
+              GitHub
+            </a>
+            <a href="https://www.npmjs.com/package/nifra" target="_blank" rel="noopener noreferrer">
+              npm
+            </a>
+            <span>MIT</span>
+          </span>
         </div>
       </footer>
 
