@@ -3145,6 +3145,123 @@ backend you can also ship on its own. Start with [Getting started](/docs).
 Moving a backend (Express, Hono, Fastify, Elysia) instead? See
 [Migrating a backend](/docs/migrate-backend).
 
+## Nifra — Types-first architecture
+
+> One schema is the single source of truth: it drives runtime validation, inferred TypeScript types, the no-codegen typed client, an OpenAPI document, and the MCP contract your agents read.
+
+In Nifra a single schema is the **source of truth**. The same definition drives runtime
+validation, inferred TypeScript types, the no-codegen typed client, an OpenAPI document, and
+the contract your coding agents read — so the five never drift apart.
+
+### One schema
+
+Define request inputs and the response shape once with `t`. Nothing here is
+framework-specific; it's a plain object you attach to a route.
+
+```ts
+import { t } from "@nifrajs/schema"
+
+// One contract, defined once. Everything below is derived from it.
+export const GetUser = {
+  params: t.object({ id: t.string() }),
+  response: t.object({
+    id: t.string(),
+    name: t.string(),
+    role: t.union([t.literal("admin"), t.literal("user")]),
+  }),
+}
+```
+
+### Runtime validation
+
+Attach the schema to a route. Path params, query, and body are validated at the runtime
+boundary _before_ your handler runs — invalid input is rejected with a 400, so the
+handler only ever sees well-formed data.
+
+```ts
+import { server } from "@nifrajs/core"
+import { GetUser } from "./schema"
+
+export const app = server().get("/users/:id", GetUser, (c) => {
+  // c.params.id is typed `string` — parsed from the path and validated at the boundary.
+  return { id: c.params.id, name: "Ada", role: "admin" as const }
+  //     ^ the return is checked against GetUser.response — a wrong shape is a tsc error.
+})
+```
+
+### Inferred types
+
+The same schema types the handler: `c.params.id` is `string`, and the
+return value is checked against `response`. Change the schema and the handler
+stops compiling until it matches — types and validation can't disagree.
+
+### The typed client
+
+The client is inferred from the server's _type_ — no generators, no build step, no
+SDK to regenerate. Paths and params autocomplete; the response is typed from the route. A
+backend change that breaks a call is a compile error on the frontend.
+
+```ts
+import { client } from "@nifrajs/client"
+import type { app } from "./server"   // a TYPE import — server code never ships to the client
+
+const api = client<typeof app>("https://api.example.com")
+
+const res = await api.users({ id: "42" }).get()   // path + params autocomplete, no codegen
+if (res.ok) {
+  res.data.name        // typed from the route's response schema
+} else {
+  res.error            // client-call failures are returned, never thrown
+}
+```
+
+### OpenAPI
+
+The `openapi()` middleware builds an OpenAPI 3.1 document from your registered
+routes and their schemas — generated lazily on first request, never hand-written. Pass
+`ui: true` to also serve a Scalar reference page.
+
+```ts
+import { openapi } from "@nifrajs/middleware"
+
+// Generates an OpenAPI 3.1 document from your registered routes — lazily, on first request.
+export const app = server()
+  .use(openapi({ info: { title: "My API", version: "1.0.0" }, ui: true }))
+  .get("/users/:id", GetUser, (c) => ({ id: c.params.id, name: "Ada", role: "admin" }))
+
+// → GET /openapi.json   (the spec, generated from your schemas)
+// → GET /reference      (a Scalar API-reference page, because `ui: true`)
+```
+
+### The MCP contract
+
+The same routes and schemas feed coding agents. `nifra context` prints the live
+API surface as compact text, and `nifra mcp` serves it over the Model Context
+Protocol so Claude Code or Cursor read the real contract instead of guessing.
+
+```ts
+$ nifra context        # the same contract as compact text — pipe into any agent prompt
+  GET /users/:id  →  params { id: string }  response { id, name, role }
+
+$ nifra mcp            # the same data over an MCP server — Claude Code & Cursor read it
+```
+
+### Known limitations
+
+-
+Validation only covers what you put in a schema. A raw-body, file-upload, or
+bring-your-own-validation route reads the body directly — cap and validate those yourself
+(see [Security](/docs/security)'s `c.boundedBody`).
+
+-
+The typed client infers from the server _type_, so it needs an
+`import type` of your app and TypeScript on the frontend. There is no runtime
+coupling — server code never ships to the client.
+
+-
+The generated OpenAPI document is a structural subset of 3.1 derived from your schemas;
+it reflects exactly what the routes declare, not hand-authored prose.
+
 ---
 
 # Package reference (READMEs)
