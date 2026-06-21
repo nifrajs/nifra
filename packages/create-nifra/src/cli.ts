@@ -14,6 +14,13 @@ import { realpathSync } from "node:fs"
 import { cp, mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { basename, join, relative, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
+import {
+  CLAUDE_MD_PATH,
+  CURSOR_MCP_JSON_PATH,
+  claudeMd,
+  MCP_JSON_PATH,
+  mcpJson,
+} from "./agent-files.ts"
 import { agentsMd } from "./agents.ts"
 import {
   AUTH_CHOICES,
@@ -368,6 +375,15 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
       ...(auth !== undefined ? { auth } : {}),
     }),
   )
+
+  // Register the project's nifra MCP server so a coding agent auto-discovers it. Claude Code reads
+  // `.mcp.json` + `CLAUDE.md`; Cursor reads `.cursor/mcp.json`. All three come from one canonical config
+  // (agent-files.ts) so they can't drift. CLAUDE.md is a short MCP-first preamble that `@AGENTS.md`-imports
+  // the full cookbook rather than duplicating it.
+  await writeFile(join(opts.target, MCP_JSON_PATH), mcpJson())
+  await writeFile(join(opts.target, CLAUDE_MD_PATH), claudeMd())
+  await mkdir(join(opts.target, ".cursor"), { recursive: true })
+  await writeFile(join(opts.target, CURSOR_MCP_JSON_PATH), mcpJson())
 
   // Wire the Drizzle data layer (db/ module + drizzle.config + .env.example + gitignore entries).
   if (db !== undefined) await writeDbFiles(opts.target, db)

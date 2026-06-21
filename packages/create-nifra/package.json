@@ -20,6 +20,13 @@
   "bin": {
     "create-nifra": "./dist/cli.js"
   },
+  "exports": {
+    "./agent-files": {
+      "bun": "./src/agent-files.ts",
+      "types": "./dist/agent-files.d.ts",
+      "default": "./dist/agent-files.js"
+    }
+  },
   "files": [
     "dist",
     "template",

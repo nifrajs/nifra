@@ -6,6 +6,7 @@
  * server-only code into a route module. Tailored per template so the paths + commands are real.
  */
 
+import { agentsMcpSection } from "./agent-files.ts"
 import type { AuthChoice } from "./auth.ts"
 import type { Framework, TemplateName } from "./cli.ts"
 import { DB_PRESETS, type DbChoice, type DbPreset } from "./db.ts"
@@ -270,6 +271,9 @@ export function agentsMd(opts: AgentsMdOptions): string {
   const blocks = [
     `# AGENTS.md — ${opts.name}\n\nGuidance for AI coding agents working in this repo. This is ${what}. nifra is Bun-native, Web-standard, and framework-agnostic; the same app runs on Bun, Node, Deno, and the edge.`,
     `## Commands\n\n${COMMANDS[opts.template]}`,
+    // Surface the MCP early — an agent that learns the typechecked tools exist (and that `nifra check`
+    // is the done-gate) up front will reach for them instead of writing nifra from stale memory.
+    agentsMcpSection(),
     API_RULES.trim(),
     opts.db !== undefined ? dbRules(opts.db) : "",
     opts.auth !== undefined ? authRules(opts.auth) : "",
