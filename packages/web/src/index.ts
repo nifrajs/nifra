@@ -28,6 +28,7 @@ import type {
   MetaInput,
   RouteEntry,
   RouteModule,
+  ScriptDescriptor,
 } from "./manifest.ts"
 import {
   DATA_HEADER,
@@ -94,6 +95,7 @@ export {
   type MetaInput,
   type RouteEntry,
   type RouteModule,
+  type ScriptDescriptor,
   type StaticPath,
   type StaticPaths,
   type StaticRoutes,
@@ -640,6 +642,23 @@ function escapeHtml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
 }
 
+/**
+ * Escape a `<script>` element's text content so it cannot break out of the element. Per the HTML spec,
+ * a script's text may contain any character EXCEPT the sequences that the parser treats as element
+ * boundaries: `</` (which would begin the end tag — `</script>` is the obvious XSS vector, but ANY `</`
+ * starts script-data-end-tag parsing), and the comment/CDATA edges `<!--` / `]]>`. We escape the `<`
+ * (and the `>` of `]]>`) to its JS unicode escape: inside a JS/JSON string literal `<` is the
+ * identical character, so a JSON-LD payload is byte-equivalent after parsing — but the raw `<`/`>` the
+ * HTML tokenizer scans for is gone. This is the JSON-LD-in-HTML rule (content is JSON, never raw HTML),
+ * mirroring {@link serializeData}'s posture for the data-global script. Idempotent on already-safe text.
+ */
+function escapeScriptContent(content: string): string {
+  // Order matters: rewrite `]]>` first (its `>` becomes `>`), then every `<` (covers `</` and
+  // `<!--` in one pass). `<` → `<`; the lone `>` of `]]>` → `>`. A bare `>` elsewhere is
+  // harmless in script data, so only the `]]>` close is targeted for `>`.
+  return content.replaceAll("]]>", "]]\\u003e").replaceAll("<", "\\u003c")
+}
+
 function escapeAttr(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -693,6 +712,12 @@ function headTags(head: Meta | undefined): string {
   let out = ""
   if (head.meta !== undefined) for (const m of head.meta) out += `<meta ${tagAttrs(m)} data-nifra>`
   if (head.link !== undefined) for (const l of head.link) out += `<link ${tagAttrs(l)} data-nifra>`
+  // `<script>` slot — JSON-LD + other inert head scripts. `type` is attribute-escaped; `content` is
+  // breakout-escaped (`escapeScriptContent`) so a `</script>` (or `<!--`/`]]>`) payload can't close the
+  // element early. Managed (`data-nifra`) so a soft-nav's `applyHead` cleanly replaces it.
+  if (head.script !== undefined)
+    for (const s of head.script)
+      out += `<script type="${escapeAttr(s.type ?? "application/ld+json")}" data-nifra>${escapeScriptContent(s.content)}</script>`
   headTagsCache.set(head, out)
   return out
 }
@@ -701,6 +726,68 @@ function headTags(head: Meta | undefined): string {
 export function resolveMeta(meta: MetaInput | undefined, args: MetaArgs): Meta {
   if (meta === undefined) return {}
   return typeof meta === "function" ? meta(args) : meta
+}
+
+/**
+ * A `<link rel="canonical">` descriptor for a route's `meta.link`. The canonical URL tells search
+ * engines which URL is authoritative for a page (deduping query-string / tracking variants).
+ *
+ * ```ts
+ * export const meta = (a) => ({ link: [canonical(`https://site.com/posts/${a.params.slug}`)] })
+ * ```
+ */
+export function canonical(href: string): LinkDescriptor {
+  return { rel: "canonical", href }
+}
+
+/** Inputs for {@link openGraph} — the common Open Graph properties. All optional; only the provided
+ * ones become tags. `type` defaults to `"website"`. */
+export interface OpenGraphInput {
+  readonly title?: string
+  readonly description?: string
+  /** Absolute URL of the share image (`og:image`). */
+  readonly image?: string
+  /** Canonical URL of the page (`og:url`). */
+  readonly url?: string
+  /** Object type (`og:type`) — `"website"`, `"article"`, … Default `"website"`. */
+  readonly type?: string
+}
+
+/**
+ * Build the Open Graph `<meta property="og:*">` entries for a route's `meta.meta`. Returns only the
+ * properties you supplied (plus `og:type`, defaulting to `"website"`), so it composes with other meta.
+ *
+ * ```ts
+ * export const meta = { meta: [...openGraph({ title: "Nifra", image: "https://site.com/og.png" })] }
+ * ```
+ */
+export function openGraph(input: OpenGraphInput): Array<Record<string, string>> {
+  const tags: Array<Record<string, string>> = []
+  const add = (property: string, content: string | undefined): void => {
+    if (content !== undefined) tags.push({ property, content })
+  }
+  add("og:title", input.title)
+  add("og:description", input.description)
+  add("og:image", input.image)
+  add("og:url", input.url)
+  // `og:type` always present (the spec's required property) — default "website" when unset.
+  tags.push({ property: "og:type", content: input.type ?? "website" })
+  return tags
+}
+
+/**
+ * Build a JSON-LD `<script type="application/ld+json">` entry for a route's `meta.script` from a plain
+ * object. `JSON.stringify` produces the body; the head renderer breakout-escapes it (see
+ * `escapeScriptContent`), so a string field containing `</script>` is embedded safely.
+ *
+ * ```ts
+ * export const meta = {
+ *   script: [jsonLd({ "@context": "https://schema.org", "@type": "Article", headline: "Hi" })],
+ * }
+ * ```
+ */
+export function jsonLd(data: Record<string, unknown>): ScriptDescriptor {
+  return { type: "application/ld+json", content: JSON.stringify(data) }
 }
 
 /**
@@ -729,18 +816,27 @@ export function mergeHeads(heads: readonly Meta[]): Meta {
   let title: string | undefined
   const meta: Array<Record<string, string>> = []
   const link: LinkDescriptor[] = []
+  const script: ScriptDescriptor[] = []
   for (const h of heads) {
     if (h.title !== undefined) title = h.title // nearest-wins: later (more specific) overrides
     if (h.meta !== undefined) meta.push(...h.meta)
     if (h.link !== undefined) link.push(...h.link)
+    if (h.script !== undefined) script.push(...h.script) // concatenated like meta/link (outermost first)
   }
-  // Build the result with only the fields that were actually contributed — an empty `meta`/`link`
-  // array would otherwise be a spurious (if harmless) key. A mutable local; the cast to `Meta` is sound
-  // because a key is assigned only when defined (so `exactOptionalPropertyTypes` never sees `undefined`).
-  const merged: { title?: string; meta?: Meta["meta"]; link?: Meta["link"] } = {}
+  // Build the result with only the fields that were actually contributed — an empty `meta`/`link`/
+  // `script` array would otherwise be a spurious (if harmless) key. A mutable local; the cast to `Meta`
+  // is sound because a key is assigned only when defined (so `exactOptionalPropertyTypes` never sees
+  // `undefined`).
+  const merged: {
+    title?: string
+    meta?: Meta["meta"]
+    link?: Meta["link"]
+    script?: Meta["script"]
+  } = {}
   if (title !== undefined) merged.title = title
   if (meta.length > 0) merged.meta = meta
   if (link.length > 0) merged.link = link
+  if (script.length > 0) merged.script = script
   return merged as Meta
 }
 
@@ -752,8 +848,24 @@ export interface CreateWebAppOptions {
   /** Default document title for all pages. */
   readonly title?: string
   /** Injected into each loader's `ctx.api` — typically an `inProcessClient(app)` (typed
-   * per-route via `@nifrajs/client`'s `createRoutes`). Opaque to the core. */
+   * per-route via `@nifrajs/client`'s `createRoutes`). Opaque to the core.
+   *
+   * **Auto-mount.** When `api` exposes a callable `.fetch(url, init)` (every `inProcessClient(backend)`
+   * does — see {@link isMountableApi}), `createWebApp` also serves that backend over HTTP at
+   * {@link apiPrefix} (default `/api`): a request whose pathname starts with the prefix is dispatched
+   * straight to `api.fetch(req.url, req)` before page routing, and the backend's `Response` is returned
+   * untouched. This closes the reported gap where `POST /api/sync` / `/api/auth/*` 404/405'd against the
+   * page router until the app author hand-wrote an `if (pathname.startsWith("/api/")) …` branch in
+   * `server-bun.ts`. The mount runs in `nifra dev` too (the Vite dev server dispatches every request
+   * through this same app). Pass `apiPrefix: ""` to disable it (pages-only). */
   readonly api?: unknown
+  /** HTTP path prefix the {@link api} backend is auto-mounted at (default `"/api"`). A request whose
+   * pathname is exactly the prefix or starts with `prefix + "/"` is dispatched to the backend before
+   * page routing; the backend therefore defines its routes at the **full** path (`server().post("/api/
+   * sync", …)`), matching the in-process `inProcessClient` call sites. Set to `""` to disable the
+   * auto-mount entirely (the app serves pages only and `api` stays a loader-only `ctx.api`). Mounting
+   * is also a no-op when `api` has no callable `.fetch` (e.g. a plain object passed as `ctx.api`). */
+  readonly apiPrefix?: string
   /** Secret for **draft / preview mode** (see `enableDraft`). When set, a request carrying a valid
    * signed `__nifra_draft` cookie gets `ctx.draft === true` in loaders/actions (else always `false`).
    * Pair with `withISR({ draftSecret })` so editors bypass the cache. Omit to disable draft mode. */
@@ -804,6 +916,29 @@ interface RouteContext {
   readonly env: unknown
 }
 
+/** The minimal shape the `/api/*` auto-mount needs: a `fetch(url, init)` that yields a `Response`.
+ * `inProcessClient(backend)` exposes exactly this (its in-process bridge); a raw `@nifrajs/core`
+ * `Server` does not match (its `fetch` takes a `Request`, not `(url, init)`) — which is intended,
+ * since the documented `api` is the `inProcessClient` proxy, not the bare server. */
+interface MountableApi {
+  readonly fetch: (url: string, init?: RequestInit) => Response | Promise<Response>
+}
+
+/**
+ * Narrow an opaque `api` to a {@link MountableApi}. Guards the `/api/*` auto-mount: an `api` set to a
+ * plain loader-only value (no `.fetch`) leaves the app pages-only rather than crashing. Kept a
+ * structural shape check (not an `instanceof`) so any in-process bridge — `inProcessClient`, a test
+ * stub, a custom agent — is mountable without `@nifrajs/web` depending on `@nifrajs/client`.
+ */
+function isMountableApi(api: unknown): api is MountableApi {
+  return (
+    typeof api === "object" &&
+    api !== null &&
+    "fetch" in api &&
+    typeof (api as { fetch: unknown }).fetch === "function"
+  )
+}
+
 /**
  * Build a nifra app from a route manifest: every route SSRs its layout chain via `renderPage`,
  * and a wildcard catch-all renders `_404` (or a plain 404). Reuses @nifrajs/core's router +
@@ -833,6 +968,32 @@ export function createWebApp(options: CreateWebAppOptions): Server {
     return options.styles && options.styles.length > 0 ? { styles: options.styles } : {}
   }
   const app = server()
+  // Auto-mount the in-process backend over HTTP at `apiPrefix` (default `/api`), BEFORE page routing.
+  // `onRequest` runs on the raw request ahead of the router, so this wins over the page wildcard `/*`
+  // for every method (POST/GET/PUT/…) — not just the GET page routes — and a backend 404 (`/api/none`)
+  // surfaces as the backend's own response, never the page 404. We dispatch the SAME `Request` object
+  // (its body unread) so streamed/large bodies pass through untouched; the backend defines its routes
+  // at the full prefixed path (`server().post("/api/sync", …)`), matching the `inProcessClient` call
+  // sites. `apiPrefix: ""` opts out; a non-mountable `api` (no `.fetch`) is left pages-only. The hook
+  // is registered ONLY when both hold, so a pages-only app keeps core's synchronous no-hook fast path.
+  //
+  // Backward-compat: an app that still hand-dispatches `/api/*` in its server entry (the old
+  // `if (pathname.startsWith("/api/")) return backend.fetch(req)`) intercepts BEFORE `app.fetch` is
+  // ever called, so that branch returns first and this hook never sees the request — no double
+  // handling. Apps that drop the hand-dispatch now rely on this mount instead (dev + prod alike).
+  const apiPrefix = options.apiPrefix ?? "/api"
+  if (apiPrefix !== "" && isMountableApi(api)) {
+    const mountedApi = api
+    app.onRequest((req) => {
+      const { pathname } = new URL(req.url)
+      // Exactly the prefix (`/api`) or a sub-path (`/api/…`) — NOT a sibling like `/apixyz` that merely
+      // shares the prefix as a string head. Dispatch the original `req` (body intact) to the backend.
+      if (pathname === apiPrefix || pathname.startsWith(`${apiPrefix}/`)) {
+        return mountedApi.fetch(req.url, req)
+      }
+      return undefined // not an API path → continue to page routing
+    })
+  }
   // SSG `fallback: "404"`: the set of concrete paths that actually exist for those routes. An unlisted
   // path under a `"404"` route is rejected (it isn't a static file, and the route declared it shouldn't
   // SSR on demand). O(1) membership via a Set.

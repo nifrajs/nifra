@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { server } from "@nifrajs/core"
 import {
   createWebApp,
   defer,
@@ -9,6 +10,16 @@ import {
   redirect,
   revalidate,
 } from "../src/index.ts"
+
+// The in-process backend mount target — the exact `{ fetch(url, init) }` bridge `inProcessClient(app)`
+// returns (it wraps `app.fetch(new Request(url, init))`). Reproduced here so the web test exercises the
+// real `createWebApp` `/api/*` auto-mount contract WITHOUT a runtime dependency on `@nifrajs/client`
+// (web doesn't depend on it; the bridge shape, not the client proxy, is what the mount consumes).
+const inProcessBridge = (app: {
+  fetch(request: Request): Response | Promise<Response>
+}): { fetch: (url: string, init?: RequestInit) => Promise<Response> } => ({
+  fetch: (url, init) => Promise.resolve(app.fetch(new Request(url, init))),
+})
 
 // Turn a string into a one-chunk byte stream — the minimal `renderToStream` an adapter returns.
 const streamOf = (s: string): ReadableStream<Uint8Array> => {
@@ -728,4 +739,119 @@ test("redirect() rejects off-origin destinations unless { external: true } [AUDI
   const r = redirect("https://example.com/ok", { external: true })
   expect(r.status).toBe(303)
   expect(r.headers.get("location")).toBe("https://example.com/ok")
+})
+
+// --- /api/* auto-mount: createWebApp serves the in-process backend over HTTP (dev + prod) ---
+
+// A backend with real routes under /api/* — the same shape an app feeds via `inProcessClient(backend)`.
+const apiBackend = (): { fetch(request: Request): Response | Promise<Response> } =>
+  server()
+    .post("/api/echo", async (c) => ({ echoed: await c.req.json() }))
+    .get("/api/x", () => ({ x: 1 }))
+
+test("createWebApp auto-mounts the api backend: POST /api/echo reaches the backend", async () => {
+  const api = inProcessBridge(apiBackend())
+  const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })
+  const res = await app.fetch(
+    new Request("http://x/api/echo", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hi: "there" }),
+    }),
+  )
+  expect(res.status).toBe(200) // not a 405 from the page router
+  expect(await res.json()).toEqual({ echoed: { hi: "there" } }) // backend ran, body passed through
+})
+
+test("createWebApp auto-mount: GET /api/x reaches the backend (not the page router)", async () => {
+  const api = inProcessBridge(apiBackend())
+  const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })
+  const res = await app.fetch(new Request("http://x/api/x"))
+  expect(res.status).toBe(200)
+  expect(await res.json()).toEqual({ x: 1 })
+})
+
+test("createWebApp auto-mount: a normal page path still SSRs (mount only claims the prefix)", async () => {
+  const api = inProcessBridge(apiBackend())
+  const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })
+  const res = await app.fetch(new Request("http://x/"))
+  expect(res.status).toBe(200)
+  expect(res.headers.get("content-type")).toContain("text/html")
+  expect(await res.text()).toContain("chain=1:null") // the home page, rendered by the page router
+})
+
+test("createWebApp auto-mount: an unknown /api path returns the BACKEND 404, not the page 404", async () => {
+  const api = inProcessBridge(apiBackend())
+  const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })
+  const res = await app.fetch(new Request("http://x/api/none"))
+  expect(res.status).toBe(404)
+  // The page 404 (`_404` route) renders the not-found *component* as HTML; the backend 404 is the
+  // core router's own (non-HTML) response. Asserting the body isn't the page markup proves the
+  // request was dispatched to the backend, not the page router.
+  expect(await res.text()).not.toContain("chain=") // not the SSR'd `_404` page
+})
+
+test("createWebApp auto-mount: apiPrefix='' disables mounting (api stays loader-only)", async () => {
+  const api = inProcessBridge(apiBackend())
+  const app = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+    apiPrefix: "",
+  })
+  // With the mount disabled, `/api/echo` falls through to the page router. No page route matches it,
+  // so the wildcard catch-all renders the `_404` page (HTML), NOT the backend's echo.
+  const res = await app.fetch(
+    new Request("http://x/api/echo", { method: "POST", body: JSON.stringify({}) }),
+  )
+  // POST to a non-action page route is a 405 (the page router's method guard), proving the backend
+  // never saw it.
+  expect(res.status).toBe(405)
+})
+
+test("createWebApp auto-mount: a custom apiPrefix is honored", async () => {
+  const api = inProcessBridge(server().get("/rpc/ping", () => ({ pong: true })))
+  const app = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+    apiPrefix: "/rpc",
+  })
+  const res = await app.fetch(new Request("http://x/rpc/ping"))
+  expect(res.status).toBe(200)
+  expect(await res.json()).toEqual({ pong: true })
+})
+
+test("createWebApp auto-mount: a sibling path sharing the prefix string is NOT captured", async () => {
+  // `/apidocs` shares "/api" as a string head but is NOT under the `/api/` boundary — it must reach
+  // the page router (here: the `_404` page), not the backend. Guards the off-by-one prefix bug.
+  const api = inProcessBridge(apiBackend())
+  const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })
+  const res = await app.fetch(new Request("http://x/apidocs"))
+  expect(res.status).toBe(404)
+  expect(await res.text()).toContain("chain=") // the SSR'd `_404` page, i.e. the page router handled it
+})
+
+test("createWebApp auto-mount: exactly the prefix path (no trailing slash) dispatches to the backend", async () => {
+  const api = inProcessBridge(server().get("/api", () => ({ root: true })))
+  const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })
+  const res = await app.fetch(new Request("http://x/api"))
+  expect(res.status).toBe(200)
+  expect(await res.json()).toEqual({ root: true })
+})
+
+test("createWebApp: a non-mountable api (no .fetch) leaves the app pages-only (no crash)", async () => {
+  // A plain object passed as `ctx.api` (not an in-process bridge) must NOT be mounted — the app serves
+  // pages, and `/api/*` falls through to the page router exactly as before the auto-mount existed.
+  const app = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api: { tag: "plain" },
+  })
+  const res = await app.fetch(new Request("http://x/api/none"))
+  expect(res.status).toBe(404)
+  expect(await res.text()).toContain("chain=") // page 404, not a backend dispatch
 })

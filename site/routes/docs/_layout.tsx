@@ -21,6 +21,7 @@ const GROUPS: ReadonlyArray<{ title: string; links: ReadonlyArray<{ href: string
       { href: "/docs/frameworks", label: "Frameworks" },
       { href: "/docs/routing", label: "Routing" },
       { href: "/docs/data", label: "Loaders & actions" },
+      { href: "/docs/backends", label: "Backends & API" },
       { href: "/docs/mutations", label: "Optimistic UI" },
       { href: "/docs/query", label: "Query cache" },
       { href: "/docs/streaming", label: "Streaming" },

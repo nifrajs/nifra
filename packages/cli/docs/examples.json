@@ -36,6 +36,30 @@
     "code": "// auth.ts — one session manager. LAZY so a route module can import it without shipping it to the\n// browser (see the warning below). Store mode keeps data server-side; cookie mode (no store) is stateless.\nimport { createSessions, MemorySessionStore, KVSessionStore } from \"@nifrajs/auth\"\n\nlet manager\nexport const getSessions = () => (manager ??= createSessions({\n  secret: process.env.SESSION_SECRET,           // ≥ 16 chars; rotating it invalidates all sessions\n  store: new MemorySessionStore(),              // prod: new KVSessionStore(env.SESSIONS)\n  // cookie: { secure: false },                 // local http dev only\n}))"
   },
   {
+    "name": "BACKEND",
+    "topic": "Nifra — Backends & API (dev and prod)",
+    "slug": "backends",
+    "code": "// backend.ts — a normal @nifrajs/core server. Routes live at the full /api/... path.\nimport { server } from \"@nifrajs/core\"\nimport { t } from \"@nifrajs/schema\"\n\nexport const backend = server()\n  .post(\"/api/sync\", { body: t.object({ cursor: t.string() }) }, async (c) => {\n    // validated body; runs the same whether called in-process (a loader) or over HTTP (a client fetch)\n    return { applied: 12, nextCursor: c.body.cursor }\n  })\n  .get(\"/api/me\", (c) => ({ id: c.cookies.session ?? null }))"
+  },
+  {
+    "name": "CLIENT",
+    "topic": "Nifra — Backends & API (dev and prod)",
+    "slug": "backends",
+    "code": "// A browser island / client component hits the mounted HTTP routes with the typed client.\nimport { client } from \"@nifrajs/client\"\nimport type { backend } from \"./backend\"\n\nconst api = client<typeof backend>(\"\") // same-origin: /api/sync is served by createWebApp's mount\nexport async function runSync(cursor: string) {\n  const { data, error } = await api.api.sync.post({ cursor })\n  return error ? { applied: 0 } : data\n}"
+  },
+  {
+    "name": "LOADER",
+    "topic": "Nifra — Backends & API (dev and prod)",
+    "slug": "backends",
+    "code": "// routes/index.tsx — a loader calls the backend IN-PROCESS via ctx.api (no network).\nimport type { LoaderContext } from \"@nifrajs/web\"\n\nexport async function loader(ctx: LoaderContext) {\n  const api = ctx.api as { me: { get(): Promise<{ data: { id: string | null } }> } }\n  const res = await api.me.get() // in-process: full validation/middleware, no HTTP round-trip\n  return { me: res.data }\n}"
+  },
+  {
+    "name": "WIRE",
+    "topic": "Nifra — Backends & API (dev and prod)",
+    "slug": "backends",
+    "code": "// server.ts (prod) — createWebApp serves pages AND auto-mounts the backend at /api/*.\nimport { inProcessClient } from \"@nifrajs/client\"\nimport { createWebApp } from \"@nifrajs/web\"\nimport { reactAdapter } from \"@nifrajs/web-react\"\nimport { backend } from \"./backend\"\nimport { clientEntry, manifest } from \"./server-manifest\"\n\nexport const app = createWebApp({\n  adapter: reactAdapter,\n  manifest,\n  clientEntry,\n  api: inProcessClient(backend), // → ctx.api in loaders/actions AND auto-mounted at /api/*\n  // apiPrefix: \"/api\",          // the default; pass \"\" to disable the HTTP mount (pages only)\n})\n\n// Bun: Bun.serve({ fetch: app.fetch }). No `if (pathname.startsWith(\"/api/\")) …` branch needed —\n// POST /api/sync, GET /api/me, etc. are dispatched to the backend BEFORE the page router sees them."
+  },
+  {
     "name": "FRAMEWORK",
     "topic": "Nifra — CLI",
     "slug": "cli",

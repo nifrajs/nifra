@@ -2585,6 +2585,136 @@ own stylesheet. Pass `manifest.routeStyles` to `createWebApp` alongside
 `styles`, and Nifra links the matched route's CSS during SSR. In
 **dev**, Vite injects per-module CSS.
 
+## Nifra — Backends & API (dev and prod)
+
+> How a Nifra backend reaches your app: inProcessClient feeds ctx.api to loaders, and createWebApp auto-mounts the backend over HTTP at /api/* — in `nifra dev` and production alike, no hand-dispatch.
+
+Your `@nifrajs/core` backend reaches a Nifra app two ways from a single wiring.
+`inProcessClient(backend)` is fed to every loader and action as
+`ctx.api` — and `createWebApp` now **auto-mounts** that
+backend over HTTP at `/api/*`, so the browser can call the very same routes. No
+hand-written `if (pathname.startsWith("/api/"))` branch in your server entry.
+
+### One backend, two call paths
+
+Write the backend once. It defines its routes at the full `/api/…` path (the mount
+does no path stripping). Loaders call it _in-process_ during SSR; the browser calls it
+_over HTTP_. Both run the identical lifecycle — validation, middleware, contracts.
+
+```ts
+// backend.ts — a normal @nifrajs/core server. Routes live at the full /api/... path.
+import { server } from "@nifrajs/core"
+import { t } from "@nifrajs/schema"
+
+export const backend = server()
+  .post("/api/sync", { body: t.object({ cursor: t.string() }) }, async (c) => {
+    // validated body; runs the same whether called in-process (a loader) or over HTTP (a client fetch)
+    return { applied: 12, nextCursor: c.body.cursor }
+  })
+  .get("/api/me", (c) => ({ id: c.cookies.session ?? null }))
+```
+
+### ctx.api — the in-process loader client
+
+Pass `inProcessClient(backend)` as `createWebApp`'s `api`.
+Inside a loader or action, `ctx.api` is that typed client, and a call goes
+**straight to the backend's `fetch` in-process** — no network hop, no
+port, the full real lifecycle. This is the SSR data path; it never touches the HTTP mount.
+
+```ts
+// routes/index.tsx — a loader calls the backend IN-PROCESS via ctx.api (no network).
+import type { LoaderContext } from "@nifrajs/web"
+
+export async function loader(ctx: LoaderContext) {
+  const api = ctx.api as { me: { get(): Promise<{ data: { id: string | null } }> } }
+  const res = await api.me.get() // in-process: full validation/middleware, no HTTP round-trip
+  return { me: res.data }
+}
+```
+
+### The auto-mounted /api/* (the new part)
+
+Before, `inProcessClient` fed `ctx.api` but did _not_ serve the
+backend over HTTP — so a browser `POST /api/sync` hit the page router and 404/405'd
+until you hand-wrote a dispatch branch in `server-bun.ts`. Now
+`createWebApp` mounts it for you: a request whose pathname is exactly
+`apiPrefix` (default `/api`) or starts with
+`apiPrefix + "/"` is dispatched to `api.fetch(req.url, req)`
+**before** page routing, and the backend's `Response` is returned
+untouched (the request body is passed through, never pre-read).
+
+```ts
+// server.ts (prod) — createWebApp serves pages AND auto-mounts the backend at /api/*.
+import { inProcessClient } from "@nifrajs/client"
+import { createWebApp } from "@nifrajs/web"
+import { reactAdapter } from "@nifrajs/web-react"
+import { backend } from "./backend"
+import { clientEntry, manifest } from "./server-manifest"
+
+export const app = createWebApp({
+  adapter: reactAdapter,
+  manifest,
+  clientEntry,
+  api: inProcessClient(backend), // → ctx.api in loaders/actions AND auto-mounted at /api/*
+  // apiPrefix: "/api",          // the default; pass "" to disable the HTTP mount (pages only)
+})
+
+// Bun: Bun.serve({ fetch: app.fetch }). No `if (pathname.startsWith("/api/")) …` branch needed —
+// POST /api/sync, GET /api/me, etc. are dispatched to the backend BEFORE the page router sees them.
+```
+
+The dispatch runs in `createWebApp`'s request lifecycle, ahead of the page wildcard,
+for **every method** — so `GET`/`POST`/`PUT`/… all
+reach the backend, and an unknown `/api/…` path returns the _backend's_ 404,
+not the page's. A sibling path that merely shares the prefix string (e.g.
+`/apidocs`) is **not** captured — only the `/api` boundary
+is. Pass `apiPrefix: ""` to turn the mount off and keep `ctx.api` as a
+loader-only client.
+
+[!NOTE] The mount lives in `createWebApp`, and `nifra dev` (the
+Vite-backed dev server) routes every request through that same app's `fetch`. So
+the `/api/*` routes are served identically in development and production — there is
+nothing extra to wire for the dev loop.
+
+### Calling /api/* from the browser
+
+With the routes mounted, a client island or component hits them with the same typed
+`client<typeof backend>` — same-origin, no separate API server.
+
+```ts
+// A browser island / client component hits the mounted HTTP routes with the typed client.
+import { client } from "@nifrajs/client"
+import type { backend } from "./backend"
+
+const api = client<typeof backend>("") // same-origin: /api/sync is served by createWebApp's mount
+export async function runSync(cursor: string) {
+  const { data, error } = await api.api.sync.post({ cursor })
+  return error ? { applied: 0 } : data
+}
+```
+
+### Route actions vs the in-process backend (for mutations)
+
+Two valid ways to mutate; pick by where the call originates.
+
+-
+**Route `action`** — the form/SSR path. A
+`` (or the client submit) runs the route's
+`action(ctx)`, which typically calls `ctx.api` in-process and returns
+`actionData` (or a `redirect`). Progressive-enhancement: works with JS
+off, and the loader revalidates after. Reach for this for page-driven mutations tied to a
+route's UI.
+
+-
+**The mounted `/api/*` backend** — the programmatic path. A browser
+island, a third party, a webhook, or a non-page client calls the HTTP route directly. Reach
+for this when the caller isn't a Nifra route's form — an RPC the page makes on an
+interaction, an external integration, a mobile client.
+
+They share the backend: a route `action` and a browser `fetch` can both
+call `POST /api/sync` — one in-process, one over the mount — and get identical
+validation and behavior.
+
 ## Nifra — Framework contract
 
 > The one-page contract: LoaderContext shape, loader/action/meta/head signatures, the client↔server boundary, and the build-output contract — every signature verified against the source.
@@ -4711,7 +4841,7 @@ MIT.
 
 ## @nifrajs/web
 
-`Action`, `ACTION_GLOBAL`, `buildManifest`, `CachedResponse`, `CacheStore`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumeratePrerenderedPaths`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `GetStaticPaths`, `hashQueryKey`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `RenderAdapter`, `RenderedPage`, `renderPage`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `serializeData`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `Submission`, `SubmitOptions`, `withISR`
+`Action`, `ACTION_GLOBAL`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumeratePrerenderedPaths`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `GetStaticPaths`, `hashQueryKey`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `openGraph`, `OpenGraphInput`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `RenderAdapter`, `RenderedPage`, `renderPage`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `ScriptDescriptor`, `serializeData`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `Submission`, `SubmitOptions`, `withISR`
 
 ## @nifrajs/web-preact
 
