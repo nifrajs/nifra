@@ -849,6 +849,12 @@ const css = `
   .play-run-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .play-run { min-height: 40px; }
   .play-kbd-hint { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
+  .play-share { min-height: 40px; margin-left: auto; }
+  .play-share-msg { font-size: 12px; color: var(--muted); min-height: 1em; }
+  /* Embed mode (/play?embed=1): strip site chrome so /play drops cleanly into an <iframe>. */
+  .play-embed header.site, .play-embed footer.site,
+  .play-embed .nifra-bot-container, .play-embed .play-head { display: none; }
+  .play-embed main.wrap { padding-top: 12px; }
   .play-kbd {
     font-family: ${MONO}; font-size: 11px; color: var(--soft);
     background: var(--surface); border: 1px solid var(--line-2); border-bottom-width: 2px;

@@ -64,6 +64,10 @@ export default function Play() {
             <kbd className="play-kbd">⌘</kbd>
             <kbd className="play-kbd">↵</kbd> to run
           </span>
+          <button type="button" id="play-share" className="button play-share">
+            Fork to link
+          </button>
+          <span id="play-share-msg" className="play-share-msg" aria-live="polite" />
         </div>
       </div>
 

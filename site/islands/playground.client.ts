@@ -12,6 +12,7 @@
 import { server } from "@nifrajs/core"
 import { type RunResult, runApp } from "@nifrajs/runner"
 import { t } from "@nifrajs/schema"
+import { decodeState, encodeState, readShareHash, shareHash } from "./share-codec"
 
 interface Preset {
   readonly label: string
@@ -152,12 +153,45 @@ async function run(
   }
 }
 
-function init(): void {
+/** Encode the current editors into a `#play=` link, push it to the address bar, and copy it. */
+async function share(
+  code: HTMLTextAreaElement,
+  reqs: HTMLTextAreaElement,
+  msg: HTMLElement | null,
+): Promise<void> {
+  let note: string
+  try {
+    const hash = shareHash(await encodeState({ code: code.value, requests: reqs.value }))
+    const url = location.origin + location.pathname + location.search + hash
+    history.replaceState(null, "", hash) // make the link real without a reload
+    note = url.length > 8000 ? "Copied — long link, may not paste everywhere" : "Link copied"
+    try {
+      await navigator.clipboard.writeText(url)
+    } catch {
+      note = "Link is in your address bar (clipboard blocked)"
+    }
+  } catch {
+    note = "Couldn't build the link"
+  }
+  if (msg) {
+    msg.textContent = note
+    window.setTimeout(() => {
+      if (msg.textContent === note) msg.textContent = ""
+    }, 4000)
+  }
+}
+
+async function init(): Promise<void> {
   const code = $<HTMLTextAreaElement>("#play-code")
   const reqs = $<HTMLTextAreaElement>("#play-requests")
   const out = $<HTMLElement>("#play-results")
   const runBtn = $<HTMLButtonElement>("#play-run")
   if (!code || !reqs || !out || !runBtn) return
+
+  // Embed mode (`?embed=1`) drops the site chrome so /play can live in an <iframe>.
+  if (new URLSearchParams(location.search).has("embed")) {
+    document.documentElement.classList.add("play-embed")
+  }
 
   runBtn.addEventListener("click", () => {
     void run(code, reqs, out)
@@ -171,6 +205,13 @@ function init(): void {
   }
   code.addEventListener("keydown", runHotkey)
   reqs.addEventListener("keydown", runHotkey)
+
+  const shareBtn = $<HTMLButtonElement>("#play-share")
+  const shareMsg = $<HTMLElement>("#play-share-msg")
+  shareBtn?.addEventListener("click", () => {
+    void share(code, reqs, shareMsg)
+  })
+
   for (const btn of document.querySelectorAll<HTMLButtonElement>("[data-preset]")) {
     const preset = PRESETS[btn.dataset.preset ?? ""]
     if (!preset) continue
@@ -183,8 +224,19 @@ function init(): void {
       void run(code, reqs, out)
     })
   }
-  // Run the default once so the results panel is populated on first paint.
+
+  // A share link (`#play=…`) reconstructs custom editor state; otherwise the SSR'd starter stands.
+  const payload = readShareHash(location.hash)
+  const restored = payload ? await decodeState(payload) : null
+  if (restored) {
+    code.value = restored.code
+    reqs.value = restored.requests
+    for (const btn of document.querySelectorAll<HTMLButtonElement>("[data-preset]")) {
+      btn.classList.remove("active") // custom code — no preset is active
+    }
+  }
+  // Run once so the results panel is populated on first paint (restored or default).
   void run(code, reqs, out)
 }
 
-init()
+void init()
