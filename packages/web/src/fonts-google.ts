@@ -24,6 +24,7 @@
 import { writeFile as fsWriteFile, mkdir } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { type FontDisplay, fontFace, fontPreload } from "./fonts.ts"
+import type { LinkDescriptor } from "./manifest.ts"
 
 /** Options describing the Google font to fetch + self-host. */
 export interface GoogleFontOptions {
@@ -82,7 +83,7 @@ export interface LoadGoogleFontResult {
   readonly assets: readonly FontAsset[]
   /** `fontPreload()` link-attribute sets — spread the ones you want into a layout's `meta.link`.
    * Preloading *every* weight/subset is wasteful; usually preload just the primary subset + weight. */
-  readonly preloads: readonly Record<string, string>[]
+  readonly preloads: readonly LinkDescriptor[]
 }
 
 export interface LoadGoogleFontIO {
@@ -340,7 +341,7 @@ export async function loadGoogleFont(
 
   const assets: FontAsset[] = []
   const rules: string[] = []
-  const preloads: Record<string, string>[] = []
+  const preloads: LinkDescriptor[] = []
 
   for (const face of faces) {
     // Prefer woff2; the CSS2 endpoint with a Chrome UA only ever returns woff2, but be defensive.

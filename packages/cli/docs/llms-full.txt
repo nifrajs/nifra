@@ -2591,8 +2591,9 @@ own stylesheet. Pass `manifest.routeStyles` to `createWebApp` alongside
 
 Everything you'd otherwise read the source to learn, on one page: the
 `LoaderContext` shape, the loader / action / meta / head signatures, what runs on
-the server vs the client, and the build-output contract. Every signature here is verified
-against the `@nifrajs/web` source.
+the server vs the client, the two ways to handle a request, the dynamic-route 404 rule, and
+the build-output contract. Every signature here is verified against the
+`@nifrajs/web` source.
 
 ### LoaderContext
 
@@ -2654,6 +2655,73 @@ export default function User(props) { /* props.data, props.actionData, props.par
 say) — it's passed through untouched. Any other return is serialized as
 `actionData`.
 
+### Two ways to handle a request
+
+A page's data comes from a `loader` calling the **in-process backend**
+(`ctx.api`) — but that backend is **loaders-only**: it registers
+`GET` handlers, so a `.post()` to `ctx.api` answers
+**405**. A **public POST** (a browser form or `fetch`) is
+a route **action** export, not an `inProcessClient(backend).post()`
+call.
+
+```ts
+// TWO ways to handle a request — pick by who is calling.
+import type { LoaderContext } from "@nifrajs/web"
+
+// (1) A page's own data + mutations → route exports. A PUBLIC POST is a route ACTION
+//     (routes/contact.tsx) — the browser POSTs the route's own URL, nifra runs `action`:
+export async function action(ctx: LoaderContext) {
+  const form = await ctx.request.formData()        // the browser POSTed this route
+  return { ok: true, body: String(form.get("body")) } // → props.actionData on re-render
+}
+
+// (2) ctx.api is the IN-PROCESS backend client (the inProcessClient(server) the app was given).
+//     It is LOADERS-ONLY: the SSR backend registers GET handlers, so a .post() to ctx.api 405s.
+export async function loader(ctx: LoaderContext) {
+  // ✅ a GET in-process — no HTTP hop. (A .post() to ctx.api would 405; write an `action` instead.)
+  return { id: ctx.params.id }
+}
+
+// Rule of thumb: data INTO a page → loader + ctx.api (GET). A mutation FROM the browser
+// (a form/fetch POST) → an `action` export on the route. Don't `inProcessClient(api).post()`.
+```
+
+### Dynamic routes & the 404 / control-flow rule
+
+A `[param]` route's loader runs for _any_ value on plain SSR —
+`getStaticPaths`'s `fallback: "404"` is enforced only by the prerender /
+CDN layer, never by the on-demand worker. So a loader that can't find its record
+**must** 404 itself. The mechanism is the throw contract:
+
+```ts
+// routes/users/[id].tsx — plain SSR runs the loader for ANY :id value. `fallback: "404"`
+// only takes effect under prerender/CDN, so on on-demand SSR you MUST guard and 404 yourself.
+import type { LoaderContext } from "@nifrajs/web"
+
+export async function loader(ctx: LoaderContext) {
+  const user = await lookupUser(ctx.params.id)
+  if (!user) {
+    // CONTROL FLOW: a thrown Response is an INTENTIONAL HTTP response — it propagates untouched
+    // (no _error boundary, no 500). This is how you 404 a missing record.
+    throw new Response("Not Found", { status: 404 })
+  }
+  return { user }
+}
+
+declare function lookupUser(id: string): Promise<{ name: string } | null>
+
+// The throw contract, stated once:
+//   • throw a Response  → that exact HTTP response is sent (404 / redirect() / 403 / …). Control flow.
+//   • throw an Error    → renders the nearest _error boundary if one exists, else a 500. A bug.
+// So NEVER `throw new Error("not found")` to mean 404 — that is a 500. Throw a 404 Response.
+```
+
+**Throwing a `Response` is control flow** — that exact HTTP response
+(a 404, a `redirect()`, a 403) is sent untouched, bypassing the
+`_error` boundary. **Throwing an `Error` is a fault** — it
+renders the nearest `_error` boundary (or a 500 if there is none). Never throw an
+`Error` to signal a 404.
+
 ### Meta & head rendering rules
 
 A route's `<head>` is its **layout chain's** head merged with
@@ -2677,18 +2745,22 @@ export const meta = {
 //     An undefined page title keeps the layout's.
 //   • meta / link arrays: CONCATENATED outermost-layout → … → page (so the page's canonical
 //     comes after the layout's links).
-// <link> attributes are name-validated (any letter/digit/hyphen name) and value-escaped against
-// XSS — so rel/href/hreflang/crossorigin/media/sizes/as/integrity/fetchpriority/… all survive.
+// <link> attributes are typed (LinkDescriptor: a partial like { rel, href, hreflang } is assignable),
+// name-validated (any letter/digit/hyphen name) and value-escaped against XSS — so
+// rel/href/hreflang/crossorigin/media/sizes/as/integrity/fetchpriority/… all survive. A boolean
+// attribute (e.g. `disabled: true`) renders bare; `false`/`undefined` is omitted.
 ```
 
 The merge is **nearest-wins** for scalars (the page's `title` beats an
 inner layout's, which beats an outer one) and **concatenated** for the
-`meta` / `link` arrays (outermost layout first, page last). Every
-`<link>` attribute with a normal name — `rel`, `href`,
-`hreflang`, `crossorigin`, `media`, `sizes`,
-`type`, `as`, `integrity`, `referrerpolicy`,
-`fetchpriority`, `imagesrcset` — survives into the SSR'd tag; values are
-HTML-escaped against XSS.
+`meta` / `link` arrays (outermost layout first, page last). A
+`link` entry is a typed `LinkDescriptor` — a partial like
+`{ rel, href, hreflang }` is assignable, custom / `data-*` attrs
+pass through, and every `<link>` attribute with a normal name —
+`rel`, `href`, `hreflang`, `crossorigin`,
+`media`, `sizes`, `type`, `as`,
+`integrity`, `referrerpolicy`, `fetchpriority`,
+`imagesrcset` — survives into the SSR'd tag; values are HTML-escaped against XSS.
 
 ### The client ↔ server boundary
 
@@ -2709,7 +2781,8 @@ or `env`. Keep server-only imports out of a route file's top level.
 // The client gets the loader's RETURN VALUE (serialized into the document), never the loader
 // itself, the api, or env. So:
 //  1. Never import server-only modules (Bun, a DB client, secrets) at the top level of a route
-//     file — the bundler pulls it into the client chunk and it crashes / leaks.
+//     file — the bundler pulls it into the client chunk and it crashes / leaks. (The build now
+//     FAILS with a named error if a `node:` built-in reaches a client chunk — see below.)
 //  2. A client soft-nav re-runs the loader over the network (X-Nifra-Data) and re-merges the
 //     same layout-chain head, so sitewide tags persist across navigation — no page-only flash.
 ```
@@ -2731,14 +2804,80 @@ or `env`. Keep server-only imports out of a route file's top level.
   "routeStyles": { "users/[id]": ["/assets/_layout-H.css"] }  // per-route CSS (chain only)
 }
 
-// Three invariants worth knowing:
+// Invariants worth knowing:
 //  • Chunk names are URL-PATH-SAFE. A dynamic-route file [slug].tsx would emit `[slug]-H.js`,
 //    whose [ ] make a static server 400 the request. The build renames it (`[slug]` → `_slug_`)
 //    and rewrites every reference, so the lazy import resolves and the route hydrates.
 //  • `process.env` is compiled away. `process.env` → `({})` and `process.env.NODE_ENV` → the
-//    build mode; every other `process.env.X` becomes undefined. No `process is not defined`
-//    crash in the browser, no server env leaking into the client bundle.
+//    build mode; every other `process.env.X` becomes undefined — EXCEPT names you opt in with the
+//    PUBLIC_ prefix (Vite/Next convention), which are baked in with their value (see below). No
+//    `process is not defined` crash, and no unprefixed (secret) env leaking into the client bundle.
+//  • A `node:` built-in in the CLIENT bundle FAILS the build with a named error (move it behind a
+//    loader/action — server-only). It builds via a browser polyfill otherwise, then breaks at runtime.
 //  • Assets are content-hashed + immutable. Serve /assets/* with a long-lived cache header.
+```
+
+### Public env in the client bundle
+
+`process.env` is compiled away in the browser bundle, so a bare read can't crash
+hydration and an unprefixed (secret) var resolves to `undefined` — it never reaches
+the client. To expose a value, give it the `PUBLIC_` prefix (the Vite / Next
+convention) in the build environment and it's baked in by value. The prefix is overridable via
+`buildClient`'s `publicEnvPrefix` (`""` disables it).
+
+```ts
+// process.env in the CLIENT bundle is compiled at build time:
+//   process.env             → ({})          (a bare read won't crash hydration)
+//   process.env.NODE_ENV    → "production"  (the build mode — frameworks' prod/dev branch)
+//   process.env.SECRET_KEY  → undefined     (unprefixed → never exposed; no secret leak)
+//   process.env.PUBLIC_API_URL → "https://api.example.com"  (PUBLIC_-prefixed → baked in by value)
+//
+// So to ship a value to the browser, give it a PUBLIC_ prefix in the BUILD environment:
+//   PUBLIC_API_URL=https://api.example.com  bun run build
+// then read process.env.PUBLIC_API_URL in app code — it becomes a string literal after the build.
+import { buildClient } from "@nifrajs/web/build"
+
+// Override the prefix (or disable auto-exposure) via buildClient:
+await buildClient({
+  routesDir: "./routes",
+  outDir: "./dist",
+  clientModule: "@nifrajs/web-react/client",
+  publicEnvPrefix: "NIFRA_PUBLIC_", // default "PUBLIC_"; "" disables auto-exposure entirely
+})
+```
+
+### Static emit (prerender)
+
+Opt a static route into SSG with `export const prerender = true` (or a dynamic
+route with `export const getStaticPaths`), then call `prerenderRoutes` —
+a **public** export of `@nifrajs/web/build`. It drives the app's own
+`fetch` to write `index.html` + `_data.json` per route;
+`cloudflarePagesRoutes` emits the `_routes.json` for a hybrid CDN +
+worker deploy. No need to boot a server and curl it.
+
+```ts
+// build.ts — emit static HTML for opted-in routes. prerenderRoutes + cloudflarePagesRoutes
+// are PUBLIC (exported from @nifrajs/web/build) — no need to boot a server and curl it.
+import { buildClient, prerenderRoutes, cloudflarePagesRoutes } from "@nifrajs/web/build"
+import { discoverRoutes } from "@nifrajs/web/fs"
+
+// 1. Build the client bundle first (so the app references the hashed entry).
+await buildClient({ routesDir: "./routes", outDir: "./dist", clientModule: "@nifrajs/web-react/client" })
+
+// 2. Drive the app's own fetch to render each opted-in route → dist/<path>/index.html + _data.json.
+//    Static routes opt in with `export const prerender = true`; dynamic routes enumerate concrete
+//    params with `export const getStaticPaths` (+ a `fallback: "ssr" | "404"`).
+const { app } = await import("./server")
+const { prerendered } = await prerenderRoutes({
+  app,                                       // the built createWebApp (a { fetch } is enough)
+  routes: discoverRoutes("./routes").routes,
+  outDir: "./dist",
+})
+
+// 3. Hybrid deploy: a Cloudflare Pages _routes.json that serves the prerendered HTML + _data.json
+//    from the CDN and falls everything else through to the SSR worker.
+const paths = prerendered.map((p) => p.path)
+await Bun.write("./dist/_routes.json", JSON.stringify(cloudflarePagesRoutes({ prerendered: paths })))
 ```
 
 See [SSG & ISR](/docs/rendering) for prerendering, [Dev & HMR](/docs/dev) for the
@@ -4572,7 +4711,7 @@ MIT.
 
 ## @nifrajs/web
 
-`Action`, `ACTION_GLOBAL`, `buildManifest`, `CachedResponse`, `CacheStore`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumeratePrerenderedPaths`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `GetStaticPaths`, `hashQueryKey`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LayoutEntry`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `RenderAdapter`, `RenderedPage`, `renderPage`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `serializeData`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `Submission`, `SubmitOptions`, `withISR`
+`Action`, `ACTION_GLOBAL`, `buildManifest`, `CachedResponse`, `CacheStore`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumeratePrerenderedPaths`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `GetStaticPaths`, `hashQueryKey`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `RenderAdapter`, `RenderedPage`, `renderPage`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `serializeData`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `Submission`, `SubmitOptions`, `withISR`
 
 ## @nifrajs/web-preact
 

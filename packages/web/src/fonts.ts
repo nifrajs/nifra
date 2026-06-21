@@ -14,6 +14,7 @@
  *   // a root layout's meta — becomes a <link rel="preload" as="font"> in <head>
  *   export const meta = { link: [fontPreload({ href: "/fonts/inter.woff2" })] }
  */
+import type { LinkDescriptor } from "./manifest.ts"
 
 /** `font-display` strategy. `swap` (the default here) paints fallback text immediately, then swaps. */
 export type FontDisplay = "auto" | "block" | "swap" | "fallback" | "optional"
@@ -135,7 +136,7 @@ export interface FontPreloadInput {
  * escaped at injection by the head renderer. Preloading the font file removes a render-blocking round
  * trip (the browser would otherwise discover the font only after parsing the CSS).
  */
-export function fontPreload(input: FontPreloadInput): Record<string, string> {
+export function fontPreload(input: FontPreloadInput): LinkDescriptor {
   const type = input.type ?? MIME_BY_EXT[extOf(input.href)]
   return {
     rel: "preload",

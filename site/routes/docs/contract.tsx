@@ -63,8 +63,10 @@ export const meta = {
 //     An undefined page title keeps the layout's.
 //   • meta / link arrays: CONCATENATED outermost-layout → … → page (so the page's canonical
 //     comes after the layout's links).
-// <link> attributes are name-validated (any letter/digit/hyphen name) and value-escaped against
-// XSS — so rel/href/hreflang/crossorigin/media/sizes/as/integrity/fetchpriority/… all survive.`
+// <link> attributes are typed (LinkDescriptor: a partial like { rel, href, hreflang } is assignable),
+// name-validated (any letter/digit/hyphen name) and value-escaped against XSS — so
+// rel/href/hreflang/crossorigin/media/sizes/as/integrity/fetchpriority/… all survive. A boolean
+// attribute (e.g. \`disabled: true\`) renders bare; \`false\`/\`undefined\` is omitted.`
 
 const BOUNDARY = `// What runs WHERE:
 //
@@ -78,9 +80,93 @@ const BOUNDARY = `// What runs WHERE:
 // The client gets the loader's RETURN VALUE (serialized into the document), never the loader
 // itself, the api, or env. So:
 //  1. Never import server-only modules (Bun, a DB client, secrets) at the top level of a route
-//     file — the bundler pulls it into the client chunk and it crashes / leaks.
+//     file — the bundler pulls it into the client chunk and it crashes / leaks. (The build now
+//     FAILS with a named error if a \`node:\` built-in reaches a client chunk — see below.)
 //  2. A client soft-nav re-runs the loader over the network (X-Nifra-Data) and re-merges the
 //     same layout-chain head, so sitewide tags persist across navigation — no page-only flash.`
+
+const DUAL_API = `// TWO ways to handle a request — pick by who is calling.
+import type { LoaderContext } from "@nifrajs/web"
+
+// (1) A page's own data + mutations → route exports. A PUBLIC POST is a route ACTION
+//     (routes/contact.tsx) — the browser POSTs the route's own URL, nifra runs \`action\`:
+export async function action(ctx: LoaderContext) {
+  const form = await ctx.request.formData()        // the browser POSTed this route
+  return { ok: true, body: String(form.get("body")) } // → props.actionData on re-render
+}
+
+// (2) ctx.api is the IN-PROCESS backend client (the inProcessClient(server) the app was given).
+//     It is LOADERS-ONLY: the SSR backend registers GET handlers, so a .post() to ctx.api 405s.
+export async function loader(ctx: LoaderContext) {
+  // ✅ a GET in-process — no HTTP hop. (A .post() to ctx.api would 405; write an \`action\` instead.)
+  return { id: ctx.params.id }
+}
+
+// Rule of thumb: data INTO a page → loader + ctx.api (GET). A mutation FROM the browser
+// (a form/fetch POST) → an \`action\` export on the route. Don't \`inProcessClient(api).post()\`.`
+
+const PARAM_404 = `// routes/users/[id].tsx — plain SSR runs the loader for ANY :id value. \`fallback: "404"\`
+// only takes effect under prerender/CDN, so on on-demand SSR you MUST guard and 404 yourself.
+import type { LoaderContext } from "@nifrajs/web"
+
+export async function loader(ctx: LoaderContext) {
+  const user = await lookupUser(ctx.params.id)
+  if (!user) {
+    // CONTROL FLOW: a thrown Response is an INTENTIONAL HTTP response — it propagates untouched
+    // (no _error boundary, no 500). This is how you 404 a missing record.
+    throw new Response("Not Found", { status: 404 })
+  }
+  return { user }
+}
+
+declare function lookupUser(id: string): Promise<{ name: string } | null>
+
+// The throw contract, stated once:
+//   • throw a Response  → that exact HTTP response is sent (404 / redirect() / 403 / …). Control flow.
+//   • throw an Error    → renders the nearest _error boundary if one exists, else a 500. A bug.
+// So NEVER \`throw new Error("not found")\` to mean 404 — that is a 500. Throw a 404 Response.`
+
+const PUBLIC_ENV = `// process.env in the CLIENT bundle is compiled at build time:
+//   process.env             → ({})          (a bare read won't crash hydration)
+//   process.env.NODE_ENV    → "production"  (the build mode — frameworks' prod/dev branch)
+//   process.env.SECRET_KEY  → undefined     (unprefixed → never exposed; no secret leak)
+//   process.env.PUBLIC_API_URL → "https://api.example.com"  (PUBLIC_-prefixed → baked in by value)
+//
+// So to ship a value to the browser, give it a PUBLIC_ prefix in the BUILD environment:
+//   PUBLIC_API_URL=https://api.example.com  bun run build
+// then read process.env.PUBLIC_API_URL in app code — it becomes a string literal after the build.
+import { buildClient } from "@nifrajs/web/build"
+
+// Override the prefix (or disable auto-exposure) via buildClient:
+await buildClient({
+  routesDir: "./routes",
+  outDir: "./dist",
+  clientModule: "@nifrajs/web-react/client",
+  publicEnvPrefix: "NIFRA_PUBLIC_", // default "PUBLIC_"; "" disables auto-exposure entirely
+})`
+
+const STATIC_EMIT = `// build.ts — emit static HTML for opted-in routes. prerenderRoutes + cloudflarePagesRoutes
+// are PUBLIC (exported from @nifrajs/web/build) — no need to boot a server and curl it.
+import { buildClient, prerenderRoutes, cloudflarePagesRoutes } from "@nifrajs/web/build"
+import { discoverRoutes } from "@nifrajs/web/fs"
+
+// 1. Build the client bundle first (so the app references the hashed entry).
+await buildClient({ routesDir: "./routes", outDir: "./dist", clientModule: "@nifrajs/web-react/client" })
+
+// 2. Drive the app's own fetch to render each opted-in route → dist/<path>/index.html + _data.json.
+//    Static routes opt in with \`export const prerender = true\`; dynamic routes enumerate concrete
+//    params with \`export const getStaticPaths\` (+ a \`fallback: "ssr" | "404"\`).
+const { app } = await import("./server")
+const { prerendered } = await prerenderRoutes({
+  app,                                       // the built createWebApp (a { fetch } is enough)
+  routes: discoverRoutes("./routes").routes,
+  outDir: "./dist",
+})
+
+// 3. Hybrid deploy: a Cloudflare Pages _routes.json that serves the prerendered HTML + _data.json
+//    from the CDN and falls everything else through to the SSR worker.
+const paths = prerendered.map((p) => p.path)
+await Bun.write("./dist/_routes.json", JSON.stringify(cloudflarePagesRoutes({ prerendered: paths })))`
 
 const BUILD_OUTPUT = `// \`nifra build\` → buildClient (Bun.build) writes dist/ + manifest.json. The contract:
 {
@@ -91,13 +177,16 @@ const BUILD_OUTPUT = `// \`nifra build\` → buildClient (Bun.build) writes dist
   "routeStyles": { "users/[id]": ["/assets/_layout-H.css"] }  // per-route CSS (chain only)
 }
 
-// Three invariants worth knowing:
+// Invariants worth knowing:
 //  • Chunk names are URL-PATH-SAFE. A dynamic-route file [slug].tsx would emit \`[slug]-H.js\`,
 //    whose [ ] make a static server 400 the request. The build renames it (\`[slug]\` → \`_slug_\`)
 //    and rewrites every reference, so the lazy import resolves and the route hydrates.
 //  • \`process.env\` is compiled away. \`process.env\` → \`({})\` and \`process.env.NODE_ENV\` → the
-//    build mode; every other \`process.env.X\` becomes undefined. No \`process is not defined\`
-//    crash in the browser, no server env leaking into the client bundle.
+//    build mode; every other \`process.env.X\` becomes undefined — EXCEPT names you opt in with the
+//    PUBLIC_ prefix (Vite/Next convention), which are baked in with their value (see below). No
+//    \`process is not defined\` crash, and no unprefixed (secret) env leaking into the client bundle.
+//  • A \`node:\` built-in in the CLIENT bundle FAILS the build with a named error (move it behind a
+//    loader/action — server-only). It builds via a browser polyfill otherwise, then breaks at runtime.
 //  • Assets are content-hashed + immutable. Serve /assets/* with a long-lived cache header.`
 
 export default function Contract() {
@@ -107,8 +196,9 @@ export default function Contract() {
       <p className="lead">
         Everything you'd otherwise read the source to learn, on one page: the{" "}
         <code>LoaderContext</code> shape, the loader / action / meta / head signatures, what runs on
-        the server vs the client, and the build-output contract. Every signature here is verified
-        against the <code>@nifrajs/web</code> source.
+        the server vs the client, the two ways to handle a request, the dynamic-route 404 rule, and
+        the build-output contract. Every signature here is verified against the{" "}
+        <code>@nifrajs/web</code> source.
       </p>
 
       <h2>LoaderContext</h2>
@@ -134,6 +224,33 @@ export default function Contract() {
         <code>actionData</code>.
       </blockquote>
 
+      <h2>Two ways to handle a request</h2>
+      <p>
+        A page's data comes from a <code>loader</code> calling the <strong>in-process backend</strong>{" "}
+        (<code>ctx.api</code>) — but that backend is <strong>loaders-only</strong>: it registers{" "}
+        <code>GET</code> handlers, so a <code>.post()</code> to <code>ctx.api</code> answers{" "}
+        <strong>405</strong>. A <strong>public POST</strong> (a browser form or <code>fetch</code>) is
+        a route <strong>action</strong> export, not an <code>inProcessClient(backend).post()</code>{" "}
+        call.
+      </p>
+      <CodeBlock code={DUAL_API} />
+
+      <h2>Dynamic routes &amp; the 404 / control-flow rule</h2>
+      <p>
+        A <code>[param]</code> route's loader runs for <em>any</em> value on plain SSR —{" "}
+        <code>getStaticPaths</code>'s <code>fallback: "404"</code> is enforced only by the prerender /
+        CDN layer, never by the on-demand worker. So a loader that can't find its record{" "}
+        <strong>must</strong> 404 itself. The mechanism is the throw contract:
+      </p>
+      <CodeBlock code={PARAM_404} />
+      <p>
+        <strong>Throwing a <code>Response</code> is control flow</strong> — that exact HTTP response
+        (a 404, a <code>redirect()</code>, a 403) is sent untouched, bypassing the{" "}
+        <code>_error</code> boundary. <strong>Throwing an <code>Error</code> is a fault</strong> — it
+        renders the nearest <code>_error</code> boundary (or a 500 if there is none). Never throw an{" "}
+        <code>Error</code> to signal a 404.
+      </p>
+
       <h2>Meta &amp; head rendering rules</h2>
       <p>
         A route's <code>&lt;head&gt;</code> is its <strong>layout chain's</strong> head merged with
@@ -145,12 +262,14 @@ export default function Contract() {
       <p>
         The merge is <strong>nearest-wins</strong> for scalars (the page's <code>title</code> beats an
         inner layout's, which beats an outer one) and <strong>concatenated</strong> for the{" "}
-        <code>meta</code> / <code>link</code> arrays (outermost layout first, page last). Every{" "}
-        <code>&lt;link&gt;</code> attribute with a normal name — <code>rel</code>, <code>href</code>,{" "}
-        <code>hreflang</code>, <code>crossorigin</code>, <code>media</code>, <code>sizes</code>,{" "}
-        <code>type</code>, <code>as</code>, <code>integrity</code>, <code>referrerpolicy</code>,{" "}
-        <code>fetchpriority</code>, <code>imagesrcset</code> — survives into the SSR'd tag; values are
-        HTML-escaped against XSS.
+        <code>meta</code> / <code>link</code> arrays (outermost layout first, page last). A{" "}
+        <code>link</code> entry is a typed <code>LinkDescriptor</code> — a partial like{" "}
+        <code>{"{ rel, href, hreflang }"}</code> is assignable, custom / <code>data-*</code> attrs
+        pass through, and every <code>&lt;link&gt;</code> attribute with a normal name —{" "}
+        <code>rel</code>, <code>href</code>, <code>hreflang</code>, <code>crossorigin</code>,{" "}
+        <code>media</code>, <code>sizes</code>, <code>type</code>, <code>as</code>,{" "}
+        <code>integrity</code>, <code>referrerpolicy</code>, <code>fetchpriority</code>,{" "}
+        <code>imagesrcset</code> — survives into the SSR'd tag; values are HTML-escaped against XSS.
       </p>
 
       <h2>The client ↔ server boundary</h2>
@@ -169,6 +288,28 @@ export default function Contract() {
         <code>&lt;link&gt;</code> injection).
       </p>
       <CodeBlock code={BUILD_OUTPUT} />
+
+      <h2>Public env in the client bundle</h2>
+      <p>
+        <code>process.env</code> is compiled away in the browser bundle, so a bare read can't crash
+        hydration and an unprefixed (secret) var resolves to <code>undefined</code> — it never reaches
+        the client. To expose a value, give it the <code>PUBLIC_</code> prefix (the Vite / Next
+        convention) in the build environment and it's baked in by value. The prefix is overridable via{" "}
+        <code>buildClient</code>'s <code>publicEnvPrefix</code> (<code>""</code> disables it).
+      </p>
+      <CodeBlock code={PUBLIC_ENV} />
+
+      <h2>Static emit (prerender)</h2>
+      <p>
+        Opt a static route into SSG with <code>export const prerender = true</code> (or a dynamic
+        route with <code>export const getStaticPaths</code>), then call <code>prerenderRoutes</code> —{" "}
+        a <strong>public</strong> export of <code>@nifrajs/web/build</code>. It drives the app's own{" "}
+        <code>fetch</code> to write <code>index.html</code> + <code>_data.json</code> per route;{" "}
+        <code>cloudflarePagesRoutes</code> emits the <code>_routes.json</code> for a hybrid CDN +
+        worker deploy. No need to boot a server and curl it.
+      </p>
+      <CodeBlock code={STATIC_EMIT} />
+
       <p>
         See <a href="/docs/rendering">SSG &amp; ISR</a> for prerendering, <a href="/docs/dev">Dev &amp; HMR</a> for the
         two dev loops and the <code>--port</code> flag, and <a href="/docs/data">Loaders &amp; actions</a> for the
