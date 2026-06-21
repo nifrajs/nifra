@@ -7,7 +7,7 @@
  * the adapter interprets them. That keeps this package both framework-agnostic and free
  * of DOM types: it is pure server orchestration + string building.
  */
-import { type Server, server } from "@nifrajs/core"
+import { server } from "@nifrajs/core"
 import {
   DEFERRED_ERROR_CODE,
   DEFERRED_RUNTIME,
@@ -946,8 +946,18 @@ function isMountableApi(api: unknown): api is MountableApi {
  * and a wildcard catch-all renders `_404` (or a plain 404). Reuses @nifrajs/core's router +
  * lifecycle, so matching, params, and precedence are battle-tested. fs-free — feed it a
  * manifest from `discoverRoutes` (`@nifrajs/web/fs`) at startup, so the served app stays portable.
+ *
+ * **Typed platform bindings.** Pass `Env` — `createWebApp<Env>({ … })` — to declare the app's Workers
+ * bindings ONCE. It seeds the returned `Server`'s context with `{ env: Env }` (exactly as the backend's
+ * `server<Env>()` does), so `app.fetch(req, { env })` / `toFetchHandler(app)` type-check the `env`
+ * argument against the declared shape — no per-binding cast at the edge entry. Per-route loaders/actions
+ * stay typed independently of this call: annotate them with `@nifrajs/client`'s `LoaderArgs<Api, Env>`
+ * (same `Env`) so `ctx.env.MY_KV` is typed there too. Omit the parameter and `Env` is `unknown` — the
+ * secure default; validate at the trust boundary before use.
  */
-export function createWebApp(options: CreateWebAppOptions): Server {
+export function createWebApp<Env = unknown>(
+  options: CreateWebAppOptions,
+): ReturnType<typeof server<Env>> {
   const { adapter, manifest, clientEntry, title, api } = options
   const titleOption = title === undefined ? {} : { title }
   // Draft/preview: when a `draftSecret` is configured, each request's signed `__nifra_draft` cookie is
@@ -969,7 +979,10 @@ export function createWebApp(options: CreateWebAppOptions): Server {
     if (perRoute !== undefined) return { styles: perRoute }
     return options.styles && options.styles.length > 0 ? { styles: options.styles } : {}
   }
-  const app = server()
+  // Seed the context with the declared `Env` so `app.fetch(req, { env })` / `toFetchHandler(app)` type
+  // the platform bindings (see the `createWebApp` doc). The runtime `env` still arrives per-request via
+  // `app.fetch(req, { env })`; this is a compile-time-only seed (`server<Env>()` casts, doesn't store).
+  const app = server<Env>()
   // Auto-mount the in-process backend over HTTP at `apiPrefix` (default `/api`), BEFORE page routing.
   // `onRequest` runs on the raw request ahead of the router, so this wins over the page wildcard `/*`
   // for every method (POST/GET/PUT/…) — not just the GET page routes — and a backend 404 (`/api/none`)
