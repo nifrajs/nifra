@@ -256,6 +256,12 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
     plugins: [...plugins],
     resolve: {
       conditions: [...(options.conditions ?? []), "bun", "module", "browser", "development"],
+      // Dedupe React to ONE copy. In a multi-root workspace a shared package can pull react/react-dom
+      // from a SIBLING app's node_modules, so the dev server loads two React cores → a second hook
+      // dispatcher → `resolveDispatcher().useState` null on any hook-using route (the error points at the
+      // component, not the resolution — brutal to diagnose). Mirrors the build-time reactDedupePlugin so
+      // dev matches prod. No-op for non-React apps (the package simply isn't present to dedupe).
+      dedupe: ["react", "react-dom"],
     },
     ...(options.define ? { define: options.define } : {}),
   })
