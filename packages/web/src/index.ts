@@ -931,11 +931,13 @@ interface MountableApi {
  * stub, a custom agent — is mountable without `@nifrajs/web` depending on `@nifrajs/client`.
  */
 function isMountableApi(api: unknown): api is MountableApi {
+  // inProcessClient(backend) is a CALLABLE Eden proxy — `typeof` is "function", not "object" — so the
+  // guard must accept both; it only needs a callable `.fetch` (the in-process bridge the outer proxy
+  // exposes for the mount). An object-only check silently disabled the whole /api/* auto-mount.
   return (
-    typeof api === "object" &&
+    (typeof api === "object" || typeof api === "function") &&
     api !== null &&
-    "fetch" in api &&
-    typeof (api as { fetch: unknown }).fetch === "function"
+    typeof (api as { fetch?: unknown }).fetch === "function"
   )
 }
 
