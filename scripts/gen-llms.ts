@@ -57,6 +57,7 @@ const DOC_ORDER = [
   "deployment",
   "cli",
   "dev",
+  "troubleshooting",
 ]
 
 interface DocPage {

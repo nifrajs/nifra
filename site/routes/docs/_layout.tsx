@@ -47,6 +47,7 @@ const GROUPS: ReadonlyArray<{ title: string; links: ReadonlyArray<{ href: string
       { href: "/docs/dev", label: "Dev & HMR" },
       { href: "/docs/cli", label: "CLI" },
       { href: "/docs/deployment", label: "Deployment" },
+      { href: "/docs/troubleshooting", label: "Troubleshooting" },
     ],
   },
   {

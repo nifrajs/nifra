@@ -98,9 +98,17 @@ backend in `nifra dev` and in prod alike — no hand-dispatch in `server-bun.ts`
   `throw new Response("", { status: 404 })` for unknown ids.
 - **React is deduped** in both the build and the vite dev server, so a `file:`-linked package shipping
   its own React no longer nulls the SSR hook dispatcher.
-- **Server-only code** → put it in a `*.server.ts` module: the client build empties it (its `node:` /
-  native imports never ship to the browser). A server-only import **co-located** in a route file instead
-  fails the build loud (the `node:`-builtin guard names the chunk) — move it into a `.server.ts` module.
+- **Server-only code** → three ways to keep it out of the browser bundle:
+  - put it in a `*.server.ts` module — the client build empties it (its `node:` / native imports never
+    ship), no extra import needed;
+  - for **pure server logic with no `node:` import** (a secret, a server-only API call), add
+    `import "@nifrajs/web/server-only"` at the top — the client build fails loud, naming the import
+    **chain**, if that module ever reaches a browser chunk (the node-builtin guard can't catch it);
+  - mark the value's type `ServerOnly<T>` (from `@nifrajs/web`) to document intent — but it's
+    type-level only and erases at build, so always pair it with `.server.ts` or the import marker.
+  A server-only import **co-located** in a route file fails the build loud — error: `… reached the
+  client bundle via <chain>`. `nifra check` reports the same transitive chain pre-build. See
+  `/docs/troubleshooting` (keyed on the literal error strings).
 - Run **`nifra check`** (`--json` for agents) as the done-gate: typecheck + typed-client drift +
   server-only-import-in-a-route + raw-`Response`-from-a-route + undeclared dependency.
 
