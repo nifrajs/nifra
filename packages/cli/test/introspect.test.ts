@@ -5,6 +5,7 @@ import { join, resolve } from "node:path"
 import {
   buildRouteTable,
   clientCall,
+  describeProject,
   describeRoutes,
   type RouteJson,
   renderRouteTable,
@@ -17,6 +18,17 @@ import type { LoadedApp } from "../src/load.ts"
 // A minimal LoadedApp whose backend exposes the routes routesToJson reads — the only field it touches.
 const appWith = (routes: unknown[]): LoadedApp =>
   ({ backend: { routes: () => routes } }) as unknown as LoadedApp
+
+// A LoadedApp for describeProject: needs cwd (for the heading) + a routesDir (a missing one → the
+// page-routes section reports "no file routes", keeping the test focused on the API/index behavior).
+const projectWith = (routes: unknown[]): LoadedApp =>
+  ({
+    cwd: "/tmp/nifra-context-app",
+    routesDir: "/tmp/nifra-context-app/routes",
+    outDir: "/tmp/nifra-context-app/dist",
+    framework: { adapter: {}, clientModule: "@nifrajs/web-react/client" },
+    backend: { routes: () => routes },
+  }) as unknown as LoadedApp
 
 // The token-efficiency contract: JSON Schema in, compact TS-shaped contract out — faithful, and a
 // fraction of the raw schema's tokens (the MCP nifra_context payload is built from these).
@@ -320,5 +332,60 @@ describe("describeRoutes (cwd integration)", () => {
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe("describeProject — nifra_context index vs slice", () => {
+  // A backend with a route carrying a real schema, so the difference between the compact index (no
+  // schema) and the full slice (the schema rendered as a TS shape) is observable in the output.
+  const ROUTES = [
+    {
+      method: "GET",
+      path: "/api/orders/:id",
+      schema: {
+        response: {
+          jsonSchema: {
+            type: "object",
+            properties: { id: { type: "string" }, total: { type: "number" } },
+            required: ["id", "total"],
+          },
+        },
+      },
+    },
+    { method: "POST", path: "/api/orders" },
+    { method: "GET", path: "/health" },
+  ]
+
+  test("no-arg call returns a tight INDEX: route list + conventions, NO per-route schemas", () => {
+    const out = describeProject(projectWith(ROUTES))
+    // Every route is listed (so the agent knows what's mounted)…
+    expect(out).toContain("`GET /api/orders/:id`")
+    expect(out).toContain("`POST /api/orders`")
+    expect(out).toContain("`GET /health`")
+    // …but the index omits the heavy per-route detail: no rendered schema, no `call:` line.
+    expect(out).not.toContain("total: number") // the response schema is NOT dumped in the index
+    expect(out).not.toContain("call:")
+    // It points the agent at how to fetch the full contract, and still ships the conventions block.
+    expect(out).toContain("nifra_context")
+    expect(out).toContain("## Conventions (summary)")
+  })
+
+  test("a `path` slice returns the FULL contract (schema + call form) and drops conventions", () => {
+    const out = describeProject(projectWith(ROUTES), { path: "/api/orders" })
+    // Narrowed to the matching routes…
+    expect(out).toContain("`GET /api/orders/:id`")
+    expect(out).not.toContain("/health")
+    // …with the full detail the index withheld: the response schema as a TS shape + the typed-client call.
+    expect(out).toContain("response: `{ id: string, total: number }`")
+    expect(out).toContain("call:")
+    // A slice omits the conventions block (the agent already has it from the index call).
+    expect(out).not.toContain("## Conventions (summary)")
+  })
+
+  test("a `kind: api` slice returns full API detail and no page section", () => {
+    const out = describeProject(projectWith(ROUTES), { kind: "api" })
+    expect(out).toContain("call:")
+    expect(out).not.toContain("## Page routes")
+    expect(out).not.toContain("## Conventions (summary)")
   })
 })

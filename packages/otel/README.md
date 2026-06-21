@@ -49,3 +49,9 @@ interface SpanExporter {
 Use `traceparent` and the built-in semantic attributes in every request span, then send spans to
 your own collector through an exporter. Keep the package edge-safe by installing the OpenTelemetry
 SDK only in apps that need that exporter.
+
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.

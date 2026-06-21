@@ -167,6 +167,20 @@ export function apiRoutesSection(routes: readonly RouteDesc[]): string {
   return `## API routes (backend.ts)\n\nEach route's \`body\`/\`query\`/\`response\` shape is its contract — the typed client derives request inputs and \`res.data\` from these, so a screen built on \`client<typeof app>\` stays in sync automatically. The \`call\` line is the exact \`client<typeof app>\` form: static path segments are properties, a path param is a call (\`({ id })\`), the verb is the terminal call (body first for POST/PUT/PATCH), and every call returns the never-throwing \`{ ok, status, data, error }\` Result.\n\n${lines.join("\n")}`
 }
 
+/** Compact API-routes INDEX for the no-arg `nifra_context` call — `METHOD path` per route, WITHOUT the
+ * body/query/response shapes or the per-route `call` line. Bounds the first-call payload on a big backend:
+ * an agent gets the full route list (so it knows what's mounted) plus a pointer to fetch any route's full
+ * contract via the `path`/`kind` slice, instead of every schema up front. */
+export function apiRoutesIndexSection(routes: readonly RouteDesc[]): string {
+  if (routes.length === 0) {
+    return "## API routes (backend.ts)\n\nNo `backend.ts` server routes found (this app may be frontend-only)."
+  }
+  const lines = [...routes]
+    .sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))
+    .map((r) => `- \`${r.method} ${r.path}\``)
+  return `## API routes (backend.ts)\n\n${routes.length} route${routes.length === 1 ? "" : "s"}. Call \`nifra_context\` again with \`path\` (a route prefix) and/or \`kind: "api"\` for the body/query/response contracts + the exact \`client<typeof app>\` call form — or \`nifra_routes\` for the same as structured JSON.\n\n${lines.join("\n")}`
+}
+
 /** Markdown section listing the file-routed pages (URL pattern → source file). */
 export function pageRoutesSection(manifest: Manifest | undefined): string {
   if (!manifest || manifest.routes.length === 0) {
@@ -203,8 +217,14 @@ export interface ContextFilter {
   readonly kind?: "api" | "pages"
 }
 
-/** Build the project brief (API routes + page routes + conventions) as Markdown — optionally
- * narrowed by {@link ContextFilter} for cheap follow-up calls. */
+/**
+ * Build the project brief as Markdown. A no-arg call returns a tight **INDEX** — the route list (API
+ * routes as `METHOD path`, page routes as `pattern → file`) + conventions + a pointer to fetch full
+ * contracts via the slice — so learning a big project is cheap, not a full-surface schema dump. Passing a
+ * {@link ContextFilter} (`path` prefix and/or `kind`) returns the narrowed, FULL detail (per-route
+ * body/query/response shapes + the typed-client `call` form), and omits the conventions block (the agent
+ * already has it from the index call).
+ */
 export function describeProject(app: LoadedApp, filter?: ContextFilter): string {
   let manifest: Manifest | undefined
   try {
@@ -221,19 +241,24 @@ export function describeProject(app: LoadedApp, filter?: ContextFilter): string 
       pages = { ...manifest, routes: manifest.routes.filter((r) => r.pattern.startsWith(prefix)) }
     }
   }
-  const narrowed = filter?.kind !== undefined || (prefix !== undefined && prefix !== "")
+  // No `path` and no `kind` → the first-call index (compact route list, no per-route schemas). Any filter
+  // → the narrowed full-detail slice (schemas + call form), unchanged.
+  const isIndex = filter?.kind === undefined && (prefix === undefined || prefix === "")
   const sections: string[] = [`# nifra project: ${app.cwd.slice(app.cwd.lastIndexOf("/") + 1)}`]
-  if (!narrowed) {
+  if (isIndex) {
     sections.push(
-      "A full-stack nifra app — Web-standard, one app on Bun, Node, Deno, and the edge.",
+      "A full-stack nifra app — Web-standard, one app on Bun, Node, Deno, and the edge. This is the route INDEX; fetch a route's full body/query/response contract on demand (see below).",
       // Point agents at the verified surface, not recalled APIs — nifra is young, so training data is the
       // wrong source. The MCP tools (nifra_docs / nifra_example) are checked against the installed version.
       "> **Build against THIS surface + the verified tools — do not write nifra APIs from memory** (the\n> framework is young; recalled APIs drift). For framework code, call `nifra_example` (snippets\n> typechecked against the installed version) or `nifra_docs`; verify edits with `nifra_run` + `nifra_check`.",
     )
   }
-  if (filter?.kind !== "pages") sections.push(apiRoutesSection(routes))
+  if (filter?.kind !== "pages") {
+    // Index → compact `METHOD path` list; a slice → the full schema + call-form detail.
+    sections.push(isIndex ? apiRoutesIndexSection(routes) : apiRoutesSection(routes))
+  }
   if (filter?.kind !== "api") sections.push(pageRoutesSection(pages))
-  if (!narrowed) sections.push(CONVENTIONS)
+  if (isIndex) sections.push(CONVENTIONS)
   return sections.join("\n\n")
 }
 

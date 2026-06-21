@@ -119,7 +119,12 @@ type PipeSubprocess = ReturnType<typeof Bun.spawn> & {
   readonly stderr: ReadableStream<Uint8Array>
 }
 
-class WarmRunWorker {
+/** A persistent `mcp-run`/`mcp-render` `--worker` subprocess: the backend/web app is loaded ONCE and
+ * reused across newline-delimited `{ id, input }` requests, replying `{ id, output }`. The same machinery
+ * powers both `nifra_run warm` and `nifra_render warm` — `child` selects which engine, `label` shapes the
+ * cancellation message. The owning handler ({@link createWarmHandler}) fingerprints the source tree and
+ * replaces the worker when a file changes, so warm reuse never serves a stale result. */
+class WarmWorker {
   private readonly proc: PipeSubprocess
   private readonly pending = new Map<
     number,
@@ -135,10 +140,12 @@ class WarmRunWorker {
   private closed = false
 
   constructor(
+    child: "mcp-run" | "mcp-render",
     cwd: string,
     readonly fingerprint: string,
+    private readonly label: string,
   ) {
-    this.proc = Bun.spawn(["bun", childPath("mcp-run"), cwd, "--worker"], {
+    this.proc = Bun.spawn(["bun", childPath(child), cwd, "--worker"], {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
@@ -148,7 +155,7 @@ class WarmRunWorker {
     void this.proc.exited.then((code) => {
       this.closed = true
       const err = new Error(
-        `warm run worker exited (${code})${this.stderrBuffer ? `:\n${this.stderrBuffer}` : ""}`,
+        `warm ${this.label} worker exited (${code})${this.stderrBuffer ? `:\n${this.stderrBuffer}` : ""}`,
       )
       for (const pending of this.pending.values()) {
         pending.cleanup()
@@ -163,15 +170,15 @@ class WarmRunWorker {
   }
 
   async request(input: unknown, signal?: AbortSignal): Promise<string> {
-    if (this.closed) throw new Error("warm run worker is closed")
-    if (signal?.aborted) return "run cancelled before it started."
+    if (this.closed) throw new Error(`warm ${this.label} worker is closed`)
+    if (signal?.aborted) return `${this.label} cancelled before it started.`
     const id = ++this.nextId
     return new Promise((resolve, reject) => {
       const abort = (): void => {
         this.pending.delete(id)
         this.stop()
         const reason = typeof signal?.reason === "string" ? `: ${signal.reason}` : ""
-        resolve(`run cancelled${reason}.`)
+        resolve(`${this.label} cancelled${reason}.`)
       }
       const cleanup = (): void => signal?.removeEventListener("abort", abort)
       signal?.addEventListener("abort", abort, { once: true })
@@ -218,7 +225,10 @@ class WarmRunWorker {
     try {
       message = JSON.parse(line) as { id?: unknown; output?: unknown }
     } catch {
-      this.stderrBuffer = boundedAppend(this.stderrBuffer, `invalid warm worker line: ${line}\n`)
+      this.stderrBuffer = boundedAppend(
+        this.stderrBuffer,
+        `invalid warm ${this.label} worker line: ${line}\n`,
+      )
       return
     }
     if (typeof message.id !== "number") return
@@ -230,15 +240,21 @@ class WarmRunWorker {
   }
 }
 
-function createWarmRunHandler(
+/** A warm handler that reuses a hot {@link WarmWorker} across calls and falls back to a one-shot fresh
+ * subprocess on any worker failure. Shared by `nifra_run` (`child: "mcp-run"`, `label: "run"`) and
+ * `nifra_render` (`child: "mcp-render"`, `label: "render"`) — the only differences are the engine and the
+ * message label, so there's a single source for the reuse + auto-restart-on-file-change logic. */
+function createWarmHandler(
+  child: "mcp-run" | "mcp-render",
   cwd: string,
+  label: string,
 ): (input: unknown, signal?: AbortSignal) => Promise<string> {
-  let worker: WarmRunWorker | undefined
+  let worker: WarmWorker | undefined
   return async (input, signal) => {
     const fingerprint = await warmRunFingerprint(cwd)
     if (worker === undefined || worker.fingerprint !== fingerprint) {
       worker?.stop()
-      worker = new WarmRunWorker(cwd, fingerprint)
+      worker = new WarmWorker(child, cwd, fingerprint, label)
     }
     try {
       return await worker.request(input, signal)
@@ -247,9 +263,9 @@ function createWarmRunHandler(
       worker = undefined
       if (signal?.aborted) {
         const reason = typeof signal.reason === "string" ? `: ${signal.reason}` : ""
-        return `run cancelled${reason}.`
+        return `${label} cancelled${reason}.`
       }
-      return spawnChild("mcp-run", cwd, input, "run", signal)
+      return spawnChild(child, cwd, input, label, signal)
     }
   }
 }
@@ -273,17 +289,25 @@ async function runHandler(
   return spawnChild("mcp-run", cwd, input, "run", context.signal)
 }
 
-/** The `nifra_render` handler: SSR page routes through the project's CURRENT web app, return the HTML. */
+/** The `nifra_render` handler: SSR page routes through the project's CURRENT web app, return the HTML.
+ * By default a fresh subprocess loads the current code each call; `warm:true` reuses a hot worker (like
+ * `nifra_run`) that auto-restarts when a source file changes. */
 async function renderHandler(
   cwd: string,
   args: Record<string, unknown>,
   context: McpToolContext,
+  warmRender: (input: unknown, signal?: AbortSignal) => Promise<string>,
 ): Promise<string> {
   const requests = Array.isArray(args.requests) ? args.requests : []
   if (requests.length === 0) {
     return 'No requests provided. Pass { "requests": [{ "path": "/..." }] }.'
   }
-  return spawnChild("mcp-render", cwd, { requests }, "render", context.signal)
+  const input = { requests }
+  if ((args as { warm?: boolean }).warm === true) {
+    context.reportProgress(0.2, 1)
+    return warmRender(input, context.signal)
+  }
+  return spawnChild("mcp-render", cwd, input, "render", context.signal)
 }
 
 /** The `nifra_ws` handler: verify WebSocket routes through a fresh app subprocess. */
@@ -386,7 +410,8 @@ async function openApiHandler(
   loadAppCached: (outDirName?: string) => Promise<LoadedApp>,
 ): Promise<string> {
   const { renderOpenApi } = await import("./openapi-tool.ts")
-  return renderOpenApi(await loadAppCached(), openApiFormat(args))
+  const pathPrefix = typeof args.path === "string" ? args.path : undefined
+  return renderOpenApi(await loadAppCached(), openApiFormat(args), pathPrefix)
 }
 
 async function readProjectFile(
@@ -540,12 +565,13 @@ export function projectTools(
   cwd: string,
   loadAppCached: (outDirName?: string) => Promise<LoadedApp> = createCachedAppLoader(cwd),
 ): McpTool[] {
-  const warmRun = createWarmRunHandler(cwd)
+  const warmRun = createWarmHandler("mcp-run", cwd, "run")
+  const warmRender = createWarmHandler("mcp-render", cwd, "render")
   return [
     {
       name: "nifra_context",
       description:
-        "Get this nifra project's surface: API routes (backend.ts) with compact TypeScript-shaped contracts, page routes (routes/), and the framework conventions. Call it once unfiltered to learn the project; afterwards pass `path` (a route prefix like /api/orders) and/or `kind` (api|pages) for a cheap, narrow slice instead of the full dump.",
+        "Get this nifra project's surface. Call it once UNFILTERED for a tight INDEX: the route list (API routes as `METHOD path`, page routes as `pattern → file`) + framework conventions + a pointer — cheap even on a big app, no per-route schema dump. Then pass `path` (a route prefix like /api/orders) and/or `kind` (api|pages) to fetch the FULL contract for that slice (body/query/response TS shapes + the exact typed-client call form).",
       inputSchema: {
         type: "object",
         properties: {
@@ -589,7 +615,7 @@ export function projectTools(
     {
       name: "nifra_openapi",
       description:
-        'Return this project\'s backend OpenAPI 3.1 document generated from backend.ts route schemas via @nifrajs/schema. Use `format:"json"` for machine edits (default) or `format:"yaml"` for humans. Frontend-only apps return a valid empty paths object.',
+        'Return this project\'s backend OpenAPI 3.1 document generated from backend.ts route schemas via @nifrajs/schema. Use `format:"json"` for machine edits (default) or `format:"yaml"` for humans. Pass `path` (a route prefix like /api/orders, mirroring nifra_routes) to narrow a large backend to operations under that prefix instead of the whole document. Frontend-only apps return a valid empty paths object.',
       inputSchema: {
         type: "object",
         properties: {
@@ -597,6 +623,11 @@ export function projectTools(
             type: "string",
             enum: ["json", "yaml"],
             description: "Output format (default: json).",
+          },
+          path: {
+            type: "string",
+            description:
+              "Only operations whose path starts with this prefix (omit for the whole document).",
           },
         },
         additionalProperties: false,
@@ -641,7 +672,7 @@ export function projectTools(
     {
       name: "nifra_render",
       description:
-        "SSR a page route (routes/) through this project's CURRENT web app and return { status, headers, body: the rendered HTML }. The page half of nifra_run: use it to verify a page renders and its loader ran after an edit. No build needed (a placeholder client entry is used; the SSR HTML renders regardless). Each request: { path, headers? }. Re-loaded in a fresh process each call.",
+        "SSR a page route (routes/) through this project's CURRENT web app and return { status, headers, body: the rendered HTML }. The page half of nifra_run: use it to verify a page renders and its loader ran after an edit. No build needed (a placeholder client entry is used; the SSR HTML renders regardless). Each request: { path, headers? }. By default re-loaded in a fresh process each call; pass warm:true to reuse a hot worker while source files are unchanged (it restarts automatically when files change), mirroring nifra_run.",
       inputSchema: {
         type: "object",
         properties: {
@@ -656,11 +687,16 @@ export function projectTools(
               required: ["path"],
             },
           },
+          warm: {
+            type: "boolean",
+            description:
+              "Reuse a hot web-app worker while source files are unchanged. Default false for maximum isolation.",
+          },
         },
         required: ["requests"],
         additionalProperties: false,
       },
-      handler: (args, context) => renderHandler(cwd, args, context),
+      handler: (args, context) => renderHandler(cwd, args, context, warmRender),
     },
     {
       name: "nifra_ws",

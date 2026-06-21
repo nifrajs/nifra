@@ -71,7 +71,16 @@ export interface ScriptDescriptor {
   readonly content: string
 }
 
-/** The document head a route contributes — title + `<meta>`/`<link>`/`<script>` tag sets. */
+/**
+ * The document head a route contributes — title + `<meta>`/`<link>`/`<script>` tag sets. Returned by a
+ * route/layout `meta` (statically, or from a {@link MetaArgs} function). Every value is serialized into
+ * managed (`data-nifra`) head tags: attribute *names* are shape-validated and *values* HTML-escaped at
+ * render (see `tagAttrs`/`headTags` in `@nifrajs/web`), and `script[].content` is breakout-escaped — so
+ * loader-derived strings (LLM-authored `og:*`, user content) are XSS-safe in the head by construction.
+ * Layout-chain heads merge with the page's via `mergeHeads` (arrays concat outermost→page; `title` is
+ * nearest-wins). Build `og:*`/`twitter:*` with `openGraph(...)`, canonical with `canonical(...)`, and
+ * JSON-LD with `jsonLd(...)` (all from `@nifrajs/web`) rather than hand-writing the records.
+ */
 export interface Meta {
   readonly title?: string
   readonly meta?: ReadonlyArray<Record<string, string>>
@@ -80,7 +89,12 @@ export interface Meta {
   readonly script?: readonly ScriptDescriptor[]
 }
 
-/** Args for a route's `meta` function: the loader's data + the route params + the request origin. */
+/**
+ * Args for a route's `meta` function: the loader's `data` + the route `params` + the request `origin`.
+ * `meta()` runs in BOTH SSR and client navigation, so it has **no `request`/`process.env`/server access** —
+ * `origin` is the only server-resolved fact it gets (so you needn't thread `siteUrl` through loader data
+ * for absolute `og:url`/`canonical`/`og:image` URLs). See {@link origin}.
+ */
 export interface MetaArgs<Data = unknown> {
   readonly data: Data
   readonly params: Record<string, string>

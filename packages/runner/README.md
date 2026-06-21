@@ -27,3 +27,9 @@ string/`Uint8Array` is sent as-is. Relative paths resolve against `options.origi
 It's a **runner, not a security sandbox**: it calls the app you hand it in-process, with no isolation.
 Isolation, when you need it, comes from the host — the browser tab for the playground, your own
 process/CI for the agent runner. Don't feed it code you wouldn't already run.
+
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.

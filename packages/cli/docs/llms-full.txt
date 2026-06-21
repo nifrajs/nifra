@@ -3785,6 +3785,12 @@ bun add @nifrajs/auth
 
 MIT
 
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+
 ## @nifrajs/better-auth
 
 Mount [better-auth](https://better-auth.com) into a [nifra](https://github.com/nifra) app: one
@@ -3877,6 +3883,12 @@ export const loader = async ({ request }) => {
 ## License
 
 MIT
+
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/cli
 
@@ -3978,6 +3990,12 @@ claude mcp add nifra -- nifra mcp
 Run the client from (or point it at) your project root. The protocol is hand-rolled
 (newline-delimited JSON-RPC 2.0) — no SDK dependency.
 
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+
 ## @nifrajs/client
 
 A browser-safe, **end-to-end-typed** client for [nifra](../../README.md) servers — an
@@ -4009,6 +4027,12 @@ const { ok, status, data, error } = await api.users({ id: "42" }).get()
 
 ESM-only. MIT.
 
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+
 ## @nifrajs/content
 
 Typed, schema-validated content collections for nifra — Markdown + frontmatter, framework-agnostic.
@@ -4027,6 +4051,12 @@ bun add @nifrajs/content
 - AI-readable: <https://nifra.dev/llms.txt>
 
 MIT
+
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/core
 
@@ -4063,6 +4093,12 @@ export type App = typeof app // hand this to @nifrajs/client for end-to-end type
   redacting structured `Logger`.
 
 ESM-only; requires Bun at runtime. MIT.
+
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/cron
 
@@ -4125,6 +4161,12 @@ Workers has no long-lived process, so in-process cron doesn't apply. Use the pla
 trigger instead: `toFetchHandler(app, { scheduled })` from `@nifrajs/core` + a `[triggers]` cron in
 `wrangler.toml`. This package is for Bun/Node/Deno servers.
 
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+
 ## @nifrajs/deno
 
 Run a [nifra](../../README.md) app on [Deno](https://deno.com) via `Deno.serve`.
@@ -4160,6 +4202,12 @@ The request timeout (`server({ requestTimeoutMs })` → `503 request_timeout`) a
 cap live inside `app.fetch`, so they apply through this adapter automatically.
 
 Works with any `{ fetch(req): Promise<Response> }` handler, not just nifra. ESM/TS. MIT.
+
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/env
 
@@ -4229,6 +4277,12 @@ pass the request's bindings: `defineEnv(shape, { source: env })`.
 Error messages name the offending variable and the reason — **never its value** (it may be a
 secret). `defineEnv` returns a frozen object, so a validated config can't be mutated downstream.
 
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+
 ## @nifrajs/i18n
 
 Framework-agnostic i18n for nifra — locale negotiation + a tiny ICU message formatter on the platform Intl. Dependency-free.
@@ -4248,6 +4302,12 @@ bun add @nifrajs/i18n
 
 MIT
 
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+
 ## @nifrajs/image
 
 Image optimization for nifra — a CLS-safe responsive <Image> + pluggable loaders (CDN or self-hosted) + pure-JS dimension reading. Zero-dependency core; optional Bun.Image-backed resize endpoint at @nifrajs/image/server.
@@ -4266,6 +4326,12 @@ bun add @nifrajs/image
 - AI-readable: <https://nifra.dev/llms.txt>
 
 MIT
+
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/islets
 
@@ -4328,6 +4394,12 @@ per-run re-tracking, `Object.is` skips, synchronous updates; `batch` coalesces m
 into one flush. Island-scale by design: if a widget outgrows this (lists, ownership trees,
 async orchestration), that's the signal to use the Solid adapter for that page — both tiers are
 first-class.
+
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/middleware
 
@@ -4409,6 +4481,12 @@ const app = server({ requestTimeoutMs: 5_000 })
 
 `@nifrajs/core` is a peer dependency. ESM-only. MIT.
 
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+
 ## @nifrajs/node
 
 Run a [nifra](../../README.md) app on Node's `http` server — nifra's ergonomics, deployed
@@ -4472,6 +4550,12 @@ with no extra wiring. Slow-client / slow-loris protection is Node's built-in
 
 Works with any `{ fetch(req): Promise<Response> }` handler, not just nifra. ESM-only. MIT.
 
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+
 ## @nifrajs/otel
 
 Distributed tracing for nifra. The `tracing()` plugin continues (or starts) a **W3C trace** per
@@ -4524,6 +4608,12 @@ Use `traceparent` and the built-in semantic attributes in every request span, th
 your own collector through an exporter. Keep the package edge-safe by installing the OpenTelemetry
 SDK only in apps that need that exporter.
 
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+
 ## @nifrajs/runner
 
 Run requests through a nifra app and capture **structured results** — the shared engine behind the
@@ -4553,6 +4643,12 @@ string/`Uint8Array` is sent as-is. Relative paths resolve against `options.origi
 It's a **runner, not a security sandbox**: it calls the app you hand it in-process, with no isolation.
 Isolation, when you need it, comes from the host — the browser tab for the playground, your own
 process/CI for the agent runner. Don't feed it code you wouldn't already run.
+
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/schema
 
@@ -4605,6 +4701,12 @@ are still emitted without body/response detail (Standard Schema exposes no JSON 
 
 `@nifrajs/core` is a peer dependency. ESM-only. MIT.
 
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+
 ## @nifrajs/uploads
 
 File-upload hardening for nifra — magic-byte MIME detection, size + type validation, short-TTL signed download URLs, and EXIF/metadata stripping. Dependency-free, edge-safe.
@@ -4623,6 +4725,12 @@ bun add @nifrajs/uploads
 - AI-readable: <https://nifra.dev/llms.txt>
 
 MIT
+
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
@@ -4643,6 +4751,12 @@ bun add @nifrajs/web
 
 MIT
 
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+
 ## @nifrajs/web-preact
 
 Preact render adapter for @nifrajs/web — streaming SSR + hydration (no build plugin).
@@ -4661,6 +4775,12 @@ bun add @nifrajs/web-preact
 - AI-readable: <https://nifra.dev/llms.txt>
 
 MIT
+
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web-react
 
@@ -4681,6 +4801,12 @@ bun add @nifrajs/web-react
 
 MIT
 
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+
 ## @nifrajs/web-solid
 
 Solid render adapter for @nifrajs/web — SSR + hydration + the Solid Babel build plugin.
@@ -4699,6 +4825,12 @@ bun add @nifrajs/web-solid
 - AI-readable: <https://nifra.dev/llms.txt>
 
 MIT
+
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web-svelte
 
@@ -4719,6 +4851,12 @@ bun add @nifrajs/web-svelte
 
 MIT
 
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+
 ## @nifrajs/web-vanilla
 
 Zero-framework render adapter for @nifrajs/web — auto-escaping tagged-template HTML, ~0 KB client JS, interactivity via @nifrajs/web/islands.
@@ -4737,6 +4875,12 @@ bun add @nifrajs/web-vanilla
 - AI-readable: <https://nifra.dev/llms.txt>
 
 MIT
+
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web-vue
 
@@ -4757,6 +4901,12 @@ bun add @nifrajs/web-vue
 
 MIT
 
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+
 ## @nifrajs/workers
 
 Cloudflare Workers helpers for nifra — a Durable Object hub for cross-connection WebSocket broadcast.
@@ -4775,6 +4925,12 @@ bun add @nifrajs/workers
 - AI-readable: <https://nifra.dev/llms.txt>
 
 MIT
+
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## create-nifra
 
@@ -4810,6 +4966,12 @@ bun run dev
 
 MIT.
 
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+
 ## nifra
 
 The unscoped meta-entry for the **nifra** full-stack framework. It re-exports [`@nifrajs/core`](https://www.npmjs.com/package/@nifrajs/core), so:
@@ -4836,6 +4998,12 @@ The framework is a set of focused packages under the `@nifrajs/*` scope:
 Docs + an AI-readable reference: [`/llms.txt`](https://nifra.dev/llms.txt) · [`/llms-full.txt`](https://nifra.dev/llms-full.txt).
 
 MIT.
+
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
 
 ---
 

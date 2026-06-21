@@ -27,6 +27,13 @@ export interface SourceFinding {
 /** @deprecated kept for back-compat with existing tests; prefer {@link SourceFinding}. */
 export type FetchFinding = SourceFinding
 
+/** A server-only-import finding, carrying the offending module specifier on top of the base location so
+ * the diagnostic can show the import chain `routeFile → specifier` (the direct edge the regex scan sees). */
+export interface ServerImportFinding extends SourceFinding {
+  /** The server-only module specifier the route top-level-imports (e.g. `pg`, `node:fs`, `../db`). */
+  readonly specifier: string
+}
+
 // `fetch( <ws> ('|"|`) / (not /)` — a string/template arg starting with a single `/` is a relative URL,
 // i.e. same-origin = this app's own API. `(?<![.\w])` skips `.fetch(` (a method) and `prefetch(`; the
 // `(?!\/)` skips protocol-relative `//host` (an external origin). A variable arg (`fetch(url)`) is left
@@ -307,16 +314,18 @@ export function scanUntypedClient(file: string, content: string): SourceFinding[
 }
 
 /** Scan a route module for top-level server-only imports. Returns `[]` for non-route files (only
- * `routes/` modules are browser-bundled, so a server-only import elsewhere is fine). Pure. */
-export function scanServerOnlyImports(file: string, content: string): SourceFinding[] {
+ * `routes/` modules are browser-bundled, so a server-only import elsewhere is fine). Each finding carries
+ * the offending `specifier` so the diagnostic can render the `routeFile → specifier` chain. Pure. */
+export function scanServerOnlyImports(file: string, content: string): ServerImportFinding[] {
   if (!ROUTE_FILE.test(file)) return []
-  const out: SourceFinding[] = []
+  const out: ServerImportFinding[] = []
   const lines = content.split("\n")
   STATIC_IMPORT.lastIndex = 0
   for (let m = STATIC_IMPORT.exec(content); m !== null; m = STATIC_IMPORT.exec(content)) {
-    if (!SERVER_ONLY.test(m[1] ?? "")) continue
+    const specifier = m[1] ?? ""
+    if (!SERVER_ONLY.test(specifier)) continue
     const line = lineAt(content, m.index)
-    out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
+    out.push({ file, line, snippet: (lines[line - 1] ?? "").trim(), specifier })
   }
   return out
 }
@@ -510,6 +519,18 @@ export interface CheckDiagnostic {
   /** A richer, agent-oriented fix hint. Diffs are only emitted when the edit is mechanical and local;
    * ambiguous cases give concrete steps instead of pretending the checker can safely rewrite code. */
   readonly suggestion?: CheckSuggestion
+  /**
+   * The import chain that pulls server-only code into the browser bundle — `[routeFile, specifier]`, the
+   * route module and the server-only module it top-level-imports. Set only on `server-only-import`.
+   *
+   * This is the **direct** edge the source scan can see (the route's own `import` line), NOT a transitive
+   * graph: the check is a pure per-file regex scan with no module-resolution graph, so it can't follow
+   * `route → ../data → ../db → pg`. The deeper transitive leak (a server module reached through a chain
+   * of re-exports) surfaces at BUILD time, where the leak-guard DOES resolve the full chain
+   * (`detectNodeBuiltinsInClient` in `@nifrajs/web/build`). Faking a transitive chain here would be a lie;
+   * the honest signal is the offending top-level import + the route it sits in.
+   */
+  readonly chain?: readonly string[]
 }
 
 export interface CheckSuggestion {
@@ -634,14 +655,14 @@ function ownFetchSuggestion(
   }
 }
 
-function serverImportSuggestion(): CheckSuggestion {
+function serverImportSuggestion(specifier: string): CheckSuggestion {
   return {
     kind: "manual",
     title: "Move server-only code behind the route server boundary",
     steps: [
-      "Remove the top-level server-only import from the route module.",
+      `Remove the top-level \`import … from "${specifier}"\` from this route module (it's bundled for the browser).`,
       "Access backend/data work through the route `loader`/`action` context (`api`, `env`, or project server context).",
-      "If a direct module import is unavoidable, lazy-load it inside the server-only loader/action path.",
+      `If a direct module import is unavoidable, lazy-load it (\`await import("${specifier}")\`) inside the server-only loader/action path.`,
     ],
   }
 }
@@ -666,7 +687,7 @@ export async function collectCheckResult(
   const fetches: SourceFinding[] = []
   const staticRoutes: StaticRouteFinding[] = []
   const untypedClients: SourceFinding[] = []
-  const serverImports: SourceFinding[] = []
+  const serverImports: ServerImportFinding[] = []
   const responseRoutes: SourceFinding[] = []
   // lintsOnly: skip the tsc pass (seconds on a big project) and run just the near-instant source
   // lints — the agent inner-loop mode; the full gate stays the definition of done.
@@ -747,14 +768,19 @@ export async function collectCheckResult(
     })
   }
   for (const f of serverImports.sort(bySite)) {
+    // The chain the source scan can see: the route module → the server-only specifier it top-level-imports.
+    // A direct edge (not a transitive graph — see CheckDiagnostic.chain); naming both ends still answers
+    // the agent's "what pulled server code into this route?" without a source read.
+    const chain = [f.file, f.specifier] as const
     diagnostics.push({
       rule: "server-only-import",
       severity: "error",
       file: f.file,
       line: f.line,
-      message: `${f.snippet} — ${SERVER_IMPORT_HINT}`,
+      message: `${f.snippet} — server-only "${f.specifier}" imported into the browser bundle via ${chain.join(" → ")}; ${SERVER_IMPORT_HINT}`,
       fix: SERVER_IMPORT_HINT,
-      suggestion: serverImportSuggestion(),
+      chain,
+      suggestion: serverImportSuggestion(f.specifier),
     })
   }
   // Advisory — surfaced but NOT folded into `ok`, so it never fails the gate (a raw Response is valid).

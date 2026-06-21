@@ -46,4 +46,32 @@ describe("renderOpenApi", () => {
   test("yaml output is available without changing the source document", () => {
     expect(renderOpenApi(loaded(undefined), "yaml")).toContain('"openapi": "3.1.0"')
   })
+
+  test("a `path` prefix narrows the document to operations under that prefix", () => {
+    const app = server()
+      .get("/api/orders/:id", { response: t.object({ id: t.string() }) }, (c) => ({
+        id: c.params.id,
+      }))
+      .post("/api/orders", { body: t.object({ total: t.number() }) }, () => ({ ok: true }))
+      .get("/health", () => ({ ok: true }))
+
+    const doc = JSON.parse(renderOpenApi(loaded(app), "json", "/api/orders")) as {
+      paths: Record<string, unknown>
+    }
+    // Both /api/orders operations survive (templated key included); /health is dropped.
+    expect(Object.keys(doc.paths).sort()).toEqual(["/api/orders", "/api/orders/{id}"])
+    expect(doc.paths["/health"]).toBeUndefined()
+  })
+
+  test("an empty/absent `path` prefix returns the whole document (back-compat)", () => {
+    const app = server()
+      .get("/api/orders", () => ({ ok: true }))
+      .get("/health", () => ({ ok: true }))
+    const all = JSON.parse(renderOpenApi(loaded(app), "json")) as { paths: Record<string, unknown> }
+    const emptyPrefix = JSON.parse(renderOpenApi(loaded(app), "json", "")) as {
+      paths: Record<string, unknown>
+    }
+    expect(Object.keys(all.paths).sort()).toEqual(["/api/orders", "/health"])
+    expect(Object.keys(emptyPrefix.paths).sort()).toEqual(["/api/orders", "/health"])
+  })
 })

@@ -48,3 +48,9 @@ generic `200` with no schema — declare a `defineContract` with `response` sche
 are still emitted without body/response detail (Standard Schema exposes no JSON Schema).
 
 `@nifrajs/core` is a peer dependency. ESM-only. MIT.
+
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.

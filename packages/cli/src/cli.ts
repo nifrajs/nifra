@@ -42,8 +42,9 @@ Usage:
                                          framework.ts (adapter) + backend.ts + routes/. --report prints
                                          a per-chunk size + gzip table (biggest first).
   nifra start   [--port <n>] [--out <dir>]  Serve the built app (client + SSR) on Bun. Default port ${DEFAULT_DEV_PORT}.
-  nifra context                          Print this project's API + page routes + conventions
-                                         (for piping into an AI coding agent's prompt).
+  nifra context                          Print this project's route INDEX (API + page routes) + conventions
+                                         for an AI agent's prompt. Per-route schemas: nifra mcp's
+                                         nifra_context (path/kind slice) or nifra routes --json.
   nifra routes  [--json]                 List every route the app serves with its method(s): page
                                          routes (routes/) + the in-process backend's API routes,
                                          marking which API routes are auto-mounted under apiPrefix.

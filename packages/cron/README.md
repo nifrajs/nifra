@@ -58,3 +58,9 @@ dates to test schedules deterministically. `runNow(name)` fires a job off-schedu
 Workers has no long-lived process, so in-process cron doesn't apply. Use the platform `scheduled`
 trigger instead: `toFetchHandler(app, { scheduled })` from `@nifrajs/core` + a `[triggers]` cron in
 `wrangler.toml`. This package is for Bun/Node/Deno servers.
+
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.

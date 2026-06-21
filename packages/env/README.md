@@ -65,3 +65,9 @@ pass the request's bindings: `defineEnv(shape, { source: env })`.
 
 Error messages name the offending variable and the reason — **never its value** (it may be a
 secret). `defineEnv` returns a frozen object, so a validated config can't be mutated downstream.
+
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.

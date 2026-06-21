@@ -705,9 +705,9 @@ Every public export of every package — name, kind, signature, and doc summary 
   In-process ISR cache. Refuses to run in production unless explicitly allowed (mirrors the rate-limit `MemoryStore` — a per-instance cache is unsafe across instances). Bounded **LRU**: a read or write bumps the entry, so the least-recently-used evicts past `max` (a hot, frequently-read page survives…
 - **MemoryCacheStoreOptions** _(interface)_ — `interface MemoryCacheStoreOptions`
 - **Meta** _(interface)_ — `interface Meta`
-  The document head a route contributes — title + `<meta>`/`<link>`/`<script>` tag sets.
+  The document head a route contributes — title + `<meta>`/`<link>`/`<script>` tag sets. Returned by a route/layout `meta` (statically, or from a {@link MetaArgs} function). Every value is serialized into managed (`data-nifra`) head tags: attribute *names* are shape-validated and *values* HTML-escape…
 - **MetaArgs** _(interface)_ — `interface MetaArgs<Data = unknown>`
-  Args for a route's `meta` function: the loader's data + the route params + the request origin.
+  Args for a route's `meta` function: the loader's `data` + the route `params` + the request `origin`. `meta()` runs in BOTH SSR and client navigation, so it has **no `request`/`process.env`/server access** — `origin` is the only server-resolved fact it gets (so you needn't thread `siteUrl` through l…
 - **MetaInput** _(type)_ — `type MetaInput = Meta | ((args: MetaArgs) => Meta)`
   A route's `meta`: a static {@link Meta}, or a function of the loader data + params + the request origin ({@link MetaArgs}). Use the `origin` arg for absolute `canonical`/`og:url`/`og:image` URLs — it's resolved server-side from the request and matches the client's `location.origin`.
 - **MountRouterOptions** _(interface)_ — `interface MountRouterOptions`

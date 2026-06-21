@@ -109,6 +109,19 @@ describe("scanServerOnlyImports — server-only imports in route modules", () =>
     expect(scanServerOnlyImports("db/index.ts", src)).toHaveLength(0)
     expect(scanServerOnlyImports("routes/x.tsx", src)).toHaveLength(1)
   })
+
+  test("captures the offending specifier (for the import-chain diagnostic)", () => {
+    expect(
+      scanServerOnlyImports("routes/notes.tsx", 'import postgres from "postgres"')[0]?.specifier,
+    ).toBe("postgres")
+    expect(
+      scanServerOnlyImports("routes/notes.tsx", 'import { readFileSync } from "node:fs"')[0]
+        ?.specifier,
+    ).toBe("node:fs")
+    expect(
+      scanServerOnlyImports("routes/notes.tsx", 'import { db } from "../db"')[0]?.specifier,
+    ).toBe("../db")
+  })
 })
 
 describe("collectCheckResult — structured result for --json / the MCP tool", () => {
@@ -132,6 +145,13 @@ describe("collectCheckResult — structured result for --json / the MCP tool", (
     expect(fetchDiag?.suggestion?.steps?.join("\n")).toContain("nifra_routes")
     const importDiag = result.diagnostics.find((d) => d.rule === "server-only-import")
     expect(importDiag?.suggestion?.title).toContain("server-only")
+    // The diagnostic names the import chain it can see: the route module → the server-only specifier it
+    // top-level-imports (the direct edge; not a transitive graph — see CheckDiagnostic.chain).
+    expect(importDiag?.chain).toEqual(["routes/notes.tsx", "../db"])
+    expect(importDiag?.message).toContain("routes/notes.tsx → ../db")
+    expect(importDiag?.message).toContain('server-only "../db"')
+    // The fix references the exact specifier so an agent acts without re-reading the source.
+    expect(importDiag?.suggestion?.steps?.join("\n")).toContain('"../db"')
     await rm(dir, { recursive: true, force: true })
   })
 
