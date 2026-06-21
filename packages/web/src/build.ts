@@ -8,6 +8,7 @@
 import { mkdirSync, writeFileSync } from "node:fs"
 import { dirname, relative, resolve as resolvePath } from "node:path"
 import type { BunPlugin } from "bun"
+import { sanitizeOutputNames } from "./chunk-names.ts"
 import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
 
@@ -102,8 +103,14 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   const routeManifest = discoverRoutes(routesDir)
   // The bootstrap's filename is `_velo`-namespaced (not `entry.ts`) so its `[name]` can't collide with
   // a user route named `entry.tsx` when the CSS mapping below excludes the bootstrap's aggregate CSS.
+  const mode = options.minify === false ? "development" : "production"
   const entryFile = `${outDir}/_nifra-entry.ts`
-  writeFileSync(entryFile, generateClientEntry(routeManifest, { clientModule, resolve }))
+  // A client bundle has no Node `process`; provide a minimal one so a stray bare `process` reference in
+  // an app module doesn't crash hydration (`process.env.*` reads are handled at compile time by `define`).
+  writeFileSync(
+    entryFile,
+    `globalThis.process ??= { env: {} };\n${generateClientEntry(routeManifest, { clientModule, resolve })}`,
+  )
 
   // Every unique route/layout/`_404` file (sorted, stable), as ADDITIONAL entrypoints — Bun emits a
   // named chunk per file that the bootstrap's lazy `import()` dedupes to (verified), so the manifest
@@ -137,7 +144,15 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     minify: options.minify ?? true,
     plugins: [...(options.plugins ?? [])],
     ...(options.conditions ? { conditions: [...options.conditions] } : {}),
-    ...(options.define ? { define: { ...options.define } } : {}),
+    // Replace `process.env.*` at compile time so an app module reading config off `process.env` doesn't
+    // hit a `process is not defined` crash in the browser. Bun does longest-match: NODE_ENV resolves to
+    // the build mode (React's prod/dev branch); every other `process.env.X` becomes undefined. Callers
+    // can override either via `options.define`.
+    define: {
+      "process.env": "({})",
+      "process.env.NODE_ENV": JSON.stringify(mode),
+      ...options.define,
+    },
   })
   if (!result.success) {
     throw new Error(
@@ -145,7 +160,11 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     )
   }
 
-  const toUrl = (path: string): string => `${publicPath}${basename(path)}`
+  // Rename any chunk whose basename isn't URL-safe (dynamic-route files become `[slug]-hash.js`) and
+  // rewrite the references — otherwise the lazy import 404s and the route silently never hydrates.
+  const renamed = sanitizeOutputNames(result.outputs)
+  const toUrl = (path: string): string =>
+    `${publicPath}${renamed.get(basename(path)) ?? basename(path)}`
   // Entry-point outputs come back in entrypoint order: [bootstrap, ...routeFiles]. Map each route file
   // to its chunk URL by that order (guarded against drift), then a route's chunks = its layout chain +
   // own file.
