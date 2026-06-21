@@ -7,6 +7,7 @@
 import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { mdxBunPlugin } from "@nifrajs/content/mdx"
 import { buildClient, buildServer } from "@nifrajs/web/build"
+import { writeFrameworksArtifact } from "./build-frameworks"
 import { buildSiteIslands } from "./build-islands"
 
 const dir = import.meta.dir
@@ -17,6 +18,13 @@ const mdx = mdxBunPlugin({ jsxImportSource: "react" })
 
 rmSync(dist, { recursive: true, force: true })
 mkdirSync(`${dist}/assets`, { recursive: true })
+
+// (0) The /frameworks live demo: render the shared catalog through all five UI adapters → five HTML
+// fragments + five real client hydration bundles (dist/assets/fw-*.client.js), and measure each bundle's
+// gzip size. Runs BEFORE the React client/server builds because the /frameworks route imports the JSON
+// artifact this writes (../data/frameworks-demo.json). Each framework is its own isolated Bun.build, so
+// Solid's Babel plugin / Svelte's compiler don't leak onto the React/Preact .tsx — see build-frameworks.ts.
+await writeFrameworksArtifact({ outDir: `${dist}/assets` })
 
 // (1) Client bundle → dist/assets/* (served by Pages at /assets/*).
 const client = await buildClient({

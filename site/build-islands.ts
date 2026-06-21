@@ -1,5 +1,10 @@
 import { basename } from "node:path"
-import { HOME_COUNTER_ENTRY, NIFRA_BOT_ENTRY, PLAYGROUND_ENTRY } from "./islands/entries"
+import {
+  FRAMEWORKS_ENTRY,
+  HOME_COUNTER_ENTRY,
+  NIFRA_BOT_ENTRY,
+  PLAYGROUND_ENTRY,
+} from "./islands/entries"
 
 export interface BuildSiteIslandsOptions {
   readonly outDir: string
@@ -19,6 +24,7 @@ const ISLANDS: ReadonlyArray<{ src: string; url: string }> = [
   { src: "home-counter.client.ts", url: HOME_COUNTER_ENTRY },
   { src: "playground.client.ts", url: PLAYGROUND_ENTRY },
   { src: "nifra-bot.client.ts", url: NIFRA_BOT_ENTRY },
+  { src: "frameworks.client.ts", url: FRAMEWORKS_ENTRY },
 ]
 
 export async function buildSiteIslands(options: BuildSiteIslandsOptions): Promise<void> {

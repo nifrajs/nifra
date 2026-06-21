@@ -38,6 +38,7 @@
     "includes": [
       "**",
       "!**/node_modules",
+      "!**/.claude",
       "!**/coverage",
       "!**/.nifra-vite-entry.tsx",
       "!**/*.svelte",
