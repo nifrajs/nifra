@@ -80,13 +80,26 @@ export interface Meta {
   readonly script?: readonly ScriptDescriptor[]
 }
 
-/** Args for a route's `meta` function: the loader's data + the route params. */
+/** Args for a route's `meta` function: the loader's data + the route params + the request origin. */
 export interface MetaArgs<Data = unknown> {
   readonly data: Data
   readonly params: Record<string, string>
+  /**
+   * The site origin — scheme + host (+ port), e.g. `"https://news.example.com"`, **with no trailing
+   * slash**. The single piece of server/env knowledge `meta()` otherwise can't see: it runs in BOTH
+   * SSR and client navigation, so it has no `request`/`process.env`. The framework resolves it from the
+   * request URL during SSR and from `location.origin` on client nav — and they match, so an absolute
+   * `og:url`/`canonical`/`og:image` built from it never drifts between the server-rendered `<head>` and
+   * a soft-nav. Use it for absolute URLs (`origin + "/posts/" + slug`) instead of threading `siteUrl`
+   * through loader data. Empty string (`""`) when the origin is unknown (e.g. a hand-built test render
+   * with no request URL) — back-compat-safe: a `meta()` that ignores `origin` is unchanged.
+   */
+  readonly origin: string
 }
 
-/** A route's `meta`: a static {@link Meta}, or a function of the loader data + params. */
+/** A route's `meta`: a static {@link Meta}, or a function of the loader data + params + the request
+ * origin ({@link MetaArgs}). Use the `origin` arg for absolute `canonical`/`og:url`/`og:image` URLs —
+ * it's resolved server-side from the request and matches the client's `location.origin`. */
 export type MetaInput = Meta | ((args: MetaArgs) => Meta)
 
 /** One concrete parameterization of a dynamic route, returned by {@link GetStaticPaths}. */

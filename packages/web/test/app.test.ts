@@ -161,6 +161,41 @@ test("createWebApp keeps a layout's title when the page sets no title [#3]", asy
   expect(html.split("<body>")[0]).toContain("<title>Marketing</title>")
 })
 
+test("createWebApp resolves MetaArgs.origin from the request host (absolute canonical) [#1]", async () => {
+  // Item 1: a `meta(({ origin }) => …)` builds an absolute canonical from the SERVER-resolved origin
+  // (scheme + host + port of the request URL), so apps no longer thread siteUrl through loader data.
+  const manifest: Manifest = {
+    routes: [
+      {
+        id: "articles/[slug]",
+        pattern: "/articles/:slug",
+        layoutIds: [],
+        file: "articles/[slug].tsx",
+        load: async () => ({
+          default: "article",
+          meta: (args) => ({
+            link: [{ rel: "canonical", href: `${args.origin}/articles/${args.params.slug}` }],
+            meta: [{ property: "og:url", content: `${args.origin}/articles/${args.params.slug}` }],
+          }),
+        }),
+      },
+    ],
+    layouts: {},
+  }
+  const app = createWebApp({ adapter: stub, manifest, clientEntry: "/c.js" })
+  const html = await (
+    await app.fetch(new Request("https://news.example.com:8443/articles/hello"))
+  ).text()
+  const head = html.split("<body>")[0] ?? ""
+  // origin === URL.origin of the request — scheme + host + port, no trailing slash.
+  expect(head).toContain(
+    '<link rel="canonical" href="https://news.example.com:8443/articles/hello" data-nifra>',
+  )
+  expect(head).toContain(
+    '<meta property="og:url" content="https://news.example.com:8443/articles/hello" data-nifra>',
+  )
+})
+
 test("createWebApp matches a catch-all route end-to-end (params.path = the rest)", async () => {
   const manifest: Manifest = {
     routes: [

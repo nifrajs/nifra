@@ -707,9 +707,9 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **Meta** _(interface)_ — `interface Meta`
   The document head a route contributes — title + `<meta>`/`<link>`/`<script>` tag sets.
 - **MetaArgs** _(interface)_ — `interface MetaArgs<Data = unknown>`
-  Args for a route's `meta` function: the loader's data + the route params.
+  Args for a route's `meta` function: the loader's data + the route params + the request origin.
 - **MetaInput** _(type)_ — `type MetaInput = Meta | ((args: MetaArgs) => Meta)`
-  A route's `meta`: a static {@link Meta}, or a function of the loader data + params.
+  A route's `meta`: a static {@link Meta}, or a function of the loader data + params + the request origin ({@link MetaArgs}). Use the `origin` arg for absolute `canonical`/`og:url`/`og:image` URLs — it's resolved server-side from the request and matches the client's `location.origin`.
 - **MountRouterOptions** _(interface)_ — `interface MountRouterOptions`
   Options for a per-adapter `mountRouter` (the Router binding that hydrates + re-renders).
 - **OpenGraphInput** _(interface)_ — `interface OpenGraphInput`

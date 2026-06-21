@@ -37,12 +37,14 @@ export async function action(ctx: LoaderContext) {
   return { ok: true }
 }
 
-// Static OR a function of { data, params }. Static meta is serialized once; function meta
-// recomputes per request (its content can vary with loader data).
-export const meta = ({ data, params }) => ({
+// Static OR a function of { data, params, origin }. Static meta is serialized once; function meta
+// recomputes per request (its content can vary with loader data). \`origin\` is the request's
+// scheme+host (server-resolved, matches the client's location.origin) — use it for ABSOLUTE
+// canonical / og:url / og:image URLs without threading siteUrl through loader data.
+export const meta = ({ data, params, origin }) => ({
   title: \`User \${data.user.name}\`,
   meta: [{ name: "description", content: data.user.bio }],
-  link: [{ rel: "canonical", href: \`/users/\${params.id}\` }],
+  link: [{ rel: "canonical", href: \`\${origin}/users/\${params.id}\` }],
 })
 
 export const hydrate = false   // opt out of full-document hydration (static / island pages)
@@ -168,6 +170,53 @@ const { prerendered } = await prerenderRoutes({
 const paths = prerendered.map((p) => p.path)
 await Bun.write("./dist/_routes.json", JSON.stringify(cloudflarePagesRoutes({ prerendered: paths })))`
 
+const SEO_EXAMPLE = `// routes/articles/[slug].tsx — a complete SEO head: canonical + Open Graph + Twitter + JSON-LD,
+// with ABSOLUTE URLs built from \`origin\`. The three helpers (canonical/openGraph/jsonLd) are public
+// exports of @nifrajs/web; \`origin\` is the third MetaArgs field (after data + params).
+import { canonical, jsonLd, openGraph, type MetaArgs } from "@nifrajs/web"
+
+// CAVEAT: meta() runs in BOTH SSR and client navigation, so it has NO server env — never read
+// \`process.env\` or the request here. The framework injects \`origin\` (the site's scheme+host, e.g.
+// "https://news.example.com") server-side from the request AND on the client from location.origin, so
+// the two match and an absolute og:url/canonical/og:image never drifts between SSR and a soft-nav. For
+// anything else server-only (an API base, a CDN host), thread it through the LOADER, not meta().
+export const meta = ({ data, params, origin }: MetaArgs) => {
+  const article = data as { title: string; summary: string; image: string; published: string }
+  const url = \`\${origin}/articles/\${params.slug}\`        // absolute, from the injected origin
+  const image = \`\${origin}\${article.image}\`              // og:image MUST be absolute for crawlers
+  return {
+    title: article.title,
+    meta: [
+      { name: "description", content: article.summary },
+      // og:* — openGraph emits only the props you pass (+ og:type, here "article").
+      ...openGraph({
+        title: article.title,
+        description: article.summary,
+        url,
+        image,
+        type: "article",
+      }),
+      // twitter:* — a large-image summary card sharing the same absolute image.
+      { name: "twitter:card", content: "summary_large_image" },
+      { name: "twitter:title", content: article.title },
+      { name: "twitter:description", content: article.summary },
+      { name: "twitter:image", content: image },
+    ],
+    link: [canonical(url)],                              // <link rel="canonical"> — the authoritative URL
+    // JSON-LD structured data — escaped for safe <script> embedding by the head renderer.
+    script: [
+      jsonLd({
+        "@context": "https://schema.org",
+        "@type": "NewsArticle",
+        headline: article.title,
+        image,
+        datePublished: article.published,
+        mainEntityOfPage: url,
+      }),
+    ],
+  }
+}`
+
 const BUILD_OUTPUT = `// \`nifra build\` → buildClient (Bun.build) writes dist/ + manifest.json. The contract:
 {
   "entry": "/assets/_nifra-entry-HASH.js",        // the bootstrap module script
@@ -271,6 +320,28 @@ export default function Contract() {
         <code>integrity</code>, <code>referrerpolicy</code>, <code>fetchpriority</code>,{" "}
         <code>imagesrcset</code> — survives into the SSR'd tag; values are HTML-escaped against XSS.
       </p>
+
+      <h2>SEO: Open Graph, Twitter cards &amp; JSON-LD</h2>
+      <p>
+        A route's <code>meta</code> emits the full social / structured-data head with three public
+        helpers — <code>canonical()</code>, <code>openGraph()</code>, and <code>jsonLd()</code> — and
+        builds <strong>absolute</strong> URLs from the <code>origin</code> argument. Because{" "}
+        <code>meta()</code> runs in <strong>both</strong> SSR and client navigation it has{" "}
+        <strong>no server env</strong>: never read <code>process.env</code> or the request inside it.
+        The framework injects <code>origin</code> (the site's scheme + host, e.g.{" "}
+        <code>https://news.example.com</code>) from the request on the server and from{" "}
+        <code>location.origin</code> on the client, so the two match and an absolute{" "}
+        <code>og:url</code> / <code>canonical</code> / <code>og:image</code> never drifts between the
+        server-rendered <code>&lt;head&gt;</code> and a soft-nav. Anything else server-only (an API
+        base, a CDN host) belongs in the <code>loader</code>, not <code>meta()</code>.
+      </p>
+      <CodeBlock code={SEO_EXAMPLE} />
+      <blockquote>
+        [!NOTE] <code>og:image</code> (and the Twitter image) <strong>must be absolute</strong> for
+        crawlers — build it from <code>origin</code>. <code>openGraph()</code> emits only the
+        properties you pass (plus <code>og:type</code>); <code>jsonLd()</code>'s payload is escaped for
+        safe <code>&lt;script&gt;</code> embedding by the head renderer.
+      </blockquote>
 
       <h2>The client ↔ server boundary</h2>
       <p>
