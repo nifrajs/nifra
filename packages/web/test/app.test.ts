@@ -763,6 +763,25 @@ test("createWebApp auto-mounts the api backend: POST /api/echo reaches the backe
   expect(await res.json()).toEqual({ echoed: { hi: "there" } }) // backend ran, body passed through
 })
 
+// The REAL inProcessClient(app) is a CALLABLE Eden proxy (`typeof === "function"`), not a plain object,
+// so the mount guard must accept function-typed apis. An object-only guard silently skipped the mount
+// for every real inProcessClient (the prior object-stub tests above missed it). Mirror that shape:
+const inProcessBridgeFn = (app: {
+  fetch(request: Request): Response | Promise<Response>
+}): (() => undefined) & { fetch: (url: string, init?: RequestInit) => Promise<Response> } =>
+  Object.assign(() => undefined, {
+    fetch: (url: string, init?: RequestInit) => Promise.resolve(app.fetch(new Request(url, init))),
+  })
+
+test("createWebApp auto-mount: a FUNCTION-typed api (real inProcessClient proxy shape) still mounts", async () => {
+  const api = inProcessBridgeFn(apiBackend())
+  expect(typeof api).toBe("function") // the regression: an object-only guard skips this
+  const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })
+  const res = await app.fetch(new Request("http://x/api/x"))
+  expect(res.status).toBe(200)
+  expect(await res.json()).toEqual({ x: 1 }) // reached the backend, not the page router
+})
+
 test("createWebApp auto-mount: GET /api/x reaches the backend (not the page router)", async () => {
   const api = inProcessBridge(apiBackend())
   const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })
