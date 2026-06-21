@@ -44,6 +44,11 @@
       "types": "./dist/islands.d.ts",
       "default": "./dist/islands.js"
     },
+    "./server-only": {
+      "bun": "./src/server-only.ts",
+      "types": "./dist/server-only.d.ts",
+      "default": "./dist/server-only.js"
+    },
     "./build": {
       "bun": "./src/build.ts",
       "types": "./dist/build.d.ts",
