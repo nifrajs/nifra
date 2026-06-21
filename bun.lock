@@ -125,6 +125,7 @@
         "@nifrajs/runner": "workspace:*",
         "@nifrajs/schema": "workspace:*",
         "@nifrajs/web": "workspace:*",
+        "create-nifra": "workspace:*",
       },
     },
     "packages/client": {

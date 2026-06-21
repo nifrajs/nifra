@@ -44,7 +44,8 @@
     "@nifrajs/client": "workspace:*",
     "@nifrajs/runner": "workspace:*",
     "@nifrajs/schema": "workspace:*",
-    "@nifrajs/web": "workspace:*"
+    "@nifrajs/web": "workspace:*",
+    "create-nifra": "workspace:*"
   },
   "repository": {
     "type": "git",

@@ -125,6 +125,55 @@ describe("scaffold — templates", () => {
   })
 })
 
+describe("scaffold — agent-discovery files (MCP auto-discovery)", () => {
+  test("writes .mcp.json registering the nifra MCP with the bin-owning package", async () => {
+    const dir = await freshDir("mcp-app")
+    await scaffold({ target: dir })
+    const raw = await readFile(join(dir, ".mcp.json"), "utf8")
+    const cfg = JSON.parse(raw) as {
+      mcpServers: Record<string, { command: string; args: string[] }>
+    }
+    // Claude Code's exact shape: { mcpServers: { <name>: { command, args } } }.
+    expect(cfg.mcpServers.nifra).toBeDefined()
+    expect(cfg.mcpServers.nifra?.command).toBe("bunx")
+    // `@nifrajs/cli` (not the bare `nifra` pkg) — it's the package that provides the `nifra` bin, so it
+    // resolves across api/isr templates that don't carry @nifrajs/cli as a dep.
+    expect(cfg.mcpServers.nifra?.args).toEqual(["@nifrajs/cli", "mcp"])
+  })
+
+  test("writes .cursor/mcp.json with the same server config", async () => {
+    const dir = await freshDir("cursor-app")
+    await scaffold({ target: dir })
+    const [root, cursor] = await Promise.all([
+      readFile(join(dir, ".mcp.json"), "utf8"),
+      readFile(join(dir, ".cursor/mcp.json"), "utf8"),
+    ])
+    // Both registries serialize the one canonical config — byte-identical, so they can't drift.
+    expect(cursor).toBe(root)
+  })
+
+  test("writes a CLAUDE.md that is MCP-first and imports AGENTS.md (no duplication)", async () => {
+    const dir = await freshDir("claude-app")
+    await scaffold({ target: dir })
+    const md = await readFile(join(dir, "CLAUDE.md"), "utf8")
+    expect(md).toContain("nifra MCP server")
+    expect(md).toContain("nifra_docs")
+    expect(md).toContain("nifra_check") // the done-gate
+    // The `@AGENTS.md` import directive must be on its own line for Claude Code to resolve it — that's
+    // how the full cookbook stays in AGENTS.md alone (no drift between the two files).
+    expect(md.split("\n")).toContain("@AGENTS.md")
+  })
+
+  test("AGENTS.md gains the MCP section so non-Claude agents learn the server exists", async () => {
+    const dir = await freshDir("agents-mcp-app")
+    await scaffold({ target: dir })
+    const md = await readFile(join(dir, "AGENTS.md"), "utf8")
+    expect(md).toContain("## MCP server")
+    expect(md).toContain("bunx @nifrajs/cli mcp")
+    expect(md).toContain("nifra_docs")
+  })
+})
+
 describe("scaffold — --deploy preset", () => {
   test("vercel repoints build/deploy; per-target scripts stay", async () => {
     const dir = await freshDir("vc-app")

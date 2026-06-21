@@ -49,6 +49,12 @@ Usage:
                                          routes (routes/) + the in-process backend's API routes,
                                          marking which API routes are auto-mounted under apiPrefix.
                                          --json for agents (see POST /api/x is/isn't served, not via 405).
+  nifra init-agents [--force] [--json]   Retrofit an EXISTING app with the agent-discovery files a new
+                                         app ships: .mcp.json + .cursor/mcp.json (register this project's
+                                         nifra MCP), CLAUDE.md (MCP-first preamble + @AGENTS.md import),
+                                         and a "## MCP server" section in AGENTS.md. No-clobber by
+                                         default (skips a file you've customized); --force overwrites the
+                                         owned files. AGENTS.md is only appended to, never overwritten.
   nifra mcp                              Start an MCP server (stdio) exposing this project to a coding
                                          agent: nifra_context, nifra_routes (routes+schemas as JSON),
                                          nifra_run (backend), nifra_render (SSR a page), nifra_docs,
@@ -299,6 +305,17 @@ async function main(): Promise<void> {
       }))
     )
       process.exitCode = 1
+    return
+  }
+  // `init-agents` retrofits the agent-discovery files (.mcp.json, CLAUDE.md, …) into the cwd. It's a
+  // pure file-writing command independent of the app loading, so dispatch it before the eager `loadApp`
+  // (an existing app might be API-only or not yet built). It always succeeds unless a write throws.
+  if (command === "init-agents") {
+    const { runInitAgents } = await import("./init-agents.ts")
+    await runInitAgents(process.cwd(), {
+      json: argv.includes("--json"),
+      force: argv.includes("--force"),
+    })
     return
   }
   // `doctor` is a pure cwd check (imports vs declared deps) — like `check`, dispatch before `loadApp`

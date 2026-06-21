@@ -28,7 +28,8 @@
       "@nifrajs/content": ["./packages/content/src/index.ts"],
       "@nifrajs/content/fs": ["./packages/content/src/fs.ts"],
       "@nifrajs/content/mdx": ["./packages/content/src/mdx.ts"],
-      "@nifrajs/test-utils": ["./internal/test-utils/src/index.ts"]
+      "@nifrajs/test-utils": ["./internal/test-utils/src/index.ts"],
+      "create-nifra/agent-files": ["./packages/create-nifra/src/agent-files.ts"]
     }
   },
   "include": [
