@@ -13,8 +13,14 @@ export interface BetterAuthLike {
     /** Resolve the session from request headers (cookie or bearer). Returns a nullable payload. */
     readonly getSession: (context: { readonly headers: Headers }) => Promise<unknown>
   }
-  /** better-auth's resolved options; `basePath` (when set) defaults the mount path. */
-  readonly options?: { readonly basePath?: string }
+  /**
+   * better-auth's resolved options; `basePath` (when set) defaults the mount path. Intersected with
+   * `Record<string, unknown>` so a real better-auth instance (whose `options` is a large concrete object
+   * with no structural overlap to a bare `{ basePath? }`) stays assignable to `BetterAuthLike` WITHOUT a
+   * cast — keeping `A` concrete so `SessionOf<A>` recovers the real session type instead of collapsing
+   * to `{}` and forcing per-call session casts downstream.
+   */
+  readonly options?: { readonly basePath?: string } & Record<string, unknown>
 }
 
 /**
