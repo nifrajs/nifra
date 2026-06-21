@@ -98,6 +98,9 @@ backend in `nifra dev` and in prod alike — no hand-dispatch in `server-bun.ts`
   `throw new Response("", { status: 404 })` for unknown ids.
 - **React is deduped** in both the build and the vite dev server, so a `file:`-linked package shipping
   its own React no longer nulls the SSR hook dispatcher.
+- **Server-only code** → put it in a `*.server.ts` module: the client build empties it (its `node:` /
+  native imports never ship to the browser). A server-only import **co-located** in a route file instead
+  fails the build loud (the `node:`-builtin guard names the chunk) — move it into a `.server.ts` module.
 - Run **`nifra check`** (`--json` for agents) as the done-gate: typecheck + typed-client drift +
   server-only-import-in-a-route + raw-`Response`-from-a-route + undeclared dependency.
 

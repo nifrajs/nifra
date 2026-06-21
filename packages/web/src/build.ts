@@ -416,7 +416,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     // below — both the aggregate and per-route — via the metafile, for `<link>` injection.
     ...buildExtras,
     minify: options.minify ?? true,
-    plugins: [reactDedupePlugin(routesDir), ...(options.plugins ?? [])],
+    plugins: [reactDedupePlugin(routesDir), serverOnlyEmptyPlugin(), ...(options.plugins ?? [])],
     ...(options.conditions ? { conditions: [...options.conditions] } : {}),
     // Replace `process.env.*` at compile time so an app module reading config off `process.env` doesn't
     // hit a `process is not defined` crash in the browser. Bun does longest-match: NODE_ENV resolves to
@@ -634,6 +634,26 @@ export const reactDedupePlugin = (from: string): BunPlugin => ({
       const escaped = spec.replace(/[/\\^$*+?.()|[\]{}]/g, "\\$&")
       build.onResolve({ filter: new RegExp(`^${escaped}$`) }, () => ({ path: resolved }))
     }
+  },
+})
+
+/**
+ * Remix-style `.server` convention for the CLIENT build. A module named `*.server.ts(x)` (`db.server.ts`,
+ * `auth.server.ts`, …) is server-only — empty it in the browser bundle so its (possibly `node:` / native /
+ * Capacitor) import subtree never reaches the client. The body is CJS-with-a-Proxy so any named OR default
+ * import resolves to `undefined` rather than a "missing export" bundle error (verified), and the real
+ * import subtree is gone. The complement to the node-builtin guard: when a server-only import is co-located
+ * in a route file (so it can't be tree-shaken out and the guard fails loud), moving it into a `*.server`
+ * module is the fix. CLIENT-only — buildServer keeps the real module, which runs server-side.
+ */
+const SERVER_ONLY_MODULE = /\.server(\.[cm]?[jt]sx?)?$/
+export const serverOnlyEmptyPlugin = (): BunPlugin => ({
+  name: "nifra-server-only-empty",
+  setup(build) {
+    build.onLoad({ filter: SERVER_ONLY_MODULE }, () => ({
+      contents: "module.exports = new Proxy({}, { get: () => undefined })",
+      loader: "js",
+    }))
   },
 })
 
