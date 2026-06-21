@@ -43,6 +43,12 @@ Usage:
   nifra doctor  [--json] [--auto-fix]    Flag packages imported in source but missing from package.json
                                          (resolve at Bun runtime, break tsc + standalone install);
                                          --auto-fix writes safe local-version dependency fixes.
+  nifra port    [--target <t>] [--json]  Portability linter: print a feature × deploy-target capability
+                [--ci] [--strict]        matrix (in-memory stores, in-process cron/WebSocket, Bun/Deno
+                                         globals, node: builtins) with file:line evidence. --target auto-
+                                         detected from build/deploy scripts, wrangler.toml, or vercel config;
+                                         --ci (or any --target) exits non-zero when a used feature is
+                                         unsupported on the target; --strict also fails on caveats.
 
 Reads nifra.config.ts (adapter + clientModule + plugins; or framework.ts), backend.ts (optional), and
 routes/ from the current directory. Run from your project root.`
@@ -215,6 +221,31 @@ async function main(): Promise<void> {
       }))
     )
       process.exitCode = 1
+    return
+  }
+  // `port` is a pure cwd-based portability linter (scans source, doesn't run the app) — like `check`/
+  // `doctor`, dispatch before the eager `loadApp` so it runs on an API-only / not-yet-built project.
+  if (command === "port") {
+    const { runPort } = await import("./port.ts")
+    const targetIdx = argv.indexOf("--target")
+    const target = targetIdx !== -1 ? argv[targetIdx + 1] : undefined
+    if (targetIdx !== -1 && (target === undefined || target.startsWith("-"))) {
+      console.error("[nifra] --target needs a value: bun | node | deno | cf-pages | vercel")
+      process.exitCode = 1
+      return
+    }
+    try {
+      const passed = await runPort(process.cwd(), {
+        ...(target !== undefined ? { target } : {}),
+        json: argv.includes("--json"),
+        ci: argv.includes("--ci"),
+        strict: argv.includes("--strict"),
+      })
+      if (!passed) process.exitCode = 1
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err))
+      process.exitCode = 1
+    }
     return
   }
   if (command !== "dev" && command !== "build" && command !== "start" && command !== "context") {
