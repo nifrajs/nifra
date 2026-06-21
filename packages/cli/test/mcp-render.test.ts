@@ -62,9 +62,31 @@ function spawnRenderWorker(cwd: string): {
   return { proc, call, close }
 }
 
+/**
+ * Invoke the one-shot child entry the way production does (`bun mcp-render.ts <cwd>` — see `mcp.ts`'s
+ * nifra_render handler): SSR runs in a FRESH process, so its React/react-dom resolution is isolated from
+ * this test runner. An IN-PROCESS `renderPages()` call instead shares this Bun test process's module cache
+ * — under SSR that can surface a duplicate React (the component's react ≠ react-dom's react → a null hook
+ * dispatcher), which is environment-dependent and not how the tool is ever invoked. Subprocess = faithful.
+ */
+async function renderViaSubprocess(cwd: string, requests: unknown): Promise<RenderResult> {
+  const proc = Bun.spawn(["bun", join(import.meta.dir, "../src/mcp-render.ts"), cwd], {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  proc.stdin.write(JSON.stringify({ requests }))
+  await proc.stdin.end()
+  const out = await new Response(proc.stdout).text()
+  await proc.exited
+  return JSON.parse(out) as RenderResult
+}
+
 describe("renderPages", () => {
   test("SSRs a real page route to HTML (loader runs), 404s an unknown path", async () => {
-    const r = await renderPages(APP, [{ path: "/" }, { path: "/no-such-page" }])
+    // Subprocess (fresh process) — the production invocation path; an in-process call can mis-resolve a
+    // duplicate React under SSR in a shared test runner (CI). The warm-worker tests below prove the same.
+    const r = await renderViaSubprocess(APP, [{ path: "/" }, { path: "/no-such-page" }])
     expect(isErr(r)).toBe(false)
     if (isErr(r)) return
     const [home, missing] = r.results as PageResult[]
