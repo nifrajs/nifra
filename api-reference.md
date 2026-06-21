@@ -752,6 +752,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   The router's observable state. A new object is published on every transition.
 - **ScriptDescriptor** _(interface)_ — `interface ScriptDescriptor`
   One `<script>` element a route contributes to `<head>` — for structured data (JSON-LD) and other inert, non-executable head scripts. The `content` is the script body; `type` defaults to `"application/ld+json"` (the common case). The renderer escapes `content` against an HTML breakout (`</`, `<!--`,…
+- **ServerOnly** _(type)_ — `type ServerOnly<T> = T & { readonly [SERVER_ONLY_BRAND]?: never }`
+  Type-level intent marker for a value that must only exist on the server — a secret, a DB handle, a server-only client. `ServerOnly<T>` is structurally `T` (the brand is an optional phantom field, so existing code keeps type-checking), but it advertises to readers + the compiler that the value is no…
 - **StaticPath** _(interface)_ — `interface StaticPath`
   One concrete parameterization of a dynamic route, returned by {@link GetStaticPaths}.
 - **StaticPaths** _(interface)_ — `interface StaticPaths`

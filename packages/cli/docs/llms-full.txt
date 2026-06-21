@@ -2585,6 +2585,171 @@ own stylesheet. Pass `manifest.routeStyles` to `createWebApp` alongside
 `styles`, and Nifra links the matched route's CSS during SSR. In
 **dev**, Vite injects per-module CSS.
 
+## Nifra — Troubleshooting
+
+> Fixes keyed on the literal error strings Nifra prints: `reached the client bundle` (a node:/native import in the browser bundle), `server-only module reached the client bundle` (the server-only marker), and `resolveDispatcher` / `Invalid hook call` (duplicate React).
+
+Hit an error? Search this page for the literal message. Each section is keyed on the exact
+string Nifra prints, with what it means and the fix. The build, `nifra check`, and
+the runtime all use the same wording so you can grep for it.
+
+### `reached the client bundle` — a `node:` / native import leaked to the browser
+
+The client build refuses to ship a Node built-in (`node:fs`, `node:crypto`,
+`bun:sqlite`, a native driver like `pg`) to the browser. Bun would
+silently substitute a polyfill that breaks — or leaks server code — at runtime, so Nifra fails
+the build instead. The message names the offending builtin and the **import chain**
+that pulled it in:
+
+[nifra/web] Node built-in(s) in the client bundle — move them behind a server-only path
+
+- node:crypto reached the client bundle via routes/x.tsx → ../data.ts → ../db.ts
+(chunk: x-abc123.js)
+
+Read the chain right-to-left: `../db.ts` imports `node:crypto`, and a
+top-level import in `routes/x.tsx` dragged it into the browser. **Fix it one
+of two ways:**
+
+-
+**Move the code into a `*.server.ts` module** (the recommended
+default). The client build empties `*.server` modules, so their `node:`
+/ native imports never reach the browser. Import the server module only from a loader/action
+(which run on the server).
+
+-
+**Reach the server code from a loader/action, not a route's top level.** A
+loader runs on the server during SSR; importing the `node:` module inside (or via)
+a loader keeps it out of the client graph.
+
+```ts
+// doc-check: skip — illustrative two-file layout (a relative cross-file import).
+// db.server.ts — the `.server` convention: the client build EMPTIES this module, so its
+// `node:` / native imports never ship to the browser. No marker import needed — the filename is it.
+import { Database } from "bun:sqlite"
+export const db = new Database("app.db")
+
+// routes/notes.tsx — import the server module from a loader; it runs only on the server during SSR.
+import type { LoaderContext } from "@nifrajs/web"
+import { db } from "../db.server"
+export async function loader(_ctx: LoaderContext) {
+  return { notes: db.query("select * from notes").all() }
+}
+```
+
+[!TIP]
+
+Run `nifra check` (or `nifra check --json` for agents) to catch this
+_before_ the build: it reports the same transitive chain (
+`routes/x → ../data → ./db → node:crypto`) by walking the local module graph, so
+you see the leak as a lint result, not a failed build.
+
+### `server-only module reached the client bundle` — the server-only marker fired
+
+This is the companion guard for **pure server logic that carries no `node:`
+import** — a secret-bearing constant, a server-only API call — so the node-builtin guard
+above has nothing to catch and the `.server` convention needs the file to be
+_named_ `*.server`. You opt a module in with a side-effect import, and the
+client build fails loud (with the import chain) if it ever lands in a browser chunk:
+
+[nifra/web] server-only module(s) in the client bundle — a module marked
+`import "@nifrajs/web/server-only"` reached the browser.
+
+- server-only module reached the client bundle via routes/x.tsx → ./secrets.ts (marked
+server-only)
+
+There are three markers; reach for them by intent:
+
+marker
+enforcement
+use when
+
+`*.server.ts` filename
+
+client build auto-empties the module
+
+a dedicated server module (a DB client, a `node:` helper) you can name
+`*.server`
+
+`import "@nifrajs/web/server-only"`
+
+client build fails loud, with the chain, if it leaks
+
+pure server logic with **no `node:` import to catch** (a secret,
+a server-only call) that you can't / don't want to rename
+
+`ServerOnly` type
+
+type-level intent only — does NOT keep it out of the bundle
+
+documenting that a value must not cross to the browser; pair it with one of the two
+runtime markers
+
+A worked example — a secret with no `node:` import, marked so a leak fails the build
+rather than shipping the key to every visitor:
+
+```ts
+// secrets.ts — pure server logic: a secret constant, no `node:` import to catch.
+import "@nifrajs/web/server-only"             // ← fails the CLIENT build (loud, with the import chain)
+import type { ServerOnly } from "@nifrajs/web" // ← type-level intent: this value is server-only
+
+// `ServerOnly<string>` is structurally `string` (the brand is an optional phantom field), so it
+// stays assignment-compatible — it documents intent without obstructing real use.
+export const apiKey: ServerOnly<string> = process.env.SECRET_API_KEY!
+
+// If this module ever reaches a browser chunk, buildClient fails with:
+//   server-only module reached the client bundle via routes/x.tsx → ./secrets.ts (marked server-only)
+// Reach it from a loader/action (server-only) instead, and the secret never ships to the client.
+```
+
+**Fix:** reach the module from a loader/action (server-only), or rename it
+`*.server.ts` so the client build empties it. `nifra check` reports the
+same transitive chain pre-build. The `ServerOnly` brand on its own is purely
+type-level (it erases at build), so always back it with the import marker or the
+`.server` filename.
+
+### `resolveDispatcher` / `Invalid hook call` — duplicate React
+
+If SSR throws `Cannot read properties of null (reading 'useState')` inside
+`resolveDispatcher`, or React logs **"Invalid hook call. Hooks can only be
+called inside the body of a function component"**, you almost certainly have
+**two copies of React** in one render. React's hook dispatcher is module-level
+global state; a second copy nulls it out and every hook throws.
+
+Nifra **dedupes React** in both the production build and the Vite dev server, so
+the framework itself won't load two copies. The usual culprit is a
+**`file:`-linked package** (a local component library you
+`bun link` or reference with `file:../lib`) that bundles its own React in
+its own `node_modules`:
+
+-
+Make React a **peer dependency** of the linked package (not a regular
+dependency), so it resolves to the app's single copy.
+
+-
+Ensure one React version across the workspace — pin it in the root
+`package.json` `overrides` (Nifra's own repo pins
+`react` / `react-dom` this way) so every package resolves the same
+copy.
+
+-
+Delete the linked package's nested `node_modules/react` after linking if your
+package manager duplicated it.
+
+[!NOTE]
+
+This applies to every framework with module-global render state, not just React (Preact,
+Vue, Solid, Svelte). Nifra dedupes the active adapter's runtime in build and dev; a
+`file:`-linked package shipping its own copy is the thing to fix. See
+[Dev & HMR](/docs/dev) and the `file:`-linked-package note in
+`AGENTS.md`.
+
+### Still stuck?
+
+Run `nifra check --json` as the done-gate — it surfaces the import-chain leaks,
+typed-client drift, and raw-`Response`-from-a-route issues before you ship. The
+full machine-readable contract is at [/llms-full.txt](/llms-full.txt), and each
+package ships a tight `LLM.md` contract card.
+
 ## Nifra — Backends & API (dev and prod)
 
 > How a Nifra backend reaches your app: inProcessClient feeds ctx.api to loaders, and createWebApp auto-mounts the backend over HTTP at /api/* — in `nifra dev` and production alike, no hand-dispatch.
@@ -3787,9 +3952,11 @@ MIT
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/better-auth
 
@@ -3886,9 +4053,11 @@ MIT
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/cli
 
@@ -3992,9 +4161,11 @@ Run the client from (or point it at) your project root. The protocol is hand-rol
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/client
 
@@ -4029,9 +4200,11 @@ ESM-only. MIT.
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/content
 
@@ -4054,9 +4227,11 @@ MIT
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/core
 
@@ -4096,9 +4271,11 @@ ESM-only; requires Bun at runtime. MIT.
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/cron
 
@@ -4163,9 +4340,11 @@ trigger instead: `toFetchHandler(app, { scheduled })` from `@nifrajs/core` + a `
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/deno
 
@@ -4205,9 +4384,11 @@ Works with any `{ fetch(req): Promise<Response> }` handler, not just nifra. ESM/
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/env
 
@@ -4279,9 +4460,11 @@ secret). `defineEnv` returns a frozen object, so a validated config can't be mut
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/i18n
 
@@ -4304,9 +4487,11 @@ MIT
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/image
 
@@ -4329,9 +4514,11 @@ MIT
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/islets
 
@@ -4397,9 +4584,11 @@ first-class.
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/middleware
 
@@ -4483,9 +4672,11 @@ const app = server({ requestTimeoutMs: 5_000 })
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/node
 
@@ -4552,9 +4743,11 @@ Works with any `{ fetch(req): Promise<Response> }` handler, not just nifra. ESM-
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/otel
 
@@ -4610,9 +4803,11 @@ SDK only in apps that need that exporter.
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/runner
 
@@ -4646,9 +4841,11 @@ process/CI for the agent runner. Don't feed it code you wouldn't already run.
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/schema
 
@@ -4703,9 +4900,11 @@ are still emitted without body/response detail (Standard Schema exposes no JSON 
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/uploads
 
@@ -4728,9 +4927,11 @@ MIT
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
@@ -4753,9 +4954,11 @@ MIT
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web-preact
 
@@ -4778,9 +4981,11 @@ MIT
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web-react
 
@@ -4803,9 +5008,11 @@ MIT
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web-solid
 
@@ -4828,9 +5035,11 @@ MIT
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web-svelte
 
@@ -4853,9 +5062,11 @@ MIT
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web-vanilla
 
@@ -4878,9 +5089,11 @@ MIT
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web-vue
 
@@ -4903,9 +5116,11 @@ MIT
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/workers
 
@@ -4928,9 +5143,11 @@ MIT
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## create-nifra
 
@@ -4968,9 +5185,11 @@ MIT.
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## nifra
 
@@ -5001,9 +5220,11 @@ MIT.
 
 ## For AI agents
 
-Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
-quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
-`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ---
 
@@ -5079,7 +5300,7 @@ quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-
 
 ## @nifrajs/web
 
-`Action`, `ACTION_GLOBAL`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumeratePrerenderedPaths`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `GetStaticPaths`, `hashQueryKey`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `openGraph`, `OpenGraphInput`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `RenderAdapter`, `RenderedPage`, `renderPage`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `ScriptDescriptor`, `serializeData`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `Submission`, `SubmitOptions`, `withISR`
+`Action`, `ACTION_GLOBAL`, `apiKey`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumeratePrerenderedPaths`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `GetStaticPaths`, `hashQueryKey`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `openGraph`, `OpenGraphInput`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `RenderAdapter`, `RenderedPage`, `renderPage`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `ScriptDescriptor`, `serializeData`, `ServerOnly`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `Submission`, `SubmitOptions`, `withISR`
 
 ## @nifrajs/web-preact
 

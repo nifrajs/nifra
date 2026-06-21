@@ -372,6 +372,12 @@
     "code": "import { sse } from \"@nifrajs/core\"\n\n// A live feed — push events until the client disconnects.\napp.get(\"/notifications\", (c) =>\n  sse(c, (stream) => {\n    const off = notifications.subscribe((n) =>\n      stream.send({ event: \"notification\", id: n.id, data: JSON.stringify(n) }),\n    )\n    // Keep the connection open until the client leaves, then tear down.\n    return new Promise<void>((resolve) =>\n      stream.signal.addEventListener(\"abort\", () => { off(); resolve() }, { once: true }),\n    )\n  }, { keepAlive: 15_000 }),\n)"
   },
   {
+    "name": "SERVER_ONLY_MARKER",
+    "topic": "Nifra — Troubleshooting",
+    "slug": "troubleshooting",
+    "code": "// secrets.ts — pure server logic: a secret constant, no `node:` import to catch.\nimport \"@nifrajs/web/server-only\"             // ← fails the CLIENT build (loud, with the import chain)\nimport type { ServerOnly } from \"@nifrajs/web\" // ← type-level intent: this value is server-only\n\n// `ServerOnly<string>` is structurally `string` (the brand is an optional phantom field), so it\n// stays assignment-compatible — it documents intent without obstructing real use.\nexport const apiKey: ServerOnly<string> = process.env.SECRET_API_KEY!\n\n// If this module ever reaches a browser chunk, buildClient fails with:\n//   server-only module reached the client bundle via routes/x.tsx → ./secrets.ts (marked server-only)\n// Reach it from a loader/action (server-only) instead, and the secret never ships to the client."
+  },
+  {
     "name": "CLIENT",
     "topic": "Nifra — Types-first architecture",
     "slug": "types-first",
