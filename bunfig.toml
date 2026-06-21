@@ -14,5 +14,10 @@ coveragePathIgnorePatterns = [
   "**/web/src/vite.ts",
   "**/web/src/dev.ts",
   "**/web/src/prerender.ts",
+  # Throwaway temp APPS that the build-tooling tests (`buildTarget`/`buildClient`) generate + bundle:
+  # their stub route components are bundled, never rendered (the stub adapter emits chain length, not
+  # the component), so they report 0% function coverage. They aren't product code — exclude the temp
+  # fixture dirs from the per-file gate (same rationale as build.ts above).
+  "**/web/test/.tmp-*/**",
 ]
 pathIgnorePatterns = ["**/template/**", "**/template-*/**"]

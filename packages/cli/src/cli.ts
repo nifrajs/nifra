@@ -1,7 +1,4 @@
 #!/usr/bin/env bun
-import { inProcessClient } from "@nifrajs/client"
-import { createWebApp, DEFAULT_DEV_PORT, type RenderAdapter } from "@nifrajs/web"
-import { discoverRoutes } from "@nifrajs/web/fs"
 /**
  * `nifra` — the zero-config CLI for a nifra app. Reads `framework.ts` + `backend.ts` + `routes/` from
  * the project root (see {@link loadApp}) and wires the right `@nifrajs/web` entrypoint:
@@ -12,14 +9,24 @@ import { discoverRoutes } from "@nifrajs/web/fs"
  *
  * Bun-only (it runs the framework's TS + Bun plugins directly). The *output* runs anywhere.
  */
+import { existsSync } from "node:fs"
+import { resolve } from "node:path"
+import { inProcessClient } from "@nifrajs/client"
+import { createWebApp, DEFAULT_DEV_PORT, type RenderAdapter } from "@nifrajs/web"
+import { discoverRoutes } from "@nifrajs/web/fs"
 import type { BunPlugin } from "bun"
-import { describeProject } from "./introspect.ts"
+import { describeProject, describeRoutes } from "./introspect.ts"
 import { type LoadedApp, loadApp, resolvePlugins } from "./load.ts"
 
 export interface Flags {
   readonly port: number
   readonly out: string
   readonly poll: boolean
+  /** `nifra build --target <t>`: emit a full deploy dir for a target (bun/node/deno/cf-pages/vercel/
+   * static) instead of just the client bundle. Undefined ⇒ the legacy client-only build. */
+  readonly target?: string
+  /** `nifra build --report`: print a per-chunk size + gzip table after the build. */
+  readonly report: boolean
 }
 
 const HELP = `nifra — zero-config dev/build/start for a nifra app
@@ -27,9 +34,20 @@ const HELP = `nifra — zero-config dev/build/start for a nifra app
 Usage:
   nifra dev     [--port <n>] [--poll]    Start the true-HMR dev server (Vite). Default port ${DEFAULT_DEV_PORT}.
   nifra build   [--out <dir>]            Bundle the client + write manifest.json.
+                [--target <t>] [--report]  With --target, emit a FULL deploy dir for <t>:
+                                         bun | node | deno | cf-pages | vercel | static. Packages
+                                         buildClient + buildServer (+ prerender for static) so an app
+                                         no longer hand-writes build-<target>.ts + _worker.ts +
+                                         _routes.json. The server entry is generated from your
+                                         framework.ts (adapter) + backend.ts + routes/. --report prints
+                                         a per-chunk size + gzip table (biggest first).
   nifra start   [--port <n>] [--out <dir>]  Serve the built app (client + SSR) on Bun. Default port ${DEFAULT_DEV_PORT}.
   nifra context                          Print this project's API + page routes + conventions
                                          (for piping into an AI coding agent's prompt).
+  nifra routes  [--json]                 List every route the app serves with its method(s): page
+                                         routes (routes/) + the in-process backend's API routes,
+                                         marking which API routes are auto-mounted under apiPrefix.
+                                         --json for agents (see POST /api/x is/isn't served, not via 405).
   nifra mcp                              Start an MCP server (stdio) exposing this project to a coding
                                          agent: nifra_context, nifra_routes (routes+schemas as JSON),
                                          nifra_run (backend), nifra_render (SSR a page), nifra_docs,
@@ -106,6 +124,68 @@ async function build(app: LoadedApp): Promise<void> {
   console.log(`nifra build → ${outDir} (entry ${manifest.entry}${manifest.css ? ", + css" : ""})`)
 }
 
+/**
+ * `nifra build --target <t>` — package the engine (buildClient + buildServer + prerender) into one
+ * command that emits a full deploy dir, so an app no longer hand-writes build-bun.ts + _worker.ts +
+ * _routes.json per target. The adapter is imported from `framework.ts` (the edge-bundlable file — never
+ * `nifra.config.ts`, which pulls in Vite plugins), and the backend from `backend.ts` when present;
+ * `buildTarget` generates the per-target server entry from those + the app's `routes/`.
+ */
+async function buildForTarget(app: LoadedApp, target: string, report: boolean): Promise<void> {
+  const { buildTarget, isBuildTarget, renderSizeReport, BUILD_TARGETS } = await import(
+    "@nifrajs/web/build"
+  )
+  if (!isBuildTarget(target)) {
+    throw new Error(`[nifra] unknown --target "${target}". Valid: ${BUILD_TARGETS.join(", ")}.`)
+  }
+  const { framework: fw, routesDir, outDir, cwd, backend } = app
+  // The server entry must import the adapter from `framework.ts` (edge-safe), not the loaded config.
+  // `loadApp` guarantees one of them exists; prefer framework.ts so a multi-target app's Vite-plugin
+  // config never reaches the edge bundle (see load.ts module header).
+  const frameworkFile = existsSync(resolve(cwd, "framework.ts"))
+    ? resolve(cwd, "framework.ts")
+    : existsSync(resolve(cwd, "nifra.config.ts"))
+      ? resolve(cwd, "nifra.config.ts")
+      : resolve(cwd, "framework.ts")
+  const backendFile = resolve(cwd, "backend.ts")
+  const result = await buildTarget(target, {
+    routesDir,
+    outDir,
+    workDir: resolve(cwd, ".nifra-build"),
+    clientModule: fw.clientModule,
+    adapterImport: frameworkFile,
+    ...(backend !== undefined && existsSync(backendFile) ? { backendImport: backendFile } : {}),
+    clientPlugins: asBunPlugins(await resolvePlugins(fw.clientPlugins)),
+    serverPlugins: asBunPlugins(await resolvePlugins(fw.serverPlugins)),
+    ...(fw.conditions ? { conditions: fw.conditions } : {}),
+    ...(fw.define ? { define: fw.define } : {}),
+    // The static target needs a built app to drive prerendering — only build it when targeting static.
+    ...(target === "static" ? { prerenderApp: await buildPrerenderApp(app) } : {}),
+  })
+  console.log(`nifra build (${target}) → ${result.run}`)
+  if (report) console.log(`\n${renderSizeReport(result.size)}`)
+}
+
+/** Build a fetch-capable app instance for the `static` target's prerender pass. Mirrors `nifra start`:
+ * register the framework's SSR Bun plugins (so `.vue`/`.svelte`/Solid routes import), discover routes,
+ * and wire the in-process backend so build-time loaders can read data. The returned `Server` already
+ * satisfies `buildTarget`'s `PrerenderAppLike` (a `fetch(req)` yielding a `Response`). */
+async function buildPrerenderApp(
+  app: LoadedApp,
+): Promise<{ fetch(req: Request): Response | Promise<Response> }> {
+  const { plugin } = await import("bun")
+  const { framework: fw, routesDir, backend } = app
+  for (const p of asBunPlugins(await resolvePlugins(fw.serverPlugins))) plugin(p)
+  return createWebApp({
+    adapter: asAdapter(fw.adapter),
+    manifest: discoverRoutes(routesDir),
+    // The client entry is irrelevant to the static HTML (it's a hydration script tag) — a placeholder
+    // is fine; the real hashed bundle is emitted to /assets by buildTarget's client build.
+    clientEntry: "/assets/_nifra-entry.js",
+    ...apiOf(backend),
+  })
+}
+
 interface BuiltManifest {
   readonly entry: string
   readonly routes?: Readonly<Record<string, readonly string[]>>
@@ -160,16 +240,20 @@ export function parseFlags(args: readonly string[]): Flags {
   let port = Number(Bun.env.PORT ?? DEFAULT_DEV_PORT)
   let out = "dist"
   let poll = Bun.env.CHOKIDAR_USEPOLLING === "1"
+  let target: string | undefined
+  let report = false
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
     if ((a === "--port" || a === "-p") && args[i + 1]) port = Number(args[++i])
     else if (a === "--out" && args[i + 1]) out = args[++i] as string
     else if (a === "--poll") poll = true
+    else if (a === "--target" && args[i + 1]) target = args[++i]
+    else if (a === "--report") report = true
   }
   if (!Number.isFinite(port) || port < 0 || port > 65535) {
     throw new Error(`[nifra] invalid --port: ${port}`)
   }
-  return { port, out, poll }
+  return { port, out, poll, report, ...(target !== undefined ? { target } : {}) }
 }
 
 async function main(): Promise<void> {
@@ -254,7 +338,13 @@ async function main(): Promise<void> {
     }
     return
   }
-  if (command !== "dev" && command !== "build" && command !== "start" && command !== "context") {
+  if (
+    command !== "dev" &&
+    command !== "build" &&
+    command !== "start" &&
+    command !== "context" &&
+    command !== "routes"
+  ) {
     console.error(`[nifra] unknown command: ${command}\n`)
     console.error(HELP)
     process.exitCode = 1
@@ -263,9 +353,15 @@ async function main(): Promise<void> {
   const flags = parseFlags(argv.slice(1))
   const app = await loadApp(process.cwd(), flags.out)
   if (command === "dev") await dev(app, flags)
-  else if (command === "build") await build(app)
-  else if (command === "context") console.log(describeProject(app))
-  else await start(app, flags)
+  else if (command === "build") {
+    // `--target` (or `--report`) → the full per-target deploy build; otherwise the legacy client build.
+    if (flags.target !== undefined || flags.report) {
+      await buildForTarget(app, flags.target ?? "cf-pages", flags.report)
+    } else await build(app)
+  } else if (command === "context") console.log(describeProject(app))
+  else if (command === "routes") {
+    console.log(await describeRoutes(app, { json: argv.includes("--json") }))
+  } else await start(app, flags)
 }
 
 // Only run the CLI when invoked as the entry (`bun cli.ts …`), not when a test imports it for the

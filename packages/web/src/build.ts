@@ -11,6 +11,8 @@ import type { BunPlugin } from "bun"
 import { sanitizeOutputNames } from "./chunk-names.ts"
 import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
+// `buildTarget(static)` drives the SSG prerender engine directly (it's also re-exported below).
+import { prerenderRoutes } from "./prerender.ts"
 
 // Build-time SSG: prerender opted-in static + dynamic routes to `index.html` (+ static `_data.json`),
 // run after `buildClient`.
@@ -178,6 +180,181 @@ const entryName = (file: string): string => {
   const base = basename(file)
   const dot = base.lastIndexOf(".")
   return dot === -1 ? base : base.slice(0, dot)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Bundle-size report (`nifra build --report`). The raw byte + gzip size of each emitted chunk lets a
+// dev catch a bundle regression at build time. Pure aggregation/formatting helpers (no fs, no Bun
+// build) so they're unit-testable in isolation; the orchestrator below wires them to real outputs.
+// ---------------------------------------------------------------------------------------------------
+
+/** One emitted chunk's measured size, in raw bytes + gzipped bytes (over-the-wire weight). */
+export interface ChunkSize {
+  /** The emitted file's basename (e.g. `index-abc123.js`). */
+  readonly name: string
+  /** Raw byte length of the file. */
+  readonly bytes: number
+  /** Gzipped byte length (what the client actually downloads, modulo brotli). */
+  readonly gzip: number
+}
+
+/** A whole build's size report — every chunk (largest first) + the totals. */
+export interface SizeReport {
+  /** Per-chunk sizes, sorted biggest gzip first (the regression you want to see at the top). */
+  readonly chunks: readonly ChunkSize[]
+  /** Sum of every chunk's raw bytes. */
+  readonly totalBytes: number
+  /** Sum of every chunk's gzip bytes. */
+  readonly totalGzip: number
+}
+
+/**
+ * Aggregate a list of measured chunks into a {@link SizeReport}: sort biggest-gzip-first (ties broken
+ * by raw bytes, then name for stable output) and sum the totals. Pure — the measurement (reading the
+ * file + `Bun.gzipSync`) happens in the orchestrator; this is the deterministic, unit-testable core.
+ */
+export function aggregateSizeReport(chunks: readonly ChunkSize[]): SizeReport {
+  const sorted = [...chunks].sort(
+    (a, b) => b.gzip - a.gzip || b.bytes - a.bytes || a.name.localeCompare(b.name),
+  )
+  let totalBytes = 0
+  let totalGzip = 0
+  for (const c of sorted) {
+    totalBytes += c.bytes
+    totalGzip += c.gzip
+  }
+  return { chunks: sorted, totalBytes, totalGzip }
+}
+
+/** Human-readable byte count: `B`/`KB`/`MB` with one decimal above 1 KB (e.g. `12.3 KB`). Pure. */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/**
+ * Render a {@link SizeReport} as a terse aligned table (biggest first) with a totals row — the text
+ * `nifra build --report` prints. Pure (string in, string out) so the formatting is unit-testable.
+ */
+export function renderSizeReport(report: SizeReport): string {
+  const rows = report.chunks.map((c) => ({
+    name: c.name,
+    raw: formatBytes(c.bytes),
+    gz: formatBytes(c.gzip),
+  }))
+  // Column widths from the header + every row + the totals label, so the table never clips a value.
+  const nameW = Math.max(5, ...rows.map((r) => r.name.length), "Total".length)
+  const rawW = Math.max(3, ...rows.map((r) => r.raw.length), formatBytes(report.totalBytes).length)
+  const gzW = Math.max(4, ...rows.map((r) => r.gz.length), formatBytes(report.totalGzip).length)
+  const padEnd = (s: string, w: number): string => s + " ".repeat(Math.max(0, w - s.length))
+  const padStart = (s: string, w: number): string => " ".repeat(Math.max(0, w - s.length)) + s
+  const line = (name: string, raw: string, gz: string): string =>
+    `  ${padEnd(name, nameW)}  ${padStart(raw, rawW)}  ${padStart(gz, gzW)}`
+  const out = [
+    line("Chunk", "Raw", "Gzip"),
+    line("-".repeat(nameW), "-".repeat(rawW), "-".repeat(gzW)),
+    ...rows.map((r) => line(r.name, r.raw, r.gz)),
+    line("Total", formatBytes(report.totalBytes), formatBytes(report.totalGzip)),
+  ]
+  return out.join("\n")
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Server-manifest drift detection (#7). `server-manifest.ts` is a committed generated file: it bakes
+// the route list + the client-entry hash for a disk-less worker (`generateServerManifest`). If `routes/`
+// changes but the manifest isn't regenerated, the worker serves a stale route table — a silent edge
+// break. These pure helpers diff the COMMITTED manifest source against the freshly-discovered routes so
+// `nifra check` (and `buildServer`) can fail with a named, actionable error before the drift ships.
+// ---------------------------------------------------------------------------------------------------
+
+/** A drift finding between a committed server-manifest and the live `routes/` tree. */
+export interface ManifestDrift {
+  /** Route files present in `routes/` but ABSENT from the committed manifest (the manifest is stale —
+   * the new route won't be served by the worker). */
+  readonly missing: readonly string[]
+  /** Route files the committed manifest imports that no longer exist in `routes/` (a deleted/renamed
+   * route still wired into the worker — a build/runtime break). */
+  readonly extra: readonly string[]
+}
+
+// The route-relative specifiers the generated manifest imports. Both shapes `generateServerManifest`
+// emits are matched: eager `import * as m0 from "./routes/x.tsx"` and lazy `() => import("./routes/x")`.
+// Captures the path inside the quotes; the caller strips the routes-dir prefix to compare with discovery.
+const MANIFEST_IMPORT = /(?:import\s+\*\s+as\s+\w+\s+from|import)\s*\(?\s*["']([^"']+)["']\)?/g
+// The baked client-entry line: `export const clientEntry = "…"`.
+const MANIFEST_CLIENT_ENTRY = /export\s+const\s+clientEntry\s*=\s*["']([^"']+)["']/
+
+/**
+ * Extract the route-relative file list the committed server-manifest imports, normalized to the same
+ * `routes/`-relative keys `discoverRoutes` produces (e.g. `docs/index.tsx`). `routesPrefix` is the
+ * specifier prefix the manifest used for the routes dir (default `./routes/`, what `buildServer`'s
+ * default `resolve` emits). Only import specifiers under that prefix are route files; the
+ * `@nifrajs/web` import (and any other bare specifier) is ignored. Pure — operates on source text.
+ */
+export function parseManifestRouteFiles(source: string, routesPrefix = "./routes/"): string[] {
+  const files = new Set<string>()
+  for (const match of source.matchAll(MANIFEST_IMPORT)) {
+    const spec = match[1]
+    if (spec === undefined || !spec.startsWith(routesPrefix)) continue
+    files.add(spec.slice(routesPrefix.length))
+  }
+  return [...files].sort()
+}
+
+/** The baked `clientEntry` URL in a committed server-manifest, or `undefined` if absent. Pure. */
+export function parseManifestClientEntry(source: string): string | undefined {
+  return MANIFEST_CLIENT_ENTRY.exec(source)?.[1]
+}
+
+/**
+ * Diff the route files a committed server-manifest imports against the files freshly discovered in
+ * `routes/`. Returns the `missing` (in routes/, not in manifest — stale manifest) and `extra` (in
+ * manifest, gone from routes/ — dangling import) sets. Empty arrays ⇒ in sync. Pure — the caller
+ * supplies both file lists (the committed source is parsed via {@link parseManifestRouteFiles}; the
+ * fresh list comes from `discoverRoutes`). Lists need not be pre-sorted; the result is sorted.
+ */
+export function diffManifestRoutes(
+  manifestFiles: readonly string[],
+  discoveredFiles: readonly string[],
+): ManifestDrift {
+  const inManifest = new Set(manifestFiles)
+  const inRoutes = new Set(discoveredFiles)
+  const missing = discoveredFiles.filter((f) => !inManifest.has(f)).sort()
+  const extra = manifestFiles.filter((f) => !inRoutes.has(f)).sort()
+  return { missing, extra }
+}
+
+/** True when a drift report is clean (no missing + no extra routes). */
+export function isManifestInSync(drift: ManifestDrift): boolean {
+  return drift.missing.length === 0 && drift.extra.length === 0
+}
+
+/**
+ * Format a {@link ManifestDrift} as a named, actionable error message, or `undefined` when in sync.
+ * Names the exact missing/extra routes + the one fix (regenerate the manifest by re-running the build).
+ * `manifestPath` is shown for the dev to locate the stale file. Pure.
+ */
+export function formatManifestDrift(
+  drift: ManifestDrift,
+  manifestPath = "server-manifest.ts",
+): string | undefined {
+  if (isManifestInSync(drift)) return undefined
+  const lines: string[] = [
+    `[nifra/web] server-manifest drift — \`${manifestPath}\` is out of sync with routes/.`,
+  ]
+  if (drift.missing.length > 0) {
+    lines.push(
+      `  Missing (in routes/, not in the manifest — these routes won't be served): ${drift.missing.join(", ")}`,
+    )
+  }
+  if (drift.extra.length > 0) {
+    lines.push(
+      `  Extra (imported by the manifest, gone from routes/ — a dangling import): ${drift.extra.join(", ")}`,
+    )
+  }
+  lines.push("  Fix: re-run the build to regenerate the server manifest, then commit it.")
+  return lines.join("\n")
 }
 
 /**
@@ -537,3 +714,368 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
   }
   return { worker: entryOutput.path, outputs: result.outputs.map((o) => o.path) }
 }
+
+// ===================================================================================================
+// `nifra build --target` — package the engine above into one command that emits a full deploy dir.
+//
+// An app already declares everything the build needs through nifra's conventions: `adapter` +
+// `clientModule` (nifra.config.ts / framework.ts), an optional `backend` (backend.ts), and `routes/`.
+// The ONLY thing apps used to hand-write per target was the server entry (`_worker.ts`, `server-bun.ts`,
+// …) — so we GENERATE it here (per target) instead of asking each app to ship five near-identical files.
+// ===================================================================================================
+
+/** A deploy target `nifra build --target <t>` can emit. `static` is pure SSG (no server). */
+export const BUILD_TARGETS = ["bun", "node", "deno", "cf-pages", "vercel", "static"] as const
+export type BuildTarget = (typeof BUILD_TARGETS)[number]
+
+/** A type guard narrowing an arbitrary string to a {@link BuildTarget}. */
+export function isBuildTarget(value: string): value is BuildTarget {
+  return (BUILD_TARGETS as readonly string[]).includes(value)
+}
+
+/**
+ * Codegen the per-target **server entry** module (source text) for `buildServer` to bundle. It imports
+ * the app's `adapter` (from `framework.ts`), the optional `backend` (from `backend.ts`), and the
+ * generated `{ manifest, clientEntry }` (from `./server-manifest`), builds `createWebApp`, then wires
+ * the right host:
+ *   - `cf-pages` / `vercel`: `export default` the fetch handler (the platform serves /assets/* itself).
+ *   - `deno`: same fetch-handler default, plus `Deno.serve` self-host when run directly.
+ *   - `bun` / `node`: a self-hosting server that ALSO serves the client bundle from disk (those
+ *     runtimes have a filesystem; the static `/assets/*` sit next to the entry).
+ * `adapterImport`/`backendImport` are the specifiers the entry uses (relative to where it's written) —
+ * `buildServer` writes the entry next to `serverEntry`, so they're resolved from there. Pure (string in,
+ * string out) so the generation is unit-testable without a real build.
+ */
+export function generateServerEntry(options: {
+  readonly target: BuildTarget
+  /** Import specifier for the module exporting `adapter` (e.g. `"../framework.ts"`). */
+  readonly adapterImport: string
+  /** Import specifier for the module exporting `backend`, or `undefined` for a frontend-only app. */
+  readonly backendImport?: string
+  /** Document `<title>` passed to `createWebApp`. */
+  readonly title?: string
+}): string {
+  const { target, adapterImport, backendImport, title = "nifra" } = options
+  if (target === "static") {
+    throw new Error("[nifra/web] generateServerEntry: `static` has no server entry (SSG only)")
+  }
+  const lines: string[] = ['import { createWebApp } from "@nifrajs/web"']
+  if (backendImport !== undefined) lines.push('import { inProcessClient } from "@nifrajs/client"')
+  lines.push(`import { adapter } from ${JSON.stringify(adapterImport)}`)
+  if (backendImport !== undefined) {
+    lines.push(`import { backend } from ${JSON.stringify(backendImport)}`)
+  }
+  lines.push('import { clientEntry, manifest } from "./server-manifest"')
+  // cf-pages/vercel/deno need the fetch-handler shape; bun/node call app.fetch directly.
+  const usesToFetch = target === "cf-pages" || target === "vercel" || target === "deno"
+  if (usesToFetch) lines.push('import { toFetchHandler } from "@nifrajs/core"')
+  if (target === "node") lines.push('import { serve } from "@nifrajs/node"')
+  lines.push(
+    "",
+    "const app = createWebApp({",
+    "  adapter,",
+    "  manifest,",
+    "  clientEntry,",
+    ...(backendImport !== undefined ? ["  api: inProcessClient(backend),"] : []),
+    `  title: ${JSON.stringify(title)},`,
+    "})",
+    "",
+  )
+
+  if (target === "cf-pages") {
+    // Cloudflare Pages advanced mode: `_routes.json` serves /assets/* from the CDN; everything else
+    // falls through to this fetch handler (SSR). The default export is the handler object.
+    lines.push("export default toFetchHandler(app)")
+    return `${lines.join("\n")}\n`
+  }
+  if (target === "vercel") {
+    lines.push(
+      "// Vercel Edge Function — Vercel serves /assets/* from its CDN; this only SSRs page routes.",
+      'export const config = { runtime: "edge" }',
+      "export default (req: Request): Response | Promise<Response> => app.fetch(req)",
+    )
+    return `${lines.join("\n")}\n`
+  }
+
+  // bun / node / deno self-host AND serve the client bundle from disk (it sits next to this entry).
+  lines.push(
+    "// The client bundle lives next to this entry; serve /assets/* from disk, SSR everything else.",
+    'const ASSETS = new URL("./assets/", import.meta.url)',
+    'const TYPES = { js: "text/javascript", css: "text/css", map: "application/json" }',
+  )
+  if (target === "bun") {
+    lines.push(
+      "const server = Bun.serve({",
+      "  port: Number(Bun.env.PORT ?? 3000),",
+      "  async fetch(req) {",
+      "    const { pathname } = new URL(req.url)",
+      '    if (pathname.startsWith("/assets/")) {',
+      '      const name = pathname.slice("/assets/".length)',
+      '      if (!/^[A-Za-z0-9._-]+$/.test(name)) return new Response("bad request", { status: 400 })',
+      "      const file = Bun.file(new URL(name, ASSETS))",
+      '      if (!(await file.exists())) return new Response("not found", { status: 404 })',
+      '      const ext = name.slice(name.lastIndexOf(".") + 1)',
+      '      return new Response(file, { headers: { "content-type": TYPES[ext] ?? "application/octet-stream" } })',
+      "    }",
+      "    return app.fetch(req)",
+      "  },",
+      "})",
+      // The `${...}` here is literal OUTPUT (a template in the GENERATED file), not a template in this
+      // source — split so biome's noTemplateCurlyInString doesn't flag it; the emitted line is unchanged.
+      `console.log(\`nifra (Bun) → http://localhost:$${"{server.port}"}\`)`,
+    )
+    return `${lines.join("\n")}\n`
+  }
+  if (target === "node") {
+    lines.push(
+      'import { readFile } from "node:fs/promises"',
+      "await serve(",
+      "  {",
+      "    async fetch(req) {",
+      "      const { pathname } = new URL(req.url)",
+      '      if (pathname.startsWith("/assets/")) {',
+      '        const name = pathname.slice("/assets/".length)',
+      '        if (!/^[A-Za-z0-9._-]+$/.test(name)) return new Response("bad request", { status: 400 })',
+      "        try {",
+      "          const body = await readFile(new URL(name, ASSETS))",
+      '          const ext = name.slice(name.lastIndexOf(".") + 1)',
+      '          return new Response(body, { headers: { "content-type": TYPES[ext] ?? "application/octet-stream" } })',
+      "        } catch {",
+      '          return new Response("not found", { status: 404 })',
+      "        }",
+      "      }",
+      "      return app.fetch(req)",
+      "    },",
+      "  },",
+      "  { port: Number(process.env.PORT ?? 3000) },",
+      ")",
+    )
+    return `${lines.join("\n")}\n`
+  }
+  // deno
+  lines.push(
+    "const handler = toFetchHandler(app)",
+    "// @ts-ignore — Deno global is present on the Deno runtime this output targets.",
+    'Deno.serve({ port: Number(Deno.env.get("PORT") ?? "3000") }, async (req) => {',
+    "  const { pathname } = new URL(req.url)",
+    '  if (pathname.startsWith("/assets/")) {',
+    '    const name = pathname.slice("/assets/".length)',
+    '    if (!/^[A-Za-z0-9._-]+$/.test(name)) return new Response("bad request", { status: 400 })',
+    "    try {",
+    "      // @ts-ignore — Deno.readFile is present on the Deno runtime.",
+    "      const body = await Deno.readFile(new URL(name, ASSETS))",
+    '      const ext = name.slice(name.lastIndexOf(".") + 1)',
+    '      return new Response(body, { headers: { "content-type": TYPES[ext] ?? "application/octet-stream" } })',
+    "    } catch {",
+    '      return new Response("not found", { status: 404 })',
+    "    }",
+    "  }",
+    "  return handler.fetch(req)",
+    "})",
+  )
+  return `${lines.join("\n")}\n`
+}
+
+/** The Bun.build `target` each deploy target compiles its server with (mirrors `buildServer`'s docs). */
+const SERVER_BUILD_TARGET: Record<Exclude<BuildTarget, "static">, "browser" | "node" | "bun"> = {
+  "cf-pages": "browser", // edge conditions (workerd/edge-light)
+  vercel: "browser", // Vercel Edge runtime
+  deno: "browser", // Deno's Web-standard runtime runs the edge bundle
+  node: "node", // node:* external; react-dom → its Node SSR build
+  bun: "bun", // Bun's flagship runtime
+}
+
+/** Measure each emitted output file's raw + gzip size. Reads the file off disk and gzips it with
+ * `Bun.gzipSync` (the over-the-wire weight). Async only because it reads files; the aggregation is the
+ * pure {@link aggregateSizeReport}. */
+async function measureOutputs(paths: readonly string[]): Promise<ChunkSize[]> {
+  const chunks: ChunkSize[] = []
+  for (const path of paths) {
+    const bytes = await Bun.file(path).bytes()
+    chunks.push({
+      name: basename(path),
+      bytes: bytes.byteLength,
+      gzip: Bun.gzipSync(bytes).byteLength,
+    })
+  }
+  return chunks
+}
+
+export interface BuildTargetOptions {
+  /** The `routes/` directory to discover (absolute path). */
+  readonly routesDir: string
+  /** Output directory for the assembled deploy dir (absolute path). Cleared and recreated. */
+  readonly outDir: string
+  /** A scratch directory for intermediate codegen (the generated server entry + manifest) and the
+   * server bundle, cleaned up after. Absolute path. */
+  readonly workDir: string
+  /** The adapter's client runtime module (exports `mountRouter`), e.g. `"@nifrajs/web-react/client"`. */
+  readonly clientModule: string
+  /** Import specifier (resolvable from `workDir`) of the module exporting `adapter`. */
+  readonly adapterImport: string
+  /** Import specifier (resolvable from `workDir`) of the module exporting `backend`, or `undefined`. */
+  readonly backendImport?: string
+  /** A pre-built app instance for `static` prerendering (a `createWebApp` result). Required for
+   * `target: "static"` (SSG drives `app.fetch`); ignored otherwise. */
+  readonly prerenderApp?: PrerenderAppLike
+  /** Client-build plugins (e.g. the MDX/Vue/Solid Bun plugins). */
+  readonly clientPlugins?: readonly BunPlugin[]
+  /** Server-build plugins (e.g. the SSR variants). */
+  readonly serverPlugins?: readonly BunPlugin[]
+  /** Extra Bun.build resolve conditions for the CLIENT build. */
+  readonly conditions?: readonly string[]
+  /** Compile-time `define` replacements layered onto both builds. */
+  readonly define?: Readonly<Record<string, string>>
+  /** Document `<title>` for the generated server entry. */
+  readonly title?: string
+}
+
+/** Minimal app surface `buildTarget`'s static path needs — a fetch handler (a built `createWebApp`). */
+export interface PrerenderAppLike {
+  fetch(req: Request): Response | Promise<Response>
+}
+
+/** The result of a target build — the deploy dir + the client manifest + an optional size report. */
+export interface BuildTargetResult {
+  /** The deploy target that was built. */
+  readonly target: BuildTarget
+  /** The assembled output directory. */
+  readonly outDir: string
+  /** The client build's manifest (entry URL, assets, per-route chunks/styles). */
+  readonly client: BuildManifest
+  /** A human-readable note on how to run/deploy the output. */
+  readonly run: string
+  /** Per-chunk size report over the emitted client (+ server) outputs. Always computed; the CLI prints
+   * it only with `--report`. */
+  readonly size: SizeReport
+}
+
+/**
+ * Build a full deploy directory for `target` from a file-routed nifra app. Emits the client bundle to
+ * `<outDir>/assets/*`, then per target:
+ *   - `static`: prerenders opted-in routes (`prerenderRoutes`) to `<outDir>/<path>/index.html` (+
+ *     `_data.json`); needs `prerenderApp`. No server.
+ *   - `cf-pages`: a `_worker.js` (edge bundle) + a `_routes.json` excluding /assets/* from the worker.
+ *   - `vercel`: a `.vercel/output`-shaped function isn't emitted here — `vercel` emits the bundled edge
+ *     entry as `<outDir>/index.js` (the CLI's docs point at `vercel`'s Build Output wrapper). [see note]
+ *   - `deno`/`node`/`bun`: the self-hosting server bundle (`server.js`) next to the assets.
+ * The server entry is GENERATED (`generateServerEntry`) and bundled (`buildServer`); the app supplies
+ * only adapter/backend/routes. Returns the manifest + a size report. Throws on any build failure.
+ *
+ * Note: the heavier platform wrappers (`.vercel/output` v3 layout, wrangler ISR `find_additional_modules`)
+ * remain app-owned scripts; this command targets the common single-bundle deploys. See the CLI docs.
+ */
+export async function buildTarget(
+  target: BuildTarget,
+  options: BuildTargetOptions,
+): Promise<BuildTargetResult> {
+  const { routesDir, outDir, workDir } = options
+  const { rmSync } = await import("node:fs")
+  rmSync(outDir, { recursive: true, force: true })
+  rmSync(workDir, { recursive: true, force: true })
+  const assetsDir = `${outDir}/assets`
+  mkdirSync(assetsDir, { recursive: true })
+  mkdirSync(workDir, { recursive: true })
+
+  // (1) Client bundle → <outDir>/assets/* (every target ships the same hashed client bundle).
+  const client = await buildClient({
+    routesDir,
+    outDir: assetsDir,
+    clientModule: options.clientModule,
+    ...(options.clientPlugins ? { plugins: options.clientPlugins } : {}),
+    ...(options.conditions ? { conditions: options.conditions } : {}),
+    define: { "process.env.NODE_ENV": '"production"', ...(options.define ?? {}) },
+  })
+
+  if (target === "static") {
+    if (options.prerenderApp === undefined) {
+      throw new Error(
+        "[nifra/web] buildTarget(static) requires `prerenderApp` (a built createWebApp)",
+      )
+    }
+    const manifest = discoverRoutes(routesDir)
+    const result = await prerenderRoutes({
+      app: options.prerenderApp,
+      routes: manifest.routes,
+      outDir,
+    })
+    if (result.prerendered.length === 0) {
+      // A static build that renders nothing is almost always a misconfig (no `prerender = true` / no
+      // getStaticPaths) — fail loudly rather than ship an empty dir the dev thinks is their site.
+      throw new Error(
+        "[nifra/web] buildTarget(static): no routes were prerendered — opt routes in with " +
+          "`export const prerender = true` (static) or `getStaticPaths` (dynamic).",
+      )
+    }
+    rmSync(workDir, { recursive: true, force: true })
+    const size = aggregateSizeReport(
+      await measureOutputs(client.assets.map((u) => assetUrlToPath(u, assetsDir))),
+    )
+    return {
+      target,
+      outDir,
+      client,
+      run: `static site → ${outDir} (serve the directory with any static host)`,
+      size,
+    }
+  }
+
+  // (2) Generate + bundle the server entry. It's written into workDir; the generated server-manifest
+  // lands next to it (buildServer writes it there). The adapter/backend specifiers are resolved from
+  // workDir, so the caller passes paths relative to it (or absolute).
+  const serverEntryPath = `${workDir}/server-entry.ts`
+  writeFileSync(
+    serverEntryPath,
+    generateServerEntry({
+      target,
+      adapterImport: options.adapterImport,
+      ...(options.backendImport !== undefined ? { backendImport: options.backendImport } : {}),
+      ...(options.title !== undefined ? { title: options.title } : {}),
+    }),
+  )
+  const serverTarget = SERVER_BUILD_TARGET[target]
+  const { worker } = await buildServer({
+    routesDir,
+    serverEntry: serverEntryPath,
+    outDir: `${workDir}/server`,
+    clientEntry: client.entry,
+    target: serverTarget,
+    ...(options.serverPlugins ? { plugins: options.serverPlugins } : {}),
+    define: { "process.env.NODE_ENV": '"production"', ...(options.define ?? {}) },
+  })
+
+  // (3) Assemble the deploy dir for the target.
+  const { cpSync } = await import("node:fs")
+  let run: string
+  if (target === "cf-pages") {
+    cpSync(worker, `${outDir}/_worker.js`)
+    writeFileSync(
+      `${outDir}/_routes.json`,
+      `${JSON.stringify({ version: 1, include: ["/*"], exclude: ["/assets/*"] }, null, 2)}\n`,
+    )
+    run = `Cloudflare Pages → ${outDir} (deploy: wrangler pages deploy ${basename(outDir)})`
+  } else if (target === "vercel") {
+    cpSync(worker, `${outDir}/index.js`)
+    run = `Vercel edge function → ${outDir}/index.js (wrap with your vercel.json or Build Output API)`
+  } else {
+    // bun / node / deno: the runnable server bundle next to its /assets.
+    cpSync(worker, `${outDir}/server.js`)
+    const cmd =
+      target === "node"
+        ? `node ${basename(outDir)}/server.js`
+        : `${target} ${basename(outDir)}/server.js`
+    run = `${target} server → ${outDir} (run: ${cmd})`
+  }
+  rmSync(workDir, { recursive: true, force: true })
+
+  // Size report over the client assets + the server bundle (its parse cost matters on the edge).
+  const clientPaths = client.assets.map((u) => assetUrlToPath(u, assetsDir))
+  const serverPath = `${outDir}/${target === "cf-pages" ? "_worker.js" : target === "vercel" ? "index.js" : "server.js"}`
+  const size = aggregateSizeReport(await measureOutputs([...clientPaths, serverPath]))
+  return { target, outDir, client, run, size }
+}
+
+/** Map a client asset URL (`/assets/x-hash.js`) back to its on-disk path under `assetsDir`. The
+ * `publicPath` prefix is always `/assets/` for these builds, so strip it and rejoin. */
+const assetUrlToPath = (url: string, assetsDir: string): string =>
+  `${assetsDir}/${url.slice(url.lastIndexOf("/") + 1)}`
