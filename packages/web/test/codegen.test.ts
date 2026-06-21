@@ -31,7 +31,7 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
     resolve: (file) => `/routes/${file}`,
   })
   expect(code).toContain(
-    'import { createClientRouter, createMatcher, resolveMeta } from "@nifrajs/web"',
+    'import { createClientRouter, createMatcher, mergeHeads, resolveMeta } from "@nifrajs/web"',
   )
   expect(code).toContain(
     'import { applyHead, installForms, installHistory } from "@nifrajs/web/client"',
@@ -47,10 +47,11 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   expect(code).toContain('"index": () => Promise.all([')
   expect(code).toContain('"users/[id]": () => Promise.all([')
   expect(code).toContain('"_404": () => Promise.all([')
-  // loadModule caches the component chain + the page's meta export per route.
+  // loadModule caches the component chain + the chain's meta list (layouts→page) per route, so a
+  // soft-nav merges the layout chain's head with the page's (matching the SSR <head>) — #3.
   expect(code).toContain("const loadModule = async (id) =>")
   expect(code).toContain("chains[id] = mods.map((m) => m.default)")
-  expect(code).toContain("metas[id] = mods[mods.length - 1].meta")
+  expect(code).toContain("metas[id] = mods.map((m) => m.meta)")
   // patterns drive client-side matching and must mirror the server routes.
   expect(code).toContain('{ routeId: "index", pattern: "/" }')
   expect(code).toContain('{ routeId: "users/[id]", pattern: "/users/:id" }')
@@ -59,9 +60,9 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   expect(code).toContain("installHistory(router)")
   expect(code).toContain("installForms(router)")
   expect(code).toContain("mountRouter({ router, routes: chains, container: root })")
-  // head updates on navigation from the matched route's meta + data.
+  // head updates on navigation from the matched route's MERGED chain meta (layouts→page) + data — #3.
   expect(code).toContain(
-    "applyHead(resolveMeta(metas[s.routeId], { data: s.data, params: s.params }))",
+    "applyHead(mergeHeads((metas[s.routeId] ?? [undefined]).map((m) => resolveMeta(m, args))))",
   )
   // Initial data is mapped through `mapDeferred` so `{__nifra_deferred: id}` placeholders become the
   // registry's promises (a no-op for non-deferred pages).

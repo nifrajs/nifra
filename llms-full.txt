@@ -2302,10 +2302,11 @@ Deploy: `wrangler pages deploy dist` (Pages) or `wrangler deploy`
 `server.ts` to hand-write. (`create-nifra` scaffolds the conventions.)
 
 ```ts
-nifra dev      # true-HMR dev server (Vite middleware + nifra SSR) — http://localhost:3000
+nifra dev      # true-HMR dev server (Vite middleware + nifra SSR) — http://localhost:4321
 nifra build    # bundle the client (content-hashed, code-split) + write dist/manifest.json (incl. CSS)
 nifra start    # serve the built client + SSR on Bun (assets, <link> stylesheets, matched-route preload)
 
+# dev + start share the default port 4321. Override per run: --port <n> (alias -p) or the PORT env var.
 # flags: --port <n> (dev/start) · --out <dir> (build/start) · --poll (dev; containers/sandboxes)
 ```
 
@@ -2403,7 +2404,7 @@ const server = await createViteDevServer({
   routesDir,
   clientModule: "@nifrajs/web-react/client",
   plugins: [react()],                                // Vue: @vitejs/plugin-vue, Svelte: …, etc.
-  port: Number(Bun.env.PORT ?? 3000),
+  port: Number(Bun.env.PORT ?? 4321),                // nifra's default; --port / PORT override it
   createApp: (clientEntry, importQuery) =>
     createWebApp({
       adapter: reactAdapter,
@@ -2583,6 +2584,166 @@ declare module "*.css" {}
 own stylesheet. Pass `manifest.routeStyles` to `createWebApp` alongside
 `styles`, and Nifra links the matched route's CSS during SSR. In
 **dev**, Vite injects per-module CSS.
+
+## Nifra — Framework contract
+
+> The one-page contract: LoaderContext shape, loader/action/meta/head signatures, the client↔server boundary, and the build-output contract — every signature verified against the source.
+
+Everything you'd otherwise read the source to learn, on one page: the
+`LoaderContext` shape, the loader / action / meta / head signatures, what runs on
+the server vs the client, and the build-output contract. Every signature here is verified
+against the `@nifrajs/web` source.
+
+### LoaderContext
+
+One context object is passed to every `loader` and every `action`. The
+same five fields, always — `params`, `request`, `api`,
+`env`, and `draft`.
+
+```ts
+// The single context object passed to every loader AND action (@nifrajs/web).
+interface LoaderContext {
+  params:  Record<string, string>  // matched route params (:id, *path)
+  request: Request                 // the standard Web Request — read headers/body/URL off it
+  api:     unknown                 // the in-process backend client createWebApp was given
+  env:     unknown                 // platform bindings forwarded from c.env (Workers KV/D1/…)
+  draft:   boolean                 // true only when a valid draft cookie is present (draftSecret set)
+}
+
+// api + env are typed per-route via @nifrajs/client's LoaderArgs<Api, Env>; the agnostic core
+// keeps them `unknown`. Branch on `draft` to load unpublished content for preview/editors.
+```
+
+### Loader, action & meta signatures
+
+A route module co-locates its data, mutation, head, and view. Only the
+`default` export (the component) is required; `loader`,
+`action`, `meta`, and `hydrate` are all optional. A
+`loader` runs on **GET** and feeds `props.data`; an
+`action` runs on **POST** and feeds `props.actionData`.
+
+```ts
+// routes/users/[id].tsx — a route module's full contract (every export optional but `default`).
+import type { LoaderContext } from "@nifrajs/web"
+
+// GET → data for the page. Runs in-process on the server during SSR (no HTTP hop).
+export async function loader(ctx: LoaderContext) {
+  return { user: await ctx.api.users.get({ id: ctx.params.id }) }
+}
+
+// POST → a mutation. Same context. Return a Response (e.g. a redirect — passed straight
+// through) OR data, which reaches the component as `actionData`.
+export async function action(ctx: LoaderContext) {
+  const form = await ctx.request.formData()
+  return { ok: true }
+}
+
+// Static OR a function of { data, params }. Static meta is serialized once; function meta
+// recomputes per request (its content can vary with loader data).
+export const meta = ({ data, params }) => ({
+  title: `User ${data.user.name}`,
+  meta: [{ name: "description", content: data.user.bio }],
+  link: [{ rel: "canonical", href: `/users/${params.id}` }],
+})
+
+export const hydrate = false   // opt out of full-document hydration (static / island pages)
+export default function User(props) { /* props.data, props.actionData, props.params */ }
+```
+
+[!NOTE] An `action` may return a `Response` (a `redirect()`,
+say) — it's passed through untouched. Any other return is serialized as
+`actionData`.
+
+### Meta & head rendering rules
+
+A route's `<head>` is its **layout chain's** head merged with
+the page's — so a `_layout.tsx` can export `meta` to put sitewide tags
+(`hreflang`, `preconnect`, a section `<title>`) on every
+page below it.
+
+```ts
+// routes/_layout.tsx — a layout can export `meta` too. Its tags are SITEWIDE: they land in
+// the <head> of every page below it — the home for hreflang / preconnect / a section <title>.
+export const meta = {
+  link: [
+    { rel: "preconnect", href: "https://cdn.example.com", crossorigin: "anonymous" },
+    { rel: "alternate", hreflang: "es", href: "https://example.com/es" },
+  ],
+  title: "Docs",   // section default — a child page's title overrides it
+}
+
+// The route's final <head> = its LAYOUT CHAIN's meta merged with the page's:
+//   • title (and other scalars): NEAREST-WINS — page overrides inner layout overrides outer.
+//     An undefined page title keeps the layout's.
+//   • meta / link arrays: CONCATENATED outermost-layout → … → page (so the page's canonical
+//     comes after the layout's links).
+// <link> attributes are name-validated (any letter/digit/hyphen name) and value-escaped against
+// XSS — so rel/href/hreflang/crossorigin/media/sizes/as/integrity/fetchpriority/… all survive.
+```
+
+The merge is **nearest-wins** for scalars (the page's `title` beats an
+inner layout's, which beats an outer one) and **concatenated** for the
+`meta` / `link` arrays (outermost layout first, page last). Every
+`<link>` attribute with a normal name — `rel`, `href`,
+`hreflang`, `crossorigin`, `media`, `sizes`,
+`type`, `as`, `integrity`, `referrerpolicy`,
+`fetchpriority`, `imagesrcset` — survives into the SSR'd tag; values are
+HTML-escaped against XSS.
+
+### The client ↔ server boundary
+
+Loaders, actions, and head resolution run on the server. The client receives the loader's
+_return value_ (serialized into the document), never the loader, the `api`,
+or `env`. Keep server-only imports out of a route file's top level.
+
+```ts
+// What runs WHERE:
+//
+//   SERVER (Bun / edge)            CLIENT (browser)
+//   ─────────────────────          ──────────────────────────
+//   loader / action                event handlers, useState/effects
+//   meta / head resolution         soft-nav re-fetch of loader data
+//   SSR of the layout chain        hydration + Fast Refresh (dev)
+//   backend (api, env, draft)      —
+//
+// The client gets the loader's RETURN VALUE (serialized into the document), never the loader
+// itself, the api, or env. So:
+//  1. Never import server-only modules (Bun, a DB client, secrets) at the top level of a route
+//     file — the bundler pulls it into the client chunk and it crashes / leaks.
+//  2. A client soft-nav re-runs the loader over the network (X-Nifra-Data) and re-merges the
+//     same layout-chain head, so sitewide tags persist across navigation — no page-only flash.
+```
+
+### The build-output contract
+
+`nifra build` emits a content-hashed `dist/` plus a
+`manifest.json` you hand to `createWebApp` (`entry`,
+`routes` for per-route preload, `css` + `routeStyles` for
+`<link>` injection).
+
+```ts
+// `nifra build` → buildClient (Bun.build) writes dist/ + manifest.json. The contract:
+{
+  "entry": "/assets/_nifra-entry-HASH.js",        // the bootstrap module script
+  "assets": ["/assets/…"],                          // every emitted chunk URL
+  "routes": { "users/[id]": ["/assets/_layout-H.js", "/assets/_slug_-H.js"] },
+  "css": ["/assets/app-H.css"],                     // aggregate stylesheets (fallback)
+  "routeStyles": { "users/[id]": ["/assets/_layout-H.css"] }  // per-route CSS (chain only)
+}
+
+// Three invariants worth knowing:
+//  • Chunk names are URL-PATH-SAFE. A dynamic-route file [slug].tsx would emit `[slug]-H.js`,
+//    whose [ ] make a static server 400 the request. The build renames it (`[slug]` → `_slug_`)
+//    and rewrites every reference, so the lazy import resolves and the route hydrates.
+//  • `process.env` is compiled away. `process.env` → `({})` and `process.env.NODE_ENV` → the
+//    build mode; every other `process.env.X` becomes undefined. No `process is not defined`
+//    crash in the browser, no server env leaking into the client bundle.
+//  • Assets are content-hashed + immutable. Serve /assets/* with a long-lived cache header.
+```
+
+See [SSG & ISR](/docs/rendering) for prerendering, [Dev & HMR](/docs/dev) for the
+two dev loops and the `--port` flag, and [Loaders & actions](/docs/data) for the
+data layer in depth.
 
 ## Nifra — Databases
 
@@ -4411,7 +4572,7 @@ MIT.
 
 ## @nifrajs/web
 
-`Action`, `ACTION_GLOBAL`, `buildManifest`, `CachedResponse`, `CacheStore`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `defer`, `Deferred`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumeratePrerenderedPaths`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `GetStaticPaths`, `hashQueryKey`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LayoutEntry`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `RenderAdapter`, `RenderedPage`, `renderPage`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `serializeData`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `Submission`, `SubmitOptions`, `withISR`
+`Action`, `ACTION_GLOBAL`, `buildManifest`, `CachedResponse`, `CacheStore`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumeratePrerenderedPaths`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `GetStaticPaths`, `hashQueryKey`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LayoutEntry`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `RenderAdapter`, `RenderedPage`, `renderPage`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `serializeData`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `Submission`, `SubmitOptions`, `withISR`
 
 ## @nifrajs/web-preact
 

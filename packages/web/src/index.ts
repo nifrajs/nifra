@@ -19,7 +19,15 @@ import {
 } from "./deferred.ts"
 import { isDraftEnabled } from "./draft.ts"
 import { ISR_REVALIDATE_HEADER } from "./isr.ts"
-import type { LayoutEntry, Manifest, Meta, MetaArgs, MetaInput, RouteEntry } from "./manifest.ts"
+import type {
+  LayoutEntry,
+  Manifest,
+  Meta,
+  MetaArgs,
+  MetaInput,
+  RouteEntry,
+  RouteModule,
+} from "./manifest.ts"
 import {
   DATA_HEADER,
   PRERENDERED_GLOBAL,
@@ -178,6 +186,14 @@ export const ROUTE_GLOBAL = "__NIFRA_ROUTE__"
  * reads it so hydration after a native form POST matches the server-rendered markup. */
 export const ACTION_GLOBAL = "__NIFRA_ACTION__"
 
+/**
+ * The single default port for the dev server (`@nifrajs/web/dev`, `@nifrajs/web/vite`) **and**
+ * `nifra start`. Deliberately uncommon: `3000`/`5173`/`8080` collide with whatever else is running
+ * (Next, Vite, a stray Node API). `4321` rarely is — and being the *same* constant across `nifra dev`
+ * and `nifra start` means a project's URL doesn't change between commands. Override per-run with
+ * `--port <n>` or the `PORT` env var. */
+export const DEFAULT_DEV_PORT = 4321
+
 // Shared, stateless — allocated once at module load, not per render/stream.
 const TEXT_ENCODER = new TextEncoder()
 
@@ -241,7 +257,17 @@ export interface RenderPageOptions {
   /** Document title (fallback when `head.title` is unset). */
   readonly title?: string
   /** Resolved route head — `title` overrides `title` above; `meta`/`link` render as managed
-   * (`data-nifra`) tags the client updates on navigation. */
+   * (`data-nifra`) tags the client updates on navigation.
+   *
+   * **Head contract (the layout chain contributes).** `createWebApp` resolves this via
+   * {@link mergeHeads}: a route's head is its **layout chain's** `meta`/`head` exports merged with the
+   * page's. A `_layout.tsx` may `export const meta` (or `export function meta(args)`) — its tags land
+   * on every page below it (the home for `hreflang`, `preconnect`, a section-default `<title>`). The
+   * merge is **nearest-wins for scalars** (the page's `title` overrides an inner layout's, which
+   * overrides an outer one; an undefined page title keeps the layout's) and **concatenated for the
+   * `meta`/`link` arrays** (outermost layout first, page last). `<link>` attributes are name-validated
+   * (any letter/digit/hyphen name — covers `rel`/`href`/`hreflang`/`crossorigin`/`media`/`sizes`/`as`/
+   * `integrity`/`fetchpriority`/…) and value-escaped against XSS. */
   readonly head?: Meta
   /** Id of the container wrapping the app markup (default `"root"`). */
   readonly rootId?: string
@@ -620,10 +646,20 @@ function escapeAttr(value: string): string {
     .replaceAll(">", "&gt;")
 }
 
+// Attribute-NAME guard for emitted `<meta>`/`<link>` tags. Intentionally a *name-shape* allowlist, not
+// a hardcoded per-attribute one: any letter/digit/hyphen name beginning with a letter is permitted, so
+// every standard `<link>` attribute flows through — `rel`, `href`, `hreflang`, `crossorigin`, `media`,
+// `sizes`, `type`, `as`, `title`, `integrity`, `referrerpolicy`, `imagesrcset`, `imagesizes`,
+// `disabled`, `color`, `fetchpriority` — alongside `<meta>`'s `name`/`property`/`content` and custom
+// `data-*`. A hardcoded list would silently drop valid attrs (the bug this guards against: `hreflang`
+// /`crossorigin` getting filtered out). What it rejects is name-shape abuse only — a name with a space,
+// `=`, `>`, quote, or a leading digit can't break out of the tag. Attribute VALUES are escaped
+// separately (they may carry loader data → XSS), so a widened name set never widens the injection
+// surface. Names that fail the shape check are dropped.
 const SAFE_ATTR_NAME = /^[a-zA-Z][a-zA-Z0-9-]*$/
 
-/** Serialize a meta/link tag's attributes: validate the name (dev-authored) + escape the value
- * (may carry loader data → XSS). Invalid attribute names are dropped. */
+/** Serialize a meta/link tag's attributes: validate the name shape (see {@link SAFE_ATTR_NAME}) +
+ * escape the value against XSS. Invalid attribute names are dropped. */
 function tagAttrs(attrs: Record<string, string>): string {
   return Object.entries(attrs)
     .filter(([name]) => SAFE_ATTR_NAME.test(name))
@@ -657,6 +693,47 @@ function headTags(head: Meta | undefined): string {
 export function resolveMeta(meta: MetaInput | undefined, args: MetaArgs): Meta {
   if (meta === undefined) return {}
   return typeof meta === "function" ? meta(args) : meta
+}
+
+/**
+ * Merge a route's `<head>` contributions from its layout chain + the page into one {@link Meta}.
+ *
+ * The head contract (see {@link CreateWebAppOptions} and `LayoutEntry`): a `_layout.tsx` may export
+ * `meta` to put sitewide tags (`hreflang`, `preconnect`, a default `<title>`, …) on every page below
+ * it. `heads` is passed **outermost layout → … → innermost layout → page** (the same order as the
+ * render chain), and merges:
+ *  - **`title`** — *nearest-wins*: the last defined value across the list, so the page overrides an
+ *    inner layout, which overrides an outer one. A layout `title` is the section default; an undefined
+ *    page `title` keeps it.
+ *  - **`meta` / `link`** — *concatenated* in list order (outermost first, page last). Duplicate-tag
+ *    de-duplication is the caller's concern; the framework emits exactly what's declared so a layout
+ *    can ship N `<link rel="alternate" hreflang>` tags and a page can add its own canonical.
+ *
+ * Returns a fresh object whose identity is stable per `heads` *content* only when every entry is a
+ * static (by-reference) `Meta` and there is exactly one — otherwise a new object each call. That is
+ * fine: {@link headTags}'s memo is keyed on identity, so a per-request merge simply recomputes (its
+ * content can vary with loader data anyway).
+ */
+export function mergeHeads(heads: readonly Meta[]): Meta {
+  // Single-head fast path (a route with no layout `meta`, by far the common case) — return the
+  // resolved object by reference so headTags' identity-keyed memo hits across requests for static meta.
+  if (heads.length === 1) return heads[0] as Meta
+  let title: string | undefined
+  const meta: Array<Record<string, string>> = []
+  const link: Array<Record<string, string>> = []
+  for (const h of heads) {
+    if (h.title !== undefined) title = h.title // nearest-wins: later (more specific) overrides
+    if (h.meta !== undefined) meta.push(...h.meta)
+    if (h.link !== undefined) link.push(...h.link)
+  }
+  // Build the result with only the fields that were actually contributed — an empty `meta`/`link`
+  // array would otherwise be a spurious (if harmless) key. A mutable local; the cast to `Meta` is sound
+  // because a key is assigned only when defined (so `exactOptionalPropertyTypes` never sees `undefined`).
+  const merged: { title?: string; meta?: Meta["meta"]; link?: Meta["link"] } = {}
+  if (title !== undefined) merged.title = title
+  if (meta.length > 0) merged.meta = meta
+  if (link.length > 0) merged.link = link
+  return merged as Meta
 }
 
 export interface CreateWebAppOptions {
@@ -753,15 +830,33 @@ export function createWebApp(options: CreateWebAppOptions): Server {
   // SSR on demand). O(1) membership via a Set.
   const prerenderedSet = new Set(options.prerenderedPaths ?? [])
 
-  // Resolve a route's layout chain (outermost layout → page). Loaded lazily — the data-only and
-  // 405 branches return before any layout is needed.
-  const loadLayouts = (route: RouteEntry): Promise<unknown[]> =>
+  // Load a route's layout modules (outermost layout → innermost), keeping each module whole so the
+  // render path can take both its `default` (the component chain) AND its `meta` (the sitewide head it
+  // contributes). Loaded lazily — the data-only and 405 branches return before any layout is needed.
+  const loadLayoutModules = (
+    route: RouteEntry,
+  ): Promise<ReadonlyArray<{ default: unknown; meta?: MetaInput }>> =>
     Promise.all(
       // layoutIds only reference layouts present in the manifest (buildManifest invariant).
-      route.layoutIds.map((id) =>
-        (manifest.layouts[id] as LayoutEntry).load().then((m) => m.default),
-      ),
+      route.layoutIds.map((id) => (manifest.layouts[id] as LayoutEntry).load()),
     )
+
+  // Build a route's render chain + its merged `<head>` from the already-loaded layout modules + the
+  // page module. The chain is `[…layout components, page]`; the head merges each layout's `meta`
+  // export (outermost→innermost) with the page's (last), so a `head`/`meta` on `_layout.tsx`
+  // contributes sitewide tags. `metaArgs` (loader data + params) feed function-form `meta`s.
+  const resolveChainAndHead = (
+    layoutModules: ReadonlyArray<{ default: unknown; meta?: MetaInput }>,
+    page: RouteModule,
+    metaArgs: MetaArgs,
+  ): { chain: unknown[]; head: Meta } => {
+    const chain = [...layoutModules.map((m) => m.default), page.default]
+    const heads = [
+      ...layoutModules.map((m) => resolveMeta(m.meta, metaArgs)),
+      resolveMeta(page.meta, metaArgs),
+    ]
+    return { chain, head: mergeHeads(heads) }
+  }
 
   // Dir a special-file id lives in: `_error`→"" , `a/b/_error`→"a/b" (and likewise for `_layout`).
   const dirOfId = (id: string, suffix: string): string =>
@@ -883,8 +978,10 @@ export function createWebApp(options: CreateWebAppOptions): Server {
           headers: { "content-type": "application/x-ndjson; charset=utf-8" },
         })
       }
-      const chain = [...(await loadLayouts(route)), mod.default]
-      const head = resolveMeta(mod.meta, { data, params: c.params })
+      const { chain, head } = resolveChainAndHead(await loadLayoutModules(route), mod, {
+        data,
+        params: c.params,
+      })
       const hydrateRoute = mod.hydrate !== false
       try {
         // `await` so a shell-render throw (renderToStream rejects before any byte) is caught here and
@@ -968,8 +1065,10 @@ export function createWebApp(options: CreateWebAppOptions): Server {
       const data = mod.loader
         ? await mod.loader({ params: c.params, request: c.req, api, env: c.env, draft })
         : null
-      const chain = [...(await loadLayouts(route)), mod.default]
-      const head = resolveMeta(mod.meta, { data, params: c.params })
+      const { chain, head } = resolveChainAndHead(await loadLayoutModules(route), mod, {
+        data,
+        params: c.params,
+      })
       const hydrateRoute = mod.hydrate !== false
       // A full-page POST streams the action's `defer()`'d parts mid-document behind `<Await>` too —
       // `renderPage` splits `actionData` like loader data (works with JS off; hydrates after).
@@ -1054,7 +1153,7 @@ export function generateClientEntry(
   }
 
   return `${[
-    'import { createClientRouter, createMatcher, resolveMeta } from "@nifrajs/web"',
+    'import { createClientRouter, createMatcher, mergeHeads, resolveMeta } from "@nifrajs/web"',
     'import { applyHead, installForms, installHistory } from "@nifrajs/web/client"',
     // Namespace import: `errorBoundary` is optional (an adapter may not export it). A namespace member
     // access yields `undefined` if absent — unlike a named import, which would be a link error.
@@ -1064,7 +1163,7 @@ export function generateClientEntry(
     `const errorRouteIds = new Set(${JSON.stringify(errorRouteIds)})`,
     // Each route is a lazy loader: dynamic imports → Bun.build (splitting) emits one chunk per
     // route, shared layouts/deps deduped into shared chunks, so a route's code loads only when
-    // visited. loadModule caches the [layouts…, page] component chain + the page's meta per id.
+    // visited. loadModule caches the [layouts…, page] component chain + the chain's meta list per id.
     "const loaders = {",
     ...loaderRows,
     "}",
@@ -1077,15 +1176,19 @@ export function generateClientEntry(
     // the adapter's boundary so a client render error renders the `_error` UI. DOM-transparent, so the
     // hydrated tree matches the SSR markup (which has no boundary). Falls back to the plain chain when
     // the adapter has no `errorBoundary`.
+    // `metas[id]` is the chain's `meta` exports in head order (outermost layout → … → page), so a
+    // soft-nav merges the layout chain's head with the page's — matching the SSR `<head>` (sitewide
+    // layout tags persist across client navigation, no flash of page-only head). `_error` carries no
+    // head (a terminal boundary), so it's excluded from the meta list for error routes.
     "  if (errorBoundary && errorRouteIds.has(id)) {",
     "    const fallback = mods[mods.length - 1].default",
     "    const page = mods[mods.length - 2].default",
     "    const layouts = mods.slice(0, mods.length - 2).map((m) => m.default)",
     "    chains[id] = [...layouts, errorBoundary(fallback), page]",
-    "    metas[id] = mods[mods.length - 2].meta",
+    "    metas[id] = mods.slice(0, mods.length - 1).map((m) => m.meta)",
     "  } else {",
     "    chains[id] = mods.map((m) => m.default)",
-    "    metas[id] = mods[mods.length - 1].meta",
+    "    metas[id] = mods.map((m) => m.meta)",
     "  }",
     "}",
     "const patterns = [",
@@ -1118,7 +1221,11 @@ export function generateClientEntry(
     "  mountRouter({ router, routes: chains, container: root })",
     "  router.subscribe(() => {",
     "    const s = router.snapshot()",
-    "    if (!s.pending) applyHead(resolveMeta(metas[s.routeId], { data: s.data, params: s.params }))",
+    // Merge the matched route's chain meta (layouts→page) into one head — same contract as SSR.
+    "    if (!s.pending) {",
+    "      const args = { data: s.data, params: s.params }",
+    "      applyHead(mergeHeads((metas[s.routeId] ?? [undefined]).map((m) => resolveMeta(m, args))))",
+    "    }",
     "  })",
     "})",
   ].join("\n")}\n`

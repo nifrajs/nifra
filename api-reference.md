@@ -653,6 +653,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Global the server serializes loader data into; the client reads it to hydrate.
 - **DATA_HEADER** _(const)_ — `DATA_HEADER: "x-nifra-data"`
   Request header that asks a nifra route's GET to return just the loader data as JSON (instead of the full HTML document). Set by client-side navigation; read by `createWebApp`'s GET handler.
+- **DEFAULT_DEV_PORT** _(const)_ — `DEFAULT_DEV_PORT: 4321`
+  The single default port for the dev server (`@nifrajs/web/dev`, `@nifrajs/web/vite`) **and** `nifra start`. Deliberately uncommon: `3000`/`5173`/`8080` collide with whatever else is running (Next, Vite, a stray Node API). `4321` rarely is — and being the *same* constant across `nifra dev` and `nifr…
 - **DRAFT_COOKIE** _(const)_ — `DRAFT_COOKIE: "__nifra_draft"`
   The cookie name nifra uses for draft/preview mode.
 - **Deferred** _(interface)_ — `interface Deferred<T>`
@@ -789,6 +791,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Hash a query key to a stable cache string. Object keys are sorted (so `{a,b}` ≡ `{b,a}`); arrays keep order. Keys must be serializable — a function/symbol in the key throws (it can't be a stable identity). Mirrors TanStack Query's structural hashing.
 - **isDraftEnabled** _(function)_ — `isDraftEnabled: (request: Request, secret: string) => Promise<boolean>`
   Whether `request` carries a **valid** signed draft cookie (constant-time verify via `unsignValue`). `createWebApp` uses it to set `ctx.draft`; `withISR` uses it to bypass the cache for editors. A missing, forged, or tampered cookie returns `false`.
+- **mergeHeads** _(function)_ — `mergeHeads: (heads: readonly Meta[]) => Meta`
+  Merge a route's `<head>` contributions from its layout chain + the page into one {@link Meta}.
 - **redirect** _(function)_ — `redirect: (location: string, statusOrOptions?: number | RedirectOptions) => Response`
   Build a redirect `Response` — return it from a route `action` for the Post/Redirect/Get pattern (POST mutates, 303 sends the browser to a fresh GET, so a reload doesn't re-submit). Defaults to 303 (See Other); pass `307`/`308` (or `{ status }`) to preserve the method.
 - **renderPage** _(function)_ — `renderPage: (options: RenderPageOptions) => MaybePromise<Response>`

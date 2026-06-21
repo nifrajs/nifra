@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { inProcessClient } from "@nifrajs/client"
-import { createWebApp, type RenderAdapter } from "@nifrajs/web"
+import { createWebApp, DEFAULT_DEV_PORT, type RenderAdapter } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
 /**
  * `nifra` — the zero-config CLI for a nifra app. Reads `framework.ts` + `backend.ts` + `routes/` from
@@ -16,7 +16,7 @@ import type { BunPlugin } from "bun"
 import { describeProject } from "./introspect.ts"
 import { type LoadedApp, loadApp, resolvePlugins } from "./load.ts"
 
-interface Flags {
+export interface Flags {
   readonly port: number
   readonly out: string
   readonly poll: boolean
@@ -25,9 +25,9 @@ interface Flags {
 const HELP = `nifra — zero-config dev/build/start for a nifra app
 
 Usage:
-  nifra dev     [--port <n>] [--poll]    Start the true-HMR dev server (Vite).
+  nifra dev     [--port <n>] [--poll]    Start the true-HMR dev server (Vite). Default port ${DEFAULT_DEV_PORT}.
   nifra build   [--out <dir>]            Bundle the client + write manifest.json.
-  nifra start   [--port <n>] [--out <dir>]  Serve the built app (client + SSR) on Bun.
+  nifra start   [--port <n>] [--out <dir>]  Serve the built app (client + SSR) on Bun. Default port ${DEFAULT_DEV_PORT}.
   nifra context                          Print this project's API + page routes + conventions
                                          (for piping into an AI coding agent's prompt).
   nifra mcp                              Start an MCP server (stdio) exposing this project to a coding
@@ -51,7 +51,10 @@ Usage:
                                          unsupported on the target; --strict also fails on caveats.
 
 Reads nifra.config.ts (adapter + clientModule + plugins; or framework.ts), backend.ts (optional), and
-routes/ from the current directory. Run from your project root.`
+routes/ from the current directory. Run from your project root.
+
+Port: \`dev\` and \`start\` share the default ${DEFAULT_DEV_PORT}. Override with \`--port <n>\` (alias \`-p\`) or the
+\`PORT\` env var (\`--port\` wins over \`PORT\`, which wins over the default).`
 
 const CLI_VERSION = "0.1.0-alpha.1"
 
@@ -150,8 +153,11 @@ async function start(app: LoadedApp, flags: Flags): Promise<void> {
   console.log(`nifra start → http://localhost:${running.port}`)
 }
 
-function parseFlags(args: readonly string[]): Flags {
-  let port = Number(Bun.env.PORT ?? 3000)
+export function parseFlags(args: readonly string[]): Flags {
+  // Port precedence: `--port`/`-p` (most specific) > `PORT` env > the framework default. The default is
+  // the SAME uncommon port for `nifra dev` and `nifra start` (DEFAULT_DEV_PORT) so a project's URL is
+  // stable across commands and doesn't collide with the usual 3000/5173/8080 crowd.
+  let port = Number(Bun.env.PORT ?? DEFAULT_DEV_PORT)
   let out = "dist"
   let poll = Bun.env.CHOKIDAR_USEPOLLING === "1"
   for (let i = 0; i < args.length; i++) {
@@ -262,7 +268,11 @@ async function main(): Promise<void> {
   else await start(app, flags)
 }
 
-main().catch((err) => {
-  console.error(err instanceof Error ? err.message : String(err))
-  process.exitCode = 1
-})
+// Only run the CLI when invoked as the entry (`bun cli.ts …`), not when a test imports it for the
+// exported `parseFlags`. `import.meta.main` is true only for the process's entry module.
+if (import.meta.main) {
+  main().catch((err) => {
+    console.error(err instanceof Error ? err.message : String(err))
+    process.exitCode = 1
+  })
+}

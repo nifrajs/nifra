@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import {
   DATA_GLOBAL,
   defer,
+  mergeHeads,
   type RenderAdapter,
   ROUTE_GLOBAL,
   renderPage,
@@ -165,6 +166,37 @@ test("renderPage injects head: title override + managed (data-nifra) meta/link, 
   expect(html).not.toContain("bad key") // invalid attribute names are dropped
 })
 
+test("renderPage keeps the full standard <link> attr set (hreflang, crossorigin, …) in <head> [#4]", async () => {
+  // Regression: the attribute filter is a name-shape guard, NOT a hardcoded allowlist — so every
+  // standard <link> attribute (hreflang/crossorigin/media/sizes/as/integrity/fetchpriority/…) must
+  // survive. A hardcoded list previously dropped hreflang/crossorigin.
+  const html = await (
+    await renderPage({
+      adapter: stub,
+      chain: [null],
+      data: null,
+      clientEntry: "/c.js",
+      title: "default",
+      head: {
+        link: [
+          { rel: "alternate", hreflang: "es", href: "https://x/es" },
+          {
+            rel: "preconnect",
+            href: "https://cdn.example.com",
+            crossorigin: "anonymous",
+            fetchpriority: "high",
+          },
+        ],
+      },
+    })
+  ).text()
+  expect(html).toContain('<link rel="alternate" hreflang="es" href="https://x/es" data-nifra>')
+  // crossorigin AND fetchpriority both survive (neither is dropped by the name guard).
+  expect(html).toContain(
+    '<link rel="preconnect" href="https://cdn.example.com" crossorigin="anonymous" fetchpriority="high" data-nifra>',
+  )
+})
+
 test("renderPage falls back to the title option when head has no title", async () => {
   const html = await (
     await renderPage({
@@ -304,6 +336,28 @@ test("resolveMeta: undefined → {}, static passthrough, function of data + para
     params: { id: "7" },
   })
   expect(meta).toEqual({ title: "id=7" })
+})
+
+test("mergeHeads: title nearest-wins, meta/link concatenated outermost→page [#3]", () => {
+  // heads order = outermost layout → … → page. title is nearest-wins (later overrides);
+  // meta/link arrays concatenate in that order.
+  const merged = mergeHeads([
+    { title: "Outer", link: [{ rel: "preconnect", href: "https://a" }] },
+    { title: "Inner", meta: [{ name: "theme-color", content: "#000" }] },
+    { title: "Page", link: [{ rel: "canonical", href: "/p" }] },
+  ])
+  expect(merged.title).toBe("Page") // page wins
+  expect(merged.meta).toEqual([{ name: "theme-color", content: "#000" }])
+  expect(merged.link).toEqual([
+    { rel: "preconnect", href: "https://a" }, // layout first
+    { rel: "canonical", href: "/p" }, // page last
+  ])
+})
+
+test("mergeHeads: an undefined-title page keeps the layout's title; single head is identity [#3]", () => {
+  expect(mergeHeads([{ title: "Layout" }, {}]).title).toBe("Layout") // page silent → keep layout's
+  const only = { title: "Solo", link: [{ rel: "canonical", href: "/" }] }
+  expect(mergeHeads([only])).toBe(only) // single-head fast path returns by reference (memo-friendly)
 })
 
 test("serializeData neutralizes </script>, comments, and line separators (XSS-safe)", () => {

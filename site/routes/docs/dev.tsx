@@ -29,7 +29,7 @@ const server = await createViteDevServer({
   routesDir,
   clientModule: "@nifrajs/web-react/client",
   plugins: [react()],                                // Vue: @vitejs/plugin-vue, Svelte: …, etc.
-  port: Number(Bun.env.PORT ?? 3000),
+  port: Number(Bun.env.PORT ?? 4321),                // nifra's default; --port / PORT override it
   createApp: (clientEntry, importQuery) =>
     createWebApp({
       adapter: reactAdapter,

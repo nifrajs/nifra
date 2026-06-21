@@ -104,10 +104,16 @@ export interface RouteModule {
   readonly islandScripts?: readonly string[]
 }
 
-/** A layout (or `_404`/`_error`) entry: its source file (for client codegen) + a lazy loader. */
+/** A layout (or `_404`/`_error`) entry: its source file (for client codegen) + a lazy loader.
+ *
+ * A `_layout.tsx` may export `meta` (static {@link Meta} or a function of the loader data + params,
+ * same shape as a route's) to contribute sitewide `<head>` tags — `hreflang`/`preconnect`/etc. that
+ * belong on every page under the layout. The layout chain's heads merge with the page's: arrays
+ * (`meta`/`link`) concatenate outermost→innermost→page; scalars (`title`) are nearest-wins (the page
+ * overrides an inner layout, which overrides an outer one). See `mergeHeads` in `@nifrajs/web`. */
 export interface LayoutEntry {
   readonly file: string
-  readonly load: () => Promise<{ default: unknown }>
+  readonly load: () => Promise<{ default: unknown; meta?: MetaInput }>
 }
 
 /** One matched route: pattern, nested layout ids (outermost → innermost), source file, loader. */

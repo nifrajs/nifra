@@ -10,10 +10,11 @@ export const meta = pageMeta(
   "The zero-config Nifra CLI (`nifra dev`, `nifra build`, `nifra start`): true HMR, hashed client builds, and SSR serve.",
 )
 
-const COMMANDS = `nifra dev      # true-HMR dev server (Vite middleware + nifra SSR) — http://localhost:3000
+const COMMANDS = `nifra dev      # true-HMR dev server (Vite middleware + nifra SSR) — http://localhost:4321
 nifra build    # bundle the client (content-hashed, code-split) + write dist/manifest.json (incl. CSS)
 nifra start    # serve the built client + SSR on Bun (assets, <link> stylesheets, matched-route preload)
 
+# dev + start share the default port 4321. Override per run: --port <n> (alias -p) or the PORT env var.
 # flags: --port <n> (dev/start) · --out <dir> (build/start) · --poll (dev; containers/sandboxes)`
 
 const FRAMEWORK = `// framework.ts — the one place an app names its framework. The CLI reads these:
