@@ -142,7 +142,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     // below — both the aggregate and per-route — via the metafile, for `<link>` injection.
     ...buildExtras,
     minify: options.minify ?? true,
-    plugins: [...(options.plugins ?? [])],
+    plugins: [reactDedupePlugin(routesDir), ...(options.plugins ?? [])],
     ...(options.conditions ? { conditions: [...options.conditions] } : {}),
     // Replace `process.env.*` at compile time so an app module reading config off `process.env` doesn't
     // hit a `process is not defined` crash in the browser. Bun does longest-match: NODE_ENV resolves to
@@ -317,6 +317,34 @@ const reactDomEdgePlugin = (from: string): BunPlugin => ({
 })
 
 /**
+ * Dedupe React to a single copy. A `file:`-linked package can ship its OWN `react` under its own
+ * node_modules, so the bundle ends up with two React cores — each with its own hook dispatcher — and SSR
+ * throws the cryptic `null is not an object (evaluating '…H.useState')` (the second renderer's dispatcher
+ * is null). This was the #1 time-sink in app builds. Pinning `react` + its JSX runtimes to ONE resolved
+ * copy (the app's, from `from`) guarantees a single dispatcher; `react-dom`, which imports `react`, then
+ * shares it — so the class can't occur rather than needing a named error. No-op when React isn't used
+ * (an unresolvable spec is skipped; the resolver only fires on an exact match). React core is
+ * condition-agnostic, so pinning it doesn't disturb the edge/browser/server conditions that select
+ * react-dom's build.
+ */
+const REACT_DEDUPE_SPECS = ["react", "react/jsx-runtime", "react/jsx-dev-runtime"] as const
+export const reactDedupePlugin = (from: string): BunPlugin => ({
+  name: "nifra-react-dedupe",
+  setup(build) {
+    for (const spec of REACT_DEDUPE_SPECS) {
+      let resolved: string
+      try {
+        resolved = Bun.resolveSync(spec, from)
+      } catch {
+        continue // React (or this subpath) isn't resolvable here — nothing to dedupe
+      }
+      const escaped = spec.replace(/[/\\^$*+?.()|[\]{}]/g, "\\$&")
+      build.onResolve({ filter: new RegExp(`^${escaped}$`) }, () => ({ path: resolved }))
+    }
+  },
+})
+
+/**
  * `solid-js/web` selects its **server** runtime (`renderToStream`) via the `worker` condition, but
  * `Bun.build` 1.3.14 **segfaults** when the `worker` condition is active (https://bun.report). And
  * without `worker`, `browser` (which precedes the other server conditions in solid's exports map)
@@ -378,6 +406,7 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
     splitting: lazy,
     plugins: [
       ...(edge ? [reactDomEdgePlugin(entryDir), solidWebServerPlugin(entryDir)] : []),
+      reactDedupePlugin(entryDir),
       ...(options.plugins ?? []),
     ],
   })
