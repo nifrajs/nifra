@@ -21,6 +21,7 @@ import { isDraftEnabled } from "./draft.ts"
 import { ISR_REVALIDATE_HEADER } from "./isr.ts"
 import type {
   LayoutEntry,
+  LinkDescriptor,
   Manifest,
   Meta,
   MetaArgs,
@@ -84,6 +85,7 @@ export {
   filePathToPatterns,
   type GetStaticPaths,
   type LayoutEntry,
+  type LinkDescriptor,
   type Loader,
   type LoaderContext,
   type Manifest,
@@ -659,12 +661,18 @@ function escapeAttr(value: string): string {
 const SAFE_ATTR_NAME = /^[a-zA-Z][a-zA-Z0-9-]*$/
 
 /** Serialize a meta/link tag's attributes: validate the name shape (see {@link SAFE_ATTR_NAME}) +
- * escape the value against XSS. Invalid attribute names are dropped. */
-function tagAttrs(attrs: Record<string, string>): string {
-  return Object.entries(attrs)
-    .filter(([name]) => SAFE_ATTR_NAME.test(name))
-    .map(([name, value]) => `${name}="${escapeAttr(value)}"`)
-    .join(" ")
+ * escape the value against XSS. Invalid attribute names are dropped. Values follow the HTML attribute
+ * conventions {@link LinkDescriptor} types: a string renders `name="escaped"`; `true` renders the bare
+ * boolean attribute (`disabled`); `false` and `undefined` are skipped (a conditionally-absent attr). */
+function tagAttrs(attrs: Record<string, string | boolean | undefined>): string {
+  let out = ""
+  for (const [name, value] of Object.entries(attrs)) {
+    if (value === undefined || value === false) continue // omitted / absent boolean attribute
+    if (!SAFE_ATTR_NAME.test(name)) continue // name-shape abuse — dropped (see SAFE_ATTR_NAME)
+    if (out !== "") out += " "
+    out += value === true ? name : `${name}="${escapeAttr(value)}"`
+  }
+  return out
 }
 
 // Memoize the serialized head-tag string by the resolved `Meta` object's identity. A STATIC route
@@ -720,7 +728,7 @@ export function mergeHeads(heads: readonly Meta[]): Meta {
   if (heads.length === 1) return heads[0] as Meta
   let title: string | undefined
   const meta: Array<Record<string, string>> = []
-  const link: Array<Record<string, string>> = []
+  const link: LinkDescriptor[] = []
   for (const h of heads) {
     if (h.title !== undefined) title = h.title // nearest-wins: later (more specific) overrides
     if (h.meta !== undefined) meta.push(...h.meta)

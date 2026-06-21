@@ -46,6 +46,38 @@ export interface BuildClientOptions {
   readonly minify?: boolean
   /** URL prefix the assets are served under (default `"/assets/"`); also Bun's chunk `publicPath`. */
   readonly publicPath?: string
+  /**
+   * Prefix that opts an environment variable into the **client** bundle (Vite/Next convention; default
+   * `"PUBLIC_"`). Every var in the build environment whose name starts with this prefix is baked into
+   * the client `define` as `"process.env.NAME": JSON.stringify(value)`, so `process.env.PUBLIC_API_URL`
+   * compiles to its literal value in the browser. Vars WITHOUT the prefix are never exposed — the bare
+   * `process.env` define resolves them to `undefined`, so server secrets can't leak into the client
+   * bundle. Set to `""` to disable auto-exposure entirely (no var is baked in). `options.define` still
+   * wins over an auto-exposed var (it's layered last). Sourced from `Bun.env` (falls back to
+   * `process.env`) at build time. */
+  readonly publicEnvPrefix?: string
+}
+
+/**
+ * The `process.env.<NAME>` → `JSON.stringify(value)` define entries for every env var whose name
+ * carries `prefix` (the Vite/Next public-env convention). Exposing ONLY the prefixed vars is the
+ * security boundary: an unprefixed var (a secret) never gets a define, so the bare `process.env`
+ * define resolves it to `undefined` in the client bundle. An empty `prefix` exposes nothing (the
+ * opt-out). Pure + exported so the prefix/redaction contract is unit-testable without a real build.
+ */
+export function publicEnvDefines(
+  prefix: string,
+  env: Readonly<Record<string, string | undefined>>,
+): Record<string, string> {
+  const defines: Record<string, string> = {}
+  if (prefix === "") return defines // opt-out: bake in nothing
+  for (const [name, value] of Object.entries(env)) {
+    // Skip `undefined` (a deleted/unset key can still enumerate) so we never bake in `"undefined"`.
+    if (name.startsWith(prefix) && value !== undefined) {
+      defines[`process.env.${name}`] = JSON.stringify(value)
+    }
+  }
+  return defines
 }
 
 /** The built asset map — the server reads `entry` for the client script + serves `assets`. */
@@ -72,13 +104,72 @@ export interface BuildManifest {
   readonly routeStyles?: Readonly<Record<string, readonly string[]>>
 }
 
-/** The slice of Bun's build metafile nifra reads: per JS output, its source `entryPoint` + the
- * `cssBundle` Bun emitted for that entry. Used to map each route file → its stylesheet (collision-safe,
- * keyed by source path). Not yet in `@types/bun`; shape per the Bun bundler docs. */
+/** One edge in the metafile's import graph: the resolved `path` + the `original` specifier as written
+ * (so `import "node:crypto"` records `original: "node:crypto"` even after Bun resolves it to a
+ * polyfill path). Other Bun fields (`kind`, `external`) are ignored here. */
+interface BunMetafileImport {
+  readonly path?: string
+  readonly original?: string
+}
+/** The slice of Bun's build metafile nifra reads: per INPUT module, the specifiers it `imports`
+ * (for the `node:` guard); per JS OUTPUT, its source `entryPoint`, the `cssBundle` Bun emitted for
+ * that entry, and the `inputs` (graph keys) that landed in it (for the per-route CSS map + locating
+ * which chunk a flagged builtin reached). Not yet in `@types/bun`; shape per the Bun bundler docs. */
+interface BunMetafileOutput {
+  readonly entryPoint?: string
+  readonly cssBundle?: string
+  readonly inputs?: Readonly<Record<string, unknown>>
+}
 interface BunMetafile {
-  readonly outputs: Readonly<
-    Record<string, { readonly entryPoint?: string; readonly cssBundle?: string }>
-  >
+  readonly inputs?: Readonly<Record<string, { readonly imports?: readonly BunMetafileImport[] }>>
+  readonly outputs: Readonly<Record<string, BunMetafileOutput>>
+}
+
+/** The `node:` specifier of an import edge, or undefined if it isn't a Node built-in. Reads the
+ * `original` (as-written) specifier first, falling back to the resolved `path` (an `external` node:
+ * import keeps `node:` in its path). */
+const nodeBuiltinOf = (im: BunMetafileImport): string | undefined => {
+  if (im.original?.startsWith("node:")) return im.original
+  if (im.path?.startsWith("node:")) return im.path
+  return undefined
+}
+
+/**
+ * Scan a build's metafile for any `node:` builtin that a USER module pulled into a CLIENT output
+ * chunk, returning a sorted, deduped list of `{ builtin, chunk }` findings. Two graph facts are
+ * combined so the report is both precise and actionable:
+ *  1. **What the user wrote** — only builtins imported by a NON-`node:` input count, so Bun's own
+ *     polyfill chain (`node:crypto` → `node:buffer`/`node:stream`/…) doesn't bury the real cause.
+ *  2. **Where it landed** — the chunk is read from the per-output `inputs`, so the error names the
+ *     emitted file to look at.
+ * Graph-based (never the emitted text), so it survives minification and can't be fooled by a string
+ * literal that merely contains `"node:crypto"`. Pure + exported for unit testing. Empty ⇒ clean.
+ */
+export function detectNodeBuiltinsInClient(
+  meta: BunMetafile | undefined,
+): ReadonlyArray<{ readonly builtin: string; readonly chunk: string }> {
+  // (1) The builtins a user (non-polyfill) module imports directly — the ones the author controls.
+  const userImported = new Set<string>()
+  for (const [inputKey, input] of Object.entries(meta?.inputs ?? {})) {
+    if (inputKey.startsWith("node:")) continue // a polyfill importing another builtin — not the cause
+    for (const im of input.imports ?? []) {
+      const builtin = nodeBuiltinOf(im)
+      if (builtin !== undefined) userImported.add(builtin)
+    }
+  }
+  // (2) Locate which emitted chunk each user-imported builtin reached, via the per-output `inputs`.
+  const findings = new Map<string, { builtin: string; chunk: string }>()
+  for (const [outPath, out] of Object.entries(meta?.outputs ?? {})) {
+    for (const inputKey of Object.keys(out.inputs ?? {})) {
+      if (userImported.has(inputKey)) {
+        const chunk = basename(outPath)
+        findings.set(`${inputKey}\0${chunk}`, { builtin: inputKey, chunk })
+      }
+    }
+  }
+  return [...findings.values()].sort((a, b) =>
+    a.builtin === b.builtin ? a.chunk.localeCompare(b.chunk) : a.builtin.localeCompare(b.builtin),
+  )
 }
 
 const basename = (path: string): string => path.slice(path.lastIndexOf("/") + 1)
@@ -104,6 +195,12 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   // The bootstrap's filename is `_velo`-namespaced (not `entry.ts`) so its `[name]` can't collide with
   // a user route named `entry.tsx` when the CSS mapping below excludes the bootstrap's aggregate CSS.
   const mode = options.minify === false ? "development" : "production"
+  // PUBLIC_*-prefixed env → client define (Vite/Next convention). Sourced from the build env (`Bun.env`,
+  // falling back to `process.env`). Only prefixed vars are baked in; unprefixed secrets stay undefined
+  // in the client via the bare `process.env` → `({})` define below. Caller's `options.define` wins (it's
+  // layered after these in the `define` object). `Bun` may be absent under non-Bun typecheck — guard it.
+  const buildEnv = (typeof Bun !== "undefined" ? Bun.env : undefined) ?? process.env
+  const publicDefines = publicEnvDefines(options.publicEnvPrefix ?? "PUBLIC_", buildEnv)
   const entryFile = `${outDir}/_nifra-entry.ts`
   // A client bundle has no Node `process`; provide a minimal one so a stray bare `process` reference in
   // an app module doesn't crash hydration (`process.env.*` reads are handled at compile time by `define`).
@@ -146,17 +243,37 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     ...(options.conditions ? { conditions: [...options.conditions] } : {}),
     // Replace `process.env.*` at compile time so an app module reading config off `process.env` doesn't
     // hit a `process is not defined` crash in the browser. Bun does longest-match: NODE_ENV resolves to
-    // the build mode (React's prod/dev branch); every other `process.env.X` becomes undefined. Callers
-    // can override either via `options.define`.
+    // the build mode (React's prod/dev branch); each PUBLIC_* var resolves to its baked VALUE; every
+    // other `process.env.X` becomes undefined (the bare `process.env` → `({})` fallback — so secrets
+    // never leak). Callers can override any of these via `options.define` (layered last).
     define: {
       "process.env": "({})",
       "process.env.NODE_ENV": JSON.stringify(mode),
+      ...publicDefines,
       ...options.define,
     },
   })
   if (!result.success) {
     throw new Error(
       `[nifra/web] client build failed:\n${result.logs.map((l) => String(l)).join("\n")}`,
+    )
+  }
+
+  // #4: a `node:` builtin (e.g. `node:crypto`) pulled into a CLIENT chunk builds fine (Bun substitutes
+  // a browser polyfill) but breaks/leaks at runtime. Fail the build with a named, actionable error
+  // instead — caught at build time, not by a confused user in the browser. Graph-based (the metafile's
+  // per-output `inputs`), so it can't false-positive on a `"node:..."` string literal and survives
+  // minification. Only the client build runs this; the server build's `node:` imports are legitimate.
+  const clientMeta = (result as unknown as { metafile?: BunMetafile }).metafile
+  const nodeBuiltins = detectNodeBuiltinsInClient(clientMeta)
+  if (nodeBuiltins.length > 0) {
+    const lines = nodeBuiltins.map(
+      (f) => `  - ${f.builtin} reached the client bundle via ${f.chunk}`,
+    )
+    throw new Error(
+      `[nifra/web] Node built-in(s) in the client bundle — move them behind a server-only path ` +
+        `(a loader/action runs on the server; import the \`node:\` module there, not at a route's ` +
+        `top level):\n${lines.join("\n")}`,
     )
   }
 
@@ -214,10 +331,9 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   // same-basename collisions (`index.tsx` + `blog/index.tsx`) that a filename match can't. A page then
   // links only its layout chain + own CSS (deduped); an empty array means the page needs no CSS at all.
   // Absent (→ aggregate fallback) only if Bun emits no metafile/cssBundle — never silently incomplete.
-  const meta = (result as unknown as { metafile?: BunMetafile }).metafile
   const cwd = process.cwd()
   const cssByEntry = new Map<string, string>()
-  for (const out of Object.values(meta?.outputs ?? {})) {
+  for (const out of Object.values(clientMeta?.outputs ?? {})) {
     if (out.entryPoint !== undefined && out.cssBundle !== undefined) {
       cssByEntry.set(resolvePath(cwd, out.entryPoint), toUrl(out.cssBundle))
     }

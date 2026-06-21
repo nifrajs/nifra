@@ -197,6 +197,38 @@ test("renderPage keeps the full standard <link> attr set (hreflang, crossorigin,
   )
 })
 
+test("renderPage renders LinkDescriptor boolean attrs: true → bare, false/undefined → omitted [#A]", async () => {
+  // LinkDescriptor values are `string | boolean | undefined`: a string renders `name="value"`,
+  // `true` renders the bare boolean attribute (HTML convention), `false`/`undefined` are skipped
+  // entirely. Regression for the typed-partial fix — a `{ rel, href }` interface is now assignable.
+  const html = await (
+    await renderPage({
+      adapter: stub,
+      chain: [null],
+      data: null,
+      clientEntry: "/c.js",
+      head: {
+        link: [
+          { rel: "stylesheet", href: "/print.css", media: "print", disabled: true },
+          { rel: "stylesheet", href: "/main.css", disabled: false },
+          // A conditionally-absent custom attribute (index-signature path) renders nothing.
+          { rel: "preload", href: "/x.woff2", as: "font", "data-when": undefined },
+        ],
+      },
+    })
+  ).text()
+  // `disabled: true` → bare attribute with no `="..."`.
+  expect(html).toContain(
+    '<link rel="stylesheet" href="/print.css" media="print" disabled data-nifra>',
+  )
+  // `disabled: false` → the attribute is omitted (the link is NOT disabled).
+  expect(html).toContain('<link rel="stylesheet" href="/main.css" data-nifra>')
+  expect(html).not.toContain('href="/main.css" disabled')
+  // `data-when: undefined` → omitted, the rest of the tag is intact.
+  expect(html).toContain('<link rel="preload" href="/x.woff2" as="font" data-nifra>')
+  expect(html).not.toContain("data-when")
+})
+
 test("renderPage falls back to the title option when head has no title", async () => {
   const html = await (
     await renderPage({

@@ -693,6 +693,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Minimal structural shape of a Cloudflare Workers **KV namespace** binding — just the three methods {@link KVCacheStore} uses. Structural (not a dependency on `@cloudflare/workers-types`) so any KV-like binding satisfies it and tests can pass an in-memory double.
 - **LayoutEntry** _(interface)_ — `interface LayoutEntry`
   A layout (or `_404`/`_error`) entry: its source file (for client codegen) + a lazy loader.
+- **LinkDescriptor** _(interface)_ — `interface LinkDescriptor`
+  One `<link>` tag's attributes for a route/layout's `meta.link`. The common HTML `<link>` attributes are spelled out and **optional** so a typed partial like `{ rel, href, hreflang }` is assignable — the previous `Record<string, string>` required *every* value to be a present string, which rejected …
 - **Loader** _(type)_ — `type Loader = (ctx: LoaderContext) => unknown | Promise<unknown>`
   A route's optional data loader: params/request in, data out.
 - **LoaderContext** _(interface)_ — `interface LoaderContext`
@@ -781,7 +783,7 @@ Every public export of every package — name, kind, signature, and doc summary 
   Derive **every** nifra router pattern a route file maps to (relative to the routes dir): `index` → the parent path, `[id]` → `:id`, `[...slug]` → `*slug` (catch-all, captures the rest of the path into one param), `(group)` folders are dropped from the URL (organization only), and an optional `[[lan…
 - **fontFace** _(function)_ — `fontFace: (face: FontFace) => string`
   Build a single `@font-face` CSS rule. Defaults to `font-display: swap`; infers each source's `format()` from its extension. All values are CSS-escaped, so a dynamic family/URL can't inject CSS. Put the result in a stylesheet your app imports (nifra's CSS pipeline bundles + links it).
-- **fontPreload** _(function)_ — `fontPreload: (input: FontPreloadInput) => Record<string, string>`
+- **fontPreload** _(function)_ — `fontPreload: (input: FontPreloadInput) => LinkDescriptor`
   Build a font preload as a `<link>` attribute set for a route/layout's `meta.link` — nifra injects it into `<head>` (`<link rel="preload" as="font" type="font/woff2" crossorigin="anonymous">`). Values are escaped at injection by the head renderer. Preloading the font file removes a render-blocking r…
 - **generateClientEntry** _(function)_ — `generateClientEntry: (manifest: Manifest, options: GenerateClientEntryOptions) => string`
   Codegen: emit a client-entry module (as source) that lazily imports each route's layout chain (so `Bun.build` with `splitting` code-splits one chunk per route), builds a `patterns` list, then creates the agnostic router store (with a `loadModule` hook), installs history + form interception, loads t…

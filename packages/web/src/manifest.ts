@@ -28,11 +28,41 @@ export type Loader = (ctx: LoaderContext) => unknown | Promise<unknown>
  */
 export type Action = (ctx: LoaderContext) => unknown | Promise<unknown>
 
+/**
+ * One `<link>` tag's attributes for a route/layout's `meta.link`. The common HTML `<link>` attributes
+ * are spelled out and **optional** so a typed partial like `{ rel, href, hreflang }` is assignable —
+ * the previous `Record<string, string>` required *every* value to be a present string, which rejected
+ * exactly that idiomatic shape (the bug this fixes). The index signature keeps custom/`data-*` attrs
+ * (and any future standard attr) passing without a cast; `boolean` covers boolean attributes like
+ * `disabled` (rendered as a bare attribute when `true`, omitted when `false`), and `undefined` lets a
+ * caller spread in a conditionally-absent attribute. Attribute *names* are still shape-validated and
+ * values HTML-escaped at render — a widened type never widens the injection surface.
+ */
+export interface LinkDescriptor {
+  readonly rel?: string
+  readonly href?: string
+  readonly hreflang?: string
+  readonly crossorigin?: string
+  readonly media?: string
+  readonly sizes?: string
+  readonly type?: string
+  readonly as?: string
+  readonly integrity?: string
+  readonly referrerpolicy?: string
+  readonly fetchpriority?: string
+  readonly title?: string
+  readonly imagesrcset?: string
+  readonly imagesizes?: string
+  readonly color?: string
+  readonly disabled?: boolean
+  readonly [attr: string]: string | boolean | undefined
+}
+
 /** The document head a route contributes — title + `<meta>`/`<link>` tag attribute sets. */
 export interface Meta {
   readonly title?: string
   readonly meta?: ReadonlyArray<Record<string, string>>
-  readonly link?: ReadonlyArray<Record<string, string>>
+  readonly link?: readonly LinkDescriptor[]
 }
 
 /** Args for a route's `meta` function: the loader's data + the route params. */

@@ -186,9 +186,15 @@ export function installHistory(
 export function applyHead(head: Meta): void {
   if (head.title !== undefined) document.title = head.title
   for (const el of document.head.querySelectorAll("[data-nifra]")) el.remove()
-  const add = (tag: "meta" | "link", attrs: Record<string, string>): void => {
+  // Values follow the same HTML attribute conventions as the SSR `tagAttrs`: a string sets the value,
+  // `true` sets the bare boolean attribute, `false`/`undefined` skip it — so a soft-nav head matches
+  // the server-rendered one exactly (no hydration drift on the managed tags).
+  const add = (tag: "meta" | "link", attrs: Record<string, string | boolean | undefined>): void => {
     const el = document.createElement(tag)
-    for (const [name, value] of Object.entries(attrs)) el.setAttribute(name, value)
+    for (const [name, value] of Object.entries(attrs)) {
+      if (value === undefined || value === false) continue
+      el.setAttribute(name, value === true ? "" : value)
+    }
     el.setAttribute("data-nifra", "")
     document.head.appendChild(el)
   }
