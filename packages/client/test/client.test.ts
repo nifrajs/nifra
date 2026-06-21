@@ -199,4 +199,30 @@ describe("testClient", () => {
     const missing = await untyped.nope.get()
     expect(missing.ok).toBe(false)
   })
+
+  test("exposes a real .fetch(url, init) bridge for createWebApp's /api/* auto-mount", async () => {
+    // `createWebApp({ api: inProcessClient(backend) })` mounts the backend over HTTP by dispatching
+    // `api.fetch(req.url, req)`. That requires `.fetch` to be the in-process bridge (→ a `Response`),
+    // NOT a route sub-proxy (a `/fetch` call). Assert the bridge dispatches GET + POST with the body.
+    const backend = server()
+      .get("/api/x", () => ({ x: 1 }))
+      .post("/api/echo", async (c) => ({ echoed: await c.req.json() }))
+    const api = testClient<typeof backend>(backend) as unknown as {
+      fetch: (url: string, init?: RequestInit) => Promise<Response>
+    }
+    expect(typeof api.fetch).toBe("function")
+    const got = await api.fetch("http://nifra.internal/api/x", { method: "GET" })
+    expect(got instanceof Response).toBe(true)
+    expect(got.status).toBe(200)
+    expect(await got.json()).toEqual({ x: 1 })
+    const echoed = await api.fetch("http://nifra.internal/api/echo", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hi: 1 }),
+    })
+    expect(await echoed.json()).toEqual({ echoed: { hi: 1 } })
+    // The typed route surface is unchanged — `.fetch` shadows only the mount seam, not real routes.
+    const typed = await testClient<typeof backend>(backend).api.x.get()
+    expect(typed.ok && typed.data).toEqual({ x: 1 })
+  })
 })

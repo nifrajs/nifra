@@ -72,14 +72,33 @@ export function client(
  * lifecycle (validation, middleware, contracts). For SSR loaders. Typed from `App` exactly like
  * the network client. The `(url, init) → Request` bridge is required because the client calls
  * `fetch(url, init)` while `app.fetch` takes a `Request`.
+ *
+ * The returned typed proxy ALSO carries a real `fetch(url, init)` method — the same in-process
+ * bridge — so `createWebApp({ api: inProcessClient(backend) })` can **auto-mount** the backend over
+ * HTTP at `/api/*` (it dispatches `api.fetch(req.url, req)` to the backend, no hand-written
+ * `server-bun.ts` `/api/*` branch). Without this, `api.fetch` would resolve to a *route* sub-proxy
+ * (a call to `/fetch`), not the backend's own `fetch` — so the mount can't reach the app. The `fetch`
+ * key is intercepted on the proxy and shadows any (non-existent) `/fetch` route segment; no app
+ * defines a literal `/fetch` route reached via the typed proxy, so this is backward-compatible.
  */
 export function inProcessClient<
   App extends { fetch(request: Request): Response | Promise<Response> },
 >(app: App, options?: Omit<ClientOptions, "fetch">): Treaty<App> {
-  return client<App>("http://nifra.internal", {
-    ...options,
-    fetch: (url, init) => Promise.resolve(app.fetch(new Request(url, init))),
-  })
+  // The in-process bridge: the client speaks `fetch(url, init)` (the `FetchFn` shape) while the app's
+  // own `fetch` takes a `Request`. Reused both as the proxy's per-call transport (below) and as the
+  // mount hook exposed as `.fetch`.
+  const bridge: FetchFn = (url, init) => Promise.resolve(app.fetch(new Request(url, init)))
+  const proxy = client<App>("http://nifra.internal", { ...options, fetch: bridge })
+  // Expose the bridge as a real `.fetch` for `createWebApp`'s `/api/*` auto-mount. An outer Proxy
+  // intercepts only the `fetch` key and delegates everything else to the typed route proxy, so the
+  // end-to-end-typed call surface (`api.users({ id }).get()`) is unchanged. The declared return type
+  // stays `Treaty<App>`: `.fetch` is an internal mount seam, not part of the public typed API.
+  return new Proxy(proxy as object, {
+    get(targetProxy, key, receiver) {
+      if (key === "fetch") return bridge
+      return Reflect.get(targetProxy, key, receiver)
+    },
+  }) as Treaty<App>
 }
 
 /**

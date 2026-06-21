@@ -25,6 +25,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - [Nifra — Deployment](/docs/deployment): One Nifra app, one command per target — Bun, Node (Docker), Deno Deploy, Cloudflare Pages, Vercel Edge.
 - [Nifra — CLI](/docs/cli): The zero-config Nifra CLI (`nifra dev`, `nifra build`, `nifra start`): true HMR, hashed client builds, and SSR serve.
 - [Nifra — Dev & HMR](/docs/dev): Use `nifra dev` for a Vite-backed state-preserving HMR loop, or `@nifrajs/web/dev` for a Bun-native live-reload loop. Production builds use Bun.
+- [Nifra — Backends & API (dev and prod)](/docs/backends): How a Nifra backend reaches your app: inProcessClient feeds ctx.api to loaders, and createWebApp auto-mounts the backend over HTTP at /api/* — in `nifra dev` and production alike, no hand-dispatch.
 - [Nifra — Framework contract](/docs/contract): The one-page contract: LoaderContext shape, loader/action/meta/head signatures, the client↔server boundary, and the build-output contract — every signature verified against the source.
 - [Nifra — Databases](/docs/database): Nifra is database-agnostic: use SQLite, Postgres, or any ORM (Drizzle, Prisma, Kysely) from your handlers and loaders, on Bun, Node, Deno, and the edge.
 - [Nifra — Fonts](/docs/fonts): Self-host web fonts with zero layout shift: a build-time Google Fonts downloader (the next/font equivalent) plus CLS-safe @font-face + preload primitives.

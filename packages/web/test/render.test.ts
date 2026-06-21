@@ -1,8 +1,11 @@
 import { expect, test } from "bun:test"
 import {
+  canonical,
   DATA_GLOBAL,
   defer,
+  jsonLd,
   mergeHeads,
+  openGraph,
   type RenderAdapter,
   ROUTE_GLOBAL,
   renderPage,
@@ -227,6 +230,143 @@ test("renderPage renders LinkDescriptor boolean attrs: true → bare, false/unde
   // `data-when: undefined` → omitted, the rest of the tag is intact.
   expect(html).toContain('<link rel="preload" href="/x.woff2" as="font" data-nifra>')
   expect(html).not.toContain("data-when")
+})
+
+// --- head <script> slot (JSON-LD) + breakout escaping ---
+
+test("renderPage renders the head <script> slot (JSON-LD), default type, managed (data-nifra)", async () => {
+  const html = await (
+    await renderPage({
+      adapter: stub,
+      chain: [null],
+      data: null,
+      clientEntry: "/c.js",
+      head: {
+        script: [{ content: '{"@context":"https://schema.org","@type":"Article"}' }],
+      },
+    })
+  ).text()
+  // Default type is application/ld+json; managed so a soft-nav can replace it; content intact.
+  expect(html).toContain(
+    '<script type="application/ld+json" data-nifra>{"@context":"https://schema.org","@type":"Article"}</script>',
+  )
+})
+
+test("renderPage head <script>: a </script> (and <!-- / ]]>) payload is breakout-escaped", async () => {
+  // The XSS vector: a JSON-LD string field containing `</script>` (or `<!--`, `]]>`) would otherwise
+  // close the element early and inject markup. Escaping rewrites `<`/the `]]>` `>` to a JS unicode
+  // escape — byte-equivalent JSON after parse, but the raw boundary chars the HTML tokenizer scans for
+  // are gone.
+  const payload = '{"x":"</script><img src=x onerror=alert(1)> <!-- ]]>"}'
+  const html = await (
+    await renderPage({
+      adapter: stub,
+      chain: [null],
+      data: null,
+      clientEntry: "/c.js",
+      head: { script: [{ content: payload }] },
+    })
+  ).text()
+  // The injected breakout `</script><img …>` must NOT appear — every `<` is escaped to `<`.
+  expect(html).not.toContain("</script><img")
+  expect(html).toContain("\\u003c/script>\\u003cimg")
+  // The `<!--` open and the `]]>` close are neutralized too.
+  expect(html).toContain("\\u003c!--")
+  expect(html).toContain("]]\\u003e")
+  // The JSON-LD slot is followed by exactly its OWN real close tag — the escaped one inside the body
+  // doesn't add a second close for the slot (isolate to the slot's start to avoid counting the
+  // data-global script's own legitimate `</script>`).
+  const slotStart = html.indexOf('<script type="application/ld+json"')
+  const slot = html.slice(slotStart)
+  expect(slot.indexOf("</script>")).toBeGreaterThan(0) // a real close exists
+  // No second `</script>` before the (single) real close — i.e. the body didn't smuggle one in.
+  const realClose = slot.indexOf("</script>")
+  expect(slot.slice(0, realClose)).not.toContain("</script>")
+})
+
+test("renderPage head <script>: a custom type is attribute-escaped", async () => {
+  const html = await (
+    await renderPage({
+      adapter: stub,
+      chain: [null],
+      data: null,
+      clientEntry: "/c.js",
+      head: { script: [{ type: "speculationrules", content: '{"prerender":[]}' }] },
+    })
+  ).text()
+  expect(html).toContain('<script type="speculationrules" data-nifra>{"prerender":[]}</script>')
+})
+
+// --- SEO helpers ---
+
+test("canonical() builds a rel=canonical LinkDescriptor that renders in <head>", async () => {
+  const link = canonical("https://site.com/posts/hello")
+  expect(link).toEqual({ rel: "canonical", href: "https://site.com/posts/hello" })
+  const html = await (
+    await renderPage({
+      adapter: stub,
+      chain: [null],
+      data: null,
+      clientEntry: "/c.js",
+      head: { link: [link] },
+    })
+  ).text()
+  expect(html).toContain('<link rel="canonical" href="https://site.com/posts/hello" data-nifra>')
+})
+
+test("openGraph() emits only the provided og:* properties, with og:type defaulting to website", async () => {
+  const tags = openGraph({ title: "Nifra", image: "https://site.com/og.png" })
+  // No description/url provided → not emitted; og:type defaults to website.
+  expect(tags).toEqual([
+    { property: "og:title", content: "Nifra" },
+    { property: "og:image", content: "https://site.com/og.png" },
+    { property: "og:type", content: "website" },
+  ])
+  // An explicit type is honored, and url/description flow through.
+  const full = openGraph({ description: "d", url: "https://site.com", type: "article" })
+  expect(full).toContainEqual({ property: "og:description", content: "d" })
+  expect(full).toContainEqual({ property: "og:url", content: "https://site.com" })
+  expect(full).toContainEqual({ property: "og:type", content: "article" })
+  const html = await (
+    await renderPage({
+      adapter: stub,
+      chain: [null],
+      data: null,
+      clientEntry: "/c.js",
+      head: { meta: tags },
+    })
+  ).text()
+  expect(html).toContain('<meta property="og:title" content="Nifra" data-nifra>')
+})
+
+test("jsonLd() builds an application/ld+json script entry; head renderer escapes a </script> payload", async () => {
+  const entry = jsonLd({ "@type": "Article", headline: "A </script> in the title" })
+  expect(entry.type).toBe("application/ld+json")
+  expect(entry.content).toBe('{"@type":"Article","headline":"A </script> in the title"}')
+  const html = await (
+    await renderPage({
+      adapter: stub,
+      chain: [null],
+      data: null,
+      clientEntry: "/c.js",
+      head: { script: [entry] },
+    })
+  ).text()
+  // The `</script>` inside the JSON-LD is escaped — no early close.
+  expect(html).not.toContain("</script> in the title")
+  expect(html).toContain("\\u003c/script> in the title")
+})
+
+test("mergeHeads concatenates the script slot (layout chain first, page last)", () => {
+  const merged = mergeHeads([
+    { script: [{ content: "A" }] },
+    { script: [{ content: "B" }] },
+    { meta: [{ name: "x", content: "y" }] },
+  ])
+  expect(merged.script).toEqual([{ content: "A" }, { content: "B" }])
+  // A single head returns by reference (the existing fast path) — unaffected by the new slot.
+  const one = { script: [{ content: "solo" }] }
+  expect(mergeHeads([one])).toBe(one)
 })
 
 test("renderPage falls back to the title option when head has no title", async () => {

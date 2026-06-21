@@ -21,6 +21,7 @@ packages/web/test/.tmp-*
 # Internal working docs (planning, design, audit) — kept on disk for local reference, never committed.
 # (README.md stays tracked.)
 /AUDIT*.md
+/*FEEDBACK*.md
 
 # Benchmark RESULTS — generated locally, never committed (numbers move with machine load; see
 # bench/README.md). The benchmark CODE under bench/ stays tracked.

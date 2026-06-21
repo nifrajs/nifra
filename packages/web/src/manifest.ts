@@ -58,11 +58,26 @@ export interface LinkDescriptor {
   readonly [attr: string]: string | boolean | undefined
 }
 
-/** The document head a route contributes — title + `<meta>`/`<link>` tag attribute sets. */
+/** One `<script>` element a route contributes to `<head>` — for structured data (JSON-LD) and other
+ * inert, non-executable head scripts. The `content` is the script body; `type` defaults to
+ * `"application/ld+json"` (the common case). The renderer escapes `content` against an HTML breakout
+ * (`</`, `<!--`, `]]>`) — see `escapeScriptContent` — so a JSON-LD payload can never close the
+ * `<script>` element early. `content` is **JSON/text, never raw HTML**: this slot is not an XSS escape
+ * hatch for arbitrary markup. */
+export interface ScriptDescriptor {
+  /** The script's `type` attribute. Default `"application/ld+json"`. */
+  readonly type?: string
+  /** The script body (e.g. a `JSON.stringify`'d JSON-LD object). Escaped for safe `<script>` embedding. */
+  readonly content: string
+}
+
+/** The document head a route contributes — title + `<meta>`/`<link>`/`<script>` tag sets. */
 export interface Meta {
   readonly title?: string
   readonly meta?: ReadonlyArray<Record<string, string>>
   readonly link?: readonly LinkDescriptor[]
+  /** Inert head `<script>`s (JSON-LD structured data, etc.). See {@link ScriptDescriptor}. */
+  readonly script?: readonly ScriptDescriptor[]
 }
 
 /** Args for a route's `meta` function: the loader's data + the route params. */

@@ -705,13 +705,15 @@ Every public export of every package — name, kind, signature, and doc summary 
   In-process ISR cache. Refuses to run in production unless explicitly allowed (mirrors the rate-limit `MemoryStore` — a per-instance cache is unsafe across instances). Bounded **LRU**: a read or write bumps the entry, so the least-recently-used evicts past `max` (a hot, frequently-read page survives…
 - **MemoryCacheStoreOptions** _(interface)_ — `interface MemoryCacheStoreOptions`
 - **Meta** _(interface)_ — `interface Meta`
-  The document head a route contributes — title + `<meta>`/`<link>` tag attribute sets.
+  The document head a route contributes — title + `<meta>`/`<link>`/`<script>` tag sets.
 - **MetaArgs** _(interface)_ — `interface MetaArgs<Data = unknown>`
   Args for a route's `meta` function: the loader's data + the route params.
 - **MetaInput** _(type)_ — `type MetaInput = Meta | ((args: MetaArgs) => Meta)`
   A route's `meta`: a static {@link Meta}, or a function of the loader data + params.
 - **MountRouterOptions** _(interface)_ — `interface MountRouterOptions`
   Options for a per-adapter `mountRouter` (the Router binding that hydrates + re-renders).
+- **OpenGraphInput** _(interface)_ — `interface OpenGraphInput`
+  Inputs for {@link openGraph} — the common Open Graph properties. All optional; only the provided ones become tags. `type` defaults to `"website"`.
 - **QueryClient** _(interface)_ — `interface QueryClient`
   The keyed query cache. One per app (a binding registers it like the router).
 - **QueryClientOptions** _(interface)_ — `interface QueryClientOptions`
@@ -748,6 +750,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   A route id paired with its nifra pattern (e.g. `":id"` segments) — the matcher input.
 - **RouterState** _(interface)_ — `interface RouterState`
   The router's observable state. A new object is published on every transition.
+- **ScriptDescriptor** _(interface)_ — `interface ScriptDescriptor`
+  One `<script>` element a route contributes to `<head>` — for structured data (JSON-LD) and other inert, non-executable head scripts. The `content` is the script body; `type` defaults to `"application/ld+json"` (the common case). The renderer escapes `content` against an HTML breakout (`</`, `<!--`,…
 - **StaticPath** _(interface)_ — `interface StaticPath`
   One concrete parameterization of a dynamic route, returned by {@link GetStaticPaths}.
 - **StaticPaths** _(interface)_ — `interface StaticPaths`
@@ -760,6 +764,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Per-submit options. `revalidate: false` opts out of the post-action loader re-fetch.
 - **buildManifest** _(function)_ — `buildManifest: (files: readonly string[], importer: (file: string) => () => Promise<RouteModule>) => Manifest`
   Build a manifest from route file paths (relative to the routes dir) + an `importer` that turns a path into a lazy module loader. Pure — no fs. Throws at boot (the loud-and-early RouteConfigError ethos) on duplicate patterns. `_layout`/`_404`/`_error` files are special; other `_`-prefixed files are …
+- **canonical** _(function)_ — `canonical: (href: string) => LinkDescriptor`
+  A `<link rel="canonical">` descriptor for a route's `meta.link`. The canonical URL tells search engines which URL is authoritative for a page (deduping query-string / tracking variants).
 - **createClientRouter** _(function)_ — `createClientRouter: (options: ClientRouterOptions) => ClientRouter`
   Create the agnostic router store. `navigate` is guarded by a monotonic token so that when navigations overlap, only the latest result is applied (rapid clicks don't flash stale data). A failed fetch clears `pending` and rethrows so the caller can fall back to a full-page load.
 - **createMatcher** _(function)_ — `createMatcher: (patterns: readonly RoutePattern[]) => (path: string) => RouteMatch | null`
@@ -793,8 +799,12 @@ Every public export of every package — name, kind, signature, and doc summary 
   Hash a query key to a stable cache string. Object keys are sorted (so `{a,b}` ≡ `{b,a}`); arrays keep order. Keys must be serializable — a function/symbol in the key throws (it can't be a stable identity). Mirrors TanStack Query's structural hashing.
 - **isDraftEnabled** _(function)_ — `isDraftEnabled: (request: Request, secret: string) => Promise<boolean>`
   Whether `request` carries a **valid** signed draft cookie (constant-time verify via `unsignValue`). `createWebApp` uses it to set `ctx.draft`; `withISR` uses it to bypass the cache for editors. A missing, forged, or tampered cookie returns `false`.
+- **jsonLd** _(function)_ — `jsonLd: (data: Record<string, unknown>) => ScriptDescriptor`
+  Build a JSON-LD `<script type="application/ld+json">` entry for a route's `meta.script` from a plain object. `JSON.stringify` produces the body; the head renderer breakout-escapes it (see `escapeScriptContent`), so a string field containing `</script>` is embedded safely.
 - **mergeHeads** _(function)_ — `mergeHeads: (heads: readonly Meta[]) => Meta`
   Merge a route's `<head>` contributions from its layout chain + the page into one {@link Meta}.
+- **openGraph** _(function)_ — `openGraph: (input: OpenGraphInput) => Array<Record<string, string>>`
+  Build the Open Graph `<meta property="og:*">` entries for a route's `meta.meta`. Returns only the properties you supplied (plus `og:type`, defaulting to `"website"`), so it composes with other meta.
 - **redirect** _(function)_ — `redirect: (location: string, statusOrOptions?: number | RedirectOptions) => Response`
   Build a redirect `Response` — return it from a route `action` for the Post/Redirect/Get pattern (POST mutates, 303 sends the browser to a fresh GET, so a reload doesn't re-submit). Defaults to 303 (See Other); pass `307`/`308` (or `{ status }`) to preserve the method.
 - **renderPage** _(function)_ — `renderPage: (options: RenderPageOptions) => MaybePromise<Response>`

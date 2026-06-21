@@ -200,6 +200,17 @@ export function applyHead(head: Meta): void {
   }
   for (const m of head.meta ?? []) add("meta", m)
   for (const l of head.link ?? []) add("link", l)
+  // `<script>` slot (JSON-LD etc.) — soft-nav parity with the SSR `headTags` script render. Set the body
+  // via `textContent`, NOT `innerHTML`: `textContent` assigns the raw string without HTML re-parsing, so
+  // a `</script>` (or `<!--`/`]]>`) payload in the JSON-LD can't break out — the DOM-native equivalent of
+  // the server's `escapeScriptContent`. `type` defaults to `application/ld+json` (matching the SSR side).
+  for (const s of head.script ?? []) {
+    const el = document.createElement("script")
+    el.setAttribute("type", s.type ?? "application/ld+json")
+    el.textContent = s.content
+    el.setAttribute("data-nifra", "")
+    document.head.appendChild(el)
+  }
 }
 
 export function installForms(router: ClientRouter): () => void {
