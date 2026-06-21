@@ -771,7 +771,7 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **createMatcher** _(function)_ — `createMatcher: (patterns: readonly RoutePattern[]) => (path: string) => RouteMatch | null`
   Build a matcher from route patterns (built from the SAME manifest the server routes from, so client and server agree). Returns the first matching route + decoded params, or null. The query string is ignored for matching (it is not part of the route pattern).
 - **createQueryClient** _(function)_ — `createQueryClient: (options: QueryClientOptions) => QueryClient`
-- **createWebApp** _(function)_ — `createWebApp: (options: CreateWebAppOptions) => Server`
+- **createWebApp** _(function)_ — `createWebApp: <Env = unknown>(options: CreateWebAppOptions) => ReturnType<typeof server<Env>>`
   Build a nifra app from a route manifest: every route SSRs its layout chain via `renderPage`, and a wildcard catch-all renders `_404` (or a plain 404). Reuses
 - **defer** _(function)_ — `defer: <T>(promise: Promise<T>) => Deferred<T>`
   Mark a loader value as deferred — it streams in after the shell instead of blocking it. Works **anywhere** in the loader's returned data — a top-level key, or nested in objects/arrays:
