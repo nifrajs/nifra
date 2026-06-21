@@ -4,6 +4,10 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   collectCheckResult,
+  type ModuleReader,
+  type ModuleResolver,
+  parseStaticImports,
+  resolveServerOnlyChains,
   scanFetchText,
   scanProject,
   scanResponseRoutes,
@@ -12,6 +16,7 @@ import {
   scanStaticRouteText,
   scanUntypedClient,
   stripComments,
+  walkServerOnlyChain,
 } from "../src/check.ts"
 
 describe("scanFetchText — own-API fetch detection", () => {
@@ -427,6 +432,220 @@ describe("collectCheckResult — server-manifest drift rule", () => {
     const dir = await manifestApp(["index.tsx"], ["index.tsx"])
     const result = await collectCheckResult(dir, { lintsOnly: true })
     expect(result.diagnostics.find((d) => d.rule === "server-manifest-drift")).toBeUndefined()
+    await rm(dir, { recursive: true, force: true })
+  })
+})
+
+describe("parseStaticImports — static non-type import specifiers", () => {
+  test("collects static imports, skips type-only + dynamic imports", () => {
+    const src = [
+      'import { a } from "./a.ts"',
+      'import type { T } from "./t.ts"', // erased at build → skipped
+      'import "../side-effect.ts"',
+      'const x = await import("./dyn.ts")', // dynamic → skipped
+      'import postgres from "postgres"',
+    ].join("\n")
+    expect(parseStaticImports(src)).toEqual(["./a.ts", "../side-effect.ts", "postgres"])
+  })
+})
+
+describe("walkServerOnlyChain — bounded transitive walk over a fake module graph (#4.4)", () => {
+  // A fake local module graph: route → ../data → ../db → (node:crypto). `resolve` maps a relative
+  // specifier from a file to an absolute key; `read` returns the module source. No real fs.
+  const graph: Record<string, string> = {
+    "/app/routes/x.tsx": 'import { load } from "../data.ts"\nexport default () => null',
+    "/app/data.ts": 'import { query } from "./db.ts"\nexport const load = () => query()',
+    "/app/db.ts":
+      'import { randomUUID } from "node:crypto"\nexport const query = () => randomUUID()',
+  }
+  const resolve: ModuleResolver = (from, spec) => {
+    // Minimal relative resolver for the fake graph: join the dir of `from` with `spec`, normalising `..`.
+    if (!spec.startsWith(".")) return undefined
+    const segs = from.split("/").slice(0, -1).concat(spec.split("/"))
+    const stack: string[] = []
+    for (const s of segs) {
+      if (s === "" || s === ".") continue
+      if (s === "..") stack.pop()
+      else stack.push(s)
+    }
+    return `/${stack.join("/")}`
+  }
+  const read: ModuleReader = (abs) => graph[abs]
+
+  test("builds the full chain route → ../data → ../db → node:crypto", () => {
+    const chain = walkServerOnlyChain(
+      "/app/routes/x.tsx",
+      graph["/app/routes/x.tsx"] as string,
+      resolve,
+      read,
+    )
+    expect(chain).toEqual(["/app/routes/x.tsx", "../data.ts", "./db.ts", "node:crypto"])
+  })
+
+  test("returns undefined when no module in the graph reaches a sink", () => {
+    const clean: Record<string, string> = {
+      "/app/routes/y.tsx": 'import { x } from "../util.ts"\nexport default () => x',
+      "/app/util.ts": 'import { useState } from "react"\nexport const x = 1',
+    }
+    const chain = walkServerOnlyChain(
+      "/app/routes/y.tsx",
+      clean["/app/routes/y.tsx"] as string,
+      (from, spec) => resolve(from, spec),
+      (abs) => clean[abs],
+    )
+    expect(chain).toBeUndefined()
+  })
+
+  test("a *.server dependency terminates the chain by the .server convention", () => {
+    const g: Record<string, string> = {
+      "/app/routes/z.tsx":
+        'import { secret } from "../auth.server.ts"\nexport default () => secret',
+    }
+    const chain = walkServerOnlyChain(
+      "/app/routes/z.tsx",
+      g["/app/routes/z.tsx"] as string,
+      (from, spec) => resolve(from, spec),
+      (abs) => g[abs],
+    )
+    expect(chain).toEqual(["/app/routes/z.tsx", "../auth.server.ts"])
+  })
+
+  test("a server-only-marked dependency terminates the chain", () => {
+    const g: Record<string, string> = {
+      "/app/routes/m.tsx": 'import { key } from "../secrets.ts"\nexport default () => key',
+      "/app/secrets.ts": 'import "@nifrajs/web/server-only"\nexport const key = "x"',
+    }
+    const chain = walkServerOnlyChain(
+      "/app/routes/m.tsx",
+      g["/app/routes/m.tsx"] as string,
+      (from, spec) => resolve(from, spec),
+      (abs) => g[abs],
+    )
+    expect(chain).toEqual(["/app/routes/m.tsx", "../secrets.ts"])
+  })
+
+  test("is cycle-safe (a → b → a) — never loops, returns undefined for no sink", () => {
+    const g: Record<string, string> = {
+      "/app/routes/c.tsx": 'import { a } from "../a.ts"\nexport default () => a',
+      "/app/a.ts": 'import { b } from "./b.ts"\nexport const a = () => b',
+      "/app/b.ts": 'import { a } from "./a.ts"\nexport const b = () => a',
+    }
+    const chain = walkServerOnlyChain(
+      "/app/routes/c.tsx",
+      g["/app/routes/c.tsx"] as string,
+      (from, spec) => resolve(from, spec),
+      (abs) => g[abs],
+    )
+    expect(chain).toBeUndefined()
+  })
+})
+
+describe("resolveServerOnlyChains — per-route findings with the full chain (#4.4)", () => {
+  test("a direct server-only import yields the direct edge (length-2 chain)", () => {
+    const finding = resolveServerOnlyChains(
+      "routes/x.tsx",
+      'import { readFileSync } from "node:fs"',
+      () => undefined,
+      () => undefined,
+    )[0]
+    expect(finding?.chain).toEqual(["routes/x.tsx", "node:fs"])
+    expect(finding?.fallback).toBe(false)
+  })
+
+  test("an unresolvable ../db relative import falls back to the direct edge (fallback: true)", () => {
+    const finding = resolveServerOnlyChains(
+      "routes/x.tsx",
+      'import { db } from "../db"',
+      () => undefined, // can't resolve
+      () => undefined,
+    )[0]
+    expect(finding?.chain).toEqual(["routes/x.tsx", "../db"])
+    expect(finding?.fallback).toBe(true)
+  })
+
+  test("non-route files yield no findings", () => {
+    expect(
+      resolveServerOnlyChains(
+        "src/data.ts",
+        'import { readFileSync } from "node:fs"',
+        () => undefined,
+        () => undefined,
+      ),
+    ).toEqual([])
+  })
+})
+
+describe("collectCheckResult — transitive server-only chain end-to-end (#4.4)", () => {
+  test("routes/x.tsx → ../data.ts → ../db.ts (node:crypto) yields the full chain", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-transitive-"))
+    await mkdir(join(dir, "routes"), { recursive: true })
+    await writeFile(
+      join(dir, "routes", "x.tsx"),
+      'import { load } from "../data.ts"\nexport const loader = () => load()\nexport default () => null\n',
+    )
+    await writeFile(
+      join(dir, "data.ts"),
+      'import { query } from "./db.ts"\nexport const load = () => query()\n',
+    )
+    await writeFile(
+      join(dir, "db.ts"),
+      'import { randomUUID } from "node:crypto"\nexport const query = () => randomUUID()\n',
+    )
+    const result = await collectCheckResult(dir, { lintsOnly: true })
+    const diag = result.diagnostics.find((d) => d.rule === "server-only-import")
+    expect(diag).toBeDefined()
+    // The FULL transitive chain, matching the build leak-guard's depth.
+    expect(diag?.chain).toEqual(["routes/x.tsx", "../data.ts", "./db.ts", "node:crypto"])
+    expect(diag?.message).toContain("routes/x.tsx → ../data.ts → ./db.ts → node:crypto")
+    expect(diag?.message).toContain('server-only "node:crypto"')
+    // The fix surfaces the resolved chain so an agent acts without re-reading the source.
+    expect(diag?.suggestion?.steps?.join("\n")).toContain(
+      "routes/x.tsx → ../data.ts → ./db.ts → node:crypto",
+    )
+    expect(result.ok).toBe(false)
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("a direct server-only import still works (the direct edge)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-direct-"))
+    await mkdir(join(dir, "routes"), { recursive: true })
+    await writeFile(
+      join(dir, "routes", "x.tsx"),
+      'import { readFileSync } from "node:fs"\nexport const loader = () => readFileSync("x")\nexport default () => null\n',
+    )
+    const result = await collectCheckResult(dir, { lintsOnly: true })
+    const diag = result.diagnostics.find((d) => d.rule === "server-only-import")
+    expect(diag?.chain).toEqual(["routes/x.tsx", "node:fs"])
+    expect(diag?.message).toContain("routes/x.tsx → node:fs")
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("an unresolvable ../db import falls back to the direct edge + says so", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-fallback-"))
+    await mkdir(join(dir, "routes"), { recursive: true })
+    // No db.ts on disk → the relative import can't be resolved → direct-edge fallback.
+    await writeFile(
+      join(dir, "routes", "x.tsx"),
+      'import { db } from "../db"\nexport const loader = () => db.query()\nexport default () => null\n',
+    )
+    const result = await collectCheckResult(dir, { lintsOnly: true })
+    const diag = result.diagnostics.find((d) => d.rule === "server-only-import")
+    expect(diag?.chain).toEqual(["routes/x.tsx", "../db"])
+    expect(diag?.message).toContain("direct edge")
+    expect(result.ok).toBe(false)
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("a clean route (no server-only reach) produces no server-only diagnostic", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-clean-"))
+    await mkdir(join(dir, "routes"), { recursive: true })
+    await writeFile(
+      join(dir, "routes", "x.tsx"),
+      'import { greet } from "../util.ts"\nexport default () => greet()\n',
+    )
+    await writeFile(join(dir, "util.ts"), 'export const greet = () => "hi"\n')
+    const result = await collectCheckResult(dir, { lintsOnly: true })
+    expect(result.diagnostics.find((d) => d.rule === "server-only-import")).toBeUndefined()
     await rm(dir, { recursive: true, force: true })
   })
 })

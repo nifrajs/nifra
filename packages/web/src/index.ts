@@ -134,6 +134,35 @@ export {
 // Deferred loader data (`defer()` + the `Deferred<T>` type) — consumed by the adapter's `<Await>`.
 export { type Deferred, defer }
 
+/** Phantom brand key for {@link ServerOnly}. A unique symbol so the brand can't be forged by a plain
+ * object literal; `unique symbol` keys never appear in the emitted JS, so the brand is purely
+ * type-level (zero runtime cost). The property is optional + `never`-typed, so a `ServerOnly<T>`
+ * stays assignment-compatible with `T` — it documents intent without obstructing real use. */
+declare const SERVER_ONLY_BRAND: unique symbol
+
+/**
+ * Type-level intent marker for a value that must only exist on the server — a secret, a DB handle, a
+ * server-only client. `ServerOnly<T>` is structurally `T` (the brand is an optional phantom field, so
+ * existing code keeps type-checking), but it advertises to readers + the compiler that the value is
+ * not meant to cross to the browser. It is **purely type-level** and erases at build — it does NOT,
+ * by itself, keep the value out of the client bundle.
+ *
+ * The enforcement is two runtime conventions:
+ *  - add the side-effect import `import "@nifrajs/web/server-only"` at the top of the module — the
+ *    client build ({@link buildClient}) fails loud, with the import chain, if it reaches a browser
+ *    chunk (the poison-import marker);
+ *  - or name the file `*.server.ts` — the `.server` convention empties it in the client build.
+ *
+ * Use this brand to express the intent in the types; pair it with one of those runtime markers so a
+ * leak is caught at build time rather than shipping a secret to the client.
+ *
+ * @example
+ * import "@nifrajs/web/server-only"
+ * import type { ServerOnly } from "@nifrajs/web"
+ * export const apiKey: ServerOnly<string> = process.env.SECRET_API_KEY!
+ */
+export type ServerOnly<T> = T & { readonly [SERVER_ONLY_BRAND]?: never }
+
 /** The data handed to a route component. Opaque to the core. `actionData` is the return of a
  * route `action` after a POST (absent on plain GETs). `pending` + `submission` are client-only
  * (absent on SSR): they drive **optimistic UI** — render from `submission.formData` while `pending`. */

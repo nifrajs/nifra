@@ -265,6 +265,178 @@ export function detectNodeBuiltinsInClient(
   )
 }
 
+// ---------------------------------------------------------------------------------------------------
+// `server-only` poison-import guard (§3.3/§5.1). The complement to the `.server` convention + the
+// node-builtin guard: a module of PURE server logic with NO `node:` import (a secret-bearing constant,
+// a server-only API call) that an author wants to FAIL LOUD if it reaches the client opts in with a
+// side-effect `import "@nifrajs/web/server-only"` (Next's `import "server-only"`). On the SERVER build
+// the marker is an empty no-op; the CLIENT build detects — via the SAME Bun metafile graph the
+// node-builtin guard walks — any module that imports the marker AND lands in a client chunk, and fails
+// the build with the import chain. Graph-based (never the emitted text), so it survives minification.
+// ---------------------------------------------------------------------------------------------------
+
+/** The marker specifier an author imports to opt a module into the client-leak guard. Matched on the
+ * import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed,
+ * before Bun resolves it to `src/server-only.ts` / `dist/server-only.js`). */
+export const SERVER_ONLY_MARKER = "@nifrajs/web/server-only"
+
+/** True when an import edge is the `server-only` marker import. Reads the as-written `original` (the
+ * specifier the author typed); falls back to the resolved `path`'s basename so a pre-resolved edge
+ * (no `original`) — or a workspace-relative resolution — is still recognised. */
+const isServerOnlyMarkerImport = (im: BunMetafileImport): boolean => {
+  if (im.original === SERVER_ONLY_MARKER) return true
+  // Defensive fallback: an edge that lost its `original` but resolved to the marker module file. The
+  // marker is the only `server-only.{ts,js}` under `@nifrajs/web`, so the basename is unambiguous.
+  const path = im.path
+  return path !== undefined && /(^|\/)server-only\.[cm]?[jt]s$/.test(path)
+}
+
+/** One `server-only`-module-in-the-client finding: the offending module (the as-written marker-import
+ * chain's tail before the marker), the emitted chunk it landed in, and the shortest USER-module import
+ * chain that pulled it there (entry → … → the server-only module). */
+export interface ServerOnlyFinding {
+  /** The emitted client chunk the server-only module landed in (basename). */
+  readonly chunk: string
+  /** The shortest import path from a user entry to the server-only module, as display labels:
+   * `[entryFile, ...as-written specifiers…, "<module> (marked server-only)"]`. Mirrors
+   * {@link NodeBuiltinFinding.chain}; the tail names the marked module so the message reads
+   * `routes/x.tsx → ../secrets.ts (marked server-only)`. */
+  readonly chain: readonly string[]
+}
+
+/**
+ * BFS the metafile import graph for the SHORTEST user-module path that reaches a module which imports
+ * the `server-only` marker, returning it as display labels `[entryFile, …as-written specifiers…,
+ * "<module> (marked server-only)"]`. Mirrors {@link shortestBuiltinChain}: the frontier starts at
+ * every `entryInput` so the chain begins at the file the dev wrote an `import` in; traversal crosses
+ * only NON-`node:` user edges (no cycles via `seen`); it stops at the first node whose import set
+ * contains the marker (the marked module — the actionable tail), labelling that node by the as-written
+ * specifier the previous hop used to reach it. Pure — operates on the graph, never the emitted text.
+ */
+function shortestServerOnlyChain(
+  inputs: Readonly<Record<string, { readonly imports?: readonly BunMetafileImport[] }>>,
+  entryInputs: readonly string[],
+  markedModule: string,
+  resolveTarget: (im: BunMetafileImport) => string | undefined,
+): string[] {
+  // The label for the marked module's tail: its as-written specifier (filled when we cross the edge
+  // that reaches it) suffixed with `(marked server-only)`; the entry case uses the entry key itself.
+  const tail = (label: string): string => `${label} (marked server-only)`
+  // An entry that is ITSELF the marked module — the chain is just that one node.
+  if (entryInputs.includes(markedModule)) return [tail(markedModule)]
+  const seen = new Set<string>(entryInputs)
+  let frontier: Array<{ node: string; chain: string[] }> = entryInputs.map((node) => ({
+    node,
+    chain: [node],
+  }))
+  while (frontier.length > 0) {
+    const next: Array<{ node: string; chain: string[] }> = []
+    for (const { node, chain } of frontier) {
+      for (const im of inputs[node]?.imports ?? []) {
+        // Resolve the edge's `path` to the matching INPUT-GRAPH KEY — in a real build the edge `path`
+        // is absolute while the input keys are cwd-relative, so a raw equality/lookup would miss every
+        // multi-hop user edge (and the chain would degrade to just the tail). The resolver maps both.
+        const target = resolveTarget(im)
+        if (target === undefined || target.startsWith("node:")) continue
+        // The marked module reached via THIS edge → the chain ends here (label it as the marked tail
+        // using the as-written specifier the author wrote, falling back to the resolved key).
+        if (target === markedModule) return [...chain, tail(im.original ?? target)]
+        if (seen.has(target)) continue
+        seen.add(target)
+        next.push({ node: target, chain: [...chain, im.original ?? target] })
+      }
+    }
+    frontier = next
+  }
+  return [tail(markedModule)] // unreachable from any entry (defensive; a flagged module is reachable)
+}
+
+/**
+ * Build a resolver from an import EDGE to its INPUT-GRAPH KEY. Bun's metafile records edge `path`s as
+ * ABSOLUTE paths but keys `inputs` by CWD-RELATIVE paths, so a raw `inputs[im.path]` lookup misses
+ * every user edge in a real build. The resolver: (1) an exact key match (the synthetic-metafile / unit
+ * case); else (2) the input key the absolute path ends with (`…/secrets.ts` → `packages/web/.../secrets.ts`).
+ * The longest-suffix match is taken so a shorter key can't shadow a more specific one. Pure.
+ */
+function inputKeyResolver(
+  inputs: Readonly<Record<string, unknown>>,
+): (im: BunMetafileImport) => string | undefined {
+  const keys = Object.keys(inputs)
+  return (im) => {
+    const path = im.path
+    if (path === undefined) return undefined
+    if (inputs[path] !== undefined) return path // exact (synthetic keys, or already-relative paths)
+    let best: string | undefined
+    for (const key of keys) {
+      // `/<key>` so a suffix match aligns on a path boundary (never a partial segment), and the longest
+      // such key wins (the most specific file).
+      if (path.endsWith(`/${key}`) && (best === undefined || key.length > best.length)) best = key
+    }
+    return best
+  }
+}
+
+/**
+ * Scan a build's metafile for any module that opts into the `server-only` marker (a side-effect
+ * `import "@nifrajs/web/server-only"`) yet landed in a CLIENT output chunk, returning a sorted, deduped
+ * list of {@link ServerOnlyFinding}s. Mirrors {@link detectNodeBuiltinsInClient}: it reads the SAME
+ * graph facts — which inputs import the marker (the "marked" modules), which chunk each landed in (the
+ * per-output `inputs`), and the shortest import chain from a user entry to it. The marker module ITSELF
+ * (which imports nothing) is excluded — only the modules that *opt in* are flagged. Pure + exported for
+ * unit testing. Empty ⇒ clean.
+ */
+export function detectServerOnlyInClient(
+  meta: BunMetafile | undefined,
+): ReadonlyArray<ServerOnlyFinding> {
+  const inputs = meta?.inputs ?? {}
+  // (1) The modules that import the marker — the ones the author opted into the guard. The marker
+  // module itself is skipped: it's the import TARGET, not an opt-in (it imports nothing of its own).
+  const marked = new Set<string>()
+  for (const [inputKey, input] of Object.entries(inputs)) {
+    if (isServerOnlyMarkerModule(inputKey)) continue
+    if ((input.imports ?? []).some(isServerOnlyMarkerImport)) marked.add(inputKey)
+  }
+  if (marked.size === 0) return []
+  // The entry inputs — the chain BFS starts here, so the reported path begins at the file the dev
+  // wrote an `import` in. Same derivation as the node-builtin guard.
+  const entryInputs = [
+    ...new Set(
+      Object.values(meta?.outputs ?? {})
+        .map((o) => o.entryPoint)
+        .filter((e): e is string => e !== undefined && !e.startsWith("node:")),
+    ),
+  ]
+  const resolveTarget = inputKeyResolver(inputs)
+  const chainCache = new Map<string, readonly string[]>()
+  const chainFor = (markedModule: string): readonly string[] => {
+    const cached = chainCache.get(markedModule)
+    if (cached !== undefined) return cached
+    const chain = shortestServerOnlyChain(inputs, entryInputs, markedModule, resolveTarget)
+    chainCache.set(markedModule, chain)
+    return chain
+  }
+  // (2) Locate which emitted chunk each marked module reached, via the per-output `inputs`.
+  const findings = new Map<string, ServerOnlyFinding>()
+  for (const [outPath, out] of Object.entries(meta?.outputs ?? {})) {
+    for (const inputKey of Object.keys(out.inputs ?? {})) {
+      if (marked.has(inputKey)) {
+        const chunk = basename(outPath)
+        findings.set(`${inputKey}\0${chunk}`, { chunk, chain: chainFor(inputKey) })
+      }
+    }
+  }
+  return [...findings.values()].sort((a, b) => {
+    const am = a.chain[a.chain.length - 1] ?? ""
+    const bm = b.chain[b.chain.length - 1] ?? ""
+    return am === bm ? a.chunk.localeCompare(b.chunk) : am.localeCompare(bm)
+  })
+}
+
+/** True when an INPUT graph key is the marker module file itself (`…/server-only.{ts,js}` under web).
+ * Excluded from the "marked" set — the marker is the import target, not an opt-in module. */
+const isServerOnlyMarkerModule = (inputKey: string): boolean =>
+  /(^|\/)server-only\.[cm]?[jt]s$/.test(inputKey)
+
 const basename = (path: string): string => path.slice(path.lastIndexOf("/") + 1)
 /** `[name]` Bun derives for an entrypoint: basename without extension (`users/[id].tsx` → `[id]`). */
 const entryName = (file: string): string => {
@@ -547,6 +719,26 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
       `[nifra/web] Node built-in(s) in the client bundle — move them behind a server-only path ` +
         `(a loader/action runs on the server; import the \`node:\` module there, not at a route's ` +
         `top level):\n${lines.join("\n")}`,
+    )
+  }
+
+  // §3.3/§5.1: a module that opted into the `server-only` marker (`import "@nifrajs/web/server-only"`)
+  // yet reached a CLIENT chunk — fail the build with the same chain-bearing, "reached the client bundle
+  // via" message shape as the node-builtin guard above. This catches pure-server logic (a secret, a
+  // server-only API call) that carries no `node:` import and isn't named `*.server`, so neither of the
+  // other two guards fires. Graph-based (the same metafile), so it survives minification.
+  const serverOnly = detectServerOnlyInClient(clientMeta)
+  if (serverOnly.length > 0) {
+    const lines = serverOnly.map((f) =>
+      f.chain.length > 1
+        ? `  - server-only module reached the client bundle via ${f.chain.join(" → ")} (chunk: ${f.chunk})`
+        : `  - server-only module reached the client bundle via ${f.chunk}`,
+    )
+    throw new Error(
+      `[nifra/web] server-only module(s) in the client bundle — a module marked ` +
+        `\`import "${SERVER_ONLY_MARKER}"\` reached the browser. Move it behind a server-only path ` +
+        `(reach it via a loader/action, or rename it \`*.server.ts\`), so its server logic never ships ` +
+        `to the client:\n${lines.join("\n")}`,
     )
   }
 
