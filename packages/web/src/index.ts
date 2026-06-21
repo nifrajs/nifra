@@ -701,10 +701,13 @@ function tagAttrs(attrs: Record<string, string | boolean | undefined>): string {
 // content can vary). WeakMap so a route module that's GC'd takes its entry with it.
 const headTagsCache = new WeakMap<Meta, string>()
 
-/** Render a route's `meta`/`link` as managed (`data-nifra`) head tags. Title is set separately.
- * String concatenation (no intermediate `.map()` arrays + spread) — parity with the already
- * concat-based preloadLinks/styleLinks/islandPreloads loops; byte-identical output.
- * Result is memoized per resolved-`Meta` identity (static meta → serialized once per route). */
+/** Render a route's `meta`/`link`/`script` as managed (`data-nifra`) head tags. Title is set
+ * separately. XSS-safe by construction: every attribute flows through {@link tagAttrs} (name shape-
+ * validated, value HTML-escaped), and each `script[].content` through `escapeScriptContent`
+ * (breakout-escaped) — so loader-derived strings (LLM-authored `og:*`, user content) can't inject markup
+ * or close the tag early. String concatenation (no intermediate `.map()` arrays + spread) — parity with
+ * the already concat-based preloadLinks/styleLinks/islandPreloads loops; byte-identical output. Result
+ * is memoized per resolved-`Meta` identity (static meta → serialized once per route). */
 function headTags(head: Meta | undefined): string {
   if (head === undefined) return ""
   const cached = headTagsCache.get(head)

@@ -60,3 +60,9 @@ with no extra wiring. Slow-client / slow-loris protection is Node's built-in
 `requestTimeout` (300s) and `headersTimeout` (60s) defaults.
 
 Works with any `{ fetch(req): Promise<Response> }` handler, not just nifra. ESM-only. MIT.
+
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.

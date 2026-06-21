@@ -97,3 +97,9 @@ claude mcp add nifra -- nifra mcp
 
 Run the client from (or point it at) your project root. The protocol is hand-rolled
 (newline-delimited JSON-RPC 2.0) — no SDK dependency.
+
+## For AI agents
+
+Building on nifra with an AI coding agent? The repo's [`AGENTS.md`](../../AGENTS.md) is the copy-paste
+quick reference, and [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run
+`nifra check` as the done-gate, or `nifra mcp` to give the agent live project tools.
