@@ -18,7 +18,7 @@ interface RouteDesc {
 }
 
 /** Read the backend's registered routes, if it's a `server()` with a `.routes()` method. */
-function backendRoutes(backend: unknown): RouteDesc[] {
+export function backendRoutes(backend: unknown): RouteDesc[] {
   if (backend && typeof (backend as { routes?: unknown }).routes === "function") {
     try {
       return (backend as { routes(): RouteDesc[] }).routes()
@@ -281,4 +281,179 @@ export function routesToJson(app: LoadedApp, pathPrefix?: string): RouteJson[] {
         ...(response !== undefined && { response }),
       }
     })
+}
+
+// ===================================================================================================
+// `nifra routes [--json]` — the focused, uniform view of every route the app serves, with methods.
+//
+// `nifra context` lists page routes + API routes for an agent's prompt (Markdown, with schemas).
+// `nifra routes` answers a different question: "what does this app actually serve, and with which
+// methods?" — so an agent sees instantly that `POST /api/explain` is (or isn't) mounted, instead of
+// discovering it via a 405. It marks which backend routes are AUTO-MOUNTED under the page router's
+// `apiPrefix` (default `/api`), and `--json` makes it machine-consumable. The table-building +
+// rendering are pure (no fs / no module loads), so they're unit-tested; the cwd gathering is the thin
+// async wrapper `describeRoutes`.
+// ===================================================================================================
+
+/** The kind of route: a file-routed `page` (SSR/SSG) or a backend `api` (HTTP handler). */
+export type RouteKind = "page" | "api"
+
+/** One row of the unified route table. */
+export interface RouteTableEntry {
+  readonly kind: RouteKind
+  /** The URL pattern (page: `/blog/:slug`; api: `/api/users`). */
+  readonly path: string
+  /** Methods this route serves, sorted (page: `GET`, plus `POST` when it has an `action`). */
+  readonly methods: readonly string[]
+  /** Source file (page only — the route module path relative to `routes/`). */
+  readonly file?: string
+  /** True when this API route is auto-mounted under the page router's `apiPrefix` (so it's reachable
+   * through the same web app, no hand-wired `if (pathname.startsWith("/api/"))`). Pages are never
+   * auto-mounted (they ARE the page router); only API routes carry this flag. */
+  readonly autoMounted?: boolean
+}
+
+/** A page route + whether its module exports an `action` (→ it also serves POST). The caller resolves
+ * `hasAction` (a module load); kept out of the pure builder so the builder needs no fs. */
+export interface PageRouteInput {
+  readonly pattern: string
+  readonly file: string
+  readonly hasAction: boolean
+}
+
+export interface RouteTableInput {
+  readonly pages: readonly PageRouteInput[]
+  readonly api: readonly RouteDesc[]
+  /** The page router's `apiPrefix` (default `/api`); an API route at/under it is auto-mounted. `""`
+   * disables the auto-mount, so no API route is marked auto-mounted. */
+  readonly apiPrefix?: string
+}
+
+/** True when `path` is at or under `prefix` as a path segment boundary (`/api` matches `/api` and
+ * `/api/x`, but not `/apiary`). An empty prefix matches nothing (auto-mount disabled). */
+function isUnderPrefix(path: string, prefix: string): boolean {
+  if (prefix === "") return false
+  return path === prefix || path.startsWith(`${prefix}/`)
+}
+
+/**
+ * Build the unified, sorted route table from page routes + backend API routes. Pure — the caller
+ * supplies page `hasAction` (resolved via a module load) and the API descriptors (`backend.routes()`).
+ * Page routes serve `GET` (+ `POST` when they export an `action`); API routes carry their declared
+ * method, and are flagged `autoMounted` when at/under `apiPrefix`. Sorted by path, then kind, then the
+ * joined methods, for stable output.
+ */
+export function buildRouteTable(input: RouteTableInput): RouteTableEntry[] {
+  const apiPrefix = input.apiPrefix ?? "/api"
+  const rows: RouteTableEntry[] = []
+  for (const page of input.pages) {
+    const methods = page.hasAction ? ["GET", "POST"] : ["GET"]
+    rows.push({ kind: "page", path: page.pattern, methods, file: page.file })
+  }
+  // Collapse API routes that share a path into one row with all its methods (a REST resource).
+  const byPath = new Map<string, { methods: Set<string>; autoMounted: boolean }>()
+  for (const r of input.api) {
+    const existing = byPath.get(r.path)
+    if (existing === undefined) {
+      byPath.set(r.path, {
+        methods: new Set([r.method.toUpperCase()]),
+        autoMounted: isUnderPrefix(r.path, apiPrefix),
+      })
+    } else existing.methods.add(r.method.toUpperCase())
+  }
+  for (const [path, info] of byPath) {
+    rows.push({
+      kind: "api",
+      path,
+      methods: [...info.methods].sort(),
+      autoMounted: info.autoMounted,
+    })
+  }
+  return rows.sort(
+    (a, b) =>
+      a.path.localeCompare(b.path) ||
+      a.kind.localeCompare(b.kind) ||
+      a.methods.join(",").localeCompare(b.methods.join(",")),
+  )
+}
+
+/** Render the route table as a terse aligned text table (the `nifra routes` default output). Pure. */
+export function renderRouteTable(rows: readonly RouteTableEntry[]): string {
+  if (rows.length === 0)
+    return "No routes found (no `routes/` pages and no `backend.ts` API routes)."
+  const display = rows.map((r) => ({
+    methods: r.methods.join(", "),
+    kind: r.kind,
+    path: r.kind === "api" && r.autoMounted ? `${r.path}  (auto-mounted)` : r.path,
+  }))
+  const methodW = Math.max("METHOD".length, ...display.map((d) => d.methods.length))
+  const kindW = Math.max("KIND".length, ...display.map((d) => d.kind.length))
+  const padEnd = (s: string, w: number): string => s + " ".repeat(Math.max(0, w - s.length))
+  const line = (methods: string, kind: string, path: string): string =>
+    `${padEnd(methods, methodW)}  ${padEnd(kind, kindW)}  ${path}`
+  return [
+    line("METHOD", "KIND", "PATH"),
+    ...display.map((d) => line(d.methods, d.kind, d.path)),
+  ].join("\n")
+}
+
+/** One JSON row for `nifra routes --json` (the agent-facing, stable shape). */
+export interface RouteJsonRow {
+  readonly kind: RouteKind
+  readonly path: string
+  readonly methods: readonly string[]
+  readonly file?: string
+  readonly autoMounted?: boolean
+}
+
+/** The route table as a JSON document for `--json` (agents). Stable keys; `file`/`autoMounted` present
+ * only where meaningful (file on pages, autoMounted on API routes). */
+export function routeTableToJson(rows: readonly RouteTableEntry[]): {
+  readonly routes: readonly RouteJsonRow[]
+} {
+  return {
+    routes: rows.map((r) => ({
+      kind: r.kind,
+      path: r.path,
+      methods: r.methods,
+      ...(r.file !== undefined ? { file: r.file } : {}),
+      ...(r.kind === "api" ? { autoMounted: r.autoMounted === true } : {}),
+    })),
+  }
+}
+
+/** A route module that may export an `action` (→ the page serves POST). */
+interface MaybeActionModule {
+  readonly action?: unknown
+}
+
+/**
+ * Gather + render the unified route table for `nifra routes`. Discovers page routes (`discoverRoutes`),
+ * loads each module to detect an `action` export (→ POST), reads the backend's API routes, then renders
+ * text (default) or JSON (`--json`). The page-route load mirrors what SSR would do; a load failure
+ * degrades to GET-only for that route (never throws the whole command).
+ */
+export async function describeRoutes(
+  app: LoadedApp,
+  opts: { readonly json?: boolean } = {},
+): Promise<string> {
+  let manifest: Manifest | undefined
+  try {
+    manifest = discoverRoutes(app.routesDir)
+  } catch {
+    // No (or unreadable) routes/ — fall through with no pages; the table still shows API routes.
+  }
+  const pages: PageRouteInput[] = []
+  for (const route of manifest?.routes ?? []) {
+    let hasAction = false
+    try {
+      const mod = (await route.load()) as MaybeActionModule
+      hasAction = typeof mod.action === "function"
+    } catch {
+      // A route that can't be loaded at introspection time (e.g. a server-only import) → GET-only.
+    }
+    pages.push({ pattern: route.pattern, file: route.file, hasAction })
+  }
+  const rows = buildRouteTable({ pages, api: backendRoutes(app.backend) })
+  return opts.json ? JSON.stringify(routeTableToJson(rows), null, 2) : renderRouteTable(rows)
 }

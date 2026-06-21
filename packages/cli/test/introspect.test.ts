@@ -1,5 +1,17 @@
 import { describe, expect, test } from "bun:test"
-import { clientCall, type RouteJson, routesToJson, tsTypeOf } from "../src/introspect.ts"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join, resolve } from "node:path"
+import {
+  buildRouteTable,
+  clientCall,
+  describeRoutes,
+  type RouteJson,
+  renderRouteTable,
+  routesToJson,
+  routeTableToJson,
+  tsTypeOf,
+} from "../src/introspect.ts"
 import type { LoadedApp } from "../src/load.ts"
 
 // A minimal LoadedApp whose backend exposes the routes routesToJson reads — the only field it touches.
@@ -159,5 +171,154 @@ describe("routesToJson — structured list_routes / get_route_schema", () => {
 
   test("no backend → empty list", () => {
     expect(routesToJson({} as LoadedApp)).toEqual([])
+  })
+})
+
+// `nifra routes [--json]` — the focused, uniform route view (page + API routes, with methods). The
+// table builder + renderer are pure; describeRoutes is the cwd-gathering wrapper.
+
+describe("buildRouteTable", () => {
+  test("pages serve GET (+ POST when they have an action); sorted by path", () => {
+    const rows = buildRouteTable({
+      pages: [
+        { pattern: "/about", file: "about.tsx", hasAction: false },
+        { pattern: "/contact", file: "contact.tsx", hasAction: true },
+      ],
+      api: [],
+    })
+    expect(rows).toEqual([
+      { kind: "page", path: "/about", methods: ["GET"], file: "about.tsx" },
+      { kind: "page", path: "/contact", methods: ["GET", "POST"], file: "contact.tsx" },
+    ])
+  })
+
+  test("API routes sharing a path collapse into one row with all methods, sorted", () => {
+    const rows = buildRouteTable({
+      pages: [],
+      api: [
+        { method: "post", path: "/api/count" },
+        { method: "get", path: "/api/count" },
+      ],
+    })
+    expect(rows).toEqual([
+      { kind: "api", path: "/api/count", methods: ["GET", "POST"], autoMounted: true },
+    ])
+  })
+
+  test("autoMounted reflects the apiPrefix (default /api), as a segment boundary", () => {
+    const rows = buildRouteTable({
+      pages: [],
+      api: [
+        { method: "get", path: "/api/users" }, // under /api → auto-mounted
+        { method: "get", path: "/health" }, // not under /api
+        { method: "get", path: "/apiary" }, // shares the prefix string but NOT a segment boundary
+      ],
+    })
+    const byPath = Object.fromEntries(rows.map((r) => [r.path, r.autoMounted]))
+    expect(byPath["/api/users"]).toBe(true)
+    expect(byPath["/health"]).toBe(false)
+    expect(byPath["/apiary"]).toBe(false)
+  })
+
+  test('apiPrefix "" disables auto-mount marking', () => {
+    const rows = buildRouteTable({
+      pages: [],
+      api: [{ method: "get", path: "/api/users" }],
+      apiPrefix: "",
+    })
+    expect(rows[0]?.autoMounted).toBe(false)
+  })
+})
+
+describe("renderRouteTable + routeTableToJson", () => {
+  const rows = buildRouteTable({
+    pages: [{ pattern: "/", file: "index.tsx", hasAction: false }],
+    api: [{ method: "get", path: "/api/explain" }],
+  })
+
+  test("text table shows method, kind, path + an (auto-mounted) marker on API routes", () => {
+    const text = renderRouteTable(rows)
+    expect(text).toContain("METHOD")
+    expect(text).toContain("KIND")
+    expect(text).toContain("PATH")
+    expect(text).toContain("/api/explain")
+    expect(text).toContain("(auto-mounted)")
+    expect(text).toContain("page")
+    expect(text).toContain("api")
+  })
+
+  test("empty table → a clear no-routes line", () => {
+    expect(renderRouteTable([])).toContain("No routes found")
+  })
+
+  test("--json shape: stable keys; file on pages, autoMounted on API routes", () => {
+    const json = routeTableToJson(rows)
+    // Sorted by path: "/" precedes "/api/explain".
+    expect(json.routes).toEqual([
+      { kind: "page", path: "/", methods: ["GET"], file: "index.tsx" },
+      { kind: "api", path: "/api/explain", methods: ["GET"], autoMounted: true },
+    ])
+  })
+})
+
+describe("describeRoutes (cwd integration)", () => {
+  test("enumerates pages (GET, +POST for an action) + backend API routes, marking auto-mount", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-routes-"))
+    try {
+      const routesDir = join(dir, "routes")
+      await mkdir(routesDir, { recursive: true })
+      await writeFile(join(routesDir, "index.tsx"), "export default function H() { return null }\n")
+      await writeFile(
+        join(routesDir, "submit.tsx"),
+        "export default function S() { return null }\nexport const action = async () => ({ ok: true })\n",
+      )
+      const app: LoadedApp = {
+        cwd: dir,
+        routesDir,
+        outDir: join(dir, "dist"),
+        framework: { adapter: {}, clientModule: "x" },
+        backend: {
+          routes: () => [
+            { method: "GET", path: "/api/explain" },
+            { method: "POST", path: "/api/explain" },
+            { method: "GET", path: "/health" },
+          ],
+        },
+      }
+
+      const text = await describeRoutes(app)
+      expect(text).toContain("/api/explain")
+      expect(text).toContain("(auto-mounted)")
+      // The action route serves POST too.
+      expect(text).toMatch(/GET, POST\s+page\s+\/submit/)
+
+      const json = JSON.parse(await describeRoutes(app, { json: true })) as {
+        routes: { path: string; methods: string[]; autoMounted?: boolean }[]
+      }
+      const explain = json.routes.find((r) => r.path === "/api/explain")
+      expect(explain?.methods).toEqual(["GET", "POST"])
+      expect(explain?.autoMounted).toBe(true)
+      expect(json.routes.find((r) => r.path === "/health")?.autoMounted).toBe(false)
+      const submit = json.routes.find((r) => r.path === "/submit")
+      expect(submit?.methods).toEqual(["GET", "POST"])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("no routes/ and no backend → a clear no-routes message", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-routes-empty-"))
+    try {
+      const app: LoadedApp = {
+        cwd: dir,
+        routesDir: resolve(dir, "routes"), // doesn't exist
+        outDir: join(dir, "dist"),
+        framework: { adapter: {}, clientModule: "x" },
+        backend: undefined,
+      }
+      expect(await describeRoutes(app)).toContain("No routes found")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 })
