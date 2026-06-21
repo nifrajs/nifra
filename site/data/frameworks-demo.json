@@ -1,0 +1,259 @@
+{
+  "entries": [
+    {
+      "id": "react",
+      "label": "React 19",
+      "idiom": "hooks",
+      "fragmentHtml": "<div id=\"app\"><main><h1>Items (<!-- -->50<!-- -->)</h1><ul><li>Item 1</li><li>Item 2</li><li>Item 3</li><li>Item 4</li><li>Item 5</li><li>Item 6</li><li>Item 7</li><li>Item 8</li><li>Item 9</li><li>Item 10</li><li>Item 11</li><li>Item 12</li><li>Item 13</li><li>Item 14</li><li>Item 15</li><li>Item 16</li><li>Item 17</li><li>Item 18</li><li>Item 19</li><li>Item 20</li><li>Item 21</li><li>Item 22</li><li>Item 23</li><li>Item 24</li><li>Item 25</li><li>Item 26</li><li>Item 27</li><li>Item 28</li><li>Item 29</li><li>Item 30</li><li>Item 31</li><li>Item 32</li><li>Item 33</li><li>Item 34</li><li>Item 35</li><li>Item 36</li><li>Item 37</li><li>Item 38</li><li>Item 39</li><li>Item 40</li><li>Item 41</li><li>Item 42</li><li>Item 43</li><li>Item 44</li><li>Item 45</li><li>Item 46</li><li>Item 47</li><li>Item 48</li><li>Item 49</li><li>Item 50</li></ul></main></div>",
+      "hydrationHead": "",
+      "bundleUrl": "/assets/fw-react.client.js",
+      "bytesRaw": 186628,
+      "bytesGzip": 59423
+    },
+    {
+      "id": "preact",
+      "label": "Preact",
+      "idiom": "hooks (React-compat)",
+      "fragmentHtml": "<main><h1>Items (50)</h1><ul><li>Item 1</li><li>Item 2</li><li>Item 3</li><li>Item 4</li><li>Item 5</li><li>Item 6</li><li>Item 7</li><li>Item 8</li><li>Item 9</li><li>Item 10</li><li>Item 11</li><li>Item 12</li><li>Item 13</li><li>Item 14</li><li>Item 15</li><li>Item 16</li><li>Item 17</li><li>Item 18</li><li>Item 19</li><li>Item 20</li><li>Item 21</li><li>Item 22</li><li>Item 23</li><li>Item 24</li><li>Item 25</li><li>Item 26</li><li>Item 27</li><li>Item 28</li><li>Item 29</li><li>Item 30</li><li>Item 31</li><li>Item 32</li><li>Item 33</li><li>Item 34</li><li>Item 35</li><li>Item 36</li><li>Item 37</li><li>Item 38</li><li>Item 39</li><li>Item 40</li><li>Item 41</li><li>Item 42</li><li>Item 43</li><li>Item 44</li><li>Item 45</li><li>Item 46</li><li>Item 47</li><li>Item 48</li><li>Item 49</li><li>Item 50</li></ul></main>",
+      "hydrationHead": "",
+      "bundleUrl": "/assets/fw-preact.client.js",
+      "bytesRaw": 17820,
+      "bytesGzip": 7370
+    },
+    {
+      "id": "vue",
+      "label": "Vue 3",
+      "idiom": "composables",
+      "fragmentHtml": "<main><h1>Items (50)</h1><ul><li>Item 1</li><li>Item 2</li><li>Item 3</li><li>Item 4</li><li>Item 5</li><li>Item 6</li><li>Item 7</li><li>Item 8</li><li>Item 9</li><li>Item 10</li><li>Item 11</li><li>Item 12</li><li>Item 13</li><li>Item 14</li><li>Item 15</li><li>Item 16</li><li>Item 17</li><li>Item 18</li><li>Item 19</li><li>Item 20</li><li>Item 21</li><li>Item 22</li><li>Item 23</li><li>Item 24</li><li>Item 25</li><li>Item 26</li><li>Item 27</li><li>Item 28</li><li>Item 29</li><li>Item 30</li><li>Item 31</li><li>Item 32</li><li>Item 33</li><li>Item 34</li><li>Item 35</li><li>Item 36</li><li>Item 37</li><li>Item 38</li><li>Item 39</li><li>Item 40</li><li>Item 41</li><li>Item 42</li><li>Item 43</li><li>Item 44</li><li>Item 45</li><li>Item 46</li><li>Item 47</li><li>Item 48</li><li>Item 49</li><li>Item 50</li></ul></main>",
+      "hydrationHead": "",
+      "bundleUrl": "/assets/fw-vue.client.js",
+      "bytesRaw": 67151,
+      "bytesGzip": 26569
+    },
+    {
+      "id": "solid",
+      "label": "Solid",
+      "idiom": "fine-grained reactivity",
+      "fragmentHtml": "<main data-hk=\"00\"><h1>Items (<!--$-->50<!--/-->)</h1><ul><li data-hk=\"010\">Item 1</li><li data-hk=\"011\">Item 2</li><li data-hk=\"012\">Item 3</li><li data-hk=\"013\">Item 4</li><li data-hk=\"014\">Item 5</li><li data-hk=\"015\">Item 6</li><li data-hk=\"016\">Item 7</li><li data-hk=\"017\">Item 8</li><li data-hk=\"018\">Item 9</li><li data-hk=\"019\">Item 10</li><li data-hk=\"01a10\">Item 11</li><li data-hk=\"01a11\">Item 12</li><li data-hk=\"01a12\">Item 13</li><li data-hk=\"01a13\">Item 14</li><li data-hk=\"01a14\">Item 15</li><li data-hk=\"01a15\">Item 16</li><li data-hk=\"01a16\">Item 17</li><li data-hk=\"01a17\">Item 18</li><li data-hk=\"01a18\">Item 19</li><li data-hk=\"01a19\">Item 20</li><li data-hk=\"01a20\">Item 21</li><li data-hk=\"01a21\">Item 22</li><li data-hk=\"01a22\">Item 23</li><li data-hk=\"01a23\">Item 24</li><li data-hk=\"01a24\">Item 25</li><li data-hk=\"01a25\">Item 26</li><li data-hk=\"01a26\">Item 27</li><li data-hk=\"01a27\">Item 28</li><li data-hk=\"01a28\">Item 29</li><li data-hk=\"01a29\">Item 30</li><li data-hk=\"01a30\">Item 31</li><li data-hk=\"01a31\">Item 32</li><li data-hk=\"01a32\">Item 33</li><li data-hk=\"01a33\">Item 34</li><li data-hk=\"01a34\">Item 35</li><li data-hk=\"01a35\">Item 36</li><li data-hk=\"01a36\">Item 37</li><li data-hk=\"01a37\">Item 38</li><li data-hk=\"01a38\">Item 39</li><li data-hk=\"01a39\">Item 40</li><li data-hk=\"01a40\">Item 41</li><li data-hk=\"01a41\">Item 42</li><li data-hk=\"01a42\">Item 43</li><li data-hk=\"01a43\">Item 44</li><li data-hk=\"01a44\">Item 45</li><li data-hk=\"01a45\">Item 46</li><li data-hk=\"01a46\">Item 47</li><li data-hk=\"01a47\">Item 48</li><li data-hk=\"01a48\">Item 49</li><li data-hk=\"01a49\">Item 50</li></ul></main>",
+      "hydrationHead": "<script>window._$HY||(e=>{let t=e=>e&&e.hasAttribute&&(e.hasAttribute(\"data-hk\")?e:t(e.host&&e.host.nodeType?e.host:e.parentNode));[\"click\", \"input\"].forEach((o=>document.addEventListener(o,(o=>{if(!e.events)return;let s=t(o.composedPath&&o.composedPath()[0]||o.target);s&&!e.completed.has(s)&&e.events.push([s,o])}))))})(_$HY={events:[],completed:new WeakSet,r:{},fe(){}});</script><!--xs-->",
+      "bundleUrl": "/assets/fw-solid.client.js",
+      "bytesRaw": 15716,
+      "bytesGzip": 6059
+    },
+    {
+      "id": "svelte",
+      "label": "Svelte 5",
+      "idiom": "runes",
+      "fragmentHtml": "<!--[--><!--[0--><!--[0--><!--[--><main><h1>Items (50)</h1> <ul><!--[--><li>Item 1</li><li>Item 2</li><li>Item 3</li><li>Item 4</li><li>Item 5</li><li>Item 6</li><li>Item 7</li><li>Item 8</li><li>Item 9</li><li>Item 10</li><li>Item 11</li><li>Item 12</li><li>Item 13</li><li>Item 14</li><li>Item 15</li><li>Item 16</li><li>Item 17</li><li>Item 18</li><li>Item 19</li><li>Item 20</li><li>Item 21</li><li>Item 22</li><li>Item 23</li><li>Item 24</li><li>Item 25</li><li>Item 26</li><li>Item 27</li><li>Item 28</li><li>Item 29</li><li>Item 30</li><li>Item 31</li><li>Item 32</li><li>Item 33</li><li>Item 34</li><li>Item 35</li><li>Item 36</li><li>Item 37</li><li>Item 38</li><li>Item 39</li><li>Item 40</li><li>Item 41</li><li>Item 42</li><li>Item 43</li><li>Item 44</li><li>Item 45</li><li>Item 46</li><li>Item 47</li><li>Item 48</li><li>Item 49</li><li>Item 50</li><!--]--></ul></main><!--]--><!--]--><!--]--><!--]-->",
+      "hydrationHead": "",
+      "bundleUrl": "/assets/fw-svelte.client.js",
+      "bytesRaw": 55796,
+      "bytesGzip": 20940
+    }
+  ],
+  "data": {
+    "items": [
+      {
+        "id": 1,
+        "name": "Item 1"
+      },
+      {
+        "id": 2,
+        "name": "Item 2"
+      },
+      {
+        "id": 3,
+        "name": "Item 3"
+      },
+      {
+        "id": 4,
+        "name": "Item 4"
+      },
+      {
+        "id": 5,
+        "name": "Item 5"
+      },
+      {
+        "id": 6,
+        "name": "Item 6"
+      },
+      {
+        "id": 7,
+        "name": "Item 7"
+      },
+      {
+        "id": 8,
+        "name": "Item 8"
+      },
+      {
+        "id": 9,
+        "name": "Item 9"
+      },
+      {
+        "id": 10,
+        "name": "Item 10"
+      },
+      {
+        "id": 11,
+        "name": "Item 11"
+      },
+      {
+        "id": 12,
+        "name": "Item 12"
+      },
+      {
+        "id": 13,
+        "name": "Item 13"
+      },
+      {
+        "id": 14,
+        "name": "Item 14"
+      },
+      {
+        "id": 15,
+        "name": "Item 15"
+      },
+      {
+        "id": 16,
+        "name": "Item 16"
+      },
+      {
+        "id": 17,
+        "name": "Item 17"
+      },
+      {
+        "id": 18,
+        "name": "Item 18"
+      },
+      {
+        "id": 19,
+        "name": "Item 19"
+      },
+      {
+        "id": 20,
+        "name": "Item 20"
+      },
+      {
+        "id": 21,
+        "name": "Item 21"
+      },
+      {
+        "id": 22,
+        "name": "Item 22"
+      },
+      {
+        "id": 23,
+        "name": "Item 23"
+      },
+      {
+        "id": 24,
+        "name": "Item 24"
+      },
+      {
+        "id": 25,
+        "name": "Item 25"
+      },
+      {
+        "id": 26,
+        "name": "Item 26"
+      },
+      {
+        "id": 27,
+        "name": "Item 27"
+      },
+      {
+        "id": 28,
+        "name": "Item 28"
+      },
+      {
+        "id": 29,
+        "name": "Item 29"
+      },
+      {
+        "id": 30,
+        "name": "Item 30"
+      },
+      {
+        "id": 31,
+        "name": "Item 31"
+      },
+      {
+        "id": 32,
+        "name": "Item 32"
+      },
+      {
+        "id": 33,
+        "name": "Item 33"
+      },
+      {
+        "id": 34,
+        "name": "Item 34"
+      },
+      {
+        "id": 35,
+        "name": "Item 35"
+      },
+      {
+        "id": 36,
+        "name": "Item 36"
+      },
+      {
+        "id": 37,
+        "name": "Item 37"
+      },
+      {
+        "id": 38,
+        "name": "Item 38"
+      },
+      {
+        "id": 39,
+        "name": "Item 39"
+      },
+      {
+        "id": 40,
+        "name": "Item 40"
+      },
+      {
+        "id": 41,
+        "name": "Item 41"
+      },
+      {
+        "id": 42,
+        "name": "Item 42"
+      },
+      {
+        "id": 43,
+        "name": "Item 43"
+      },
+      {
+        "id": 44,
+        "name": "Item 44"
+      },
+      {
+        "id": 45,
+        "name": "Item 45"
+      },
+      {
+        "id": 46,
+        "name": "Item 46"
+      },
+      {
+        "id": 47,
+        "name": "Item 47"
+      },
+      {
+        "id": 48,
+        "name": "Item 48"
+      },
+      {
+        "id": 49,
+        "name": "Item 49"
+      },
+      {
+        "id": 50,
+        "name": "Item 50"
+      }
+    ]
+  },
+  "itemCount": 50
+}

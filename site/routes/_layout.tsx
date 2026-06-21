@@ -169,6 +169,7 @@ const css = `
   nav.top a:hover { color: var(--fg); background: var(--hover); text-decoration: none; }
   nav.top a.icon-link { display: inline-flex; align-items: center; padding: 8px; }
   nav.top a.icon-link svg { width: 20px; height: 20px; display: block; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
   footer.site { border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
   footer.site .wrap { padding: 28px 0; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
@@ -925,6 +926,67 @@ const css = `
     .play-controls { position: static; }
     .play-editor-code { min-height: 200px; }
     .play-editor-requests, .play-results { min-height: 160px; }
+  }
+
+  /* ---- /frameworks live demo — one app, five renderers, real measured bundle sizes ---- */
+  .fw-head { display: flex; flex-direction: column; gap: 10px; margin-bottom: 28px; }
+  /* A <fieldset> for grouping semantics — reset its default chrome; it lays out as a pill row. */
+  .fw-toggle { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 22px; padding: 0; border: 0; min-inline-size: 0; }
+  .fw-toggle-btn {
+    display: inline-flex; align-items: center; gap: 8px; padding: 9px 15px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--muted);
+    font-family: ${MONO}; font-size: 13px; font-weight: 700; cursor: pointer;
+    transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+  }
+  .fw-toggle-btn:hover { color: var(--fg); border-color: var(--line-2); }
+  .fw-toggle-btn.active { color: var(--fg); border-color: var(--green); background: var(--green-soft); }
+  .fw-toggle-size { font-weight: 600; color: var(--soft); font-size: 12px; }
+  .fw-toggle-btn.active .fw-toggle-size { color: var(--green-2); }
+
+  .fw-panels { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 0.78fr); gap: 22px; align-items: start; }
+  .fw-stage-wrap {
+    border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel);
+    overflow: hidden; min-height: 280px;
+  }
+  .fw-stage-head {
+    display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+    border-bottom: 1px solid var(--line); background: var(--panel-2);
+  }
+  .fw-stage-title { font-family: ${MONO}; font-size: 12.5px; font-weight: 700; color: var(--fg); }
+  .fw-stage-live {
+    display: inline-flex; align-items: center; gap: 6px; margin-left: auto;
+    font-family: ${MONO}; font-size: 11px; font-weight: 700; color: var(--green-2);
+  }
+  .fw-stage-live::before {
+    content: ""; width: 7px; height: 7px; border-radius: 99px; background: var(--green);
+  }
+  .fw-stage-body { padding: 16px 20px; max-height: 360px; overflow: auto; }
+  /* The shared catalog markup — same DOM whichever framework rendered it. */
+  .fw-stage-body main h1 { font-size: 16px; margin: 0 0 12px; color: var(--fg); }
+  .fw-stage-body main ul { display: grid; grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); gap: 6px; margin: 0; padding: 0; list-style: none; }
+  .fw-stage-body main li {
+    font-family: ${MONO}; font-size: 12px; color: var(--soft); padding: 5px 8px;
+    border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2);
+  }
+
+  .fw-sizes { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel); padding: 18px 18px 20px; }
+  .fw-sizes h3 { margin: 0 0 4px; font-size: 14px; color: var(--fg); }
+  .fw-sizes-sub { margin: 0 0 16px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+  .fw-bar-row { display: grid; grid-template-columns: 96px 1fr 70px; align-items: center; gap: 10px; padding: 6px 6px; border-radius: 8px; transition: background 0.15s ease; }
+  .fw-bar-row.active { background: var(--green-soft); }
+  .fw-bar-name { display: flex; flex-direction: column; gap: 1px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+  .fw-bar-row.active .fw-bar-name { color: var(--fg); font-weight: 700; }
+  .fw-bar-idiom { font-size: 10.5px; font-weight: 500; color: var(--soft); }
+  .fw-bar-track { height: 18px; border-radius: 5px; background: var(--panel-2); overflow: hidden; }
+  .fw-bar-fill { display: block; height: 100%; border-radius: 5px; background: var(--bar-fill); transform-origin: left; animation: grow 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+  .fw-bar-row.active .fw-bar-fill { background: linear-gradient(90deg, var(--green-2), var(--green)); }
+  .fw-bar-value { font-family: ${MONO}; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--soft); text-align: right; }
+  .fw-bar-row.active .fw-bar-value { color: var(--green-2); font-weight: 700; }
+  .fw-foot { margin: 26px 0 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+  .fw-noscript { color: var(--muted); margin-top: 16px; }
+
+  @media (max-width: 880px) {
+    .fw-panels { grid-template-columns: 1fr; }
   }
 
   /* ---- nifra bot island ---- */
@@ -1708,9 +1770,9 @@ export default function Layout(props: { children?: ReactNode }) {
           <nav className="top" aria-label="Primary navigation">
             <a href="/docs">Docs</a>
             <a href="/play">Playground</a>
+            <a href="/frameworks">5 Frameworks</a>
             <a href="/benchmarks">Benchmarks</a>
             <a href="/docs/security">Security</a>
-            <a href="/docs/frameworks">Frameworks</a>
             <a
               className="icon-link"
               href="https://github.com/nifrajs/nifra"
@@ -1721,6 +1783,7 @@ export default function Layout(props: { children?: ReactNode }) {
               <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M12 .5A11.5 11.5 0 0 0 .5 12a11.5 11.5 0 0 0 7.86 10.92c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.34-1.3-1.7-1.3-1.7-1.06-.72.08-.71.08-.71 1.17.08 1.79 1.2 1.79 1.2 1.04 1.79 2.73 1.27 3.4.97.1-.76.41-1.27.74-1.56-2.56-.29-5.26-1.28-5.26-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.43-2.7 5.41-5.27 5.69.42.36.8 1.08.8 2.18v3.23c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12 11.5 11.5 0 0 0 12 .5z" />
               </svg>
+              <span className="sr-only">GitHub</span>
             </a>
             <a
               className="icon-link"
@@ -1732,6 +1795,7 @@ export default function Layout(props: { children?: ReactNode }) {
               <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M0 7.334v8h6.666v1.334H12v-1.334h12v-8zm6.666 6.665H5.334v-4H3.999v4H1.335V8.667h5.331zm4 0v1.336H8.001V8.667h5.334v5.332h-2.669zm12.001 0h-1.33v-4h-1.336v4h-1.335v-4h-1.33v4h-2.671V8.667h8.002z" />
               </svg>
+              <span className="sr-only">npm</span>
             </a>
             <button
               id="theme-toggle"
@@ -1772,6 +1836,7 @@ export default function Layout(props: { children?: ReactNode }) {
         <div className="wrap">
           <span>Proudly built with Nifra — server-rendered on Cloudflare Pages.</span>
           <span className="foot-links">
+            <a href="/frameworks">5 Frameworks</a>
             <a href="https://github.com/nifrajs/nifra" target="_blank" rel="noopener noreferrer">
               GitHub
             </a>

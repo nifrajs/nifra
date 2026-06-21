@@ -2,6 +2,7 @@
 export const HOME_COUNTER_ENTRY = "/assets/home-counter.client.js"
 export const PLAYGROUND_ENTRY = "/assets/playground.client.js"
 export const NIFRA_BOT_ENTRY = "/assets/nifra-bot.client.js"
+export const FRAMEWORKS_ENTRY = "/assets/frameworks.client.js"
 
 /** Starter snippet the /play route server-renders into the editor — matches the island's "hello"
  * preset so the SSR'd shell and the first client run agree. */
