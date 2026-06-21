@@ -136,36 +136,127 @@ const nodeBuiltinOf = (im: BunMetafileImport): string | undefined => {
   return undefined
 }
 
+/** One `node:`-builtin-in-the-client finding: the offending builtin, the emitted chunk it landed in,
+ * and the shortest USER-module import chain that pulled it there (entry → … → builtin). */
+export interface NodeBuiltinFinding {
+  readonly builtin: string
+  readonly chunk: string
+  /** The shortest import path from a user entry to the builtin, as a list of display labels:
+   * `[entryFile, ...as-written specifiers along the way, builtin]`, e.g.
+   * `["routes/article/[slug].tsx", "../data.ts", "../db/client.ts", "postgres", "node:tls"]`. The
+   * entry is its graph key (the route file); each hop is the import's *as-written* specifier; the tail
+   * is the builtin. Empty only if the builtin module isn't reachable from any traced input (it always
+   * is when flagged). */
+  readonly chain: readonly string[]
+}
+
+/**
+ * BFS the metafile import graph for the SHORTEST user-module path that pulls `builtin` into the
+ * bundle, returning it as display labels `[entryFile, …as-written specifiers…, builtin]`. The frontier
+ * starts at every `entryInput` (the route/user entrypoints) so the reported chain begins where the dev
+ * actually wrote `import` — the actionable root, not an arbitrary internal module. Traversal crosses
+ * only NON-`node:` edges (so Bun's polyfill chain never extends the path) and stops at the first edge
+ * whose target is the builtin. Returns `[builtin]` if no entry reaches it (defensive; a flagged builtin
+ * is reachable by construction). Pure — operates on the graph, never the emitted text.
+ */
+function shortestBuiltinChain(
+  inputs: Readonly<Record<string, { readonly imports?: readonly BunMetafileImport[] }>>,
+  entryInputs: readonly string[],
+  builtin: string,
+): string[] {
+  // Each queue item carries the resolved-path node + the display chain to reach it (entry + the
+  // as-written specifier of every hop crossed so far). `seen` dedupes nodes so the BFS is linear and
+  // the first time we touch the builtin's importer is via a shortest path.
+  const seen = new Set<string>(entryInputs)
+  let frontier: Array<{ node: string; chain: string[] }> = entryInputs.map((node) => ({
+    node,
+    chain: [node],
+  }))
+  while (frontier.length > 0) {
+    const next: Array<{ node: string; chain: string[] }> = []
+    for (const { node, chain } of frontier) {
+      for (const im of inputs[node]?.imports ?? []) {
+        // The builtin reached via THIS edge → the chain ends here (append the builtin label). Match on
+        // the same `node:` detection the finding used (`original` first, then resolved `path`).
+        if (nodeBuiltinOf(im) === builtin) return [...chain, builtin]
+        const target = im.path
+        // Only follow edges into user (non-`node:`) modules that exist in the input graph and haven't
+        // been visited — so the polyfill subtree can't lengthen the path and there are no cycles.
+        if (
+          target === undefined ||
+          target.startsWith("node:") ||
+          inputs[target] === undefined ||
+          seen.has(target)
+        ) {
+          continue
+        }
+        seen.add(target)
+        // Display the hop by its as-written specifier (`../db/client.ts`, `postgres`), falling back to
+        // the resolved path — that's what the dev recognizes in their source, not the resolved path.
+        next.push({ node: target, chain: [...chain, im.original ?? target] })
+      }
+    }
+    frontier = next
+  }
+  return [builtin] // unreachable from any entry — degrade to just the builtin (shouldn't happen)
+}
+
 /**
  * Scan a build's metafile for any `node:` builtin that a USER module pulled into a CLIENT output
- * chunk, returning a sorted, deduped list of `{ builtin, chunk }` findings. Two graph facts are
- * combined so the report is both precise and actionable:
+ * chunk, returning a sorted, deduped list of {@link NodeBuiltinFinding}s. Three graph facts combine so
+ * the report is precise AND actionable:
  *  1. **What the user wrote** — only builtins imported by a NON-`node:` input count, so Bun's own
  *     polyfill chain (`node:crypto` → `node:buffer`/`node:stream`/…) doesn't bury the real cause.
  *  2. **Where it landed** — the chunk is read from the per-output `inputs`, so the error names the
  *     emitted file to look at.
+ *  3. **How it got there** — the shortest import chain from a user entry to the builtin
+ *     (`shortestBuiltinChain`), so the error points straight at the offending `import` line instead of
+ *     leaving the dev to grep the dependency tree (the DX gap this closes).
  * Graph-based (never the emitted text), so it survives minification and can't be fooled by a string
  * literal that merely contains `"node:crypto"`. Pure + exported for unit testing. Empty ⇒ clean.
  */
 export function detectNodeBuiltinsInClient(
   meta: BunMetafile | undefined,
-): ReadonlyArray<{ readonly builtin: string; readonly chunk: string }> {
+): ReadonlyArray<NodeBuiltinFinding> {
+  const inputs = meta?.inputs ?? {}
   // (1) The builtins a user (non-polyfill) module imports directly — the ones the author controls.
   const userImported = new Set<string>()
-  for (const [inputKey, input] of Object.entries(meta?.inputs ?? {})) {
+  for (const [inputKey, input] of Object.entries(inputs)) {
     if (inputKey.startsWith("node:")) continue // a polyfill importing another builtin — not the cause
     for (const im of input.imports ?? []) {
       const builtin = nodeBuiltinOf(im)
       if (builtin !== undefined) userImported.add(builtin)
     }
   }
+  // The entry inputs (route/user entrypoints) — the chain BFS starts here so the reported path begins
+  // at the file the dev wrote an `import` in. Each output's `entryPoint` is one such input.
+  const entryInputs = [
+    ...new Set(
+      Object.values(meta?.outputs ?? {})
+        .map((o) => o.entryPoint)
+        .filter((e): e is string => e !== undefined && !e.startsWith("node:")),
+    ),
+  ]
+  // The chain per builtin is independent of the chunk, so compute it once per builtin (memoized).
+  const chainCache = new Map<string, readonly string[]>()
+  const chainFor = (builtin: string): readonly string[] => {
+    const cached = chainCache.get(builtin)
+    if (cached !== undefined) return cached
+    const chain = shortestBuiltinChain(inputs, entryInputs, builtin)
+    chainCache.set(builtin, chain)
+    return chain
+  }
   // (2) Locate which emitted chunk each user-imported builtin reached, via the per-output `inputs`.
-  const findings = new Map<string, { builtin: string; chunk: string }>()
+  const findings = new Map<string, NodeBuiltinFinding>()
   for (const [outPath, out] of Object.entries(meta?.outputs ?? {})) {
     for (const inputKey of Object.keys(out.inputs ?? {})) {
       if (userImported.has(inputKey)) {
         const chunk = basename(outPath)
-        findings.set(`${inputKey}\0${chunk}`, { builtin: inputKey, chunk })
+        findings.set(`${inputKey}\0${chunk}`, {
+          builtin: inputKey,
+          chunk,
+          chain: chainFor(inputKey),
+        })
       }
     }
   }
@@ -444,8 +535,13 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   const clientMeta = (result as unknown as { metafile?: BunMetafile }).metafile
   const nodeBuiltins = detectNodeBuiltinsInClient(clientMeta)
   if (nodeBuiltins.length > 0) {
-    const lines = nodeBuiltins.map(
-      (f) => `  - ${f.builtin} reached the client bundle via ${f.chunk}`,
+    // Name the offending builtin AND the import chain that pulled it in (entry → … → builtin), so the
+    // dev sees the exact path from a route file to the leak instead of just the emitted chunk name.
+    // The chain always starts at a user entry; fall back to the chunk name if it somehow came back empty.
+    const lines = nodeBuiltins.map((f) =>
+      f.chain.length > 1
+        ? `  - ${f.builtin} reached the client bundle via ${f.chain.join(" → ")} (chunk: ${f.chunk})`
+        : `  - ${f.builtin} reached the client bundle via ${f.chunk}`,
     )
     throw new Error(
       `[nifra/web] Node built-in(s) in the client bundle — move them behind a server-only path ` +

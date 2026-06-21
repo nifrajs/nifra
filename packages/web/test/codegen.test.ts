@@ -64,6 +64,9 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   expect(code).toContain(
     "applyHead(mergeHeads((metas[s.routeId] ?? [undefined]).map((m) => resolveMeta(m, args))))",
   )
+  // Item 1: the client passes `origin: location.origin` into MetaArgs. It equals the SSR-side
+  // `URL(req.url).origin`, so a soft-nav re-resolves the SAME absolute canonical/og:url — no head drift.
+  expect(code).toContain("const args = { data: s.data, params: s.params, origin: location.origin }")
   // Initial data is mapped through `mapDeferred` so `{__nifra_deferred: id}` placeholders become the
   // registry's promises (a no-op for non-deferred pages).
   expect(code).toContain("const mapDeferred = (d) =>")

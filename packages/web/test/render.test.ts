@@ -501,13 +501,83 @@ test("renderPage streams deferred resolutions out-of-order — a slow defer() do
 })
 
 test("resolveMeta: undefined → {}, static passthrough, function of data + params", () => {
-  expect(resolveMeta(undefined, { data: null, params: {} })).toEqual({})
-  expect(resolveMeta({ title: "Static" }, { data: null, params: {} })).toEqual({ title: "Static" })
+  expect(resolveMeta(undefined, { data: null, params: {}, origin: "" })).toEqual({})
+  expect(resolveMeta({ title: "Static" }, { data: null, params: {}, origin: "" })).toEqual({
+    title: "Static",
+  })
   const meta = resolveMeta((a) => ({ title: `id=${a.params.id}` }), {
     data: null,
     params: { id: "7" },
+    origin: "",
   })
   expect(meta).toEqual({ title: "id=7" })
+})
+
+test("resolveMeta: function meta builds an absolute canonical from the origin arg [#1]", () => {
+  // The Item-1 contract: a `meta(({ origin }) => …)` reads the server-resolved origin to build an
+  // absolute URL without threading siteUrl through loader data.
+  const meta = resolveMeta(
+    ({ origin, params }) => ({ link: [canonical(`${origin}/x/${params.id}`)] }),
+    {
+      data: null,
+      params: { id: "9" },
+      origin: "https://news.example.com",
+    },
+  )
+  expect(meta.link).toEqual([{ rel: "canonical", href: "https://news.example.com/x/9" }])
+})
+
+test("MetaArgs.origin: SSR (URL.origin) and client (location.origin) resolve an IDENTICAL head — no drift [#1]", () => {
+  // The drift proof: SSR derives the origin via `new URL(req.url).origin`; the client passes
+  // `location.origin`. Both are the standard `URL.origin` for the SAME page URL, so a function meta
+  // re-resolves byte-identical absolute tags on a soft-nav. Model both sides off one URL.
+  const url = "https://news.example.com:8443/articles/hello?ref=x#frag"
+  const ssrOrigin = new URL(url).origin // what createWebApp's originOf(req) computes
+  const clientOrigin = new URL(url).origin // what the browser exposes as location.origin
+  expect(ssrOrigin).toBe(clientOrigin) // the invariant the no-drift contract rests on
+  const meta = (a: { origin: string; params: Record<string, string> }) => ({
+    link: [canonical(`${a.origin}/articles/${a.params.slug}`)],
+    meta: [
+      ...openGraph({ url: `${a.origin}/articles/${a.params.slug}`, image: `${a.origin}/og.png` }),
+    ],
+  })
+  const params = { slug: "hello" }
+  const ssrHead = resolveMeta(meta, { data: null, params, origin: ssrOrigin })
+  const clientHead = resolveMeta(meta, { data: null, params, origin: clientOrigin })
+  expect(clientHead).toEqual(ssrHead) // identical resolved head → no hydration drift in <head>
+  expect(ssrHead.link).toEqual([
+    { rel: "canonical", href: "https://news.example.com:8443/articles/hello" },
+  ])
+})
+
+test("MetaArgs.origin: a STATIC meta is origin-independent and serializes once (memo stays sound) [#1]", async () => {
+  // The memo (headTagsCache, keyed by resolved-Meta identity) must stay correct now that meta is "a
+  // function of origin". A STATIC meta is an object returned by reference every request — it can't
+  // depend on origin, so the same identity recurs → one cache hit, serialized once. A FUNCTION meta
+  // builds a fresh object per request (new identity) → always a miss → recompute, so it never serves a
+  // stale/cross-origin head. Prove the static side: the SAME resolved object is reused across renders,
+  // and the head renders identically regardless of which request origin the page was served from.
+  const STATIC = { link: [canonical("https://site.com/about")] } as const
+  // `resolveMeta` returns a static meta BY REFERENCE (the memo-key contract) — so the cache hits.
+  expect(resolveMeta(STATIC, { data: null, params: {}, origin: "https://a.example" })).toBe(STATIC)
+  expect(resolveMeta(STATIC, { data: null, params: {}, origin: "https://b.example" })).toBe(STATIC)
+  // And the rendered <head> is the same whichever host served the page (a static meta ignores origin).
+  const render = async (origin: string): Promise<string> => {
+    const page = await renderPageResult({
+      adapter: stub,
+      chain: ["page"],
+      data: null,
+      clientEntry: "/c.js",
+      head: resolveMeta(STATIC, { data: null, params: {}, origin }),
+    })
+    return page.toResponse().text()
+  }
+  expect(await render("https://a.example")).toContain(
+    '<link rel="canonical" href="https://site.com/about" data-nifra>',
+  )
+  expect(await render("https://b.example")).toContain(
+    '<link rel="canonical" href="https://site.com/about" data-nifra>',
+  )
 })
 
 test("mergeHeads: title nearest-wins, meta/link concatenated outermost→page [#3]", () => {

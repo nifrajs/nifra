@@ -22,13 +22,19 @@ const META_WITH_NODE = {
       inputs: { "routes/index.tsx": {}, "node:crypto": {}, "node:buffer": {} },
     },
   },
-}
+} as const
 
 test("flags only the user-imported builtin (not Bun's transitive polyfill chain) + its chunk [#4]", () => {
   const found = detectNodeBuiltinsInClient(META_WITH_NODE)
   // node:crypto is what the route imported; node:buffer is only pulled in by the crypto polyfill, so
-  // it must NOT be reported (it would bury the real cause).
-  expect(found).toEqual([{ builtin: "node:crypto", chunk: "index-abc123.js" }])
+  // it must NOT be reported (it would bury the real cause). The chain is the route → builtin path.
+  expect(found).toEqual([
+    {
+      builtin: "node:crypto",
+      chunk: "index-abc123.js",
+      chain: ["routes/index.tsx", "node:crypto"],
+    },
+  ])
 })
 
 test("clean metafile (no node: builtins) → no findings [#4]", () => {
@@ -47,9 +53,99 @@ test("undefined/empty metafile → no findings (never throws on a missing graph)
 test("an `external` node: import (resolved path only, no `original`) is still flagged [#4]", () => {
   const found = detectNodeBuiltinsInClient({
     inputs: { "routes/page.tsx": { imports: [{ path: "node:fs" }] } },
-    outputs: { "dist/page-y.js": { inputs: { "routes/page.tsx": {}, "node:fs": {} } } },
+    outputs: {
+      "dist/page-y.js": {
+        entryPoint: "routes/page.tsx",
+        inputs: { "routes/page.tsx": {}, "node:fs": {} },
+      },
+    },
   })
-  expect(found).toEqual([{ builtin: "node:fs", chunk: "page-y.js" }])
+  expect(found).toEqual([
+    { builtin: "node:fs", chunk: "page-y.js", chain: ["routes/page.tsx", "node:fs"] },
+  ])
+})
+
+// #5 (import-chain trace): the finding now includes the SHORTEST user-module import chain from the
+// route entry to the offending builtin — so the dev sees `route → ../data.ts → ../db/client.ts →
+// postgres → node:tls` instead of just the chunk name. Modeled on a realistic transitive leak.
+const META_DEEP_CHAIN = {
+  inputs: {
+    "routes/article/[slug].tsx": {
+      imports: [{ path: "src/data.ts", original: "../data.ts" }],
+    },
+    "src/data.ts": { imports: [{ path: "src/db/client.ts", original: "../db/client.ts" }] },
+    "src/db/client.ts": {
+      imports: [{ path: "node_modules/postgres/index.js", original: "postgres" }],
+    },
+    "node_modules/postgres/index.js": {
+      imports: [{ path: "node:tls", original: "node:tls" }],
+    },
+    "node:tls": { imports: [] },
+  },
+  outputs: {
+    "dist/_slug_-abc.js": {
+      entryPoint: "routes/article/[slug].tsx",
+      inputs: {
+        "routes/article/[slug].tsx": {},
+        "src/data.ts": {},
+        "src/db/client.ts": {},
+        "node_modules/postgres/index.js": {},
+        "node:tls": {},
+      },
+    },
+  },
+}
+
+test("includes the shortest import chain entry → … → builtin (as-written specifiers) [#5]", () => {
+  const found = detectNodeBuiltinsInClient(META_DEEP_CHAIN)
+  expect(found).toEqual([
+    {
+      builtin: "node:tls",
+      chunk: "_slug_-abc.js",
+      // Root is the route entry KEY; each hop is the *as-written* specifier; tail is the builtin.
+      chain: ["routes/article/[slug].tsx", "../data.ts", "../db/client.ts", "postgres", "node:tls"],
+    },
+  ])
+})
+
+test("chain BFS picks the SHORTEST path when a builtin is reachable two ways [#5]", () => {
+  // The route reaches node:crypto both directly AND via a longer util chain; the chain must be the
+  // shortest (direct) one, not an arbitrary longer route through the graph.
+  const found = detectNodeBuiltinsInClient({
+    inputs: {
+      "routes/index.tsx": {
+        imports: [
+          { path: "src/long/a.ts", original: "./long/a.ts" },
+          { path: "node:crypto", original: "node:crypto" },
+        ],
+      },
+      "src/long/a.ts": { imports: [{ path: "src/long/b.ts", original: "./b.ts" }] },
+      "src/long/b.ts": { imports: [{ path: "node:crypto", original: "node:crypto" }] },
+      "node:crypto": { imports: [] },
+    },
+    outputs: {
+      "dist/index-z.js": {
+        entryPoint: "routes/index.tsx",
+        inputs: {
+          "routes/index.tsx": {},
+          "src/long/a.ts": {},
+          "src/long/b.ts": {},
+          "node:crypto": {},
+        },
+      },
+    },
+  })
+  // Direct import wins: entry → node:crypto (length 2), not entry → ./long/a.ts → ./b.ts → node:crypto.
+  expect(found[0]?.chain).toEqual(["routes/index.tsx", "node:crypto"])
+})
+
+test("chain BFS does NOT walk through Bun's polyfill subtree (precise, user modules only) [#5]", () => {
+  // node:crypto's polyfill imports node:buffer; the chain to node:crypto must stop at node:crypto and
+  // never traverse INTO the polyfill (which would lengthen/derail the path with non-user modules).
+  const found = detectNodeBuiltinsInClient(META_WITH_NODE)
+  expect(found[0]?.chain).toEqual(["routes/index.tsx", "node:crypto"])
+  // The polyfill's own builtin (node:buffer) is not even reported (it's not user-imported).
+  expect(found.map((f) => f.builtin)).toEqual(["node:crypto"])
 })
 
 // End-to-end through the real `buildClient` — the temp app lives INSIDE the workspace so the generated

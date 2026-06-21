@@ -1046,6 +1046,20 @@ export function createWebApp<Env = unknown>(
   const dirOfId = (id: string, suffix: string): string =>
     id === suffix ? "" : id.slice(0, id.length - suffix.length - 1)
 
+  // The request's origin (scheme + host + port, NO trailing slash) — the one server fact `meta()` needs
+  // for absolute `canonical`/`og:url`/`og:image` but can't otherwise see (it also runs on the client).
+  // `URL.origin` is exactly that shape; it matches the browser's `location.origin` for the same URL, so
+  // a soft-nav's `applyHead` resolves an identical `<head>` (no hydration drift). A malformed `req.url`
+  // (shouldn't happen on a real request) degrades to `""` — the documented unknown-origin default —
+  // rather than throwing during render.
+  const originOf = (req: Request): string => {
+    try {
+      return new URL(req.url).origin
+    } catch {
+      return ""
+    }
+  }
+
   /**
    * Render the **nearest `_error` boundary** when a route's loader throws (the agnostic, server-side
    * half of error UI — works on every adapter, no client takeover). The boundary renders in place of
@@ -1165,6 +1179,7 @@ export function createWebApp<Env = unknown>(
       const { chain, head } = resolveChainAndHead(await loadLayoutModules(route), mod, {
         data,
         params: c.params,
+        origin: originOf(c.req),
       })
       const hydrateRoute = mod.hydrate !== false
       try {
@@ -1252,6 +1267,7 @@ export function createWebApp<Env = unknown>(
       const { chain, head } = resolveChainAndHead(await loadLayoutModules(route), mod, {
         data,
         params: c.params,
+        origin: originOf(c.req),
       })
       const hydrateRoute = mod.hydrate !== false
       // A full-page POST streams the action's `defer()`'d parts mid-document behind `<Await>` too —
@@ -1407,7 +1423,9 @@ export function generateClientEntry(
     "    const s = router.snapshot()",
     // Merge the matched route's chain meta (layouts→page) into one head — same contract as SSR.
     "    if (!s.pending) {",
-    "      const args = { data: s.data, params: s.params }",
+    // `origin: location.origin` matches the SSR `originOf(req)` (both are `URL.origin` for the same
+    // page URL), so a soft-nav re-resolves the SAME absolute canonical/og:url — no head drift.
+    "      const args = { data: s.data, params: s.params, origin: location.origin }",
     "      applyHead(mergeHeads((metas[s.routeId] ?? [undefined]).map((m) => resolveMeta(m, args))))",
     "    }",
     "  })",
