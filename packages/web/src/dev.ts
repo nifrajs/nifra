@@ -7,6 +7,7 @@
  */
 import { readdirSync, unwatchFile, watchFile } from "node:fs"
 import { type BuildClientOptions, buildClient } from "./build.ts"
+import { DEFAULT_DEV_PORT } from "./index.ts"
 
 /** Minimal app surface the dev server needs — `createWebApp(...)` satisfies it. */
 interface FetchApp {
@@ -22,7 +23,7 @@ export interface DevServerOptions extends Omit<BuildClientOptions, "minify"> {
   readonly createApp: (clientEntry: string, importQuery: string) => FetchApp | Promise<FetchApp>
   /** Directories to watch (default: `[routesDir]`). */
   readonly watch?: readonly string[]
-  /** Port to listen on (default 3000). */
+  /** Port to listen on (default {@link DEFAULT_DEV_PORT}). */
   readonly port?: number
 }
 
@@ -38,7 +39,7 @@ const reloadClient = `<script>(()=>{const x=()=>{const w=new WebSocket((location
 
 /** Start the dev server: build → serve → watch → rebuild + reload on change. */
 export async function createDevServer(options: DevServerOptions): Promise<DevServer> {
-  const { createApp, port = 3000, outDir, routesDir } = options
+  const { createApp, port = DEFAULT_DEV_PORT, outDir, routesDir } = options
   const publicPath = options.publicPath ?? "/assets/"
   let version = 0
   const rebuild = async (): Promise<FetchApp> => {

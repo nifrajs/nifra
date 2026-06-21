@@ -8,6 +8,7 @@ const GROUPS: ReadonlyArray<{ title: string; links: ReadonlyArray<{ href: string
     title: "Start here",
     links: [
       { href: "/docs", label: "Getting started" },
+      { href: "/docs/contract", label: "Framework contract" },
       { href: "/docs/api", label: "API & typed client" },
       { href: "/docs/types-first", label: "Types-first" },
       { href: "/docs/database", label: "Database" },

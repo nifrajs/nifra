@@ -42,6 +42,12 @@
     "code": "// framework.ts — the one place an app names its framework. The CLI reads these:\nimport react from \"@vitejs/plugin-react\"\nimport { reactAdapter } from \"@nifrajs/web-react\"\n\nexport const adapter = reactAdapter\nexport const clientModule = \"@nifrajs/web-react/client\"\nexport const vitePlugins = [react()]          // dev HMR (Fast Refresh)\n// Vue/Svelte/Solid also export:\n//   clientPlugins = [vueBunPlugin(\"dom\")]     // compile routes for the client build\n//   serverPlugins = [vueBunPlugin(\"ssr\")]     // compile routes for SSR (nifra start registers them)\n//   conditions    = [\"solid\"]                 // Solid: resolve solid-js to its source\n//   define        = { __VUE_OPTIONS_API__: \"true\", ... }   // Vue feature flags"
   },
   {
+    "name": "SIGNATURES",
+    "topic": "Nifra — Framework contract",
+    "slug": "contract",
+    "code": "// routes/users/[id].tsx — a route module's full contract (every export optional but `default`).\nimport type { LoaderContext } from \"@nifrajs/web\"\n\n// GET → data for the page. Runs in-process on the server during SSR (no HTTP hop).\nexport async function loader(ctx: LoaderContext) {\n  return { user: await ctx.api.users.get({ id: ctx.params.id }) }\n}\n\n// POST → a mutation. Same context. Return a Response (e.g. a redirect — passed straight\n// through) OR data, which reaches the component as `actionData`.\nexport async function action(ctx: LoaderContext) {\n  const form = await ctx.request.formData()\n  return { ok: true }\n}\n\n// Static OR a function of { data, params }. Static meta is serialized once; function meta\n// recomputes per request (its content can vary with loader data).\nexport const meta = ({ data, params }) => ({\n  title: `User ${data.user.name}`,\n  meta: [{ name: \"description\", content: data.user.bio }],\n  link: [{ rel: \"canonical\", href: `/users/${params.id}` }],\n})\n\nexport const hydrate = false   // opt out of full-document hydration (static / island pages)\nexport default function User(props) { /* props.data, props.actionData, props.params */ }"
+  },
+  {
     "name": "CONTENT",
     "topic": "Nifra — Loaders & actions",
     "slug": "data",
@@ -87,7 +93,7 @@
     "name": "VITE_DEV",
     "topic": "Nifra — Dev & HMR",
     "slug": "dev",
-    "code": "// dev.ts — state-preserving HMR for supported UI adapters\nimport react from \"@vitejs/plugin-react\"            // your framework's official Vite plugin\nimport { createWebApp } from \"@nifrajs/web\"\nimport { discoverRoutes } from \"@nifrajs/web/fs\"\nimport { createViteDevServer } from \"@nifrajs/web/vite\"\nimport { reactAdapter } from \"@nifrajs/web-react\"\nimport { backend } from \"./backend\"\n\nconst routesDir = `${import.meta.dir}/routes`\nconst server = await createViteDevServer({\n  root: import.meta.dir,\n  routesDir,\n  clientModule: \"@nifrajs/web-react/client\",\n  plugins: [react()],                                // Vue: @vitejs/plugin-vue, Svelte: …, etc.\n  port: Number(Bun.env.PORT ?? 3000),\n  createApp: (clientEntry, importQuery) =>\n    createWebApp({\n      adapter: reactAdapter,\n      manifest: discoverRoutes(routesDir, { importQuery }),\n      clientEntry,\n      api: inProcessClient(backend),\n    }),\n})"
+    "code": "// dev.ts — state-preserving HMR for supported UI adapters\nimport react from \"@vitejs/plugin-react\"            // your framework's official Vite plugin\nimport { createWebApp } from \"@nifrajs/web\"\nimport { discoverRoutes } from \"@nifrajs/web/fs\"\nimport { createViteDevServer } from \"@nifrajs/web/vite\"\nimport { reactAdapter } from \"@nifrajs/web-react\"\nimport { backend } from \"./backend\"\n\nconst routesDir = `${import.meta.dir}/routes`\nconst server = await createViteDevServer({\n  root: import.meta.dir,\n  routesDir,\n  clientModule: \"@nifrajs/web-react/client\",\n  plugins: [react()],                                // Vue: @vitejs/plugin-vue, Svelte: …, etc.\n  port: Number(Bun.env.PORT ?? 4321),                // nifra's default; --port / PORT override it\n  createApp: (clientEntry, importQuery) =>\n    createWebApp({\n      adapter: reactAdapter,\n      manifest: discoverRoutes(routesDir, { importQuery }),\n      clientEntry,\n      api: inProcessClient(backend),\n    }),\n})"
   },
   {
     "name": "CRON",

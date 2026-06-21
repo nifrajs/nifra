@@ -68,6 +68,88 @@ test("createWebApp resolves params, runs the loader, and wraps in the layout cha
   expect(html).toContain('chain=2:{"id":"42"}') // [layout, page] + loader data
 })
 
+test("createWebApp merges a _layout's meta/head into a child route's SSR <head> [#3]", async () => {
+  // A _layout that exports `meta` — its tags (a sitewide preconnect/hreflang + a section title) must
+  // land in the SSR <head> of every page below it, merged with the page's own meta.
+  const manifest: Manifest = {
+    routes: [
+      {
+        id: "users/[id]",
+        pattern: "/users/:id",
+        layoutIds: ["_layout"],
+        file: "users/[id].tsx",
+        load: async () => ({
+          default: "user",
+          loader: (ctx) => ({ id: ctx.params.id }),
+          // The page contributes its own canonical + overrides the layout's title. `meta` is a
+          // function of MetaArgs (data is `unknown` in the core; narrow it to the loader's shape).
+          meta: (args) => {
+            const { id } = args.data as { id: string }
+            return { title: `User ${id}`, link: [{ rel: "canonical", href: `/users/${id}` }] }
+          },
+        }),
+      },
+    ],
+    layouts: {
+      _layout: {
+        file: "_layout.tsx",
+        load: async () => ({
+          default: "layout",
+          // Sitewide head from the LAYOUT — the home for preconnect/hreflang that #3 lacked.
+          meta: {
+            title: "Section default",
+            link: [
+              { rel: "preconnect", href: "https://cdn.example.com", crossorigin: "anonymous" },
+              { rel: "alternate", hreflang: "es", href: "https://x/es/users" },
+            ],
+          },
+        }),
+      },
+    },
+    notFound: { file: "_404.tsx", load: async () => ({ default: "not-found" }) },
+  }
+  const app = createWebApp({ adapter: stub, manifest, clientEntry: "/c.js" })
+  const html = await (await app.fetch(new Request("http://x/users/7"))).text()
+  const head = html.split("<body>")[0] ?? ""
+  // Layout's links survive into <head>, hreflang + crossorigin intact (#4).
+  expect(head).toContain(
+    '<link rel="preconnect" href="https://cdn.example.com" crossorigin="anonymous" data-nifra>',
+  )
+  expect(head).toContain(
+    '<link rel="alternate" hreflang="es" href="https://x/es/users" data-nifra>',
+  )
+  // Page's own link concatenated after the layout's.
+  expect(head).toContain('<link rel="canonical" href="/users/7" data-nifra>')
+  // Page title wins over the layout's section default (nearest-wins scalar).
+  expect(head).toContain("<title>User 7</title>")
+  expect(head).not.toContain("Section default")
+})
+
+test("createWebApp keeps a layout's title when the page sets no title [#3]", async () => {
+  // An undefined page `title` keeps the layout's section default (nearest-wins, but the page is silent).
+  const manifest: Manifest = {
+    routes: [
+      {
+        id: "about",
+        pattern: "/about",
+        layoutIds: ["_layout"],
+        file: "about.tsx",
+        load: async () => ({ default: "about" }), // no page meta at all
+      },
+    ],
+    layouts: {
+      _layout: {
+        file: "_layout.tsx",
+        load: async () => ({ default: "layout", meta: { title: "Marketing" } }),
+      },
+    },
+    notFound: { file: "_404.tsx", load: async () => ({ default: "not-found" }) },
+  }
+  const app = createWebApp({ adapter: stub, manifest, clientEntry: "/c.js" })
+  const html = await (await app.fetch(new Request("http://x/about"))).text()
+  expect(html.split("<body>")[0]).toContain("<title>Marketing</title>")
+})
+
 test("createWebApp matches a catch-all route end-to-end (params.path = the rest)", async () => {
   const manifest: Manifest = {
     routes: [

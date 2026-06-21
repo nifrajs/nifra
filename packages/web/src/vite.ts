@@ -19,7 +19,7 @@ import {
 import { relative, resolve as resolvePath } from "node:path"
 import { renderDevErrorOverlay } from "./dev-error.ts"
 import { discoverRoutes } from "./fs.ts"
-import { generateClientEntry } from "./index.ts"
+import { DEFAULT_DEV_PORT, generateClientEntry } from "./index.ts"
 
 /** Minimal app surface — `createWebApp(...)` satisfies it. */
 interface FetchApp {
@@ -36,6 +36,8 @@ interface ViteLike {
 }
 interface ViteModule {
   createServer(config: Record<string, unknown>): Promise<ViteLike>
+  // Present only on rolldown-vite (Vite 8+); used to gate the optimizeDeps.jsx-key normalization below.
+  readonly rolldownVersion?: string
 }
 
 // `node:http` server type the request handler runs on (also the HMR WebSocket host — see below).
@@ -66,7 +68,7 @@ export interface ViteDevServerOptions {
   readonly define?: Readonly<Record<string, string>>
   /** Vite project root (default `process.cwd()`). */
   readonly root?: string
-  /** Port (default 3000). */
+  /** Port (default {@link DEFAULT_DEV_PORT}). */
   readonly port?: number
   /**
    * Use polling for the file watcher. Native fs events (fsevents/inotify) are unreliable inside
@@ -111,6 +113,68 @@ function toWebRequest(req: IncomingMessage, body: Buffer | undefined): Request {
   return new Request(url, init as unknown as ConstructorParameters<typeof Request>[1])
 }
 
+// A Vite plugin's `config` hook — the only hook we wrap. Typed structurally (no `vite` type dep): it
+// takes the user config + env and may return a partial config (possibly a promise). Everything else on
+// the plugin object is preserved by spread, so wrapping is transparent to Vite.
+interface VitePluginLike {
+  readonly name?: string
+  config?: (config: unknown, env: unknown) => unknown
+  readonly [key: string]: unknown
+}
+
+/**
+ * Strip `optimizeDeps.rollupOptions.jsx` from a plugin's `config` hook output when running under
+ * rolldown-vite — the source of the scary, harmless `Warning: Invalid input options … "jsx" Invalid
+ * key: Expected never but received "jsx"` on `nifra dev`.
+ *
+ * Why it happens: `@vitejs/plugin-react@4.x` (and peers) target an *older* rolldown-vite optimizeDeps
+ * API — they inject `optimizeDeps.rollupOptions.jsx` to tell the dep pre-bundler to transform JSX. Vite
+ * 8's rolldown dep-optimizer renamed that surface to `optimizeDeps.rolldownOptions` (and moved jsx under
+ * `transform.jsx`), so the stale `rollupOptions.jsx` is an unrecognized input option → the warning. It's
+ * a version-skew artifact, not a real misconfig: the route source JSX transform runs through the
+ * plugin's own `transform` hook (untouched here), and node_modules deps that get pre-bundled almost
+ * never contain raw JSX — so dropping the dead key changes no behavior and keeps HMR/Fast Refresh
+ * intact. We *strip* (rather than translate to `rolldownOptions`) so the fix is version-agnostic: a
+ * plugin already emitting the correct `rolldownOptions` is left untouched, and a future plugin bump that
+ * stops emitting `rollupOptions.jsx` makes this a no-op.
+ *
+ * Scoped narrowly: only the `optimizeDeps.rollupOptions.jsx` key is removed, only under rolldown-vite,
+ * and only from the value a plugin's `config` hook returns. Non-rolldown Vite is passed through verbatim.
+ */
+export function normalizeRolldownPlugins(
+  plugins: readonly unknown[],
+  isRolldown: boolean,
+): readonly unknown[] {
+  if (!isRolldown) return plugins
+  const stripJsxKey = (returned: unknown): unknown => {
+    // Only touch a plain-object config carrying optimizeDeps.rollupOptions.jsx; leave anything else as-is.
+    if (returned === null || typeof returned !== "object") return returned
+    const cfg = returned as { optimizeDeps?: { rollupOptions?: Record<string, unknown> } }
+    const rollupOptions = cfg.optimizeDeps?.rollupOptions
+    if (rollupOptions === undefined || !("jsx" in rollupOptions)) return returned
+    // Clone the affected branch (never mutate the plugin's own return value) and drop the dead key.
+    const { jsx: _dropped, ...restRollup } = rollupOptions
+    return {
+      ...cfg,
+      optimizeDeps: { ...cfg.optimizeDeps, rollupOptions: restRollup },
+    }
+  }
+  return plugins.map((plugin) => {
+    if (plugin === null || typeof plugin !== "object") return plugin
+    const p = plugin as VitePluginLike
+    if (typeof p.config !== "function") return plugin
+    const originalConfig = p.config
+    return {
+      ...p,
+      config: (config: unknown, env: unknown) => {
+        const returned = originalConfig(config, env)
+        // The hook may return a promise — normalize both shapes.
+        return returned instanceof Promise ? returned.then(stripJsxKey) : stripJsxKey(returned)
+      },
+    }
+  })
+}
+
 /**
  * Start the Vite-backed dev server: Vite serves/HMRs the client; nifra SSRs each request and Vite
  * injects its HMR client + the framework refresh preamble via `transformIndexHtml`.
@@ -118,7 +182,7 @@ function toWebRequest(req: IncomingMessage, body: Buffer | undefined): Request {
 export async function createViteDevServer(options: ViteDevServerOptions): Promise<ViteDevServer> {
   const root = resolvePath(options.root ?? process.cwd())
   const routesDir = resolvePath(options.routesDir)
-  const port = options.port ?? 3000
+  const port = options.port ?? DEFAULT_DEV_PORT
 
   // Codegen the client entry with Vite-servable, root-relative specifiers (e.g. `/routes/index.tsx`).
   const manifest = discoverRoutes(routesDir)
@@ -172,7 +236,14 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   // `conditions: ["bun"]` makes Vite resolve nifra's workspace packages (`@nifrajs/web-react/client`, …) to
   // their TS **source** — so the dev server needs no prior `dist` build of the adapter packages.
   const usePolling = options.poll ?? process.env.CHOKIDAR_USEPOLLING === "1"
-  const { createServer } = (await import("vite")) as unknown as ViteModule
+  const viteModule = (await import("vite")) as unknown as ViteModule
+  const { createServer } = viteModule
+  // Under rolldown-vite (Vite 8+), strip the stale `optimizeDeps.rollupOptions.jsx` some framework
+  // plugins still emit — it triggers a noisy "Invalid key … jsx" warning but does nothing useful here.
+  const plugins = normalizeRolldownPlugins(
+    options.plugins ?? [],
+    viteModule.rolldownVersion !== undefined,
+  )
   vite = await createServer({
     root,
     appType: "custom",
@@ -182,7 +253,7 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
       // Explicit watch config; poll when native fs events aren't delivered (containers/sandboxes).
       watch: usePolling ? { usePolling: true, interval: 80 } : {},
     },
-    plugins: [...(options.plugins ?? [])],
+    plugins: [...plugins],
     resolve: {
       conditions: [...(options.conditions ?? []), "bun", "module", "browser", "development"],
     },
