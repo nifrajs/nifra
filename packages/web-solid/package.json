@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/web-solid",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.4",
   "description": "Solid render adapter for @nifrajs/web — SSR + hydration + the Solid Babel build plugin.",
   "keywords": [
     "bun",
