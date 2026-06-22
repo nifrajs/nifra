@@ -17,7 +17,8 @@ nifra start    # serve the built client + SSR on Bun (assets, <link> stylesheets
 # dev + start share the default port 4321. Override per run: --port <n> (alias -p) or the PORT env var.
 # flags: --port <n> (dev/start) · --out <dir> (build/start) · --poll (dev; containers/sandboxes)`
 
-const FRAMEWORK = `// framework.ts — the one place an app names its framework. The CLI reads these:
+const FRAMEWORK = `// doc-check: skip — needs the third-party @vitejs/plugin-react; install it to run this.
+// framework.ts — the one place an app names its framework. The CLI reads these:
 import react from "@vitejs/plugin-react"
 import { reactAdapter } from "@nifrajs/web-react"
 

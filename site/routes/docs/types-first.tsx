@@ -43,12 +43,14 @@ if (res.ok) {
   res.error            // client-call failures are returned, never thrown
 }`
 
-const OPENAPI = `import { openapi } from "@nifrajs/middleware"
+const OPENAPI = `import { server } from "@nifrajs/core"
+import { openapi } from "@nifrajs/middleware"
+import { GetUser } from "./schema"   // the contract defined above
 
 // Generates an OpenAPI 3.1 document from your registered routes — lazily, on first request.
 export const app = server()
   .use(openapi({ info: { title: "My API", version: "1.0.0" }, ui: true }))
-  .get("/users/:id", GetUser, (c) => ({ id: c.params.id, name: "Ada", role: "admin" }))
+  .get("/users/:id", GetUser, (c) => ({ id: c.params.id, name: "Ada", role: "admin" as const }))
 
 // → GET /openapi.json   (the spec, generated from your schemas)
 // → GET /reference      (a Scalar API-reference page, because \`ui: true\`)`

@@ -23,6 +23,8 @@ interface LoaderContext {
 // keeps them \`unknown\`. Branch on \`draft\` to load unpublished content for preview/editors.`
 
 const SIGNATURES = `// routes/users/[id].tsx — a route module's full contract (every export optional but \`default\`).
+// doc-check: skip — full-contract sketch; ctx.api's routes and meta's loader-data shape come from
+// the reader's own backend type, so it can't compile standalone (see the typed examples elsewhere).
 import type { LoaderContext } from "@nifrajs/web"
 
 // GET → data for the page. Runs in-process on the server during SSR (no HTTP hop).
@@ -111,8 +113,11 @@ const PARAM_404 = `// routes/users/[id].tsx — plain SSR runs the loader for AN
 // only takes effect under prerender/CDN, so on on-demand SSR you MUST guard and 404 yourself.
 import type { LoaderContext } from "@nifrajs/web"
 
+declare function lookupUser(id: string): Promise<{ id: string } | null>
+
 export async function loader(ctx: LoaderContext) {
-  const user = await lookupUser(ctx.params.id)
+  // ctx.params.id is \`string | undefined\` (an optional segment) — default it before the lookup.
+  const user = await lookupUser(ctx.params.id ?? "")
   if (!user) {
     // CONTROL FLOW: a thrown Response is an INTENTIONAL HTTP response — it propagates untouched
     // (no _error boundary, no 500). This is how you 404 a missing record.

@@ -10,7 +10,8 @@ export const meta = pageMeta(
   "Optimistic updates and concurrent fetchers in Nifra: instant feedback, row-level mutations.",
 )
 
-const OPTIMISTIC = `import { useFetcher } from "@nifrajs/web-react/fetcher"
+const OPTIMISTIC = `// doc-check: skip — component-body fragment: \`id\` and \`todo\` are the row's props.
+import { useFetcher } from "@nifrajs/web-react/fetcher"
 
 // Optimistic UI: while a submit is in flight, read the expected value from the in-flight
 // submission's FormData; the real data takes over when the action resolves, and a failed

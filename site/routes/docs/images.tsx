@@ -10,7 +10,8 @@ export const meta = pageMeta(
   "A CLS-safe responsive <Image> with pluggable loaders — a CDN, or Nifra's self-hosted resize endpoint (Bun.Image, sharp, or WASM on the edge) with optional signed URLs.",
 )
 
-const BACKENDS = `import { createImageHandler } from "@nifrajs/image/server"
+const BACKENDS = `// doc-check: skip — illustrates third-party codecs (sharp, @jsquash/*); install them to run it.
+import { createImageHandler } from "@nifrajs/image/server"
 import { sharpImageBackend, wasmImageBackend } from "@nifrajs/image/backends"
 
 // Node — libvips via sharp. Pass your own import (nifra never depends on it):
@@ -35,15 +36,17 @@ const SIGNING = `// Lock the endpoint to URLs YOU minted — kills resize-bombin
 import { selfHostedLoader, signImageUrl } from "@nifrajs/image"
 import { createImageHandler } from "@nifrajs/image/server"
 
-const resize = selfHostedLoader({ endpoint: "/_image", secret: env.IMAGE_SECRET })
+const IMAGE_SECRET = process.env.IMAGE_SECRET! // server-only; on Workers read c.env.IMAGE_SECRET instead
+
+const resize = selfHostedLoader({ endpoint: "/_image", secret: IMAGE_SECRET })
 //  → /_image?src=…&w=800&s=<hmac>   (stable: an SSR-signed URL hydrates + caches identically)
 
-const image = createImageHandler({ root: "./public", signing: { secret: env.IMAGE_SECRET } })
+const image = createImageHandler({ root: "./public", signing: { secret: IMAGE_SECRET } })
 //  any request without a valid &s= (forged / tampered / expired) → 403, before any fetch or decode
 
 // Time-limited links to private images (server-side only):
 const url = signImageUrl("/_image", { src: "/private/a.jpg", width: 800 }, {
-  secret: env.IMAGE_SECRET,
+  secret: IMAGE_SECRET,
   expiresIn: 300, // seconds → adds &exp=
 })`
 
@@ -105,8 +108,10 @@ const info = await readImageDimensions(Bun.file("public/hero.jpg"))
 // → { width: 1200, height: 630, format: "jpeg" }   (null if unrecognized)
 
 // Build-time tooling: pre-read sizes into a manifest so <Image> is CLS-safe
-// without hardcoding width/height at every call site.
-imageDimensions(new Uint8Array(headerBytes))`
+// without hardcoding width/height at every call site. The sync variant takes the
+// raw header bytes you already have in memory (no file read):
+const headerBytes = await Bun.file("public/hero.jpg").bytes()
+imageDimensions(headerBytes)`
 
 export default function Images() {
   return (

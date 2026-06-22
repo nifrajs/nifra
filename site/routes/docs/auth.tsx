@@ -10,7 +10,8 @@ export const meta = pageMeta(
   "Turnkey auth with @nifrajs/better-auth (OAuth, magic links, 2FA), or signed-cookie + server-store sessions, route guards, and CSRF with @nifrajs/auth.",
 )
 
-const BETTERAUTH = `// auth.ts — your configured Better Auth instance (database, providers, …):
+const BETTERAUTH = `// doc-check: skip — needs the third-party \`better-auth\` package + your \`db\`; install it to run this.
+// auth.ts — your configured Better Auth instance (database, providers, …):
 import { betterAuth as createBetterAuth } from "better-auth"
 export const auth = createBetterAuth({ database: db, emailAndPassword: { enabled: true } })
 
@@ -29,11 +30,11 @@ export async function loader({ request }) {
 
 const SETUP = `// auth.ts — one session manager. LAZY so a route module can import it without shipping it to the
 // browser (see the warning below). Store mode keeps data server-side; cookie mode (no store) is stateless.
-import { createSessions, MemorySessionStore, KVSessionStore } from "@nifrajs/auth"
+import { createSessions, MemorySessionStore } from "@nifrajs/auth"
 
-let manager
+let manager: ReturnType<typeof createSessions> | undefined
 export const getSessions = () => (manager ??= createSessions({
-  secret: process.env.SESSION_SECRET,           // ≥ 16 chars; rotating it invalidates all sessions
+  secret: process.env.SESSION_SECRET!,          // ≥ 16 chars; rotating it invalidates all sessions
   store: new MemorySessionStore(),              // prod: new KVSessionStore(env.SESSIONS)
   // cookie: { secure: false },                 // local http dev only
 }))`
@@ -59,7 +60,8 @@ app.post("/api/logout", async (c) => {
 
 createWebApp({ /* … */ api: sessions })                  // inject the manager into loaders as ctx.api`
 
-const GUARD = `// A protected route's loader — reads the session and redirects when absent.
+const GUARD = `// doc-check: skip — fragment: \`api\` is the session manager createWebApp injected (see setup above).
+// A protected route's loader — reads the session and redirects when absent.
 import { requireUser } from "@nifrajs/auth"   // browser-safe; OK to import in a route module
 
 export async function loader({ request, api }) {

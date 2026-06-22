@@ -15,14 +15,15 @@ import { Database } from "bun:sqlite"        // Node: better-sqlite3 · edge: Tu
 
 // Open the connection ONCE at module scope (the driver pools internally).
 const db = new Database("app.db")
-const byId = db.query<{ id: number; name: string }>("SELECT * FROM users WHERE id = ?")
+const byId = db.query<{ id: number; name: string }, [number]>("SELECT * FROM users WHERE id = ?")
 
 export const app = server().get("/users/:id", (c) =>
   // Parameterized (?) — never interpolate user input into SQL.
   byId.get(Number(c.params.id)) ?? new Response("Not found", { status: 404 }),
 )`
 
-const POSTGRES = `import { server } from "@nifrajs/core"
+const POSTGRES = `// doc-check: skip — illustrates a third-party driver (postgres + drizzle); install those to run it.
+import { server } from "@nifrajs/core"
 import { drizzle } from "drizzle-orm/postgres-js"   // or node-postgres / neon-http
 import postgres from "postgres"
 import { eq } from "drizzle-orm"
@@ -35,7 +36,8 @@ export const app = server().get("/users/:id", async (c) => {
   return user ?? new Response("Not found", { status: 404 })
 })`
 
-const EDGE = `import { server } from "@nifrajs/core"
+const EDGE = `// doc-check: skip — uses the Workers \`D1Database\` global (from @cloudflare/workers-types).
+import { server } from "@nifrajs/core"
 
 // On Workers there's no raw TCP, so use an HTTP-based driver. D1 is a typed platform binding:
 interface Env { DB: D1Database }

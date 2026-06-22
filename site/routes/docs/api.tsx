@@ -10,7 +10,8 @@ export const meta = pageMeta(
   "Build a typed JSON API with server()/defineContract + validate inputs with any Standard Schema, then consume it from a zero-codegen, never-throwing typed client.",
 )
 
-const INLINE = `import { server } from "@nifrajs/core"
+const INLINE = `// doc-check: skip — uses the third-party \`zod\` schema lib (any Standard Schema works); install it to run this.
+import { server } from "@nifrajs/core"
 import { z } from "zod"   // any Standard Schema works: zod, valibot, arktype…
 
 export const app = server()
@@ -21,7 +22,8 @@ export const app = server()
     (c) => ({ page: c.query.page }))
   .listen(3000)`
 
-const CONTRACT = `import { defineContract, implement } from "@nifrajs/core"
+const CONTRACT = `// doc-check: skip — uses the third-party \`zod\` schema lib + an illustrative \`users\` repo; install zod to run this.
+import { defineContract, implement } from "@nifrajs/core"
 import { z } from "zod"
 
 // 1. Declare the contract — methods, paths, and input schemas, no handlers.
