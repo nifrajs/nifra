@@ -32,6 +32,13 @@ jobs:
       - name: Test (scoped to the library test dirs; coverage + threshold via bunfig)
         run: bun run test
 
+      # Enforce the doc gates in CI (not just `bun run check` locally): documented snippets must
+      # typecheck against the live API, and api-reference.md + the per-package LLM.md cards must be
+      # regenerated — so docs/example drift can't merge. Needs the build above (snippets resolve
+      # @nifrajs/* subpaths via the built dist types).
+      - name: Doc gates (samples typecheck, api-reference + LLM cards fresh)
+        run: bun run check:docs && bun run check:api && bun run check:cards
+
       - name: Build + publish-readiness (publint + arethetypeswrong)
         run: bun run check:publish
 
