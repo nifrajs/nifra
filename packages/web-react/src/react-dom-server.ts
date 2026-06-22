@@ -12,11 +12,15 @@
  * dispatcher, no crash. (Empirically verified against a two-copy install fixture — see
  * test/dual-react.test.ts.)
  *
- * Guarding precisely so the PRODUCTION/BUILT path is untouched: when `Bun.resolveSync` is unavailable
- * (Node / Deno / Cloudflare / Vercel / any bundled output), the build has already bundled+deduped a single
- * `react-dom` (buildServer's `reactDedupePlugin` pins `react`), so the static `import` is correct AND is
- * the only thing that works without a Bun resolver. We fall back to it there. The app-root resolution runs
- * ONLY under the Bun runtime, where the duplication can occur and `Bun.resolveSync` exists.
+ * Guarding precisely so the BUILT path is untouched: a bundle is detected two ways — `Bun.resolveSync` is
+ * unavailable (Node / Deno / Cloudflare / Vercel), OR `buildServer` tagged the output with
+ * `process.env.NIFRA_SSR_BUNDLED` (a `target:"bun"` bundle DOES keep `Bun.resolveSync` under the Bun
+ * runtime, so the resolver test alone can't see it). In either case the build already bundled+deduped a
+ * single `react-dom` (buildServer's `reactDedupePlugin` pins `react`), so the static `import` is correct.
+ * Re-rooting a bundle would instead re-import a SECOND react-dom from disk — a second React core whose hook
+ * dispatcher is null for the bundled components → the `…H.useRef of null` SSR crash. The app-root re-root
+ * therefore runs ONLY under an UNBUNDLED Bun runtime (nifra dev/start, nifra_render), where the duplication
+ * can occur, `Bun.resolveSync` exists, and no bundle marker is present.
  */
 
 import type { ReactNode } from "react"
@@ -95,8 +99,17 @@ export async function loadReactDomServer(
   return (await import("react-dom/server")) as ReactDomServer
 }
 
-/** The ambient `Bun.resolveSync`, or undefined on a non-Bun host (where the static import is the only path). */
-function bunResolverFn(): ResolveSync | undefined {
+/**
+ * The resolver `loadReactDomServer` uses by default, or `undefined` when re-rooting must NOT happen — a
+ * non-Bun host (no `Bun.resolveSync`; the static import is the only path) OR a BUNDLED SSR output.
+ * `buildServer` defines `process.env.NIFRA_SSR_BUNDLED` to `"1"` in every bundle, where react-dom is
+ * already inlined + deduped to the components' React (reactDedupePlugin); re-rooting there would re-import
+ * a SECOND react-dom from disk (a `target:"bun"` bundle still has `Bun.resolveSync`), giving the bundled
+ * components a foreign/null hook dispatcher → the `…H.useRef of null` crash. The marker is read here (per
+ * call, not at module load) so it stays driveable from a test. Unbundled Bun runtimes don't set it, so
+ * dev/start still re-root. Exported for unit testing the gate. */
+export function bunResolverFn(): ResolveSync | undefined {
+  if (process.env.NIFRA_SSR_BUNDLED === "1") return undefined
   return hasBunResolveSync && bunResolver?.resolveSync !== undefined
     ? bunResolver.resolveSync.bind(bunResolver)
     : undefined

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
-import { loadReactDomServer } from "../src/react-dom-server.ts"
+import { bunResolverFn, loadReactDomServer } from "../src/react-dom-server.ts"
 
 /**
  * Regression test for the dual-React SSR crash: under Bun runtime SSR (`nifra dev` / `nifra start` /
@@ -159,4 +159,19 @@ test("loadReactDomServer uses the bundled copy on a non-Bun host (resolver undef
   // the only (and correct, bundled+deduped) path.
   const mod = await loadReactDomServer(undefined)
   expect(typeof mod.renderToString).toBe("function")
+})
+
+test("NIFRA_SSR_BUNDLED marker disables re-root even when Bun.resolveSync exists (the bun-target bundle fix)", () => {
+  // Regression for the `target:"bun"` bundle crash: a Bun bundle keeps `Bun.resolveSync`, so the resolver
+  // test alone (this runner IS Bun) would re-root to a DISK react-dom — a 2nd React core → `…H.useRef of
+  // null` at SSR. buildServer tags every bundle with this marker; the default resolver must then be
+  // `undefined` (→ the static, bundled+deduped import). Without the marker the Bun runtime still re-roots.
+  expect(typeof bunResolverFn()).toBe("function") // unbundled Bun runtime: re-root resolver present
+  process.env.NIFRA_SSR_BUNDLED = "1"
+  try {
+    expect(bunResolverFn()).toBeUndefined() // bundle: no re-root → static import path
+  } finally {
+    delete process.env.NIFRA_SSR_BUNDLED // never leak the marker into sibling tests
+  }
+  expect(typeof bunResolverFn()).toBe("function") // restored
 })

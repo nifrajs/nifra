@@ -682,6 +682,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     plugins: [
       reactDedupePlugin(routesDir),
       preactDedupePlugin(routesDir),
+      svelteDedupePlugin(routesDir),
       serverOnlyEmptyPlugin(),
       ...(options.plugins ?? []),
     ],
@@ -965,6 +966,34 @@ export const preactDedupePlugin = (from: string): BunPlugin => ({
 })
 
 /**
+ * Dedupe Svelte to a single copy — the Svelte analogue of `reactDedupePlugin`/`preactDedupePlugin`, closing
+ * the same class of bug for Svelte (which had NO build-time dedup before). A workspace- or file-linked
+ * `@nifrajs/web-svelte` can resolve its OWN `svelte` (e.g. a sibling repo's install store) while the app's
+ * components resolve another — SAME version, two physical copies. Svelte 5's client runtime
+ * (`svelte/internal/client`) holds module-level component-context state, so two copies means the compiled
+ * components register on one runtime while `hydrate` runs on the other → hydration throws
+ * `Cannot read properties of undefined (reading 'call')` and the server-rendered markup is wiped.
+ *
+ * Pin every `svelte` + `svelte/internal/*` import to the ONE copy resolvable from `from` (the app root) so
+ * the renderer (`hydrate`/`mount`) and the compiled components share one runtime. Unlike react/preact (a
+ * fixed subpath list), Svelte has many internal subpaths, so each matched import is resolved dynamically.
+ * `svelte/compiler` (build-time only, not in the bundle) doesn't match the filter and is left alone. No-op
+ * when Svelte isn't used / isn't resolvable from `from`.
+ */
+export const svelteDedupePlugin = (from: string): BunPlugin => ({
+  name: "nifra-svelte-dedupe",
+  setup(build) {
+    build.onResolve({ filter: /^svelte($|\/internal\/)/ }, (args) => {
+      try {
+        return { path: Bun.resolveSync(args.path, from) }
+      } catch {
+        return undefined // not resolvable from the app root — leave Bun's default resolution
+      }
+    })
+  },
+})
+
+/**
  * Remix-style `.server` convention for the CLIENT build. A module named `*.server.ts(x)` (`db.server.ts`,
  * `auth.server.ts`, …) is server-only — empty it in the browser bundle so its (possibly `node:` / native /
  * Capacitor) import subtree never reaches the client. The body is CJS-with-a-Proxy so any named OR default
@@ -1040,7 +1069,17 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
     outdir: outDir,
     target,
     conditions: [...conditions],
-    define: { ...(options.define ?? { "process.env.NODE_ENV": '"production"' }) },
+    define: {
+      ...(options.define ?? { "process.env.NODE_ENV": '"production"' }),
+      // Tag every BUNDLED SSR output so @nifrajs/web-react's react-dom adapter takes the static
+      // (bundled, deduped) react-dom instead of re-rooting react-dom/server to a DISK copy at runtime.
+      // A `target:"bun"` bundle still has `Bun.resolveSync` under the Bun runtime, so without this tag the
+      // adapter re-imports a SECOND react-dom from node_modules — a second React core whose hook dispatcher
+      // is null for the bundled components → SSR throws `…H.useRef of null`. Always set (a structural fact
+      // of bundling, layered after any caller `define` so it can't be overridden). Unbundled Bun runtimes
+      // (nifra dev/start, nifra_render) never define it, so they still re-root — the dev dual-install fix.
+      "process.env.NIFRA_SSR_BUNDLED": '"1"',
+    },
     minify: options.minify ?? true,
     // Lazy → one chunk per route (loaded on first request); eager → a single self-contained file.
     splitting: lazy,
