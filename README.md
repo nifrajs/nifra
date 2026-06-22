@@ -205,6 +205,7 @@ bun run examples/edge.ts        # app.fetch as a universal handler
 bun install
 bun run check          # lint + typecheck (incl. type-level tests) + tests w/ coverage
 bun run build          # emit dist/ (js + d.ts) for all packages
+bun run check:publish  # build + publint + arethetypeswrong
 bun run bench:loadtest # oha HTTP matrix across Bun/Node/Deno
 ```
 

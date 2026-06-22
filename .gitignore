@@ -51,6 +51,3 @@ bench/**/*.md
 
 # check:docs snippet sandbox (transient) — lives under site/ so workspace @nifrajs/* symlinks resolve
 site/.tmp-doc-check
-
-# release tooling kept local, not published in the public repo
-scripts/check-publish.ts
