@@ -145,6 +145,19 @@ async function runWorker(cwd: string): Promise<void> {
 // warm loop instead. Guarded so importing this module in a test does not execute it.
 if (import.meta.main) {
   const cwd = process.argv[2] ?? process.cwd()
+  // The parent (mcp.ts) spawns `bun mcp-render.ts <cwd>` WITHOUT setting the subprocess `cwd` option, so
+  // this process inherits the MCP server's working dir, not the app's. SSR resolves `react-dom/server`
+  // from `process.cwd()` to share ONE React core with the app's route components (the dual-React fix in
+  // @nifrajs/web-react) — so we must chdir to the app root before any render. Best-effort: a bad path
+  // surfaces later as a load error rather than crashing the child here.
+  if (cwd !== process.cwd()) {
+    try {
+      process.chdir(cwd)
+    } catch {
+      // Leave cwd as-is; loadApp(cwd) below uses the explicit `cwd` arg and will report an actionable
+      // error if the directory is unusable. The adapter then falls back to its bundled react-dom.
+    }
+  }
   if (process.argv.includes("--worker")) {
     await runWorker(cwd)
     process.exit(0)
