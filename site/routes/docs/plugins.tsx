@@ -10,7 +10,8 @@ export const meta = pageMeta(
   "Extend Nifra with definePlugin (typed context, idempotent) + hook-bundle middleware. Official middleware: requestId, logger, etag, bearer, apiKey, basicAuth, jwt/jwks, csrf, ipRestriction, bodyLimit, cors, securityHeaders, rateLimit, compression, cacheControl, cache, prettyJson, timing, methodOverride, trailingSlash, language, poweredBy, combine, openapi, healthcheck, idempotency.",
 )
 
-const PLUGIN = `import { definePlugin } from "@nifrajs/core"
+const PLUGIN = `// doc-check: skip — fragment: the outer \`app\`, \`verify\`, and \`db\` are your application's.
+import { definePlugin } from "@nifrajs/core"
 
 // A plugin is just (app) => app — call use/derive/decorate or register routes.
 // definePlugin adds a name so applying it twice (even transitively) is a no-op.
@@ -25,22 +26,26 @@ app
 // Inline plugins thread context too — no definePlugin needed for one-offs:
 app.use((a) => a.decorate("db", db).derive((c) => ({ now: Date.now() })))`
 
-const MIDDLEWARE = `import { cors, rateLimit, securityHeaders } from "@nifrajs/middleware"
+const MIDDLEWARE = `import { server } from "@nifrajs/core"
+import { cors, rateLimit, securityHeaders, MemoryStore } from "@nifrajs/middleware"
 
 // Hardening middleware is a hook bundle (context-agnostic) — same app.use():
-app
+const app = server()
   .use(securityHeaders())
-  .use(cors({ origins: ["https://app.example"] }))
-  .use(rateLimit({ limit: 100, windowMs: 60_000 }))`
+  .use(cors({ origin: ["https://app.example"] }))
+  // MemoryStore is dev/single-instance only — use a shared store (Redis, etc.) in production.
+  .use(rateLimit({ store: new MemoryStore(), max: 100, windowMs: 60_000 }))`
 
-const OFFICIAL = `import { requestId, logger, etag } from "@nifrajs/middleware"
+const OFFICIAL = `import { server } from "@nifrajs/core"
+import { requestId, logger, etag } from "@nifrajs/middleware"
 
-app
+const app = server()
   .use(requestId())   // reuse/generate x-request-id → c.requestId (typed) + response header
   .use(logger())      // one structured line/request: { method, path, status, ms }
   .use(etag())        // content-hash ETag on GET 200s → 304 on matching If-None-Match`
 
-const AUTHN = `import { bearer, apiKey } from "@nifrajs/middleware"
+const AUTHN = `// doc-check: skip — fragment: \`app\`, \`lookupUser\`, and the \`db\` lookup are your application's.
+import { bearer, apiKey } from "@nifrajs/middleware"
 
 // Bearer tokens — verify returns your principal (its type is inferred), 401s missing/invalid:
 const auth = bearer({ verify: (token) => lookupUser(token) })   // AuthPlugin<User>
@@ -53,9 +58,10 @@ app.use(apiKey({ keys: [process.env.API_KEY!] }))              // matched key be
 // …or custom (DB-backed) verification; 'optional' lets unauthenticated requests through:
 app.use(apiKey({ verify: (key) => db.apiKeys.find(key), optional: true }))`
 
-const PERF = `import { compression, cacheControl } from "@nifrajs/middleware"
+const PERF = `import { server } from "@nifrajs/core"
+import { compression, cacheControl } from "@nifrajs/middleware"
 
-app
+const app = server()
   .use(compression())                                  // gzip compressible responses (Accept-Encoding)
   .use(cacheControl("public, max-age=60"))             // Cache-Control on GET/HEAD 2xx (won't clobber)
   // …or a per-path policy — return undefined to leave a response untouched:
@@ -64,7 +70,8 @@ app
       ? "public, max-age=31536000, immutable"
       : undefined))`
 
-const OPS = `import { healthcheck, openapi } from "@nifrajs/middleware"
+const OPS = `// doc-check: skip — fragment: \`app\`, \`db\`, and \`redis\` are your application's clients.
+import { healthcheck, openapi } from "@nifrajs/middleware"
 
 app
   // Liveness + readiness. /ready runs each check concurrently → 200 (all pass) or 503.
@@ -72,17 +79,20 @@ app
   // GET /openapi.json from your routes (paths, methods, params); ui adds a Scalar page at /reference.
   .use(openapi({ info: { title: "My API", version: "1.0.0" }, ui: true }))`
 
-const RELIABILITY = `import { idempotency, MemoryIdempotencyStore } from "@nifrajs/middleware"
+const RELIABILITY = `import { server } from "@nifrajs/core"
+import { idempotency, MemoryIdempotencyStore } from "@nifrajs/middleware"
 
 // A retried POST with the same Idempotency-Key replays the first response instead of
 // re-running the side effect. Shared store in production (atomic claim); dev-only memory store.
+const app = server()
 app.use(idempotency({ store: new MemoryIdempotencyStore() }))`
 
-const JWT_BASIC = `import { jwt, jwks, basicAuth } from "@nifrajs/middleware"
+const JWT_BASIC = `import { server } from "@nifrajs/core"
+import { jwt, jwks, basicAuth } from "@nifrajs/middleware"
 
 // JWT (WebCrypto): an explicit algorithm allowlist is REQUIRED; alg:none and RSA/HMAC confusion are rejected.
 const auth = jwt({ key: process.env.JWT_SECRET!, algorithms: ["HS256"], issuer: "my-app" })
-app
+const app = server()
   .use(auth)                                       // 401s missing/invalid (optional:true lets them through)
   .get("/me", (c) => auth.requireClaims(c.req))    // typed claims, or throws 401; auth.claims(req) is nullable
 // Asymmetric (rotating keys): key: jwks({ url: "https://issuer/.well-known/jwks.json" }) — https-only, cached.
@@ -90,16 +100,19 @@ app
 // HTTP Basic — static creds compared in CONSTANT TIME (SHA-256 + timing-safe), or a verify callback.
 app.use(basicAuth({ username: "admin", password: process.env.PASS!, realm: "staging" }))`
 
-const CACHING = `import { cache, MemoryResponseCache, prettyJson } from "@nifrajs/middleware"
+const CACHING = `import { server } from "@nifrajs/core"
+import { cache, MemoryResponseCache, prettyJson } from "@nifrajs/middleware"
 
 // Full response cache: pluggable store, Vary-aware keys, byte cap. Bypasses Set-Cookie and respects
 // Cache-Control (no-store/private). MemoryResponseCache is per-instance — refuses prod unless opted in.
+const app = server()
 app.use(cache({ store: new MemoryResponseCache(), ttlMs: 30_000, vary: ["accept-language"] }))
 app.use(prettyJson())   // pretty-print JSON responses (size-capped; optional ?pretty query toggle)`
 
-const SHAPING = `import { methodOverride, trimTrailingSlash, language, timing, poweredBy, combine } from "@nifrajs/middleware"
+const SHAPING = `import { server } from "@nifrajs/core"
+import { methodOverride, trimTrailingSlash, language, timing, poweredBy, combine } from "@nifrajs/middleware"
 
-app
+const app = server()
   .use(methodOverride())     // POST + X-HTTP-Method-Override → PUT/PATCH/DELETE (a real pre-routing request rewrite)
   .use(trimTrailingSlash())  // canonicalize URLs: 308 redirect (or rewrite), same-origin only, conservative methods
   .use(language({ supported: ["en", "fr"], defaultLanguage: "en" }))  // Accept-Language → c.language + Content-Language

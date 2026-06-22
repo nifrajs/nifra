@@ -10,7 +10,7 @@ export const meta = pageMeta(
   "Bounded request bodies, magic-byte file-upload validation, constant-time webhook verification, and idempotency-key replay — the hardening primitives every production app needs, built in.",
 )
 
-const BOUNDED = `import { server, t } from "@nifrajs/core"
+const BOUNDED = `import { server } from "@nifrajs/core"
 
 const app = server()
 
@@ -23,20 +23,22 @@ app.post("/import", async (c) => {
   // Responses (caught by the lifecycle like \`throw redirect()\`), so a handler can't
   // accidentally ignore the cap. The over-cap length is rejected BEFORE buffering;
   // a chunked / length-less body is aborted mid-stream once it crosses the cap.
-  return c.json({ received: bytes.byteLength })
+  return { received: bytes.byteLength } // a returned object is serialized as JSON 200
 })
 
 app.post("/rpc", async (c) => {
   const body = await c.boundedJson<{ method: string }>() // default: the server's maxBodyBytes
   // …bad JSON → 400. Then validate \`body\` with your schema before trusting it.
+  return { method: body.method }
 })`
 
-const UPLOADS = `import { validateUpload, signDownloadUrl } from "@nifrajs/uploads"
+const UPLOADS = `// doc-check: skip — fragment: \`app\`, \`save\`, \`id\`, and \`env\` are your application's.
+import { validateUpload, signDownloadUrl } from "@nifrajs/uploads"
 
 app.post("/avatar", async (c) => {
   const form = await c.req.formData()
   const file = form.get("file")
-  if (!(file instanceof Blob)) return c.json({ ok: false, error: "no_file" }, 400)
+  if (!(file instanceof Blob)) { c.set.status = 400; return { ok: false, error: "no_file" } }
 
   // Size cap + REAL type by magic bytes — a .exe renamed .png (or a spoofed
   // Content-Type) is caught, because the bytes win. An oversized Blob is rejected
@@ -45,17 +47,18 @@ app.post("/avatar", async (c) => {
     maxBytes: 2_000_000,
     accept: ["image/png", "image/jpeg"], // exact, or "image/*"
   })
-  if (!result.ok) return c.json({ ok: false, error: result.reason }, 400)
+  if (!result.ok) { c.set.status = 400; return { ok: false, error: result.reason } }
   //  reason: "too_large" | "empty" | "unrecognized" | "type_not_allowed"
 
   await save(result.bytes, \`\${id}.\${result.ext}\`) // result.mime / .ext are trustworthy
 
   // Hand back a short-TTL, tamper-evident URL (HMAC over path + expiry):
   const url = await signDownloadUrl(\`/files/\${id}\`, env.FILE_SECRET, { expiresInSeconds: 300 })
-  return c.json({ ok: true, url })
+  return { ok: true, url } // a returned object is serialized as JSON 200
 })`
 
-const STRIP = `import { stripImageMetadata } from "@nifrajs/uploads"
+const STRIP = `// doc-check: skip — fragment: continues the upload handler above (\`result.bytes\`).
+import { stripImageMetadata } from "@nifrajs/uploads"
 import { bunImageBackend } from "@nifrajs/image/backends"
 
 // Drop EXIF/GPS by re-encoding through any @nifrajs/image backend. @nifrajs/uploads keeps
@@ -63,19 +66,20 @@ import { bunImageBackend } from "@nifrajs/image/backends"
 // also works with sharpImageBackend(sharp) on Node or wasmImageBackend(...) on the edge.
 const clean = await stripImageMetadata(result.bytes, bunImageBackend())`
 
-const WEBHOOK = `import { verifyWebhook } from "@nifrajs/core"
+const WEBHOOK = `// doc-check: skip — fragment: \`app\`, \`env\`, \`StripeEvent\`, and the rotation keys are your application's.
+import { verifyWebhook } from "@nifrajs/core"
 
 app.post("/webhooks/stripe", async (c) => {
   // Reads the raw body BOUNDED (DoS guard), verifies the HMAC CONSTANT-TIME, and only
   // then returns the payload. Never JSON.parse a webhook before the signature checks out.
   const r = await verifyWebhook(c.req, env.STRIPE_WEBHOOK_SECRET, { provider: "stripe" })
-  if (!r.ok) return c.json({ ok: false, error: r.reason }, 400)
+  if (!r.ok) { c.set.status = 400; return { ok: false, error: r.reason } }
   //  reason: "missing_signature" | "invalid_signature" | "timestamp_out_of_tolerance"
   //        | "malformed_signature" | "payload_too_large" | "invalid_content_length"
 
   const event = StripeEvent.parse(JSON.parse(r.payload)) // validate at the trust boundary
   // …handle event… (pair with idempotency below so a redelivery doesn't double-process)
-  return c.json({ ok: true })
+  return { ok: true }
 })
 
 // GitHub (sha256=…hex), or any provider via the generic preset:
@@ -84,7 +88,8 @@ await verifyWebhook(c.req, [next, current], {            // an array accepts eit
   header: "x-signature", encoding: "base64", prefix: "v1=",
 })`
 
-const IDEMPOTENCY = `import { idempotency, MemoryIdempotencyStore } from "@nifrajs/middleware"
+const IDEMPOTENCY = `// doc-check: skip — fragment: \`app\`, \`chargeCard\`, and \`id\` are your application's.
+import { idempotency, MemoryIdempotencyStore } from "@nifrajs/middleware"
 
 // Dev / single-instance. In production use a SHARED store (Redis, etc.) with an atomic
 // claim — MemoryIdempotencyStore throws under NODE_ENV=production unless you opt in.
@@ -92,7 +97,7 @@ app.use(idempotency({ store: new MemoryIdempotencyStore() }))
 
 app.post("/charge", async (c) => {
   await chargeCard(/* … */) // the side effect
-  return c.json({ ok: true, id })
+  return { ok: true, id }
 })
 
 // A client retrying POST /charge with the same \`Idempotency-Key\` header gets the FIRST
@@ -100,13 +105,14 @@ app.post("/charge", async (c) => {
 // retry, while the first is still in flight, gets 409 { error: "idempotency_in_progress" }.
 // Transient 5xx are NOT cached (a failed call stays retryable).`
 
-const GATING = `import { jwt, csrf, ipRestriction, bodyLimit } from "@nifrajs/middleware"
+const GATING = `import { server } from "@nifrajs/core"
+import { jwt, csrf, ipRestriction, bodyLimit } from "@nifrajs/middleware"
 
-app
+const app = server()
   // JWT: the algorithm allowlist is REQUIRED; alg:none and RSA/HMAC confusion are rejected; exp enforced.
-  .use(jwt({ key: env.JWT_SECRET, algorithms: ["HS256"], issuer: "my-app" }))
+  .use(jwt({ key: process.env.JWT_SECRET!, algorithms: ["HS256"], issuer: "my-app" }))
   // Signed double-submit CSRF (HMAC) + Origin/Referer check on unsafe methods. Secret must be >= 32 bytes.
-  .use(csrf({ secret: env.CSRF_SECRET }))
+  .use(csrf({ secret: process.env.CSRF_SECRET! }))
   // Allow/deny by IPv4/IPv6 + CIDR. FAILS CLOSED with no trusted client IP; X-Forwarded-For is ignored
   // unless trustedProxies > 0 (set it to the number of proxies you actually run in front of the app).
   .use(ipRestriction({ allow: ["10.0.0.0/8", "::1"], trustedProxies: 1 }))

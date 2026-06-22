@@ -14,7 +14,7 @@ const NEGOTIATE = `// In a loader: resolve the locale + return only that catalog
 import { negotiateLocale } from "@nifrajs/i18n"
 import { catalogs, locales } from "../catalogs"
 
-export async function loader({ request }) {
+export async function loader({ request }: { request: Request }) {
   const q = new URL(request.url).searchParams.get("lang")
   const locale = q && locales.includes(q) ? q : negotiateLocale(request, { locales, defaultLocale: "en", cookie: "lang" })
   return { locale, messages: catalogs[locale] }   // cookie → Accept-Language → default

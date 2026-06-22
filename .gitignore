@@ -48,3 +48,6 @@ bench/**/*.md
 .claude/launch.json
 .claude/settings.local.json
 .code-review-graph/
+
+# check:docs snippet sandbox (transient) — lives under site/ so workspace @nifrajs/* symlinks resolve
+site/.tmp-doc-check

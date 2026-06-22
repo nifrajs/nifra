@@ -29,7 +29,11 @@ export default function Page(props: { data: LoaderData<typeof loader> }) {
   )
 }`
 
-const SSE = `import { sse } from "@nifrajs/core"
+const SSE = `import { server, sse } from "@nifrajs/core"
+
+const app = server()
+// Your pub-sub of choice — subscribe returns an unsubscribe function.
+declare const notifications: { subscribe(on: (n: { id: string }) => void): () => void }
 
 // A live feed — push events until the client disconnects.
 app.get("/notifications", (c) =>

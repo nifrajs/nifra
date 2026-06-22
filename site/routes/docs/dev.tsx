@@ -10,12 +10,14 @@ export const meta = pageMeta(
   "Use `nifra dev` for a Vite-backed state-preserving HMR loop, or `@nifrajs/web/dev` for a Bun-native live-reload loop. Production builds use Bun.",
 )
 
-const BUN_DEV = `// dev.ts — Bun-native live reload
+const BUN_DEV = `// doc-check: skip — fragment: routesDir/outDir/clientModule/createApp are your app's dev config.
+// dev.ts — Bun-native live reload
 import { createDevServer } from "@nifrajs/web/dev"
 // builds the client on boot, serves SSR, watches routes, full-page live-reload on change.
 const server = await createDevServer({ routesDir, outDir, clientModule, createApp })`
 
-const VITE_DEV = `// dev.ts — state-preserving HMR for supported UI adapters
+const VITE_DEV = `// doc-check: skip — needs the third-party @vitejs/plugin-react + your ./backend; install it to run this.
+// dev.ts — state-preserving HMR for supported UI adapters
 import react from "@vitejs/plugin-react"            // your framework's official Vite plugin
 import { createWebApp } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
