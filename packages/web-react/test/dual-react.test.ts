@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { dirname, join } from "node:path"
 import { loadReactDomServer } from "../src/react-dom-server.ts"
 
 /**
@@ -20,35 +20,41 @@ import { loadReactDomServer } from "../src/react-dom-server.ts"
  *     → matches the component's react@A → renders cleanly.
  */
 
-// Two DISTINCT React copies in the repo store — the dual-install the bug needs (mirror of the manual
-// fixture that proved the fix). The app uses copy `B` (19.2.6); the adapter's STATIC `import
-// "react-dom/server"` (from packages/web-react/src) resolves to the hoisted copy `A` (19.2.7) — so the
-// pre-fix static path mismatches the app on purpose, making the FIXED test genuinely RED if the fix is
-// reverted to the static import. The FIXED adapter re-roots react-dom to the app (copy B) → it matches.
-const STORE = join(import.meta.dir, "../../../node_modules/.bun")
-const APP_REACT = join(STORE, "react@19.2.6/node_modules/react")
-const APP_REACT_DOM = join(STORE, "react-dom@19.2.6+d86b59289c1a13ae/node_modules/react-dom")
-// Copy A (hoisted at the monorepo root) — what the adapter's bundled/static import resolves to.
-const STATIC_REACT_DOM = join(STORE, "react-dom@19.2.7+e14d3f224186685e/node_modules/react-dom")
+// The dual-install the bug needs = TWO DISTINCT React module instances. We make them by COPYING the one
+// installed react/react-dom into two separate node_modules trees (`app/` and `static/`): same version,
+// different physical paths → Bun loads each as its own core (its own hook dispatcher). This is portable —
+// it depends only on the single hoisted copy, not on two versions happening to sit in the store (a clean
+// CI install hoists exactly one, so the old "symlink to react@19.2.6 vs @19.2.7" fixture ENOENT'd there).
+// The app uses the `app/` copy; the pre-fix adapter's STATIC `react-dom/server` is simulated by importing
+// the `static/` copy — a different instance → the mismatch crash. The FIXED adapter re-roots react-dom to
+// the app root (the `app/` copy) → it matches → renders. Reverting the fix to a static import → RED.
+const SRC_REACT = dirname(Bun.resolveSync("react/package.json", import.meta.dir))
+const SRC_REACT_DOM = dirname(Bun.resolveSync("react-dom/package.json", import.meta.dir))
 
-// `.tmp-nifra-*` is excluded from the per-file coverage gate (bunfig `**/.tmp-nifra-*/**`) — the fixture's
-// stub component is rendered, never product code.
+// `.tmp-nifra-*` is excluded from the per-file coverage gate (bunfig `**/.tmp-nifra-*/**`).
 const TMP_BASE = join(import.meta.dir, ".tmp-nifra-dual-react-")
+let base: string
 let appRoot: string
+let APP_REACT_DOM: string
+let STATIC_REACT_DOM: string
 
 beforeAll(() => {
-  appRoot = mkdtempSync(TMP_BASE)
-  // The app root owns react + react-dom copy B (what a real consumer install hoists for THIS app).
-  // Symlinks (not copies) keep it cheap; module identity is the linked store path, which differs from the
-  // copy the adapter's static import resolves (copy A at the monorepo root).
-  const appModules = join(appRoot, "node_modules")
-  mkdirSync(appModules, { recursive: true })
-  symlinkSync(APP_REACT, join(appModules, "react"))
-  symlinkSync(APP_REACT_DOM, join(appModules, "react-dom"))
+  base = mkdtempSync(TMP_BASE)
+  appRoot = join(base, "app")
+  const staticRoot = join(base, "static")
+  for (const root of [appRoot, staticRoot]) {
+    const nm = join(root, "node_modules")
+    mkdirSync(nm, { recursive: true })
+    // `dereference` copies through the store symlink to the real files, so each tree is a standalone copy.
+    cpSync(SRC_REACT, join(nm, "react"), { recursive: true, dereference: true })
+    cpSync(SRC_REACT_DOM, join(nm, "react-dom"), { recursive: true, dereference: true })
+  }
+  APP_REACT_DOM = join(appRoot, "node_modules", "react-dom")
+  STATIC_REACT_DOM = join(staticRoot, "node_modules", "react-dom")
 })
 
 afterAll(() => {
-  rmSync(appRoot, { recursive: true, force: true })
+  rmSync(base, { recursive: true, force: true })
 })
 
 /** Spawn `bun <driver>` with cwd=app fixture, capture stdout. Mirrors runtime SSR's process isolation. */
