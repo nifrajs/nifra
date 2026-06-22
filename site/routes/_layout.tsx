@@ -1638,6 +1638,11 @@ const css = `
 
   /* Framework switcher — CSS-only (:checked radio tabs, zero JS) */
   .fw-switcher { width: 100%; min-width: 0; }
+  /* The global .fw-panels is a 2-column grid (code + preview) for the /frameworks page. Inside the
+     homepage switcher each panel is ONLY a code-window, so the 2-col grid left the code in column 1
+     (~44% width) with an empty second column. Force a single column so the code-window fills the cell,
+     matching the other feature-showcase code blocks. */
+  .fw-switcher .fw-panels { grid-template-columns: 1fr; }
   .fw-radio { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
   .fw-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
   .fw-tab {

@@ -23,6 +23,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { preactAdapter } from "@nifrajs/web-preact"
+import { svelteDedupePlugin } from "@nifrajs/web/build"
 import { reactAdapter } from "@nifrajs/web-react"
 import { solidBunPlugin } from "@nifrajs/web-solid"
 import { svelteBunPlugin } from "@nifrajs/web-svelte/plugin"
@@ -105,7 +106,10 @@ const SPECS: readonly FrameworkSpec[] = [
     idiom: "runes",
     clientEntry: `${DIR}/frameworks/svelte.client.ts`,
     clientConditions: ["bun", "browser"],
-    clientPlugins: [svelteBunPlugin("dom")],
+    // svelteDedupePlugin first: pin svelte + svelte/internal/* to ONE copy (resolved from the site root)
+    // so the adapter's Chain.svelte and the app's App.svelte hydrate against the SAME Svelte runtime —
+    // without it the two resolve to different physical svelte@5.56.3 installs and hydration crashes.
+    clientPlugins: [svelteDedupePlugin(DIR), svelteBunPlugin("dom")],
     define: PROD_DEFINE,
   },
 ]
