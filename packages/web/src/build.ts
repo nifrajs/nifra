@@ -679,7 +679,12 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     // below — both the aggregate and per-route — via the metafile, for `<link>` injection.
     ...buildExtras,
     minify: options.minify ?? true,
-    plugins: [reactDedupePlugin(routesDir), serverOnlyEmptyPlugin(), ...(options.plugins ?? [])],
+    plugins: [
+      reactDedupePlugin(routesDir),
+      preactDedupePlugin(routesDir),
+      serverOnlyEmptyPlugin(),
+      ...(options.plugins ?? []),
+    ],
     ...(options.conditions ? { conditions: [...options.conditions] } : {}),
     // Replace `process.env.*` at compile time so an app module reading config off `process.env` doesn't
     // hit a `process is not defined` crash in the browser. Bun does longest-match: NODE_ENV resolves to
@@ -926,6 +931,40 @@ export const reactDedupePlugin = (from: string): BunPlugin => ({
 })
 
 /**
+ * Dedupe Preact to a single copy — the Preact analogue of `reactDedupePlugin`, closing the same class of
+ * bug for the Preact framework (which had NO build-time dedup before). A `file:`-linked package can ship
+ * its OWN `preact`, so the bundle ends up with two Preact cores; since `preact-render-to-string` mutates
+ * `preact`'s shared `options` global and `preact/hooks` writes the SAME global, two copies → two `options`
+ * → SSR throws `undefined is not an object (… __H)` (the vnode's hook state was set up on the other copy).
+ * Pinning `preact` + its hooks/compat/jsx subpaths to ONE resolved copy (the app's, from `from`) makes the
+ * renderer and the components share one core. No-op when Preact isn't used (an unresolvable spec is
+ * skipped). Preact core is condition-agnostic, so pinning it doesn't disturb any condition selection — and
+ * unlike react-dom there is no edge-vs-server build to preserve, so pinning the subpaths is safe.
+ */
+const PREACT_DEDUPE_SPECS = [
+  "preact",
+  "preact/hooks",
+  "preact/compat",
+  "preact/jsx-runtime",
+  "preact/jsx-dev-runtime",
+] as const
+export const preactDedupePlugin = (from: string): BunPlugin => ({
+  name: "nifra-preact-dedupe",
+  setup(build) {
+    for (const spec of PREACT_DEDUPE_SPECS) {
+      let resolved: string
+      try {
+        resolved = Bun.resolveSync(spec, from)
+      } catch {
+        continue // Preact (or this subpath) isn't resolvable here — nothing to dedupe
+      }
+      const escaped = spec.replace(/[/\\^$*+?.()|[\]{}]/g, "\\$&")
+      build.onResolve({ filter: new RegExp(`^${escaped}$`) }, () => ({ path: resolved }))
+    }
+  },
+})
+
+/**
  * Remix-style `.server` convention for the CLIENT build. A module named `*.server.ts(x)` (`db.server.ts`,
  * `auth.server.ts`, …) is server-only — empty it in the browser bundle so its (possibly `node:` / native /
  * Capacitor) import subtree never reaches the client. The body is CJS-with-a-Proxy so any named OR default
@@ -1008,6 +1047,7 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
     plugins: [
       ...(edge ? [reactDomEdgePlugin(entryDir), solidWebServerPlugin(entryDir)] : []),
       reactDedupePlugin(entryDir),
+      preactDedupePlugin(entryDir),
       ...(options.plugins ?? []),
     ],
   })
