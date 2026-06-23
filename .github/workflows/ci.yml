@@ -42,6 +42,13 @@ jobs:
       - name: Build + publish-readiness (publint + arethetypeswrong)
         run: bun run check:publish
 
+      # Cold-start gate: the `bun create nifra` → `bun install` → `bun run build` path a fresh external
+      # user takes. alpha.4's templates pinned `@nifrajs/*@^0.1.0` (excludes the published prerelease) →
+      # every scaffolded app failed to install; the package-level gates never look at the templates.
+      # Static pin-satisfiability + a functional scaffold/install/build against the packed current source.
+      - name: Cold-start gate (templates install + build for a fresh user)
+        run: bun run check:cold-start
+
   deno:
     runs-on: ubuntu-latest
     steps:
