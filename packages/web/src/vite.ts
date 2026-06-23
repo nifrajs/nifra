@@ -122,6 +122,40 @@ interface VitePluginLike {
   readonly [key: string]: unknown
 }
 
+/** The bits of a Node ServerResponse `pipeWebBodyToNode` touches — structural, to avoid a node:http dep here. */
+interface NodeResLike {
+  flushHeaders?(): void
+  on(event: "close", cb: () => void): void
+  write(chunk: Uint8Array): boolean
+  end(): void
+}
+
+/**
+ * Stream a Web `Response` body to a Node response chunk-by-chunk. Buffering the whole body (e.g.
+ * `arrayBuffer()`) waits for the stream to END — which an open-ended SSE (`text/event-stream`) body never
+ * does, so it hung `nifra dev` (the Bun production server streamed it fine). This flushes each chunk as it
+ * arrives and cancels the reader if the client disconnects; a finite body just streams its chunk(s) + ends.
+ */
+export async function pipeWebBodyToNode(body: ReadableStream<Uint8Array> | null, res: NodeResLike): Promise<void> {
+  if (!body) {
+    res.end()
+    return
+  }
+  const reader = body.getReader()
+  res.flushHeaders?.()
+  res.on("close", () => void reader.cancel().catch(() => {}))
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      res.write(value)
+    }
+  } catch {
+    // client disconnected mid-stream — the `close` handler already cancelled the reader
+  }
+  res.end()
+}
+
 /**
  * Strip `optimizeDeps.rollupOptions.jsx` from a plugin's `config` hook output when running under
  * rolldown-vite — the source of the scary, harmless `Warning: Invalid input options … "jsx" Invalid
@@ -212,9 +246,9 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
           const contentType = nifraRes.headers.get("content-type") ?? ""
           res.statusCode = nifraRes.status
           if (!contentType.includes("text/html")) {
-            // Data / redirect / asset response — pass through untouched.
+            // Data / redirect / asset response — pass through untouched, streamed (SSE-safe).
             for (const [key, value] of nifraRes.headers) res.setHeader(key, value)
-            res.end(Buffer.from(await nifraRes.arrayBuffer()))
+            await pipeWebBodyToNode(nifraRes.body, res)
             return
           }
           // Inject Vite's HMR client + the framework's refresh preamble into the SSR'd HTML.
