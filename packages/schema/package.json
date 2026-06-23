@@ -35,11 +35,8 @@
     "dist",
     "src"
   ],
-  "comment:sideEffects": "formats.ts registers string formats into TypeBox's global FormatRegistry on import — that file must not be tree-shaken away, so it (not the package) is marked side-effectful.",
-  "sideEffects": [
-    "./src/formats.ts",
-    "./dist/formats.js"
-  ],
+  "comment:sideEffects": "No module here runs work at import time: the standard string formats install lazily from the validate path (src/adapter.ts → src/formats.ts ensureDefaultFormats), not as a top-level import side effect. The previous `sideEffects: [formats]` array did not survive bundling — Bun.build ignores the field — which is why formats were dropped from prod bundles. `false` is accurate now and lets consumers tree-shake freely.",
+  "sideEffects": false,
   "scripts": {
     "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
   },

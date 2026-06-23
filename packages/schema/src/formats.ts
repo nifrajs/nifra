@@ -9,9 +9,9 @@ import { FormatRegistry } from "@sinclair/typebox"
  *
  * Patterns are pragmatic (not full RFC grammars) but reject obvious garbage. Need a
  * stricter rule or a format not listed here (e.g. `ipv6`, `hostname`)? Register it
- * with {@link registerFormat}. Importing this module performs the registration as a
- * one-time side effect; the `Has` guard means an app that registered its own
- * validator first wins.
+ * with {@link registerFormat}. The defaults are installed lazily by
+ * {@link ensureDefaultFormats} from the validate path; the `Has` guard means an app
+ * that registered its own validator first wins.
  */
 const DEFAULT_FORMATS: Readonly<Record<string, RegExp>> = {
   email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
@@ -28,6 +28,27 @@ export function registerFormat(name: string, validate: (value: string) => boolea
   FormatRegistry.Set(name, validate)
 }
 
-for (const [name, pattern] of Object.entries(DEFAULT_FORMATS)) {
-  if (!FormatRegistry.Has(name)) FormatRegistry.Set(name, (value) => pattern.test(value))
+let defaultsRegistered = false
+
+/**
+ * Install the standard string formats into TypeBox's global `FormatRegistry`, once.
+ *
+ * This is driven from the validate path (see `./adapter.ts`) rather than run as a bare
+ * top-level import side effect *on purpose*: a production bundler (`Bun.build`, esbuild)
+ * tree-shakes a module that is only imported for its effect, and Bun.build does **not**
+ * honor the `sideEffects` package.json field — so the old top-level registration loop was
+ * dropped from prod server bundles, making every `t.string({ format })` reject with
+ * "Unknown format" while unbundled `nifra dev` worked. Calling this from code the validator
+ * actually reaches keeps the registration in the bundle.
+ *
+ * Idempotent and cheap to call on every validate (a single boolean check after the first
+ * run). The `Has` guard means a format a consumer registered first via {@link registerFormat}
+ * is left untouched.
+ */
+export function ensureDefaultFormats(): void {
+  if (defaultsRegistered) return
+  defaultsRegistered = true
+  for (const [name, pattern] of Object.entries(DEFAULT_FORMATS)) {
+    if (!FormatRegistry.Has(name)) FormatRegistry.Set(name, (value) => pattern.test(value))
+  }
 }

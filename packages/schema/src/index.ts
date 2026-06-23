@@ -7,8 +7,9 @@
  * a validator; this package is the opt-in default.
  */
 export { fromTypeBox, type NifraSchema } from "./adapter.ts"
-// Re-exporting evaluates ./formats.ts, registering the standard string formats so
-// `t.string({ format })` validates instead of rejecting everything.
+// `registerFormat` adds/overrides a custom string format. The standard formats (email, uuid, …)
+// install themselves lazily from the validate path (see ./adapter.ts) — NOT as an import side
+// effect of this module, which a production bundler would tree-shake away.
 export { registerFormat } from "./formats.ts"
 export { type OpenAPIDocument, type OpenAPIInfo, toOpenAPI } from "./openapi.ts"
 export { t } from "./t.ts"

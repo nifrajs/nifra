@@ -2,6 +2,7 @@ import type { StandardIssue, StandardResult, StandardSchemaV1, StandardTypes } f
 import type { Static, TSchema } from "@sinclair/typebox"
 import { type TypeCheck, TypeCompiler } from "@sinclair/typebox/compiler"
 import { Value } from "@sinclair/typebox/value"
+import { ensureDefaultFormats } from "./formats.ts"
 
 /**
  * A `t` schema. It is a Standard Schema (so any nifra route validates it with no
@@ -54,6 +55,10 @@ export function fromTypeBox<T extends TSchema>(schema: T): NifraSchema<T> {
       version: 1,
       vendor: "nifra",
       validate: (value: unknown): StandardResult<Static<T>> => {
+        // Install the standard string formats before the first Compile/Check. Driven from this
+        // reachable path (not a top-level import side effect) so a production bundle can't
+        // tree-shake the registration away — see ./formats.ts. Idempotent, ~free after first call.
+        ensureDefaultFormats()
         if (compiled === undefined && !evalFree) {
           try {
             compiled = TypeCompiler.Compile(schema)
