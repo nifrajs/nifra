@@ -17,16 +17,16 @@
     "deploy:vercel": "vercel deploy --prebuilt"
   },
   "dependencies": {
-    "@nifrajs/client": "^0.1.0",
-    "@nifrajs/core": "^0.1.0",
-    "@nifrajs/deno": "^0.1.0",
-    "@nifrajs/node": "^0.1.0",
-    "@nifrajs/web": "^0.1.0",
-    "@nifrajs/web-vue": "^0.1.0",
+    "@nifrajs/client": "^0.1.0-alpha.4",
+    "@nifrajs/core": "^0.1.0-alpha.4",
+    "@nifrajs/deno": "^0.1.0-alpha.4",
+    "@nifrajs/node": "^0.1.0-alpha.4",
+    "@nifrajs/web": "^0.1.0-alpha.4",
+    "@nifrajs/web-vue": "^0.1.0-alpha.4",
     "vue": "^3.5.0"
   },
   "devDependencies": {
-    "@nifrajs/cli": "^0.1.0",
+    "@nifrajs/cli": "^0.1.0-alpha.4",
     "@vitejs/plugin-vue": "^5.2.0",
     "@vue/compiler-sfc": "^3.5.0",
     "typescript": "^6.0.3",
