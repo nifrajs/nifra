@@ -11,6 +11,7 @@
   "dependencies": {
     "@nifrajs/client": "^0.1.0-alpha.4",
     "@nifrajs/core": "^0.1.0-alpha.4",
+    "@nifrajs/schema": "^0.1.0-alpha.4",
     "@nifrajs/web": "^0.1.0-alpha.4",
     "@nifrajs/web-react": "^0.1.0-alpha.4",
     "react": "^19.0.0",

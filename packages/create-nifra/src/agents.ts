@@ -43,16 +43,24 @@ export type App = typeof app
 
 Rules an agent must follow:
 
-- **Validate every input at the boundary.** Pass a schema (\`{ body, query, params, headers }\`) on any
-  route that reads untrusted input — use \`t\` from \`@nifrajs/schema\` or any Standard Schema (zod, valibot).
-  Then read \`c.body\` / \`c.query\` / \`c.params\`, which are typed and already validated. **Never** hand-parse
-  \`await c.req.json()\` and poke at properties — that's the bug class the schema exists to remove.
+- **Validate every input at the boundary.** The route schema slots are \`{ body, query }\` (plus
+  \`response\`, below) — use \`t\` from \`@nifrajs/schema\` (installed) or any Standard Schema (zod, valibot).
+  Read the typed, already-validated \`c.body\` / \`c.query\` (invalid input was rejected with a 400 before the
+  handler ran). **Never** hand-parse \`await c.req.json()\` and poke at properties — that's the bug class the
+  schema exists to remove.
+- **Path params are NOT a schema slot.** \`:id\` etc. are inferred from the path literal as \`string\` and
+  read via \`c.params.id\`; there is no \`params\` (or \`headers\`) key in the route schema. Validate a param's
+  shape inside the handler (a length/format check), not via \`{ params: ... }\` — that's a type error.
 - **Lock the output shape with \`response\` (no drift).** Add \`{ response: t.object({...}) }\` to a route:
   the handler's return is type-checked against it, and the typed client sees exactly that shape. One
   contract, both sides — the frontend physically can't drift from the backend's output.
-- **Return values, not boilerplate.** Returning a plain object/array/string sends JSON. Return a
-  \`Response\` for full control, or \`new Response(..., { status })\` for errors. Prefer explicit error
-  shapes (\`{ ok: false, error: "slot_unavailable" }\`) with the right status over generic 500s.
+- **Data-or-error routes: return a discriminated UNION, set the code via \`c.set.status\`** — e.g.
+  \`response: t.union([Item, t.object({ ok: t.literal(false), error: t.string() })])\`, then
+  \`c.set.status = 404; return { ok: false, error: "not_found" }\`. This keeps the typed client's \`res.data\`
+  precise — do NOT return a raw \`Response\` just to set an error status.
+- **Raw \`Response\` is for redirects / streams / files** (\`Response.redirect(url, 302)\`, a file body, an
+  SSE stream). The typed client infers \`res.data: never\` on such a route and \`nifra check\` emits a
+  non-blocking \`response-route\` warning — both are EXPECTED there, not defects.
 - **\`app.fetch(request)\` is the whole app** — \`(Request) => Response | Promise<Response>\`. Tests drive it
   directly (\`await app.fetch(new Request("http://x/users/1"))\`); no server needs to be running.
 - **Don't reach for a heavy ORM/HTTP layer.** Routing, validation, cookies, and the typed client are
@@ -85,6 +93,9 @@ function webRules(framework: Framework): string {
   \`_404.tsx\` / \`_error.tsx\` are the fallbacks.
 - A route file may export: \`default\` (the page component), \`loader\` (server-only data), \`action\`
   (server-only mutation), and \`meta\` (head tags). The \`loader\` returns data typed straight into the page.
+- **The \`server()\` backend is IN-PROCESS, not a public HTTP surface.** Loaders/actions call it through
+  \`ctx.api\` (the typed client — no network) during SSR; there is no \`GET /your-route\` endpoint on the page
+  server to curl. Build features through loaders/actions + the typed client, not direct HTTP calls.
 - Swap UI frameworks by changing one import (\`@nifrajs/web-${framework}\` → another adapter); your route,
   loader, and action code do not change.
 - **Loaders \`throw redirect(url)\`, actions \`return redirect(url)\`.** Loader redirects abort the

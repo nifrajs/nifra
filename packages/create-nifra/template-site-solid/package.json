@@ -19,6 +19,7 @@
   "dependencies": {
     "@nifrajs/client": "^0.1.0-alpha.4",
     "@nifrajs/core": "^0.1.0-alpha.4",
+    "@nifrajs/schema": "^0.1.0-alpha.4",
     "@nifrajs/deno": "^0.1.0-alpha.4",
     "@nifrajs/node": "^0.1.0-alpha.4",
     "@nifrajs/web": "^0.1.0-alpha.4",
