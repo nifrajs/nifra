@@ -54,10 +54,14 @@ Rules an agent must follow:
 - **Lock the output shape with \`response\` (no drift).** Add \`{ response: t.object({...}) }\` to a route:
   the handler's return is type-checked against it, and the typed client sees exactly that shape. One
   contract, both sides — the frontend physically can't drift from the backend's output.
-- **Data-or-error routes: return a discriminated UNION, set the code via \`c.set.status\`** — e.g.
-  \`response: t.union([Item, t.object({ ok: t.literal(false), error: t.string() })])\`, then
-  \`c.set.status = 404; return { ok: false, error: "not_found" }\`. This keeps the typed client's \`res.data\`
-  precise — do NOT return a raw \`Response\` just to set an error status.
+- **Data-or-error routes: set the status with \`c.set.status\`, then read the error off \`res.error\` (NOT \`res.data\`).**
+  The typed client maps \`res.ok\` to the HTTP status. A route that does \`c.set.status = 404; return { ok: false,
+  error: "not_found" }\` arrives at the client as \`res.ok === false\`, \`res.data === null\`, and the body on
+  \`res.error\` (\`res.error.error === "not_found"\`). So branch on \`res.ok\` FIRST, then read \`res.data\` on success
+  or \`res.error\` on failure — never assert a 4xx onto \`res.data\`. Declaring the error arm in \`response\`
+  (\`t.union([Item, t.object({ ok: t.literal(false), error: t.string() })])\`) documents the shape and keeps the
+  success \`res.data\` precise, but a 4xx still surfaces via \`res.error\`. Do NOT return a raw \`Response\` just to
+  set an error status.
 - **Raw \`Response\` is for redirects / streams / files** (\`Response.redirect(url, 302)\`, a file body, an
   SSE stream). The typed client infers \`res.data: never\` on such a route and \`nifra check\` emits a
   non-blocking \`response-route\` warning — both are EXPECTED there, not defects.
@@ -240,14 +244,21 @@ const COMMANDS: Readonly<Record<TemplateName, string>> = {
 - \`nifra check\` — typecheck + typed-client lint (run before you call work done)`,
   site: `- \`bun install\` — install dependencies
 - \`nifra dev\` — true-HMR dev server
-- \`nifra build\` — content-hashed client bundle + manifest
-- \`nifra start\` — serve the built app (SSR)
-- \`nifra check\` — typecheck + typed-client lint (run before you call work done)`,
+- \`nifra build\` — content-hashed client bundle + manifest (local build)
+- \`nifra start\` — serve the built app (SSR) — pairs with \`nifra build\`
+- \`nifra check\` — typecheck + typed-client lint (run before you call work done)
+
+  For a local production run use \`nifra build && nifra start\` (or \`bun run build:bun && bun run start\`). NOTE:
+  the bare \`bun run build\` script targets **Cloudflare Pages for DEPLOY** (emits \`dist/\`, a different layout)
+  — it does NOT pair with \`nifra start\`/\`bun run start\` (which serve \`dist-bun/\`). Don't mix the two.`,
   isr: `- \`bun install\` — install dependencies
 - \`nifra dev\` — true-HMR dev server
-- \`nifra build\` — build for your deploy target
-- \`nifra start\` — serve the built app (SSR + ISR cache)
-- \`nifra check\` — typecheck + typed-client lint (run before you call work done)`,
+- \`nifra build\` — content-hashed client bundle + manifest (local build)
+- \`nifra start\` — serve the built app (SSR + ISR cache) — pairs with \`nifra build\`
+- \`nifra check\` — typecheck + typed-client lint (run before you call work done)
+
+  For a local production run use \`nifra build && nifra start\`. NOTE: the bare \`bun run build\` script targets
+  **Cloudflare Pages for DEPLOY** (\`dist/\`) and does NOT pair with \`nifra start\` — don't mix the two.`,
 }
 
 /** The agent's stop condition — what makes the anti-drift guarantees actually fire. */
