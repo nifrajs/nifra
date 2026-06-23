@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/web-vanilla",
-  "version": "0.1.0-alpha.4",
+  "version": "0.1.0-alpha.5",
   "description": "Zero-framework render adapter for @nifrajs/web — auto-escaping tagged-template HTML, ~0 KB client JS, interactivity via @nifrajs/web/islands.",
   "keywords": [
     "bun",

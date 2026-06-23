@@ -116,7 +116,7 @@
     },
     "packages/cli": {
       "name": "@nifrajs/cli",
-      "version": "0.1.0-alpha.4",
+      "version": "0.1.0-alpha.5",
       "bin": {
         "nifra": "./dist/cli.js",
       },
@@ -162,7 +162,7 @@
     },
     "packages/create-nifra": {
       "name": "create-nifra",
-      "version": "0.1.0-alpha.4",
+      "version": "0.1.0-alpha.7",
       "bin": {
         "create-nifra": "./dist/cli.js",
       },
@@ -260,7 +260,7 @@
     },
     "packages/web": {
       "name": "@nifrajs/web",
-      "version": "0.1.0-alpha.4",
+      "version": "0.1.0-alpha.5",
       "dependencies": {
         "@nifrajs/core": "workspace:*",
       },
@@ -279,7 +279,7 @@
     },
     "packages/web-preact": {
       "name": "@nifrajs/web-preact",
-      "version": "0.1.0-alpha.4",
+      "version": "0.1.0-alpha.5",
       "dependencies": {
         "@nifrajs/i18n": "workspace:*",
         "@nifrajs/image": "workspace:*",
@@ -295,7 +295,7 @@
     },
     "packages/web-react": {
       "name": "@nifrajs/web-react",
-      "version": "0.1.0-alpha.4",
+      "version": "0.1.0-alpha.5",
       "dependencies": {
         "@nifrajs/i18n": "workspace:*",
         "@nifrajs/image": "workspace:*",
@@ -314,7 +314,7 @@
     },
     "packages/web-solid": {
       "name": "@nifrajs/web-solid",
-      "version": "0.1.0-alpha.4",
+      "version": "0.1.0-alpha.5",
       "dependencies": {
         "@babel/core": "^7.26.0",
         "@babel/preset-typescript": "^7.26.0",
@@ -337,7 +337,7 @@
     },
     "packages/web-svelte": {
       "name": "@nifrajs/web-svelte",
-      "version": "0.1.0-alpha.4",
+      "version": "0.1.0-alpha.5",
       "dependencies": {
         "@nifrajs/i18n": "workspace:*",
         "@nifrajs/image": "workspace:*",
@@ -356,14 +356,14 @@
     },
     "packages/web-vanilla": {
       "name": "@nifrajs/web-vanilla",
-      "version": "0.1.0-alpha.4",
+      "version": "0.1.0-alpha.5",
       "peerDependencies": {
         "@nifrajs/web": "workspace:*",
       },
     },
     "packages/web-vue": {
       "name": "@nifrajs/web-vue",
-      "version": "0.1.0-alpha.4",
+      "version": "0.1.0-alpha.5",
       "dependencies": {
         "@nifrajs/i18n": "workspace:*",
         "@nifrajs/image": "workspace:*",
