@@ -1,5 +1,39 @@
 import { expect, test } from "bun:test"
-import { pipeWebBodyToNode } from "../src/vite.ts"
+import { applyResponseHeaders, pipeWebBodyToNode } from "../src/vite.ts"
+
+// A header sink mock recording setHeader calls (the dev server writes onto a Node ServerResponse).
+function mockHeaderSink() {
+  const set: Array<[string, string | readonly string[]]> = []
+  return { set, setHeader: (name: string, value: string | readonly string[]) => set.push([name, value]) }
+}
+
+test("applyResponseHeaders emits multiple Set-Cookie headers separately (not joined)", () => {
+  const headers = new Headers()
+  headers.append("set-cookie", "app.session_token=abc; Path=/; HttpOnly; SameSite=Lax")
+  headers.append("set-cookie", "app.session_data=xyz; Path=/; HttpOnly; SameSite=Lax")
+  headers.set("content-type", "application/json")
+  const res = mockHeaderSink()
+
+  applyResponseHeaders(headers, res)
+
+  // set-cookie set ONCE as an array of both cookies (never comma-joined); content-type passed through.
+  const cookieCalls = res.set.filter(([k]) => k.toLowerCase() === "set-cookie")
+  expect(cookieCalls.length).toBe(1)
+  const value = cookieCalls[0]?.[1]
+  expect(Array.isArray(value)).toBe(true)
+  expect(value).toHaveLength(2)
+  expect((value as string[])[0]).toContain("session_token=abc")
+  expect((value as string[])[1]).toContain("session_data=xyz")
+  expect(res.set.some(([k, v]) => k === "content-type" && v === "application/json")).toBe(true)
+})
+
+test("applyResponseHeaders sets no Set-Cookie when there are none", () => {
+  const headers = new Headers({ "content-type": "text/event-stream" })
+  const res = mockHeaderSink()
+  applyResponseHeaders(headers, res)
+  expect(res.set.some(([k]) => k.toLowerCase() === "set-cookie")).toBe(false)
+  expect(res.set.some(([k]) => k === "content-type")).toBe(true)
+})
 
 // A minimal Node-ServerResponse mock capturing what the dev server writes.
 function mockRes() {

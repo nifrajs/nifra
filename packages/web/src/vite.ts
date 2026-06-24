@@ -130,6 +130,26 @@ interface NodeResLike {
   end(): void
 }
 
+/** Structural slice of a Node response for header writing. */
+interface NodeHeaderSink {
+  setHeader(name: string, value: string | readonly string[]): void
+}
+
+/**
+ * Copy a Web `Response`'s headers onto a Node response, emitting EACH `Set-Cookie` as its own header. The
+ * `Headers` iterator (and `.get`) join multiple set-cookie values with ", ", which corrupts cookies — e.g.
+ * better-auth's `session_token` + `session_data` collapse into one unparseable cookie and the session is
+ * silently lost. `getSetCookie()` returns them split; Node's `setHeader` emits one header per array element.
+ */
+export function applyResponseHeaders(headers: Headers, res: NodeHeaderSink): void {
+  for (const [key, value] of headers) {
+    if (key.toLowerCase() === "set-cookie") continue
+    res.setHeader(key, value)
+  }
+  const cookies = headers.getSetCookie?.()
+  if (cookies && cookies.length > 0) res.setHeader("set-cookie", cookies)
+}
+
 /**
  * Stream a Web `Response` body to a Node response chunk-by-chunk. Buffering the whole body (e.g.
  * `arrayBuffer()`) waits for the stream to END — which an open-ended SSE (`text/event-stream`) body never
@@ -246,8 +266,9 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
           const contentType = nifraRes.headers.get("content-type") ?? ""
           res.statusCode = nifraRes.status
           if (!contentType.includes("text/html")) {
-            // Data / redirect / asset response — pass through untouched, streamed (SSE-safe).
-            for (const [key, value] of nifraRes.headers) res.setHeader(key, value)
+            // Data / redirect / asset response — pass through untouched, streamed (SSE-safe). Set-Cookie is
+            // emitted per-header so multi-cookie responses (e.g. better-auth sessions) aren't collapsed.
+            applyResponseHeaders(nifraRes.headers, res)
             await pipeWebBodyToNode(nifraRes.body, res)
             return
           }
