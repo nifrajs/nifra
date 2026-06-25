@@ -55,6 +55,7 @@ const DOC_ORDER = [
   "images",
   "i18n",
   "edge",
+  "websockets",
   "deployment",
   "cli",
   "dev",

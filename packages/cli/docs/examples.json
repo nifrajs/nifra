@@ -268,5 +268,11 @@
     "topic": "Nifra — Types-first architecture",
     "slug": "types-first",
     "code": "import { t } from \"@nifrajs/schema\"\n\n// One contract, defined once. Everything below is derived from it.\nexport const GetUser = {\n  params: t.object({ id: t.string() }),\n  response: t.object({\n    id: t.string(),\n    name: t.string(),\n    role: t.union([t.literal(\"admin\"), t.literal(\"user\")]),\n  }),\n}"
+  },
+  {
+    "name": "BASIC",
+    "topic": "Nifra — WebSockets",
+    "slug": "websockets",
+    "code": "import { server } from \"@nifrajs/core\"\nimport \"@nifrajs/core/ws\" // registers the WebSocket runtime app.ws() needs\n\nconst app = server()\n  .get(\"/\", () => ({ ok: true }))\n  .ws(\"/echo\", {\n    open: (ws) => ws.send(\"welcome\"),\n    message: (ws, data) => ws.send(data), // data: string | Uint8Array\n  })\n\napp.listen(3000) // Bun"
   }
 ]
