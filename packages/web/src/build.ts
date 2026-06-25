@@ -848,6 +848,12 @@ export interface BuildServerOptions {
   /** The content-hashed client entry URL (from `buildClient`'s manifest) — **baked** into the generated
    * server manifest, since a disk-less worker can't read `manifest.json` at runtime. */
   readonly clientEntry: string
+  /** The app's aggregate stylesheet URLs (`buildClient`'s `BuildManifest.css`) — baked into the generated
+   * manifest so the server entry hands them to `createWebApp` (→ `<link rel="stylesheet">`). Omit ⇒ no CSS
+   * link (the built SSR page would otherwise render unstyled). */
+  readonly styles?: readonly string[] | undefined
+  /** Per-route stylesheet URLs (`buildClient`'s `BuildManifest.routeStyles`) — baked alongside `styles`. */
+  readonly routeStyles?: Readonly<Record<string, readonly string[]>> | undefined
   /** Route/layout file → import specifier in the generated manifest (default: a relative path from the
    * manifest's location — written next to `serverEntry` — to `routesDir`). */
   readonly resolve?: (file: string) => string
@@ -1042,7 +1048,7 @@ const solidWebServerPlugin = (from: string): BunPlugin => ({
  * silently ships a broken worker.
  */
 export async function buildServer(options: BuildServerOptions): Promise<ServerBuild> {
-  const { routesDir, serverEntry, outDir, clientEntry } = options
+  const { routesDir, serverEntry, outDir, clientEntry, styles, routeStyles } = options
   const entryDir = dirname(serverEntry)
   const manifestFile = options.manifestFile ?? "server-manifest.ts"
   // Default: import routes relative from the generated manifest (next to serverEntry) to routesDir.
@@ -1061,7 +1067,7 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
   const manifest = discoverRoutes(routesDir)
   writeFileSync(
     `${entryDir}/${manifestFile}`,
-    generateServerManifest(manifest, { resolve, clientEntry, lazy }),
+    generateServerManifest(manifest, { resolve, clientEntry, styles, routeStyles, lazy }),
   )
 
   const result = await Bun.build({
@@ -1152,7 +1158,7 @@ export function generateServerEntry(options: {
   if (backendImport !== undefined) {
     lines.push(`import { backend } from ${JSON.stringify(backendImport)}`)
   }
-  lines.push('import { clientEntry, manifest } from "./server-manifest"')
+  lines.push('import { clientEntry, manifest, styles, routeStyles } from "./server-manifest"')
   // cf-pages/vercel/deno need the fetch-handler shape; bun/node call app.fetch directly.
   const usesToFetch = target === "cf-pages" || target === "vercel" || target === "deno"
   if (usesToFetch) lines.push('import { toFetchHandler } from "@nifrajs/core"')
@@ -1163,6 +1169,8 @@ export function generateServerEntry(options: {
     "  adapter,",
     "  manifest,",
     "  clientEntry,",
+    "  styles,",
+    "  routeStyles,",
     ...(backendImport !== undefined ? ["  api: inProcessClient(backend),"] : []),
     `  title: ${JSON.stringify(title)},`,
     "})",

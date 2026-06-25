@@ -1499,6 +1499,13 @@ export interface GenerateServerManifestOptions {
   /** The content-hashed client entry URL (from `buildClient`'s manifest), **baked** into the emitted
    * module — a disk-less worker can't read `manifest.json` at runtime. */
   readonly clientEntry: string
+  /** The app's aggregate stylesheet URLs (`buildClient`'s `BuildManifest.css`) — baked as
+   * `export const styles` so the server entry can hand them to `createWebApp` (→ `<link rel="stylesheet">`
+   * in `<head>`). Without this the built SSR page ships no CSS link and renders unstyled. */
+  readonly styles?: readonly string[] | undefined
+  /** Per-route stylesheet URLs (`buildClient`'s `BuildManifest.routeStyles`) — baked as
+   * `export const routeStyles` so a page links only the CSS its route chain uses. */
+  readonly routeStyles?: Readonly<Record<string, readonly string[]>> | undefined
   /** Emit **lazy** per-route loaders (`() => import("./routes/x")`, a static specifier) instead of
    * eager `import * as`, so a bundler with code-splitting emits one chunk per route — loaded on the
    * first request to it, not all at boot (smaller cold-start parse). Default `false` (eager). Both
@@ -1521,7 +1528,7 @@ export function generateServerManifest(
   manifest: Manifest,
   options: GenerateServerManifestOptions,
 ): string {
-  const { resolve, clientEntry, lazy = false } = options
+  const { resolve, clientEntry, styles, routeStyles, lazy = false } = options
   // Every unique source file in the manifest (routes + layouts + `_error` + `_404`), sorted for stable output.
   const files = [
     ...new Set([
@@ -1538,6 +1545,10 @@ export function generateServerManifest(
     'import { buildManifest } from "@nifrajs/web"',
   ]
   const clientEntryLine = `export const clientEntry = ${JSON.stringify(clientEntry)}`
+  // Baked stylesheet URLs so the server entry can pass them to createWebApp → <link rel="stylesheet">.
+  // Always emitted (default empty) so consumers can `import { styles, routeStyles }` unconditionally.
+  const stylesLine = `export const styles = ${JSON.stringify(styles ?? [])}`
+  const routeStylesLine = `export const routeStyles = ${JSON.stringify(routeStyles ?? {})}`
   if (lazy) {
     // Lazy: `() => import("./routes/x")` per route (static specifier → one chunk per route under a
     // code-splitting bundler, loaded on first request). The map keys are the route-relative paths
@@ -1551,6 +1562,8 @@ export function generateServerManifest(
       ...loaders,
       "}",
       clientEntryLine,
+      stylesLine,
+      routeStylesLine,
       "export const manifest = buildManifest(Object.keys(loaders), (file) => () => loaders[file]())",
     ].join("\n")}\n`
   }
@@ -1565,6 +1578,8 @@ export function generateServerManifest(
     ...entries,
     "}",
     clientEntryLine,
+    stylesLine,
+    routeStylesLine,
     "export const manifest = buildManifest(Object.keys(modules), (file) => () => Promise.resolve(modules[file]))",
   ].join("\n")}\n`
 }

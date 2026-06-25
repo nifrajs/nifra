@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { generateServerManifest } from "../src/index.ts"
 import {
   aggregateSizeReport,
   type ChunkSize,
@@ -225,5 +226,33 @@ describe("generateServerEntry", () => {
     expect(() =>
       generateServerEntry({ target: "static", adapterImport: "../framework.ts" }),
     ).toThrow(/static/)
+  })
+
+  test("imports + passes styles/routeStyles to createWebApp (so the SSR head links CSS)", () => {
+    const src = generateServerEntry({ target: "bun", adapterImport: "../framework.ts" })
+    expect(src).toContain('import { clientEntry, manifest, styles, routeStyles } from "./server-manifest"')
+    expect(src).toContain("  styles,")
+    expect(src).toContain("  routeStyles,")
+  })
+})
+
+describe("generateServerManifest — bakes styles for createWebApp", () => {
+  const EMPTY = { routes: [], layouts: {} } as unknown as Parameters<typeof generateServerManifest>[0]
+
+  test("bakes styles + routeStyles exports from the build's CSS manifest", () => {
+    const src = generateServerManifest(EMPTY, {
+      resolve: (f) => `./routes/${f}`,
+      clientEntry: "/assets/x.js",
+      styles: ["/assets/x.css"],
+      routeStyles: { index: ["/assets/x.css"] },
+    })
+    expect(src).toContain('export const styles = ["/assets/x.css"]')
+    expect(src).toContain('export const routeStyles = {"index":["/assets/x.css"]}')
+  })
+
+  test("defaults to empty exports when the app imports no CSS (so consumers can always import them)", () => {
+    const src = generateServerManifest(EMPTY, { resolve: (f) => `./routes/${f}`, clientEntry: "/assets/x.js" })
+    expect(src).toContain("export const styles = []")
+    expect(src).toContain("export const routeStyles = {}")
   })
 })
