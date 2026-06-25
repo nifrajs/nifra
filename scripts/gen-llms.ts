@@ -45,6 +45,7 @@ const DOC_ORDER = [
   "data",
   "mutations",
   "rendering",
+  "hydration",
   "streaming",
   "query",
   "frameworks",
