@@ -17,18 +17,18 @@
     "deploy:vercel": "vercel deploy --prebuilt"
   },
   "dependencies": {
-    "@nifrajs/client": "^0.1.0-beta.0",
-    "@nifrajs/core": "^0.1.0-beta.0",
-    "@nifrajs/schema": "^0.1.0-beta.0",
-    "@nifrajs/deno": "^0.1.0-beta.0",
-    "@nifrajs/node": "^0.1.0-beta.0",
-    "@nifrajs/web": "^0.1.0-beta.0",
-    "@nifrajs/web-svelte": "^0.1.0-beta.0",
+    "@nifrajs/client": "^0.1.0-beta.1",
+    "@nifrajs/core": "^0.1.0-beta.1",
+    "@nifrajs/schema": "^0.1.0-beta.1",
+    "@nifrajs/deno": "^0.1.0-beta.1",
+    "@nifrajs/node": "^0.1.0-beta.1",
+    "@nifrajs/web": "^0.1.0-beta.1",
+    "@nifrajs/web-svelte": "^0.1.0-beta.1",
     "svelte": "^5.3.0"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
-    "@nifrajs/cli": "^0.1.0-beta.0",
+    "@nifrajs/cli": "^0.1.0-beta.1",
     "typescript": "^6.0.3",
     "vite": "^8.0.0"
   }

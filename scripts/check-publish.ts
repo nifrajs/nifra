@@ -50,6 +50,31 @@ if (stray.exitCode === 0) {
   console.log("✓ no stray `@nifra/` scope")
 }
 
+// Publish-resolution gate: `changeset publish` shells `npm publish`, which does NOT rewrite the
+// `workspace:` protocol — so `changeset:publish` runs resolve-workspace-deps first. This asserts every
+// internal `workspace:` dep in a published block (dependencies/peer/optional) points to a known
+// sibling, so that rewrite can't leave a `workspace:*` to ship to npm. (Packing here with `bun pm
+// pack` rewrites workspace: for free and hid the alpha.1/2 + beta.0 EUNSUPPORTEDPROTOCOL break — npm
+// publish does not, which is what actually ships.)
+const resolveCheck = await $`bun run scripts/resolve-workspace-deps.ts --check`.nothrow()
+if (resolveCheck.exitCode !== 0) {
+  failures += 1
+  console.error(
+    "✗ unresolvable workspace: dep(s) in a published block — publish would leak workspace:",
+  )
+}
+// ...and the publish script must actually RUN the resolver before `changeset publish` — removing it
+// would silently reship the workspace: leak (npm publish does not rewrite it). Guard the wiring.
+const publishScript = (
+  JSON.parse(await Bun.file("package.json").text()) as { scripts: Record<string, string> }
+).scripts["changeset:publish"]
+if (publishScript === undefined || !publishScript.includes("resolve-workspace-deps")) {
+  failures += 1
+  console.error("✗ changeset:publish must run resolve-workspace-deps before `changeset publish`")
+} else {
+  console.log("✓ changeset:publish resolves workspace: deps before publishing")
+}
+
 await $`bun run build`
 for (const pkg of LIBRARIES) {
   console.log(`\n=== @nifrajs/${pkg} ===`)

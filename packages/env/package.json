@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/env",
-  "version": "0.1.0-beta.0",
+  "version": "0.1.0-beta.1",
   "description": "Typed, validated environment variables for nifra — define a schema, get a frozen typed object, fail loud at boot listing every problem. Coercing helpers (number/port/boolean/url/enum) + any Standard Schema. Dependency-free, edge-safe.",
   "keywords": [
     "bun",
