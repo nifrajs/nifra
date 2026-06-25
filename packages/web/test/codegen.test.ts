@@ -34,7 +34,7 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
     'import { createClientRouter, createMatcher, mergeHeads, resolveMeta } from "@nifrajs/web"',
   )
   expect(code).toContain(
-    'import { applyHead, installForms, installHistory } from "@nifrajs/web/client"',
+    'import { applyHead, installForms, installHistory, signalHydrated } from "@nifrajs/web/client"',
   )
   expect(code).toContain('import * as __adapter from "@nifrajs/web-solid/client"')
   expect(code).toContain("const { mountRouter } = __adapter")
@@ -60,6 +60,8 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   expect(code).toContain("installHistory(router)")
   expect(code).toContain("installForms(router)")
   expect(code).toContain("mountRouter({ router, routes: chains, container: root })")
+  // The hydration signal fires on the frame after the adapter mounts (see the Hydration guide).
+  expect(code).toContain("requestAnimationFrame(signalHydrated)")
   // head updates on navigation from the matched route's MERGED chain meta (layouts→page) + data — #3.
   expect(code).toContain(
     "applyHead(mergeHeads((metas[s.routeId] ?? [undefined]).map((m) => resolveMeta(m, args))))",
