@@ -81,7 +81,8 @@ routes/ from the current directory. Run from your project root.
 Port: \`dev\` and \`start\` share the default ${DEFAULT_DEV_PORT}. Override with \`--port <n>\` (alias \`-p\`) or the
 \`PORT\` env var (\`--port\` wins over \`PORT\`, which wins over the default).`
 
-const CLI_VERSION = "0.1.0-alpha.1"
+// Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
+const CLI_VERSION = "0.1.0-beta.0"
 
 // A render adapter + nifra server are opaque to the CLI (it just forwards them); cast at the seam.
 const asAdapter = (v: unknown): RenderAdapter => v as RenderAdapter
