@@ -156,7 +156,10 @@ export function applyResponseHeaders(headers: Headers, res: NodeHeaderSink): voi
  * does, so it hung `nifra dev` (the Bun production server streamed it fine). This flushes each chunk as it
  * arrives and cancels the reader if the client disconnects; a finite body just streams its chunk(s) + ends.
  */
-export async function pipeWebBodyToNode(body: ReadableStream<Uint8Array> | null, res: NodeResLike): Promise<void> {
+export async function pipeWebBodyToNode(
+  body: ReadableStream<Uint8Array> | null,
+  res: NodeResLike,
+): Promise<void> {
   if (!body) {
     res.end()
     return
