@@ -714,6 +714,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Options for a per-adapter `mountRouter` (the Router binding that hydrates + re-renders).
 - **OpenGraphInput** _(interface)_ — `interface OpenGraphInput`
   Inputs for {@link openGraph} — the common Open Graph properties. All optional; only the provided ones become tags. `type` defaults to `"website"`.
+- **PRE_HYDRATION_GUARD** _(const)_ — `PRE_HYDRATION_GUARD: string`
+  Pre-hydration form guard — a tiny inline script flushed in `<head>` (it runs in the window between first paint and the island bundle taking over). It neutralizes the one real hydration footgun: a JS-only form (a hand-wired `onSubmit` with no native fallback) submitting *natively* before its handler…
 - **QueryClient** _(interface)_ — `interface QueryClient`
   The keyed query cache. One per app (a binding registers it like the router).
 - **QueryClientOptions** _(interface)_ — `interface QueryClientOptions`

@@ -23,10 +23,11 @@
  *
  *   bun run scripts/check-cold-start.ts
  */
-import { $ } from "bun"
-import { readdirSync, readFileSync, cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+
+import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { $ } from "bun"
 
 const ROOT = resolve(import.meta.dir, "..")
 const PKGS_DIR = join(ROOT, "packages")
@@ -84,11 +85,15 @@ for (const tpl of templateDirs) {
     // `workspace:` shouldn't appear in a shipped template; the publish rewrite is for real packages, not
     // these static files. Flag it — a scaffolded app can't resolve a `workspace:` dep.
     if (range.startsWith("workspace:")) {
-      bad.push(`${dep}="${range}" → workspace: protocol in a template (unresolvable for an external app)`)
+      bad.push(
+        `${dep}="${range}" → workspace: protocol in a template (unresolvable for an external app)`,
+      )
       continue
     }
     if (!Bun.semver.satisfies(current, range)) {
-      bad.push(`${dep}="${range}" does NOT satisfy the current ${current} (caret excludes the prerelease?)`)
+      bad.push(
+        `${dep}="${range}" does NOT satisfy the current ${current} (caret excludes the prerelease?)`,
+      )
     }
   }
   if (bad.length > 0) {
@@ -114,7 +119,9 @@ try {
   for (const { name, dir } of publishable) {
     const packed = await $`bun pm pack --destination ${tarballs}`.cwd(dir).nothrow().quiet()
     if (packed.exitCode !== 0) {
-      console.error(`✗ pack ${name} failed — did you run \`bun run build\` first? (exit ${packed.exitCode})`)
+      console.error(
+        `✗ pack ${name} failed — did you run \`bun run build\` first? (exit ${packed.exitCode})`,
+      )
       packFailed = true
       break
     }
@@ -127,7 +134,8 @@ try {
       // The char right after `<slug>-` must be a digit (the version) — else `nifrajs-web-` would also
       // match `nifrajs-web-react-….tgz` and `@nifrajs/web` would get the wrong tarball.
       const file = files.find(
-        (f) => f.startsWith(`${slug}-`) && /\d/.test(f.charAt(slug.length + 1)) && f.endsWith(".tgz"),
+        (f) =>
+          f.startsWith(`${slug}-`) && /\d/.test(f.charAt(slug.length + 1)) && f.endsWith(".tgz"),
       )
       if (file) tarballByName.set(name, join(tarballs, file))
     }
@@ -142,7 +150,9 @@ try {
 
     // Force the WHOLE @nifrajs tree to the packed tarballs via `overrides` — so the template builds
     // against the current source, not whatever is on npm. (Layer 1 already validated the pin ranges.)
-    const appPkg = readJson(join(app, "package.json")) as Manifest & { overrides?: Record<string, string> }
+    const appPkg = readJson(join(app, "package.json")) as Manifest & {
+      overrides?: Record<string, string>
+    }
     appPkg.overrides = appPkg.overrides ?? {}
     for (const [name, tgz] of tarballByName) appPkg.overrides[name] = `file:${tgz}`
     writeFileSync(join(app, "package.json"), `${JSON.stringify(appPkg, null, 2)}\n`)
@@ -157,7 +167,9 @@ try {
         failures += 1
         console.error(`✗ scaffolded template-site: bun run build failed (exit ${build.exitCode})`)
       } else {
-        console.log("✓ scaffolded template-site installs + builds against the packed current source")
+        console.log(
+          "✓ scaffolded template-site installs + builds against the packed current source",
+        )
       }
     }
   }

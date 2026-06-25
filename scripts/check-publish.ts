@@ -124,7 +124,9 @@ for (const dir of ALL_DIRS) {
   }
   if (leaks.length > 0) {
     failures += 1
-    console.error(`✗ ${manifest.name}: workspace: leaked into published manifest → ${leaks.join(", ")}`)
+    console.error(
+      `✗ ${manifest.name}: workspace: leaked into published manifest → ${leaks.join(", ")}`,
+    )
   } else {
     console.log(`✓ ${manifest.name}: packed manifest concrete (no workspace: leak)`)
   }

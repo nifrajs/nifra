@@ -4,7 +4,10 @@ import { applyResponseHeaders, pipeWebBodyToNode } from "../src/vite.ts"
 // A header sink mock recording setHeader calls (the dev server writes onto a Node ServerResponse).
 function mockHeaderSink() {
   const set: Array<[string, string | readonly string[]]> = []
-  return { set, setHeader: (name: string, value: string | readonly string[]) => set.push([name, value]) }
+  return {
+    set,
+    setHeader: (name: string, value: string | readonly string[]) => set.push([name, value]),
+  }
 }
 
 test("applyResponseHeaders emits multiple Set-Cookie headers separately (not joined)", () => {
