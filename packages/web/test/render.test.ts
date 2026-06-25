@@ -52,6 +52,8 @@ test("renderPage builds an HTML doc: SSR markup, hydration head, data, client en
   expect(html).toContain('<div id="root"><p>chain=2:{"user":"ada"}</p></div>')
   expect(html).toContain(`window.${DATA_GLOBAL}={"user":"ada"}`)
   expect(html).toContain('<script type="module" src="/assets/client.js">')
+  // The pre-hydration form guard is inlined in <head> on a hydrating page.
+  expect(html).toContain("addEventListener('submit'")
   expect(html).toContain('<link rel="modulepreload" href="/assets/client.js">') // preloads the entry
 })
 
@@ -100,6 +102,8 @@ test("renderPage emits stylesheets even on a non-hydrated page (e.g. _error)", a
   expect(html).toContain('<link rel="stylesheet" href="/assets/app-z.css">')
   // ...but no client entry (non-hydrated terminal page).
   expect(html).not.toContain('<script type="module"')
+  // ...and no pre-hydration guard — a non-hydrating page has no client handlers to race.
+  expect(html).not.toContain("addEventListener('submit'")
   // Preload links are attribute-escaped (no breakout).
   const esc = await (
     await renderPage({

@@ -233,3 +233,18 @@ export function installForms(router: ClientRouter): () => void {
   document.addEventListener("submit", onSubmit)
   return () => document.removeEventListener("submit", onSubmit)
 }
+
+/**
+ * Mark the document interactive once the client has hydrated: sets `data-nifra-hydrated` on `<html>`
+ * and fires a one-shot `nifra:hydrated` event. The generated client entry calls this on the next frame
+ * after the adapter mounts (so every framework binding gets it), letting apps gate a custom JS-only
+ * interaction that would otherwise fire before its handler is attached. Idempotent. nifra's own
+ * progressive-enhancement forms/links don't need it — only hand-wired onClick/onSubmit handlers with no
+ * native fallback do. See the Hydration guide.
+ */
+export function signalHydrated(): void {
+  const el = document.documentElement
+  if (el.hasAttribute("data-nifra-hydrated")) return
+  el.setAttribute("data-nifra-hydrated", "")
+  document.dispatchEvent(new Event("nifra:hydrated"))
+}

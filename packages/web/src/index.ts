@@ -220,6 +220,27 @@ export const ROUTE_GLOBAL = "__NIFRA_ROUTE__"
 export const ACTION_GLOBAL = "__NIFRA_ACTION__"
 
 /**
+ * Pre-hydration form guard — a tiny inline script flushed in `<head>` (it runs in the window between
+ * first paint and the island bundle taking over). It neutralizes the one real hydration footgun: a
+ * JS-only form (a hand-wired `onSubmit` with no native fallback) submitting *natively* before its
+ * handler is attached, which navigates the browser to a broken `?field=…` GET of the current page.
+ *
+ * It blocks ONLY that shape — an effective-GET form whose action targets the current document — and
+ * only until hydration commits (`data-nifra-hydrated`, set by the client entry). Method-`post` forms
+ * (progressive enhancement: the native POST hits the route `action`) and GET forms with a real action
+ * (a search box → `/search`) pass through untouched. Opt out per-form with `data-native`. Static text
+ * (no interpolation), so it can't carry injected markup. See the Hydration guide.
+ */
+export const PRE_HYDRATION_GUARD =
+  "(function(){addEventListener('submit',function(e){var f=e.target;" +
+  "if(!f||f.tagName!=='FORM'||f.hasAttribute('data-native'))return;" +
+  "if(document.documentElement.hasAttribute('data-nifra-hydrated'))return;" +
+  "var m=(f.getAttribute('method')||'get').toLowerCase();if(m==='post')return;" +
+  "var a=f.getAttribute('action');" +
+  "if(!a||a===''||a==='#'||a===location.pathname||a===location.href)e.preventDefault()" +
+  "},true)})()"
+
+/**
  * The single default port for the dev server (`@nifrajs/web/dev`, `@nifrajs/web/vite`) **and**
  * `nifra start`. Deliberately uncommon: `3000`/`5173`/`8080` collide with whatever else is running
  * (Next, Vite, a stray Node API). `4321` rarely is — and being the *same* constant across `nifra dev`
@@ -400,7 +421,10 @@ export function renderPageResult(options: RenderPageOptions): MaybePromise<Rende
   const hydrationLinks = hydrate
     ? `<link rel="modulepreload" href="${escapeAttr(clientEntry)}">${preloadLinks}${deferredRuntime}`
     : ""
-  const shellHtml = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(head?.title ?? title)}</title>${headTags(head)}${styleLinks}${hydrationLinks}${islandPreloads}${adapter.hydrationHead()}</head><body><div id="${escapeAttr(rootId)}">`
+  // Runs in the first-paint→hydration window to swallow a JS-only form's broken native submit. Only on a
+  // hydrating page (a static/_error page has no client handlers, so no footgun).
+  const hydrationGuard = hydrate ? `<script>${PRE_HYDRATION_GUARD}</script>` : ""
+  const shellHtml = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${hydrationGuard}<title>${escapeHtml(head?.title ?? title)}</title>${headTags(head)}${styleLinks}${hydrationLinks}${islandPreloads}${adapter.hydrationHead()}</head><body><div id="${escapeAttr(rootId)}">`
   // Closes the hydration container; deferred resolve scripts go AFTER it (outside `#root`) so they
   // aren't part of the adapter's hydrated tree (an inline script inside it breaks hydration).
   const closeRootHtml = "</div>"
@@ -1386,7 +1410,7 @@ export function generateClientEntry(
 
   return `${[
     'import { createClientRouter, createMatcher, mergeHeads, resolveMeta } from "@nifrajs/web"',
-    'import { applyHead, installForms, installHistory } from "@nifrajs/web/client"',
+    'import { applyHead, installForms, installHistory, signalHydrated } from "@nifrajs/web/client"',
     // Namespace import: `errorBoundary` is optional (an adapter may not export it). A namespace member
     // access yields `undefined` if absent — unlike a named import, which would be a link error.
     `import * as __adapter from ${JSON.stringify(clientModule)}`,
@@ -1451,6 +1475,9 @@ export function generateClientEntry(
     // is server-rendered; subsequent navigations update it from the matched route's meta + data.
     "if (root) loadModule(initial.routeId).then(() => {",
     "  mountRouter({ router, routes: chains, container: root })",
+    // Next frame: the adapter has committed its initial hydration, so handlers are attached. Flip the
+    // document to interactive (`data-nifra-hydrated` + `nifra:hydrated`) for apps to gate pre-hydration UI.
+    "  requestAnimationFrame(signalHydrated)",
     "  router.subscribe(() => {",
     "    const s = router.snapshot()",
     // Merge the matched route's chain meta (layouts→page) into one head — same contract as SSR.
