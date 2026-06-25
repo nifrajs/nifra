@@ -22,7 +22,8 @@ export type { Example } from "./examples.ts"
 // tool factory + the transport core from one entry: `import { respondMcpHttp, docsTools } from "@nifrajs/cli/mcp"`.
 export { docsTools } from "./mcp-docs-tools.ts"
 
-const VERSION = "0.1.0-alpha.1"
+// Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
+const VERSION = "0.1.0-beta.0"
 const SERVER_INFO = { name: "nifra-docs", version: VERSION }
 
 const CORS: Record<string, string> = {

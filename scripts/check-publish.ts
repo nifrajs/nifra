@@ -132,6 +132,33 @@ for (const dir of ALL_DIRS) {
   }
 }
 
+// Version-consistency gate: the CLI hardcodes its version in two source files — the tsc-built CLI
+// reads no package.json at runtime, and mcp-http.ts must run on edge runtimes with no fs. Assert both
+// match packages/cli/package.json so a release bump can't leave a stale `nifra --version` or a stale
+// MCP server-info version (alpha.1 shipped while the package was past it — this gate stops the recurrence).
+{
+  const cliVersion = JSON.parse(await Bun.file("packages/cli/package.json").text())
+    .version as string
+  const constants: ReadonlyArray<{ file: string; re: RegExp }> = [
+    { file: "packages/cli/src/cli.ts", re: /CLI_VERSION\s*=\s*"([^"]+)"/ },
+    { file: "packages/cli/src/mcp-http.ts", re: /\bconst VERSION\s*=\s*"([^"]+)"/ },
+  ]
+  for (const { file, re } of constants) {
+    const found = (await Bun.file(file).text()).match(re)
+    if (found === null) {
+      failures += 1
+      console.error(`✗ ${file}: no version constant matching ${re}`)
+    } else if (found[1] !== cliVersion) {
+      failures += 1
+      console.error(
+        `✗ ${file}: version constant "${found[1]}" ≠ @nifrajs/cli ${cliVersion} — bump it`,
+      )
+    } else {
+      console.log(`✓ ${file}: version constant matches @nifrajs/cli ${cliVersion}`)
+    }
+  }
+}
+
 if (failures > 0) {
   console.error(`\n${failures} package(s) failed publish validation`)
   process.exit(1)
