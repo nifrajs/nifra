@@ -17,20 +17,20 @@
     "deploy:vercel": "vercel deploy --prebuilt"
   },
   "dependencies": {
-    "@nifrajs/client": "^0.1.0-alpha.4",
-    "@nifrajs/core": "^0.1.0-alpha.4",
-    "@nifrajs/schema": "^0.1.0-alpha.4",
-    "@nifrajs/deno": "^0.1.0-alpha.4",
-    "@nifrajs/node": "^0.1.0-alpha.4",
-    "@nifrajs/web": "^0.1.0-alpha.4",
-    "@nifrajs/web-react": "^0.1.0-alpha.4",
+    "@nifrajs/client": "^0.1.0-beta.0",
+    "@nifrajs/core": "^0.1.0-beta.0",
+    "@nifrajs/schema": "^0.1.0-beta.0",
+    "@nifrajs/deno": "^0.1.0-beta.0",
+    "@nifrajs/node": "^0.1.0-beta.0",
+    "@nifrajs/web": "^0.1.0-beta.0",
+    "@nifrajs/web-react": "^0.1.0-beta.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "@nifrajs/cli": "^0.1.0-alpha.4",
+    "@nifrajs/cli": "^0.1.0-beta.0",
     "@vitejs/plugin-react": "^4.3.0",
     "typescript": "^6.0.3",
     "vite": "^8.0.0"
