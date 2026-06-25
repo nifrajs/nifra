@@ -1,9 +1,25 @@
 name: Release
 
-# PREPARE-ONLY. On push to main this opens/updates a "Version Packages" PR from any
-# pending changesets (bumping versions + writing CHANGELOGs). It does NOT publish to
-# npm. To go live later: uncomment the `publish` line below and add an `NPM_TOKEN`
-# secret — until then there is no code path that can publish by accident.
+# Automated, changeset-driven release. On every push to main this does ONE of two things:
+#
+#   1. Pending changesets exist  → opens/updates a "Version Packages" PR that bumps the
+#      affected packages and writes their CHANGELOGs. Nothing is published yet.
+#   2. No pending changesets      → (i.e. the Version Packages PR was just merged) builds
+#      every package and publishes the changed ones to npm.
+#
+# Day-to-day flow:
+#   bun run changeset      # describe the bump (which packages, major/minor/patch)
+#   git push               # → bot opens the "Version Packages" PR
+#   merge that PR          # → THIS workflow publishes to npm automatically
+#
+# `changeset publish` replaces every internal `workspace:*` range with the concrete
+# resolved version in the published tarball (so no workspace: protocol leaks to npm —
+# the alpha.1/alpha.2 failure mode) and publishes in dependency order.
+#
+# ONE-TIME SETUP: add an `NPM_TOKEN` repo secret (npm automation token with publish
+# rights to the @nifrajs scope) under Settings → Secrets and variables → Actions.
+# Until that secret exists the publish step finds no auth and fails loudly only when
+# there is actually something to publish — there is no silent half-publish.
 
 on:
   push:
@@ -12,6 +28,10 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  id-token: write # reserved for npm provenance (see NPM_CONFIG_PROVENANCE below)
+
+# Never run two releases concurrently — a second push mid-publish must wait, not race.
+concurrency: release-${{ github.ref }}
 
 jobs:
   release:
@@ -21,18 +41,22 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.14 # pinned to match CI — reproducible publishes
 
       - name: Install
         run: bun install --frozen-lockfile
 
-      - name: Version Packages PR (no publish)
+      - name: Version Packages PR / publish to npm
         uses: changesets/action@v1
         with:
           version: bun run changeset:version
-          # publish: bun run changeset:publish   # ← uncomment to publish (requires NPM_TOKEN)
+          publish: bun run changeset:publish # = `bun run build && changeset publish`
           commit: "chore: version packages"
           title: "chore: version packages"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # NPM_TOKEN: ${{ secrets.NPM_TOKEN }}   # ← required once `publish` is enabled
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Supply-chain provenance attestation. Enable once every published package.json
+          # carries a `repository` field (with `directory` for the monorepo subpath); if a
+          # publish ever errors on provenance, removing this line is the safe fallback.
+          # NPM_CONFIG_PROVENANCE: "true"
