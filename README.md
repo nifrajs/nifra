@@ -167,7 +167,7 @@ server({ requestTimeoutMs: 5_000, gracefulSignals: true })
 
 ## Runs on the edge, too
 
-Bun is the first-class runtime (`app.listen()`), but the whole lifecycle is `app.fetch(Request): Promise<Response>` with zero Bun APIs — so the same `app` deploys to **Cloudflare Workers** (`export default app`), **Deno** (`Deno.serve(app.fetch)`), or **Node** (via the [`@nifrajs/node`](packages/node) adapter). See [Runtimes & deployment](docs/src/content/docs/guides/runtimes.md).
+Bun is the first-class runtime (`app.listen()`), but the whole lifecycle is `app.fetch(Request): Promise<Response>` with zero Bun APIs — so the same `app` deploys to **Cloudflare Workers** (`export default app`), **Deno** (`Deno.serve(app.fetch)`), or **Node** (via the [`@nifrajs/node`](packages/node) adapter). See [Deployment](site/routes/docs/deployment.tsx) and [Edge & bindings](site/routes/docs/edge.tsx).
 
 ## Principles (enforced, not aspirational)
 
