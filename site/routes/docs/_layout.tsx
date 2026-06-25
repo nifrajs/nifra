@@ -25,6 +25,7 @@ const GROUPS: ReadonlyArray<{ title: string; links: ReadonlyArray<{ href: string
       { href: "/docs/mutations", label: "Optimistic UI" },
       { href: "/docs/query", label: "Query cache" },
       { href: "/docs/streaming", label: "Streaming" },
+      { href: "/docs/hydration", label: "Hydration" },
       { href: "/docs/content", label: "Content & MDX" },
       { href: "/docs/images", label: "Images" },
       { href: "/docs/fonts", label: "Fonts" },

@@ -819,6 +819,71 @@ occasionally and can tolerate seconds-to-minutes of staleness → **ISR**. Per-r
 per-user content → plain **SSR** (the default). You can mix all three in one app, route by
 route.
 
+## Nifra — Hydration & pre-hydration forms
+
+> SSR pages become interactive after hydration. nifra keeps that gap safe: progressive-enhancement forms and links work before it, and a JS-only form's broken native submit is guarded automatically.
+
+An SSR page is visible at once but interactive only after its island hydrates. nifra keeps
+that gap safe for you — you rarely have to think about it.
+
+### Forms and links — nothing to do
+
+A `` to a route, and any ``, use
+progressive enhancement: native submit/navigation before hydration, a no-reload client
+takeover after.
+
+```ts
+// Native POST before hydration, client takeover after. Nothing to do.
+<form method="post">
+  <button type="submit">Save</button>
+</form>
+```
+
+### JS-only forms — guarded automatically
+
+The one risky shape is a form wired purely in JavaScript — a `preventDefault`
+handler with no native fallback. Submitted before hydration, the browser would fall back to a
+native GET of the current page (`/?email=…`), a broken navigation.
+
+```ts
+// doc-check: skip — illustrative island: `FormEvent` + an app-provided `authClient`.
+// A form wired purely in JS (preventDefault, no native fallback).
+async function onSubmit(e: FormEvent) {
+  e.preventDefault()
+  await authClient.signIn.email({ email, password })
+}
+return <form onSubmit={onSubmit}>…</form>
+```
+
+nifra blocks that native submit until hydration commits, so the worst case is a no-op click —
+never a broken navigation. It never touches a `method="post"` form or a GET form
+with a real action. Opt a form out with `data-native`:
+
+```ts
+<form data-native>…</form>   {/* nifra won't guard it — native submit is intended */}
+```
+
+### Gate other JS on the signal
+
+For a visible “not ready” state, or a non-form interaction (canvas, drag-drop, a third-party
+widget), gate on `data-nifra-hydrated` (set on `<html>` once
+hydration commits) or the one-shot `nifra:hydrated` event.
+
+```ts
+html:not([data-nifra-hydrated]) [data-needs-js] { opacity: 0.6; pointer-events: none; }
+```
+
+```ts
+// doc-check: skip — illustrative island: React hooks + your `onSubmit`.
+const [ready, setReady] = useState(false)
+useEffect(() => setReady(true), [])
+return <button disabled={!ready} onClick={onSubmit}>Sign in</button>
+
+// or, framework-free:
+if (document.documentElement.hasAttribute("data-nifra-hydrated")) start()
+else document.addEventListener("nifra:hydrated", start, { once: true })
+```
+
 ## Nifra — Streaming
 
 > Streaming SSR, Suspense, and defer() in Nifra — on every runtime including the edge.
@@ -5349,7 +5414,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`Action`, `ACTION_GLOBAL`, `apiKey`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumeratePrerenderedPaths`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `GetStaticPaths`, `hashQueryKey`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `openGraph`, `OpenGraphInput`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `RenderAdapter`, `RenderedPage`, `renderPage`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `ScriptDescriptor`, `serializeData`, `ServerOnly`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `Submission`, `SubmitOptions`, `withISR`
+`Action`, `ACTION_GLOBAL`, `apiKey`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumeratePrerenderedPaths`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `GetStaticPaths`, `hashQueryKey`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `openGraph`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `RenderAdapter`, `RenderedPage`, `renderPage`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `ScriptDescriptor`, `serializeData`, `ServerOnly`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `Submission`, `SubmitOptions`, `withISR`
 
 ## @nifrajs/web-preact
 

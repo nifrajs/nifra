@@ -13,6 +13,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - [Nifra — Loaders & actions](/docs/data): Typed loaders and actions in Nifra: data on the server, mutations, revalidation.
 - [Nifra — Optimistic UI & fetchers](/docs/mutations): Optimistic updates and concurrent fetchers in Nifra: instant feedback, row-level mutations.
 - [Nifra — Rendering: SSG & ISR](/docs/rendering): Prerender static routes, enumerate dynamic ones, and cache rendered pages with stale-while-revalidate — on every runtime including the edge.
+- [Nifra — Hydration & pre-hydration forms](/docs/hydration): SSR pages become interactive after hydration. nifra keeps that gap safe: progressive-enhancement forms and links work before it, and a JS-only form's broken native submit is guarded automatically.
 - [Nifra — Streaming](/docs/streaming): Streaming SSR, Suspense, and defer() in Nifra — on every runtime including the edge.
 - [Nifra — Query cache](/docs/query): Nifra's keyed query cache: useQuery / createQuery, dedup, staleness, invalidation.
 - [Nifra — Frameworks](/docs/frameworks): One agnostic core, five UI frameworks: React, Solid, Vue, Preact, and Svelte — same loaders, streaming, islands, and routing, unchanged.
