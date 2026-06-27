@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/better-auth",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.2",
   "description": "Mount better-auth into a nifra app — one app.use() wires /api/auth/*, plus typed getSession/requireSession guards. Structural typing: no hard dependency on better-auth.",
   "keywords": [
     "bun",

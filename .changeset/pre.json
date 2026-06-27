@@ -35,5 +35,7 @@
     "@nifrajs/workers": "0.1.0-beta.0",
     "@nifrajs/site": "0.0.0"
   },
-  "changesets": []
+  "changesets": [
+    "web-bake-css-styles"
+  ]
 }
