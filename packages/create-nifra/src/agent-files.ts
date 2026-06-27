@@ -38,7 +38,7 @@ export const MCP_SERVER_COMMAND = "bunx" as const
  * fresh and a stale cache can never shadow it. The cost: an already-scaffolded app's `.mcp.json` freezes
  * at its scaffold-time version until `nifra init-agents` is re-run — an acceptable, deterministic trade.
  */
-export const MCP_CLI_VERSION = "1.0.0-beta.3" as const
+export const MCP_CLI_VERSION = "1.0.0-beta.4" as const
 export const MCP_SERVER_ARGS = [`@nifrajs/cli@${MCP_CLI_VERSION}`, "mcp"] as const
 
 /** The server entry registered under the `nifra` key in both Claude Code's and Cursor's MCP config. */

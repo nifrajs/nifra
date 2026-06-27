@@ -35,5 +35,9 @@
     "@nifrajs/workers": "0.1.0-beta.0",
     "@nifrajs/site": "0.0.0"
   },
-  "changesets": ["monorepo-mcp-server", "web-bake-css-styles"]
+  "changesets": [
+    "monorepo-mcp-server",
+    "pin-mcp-launch-version",
+    "web-bake-css-styles"
+  ]
 }

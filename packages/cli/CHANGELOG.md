@@ -1,5 +1,16 @@
 # @nifrajs/cli
 
+## 1.0.0-beta.4
+
+### Patch Changes
+
+- Updated dependencies [5181a35]
+  - create-nifra@1.0.0-beta.4
+  - @nifrajs/client@1.0.0-beta.4
+  - @nifrajs/runner@1.0.0-beta.4
+  - @nifrajs/schema@1.0.0-beta.4
+  - @nifrajs/web@1.0.0-beta.4
+
 ## 1.0.0-beta.3
 
 ### Patch Changes
