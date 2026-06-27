@@ -30,8 +30,8 @@ import { Glob } from "bun"
 import { loadDocsCorpus } from "./docs-search.ts"
 import { loadExamplesCorpus } from "./examples.ts"
 import { describeProject } from "./introspect.ts"
-import { detectMonorepo, loadMonorepoApps } from "./load.ts"
 import type { LoadAppOptions, LoadedApp } from "./load.ts"
+import { detectMonorepo, loadMonorepoApps } from "./load.ts"
 import { docsTools } from "./mcp-docs-tools.ts"
 import {
   createMcpProtocolState,
@@ -891,7 +891,11 @@ export async function runMcpServer(cwd: string, version: string): Promise<void> 
     const allPrompts: McpPrompt[] = []
     for (const { name, cwd: appCwd } of appEntries) {
       const loader = createCachedAppLoader(appCwd)
-      const ns = namespaceForApp(name, projectTools(appCwd, loader), projectFeatures(appCwd, loader))
+      const ns = namespaceForApp(
+        name,
+        projectTools(appCwd, loader),
+        projectFeatures(appCwd, loader),
+      )
       allTools.push(...ns.tools)
       allResources.push(...(ns.features.resources ?? []))
       allPrompts.push(...(ns.features.prompts ?? []))

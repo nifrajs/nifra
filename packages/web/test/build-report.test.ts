@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test"
-import { generateServerManifest } from "../src/index.ts"
 import {
   aggregateSizeReport,
   type ChunkSize,
@@ -12,6 +11,7 @@ import {
   parseManifestRouteFiles,
   renderSizeReport,
 } from "../src/build.ts"
+import { generateServerManifest } from "../src/index.ts"
 
 // Pure size + drift helpers for `nifra build --report` and the #7 server-manifest drift guard. They're
 // the deterministic cores (no fs / no Bun.build), measured + bundled by the orchestrators in build.ts.
@@ -230,14 +230,18 @@ describe("generateServerEntry", () => {
 
   test("imports + passes styles/routeStyles to createWebApp (so the SSR head links CSS)", () => {
     const src = generateServerEntry({ target: "bun", adapterImport: "../framework.ts" })
-    expect(src).toContain('import { clientEntry, manifest, styles, routeStyles } from "./server-manifest"')
+    expect(src).toContain(
+      'import { clientEntry, manifest, styles, routeStyles } from "./server-manifest"',
+    )
     expect(src).toContain("  styles,")
     expect(src).toContain("  routeStyles,")
   })
 })
 
 describe("generateServerManifest — bakes styles for createWebApp", () => {
-  const EMPTY = { routes: [], layouts: {} } as unknown as Parameters<typeof generateServerManifest>[0]
+  const EMPTY = { routes: [], layouts: {} } as unknown as Parameters<
+    typeof generateServerManifest
+  >[0]
 
   test("bakes styles + routeStyles exports from the build's CSS manifest", () => {
     const src = generateServerManifest(EMPTY, {
@@ -251,7 +255,10 @@ describe("generateServerManifest — bakes styles for createWebApp", () => {
   })
 
   test("defaults to empty exports when the app imports no CSS (so consumers can always import them)", () => {
-    const src = generateServerManifest(EMPTY, { resolve: (f) => `./routes/${f}`, clientEntry: "/assets/x.js" })
+    const src = generateServerManifest(EMPTY, {
+      resolve: (f) => `./routes/${f}`,
+      clientEntry: "/assets/x.js",
+    })
     expect(src).toContain("export const styles = []")
     expect(src).toContain("export const routeStyles = {}")
   })

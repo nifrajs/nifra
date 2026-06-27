@@ -4,8 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { LoadedApp } from "../src/load.ts"
 import { detectMonorepo, loadMonorepoApps } from "../src/load.ts"
-import { createCachedAppLoader } from "../src/mcp.ts"
-import { projectTools, projectFeatures } from "../src/mcp.ts"
+import { createCachedAppLoader, projectFeatures, projectTools } from "../src/mcp.ts"
 import {
   createMcpProtocolState,
   handleRpc,
@@ -441,10 +440,7 @@ describe("monorepo detection + tool namespacing", () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-mono-"))
     try {
       await mkdir(join(dir, "routes"))
-      await writeFile(
-        join(dir, "nifra.config.ts"),
-        `export const apps = { dash: "./apps/dash" }`,
-      )
+      await writeFile(join(dir, "nifra.config.ts"), `export const apps = { dash: "./apps/dash" }`)
       expect(await detectMonorepo(dir)).toBeNull()
     } finally {
       await rm(dir, { recursive: true, force: true })
