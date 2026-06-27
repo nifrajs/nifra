@@ -23,7 +23,7 @@ export type { Example } from "./examples.ts"
 export { docsTools } from "./mcp-docs-tools.ts"
 
 // Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
-const VERSION = "0.1.0-beta.1"
+const VERSION = "1.0.0-beta.3"
 const SERVER_INFO = { name: "nifra-docs", version: VERSION }
 
 const CORS: Record<string, string> = {
