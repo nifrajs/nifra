@@ -93,11 +93,13 @@ backend in `nifra dev` and in prod alike — no hand-dispatch in `server-bun.ts`
 
 - **`PUBLIC_*` env** is baked into the client bundle (Vite/Next convention). Any other `process.env.X`
   compiles to `undefined` in the browser — no `process is not defined` crash, and secrets can't leak.
-- **Runtime secrets on the edge arrive via `ctx.env`, not `process.env`.** In a `loader`/`action`, `ctx.env`
-  is the platform binding (Workers/Pages `env` — KV/D1/secrets, e.g. what `wrangler pages secret put` sets);
-  it's `undefined` off-edge (Bun/Node/Deno), where `process.env` is the source. A secret that must work in
-  BOTH a Bun preview AND a Cloudflare deploy should read `ctx.env?.KEY ?? process.env.KEY`. Type the shape via
-  the second arg: `LoaderArgs<typeof backend, Env>`.
+- **Reading secrets/env in a server handler.** `process.env.X` is `undefined` in the browser (keep secret
+  reads server-side), but on the SERVER it's there on Bun/Node/Deno **and** on Workers/Pages with
+  `nodejs_compat` — Cloudflare then populates `process.env` from the deployment's vars + secrets (a
+  `wrangler … secret put` value lands in `process.env`). So with `nodejs_compat` on, `process.env.KEY` is the
+  one portable, type-safe server read. `ctx.env` is the raw platform binding (typed `Env`); reach for it only
+  when you can't enable `nodejs_compat`, and then declare the shape (`LoaderArgs<typeof backend, Env>`) or cast
+  — an arbitrary key off the typed `Env` fails `TS2339`.
 - **Loaders/actions are typed with `LoaderArgs`/`ActionArgs` from `@nifrajs/client`** — e.g.
   `export async function action({ request }: ActionArgs<typeof backend>)`. They are NOT `LoaderFunctionArgs`/
   `ActionFunctionArgs`, and never imported from `@nifrajs/core` — those are Remix shapes and fail with
