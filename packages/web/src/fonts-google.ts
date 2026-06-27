@@ -212,7 +212,7 @@ export function googleFontsCssUrl(options: GoogleFontOptions): string {
   return `${CSS2_ENDPOINT}?${params.join("&")}`
 }
 
-const FACE_RE = /(?:\/\*\s*([^*]+?)\s*\*\/\s*)?@font-face\s*\{([^}]*)\}/g
+const FACE_RE = /(?:\/\*([^*]*)\*\/\s*)?@font-face\s*\{([^}]*)\}/g
 const SRC_RE = /url\(\s*(['"]?)([^'")]+)\1\s*\)(?:\s*format\(\s*(['"]?)([^'")]+)\3\s*\))?/g
 
 function declOf(body: string, prop: string): string | undefined {

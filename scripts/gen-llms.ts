@@ -82,7 +82,7 @@ function extractMeta(src: string): { title: string; description: string } {
 /** `const NAME = \`…code…\`` → map of name → code (template literals; unescape \\\` and \\${). */
 function extractCodeConsts(src: string): Map<string, string> {
   const out = new Map<string, string>()
-  const re = /\bconst\s+(\w+)\s*=\s*`((?:\\.|[^`])*)`/g
+  const re = /\bconst\s+(\w+)\s*=\s*`((?:[^`\\]|\\.)*)`/g
   for (const m of src.matchAll(re)) {
     const code = m[2]!
       .replace(/\\`/g, "`")
@@ -127,7 +127,7 @@ function isJsxResidue(line: string): boolean {
 function jsxToMarkdown(src: string, consts: Map<string, string>): string {
   // Strip the code-block consts (template literals) FIRST — their example snippets contain
   // `export default function` / `return (` that would otherwise be mistaken for the real component.
-  const stripped = src.replace(/\bconst\s+\w+\s*=\s*`(?:\\.|[^`])*`/g, "")
+  const stripped = src.replace(/\bconst\s+\w+\s*=\s*`(?:[^`\\]|\\.)*`/g, "")
   const compStart = stripped.search(/export\s+default/)
   const start = stripped.indexOf("return (", compStart < 0 ? 0 : compStart)
   if (start < 0) return ""

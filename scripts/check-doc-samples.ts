@@ -67,7 +67,7 @@ interface Sample {
  * top-level file generation as a side effect. Both read the same `const NAME = `...`` doc-snippet shape. */
 export function extractConsts(src: string): Map<string, string> {
   const out = new Map<string, string>()
-  for (const m of src.matchAll(/\bconst\s+(\w+)\s*=\s*`((?:\\.|[^`])*)`/g)) {
+  for (const m of src.matchAll(/\bconst\s+(\w+)\s*=\s*`((?:[^`\\]|\\.)*)`/g)) {
     out.set(
       m[1] as string,
       (m[2] as string)
