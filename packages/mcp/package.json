@@ -1,0 +1,65 @@
+{
+  "name": "@nifrajs/mcp",
+  "version": "1.0.0-beta.4",
+  "description": "Build MCP servers — and MCP Apps (interactive `ui://` widgets, SEP-1865) — for a nifra app. The transport-agnostic JSON-RPC core (also used by `@nifrajs/cli`'s dev MCP), a Streamable-HTTP handler you mount at `POST /mcp`, and `defineMcpWidget`/`defineMcpTool` for tool results that render real UI in MCP hosts.",
+  "keywords": [
+    "bun",
+    "typescript",
+    "nifra",
+    "mcp",
+    "model-context-protocol",
+    "mcp-apps",
+    "mcp-ui",
+    "json-rpc",
+    "ai",
+    "tools",
+    "widgets"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./protocol": {
+      "bun": "./src/protocol.ts",
+      "types": "./dist/protocol.d.ts",
+      "default": "./dist/protocol.js"
+    },
+    "./http": {
+      "bun": "./src/http.ts",
+      "types": "./dist/http.d.ts",
+      "default": "./dist/http.js"
+    },
+    "./react": {
+      "bun": "./src/react.ts",
+      "types": "./dist/react.d.ts",
+      "default": "./dist/react.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}

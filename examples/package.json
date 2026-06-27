@@ -21,13 +21,15 @@
     "cli-react:start": "cd cli-react && nifra start",
     "cli-vue:dev": "cd cli-vue && nifra dev",
     "cli-vue:build": "cd cli-vue && nifra build",
-    "cli-vue:start": "cd cli-vue && nifra start"
+    "cli-vue:start": "cd cli-vue && nifra start",
+    "mcp-app:start": "bun run mcp-app/server.ts"
   },
   "dependencies": {
     "@nifrajs/cli": "workspace:*",
     "@nifrajs/client": "workspace:*",
     "@nifrajs/core": "workspace:*",
     "@nifrajs/deno": "workspace:*",
+    "@nifrajs/mcp": "workspace:*",
     "@nifrajs/middleware": "workspace:*",
     "@nifrajs/node": "workspace:*",
     "@nifrajs/schema": "workspace:*",

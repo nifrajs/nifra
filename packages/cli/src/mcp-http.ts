@@ -4,19 +4,20 @@
  * Both tools read the bundled corpus (llms-full.txt / examples.json shipped in this package) and ignore
  * `cwd`, so they reuse the exact definitions from {@link projectTools} — one source, no drift.
  *
- * {@link handleMcpHttp} is a plain Web `fetch` handler, so it self-hosts ANYWHERE Bun runs — the
- * simplest path is `nifra docs-mcp` on a VPS behind a reverse proxy (Caddy/nginx + TLS), where the
- * bundled corpus reads straight from disk (`Bun.file`). `export default { port, fetch }` also lets
- * `bun run mcp-http.ts` serve it directly, and the same handler runs on Cloudflare/Vercel edge — only
- * there must you inline the two corpus files as string imports (a Worker has no filesystem). The
- * dispatch is the shared, transport-agnostic {@link handleRpc}.
+ * The transport itself (body cap, CORS, JSON-RPC dispatch) lives in `@nifrajs/mcp/http`; this module is
+ * the docs-specific layer over it: it supplies the bundled corpus tools and the `nifra-docs` server info.
+ * {@link handleMcpHttp} self-hosts ANYWHERE Bun runs — the simplest path is `nifra docs-mcp` on a VPS; the
+ * same handler runs on Cloudflare/Vercel edge (there inline the corpus as string imports — a Worker has no
+ * filesystem). `export default { port, fetch }` also lets `bun run mcp-http.ts` serve it directly.
  */
 
+import { type McpHttpOptions, respondMcpHttp as respondMcpHttpCore } from "@nifrajs/mcp/http"
+import type { McpTool } from "@nifrajs/mcp/protocol"
 import { loadDocsCorpus } from "./docs-search.ts"
 import { loadExamplesCorpus } from "./examples.ts"
 import { docsTools } from "./mcp-docs-tools.ts"
-import { handleRpc, type JsonRpcRequest, type McpTool, rpcError } from "./mcp-protocol.ts"
 
+export type { McpHttpOptions } from "@nifrajs/mcp/http"
 export type { Example } from "./examples.ts"
 // Re-exported so a self-host (e.g. a Cloudflare-Pages `/mcp` worker route) gets the corpus-injectable
 // tool factory + the transport core from one entry: `import { respondMcpHttp, docsTools } from "@nifrajs/cli/mcp"`.
@@ -25,73 +26,8 @@ export { docsTools } from "./mcp-docs-tools.ts"
 // Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
 const VERSION = "1.0.0-beta.4"
 const SERVER_INFO = { name: "nifra-docs", version: VERSION }
-
-const CORS: Record<string, string> = {
-  "access-control-allow-origin": "*",
-  "access-control-allow-methods": "POST, GET, OPTIONS",
-  "access-control-allow-headers": "content-type",
-}
-
-const DEFAULT_MAX_BODY_BYTES = 1_000_000
-const TEXT_DECODER = new TextDecoder()
-
-export interface McpHttpOptions {
-  /** Maximum JSON-RPC request body size in bytes. Default 1 MB. */
-  readonly maxBodyBytes?: number
-}
-
-function parseContentLength(value: string): number | undefined {
-  if (value.length === 0) return undefined
-  let length = 0
-  for (let i = 0; i < value.length; i++) {
-    const digit = value.charCodeAt(i) - 48
-    if (digit < 0 || digit > 9) return undefined
-    length = length * 10 + digit
-    if (length > Number.MAX_SAFE_INTEGER) return Number.POSITIVE_INFINITY
-  }
-  return length
-}
-
-async function readJsonBounded(
-  request: Request,
-  maxBytes: number,
-): Promise<{ ok: true; value: unknown } | { ok: false; status: 400 | 413 }> {
-  const declared = request.headers.get("content-length")
-  if (declared !== null) {
-    const length = parseContentLength(declared)
-    if (length === undefined) return { ok: false, status: 400 }
-    if (length > maxBytes) return { ok: false, status: 413 }
-  }
-
-  const body = request.body
-  if (body === null) return { ok: false, status: 400 }
-
-  const reader = body.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    total += value.byteLength
-    if (total > maxBytes) {
-      await reader.cancel()
-      return { ok: false, status: 413 }
-    }
-    chunks.push(value)
-  }
-
-  const bytes = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  try {
-    return { ok: true, value: JSON.parse(TEXT_DECODER.decode(bytes)) as unknown }
-  } catch {
-    return { ok: false, status: 400 }
-  }
-}
+const DOCS_HEALTH =
+  "nifra docs MCP — POST JSON-RPC 2.0 here (methods: initialize, tools/list, tools/call). Tools: nifra_docs, nifra_example."
 
 /** The two project-independent tools, reading the package's bundled corpus from disk (CLI use). */
 export function publicDocsTools(): McpTool[] {
@@ -99,44 +35,16 @@ export function publicDocsTools(): McpTool[] {
 }
 
 /**
- * The transport core, shared by every HTTP host (CLI `docs-mcp`, the site's edge worker): handle one
- * MCP request against the given `tools`. POST a JSON-RPC body → JSON-RPC response; GET is a health page;
- * OPTIONS is the CORS preflight. Never throws — a bad body becomes a JSON-RPC parse error. Pass the
- * tools so each host supplies its own corpus source (disk vs cached fetch) behind identical defs.
+ * Handle one MCP request against the given `tools` with the docs server identity. A thin docs-flavored
+ * wrapper over the shared {@link respondMcpHttpCore} so the `@nifrajs/cli/mcp` self-host surface keeps its
+ * `(request, tools, options?)` shape (the site's edge worker calls it with two args).
  */
-export async function respondMcpHttp(
+export function respondMcpHttp(
   request: Request,
   tools: McpTool[],
   options: McpHttpOptions = {},
 ): Promise<Response> {
-  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS })
-  if (request.method === "GET") {
-    return new Response(
-      "nifra docs MCP — POST JSON-RPC 2.0 here (methods: initialize, tools/list, tools/call). Tools: nifra_docs, nifra_example.",
-      { headers: { "content-type": "text/plain; charset=utf-8", ...CORS } },
-    )
-  }
-  if (request.method !== "POST") {
-    return new Response("method not allowed", {
-      status: 405,
-      headers: { allow: "POST, GET", ...CORS },
-    })
-  }
-  const parsed = await readJsonBounded(request, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES)
-  if (!parsed.ok) {
-    if (parsed.status === 413) {
-      return Response.json(rpcError(null, -32000, "payload too large"), {
-        status: 413,
-        headers: CORS,
-      })
-    }
-    return Response.json(rpcError(null, -32700, "parse error"), { status: 400, headers: CORS })
-  }
-  const message = parsed.value as JsonRpcRequest
-  const response = await handleRpc(message, tools, SERVER_INFO, {}, { signal: request.signal })
-  // A notification (no id) yields null — acknowledge with 204, no body.
-  if (response === null) return new Response(null, { status: 204, headers: CORS })
-  return Response.json(response, { headers: CORS })
+  return respondMcpHttpCore(request, tools, SERVER_INFO, { health: DOCS_HEALTH, ...options })
 }
 
 /** The CLI HTTP handler: serves the disk-backed corpus tools. (`nifra docs-mcp` / `bun run` this file.) */

@@ -22,6 +22,11 @@
       "@nifrajs/env": ["./packages/env/src/index.ts"],
       "@nifrajs/schema": ["./packages/schema/src/index.ts"],
       "@nifrajs/schema/openapi": ["./packages/schema/src/openapi.ts"],
+      "@nifrajs/mcp": ["./packages/mcp/src/index.ts"],
+      "@nifrajs/mcp/protocol": ["./packages/mcp/src/protocol.ts"],
+      "@nifrajs/mcp/http": ["./packages/mcp/src/http.ts"],
+      "@nifrajs/mcp/server": ["./packages/mcp/src/server.ts"],
+      "@nifrajs/mcp/react": ["./packages/mcp/src/react.ts"],
       "@nifrajs/middleware": ["./packages/middleware/src/index.ts"],
       "@nifrajs/middleware/context-storage": ["./packages/middleware/src/context-storage.ts"],
       "@nifrajs/better-auth": ["./packages/better-auth/src/index.ts"],
@@ -90,6 +95,8 @@
     "examples/portable-ssr-react",
     "examples/portable-ssr-solid",
     "examples/mdx-blog",
-    "examples/fonts-google"
+    "examples/fonts-google",
+    "examples/mcp-app/OrdersTableWidget.tsx",
+    "packages/mcp/test/fixtures"
   ]
 }

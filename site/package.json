@@ -14,6 +14,7 @@
     "@nifrajs/content": "workspace:*",
     "@nifrajs/core": "workspace:*",
     "@nifrajs/deno": "workspace:*",
+    "@nifrajs/mcp": "workspace:*",
     "@nifrajs/node": "workspace:*",
     "@nifrajs/runner": "workspace:*",
     "@nifrajs/schema": "workspace:*",

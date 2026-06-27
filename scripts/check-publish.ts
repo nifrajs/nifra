@@ -13,6 +13,7 @@ import { $ } from "bun"
 const LIBRARIES = [
   "core",
   "client",
+  "mcp",
   "schema",
   "middleware",
   "auth",
