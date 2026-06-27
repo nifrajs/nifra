@@ -1,5 +1,23 @@
 # @nifrajs/examples
 
+## 1.0.0-beta.3
+
+### Patch Changes
+
+- @nifrajs/cli@1.0.0-beta.3
+- @nifrajs/client@1.0.0-beta.3
+- @nifrajs/core@1.0.0-beta.3
+- @nifrajs/deno@1.0.0-beta.3
+- @nifrajs/middleware@1.0.0-beta.3
+- @nifrajs/node@1.0.0-beta.3
+- @nifrajs/schema@1.0.0-beta.3
+- @nifrajs/web@1.0.0-beta.3
+- @nifrajs/web-preact@1.0.0-beta.3
+- @nifrajs/web-react@1.0.0-beta.3
+- @nifrajs/web-solid@1.0.0-beta.3
+- @nifrajs/web-svelte@1.0.0-beta.3
+- @nifrajs/web-vue@1.0.0-beta.3
+
 ## 0.1.0-beta.2
 
 ### Patch Changes
