@@ -93,6 +93,15 @@ backend in `nifra dev` and in prod alike — no hand-dispatch in `server-bun.ts`
 
 - **`PUBLIC_*` env** is baked into the client bundle (Vite/Next convention). Any other `process.env.X`
   compiles to `undefined` in the browser — no `process is not defined` crash, and secrets can't leak.
+- **Runtime secrets on the edge arrive via `ctx.env`, not `process.env`.** In a `loader`/`action`, `ctx.env`
+  is the platform binding (Workers/Pages `env` — KV/D1/secrets, e.g. what `wrangler pages secret put` sets);
+  it's `undefined` off-edge (Bun/Node/Deno), where `process.env` is the source. A secret that must work in
+  BOTH a Bun preview AND a Cloudflare deploy should read `ctx.env?.KEY ?? process.env.KEY`. Type the shape via
+  the second arg: `LoaderArgs<typeof backend, Env>`.
+- **Loaders/actions are typed with `LoaderArgs`/`ActionArgs` from `@nifrajs/client`** — e.g.
+  `export async function action({ request }: ActionArgs<typeof backend>)`. They are NOT `LoaderFunctionArgs`/
+  `ActionFunctionArgs`, and never imported from `@nifrajs/core` — those are Remix shapes and fail with
+  `TS2305: no exported member` (a frequent LLM mistake).
 - **Loader data** arrives as `props.data` (not spread into props).
 - **Dynamic `[param]`**: plain SSR runs the loader for ANY param value — guard and
   `throw new Response("", { status: 404 })` for unknown ids.
@@ -106,6 +115,9 @@ backend in `nifra dev` and in prod alike — no hand-dispatch in `server-bun.ts`
     **chain**, if that module ever reaches a browser chunk (the node-builtin guard can't catch it);
   - mark the value's type `ServerOnly<T>` (from `@nifrajs/web`) to document intent — but it's
     type-level only and erases at build, so always pair it with `.server.ts` or the import marker.
+  - or import a heavy / `node:`-using npm SDK (stripe, a DB driver, an API client) DYNAMICALLY *inside* the
+    `loader`/`action`: `const X = (await import('pkg')).default` — it then never sits in the route's
+    top-level (client-reachable) scope, so its `node:` builtins can't leak into the browser bundle.
   A server-only import **co-located** in a route file fails the build loud — error: `… reached the
   client bundle via <chain>`. `nifra check` reports the same transitive chain pre-build. See
   `/docs/troubleshooting` (keyed on the literal error strings).
