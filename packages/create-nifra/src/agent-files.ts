@@ -25,7 +25,21 @@
 /** The MCP launch command, shared by `.mcp.json` and `.cursor/mcp.json`. See the module header for why
  * the package is named explicitly rather than relying on the bare `nifra` bin. */
 export const MCP_SERVER_COMMAND = "bunx" as const
-export const MCP_SERVER_ARGS = ["@nifrajs/cli", "mcp"] as const
+
+/**
+ * The `@nifrajs/cli` version the launch command pins to. Kept in lockstep with the published
+ * `@nifrajs/cli` version by `scripts/version.ts` (alongside the cli.ts / mcp-http.ts constants).
+ *
+ * Why pin at all instead of `bunx @nifrajs/cli mcp`: `bunx` keys its cache on the exact version spec.
+ * An UNPINNED spec resolves to the `latest` tag once, then `bunx` reuses that cached copy on every
+ * later spawn WITHOUT re-checking the registry — so an editor that once launched an older `@nifrajs/cli`
+ * keeps respawning the stale binary even after a newer one is published (the MCP server silently runs
+ * old code). Pinning the exact version makes the version part of the cache key, so each release fetches
+ * fresh and a stale cache can never shadow it. The cost: an already-scaffolded app's `.mcp.json` freezes
+ * at its scaffold-time version until `nifra init-agents` is re-run — an acceptable, deterministic trade.
+ */
+export const MCP_CLI_VERSION = "1.0.0-beta.3" as const
+export const MCP_SERVER_ARGS = [`@nifrajs/cli@${MCP_CLI_VERSION}`, "mcp"] as const
 
 /** The server entry registered under the `nifra` key in both Claude Code's and Cursor's MCP config. */
 export interface McpServerConfig {

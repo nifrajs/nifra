@@ -16,6 +16,8 @@ const { version } = JSON.parse(readFileSync("packages/cli/package.json", "utf8")
 const constants: Array<{ file: string; re: RegExp }> = [
   { file: "packages/cli/src/cli.ts", re: /(CLI_VERSION\s*=\s*)"[^"]+"/ },
   { file: "packages/cli/src/mcp-http.ts", re: /(const VERSION\s*=\s*)"[^"]+"/ },
+  // The pinned @nifrajs/cli version in the generated .mcp.json launch command.
+  { file: "packages/create-nifra/src/agent-files.ts", re: /(MCP_CLI_VERSION\s*=\s*)"[^"]+"/ },
 ]
 
 for (const { file, re } of constants) {

@@ -49,7 +49,10 @@ describe("initAgents — fresh project", () => {
     const mcp = JSON.parse(await read(dir, ".mcp.json")) as {
       mcpServers: Record<string, { command: string; args: string[] }>
     }
-    expect(mcp.mcpServers.nifra).toEqual({ command: "bunx", args: ["@nifrajs/cli", "mcp"] })
+    expect(mcp.mcpServers.nifra?.command).toBe("bunx")
+    // Pinned to an exact @nifrajs/cli version so a stale bunx cache can't shadow it.
+    expect(mcp.mcpServers.nifra?.args?.[0]).toMatch(/^@nifrajs\/cli@\d+\.\d+\.\d+/)
+    expect(mcp.mcpServers.nifra?.args?.[1]).toBe("mcp")
 
     // .cursor/mcp.json — same server config, byte-identical (single source of truth).
     expect(await read(dir, ".cursor/mcp.json")).toBe(await read(dir, ".mcp.json"))
@@ -63,7 +66,7 @@ describe("initAgents — fresh project", () => {
     // AGENTS.md — written fresh (none existed) with the MCP section.
     const agents = await read(dir, "AGENTS.md")
     expect(agents).toContain("## MCP server")
-    expect(agents).toContain("bunx @nifrajs/cli mcp")
+    expect(agents).toMatch(/bunx @nifrajs\/cli@\d+\.\d+\.\d+\S* mcp/)
 
     expect(result.files.map((f) => f.action)).toEqual(["wrote", "wrote", "wrote", "wrote"])
   })

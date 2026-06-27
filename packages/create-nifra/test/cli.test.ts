@@ -137,8 +137,11 @@ describe("scaffold — agent-discovery files (MCP auto-discovery)", () => {
     expect(cfg.mcpServers.nifra).toBeDefined()
     expect(cfg.mcpServers.nifra?.command).toBe("bunx")
     // `@nifrajs/cli` (not the bare `nifra` pkg) — it's the package that provides the `nifra` bin, so it
-    // resolves across api/isr templates that don't carry @nifrajs/cli as a dep.
-    expect(cfg.mcpServers.nifra?.args).toEqual(["@nifrajs/cli", "mcp"])
+    // resolves across api/isr templates that don't carry @nifrajs/cli as a dep. Pinned to an exact
+    // version so a stale `bunx` cache can't shadow it (the version is part of bunx's cache key).
+    const args = cfg.mcpServers.nifra?.args
+    expect(args?.[0]).toMatch(/^@nifrajs\/cli@\d+\.\d+\.\d+/)
+    expect(args?.[1]).toBe("mcp")
   })
 
   test("writes .cursor/mcp.json with the same server config", async () => {
@@ -169,7 +172,7 @@ describe("scaffold — agent-discovery files (MCP auto-discovery)", () => {
     await scaffold({ target: dir })
     const md = await readFile(join(dir, "AGENTS.md"), "utf8")
     expect(md).toContain("## MCP server")
-    expect(md).toContain("bunx @nifrajs/cli mcp")
+    expect(md).toMatch(/bunx @nifrajs\/cli@\d+\.\d+\.\d+\S* mcp/)
     expect(md).toContain("nifra_docs")
   })
 })
