@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { LoadedApp } from "../src/load.ts"
+import { detectMonorepo, loadMonorepoApps } from "../src/load.ts"
 import { createCachedAppLoader } from "../src/mcp.ts"
+import { projectTools, projectFeatures } from "../src/mcp.ts"
 import {
   createMcpProtocolState,
   handleRpc,
@@ -430,6 +432,105 @@ describe("runBackend (nifra_run engine) — input guards", () => {
       proc?.kill()
       await proc?.exited.catch(() => 0)
       await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("monorepo detection + tool namespacing", () => {
+  test("detectMonorepo returns null for single-app (has routes/)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-mono-"))
+    try {
+      await mkdir(join(dir, "routes"))
+      await writeFile(
+        join(dir, "nifra.config.ts"),
+        `export const apps = { dash: "./apps/dash" }`,
+      )
+      expect(await detectMonorepo(dir)).toBeNull()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("detectMonorepo returns null when no nifra.config.ts", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-mono-"))
+    try {
+      expect(await detectMonorepo(dir)).toBeNull()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("detectMonorepo returns null when config has no apps export", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-mono-"))
+    try {
+      await writeFile(join(dir, "nifra.config.ts"), `export const adapter = {}`)
+      expect(await detectMonorepo(dir)).toBeNull()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("detectMonorepo returns config when root has apps but no routes/", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-mono-"))
+    try {
+      await writeFile(
+        join(dir, "nifra.config.ts"),
+        `export const apps = { dash: "./apps/dash", portal: "./apps/portal" }`,
+      )
+      const result = await detectMonorepo(dir)
+      expect(result).not.toBeNull()
+      expect(result?.apps).toEqual({ dash: "./apps/dash", portal: "./apps/portal" })
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("loadMonorepoApps resolves absolute cwds for each app", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-mono-"))
+    try {
+      await writeFile(
+        join(dir, "nifra.config.ts"),
+        `export const apps = { dash: "./apps/dash", portal: "./apps/portal" }`,
+      )
+      const config = await detectMonorepo(dir)
+      const entries = await loadMonorepoApps(dir, config!)
+      expect(entries).toHaveLength(2)
+      expect(entries[0]).toEqual({ name: "dash", cwd: join(dir, "apps/dash") })
+      expect(entries[1]).toEqual({ name: "portal", cwd: join(dir, "apps/portal") })
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("projectTools names are prefixed nifra_<app>_ after namespacing", () => {
+    const fakeLoader = async (): Promise<LoadedApp> => {
+      throw new Error("should not load")
+    }
+    const rawTools = projectTools("/fake", fakeLoader)
+    const rawNames = rawTools.map((t) => t.name)
+    // Simulate what namespaceForApp does (inline, since it's private)
+    const prefix = "nifra_dash_"
+    const namespaced = rawTools.map((t) => ({ ...t, name: t.name.replace(/^nifra_/, prefix) }))
+    for (const t of namespaced) {
+      expect(t.name.startsWith("nifra_dash_")).toBe(true)
+    }
+    // Confirm originals all start with nifra_
+    for (const n of rawNames) {
+      expect(n.startsWith("nifra_")).toBe(true)
+    }
+  })
+
+  test("projectFeatures resource URIs are prefixed after namespacing", () => {
+    const fakeLoader = async (): Promise<LoadedApp> => {
+      throw new Error("should not load")
+    }
+    const features = projectFeatures("/fake", fakeLoader)
+    const namespaced = (features.resources ?? []).map((r) => ({
+      ...r,
+      uri: r.uri.replace(/^nifra:\/\//, "nifra://portal/"),
+    }))
+    for (const r of namespaced) {
+      expect(r.uri.startsWith("nifra://portal/")).toBe(true)
     }
   })
 })

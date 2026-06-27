@@ -30,6 +30,7 @@ import { Glob } from "bun"
 import { loadDocsCorpus } from "./docs-search.ts"
 import { loadExamplesCorpus } from "./examples.ts"
 import { describeProject } from "./introspect.ts"
+import { detectMonorepo, loadMonorepoApps } from "./load.ts"
 import type { LoadAppOptions, LoadedApp } from "./load.ts"
 import { docsTools } from "./mcp-docs-tools.ts"
 import {
@@ -855,11 +856,53 @@ export function projectTools(
   ]
 }
 
+/** Prefix every tool name and resource URI for a named app in a monorepo. */
+function namespaceForApp(
+  name: string,
+  tools: McpTool[],
+  features: McpServerFeatures,
+): { tools: McpTool[]; features: McpServerFeatures } {
+  const prefix = `nifra_${name}_`
+  const namespacedTools = tools.map((t) => ({ ...t, name: t.name.replace(/^nifra_/, prefix) }))
+  const namespacedResources = (features.resources ?? []).map((r) => ({
+    ...r,
+    uri: r.uri.replace(/^nifra:\/\//, `nifra://${name}/`),
+  }))
+  const namespacedPrompts = (features.prompts ?? []).map((p) => ({
+    ...p,
+    name: p.name.replace(/^nifra_/, prefix),
+  }))
+  return {
+    tools: namespacedTools,
+    features: { resources: namespacedResources, prompts: namespacedPrompts },
+  }
+}
+
 /** Run the stdio MCP server: read newline-delimited JSON-RPC from stdin, write responses to stdout. */
 export async function runMcpServer(cwd: string, version: string): Promise<void> {
-  const loadAppCached = createCachedAppLoader(cwd)
-  const tools = projectTools(cwd, loadAppCached)
-  const features = projectFeatures(cwd, loadAppCached)
+  let tools: McpTool[]
+  let features: McpServerFeatures
+
+  const monorepo = await detectMonorepo(cwd)
+  if (monorepo) {
+    const appEntries = await loadMonorepoApps(cwd, monorepo)
+    const allTools: McpTool[] = []
+    const allResources: McpResource[] = []
+    const allPrompts: McpPrompt[] = []
+    for (const { name, cwd: appCwd } of appEntries) {
+      const loader = createCachedAppLoader(appCwd)
+      const ns = namespaceForApp(name, projectTools(appCwd, loader), projectFeatures(appCwd, loader))
+      allTools.push(...ns.tools)
+      allResources.push(...(ns.features.resources ?? []))
+      allPrompts.push(...(ns.features.prompts ?? []))
+    }
+    tools = [...docsTools(loadDocsCorpus, loadExamplesCorpus), ...allTools]
+    features = { resources: allResources, prompts: allPrompts }
+  } else {
+    const loadAppCached = createCachedAppLoader(cwd)
+    tools = projectTools(cwd, loadAppCached)
+    features = projectFeatures(cwd, loadAppCached)
+  }
   const serverInfo = { name: "nifra", version }
   const state = createMcpProtocolState()
   const send = (message: JsonRpcResponse | JsonRpcNotification): void => {

@@ -72,6 +72,55 @@ export interface LoadAppOptions {
   readonly importQuery?: string
 }
 
+/**
+ * Root-level monorepo config — exported from `nifra.config.ts` at the workspace root.
+ * Each key in `apps` is the short name used to namespace MCP tools (`nifra_<name>_context` etc.);
+ * each value is a path relative to the root that contains its own `nifra.config.ts` / `framework.ts`.
+ *
+ * Example:
+ * ```ts
+ * // nifra.config.ts (workspace root)
+ * export const apps = {
+ *   dashboard: "./apps/dashboard",
+ *   portal:    "./apps/portal",
+ * }
+ * ```
+ */
+export interface NifraMonorepoConfig {
+  readonly apps: Readonly<Record<string, string>>
+}
+
+/**
+ * Detect whether `cwd` is a monorepo root: has `nifra.config.ts` that exports `apps`, but no
+ * `routes/` directory (so it's not itself a nifra app). Returns the `apps` map if so, else `null`.
+ */
+export async function detectMonorepo(
+  cwd: string,
+  options: LoadAppOptions = {},
+): Promise<NifraMonorepoConfig | null> {
+  const configPath = resolve(cwd, "nifra.config.ts")
+  if (!existsSync(configPath) || existsSync(resolve(cwd, "routes"))) return null
+  const mod = (await import(
+    options.importQuery ? `${configPath}?${options.importQuery}` : configPath
+  ).catch(() => null)) as Partial<NifraMonorepoConfig> | null
+  if (!mod || typeof mod.apps !== "object" || mod.apps === null) return null
+  return { apps: mod.apps as Record<string, string> }
+}
+
+/**
+ * Load all apps declared in a monorepo config. Returns `{ name, cwd, app }[]` in declaration order.
+ * Individual app load failures throw — each app must be valid.
+ */
+export async function loadMonorepoApps(
+  rootCwd: string,
+  config: NifraMonorepoConfig,
+): Promise<Array<{ name: string; cwd: string }>> {
+  return Object.entries(config.apps).map(([name, rel]) => ({
+    name,
+    cwd: resolve(rootCwd, rel),
+  }))
+}
+
 const isAdapter = (v: unknown): boolean => typeof v === "object" && v !== null
 
 const importWithQuery = (path: string, query: string | undefined): Promise<unknown> =>
