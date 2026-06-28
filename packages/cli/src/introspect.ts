@@ -200,6 +200,8 @@ const CONVENTIONS = `## Conventions (summary)
 - **Cross-cutting concerns** (rate limit / \`429\`, CORS, auth, CSRF, caching, security headers, body limits)
   → \`@nifrajs/middleware\`, applied with \`app.use(...)\`. Don't hand-roll them; call \`nifra_docs("middleware")\`
   for the full list + usage.
+- **Need the exact TypeScript of a \`@nifrajs/*\` symbol?** Call \`nifra_types({ name })\` (e.g. \`RateLimitStore\`,
+  \`RouteSchema\`) — the authoritative, complete declaration. Never read \`@nifrajs\` \`.d.ts\` files.
 - **Response contract (no drift):** declare \`{ response: t.object({...}) }\` on a route to lock its output
   shape — the handler is type-checked against it and the client sees exactly that shape. The contract above
   is the single source of truth for both sides.
