@@ -137,9 +137,13 @@ export interface WebSocketHandler<
    * any site can open an authenticated socket to your app. Set this to lock the route to known
    * origins: a string allow-list (exact `Origin` header match) or a predicate. A request whose
    * `Origin` doesn't match (or is absent, for the allow-list form) is rejected with `403` before any
-   * per-connection work. Omit for no built-in check (same as today — then enforce it yourself in
-   * `upgrade()`). Non-browser clients can spoof `Origin`, so this is a browser-CSWSH defense, not
-   * authentication — pair it with auth in `upgrade()`.
+   * per-connection work.
+   *
+   * **When omitted, the default is same-origin:** a cross-origin BROWSER handshake (an `Origin` header
+   * whose host differs from the request's) is rejected with `403`. Non-browser clients (no `Origin`) and
+   * same-origin browsers pass. Set this to allow specific cross-origin clients, or `() => true` for a
+   * genuinely public socket. Non-browser clients can spoof `Origin`, so this is a browser-CSWSH defense,
+   * not authentication — pair it with auth in `upgrade()`.
    */
   allowedOrigins?: ReadonlyArray<string> | ((origin: string | null) => boolean)
   /**

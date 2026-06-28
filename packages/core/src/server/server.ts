@@ -406,6 +406,17 @@ function jsonError(status: number, error: string, headers?: Record<string, strin
   )
 }
 
+/** Same-origin check for a WebSocket handshake (CSWSH default): the `Origin`'s host[:port] must equal the
+ * request's own host (from `req.url`, which the runtime builds from the `Host` header). Scheme differs
+ * (ws↔http), so compare host only. An unparseable Origin is treated as NOT same-origin (rejected). */
+function wsSameOrigin(origin: string, req: Request): boolean {
+  try {
+    return new URL(origin).host === new URL(req.url).host
+  } catch {
+    return false
+  }
+}
+
 function validationError(issues: ReadonlyArray<StandardIssue>): Response {
   const serialized = issues.map((issue) => {
     const path = issue.path?.map((seg) => String(typeof seg === "object" ? seg.key : seg))
@@ -1477,13 +1488,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // CSWSH guard, before any per-connection work or the user's upgrade(): reject a disallowed
     // Origin with 403. Browsers don't CORS-protect WS handshakes but do send cookies, so this
     // blocks cross-site authenticated sockets when the route opts in via `allowedOrigins`.
+    const origin = req.headers.get("origin")
     if (handler.allowedOrigins !== undefined) {
-      const origin = req.headers.get("origin")
       const allowed =
         typeof handler.allowedOrigins === "function"
           ? handler.allowedOrigins(origin)
           : origin !== null && handler.allowedOrigins.includes(origin)
       if (!allowed) return { kind: "reject", response: jsonError(403, "forbidden_origin") }
+    } else if (origin !== null && !wsSameOrigin(origin, req)) {
+      // Secure default (no explicit `allowedOrigins`): reject a CROSS-ORIGIN browser handshake — the
+      // CSWSH case, since browsers send cookies on WS handshakes and don't apply CORS. Non-browser
+      // clients send no `Origin` and pass; same-origin browsers pass. Set `allowedOrigins` to permit
+      // specific cross-origin clients (or `() => true` for a genuinely public socket).
+      return { kind: "reject", response: jsonError(403, "forbidden_origin") }
     }
     if (handler.upgrade === undefined) {
       return { kind: "upgrade", handler, data: undefined, pubsub }
