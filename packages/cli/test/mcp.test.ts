@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { LoadedApp } from "../src/load.ts"
 import { detectMonorepo, loadMonorepoApps } from "../src/load.ts"
-import { createCachedAppLoader, projectFeatures, projectTools } from "../src/mcp.ts"
+import { createCachedAppLoader, projectFeatures, projectTools, WarmWorker } from "../src/mcp.ts"
 import {
   createMcpProtocolState,
   handleRpc,
@@ -430,6 +430,60 @@ describe("runBackend (nifra_run engine) — input guards", () => {
     } finally {
       proc?.kill()
       await proc?.exited.catch(() => 0)
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("WarmWorker: cancelling one request leaves concurrent requests + the worker alive", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-warm-cancel-"))
+    let worker: WarmWorker | undefined
+    try {
+      // `/slow` parks long enough to be cancelled mid-flight; `count` persists so we can prove the
+      // follow-up request hit the SAME loaded process (no cold respawn).
+      await writeFile(
+        join(dir, "backend.ts"),
+        [
+          "let count = 0",
+          "export const backend = {",
+          "  async fetch(req) {",
+          "    const url = new URL(req.url)",
+          "    if (url.pathname === '/slow') await new Promise((r) => setTimeout(r, 200))",
+          "    count++",
+          "    return Response.json({ count, path: url.pathname })",
+          "  }",
+          "}",
+          "",
+        ].join("\n"),
+      )
+      worker = new WarmWorker("mcp-run", dir, "test-fingerprint", "run")
+      const body = async (raw: string): Promise<{ count: number; path: string }> => {
+        const parsed = JSON.parse(raw) as {
+          results?: Array<{ body: { count: number; path: string } }>
+        }
+        const first = parsed.results?.[0]
+        if (first === undefined) throw new Error(`no result in worker output: ${raw}`)
+        return first.body
+      }
+
+      // Two requests outstanding at once, then cancel only the first.
+      const aborter = new AbortController()
+      const cancelled = worker.request({ requests: [{ path: "/slow" }] }, aborter.signal)
+      const survivor = worker.request({ requests: [{ path: "/survivor" }] })
+      aborter.abort("user cancelled")
+
+      // The cancelled call returns its cancellation message; the OTHER call still resolves for real
+      // (the buggy version killed the shared worker here, rejecting `survivor` with "worker exited").
+      expect(await cancelled).toBe("run cancelled: user cancelled.")
+      const survivorBody = await body(await survivor)
+      expect(survivorBody.path).toBe("/survivor")
+
+      // Worker was never torn down: a follow-up request succeeds and shares the same process, so the
+      // persistent counter keeps climbing instead of resetting from a cold respawn.
+      const followBody = await body(await worker.request({ requests: [{ path: "/again" }] }))
+      expect(followBody.path).toBe("/again")
+      expect(followBody.count).toBeGreaterThan(survivorBody.count)
+    } finally {
+      worker?.stop()
       await rm(dir, { recursive: true, force: true })
     }
   })
