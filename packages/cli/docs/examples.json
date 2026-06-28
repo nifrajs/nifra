@@ -159,7 +159,7 @@
     "name": "IDENTITY",
     "topic": "Nifra — Plugins & middleware",
     "slug": "plugins",
-    "code": "import { defineIdentityPlugin, server } from \"@nifrajs/core\"\n\n// A plugin that registers routes/hooks but adds NO context type is a type-IDENTITY plugin.\n// defineIdentityPlugin keeps app.use()'s return type EXACTLY the caller's server, so routes added\n// after .use() keep their types — and the typed client derived from them stays intact.\nexport const audit = defineIdentityPlugin(\"audit\", (app) =>\n  app.onResponse((res) => res),\n)\n\n// /a AND /b stay fully typed across the .use():\nconst api = server().get(\"/a\", () => ({ a: 1 })).use(audit).get(\"/b\", () => ({ b: 2 }))"
+    "code": "import { defineRouterPlugin, server } from \"@nifrajs/core\"\n\n// A plugin that mounts routes/hooks but adds NO context type: defineRouterPlugin (the clearer name for\n// defineIdentityPlugin) keeps app.use()'s return type EXACTLY the caller's server, so routes added after\n// .use() stay typed — and the typed client derived from them stays intact.\nexport const scim = defineRouterPlugin(\"scim\", (app) => {\n  app.get(\"/scim/v2/Users\", () => ({ Resources: [] })) // mount as a SIDE EFFECT (a runtime-only route)\n  return app                                           // return the app unchanged → caller's registry preserved\n})\n\n// /a AND /b stay fully typed across the .use():\nconst api = server().get(\"/a\", () => ({ a: 1 })).use(scim).get(\"/b\", () => ({ b: 2 }))"
   },
   {
     "name": "JWT_BASIC",

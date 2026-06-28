@@ -111,5 +111,7 @@ api.users.post({ nope: 1 })
 api.users({ id: "1" }).patch()
 // @ts-expect-error query shape is wrong
 api.search.get({ query: { page: "two" } })
+// @ts-expect-error route declares no `query` schema — passing query is rejected (error message names the fix)
+api.health.get({ query: { page: 1 } })
 // @ts-expect-error a bodyless POST takes no body argument
 api.ping.post({ data: 1 })
