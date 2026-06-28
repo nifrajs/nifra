@@ -1187,29 +1187,37 @@ app
 app.use((a) => a.decorate("db", db).derive((c) => ({ now: Date.now() })))
 ```
 
-### Route/hook plugins: keep types with defineIdentityPlugin
+### Route/hook plugins: keep types with defineRouterPlugin
 
 A plugin that registers routes or hooks but adds **no context type** — e.g. mounting an auth
-handler — should be built with `defineIdentityPlugin`, not `definePlugin`.
-It threads the app's _exact_ type through `use`, so the route registry (and the
-typed client derived from it) survives the plugin. A plain
-`definePlugin((app) => app)` infers `app` as
-`Server`, which collapses `use()`'s result — and your whole
-typed client — to `any`. `@nifrajs/better-auth` is built this way, so
+router — should be built with `defineRouterPlugin` (the clearer-named alias of
+`defineIdentityPlugin`), not `definePlugin`. It threads the app's
+_exact_ type through `use`, so the route registry (and the typed client derived
+from it) survives the plugin. Mount routes as a **side effect** then `return app`
+(registering with `.get`/`.post` directly would change the type away from the
+identity, so those routes run but aren't in the typed registry — the trade that keeps everything
+else typed).
+
+**Footgun:** reach for `definePlugin` here instead and a plain
+`definePlugin((app) => app.get(...))` infers `app` as
+`Server`, collapsing `use()`'s result — and your whole typed
+client — to `any`, with **no type error and no runtime error**.
+`@nifrajs/better-auth` is built with the identity form, so
 `server().use(betterAuth(auth)).get(...)` keeps every route typed.
 
 ```ts
-import { defineIdentityPlugin, server } from "@nifrajs/core"
+import { defineRouterPlugin, server } from "@nifrajs/core"
 
-// A plugin that registers routes/hooks but adds NO context type is a type-IDENTITY plugin.
-// defineIdentityPlugin keeps app.use()'s return type EXACTLY the caller's server, so routes added
-// after .use() keep their types — and the typed client derived from them stays intact.
-export const audit = defineIdentityPlugin("audit", (app) =>
-  app.onResponse((res) => res),
-)
+// A plugin that mounts routes/hooks but adds NO context type: defineRouterPlugin (the clearer name for
+// defineIdentityPlugin) keeps app.use()'s return type EXACTLY the caller's server, so routes added after
+// .use() stay typed — and the typed client derived from them stays intact.
+export const scim = defineRouterPlugin("scim", (app) => {
+  app.get("/scim/v2/Users", () => ({ Resources: [] })) // mount as a SIDE EFFECT (a runtime-only route)
+  return app                                           // return the app unchanged → caller's registry preserved
+})
 
 // /a AND /b stay fully typed across the .use():
-const api = server().get("/a", () => ({ a: 1 })).use(audit).get("/b", () => ({ b: 2 }))
+const api = server().get("/a", () => ({ a: 1 })).use(scim).get("/b", () => ({ b: 2 }))
 ```
 
 ### Lifecycle hooks
@@ -3062,12 +3070,22 @@ plain object and shape the response with `c.set` — reach for `c.json` /
 **A plugin widened the app's type.** A plugin that registers routes/hooks but whose return
 type isn't the concrete server (e.g. an untyped `app => app.onResponse(…)`)
 makes `.use()` return `Server` and the client loses your
-registry. Wrap it with `defineIdentityPlugin(name, …)` so `.use()`
-returns your server unchanged and routes added after it stay typed. See
-[Plugins → keep types with defineIdentityPlugin](/docs/plugins).
+registry. Build it with `defineRouterPlugin(name, …)` (the clearer-named
+`defineIdentityPlugin`) so `.use()` returns your server unchanged and
+routes added after it stay typed. See
+[Plugins → keep types with defineRouterPlugin](/docs/plugins).
 
 `nifra check` flags the raw-`Response` case; the plugin case surfaces as a
 `never` client at the call site.
+
+####
+Call site rejects `{ query: {…} }`
+
+If `api.thing.get(&#123; query: &#123; … &#125; &#125;)` errors, the route declares no
+`query` schema — its query types as `never`, so the client can't accept query
+params. The error reads out the fix; add a schema to the route:
+`.get("/thing", { query: z.object({ page: z.string() }) }, h)`. Then
+`c.query` is the validated type and the client accepts a typed `query`.
 
 ### Still stuck?
 
@@ -5582,7 +5600,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/core
 
-`AnyServer`, `attachWebSocket`, `commonSecretPatterns`, `Context`, `ContextForOp`, `ContractShape`, `CookieOptions`, `defineContract`, `defineIdentityPlugin`, `definePlugin`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FRAMEWORK_NAME`, `FrameworkError`, `FrameworkName`, `Handler`, `HandlersFor`, `IdentityPlugin`, `implement`, `InferInput`, `InferOutput`, `jsonLogger`, `LogFields`, `Logger`, `Method`, `METHODS`, `Middleware`, `NifraPlugin`, `NifraWebSocket`, `NodeServeOutcome`, `OnRequestResult`, `OperationDef`, `Params`, `parseCookies`, `Platform`, `Prettify`, `redactLogFields`, `RedactOptions`, `Registry`, `RegistryFor`, `RegistryFromImpl`, `ResponseControls`, `ResponseDef`, `robots`, `RobotsOptions`, `RobotsRule`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `Router`, `RouterMatch`, `RouteSchema`, `RunningServer`, `ScheduledController`, `ScheduledHandler`, `serializeCookie`, `server`, `Server`, `ServerOptions`, `SignatureEncoding`, `signValue`, `silentLogger`, `sitemap`, `SitemapChangeFreq`, `SitemapEntry`, `SitemapOptions`, `sse`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `toFetchHandler`, `TopicRegistry`, `unsignValue`, `validateStandard`, `ValidationOutcome`, `verifyWebhook`, `VerifyWebhookOptions`, `Version`, `VERSION`, `WebhookFailureReason`, `WebhookProvider`, `WebhookResult`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`
+`AnyServer`, `attachWebSocket`, `commonSecretPatterns`, `Context`, `ContextForOp`, `ContractShape`, `CookieOptions`, `defineContract`, `defineIdentityPlugin`, `definePlugin`, `defineRouterPlugin`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FRAMEWORK_NAME`, `FrameworkError`, `FrameworkName`, `Handler`, `HandlersFor`, `IdentityPlugin`, `implement`, `InferInput`, `InferOutput`, `jsonLogger`, `LogFields`, `Logger`, `Method`, `METHODS`, `Middleware`, `NifraPlugin`, `NifraWebSocket`, `NodeServeOutcome`, `OnRequestResult`, `OperationDef`, `Params`, `parseCookies`, `Platform`, `Prettify`, `redactLogFields`, `RedactOptions`, `Registry`, `RegistryFor`, `RegistryFromImpl`, `ResponseControls`, `ResponseDef`, `robots`, `RobotsOptions`, `RobotsRule`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `Router`, `RouterMatch`, `RouteSchema`, `RunningServer`, `ScheduledController`, `ScheduledHandler`, `serializeCookie`, `server`, `Server`, `ServerOptions`, `SignatureEncoding`, `signValue`, `silentLogger`, `sitemap`, `SitemapChangeFreq`, `SitemapEntry`, `SitemapOptions`, `sse`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `toFetchHandler`, `TopicRegistry`, `unsignValue`, `validateStandard`, `ValidationOutcome`, `verifyWebhook`, `VerifyWebhookOptions`, `Version`, `VERSION`, `WebhookFailureReason`, `WebhookProvider`, `WebhookResult`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`
 
 ## @nifrajs/cron
 

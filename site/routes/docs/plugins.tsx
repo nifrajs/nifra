@@ -127,17 +127,18 @@ createWebApp({
 // Fires before the nearest _error boundary renders — so errors the boundary
 // would hide still reach your reporter. (Control-flow redirects aren't reported.)`
 
-const IDENTITY = `import { defineIdentityPlugin, server } from "@nifrajs/core"
+const IDENTITY = `import { defineRouterPlugin, server } from "@nifrajs/core"
 
-// A plugin that registers routes/hooks but adds NO context type is a type-IDENTITY plugin.
-// defineIdentityPlugin keeps app.use()'s return type EXACTLY the caller's server, so routes added
-// after .use() keep their types — and the typed client derived from them stays intact.
-export const audit = defineIdentityPlugin("audit", (app) =>
-  app.onResponse((res) => res),
-)
+// A plugin that mounts routes/hooks but adds NO context type: defineRouterPlugin (the clearer name for
+// defineIdentityPlugin) keeps app.use()'s return type EXACTLY the caller's server, so routes added after
+// .use() stay typed — and the typed client derived from them stays intact.
+export const scim = defineRouterPlugin("scim", (app) => {
+  app.get("/scim/v2/Users", () => ({ Resources: [] })) // mount as a SIDE EFFECT (a runtime-only route)
+  return app                                           // return the app unchanged → caller's registry preserved
+})
 
 // /a AND /b stay fully typed across the .use():
-const api = server().get("/a", () => ({ a: 1 })).use(audit).get("/b", () => ({ b: 2 }))`
+const api = server().get("/a", () => ({ a: 1 })).use(scim).get("/b", () => ({ b: 2 }))`
 
 export default function Plugins() {
   return (
@@ -160,15 +161,23 @@ export default function Plugins() {
       </p>
       <CodeBlock code={PLUGIN} />
 
-      <h2>Route/hook plugins: keep types with defineIdentityPlugin</h2>
+      <h2>Route/hook plugins: keep types with defineRouterPlugin</h2>
       <p>
         A plugin that registers routes or hooks but adds <b>no context type</b> — e.g. mounting an auth
-        handler — should be built with <code>defineIdentityPlugin</code>, not <code>definePlugin</code>.
-        It threads the app's <i>exact</i> type through <code>use</code>, so the route registry (and the
-        typed client derived from it) survives the plugin. A plain{" "}
-        <code>{`definePlugin((app) => app)`}</code> infers <code>app</code> as{" "}
-        <code>{`Server<any, any>`}</code>, which collapses <code>use()</code>'s result — and your whole
-        typed client — to <code>any</code>. <code>@nifrajs/better-auth</code> is built this way, so{" "}
+        router — should be built with <code>defineRouterPlugin</code> (the clearer-named alias of{" "}
+        <code>defineIdentityPlugin</code>), not <code>definePlugin</code>. It threads the app's{" "}
+        <i>exact</i> type through <code>use</code>, so the route registry (and the typed client derived
+        from it) survives the plugin. Mount routes as a <b>side effect</b> then <code>return app</code>{" "}
+        (registering with <code>.get</code>/<code>.post</code> directly would change the type away from the
+        identity, so those routes run but aren't in the typed registry — the trade that keeps everything
+        else typed).
+      </p>
+      <p className="caveat">
+        <b>Footgun:</b> reach for <code>definePlugin</code> here instead and a plain{" "}
+        <code>{`definePlugin((app) => app.get(...))`}</code> infers <code>app</code> as{" "}
+        <code>{`Server<any, any>`}</code>, collapsing <code>use()</code>'s result — and your whole typed
+        client — to <code>any</code>, with <b>no type error and no runtime error</b>.{" "}
+        <code>@nifrajs/better-auth</code> is built with the identity form, so{" "}
         <code>{`server().use(betterAuth(auth)).get(...)`}</code> keeps every route typed.
       </p>
       <CodeBlock code={IDENTITY} />

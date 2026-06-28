@@ -315,13 +315,19 @@ export type IdentityPlugin = (<S extends AnyServer>(app: S) => S) & {
 }
 
 /**
- * Name + ergonomics for a plugin. `app.use(myPlugin)` applies it once; a second `use` of the same
- * name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
+ * Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)`
+ * applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each
+ * other without double-registering hooks.
  *
  * ```ts
  * export const requestId = definePlugin("requestId", (app) => app.derive(() => ({ requestId: uuid() })))
  * app.use(requestId)   // downstream handlers see c.requestId
  * ```
+ *
+ * FOOTGUN: only use this for a plugin that adds context. For a plugin that **mounts routes/hooks but adds
+ * NO context** (an auth router, an audit logger), use {@link defineRouterPlugin} ({@link defineIdentityPlugin}).
+ * `definePlugin((app) => app.get(...))` infers `app: Server<any, any>`, so `.use()` returns `Server<any, any>`
+ * and your whole typed client silently collapses to `any` — no type error, no runtime error.
  */
 export function definePlugin<In extends AnyServer, Out extends AnyServer>(
   name: string,
@@ -351,6 +357,27 @@ export function defineIdentityPlugin(
 ): IdentityPlugin {
   return Object.assign(apply, { pluginName: name }) as IdentityPlugin
 }
+
+/**
+ * Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts
+ * routes/hooks but adds no context type** (an auth router, an audit logger). Use this — not
+ * {@link definePlugin} — for any such plugin, or the typed client silently collapses to `any`. The
+ * "identity" in {@link defineIdentityPlugin} refers to the type-identity it preserves; `defineRouterPlugin`
+ * is the same thing under a clearer name.
+ *
+ * Mount routes as a **side effect**, then return the app unchanged (registering via `.get`/`.post` would
+ * change the type away from the identity `S`; the mounted routes run but aren't in the caller's typed
+ * registry — that's the trade that keeps everything else typed):
+ *
+ * ```ts
+ * export const scim = defineRouterPlugin("scim", (app) => {
+ *   app.get("/scim/v2/Users", listUsers) // side effect: mounted at runtime
+ *   return app                           // return S unchanged → routes added after .use(scim) stay typed
+ * })
+ * const api = server().get("/a", h).use(scim).get("/b", h) // /a AND /b stay typed
+ * ```
+ */
+export const defineRouterPlugin: typeof defineIdentityPlugin = defineIdentityPlugin
 
 const DEFAULT_MAX_BODY_BYTES = 1_000_000
 const DEFAULT_DRAIN_MS = 10_000

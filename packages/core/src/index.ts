@@ -73,6 +73,7 @@ export {
   type DurableObjectNamespaceLike,
   defineIdentityPlugin,
   definePlugin,
+  defineRouterPlugin,
   type ExecutionContext,
   type Handler,
   type IdentityPlugin,

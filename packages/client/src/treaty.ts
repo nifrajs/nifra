@@ -7,8 +7,17 @@ export type RegistryOf<App> = App extends Server<infer R, infer _Ctx> ? R : neve
 
 // --- per-method call signature ---
 
+/**
+ * The `query` option's type for a route that declares NO `query` schema. It's a descriptive string
+ * literal, so passing query params to such a route fails with an error that READS OUT the fix —
+ * `Type '{ page: string }' is not assignable to type 'add a `query` schema…'` — instead of the opaque
+ * `not assignable to type 'never'`. The error surfaces at the call site; the fix is at the route.
+ */
+type QueryNotTyped =
+  "add a `query` schema to this route — `{ query: z.object({ … }) }` — so the typed client can accept query params here"
+
 type CallOptions<I extends RouteInfo> = {
-  query?: [I["query"]] extends [never] ? never : I["query"]
+  query?: [I["query"]] extends [never] ? QueryNotTyped : I["query"]
   headers?: Record<string, string>
   signal?: AbortSignal
 }

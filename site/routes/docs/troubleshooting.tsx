@@ -232,14 +232,25 @@ export default function Troubleshooting() {
           <b>A plugin widened the app's type.</b> A plugin that registers routes/hooks but whose return
           type isn't the concrete server (e.g. an untyped <code>{`app => app.onResponse(…)`}</code>){" "}
           makes <code>.use()</code> return <code>{`Server<any, any>`}</code> and the client loses your
-          registry. Wrap it with <code>defineIdentityPlugin(name, …)</code> so <code>.use()</code>{" "}
-          returns your server unchanged and routes added after it stay typed. See{" "}
-          <a href="/docs/plugins">Plugins → keep types with defineIdentityPlugin</a>.
+          registry. Build it with <code>defineRouterPlugin(name, …)</code> (the clearer-named{" "}
+          <code>defineIdentityPlugin</code>) so <code>.use()</code> returns your server unchanged and
+          routes added after it stay typed. See{" "}
+          <a href="/docs/plugins">Plugins → keep types with defineRouterPlugin</a>.
         </li>
       </ul>
       <p>
         <code>nifra check</code> flags the raw-<code>Response</code> case; the plugin case surfaces as a{" "}
         <code>never</code> client at the call site.
+      </p>
+      <h3>
+        Call site rejects <code>{`{ query: {…} }`}</code>
+      </h3>
+      <p>
+        If <code>api.thing.get(&#123; query: &#123; … &#125; &#125;)</code> errors, the route declares no{" "}
+        <code>query</code> schema — its query types as <code>never</code>, so the client can't accept query
+        params. The error reads out the fix; add a schema to the route:{" "}
+        <code>{`.get("/thing", { query: z.object({ page: z.string() }) }, h)`}</code>. Then{" "}
+        <code>c.query</code> is the validated type and the client accepts a typed <code>query</code>.
       </p>
 
       <h2>Still stuck?</h2>

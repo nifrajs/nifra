@@ -25,7 +25,7 @@ The nifra full-stack framework — unscoped meta-entry that re-exports @nifrajs/
 - **sitemap** _(function)_ — `sitemap: (entries: readonly SitemapEntry[], options?: SitemapOptions) => string`
 - **sse** _(function)_ — `sse: (c: SSEContext, run: (stream: SSEStream) => void | Promise<void>, init?: SSEInit) => Response`
 
-_…and 79 more — see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
+_…and 80 more — see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
 
 ## Footguns
 

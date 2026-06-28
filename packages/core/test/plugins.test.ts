@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { definePlugin, type Middleware, server } from "@nifrajs/core"
+import { definePlugin, defineRouterPlugin, type Middleware, server } from "@nifrajs/core"
 
 const GET = (path: string) => new Request(`http://x${path}`)
 
@@ -26,6 +26,25 @@ describe("plugin convention — use(fn)", () => {
     const health = definePlugin("health", (a) => a.get("/health", () => ({ ok: true })))
     const app = server().use(health)
     expect(await (await app.fetch(GET("/health"))).json()).toEqual({ ok: true })
+  })
+
+  test("defineRouterPlugin mounts routes and keeps the chain typed (routes before AND after)", async () => {
+    // A route/hook plugin that adds NO context — built with defineRouterPlugin so .use() returns the
+    // caller's exact server type (routes added after it stay typed; the typed client doesn't collapse).
+    const scim = defineRouterPlugin("scim", (a) => {
+      a.get("/scim/v2/Users", () => ({ Resources: [] })) // side effect: mounts the route at runtime
+      return a // return the app unchanged (type S) — the caller's registry stays typed
+    })
+    const app = server()
+      .get("/a", () => ({ a: 1 }))
+      .use(scim)
+      .get("/b", () => ({ b: 2 }))
+
+    // The type proof is that `.get("/b", …)` after `.use(scim)` still typechecks against the concrete
+    // server (a collapsed `any` would too — so the runtime checks below are the behavioral proof).
+    expect(await (await app.fetch(GET("/a"))).json()).toEqual({ a: 1 })
+    expect(await (await app.fetch(GET("/scim/v2/Users"))).json()).toEqual({ Resources: [] })
+    expect(await (await app.fetch(GET("/b"))).json()).toEqual({ b: 2 })
   })
 })
 
