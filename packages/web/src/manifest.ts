@@ -10,6 +10,8 @@
 export interface LoaderContext {
   readonly params: Record<string, string>
   readonly request: Request
+  /** Alias of {@link request} — mirrors a route handler's `c.req` so the same name works in both. */
+  readonly req: Request
   readonly api: unknown
   /** Platform bindings forwarded from the request `c.env` (Workers env/KV/D1). Opaque here. */
   readonly env: unknown

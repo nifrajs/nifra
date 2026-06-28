@@ -1194,7 +1194,14 @@ export function createWebApp<Env = unknown>(
       let data: unknown
       try {
         data = mod.loader
-          ? await mod.loader({ params: c.params, request: c.req, api, env: c.env, draft })
+          ? await mod.loader({
+              params: c.params,
+              request: c.req,
+              req: c.req,
+              api,
+              env: c.env,
+              draft,
+            })
           : null
       } catch (err) {
         // A thrown `Response` is a control-flow signal (a guard's `redirect(...)`, an explicit error
@@ -1285,7 +1292,14 @@ export function createWebApp<Env = unknown>(
           headers: { allow: "GET", "content-type": "text/plain; charset=utf-8" },
         })
       }
-      const result = await mod.action({ params: c.params, request: c.req, api, env: c.env, draft })
+      const result = await mod.action({
+        params: c.params,
+        request: c.req,
+        req: c.req,
+        api,
+        env: c.env,
+        draft,
+      })
       const isDataRequest = c.req.headers.get(DATA_HEADER) !== null
       // An action may wrap its data in `revalidate(paths, data)` to declare which routes it changed.
       // Unwrap to the inner data; the paths ride the `X-Nifra-Revalidate` header on the data-mode
@@ -1318,7 +1332,7 @@ export function createWebApp<Env = unknown>(
         })
       }
       const data = mod.loader
-        ? await mod.loader({ params: c.params, request: c.req, api, env: c.env, draft })
+        ? await mod.loader({ params: c.params, request: c.req, req: c.req, api, env: c.env, draft })
         : null
       const { chain, head } = resolveChainAndHead(await loadLayoutModules(route), mod, {
         data,

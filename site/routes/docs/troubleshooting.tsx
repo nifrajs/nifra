@@ -213,6 +213,35 @@ export default function Troubleshooting() {
         </p>
       </blockquote>
 
+      <h2>
+        <code>{`client<typeof app>`}</code> resolves to <code>never</code> (or <code>data: never</code>)
+      </h2>
+      <p>The typed client is derived from your backend's type. Two things collapse it:</p>
+      <ul>
+        <li>
+          <b>
+            A route returns a raw <code>Response</code>.
+          </b>{" "}
+          That route's <code>data</code> infers <code>never</code> (Nifra can't see the shape). Return a
+          plain object and shape the response with <code>c.set</code> — reach for <code>c.json</code> /{" "}
+          <code>c.text</code> only for an error short-circuit (<code>throw</code> from a{" "}
+          <code>derive</code> / <code>beforeHandle</code>), not a route's happy path. See{" "}
+          <a href="/docs/api">API &amp; typed client</a>.
+        </li>
+        <li>
+          <b>A plugin widened the app's type.</b> A plugin that registers routes/hooks but whose return
+          type isn't the concrete server (e.g. an untyped <code>{`app => app.onResponse(…)`}</code>){" "}
+          makes <code>.use()</code> return <code>{`Server<any, any>`}</code> and the client loses your
+          registry. Wrap it with <code>defineIdentityPlugin(name, …)</code> so <code>.use()</code>{" "}
+          returns your server unchanged and routes added after it stay typed. See{" "}
+          <a href="/docs/plugins">Plugins → keep types with defineIdentityPlugin</a>.
+        </li>
+      </ul>
+      <p>
+        <code>nifra check</code> flags the raw-<code>Response</code> case; the plugin case surfaces as a{" "}
+        <code>never</code> client at the call site.
+      </p>
+
       <h2>Still stuck?</h2>
       <p>
         Run <code>nifra check --json</code> as the done-gate — it surfaces the import-chain leaks,

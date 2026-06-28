@@ -122,6 +122,21 @@ export default function Api() {
         detection for that route (<code>nifra check</code> flags it). <code>c.set</code> keeps your
         plain-object return fully typed.
       </p>
+      <p>
+        When you genuinely want a <code>Response</code> — an <b>error short-circuit</b> from a{" "}
+        <code>derive</code> / <code>beforeHandle</code> (auth, rate limits) — <code>c.json(body, status?)</code>{" "}
+        and <code>c.text(body, status?)</code> build one in a line:{" "}
+        <code>{`throw c.json({ error: "unauthorized" }, 401)`}</code> instead of{" "}
+        <code>{`new Response(JSON.stringify(…), { status: 401, headers: … })`}</code>. The second arg is a
+        status number or a full <code>ResponseInit</code>, and both work whether you <code>return</code> or{" "}
+        <code>throw</code> them. (In a route's happy path keep returning a plain object, as above, so the
+        typed client stays in sync.)
+      </p>
+      <p>
+        The request is on <code>c.req</code>, also available as <code>c.request</code> — the same name a
+        page loader/action receives (which in turn also accepts <code>ctx.req</code>), so one name works
+        in both places.
+      </p>
 
       <h2>Contract-first (defineContract + implement)</h2>
       <p>

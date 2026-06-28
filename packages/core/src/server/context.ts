@@ -81,6 +81,12 @@ export interface Platform<Env = unknown> {
  */
 export interface Context<Path extends string = string, S extends RouteSchema = RouteSchema> {
   readonly req: Request
+  /**
+   * Alias of {@link req} — the same `Request`. Page loaders/actions receive their request as `request`;
+   * this alias lets route handlers and loaders share one name, so `c.request` and `ctx.req` both work
+   * everywhere (no more `c.req` vs `ctx.request` mismatch).
+   */
+  readonly request: Request
   readonly params: Params<Path>
   readonly query: QueryOf<S>
   readonly body: BodyOf<S>
@@ -121,4 +127,13 @@ export interface Context<Path extends string = string, S extends RouteSchema = R
    * wants the body bounded.
    */
   readonly boundedJson: <T = unknown>(maxBytes?: number) => Promise<T>
+  /**
+   * Build a JSON `Response`. Pass a status number or a full `ResponseInit` as the second arg. `return` it
+   * from a handler, or `throw` it from `derive`/`beforeHandle` to short-circuit — both work:
+   * `throw c.json({ error: "unauthorized" }, 401)`. A terser alternative to
+   * `new Response(JSON.stringify(...), { status, headers: { "content-type": "application/json" } })`.
+   */
+  readonly json: (body: unknown, init?: ResponseInit | number) => Response
+  /** Build a `text/plain; charset=utf-8` `Response`. Like {@link json}, pass a status or `ResponseInit`. */
+  readonly text: (body: string, init?: ResponseInit | number) => Response
 }

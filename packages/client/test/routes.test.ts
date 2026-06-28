@@ -24,6 +24,7 @@ test("inProcessClient + a typed loader resolve data in-process (no network)", as
   const data = await load({
     params: { id: "7" },
     request: new Request("http://x"),
+    req: new Request("http://x"),
     api,
     env: undefined,
     draft: false,
@@ -91,6 +92,7 @@ test("an action with ActionArgs runs in-process and returns its data branch", as
       method: "POST",
       body: new URLSearchParams({ name: "Ada" }),
     }),
+    req: new Request("http://x"),
     api,
     env: undefined,
     draft: false,
