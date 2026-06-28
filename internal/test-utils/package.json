@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/test-utils",
-  "version": "1.0.0-beta.4",
+  "version": "1.0.0-beta.5",
   "description": "Internal type-level assertion helpers shared across the workspace's *.test-d.ts files.",
   "type": "module",
   "private": true,

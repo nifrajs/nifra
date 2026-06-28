@@ -1,5 +1,29 @@
 # @nifrajs/examples
 
+## 1.0.0-beta.5
+
+### Patch Changes
+
+- Updated dependencies [f1f0e18]
+- Updated dependencies [c099d5f]
+- Updated dependencies [bb31594]
+- Updated dependencies [5673ff1]
+- Updated dependencies [3efb7cd]
+  - @nifrajs/core@1.0.0-beta.5
+  - @nifrajs/client@1.0.0-beta.5
+  - @nifrajs/web@1.0.0-beta.5
+  - @nifrajs/mcp@1.0.0-beta.5
+  - @nifrajs/cli@1.0.0-beta.5
+  - @nifrajs/deno@1.0.0-beta.5
+  - @nifrajs/middleware@1.0.0-beta.5
+  - @nifrajs/schema@1.0.0-beta.5
+  - @nifrajs/web-preact@1.0.0-beta.5
+  - @nifrajs/web-react@1.0.0-beta.5
+  - @nifrajs/web-solid@1.0.0-beta.5
+  - @nifrajs/web-svelte@1.0.0-beta.5
+  - @nifrajs/web-vue@1.0.0-beta.5
+  - @nifrajs/node@1.0.0-beta.5
+
 ## 1.0.0-beta.4
 
 ### Patch Changes
