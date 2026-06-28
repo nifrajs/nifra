@@ -362,9 +362,9 @@ export async function handleRpc(
             },
           ],
         })
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        return rpcError(rid, -32000, msg)
+      } catch {
+        // Don't surface the raw read error — it can leak a filesystem path. Return a generic message.
+        return rpcError(rid, -32000, `failed to read resource: ${String(uri)}`)
       }
     }
     case "prompts/list":
