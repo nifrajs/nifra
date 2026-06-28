@@ -404,6 +404,19 @@ return makes the typed client infer `data: never`, so you silently lose drift
 detection for that route (`nifra check` flags it). `c.set` keeps your
 plain-object return fully typed.
 
+When you genuinely want a `Response` — an **error short-circuit** from a
+`derive` / `beforeHandle` (auth, rate limits) — `c.json(body, status?)`
+and `c.text(body, status?)` build one in a line:
+`throw c.json({ error: "unauthorized" }, 401)` instead of
+`new Response(JSON.stringify(…), { status: 401, headers: … })`. The second arg is a
+status number or a full `ResponseInit`, and both work whether you `return` or
+`throw` them. (In a route's happy path keep returning a plain object, as above, so the
+typed client stays in sync.)
+
+The request is on `c.req`, also available as `c.request` — the same name a
+page loader/action receives (which in turn also accepts `ctx.req`), so one name works
+in both places.
+
 ### Contract-first (defineContract + implement)
 
 For larger apps — or when the contract is shared across services — declare it with
@@ -3030,6 +3043,32 @@ Vue, Solid, Svelte). Nifra dedupes the active adapter's runtime in build and dev
 [Dev & HMR](/docs/dev) and the `file:`-linked-package note in
 `AGENTS.md`.
 
+###
+`client` resolves to `never` (or `data: never`)
+
+The typed client is derived from your backend's type. Two things collapse it:
+
+-
+**
+A route returns a raw `Response`.
+**
+That route's `data` infers `never` (Nifra can't see the shape). Return a
+plain object and shape the response with `c.set` — reach for `c.json` /
+`c.text` only for an error short-circuit (`throw` from a
+`derive` / `beforeHandle`), not a route's happy path. See
+[API & typed client](/docs/api).
+
+-
+**A plugin widened the app's type.** A plugin that registers routes/hooks but whose return
+type isn't the concrete server (e.g. an untyped `app => app.onResponse(…)`)
+makes `.use()` return `Server` and the client loses your
+registry. Wrap it with `defineIdentityPlugin(name, …)` so `.use()`
+returns your server unchanged and routes added after it stay typed. See
+[Plugins → keep types with defineIdentityPlugin](/docs/plugins).
+
+`nifra check` flags the raw-`Response` case; the plugin case surfaces as a
+`never` client at the call site.
+
 ### Still stuck?
 
 Run `nifra check --json` as the done-gate — it surfaces the import-chain leaks,
@@ -5569,6 +5608,10 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 `batch`, `BindableElement`, `BindableRoot`, `bindScope`, `computed`, `effect`, `island`, `IslandContext`, `IslandHost`, `IslandScope`, `IslandSetup`, `islandState`, `mountIslands`, `signal`, `Signal`
 
+## @nifrajs/mcp
+
+`bridgeScript`, `createMcpServer`, `CreateMcpServerOptions`, `defineMcpTool`, `DefineMcpToolOptions`, `defineMcpWidget`, `DefineMcpWidgetOptions`, `McpAppBridge`, `McpHttpOptions`, `McpServer`, `McpToolHandlerResult`, `McpUiIntent`, `McpWidget`, `respondMcpHttp`, `uiResourceMeta`, `widgetDocument`
+
 ## @nifrajs/middleware
 
 `apiKey`, `ApiKeyStaticOptions`, `ApiKeyVerifyOptions`, `appendTrailingSlash`, `AuthPlugin`, `basicAuth`, `BasicAuthPlugin`, `BasicAuthStaticOptions`, `BasicAuthVerifyOptions`, `bearer`, `BearerOptions`, `bodyLimit`, `BodyLimitOptions`, `buildOpenApiDocument`, `cache`, `cacheControl`, `CacheControlOptions`, `CachedResponse`, `CacheOptions`, `combine`, `Composable`, `compression`, `CompressionOptions`, `cors`, `CorsOptions`, `createCsrfToken`, `csrf`, `CsrfOptions`, `etag`, `ETagOptions`, `healthcheck`, `HealthcheckOptions`, `idempotency`, `IdempotencyClaim`, `IdempotencyOptions`, `IdempotencyRecord`, `IdempotencyStore`, `IpMatcher`, `ipRestriction`, `IpRestrictionOptions`, `jwk`, `JwkKey`, `jwks`, `JwksOptions`, `jwt`, `JwtAlgorithm`, `JwtClaims`, `JwtHeader`, `JwtKeyResolver`, `JwtOptions`, `JwtPlugin`, `JwtVerificationKey`, `language`, `LanguageMatch`, `LanguageOptions`, `logger`, `LoggerOptions`, `MemoryIdempotencyStore`, `MemoryIdempotencyStoreOptions`, `MemoryResponseCache`, `MemoryResponseCacheOptions`, `MemoryStore`, `MemoryStoreOptions`, `methodOverride`, `MethodOverrideOptions`, `namedCombine`, `openapi`, `OpenApiInfo`, `OpenApiOptions`, `OpenApiServer`, `OpenApiTag`, `OpenApiUiOptions`, `pickLanguage`, `poweredBy`, `PoweredByOptions`, `prettyJson`, `PrettyJsonOptions`, `rateLimit`, `RateLimitOptions`, `RateLimitResult`, `RateLimitStore`, `requestId`, `RequestIdOptions`, `RequestLogFields`, `responseCache`, `ResponseCacheStore`, `RouteLike`, `securityHeaders`, `SecurityHeadersOptions`, `SecurityRequirement`, `timing`, `TimingControls`, `TimingMetric`, `TimingOptions`, `TrailingSlashOptions`, `trimTrailingSlash`, `tryVerifyJwt`, `VerifiedJwt`, `verifyCsrfToken`, `verifyJwt`, `VerifyJwtOptions`, `VerifyJwtResult`
@@ -5595,7 +5638,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`Action`, `ACTION_GLOBAL`, `apiKey`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumeratePrerenderedPaths`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `GetStaticPaths`, `hashQueryKey`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `openGraph`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `RenderAdapter`, `RenderedPage`, `renderPage`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `ScriptDescriptor`, `serializeData`, `ServerOnly`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `Submission`, `SubmitOptions`, `withISR`
+`Action`, `ACTION_GLOBAL`, `apiKey`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumeratePrerenderedPaths`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `GetStaticPaths`, `hashQueryKey`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `openGraph`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `RenderAdapter`, `RenderedPage`, `renderPage`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `routeStyles`, `ScriptDescriptor`, `serializeData`, `ServerOnly`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `styles`, `Submission`, `SubmitOptions`, `withISR`
 
 ## @nifrajs/web-preact
 

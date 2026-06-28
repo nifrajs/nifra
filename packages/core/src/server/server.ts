@@ -96,6 +96,9 @@ function isResponseResult(value: unknown): value is ResponseResult {
 /** Internal, path-erased runtime context. The typed `Context<Path, S>` is a structural view of this. */
 interface RawContext {
   readonly req: Request
+  readonly request: Request
+  readonly json: (body: unknown, init?: ResponseInit | number) => Response
+  readonly text: (body: string, init?: ResponseInit | number) => Response
   readonly params: Record<string, string>
   query: unknown
   readonly cookies: Readonly<Record<string, string>>
@@ -610,6 +613,11 @@ function isContextlessNoArgArrow(handler: (context: never) => unknown): boolean 
   }
 }
 
+/** Coerce `c.json`/`c.text`'s second arg — a status number (the common case) or a full `ResponseInit`. */
+function statusInit(init?: ResponseInit | number): ResponseInit | undefined {
+  return typeof init === "number" ? { status: init } : init
+}
+
 class RequestContext implements RawContext {
   readonly params: Record<string, string>
   readonly signal: AbortSignal
@@ -658,6 +666,21 @@ class RequestContext implements RawContext {
 
   get req(): Request {
     return requestOf(this.source)
+  }
+
+  get request(): Request {
+    return requestOf(this.source)
+  }
+
+  json(body: unknown, init?: ResponseInit | number): Response {
+    return Response.json(body, statusInit(init))
+  }
+
+  text(body: string, init?: ResponseInit | number): Response {
+    const i = statusInit(init)
+    // Default to text/plain; if the caller passes their own headers, they own the content-type.
+    if (i?.headers !== undefined) return new Response(body, i)
+    return new Response(body, { ...i, headers: { "content-type": "text/plain; charset=utf-8" } })
   }
 
   get query(): unknown {

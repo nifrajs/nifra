@@ -17,6 +17,9 @@ export type ApiProxy<Api> = Api extends ContractShape
 export interface LoaderArgs<Api, Env = unknown> {
   readonly params: Record<string, string>
   readonly request: Request
+  /** Alias of {@link request} — the same `Request`. Mirrors a route handler's `c.req`, so the same name
+   * works in loaders/actions and routes (no `ctx.request` vs `c.req` mismatch). */
+  readonly req: Request
   readonly api: ApiProxy<Api>
   /**
    * Platform bindings (Workers `env` — KV/D1/secrets), forwarded from the request `c.env`.

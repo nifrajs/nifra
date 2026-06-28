@@ -50,6 +50,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - `@nifrajs/i18n` — Framework-agnostic i18n for nifra — locale negotiation + a tiny ICU message formatter on the platform Intl. Dependency-free.
 - `@nifrajs/image` — Image optimization for nifra — a CLS-safe responsive <Image> + pluggable loaders (CDN or self-hosted) + pure-JS dimension reading. Zero-dependency core; optional Bun.Image-backed resize endpoint at @nifrajs/image/server.
 - `@nifrajs/islets` — Fine-grained signals + declarative DOM bindings for nifra islands — interactivity in ~1 KB, no framework runtime. The client companion to @nifrajs/web-vanilla.
+- `@nifrajs/mcp` — Build MCP servers — and MCP Apps (interactive `ui://` widgets, SEP-1865) — for a nifra app. The transport-agnostic JSON-RPC core (also used by `@nifrajs/cli`'s dev MCP), a Streamable-HTTP handler you mount at `POST /mcp`, and `defineMcpWidget`/`defineMcpTool` for tool results that render real UI in MCP hosts.
 - `@nifrajs/middleware` — Composable middleware for nifra — auth, CSRF, JWT/JWKS, IP restriction, CORS, body limits, response cache, timing, and operational helpers.
 - `@nifrajs/node` — Run a nifra app on Node's http server — a Request<->stream adapter with a graceful stop().
 - `@nifrajs/otel` — Distributed tracing for nifra — W3C traceparent/tracestate propagation + OpenTelemetry-semantic-convention spans via a pluggable exporter. Bridge to the OpenTelemetry SDK or log spans directly; no SDK bundled. Edge-safe.
