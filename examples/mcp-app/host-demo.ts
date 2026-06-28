@@ -6,11 +6,17 @@
  * (the Refresh button) — exercising the actual widget bytes and the real bridge, end to end.
  */
 
-/** Build the host-harness HTML embedding `widgetHtml` and feeding it `structuredContent`. */
-export function hostDemoPage(widgetHtml: string, structuredContent: unknown): string {
+/** Build the host-harness HTML embedding `widgetHtml`, feeding it `structuredContent`, and (optionally)
+ * pushing a `theme` (`{ mode, tokens }`) so the widget adopts the host's design tokens. */
+export function hostDemoPage(
+  widgetHtml: string,
+  structuredContent: unknown,
+  theme?: unknown,
+): string {
   // Escape `<` so a `</script>` inside the widget HTML can't terminate this inline <script> early.
   const widget = JSON.stringify(widgetHtml).replace(/</g, "\\u003c")
   const data = JSON.stringify(structuredContent).replace(/</g, "\\u003c")
+  const themeJson = JSON.stringify(theme ?? null).replace(/</g, "\\u003c")
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -36,19 +42,22 @@ export function hostDemoPage(widgetHtml: string, structuredContent: unknown): st
 <script>
   var WIDGET = ${widget};
   var DATA = ${data};
+  var THEME = ${themeJson};
   var iframe = document.getElementById("w");
-  function push(){ iframe.contentWindow.postMessage({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { structuredContent: DATA } }, "*"); }
+  function send(msg){ iframe.contentWindow.postMessage(msg, "*"); }
+  function pushTheme(){ if (THEME) send({ jsonrpc: "2.0", method: "ui/notifications/theme", params: THEME }); }
+  function push(){ send({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { structuredContent: DATA } }); }
   window.addEventListener("message", function (e) {
     var msg = e.data;
     if (!msg || typeof msg !== "object") return;
-    // Widget signalled ready → push its data.
-    if (msg.method === "ui/notifications/ready") push();
+    // Widget signalled ready → push the theme, then its data.
+    if (msg.method === "ui/notifications/ready") { pushTheme(); push(); }
     // Widget called a tool back (the Refresh button) → answer like the host would.
     if (msg.id != null && msg.method === "tools/call") {
-      iframe.contentWindow.postMessage({ jsonrpc: "2.0", id: msg.id, result: { structuredContent: DATA } }, "*");
+      send({ jsonrpc: "2.0", id: msg.id, result: { structuredContent: DATA } });
     }
   });
-  iframe.addEventListener("load", function(){ setTimeout(push, 50); });
+  iframe.addEventListener("load", function(){ setTimeout(function(){ pushTheme(); push(); }, 50); });
   iframe.srcdoc = WIDGET;
 </script>
 </body>

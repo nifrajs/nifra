@@ -2,9 +2,15 @@
  * The tiny, dependency-free client bridge injected into every `ui://` widget's HTML (MCP Apps / SEP-1865).
  * It speaks the MCP-JSON-RPC-over-`postMessage` subset a host exposes to an embedded UI:
  *
- *   host → widget : `ui/notifications/tool-result` (the tools/call result incl. `structuredContent`) and
- *                   `ui/notifications/tool-input` (the call arguments) — pushed as JSON-RPC notifications.
+ *   host → widget : `ui/notifications/tool-result` (the tools/call result incl. `structuredContent`),
+ *                   `ui/notifications/tool-input` (the call arguments), and `ui/notifications/theme`
+ *                   (the host's design tokens) — pushed as JSON-RPC notifications.
  *   widget → host : `tools/call` requests (id-matched) so a button can re-invoke a tool through the host.
+ *
+ * Theming follows the shadcn/Tailwind semantic-token convention (`--background`, `--foreground`,
+ * `--primary`, `--card`, `--border`, `--radius`, …). The host pushes its resolved tokens; the bridge
+ * applies them to the document root, so a widget that styles with `var(--primary)` etc. matches the host
+ * app (e.g. a ShipNow-generated app injecting its theme preset) with zero per-widget work.
  *
  * It exposes a small global the widget author scripts against, so authoring a widget is just
  * `mcpApp.onData(render)` + (optionally) `mcpApp.callTool(name, args)` — no postMessage plumbing.
@@ -22,6 +28,11 @@ export interface McpAppBridge {
   onData(cb: (data: unknown) => void): void
   /** Register a callback for the raw tool-call arguments (`ui/notifications/tool-input`). */
   onInput(cb: (args: unknown) => void): void
+  /** Latest theme the host pushed (`{ mode, tokens }`), or `null` before the first push. */
+  theme: unknown
+  /** Register a callback for host theme pushes. The bridge ALSO auto-applies the tokens to the document
+   * root (shadcn semantic vars + `color-scheme`/`data-theme`), so most widgets need no theme code. */
+  onTheme(cb: (theme: unknown) => void): void
   /** Invoke a tool back through the host; resolves with the tools/call result. */
   callTool(name: string, args?: Record<string, unknown>): Promise<unknown>
 }
@@ -39,14 +50,37 @@ const BRIDGE_SOURCE = `(function () {
   var nextId = 1;
   var dataCbs = [];
   var inputCbs = [];
+  var themeCbs = [];
+  function applyTheme(theme) {
+    if (!theme || typeof theme !== "object") return;
+    var root = document.documentElement;
+    if (theme.mode === "light" || theme.mode === "dark") {
+      root.setAttribute("data-theme", theme.mode);
+      root.style.colorScheme = theme.mode;
+    }
+    var tokens = theme.tokens;
+    if (tokens && typeof tokens === "object") {
+      for (var k in tokens) {
+        if (Object.prototype.hasOwnProperty.call(tokens, k)) {
+          root.style.setProperty(k.charAt(0) === "-" ? k : "--" + k, String(tokens[k]));
+        }
+      }
+    }
+  }
   var api = {
     data: null,
+    theme: null,
     onData: function (cb) {
       if (typeof cb !== "function") return;
       dataCbs.push(cb);
       if (api.data !== null) { try { cb(api.data); } catch (e) {} }
     },
     onInput: function (cb) { if (typeof cb === "function") inputCbs.push(cb); },
+    onTheme: function (cb) {
+      if (typeof cb !== "function") return;
+      themeCbs.push(cb);
+      if (api.theme !== null) { try { cb(api.theme); } catch (e) {} }
+    },
     callTool: function (name, args) {
       var id = "w" + nextId++;
       return new Promise(function (resolve, reject) {
@@ -74,6 +108,11 @@ const BRIDGE_SOURCE = `(function () {
       emit(dataCbs, structured);
     } else if (msg.method === "ui/notifications/tool-input") {
       emit(inputCbs, (msg.params || {}).arguments);
+    } else if (msg.method === "ui/notifications/theme") {
+      var theme = msg.params || {};
+      api.theme = theme;
+      applyTheme(theme);
+      emit(themeCbs, theme);
     }
   });
   window.mcpApp = api;
