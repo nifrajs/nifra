@@ -2950,7 +2950,7 @@
     "name": "MCP_CLI_VERSION",
     "kind": "const",
     "package": "create-nifra",
-    "signature": "export declare const MCP_CLI_VERSION: \"1.0.0-beta.4\";",
+    "signature": "export declare const MCP_CLI_VERSION: \"1.0.0\";",
     "doc": "/**\n * The `@nifrajs/cli` version the launch command pins to. Kept in lockstep with the published\n * `@nifrajs/cli` version by `scripts/version.ts` (alongside the cli.ts / mcp-http.ts constants).\n *\n * Why pin at all instead of `bunx @nifrajs/cli mcp`: `bunx` keys its cache on the exact version spec.\n * An UNPINNED spec resolves to the `latest` tag once, then `bunx` reuses that cached copy on every\n * later spawn WITHOUT re-checking the registry — so an editor that once launched an older `@nifrajs/cli`\n * keeps respawning the stale binary even after a newer one is published (the MCP server silently runs\n * old code). Pinning the exact version makes the version part of the cache key, so each release fetches\n * fresh and a stale cache can never shadow it. The cost: an already-scaffolded app's `.mcp.json` freezes\n * at its scaffold-time version until `nifra init-agents` is re-run — an acceptable, deterministic trade.\n */"
   },
   {
@@ -2971,7 +2971,7 @@
     "name": "MCP_SERVER_ARGS",
     "kind": "const",
     "package": "create-nifra",
-    "signature": "export declare const MCP_SERVER_ARGS: readonly [\"@nifrajs/cli@1.0.0-beta.4\", \"mcp\"];"
+    "signature": "export declare const MCP_SERVER_ARGS: readonly [\"@nifrajs/cli@1.0.0\", \"mcp\"];"
   },
   {
     "name": "MCP_SERVER_COMMAND",
