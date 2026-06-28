@@ -10,20 +10,22 @@
 import { renderDocsResult } from "./docs-search.ts"
 import { type Example, renderExamplesResult } from "./examples.ts"
 import type { McpTool } from "./mcp-protocol.ts"
+import { renderTypesResult, type TypeEntry } from "./types-search.ts"
 
 const clamp = (n: number | undefined, lo: number, hi: number, dflt: number): number =>
   Math.min(Math.max(typeof n === "number" ? n : dflt, lo), hi)
 
-/** Build `nifra_docs` + `nifra_example` over injected corpus loaders. */
+/** Build `nifra_docs` + `nifra_example` + `nifra_types` over injected corpus loaders. */
 export function docsTools(
   loadDocs: () => Promise<string | undefined>,
   loadExamples: () => Promise<Example[] | undefined>,
+  loadTypes: () => Promise<TypeEntry[] | undefined>,
 ): McpTool[] {
   return [
     {
       name: "nifra_docs",
       description:
-        'Search nifra\'s framework documentation and get back ONLY the matching sections — auth, uploads, ISR, WebSockets, loaders, deployment, anything. Call with no query for the cheap section index; pass query (e.g. "isr revalidate") for the top matching sections. Use this instead of reading llms-full.txt (~150 KB) whole.',
+        "Search nifra's framework documentation and get back ONLY the matching sections — auth, uploads, ISR, WebSockets, loaders, deployment, anything. Call with no query for the cheap section index; pass query (e.g. \"isr revalidate\") for the top matching sections. Use this instead of reading llms-full.txt (~150 KB) whole. For the EXACT TypeScript of a type/interface/function, call nifra_types instead (don't read .d.ts files).",
       inputSchema: {
         type: "object",
         properties: {
@@ -66,6 +68,39 @@ export function docsTools(
         }
         const { query, limit } = args as { query?: string; limit?: number }
         return renderExamplesResult(corpus, query, clamp(limit, 1, 5, 3))
+      },
+    },
+    {
+      name: "nifra_types",
+      description:
+        'Get the EXACT TypeScript declaration of any exported @nifrajs/* symbol — interface, type, class, function, const. Each signature is generated from the package\'s built .d.ts, so it is the LITERAL declaration: complete, authoritative, never prose and never truncated. THIS IS THE SOURCE OF TRUTH for nifra\'s types — do NOT read node_modules/@nifrajs/**/*.d.ts; call this instead. Pass `name` for an exact symbol (e.g. "RateLimitStore", "RouteSchema", "Context", "rateLimit"); pass `query` to search by keyword; omit both for the per-package index of names.',
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description:
+              "Exact symbol name — returns its literal declaration (e.g. RateLimitStore).",
+          },
+          query: {
+            type: "string",
+            description:
+              "Keyword search over names + signatures (when you don't know the exact name).",
+          },
+          limit: {
+            type: "number",
+            description: "Max results for a query/search (default 5, max 8).",
+          },
+        },
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const corpus = await loadTypes()
+        if (corpus === undefined) {
+          return "types corpus missing — run `bun run build && bun run gen:llms` in the nifra repo (published builds ship it)."
+        }
+        const { name, query, limit } = args as { name?: string; query?: string; limit?: number }
+        return renderTypesResult(corpus, name, query, clamp(limit, 1, 8, 5))
       },
     },
   ]

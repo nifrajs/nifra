@@ -16,6 +16,7 @@ import { basename } from "node:path"
  * The site serves them at `/llms.txt` + `/llms-full.txt` (see site/build.ts).
  */
 import { Glob } from "bun"
+import ts from "typescript"
 
 const ROOT = `${import.meta.dir}/..`
 
@@ -260,6 +261,97 @@ for (const file of new Glob("packages/*/package.json").scanSync(ROOT)) {
 }
 pkgs.sort((a, b) => a.name.localeCompare(b.name))
 
+// ---- types index (for the `nifra_types` MCP tool) ----------------------------------------------
+// The EXACT TypeScript of every exported symbol, parsed from each package's BUILT `dist/**/*.d.ts`
+// (signatures only — no impl) with the TS compiler, so it's the authoritative source, never prose and
+// never truncated. An agent calls `nifra_types({ name })` for the literal declaration instead of
+// reading `.d.ts` files. Requires the packages to be built (`site:build`/`check:publish` build first).
+
+interface TypeEntry {
+  readonly name: string
+  readonly kind: "interface" | "type" | "class" | "function" | "enum" | "const"
+  readonly package: string
+  /** The literal declaration text from the `.d.ts` (a clean signature — no implementation). */
+  readonly signature: string
+  /** The declaration's JSDoc block, if any. */
+  readonly doc?: string
+}
+
+function leadingJsDoc(text: string, start: number): string | undefined {
+  const ranges = ts.getLeadingCommentRanges(text, start)
+  if (!ranges) return undefined
+  for (let i = ranges.length - 1; i >= 0; i--) {
+    const r = ranges[i]
+    if (r === undefined) continue
+    const comment = text.slice(r.pos, r.end)
+    if (comment.startsWith("/**")) return comment
+  }
+  return undefined
+}
+
+function extractTypesFromDts(
+  pkgName: string,
+  file: string,
+  seen: Set<string>,
+  out: TypeEntry[],
+): void {
+  const text = read(file)
+  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.ESNext, true)
+  for (const stmt of sf.statements) {
+    const exported =
+      ts.canHaveModifiers(stmt) &&
+      ts.getModifiers(stmt)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
+    if (!exported) continue
+    let name: string | undefined
+    let kind: TypeEntry["kind"] | undefined
+    if (ts.isInterfaceDeclaration(stmt)) {
+      name = stmt.name.text
+      kind = "interface"
+    } else if (ts.isTypeAliasDeclaration(stmt)) {
+      name = stmt.name.text
+      kind = "type"
+    } else if (ts.isClassDeclaration(stmt) && stmt.name) {
+      name = stmt.name.text
+      kind = "class"
+    } else if (ts.isFunctionDeclaration(stmt) && stmt.name) {
+      name = stmt.name.text
+      kind = "function"
+    } else if (ts.isEnumDeclaration(stmt)) {
+      name = stmt.name.text
+      kind = "enum"
+    } else if (ts.isVariableStatement(stmt)) {
+      const decl = stmt.declarationList.declarations[0]
+      if (decl && ts.isIdentifier(decl.name)) {
+        name = decl.name.text
+        kind = "const"
+      }
+    }
+    if (name === undefined || kind === undefined || seen.has(`${pkgName}:${name}`)) continue
+    seen.add(`${pkgName}:${name}`)
+    const doc = leadingJsDoc(text, stmt.getFullStart())
+    out.push({
+      name,
+      kind,
+      package: pkgName,
+      signature: stmt.getText(sf).trim(),
+      ...(doc ? { doc } : {}),
+    })
+  }
+}
+
+const types: TypeEntry[] = []
+const typeSeen = new Set<string>()
+let typedPkgs = 0
+for (const p of pkgs) {
+  const dts = [...new Glob("dist/**/*.d.ts").scanSync(p.dir)].filter(
+    (f) => !f.endsWith(".d.ts.map"),
+  )
+  if (dts.length === 0) continue
+  typedPkgs += 1
+  for (const f of dts) extractTypesFromDts(p.name, `${p.dir}/${f}`, typeSeen, types)
+}
+types.sort((a, b) => a.name.localeCompare(b.name) || a.package.localeCompare(b.package))
+
 // ---- assemble llms.txt -------------------------------------------------------------------------
 
 const llms = [
@@ -348,6 +440,10 @@ writeFileSync(`${ROOT}/packages/cli/docs/llms-full.txt`, llmsFull)
 examples.sort((a, b) => a.slug.localeCompare(b.slug) || a.name.localeCompare(b.name))
 writeFileSync(`${ROOT}/packages/cli/docs/examples.json`, `${JSON.stringify(examples, null, 2)}\n`)
 
+// Type-signature corpus for the `nifra_types` MCP tool — exact TypeScript per exported symbol, shipped
+// inside @nifrajs/cli so an agent gets the literal declaration without a network fetch or reading .d.ts.
+writeFileSync(`${ROOT}/packages/cli/docs/types.json`, `${JSON.stringify(types, null, 2)}\n`)
+
 console.log(
-  `Generated llms.txt (${docs.length} doc links, ${pkgs.length} packages) + llms-full.txt + examples.json (${examples.length} verified) from source.`,
+  `Generated llms.txt (${docs.length} doc links, ${pkgs.length} packages) + llms-full.txt + examples.json (${examples.length} verified) + types.json (${types.length} types from ${typedPkgs} built packages) from source.`,
 )

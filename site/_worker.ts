@@ -1,4 +1,4 @@
-import { docsTools, type Example, respondMcpHttp } from "@nifrajs/cli/mcp"
+import { docsTools, type Example, respondMcpHttp, type TypeEntry } from "@nifrajs/cli/mcp"
 import { inProcessClient } from "@nifrajs/client"
 import { toFetchHandler } from "@nifrajs/core"
 import { UI_MIME } from "@nifrajs/mcp"
@@ -50,6 +50,22 @@ async function loadExamples(requestUrl: string): Promise<Example[] | undefined> 
   return undefined
 }
 
+let cachedTypes: TypeEntry[] | undefined
+async function loadTypes(requestUrl: string): Promise<TypeEntry[] | undefined> {
+  if (cachedTypes) return cachedTypes
+  try {
+    const url = new URL("/types.json", requestUrl).toString()
+    const res = await fetch(url)
+    if (res.ok) {
+      cachedTypes = (await res.json()) as TypeEntry[]
+      return cachedTypes
+    }
+  } catch (e) {
+    console.error("Failed to fetch types corpus in worker", e)
+  }
+  return undefined
+}
+
 const handler = toFetchHandler(app)
 // Exact arg tuple of the SSR handler's fetch — keeps env/ctx strongly typed without `any`.
 type FetchArgs = Parameters<typeof handler.fetch>
@@ -67,6 +83,7 @@ export default {
         ...docsTools(
           () => loadDocs(request.url),
           () => loadExamples(request.url),
+          () => loadTypes(request.url),
         ),
         examplesAppTool(() => loadExamples(request.url)),
       ]

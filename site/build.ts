@@ -63,6 +63,9 @@ cpSync(`${dir}/../api-reference.md`, `${dist}/api-reference.md`)
 // The verified-example corpus, served at /examples.json — the `/mcp` worker route fetches this (and
 // /llms-full.txt) same-origin to back nifra_example / nifra_docs without bundling. See _worker.ts.
 cpSync(`${dir}/../packages/cli/docs/examples.json`, `${dist}/examples.json`)
+// The type-signature corpus, served at /types.json — the `/mcp` worker route fetches it same-origin to
+// back nifra_types (the exact TypeScript of every @nifrajs/* export). See _worker.ts.
+cpSync(`${dir}/../packages/cli/docs/types.json`, `${dist}/types.json`)
 rmSync(`${dir}/dist-server`, { recursive: true, force: true })
 
 // (4) `_routes.json` — exclude paths the Worker should NOT handle so Pages serves them statically from
@@ -74,7 +77,14 @@ writeFileSync(
     {
       version: 1,
       include: ["/*"],
-      exclude: ["/assets/*", "/llms.txt", "/llms-full.txt", "/api-reference.md", "/examples.json"],
+      exclude: [
+        "/assets/*",
+        "/llms.txt",
+        "/llms-full.txt",
+        "/api-reference.md",
+        "/examples.json",
+        "/types.json",
+      ],
     },
     null,
     2,

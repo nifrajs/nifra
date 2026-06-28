@@ -9,12 +9,12 @@ const post = (body: unknown): Request =>
   })
 
 describe("publicDocsTools", () => {
-  test("exposes exactly the two project-independent tools", () => {
+  test("exposes exactly the project-independent tools", () => {
     expect(
       publicDocsTools()
         .map((t) => t.name)
         .sort(),
-    ).toEqual(["nifra_docs", "nifra_example"])
+    ).toEqual(["nifra_docs", "nifra_example", "nifra_types"])
   })
 })
 
@@ -42,7 +42,11 @@ describe("handleMcpHttp", () => {
     const body = (await res.json()) as {
       result: { tools: Array<{ name: string; inputSchema: unknown }> }
     }
-    expect(body.result.tools.map((t) => t.name).sort()).toEqual(["nifra_docs", "nifra_example"])
+    expect(body.result.tools.map((t) => t.name).sort()).toEqual([
+      "nifra_docs",
+      "nifra_example",
+      "nifra_types",
+    ])
     expect(body.result.tools[0]?.inputSchema).toBeDefined()
   })
 
