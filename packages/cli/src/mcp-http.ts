@@ -16,12 +16,14 @@ import type { McpTool } from "@nifrajs/mcp/protocol"
 import { loadDocsCorpus } from "./docs-search.ts"
 import { loadExamplesCorpus } from "./examples.ts"
 import { docsTools } from "./mcp-docs-tools.ts"
+import { loadTypesCorpus } from "./types-search.ts"
 
 export type { McpHttpOptions } from "@nifrajs/mcp/http"
 export type { Example } from "./examples.ts"
 // Re-exported so a self-host (e.g. a Cloudflare-Pages `/mcp` worker route) gets the corpus-injectable
 // tool factory + the transport core from one entry: `import { respondMcpHttp, docsTools } from "@nifrajs/cli/mcp"`.
 export { docsTools } from "./mcp-docs-tools.ts"
+export type { TypeEntry } from "./types-search.ts"
 
 // Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
 const VERSION = "1.0.0-beta.4"
@@ -31,7 +33,7 @@ const DOCS_HEALTH =
 
 /** The two project-independent tools, reading the package's bundled corpus from disk (CLI use). */
 export function publicDocsTools(): McpTool[] {
-  return docsTools(loadDocsCorpus, loadExamplesCorpus)
+  return docsTools(loadDocsCorpus, loadExamplesCorpus, loadTypesCorpus)
 }
 
 /**

@@ -46,6 +46,7 @@ import {
   type McpToolContext,
   rpcError,
 } from "./mcp-protocol.ts"
+import { loadTypesCorpus } from "./types-search.ts"
 
 /** Path to a sibling child entry (`mcp-run` / `mcp-render` / `mcp-ws`), resolved next to this module (`.ts` in
  * dev, `.js` once built). Each runs in a FRESH subprocess per call so the project's current code loads. */
@@ -764,7 +765,7 @@ export function projectTools(
     },
     // nifra_docs + nifra_example are project-independent (corpus-backed); the shared factory keeps their
     // definitions identical to the CLI HTTP server and the site's edge worker.
-    ...docsTools(loadDocsCorpus, loadExamplesCorpus),
+    ...docsTools(loadDocsCorpus, loadExamplesCorpus, loadTypesCorpus),
     {
       name: "nifra_scaffold",
       description:
@@ -900,7 +901,7 @@ export async function runMcpServer(cwd: string, version: string): Promise<void> 
       allResources.push(...(ns.features.resources ?? []))
       allPrompts.push(...(ns.features.prompts ?? []))
     }
-    tools = [...docsTools(loadDocsCorpus, loadExamplesCorpus), ...allTools]
+    tools = [...docsTools(loadDocsCorpus, loadExamplesCorpus, loadTypesCorpus), ...allTools]
     features = { resources: allResources, prompts: allPrompts }
   } else {
     const loadAppCached = createCachedAppLoader(cwd)
