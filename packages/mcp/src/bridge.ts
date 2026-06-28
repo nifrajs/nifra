@@ -92,6 +92,10 @@ const BRIDGE_SOURCE = `(function () {
   function post(msg) { try { (window.parent || window).postMessage(msg, "*"); } catch (e) {} }
   function emit(list, value) { for (var i = 0; i < list.length; i++) { try { list[i](value); } catch (e) {} } }
   window.addEventListener("message", function (event) {
+    // Only trust the embedding host (the parent window). A widget is rendered in a sandboxed iframe whose
+    // host posts via the parent (or a sandbox-proxy parent); rejecting any other source stops a sibling/
+    // opener frame from spoofing tool-results, tool-call responses, or theme.
+    if (event.source && event.source !== window.parent) return;
     var msg = event.data;
     if (!msg || typeof msg !== "object") return;
     // A response to one of our tools/call requests (id-matched).
