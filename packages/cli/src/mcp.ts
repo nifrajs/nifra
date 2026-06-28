@@ -125,8 +125,9 @@ type PipeSubprocess = ReturnType<typeof Bun.spawn> & {
  * reused across newline-delimited `{ id, input }` requests, replying `{ id, output }`. The same machinery
  * powers both `nifra_run warm` and `nifra_render warm` — `child` selects which engine, `label` shapes the
  * cancellation message. The owning handler ({@link createWarmHandler}) fingerprints the source tree and
- * replaces the worker when a file changes, so warm reuse never serves a stale result. */
-class WarmWorker {
+ * replaces the worker when a file changes, so warm reuse never serves a stale result. Exported for the
+ * concurrency test that proves a single per-request cancel doesn't tear down the shared worker. */
+export class WarmWorker {
   private readonly proc: PipeSubprocess
   private readonly pending = new Map<
     number,
@@ -177,8 +178,11 @@ class WarmWorker {
     const id = ++this.nextId
     return new Promise((resolve, reject) => {
       const abort = (): void => {
+        // Per-request cancel: drop just THIS id and resolve its cancellation. The worker is shared
+        // across concurrent requests (`pending` is id-keyed for exactly this reason), so killing the
+        // process here would reject every OTHER in-flight request via the `exited` handler and force a
+        // cold rebuild. Leave it hot — `createWarmHandler` already replaces it on file change.
         this.pending.delete(id)
-        this.stop()
         const reason = typeof signal?.reason === "string" ? `: ${signal.reason}` : ""
         resolve(`${this.label} cancelled${reason}.`)
       }
