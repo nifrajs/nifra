@@ -69,6 +69,10 @@ Rules an agent must follow:
   directly (\`await app.fetch(new Request("http://x/users/1"))\`); no server needs to be running.
 - **Don't reach for a heavy ORM/HTTP layer.** Routing, validation, cookies, and the typed client are
   built in. Parameterize DB queries; use \`timingSafeEqual\` (or WebCrypto) for secret comparison.
+- **Cross-cutting concerns — use \`@nifrajs/middleware\`, don't hand-roll.** Rate limiting (\`429\` +
+  \`Retry-After\`), CORS, security headers, body limits, auth (\`bearer\`/\`apiKey\`/\`basicAuth\`/\`jwt\`), CSRF,
+  IP restriction, response caching, compression — all \`app.use(...)\` plugins in \`@nifrajs/middleware\`.
+  Call \`nifra_docs("middleware")\` for the full list + usage before building one of these by hand.
 
 ## The client is typed + never throws — ALWAYS use it for internal API calls
 
