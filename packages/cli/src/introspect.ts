@@ -197,6 +197,9 @@ const CONVENTIONS = `## Conventions (summary)
 - **Backend:** \`server()\` from \`@nifrajs/core\`; returning a value sends JSON. Validate untrusted input with
   a route schema (\`{ body, query, params }\` using \`t\` from \`@nifrajs/schema\` or any Standard Schema) and read
   the typed \`c.body\` / \`c.query\` / \`c.params\` — never hand-parse.
+- **Cross-cutting concerns** (rate limit / \`429\`, CORS, auth, CSRF, caching, security headers, body limits)
+  → \`@nifrajs/middleware\`, applied with \`app.use(...)\`. Don't hand-roll them; call \`nifra_docs("middleware")\`
+  for the full list + usage.
 - **Response contract (no drift):** declare \`{ response: t.object({...}) }\` on a route to lock its output
   shape — the handler is type-checked against it and the client sees exactly that shape. The contract above
   is the single source of truth for both sides.
