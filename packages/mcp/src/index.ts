@@ -13,7 +13,12 @@ export { bridgeScript, type McpAppBridge } from "./bridge.ts"
 export { type McpHttpOptions, respondMcpHttp } from "./http.ts"
 export * from "./protocol.ts"
 export { type CreateMcpServerOptions, createMcpServer, type McpServer } from "./server.ts"
-export { type DefineMcpToolOptions, defineMcpTool, type McpToolHandlerResult } from "./tool.ts"
+export {
+  type DefineMcpToolOptions,
+  defineMcpTool,
+  type McpToolHandlerResult,
+  type McpUiIntent,
+} from "./tool.ts"
 export {
   type DefineMcpWidgetOptions,
   defineMcpWidget,

@@ -48,6 +48,44 @@ describe("defineMcpWidget", () => {
       "ui/resourceUri": "ui://orders/table",
     })
   })
+
+  test("the bridge handles host theme pushes (shadcn token convention)", async () => {
+    const { text } = await widget.resource.read()
+    expect(text).toContain("ui/notifications/theme")
+    expect(text).toContain("setProperty")
+    expect(text).toContain("colorScheme")
+  })
+})
+
+describe("defineMcpTool — render intent", () => {
+  test("intent lands in _meta.ui.intent (builder hosts)", () => {
+    const tool = defineMcpTool({
+      name: "list_things",
+      description: "x",
+      intent: "table",
+      handler: () => ({ structuredContent: { rows: [] } }),
+    })
+    expect(tool._meta).toEqual({ ui: { intent: "table" } })
+  })
+
+  test("widget + intent coexist under _meta.ui", () => {
+    const tool = defineMcpTool({
+      name: "list_things",
+      description: "x",
+      widget,
+      intent: "table",
+      handler: () => "ok",
+    })
+    expect(tool._meta).toEqual({
+      ui: { resourceUri: "ui://orders/table", intent: "table" },
+      "ui/resourceUri": "ui://orders/table",
+    })
+  })
+
+  test("no widget, no intent → no _meta", () => {
+    const tool = defineMcpTool({ name: "plain", description: "x", handler: () => "ok" })
+    expect(tool._meta).toBeUndefined()
+  })
 })
 
 describe("handleRpc — MCP Apps extensions", () => {

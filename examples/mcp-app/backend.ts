@@ -19,6 +19,22 @@ const ORDERS = [
   { id: 1003, customer: "Grace Hopper", total: 7 },
 ]
 
+// A host's design tokens (here: a sample theme preset — shadcn semantic HSL tokens). The harness pushes
+// these over the bridge so the widget restyles to match the embedding app. Swap to demo a different theme.
+const HOST_THEME = {
+  mode: "light",
+  tokens: {
+    "--background": "220 20% 98.5%",
+    "--foreground": "224 24% 8%",
+    "--card": "0 0% 100%",
+    "--primary": "256 100% 67%",
+    "--primary-foreground": "0 0% 100%",
+    "--muted-foreground": "220 10% 44%",
+    "--border": "220 16% 90%",
+    "--radius": "0.625rem",
+  },
+}
+
 /** The tool whose result renders as the interactive orders widget. `structuredContent` feeds the widget;
  * `text` is the model-facing summary (text-only hosts show this). */
 const listOrders = defineMcpTool({
@@ -65,7 +81,7 @@ export const app = server()
   // Browser-viewable host harnesses (what an MCP Apps host does) so the widgets are visible without one.
   .get("/", async () => {
     const widgetHtml = (await ordersWidget.resource.read()).text
-    return new Response(hostDemoPage(widgetHtml, { orders: ORDERS }), {
+    return new Response(hostDemoPage(widgetHtml, { orders: ORDERS }, HOST_THEME), {
       headers: { "content-type": "text/html; charset=utf-8" },
     })
   })
