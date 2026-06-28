@@ -750,8 +750,13 @@ describe("allowedOrigins CSWSH guard (audit 2026-06, L3)", () => {
     expect(upgradeRan).toBe(false)
   })
 
-  test("no allowedOrigins → no built-in check (back-compat)", async () => {
+  test("no allowedOrigins → secure default: cross-origin browser rejected; same-origin + non-browser pass", async () => {
     const app = server().ws("/chat", { message: (ws, d) => ws.send(d) })
-    expect((await app.resolveWebSocketUpgrade(wsReq("https://anywhere.com"))).kind).toBe("upgrade")
+    // Cross-origin browser handshake (Origin present, different host) → rejected (CSWSH default).
+    expect((await app.resolveWebSocketUpgrade(wsReq("https://anywhere.com"))).kind).toBe("reject")
+    // Same-origin browser handshake (Origin host === request host "t") → allowed.
+    expect((await app.resolveWebSocketUpgrade(wsReq("http://t"))).kind).toBe("upgrade")
+    // Non-browser client (no Origin header) → allowed (CSWSH is browser-only).
+    expect((await app.resolveWebSocketUpgrade(wsReq())).kind).toBe("upgrade")
   })
 })
