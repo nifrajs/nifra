@@ -82,6 +82,8 @@ typechecked against *this* project and this installed version, so they beat trai
 - \`nifra_docs\` / \`nifra_example\` — exact signatures + verified, compiling snippets. Reach for these
   before hand-writing a route, a loader, or a client call; a remembered API is often stale or wrong.
 - \`nifra_context\` — this project's route index + conventions, so changes fit the existing surface.
+- \`nifra_types\` — the EXACT TypeScript of any \`@nifrajs/*\` symbol (e.g. \`nifra_types({ name: "RateLimitStore" })\`).
+  Call it for a precise type; **never read \`node_modules/@nifrajs/**/*.d.ts\`** — the tool is the authoritative, complete source.
 - **\`nifra_check\` is the done-gate.** Before declaring any change complete, run \`nifra_check\` (or
   \`nifra check --json\` in a terminal). It typechecks the frontend↔backend contract and flags drift
   (hand-rolled \`fetch()\` to this app's own API, server-only imports in \`routes/\`). A failing check
@@ -109,6 +111,8 @@ project + the installed version, so they beat training-data recall:
 
 - \`nifra_docs\` / \`nifra_example\` — exact signatures + verified, compiling snippets.
 - \`nifra_context\` / \`nifra_routes\` — this project's route index + per-route schemas.
+- \`nifra_types\` — the EXACT TypeScript of any \`@nifrajs/*\` symbol (interface/type/function). Call it for a
+  precise type; **never read \`@nifrajs\` \`.d.ts\` files** — this is the authoritative, complete source.
 - \`nifra_check\` — the done-gate (typecheck + drift lints). Run it before calling work complete; a
   failing check means it isn't done. (\`nifra check --json\` in a terminal does the same.)`
 }
