@@ -240,6 +240,10 @@ export interface ServerOptions {
    * smaller to tighten one).
    */
   readonly maxBodyBytes?: number
+  /** Max inbound WebSocket message size (bytes) when `listen()`ing on Bun — frames over this are rejected
+   * by the runtime before reaching your handler (so a huge frame can't be JSON-parsed into memory).
+   * Default: `maxBodyBytes` (1 MB). */
+  readonly wsMaxPayloadBytes?: number
   /** Per-request timeout (ms): a slower request gets a 503 and `ctx.signal` aborts. 0 disables (default). */
   readonly requestTimeoutMs?: number
   /** When `listen()`ing, install SIGTERM/SIGINT handlers that gracefully `stop()`. Default false. */
@@ -1020,6 +1024,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private topics: TopicRegistry | undefined
   private readonly routeList: RouteDescriptor[]
   private readonly maxBodyBytes: number
+  private readonly wsMaxPayloadBytes: number
   private readonly requestTimeoutMs: number
   private readonly gracefulSignals: boolean
   private readonly logger: Logger
@@ -1043,6 +1048,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.topics = undefined
     this.routeList = []
     this.maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
+    this.wsMaxPayloadBytes = options.wsMaxPayloadBytes ?? this.maxBodyBytes
     this.requestTimeoutMs = options.requestTimeoutMs ?? 0
     this.gracefulSignals = options.gracefulSignals ?? false
     this.logger = options.logger ?? jsonLogger()
@@ -2339,6 +2345,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           // `BunSocket` view (kept local so `Bun.*` types never leak into the published .d.ts); the
           // `unknown` params bridge a TS structural-variance quirk. Round-trip covered by websocket.test.ts.
           websocket: {
+            // Cap inbound frames so a huge message can't be buffered/JSON-parsed into memory; the runtime
+            // closes an over-cap connection before the handler runs. Default 1 MB (maxBodyBytes).
+            maxPayloadLength: this.wsMaxPayloadBytes,
             open: (ws) => wsHandlers.open(ws),
             message: (ws, message) => wsHandlers.message(ws, message),
             close: (ws, code, reason) => wsHandlers.close(ws, code, reason),

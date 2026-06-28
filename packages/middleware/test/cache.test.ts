@@ -101,4 +101,36 @@ describe("cache()", () => {
       process.env.NODE_ENV = previous ?? "test"
     }
   })
+
+  test("does NOT cache a response to an authenticated request by default (no cross-user leak)", async () => {
+    let calls = 0
+    const app = server()
+      .use(cache({ store: new MemoryResponseCache(), ttlMs: 60_000 }))
+      .get("/me", () => ({ user: ++calls }))
+
+    const authed = (): Request =>
+      new Request("http://x/me", { headers: { authorization: "Bearer t" } })
+    expect((await app.fetch(authed())).headers.get("x-nifra-cache")).toBe("BYPASS")
+    const second = await app.fetch(authed())
+    expect(second.headers.get("x-nifra-cache")).toBe("BYPASS")
+    expect(await second.json()).toEqual({ user: 2 }) // re-ran, not replayed
+    const cookie = await app.fetch(new Request("http://x/me", { headers: { cookie: "s=1" } }))
+    expect(cookie.headers.get("x-nifra-cache")).toBe("BYPASS")
+  })
+
+  test("caches an authenticated request when the response is explicitly public", async () => {
+    let calls = 0
+    const app = server()
+      .use(cache({ store: new MemoryResponseCache(), ttlMs: 60_000 }))
+      .get("/pub", (c) => {
+        c.set.headers["cache-control"] = "public, max-age=60"
+        return { n: ++calls }
+      })
+    const authed = (): Request =>
+      new Request("http://x/pub", { headers: { authorization: "Bearer t" } })
+    expect((await app.fetch(authed())).headers.get("x-nifra-cache")).toBe("MISS")
+    const hit = await app.fetch(authed())
+    expect(hit.headers.get("x-nifra-cache")).toBe("HIT")
+    expect(await hit.json()).toEqual({ n: 1 })
+  })
 })

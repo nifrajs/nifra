@@ -10,7 +10,7 @@
  * so this adapter just bridges Node's stream-based `(req, res)` to/from Web
  * `Request`/`Response`, plus a Bun-`listen()`-style graceful `stop()`.
  */
-import { open } from "node:fs/promises"
+import { open, realpath } from "node:fs/promises"
 import {
   createServer,
   type IncomingHttpHeaders,
@@ -294,9 +294,18 @@ async function readStatic(
       await handle.close()
       return { kind: "response", response: new Response("Not Found", { status: 404 }) }
     }
+    // Defense-in-depth: the lexical `..` guard in staticMatch can't catch a symlink INSIDE root that
+    // points outside it. Re-confirm the real path is contained before streaming the bytes.
+    const [realFile, realRoot] = await Promise.all([realpath(file), realpath(state.root)])
+    if (realFile !== realRoot && !realFile.startsWith(realRoot + sep)) {
+      await handle.close()
+      return { kind: "response", response: new Response("Forbidden", { status: 403 }) }
+    }
     const headers: Record<string, string> = { ...state.headers }
     headers["content-type"] =
       STATIC_CONTENT_TYPES[extname(file).toLowerCase()] ?? "application/octet-stream"
+    // Never let a client sniff a served file into a more dangerous type (e.g. an .svg as active content).
+    headers["x-content-type-options"] = "nosniff"
     headers["content-length"] = String(stat.size)
     if (state.immutable && headers["cache-control"] === undefined) {
       headers["cache-control"] = "public, max-age=31536000, immutable"

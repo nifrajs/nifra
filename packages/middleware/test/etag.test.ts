@@ -95,6 +95,18 @@ describe("etag", () => {
     expect(await res.text()).toBe("12345678")
   })
 
+  test("a 304 carries no Content-Length / Content-Type (no body-describing headers)", async () => {
+    const first = await app.fetch(new Request("http://x/"))
+    const tag = first.headers.get("etag")
+    expect(tag).not.toBeNull()
+    const res = await app.fetch(
+      new Request("http://x/", { headers: { "if-none-match": tag as string } }),
+    )
+    expect(res.status).toBe(304)
+    expect(res.headers.get("content-length")).toBeNull()
+    expect(res.headers.get("content-type")).toBeNull()
+  })
+
   test("validates construction", () => {
     expect(() => etag({ maxBytes: -1 })).toThrow(/maxBytes/)
   })

@@ -84,6 +84,11 @@ export interface CacheOptions {
   readonly respectResponseCacheControl?: boolean
   /** Cache responses with `Set-Cookie`. Default `false`. */
   readonly cacheSetCookie?: boolean
+  /** Cache responses to requests bearing `Authorization` or `Cookie` even when the response is not
+   * explicitly `Cache-Control: public` (or `s-maxage`). Default `false`: a shared cache must not store a
+   * personalized response (RFC 9111 §3.5), or it would be replayed to other users. Leave this off unless
+   * the cached route is genuinely the same for every caller. */
+  readonly cacheAuthenticated?: boolean
   /** Response header for cache status. Default `"x-nifra-cache"`; set `false` to disable. */
   readonly cacheStatusHeader?: string | false
 }
@@ -195,6 +200,7 @@ export function cache(options: CacheOptions): Middleware {
   const respectRequestCacheControl = options.respectRequestCacheControl !== false
   const respectResponseCacheControl = options.respectResponseCacheControl !== false
   const cacheSetCookie = options.cacheSetCookie === true
+  const cacheAuthenticated = options.cacheAuthenticated === true
   const cacheStatusHeader =
     options.cacheStatusHeader === undefined ? "x-nifra-cache" : options.cacheStatusHeader
   if (cacheStatusHeader !== false && cacheStatusHeader.trim() === "") {
@@ -240,6 +246,16 @@ export function cache(options: CacheOptions): Middleware {
         return withStatusHeader(res, cacheStatusHeader, "BYPASS")
       }
       if (!cacheSetCookie && res.headers.has("set-cookie")) {
+        return withStatusHeader(res, cacheStatusHeader, "BYPASS")
+      }
+      // Shared-cache safety (RFC 9111 §3.5): never store a response to an authenticated request
+      // (Authorization or Cookie) unless it's explicitly public — otherwise a personalized 200 leaks
+      // across users. Opt in with `cacheAuthenticated: true` for a route that's the same for everyone.
+      if (
+        !cacheAuthenticated &&
+        (req.headers.has("authorization") || req.headers.has("cookie")) &&
+        !cacheControlHas(res.headers, ["public", "s-maxage"])
+      ) {
         return withStatusHeader(res, cacheStatusHeader, "BYPASS")
       }
       const declared = parseLength(res.headers.get("content-length"))

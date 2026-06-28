@@ -40,6 +40,10 @@ export function etag(options: ETagOptions = {}) {
       const headers = new Headers(res.headers)
       headers.set("ETag", tag)
       if (matchesIfNoneMatch(req.headers.get("if-none-match"), tag)) {
+        // A 304 carries no body — drop the body-describing headers so strict intermediaries don't see a
+        // null body with a non-zero Content-Length.
+        headers.delete("content-length")
+        headers.delete("content-type")
         return new Response(null, { status: 304, headers })
       }
       return new Response(body, { status: res.status, statusText: res.statusText, headers })
