@@ -6,6 +6,11 @@
  * {@link ./bridge.ts} bridge — so the author writes plain markup + `mcpApp.onData(render)`, no transport
  * glue. Link it to a tool with {@link ./tool.ts | defineMcpTool({ widget })}, which stamps the tool's
  * `_meta.ui.resourceUri` from {@link McpWidget.meta}.
+ *
+ * SECURITY: `structuredContent` (and any theme) arriving over the bridge is UNTRUSTED — escape it before
+ * writing to `innerHTML`, or render with a framework that escapes (React/Preact, or `@nifrajs/mcp/react`).
+ * The sandboxed iframe limits blast radius, but a widget that builds markup by string concatenation can
+ * still XSS itself; the bridge passes data through, it does not sanitize.
  */
 
 import { bridgeScript } from "./bridge.ts"
