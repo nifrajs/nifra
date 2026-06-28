@@ -107,6 +107,13 @@ export interface IdempotencyOptions {
   readonly maxBytes?: number
   /** Whether a response should be cached for replay. Default: status `< 500` (don't replay transient 5xx). */
   readonly shouldCache?: (response: Response) => boolean
+  /**
+   * Derive the store key from the request. Default: the `header` value **scoped by method + path**, so the
+   * same key on a different endpoint can't collide. Return a **principal-scoped** key (e.g.
+   * `` `${userId}:${req.headers.get("idempotency-key")}` ``) so one user can't replay another's stored
+   * response on a shared key. Return `null`/`""` to skip dedupe for this request.
+   */
+  readonly key?: (req: Request, header: string) => string | null
 }
 
 const DEFAULT_METHODS = ["POST", "PUT", "PATCH", "DELETE"] as const
@@ -251,6 +258,14 @@ function replay(record: IdempotencyRecord): Response {
  *
  * Caching buffers the response body, so apply this to JSON/API routes, not streaming SSR responses.
  */
+/** The default store key: the `header` value scoped by method + path, so the same key on a different
+ * endpoint can't collide (cross-resource replay). `null` when no key header is present (no dedupe). */
+function defaultIdempotencyKey(req: Request, header: string): string | null {
+  const raw = req.headers.get(header)
+  if (raw === null || raw === "") return null
+  return `${req.method.toUpperCase()} ${new URL(req.url).pathname}\n${raw}`
+}
+
 export function idempotency(options: IdempotencyOptions): Middleware {
   const { store } = options
   const header = (options.header ?? "idempotency-key").toLowerCase()
@@ -262,13 +277,14 @@ export function idempotency(options: IdempotencyOptions): Middleware {
     throw new Error("idempotency: maxBytes must be a non-negative integer")
   }
   const shouldCache = options.shouldCache ?? ((res: Response) => res.status < 500)
+  const keyOf = options.key ?? defaultIdempotencyKey
   const claimed = new WeakMap<Request, string>()
 
   return {
     name: "idempotency",
     async onRequest(req) {
-      if (!methods.has(req.method)) return undefined
-      const key = req.headers.get(header)
+      if (!methods.has(req.method.toUpperCase())) return undefined
+      const key = keyOf(req, header)
       if (key === null || key === "") return undefined // opt-in per request — no key ⇒ no dedupe
       const claim = await store.begin(key, lockTtlMs)
       if (claim.state === "replay") return replay(claim.record)

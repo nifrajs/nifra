@@ -71,7 +71,9 @@ describe("idempotency middleware", () => {
 
   test("a concurrent in-flight request gets a 409 (not a double-run)", async () => {
     const store = new MemoryIdempotencyStore()
-    await store.begin("busy", 60_000) // simulate another instance/request holding the lock
+    // The default key is scoped by method+path, so seed the lock under the SAME scoped key the request
+    // will compute ("POST /pay\nbusy"), simulating another instance/request holding it.
+    await store.begin("POST /pay\nbusy", 60_000)
     const { app, calls } = counterApp({ store })
 
     const res = await app.fetch(post("busy"))
@@ -79,6 +81,30 @@ describe("idempotency middleware", () => {
     expect(await res.json()).toEqual({ ok: false, error: "idempotency_in_progress" })
     expect(res.headers.get("retry-after")).not.toBeNull()
     expect(calls()).toBe(0) // the handler never ran
+  })
+
+  test("the default key is route-scoped — the same key on a different path does not collide", async () => {
+    const store = new MemoryIdempotencyStore()
+    const json = (v: unknown) =>
+      new Response(JSON.stringify(v), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    const app = server()
+      .use(idempotency({ store }))
+      .post("/pay", () => json({ which: "pay" }))
+      .post("/refund", () => json({ which: "refund" }))
+    const headers = { "idempotency-key": "shared" }
+    const pay = await app.fetch(
+      new Request("http://x/pay", { method: "POST", body: "{}", headers }),
+    )
+    const refund = await app.fetch(
+      new Request("http://x/refund", { method: "POST", body: "{}", headers }),
+    )
+    // Same key, different routes → NOT a cross-resource replay; each handler runs.
+    expect(await pay.json()).toEqual({ which: "pay" })
+    expect(await refund.json()).toEqual({ which: "refund" })
+    expect(refund.headers.get("idempotent-replayed")).toBeNull()
   })
 
   test("a 5xx is not cached — the lock releases so a retry re-runs the handler", async () => {

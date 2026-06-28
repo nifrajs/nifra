@@ -6,7 +6,7 @@
  */
 
 import { existsSync } from "node:fs"
-import { resolve } from "node:path"
+import { resolve, sep } from "node:path"
 import { pathToFileURL } from "node:url"
 import { type AppLike, runApp } from "@nifrajs/runner"
 
@@ -23,6 +23,12 @@ export async function loadBackend(
   const found = candidates.map((c) => resolve(cwd, c)).find((p) => existsSync(p))
   if (!found) {
     return { error: `no backend entry found in ${cwd} (looked for ${candidates.join(", ")})` }
+  }
+  // The `entry` arg comes from MCP args; importing it executes it. Keep it inside the project root so a
+  // crafted `entry` (`../../x`, an absolute path) can't run arbitrary modules outside the project.
+  const root = resolve(cwd)
+  if (found !== root && !found.startsWith(root + sep)) {
+    return { error: `refusing to load a backend entry outside the project root: ${entry}` }
   }
 
   let mod: Record<string, unknown>
