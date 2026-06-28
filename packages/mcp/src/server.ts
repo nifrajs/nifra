@@ -13,6 +13,11 @@
  * ```
  *
  * {@link McpServer.handle} dispatches a single JSON-RPC message directly (for headless verification / tests).
+ *
+ * SECURITY: this has NO built-in authentication — once mounted, every tool is callable by anyone who can
+ * reach the route (the CORS header is `*` and no credentials are used, so it is effectively public). That
+ * is fine for read-only/public tools; if any tool mutates state or returns private data, gate the route
+ * yourself (check an `Authorization` header / session in the nifra handler before calling `mcp.fetch`).
  */
 
 import { respondMcpHttp } from "./http.ts"
