@@ -17,6 +17,7 @@ const GROUPS = [
     "runner",
     "env",
     "cron",
+    "jobs",
     "otel",
     "web",
     "cli",
