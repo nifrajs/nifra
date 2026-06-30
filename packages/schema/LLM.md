@@ -10,12 +10,16 @@ Built-in schema builder `t` — TypeBox-backed (free JSON Schema + compiled vali
 
 ## Key exports
 
+- **decodeCursor** _(function)_ — `decodeCursor: <T = unknown>(cursor: string | null | undefined) => T | undefined`
+- **encodeCursor** _(function)_ — `encodeCursor: (value: unknown) => string`
 - **fromTypeBox** _(function)_ — `fromTypeBox: <T extends TSchema>(schema: T) => NifraSchema<T>`
+- **paginate** _(function)_ — `paginate: <Row>(rows: readonly Row[], limit: number, cursorOf: (row: Row) => unknown) => Page<Row>`
 - **registerFormat** _(function)_ — `registerFormat: (name: string, validate: (value: string) => boolean) => void`
 - **toOpenAPI** _(function)_ — `toOpenAPI: (input: ContractShape | Server, options?: ToOpenAPIOptions) => OpenAPIDocument`
 - **t** _(const)_ — `t: { readonly string: (options?: StringOptions) => NifraSchema<import("@sinclair/typebox").TString>; readonly number: (options?: NumberOpti…`
 - **OpenAPIDocument** _(interface)_ — `interface OpenAPIDocument`
 - **OpenAPIInfo** _(interface)_ — `interface OpenAPIInfo`
+- **Page** _(interface)_ — `interface Page<Item>`
 - **NifraSchema** _(type)_ — `type NifraSchema<T extends TSchema = TSchema> = StandardSchemaV1<Static<T>, Static<T>> & { readonly jsonSchema: T }`
 
 ## Footguns
