@@ -1,0 +1,11 @@
+---
+"@nifrajs/schema": minor
+---
+
+feat(schema): cursor pagination — `t.paginated`, `t.pageQuery`, and cursor helpers
+
+`t.paginated(item)` is the response envelope schema `{ items: T[]; nextCursor: string | null }`, and
+`t.pageQuery({ maxLimit })` the request query schema `{ cursor?: string; limit?: number }` (an over-limit
+value fails validation). Runtime helpers `encodeCursor` / `decodeCursor` (opaque, URL-safe, edge-safe —
+no `Buffer`) and `paginate(rows, limit, cursorOf)` build a page from a `limit + 1` fetch. Cursor
+pagination — not OFFSET — is the production default: stable under concurrent inserts, O(1) per page.

@@ -717,8 +717,16 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **OpenAPIDocument** _(interface)_ — `interface OpenAPIDocument`
 - **OpenAPIInfo** _(interface)_ — `interface OpenAPIInfo`
   OpenAPI 3.1 generation. We model a practical slice of the spec — enough to feed Swagger UI / codegen and to validate structurally: paths, parameters, request bodies, responses (incl. non-200 and non-JSON), tags, security, servers, and `$ref` reuse via `components.schemas`.
+- **Page** _(interface)_ — `interface Page<Item>`
+  A cursor-pagination page — matches the shape of `t.paginated(item)`.
+- **decodeCursor** _(function)_ — `decodeCursor: <T = unknown>(cursor: string | null | undefined) => T | undefined`
+  Decode a cursor back to its value. Returns `undefined` for a null/empty/malformed cursor — treat that as "start from the beginning" rather than erroring on a client-supplied string.
+- **encodeCursor** _(function)_ — `encodeCursor: (value: unknown) => string`
+  Encode any JSON-serializable value (e.g. the last row's sort key) into an opaque cursor string.
 - **fromTypeBox** _(function)_ — `fromTypeBox: <T extends TSchema>(schema: T) => NifraSchema<T>`
   Wrap a TypeBox schema as a `NifraSchema`.
+- **paginate** _(function)_ — `paginate: <Row>(rows: readonly Row[], limit: number, cursorOf: (row: Row) => unknown) => Page<Row>`
+  Build a page from rows you fetched with `limit + 1`. If the extra row came back there are more pages: drop it and emit a `nextCursor` from the last KEPT row via `cursorOf`; otherwise `nextCursor` is `null`.
 - **registerFormat** _(function)_ — `registerFormat: (name: string, validate: (value: string) => boolean) => void`
   Register (or override) a string format usable as `t.string({ format: name })`.
 - **t** _(const)_ — `t: { readonly string: (options?: StringOptions) => NifraSchema<import("@sinclair/typebox").TString>; readonly number: (options?: NumberOptions) => NifraSchema<import("@sinclair/typebox").TNumber>; readonly integer: (opt…`

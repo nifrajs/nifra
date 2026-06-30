@@ -67,4 +67,31 @@ export const t = {
     ) as NifraSchema<TUnion<{ -readonly [K in keyof S]: S[K]["jsonSchema"] }>>,
   record: <T extends TSchema>(value: NifraSchema<T>, options?: ObjectOptions) =>
     fromTypeBox(Type.Record(Type.String(), value.jsonSchema, options)),
+
+  // Composed from TypeBox directly (not `t.object`/`t.array`) so the `t` literal doesn't reference
+  // itself during inference. Cursor pagination — not OFFSET — is the production default: stable under
+  // concurrent inserts and O(1) per page. Build pages with `paginate()` + `encodeCursor`/`decodeCursor`.
+  /** A cursor-pagination response envelope: `{ items: T[]; nextCursor: string | null }` (`null` = last page). */
+  paginated: <T extends TSchema>(item: NifraSchema<T>, options?: ObjectOptions) =>
+    fromTypeBox(
+      Type.Object(
+        {
+          items: Type.Array(item.jsonSchema),
+          nextCursor: Type.Union([Type.String(), Type.Null()]),
+        },
+        { additionalProperties: false, ...options },
+      ),
+    ),
+  /** A request query schema for cursor pagination: `{ cursor?: string; limit?: number }`. `maxLimit`
+   * caps `limit` — a larger value fails validation (a 400), so a client can't request an unbounded page. */
+  pageQuery: (options?: { maxLimit?: number }) =>
+    fromTypeBox(
+      Type.Object(
+        {
+          cursor: Type.Optional(Type.String()),
+          limit: Type.Optional(Type.Integer({ minimum: 1, maximum: options?.maxLimit ?? 100 })),
+        },
+        { additionalProperties: false },
+      ),
+    ),
 } as const
