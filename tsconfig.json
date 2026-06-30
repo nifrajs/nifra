@@ -18,6 +18,7 @@
       "@nifrajs/runner": ["./packages/runner/src/index.ts"],
       "@nifrajs/client": ["./packages/client/src/index.ts"],
       "@nifrajs/cron": ["./packages/cron/src/index.ts"],
+      "@nifrajs/jobs": ["./packages/jobs/src/index.ts"],
       "@nifrajs/otel": ["./packages/otel/src/index.ts"],
       "@nifrajs/env": ["./packages/env/src/index.ts"],
       "@nifrajs/schema": ["./packages/schema/src/index.ts"],

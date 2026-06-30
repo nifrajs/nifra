@@ -212,8 +212,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   A standard server-side `WebSocket` — the half returned by Deno's `Deno.upgradeWebSocket` and the Workers `WebSocketPair`. {@link attachWebSocket} wires one to a nifra handler, so the Deno and Workers bridges share all the dispatch/normalization/error-isolation logic (only the upgrade call differs).
 - **TopicRegistry** _(class)_ — `class TopicRegistry`
   In-process pub/sub for `ws.subscribe(topic)` + `app.publish(topic, data)`. **Single-instance only** — topics live in this process's memory, so a multi-instance deploy (multiple servers behind a load balancer) needs an external fan-out (Redis pub/sub, a Cloudflare Durable Object, NATS, …) bridged to…
-- **VERSION** _(const)_ — `VERSION: "0.0.0"`
-  Current package version. Kept as a literal so type-level tests can pin it.
+- **VERSION** _(const)_ — `VERSION: "1.0.0"`
+  Current package version. A hardcoded literal on purpose — core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version, so the literal can't go stale (i…
 - **ValidationOutcome** _(type)_ — `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
 - **VerifyWebhookOptions** _(interface)_ — `interface VerifyWebhookOptions`
 - **Version** _(type)_ — `type Version = typeof VERSION`
@@ -238,7 +238,9 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **defineIdentityPlugin** _(function)_ — `defineIdentityPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
   Define a type-**identity** plugin: it registers routes/hooks as a side effect but returns the app with its `Registry` + `Context` UNCHANGED. Use this (not {@link definePlugin}) for any plugin that doesn't add context types — e.g. one mounting an auth handler. It threads the caller's *concrete* serv…
 - **definePlugin** _(function)_ — `definePlugin: <In extends AnyServer, Out extends AnyServer>(name: string, apply: (app: In) => Out) => NifraPlugin<In, Out>`
-  Name + ergonomics for a plugin. `app.use(myPlugin)` applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
+  Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)` applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
+- **defineRouterPlugin** _(const)_ — `defineRouterPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
+  Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this — not {@link definePlugin} — for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
 - **implement** _(function)_ — `implement: <const C extends ContractShape, H extends HandlersFor<C>>(contract: C, handlers: H) => Server<RegistryFromImpl<C, H>>`
   Bind handlers to a contract, producing a real {@link Server} you can `.listen()` or `.fetch()`. Each op is registered through the same path as the inline builder, so the result is identical to writing the routes inline — handlers lift over **unchanged** ("graduation"), and body/query schemas valida…
 - **jsonLogger** _(function)_ — `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
@@ -397,6 +399,103 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **signal** _(function)_ — `signal: <T>(initial: T) => Signal<T>`
   Create a signal. Reads inside an {@link effect} (or {@link computed}) subscribe automatically.
 
+## @nifrajs/jobs
+
+- **Backoff** _(type)_ — `type Backoff = (attempt: number) => number`
+  ms to wait before the next attempt, given the number of attempts already made (1-based).
+- **EnqueueOptions** _(interface)_ — `interface EnqueueOptions`
+- **ExponentialOptions** _(interface)_ — `interface ExponentialOptions`
+- **JobContext** _(interface)_ — `interface JobContext`
+  What a handler receives alongside the payload: identity + which attempt this is (1-based).
+- **JobCounts** _(interface)_ — `interface JobCounts`
+- **JobDefinition** _(interface)_ — `interface JobDefinition<Payload>`
+  A job definition registered on a queue.
+- **JobError** _(class)_ — `class JobError`
+  Thrown for a misuse of the queue API (duplicate/unknown job name).
+- **JobHandle** _(interface)_ — `interface JobHandle<Payload>`
+  A typed handle to enqueue a defined job.
+- **JobHandler** _(type)_ — `type JobHandler<Payload> = (payload: Payload, ctx: JobContext) => void | Promise<void>`
+  A job processor. A throw/rejection routes to `onError` and triggers retry/dead-letter — never crashes the worker.
+- **JobStore** _(interface)_ — `interface JobStore`
+  Persistence + leasing for the queue. The default {@link MemoryJobStore } is single-process (dev / a single long-running server); implement this over Redis/Postgres/etc. for durability or multiple workers. All methods may be sync or async — the queue awaits them.
+- **JobValidationError** _(class)_ — `class JobValidationError`
+  Thrown by `enqueue` when the payload fails the job's `input` schema (validation at the trust boundary).
+- **MemoryJobStore** _(class)_ — `class MemoryJobStore`
+  Construct an in-memory job store. `idFor` is injectable for deterministic tests.
+- **Queue** _(interface)_ — `interface Queue`
+- **QueueOptions** _(interface)_ — `interface QueueOptions`
+- **RetryPolicy** _(interface)_ — `interface RetryPolicy`
+- **StandardResult** _(type)_ — `type StandardResult<Output> = | { readonly value: Output; readonly issues?: undefined } | { readonly issues: ReadonlyArray<{ readonly message: string }> }`
+  The validate-result half of the Standard Schema spec.
+- **StandardSchemaV1** _(interface)_ — `interface StandardSchemaV1<Output = unknown>`
+  A minimal structural view of a Standard Schema validator (v1). `t.object(...)` satisfies it.
+- **StoredJob** _(interface)_ — `interface StoredJob`
+  A job as handed back by {@link JobStore.lease}. `attempt` is the count of PRIOR attempts (0 the first time).
+- **Worker** _(interface)_ — `interface Worker`
+- **WorkerOptions** _(interface)_ — `interface WorkerOptions`
+- **createQueue** _(function)_ — `createQueue: (options?: QueueOptions) => Queue`
+  Create a job queue. Define jobs, enqueue payloads, and `start()` a worker (or `drain()` once).
+- **exponentialBackoff** _(function)_ — `exponentialBackoff: (options?: ExponentialOptions) => Backoff`
+  Exponential backoff: `baseMs * 2^(attempt-1)`, capped at `maxMs`, with optional jitter.
+- **fixedBackoff** _(const)_ — `fixedBackoff: (ms: number) => Backoff`
+  Fixed delay before every retry.
+- **noBackoff** _(const)_ — `noBackoff: Backoff`
+  No delay — retry immediately.
+
+## @nifrajs/mcp
+
+- **CreateMcpServerOptions** _(interface)_ — `interface CreateMcpServerOptions`
+- **DefineMcpToolOptions** _(interface)_ — `interface DefineMcpToolOptions`
+- **DefineMcpWidgetOptions** _(interface)_ — `interface DefineMcpWidgetOptions`
+- **JsonRpcNotification** _(interface)_ — `interface JsonRpcNotification`
+- **JsonRpcRequest** _(interface)_ — `interface JsonRpcRequest`
+- **JsonRpcResponse** _(type)_ — `type JsonRpcResponse = | { jsonrpc: "2.0"; id: JsonRpcId; result: unknown } | { jsonrpc: "2.0"; id: JsonRpcId; error: { code: number; message: string } }`
+- **McpAppBridge** _(interface)_ — `interface McpAppBridge`
+  The author-facing global injected into a widget. Kept minimal and stable.
+- **McpContentBlock** _(interface)_ — `interface McpContentBlock`
+  A single content block in a tool result. Today only text — the model-facing representation.
+- **McpHttpOptions** _(interface)_ — `interface McpHttpOptions`
+- **McpPrompt** _(interface)_ — `interface McpPrompt`
+- **McpPromptMessage** _(interface)_ — `interface McpPromptMessage`
+- **McpProtocolOptions** _(interface)_ — `interface McpProtocolOptions`
+- **McpProtocolState** _(interface)_ — `interface McpProtocolState`
+- **McpResource** _(interface)_ — `interface McpResource`
+- **McpServer** _(interface)_ — `interface McpServer`
+- **McpServerFeatures** _(interface)_ — `interface McpServerFeatures`
+- **McpTool** _(interface)_ — `interface McpTool`
+  A tool the agent can call. `handler` returns the text shown to the agent, or a rich {@link McpToolResult} (for MCP Apps: structured data + a `ui://` widget link). `_meta` is the per-tool descriptor metadata surfaced in `tools/list` — for a widget tool it carries `ui.resourceUri`.
+- **McpToolContext** _(interface)_ — `interface McpToolContext`
+- **McpToolHandlerResult** _(type)_ — `type McpToolHandlerResult`
+  The ergonomic result an MCP-tool handler may return (coerced to the protocol's {@link McpToolResult}).
+- **McpToolResult** _(interface)_ — `interface McpToolResult`
+  The rich result a tool handler may return instead of a bare string (MCP Apps). `content` is the model-facing text (also shown by text-only hosts); `structuredContent` is the data a linked `ui://` widget renders and is deliberately NOT added to the model's context; `_meta` carries the `ui.resourceUr…
+- **McpUiIntent** _(type)_ — `type McpUiIntent = | "table" | "list" | "cards" | "form" | "metric" | "detail" | "chart" | (string & {})`
+  A render-intent hint for GENERATIVE hosts (e.g. an app-builder host): how to present the result's `structuredContent` when the host renders its OWN themed UI rather than an iframe widget. The host maps the intent to a component in its design system (a shadcn/Tailwind table, form, metric card, …). O…
+- **McpWidget** _(interface)_ — `interface McpWidget`
+  A widget: the resource to register on the server, its `ui://` URI, and the `_meta` link for its tool.
+- **PROTOCOL_VERSION** _(const)_ — `PROTOCOL_VERSION: "2024-11-05"`
+  The pure MCP (Model Context Protocol) JSON-RPC dispatch — no I/O, no `Bun.*`, no side effects, so it unit-tests cleanly. A transport (stdio in `@nifrajs/cli`'s `mcp.ts`, Streamable-HTTP in {@link ./http.ts}) wires this to a byte stream; the tools/resources are injected, so the protocol logic is exe…
+- **UI_EXTENSION_KEY** _(const)_ — `UI_EXTENSION_KEY: "io.modelcontextprotocol/ui"`
+  The `capabilities.extensions` key advertising UI support in the `initialize` result (SEP-1865).
+- **UI_MIME** _(const)_ — `UI_MIME: "text/html;profile=mcp-app"`
+  The MIME type a UI resource MUST use so a host recognizes it as an MCP App widget (SEP-1865).
+- **bridgeScript** _(function)_ — `bridgeScript: () => string`
+  The bridge source, as a string for inlining in a `<script>`. Self-contained, no imports.
+- **createMcpProtocolState** _(function)_ — `createMcpProtocolState: () => McpProtocolState`
+- **createMcpServer** _(function)_ — `createMcpServer: (opts: CreateMcpServerOptions) => McpServer`
+- **defineMcpTool** _(function)_ — `defineMcpTool: (opts: DefineMcpToolOptions) => McpTool`
+- **defineMcpWidget** _(function)_ — `defineMcpWidget: (opts: DefineMcpWidgetOptions) => McpWidget`
+- **handleRpc** _(function)_ — `handleRpc: (message: JsonRpcRequest, tools: readonly McpTool[], serverInfo: { name: string; version: string; }, features?: McpServerFeatures, options?: McpProtocolOptions) => Promise<JsonRpcResponse | null>`
+  Dispatch one JSON-RPC message against the given tools. Returns the response, or `null` for a notification (no reply). Tool errors are reported in-band (`isError`) so the agent can react to them.
+- **respondMcpHttp** _(function)_ — `respondMcpHttp: (request: Request, tools: McpTool[], serverInfo: { name: string; version: string; }, options?: McpHttpOptions) => Promise<Response>`
+  Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → JSON-RPC response; GET → a plain-text health page; OPTIONS → CORS preflight. Never throws — a bad body becomes a JSON-RPC parse error. The dispatch is the shared, transport-agnostic {@link handleRpc}.
+- **rpcError** _(const)_ — `rpcError: (id: JsonRpcId, code: number, message: string) => JsonRpcResponse`
+- **rpcResult** _(const)_ — `rpcResult: (id: JsonRpcId, value: unknown) => JsonRpcResponse`
+- **uiResourceMeta** _(function)_ — `uiResourceMeta: (uri: string) => Record<string, unknown>`
+  The MCP Apps `_meta.ui.resourceUri` link, emitted nested (current spec) AND flat (the deprecated `ui/resourceUri`, still read by some hosts) so a tool renders across the transition.
+- **widgetDocument** _(function)_ — `widgetDocument: (opts: DefineMcpWidgetOptions) => string`
+  Assemble the full self-contained widget document (bridge inlined in `<head>` so body scripts can use `mcpApp` immediately).
+
 ## @nifrajs/middleware
 
 - **ApiKeyStaticOptions** _(interface)_ — `interface ApiKeyStaticOptions`
@@ -504,7 +603,6 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **healthcheck** _(function)_ — `healthcheck: (options?: HealthcheckOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").AnyServer>`
   Register **liveness** (`/health`) and **readiness** (`/ready`) endpoints. Liveness is a flat `200` (the process is serving). Readiness runs each `check` and returns `200 { status: "ok", checks }` when all pass, or `503 { status: "error", checks }` when any fail (a thrown check counts as failed). Bo…
 - **idempotency** _(function)_ — `idempotency: (options: IdempotencyOptions) => Middleware`
-  Idempotency-key middleware. Apply with `app.use(idempotency({ store }))`.
 - **ipRestriction** _(function)_ — `ipRestriction: (options: IpRestrictionOptions) => Middleware`
   IP allow/deny middleware. It fails closed when no trustworthy client IP can be derived. Configure `clientIp`, `trustedProxies`, or a trusted single-IP `header`; unconfigured X-Forwarded-For is never trusted.
 - **jwk** _(function)_ — `jwk: (key: JwtVerificationKey) => JwtKeyResolver`
@@ -988,8 +1086,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   A standard server-side `WebSocket` — the half returned by Deno's `Deno.upgradeWebSocket` and the Workers `WebSocketPair`. {@link attachWebSocket} wires one to a nifra handler, so the Deno and Workers bridges share all the dispatch/normalization/error-isolation logic (only the upgrade call differs).
 - **TopicRegistry** _(class)_ — `class TopicRegistry`
   In-process pub/sub for `ws.subscribe(topic)` + `app.publish(topic, data)`. **Single-instance only** — topics live in this process's memory, so a multi-instance deploy (multiple servers behind a load balancer) needs an external fan-out (Redis pub/sub, a Cloudflare Durable Object, NATS, …) bridged to…
-- **VERSION** _(const)_ — `VERSION: "0.0.0"`
-  Current package version. Kept as a literal so type-level tests can pin it.
+- **VERSION** _(const)_ — `VERSION: "1.0.0"`
+  Current package version. A hardcoded literal on purpose — core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version, so the literal can't go stale (i…
 - **ValidationOutcome** _(type)_ — `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
 - **VerifyWebhookOptions** _(interface)_ — `interface VerifyWebhookOptions`
 - **Version** _(type)_ — `type Version = typeof VERSION`
@@ -1014,7 +1112,9 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **defineIdentityPlugin** _(function)_ — `defineIdentityPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
   Define a type-**identity** plugin: it registers routes/hooks as a side effect but returns the app with its `Registry` + `Context` UNCHANGED. Use this (not {@link definePlugin}) for any plugin that doesn't add context types — e.g. one mounting an auth handler. It threads the caller's *concrete* serv…
 - **definePlugin** _(function)_ — `definePlugin: <In extends AnyServer, Out extends AnyServer>(name: string, apply: (app: In) => Out) => NifraPlugin<In, Out>`
-  Name + ergonomics for a plugin. `app.use(myPlugin)` applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
+  Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)` applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
+- **defineRouterPlugin** _(const)_ — `defineRouterPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
+  Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this — not {@link definePlugin} — for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
 - **implement** _(function)_ — `implement: <const C extends ContractShape, H extends HandlersFor<C>>(contract: C, handlers: H) => Server<RegistryFromImpl<C, H>>`
   Bind handlers to a contract, producing a real {@link Server} you can `.listen()` or `.fetch()`. Each op is registered through the same path as the inline builder, so the result is identical to writing the routes inline — handlers lift over **unchanged** ("graduation"), and body/query schemas valida…
 - **jsonLogger** _(function)_ — `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
