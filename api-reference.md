@@ -49,6 +49,21 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **requireSession** _(function)_ — `requireSession: <A extends BetterAuthLike>(auth: A, request: Request, options?: RequireSessionOptions) => Promise<SessionOf<A>>`
   Require an authenticated better-auth session at the top of a protected handler/loader/action. Returns the (non-null) session when present; otherwise **throws a `Response`** (302/401) — nifra returns a thrown `Response` as-is, short-circuiting the rest of the handler.
 
+## @nifrajs/cache
+
+- **Cache** _(interface)_ — `interface Cache`
+- **CacheOptions** _(interface)_ — `interface CacheOptions`
+- **CacheStore** _(interface)_ — `interface CacheStore`
+  Raw key→entry storage. The default {@link MemoryCache } is in-process; implement this over CF KV / Redis / etc. for a cache shared across instances. All methods may be sync or async — the cache awaits them.
+- **MemoryCache** _(class)_ — `class MemoryCache`
+- **MemoryCacheOptions** _(interface)_ — `interface MemoryCacheOptions`
+- **SetOptions** _(interface)_ — `interface SetOptions`
+- **StoredEntry** _(interface)_ — `interface StoredEntry`
+  A cached entry as the store holds it.
+- **WrapOptions** _(type)_ — `type WrapOptions = SetOptions`
+- **createCache** _(function)_ — `createCache: (options?: CacheOptions) => Cache`
+  Create a cache over the given (or a fresh in-memory) store.
+
 ## @nifrajs/client
 
 - **ActionArgs** _(type)_ — `type ActionArgs<Api, Env = unknown> = LoaderArgs<Api, Env>`

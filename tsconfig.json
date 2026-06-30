@@ -17,6 +17,7 @@
       "@nifrajs/workers": ["./packages/workers/src/index.ts"],
       "@nifrajs/runner": ["./packages/runner/src/index.ts"],
       "@nifrajs/client": ["./packages/client/src/index.ts"],
+      "@nifrajs/cache": ["./packages/cache/src/index.ts"],
       "@nifrajs/cron": ["./packages/cron/src/index.ts"],
       "@nifrajs/jobs": ["./packages/jobs/src/index.ts"],
       "@nifrajs/otel": ["./packages/otel/src/index.ts"],
