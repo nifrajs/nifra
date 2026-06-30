@@ -1,11 +1,18 @@
 /**
- * Wraps `changeset version` and keeps the two hardcoded CLI version constants in sync.
- * The CLI is tsc-built (reads no package.json at runtime) and mcp-http.ts runs on the edge
- * (no fs), so they hardcode the version. `check:publish` enforces they match — this script
- * ensures the "Version Packages" PR updates them automatically alongside package.json.
+ * Wraps `changeset version` and re-syncs the version refs `changeset version` itself leaves untouched:
+ *   - the two hardcoded CLI version constants — cli.ts reads no package.json at runtime, mcp-http.ts runs
+ *     on the edge with no fs, so both hardcode the version; and
+ *   - the create-nifra templates' `@nifrajs/*` / `nifra` dep pins + the `--auth` injected
+ *     `@nifrajs/better-auth` range. These are plain template/source files (not workspace deps), so
+ *     changeset skips them, and a missed bump ships templates that install the PREVIOUS release — the
+ *     1.0.0 cut shipped stale beta pins exactly this way.
+ *
+ * `check:publish` re-asserts every one of these matches, so a forgotten bump fails the publish gate
+ * instead of shipping silently. (agent-files' MCP_CLI_VERSION is DERIVED from create-nifra's own version,
+ * so it needs no rewrite here.) This keeps the "Version Packages" PR correct automatically.
  */
 import { execSync } from "node:child_process"
-import { readFileSync, writeFileSync } from "node:fs"
+import { readdirSync, readFileSync, writeFileSync } from "node:fs"
 
 execSync("changeset version", { stdio: "inherit" })
 
@@ -13,15 +20,37 @@ const { version } = JSON.parse(readFileSync("packages/cli/package.json", "utf8")
   version: string
 }
 
+// Hardcoded version literals in published source that read no package.json at runtime: the CLI
+// constants (cli.ts / mcp-http.ts) and @nifrajs/core's exported `VERSION` (core runs on the edge — no
+// fs — so it can't derive its own version). Under `fixed` versioning every package shares this version.
 const constants: Array<{ file: string; re: RegExp }> = [
   { file: "packages/cli/src/cli.ts", re: /(CLI_VERSION\s*=\s*)"[^"]+"/ },
   { file: "packages/cli/src/mcp-http.ts", re: /(const VERSION\s*=\s*)"[^"]+"/ },
-  // The pinned @nifrajs/cli version in the generated .mcp.json launch command.
-  { file: "packages/create-nifra/src/agent-files.ts", re: /(MCP_CLI_VERSION\s*=\s*)"[^"]+"/ },
+  { file: "packages/core/src/index.ts", re: /(export const VERSION\s*=\s*)"[^"]+"/ },
 ]
 
 for (const { file, re } of constants) {
   const src = readFileSync(file, "utf8")
   writeFileSync(file, src.replace(re, `$1"${version}"`))
   console.log(`✓ ${file} → ${version}`)
+}
+
+// create-nifra template pins: rewrite every internal `@nifrajs/*` / `nifra` dep to `^<version>`, leaving
+// third-party pins (react, vite, …) alone. Global flag: each template lists several internal deps.
+const NIFRA_DEP = /("(?:@nifrajs\/[a-z0-9-]+|nifra)":\s*")[~^]?[^"]+(")/g
+const CREATE_NIFRA = "packages/create-nifra"
+for (const dir of readdirSync(CREATE_NIFRA).filter((d) => d.startsWith("template"))) {
+  const file = `${CREATE_NIFRA}/${dir}/package.json`
+  const src = readFileSync(file, "utf8")
+  writeFileSync(file, src.replace(NIFRA_DEP, `$1^${version}$2`))
+  console.log(`✓ ${file} → ^${version}`)
+}
+
+// The `--auth better-auth` injected `@nifrajs/better-auth` range in auth.ts's AUTH_PRESETS (its sibling
+// `better-auth` peer pin is a third-party version — left untouched).
+{
+  const file = `${CREATE_NIFRA}/src/auth.ts`
+  const src = readFileSync(file, "utf8")
+  writeFileSync(file, src.replace(/("@nifrajs\/better-auth":\s*")[~^]?[^"]+(")/, `$1^${version}$2`))
+  console.log(`✓ ${file} → ^${version}`)
 }

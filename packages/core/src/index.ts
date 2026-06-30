@@ -5,8 +5,14 @@
  * the unified route descriptor.
  */
 
-/** Current package version. Kept as a literal so type-level tests can pin it. */
-export const VERSION = "0.0.0" as const
+/**
+ * Current package version. A hardcoded literal on purpose — core runs on the edge (no fs), so it can't
+ * read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and
+ * `check:publish` asserts it equals `@nifrajs/core`'s package version, so the literal can't go stale
+ * (it shipped at "0.0.0" through 1.0.0 before those guards existed). Kept narrow (`as const`) so
+ * consumers can pin it at the type level — see `test/version.test-d.ts`.
+ */
+export const VERSION = "1.0.0" as const
 
 export type Version = typeof VERSION
 
