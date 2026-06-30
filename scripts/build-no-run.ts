@@ -6,6 +6,7 @@ const GROUPS = [
   ["core"],
   [
     "client",
+    "cache",
     "schema",
     "middleware",
     "auth",

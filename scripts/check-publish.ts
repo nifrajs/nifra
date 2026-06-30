@@ -13,6 +13,7 @@ import { $, Glob } from "bun"
 const LIBRARIES = [
   "core",
   "client",
+  "cache",
   "mcp",
   "schema",
   "middleware",
