@@ -6,7 +6,7 @@
  *
  *   bun run scripts/check-publish.ts
  */
-import { $ } from "bun"
+import { $, Glob } from "bun"
 
 // Library packages get publint + attw (type resolution). `create-nifra` is a CLI (bin,
 // no library exports), so it gets publint only.
@@ -25,6 +25,7 @@ const LIBRARIES = [
   "runner",
   "env",
   "cron",
+  "jobs",
   "otel",
   "web",
   "web-solid",
@@ -182,6 +183,91 @@ for (const dir of ALL_DIRS) {
     } else {
       console.log(`✓ ${file}: version constant matches @nifrajs/cli ${cliVersion}`)
     }
+  }
+
+  // @nifrajs/core exports a public literal `VERSION` (it runs on the edge — no fs — so it can't derive
+  // its own version). changeset version skips it; version.ts re-syncs it. Checked against core's OWN
+  // package version (not cli's), so it also fails loudly if the `fixed` link between them ever breaks.
+  // It shipped at "0.0.0" through 1.0.0 before this gate existed.
+  {
+    const coreVersion = JSON.parse(await Bun.file("packages/core/package.json").text())
+      .version as string
+    const file = "packages/core/src/index.ts"
+    const found = (await Bun.file(file).text()).match(/export const VERSION\s*=\s*"([^"]+)"/)
+    if (found === null) {
+      failures += 1
+      console.error(`✗ ${file}: no exported VERSION constant`)
+    } else if (found[1] !== coreVersion) {
+      failures += 1
+      console.error(`✗ ${file}: VERSION "${found[1]}" ≠ @nifrajs/core ${coreVersion} — bump it`)
+    } else {
+      console.log(`✓ ${file}: VERSION matches @nifrajs/core ${coreVersion}`)
+    }
+  }
+
+  // Scaffold/template version refs that `changeset version` does NOT touch (plain template + source
+  // files, not workspace deps) and that drifted silently to beta at the 1.0.0 cut. `scripts/version.ts`
+  // now re-syncs them on bump; this re-asserts the result so a missed bump fails the gate, not npm.
+  const expected = `^${cliVersion}`
+
+  // (a) The scaffolded `.mcp.json` pins `@nifrajs/cli@<MCP_CLI_VERSION>`; a stale pin launches an old MCP
+  // server in every new project. agent-files derives it from create-nifra's own version, and `fixed`
+  // versioning locks create-nifra to @nifrajs/cli — so this also guards the `fixed` link itself.
+  const { MCP_CLI_VERSION } = (await import("../packages/create-nifra/src/agent-files.ts")) as {
+    MCP_CLI_VERSION: string
+  }
+  if (MCP_CLI_VERSION !== cliVersion) {
+    failures += 1
+    console.error(
+      `✗ create-nifra MCP_CLI_VERSION "${MCP_CLI_VERSION}" ≠ @nifrajs/cli ${cliVersion} — bump it`,
+    )
+  } else {
+    console.log(`✓ create-nifra MCP_CLI_VERSION matches @nifrajs/cli ${cliVersion}`)
+  }
+
+  // (b) Every create-nifra template pins the just-published internal packages with `^<version>`. A
+  // release that forgets to bump them ships templates that install the PREVIOUS line. Assert every
+  // `@nifrajs/*` / `nifra` dep (across dependencies + devDependencies) in every template is `^<version>`.
+  const templatePkgs = (
+    await Array.fromAsync(new Glob("packages/create-nifra/template*/package.json").scan("."))
+  ).sort()
+  for (const file of templatePkgs) {
+    const pkg = JSON.parse(await Bun.file(file).text()) as {
+      dependencies?: Record<string, string>
+      devDependencies?: Record<string, string>
+    }
+    const bad: string[] = []
+    for (const block of ["dependencies", "devDependencies"] as const) {
+      for (const [name, spec] of Object.entries(pkg[block] ?? {})) {
+        if ((name.startsWith("@nifrajs/") || name === "nifra") && spec !== expected) {
+          bad.push(`${block}.${name}="${spec}"`)
+        }
+      }
+    }
+    if (bad.length > 0) {
+      failures += 1
+      console.error(`✗ ${file}: internal dep(s) ≠ ${expected} → ${bad.join(", ")}`)
+    } else {
+      console.log(`✓ ${file}: internal deps pinned to ${expected}`)
+    }
+  }
+
+  // (c) `--auth better-auth` injects an `@nifrajs/better-auth` dep into scaffolded apps; its range must
+  // track the published @nifrajs/better-auth version (also `fixed`, == cliVersion). Its sibling
+  // `better-auth` peer pin is a third-party version and is intentionally NOT checked here.
+  const betterAuthVersion = JSON.parse(await Bun.file("packages/better-auth/package.json").text())
+    .version as string
+  const { AUTH_PRESETS } = (await import("../packages/create-nifra/src/auth.ts")) as {
+    AUTH_PRESETS: Record<string, { deps: Record<string, string> }>
+  }
+  const authPin = AUTH_PRESETS["better-auth"]?.deps["@nifrajs/better-auth"]
+  if (authPin !== `^${betterAuthVersion}`) {
+    failures += 1
+    console.error(
+      `✗ auth.ts @nifrajs/better-auth pin "${authPin}" ≠ ^${betterAuthVersion} — bump it`,
+    )
+  } else {
+    console.log(`✓ auth.ts @nifrajs/better-auth pin matches ^${betterAuthVersion}`)
   }
 }
 

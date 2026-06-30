@@ -22,13 +22,24 @@
  * template and for any existing app.
  */
 
+import { readFileSync } from "node:fs"
+
 /** The MCP launch command, shared by `.mcp.json` and `.cursor/mcp.json`. See the module header for why
  * the package is named explicitly rather than relying on the bare `nifra` bin. */
 export const MCP_SERVER_COMMAND = "bunx" as const
 
 /**
- * The `@nifrajs/cli` version the launch command pins to. Kept in lockstep with the published
- * `@nifrajs/cli` version by `scripts/version.ts` (alongside the cli.ts / mcp-http.ts constants).
+ * The `@nifrajs/cli` version the launch command pins to — DERIVED at load time from this package's own
+ * `version`, never hardcoded. `fixed` changeset versioning ([["@nifrajs/*", "create-nifra", "nifra"]] in
+ * `.changeset/config.json`) bumps `create-nifra` and `@nifrajs/cli` in lockstep, so `create-nifra@x`
+ * always means `@nifrajs/cli@x`. Deriving it here means a release bump has nothing to forget to update —
+ * there is no stale literal to drift (the 1.0.0 cut shipped a beta pin exactly this way). `check:publish`
+ * still asserts it equals `@nifrajs/cli`'s version as a belt-and-suspenders guard on the `fixed` link.
+ *
+ * Resolves correctly under BOTH export conditions: the `bun` export runs `src/agent-files.ts`
+ * (`../package.json` → the package root) and the tsc `default` export runs `dist/agent-files.js`
+ * (`../package.json` → the same root, since `dist/` sits beside the manifest). npm always ships a
+ * package's own `package.json`, so the read can't miss at install time.
  *
  * Why pin at all instead of `bunx @nifrajs/cli mcp`: `bunx` keys its cache on the exact version spec.
  * An UNPINNED spec resolves to the `latest` tag once, then `bunx` reuses that cached copy on every
@@ -38,7 +49,11 @@ export const MCP_SERVER_COMMAND = "bunx" as const
  * fresh and a stale cache can never shadow it. The cost: an already-scaffolded app's `.mcp.json` freezes
  * at its scaffold-time version until `nifra init-agents` is re-run — an acceptable, deterministic trade.
  */
-export const MCP_CLI_VERSION = "1.0.0" as const
+export const MCP_CLI_VERSION: string = (
+  JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+    version: string
+  }
+).version
 export const MCP_SERVER_ARGS = [`@nifrajs/cli@${MCP_CLI_VERSION}`, "mcp"] as const
 
 /** The server entry registered under the `nifra` key in both Claude Code's and Cursor's MCP config. */
