@@ -268,6 +268,20 @@
         "@nifrajs/core": "workspace:*",
       },
     },
+    "packages/storage": {
+      "name": "@nifrajs/storage",
+      "version": "1.0.0",
+    },
+    "packages/testing": {
+      "name": "@nifrajs/testing",
+      "version": "1.0.0",
+      "dependencies": {
+        "@nifrajs/client": "workspace:*",
+      },
+      "devDependencies": {
+        "@nifrajs/core": "workspace:*",
+      },
+    },
     "packages/uploads": {
       "name": "@nifrajs/uploads",
       "version": "1.0.0",
@@ -717,7 +731,11 @@
 
     "@nifrajs/site": ["@nifrajs/site@workspace:site"],
 
+    "@nifrajs/storage": ["@nifrajs/storage@workspace:packages/storage"],
+
     "@nifrajs/test-utils": ["@nifrajs/test-utils@workspace:internal/test-utils"],
+
+    "@nifrajs/testing": ["@nifrajs/testing@workspace:packages/testing"],
 
     "@nifrajs/uploads": ["@nifrajs/uploads@workspace:packages/uploads"],
 

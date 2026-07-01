@@ -14,6 +14,7 @@ const LIBRARIES = [
   "core",
   "client",
   "cache",
+  "testing",
   "mcp",
   "schema",
   "middleware",
