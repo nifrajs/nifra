@@ -1,5 +1,19 @@
 # @nifrajs/cli
 
+## 1.1.0
+
+### Patch Changes
+
+- Updated dependencies [9905f7f]
+- Updated dependencies [17e57c4]
+- Updated dependencies [37d2383]
+  - create-nifra@1.1.0
+  - @nifrajs/schema@1.1.0
+  - @nifrajs/web@1.1.0
+  - @nifrajs/client@1.1.0
+  - @nifrajs/mcp@1.1.0
+  - @nifrajs/runner@1.1.0
+
 ## 1.0.0
 
 ### Minor Changes

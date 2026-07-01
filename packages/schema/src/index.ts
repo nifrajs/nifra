@@ -12,4 +12,6 @@ export { fromTypeBox, type NifraSchema } from "./adapter.ts"
 // effect of this module, which a production bundler would tree-shake away.
 export { registerFormat } from "./formats.ts"
 export { type OpenAPIDocument, type OpenAPIInfo, toOpenAPI } from "./openapi.ts"
+// Cursor-pagination runtime helpers — pair with `t.paginated` / `t.pageQuery`.
+export { decodeCursor, encodeCursor, type Page, paginate } from "./pagination.ts"
 export { t } from "./t.ts"

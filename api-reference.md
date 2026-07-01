@@ -49,6 +49,21 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **requireSession** _(function)_ — `requireSession: <A extends BetterAuthLike>(auth: A, request: Request, options?: RequireSessionOptions) => Promise<SessionOf<A>>`
   Require an authenticated better-auth session at the top of a protected handler/loader/action. Returns the (non-null) session when present; otherwise **throws a `Response`** (302/401) — nifra returns a thrown `Response` as-is, short-circuiting the rest of the handler.
 
+## @nifrajs/cache
+
+- **Cache** _(interface)_ — `interface Cache`
+- **CacheOptions** _(interface)_ — `interface CacheOptions`
+- **CacheStore** _(interface)_ — `interface CacheStore`
+  Raw key→entry storage. The default {@link MemoryCache } is in-process; implement this over CF KV / Redis / etc. for a cache shared across instances. All methods may be sync or async — the cache awaits them.
+- **MemoryCache** _(class)_ — `class MemoryCache`
+- **MemoryCacheOptions** _(interface)_ — `interface MemoryCacheOptions`
+- **SetOptions** _(interface)_ — `interface SetOptions`
+- **StoredEntry** _(interface)_ — `interface StoredEntry`
+  A cached entry as the store holds it.
+- **WrapOptions** _(type)_ — `type WrapOptions = SetOptions`
+- **createCache** _(function)_ — `createCache: (options?: CacheOptions) => Cache`
+  Create a cache over the given (or a fresh in-memory) store.
+
 ## @nifrajs/client
 
 - **ActionArgs** _(type)_ — `type ActionArgs<Api, Env = unknown> = LoaderArgs<Api, Env>`
@@ -212,7 +227,7 @@ Every public export of every package — name, kind, signature, and doc summary 
   A standard server-side `WebSocket` — the half returned by Deno's `Deno.upgradeWebSocket` and the Workers `WebSocketPair`. {@link attachWebSocket} wires one to a nifra handler, so the Deno and Workers bridges share all the dispatch/normalization/error-isolation logic (only the upgrade call differs).
 - **TopicRegistry** _(class)_ — `class TopicRegistry`
   In-process pub/sub for `ws.subscribe(topic)` + `app.publish(topic, data)`. **Single-instance only** — topics live in this process's memory, so a multi-instance deploy (multiple servers behind a load balancer) needs an external fan-out (Redis pub/sub, a Cloudflare Durable Object, NATS, …) bridged to…
-- **VERSION** _(const)_ — `VERSION: "1.0.0"`
+- **VERSION** _(const)_ — `VERSION: "1.1.0"`
   Current package version. A hardcoded literal on purpose — core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version, so the literal can't go stale (i…
 - **ValidationOutcome** _(type)_ — `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
 - **VerifyWebhookOptions** _(interface)_ — `interface VerifyWebhookOptions`
@@ -702,14 +717,59 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **OpenAPIDocument** _(interface)_ — `interface OpenAPIDocument`
 - **OpenAPIInfo** _(interface)_ — `interface OpenAPIInfo`
   OpenAPI 3.1 generation. We model a practical slice of the spec — enough to feed Swagger UI / codegen and to validate structurally: paths, parameters, request bodies, responses (incl. non-200 and non-JSON), tags, security, servers, and `$ref` reuse via `components.schemas`.
-- **fromTypeBox** _(function)_ — `fromTypeBox: <T extends TSchema>(schema: T) => NifraSchema<T>`
+- **Page** _(interface)_ — `interface Page<Item>`
+  A cursor-pagination page — matches the shape of `t.paginated(item)`.
+- **decodeCursor** _(function)_ — `decodeCursor: <T = unknown>(cursor: string | null | undefined) => T | undefined`
+  Decode a cursor back to its value. Returns `undefined` for a null/empty/malformed cursor — treat that as "start from the beginning" rather than erroring on a client-supplied string.
+- **encodeCursor** _(function)_ — `encodeCursor: (value: unknown) => string`
+  Encode any JSON-serializable value (e.g. the last row's sort key) into an opaque cursor string.
+- **fromTypeBox** _(function)_ — `fromTypeBox: <T extends TSchema>(schema: T, options?: { readonly coerce?: boolean; }) => NifraSchema<T>`
   Wrap a TypeBox schema as a `NifraSchema`.
+- **paginate** _(function)_ — `paginate: <Row>(rows: readonly Row[], limit: number, cursorOf: (row: Row) => unknown) => Page<Row>`
+  Build a page from rows you fetched with `limit + 1`. If the extra row came back there are more pages: drop it and emit a `nextCursor` from the last KEPT row via `cursorOf`; otherwise `nextCursor` is `null`.
 - **registerFormat** _(function)_ — `registerFormat: (name: string, validate: (value: string) => boolean) => void`
   Register (or override) a string format usable as `t.string({ format: name })`.
 - **t** _(const)_ — `t: { readonly string: (options?: StringOptions) => NifraSchema<import("@sinclair/typebox").TString>; readonly number: (options?: NumberOptions) => NifraSchema<import("@sinclair/typebox").TNumber>; readonly integer: (opt…`
   The built-in schema builder. Each constructor returns a `NifraSchema` — a Standard Schema whose validated output type flows into `c.body`/`c.query`, and whose `jsonSchema` powers `toOpenAPI`. Options (min/max, length, pattern, …) pass straight through to TypeBox and so become JSON Schema constraint…
 - **toOpenAPI** _(function)_ — `toOpenAPI: (input: ContractShape | Server, options?: ToOpenAPIOptions) => OpenAPIDocument`
   Generate an OpenAPI 3.1 document from a contract or a running app. See the module doc for the detail model.
+
+## @nifrajs/storage
+
+- **FileStorage** _(class)_ — `class FileStorage`
+- **ListOptions** _(interface)_ — `interface ListOptions`
+- **MemoryStorage** _(class)_ — `class MemoryStorage`
+- **PutOptions** _(interface)_ — `interface PutOptions`
+- **R2BucketLike** _(interface)_ — `interface R2BucketLike`
+  The slice of the R2 bucket binding this adapter calls. `env.<BUCKET>` satisfies it.
+- **R2ObjectLike** _(interface)_ — `interface R2ObjectLike`
+  The slice of R2's object metadata this adapter reads.
+- **R2Storage** _(class)_ — `class R2Storage`
+- **StorageAdapter** _(interface)_ — `interface StorageAdapter`
+  A blob store keyed by string. Keys are POSIX-ish paths (`avatars/u1.png`); every adapter rejects unsafe keys (absolute, `..` traversal, NUL, backslash) so a key valid in one adapter is valid in all. All methods are async.
+- **StorageData** _(type)_ — `type StorageData = Uint8Array | ArrayBuffer | string`
+  Accepted `put` payloads — normalized to bytes by each adapter.
+- **StorageKeyError** _(class)_ — `class StorageKeyError`
+  Storage-key safety. A key is a POSIX-ish relative path (`avatars/u1.png`); we reject anything that could escape a `FileStorage` root or otherwise misbehave — absolute paths, `..` traversal, NUL bytes, and backslashes (Windows traversal). Enforced by EVERY adapter (not just `FileStorage`) so a key i…
+- **StorageObject** _(interface)_ — `interface StorageObject`
+  An object read back from storage. `body` is buffered (not streamed) — fine for typical uploads.
+- **assertSafeKey** _(function)_ — `assertSafeKey: (key: string) => void`
+  Throw {@link StorageKeyError} unless `key` is a safe relative storage key.
+- **toBytes** _(function)_ — `toBytes: (data: StorageData) => Uint8Array`
+  Normalize any accepted payload to bytes.
+
+## @nifrajs/testing
+
+- **AppLike** _(interface)_ — `interface AppLike`
+  The minimal shape a nifra `server()` app satisfies — its own `fetch`.
+- **CookieJar** _(interface)_ — `interface CookieJar`
+  A tiny cookie jar for in-process tests — parses `Set-Cookie` off responses and emits a `Cookie` request header, so a login → authenticated-request flow works without threading headers by hand. It honours removal (`Max-Age=0` / a past `Expires`) so logout clears the cookie; other attributes (Domain/…
+- **TestSession** _(interface)_ — `interface TestSession<App>`
+- **TestSessionOptions** _(interface)_ — `interface TestSessionOptions`
+- **cookieJar** _(function)_ — `cookieJar: () => CookieJar`
+  Create an empty cookie jar.
+- **testSession** _(function)_ — `testSession: <App extends AppLike>(app: App, options?: TestSessionOptions) => TestSession<App>`
+  Create a cookie-persisting in-process test client for `app`.
 
 ## @nifrajs/uploads
 
@@ -1086,7 +1146,7 @@ Every public export of every package — name, kind, signature, and doc summary 
   A standard server-side `WebSocket` — the half returned by Deno's `Deno.upgradeWebSocket` and the Workers `WebSocketPair`. {@link attachWebSocket} wires one to a nifra handler, so the Deno and Workers bridges share all the dispatch/normalization/error-isolation logic (only the upgrade call differs).
 - **TopicRegistry** _(class)_ — `class TopicRegistry`
   In-process pub/sub for `ws.subscribe(topic)` + `app.publish(topic, data)`. **Single-instance only** — topics live in this process's memory, so a multi-instance deploy (multiple servers behind a load balancer) needs an external fan-out (Redis pub/sub, a Cloudflare Durable Object, NATS, …) bridged to…
-- **VERSION** _(const)_ — `VERSION: "1.0.0"`
+- **VERSION** _(const)_ — `VERSION: "1.1.0"`
   Current package version. A hardcoded literal on purpose — core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version, so the literal can't go stale (i…
 - **ValidationOutcome** _(type)_ — `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
 - **VerifyWebhookOptions** _(interface)_ — `interface VerifyWebhookOptions`

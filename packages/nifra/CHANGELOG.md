@@ -1,5 +1,11 @@
 # nifra
 
+## 1.1.0
+
+### Patch Changes
+
+- @nifrajs/core@1.1.0
+
 ## 1.0.0
 
 ### Patch Changes

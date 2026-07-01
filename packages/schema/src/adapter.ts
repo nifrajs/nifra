@@ -46,8 +46,18 @@ function toIssue(error: { readonly message: string; readonly path: string }): St
  *
  * Exposed (not just used internally by `t`) so a TypeBox schema authored directly can
  * be adapted without leaving the Standard Schema world.
+ *
+ * `options.coerce` runs TypeBox's `Value.Convert` (string→number/integer/boolean, per the schema)
+ * BEFORE validating. Query values always arrive as strings (`?limit=20` → `"20"`), so a query schema
+ * with a numeric field can't validate without this — it's how `t.pageQuery` yields a real `number`.
+ * Leave it OFF (the default) for body/JSON schemas: a JSON number is already a number, and coercing
+ * would silently accept `"20"` where the contract said `20`.
  */
-export function fromTypeBox<T extends TSchema>(schema: T): NifraSchema<T> {
+export function fromTypeBox<T extends TSchema>(
+  schema: T,
+  options?: { readonly coerce?: boolean },
+): NifraSchema<T> {
+  const coerce = options?.coerce ?? false
   let compiled: TypeCheck<T> | undefined
   let evalFree = false
   return {
@@ -59,6 +69,10 @@ export function fromTypeBox<T extends TSchema>(schema: T): NifraSchema<T> {
         // reachable path (not a top-level import side effect) so a production bundle can't
         // tree-shake the registration away — see ./formats.ts. Idempotent, ~free after first call.
         ensureDefaultFormats()
+        // Coerce first when asked (query schemas): `Value.Convert` turns "20"→20 per the schema, so the
+        // compiled/eval-free Check below sees the target type. A non-convertible value (e.g. "abc" for an
+        // integer) is left as-is and fails Check → a proper 400.
+        const input = coerce ? Value.Convert(schema, value) : value
         if (compiled === undefined && !evalFree) {
           try {
             compiled = TypeCompiler.Compile(schema)
@@ -68,11 +82,11 @@ export function fromTypeBox<T extends TSchema>(schema: T): NifraSchema<T> {
           }
         }
         if (compiled !== undefined) {
-          if (compiled.Check(value)) return { value }
-          return { issues: [...compiled.Errors(value)].map(toIssue) }
+          if (compiled.Check(input)) return { value: input as Static<T> }
+          return { issues: [...compiled.Errors(input)].map(toIssue) }
         }
-        if (Value.Check(schema, value)) return { value }
-        return { issues: [...Value.Errors(schema, value)].map(toIssue) }
+        if (Value.Check(schema, input)) return { value: input as Static<T> }
+        return { issues: [...Value.Errors(schema, input)].map(toIssue) }
       },
       // Phantom: `types` carries no runtime value; this cast supplies the
       // compile-time `Static<T>` that nifra's `InferOutput` reads to type `c.body`.
