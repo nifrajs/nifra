@@ -12,7 +12,7 @@ Built-in schema builder `t` — TypeBox-backed (free JSON Schema + compiled vali
 
 - **decodeCursor** _(function)_ — `decodeCursor: <T = unknown>(cursor: string | null | undefined) => T | undefined`
 - **encodeCursor** _(function)_ — `encodeCursor: (value: unknown) => string`
-- **fromTypeBox** _(function)_ — `fromTypeBox: <T extends TSchema>(schema: T) => NifraSchema<T>`
+- **fromTypeBox** _(function)_ — `fromTypeBox: <T extends TSchema>(schema: T, options?: { readonly coerce?: boolean; }) => NifraSchema<T>`
 - **paginate** _(function)_ — `paginate: <Row>(rows: readonly Row[], limit: number, cursorOf: (row: Row) => unknown) => Page<Row>`
 - **registerFormat** _(function)_ — `registerFormat: (name: string, validate: (value: string) => boolean) => void`
 - **toOpenAPI** _(function)_ — `toOpenAPI: (input: ContractShape | Server, options?: ToOpenAPIOptions) => OpenAPIDocument`

@@ -263,6 +263,14 @@ const COMMANDS: Readonly<Record<TemplateName, string>> = {
 
   For a local production run use \`nifra build && nifra start\`. NOTE: the bare \`bun run build\` script targets
   **Cloudflare Pages for DEPLOY** (\`dist/\`) and does NOT pair with \`nifra start\` — don't mix the two.`,
+  fullstack: `- \`bun install\` — install dependencies
+- \`bun run dev\` — run the API (watch mode); \`src/index.ts\` also starts the job worker (\`queue.start()\`)
+- \`bun test\` — drives \`app.fetch\` directly (pagination, jobs via \`queue.drain()\`, cache, storage); no server required
+- \`bun run typecheck\` — run before you call work done
+
+  Wired: cursor pagination (\`t.pageQuery\`/\`t.paginated\`/\`paginate\`), background jobs (\`@nifrajs/jobs\`),
+  a TTL cache (\`@nifrajs/cache\`), blob storage (\`@nifrajs/storage\`). Swap the in-memory \`notes\` store for
+  your DB, and the memory cache/job/storage adapters for shared ones (Redis / CF KV / R2) when multi-process.`,
 }
 
 /** The agent's stop condition — what makes the anti-drift guarantees actually fire. */

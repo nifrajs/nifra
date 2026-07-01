@@ -83,7 +83,9 @@ export const t = {
       ),
     ),
   /** A request query schema for cursor pagination: `{ cursor?: string; limit?: number }`. `maxLimit`
-   * caps `limit` — a larger value fails validation (a 400), so a client can't request an unbounded page. */
+   * caps `limit` — a larger value fails validation (a 400), so a client can't request an unbounded page.
+   * `coerce` is on because query values arrive as strings (`?limit=20` → `"20"`); it's what makes `limit`
+   * a real `number` in the handler (`c.query.limit`), not a string. */
   pageQuery: (options?: { maxLimit?: number }) =>
     fromTypeBox(
       Type.Object(
@@ -93,5 +95,6 @@ export const t = {
         },
         { additionalProperties: false },
       ),
+      { coerce: true },
     ),
 } as const

@@ -9,3 +9,8 @@ feat(schema): cursor pagination — `t.paginated`, `t.pageQuery`, and cursor hel
 value fails validation). Runtime helpers `encodeCursor` / `decodeCursor` (opaque, URL-safe, edge-safe —
 no `Buffer`) and `paginate(rows, limit, cursorOf)` build a page from a `limit + 1` fetch. Cursor
 pagination — not OFFSET — is the production default: stable under concurrent inserts, O(1) per page.
+
+`t.pageQuery` coerces its `limit`: query values arrive as strings (`?limit=20` → `"20"`), so without
+coercion the integer `limit` could never validate a real request. Adds an opt-in `fromTypeBox(schema,
+{ coerce })` (runs TypeBox `Value.Convert` before `Check`) that `t.pageQuery` uses — body/JSON schemas
+stay strict.
