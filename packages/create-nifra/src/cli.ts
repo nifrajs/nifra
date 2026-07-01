@@ -4,6 +4,7 @@
  *
  *   bun create nifra my-app                      # api backend (default)
  *   bun create nifra my-app --template site      # multi-target SSR site
+ *   bun create nifra my-app --template fullstack # api + jobs + cache + storage + cursor pagination
  *   bun create nifra my-app --deploy vercel      # site, with Vercel as the default deploy target
  *
  * Copies the bundled template, restores `.gitignore` (npm strips a literal one from packages), sets the
@@ -35,6 +36,7 @@ const TEMPLATES = {
   api: "../template",
   site: "../template-site",
   isr: "../template-isr",
+  fullstack: "../template-fullstack",
 } as const
 export type TemplateName = keyof typeof TEMPLATES
 
@@ -479,7 +481,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   }
 }
 
-const USAGE = `usage: bun create nifra <directory> [--template api|site|isr] [--framework react|preact|vue|solid|svelte] [--deploy bun|node|deno|cf-pages|vercel] [--ci github] [--db ${DB_CHOICES.join("|")}] [--auth ${AUTH_CHOICES.join("|")}] [--force] [--link <path-to-nifra-repo>]`
+const USAGE = `usage: bun create nifra <directory> [--template api|site|isr|fullstack] [--framework react|preact|vue|solid|svelte] [--deploy bun|node|deno|cf-pages|vercel] [--ci github] [--db ${DB_CHOICES.join("|")}] [--auth ${AUTH_CHOICES.join("|")}] [--force] [--link <path-to-nifra-repo>]`
 
 /**
  * Run the CLI for `argv` and return the exit code + the message to print — no `process.exit`, `console`,

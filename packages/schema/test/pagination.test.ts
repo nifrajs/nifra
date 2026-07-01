@@ -76,15 +76,35 @@ describe("t.pageQuery", () => {
     expect((await validateStandard(query, { cursor: "c", limit: 20 })).ok).toBe(true)
   })
 
-  test("clamps limit: rejects over maxLimit, under 1, or non-integer; rejects unknown fields", async () => {
+  test("clamps limit: rejects over maxLimit and under 1; rejects unknown fields", async () => {
     expect((await validateStandard(query, { limit: 51 })).ok).toBe(false)
     expect((await validateStandard(query, { limit: 0 })).ok).toBe(false)
-    expect((await validateStandard(query, { limit: 1.5 })).ok).toBe(false)
     expect((await validateStandard(query, { page: 2 })).ok).toBe(false)
   })
 
   test("default maxLimit is 100", async () => {
     expect((await validateStandard(t.pageQuery(), { limit: 100 })).ok).toBe(true)
     expect((await validateStandard(t.pageQuery(), { limit: 101 })).ok).toBe(false)
+  })
+
+  // Query values arrive as STRINGS over HTTP (`?limit=20` → `"20"`). pageQuery coerces so the handler
+  // sees a real number — the case the numeric-literal tests above never exercised.
+  test("coerces a string limit from the query, then bounds it", async () => {
+    const ok = await validateStandard(query, { limit: "20" })
+    expect(ok.ok).toBe(true)
+    if (ok.ok) expect(ok.value.limit).toBe(20) // coerced string → number
+
+    const withCursor = await validateStandard(query, { cursor: "abc", limit: "50" })
+    expect(withCursor.ok).toBe(true)
+    if (withCursor.ok) expect(withCursor.value).toEqual({ cursor: "abc", limit: 50 })
+
+    expect((await validateStandard(query, { limit: "51" })).ok).toBe(false) // over cap, after coercion
+    expect((await validateStandard(query, { limit: "abc" })).ok).toBe(false) // not numeric → stays string → fails
+    expect((await validateStandard(query, {})).ok).toBe(true) // limit optional
+
+    // Convert rounds a fractional limit to an integer (lenient — a query "limit=1.5" is nonsense but harmless).
+    const frac = await validateStandard(query, { limit: "1.5" })
+    expect(frac.ok).toBe(true)
+    if (frac.ok) expect(frac.value.limit).toBe(1)
   })
 })

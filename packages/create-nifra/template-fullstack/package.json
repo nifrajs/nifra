@@ -1,0 +1,24 @@
+{
+  "name": "nifra-app",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun --watch run src/index.ts",
+    "start": "bun run src/index.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@nifrajs/cache": "^1.0.0",
+    "@nifrajs/client": "^1.0.0",
+    "@nifrajs/core": "^1.0.0",
+    "@nifrajs/jobs": "^1.0.0",
+    "@nifrajs/schema": "^1.0.0",
+    "@nifrajs/storage": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^6.0.3"
+  }
+}
