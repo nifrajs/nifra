@@ -1,0 +1,46 @@
+{
+  "name": "@nifrajs/storage",
+  "version": "1.1.0",
+  "description": "Blob storage for nifra — one StorageAdapter interface with memory, local-filesystem, and Cloudflare R2 adapters (key-traversal-safe). The persistence half of @nifrajs/uploads. Dependency-free; bring your own adapter for S3/GCS.",
+  "keywords": [
+    "bun",
+    "typescript",
+    "nifra",
+    "web-framework",
+    "full-stack",
+    "edge",
+    "ssr"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/storage"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}

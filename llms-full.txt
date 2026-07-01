@@ -4411,6 +4411,61 @@ one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
 done-gate, or `nifra mcp` to give the agent live project tools.
 
+## @nifrajs/cache
+
+Typed KV cache for nifra — **TTL**, **stale-while-revalidate**, **tag invalidation**, and **single-flight
+stampede protection** on a **pluggable store** (in-memory by default; bring CF KV / Redis for a shared
+cache). **Dependency-free**; runs on Bun/Node/Deno/Workers.
+
+```ts
+import { createCache } from "@nifrajs/cache"
+
+const cache = createCache({ defaultTtlMs: 30_000 })
+
+// Cache-aside in a loader — one DB hit per key per TTL, even under a stampede:
+export async function loader({ params }) {
+  const user = await cache.wrap(
+    `user:${params.id}`,
+    () => db.users.find(params.id),
+    { ttlMs: 30_000, swrMs: 60_000, tags: [`user:${params.id}`] },
+  )
+  return { user }
+}
+
+// On write, drop everything tagged for that user:
+await cache.invalidateTag(`user:${id}`)
+```
+
+## Semantics
+
+- **`wrap(key, loader, opts)`** — returns the cached value, or runs `loader`, stores, and returns it.
+  - **Fresh** (`now < staleAt`): the cached value, no loader call.
+  - **Stale-but-live** (`staleAt ≤ now < expiresAt`, i.e. within `swrMs`): the stale value is returned
+    **immediately** while a **background** refresh runs (deduped). Latency stays flat; data self-heals.
+  - **Miss/expired**: awaits `loader`. Concurrent misses for the same key share **one** call (no stampede).
+  - A throwing `loader` is **not** cached (and in the background path goes to `onError`, never rejects the caller).
+- **`set` / `get` / `has` / `delete`**, **`invalidateTag(tag)`**, **`clear()`**.
+- TTL: `ttlMs` (→ stale) + optional `swrMs` (→ served-stale window) + optional `tags`.
+
+## Stores
+
+The default `MemoryCache` is in-process with lazy expiry, a tag index, and an optional LRU cap
+(`new MemoryCache({ maxEntries: 10_000 })`). For a cache shared across instances, implement `CacheStore`
+(`get` / `set` / `delete` / `invalidateTag` / `clear`) over CF KV, Redis, etc.:
+
+```ts
+const cache = createCache({ store: new RedisCacheStore(redis) })
+```
+
+On **Cloudflare Workers** the in-memory cache is per-isolate and short-lived — back it with **CF KV** (or
+the Cache API) via a `CacheStore` for anything that should survive across requests/instances.
+
+## API
+
+- `createCache(options?)` → `Cache` — `{ store?, defaultTtlMs?, now?, onError? }`.
+- `cache.wrap(key, loader, { ttlMs?, swrMs?, tags? })` · `get` · `has` · `set` · `delete` · `invalidateTag` · `clear`.
+- `MemoryCache({ maxEntries?, now? })` — the default store; implement `CacheStore` for your own.
+
 ## @nifrajs/cli
 
 The `nifra` CLI — zero-config dev/build/start for a nifra app, plus the agent surfaces (`nifra context`,
@@ -4942,6 +4997,89 @@ one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
 done-gate, or `nifra mcp` to give the agent live project tools.
 
+## @nifrajs/jobs
+
+Typed background jobs for nifra — enqueue work off the request path, run it with **retries + exponential
+backoff + dead-lettering** on a **pluggable store**. The async companion to [`@nifrajs/cron`](../cron)
+(cron schedules; jobs does the deferred work — email, webhooks, image processing). **Dependency-free.**
+
+```ts
+import { createQueue } from "@nifrajs/jobs"
+import { t } from "@nifrajs/schema"
+
+const q = createQueue()
+
+const email = q.define("send-email", {
+  input: t.object({ to: t.string(), subject: t.string() }), // validated at enqueue (the trust boundary)
+  retries: { attempts: 5 },                                 // 5 tries, exponential backoff, then dead-letter
+  async handler({ to, subject }, ctx) {
+    await send(to, subject) // ctx = { id, name, attempt }
+  },
+})
+
+// In a route handler — enqueue and return immediately:
+await email.enqueue({ to: "a@b.com", subject: "Welcome" })
+await email.enqueue({ to: "b@b.com", subject: "Later" }, { delayMs: 60_000 }) // run in 1 min
+
+// Start the worker on a long-running server (Bun/Node/Deno):
+const worker = q.start({ concurrency: 4 })
+// graceful shutdown: await worker.stop()
+```
+
+`enqueue` is typed against the handler's payload, and `input` (any [Standard Schema](https://standardschema.dev)
+validator — `@nifrajs/schema`'s `t`, Zod, Valibot, …) validates it before it's stored, so a bad payload
+fails at the call site, not three retries later.
+
+## Retries
+
+Per-job: `retries: number` (attempts) or `{ attempts, backoff }`. A handler that throws is routed to
+`onError`, then retried with the backoff delay; after the last attempt it's **dead-lettered**, not lost.
+
+```ts
+import { exponentialBackoff, fixedBackoff } from "@nifrajs/jobs"
+
+q.define("flaky", { retries: { attempts: 3, backoff: fixedBackoff(5_000) }, handler })
+createQueue({ backoff: exponentialBackoff({ baseMs: 500, maxMs: 60_000, jitter: 0.2 }) }) // queue default
+```
+
+## Stores
+
+The default `MemoryJobStore` is single-process — correct for dev and a single server, but not durable and
+not multi-worker. Implement the `JobStore` interface (`enqueue` / `lease` / `complete` / `retry` /
+`deadLetter` / `counts`) over Redis/Postgres for durability or horizontal workers:
+
+```ts
+const q = createQueue({ store: new RedisJobStore(redis) })
+```
+
+Leasing is at-least-once: a leased job is hidden for `leaseMs`; a worker that dies mid-job releases it
+back automatically. Make handlers **idempotent**.
+
+## Cloudflare Workers
+
+Workers has no long-lived process, so don't call `start()`. Back the queue with a durable store and a
+[CF Queue](https://developers.cloudflare.com/queues/), enqueue via the producer binding, and drain from
+the consumer:
+
+```ts
+export default {
+  async queue(_batch, env) {
+    const q = createQueue({ store: new D1JobStore(env.DB) })
+    await q.process() // one round; the platform schedules invocations
+  },
+}
+```
+
+## API
+
+- `createQueue(options?)` → `Queue` — `{ store?, onError?, now?, defaultAttempts?, backoff? }`.
+- `queue.define(name, { handler, input?, retries? })` → typed `JobHandle` with `.enqueue(payload, { delayMs? | runAt? })`.
+- `queue.enqueue(name, payload, options?)` — enqueue by name.
+- `queue.start({ concurrency?, pollIntervalMs?, leaseMs? })` → `Worker` (`.stop()` drains gracefully).
+- `queue.process()` — run one poll round (for Workers / custom drivers). `queue.drain()` — process until empty.
+- `queue.counts()` → `{ pending, active, dead }`. `queue.store` — the underlying store.
+- Stores: `MemoryJobStore`. Backoff: `exponentialBackoff`, `fixedBackoff`, `noBackoff`.
+
 ## @nifrajs/middleware
 
 Composable, dependency-light middleware for [nifra](../../README.md) — CORS, security headers, body
@@ -5257,6 +5395,85 @@ one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
 done-gate, or `nifra mcp` to give the agent live project tools.
+
+## @nifrajs/storage
+
+Blob storage for nifra — one `StorageAdapter` interface, several adapters. The **persistence half of
+[`@nifrajs/uploads`](../uploads)**: `uploads` decides what's allowed (MIME, size, signed URLs, EXIF
+stripping); `storage` puts the bytes somewhere. **Dependency-free.**
+
+```ts
+import { FileStorage } from "@nifrajs/storage"
+
+const storage = new FileStorage("./uploads")
+await storage.put("avatars/u1.png", bytes, { contentType: "image/png" })
+
+const object = await storage.get("avatars/u1.png") // { body, size, contentType?, metadata? } | null
+await storage.delete("avatars/u1.png")
+const keys = await storage.list({ prefix: "avatars/" })
+```
+
+## Adapters
+
+| Adapter | Use | Notes |
+|---|---|---|
+| `MemoryStorage` | dev / tests | not durable, not shared across instances |
+| `FileStorage(root)` | a long-running server (Bun/Node/Deno) | bytes-only: `contentType` inferred from the extension, custom metadata not persisted |
+| `R2Storage(env.BUCKET)` | the edge (Cloudflare R2) | round-trips `contentType` + metadata; binding typed structurally (no `@cloudflare/workers-types`) |
+
+Implement `StorageAdapter` (`put` / `get` / `delete` / `exists` / `list`) for **S3 / GCS / anything else** —
+the same five methods, and your routes don't change.
+
+## Key safety
+
+Keys are POSIX-ish relative paths (`avatars/u1.png`). **Every** adapter rejects unsafe keys — absolute
+paths, `..` traversal, NUL bytes, backslashes — via `assertSafeKey`, so a `FileStorage` key can never
+escape its root and a key valid in one adapter is valid in all.
+
+```ts
+import { assertSafeKey, StorageKeyError } from "@nifrajs/storage"
+```
+
+## API
+
+- `new MemoryStorage()` · `new FileStorage(root)` · `new R2Storage(bucket)`.
+- `put(key, data, { contentType?, metadata? })` — `data` is `Uint8Array | ArrayBuffer | string`.
+- `get(key)` → `{ body, size, contentType?, metadata? } | null` · `delete(key)` · `exists(key)` · `list({ prefix?, limit? })`.
+- `assertSafeKey(key)` / `StorageKeyError` · `toBytes(data)`.
+
+## @nifrajs/testing
+
+Testing helpers for nifra apps. [`@nifrajs/client`](../client)'s **`testClient`** is already the typed,
+no-network in-process request client (nifra's supertest / `inject`). This package adds what it doesn't: a
+**cookie jar** and a **cookie-persisting `testSession`**, so a login → authenticated-request flow tests as
+easily as a single request.
+
+```ts
+import { testSession } from "@nifrajs/testing"
+import { app } from "../src/app"
+
+const { client, cookies } = testSession<typeof app>(app)
+
+await client.auth.login.post({ email, password }) // Set-Cookie captured into the jar
+const me = await client.me.get()                   // Cookie sent automatically
+expect(me.ok && me.data.id).toBeDefined()
+expect(cookies.get("sid")).toBeDefined()           // inspect the jar
+
+await client.auth.logout.post()                    // a Max-Age=0 Set-Cookie clears it
+expect(cookies.get("sid")).toBeUndefined()
+```
+
+Same in-process client as `testClient` — the app's own `fetch`, no server/port/network, the full real
+lifecycle (validation, middleware, contracts, auth) and end-to-end types from `App`. The only addition is
+that every call carries and captures cookies via a shared jar.
+
+## API
+
+- `testSession<App>(app, { origin?, cookies? })` → `{ client: Treaty<App>, cookies: CookieJar }`.
+- `cookieJar()` → `CookieJar` — `header()` · `applyTo(headers)` · `store(response)` · `set` · `get` · `clear` · `size`.
+  Honours removal (`Max-Age=0` / past `Expires`); other cookie attributes are ignored (in-process, same-origin).
+
+For a **stateless** request (no cookies), use `testClient` from `@nifrajs/client` directly.
 
 ## @nifrajs/uploads
 
@@ -5590,6 +5807,10 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 `betterAuth`, `BetterAuthLike`, `BetterAuthOptions`, `getSession`, `requireSession`, `RequireSessionOptions`, `SessionOf`
 
+## @nifrajs/cache
+
+`Cache`, `CacheOptions`, `CacheStore`, `createCache`, `MemoryCache`, `MemoryCacheOptions`, `SetOptions`, `StoredEntry`, `WrapOptions`
+
 ## @nifrajs/client
 
 `ActionArgs`, `ActionData`, `ApiError`, `ApiProxy`, `client`, `ClientOptions`, `FetchFn`, `inProcessClient`, `Jsonify`, `LoaderArgs`, `LoaderData`, `RegistryOf`, `Result`, `testClient`, `Treaty`, `TreatyFromRegistry`
@@ -5626,6 +5847,10 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 `batch`, `BindableElement`, `BindableRoot`, `bindScope`, `computed`, `effect`, `island`, `IslandContext`, `IslandHost`, `IslandScope`, `IslandSetup`, `islandState`, `mountIslands`, `signal`, `Signal`
 
+## @nifrajs/jobs
+
+`Backoff`, `createQueue`, `EnqueueOptions`, `exponentialBackoff`, `ExponentialOptions`, `fixedBackoff`, `JobContext`, `JobCounts`, `JobDefinition`, `JobError`, `JobHandle`, `JobHandler`, `JobStore`, `JobValidationError`, `MemoryJobStore`, `noBackoff`, `Queue`, `QueueOptions`, `RetryPolicy`, `StandardResult`, `StandardSchemaV1`, `StoredJob`, `Worker`, `WorkerOptions`
+
 ## @nifrajs/mcp
 
 `bridgeScript`, `createMcpServer`, `CreateMcpServerOptions`, `defineMcpTool`, `DefineMcpToolOptions`, `defineMcpWidget`, `DefineMcpWidgetOptions`, `McpAppBridge`, `McpHttpOptions`, `McpServer`, `McpToolHandlerResult`, `McpUiIntent`, `McpWidget`, `respondMcpHttp`, `uiResourceMeta`, `widgetDocument`
@@ -5648,7 +5873,15 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/schema
 
-`fromTypeBox`, `NifraSchema`, `OpenAPIDocument`, `OpenAPIInfo`, `registerFormat`, `t`, `toOpenAPI`
+`decodeCursor`, `encodeCursor`, `fromTypeBox`, `NifraSchema`, `OpenAPIDocument`, `OpenAPIInfo`, `Page`, `paginate`, `registerFormat`, `t`, `toOpenAPI`
+
+## @nifrajs/storage
+
+`assertSafeKey`, `FileStorage`, `ListOptions`, `MemoryStorage`, `PutOptions`, `R2BucketLike`, `R2ObjectLike`, `R2Storage`, `StorageAdapter`, `StorageData`, `StorageKeyError`, `StorageObject`, `toBytes`
+
+## @nifrajs/testing
+
+`AppLike`, `cookieJar`, `CookieJar`, `testSession`, `TestSession`, `TestSessionOptions`
 
 ## @nifrajs/uploads
 

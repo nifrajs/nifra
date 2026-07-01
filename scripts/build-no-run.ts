@@ -6,6 +6,8 @@ const GROUPS = [
   ["core"],
   [
     "client",
+    "cache",
+    "testing",
     "schema",
     "middleware",
     "auth",
@@ -13,6 +15,7 @@ const GROUPS = [
     "i18n",
     "image",
     "uploads",
+    "storage",
     "node",
     "runner",
     "env",

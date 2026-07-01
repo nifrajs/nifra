@@ -13,6 +13,8 @@ import { $, Glob } from "bun"
 const LIBRARIES = [
   "core",
   "client",
+  "cache",
+  "testing",
   "mcp",
   "schema",
   "middleware",
@@ -21,6 +23,7 @@ const LIBRARIES = [
   "i18n",
   "image",
   "uploads",
+  "storage",
   "node",
   "runner",
   "env",
