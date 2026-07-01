@@ -96,7 +96,7 @@
         "@nifrajs/core": "workspace:*",
       },
       "peerDependencies": {
-        "@nifrajs/core": "workspace:*",
+        "@nifrajs/core": "workspace:^",
       },
     },
     "packages/better-auth": {
@@ -108,7 +108,7 @@
         "@nifrajs/test-utils": "workspace:*",
       },
       "peerDependencies": {
-        "@nifrajs/core": "workspace:*",
+        "@nifrajs/core": "workspace:^",
         "better-auth": ">=1.0.0",
       },
       "optionalPeers": [
@@ -142,7 +142,7 @@
         "@nifrajs/test-utils": "workspace:*",
       },
       "peerDependencies": {
-        "@nifrajs/core": "workspace:*",
+        "@nifrajs/core": "workspace:^",
       },
     },
     "packages/content": {
@@ -220,7 +220,7 @@
         "@nifrajs/test-utils": "workspace:*",
       },
       "peerDependencies": {
-        "@nifrajs/core": "workspace:*",
+        "@nifrajs/core": "workspace:^",
       },
     },
     "packages/nifra": {
@@ -247,7 +247,7 @@
         "@nifrajs/core": "workspace:*",
       },
       "peerDependencies": {
-        "@nifrajs/core": "workspace:*",
+        "@nifrajs/core": "workspace:^",
       },
     },
     "packages/runner": {
@@ -265,7 +265,7 @@
         "@nifrajs/test-utils": "workspace:*",
       },
       "peerDependencies": {
-        "@nifrajs/core": "workspace:*",
+        "@nifrajs/core": "workspace:^",
       },
     },
     "packages/storage": {
