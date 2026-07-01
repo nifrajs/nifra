@@ -53,7 +53,10 @@ function toIssue(error: { readonly message: string; readonly path: string }): St
  * Leave it OFF (the default) for body/JSON schemas: a JSON number is already a number, and coercing
  * would silently accept `"20"` where the contract said `20`.
  */
-export function fromTypeBox<T extends TSchema>(schema: T, options?: { readonly coerce?: boolean }): NifraSchema<T> {
+export function fromTypeBox<T extends TSchema>(
+  schema: T,
+  options?: { readonly coerce?: boolean },
+): NifraSchema<T> {
   const coerce = options?.coerce ?? false
   let compiled: TypeCheck<T> | undefined
   let evalFree = false
