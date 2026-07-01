@@ -758,6 +758,19 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **toBytes** _(function)_ — `toBytes: (data: StorageData) => Uint8Array`
   Normalize any accepted payload to bytes.
 
+## @nifrajs/testing
+
+- **AppLike** _(interface)_ — `interface AppLike`
+  The minimal shape a nifra `server()` app satisfies — its own `fetch`.
+- **CookieJar** _(interface)_ — `interface CookieJar`
+  A tiny cookie jar for in-process tests — parses `Set-Cookie` off responses and emits a `Cookie` request header, so a login → authenticated-request flow works without threading headers by hand. It honours removal (`Max-Age=0` / a past `Expires`) so logout clears the cookie; other attributes (Domain/…
+- **TestSession** _(interface)_ — `interface TestSession<App>`
+- **TestSessionOptions** _(interface)_ — `interface TestSessionOptions`
+- **cookieJar** _(function)_ — `cookieJar: () => CookieJar`
+  Create an empty cookie jar.
+- **testSession** _(function)_ — `testSession: <App extends AppLike>(app: App, options?: TestSessionOptions) => TestSession<App>`
+  Create a cookie-persisting in-process test client for `app`.
+
 ## @nifrajs/uploads
 
 - **FileType** _(interface)_ — `interface FileType`
