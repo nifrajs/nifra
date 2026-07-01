@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/schema",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Built-in schema builder `t` — TypeBox-backed (free JSON Schema + compiled validators), implements Standard Schema so nifra routes validate it natively.",
   "keywords": [
     "bun",
@@ -48,7 +48,7 @@
     "@sinclair/typebox": "^0.34.49"
   },
   "peerDependencies": {
-    "@nifrajs/core": "workspace:*"
+    "@nifrajs/core": "workspace:^"
   },
   "devDependencies": {
     "@nifrajs/core": "workspace:*",
