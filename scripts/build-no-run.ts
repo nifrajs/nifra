@@ -14,6 +14,7 @@ const GROUPS = [
     "i18n",
     "image",
     "uploads",
+    "storage",
     "node",
     "runner",
     "env",

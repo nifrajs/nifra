@@ -22,6 +22,7 @@ const LIBRARIES = [
   "i18n",
   "image",
   "uploads",
+  "storage",
   "node",
   "runner",
   "env",

@@ -32,6 +32,7 @@
       "@nifrajs/middleware": ["./packages/middleware/src/index.ts"],
       "@nifrajs/middleware/context-storage": ["./packages/middleware/src/context-storage.ts"],
       "@nifrajs/better-auth": ["./packages/better-auth/src/index.ts"],
+      "@nifrajs/storage": ["./packages/storage/src/index.ts"],
       "@nifrajs/content": ["./packages/content/src/index.ts"],
       "@nifrajs/content/fs": ["./packages/content/src/fs.ts"],
       "@nifrajs/content/mdx": ["./packages/content/src/mdx.ts"],
