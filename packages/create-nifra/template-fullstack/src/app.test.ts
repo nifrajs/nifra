@@ -28,7 +28,9 @@ test("cursor pagination walks every page", async () => {
   await post({ title: "b", body: "" })
   await post({ title: "c", body: "" })
 
-  const first = (await (await app.fetch(new Request("http://localhost/notes?limit=2"))).json()) as Page
+  const first = (await (
+    await app.fetch(new Request("http://localhost/notes?limit=2"))
+  ).json()) as Page
   expect(first.items).toHaveLength(2)
   expect(first.nextCursor).not.toBeNull()
 

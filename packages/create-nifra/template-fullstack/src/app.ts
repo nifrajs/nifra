@@ -1,5 +1,5 @@
-import { server } from "@nifrajs/core"
 import { createCache } from "@nifrajs/cache"
+import { server } from "@nifrajs/core"
 import { createQueue } from "@nifrajs/jobs"
 import { decodeCursor, paginate, t } from "@nifrajs/schema"
 import { MemoryStorage } from "@nifrajs/storage"
@@ -46,7 +46,12 @@ const NoteSchema = t.object({
 export const app = server()
   // Create a note, then enqueue the indexing job (returns immediately; the worker runs it later).
   .post("/notes", { body: NoteInput, response: NoteSchema }, async (c) => {
-    const note: Note = { id: nextId++, title: c.body.title, body: c.body.body, createdAt: Date.now() }
+    const note: Note = {
+      id: nextId++,
+      title: c.body.title,
+      body: c.body.body,
+      createdAt: Date.now(),
+    }
     notes.push(note)
     await indexNote.enqueue({ id: note.id })
     c.set.status = 201
@@ -54,16 +59,22 @@ export const app = server()
   })
   // Cursor-paginated list. `t.pageQuery` validates `{ cursor?, limit? }` (limit capped at 50);
   // `t.paginated` types the `{ items, nextCursor }` envelope. Fetch `limit + 1` rows to detect "more".
-  .get("/notes", { query: t.pageQuery({ maxLimit: 50 }), response: t.paginated(NoteSchema) }, (c) => {
-    const limit = c.query.limit ?? 20
-    const after = decodeCursor<number>(c.query.cursor) ?? 0
-    const rows = notes.filter((n) => n.id > after).slice(0, limit + 1)
-    return paginate(rows, limit, (n) => n.id)
-  })
+  .get(
+    "/notes",
+    { query: t.pageQuery({ maxLimit: 50 }), response: t.paginated(NoteSchema) },
+    (c) => {
+      const limit = c.query.limit ?? 20
+      const after = decodeCursor<number>(c.query.cursor) ?? 0
+      const rows = notes.filter((n) => n.id > after).slice(0, limit + 1)
+      return paginate(rows, limit, (n) => n.id)
+    },
+  )
   // Read one, memoized for 30s. Concurrent misses collapse to a single load (stampede protection).
   .get("/notes/:id", async (c) => {
     const id = Number(c.params.id)
-    const note = await cache.wrap(`note:${id}`, () => notes.find((n) => n.id === id), { ttlMs: 30_000 })
+    const note = await cache.wrap(`note:${id}`, () => notes.find((n) => n.id === id), {
+      ttlMs: 30_000,
+    })
     if (note === undefined) return c.json({ error: "not found" }, 404)
     return note
   })
@@ -71,7 +82,9 @@ export const app = server()
   .put("/notes/:id/attachment", async (c) => {
     const bytes = await c.boundedBody()
     const key = `notes/${c.params.id}/attachment`
-    await storage.put(key, bytes, { contentType: c.req.headers.get("content-type") ?? "application/octet-stream" })
+    await storage.put(key, bytes, {
+      contentType: c.req.headers.get("content-type") ?? "application/octet-stream",
+    })
     c.set.status = 201
     return { key, bytes: bytes.byteLength }
   })
