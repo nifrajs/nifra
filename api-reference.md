@@ -734,6 +734,30 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **toOpenAPI** _(function)_ — `toOpenAPI: (input: ContractShape | Server, options?: ToOpenAPIOptions) => OpenAPIDocument`
   Generate an OpenAPI 3.1 document from a contract or a running app. See the module doc for the detail model.
 
+## @nifrajs/storage
+
+- **FileStorage** _(class)_ — `class FileStorage`
+- **ListOptions** _(interface)_ — `interface ListOptions`
+- **MemoryStorage** _(class)_ — `class MemoryStorage`
+- **PutOptions** _(interface)_ — `interface PutOptions`
+- **R2BucketLike** _(interface)_ — `interface R2BucketLike`
+  The slice of the R2 bucket binding this adapter calls. `env.<BUCKET>` satisfies it.
+- **R2ObjectLike** _(interface)_ — `interface R2ObjectLike`
+  The slice of R2's object metadata this adapter reads.
+- **R2Storage** _(class)_ — `class R2Storage`
+- **StorageAdapter** _(interface)_ — `interface StorageAdapter`
+  A blob store keyed by string. Keys are POSIX-ish paths (`avatars/u1.png`); every adapter rejects unsafe keys (absolute, `..` traversal, NUL, backslash) so a key valid in one adapter is valid in all. All methods are async.
+- **StorageData** _(type)_ — `type StorageData = Uint8Array | ArrayBuffer | string`
+  Accepted `put` payloads — normalized to bytes by each adapter.
+- **StorageKeyError** _(class)_ — `class StorageKeyError`
+  Storage-key safety. A key is a POSIX-ish relative path (`avatars/u1.png`); we reject anything that could escape a `FileStorage` root or otherwise misbehave — absolute paths, `..` traversal, NUL bytes, and backslashes (Windows traversal). Enforced by EVERY adapter (not just `FileStorage`) so a key i…
+- **StorageObject** _(interface)_ — `interface StorageObject`
+  An object read back from storage. `body` is buffered (not streamed) — fine for typical uploads.
+- **assertSafeKey** _(function)_ — `assertSafeKey: (key: string) => void`
+  Throw {@link StorageKeyError} unless `key` is a safe relative storage key.
+- **toBytes** _(function)_ — `toBytes: (data: StorageData) => Uint8Array`
+  Normalize any accepted payload to bytes.
+
 ## @nifrajs/uploads
 
 - **FileType** _(interface)_ — `interface FileType`
