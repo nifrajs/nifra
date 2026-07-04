@@ -1,5 +1,13 @@
 # @nifrajs/web-react
 
+## 1.2.0
+
+### Patch Changes
+
+- @nifrajs/web@1.2.0
+- @nifrajs/i18n@1.2.0
+- @nifrajs/image@1.2.0
+
 ## 1.1.0
 
 ### Patch Changes

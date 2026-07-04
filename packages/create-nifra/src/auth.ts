@@ -47,7 +47,7 @@ export const AUTH_PRESETS: Readonly<Record<AuthChoice, AuthPreset>> = {
     label: "better-auth",
     note: "email/password + sessions, mounted at /api/auth/* — add OAuth providers in auth.ts.",
     // @nifrajs/better-auth mounts it; better-auth is the implementation (peer-installed alongside).
-    deps: { "@nifrajs/better-auth": "^1.1.0", "better-auth": "^1.2.0" },
+    deps: { "@nifrajs/better-auth": "^1.2.0", "better-auth": "^1.2.0" },
   },
 }
 
