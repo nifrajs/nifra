@@ -140,7 +140,7 @@ const RUNTIME_CARDS = [
 
 // One schema → five aligned outputs. The "single source of truth" story, as a small fan diagram.
 const SOURCE_OUTPUTS = [
-  { title: "Runtime validation", note: "Bad input → 400 before your handler" },
+  { title: "Runtime validation", note: "Bad input → 422 before your handler" },
   { title: "TypeScript types", note: "Inferred params, body, response" },
   { title: "Typed client", note: "No codegen — drift is a compile error" },
   { title: "OpenAPI spec", note: "Generated, never hand-written" },

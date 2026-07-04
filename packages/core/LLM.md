@@ -29,6 +29,6 @@ _…and 80 more — see [`api-reference.md`](../../api-reference.md#nifrajscore)
 
 ## Footguns
 
-- `t.object({...})` (and any object schema) rejects **unknown fields** by default (`additionalProperties: false`) → a structured `400 { path: [...] }` **before** the handler runs. Use `t.looseObject` to allow extras.
+- `t.object({...})` (and any object schema) rejects **unknown fields** by default (`additionalProperties: false`) → a structured `422 { path: [...] }` **before** the handler runs. Use `t.looseObject` to allow extras.
 - **Throw rule:** `throw new Response("", { status: 404 })` is control flow — returned as-is, bypasses `_error`. `throw new Error(…)` hits the nearest `_error` boundary / a 500. Do not throw a `Response` to signal a bug, and do not `throw new Error` to send a 4xx.
 - Type the env ONCE on `server<Env>()` → `c.env` is typed on every route below (no per-binding cast). Without `<Env>`, `c.env` is `unknown`. Still validate untrusted env at the boundary.

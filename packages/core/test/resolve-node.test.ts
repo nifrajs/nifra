@@ -244,7 +244,7 @@ describe("resolveNode — fallback to a Response", () => {
     )
     expect(outcome.kind).toBe("response")
     if (outcome.kind !== "response") throw new Error("unreachable")
-    expect(outcome.response.status).toBe(400)
+    expect(outcome.response.status).toBe(422)
   })
 
   test("a thrown Response (redirect) is returned as control flow", async () => {
