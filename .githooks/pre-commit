@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+#
+# Keep the source-derived docs in lockstep with the code, so a stale `api-reference.md` or an
+# `LLM.md` card can never be committed — and then fail CI's `check:api` / `check:cards` after a push.
+#
+# Both generators (`gen:api`, `gen:cards`) extract every public export from each `src/index.ts` with the
+# TypeScript compiler API — they read SOURCE, not `dist`, so this needs no build and runs in a few
+# seconds. It fires ONLY when package source (or a generator script) is staged; a commit that touches
+# only tests/docs/config skips it entirely and stays instant. When it does fire, it regenerates the docs
+# and re-stages the artifacts INTO this commit (they are pure generated output — never hand-edited).
+#
+# Activated via `core.hooksPath=.githooks` (set by the root `prepare` script on install; see package.json).
+set -euo pipefail
+
+# Any staged add/copy/modify/rename under a package's src, or to a doc generator, can change the
+# exported API surface the docs are built from.
+if ! git diff --cached --name-only --diff-filter=ACMR \
+  | grep -qE '^(packages/[^/]+/src/.*\.ts|scripts/gen-(api-reference|llm-cards)\.ts)$'; then
+  exit 0
+fi
+
+if ! command -v bun >/dev/null 2>&1; then
+  echo "pre-commit: 'bun' not found — cannot refresh docs. Install bun or run 'bun run gen:api && bun run gen:cards' + re-stage." >&2
+  exit 1
+fi
+
+echo "pre-commit: package source staged — refreshing api-reference.md + LLM.md cards…"
+bun run gen:api >/dev/null
+bun run gen:cards >/dev/null
+
+# Stage only the generated artifacts (no-op when nothing changed). Never touches other files.
+git add -- api-reference.md packages/*/LLM.md
+
+if ! git diff --cached --quiet -- api-reference.md packages/*/LLM.md; then
+  echo "pre-commit: docs regenerated and staged into this commit."
+fi
