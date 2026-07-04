@@ -42,7 +42,7 @@ export const t = {
   literal: <const L extends TLiteralValue>(value: L) => fromTypeBox(Type.Literal(value)),
 
   // `t.object` REJECTS unknown fields by default (`additionalProperties: false`) — the trust-boundary
-  // rule. A body with extra keys fails validation (a 400), so `c.body` never carries attacker-supplied
+  // rule. A body with extra keys fails validation (a 422), so `c.body` never carries attacker-supplied
   // properties (no mass-assignment). Use `t.looseObject` (or pass `{ additionalProperties: true }`) to
   // opt into an open object; an explicit `options.additionalProperties` always wins over the default.
   object: <P extends Props>(props: P, options?: ObjectOptions) =>
@@ -83,7 +83,7 @@ export const t = {
       ),
     ),
   /** A request query schema for cursor pagination: `{ cursor?: string; limit?: number }`. `maxLimit`
-   * caps `limit` — a larger value fails validation (a 400), so a client can't request an unbounded page.
+   * caps `limit` — a larger value fails validation (a 422), so a client can't request an unbounded page.
    * `coerce` is on because query values arrive as strings (`?limit=20` → `"20"`); it's what makes `limit`
    * a real `number` in the handler (`c.query.limit`), not a string. */
   pageQuery: (options?: { maxLimit?: number }) =>

@@ -31,7 +31,7 @@ const CONVENTIONS = `## Conventions (always true)
 
 - **ESM-only.** Bun is the first-class runtime (\`app.listen(port)\` → \`Bun.serve\`); every other runtime uses \`app.fetch\`. No CommonJS.
 - **The client never throws.** Every \`@nifrajs/client\` call returns \`{ ok, status, data, error }\` — branch on it, don't try/catch.
-- **Validate at the boundary.** Per-route \`body\`/\`query\`/\`params\`/\`headers\`/\`response\` is any Standard Schema (zod/valibot/arktype) or \`@nifrajs/schema\`'s \`t\`; invalid input → structured \`400\` before the handler runs.
+- **Validate at the boundary.** Per-route \`body\`/\`query\`/\`params\`/\`headers\`/\`response\` is any Standard Schema (zod/valibot/arktype) or \`@nifrajs/schema\`'s \`t\`; invalid input → structured \`422\` before the handler runs.
 - **Secure by default.** Body-size cap, \`requestTimeoutMs\` + \`c.signal\`, graceful shutdown, redacting logger, same-origin \`redirect()\`, constant-time secret comparison, fail-closed middleware.
 - **Money** in integer minor units; **time** parsed to absolute UTC at the boundary.
 - Throwing a \`Response\` anywhere in the lifecycle is control flow (returned as-is), not an error.`

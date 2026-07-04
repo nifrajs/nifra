@@ -194,7 +194,7 @@ const NAV_SCRIPT = `(function(){
         "Current Topic: " + activeLabel + " (" + activeGroup + ")\\n\\n" +
         "Nifra System Constraints:\\n" +
         "1. Never hand-roll fetch() wrappers. Always communicate via the typed client: client<typeof app>(url).\\n" +
-        "2. Define schemas (t) at request boundaries to reject bad queries/bodies with 400s before route handlers run.\\n" +
+        "2. Define schemas (t) at request boundaries to reject bad queries/bodies with 422s before route handlers run.\\n" +
         "3. Route loaders run in-process on the server during SSR (no network/HTTP required). Keep endpoints decoupled.\\n" +
         "4. Never import server-only code (e.g. Bun, Drizzle backend instances) at the top-level of client page routes.\\n\\n" +
         "Documentation and Reference Code:\\n" +

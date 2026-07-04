@@ -39,9 +39,9 @@ test("cursor pagination walks every page", async () => {
   expect(second.items.length).toBeGreaterThan(0)
 })
 
-test("limit over the cap is a 400", async () => {
+test("limit over the cap is a 422", async () => {
   const res = await app.fetch(new Request("http://localhost/notes?limit=999"))
-  expect(res.status).toBe(400)
+  expect(res.status).toBe(422)
 })
 
 test("get one is served (and cached); missing is 404", async () => {
