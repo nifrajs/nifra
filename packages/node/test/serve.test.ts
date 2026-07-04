@@ -533,6 +533,48 @@ test("c.req materializes lazily and exposes method/url/headers", async () => {
   expect(await res.json()).toEqual({ method: "GET", path: "/whoami", ua: "hi" })
 })
 
+test("c.boundedBody on a GET resolves to an empty body through the lean source", async () => {
+  const app = server().get("/empty-body", async (c) => ({
+    len: (await c.boundedBody()).byteLength,
+  }))
+  running = await serve(app, { port: 0 })
+  const res = await fetch(`http://localhost:${running.port}/empty-body`)
+  expect(await res.json()).toEqual({ len: 0 })
+})
+
+test("c.cookies on a GET with no Cookie header stays empty through the lean source", async () => {
+  const app = server().get("/no-cookie", (c) => ({
+    count: Object.keys(c.cookies).length,
+  }))
+  running = await serve(app, { port: 0 })
+  const res = await fetch(`http://localhost:${running.port}/no-cookie`)
+  expect(await res.json()).toEqual({ count: 0 })
+})
+
+test("c.boundedBody on a GET honors Content-Length: 0 through the lean source", async () => {
+  const app = server().get("/empty-body-length", async (c) => ({
+    len: (await c.boundedBody()).byteLength,
+  }))
+  running = await serve(app, { port: 0 })
+  const res = await fetch(`http://localhost:${running.port}/empty-body-length`, {
+    headers: { "content-length": "0" },
+  })
+  expect(await res.json()).toEqual({ len: 0 })
+})
+
+test("c.boundedJson on a bodyless GET returns invalid_json through the lean source", async () => {
+  const app = server().get("/empty-json", async (c) => {
+    await c.boundedJson()
+    return { ok: true }
+  })
+  running = await serve(app, { port: 0 })
+  const res = await fetch(`http://localhost:${running.port}/empty-json`, {
+    headers: { "content-length": "0" },
+  })
+  expect(res.status).toBe(400)
+  expect(await res.json()).toEqual({ ok: false, error: "invalid_json" })
+})
+
 test("c.req.json() works through the lazy source on a POST", async () => {
   const app = server().post("/echo", (c) => c.req.json())
   running = await serve(app, { port: 0 })

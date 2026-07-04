@@ -33,7 +33,7 @@ export const app = server()
     // body validates the input; response LOCKS the output shape (the contract).
     { body: t.object({ name: t.string() }), response: t.object({ id: t.string(), name: t.string() }) },
     (c) => {
-      // c.body is VALIDATED + TYPED. Invalid input was already rejected with a 400 before this ran.
+      // c.body is VALIDATED + TYPED. Invalid input was already rejected with a 422 before this ran.
       return { id: crypto.randomUUID(), name: c.body.name }
     },
   )
@@ -45,7 +45,7 @@ Rules an agent must follow:
 
 - **Validate every input at the boundary.** The route schema slots are \`{ body, query }\` (plus
   \`response\`, below) — use \`t\` from \`@nifrajs/schema\` (installed) or any Standard Schema (zod, valibot).
-  Read the typed, already-validated \`c.body\` / \`c.query\` (invalid input was rejected with a 400 before the
+  Read the typed, already-validated \`c.body\` / \`c.query\` (invalid input was rejected with a 422 before the
   handler ran). **Never** hand-parse \`await c.req.json()\` and poke at properties — that's the bug class the
   schema exists to remove.
 - **Path params are NOT a schema slot.** \`:id\` etc. are inferred from the path literal as \`string\` and

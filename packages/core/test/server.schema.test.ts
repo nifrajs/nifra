@@ -81,10 +81,10 @@ describe("body validation", () => {
     expect(await res.json()).toEqual({ created: "Ada" })
   })
 
-  test("invalid body is rejected with 400 and the issues", async () => {
+  test("invalid body is rejected with 422 and the issues", async () => {
     const app = server().post("/users", { body: userBody }, (c) => c.body)
     const res = await app.fetch(jsonRequest("POST", "/users", { name: 123 }))
-    expect(res.status).toBe(400)
+    expect(res.status).toBe(422)
     expect(await res.json()).toEqual({
       ok: false,
       error: "validation",
@@ -184,7 +184,7 @@ describe("body validation", () => {
     expect(await (await app.fetch(jsonRequest("POST", "/a", { ok: true }))).json()).toEqual({
       ok: true,
     })
-    expect((await app.fetch(jsonRequest("POST", "/a", { ok: false }))).status).toBe(400)
+    expect((await app.fetch(jsonRequest("POST", "/a", { ok: false }))).status).toBe(422)
   })
 })
 
@@ -269,10 +269,10 @@ describe("query validation", () => {
     expect(await res.json()).toEqual({ page: "2" })
   })
 
-  test("invalid query is rejected with 400", async () => {
+  test("invalid query is rejected with 422", async () => {
     const app = server().get("/search", { query: pageQuery }, (c) => c.query)
     const res = await app.fetch(new Request("http://localhost/search"))
-    expect(res.status).toBe(400)
+    expect(res.status).toBe(422)
     expect(await res.json()).toEqual({
       ok: false,
       error: "validation",

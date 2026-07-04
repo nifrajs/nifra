@@ -24,7 +24,7 @@ export type App = typeof app // hand this to @nifrajs/client for end-to-end type
   surface — handlers lift over unchanged.
 - **Validation at the boundary.** Per-route `body`/`query` is any
   [Standard Schema](https://standardschema.dev) (zod/valibot/arktype, or `@nifrajs/schema`'s
-  `t`); invalid input is rejected with a structured `400` before the handler runs.
+  `t`); invalid input is rejected with a structured `422` before the handler runs.
 - **Lifecycle middleware.** `derive`/`decorate` extend the typed context;
   `onRequest`/`beforeHandle`/`afterHandle`/`onResponse`/`onError` run around handlers;
   `use(middleware)` applies a bundle.

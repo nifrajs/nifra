@@ -422,7 +422,7 @@ function validationError(issues: ReadonlyArray<StandardIssue>): Response {
     const path = issue.path?.map((seg) => String(typeof seg === "object" ? seg.key : seg))
     return path !== undefined ? { message: issue.message, path } : { message: issue.message }
   })
-  return Response.json({ ok: false, error: "validation", issues: serialized }, { status: 400 })
+  return Response.json({ ok: false, error: "validation", issues: serialized }, { status: 422 })
 }
 
 interface UrlParts {
@@ -1480,7 +1480,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     const url = urlPartsOf(req.url)
     const match = this.wsRouter.find("GET", url.pathname)
     if (!match.found) return WS_PASS // upgrade header, no WS route here → normal routing decides
-    const params = match.params === EMPTY_PARAMS ? EMPTY_PARAMS : decodeParams(match.params)
+    const params =
+      match.params === EMPTY_PARAMS || !url.pathname.includes("%")
+        ? match.params
+        : decodeParams(match.params)
     if (params === null) return { kind: "reject", response: jsonError(400, "malformed_path") }
     const handler = match.payload.handler
     // Non-null: wsRouteCount > 0 ⇒ ws() ran ⇒ the runtime created the registry.
@@ -1681,7 +1684,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       return wrapResponse(jsonError(404, "not_found"))
     }
 
-    const params = match.params === EMPTY_PARAMS ? EMPTY_PARAMS : decodeParams(match.params)
+    const params =
+      match.params === EMPTY_PARAMS || !url.pathname.includes("%")
+        ? match.params
+        : decodeParams(match.params)
     if (params === null) {
       return wrapResponse(jsonError(400, "malformed_path"))
     }
