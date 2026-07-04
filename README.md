@@ -121,7 +121,7 @@ const app = server().post("/users", { body: t.object({ name: t.string() }) }, (c
 const openapi = toOpenAPI(app) // OpenAPI 3.1 document
 ```
 
-Invalid bodies are rejected with a structured `400` before your handler runs.
+Invalid bodies are rejected with a structured `422` before your handler runs.
 
 ## Graduate to a contract — handlers unchanged
 
@@ -171,7 +171,7 @@ Bun is the first-class runtime (`app.listen()`), but the whole lifecycle is `app
 
 ## Principles (enforced, not aspirational)
 
-- **Reject invalid input at three boundaries** — compile-time (types), boot-time (config throws loudly), request-time (Standard Schema → structured `400`). "Genuine fallback" is a documented whitelist; everything else rejects.
+- **Reject invalid input at three boundaries** — compile-time (types), boot-time (config throws loudly), request-time (Standard Schema → structured `422`). "Genuine fallback" is a documented whitelist; everything else rejects.
 - **Tests everywhere, six kinds** — unit, type-level (`*.test-d.ts`), property/fuzz, mode-conformance, benchmark-regression, security-guardrail.
 - **Speed is a measured goal** — tracked with the `oha` HTTP matrix (`bun run bench:loadtest`) across Bun, Node, and Deno against raw runtime handlers plus representative API framework baselines.
 - **Production-grade by default** — graceful shutdown, redacting logs, idempotent guards, integer-money discipline; nothing is "we'll fix it later".

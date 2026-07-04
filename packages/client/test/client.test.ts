@@ -164,9 +164,10 @@ describe("client — error paths (never throws)", () => {
     expect(res).toMatchObject({ ok: false, status: 405, error: { error: "method_not_allowed" } })
   })
 
-  test("400 validation carries issues", async () => {
+  test("422 validation carries issues", async () => {
     const res = await raw().users.post({ name: 123 })
     expect(res.ok).toBe(false)
+    expect(res.status).toBe(422)
     expect(res.error).toEqual({
       error: "validation",
       issues: [{ message: "name must be a string", path: ["name"] }],

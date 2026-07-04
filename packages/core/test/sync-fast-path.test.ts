@@ -180,7 +180,7 @@ describe("sync fast path — routes that must NOT take it", () => {
         body: JSON.stringify({ name: 1 }),
       }),
     )
-    expect(bad.status).toBe(400)
+    expect(bad.status).toBe(422)
   })
 
   test("a query-schema-only route validates without the full async lifecycle", async () => {
@@ -195,7 +195,7 @@ describe("sync fast path — routes that must NOT take it", () => {
 
     const bad = app.fetch(req("/search?q=ada"))
     expect(bad).toBeInstanceOf(Response)
-    expect((bad as Response).status).toBe(400)
+    expect((bad as Response).status).toBe(422)
   })
 
   test("query-schema-only route uses the parsed search without leaking fragments", async () => {
@@ -210,7 +210,7 @@ describe("sync fast path — routes that must NOT take it", () => {
 
     const bad = app.fetch(req("/search#frag?q=ada&limit=10"))
     expect(bad).toBeInstanceOf(Response)
-    expect((bad as Response).status).toBe(400)
+    expect((bad as Response).status).toBe(422)
   })
 
   test("query-schema-only route preserves encoded URLSearchParams semantics", async () => {

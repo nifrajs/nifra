@@ -569,14 +569,19 @@ function toWebRequest(req: IncomingMessage, protocol: RequestProtocol): Request 
 }
 
 function toNodeRequestSource(req: IncomingMessage, protocol: RequestProtocol): NodeRequestSource {
-  return new LazyNodeRequestSource(req, protocol)
+  const method = req.method ?? "GET"
+  const host = req.headers.host ?? "localhost"
+  const url = `${protocol}://${host}${req.url ?? "/"}`
+  return method === "GET" || method === "HEAD"
+    ? new LeanNodeGetSource(req, method, url)
+    : new LazyNodeRequestSource(req, method, url)
 }
 
 /**
  * Lazy view over a Node `IncomingMessage`. Methods live on the prototype (not re-allocated per
  * request), and every materialization is deferred: the `Headers` object, the Web `ReadableStream`
- * body, and the undici `Request` are each built only when first read. A bare GET that never touches
- * `c.req` allocates just this instance.
+ * body, and the undici `Request` are each built only when first read. Body-capable methods use this
+ * source; GET/HEAD use the smaller {@link LeanNodeGetSource}.
  */
 class LazyNodeRequestSource implements NodeRequestSource {
   readonly method: string
@@ -589,11 +594,10 @@ class LazyNodeRequestSource implements NodeRequestSource {
   private readBodyPromise: Promise<Buffer> | undefined
   private readonly nodeReq: IncomingMessage
 
-  constructor(nodeReq: IncomingMessage, protocol: RequestProtocol) {
+  constructor(nodeReq: IncomingMessage, method: string, url: string) {
     this.nodeReq = nodeReq
-    this.method = nodeReq.method ?? "GET"
-    const host = nodeReq.headers.host ?? "localhost"
-    this.url = `${protocol}://${host}${nodeReq.url ?? "/"}`
+    this.method = method
+    this.url = url
   }
 
   get headers(): Headers {
@@ -699,6 +703,53 @@ class LazyNodeRequestSource implements NodeRequestSource {
       this.nodeReq.once("close", onClose)
     })
     return this.readBodyPromise
+  }
+}
+
+/**
+ * GET/HEAD requests dominate API reads and never carry a body. This source keeps that path lean while
+ * preserving the full Web `Request` escape hatch if user code reads `c.req`/`c.request`.
+ */
+class LeanNodeGetSource implements NodeRequestSource {
+  readonly method: string
+  readonly url: string
+
+  private headersValue: Headers | undefined
+  private requestValue: Request | undefined
+  private readonly nodeReq: IncomingMessage
+
+  constructor(nodeReq: IncomingMessage, method: string, url: string) {
+    this.nodeReq = nodeReq
+    this.method = method
+    this.url = url
+  }
+
+  get headers(): Headers {
+    this.headersValue ??= headersFromNode(this.nodeReq.headers)
+    return this.headersValue
+  }
+
+  header(name: string): string | null {
+    const value = this.nodeReq.headers[name.toLowerCase()]
+    if (value === undefined) return null
+    return Array.isArray(value) ? value.join(", ") : value
+  }
+
+  get body(): null {
+    return null
+  }
+
+  arrayBuffer(): Promise<ArrayBuffer> {
+    return Promise.resolve(new ArrayBuffer(0))
+  }
+
+  json(): Promise<unknown> {
+    return Promise.reject(new SyntaxError("Unexpected end of JSON input"))
+  }
+
+  get request(): Request {
+    this.requestValue ??= makeWebRequest(this.nodeReq, this.method, this.url, this.headers, null)
+    return this.requestValue
   }
 }
 
