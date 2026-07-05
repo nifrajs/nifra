@@ -113,12 +113,16 @@ function toWebRequest(req: IncomingMessage, body: Buffer | undefined): Request {
   return new Request(url, init as unknown as ConstructorParameters<typeof Request>[1])
 }
 
-// A Vite plugin's `config` hook — the only hook we wrap. Typed structurally (no `vite` type dep): it
-// takes the user config + env and may return a partial config (possibly a promise). Everything else on
-// the plugin object is preserved by spread, so wrapping is transparent to Vite.
+// A Vite `config` hook: a plain function, OR the object form `{ handler, order }` Vite accepts for hook
+// ordering (`order: "pre" | "post"`). We wrap the handler in either shape — see normalizeRolldownPlugins.
+type ConfigFn = (config: unknown, env: unknown) => unknown
+type ConfigHook = ConfigFn | { readonly handler: ConfigFn; readonly order?: unknown }
+
+// A Vite plugin — the only hook we wrap is `config`. Typed structurally (no `vite` type dep). Everything
+// else on the plugin object is preserved by spread, so wrapping is transparent to Vite.
 interface VitePluginLike {
   readonly name?: string
-  config?: (config: unknown, env: unknown) => unknown
+  config?: ConfigHook
   readonly [key: string]: unknown
 }
 
@@ -227,16 +231,18 @@ export function normalizeRolldownPlugins(
   return plugins.flat(Number.POSITIVE_INFINITY).map((plugin) => {
     if (plugin === null || typeof plugin !== "object") return plugin
     const p = plugin as VitePluginLike
-    if (typeof p.config !== "function") return plugin
-    const originalConfig = p.config
-    return {
-      ...p,
-      config: (config: unknown, env: unknown) => {
-        const returned = originalConfig(config, env)
-        // The hook may return a promise — normalize both shapes.
-        return returned instanceof Promise ? returned.then(stripJsxKey) : stripJsxKey(returned)
-      },
+    // `config` may be a plain function or the object form `{ handler, order }`. Wrap the handler either way.
+    const hook = p.config
+    const handler = typeof hook === "function" ? hook : hook?.handler
+    if (typeof handler !== "function") return plugin
+    const wrappedHandler: ConfigFn = (config, env) => {
+      const returned = handler(config, env)
+      // The hook may return a promise — normalize both shapes.
+      return returned instanceof Promise ? returned.then(stripJsxKey) : stripJsxKey(returned)
     }
+    // Preserve the ORIGINAL shape: a function stays a function; the object form keeps its `order`
+    // (collapsing `{ handler, order }` to a bare function would silently drop the hook ordering).
+    return { ...p, config: typeof hook === "function" ? wrappedHandler : { ...hook, handler: wrappedHandler } }
   })
 }
 
