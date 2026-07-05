@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/storage",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Blob storage for nifra — one StorageAdapter interface with memory, local-filesystem, and Cloudflare R2 adapters (key-traversal-safe). The persistence half of @nifrajs/uploads. Dependency-free; bring your own adapter for S3/GCS.",
   "keywords": [
     "bun",

@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/deno",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Run a nifra app on Deno via Deno.serve — graceful stop() + opt-in signals.",
   "keywords": [
     "bun",
