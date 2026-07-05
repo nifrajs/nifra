@@ -54,7 +54,7 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **Cache** _(interface)_ — `interface Cache`
 - **CacheOptions** _(interface)_ — `interface CacheOptions`
 - **CacheStore** _(interface)_ — `interface CacheStore`
-  Raw key→entry storage. The default {@link MemoryCache } is in-process; implement this over CF KV / Redis / etc. for a cache shared across instances. All methods may be sync or async — the cache awaits them.
+  Raw key→entry storage. The default {@link MemoryCache} is in-process; implement this over CF KV / Redis / etc. for a cache shared across instances. All methods may be sync or async — the cache awaits them.
 - **MemoryCache** _(class)_ — `class MemoryCache`
 - **MemoryCacheOptions** _(interface)_ — `interface MemoryCacheOptions`
 - **SetOptions** _(interface)_ — `interface SetOptions`
@@ -432,7 +432,7 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **JobHandler** _(type)_ — `type JobHandler<Payload> = (payload: Payload, ctx: JobContext) => void | Promise<void>`
   A job processor. A throw/rejection routes to `onError` and triggers retry/dead-letter — never crashes the worker.
 - **JobStore** _(interface)_ — `interface JobStore`
-  Persistence + leasing for the queue. The default {@link MemoryJobStore } is single-process (dev / a single long-running server); implement this over Redis/Postgres/etc. for durability or multiple workers. All methods may be sync or async — the queue awaits them.
+  Persistence + leasing for the queue. The default {@link MemoryJobStore} is single-process (dev / a single long-running server); implement this over Redis/Postgres/etc. for durability or multiple workers. All methods may be sync or async — the queue awaits them.
 - **JobValidationError** _(class)_ — `class JobValidationError`
   Thrown by `enqueue` when the payload fails the job's `input` schema (validation at the trust boundary).
 - **MemoryJobStore** _(class)_ — `class MemoryJobStore`
