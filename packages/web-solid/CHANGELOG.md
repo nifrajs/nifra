@@ -1,5 +1,13 @@
 # @nifrajs/web-solid
 
+## 1.2.2
+
+### Patch Changes
+
+- @nifrajs/i18n@1.2.2
+- @nifrajs/image@1.2.2
+- @nifrajs/web@1.2.2
+
 ## 1.2.1
 
 ### Patch Changes
