@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/node",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Run a nifra app on Node's http server — a Request<->stream adapter with a graceful stop().",
   "keywords": [
     "bun",
