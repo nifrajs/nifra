@@ -649,3 +649,55 @@ describe("collectCheckResult — transitive server-only chain end-to-end (#4.4)"
     await rm(dir, { recursive: true, force: true })
   })
 })
+
+describe("walkSource — respects .gitignore (no huge scans of generated/build trees)", () => {
+  test("skips a gitignored dir even though it holds a lintable source file", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-gi-"))
+    Bun.spawnSync(["git", "init", "-q"], { cwd: dir })
+    await writeFile(join(dir, ".gitignore"), "generated/\n")
+    await mkdir(join(dir, "routes"), { recursive: true })
+    await mkdir(join(dir, "generated"), { recursive: true })
+    await writeFile(join(dir, "routes", "a.tsx"), 'export const f = () => fetch("/a")')
+    await writeFile(join(dir, "generated", "b.tsx"), 'export const g = () => fetch("/b")') // gitignored
+
+    const found = await scanProject(dir)
+    expect(found.map((f) => f.file)).toEqual(["routes/a.tsx"]) // generated/b.tsx excluded
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("degrades gracefully outside a git repo — no filtering, never throws", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-nogit-")) // NOT a git repo
+    await writeFile(join(dir, ".gitignore"), "generated/\n") // present, but git can't consult it here
+    await mkdir(join(dir, "routes"), { recursive: true })
+    await mkdir(join(dir, "generated"), { recursive: true })
+    await writeFile(join(dir, "routes", "a.tsx"), 'export const f = () => fetch("/a")')
+    await writeFile(join(dir, "generated", "b.tsx"), 'export const g = () => fetch("/b")')
+
+    // With no git repo, `git check-ignore` can't run → both are scanned (the built-in IGNORED regex still
+    // applies; this custom .gitignore entry just isn't honoured). The scan must not throw.
+    const found = await scanProject(dir)
+    expect(found.map((f) => f.file).sort()).toEqual(["generated/b.tsx", "routes/a.tsx"])
+    await rm(dir, { recursive: true, force: true })
+  })
+})
+
+describe("collectCheckResult — maxDiagnostics bounds the result (MCP transport safety)", () => {
+  test("caps diagnostics + reports truncated; ok reflects the FULL set", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-cap-"))
+    await mkdir(join(dir, "src"), { recursive: true })
+    for (let i = 0; i < 4; i++) {
+      await writeFile(join(dir, "src", `f${i}.ts`), `const r${i} = await fetch("/x${i}")`)
+    }
+
+    const full = await collectCheckResult(dir, { lintsOnly: true })
+    const total = full.diagnostics.length
+    expect(total).toBeGreaterThanOrEqual(4)
+    expect(full.truncated).toBeUndefined()
+
+    const capped = await collectCheckResult(dir, { lintsOnly: true, maxDiagnostics: 2 })
+    expect(capped.diagnostics).toHaveLength(2)
+    expect(capped.truncated).toEqual({ shown: 2, total })
+    expect(capped.ok).toBe(false) // truncation never flips ok
+    await rm(dir, { recursive: true, force: true })
+  })
+})

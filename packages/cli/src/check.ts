@@ -576,12 +576,52 @@ export function scanResponseRoutes(file: string, content: string): SourceFinding
 
 /** Walk the project's `.ts`/`.tsx` source (skipping deps/build/tests), calling `visit` per file.
  * Exported so `nifra doctor` ({@link ./doctor.ts}) scans the same source surface as `nifra check`. */
+/**
+ * Paths git considers ignored under `cwd`, in ONE batched `git check-ignore` call — so `.gitignore`
+ * (root + nested + the global excludesfile) is honoured, not just the built-in {@link IGNORED} list. This
+ * is what keeps the scan out of generated/build trees that live under a repo but aren't source: a monorepo
+ * that gitignores, say, `builder/projects/` (238 generated apps) would otherwise be walked in full — 40k+
+ * findings, a 50 MB+ result that overwhelms the caller. Returns an EMPTY set when there's no git / not a
+ * repo / git errors, so the scan simply degrades to the {@link IGNORED} regex — never throws, never blocks.
+ */
+async function gitIgnored(cwd: string, rels: readonly string[]): Promise<Set<string>> {
+  if (rels.length === 0) return new Set()
+  try {
+    const proc = Bun.spawn(["git", "check-ignore", "--stdin"], {
+      cwd,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "ignore",
+    })
+    proc.stdin.write(`${rels.join("\n")}\n`)
+    await proc.stdin.end()
+    // git echoes back each ignored path exactly as fed on stdin (one per line); exit 1 = none matched.
+    const out = await new Response(proc.stdout).text()
+    await proc.exited
+    return new Set(
+      out
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    )
+  } catch {
+    return new Set()
+  }
+}
+
 export async function walkSource(
   cwd: string,
   visit: (rel: string, content: string) => void,
 ): Promise<void> {
+  // List candidates first (cheap — no reads), drop the built-in ignores, then exclude gitignored paths in
+  // one batch before the (expensive) reads. So a gitignored generated/build tree is never read or scanned.
+  const rels: string[] = []
   for await (const rel of new Glob("**/*.{ts,tsx,mts,cts}").scan({ cwd, dot: false })) {
-    if (IGNORED.test(rel)) continue
+    if (!IGNORED.test(rel)) rels.push(rel)
+  }
+  const ignored = await gitIgnored(cwd, rels)
+  for (const rel of rels) {
+    if (ignored.has(rel)) continue
     visit(rel, await Bun.file(join(cwd, rel)).text())
   }
 }
@@ -768,6 +808,10 @@ export interface CheckResult {
   readonly ok: boolean
   readonly typecheck: "pass" | "fail" | "skipped"
   readonly diagnostics: readonly CheckDiagnostic[]
+  /** Set only when the caller passed `maxDiagnostics` and there were more — `diagnostics` then holds the
+   * first `shown` of `total`. It caps the serialized size so the `nifra_check` MCP tool can't emit a
+   * message large enough to break the stdio transport; fix the shown diagnostics and re-run for the rest. */
+  readonly truncated?: { readonly shown: number; readonly total: number }
 }
 
 const UNTYPED_CLIENT_HINT =
@@ -917,7 +961,13 @@ function responseRouteSuggestion(): CheckSuggestion {
  * report, `--json`, and the MCP tool all render from. */
 export async function collectCheckResult(
   cwd: string,
-  opts: { readonly lintsOnly?: boolean; readonly signal?: AbortSignal } = {},
+  opts: {
+    readonly lintsOnly?: boolean
+    readonly signal?: AbortSignal
+    /** Cap the returned `diagnostics` to this many (adds {@link CheckResult.truncated}). The MCP tool sets
+     * it so a huge project can't produce a transport-breaking result; the CLI leaves it unset (all shown). */
+    readonly maxDiagnostics?: number
+  } = {},
 ): Promise<CheckResult> {
   const fetches: SourceFinding[] = []
   const staticRoutes: StaticRouteFinding[] = []
@@ -1100,6 +1150,11 @@ export async function collectCheckResult(
     })
   }
 
+  // Cap the diagnostics when asked (the MCP path), so a project with thousands of findings can't return a
+  // message that breaks the stdio transport. `ok` reflects the FULL set — truncation never flips it.
+  const total = diagnostics.length
+  const max = opts.maxDiagnostics
+  const shown = max !== undefined && total > max ? diagnostics.slice(0, max) : diagnostics
   return {
     ok:
       tc.ok &&
@@ -1109,7 +1164,8 @@ export async function collectCheckResult(
       manifestDrift.length === 0 &&
       (!dr.ran || dr.findings.length === 0),
     typecheck: tc.ran ? (tc.ok ? "pass" : "fail") : "skipped",
-    diagnostics,
+    diagnostics: shown,
+    ...(shown.length < total ? { truncated: { shown: shown.length, total } } : {}),
   }
 }
 
