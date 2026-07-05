@@ -54,3 +54,12 @@ for (const dir of readdirSync(CREATE_NIFRA).filter((d) => d.startsWith("template
   writeFileSync(file, src.replace(/("@nifrajs\/better-auth":\s*")[~^]?[^"]+(")/, `$1^${version}$2`))
   console.log(`✓ ${file} → ^${version}`)
 }
+
+// api-reference.md + the per-package LLM.md cards embed exported signatures verbatim — including core's
+// `VERSION` literal just rewritten above — so the version bump makes them stale and `check:api` /
+// `check:cards` fail on the release commit unless we regenerate here. Both generators read each
+// `src/index.ts` via the TS compiler API (SOURCE, no build), so this is safe to run in the changesets
+// `version` step (which happens before the build). The pre-commit hook does the same for hand edits, but
+// the "chore: version packages" commit is made by CI and never runs it.
+execSync("bun run gen:api && bun run gen:cards", { stdio: "inherit" })
+console.log("✓ regenerated api-reference.md + LLM.md cards for the new version")
