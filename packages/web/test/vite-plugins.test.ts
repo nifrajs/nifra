@@ -38,7 +38,10 @@ test("normalizeRolldownPlugins flattens a nested plugin array — react() return
   ]
   const out = normalizeRolldownPlugins([react()], true)
   // Flattened to the top level, so both inner plugins are reachable…
-  expect(out.map((p) => (p as { name: string }).name)).toEqual(["vite:react-babel", "vite:react-refresh"])
+  expect(out.map((p) => (p as { name: string }).name)).toEqual([
+    "vite:react-babel",
+    "vite:react-refresh",
+  ])
   // …and the babel plugin's jsx key is actually stripped now.
   const babelCfg = cfgOf(out[0]) as { optimizeDeps: { rollupOptions: Record<string, unknown> } }
   expect("jsx" in babelCfg.optimizeDeps.rollupOptions).toBe(false)
@@ -92,7 +95,9 @@ test("normalizeRolldownPlugins wraps an object-form config hook and preserves it
   ]
   expect(wrapped.config.order).toBe("pre") // ordering preserved
   expect(typeof wrapped.config.handler).toBe("function")
-  const cfg = wrapped.config.handler() as { optimizeDeps: { rollupOptions: Record<string, unknown> } }
+  const cfg = wrapped.config.handler() as {
+    optimizeDeps: { rollupOptions: Record<string, unknown> }
+  }
   expect("jsx" in cfg.optimizeDeps.rollupOptions).toBe(false) // jsx still stripped
 })
 

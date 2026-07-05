@@ -242,7 +242,10 @@ export function normalizeRolldownPlugins(
     }
     // Preserve the ORIGINAL shape: a function stays a function; the object form keeps its `order`
     // (collapsing `{ handler, order }` to a bare function would silently drop the hook ordering).
-    return { ...p, config: typeof hook === "function" ? wrappedHandler : { ...hook, handler: wrappedHandler } }
+    return {
+      ...p,
+      config: typeof hook === "function" ? wrappedHandler : { ...hook, handler: wrappedHandler },
+    }
   })
 }
 
