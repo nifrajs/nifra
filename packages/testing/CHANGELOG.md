@@ -1,5 +1,11 @@
 # @nifrajs/testing
 
+## 1.2.2
+
+### Patch Changes
+
+- @nifrajs/client@1.2.2
+
 ## 1.2.1
 
 ### Patch Changes
