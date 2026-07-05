@@ -90,7 +90,15 @@ function signatureOf(
 function summaryOf(sym: ts.Symbol, checker: ts.TypeChecker): string {
   const doc = ts.displayPartsToString(sym.getDocumentationComment(checker)).trim()
   if (doc === "") return ""
-  const firstPara = (doc.split(/\n\s*\n/)[0] ?? "").replace(/\s+/g, " ").trim()
+  const firstPara = (doc.split(/\n\s*\n/)[0] ?? "")
+    .replace(/\s+/g, " ")
+    // Normalize inline `{@link X }` → `{@link X}`. TypeScript's `displayPartsToString` serializes the
+    // space before the closing brace inconsistently across environments (local vs CI), and that one-char
+    // shift moves the 300-char truncation point below — making the generated api-reference
+    // ENVIRONMENT-DEPENDENT, so a file committed locally fails `check:api` in CI (and vice versa). Collapsing
+    // the link spacing to a single canonical form makes the output deterministic everywhere.
+    .replace(/\{@(link|linkcode|linkplain)\s+([^}]*?)\s*\}/g, "{@$1 $2}")
+    .trim()
   return firstPara.length > 300 ? `${firstPara.slice(0, 299)}…` : firstPara
 }
 
