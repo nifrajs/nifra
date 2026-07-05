@@ -827,6 +827,10 @@ export function projectTools(
           await collectCheckResult(cwd, {
             lintsOnly: opts.lintsOnly ?? false,
             signal: context.signal,
+            // Bound the result so a large project can't emit an MCP message big enough to break the stdio
+            // transport (`-32000: Connection closed`). If `truncated` comes back, fix the shown diagnostics
+            // and re-run. The scan already skips gitignored trees (walkSource), so this is the safety net.
+            maxDiagnostics: 100,
           }),
           null,
           2,
