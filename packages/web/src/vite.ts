@@ -197,6 +197,14 @@ export async function pipeWebBodyToNode(
  *
  * Scoped narrowly: only the `optimizeDeps.rollupOptions.jsx` key is removed, only under rolldown-vite,
  * and only from the value a plugin's `config` hook returns. Non-rolldown Vite is passed through verbatim.
+ *
+ * FLATTEN FIRST: a Vite plugin factory may return an ARRAY of plugins — `@vitejs/plugin-react`'s `react()`
+ * returns `[vite:react-babel, vite:react-refresh]`, and it's `react:react-babel`'s `config` hook that emits
+ * the offending `optimizeDeps.rollupOptions.jsx`. `nifra.config.ts` writes `vitePlugins = [react()]`, so the
+ * plugin list arrives NESTED (`[[babel, refresh]]`). Without flattening, `.map` sees the inner array (which
+ * has no `config`), leaves it untouched, and Vite — which flattens plugin arrays itself before running them
+ * — then executes the un-stripped babel hook, so the warning survives. Flattening here (Vite accepts a flat
+ * list identically) is what lets the strip reach every real plugin.
  */
 export function normalizeRolldownPlugins(
   plugins: readonly unknown[],
@@ -216,7 +224,7 @@ export function normalizeRolldownPlugins(
       optimizeDeps: { ...cfg.optimizeDeps, rollupOptions: restRollup },
     }
   }
-  return plugins.map((plugin) => {
+  return plugins.flat(Number.POSITIVE_INFINITY).map((plugin) => {
     if (plugin === null || typeof plugin !== "object") return plugin
     const p = plugin as VitePluginLike
     if (typeof p.config !== "function") return plugin
