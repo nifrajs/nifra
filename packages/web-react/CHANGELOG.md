@@ -1,5 +1,14 @@
 # @nifrajs/web-react
 
+## 1.2.1
+
+### Patch Changes
+
+- Updated dependencies [c3ebd73]
+  - @nifrajs/web@1.2.1
+  - @nifrajs/i18n@1.2.1
+  - @nifrajs/image@1.2.1
+
 ## 1.2.0
 
 ### Patch Changes

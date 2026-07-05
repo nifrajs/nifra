@@ -12,7 +12,7 @@
  * (it shipped at "0.0.0" through 1.0.0 before those guards existed). Kept narrow (`as const`) so
  * consumers can pin it at the type level — see `test/version.test-d.ts`.
  */
-export const VERSION = "1.2.0" as const
+export const VERSION = "1.2.1" as const
 
 export type Version = typeof VERSION
 

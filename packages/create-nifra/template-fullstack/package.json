@@ -10,12 +10,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@nifrajs/cache": "^1.2.0",
-    "@nifrajs/client": "^1.2.0",
-    "@nifrajs/core": "^1.2.0",
-    "@nifrajs/jobs": "^1.2.0",
-    "@nifrajs/schema": "^1.2.0",
-    "@nifrajs/storage": "^1.2.0"
+    "@nifrajs/cache": "^1.2.1",
+    "@nifrajs/client": "^1.2.1",
+    "@nifrajs/core": "^1.2.1",
+    "@nifrajs/jobs": "^1.2.1",
+    "@nifrajs/schema": "^1.2.1",
+    "@nifrajs/storage": "^1.2.1"
   },
   "devDependencies": {
     "@types/bun": "latest",
