@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/jobs",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Typed background jobs for nifra — enqueue work off the request path with retries, exponential backoff, and dead-lettering on a pluggable store. In-process worker for Bun/Node/Deno (Workers use CF Queues); the async companion to @nifrajs/cron. Dependency-free.",
   "keywords": [
     "bun",

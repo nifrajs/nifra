@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/web-svelte",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Svelte 5 render adapter for @nifrajs/web — SSR + hydration + the .svelte compiler Bun-plugin.",
   "keywords": [
     "bun",
