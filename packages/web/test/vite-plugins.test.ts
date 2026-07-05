@@ -77,6 +77,25 @@ test("normalizeRolldownPlugins passes through plugins without a config hook, and
   expect(normalizeRolldownPlugins([false, null], true)).toEqual([false, null])
 })
 
+test("normalizeRolldownPlugins wraps an object-form config hook and preserves its order [#6]", () => {
+  // Vite allows `config: { handler, order }` for hook ordering. The wrapper must keep the object shape —
+  // collapsing it to a bare function would silently drop the `order`.
+  const plugin = {
+    name: "obj-hook",
+    config: {
+      order: "pre",
+      handler: () => ({ optimizeDeps: { rollupOptions: { jsx: { mode: "automatic" } } } }),
+    },
+  }
+  const [wrapped] = normalizeRolldownPlugins([plugin], true) as [
+    { config: { order: string; handler: () => unknown } },
+  ]
+  expect(wrapped.config.order).toBe("pre") // ordering preserved
+  expect(typeof wrapped.config.handler).toBe("function")
+  const cfg = wrapped.config.handler() as { optimizeDeps: { rollupOptions: Record<string, unknown> } }
+  expect("jsx" in cfg.optimizeDeps.rollupOptions).toBe(false) // jsx still stripped
+})
+
 test("normalizeRolldownPlugins handles a promise-returning config hook [#6]", async () => {
   const plugin = {
     name: "async",
