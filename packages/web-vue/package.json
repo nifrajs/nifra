@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/web-vue",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Vue render adapter for @nifrajs/web — streaming SSR + hydration, with a .vue SFC compiler Bun plugin (@nifrajs/web-vue/plugin).",
   "keywords": [
     "bun",

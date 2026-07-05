@@ -1,6 +1,6 @@
 {
   "name": "create-nifra",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Scaffold a new nifra app — `bun create nifra <dir>`.",
   "keywords": [
     "bun",
