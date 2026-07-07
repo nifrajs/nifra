@@ -615,12 +615,12 @@ describe("nifra_check / nifra_test — `dir` scopes to a subdirectory", () => {
     expect(check).toBeDefined()
     const ctx = { signal: new AbortController().signal } as never
 
-    const scoped = JSON.parse(await check!.handler({ dir: "app", lintsOnly: true }, ctx))
+    const scoped = JSON.parse((await check!.handler({ dir: "app", lintsOnly: true }, ctx)) as string)
     // Findings are relative to the scoped dir (app/), and the root-level file is NOT scanned.
     expect(scoped.diagnostics.length).toBeGreaterThan(0)
     expect(JSON.stringify(scoped)).not.toContain("root.tsx")
 
-    const escaped = JSON.parse(await check!.handler({ dir: "../etc" }, ctx))
+    const escaped = JSON.parse((await check!.handler({ dir: "../etc" }, ctx)) as string)
     expect(escaped.ok).toBe(false)
     expect(escaped.error).toContain("escapes")
 
