@@ -4,7 +4,13 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { LoadedApp } from "../src/load.ts"
 import { detectMonorepo, loadMonorepoApps } from "../src/load.ts"
-import { createCachedAppLoader, projectFeatures, projectTools, WarmWorker } from "../src/mcp.ts"
+import {
+  createCachedAppLoader,
+  projectFeatures,
+  projectTools,
+  resolveProjectDir,
+  WarmWorker,
+} from "../src/mcp.ts"
 import {
   createMcpProtocolState,
   handleRpc,
@@ -582,5 +588,42 @@ describe("monorepo detection + tool namespacing", () => {
     for (const r of namespaced) {
       expect(r.uri.startsWith("nifra://portal/")).toBe(true)
     }
+  })
+})
+
+describe("nifra_check / nifra_test — `dir` scopes to a subdirectory", () => {
+  test("resolveProjectDir resolves subdirs and rejects escapes (path-traversal guard)", () => {
+    const root = "/proj"
+    expect(resolveProjectDir(root, undefined)).toBe(root) // no dir → root
+    expect(resolveProjectDir(root, "")).toBe(root)
+    expect(resolveProjectDir(root, "app")).toBe("/proj/app")
+    expect(resolveProjectDir(root, "packages/api")).toBe("/proj/packages/api")
+    expect(resolveProjectDir(root, "./app/")).toBe("/proj/app")
+    expect(resolveProjectDir(root, "../escape")).toBeNull() // climbs out → rejected
+    expect(resolveProjectDir(root, "/etc/passwd")).toBeNull() // absolute elsewhere → rejected
+    expect(resolveProjectDir(root, "app/../../escape")).toBeNull() // normalizes then escapes → rejected
+  })
+
+  test("nifra_check with dir checks only that subtree; an escaping dir errors", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-mcp-dir-"))
+    await mkdir(join(dir, "app", "routes"), { recursive: true })
+    await mkdir(join(dir, "routes"), { recursive: true })
+    await writeFile(join(dir, "app", "routes", "a.tsx"), 'export const f = () => fetch("/a")')
+    await writeFile(join(dir, "routes", "root.tsx"), 'export const g = () => fetch("/root")')
+
+    const check = projectTools(dir).find((t) => t.name === "nifra_check")
+    expect(check).toBeDefined()
+    const ctx = { signal: new AbortController().signal } as never
+
+    const scoped = JSON.parse(await check!.handler({ dir: "app", lintsOnly: true }, ctx))
+    // Findings are relative to the scoped dir (app/), and the root-level file is NOT scanned.
+    expect(scoped.diagnostics.length).toBeGreaterThan(0)
+    expect(JSON.stringify(scoped)).not.toContain("root.tsx")
+
+    const escaped = JSON.parse(await check!.handler({ dir: "../etc" }, ctx))
+    expect(escaped.ok).toBe(false)
+    expect(escaped.error).toContain("escapes")
+
+    await rm(dir, { recursive: true, force: true })
   })
 })
