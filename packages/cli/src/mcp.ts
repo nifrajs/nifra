@@ -566,6 +566,27 @@ export function projectFeatures(
   return { resources: projectResources(cwd, loadAppCached), prompts: projectPrompts() }
 }
 
+/**
+ * Resolve an optional `dir` tool argument — a subdirectory of the project root the caller wants to scope a
+ * check/test to (e.g. `nifra check` on `app/` when the MCP server's root is a monorepo). Returns the
+ * absolute target, or `null` if `dir` escapes the root (a path-traversal guard: no `..` out, no absolute
+ * path elsewhere). `undefined`/empty → the root itself.
+ */
+export function resolveProjectDir(root: string, dir: string | undefined): string | null {
+  if (dir === undefined || dir === "") return root
+  const target = resolve(root, dir)
+  return target === root || target.startsWith(root + sep) ? target : null
+}
+
+/** Consistent error string for a `dir` that escapes the project root. */
+function dirError(dir: string | undefined): string {
+  return JSON.stringify(
+    { ok: false, error: `dir must be a subdirectory of the project root — "${dir}" escapes it.` },
+    null,
+    2,
+  )
+}
+
 /** Build the project-scoped tools for `cwd`. */
 export function projectTools(
   cwd: string,
@@ -755,13 +776,21 @@ export function projectTools(
             type: "number",
             description: "Timeout in milliseconds (default 30000, max 300000).",
           },
+          dir: {
+            type: "string",
+            description:
+              'Run the tests in this subdirectory (relative to the project root), e.g. "app". Use it when the MCP server\'s root is a monorepo but you want to test just one app. Default: the project root.',
+          },
         },
         additionalProperties: false,
       },
       handler: async (args, context) => {
         const { collectTestResult } = await import("./test-tool.ts")
+        const opts = args as { dir?: string }
+        const target = resolveProjectDir(cwd, opts.dir)
+        if (target === null) return dirError(opts.dir)
         return JSON.stringify(
-          await collectTestResult(cwd, args, { signal: context.signal }),
+          await collectTestResult(target, args, { signal: context.signal }),
           null,
           2,
         )
@@ -817,14 +846,21 @@ export function projectTools(
             type: "boolean",
             description: "Skip tsc; run only the near-instant source lints (inner-loop mode).",
           },
+          dir: {
+            type: "string",
+            description:
+              'Run the check in this subdirectory (relative to the project root), e.g. "app" or "packages/api". Use it when the MCP server\'s root is a monorepo but you want to check just one app. Default: the project root.',
+          },
         },
         additionalProperties: false,
       },
       handler: async (args, context) => {
         const { collectCheckResult } = await import("./check.ts")
-        const opts = args as { lintsOnly?: boolean }
+        const opts = args as { lintsOnly?: boolean; dir?: string }
+        const target = resolveProjectDir(cwd, opts.dir)
+        if (target === null) return dirError(opts.dir)
         return JSON.stringify(
-          await collectCheckResult(cwd, {
+          await collectCheckResult(target, {
             lintsOnly: opts.lintsOnly ?? false,
             signal: context.signal,
             // Bound the result so a large project can't emit an MCP message big enough to break the stdio
