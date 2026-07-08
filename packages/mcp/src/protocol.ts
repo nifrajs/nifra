@@ -50,10 +50,20 @@ export interface McpToolResult {
 /** A tool the agent can call. `handler` returns the text shown to the agent, or a rich {@link McpToolResult}
  * (for MCP Apps: structured data + a `ui://` widget link). `_meta` is the per-tool descriptor metadata
  * surfaced in `tools/list` — for a widget tool it carries `ui.resourceUri`. */
+/** MCP tool safety hints (`readOnlyHint`/`destructiveHint`/…) surfaced in `tools/list`, per the MCP spec. */
+export interface McpToolAnnotations {
+  readonly title?: string
+  readonly readOnlyHint?: boolean
+  readonly destructiveHint?: boolean
+  readonly idempotentHint?: boolean
+  readonly openWorldHint?: boolean
+}
+
 export interface McpTool {
   readonly name: string
   readonly description: string
   readonly inputSchema: Record<string, unknown>
+  readonly annotations?: McpToolAnnotations
   readonly _meta?: Record<string, unknown>
   readonly handler: (
     args: Record<string, unknown>,
@@ -260,6 +270,7 @@ export async function handleRpc(
                 name: t.name,
                 description: t.description,
                 inputSchema: t.inputSchema,
+                ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
                 ...(t._meta !== undefined ? { _meta: t._meta } : {}),
               })),
             },
@@ -273,6 +284,7 @@ export async function handleRpc(
           name: tool.name,
           description: tool.description,
           inputSchema: tool.inputSchema,
+          ...(tool.annotations !== undefined ? { annotations: tool.annotations } : {}),
           ...(tool._meta !== undefined ? { _meta: tool._meta } : {}),
         },
       })

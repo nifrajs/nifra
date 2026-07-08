@@ -250,6 +250,32 @@ export interface ServerOptions {
   readonly gracefulSignals?: boolean
   /** Structured logger for framework events (redacts secrets). Default: JSON to stderr. */
   readonly logger?: Logger
+  /**
+   * App-wide fallback fired when a route **without its own `onValidationError`** fails body/query
+   * validation. Same contract as the per-route hook (`(issues, ctx, kind) => Response | repaired-value |
+   * undefined`): a route's own hook takes precedence, and a route can fall through to the plain `422` by
+   * returning `undefined`. Use it for one app-wide error envelope (like tRPC's `errorFormatter` /
+   * Fastify's `setErrorHandler`) instead of repeating a formatter per route.
+   */
+  readonly onValidationError?: RouteSchema["onValidationError"]
+}
+
+/**
+ * MCP tool safety hints, surfaced in `tools/list`, that tell an agent how risky a `.tool()` call is — so it
+ * can decide whether to auto-invoke or confirm first. All optional; an omitted hint means "unknown". Mirrors
+ * the MCP spec's tool `annotations`.
+ */
+export interface ToolAnnotations {
+  /** Human-readable display title for the tool, distinct from the machine `name`. */
+  readonly title?: string
+  /** The tool does not modify its environment (a pure read). */
+  readonly readOnlyHint?: boolean
+  /** The tool may perform destructive updates — only meaningful when `readOnlyHint` is not `true`. */
+  readonly destructiveHint?: boolean
+  /** Repeated calls with the same arguments have no additional effect beyond the first. */
+  readonly idempotentHint?: boolean
+  /** The tool interacts with external entities (an "open world" beyond this server). */
+  readonly openWorldHint?: boolean
 }
 
 /**
@@ -261,6 +287,41 @@ export interface RouteDescriptor {
   readonly method: Method
   readonly path: string
   readonly schema: RouteSchema | undefined
+  readonly tool?: {
+    readonly name: string
+    readonly description: string
+    readonly annotations?: ToolAnnotations
+  }
+}
+
+/** A message in an MCP prompt's rendered output (see {@link Server.prompt}). */
+export interface PromptMessage {
+  readonly role: "user" | "assistant"
+  readonly content: { readonly type: "text"; readonly text: string }
+}
+
+/** One declared argument of an MCP prompt, surfaced in `prompts/list`. */
+export interface PromptArgument {
+  readonly name: string
+  readonly description?: string
+  readonly required?: boolean
+}
+
+/** An app-declared MCP resource — read-only data an agent can fetch through `nifra mcp`. */
+export interface McpResourceDescriptor {
+  readonly uri: string
+  readonly name: string
+  readonly description?: string
+  readonly mimeType?: string
+  readonly read: () => MaybePromise<string | { readonly text: string; readonly mimeType?: string }>
+}
+
+/** An app-declared MCP prompt — a reusable prompt template an agent can fetch through `nifra mcp`. */
+export interface McpPromptDescriptor {
+  readonly name: string
+  readonly description: string
+  readonly arguments?: readonly PromptArgument[]
+  readonly handler: (args: Record<string, string>) => MaybePromise<readonly PromptMessage[]>
 }
 
 /**
@@ -1039,6 +1100,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private readonly requestTimeoutMs: number
   private readonly gracefulSignals: boolean
   private readonly logger: Logger
+  /** App-wide validation-error fallback; a route's own `schema.onValidationError` takes precedence. */
+  private readonly defaultOnValidationError?: RouteSchema["onValidationError"]
   private bunServer: RunningServer | undefined
   private readonly derives: RawDerive[]
   private readonly decorations: Record<string, unknown>
@@ -1051,6 +1114,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private readonly responseRequests: WeakMap<Request, Request>
   /** Names of plugins/middleware already applied via `use` — for idempotent dedupe. */
   private readonly appliedPlugins: Set<string>
+  /** App-declared MCP resources / prompts (via {@link resource} / {@link prompt}), read by `nifra mcp`. */
+  private readonly mcpResourceList: McpResourceDescriptor[]
+  private readonly mcpPromptList: McpPromptDescriptor[]
 
   constructor(options: ServerOptions = {}) {
     this.router = new Router<RouteEntry>()
@@ -1063,6 +1129,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.requestTimeoutMs = options.requestTimeoutMs ?? 0
     this.gracefulSignals = options.gracefulSignals ?? false
     this.logger = options.logger ?? jsonLogger()
+    this.defaultOnValidationError = options.onValidationError
     this.bunServer = undefined
     this.derives = []
     this.decorations = {}
@@ -1074,6 +1141,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.onResponseHooks = []
     this.responseRequests = new WeakMap()
     this.appliedPlugins = new Set()
+    this.mcpResourceList = []
+    this.mcpPromptList = []
   }
 
   /** Add a per-request, computed context extension for subsequent routes. */
@@ -1258,6 +1327,118 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     handler?: ErasedHandler,
   ): Server<Registry, Ctx> {
     return this.route("DELETE", path, schemaOrHandler, handler)
+  }
+
+  tool<
+    Name extends string,
+    S extends {
+      description: string
+      input: StandardSchemaV1
+      output?: StandardSchemaV1
+      annotations?: ToolAnnotations
+    },
+    H extends (
+      input: InferOutput<S["input"]>,
+      ctx: Context & Ctx,
+    ) => MaybePromise<S["output"] extends StandardSchemaV1 ? InferOutput<S["output"]> : unknown>,
+  >(
+    name: Name,
+    config: S,
+    handler: H,
+  ): Server<
+    AddRoute<
+      R,
+      "POST",
+      `/_nifra/tool/${Name}`,
+      RouteInfoFor<
+        `/_nifra/tool/${Name}`,
+        S["output"] extends StandardSchemaV1
+          ? { body: S["input"]; response: S["output"] }
+          : { body: S["input"] },
+        OutputOf<H>
+      >
+    >,
+    Ctx
+  >
+  tool(
+    name: string,
+    config: {
+      description: string
+      input: StandardSchemaV1
+      output?: StandardSchemaV1
+      annotations?: ToolAnnotations
+    },
+    handler: (input: unknown, ctx: Context & Ctx) => unknown,
+  ): Server<Registry, Ctx> {
+    const path = `/_nifra/tool/${name}`
+    const routeSchema: RouteSchema =
+      config.output !== undefined
+        ? { body: config.input, response: config.output }
+        : { body: config.input }
+    // register's handler is the erased `(context: never) => unknown`; the tool's typed input/ctx come from
+    // the overload above, so bridge with a single cast rather than `any`.
+    const run = (c: Context & Ctx): unknown => handler(c.body, c)
+    this.register("POST", path, routeSchema, run as (context: never) => unknown)
+    // Tag the just-registered descriptor as an MCP tool. `tool` is readonly on RouteDescriptor (an
+    // introspection field), so write it through a narrow mutable view — not `any`.
+    const lastRoute = this.routeList[this.routeList.length - 1]
+    if (lastRoute) {
+      ;(lastRoute as { tool?: RouteDescriptor["tool"] }).tool = {
+        name,
+        description: config.description,
+        ...(config.annotations !== undefined ? { annotations: config.annotations } : {}),
+      }
+    }
+    return this as unknown as Server<Registry, Ctx>
+  }
+
+  /**
+   * Declare an MCP **resource** — read-only data an agent can fetch through `nifra mcp` (app config, a
+   * generated document, …). `read` runs in the app process, so capture whatever app state it needs in the
+   * closure. `uri` is the MCP resource identifier (e.g. `"myapp://config"`). The sibling of {@link tool}
+   * for the resource half of MCP.
+   */
+  resource(
+    uri: string,
+    config: { readonly name: string; readonly description?: string; readonly mimeType?: string },
+    read: McpResourceDescriptor["read"],
+  ): Server<R, Ctx> {
+    this.mcpResourceList.push({
+      uri,
+      name: config.name,
+      ...(config.description !== undefined ? { description: config.description } : {}),
+      ...(config.mimeType !== undefined ? { mimeType: config.mimeType } : {}),
+      read,
+    })
+    return this
+  }
+
+  /**
+   * Declare an MCP **prompt** — a reusable prompt template an agent can fetch through `nifra mcp`.
+   * `handler` receives the caller's arguments and returns the rendered messages.
+   */
+  prompt(
+    name: string,
+    config: { readonly description: string; readonly arguments?: readonly PromptArgument[] },
+    handler: McpPromptDescriptor["handler"],
+  ): Server<R, Ctx> {
+    this.mcpPromptList.push({
+      name,
+      description: config.description,
+      ...(config.arguments !== undefined ? { arguments: config.arguments } : {}),
+      handler,
+    })
+    return this
+  }
+
+  /** The MCP resources declared via {@link resource} — enumerated by `nifra mcp`. */
+  mcpResources(): readonly McpResourceDescriptor[] {
+    return this.mcpResourceList
+  }
+
+  /** The MCP prompts declared via {@link prompt} — enumerated by `nifra mcp`. */
+  mcpPrompts(): readonly McpPromptDescriptor[] {
+    return this.mcpPromptList
   }
 
   /**
@@ -2042,6 +2223,74 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
   }
 
+  private executeHandler<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse?: (response: Response) => T,
+  ): MaybePromise<T> {
+    if (entry.hasDecorations) Object.assign(ctx, entry.decorations)
+    const handlerOutput = entry.handler(ctx)
+    if (handlerOutput instanceof Promise) {
+      return handlerOutput.then(
+        (value) => finalize(value, responseSet(ctx)),
+        (err) => {
+          if (wrapResponse) {
+            return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
+          }
+          throw err
+        },
+      )
+    }
+    return finalize(handlerOutput, responseSet(ctx))
+  }
+
+  private handleValidationErrorRecovery<T>(
+    entry: RouteEntry,
+    recovery: unknown,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+    originalIssues: ReadonlyArray<StandardIssue>,
+    kind: "body" | "query",
+  ): MaybePromise<T> {
+    if (recovery !== undefined) {
+      if (recovery instanceof Response) {
+        return wrapResponse(recovery)
+      }
+      if (kind === "body" && entry.schema?.body) {
+        const validation = entry.schema.body["~standard"].validate(recovery)
+        if (validation instanceof Promise) {
+          return validation.then((settled) => {
+            if (settled.issues !== undefined) return wrapResponse(validationError(settled.issues))
+            ctx.body = settled.value
+            return this.executeHandler(entry, ctx, finalize)
+          })
+        }
+        if (validation.issues !== undefined) return wrapResponse(validationError(validation.issues))
+        ctx.body = validation.value
+        return this.executeHandler(entry, ctx, finalize)
+      }
+      if (kind === "query" && entry.schema?.query) {
+        const validation = entry.schema.query["~standard"].validate(recovery)
+        if (validation instanceof Promise) {
+          return validation.then(
+            (settled) => {
+              if (settled.issues !== undefined) return wrapResponse(validationError(settled.issues))
+              ctx.query = settled.value
+              return this.executeHandler(entry, ctx, finalize, wrapResponse)
+            },
+            (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+          )
+        }
+        if (validation.issues !== undefined) return wrapResponse(validationError(validation.issues))
+        ctx.query = validation.value
+        return this.executeHandler(entry, ctx, finalize, wrapResponse)
+      }
+    }
+    return wrapResponse(validationError(originalIssues))
+  }
+
   private applyBodyValidation<T>(
     entry: RouteEntry,
     result: StandardResult<unknown>,
@@ -2049,13 +2298,37 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     finalize: (result: unknown, set: CtxSet) => T,
     wrapResponse: (response: Response) => T,
   ): MaybePromise<T> {
-    if (result.issues !== undefined) return wrapResponse(validationError(result.issues))
+    if (result.issues !== undefined) {
+      const hook = entry.schema?.onValidationError ?? this.defaultOnValidationError
+      if (hook) {
+        const recovery = hook(result.issues, ctx as unknown as Context, "body")
+        if (recovery instanceof Promise) {
+          return recovery.then((rec) =>
+            this.handleValidationErrorRecovery(
+              entry,
+              rec,
+              ctx,
+              finalize,
+              wrapResponse,
+              result.issues!,
+              "body",
+            ),
+          )
+        }
+        return this.handleValidationErrorRecovery(
+          entry,
+          recovery,
+          ctx,
+          finalize,
+          wrapResponse,
+          result.issues,
+          "body",
+        )
+      }
+      return wrapResponse(validationError(result.issues))
+    }
     ctx.body = result.value
-    if (entry.hasDecorations) Object.assign(ctx, entry.decorations)
-    const handlerOutput = entry.handler(ctx)
-    return handlerOutput instanceof Promise
-      ? handlerOutput.then((value) => finalize(value, responseSet(ctx)))
-      : finalize(handlerOutput, responseSet(ctx))
+    return this.executeHandler(entry, ctx, finalize)
   }
 
   private runQueryOnly<T>(
@@ -2102,16 +2375,37 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     finalize: (result: unknown, set: CtxSet) => T,
     wrapResponse: (response: Response) => T,
   ): MaybePromise<T> {
-    if (result.issues !== undefined) return wrapResponse(validationError(result.issues))
-    ctx.query = result.value
-    if (entry.hasDecorations) Object.assign(ctx, entry.decorations)
-    const handlerOutput = entry.handler(ctx)
-    return handlerOutput instanceof Promise
-      ? handlerOutput.then(
-          (value) => finalize(value, responseSet(ctx)),
-          (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+    if (result.issues !== undefined) {
+      const hook = entry.schema?.onValidationError ?? this.defaultOnValidationError
+      if (hook) {
+        const recovery = hook(result.issues, ctx as unknown as Context, "query")
+        if (recovery instanceof Promise) {
+          return recovery.then((rec) =>
+            this.handleValidationErrorRecovery(
+              entry,
+              rec,
+              ctx,
+              finalize,
+              wrapResponse,
+              result.issues!,
+              "query",
+            ),
+          )
+        }
+        return this.handleValidationErrorRecovery(
+          entry,
+          recovery,
+          ctx,
+          finalize,
+          wrapResponse,
+          result.issues,
+          "query",
         )
-      : finalize(handlerOutput, responseSet(ctx))
+      }
+      return wrapResponse(validationError(result.issues))
+    }
+    ctx.query = result.value
+    return this.executeHandler(entry, ctx, finalize, wrapResponse)
   }
 
   /**

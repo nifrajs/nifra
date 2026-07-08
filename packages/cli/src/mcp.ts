@@ -40,10 +40,12 @@ import {
   type JsonRpcRequest,
   type JsonRpcResponse,
   type McpPrompt,
+  type McpPromptMessage,
   type McpResource,
   type McpServerFeatures,
   type McpTool,
   type McpToolContext,
+  type McpToolResult,
   rpcError,
 } from "./mcp-protocol.ts"
 import { loadTypesCorpus } from "./types-search.ts"
@@ -874,6 +876,81 @@ export function projectTools(
       },
     },
     {
+      name: "nifra_fix",
+      description:
+        "Automatically fix diagnostic lints (such as rewriting hand-rolled fetch() calls to the typed nifra client, adding generic types to client factory calls, and resolving dependency drift in package.json). Runs diagnostics, applies all mechanical edit suggestions, applies doctor dependency fixes, and returns the remaining unresolved diagnostics.",
+      inputSchema: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+      handler: async (_args, context) => {
+        const { collectCheckResult } = await import("./check.ts")
+        const { applyDoctorAutoFix } = await import("./doctor.ts")
+        const { writeFile, readFile } = await import("node:fs/promises")
+        const { resolve } = await import("node:path")
+
+        let doctorResult: Awaited<ReturnType<typeof applyDoctorAutoFix>> | null = null
+        try {
+          doctorResult = await applyDoctorAutoFix(cwd)
+        } catch {
+          // ignore doctor errors
+        }
+
+        const checkResult = await collectCheckResult(cwd, {
+          lintsOnly: true,
+          signal: context.signal,
+          maxDiagnostics: 100,
+        })
+
+        const fixed: Array<{ file: string; line: number; title: string }> = []
+
+        for (const diag of checkResult.diagnostics) {
+          if (diag.file && diag.line && diag.suggestion?.kind === "edit" && diag.suggestion.diff) {
+            try {
+              const diffLines = diag.suggestion.diff.split("\n")
+              const beforeLine = diffLines.find((l) => l.startsWith("-"))?.slice(1)
+              const afterLine = diffLines.find((l) => l.startsWith("+"))?.slice(1)
+              if (beforeLine !== undefined && afterLine !== undefined) {
+                const filePath = resolve(cwd, diag.file)
+                const content = await readFile(filePath, "utf-8")
+                const lines = content.split("\n")
+                const idx = diag.line - 1
+                if (lines[idx] === beforeLine) {
+                  lines[idx] = afterLine
+                  await writeFile(filePath, lines.join("\n"), "utf-8")
+                  fixed.push({
+                    file: diag.file,
+                    line: diag.line,
+                    title: diag.suggestion.title,
+                  })
+                }
+              }
+            } catch {
+              // ignore edit errors
+            }
+          }
+        }
+
+        const finalResult = await collectCheckResult(cwd, {
+          lintsOnly: false,
+          signal: context.signal,
+          maxDiagnostics: 100,
+        })
+
+        return JSON.stringify(
+          {
+            ok: finalResult.ok,
+            fixed,
+            doctorFixed: doctorResult?.fixed ?? [],
+            remainingDiagnostics: finalResult.diagnostics,
+          },
+          null,
+          2,
+        )
+      },
+    },
+    {
       name: "nifra_doctor",
       description:
         "Check this project for packages imported in source but NOT declared in package.json — the Bun-workspace trap where an import resolves at runtime (hoisting/workspace) so tests pass and `bun install` says no changes, yet tsc fails and a fresh/standalone install can't resolve it. Returns { ok, ran, findings[], fixed?, skippedFixes? }. Pass autoFix:true to update package.json only when the dependency version can be inferred locally from an ancestor package.json or installed package metadata; otherwise the tool returns the exact bun add command to run.",
@@ -901,6 +978,151 @@ export function projectTools(
   ]
 }
 
+/** A `.tool()`-registered route as seen through the backend's `routes()` introspection. */
+type ToolRoute = {
+  readonly schema?: { readonly body?: unknown; readonly response?: unknown }
+  readonly tool?: {
+    readonly name: string
+    readonly description: string
+    readonly annotations?: McpTool["annotations"]
+  }
+}
+type ToolBackend = {
+  readonly routes?: () => ToolRoute[]
+  readonly fetch: (req: Request) => Promise<Response>
+}
+
+/** Extract tools registered via .tool() routes on the Nifra backend. Exported for the test that proves a
+ * `server().tool()` route surfaces in `tools/list` and executes through `tools/call`. */
+export function extractBackendTools(backend: unknown): McpTool[] {
+  const b = backend as ToolBackend | null
+  if (!b || typeof b.routes !== "function") return []
+  let routes: ToolRoute[] = []
+  try {
+    routes = b.routes()
+  } catch {
+    return []
+  }
+
+  const jsonSchemaOf = (schema: unknown): unknown => {
+    if (schema && typeof schema === "object" && "jsonSchema" in schema) {
+      const js = (schema as { jsonSchema?: unknown }).jsonSchema
+      if (js !== undefined && js !== null) return js
+    }
+    return undefined
+  }
+
+  return routes
+    .filter(
+      (
+        r,
+      ): r is ToolRoute & {
+        schema: NonNullable<ToolRoute["schema"]>
+        tool: NonNullable<ToolRoute["tool"]>
+      } => r.schema !== undefined && r.tool !== undefined,
+    )
+    .map((r) => {
+      const toolInfo = r.tool
+      const s = r.schema
+      return {
+        name: toolInfo.name,
+        description: toolInfo.description,
+        inputSchema: (jsonSchemaOf(s.body) ?? {
+          type: "object",
+          properties: {},
+        }) as McpTool["inputSchema"],
+        ...(toolInfo.annotations !== undefined ? { annotations: toolInfo.annotations } : {}),
+        handler: async (args): Promise<string | McpToolResult> => {
+          const res = await b.fetch(
+            new Request(`http://localhost/_nifra/tool/${toolInfo.name}`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(args),
+            }),
+          )
+          if (!res.ok) {
+            const text = await res.text()
+            throw new Error(`Tool execution failed (${res.status}): ${text}`)
+          }
+          const body: unknown = await res.json()
+          if (typeof body === "string") return body
+          if (body && typeof body === "object") {
+            if ("content" in body || "structuredContent" in body) {
+              return body as McpToolResult
+            }
+            return {
+              content: [{ type: "text", text: JSON.stringify(body, null, 2) }],
+              structuredContent: body as Record<string, unknown>,
+            }
+          }
+          return String(body)
+        },
+      }
+    })
+}
+
+/** A resource declared on the backend via `server().resource()`, seen through `mcpResources()`. */
+type ResourceDescriptor = {
+  readonly uri: string
+  readonly name: string
+  readonly description?: string
+  readonly mimeType?: string
+  readonly read: () => unknown | Promise<unknown>
+}
+type ResourceBackend = { readonly mcpResources?: () => readonly ResourceDescriptor[] }
+
+/** Extract MCP resources registered via `.resource()` on the Nifra backend. Exported for the surfacing test. */
+export function extractBackendResources(backend: unknown): McpResource[] {
+  const b = backend as ResourceBackend | null
+  if (!b || typeof b.mcpResources !== "function") return []
+  let list: readonly ResourceDescriptor[]
+  try {
+    list = b.mcpResources()
+  } catch {
+    return []
+  }
+  return list.map((r) => ({
+    uri: r.uri,
+    name: r.name,
+    ...(r.description !== undefined ? { description: r.description } : {}),
+    ...(r.mimeType !== undefined ? { mimeType: r.mimeType } : {}),
+    read: async () => {
+      const out = await r.read()
+      if (typeof out === "string") return { text: out }
+      const o = out as { text: string; mimeType?: string }
+      return o.mimeType !== undefined ? { text: o.text, mimeType: o.mimeType } : { text: o.text }
+    },
+  }))
+}
+
+/** A prompt declared on the backend via `server().prompt()`, seen through `mcpPrompts()`. */
+type PromptDescriptor = {
+  readonly name: string
+  readonly description: string
+  readonly arguments?: readonly { name: string; description?: string; required?: boolean }[]
+  readonly handler: (args: Record<string, string>) => unknown | Promise<unknown>
+}
+type PromptBackend = { readonly mcpPrompts?: () => readonly PromptDescriptor[] }
+
+/** Extract MCP prompts registered via `.prompt()` on the Nifra backend. Exported for the surfacing test. */
+export function extractBackendPrompts(backend: unknown): McpPrompt[] {
+  const b = backend as PromptBackend | null
+  if (!b || typeof b.mcpPrompts !== "function") return []
+  let list: readonly PromptDescriptor[]
+  try {
+    list = b.mcpPrompts()
+  } catch {
+    return []
+  }
+  return list.map((p) => ({
+    name: p.name,
+    description: p.description,
+    ...(p.arguments !== undefined ? { arguments: p.arguments } : {}),
+    handler: async (args: Record<string, unknown>) =>
+      (await p.handler(args as Record<string, string>)) as readonly McpPromptMessage[],
+  }))
+}
+
 /** Prefix every tool name and resource URI for a named app in a monorepo. */
 function namespaceForApp(
   name: string,
@@ -908,7 +1130,10 @@ function namespaceForApp(
   features: McpServerFeatures,
 ): { tools: McpTool[]; features: McpServerFeatures } {
   const prefix = `nifra_${name}_`
-  const namespacedTools = tools.map((t) => ({ ...t, name: t.name.replace(/^nifra_/, prefix) }))
+  const namespacedTools = tools.map((t) => ({
+    ...t,
+    name: t.name.startsWith("nifra_") ? t.name.replace(/^nifra_/, prefix) : `${name}_${t.name}`,
+  }))
   const namespacedResources = (features.resources ?? []).map((r) => ({
     ...r,
     uri: r.uri.replace(/^nifra:\/\//, `nifra://${name}/`),
@@ -925,40 +1150,65 @@ function namespaceForApp(
 
 /** Run the stdio MCP server: read newline-delimited JSON-RPC from stdin, write responses to stdout. */
 export async function runMcpServer(cwd: string, version: string): Promise<void> {
-  let tools: McpTool[]
   let features: McpServerFeatures
 
   const monorepo = await detectMonorepo(cwd)
   if (monorepo) {
     const appEntries = await loadMonorepoApps(cwd, monorepo)
-    const allTools: McpTool[] = []
     const allResources: McpResource[] = []
     const allPrompts: McpPrompt[] = []
     for (const { name, cwd: appCwd } of appEntries) {
       const loader = createCachedAppLoader(appCwd)
-      const ns = namespaceForApp(
-        name,
-        projectTools(appCwd, loader),
-        projectFeatures(appCwd, loader),
-      )
-      allTools.push(...ns.tools)
+      const app = await loader()
+      const base = projectFeatures(appCwd, loader)
+      const ns = namespaceForApp(name, [], {
+        resources: [...(base.resources ?? []), ...extractBackendResources(app.backend)],
+        prompts: [...(base.prompts ?? []), ...extractBackendPrompts(app.backend)],
+      })
       allResources.push(...(ns.features.resources ?? []))
       allPrompts.push(...(ns.features.prompts ?? []))
     }
-    tools = [...docsTools(loadDocsCorpus, loadExamplesCorpus, loadTypesCorpus), ...allTools]
     features = { resources: allResources, prompts: allPrompts }
   } else {
     const loadAppCached = createCachedAppLoader(cwd)
-    tools = projectTools(cwd, loadAppCached)
-    features = projectFeatures(cwd, loadAppCached)
+    const base = projectFeatures(cwd, loadAppCached)
+    const app = await loadAppCached()
+    features = {
+      resources: [...(base.resources ?? []), ...extractBackendResources(app.backend)],
+      prompts: [...(base.prompts ?? []), ...extractBackendPrompts(app.backend)],
+    }
   }
+  const loadAppCached = createCachedAppLoader(cwd)
   const serverInfo = { name: "nifra", version }
   const state = createMcpProtocolState()
   const send = (message: JsonRpcResponse | JsonRpcNotification): void => {
     process.stdout.write(`${JSON.stringify(message)}\n`)
   }
   const dispatch = async (message: JsonRpcRequest): Promise<void> => {
-    const response = await handleRpc(message, tools, serverInfo, features, {
+    let activeTools: McpTool[]
+    if (monorepo) {
+      const appEntries = await loadMonorepoApps(cwd, monorepo)
+      const allTools: McpTool[] = []
+      for (const { name, cwd: appCwd } of appEntries) {
+        const loader = createCachedAppLoader(appCwd)
+        const app = await loader()
+        const baseTools = projectTools(appCwd, loader)
+        const backendTools = extractBackendTools(app.backend)
+        const ns = namespaceForApp(name, [...baseTools, ...backendTools], {
+          resources: [],
+          prompts: [],
+        })
+        allTools.push(...ns.tools)
+      }
+      activeTools = [...docsTools(loadDocsCorpus, loadExamplesCorpus, loadTypesCorpus), ...allTools]
+    } else {
+      const app = await loadAppCached()
+      const baseTools = projectTools(cwd, loadAppCached)
+      const backendTools = extractBackendTools(app.backend)
+      activeTools = [...baseTools, ...backendTools]
+    }
+
+    const response = await handleRpc(message, activeTools, serverInfo, features, {
       state,
       sendNotification: send,
     })

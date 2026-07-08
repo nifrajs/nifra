@@ -25,7 +25,7 @@ Build MCP servers — and MCP Apps (interactive `ui://` widgets, SEP-1865) — f
 - **UI_EXTENSION_KEY** _(const)_ — `UI_EXTENSION_KEY: "io.modelcontextprotocol/ui"`
 - **UI_MIME** _(const)_ — `UI_MIME: "text/html;profile=mcp-app"`
 
-_…and 22 more — see [`api-reference.md`](../../api-reference.md#nifrajsmcp) for the complete list._
+_…and 23 more — see [`api-reference.md`](../../api-reference.md#nifrajsmcp) for the complete list._
 
 ## Footguns
 

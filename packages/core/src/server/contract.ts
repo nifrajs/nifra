@@ -58,6 +58,25 @@ type OpResponse<O extends OperationDef> = O extends { response: infer R extends 
   ? InferOutput<R>
   : unknown
 
+/** The body types of a contract op's declared **non-2xx** `responses` (schema-bearing ones), keyed by status. */
+type OpErrorBodies<Rs extends Record<string, ResponseDef>> = {
+  [K in keyof Rs as K extends `2${string}` ? never : K]: Rs[K] extends {
+    schema: infer S extends StandardSchemaV1
+  }
+    ? InferOutput<S>
+    : never
+}
+
+/** The client-visible error union for a contract op — the union of its non-2xx `responses` body schemas,
+ * or `unknown` when it declares none (mirrors an inline route with no `errors`). */
+type OpErrors<O extends OperationDef> = O extends {
+  responses: infer Rs extends Record<string, ResponseDef>
+}
+  ? [OpErrorBodies<Rs>[keyof OpErrorBodies<Rs>]] extends [never]
+    ? unknown
+    : OpErrorBodies<Rs>[keyof OpErrorBodies<Rs>]
+  : unknown
+
 /**
  * RouteInfo as a *decoupled consumer* sees it from the contract alone: the
  * `output` is the declared `response` schema's type, or `unknown` when none is
@@ -70,6 +89,9 @@ type RouteInfoForOp<O extends OperationDef> = {
   readonly query: OpQuery<O>
   readonly body: OpBody<O>
   readonly output: OpResponse<O>
+  // The error union from the op's non-2xx `responses` — so a decoupled contract client sees typed error
+  // bodies, just like an inline route's `errors`. `unknown` when the op declares no error responses.
+  readonly errors: OpErrors<O>
 }
 
 /** Re-key the name-keyed ops into the `path → method → RouteInfo` registry. */
@@ -166,6 +188,9 @@ export type RegistryFromImpl<C extends ContractShape, H extends HandlersFor<C>> 
         : H[K] extends AnyFn
           ? OutputOf<H[K]>
           : unknown
+      // The error union from the op's non-2xx `responses` (see OpErrors) — a graduated contract client sees
+      // the same typed error bodies as the inline `errors` path.
+      readonly errors: OpErrors<C[K]>
     }
   }
 }
