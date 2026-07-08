@@ -9,11 +9,11 @@
     "dev:bun": "bun run server.ts"
   },
   "dependencies": {
-    "@nifrajs/client": "^1.2.2",
-    "@nifrajs/core": "^1.2.2",
-    "@nifrajs/schema": "^1.2.2",
-    "@nifrajs/web": "^1.2.2",
-    "@nifrajs/web-react": "^1.2.2",
+    "@nifrajs/client": "^1.3.0",
+    "@nifrajs/core": "^1.3.0",
+    "@nifrajs/schema": "^1.3.0",
+    "@nifrajs/web": "^1.3.0",
+    "@nifrajs/web-react": "^1.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

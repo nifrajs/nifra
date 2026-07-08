@@ -1,5 +1,37 @@
 # @nifrajs/cli
 
+## 1.3.0
+
+### Minor Changes
+
+- 9f8d2aa: feat(cli): `nifra_check` / `nifra_test` MCP tools accept a `dir` to scope a subdirectory
+
+  The MCP server runs at the project root, so `nifra check` / `nifra test` always ran from there — no way to
+  target one app in a monorepo (a ShipNow pain: the root holds the builder + generated apps, but you want to
+  check just `app/`). Both tools now take an optional `dir` (relative to the root, e.g. `"app"` or
+  `"packages/api"`); the check/test runs against that subtree. Path-traversal-guarded — a `dir` that climbs
+  out of the root (`../`, an absolute path elsewhere) is rejected, not run.
+
+- 4a4b1c4: feat: `server().resource()` / `.prompt()` — app-declared MCP resources & prompts
+
+  Completing the MCP trio alongside `.tool()`: an app can now expose its own MCP **resources**
+  (`.resource(uri, { name, description?, mimeType? }, read)`) and **prompts** (`.prompt(name, { description,
+arguments? }, handler)`). `nifra mcp` surfaces them in `resources/list` + `resources/read` and `prompts/list`
+
+  - `prompts/get` (namespaced per app in a monorepo). The `read`/`handler` closures run in the app process, so
+    they capture whatever app state they need — no HTTP round-trip.
+
+### Patch Changes
+
+- Updated dependencies [4a4b1c4]
+- Updated dependencies [4a4b1c4]
+  - @nifrajs/mcp@1.3.0
+  - @nifrajs/schema@1.3.0
+  - @nifrajs/web@1.3.0
+  - @nifrajs/client@1.3.0
+  - @nifrajs/runner@1.3.0
+  - create-nifra@1.3.0
+
 ## 1.2.2
 
 ### Patch Changes
