@@ -32,10 +32,19 @@ const nameBody = schema<{ name: string }>((v) =>
 const userOut = schema<{ id: string; name: string }>((v) => ({
   value: v as { id: string; name: string },
 }))
+const notFoundError = schema<{ code: "not_found"; id: string }>((v) => ({
+  value: v as { code: "not_found"; id: string },
+}))
 
 const contract = defineContract({
   getUser: { method: "GET", path: "/users/:id", response: userOut },
   createUser: { method: "POST", path: "/users", body: nameBody, response: userOut },
+  // Declares a non-2xx error response — its schema types the decoupled client's failure `data`.
+  getOrder: {
+    method: "GET",
+    path: "/orders/:id",
+    responses: { "404": { schema: notFoundError } },
+  },
 })
 
 const app = implement(contract, {
@@ -44,6 +53,15 @@ const app = implement(contract, {
     id: "new",
     name: c.body.name,
   }),
+  getOrder: (c: Context<"/orders/:id">) => {
+    if (c.params.id === "missing") {
+      return new Response(JSON.stringify({ code: "not_found", id: c.params.id }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      })
+    }
+    return { orderId: c.params.id }
+  },
 })
 
 let instance: ReturnType<typeof app.listen>
@@ -82,5 +100,17 @@ describe("decoupled client — client(contract, url)", () => {
     const res = await raw.users.post({ name: 123 })
     expect(res.ok).toBe(false)
     expect(res.status).toBe(422)
+  })
+
+  test("a contract op's non-2xx `responses` type the failure `data`", async () => {
+    const res = await api.orders({ id: "missing" }).get()
+    expect(res.status).toBe(404)
+    if (!res.ok) {
+      // compile-time: `data` is the declared 404 error body from the contract's `responses`
+      const code: "not_found" = res.data.code
+      const id: string = res.data.id
+      expect(code).toBe("not_found")
+      expect(id).toBe("missing")
+    }
   })
 })

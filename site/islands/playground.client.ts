@@ -212,6 +212,65 @@ async function init(): Promise<void> {
     void share(code, reqs, shareMsg)
   })
 
+  // ---- AI Copilot Chat Wiring ----
+  const aiForm = $<HTMLFormElement>("#play-ai-form")
+  const aiInput = $<HTMLInputElement>("#play-ai-input")
+  const aiMessages = $<HTMLElement>("#play-ai-messages")
+
+  const appendMsg = (role: "user" | "assistant" | "system", text: string): void => {
+    if (!aiMessages) return
+    const msg = el("div", `play-ai-msg ${role}`)
+    msg.textContent = text
+    aiMessages.appendChild(msg)
+    aiMessages.scrollTop = aiMessages.scrollHeight
+  }
+
+  aiForm?.addEventListener("submit", async (e) => {
+    e.preventDefault()
+    if (!aiInput?.value.trim() || !aiMessages) return
+    const promptText = aiInput.value.trim()
+    aiInput.value = ""
+
+    appendMsg("user", promptText)
+
+    const loading = el("div", "play-ai-msg assistant", "Nifra Copilot is thinking...")
+    aiMessages.appendChild(loading)
+    aiMessages.scrollTop = aiMessages.scrollHeight
+
+    try {
+      const res = await fetch("/api/playground/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt: promptText }),
+      })
+      loading.remove()
+
+      if (res.ok) {
+        const data = (await res.json()) as { message: string; code?: string; requests?: string }
+        appendMsg("assistant", data.message)
+        if (data.code) {
+          code.value = data.code
+        }
+        if (data.requests) {
+          reqs.value = data.requests
+        }
+        // Remove active class from examples since we replaced code
+        for (const other of document.querySelectorAll<HTMLButtonElement>("[data-preset]")) {
+          other.classList.remove("active")
+        }
+        void run(code, reqs, out)
+      } else {
+        appendMsg("assistant", "Sorry, I encountered an error communicating with the chat service.")
+      }
+    } catch (_err) {
+      loading.remove()
+      appendMsg(
+        "assistant",
+        "Could not connect to the backend. Please check your network connection.",
+      )
+    }
+  })
+
   for (const btn of document.querySelectorAll<HTMLButtonElement>("[data-preset]")) {
     const preset = PRESETS[btn.dataset.preset ?? ""]
     if (!preset) continue

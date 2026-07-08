@@ -83,10 +83,14 @@ export {
   type ExecutionContext,
   type Handler,
   type IdentityPlugin,
+  type McpPromptDescriptor,
+  type McpResourceDescriptor,
   type Middleware,
   type NifraPlugin,
   type NodeServeOutcome,
   type OnRequestResult,
+  type PromptArgument,
+  type PromptMessage,
   type RouteDescriptor,
   type RunningServer,
   type ScheduledController,
@@ -94,6 +98,7 @@ export {
   Server,
   type ServerOptions,
   server,
+  type ToolAnnotations,
   toFetchHandler,
 } from "./server/server.ts"
 export {

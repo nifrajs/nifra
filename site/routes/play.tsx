@@ -40,84 +40,121 @@ export default function Play() {
         </p>
       </header>
 
-      {/* Sticky controls — presets + Run stay reachable above the editors. */}
-      <div className="play-controls">
-        <div className="play-presets">
-          <span className="play-presets-label">Examples</span>
-          <fieldset className="play-segment" aria-label="Example presets">
-            <button type="button" className="play-preset active" data-preset="hello">
-              Typed API
-            </button>
-            <button type="button" className="play-preset" data-preset="validation">
-              Validation
-            </button>
-            <button type="button" className="play-preset" data-preset="responses">
-              Status &amp; Response
-            </button>
-          </fieldset>
+      <div className="play-layout">
+        {/* AI chat assistant pane */}
+        <section className="play-pane play-pane--ai" aria-label="AI Assistant">
+          <div className="play-pane-head">
+            <Dots />
+            <span className="play-window-title">copilot.chat</span>
+            <span
+              className="play-live-dot"
+              aria-hidden="true"
+              style={{ background: "var(--indigo)", boxShadow: "0 0 0 3px var(--indigo-soft)" }}
+            />
+          </div>
+          <div className="play-ai-chat">
+            <div id="play-ai-messages" className="play-ai-messages">
+              <div className="play-ai-msg system">
+                Hi! Ask me to write Nifra backend code or endpoints (e.g. "Create a task list API
+                with completion status"), and I'll generate and load it into your editor instantly.
+              </div>
+            </div>
+            <form id="play-ai-form" className="play-ai-form">
+              <input
+                type="text"
+                id="play-ai-input"
+                className="play-ai-input"
+                placeholder="Ask Nifra Copilot..."
+                autoComplete="off"
+              />
+              <button type="submit" className="button primary play-ai-send">
+                Ask
+              </button>
+            </form>
+          </div>
+        </section>
+
+        <div className="play-main">
+          {/* Sticky controls — presets + Run stay reachable above the editors. */}
+          <div className="play-controls">
+            <div className="play-presets">
+              <span className="play-presets-label">Examples</span>
+              <fieldset className="play-segment" aria-label="Example presets">
+                <button type="button" className="play-preset active" data-preset="hello">
+                  Typed API
+                </button>
+                <button type="button" className="play-preset" data-preset="validation">
+                  Validation
+                </button>
+                <button type="button" className="play-preset" data-preset="responses">
+                  Status &amp; Response
+                </button>
+              </fieldset>
+            </div>
+            <div className="play-run-row">
+              <button type="button" id="play-run" className="button primary play-run">
+                Run ▸
+              </button>
+              <span className="play-kbd-hint">
+                <kbd className="play-kbd">⌘</kbd>
+                <kbd className="play-kbd">↵</kbd> to run
+              </span>
+              <button type="button" id="play-share" className="button play-share">
+                Fork to link
+              </button>
+              <span id="play-share-msg" className="play-share-msg" aria-live="polite" />
+            </div>
+          </div>
+
+          {/* Editor-first: code spans the top; requests (write) + response (see) sit paired below. */}
+          <div className="play-grid">
+            <section className="play-pane play-pane--code" aria-label="Code editor">
+              <div className="play-pane-head">
+                <Dots />
+                <span className="play-window-title">app.ts</span>
+                <span className="play-pane-hint">server &amp; t in scope — return the app</span>
+                <span className="play-lang-badge">TS</span>
+              </div>
+              <textarea
+                id="play-code"
+                className="play-editor play-editor-code"
+                aria-label="App source code"
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+                defaultValue={PLAYGROUND_STARTER_CODE}
+              />
+            </section>
+
+            <section className="play-pane play-pane--requests" aria-label="Requests">
+              <div className="play-pane-head">
+                <Dots />
+                <span className="play-window-title">requests.json</span>
+                <span className="play-pane-hint">array of {"{ method?, path, body? }"}</span>
+              </div>
+              <textarea
+                id="play-requests"
+                className="play-editor play-editor-requests"
+                aria-label="Requests"
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+                defaultValue={PLAYGROUND_STARTER_REQUESTS}
+              />
+            </section>
+
+            <section className="play-pane play-pane--results" aria-label="Response">
+              <div className="play-pane-head">
+                <Dots />
+                <span className="play-window-title">Response</span>
+                <span className="play-live-dot" aria-hidden="true" />
+              </div>
+              <div id="play-results" className="play-results">
+                <div className="play-running">Loading the playground…</div>
+              </div>
+            </section>
+          </div>
         </div>
-        <div className="play-run-row">
-          <button type="button" id="play-run" className="button primary play-run">
-            Run ▸
-          </button>
-          <span className="play-kbd-hint">
-            <kbd className="play-kbd">⌘</kbd>
-            <kbd className="play-kbd">↵</kbd> to run
-          </span>
-          <button type="button" id="play-share" className="button play-share">
-            Fork to link
-          </button>
-          <span id="play-share-msg" className="play-share-msg" aria-live="polite" />
-        </div>
-      </div>
-
-      {/* Editor-first: code spans the top; requests (write) + response (see) sit paired below. */}
-      <div className="play-grid">
-        <section className="play-pane play-pane--code" aria-label="Code editor">
-          <div className="play-pane-head">
-            <Dots />
-            <span className="play-window-title">app.ts</span>
-            <span className="play-pane-hint">server &amp; t in scope — return the app</span>
-            <span className="play-lang-badge">TS</span>
-          </div>
-          <textarea
-            id="play-code"
-            className="play-editor play-editor-code"
-            aria-label="App source code"
-            spellCheck={false}
-            autoCapitalize="off"
-            autoCorrect="off"
-            defaultValue={PLAYGROUND_STARTER_CODE}
-          />
-        </section>
-
-        <section className="play-pane play-pane--requests" aria-label="Requests">
-          <div className="play-pane-head">
-            <Dots />
-            <span className="play-window-title">requests.json</span>
-            <span className="play-pane-hint">array of {"{ method?, path, body? }"}</span>
-          </div>
-          <textarea
-            id="play-requests"
-            className="play-editor play-editor-requests"
-            aria-label="Requests"
-            spellCheck={false}
-            autoCapitalize="off"
-            autoCorrect="off"
-            defaultValue={PLAYGROUND_STARTER_REQUESTS}
-          />
-        </section>
-
-        <section className="play-pane play-pane--results" aria-label="Response">
-          <div className="play-pane-head">
-            <Dots />
-            <span className="play-window-title">Response</span>
-            <span className="play-live-dot" aria-hidden="true" />
-          </div>
-          <div id="play-results" className="play-results">
-            <div className="play-running">Loading the playground…</div>
-          </div>
-        </section>
       </div>
 
       <noscript>

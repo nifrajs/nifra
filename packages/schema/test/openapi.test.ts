@@ -88,10 +88,15 @@ describe("toOpenAPI(app)", () => {
     }))
     .get("/items/:id", (c) => ({ id: c.params.id }))
     .get("/me", { response: t.object({ id: t.string() }) }, () => ({ id: "1" }))
+    .post(
+      "/orders",
+      { body: t.object({ item: t.string() }), errors: { 404: t.object({ message: t.string() }) } },
+      () => ({ ok: true }),
+    )
   const doc = toOpenAPI(app)
 
   test("enumerates routes: requestBody from t, generic 200, no operationId", () => {
-    expect(Object.keys(doc.paths).sort()).toEqual(["/items", "/items/{id}", "/me"])
+    expect(Object.keys(doc.paths).sort()).toEqual(["/items", "/items/{id}", "/me", "/orders"])
     expect(
       doc.paths["/items"]?.post?.requestBody?.content["application/json"]?.schema,
     ).toMatchObject({
@@ -106,6 +111,19 @@ describe("toOpenAPI(app)", () => {
       required: true,
       schema: { type: "string" },
     })
+  })
+
+  test("a route's `errors` contract becomes non-2xx responses with each error schema", () => {
+    const res404 = doc.paths["/orders"]?.post?.responses["404"]
+    expect(res404?.description).toBe("Not Found")
+    expect(res404?.content?.["application/json"]?.schema).toEqual({
+      type: "object",
+      properties: { message: { type: "string" } },
+      required: ["message"],
+      additionalProperties: false,
+    })
+    // the happy-path 200 still stands alongside the error
+    expect(doc.paths["/orders"]?.post?.responses["200"]).toBeDefined()
   })
 
   test("a route's declared `response` contract becomes the 200 body schema", () => {
