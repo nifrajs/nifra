@@ -23,7 +23,7 @@ Browser-safe, end-to-end-typed client for @nifrajs/core servers (Eden-style prox
 - **Jsonify** _(type)_ — `type Jsonify<T>`
 - **LoaderData** _(type)_ — `type LoaderData<L> = L extends (...args: never[]) => infer R ? Awaited<R> : never`
 - **RegistryOf** _(type)_ — `type RegistryOf<App> = App extends Server<infer R, infer _Ctx> ? R : never`
-- **Result** _(type)_ — `type Result<Data>`
+- **Result** _(type)_ — `type Result<Data, ErrData = unknown>`
 
 _…and 2 more — see [`api-reference.md`](../../api-reference.md#nifrajsclient) for the complete list._
 

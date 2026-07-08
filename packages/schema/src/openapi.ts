@@ -209,6 +209,35 @@ interface OperationInput {
     | undefined
 }
 
+const STATUS_TEXT: Readonly<Record<string, string>> = {
+  "400": "Bad Request",
+  "401": "Unauthorized",
+  "403": "Forbidden",
+  "404": "Not Found",
+  "405": "Method Not Allowed",
+  "409": "Conflict",
+  "410": "Gone",
+  "415": "Unsupported Media Type",
+  "422": "Unprocessable Entity",
+  "429": "Too Many Requests",
+  "500": "Internal Server Error",
+  "502": "Bad Gateway",
+  "503": "Service Unavailable",
+}
+
+/** Turn a route's `errors` contract (`{ status → schema }`) into the additional-`responses` shape that
+ * {@link buildResponses} emits as non-2xx OpenAPI responses. */
+function errorsToResponses(
+  errors: Readonly<Record<number, StandardSchemaV1>> | undefined,
+): OperationInput["responses"] {
+  if (errors === undefined) return undefined
+  const out: Record<string, { description?: string; schema?: StandardSchemaV1 }> = {}
+  for (const [status, schema] of Object.entries(errors)) {
+    out[status] = { description: STATUS_TEXT[status] ?? "Error", schema }
+  }
+  return out
+}
+
 function buildResponses(
   input: OperationInput,
   store: SchemaStore,
@@ -306,6 +335,8 @@ export function toOpenAPI(
           query: route.schema?.query,
           // A route may now declare a `response` contract — emit it as the 200 body schema.
           response: route.schema?.response,
+          // …and an `errors` contract — emit each as a non-2xx response.
+          responses: errorsToResponses(route.schema?.errors),
           operationId: undefined,
         },
         store,

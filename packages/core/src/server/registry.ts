@@ -16,6 +16,9 @@ export interface RouteInfo {
   readonly query: unknown
   readonly body: unknown
   readonly output: unknown
+  /** Union of the route's declared error-response body types (from `schema.errors`); `unknown` when the
+   * route declares none. Surfaced by the typed client as the failure `errorData`. */
+  readonly errors?: unknown
 }
 
 /** The accumulated, type-level map of every route on a Server: path → method → RouteInfo. */
@@ -40,12 +43,21 @@ type RegistryOutput<S extends RouteSchema, Output> = S extends {
   ? InferOutput<R>
   : Output
 
+/** The union of a route's declared error-response body types (`schema.errors` → `{status: schema}`), so the
+ * typed client can surface the failure body. `unknown` when the route declares no `errors`. */
+type RegistryErrors<S extends RouteSchema> = S extends {
+  errors: infer E extends Record<number, StandardSchemaV1>
+}
+  ? { [K in keyof E]: E[K] extends StandardSchemaV1 ? InferOutput<E[K]> : never }[keyof E]
+  : unknown
+
 /** Build a {@link RouteInfo} from a route's path, schema, and handler output type. */
 export type RouteInfoFor<Path extends string, S extends RouteSchema, Output> = {
   readonly params: Params<Path>
   readonly query: RegistryQuery<S>
   readonly body: RegistryBody<S>
   readonly output: RegistryOutput<S, Output>
+  readonly errors: RegistryErrors<S>
 }
 
 /** The client-visible output of a handler: its awaited return, minus raw `Response`. */

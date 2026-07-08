@@ -85,8 +85,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   The (awaited) return of a `loader`, for typing a page component's `data` prop.
 - **RegistryOf** _(type)_ — `type RegistryOf<App> = App extends Server<infer R, infer _Ctx> ? R : never`
   Extract the accumulated route registry from a server's type (`typeof app`), ignoring its middleware context.
-- **Result** _(type)_ — `type Result<Data> = | { readonly ok: true; readonly status: number; readonly data: Data; readonly error: null } | { readonly ok: false; readonly status: number; readonly data: null; readonly error: ApiError }`
-  The outcome of a client call. The client never throws — inspect `ok` (or `error`) to branch. On success `data` is the (JSON-shaped) response body; on failure `error` carries the server's structured error or a transport error.
+- **Result** _(type)_ — `type Result<Data, ErrData = unknown> = | { readonly ok: true; readonly status: number; readonly data: Data; readonly error: null } | { readonly ok: false readonly status: number readonly data: ErrData readonly error: Ap…`
+  The outcome of a client call. The client never throws — inspect `ok` to branch. `data` is the parsed response body, **typed by `ok`**: on success it's the route's response type; on failure it's the parsed error body, typed from the route's `errors` contract (`unknown` when the route declares none, …
 - **Treaty** _(type)_ — `type Treaty<App> = TreatyFromRegistry<RegistryOf<App>>`
   The Eden-style proxy type for a server. Use a named alias for readable errors:
 - **TreatyFromRegistry** _(type)_ — `type TreatyFromRegistry<R> = TreatyNode<R, ""> & RootIndex<R>`
@@ -153,6 +153,10 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **Logger** _(interface)_ — `interface Logger`
 - **METHODS** _(const)_ — `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]`
   HTTP methods the router accepts.
+- **McpPromptDescriptor** _(interface)_ — `interface McpPromptDescriptor`
+  An app-declared MCP prompt — a reusable prompt template an agent can fetch through `nifra mcp`.
+- **McpResourceDescriptor** _(interface)_ — `interface McpResourceDescriptor`
+  An app-declared MCP resource — read-only data an agent can fetch through `nifra mcp`.
 - **Method** _(type)_ — `type Method = (typeof METHODS)[number]`
 - **Middleware** _(interface)_ — `interface Middleware`
   A bundle of lifecycle hooks applied together via {@link Server.use} — the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware is context-agnostic (sees the base `Context`); `use` does no context-type merging — th…
@@ -170,6 +174,10 @@ Every public export of every package — name, kind, signature, and doc summary 
   Runtime platform inputs, passed as `app.fetch(request, platform)`. Edge adapters (e.g. Cloudflare Workers) supply `env` (bindings) + `waitUntil`; Bun/Node/Deno omit them. Optional + runtime-neutral, so `app.fetch` stays a Web-standard handler.
 - **Prettify** _(type)_ — `type Prettify<T> = { [K in keyof T]: T[K] } & {}`
   Flattens an intersection into a single object type for readable hovers.
+- **PromptArgument** _(interface)_ — `interface PromptArgument`
+  One declared argument of an MCP prompt, surfaced in `prompts/list`.
+- **PromptMessage** _(interface)_ — `interface PromptMessage`
+  A message in an MCP prompt's rendered output (see {@link Server.prompt}).
 - **RedactOptions** _(interface)_ — `interface RedactOptions`
   Tunes redaction. Key-name redaction always runs; the rest is **opt-in**: - `keyParts` — extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` — regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the…
 - **Registry** _(type)_ — `type Registry = Record<string, Record<string, RouteInfo>>`
@@ -225,6 +233,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **StandardTypes** _(interface)_ — `interface StandardTypes<Input = unknown, Output = Input>`
 - **StandardWebSocket** _(interface)_ — `interface StandardWebSocket`
   A standard server-side `WebSocket` — the half returned by Deno's `Deno.upgradeWebSocket` and the Workers `WebSocketPair`. {@link attachWebSocket} wires one to a nifra handler, so the Deno and Workers bridges share all the dispatch/normalization/error-isolation logic (only the upgrade call differs).
+- **ToolAnnotations** _(interface)_ — `interface ToolAnnotations`
+  MCP tool safety hints, surfaced in `tools/list`, that tell an agent how risky a `.tool()` call is — so it can decide whether to auto-invoke or confirm first. All optional; an omitted hint means "unknown". Mirrors the MCP spec's tool `annotations`.
 - **TopicRegistry** _(class)_ — `class TopicRegistry`
   In-process pub/sub for `ws.subscribe(topic)` + `app.publish(topic, data)`. **Single-instance only** — topics live in this process's memory, so a multi-instance deploy (multiple servers behind a load balancer) needs an external fan-out (Redis pub/sub, a Cloudflare Durable Object, NATS, …) bridged to…
 - **VERSION** _(const)_ — `VERSION: "1.2.2"`
@@ -478,7 +488,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **McpServer** _(interface)_ — `interface McpServer`
 - **McpServerFeatures** _(interface)_ — `interface McpServerFeatures`
 - **McpTool** _(interface)_ — `interface McpTool`
-  A tool the agent can call. `handler` returns the text shown to the agent, or a rich {@link McpToolResult} (for MCP Apps: structured data + a `ui://` widget link). `_meta` is the per-tool descriptor metadata surfaced in `tools/list` — for a widget tool it carries `ui.resourceUri`.
+- **McpToolAnnotations** _(interface)_ — `interface McpToolAnnotations`
+  MCP tool safety hints (`readOnlyHint`/`destructiveHint`/…) surfaced in `tools/list`, per the MCP spec.
 - **McpToolContext** _(interface)_ — `interface McpToolContext`
 - **McpToolHandlerResult** _(type)_ — `type McpToolHandlerResult`
   The ergonomic result an MCP-tool handler may return (coerced to the protocol's {@link McpToolResult}).
@@ -1072,6 +1083,10 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **Logger** _(interface)_ — `interface Logger`
 - **METHODS** _(const)_ — `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]`
   HTTP methods the router accepts.
+- **McpPromptDescriptor** _(interface)_ — `interface McpPromptDescriptor`
+  An app-declared MCP prompt — a reusable prompt template an agent can fetch through `nifra mcp`.
+- **McpResourceDescriptor** _(interface)_ — `interface McpResourceDescriptor`
+  An app-declared MCP resource — read-only data an agent can fetch through `nifra mcp`.
 - **Method** _(type)_ — `type Method = (typeof METHODS)[number]`
 - **Middleware** _(interface)_ — `interface Middleware`
   A bundle of lifecycle hooks applied together via {@link Server.use} — the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware is context-agnostic (sees the base `Context`); `use` does no context-type merging — th…
@@ -1089,6 +1104,10 @@ Every public export of every package — name, kind, signature, and doc summary 
   Runtime platform inputs, passed as `app.fetch(request, platform)`. Edge adapters (e.g. Cloudflare Workers) supply `env` (bindings) + `waitUntil`; Bun/Node/Deno omit them. Optional + runtime-neutral, so `app.fetch` stays a Web-standard handler.
 - **Prettify** _(type)_ — `type Prettify<T> = { [K in keyof T]: T[K] } & {}`
   Flattens an intersection into a single object type for readable hovers.
+- **PromptArgument** _(interface)_ — `interface PromptArgument`
+  One declared argument of an MCP prompt, surfaced in `prompts/list`.
+- **PromptMessage** _(interface)_ — `interface PromptMessage`
+  A message in an MCP prompt's rendered output (see {@link Server.prompt}).
 - **RedactOptions** _(interface)_ — `interface RedactOptions`
   Tunes redaction. Key-name redaction always runs; the rest is **opt-in**: - `keyParts` — extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` — regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the…
 - **Registry** _(type)_ — `type Registry = Record<string, Record<string, RouteInfo>>`
@@ -1144,6 +1163,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **StandardTypes** _(interface)_ — `interface StandardTypes<Input = unknown, Output = Input>`
 - **StandardWebSocket** _(interface)_ — `interface StandardWebSocket`
   A standard server-side `WebSocket` — the half returned by Deno's `Deno.upgradeWebSocket` and the Workers `WebSocketPair`. {@link attachWebSocket} wires one to a nifra handler, so the Deno and Workers bridges share all the dispatch/normalization/error-isolation logic (only the upgrade call differs).
+- **ToolAnnotations** _(interface)_ — `interface ToolAnnotations`
+  MCP tool safety hints, surfaced in `tools/list`, that tell an agent how risky a `.tool()` call is — so it can decide whether to auto-invoke or confirm first. All optional; an omitted hint means "unknown". Mirrors the MCP spec's tool `annotations`.
 - **TopicRegistry** _(class)_ — `class TopicRegistry`
   In-process pub/sub for `ws.subscribe(topic)` + `app.publish(topic, data)`. **Single-instance only** — topics live in this process's memory, so a multi-instance deploy (multiple servers behind a load balancer) needs an external fan-out (Redis pub/sub, a Cloudflare Durable Object, NATS, …) bridged to…
 - **VERSION** _(const)_ — `VERSION: "1.2.2"`

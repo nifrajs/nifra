@@ -184,7 +184,9 @@ async function execute(
   if (response.ok) {
     return { ok: true, status: response.status, data, error: null }
   }
-  return { ok: false, status: response.status, data: null, error: toApiError(data) }
+  // On failure, `data` carries the parsed error body (typed from the route's `errors` contract);
+  // `error` is the server's normalized `{ error, issues }` summary.
+  return { ok: false, status: response.status, data, error: toApiError(data) }
 }
 
 function buildQuery(query: Record<string, unknown>): string {

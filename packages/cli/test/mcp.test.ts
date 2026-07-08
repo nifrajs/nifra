@@ -2,10 +2,15 @@ import { describe, expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import type { StandardSchemaV1 } from "@nifrajs/core"
+import { server } from "@nifrajs/core"
 import type { LoadedApp } from "../src/load.ts"
 import { detectMonorepo, loadMonorepoApps } from "../src/load.ts"
 import {
   createCachedAppLoader,
+  extractBackendPrompts,
+  extractBackendResources,
+  extractBackendTools,
   projectFeatures,
   projectTools,
   resolveProjectDir,
@@ -615,7 +620,9 @@ describe("nifra_check / nifra_test — `dir` scopes to a subdirectory", () => {
     expect(check).toBeDefined()
     const ctx = { signal: new AbortController().signal } as never
 
-    const scoped = JSON.parse((await check!.handler({ dir: "app", lintsOnly: true }, ctx)) as string)
+    const scoped = JSON.parse(
+      (await check!.handler({ dir: "app", lintsOnly: true }, ctx)) as string,
+    )
     // Findings are relative to the scoped dir (app/), and the root-level file is NOT scanned.
     expect(scoped.diagnostics.length).toBeGreaterThan(0)
     expect(JSON.stringify(scoped)).not.toContain("root.tsx")
@@ -625,5 +632,151 @@ describe("nifra_check / nifra_test — `dir` scopes to a subdirectory", () => {
     expect(escaped.error).toContain("escapes")
 
     await rm(dir, { recursive: true, force: true })
+  })
+})
+
+describe("extractBackendTools (.tool() → MCP)", () => {
+  const weatherSchema: StandardSchemaV1<unknown, { location: string }> = {
+    "~standard": {
+      version: 1,
+      vendor: "test",
+      validate: (value: unknown) =>
+        value &&
+        typeof value === "object" &&
+        "location" in value &&
+        typeof value.location === "string"
+          ? { value: value as { location: string } }
+          : { issues: [{ message: "location must be a string", path: ["location"] }] },
+    },
+  }
+
+  const weatherApp = () =>
+    server().tool(
+      "get_weather",
+      { description: "Get weather for a location", input: weatherSchema },
+      (input) => ({ temp: 22, location: input.location }),
+    )
+
+  test("a .tool() route surfaces as an MCP tool with its name, description, and input schema", () => {
+    const backendTools = extractBackendTools(weatherApp())
+    const tool = backendTools.find((t) => t.name === "get_weather")
+    expect(tool).toBeDefined()
+    expect(tool?.description).toBe("Get weather for a location")
+    expect(tool?.inputSchema).toBeDefined()
+  })
+
+  test("the surfaced tool appears in tools/list without leaking its handler", async () => {
+    const backendTools = extractBackendTools(weatherApp())
+    const res = (await handleRpc({ id: 1, method: "tools/list" }, backendTools, INFO)) as {
+      result: { tools: Array<Record<string, unknown>> }
+    }
+    const listed = res.result.tools.find((t) => t.name === "get_weather")
+    expect(listed).toBeDefined()
+    expect(listed).not.toHaveProperty("handler")
+  })
+
+  test("tools/call runs the tool through the backend handler", async () => {
+    const backendTools = extractBackendTools(weatherApp())
+    const res = (await handleRpc(
+      {
+        id: 2,
+        method: "tools/call",
+        params: { name: "get_weather", arguments: { location: "Paris" } },
+      },
+      backendTools,
+      INFO,
+    )) as {
+      result: { content: Array<{ type: string; text: string }>; structuredContent?: unknown }
+    }
+    const text = res.result.content.map((c) => c.text).join("")
+    expect(text).toContain("Paris")
+    expect(text).toContain("22")
+  })
+
+  test("tools/call surfaces a backend validation failure as an error", async () => {
+    const backendTools = extractBackendTools(weatherApp())
+    const res = (await handleRpc(
+      { id: 3, method: "tools/call", params: { name: "get_weather", arguments: {} } },
+      backendTools,
+      INFO,
+    )) as { result: { isError?: boolean; content: Array<{ text: string }> } }
+    expect(res.result.isError).toBe(true)
+  })
+
+  test("tool annotations (safety hints) surface in tools/list", async () => {
+    const app = server().tool(
+      "read_weather",
+      {
+        description: "Read the weather",
+        input: weatherSchema,
+        annotations: { readOnlyHint: true, openWorldHint: true },
+      },
+      (input) => ({ location: input.location }),
+    )
+    const backendTools = extractBackendTools(app)
+    const res = (await handleRpc({ id: 9, method: "tools/list" }, backendTools, INFO)) as {
+      result: { tools: Array<Record<string, unknown>> }
+    }
+    const listed = res.result.tools.find((t) => t.name === "read_weather")
+    expect(listed?.annotations).toEqual({ readOnlyHint: true, openWorldHint: true })
+  })
+
+  test("a backend without .tool() routes yields no tools", () => {
+    expect(extractBackendTools(server())).toEqual([])
+    expect(extractBackendTools(null)).toEqual([])
+    expect(extractBackendTools({})).toEqual([])
+  })
+})
+
+describe("extractBackendResources / extractBackendPrompts (.resource()/.prompt() → MCP)", () => {
+  const app = () =>
+    server()
+      .resource("app://config", { name: "config", mimeType: "application/json" }, () =>
+        JSON.stringify({ ok: true }),
+      )
+      .prompt(
+        "greet",
+        { description: "Greet", arguments: [{ name: "who", required: true }] },
+        (args) => [{ role: "user", content: { type: "text", text: `Hi ${args.who}` } }],
+      )
+
+  test("a .resource() surfaces in resources/list and reads via resources/read", async () => {
+    const resources = extractBackendResources(app())
+    const listed = (await handleRpc({ id: 20, method: "resources/list" }, [], INFO, {
+      resources,
+    })) as { result: { resources: Array<{ uri: string }> } }
+    expect(listed.result.resources.some((r) => r.uri === "app://config")).toBe(true)
+
+    const read = (await handleRpc(
+      { id: 21, method: "resources/read", params: { uri: "app://config" } },
+      [],
+      INFO,
+      { resources },
+    )) as { result: { contents: Array<{ text: string; mimeType?: string }> } }
+    expect(read.result.contents[0]?.text).toContain('"ok":true')
+    expect(read.result.contents[0]?.mimeType).toBe("application/json")
+  })
+
+  test("a .prompt() surfaces in prompts/list and renders via prompts/get", async () => {
+    const prompts = extractBackendPrompts(app())
+    const listed = (await handleRpc({ id: 22, method: "prompts/list" }, [], INFO, {
+      prompts,
+    })) as { result: { prompts: Array<{ name: string }> } }
+    expect(listed.result.prompts.some((p) => p.name === "greet")).toBe(true)
+
+    const got = (await handleRpc(
+      { id: 23, method: "prompts/get", params: { name: "greet", arguments: { who: "Ada" } } },
+      [],
+      INFO,
+      { prompts },
+    )) as { result: { messages: Array<{ content: { text: string } }> } }
+    expect(got.result.messages[0]?.content.text).toBe("Hi Ada")
+  })
+
+  test("empty for a backend without .resource()/.prompt()", () => {
+    expect(extractBackendResources(server())).toEqual([])
+    expect(extractBackendResources(null)).toEqual([])
+    expect(extractBackendPrompts(server())).toEqual([])
+    expect(extractBackendPrompts({})).toEqual([])
   })
 })

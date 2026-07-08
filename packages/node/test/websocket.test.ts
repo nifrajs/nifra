@@ -198,7 +198,9 @@ describe("@nifrajs/node WebSockets", () => {
     expect(bMsgs).toEqual(["m1"])
     a.close()
     b.close()
-  })
+    // Real runtime is ~1s; the generous timeout is headroom against full-suite scheduling contention
+    // (this real-socket pub/sub test occasionally exceeded the default 5s under parallel load).
+  }, 15000)
 
   test("an upgrade to a path with no WS route is rejected (404, never opens)", async () => {
     running = await serve(makeApp(), { port: 0 })
