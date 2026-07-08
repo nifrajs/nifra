@@ -19,6 +19,7 @@ import {
 } from "./deferred.ts"
 import { isDraftEnabled } from "./draft.ts"
 import { ISR_REVALIDATE_HEADER } from "./isr.ts"
+import { generateLlmsTxt } from "./llms-txt.ts"
 import type {
   LayoutEntry,
   LinkDescriptor,
@@ -1358,6 +1359,21 @@ export function createWebApp<Env = unknown>(
       })
     })
   }
+
+  // Register llms.txt & llms-full.txt
+  app.register("GET", "/llms.txt", undefined, async () => {
+    const text = await generateLlmsTxt(false, manifest.routes, api)
+    return new Response(text, {
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    })
+  })
+
+  app.register("GET", "/llms-full.txt", undefined, async () => {
+    const text = await generateLlmsTxt(true, manifest.routes, api)
+    return new Response(text, {
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    })
+  })
 
   // Wildcard catch-all: unmatched paths render `_404` (404), or a plain text 404 if absent.
   app.register("GET", "/*", undefined, () => renderNotFound())

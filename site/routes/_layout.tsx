@@ -821,6 +821,99 @@ const css = `
   /* ---- /play playground — editor-first: code full-width on top, requests + response paired below ---- */
   .play-head { max-width: 760px; margin-bottom: 22px; }
 
+  .play-layout {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 20px;
+    align-items: start;
+    margin-bottom: 32px;
+  }
+  @media (max-width: 1024px) {
+    .play-layout {
+      grid-template-columns: 1fr;
+    }
+  }
+  .play-main {
+    min-width: 0;
+  }
+
+  .play-pane--ai {
+    height: 100%;
+    min-height: 560px;
+    border-color: var(--line-2);
+  }
+  .play-ai-chat {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    max-height: 560px;
+    background: var(--surface);
+  }
+  .play-ai-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    font-size: 13px;
+    border-bottom: 1px solid var(--line-2);
+    min-height: 380px;
+    max-height: 380px;
+  }
+  .play-ai-msg {
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    max-width: 90%;
+    line-height: 1.45;
+  }
+  .play-ai-msg.system {
+    background: var(--hover);
+    color: var(--soft);
+    border: 1px dashed var(--line-2);
+    align-self: center;
+    text-align: center;
+    max-width: 100%;
+  }
+  .play-ai-msg.user {
+    background: rgba(16, 185, 129, 0.1);
+    color: var(--green-2);
+    border: 1px solid rgba(16, 185, 129, 0.2);
+    align-self: flex-end;
+  }
+  .play-ai-msg.assistant {
+    background: var(--panel);
+    color: var(--fg);
+    border: 1px solid var(--line-2);
+    align-self: flex-start;
+  }
+  .play-ai-form {
+    display: flex;
+    gap: 8px;
+    padding: 12px;
+    background: var(--panel);
+  }
+  .play-ai-input {
+    flex: 1;
+    min-height: 38px;
+    border: 1px solid var(--line-2);
+    border-radius: var(--radius);
+    padding: 0 12px;
+    font-size: 13px;
+    background: var(--surface);
+    color: var(--fg);
+  }
+  .play-ai-input:focus {
+    outline: none;
+    border-color: var(--green);
+  }
+  .play-ai-send {
+    min-height: 38px;
+    padding: 0 16px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
   /* Sticky controls bar (presets + Run) — never lost under an editor, always reachable. */
   .play-controls {
     position: sticky; top: 64px; z-index: 6;

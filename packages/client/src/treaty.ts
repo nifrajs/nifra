@@ -34,9 +34,15 @@ type IsBodyVerb<M extends string> = M extends "POST" | "PUT" | "PATCH" ? true : 
  */
 type MethodCall<I extends RouteInfo, BodyVerb extends boolean> = BodyVerb extends true
   ? [I["body"]] extends [never]
-    ? (body?: undefined, options?: CallOptions<I>) => Promise<Result<Jsonify<I["output"]>>>
-    : (body: I["body"], options?: CallOptions<I>) => Promise<Result<Jsonify<I["output"]>>>
-  : (options?: CallOptions<I>) => Promise<Result<Jsonify<I["output"]>>>
+    ? (
+        body?: undefined,
+        options?: CallOptions<I>,
+      ) => Promise<Result<Jsonify<I["output"]>, Jsonify<I["errors"]>>>
+    : (
+        body: I["body"],
+        options?: CallOptions<I>,
+      ) => Promise<Result<Jsonify<I["output"]>, Jsonify<I["errors"]>>>
+  : (options?: CallOptions<I>) => Promise<Result<Jsonify<I["output"]>, Jsonify<I["errors"]>>>
 
 type Methods<MethodMap> = {
   [M in keyof MethodMap as Lowercase<M & string>]: MethodCall<

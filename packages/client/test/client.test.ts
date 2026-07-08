@@ -28,6 +28,9 @@ const pageQuery = schema<{ page: string }>((v) =>
     ? { value: { page: v.page } }
     : { issues: [{ message: "page is required", path: ["page"] }] },
 )
+const notFoundError = schema<{ code: "no_such_item"; item: string }>((v) => ({
+  value: v as { code: "no_such_item"; item: string },
+}))
 
 const app = server()
   .get("/", () => ({ root: true }))
@@ -38,6 +41,15 @@ const app = server()
   .get("/search", { query: pageQuery }, (c) => ({ page: c.query.page }))
   .get("/files/*path", (c) => ({ path: c.params.path }))
   .post("/ping", () => ({ pong: true }))
+  .post("/orders", { body: nameBody, errors: { 404: notFoundError } }, (c) => {
+    if (c.body.name === "missing") {
+      return new Response(JSON.stringify({ code: "no_such_item", item: c.body.name }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      })
+    }
+    return { orderId: "o1" }
+  })
   .get("/secure", (c) => ({ auth: c.req.headers.get("authorization") }))
   .get("/text", () => new Response("hello text"))
   .get("/boom", () => new Response("kaboom", { status: 500 }))
@@ -154,9 +166,14 @@ describe("client — headers", () => {
 describe("client — error paths (never throws)", () => {
   const raw = (): RawClient => client<App>(url()) as unknown as RawClient
 
-  test("404 → not_found", async () => {
+  test("404 → not_found (failure `data` carries the parsed error body)", async () => {
     const res = await raw().nope.get()
-    expect(res).toMatchObject({ ok: false, status: 404, data: null, error: { error: "not_found" } })
+    expect(res).toMatchObject({
+      ok: false,
+      status: 404,
+      data: { error: "not_found" },
+      error: { error: "not_found" },
+    })
   })
 
   test("405 → method_not_allowed", async () => {
@@ -183,6 +200,30 @@ describe("client — error paths (never throws)", () => {
     const dead = client<App>("http://localhost:1") as unknown as RawClient
     const res = await dead.health.get()
     expect(res).toEqual({ ok: false, status: 0, data: null, error: { error: "network_error" } })
+  })
+
+  test("a route's `errors` contract types the failure `data` (distinct from success)", async () => {
+    const res = await api.orders.post({ name: "missing" })
+    expect(res.status).toBe(404)
+    if (!res.ok) {
+      // Type-level: `res.data` is the declared 404 error body — accessing `.code`/`.item` only
+      // compiles because it's typed from `errors`, not the success `{ orderId }` (nor the old `null`).
+      const code: "no_such_item" = res.data.code
+      const item: string = res.data.item
+      expect(code).toBe("no_such_item")
+      expect(item).toBe("missing")
+      // `error` remains the normalized summary.
+      expect(res.error).toEqual({ error: "request_failed" })
+    }
+  })
+
+  test("the same route's success `data` is the handler output type", async () => {
+    const res = await api.orders.post({ name: "ok" })
+    expect(res.ok).toBe(true)
+    if (res.ok) {
+      const orderId: string = res.data.orderId
+      expect(orderId).toBe("o1")
+    }
   })
 })
 
