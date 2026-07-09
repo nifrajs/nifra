@@ -1,5 +1,68 @@
 # @nifrajs/core
 
+## 1.3.0
+
+### Minor Changes
+
+- 4a4b1c4: feat(core): app-wide default `onValidationError` + `kind` argument
+
+  `server({ onValidationError })` now sets an app-wide fallback that fires when a route **without its own**
+  `onValidationError` fails body/query validation — one place to define your error envelope instead of repeating
+  it per route (like tRPC's `errorFormatter` / Fastify's `setErrorHandler`), while a route's own hook still
+  takes precedence. A route can fall through to the plain `422` by returning `undefined`.
+
+  The hook (route-level and app-level) now also receives a third argument, `kind: "body" | "query"`, telling it
+  which input failed — backward-compatible (existing 2-arg hooks are unaffected). The healed-value re-validation
+  contract is unchanged: an app-level default that returns a repaired value is re-validated against the route's
+  schema before the handler runs.
+
+- 4a4b1c4: feat: `server().resource()` / `.prompt()` — app-declared MCP resources & prompts
+
+  Completing the MCP trio alongside `.tool()`: an app can now expose its own MCP **resources**
+  (`.resource(uri, { name, description?, mimeType? }, read)`) and **prompts** (`.prompt(name, { description,
+arguments? }, handler)`). `nifra mcp` surfaces them in `resources/list` + `resources/read` and `prompts/list`
+
+  - `prompts/get` (namespaced per app in a monorepo). The `read`/`handler` closures run in the app process, so
+    they capture whatever app state they need — no HTTP round-trip.
+
+- 4a4b1c4: feat: MCP tool annotations on `server().tool()`
+
+  `.tool()` config now accepts `annotations` — the MCP spec's per-tool safety hints (`title`, `readOnlyHint`,
+  `destructiveHint`, `idempotentHint`, `openWorldHint`) — surfaced in `tools/list` and `tools/describe`. An
+  agent can now tell a read-only tool from a destructive one and decide whether to auto-invoke or confirm
+  first, instead of treating every exposed tool as equally risky.
+
+- 4a4b1c4: feat: `errors` response contract on routes + typed client error bodies
+
+  A route's `RouteSchema` may now declare `errors` — a `{ status → Standard Schema }` map of its failure modes.
+  Like `response`, it's a compile-time + introspection contract (not validated at runtime, zero hot-path cost):
+  the declared error bodies flow into OpenAPI as non-2xx `responses` and into the `/llms.txt` context, so
+  tooling and coding agents can read the _whole_ contract, not just the happy path.
+
+  The **typed client** now surfaces them: on a failure `Result`, `data` is the parsed error body typed from the
+  route's `errors` (a union across declared statuses; `unknown` when none declared), discriminated by `ok`.
+  `error` remains the normalized `{ error, issues }` summary. The **decoupled contract client**
+  (`client(contract, url)`) gets the same treatment — its failure `data` is typed from the op's non-2xx
+  `responses` schemas.
+
+  **Behavior change:** on failure, `data` is now the parsed error response body (previously always `null`) — so
+  `const { ok, data } = await api.orders.post(...)` gives you the typed error body in the `!ok` branch. `data`
+  is still `null` only on a transport error (status `0`, no response).
+
+- 4a4b1c4: feat(core): `onValidationError` route hook + `server().tool()`
+
+  Two additions for building agent-facing endpoints on Nifra:
+
+  - **`onValidationError` route hook**: a `RouteSchema` callback that runs when a request fails schema
+    validation. It receives the Standard Schema issues and the request context, and may return a `Response`
+    (short-circuit the route), a repaired payload (re-validated before dispatch — still invalid → the original
+    `422` stands), or `undefined` (keep the `422`). Makes validation recovery pluggable instead of every
+    handler re-checking by hand.
+
+  - **`server().tool(name, config, handler)`**: register a `.tool()` route (`POST /_nifra/tool/:name`) with
+    typed `input`/`output` Standard Schemas. The handler's `input` is inferred from the input schema; the
+    descriptor is tagged as an MCP tool so `nifra mcp` exposes it in `tools/list`.
+
 ## 1.2.2
 
 ## 1.2.1
