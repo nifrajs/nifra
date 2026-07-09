@@ -4516,7 +4516,7 @@
     "name": "RegistryFromImpl",
     "kind": "type",
     "package": "@nifrajs/core",
-    "signature": "export type RegistryFromImpl<C extends ContractShape, H extends HandlersFor<C>> = {\n    [P in C[keyof C][\"path\"]]: {\n        [K in keyof C as C[K][\"path\"] extends P ? C[K][\"method\"] : never]: {\n            readonly params: Params<C[K][\"path\"]>;\n            readonly query: OpQuery<C[K]>;\n            readonly body: OpBody<C[K]>;\n            readonly output: C[K] extends {\n                response: infer R extends StandardSchemaV1;\n            } ? InferOutput<R> : H[K] extends AnyFn ? OutputOf<H[K]> : unknown;\n            readonly errors: unknown;\n        };\n    };\n};",
+    "signature": "export type RegistryFromImpl<C extends ContractShape, H extends HandlersFor<C>> = {\n    [P in C[keyof C][\"path\"]]: {\n        [K in keyof C as C[K][\"path\"] extends P ? C[K][\"method\"] : never]: {\n            readonly params: Params<C[K][\"path\"]>;\n            readonly query: OpQuery<C[K]>;\n            readonly body: OpBody<C[K]>;\n            readonly output: C[K] extends {\n                response: infer R extends StandardSchemaV1;\n            } ? InferOutput<R> : H[K] extends AnyFn ? OutputOf<H[K]> : unknown;\n            readonly errors: OpErrors<C[K]>;\n        };\n    };\n};",
     "doc": "/**\n * The registry produced by `implement`: input from the contract op; `output` is the declared `response`\n * contract when present (it wins — exactly as in the inline path), else the bound HANDLER's return — so\n * the implemented server stays route-for-route identical to the equivalent inline server (the\n * mode-conformance guarantee), and a contract-typed client and a `typeof app`-typed client agree.\n */"
   },
   {
@@ -6739,7 +6739,7 @@
     "name": "VERSION",
     "kind": "const",
     "package": "@nifrajs/core",
-    "signature": "export declare const VERSION: \"1.2.2\";",
+    "signature": "export declare const VERSION: \"1.3.0\";",
     "doc": "/**\n * Current package version. A hardcoded literal on purpose — core runs on the edge (no fs), so it can't\n * read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and\n * `check:publish` asserts it equals `@nifrajs/core`'s package version, so the literal can't go stale\n * (it shipped at \"0.0.0\" through 1.0.0 before those guards existed). Kept narrow (`as const`) so\n * consumers can pin it at the type level — see `test/version.test-d.ts`.\n */"
   },
   {
