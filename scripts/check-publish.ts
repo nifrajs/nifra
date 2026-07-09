@@ -82,21 +82,11 @@ if (publishScript === undefined || !publishScript.includes("resolve-workspace-de
 
 await $`bun run build`
 
-// MCP-corpus staleness gate: `@nifrajs/cli` ships the `nifra mcp` types/examples corpus
-// (`packages/cli/docs/{types,examples}.json`), generated from the built `.d.ts`. If a release forgets to
-// regenerate it, `nifra_types`/`nifra_context` go stale against the new API (1.3.0 shipped a stale
-// `types.json`). Regenerate against the just-built `dist` and fail if the committed corpus drifted.
-console.log("\n=== MCP corpus staleness gate ===")
-await $`bun run scripts/gen-llms.ts`.quiet()
-const corpusDrift = (
-  await $`git status --porcelain packages/cli/docs/types.json packages/cli/docs/examples.json`.text()
-).trim()
-if (corpusDrift !== "") {
-  failures += 1
-  console.error(`✗ MCP corpus is stale — run \`bun run gen:llms\` and commit:\n${corpusDrift}`)
-} else {
-  console.log("✓ MCP corpus (types.json + examples.json) is up to date")
-}
+// Note: the `nifra mcp` corpus (`packages/cli/docs/{types,examples}.json`) is NOT byte-gated here — it's
+// generated from the built `.d.ts`, which differs subtly across build environments (bun/OS), so a
+// committed-vs-CI-regen diff yields false failures. Freshness is guaranteed at the source instead:
+// `changeset:publish` runs `gen:llms` after the build, so every published tarball carries a corpus
+// regenerated from that exact build (see 1.3.0, which shipped a stale corpus before that step existed).
 
 for (const pkg of LIBRARIES) {
   console.log(`\n=== @nifrajs/${pkg} ===`)
