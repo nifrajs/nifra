@@ -1,5 +1,11 @@
 # @nifrajs/web
 
+## 1.3.1
+
+### Patch Changes
+
+- @nifrajs/core@1.3.1
+
 ## 1.3.0
 
 ### Minor Changes
