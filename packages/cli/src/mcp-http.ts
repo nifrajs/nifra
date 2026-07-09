@@ -26,7 +26,7 @@ export { docsTools } from "./mcp-docs-tools.ts"
 export type { TypeEntry } from "./types-search.ts"
 
 // Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
-const VERSION = "1.3.0"
+const VERSION = "1.3.1"
 const SERVER_INFO = { name: "nifra-docs", version: VERSION }
 const DOCS_HEALTH =
   "nifra docs MCP — POST JSON-RPC 2.0 here (methods: initialize, tools/list, tools/call). Tools: nifra_docs, nifra_example."

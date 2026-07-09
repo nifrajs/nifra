@@ -1,5 +1,25 @@
 # @nifrajs/examples
 
+## 1.3.1
+
+### Patch Changes
+
+- Updated dependencies [578da89]
+  - @nifrajs/cli@1.3.1
+  - @nifrajs/client@1.3.1
+  - @nifrajs/core@1.3.1
+  - @nifrajs/deno@1.3.1
+  - @nifrajs/mcp@1.3.1
+  - @nifrajs/middleware@1.3.1
+  - @nifrajs/node@1.3.1
+  - @nifrajs/schema@1.3.1
+  - @nifrajs/web@1.3.1
+  - @nifrajs/web-preact@1.3.1
+  - @nifrajs/web-react@1.3.1
+  - @nifrajs/web-solid@1.3.1
+  - @nifrajs/web-svelte@1.3.1
+  - @nifrajs/web-vue@1.3.1
+
 ## 1.3.0
 
 ### Patch Changes
