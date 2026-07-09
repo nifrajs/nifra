@@ -1,5 +1,13 @@
 # @nifrajs/web-preact
 
+## 1.3.1
+
+### Patch Changes
+
+- @nifrajs/i18n@1.3.1
+- @nifrajs/image@1.3.1
+- @nifrajs/web@1.3.1
+
 ## 1.3.0
 
 ### Patch Changes
