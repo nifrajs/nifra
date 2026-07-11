@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/cron",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Runtime-agnostic in-process cron for nifra — standard 5-field expressions + @macros, overlap-safe, error-isolated, graceful stop. For long-running servers (Bun/Node/Deno); Workers use the platform scheduled trigger. Dependency-free.",
   "keywords": [
     "bun",
