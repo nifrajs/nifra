@@ -1,5 +1,11 @@
 # @nifrajs/otel
 
+## 1.6.0
+
+### Minor Changes
+
+- d228ac4: `ActiveObservation.setAttributes(attributes)` — merge attributes onto the in-flight request span from a handler or later plugin (`c.observation.setAttributes({ "tenant.key": ... })`), for facts learned mid-request (authenticated principal, flag bucket, cache verdict). Silently a no-op once the observation has ended; the exported span stays immutable.
+
 ## 1.5.0
 
 ### Patch Changes

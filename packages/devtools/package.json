@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/devtools",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Interactive DevTools overlay for nifra dev — loader traces, ISR status, route metadata.",
   "type": "module",
   "main": "./dist/index.js",
