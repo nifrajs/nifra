@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/bench",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Benchmark harness. Speed is a v1 goal (parity within ~10% of Elysia), so benchmarks are first-class and tracked from commit one.",
   "type": "module",
   "private": true,

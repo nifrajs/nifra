@@ -17,17 +17,17 @@
     "deploy:vercel": "vercel deploy --prebuilt"
   },
   "dependencies": {
-    "@nifrajs/client": "^1.4.0",
-    "@nifrajs/core": "^1.4.0",
-    "@nifrajs/schema": "^1.4.0",
-    "@nifrajs/deno": "^1.4.0",
-    "@nifrajs/node": "^1.4.0",
-    "@nifrajs/web": "^1.4.0",
-    "@nifrajs/web-solid": "^1.4.0",
+    "@nifrajs/client": "^1.5.0",
+    "@nifrajs/core": "^1.5.0",
+    "@nifrajs/schema": "^1.5.0",
+    "@nifrajs/deno": "^1.5.0",
+    "@nifrajs/node": "^1.5.0",
+    "@nifrajs/web": "^1.5.0",
+    "@nifrajs/web-solid": "^1.5.0",
     "solid-js": "^1.9.0"
   },
   "devDependencies": {
-    "@nifrajs/cli": "^1.4.0",
+    "@nifrajs/cli": "^1.5.0",
     "typescript": "^6.0.3",
     "vite": "^8.0.0",
     "vite-plugin-solid": "^2.10.0"
