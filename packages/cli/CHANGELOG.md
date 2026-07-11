@@ -1,5 +1,24 @@
 # @nifrajs/cli
 
+## 1.5.0
+
+### Minor Changes
+
+- 1ac2fde: API breaking-change gate: `snapshotRoutes` + `diffRouteSnapshots` in `@nifrajs/core/diff` (direction-aware — a new required request field or a removed response field breaks; widening a request enum or adding a response field doesn't; fails closed on anything unprovable), and `nifra snapshot` / `nifra diff <baseline>` CLI commands that exit non-zero on breaking changes for CI.
+
+### Patch Changes
+
+- Updated dependencies [1ac2fde]
+- Updated dependencies [bd3433f]
+- Updated dependencies [70aa836]
+  - @nifrajs/core@1.5.0
+  - @nifrajs/schema@1.5.0
+  - @nifrajs/client@1.5.0
+  - @nifrajs/web@1.5.0
+  - @nifrajs/mcp@1.5.0
+  - @nifrajs/runner@1.5.0
+  - create-nifra@1.5.0
+
 ## 1.4.0
 
 ### Patch Changes
