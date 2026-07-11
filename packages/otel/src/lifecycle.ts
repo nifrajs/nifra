@@ -53,6 +53,12 @@ export interface ActiveObservation {
     input: Omit<StartObservation, "parent" | "traceparent">,
     additionalAdapters?: readonly ObservationAdapter[],
   ): ActiveObservation
+  /**
+   * Merge attributes onto the in-flight span — the seam for plugins that learn something mid-request
+   * (an authenticated principal, a feature-flag bucket, a cache verdict) after the span opened.
+   * Silently ignored once the observation has ended (the exported span is immutable).
+   */
+  setAttributes(attributes: Readonly<Record<string, AttributeValue>>): void
   /** Records failure evidence without deciding the final status until the response is known. */
   recordError(error: unknown): void
   /** Ends and exports once. Repeated calls return the same completed span without notifying again. */
@@ -167,6 +173,10 @@ export function createObservationLifecycle(
           },
           childAdapters,
         )
+      },
+      setAttributes(attributes) {
+        if (ended) return
+        Object.assign(span.attributes, attributes)
       },
       recordError(_error) {
         if (ended) return
