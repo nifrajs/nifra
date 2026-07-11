@@ -84,7 +84,8 @@ describe("agentTelemetry", () => {
 
     const span = spans[0]!
     expect(span.status).toBe("error")
-    expect(span.attributes["error.message"]).toBe("boom")
+    expect(span.attributes["error.recorded"]).toBe(true)
+    expect(span.attributes["error.message"]).toBeUndefined()
   })
 
   test("creates a child of the active Nifra trace", async () => {

@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm, symlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -179,6 +179,19 @@ describe("contentType + metadata", () => {
     const object = present(await s.get("photo.png"))
     expect(object.contentType).toBe("image/png")
     expect(object.metadata).toBeUndefined()
+  })
+})
+
+describe("FileStorage filesystem containment", () => {
+  test("rejects a key whose existing path crosses a symlink outside the storage root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nifra-storage-root-"))
+    const outside = await mkdtemp(join(tmpdir(), "nifra-storage-outside-"))
+    tmpDirs.push(root, `${root}.nifra-metadata`, outside)
+    await symlink(outside, join(root, "escape"), "dir")
+
+    const storage = new FileStorage(root)
+    await expect(storage.put("escape/pwn.txt", "owned")).rejects.toBeInstanceOf(StorageKeyError)
+    await expect(readFile(join(outside, "pwn.txt"))).rejects.toMatchObject({ code: "ENOENT" })
   })
 })
 

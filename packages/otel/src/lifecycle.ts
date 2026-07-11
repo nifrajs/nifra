@@ -86,9 +86,6 @@ const defaultClock: ObservationClock = {
   monotonicTime: () => (typeof performance === "undefined" ? Date.now() : performance.now()),
 }
 
-const errorMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error)
-
 /** Creates an independent lifecycle factory. Adapters are always called fail-open. */
 export function createObservationLifecycle(
   options: ObservationLifecycleOptions = {},
@@ -171,10 +168,13 @@ export function createObservationLifecycle(
           childAdapters,
         )
       },
-      recordError(error) {
+      recordError(_error) {
         if (ended) return
         recordedError = true
-        span.attributes["error.message"] = errorMessage(error)
+        // Error text is deliberately excluded: exception messages routinely contain credentials,
+        // URLs, customer data, and query values. Integrations that own an explicit redaction policy
+        // may add sanitized detail through their own adapter.
+        span.attributes["error.recorded"] = true
       },
       end(endInput = {}) {
         if (ended) return span

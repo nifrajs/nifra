@@ -112,6 +112,26 @@ export interface OpenAPIDocument {
  */
 class SchemaStore {
   readonly schemas: Record<string, JsonSchema> = {}
+  private readonly componentNames = new Map<string, string>()
+  private readonly componentIds = new Map<string, string>()
+
+  private componentName(id: string): string {
+    const known = this.componentNames.get(id)
+    if (known !== undefined) return known
+    const encoded = [...new TextEncoder().encode(id)]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("")
+    const base = /^[A-Za-z0-9._-]+$/.test(id) ? id : `Schema_${encoded}`
+    let name = base
+    let suffix = 2
+    while (this.componentIds.has(name) && this.componentIds.get(name) !== id) {
+      name = `${base}_${suffix}`
+      suffix += 1
+    }
+    this.componentNames.set(id, name)
+    this.componentIds.set(name, id)
+    return name
+  }
 
   /** Hoist a schema with a `$id` into components + return a `$ref`; otherwise return it inline. */
   collect(schema: JsonSchema | undefined): JsonSchema | undefined {
@@ -119,12 +139,18 @@ class SchemaStore {
     if (typeof schema === "boolean") return schema
     const id = typeof schema.$id === "string" ? schema.$id : undefined
     if (id === undefined) return schema
-    if (this.schemas[id] === undefined) {
+    const componentName = this.componentName(id)
+    if (!Object.hasOwn(this.schemas, componentName)) {
       const hoisted = { ...schema }
       delete hoisted.$id // the component key is the name; drop the redundant base-URI hint
-      this.schemas[id] = hoisted
+      Object.defineProperty(this.schemas, componentName, {
+        value: hoisted,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      })
     }
-    return { $ref: `#/components/schemas/${id}` }
+    return { $ref: `#/components/schemas/${componentName}` }
   }
 }
 

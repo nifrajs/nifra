@@ -211,6 +211,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Mutable response controls a handler may write to before returning.
 - **ResponseDef** _(interface)_ — `interface ResponseDef`
   An additional (non-success) response a contract operation can document, e.g. a `404`.
+- **ResponseFinalization** _(interface)_ — `interface ResponseFinalization`
+  The terminal response-pipeline outcome observed after every transforming `onResponse` hook.
 - **RobotsOptions** _(interface)_ — `interface RobotsOptions`
 - **RobotsRule** _(interface)_ — `interface RobotsRule`
 - **RouteChange** _(interface)_ — `interface RouteChange`
@@ -1264,6 +1266,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Mutable response controls a handler may write to before returning.
 - **ResponseDef** _(interface)_ — `interface ResponseDef`
   An additional (non-success) response a contract operation can document, e.g. a `404`.
+- **ResponseFinalization** _(interface)_ — `interface ResponseFinalization`
+  The terminal response-pipeline outcome observed after every transforming `onResponse` hook.
 - **RobotsOptions** _(interface)_ — `interface RobotsOptions`
 - **RobotsRule** _(interface)_ — `interface RobotsRule`
 - **RouteChange** _(interface)_ — `interface RouteChange`

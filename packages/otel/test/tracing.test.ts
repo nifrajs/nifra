@@ -106,4 +106,42 @@ describe("tracing plugin", () => {
     const res = await app.fetch(new Request("http://t/r"))
     expect(res.headers.get("traceparent")).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/)
   })
+
+  test("classifies the response after every later response transformation", async () => {
+    const c = collector()
+    const app = server()
+      .use(tracing({ exporter: c.exporter }))
+      .onResponse(
+        (response) =>
+          new Response(response.body, {
+            status: 503,
+            statusText: "Unavailable",
+            headers: response.headers,
+          }),
+      )
+      .get("/late-status", () => ({ ok: true }))
+
+    const response = await app.fetch(new Request("http://t/late-status"))
+    expect(response.status).toBe(503)
+    expect(c.spans[0]?.attributes["http.response.status_code"]).toBe(503)
+    expect(c.spans[0]?.status).toBe("error")
+  })
+
+  test("ends the observation when a later response transformation throws", async () => {
+    const c = collector()
+    const app = server()
+      .use(tracing({ exporter: c.exporter }))
+      .onResponse(() => {
+        throw new Error("response-hook-secret")
+      })
+      .get("/hook-failure", () => ({ ok: true }))
+
+    await expect(app.fetch(new Request("http://t/hook-failure"))).rejects.toThrow(
+      "response-hook-secret",
+    )
+    expect(c.spans).toHaveLength(1)
+    expect(c.spans[0]?.status).toBe("error")
+    expect(c.spans[0]?.attributes["error.recorded"]).toBe(true)
+    expect(JSON.stringify(c.spans[0]?.attributes)).not.toContain("response-hook-secret")
+  })
 })

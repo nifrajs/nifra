@@ -25,7 +25,7 @@ The nifra full-stack framework — unscoped meta-entry that re-exports @nifrajs/
 - **serializeCookie** _(function)_ — `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
 - **server** _(function)_ — `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
 
-_…and 102 more — see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
+_…and 103 more — see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
 
 ## Footguns
 

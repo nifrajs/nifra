@@ -25,7 +25,7 @@ Bun-native, contract-first HTTP framework — the router, server, and route desc
 - **serializeCookie** _(function)_ — `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
 - **server** _(function)_ — `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
 
-_…and 102 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
+_…and 103 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 
 ## Footguns
 
