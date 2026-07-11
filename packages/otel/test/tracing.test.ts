@@ -145,3 +145,35 @@ describe("tracing plugin", () => {
     expect(JSON.stringify(c.spans[0]?.attributes)).not.toContain("response-hook-secret")
   })
 })
+
+describe("setAttributes — the mid-request annotation seam", () => {
+  test("a handler (or later plugin) annotates the in-flight span via c.observation", async () => {
+    const c = collector()
+    const app = server()
+      .use(tracing({ exporter: c.exporter }))
+      .get("/annotated", (ctx) => {
+        ctx.observation.setAttributes({ "tenant.key": "t_abc123", "flag.bucket": "treatment" })
+        return { ok: true }
+      })
+    await app.fetch(new Request("http://t/annotated"))
+    expect(c.spans[0]?.attributes["tenant.key"]).toBe("t_abc123")
+    expect(c.spans[0]?.attributes["flag.bucket"]).toBe("treatment")
+    // End-time attributes still win their own keys and the span still classifies normally.
+    expect(c.spans[0]?.attributes["http.response.status_code"]).toBe(200)
+  })
+
+  test("setAttributes after end is a silent no-op — the exported span is immutable", async () => {
+    const c = collector()
+    let leaked: { setAttributes(a: Record<string, string>): void } | undefined
+    const app = server()
+      .use(tracing({ exporter: c.exporter }))
+      .get("/leak", (ctx) => {
+        leaked = ctx.observation
+        return { ok: true }
+      })
+    await app.fetch(new Request("http://t/leak"))
+    expect(c.spans).toHaveLength(1)
+    expect(() => leaked?.setAttributes({ late: "write" })).not.toThrow()
+    expect(c.spans[0]?.attributes["late"]).toBeUndefined()
+  })
+})
