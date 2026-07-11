@@ -65,6 +65,13 @@ Usage:
   nifra check   [--json] [--lints-only]  Gate: typecheck + lints (hand-rolled fetch(), untyped client("…"),
                                          server-only imports in routes/). Run as "done"; --json for agents;
                                          --lints-only skips tsc for a near-instant inner-loop pass.
+  nifra snapshot [--out <file>]          Write the backend's API contract (routes + schemas) as plain
+                                         JSON — the baseline for \`nifra diff\`. Default api-snapshot.json.
+  nifra diff    [<baseline>] [--json]    Breaking-change gate: re-snapshot the contract and compare
+                                         against the committed baseline. Direction-aware (a new required
+                                         request field or a removed response field breaks; widening a
+                                         request enum or adding a response field doesn't) and fails
+                                         closed. Exits non-zero on any breaking change — run it in CI.
   nifra doctor  [--json] [--auto-fix]    Flag packages imported in source but missing from package.json
                                          (resolve at Bun runtime, break tsc + standalone install);
                                          --auto-fix writes safe local-version dependency fixes.
@@ -330,6 +337,38 @@ async function main(): Promise<void> {
       }))
     )
       process.exitCode = 1
+    return
+  }
+  // `snapshot` / `diff` load ONLY backend.ts (the API contract) — like `check`, they must run on an
+  // API-only project, so they dispatch before the eager `loadApp`.
+  if (command === "snapshot") {
+    const { runSnapshot } = await import("./diff-tool.ts")
+    const outIdx = argv.indexOf("--out")
+    const out = outIdx !== -1 ? argv[outIdx + 1] : undefined
+    if (outIdx !== -1 && (out === undefined || out.startsWith("-"))) {
+      console.error("[nifra] --out needs a file path")
+      process.exitCode = 1
+      return
+    }
+    try {
+      await runSnapshot(process.cwd(), out !== undefined ? { out } : {})
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err))
+      process.exitCode = 1
+    }
+    return
+  }
+  if (command === "diff") {
+    const { runDiff, DEFAULT_SNAPSHOT_FILE } = await import("./diff-tool.ts")
+    const baseline = argv.slice(1).find((arg) => !arg.startsWith("-")) ?? DEFAULT_SNAPSHOT_FILE
+    try {
+      if (!(await runDiff(process.cwd(), baseline, { json: argv.includes("--json") }))) {
+        process.exitCode = 1
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err))
+      process.exitCode = 1
+    }
     return
   }
   // `port` is a pure cwd-based portability linter (scans source, doesn't run the app) — like `check`/
