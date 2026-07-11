@@ -11,6 +11,7 @@ import type { Context, Platform, ResponseControls, RouteSchema } from "./context
 import { type CookieOptions, parseCookies, serializeCookie } from "./cookies.ts"
 import { jsonLogger, type Logger } from "./logger.ts"
 import type { AddRoute, EmptyRegistry, OutputOf, Registry, RouteInfoFor } from "./registry.ts"
+import { type SSEInit, sse, type TypedSSEStream, typedSSEStream } from "./sse.ts"
 import type {
   StandardWebSocket,
   TopicRegistry,
@@ -1259,6 +1260,43 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     handler?: ErasedHandler,
   ): Server<Registry, Ctx> {
     return this.route("GET", path, schemaOrHandler, handler)
+  }
+
+  /**
+   * Register a **typed SSE route** — a GET endpoint streaming `text/event-stream` whose event
+   * payloads are contracted by `schema.sse`. The handler receives the validated context plus a
+   * {@link TypedSSEStream}: `stream.send(event)` is compile-time-checked against the schema and
+   * JSON-serialized into the SSE `data:` field. The typed client sees the marker and grows a
+   * `.subscribe(onEvent)` for the route with the same payload type — end-to-end typed streaming.
+   *
+   *   const app = server().sse("/feed", { sse: t.object({ id: t.integer(), title: t.string() }) },
+   *     async (c, stream) => {
+   *       stream.send({ id: 1, title: "hello" })          // typed
+   *       await waitForDisconnect(stream.signal)
+   *     },
+   *     { keepAlive: 15_000 })
+   *
+   *   // client: const off = api.feed.subscribe((post) => console.log(post.title))
+   *
+   * `init` passes through to the underlying {@link sse} helper (`keepAlive`, extra headers). The
+   * connection closes when the handler resolves, `stream.close()` runs, or the client disconnects
+   * (`stream.signal`). Query/body schemas validate exactly as on any other route.
+   */
+  sse<Path extends string, S extends RouteSchema & { sse: StandardSchemaV1 }>(
+    path: Path,
+    schema: S,
+    run: (
+      context: Context<Path, S> & Ctx,
+      stream: TypedSSEStream<InferOutput<S["sse"]>>,
+    ) => void | Promise<void>,
+    init?: SSEInit,
+  ): Server<AddRoute<R, "GET", Path, RouteInfoFor<Path, S, Response>>, Ctx> {
+    const handler = (context: Context<Path, S> & Ctx): Response =>
+      sse(context, (stream) => run(context, typedSSEStream(stream)), init)
+    return this.route("GET", path, schema, handler as unknown as ErasedHandler) as Server<
+      AddRoute<R, "GET", Path, RouteInfoFor<Path, S, Response>>,
+      Ctx
+    >
   }
 
   post<Path extends string, S extends RouteSchema, H extends Handler<Path, S, Ctx>>(

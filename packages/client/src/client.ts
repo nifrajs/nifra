@@ -1,6 +1,6 @@
 import type { ContractShape, RegistryFor } from "@nifrajs/core"
 import type { ApiError, Result } from "./result.ts"
-import type { Treaty, TreatyFromRegistry } from "./treaty.ts"
+import type { Subscription, Treaty, TreatyFromRegistry } from "./treaty.ts"
 
 const HTTP_VERBS: ReadonlySet<string> = new Set([
   "get",
@@ -128,6 +128,13 @@ function createProxy(base: string, path: string, options: ClientOptions): unknow
         return (...args: unknown[]): Promise<Result<unknown>> =>
           execute(base, path, key.toLowerCase(), args, options)
       }
+      // Typed SSE subscription for `app.sse()` routes. Like `fetch` on the in-process client,
+      // `subscribe` is a reserved proxy key — a literal `/subscribe` path segment is unreachable
+      // through the typed proxy (no nifra app defines one reached this way).
+      if (key === "subscribe") {
+        return (onEvent: (event: unknown) => void, subscribeOptions?: SubscribeCallOptions) =>
+          subscribeSse(base, path, onEvent, subscribeOptions, options)
+      }
       // `index` addresses the root path "/" and adds no segment.
       return createProxy(base, key === "index" ? path : `${path}/${key}`, options)
     },
@@ -187,6 +194,195 @@ async function execute(
   // On failure, `data` carries the parsed error body (typed from the route's `errors` contract);
   // `error` is the server's normalized `{ error, issues }` summary.
   return { ok: false, status: response.status, data, error: toApiError(data) }
+}
+
+// --- typed SSE subscriptions (fetch-based, so it works over ANY fetcher: network, in-process, tests) ---
+
+interface SubscribeCallOptions {
+  readonly query?: Record<string, unknown>
+  readonly headers?: Record<string, string>
+  readonly signal?: AbortSignal
+  readonly reconnect?: boolean | { baseDelayMs?: number; maxDelayMs?: number }
+  readonly onError?: (error: unknown) => void
+  readonly onClose?: () => void
+}
+
+/** One parsed SSE frame (the fields the client consumes). */
+interface SseFrame {
+  data?: string
+  id?: string
+  retry?: number
+}
+
+/**
+ * Incrementally parse a `text/event-stream` body, invoking `onFrame` per dispatched event.
+ * Implements the SSE wire format: `data:` accumulates multi-line, `id:`/`retry:` update stream
+ * state, `:` lines are comments, a blank line dispatches.
+ */
+async function readSseStream(
+  body: ReadableStream<Uint8Array>,
+  onFrame: (frame: SseFrame) => void,
+): Promise<void> {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ""
+  let dataLines: string[] = []
+  let frame: SseFrame = {}
+
+  const dispatch = (): void => {
+    if (dataLines.length > 0) frame.data = dataLines.join("\n")
+    if (frame.data !== undefined || frame.id !== undefined || frame.retry !== undefined) {
+      onFrame(frame)
+    }
+    dataLines = []
+    frame = {}
+  }
+
+  const handleLine = (line: string): void => {
+    if (line === "") {
+      dispatch()
+      return
+    }
+    if (line.startsWith(":")) return // comment / keep-alive
+    const colon = line.indexOf(":")
+    const field = colon === -1 ? line : line.slice(0, colon)
+    let value = colon === -1 ? "" : line.slice(colon + 1)
+    if (value.startsWith(" ")) value = value.slice(1)
+    if (field === "data") dataLines.push(value)
+    else if (field === "id") frame.id = value
+    else if (field === "retry") {
+      const parsed = Number(value)
+      if (Number.isFinite(parsed)) frame.retry = parsed
+    }
+    // `event:` names pass through untyped for now — the contract types the data payload.
+  }
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      for (;;) {
+        const newline = buffer.indexOf("\n")
+        if (newline === -1) break
+        const line = buffer.slice(0, newline).replace(/\r$/, "")
+        buffer = buffer.slice(newline + 1)
+        handleLine(line)
+      }
+    }
+    buffer += decoder.decode()
+    if (buffer !== "") handleLine(buffer.replace(/\r$/, ""))
+    dispatch() // an unterminated final frame still dispatches
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+/**
+ * The `.subscribe()` runtime for `app.sse()` routes. fetch-based (never `EventSource`), so it
+ * streams over the configured fetcher — network, an in-process bridge, or a test mock — with
+ * EventSource semantics where they matter: auto-reconnect with backoff + jitter (honoring the
+ * server's `retry:` hint), `Last-Event-ID` resumption, JSON-parsed typed events. Never throws:
+ * failures reach `onError`; a terminal end reaches `onClose`.
+ */
+function subscribeSse(
+  base: string,
+  path: string,
+  onEvent: (event: unknown) => void,
+  callOptions: SubscribeCallOptions | undefined,
+  options: ClientOptions,
+): Subscription {
+  const controller = new AbortController()
+  let closed = false
+  let lastEventId: string | undefined
+  let serverRetryMs: number | undefined
+
+  const reconnectConfig = callOptions?.reconnect ?? true
+  const reconnectEnabled = reconnectConfig !== false
+  const baseDelayMs =
+    (typeof reconnectConfig === "object" ? reconnectConfig.baseDelayMs : undefined) ?? 1_000
+  const maxDelayMs =
+    (typeof reconnectConfig === "object" ? reconnectConfig.maxDelayMs : undefined) ?? 15_000
+
+  if (callOptions?.signal !== undefined) {
+    if (callOptions.signal.aborted) closed = true
+    else callOptions.signal.addEventListener("abort", () => close(), { once: true })
+  }
+
+  const close = (): void => {
+    if (closed) return
+    closed = true
+    controller.abort()
+    callOptions?.onClose?.()
+  }
+
+  let url = base + (path === "" ? "/" : path)
+  const query = callOptions?.query ? buildQuery(callOptions.query) : ""
+  if (query !== "") url += `?${query}`
+  const doFetch = options.fetch ?? fetch
+
+  const delay = (ms: number): Promise<void> =>
+    new Promise((resolve) => {
+      const timer = setTimeout(resolve, ms)
+      ;(timer as { unref?: () => void }).unref?.()
+      controller.signal.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(timer)
+          resolve()
+        },
+        { once: true },
+      )
+    })
+
+  void (async () => {
+    let attempt = 0
+    while (!closed) {
+      try {
+        const headers: Record<string, string> = {
+          ...options.headers,
+          ...callOptions?.headers,
+          accept: "text/event-stream",
+          ...(lastEventId !== undefined ? { "last-event-id": lastEventId } : {}),
+        }
+        const response = await doFetch(url, { headers, signal: controller.signal })
+        if (!response.ok || response.body === null) {
+          throw new Error(`sse_http_${response.status}`)
+        }
+        attempt = 0 // a successful connect resets the backoff
+        await readSseStream(response.body, (frame) => {
+          if (frame.id !== undefined) lastEventId = frame.id
+          if (frame.retry !== undefined) serverRetryMs = frame.retry
+          if (frame.data !== undefined) {
+            try {
+              onEvent(JSON.parse(frame.data))
+            } catch (error) {
+              callOptions?.onError?.(error)
+            }
+          }
+        })
+        // Clean server-side end: a finite stream (`reconnect: false`) completes here.
+        if (!reconnectEnabled) {
+          close()
+          return
+        }
+      } catch (error) {
+        if (closed || controller.signal.aborted) return
+        callOptions?.onError?.(error)
+        if (!reconnectEnabled) {
+          close()
+          return
+        }
+      }
+      if (closed) return
+      const backoff = Math.min(maxDelayMs, baseDelayMs * 2 ** attempt)
+      attempt = Math.min(attempt + 1, 10)
+      const wait = serverRetryMs ?? backoff / 2 + Math.random() * (backoff / 2)
+      await delay(wait)
+    }
+  })()
+
+  return { close }
 }
 
 function buildQuery(query: Record<string, unknown>): string {

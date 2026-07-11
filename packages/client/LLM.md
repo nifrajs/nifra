@@ -16,16 +16,16 @@ Browser-safe, end-to-end-typed client for @nifrajs/core servers (Eden-style prox
 - **ApiError** _(interface)_ — `interface ApiError`
 - **ClientOptions** _(interface)_ — `interface ClientOptions`
 - **LoaderArgs** _(interface)_ — `interface LoaderArgs<Api, Env = unknown>`
+- **SubscribeOptions** _(interface)_ — `interface SubscribeOptions<I extends RouteInfo>`
+- **Subscription** _(interface)_ — `interface Subscription`
 - **ActionArgs** _(type)_ — `type ActionArgs<Api, Env = unknown> = LoaderArgs<Api, Env>`
 - **ActionData** _(type)_ — `type ActionData<A>`
 - **ApiProxy** _(type)_ — `type ApiProxy<Api> = Api extends ContractShape ? TreatyFromRegistry<RegistryFor<Api>> : Treaty<Api>`
 - **FetchFn** _(type)_ — `type FetchFn = (input: string, init?: RequestInit) => Promise<Response>`
 - **Jsonify** _(type)_ — `type Jsonify<T>`
 - **LoaderData** _(type)_ — `type LoaderData<L> = L extends (...args: never[]) => infer R ? Awaited<R> : never`
-- **RegistryOf** _(type)_ — `type RegistryOf<App> = App extends Server<infer R, infer _Ctx> ? R : never`
-- **Result** _(type)_ — `type Result<Data, ErrData = unknown>`
 
-_…and 2 more — see [`api-reference.md`](../../api-reference.md#nifrajsclient) for the complete list._
+_…and 4 more — see [`api-reference.md`](../../api-reference.md#nifrajsclient) for the complete list._
 
 ## Footguns
 

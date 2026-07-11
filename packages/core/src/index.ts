@@ -108,6 +108,8 @@ export {
   type SSEMessage,
   type SSEStream,
   sse,
+  type TypedSSEStream,
+  typedSSEStream,
 } from "./server/sse.ts"
 export {
   type SignatureEncoding,

@@ -99,6 +99,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Extract the accumulated route registry from a server's type (`typeof app`), ignoring its middleware context.
 - **Result** _(type)_ — `type Result<Data, ErrData = unknown> = | { readonly ok: true; readonly status: number; readonly data: Data; readonly error: null } | { readonly ok: false readonly status: number readonly data: ErrData readonly error: Ap…`
   The outcome of a client call. The client never throws — inspect `ok` to branch. `data` is the parsed response body, **typed by `ok`**: on success it's the route's response type; on failure it's the parsed error body, typed from the route's `errors` contract (`unknown` when the route declares none, …
+- **SubscribeOptions** _(interface)_ — `interface SubscribeOptions<I extends RouteInfo>`
+- **Subscription** _(interface)_ — `interface Subscription`
 - **Treaty** _(type)_ — `type Treaty<App> = TreatyFromRegistry<RegistryOf<App>>`
   The Eden-style proxy type for a server. Use a named alias for readable errors:
 - **TreatyFromRegistry** _(type)_ — `type TreatyFromRegistry<R> = TreatyNode<R, ""> & RootIndex<R>`
@@ -257,6 +259,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   MCP tool safety hints, surfaced in `tools/list`, that tell an agent how risky a `.tool()` call is — so it can decide whether to auto-invoke or confirm first. All optional; an omitted hint means "unknown". Mirrors the MCP spec's tool `annotations`.
 - **TopicRegistry** _(class)_ — `class TopicRegistry`
   In-process pub/sub for `ws.subscribe(topic)` + `app.publish(topic, data)`. **Single-instance only** — topics live in this process's memory, so a multi-instance deploy (multiple servers behind a load balancer) needs an external fan-out (Redis pub/sub, a Cloudflare Durable Object, NATS, …) bridged to…
+- **TypedSSEStream** _(interface)_ — `interface TypedSSEStream<Event>`
+  The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field — the compile-time half of the `sse` contract.
 - **VERSION** _(const)_ — `VERSION: "1.4.0"`
   Current package version. A hardcoded literal on purpose — core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version, so the literal can't go stale (i…
 - **ValidationOutcome** _(type)_ — `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
@@ -312,6 +316,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Build a `<urlset>` sitemap XML document from `entries`. Throws on out-of-spec input (dev-time data).
 - **sse** _(function)_ — `sse: (c: SSEContext, run: (stream: SSEStream) => void | Promise<void>, init?: SSEInit) => Response`
 - **toFetchHandler** _(function)_ — `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
+- **typedSSEStream** _(function)_ — `typedSSEStream: <Event>(stream: SSEStream) => TypedSSEStream<Event>`
+  Wrap a raw {@link SSEStream} in the typed, JSON-serializing surface `app.sse()` hands out.
 - **unsignValue** _(function)_ — `unsignValue: (signed: string, secret: string) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 - **validateStandard** _(function)_ — `validateStandard: <Schema extends StandardSchemaV1>(schema: Schema, value: unknown) => ValidationOutcome<InferOutput<Schema>> | Promise<ValidationOutcome<InferOutput<Schema>>>`
@@ -1294,6 +1300,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   MCP tool safety hints, surfaced in `tools/list`, that tell an agent how risky a `.tool()` call is — so it can decide whether to auto-invoke or confirm first. All optional; an omitted hint means "unknown". Mirrors the MCP spec's tool `annotations`.
 - **TopicRegistry** _(class)_ — `class TopicRegistry`
   In-process pub/sub for `ws.subscribe(topic)` + `app.publish(topic, data)`. **Single-instance only** — topics live in this process's memory, so a multi-instance deploy (multiple servers behind a load balancer) needs an external fan-out (Redis pub/sub, a Cloudflare Durable Object, NATS, …) bridged to…
+- **TypedSSEStream** _(interface)_ — `interface TypedSSEStream<Event>`
+  The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field — the compile-time half of the `sse` contract.
 - **VERSION** _(const)_ — `VERSION: "1.4.0"`
   Current package version. A hardcoded literal on purpose — core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version, so the literal can't go stale (i…
 - **ValidationOutcome** _(type)_ — `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
@@ -1349,6 +1357,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Build a `<urlset>` sitemap XML document from `entries`. Throws on out-of-spec input (dev-time data).
 - **sse** _(function)_ — `sse: (c: SSEContext, run: (stream: SSEStream) => void | Promise<void>, init?: SSEInit) => Response`
 - **toFetchHandler** _(function)_ — `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
+- **typedSSEStream** _(function)_ — `typedSSEStream: <Event>(stream: SSEStream) => TypedSSEStream<Event>`
+  Wrap a raw {@link SSEStream} in the typed, JSON-serializing surface `app.sse()` hands out.
 - **unsignValue** _(function)_ — `unsignValue: (signed: string, secret: string) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 - **validateStandard** _(function)_ — `validateStandard: <Schema extends StandardSchemaV1>(schema: Schema, value: unknown) => ValidationOutcome<InferOutput<Schema>> | Promise<ValidationOutcome<InferOutput<Schema>>>`

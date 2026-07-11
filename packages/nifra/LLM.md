@@ -25,7 +25,7 @@ The nifra full-stack framework — unscoped meta-entry that re-exports @nifrajs/
 - **server** _(function)_ — `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
 - **signValue** _(function)_ — `signValue: (value: string, secret: string) => Promise<string>`
 
-_…and 92 more — see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
+_…and 94 more — see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
 
 ## Footguns
 

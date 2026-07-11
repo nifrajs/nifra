@@ -44,12 +44,52 @@ type MethodCall<I extends RouteInfo, BodyVerb extends boolean> = BodyVerb extend
       ) => Promise<Result<Jsonify<I["output"]>, Jsonify<I["errors"]>>>
   : (options?: CallOptions<I>) => Promise<Result<Jsonify<I["output"]>, Jsonify<I["errors"]>>>
 
+// --- typed SSE subscriptions ---
+
+/** The SSE event payload of a route (from `app.sse()`'s `sse` schema); `never` for ordinary routes. */
+type SseOf<I> = I extends { sse: infer E } ? ([E] extends [never] ? never : E) : never
+
+export interface SubscribeOptions<I extends RouteInfo> {
+  query?: [I["query"]] extends [never] ? QueryNotTyped : I["query"]
+  headers?: Record<string, string>
+  /** Abort to close the subscription (same effect as calling `close()`). */
+  signal?: AbortSignal
+  /**
+   * Reconnect after a dropped/errored stream (default true — EventSource semantics, so a proxy
+   * closing an idle feed doesn't silently kill it). A FINITE stream should pass `false` so a clean
+   * server-side end completes the subscription instead of replaying it. Delays follow exponential
+   * backoff with jitter, honoring the server's `retry:` hint when sent.
+   */
+  reconnect?: boolean | { baseDelayMs?: number; maxDelayMs?: number }
+  /** Stream-level failures (network drop, non-2xx, bad JSON). Reconnection continues regardless. */
+  onError?: (error: unknown) => void
+  /** The stream ended and no reconnect will follow (clean end with `reconnect: false`, or closed). */
+  onClose?: () => void
+}
+
+export interface Subscription {
+  /** Stop the subscription: aborts the live stream and cancels any pending reconnect. */
+  close(): void
+}
+
+type SubscribeCall<I extends RouteInfo> = (
+  onEvent: (event: Jsonify<SseOf<I>>) => void,
+  options?: SubscribeOptions<I>,
+) => Subscription
+
+/** Routes declared via `app.sse()` grow a `.subscribe()` beside their verbs. */
+type SseMethods<MethodMap> = MethodMap extends { GET: infer G }
+  ? [SseOf<G>] extends [never]
+    ? unknown
+    : { subscribe: SubscribeCall<G & RouteInfo> }
+  : unknown
+
 type Methods<MethodMap> = {
   [M in keyof MethodMap as Lowercase<M & string>]: MethodCall<
     MethodMap[M] & RouteInfo,
     IsBodyVerb<M & string>
   >
-}
+} & SseMethods<MethodMap>
 
 // --- path-tree construction over the registry ---
 

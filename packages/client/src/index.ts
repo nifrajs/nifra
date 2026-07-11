@@ -14,4 +14,10 @@ export {
 export type { Jsonify } from "./jsonify.ts"
 export type { ApiError, Result } from "./result.ts"
 export type { ActionArgs, ActionData, ApiProxy, LoaderArgs, LoaderData } from "./routes.ts"
-export type { RegistryOf, Treaty, TreatyFromRegistry } from "./treaty.ts"
+export type {
+  RegistryOf,
+  SubscribeOptions,
+  Subscription,
+  Treaty,
+  TreatyFromRegistry,
+} from "./treaty.ts"
