@@ -1,5 +1,19 @@
 # @nifrajs/cli
 
+## 1.4.0
+
+### Patch Changes
+
+- 4d25970: Add one fail-open request-observation lifecycle shared by tracing, agent telemetry, and DevTools; secured development tooling; contract-based mock responses; validator-neutral schema/route reflection; executable render and storage adapter conformance modules; optional storage pagination/signing/copy capabilities; and metadata-preserving local file storage.
+- Updated dependencies [4d25970]
+  - @nifrajs/core@1.4.0
+  - @nifrajs/schema@1.4.0
+  - @nifrajs/web@1.4.0
+  - @nifrajs/client@1.4.0
+  - @nifrajs/mcp@1.4.0
+  - @nifrajs/runner@1.4.0
+  - create-nifra@1.4.0
+
 ## 1.3.1
 
 ### Patch Changes

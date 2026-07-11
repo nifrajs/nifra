@@ -1,5 +1,14 @@
 # @nifrajs/web-vue
 
+## 1.4.0
+
+### Patch Changes
+
+- Updated dependencies [4d25970]
+  - @nifrajs/web@1.4.0
+  - @nifrajs/i18n@1.4.0
+  - @nifrajs/image@1.4.0
+
 ## 1.3.1
 
 ### Patch Changes
