@@ -36,6 +36,11 @@
       "bun": "./src/reflection.ts",
       "types": "./dist/reflection.d.ts",
       "default": "./dist/reflection.js"
+    },
+    "./diff": {
+      "bun": "./src/diff.ts",
+      "types": "./dist/diff.d.ts",
+      "default": "./dist/diff.js"
     }
   },
   "files": [

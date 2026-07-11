@@ -145,6 +145,7 @@ Every public export of every package — name, kind, signature, and doc summary 
   A contract: named operations. Names are the handler keys and OpenAPI operationIds.
 - **CookieOptions** _(interface)_ — `interface CookieOptions`
   Attributes for a `Set-Cookie`. `expires` is a `Date`; `maxAge` is in **seconds**.
+- **DiffSeverity** _(type)_ — `type DiffSeverity = "breaking" | "compatible" | "info"`
 - **DurableObjectNamespaceLike** _(interface)_ — `interface DurableObjectNamespaceLike`
   Structural view of a Cloudflare Durable Object namespace binding — keeps `@cloudflare/workers-types` out of `@nifrajs/core`. The real `DurableObjectNamespace` satisfies it.
 - **ExecutionContext** _(interface)_ — `interface ExecutionContext`
@@ -212,6 +213,7 @@ Every public export of every package — name, kind, signature, and doc summary 
   An additional (non-success) response a contract operation can document, e.g. a `404`.
 - **RobotsOptions** _(interface)_ — `interface RobotsOptions`
 - **RobotsRule** _(interface)_ — `interface RobotsRule`
+- **RouteChange** _(interface)_ — `interface RouteChange`
 - **RouteConfigError** _(class)_ — `class RouteConfigError`
   Thrown at route registration when a route is misconfigured. This is the boot-time rejection layer: loud and early, never deferred to the first request.
 - **RouteConfigErrorCode** _(type)_ — `type RouteConfigErrorCode = | "DUPLICATE_ROUTE" | "DUPLICATE_PARAM" | "PARAM_NAME_CONFLICT" | "INVALID_PATH" | "INVALID_PARAM_NAME" | "WILDCARD_NOT_LAST" | "INVALID_METHOD"`
@@ -222,10 +224,14 @@ Every public export of every package — name, kind, signature, and doc summary 
   One route's input/output shape as the **client** will consume it. `query`/`body` are `never` when the route declares no schema for them, so the client can detect "this route takes no body" via `[body] extends [never]`. `output` is the handler's raw return type (the client applies `Jsonify` when rea…
 - **RouteSchema** _(interface)_ — `interface RouteSchema`
   Per-route input schemas. Each is any Standard Schema (zod/valibot/arktype/…).
+- **RouteSnapshot** _(interface)_ — `interface RouteSnapshot`
+  One route in a snapshot — plain JSON, safe to persist as a CI baseline.
+- **RouteSnapshotSchema** _(interface)_ — `interface RouteSnapshotSchema`
 - **Router** _(class)_ — `class Router<T>`
   Radix-style segment trie router. Matching precedence is static > param > wildcard. Parameter/wildcard values are returned RAW (not percent-decoded); the server boundary decodes and rejects malformed encodings with a 400, keeping this layer pure and allocation-light.
 - **RouterMatch** _(type)_ — `type RouterMatch<T>`
   Result of {@link Router.find}. The `found: false` cases deliberately separate a missing path (404) from a path that exists for other methods (405), so the server layer can answer correctly and populate an `Allow` header.
+- **RoutesDiff** _(interface)_ — `interface RoutesDiff`
 - **RunningServer** _(interface)_ — `interface RunningServer`
   The handle `listen()` returns — the slice of Bun's server nifra holds and exposes. Declared explicitly (rather than `ReturnType<typeof Bun.serve>`) so the public type surface doesn't leak the ambient `Bun` global into consumers' `.d.ts` resolution.
 - **SSEContext** _(interface)_ — `interface SSEContext`
@@ -241,6 +247,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   A nifra cron handler: the platform controller + the same typed `env`/`waitUntil` nifra threads into request handlers. Schedule background work with `waitUntil` so it outlives the trigger.
 - **SchemaReflection** _(interface)_ — `interface SchemaReflection`
   Validation and introspection capabilities discovered for one schema-like value.
+- **SchemaSnapshot** _(interface)_ — `interface SchemaSnapshot`
+  One schema position in a snapshot: JSON Schema metadata only, no validator.
 - **Server** _(class)_ — `class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext>`
   The inline server. Routes are chainable and fully type-inferred. `derive`/ `decorate` extend the handler context (`Ctx`) for routes defined *after* them, with full types; `Ctx` is server-only and never touches the client registry.
 - **ServerOptions** _(interface)_ — `interface ServerOptions`
@@ -290,6 +298,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)` applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
 - **defineRouterPlugin** _(const)_ — `defineRouterPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this — not {@link definePlugin} — for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
+- **diffRouteSnapshots** _(function)_ — `diffRouteSnapshots: (before: readonly RouteSnapshot[], after: readonly RouteSnapshot[]) => RoutesDiff`
+  Diff two route snapshots (`snapshotRoutes` output, possibly restored from JSON). Every change is classified breaking/compatible/info; `hasBreaking` is the CI-gate bit.
 - **implement** _(function)_ — `implement: <const C extends ContractShape, H extends HandlersFor<C>>(contract: C, handlers: H) => Server<RegistryFromImpl<C, H>>`
   Bind handlers to a contract, producing a real {@link Server} you can `.listen()` or `.fetch()`. Each op is registered through the same path as the inline builder, so the result is identical to writing the routes inline — handlers lift over **unchanged** ("graduation"), and body/query schemas valida…
 - **jsonLogger** _(function)_ — `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
@@ -314,6 +324,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Discards everything — for tests, or when log output is handled elsewhere.
 - **sitemap** _(function)_ — `sitemap: (entries: readonly SitemapEntry[], options?: SitemapOptions) => string`
   Build a `<urlset>` sitemap XML document from `entries`. Throws on out-of-spec input (dev-time data).
+- **snapshotRoutes** _(function)_ — `snapshotRoutes: (source: unknown) => readonly RouteSnapshot[]`
+  Snapshot an app's routes (anything `reflectRoutes` accepts) as plain JSON. Validators are dropped; only introspectable JSON Schema metadata is kept, so the result round-trips through `JSON.stringify` unchanged.
 - **sse** _(function)_ — `sse: (c: SSEContext, run: (stream: SSEStream) => void | Promise<void>, init?: SSEInit) => Response`
 - **toFetchHandler** _(function)_ — `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
 - **typedSSEStream** _(function)_ — `typedSSEStream: <Event>(stream: SSEStream) => TypedSSEStream<Event>`
@@ -1186,6 +1198,7 @@ Every public export of every package — name, kind, signature, and doc summary 
   A contract: named operations. Names are the handler keys and OpenAPI operationIds.
 - **CookieOptions** _(interface)_ — `interface CookieOptions`
   Attributes for a `Set-Cookie`. `expires` is a `Date`; `maxAge` is in **seconds**.
+- **DiffSeverity** _(type)_ — `type DiffSeverity = "breaking" | "compatible" | "info"`
 - **DurableObjectNamespaceLike** _(interface)_ — `interface DurableObjectNamespaceLike`
   Structural view of a Cloudflare Durable Object namespace binding — keeps `@cloudflare/workers-types` out of `@nifrajs/core`. The real `DurableObjectNamespace` satisfies it.
 - **ExecutionContext** _(interface)_ — `interface ExecutionContext`
@@ -1253,6 +1266,7 @@ Every public export of every package — name, kind, signature, and doc summary 
   An additional (non-success) response a contract operation can document, e.g. a `404`.
 - **RobotsOptions** _(interface)_ — `interface RobotsOptions`
 - **RobotsRule** _(interface)_ — `interface RobotsRule`
+- **RouteChange** _(interface)_ — `interface RouteChange`
 - **RouteConfigError** _(class)_ — `class RouteConfigError`
   Thrown at route registration when a route is misconfigured. This is the boot-time rejection layer: loud and early, never deferred to the first request.
 - **RouteConfigErrorCode** _(type)_ — `type RouteConfigErrorCode = | "DUPLICATE_ROUTE" | "DUPLICATE_PARAM" | "PARAM_NAME_CONFLICT" | "INVALID_PATH" | "INVALID_PARAM_NAME" | "WILDCARD_NOT_LAST" | "INVALID_METHOD"`
@@ -1263,10 +1277,14 @@ Every public export of every package — name, kind, signature, and doc summary 
   One route's input/output shape as the **client** will consume it. `query`/`body` are `never` when the route declares no schema for them, so the client can detect "this route takes no body" via `[body] extends [never]`. `output` is the handler's raw return type (the client applies `Jsonify` when rea…
 - **RouteSchema** _(interface)_ — `interface RouteSchema`
   Per-route input schemas. Each is any Standard Schema (zod/valibot/arktype/…).
+- **RouteSnapshot** _(interface)_ — `interface RouteSnapshot`
+  One route in a snapshot — plain JSON, safe to persist as a CI baseline.
+- **RouteSnapshotSchema** _(interface)_ — `interface RouteSnapshotSchema`
 - **Router** _(class)_ — `class Router<T>`
   Radix-style segment trie router. Matching precedence is static > param > wildcard. Parameter/wildcard values are returned RAW (not percent-decoded); the server boundary decodes and rejects malformed encodings with a 400, keeping this layer pure and allocation-light.
 - **RouterMatch** _(type)_ — `type RouterMatch<T>`
   Result of {@link Router.find}. The `found: false` cases deliberately separate a missing path (404) from a path that exists for other methods (405), so the server layer can answer correctly and populate an `Allow` header.
+- **RoutesDiff** _(interface)_ — `interface RoutesDiff`
 - **RunningServer** _(interface)_ — `interface RunningServer`
   The handle `listen()` returns — the slice of Bun's server nifra holds and exposes. Declared explicitly (rather than `ReturnType<typeof Bun.serve>`) so the public type surface doesn't leak the ambient `Bun` global into consumers' `.d.ts` resolution.
 - **SSEContext** _(interface)_ — `interface SSEContext`
@@ -1282,6 +1300,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   A nifra cron handler: the platform controller + the same typed `env`/`waitUntil` nifra threads into request handlers. Schedule background work with `waitUntil` so it outlives the trigger.
 - **SchemaReflection** _(interface)_ — `interface SchemaReflection`
   Validation and introspection capabilities discovered for one schema-like value.
+- **SchemaSnapshot** _(interface)_ — `interface SchemaSnapshot`
+  One schema position in a snapshot: JSON Schema metadata only, no validator.
 - **Server** _(class)_ — `class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext>`
   The inline server. Routes are chainable and fully type-inferred. `derive`/ `decorate` extend the handler context (`Ctx`) for routes defined *after* them, with full types; `Ctx` is server-only and never touches the client registry.
 - **ServerOptions** _(interface)_ — `interface ServerOptions`
@@ -1331,6 +1351,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)` applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
 - **defineRouterPlugin** _(const)_ — `defineRouterPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this — not {@link definePlugin} — for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
+- **diffRouteSnapshots** _(function)_ — `diffRouteSnapshots: (before: readonly RouteSnapshot[], after: readonly RouteSnapshot[]) => RoutesDiff`
+  Diff two route snapshots (`snapshotRoutes` output, possibly restored from JSON). Every change is classified breaking/compatible/info; `hasBreaking` is the CI-gate bit.
 - **implement** _(function)_ — `implement: <const C extends ContractShape, H extends HandlersFor<C>>(contract: C, handlers: H) => Server<RegistryFromImpl<C, H>>`
   Bind handlers to a contract, producing a real {@link Server} you can `.listen()` or `.fetch()`. Each op is registered through the same path as the inline builder, so the result is identical to writing the routes inline — handlers lift over **unchanged** ("graduation"), and body/query schemas valida…
 - **jsonLogger** _(function)_ — `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
@@ -1355,6 +1377,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Discards everything — for tests, or when log output is handled elsewhere.
 - **sitemap** _(function)_ — `sitemap: (entries: readonly SitemapEntry[], options?: SitemapOptions) => string`
   Build a `<urlset>` sitemap XML document from `entries`. Throws on out-of-spec input (dev-time data).
+- **snapshotRoutes** _(function)_ — `snapshotRoutes: (source: unknown) => readonly RouteSnapshot[]`
+  Snapshot an app's routes (anything `reflectRoutes` accepts) as plain JSON. Validators are dropped; only introspectable JSON Schema metadata is kept, so the result round-trips through `JSON.stringify` unchanged.
 - **sse** _(function)_ — `sse: (c: SSEContext, run: (stream: SSEStream) => void | Promise<void>, init?: SSEInit) => Response`
 - **toFetchHandler** _(function)_ — `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
 - **typedSSEStream** _(function)_ — `typedSSEStream: <Event>(stream: SSEStream) => TypedSSEStream<Event>`
