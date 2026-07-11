@@ -1,0 +1,52 @@
+{
+  "name": "@nifrajs/prompt",
+  "version": "1.4.0",
+  "description": "Type-safe prompts — bind an instruction to input/output Standard Schemas and get validated, typed LLM results from any provider.",
+  "keywords": [
+    "bun",
+    "typescript",
+    "nifra",
+    "llm",
+    "structured-output",
+    "prompt",
+    "ai"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@nifrajs/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@nifrajs/schema": "workspace:*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/prompt"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}

@@ -55,10 +55,12 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - `@nifrajs/islets` — Fine-grained signals + declarative DOM bindings for nifra islands — interactivity in ~1 KB, no framework runtime. The client companion to @nifrajs/web-vanilla.
 - `@nifrajs/jobs` — Typed background jobs for nifra — enqueue work off the request path with retries, exponential backoff, and dead-lettering on a pluggable store. In-process worker for Bun/Node/Deno (Workers use CF Queues); the async companion to @nifrajs/cron. Dependency-free.
 - `@nifrajs/mcp` — Build MCP servers — and MCP Apps (interactive `ui://` widgets, SEP-1865) — for a nifra app. The transport-agnostic JSON-RPC core (also used by `@nifrajs/cli`'s dev MCP), a Streamable-HTTP handler you mount at `POST /mcp`, and `defineMcpWidget`/`defineMcpTool` for tool results that render real UI in MCP hosts.
+- `@nifrajs/mcp-db` — Serve a SQLite database as a fail-closed MCP server — allowlisted schema tools by default, opt-in read-only queries with plan verification.
 - `@nifrajs/middleware` — Composable middleware for nifra — auth, CSRF, JWT/JWKS, IP restriction, CORS, body limits, response cache, timing, and operational helpers.
 - `@nifrajs/mock` — Contract-based mock server — reads route schemas and generates fake responses.
 - `@nifrajs/node` — Run a nifra app on Node's http server — a Request<->stream adapter with a graceful stop().
 - `@nifrajs/otel` — Distributed tracing for nifra — W3C traceparent/tracestate propagation + OpenTelemetry-semantic-convention spans via a pluggable exporter. Bridge to the OpenTelemetry SDK or log spans directly; no SDK bundled. Edge-safe.
+- `@nifrajs/prompt` — Type-safe prompts — bind an instruction to input/output Standard Schemas and get validated, typed LLM results from any provider.
 - `@nifrajs/runner` — Run requests through a nifra app's fetch and capture structured results — the engine behind the playground and the agent run/verify tool. Dependency-free; runs in the browser, Bun, Node, Deno, and on the edge.
 - `@nifrajs/schema` — Built-in schema builder `t` — TypeBox-backed (free JSON Schema + compiled validators), implements Standard Schema so nifra routes validate it natively.
 - `@nifrajs/storage` — Blob storage mechanics for nifra — traversal-safe memory, filesystem, and R2 adapters, optional provider capabilities, and executable adapter conformance.
