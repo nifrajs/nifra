@@ -13,7 +13,7 @@ import {
 
 // Fixtures live INSIDE the package so the dynamically imported backend.ts resolves @nifrajs/* from
 // the workspace (a system tmp dir has no node_modules above it).
-const FIXTURES = join(import.meta.dir, ".tmp-diff-fixtures")
+const FIXTURES = join(import.meta.dir, ".tmp-nifra-diff-fixtures")
 
 afterAll(async () => {
   await rm(FIXTURES, { recursive: true, force: true })
