@@ -90,21 +90,23 @@ export function tracing(options: TracingOptions = {}) {
           inFlight.get(context.request)?.recordError(error)
           return undefined
         },
-        onResponse: (res, req) => {
+        onResponseFinalized: (outcome, req) => {
           const observation = inFlight.get(req)
-          if (observation === undefined) return res
+          if (observation === undefined) return
           inFlight.delete(req)
+          if (outcome.error !== undefined) observation.recordError(outcome.error)
+          const res = outcome.response
           const bodySize = Number(res.headers.get("content-length") ?? "0") || 0
           const isrStatus = res.headers.get("x-nifra-isr")
           observation.end({
             statusCode: res.status,
+            ...(outcome.error === undefined ? {} : { status: "error" as const }),
             attributes: {
               "http.response.status_code": res.status,
               "http.response.body.size": bodySize,
               ...(isrStatus === null ? {} : { "nifra.isr.status": isrStatus }),
             },
           })
-          return res
         },
       }),
   )

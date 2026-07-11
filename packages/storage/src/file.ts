@@ -4,7 +4,8 @@
  * traversal). Explicit content type and custom metadata are persisted in an adjacent sidecar tree;
  * objects created before sidecar support still infer content type from their extension.
  */
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { constants } from "node:fs"
+import { lstat, mkdir, open, readdir, readFile, rm, stat } from "node:fs/promises"
 import { dirname, join, posix, resolve, sep } from "node:path"
 import { assertSafeKey, StorageKeyError } from "./key.ts"
 import {
@@ -74,37 +75,102 @@ export class FileStorage implements StorageAdapter {
     return full
   }
 
+  private symlinkError(key: string): StorageKeyError {
+    return new StorageKeyError(
+      `storage key ${JSON.stringify(key)} crosses a symbolic link beneath the storage root`,
+    )
+  }
+
+  /** Reject existing symbolic links below `base`; missing suffixes are safe for later creation. */
+  private async assertNoSymlinkPath(base: string, path: string, key: string): Promise<void> {
+    try {
+      if ((await lstat(base)).isSymbolicLink()) throw this.symlinkError(key)
+    } catch (error) {
+      if (error instanceof StorageKeyError) throw error
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return
+      throw error
+    }
+    const suffix = path.slice(base.length + sep.length)
+    let current = base
+    for (const segment of suffix.split(sep)) {
+      current = join(current, segment)
+      try {
+        if ((await lstat(current)).isSymbolicLink()) throw this.symlinkError(key)
+      } catch (error) {
+        if (error instanceof StorageKeyError) throw error
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return
+        throw error
+      }
+    }
+  }
+
+  /** Create parents, re-check them, and refuse a final-component symlink at open time. */
+  private async writeContained(
+    base: string,
+    path: string,
+    key: string,
+    data: Uint8Array | string,
+  ): Promise<void> {
+    await this.assertNoSymlinkPath(base, path, key)
+    await mkdir(dirname(path), { recursive: true })
+    await this.assertNoSymlinkPath(base, path, key)
+    try {
+      const handle = await open(
+        path,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
+        0o666,
+      )
+      try {
+        await handle.writeFile(data)
+      } finally {
+        await handle.close()
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ELOOP") throw this.symlinkError(key)
+      throw error
+    }
+  }
+
   async put(key: string, data: StorageData, options: PutOptions = {}): Promise<void> {
     const path = this.pathFor(key)
-    await mkdir(dirname(path), { recursive: true })
-    await writeFile(path, toBytes(data))
+    await this.writeContained(this.root, path, key, toBytes(data))
     const metadataPath = this.metadataPathFor(key)
     if (options.contentType !== undefined || options.metadata !== undefined) {
-      await mkdir(dirname(metadataPath), { recursive: true })
-      await writeFile(
+      await this.writeContained(
+        this.metadataRoot,
         metadataPath,
+        key,
         JSON.stringify({
           ...(options.contentType !== undefined ? { contentType: options.contentType } : {}),
           ...(options.metadata !== undefined ? { metadata: options.metadata } : {}),
         }),
       )
     } else {
+      await this.assertNoSymlinkPath(this.metadataRoot, metadataPath, key)
       await rm(metadataPath, { force: true })
     }
   }
 
   async get(key: string): Promise<StorageObject | null> {
     const path = this.pathFor(key)
+    await this.assertNoSymlinkPath(this.root, path, key)
     let body: Uint8Array
     try {
       body = new Uint8Array(await readFile(path))
-    } catch {
-      return null // ENOENT (or unreadable) → treated as missing
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
+      throw error
     }
     let stored: { contentType?: string; metadata?: Readonly<Record<string, string>> } = {}
     try {
-      stored = JSON.parse(await readFile(this.metadataPathFor(key), "utf8")) as typeof stored
-    } catch {
+      const metadataPath = this.metadataPathFor(key)
+      await this.assertNoSymlinkPath(this.metadataRoot, metadataPath, key)
+      stored = JSON.parse(await readFile(metadataPath, "utf8")) as typeof stored
+    } catch (error) {
+      if (error instanceof StorageKeyError) throw error
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" && !(error instanceof SyntaxError)) {
+        throw error
+      }
       // Objects created before sidecar support still infer a useful MIME type from their extension.
     }
     const contentType = stored.contentType ?? inferContentType(key)
@@ -117,19 +183,24 @@ export class FileStorage implements StorageAdapter {
   }
 
   async delete(key: string): Promise<void> {
+    const path = this.pathFor(key)
+    const metadataPath = this.metadataPathFor(key)
     await Promise.all([
-      rm(this.pathFor(key), { force: true }),
-      rm(this.metadataPathFor(key), { force: true }),
+      this.assertNoSymlinkPath(this.root, path, key),
+      this.assertNoSymlinkPath(this.metadataRoot, metadataPath, key),
     ])
+    await Promise.all([rm(path, { force: true }), rm(metadataPath, { force: true })])
   }
 
   async exists(key: string): Promise<boolean> {
     const path = this.pathFor(key)
+    await this.assertNoSymlinkPath(this.root, path, key)
     try {
       await stat(path)
       return true
-    } catch {
-      return false
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
+      throw error
     }
   }
 
@@ -154,7 +225,8 @@ export class FileStorage implements StorageAdapter {
       const full = join(dir, name)
       // POSIX-join the key segments so listed keys are portable regardless of the host separator.
       const key = prefix === "" ? name : posix.join(prefix, name)
-      const info = await stat(full)
+      const info = await lstat(full)
+      if (info.isSymbolicLink()) continue
       if (info.isDirectory()) await this.walk(full, key, out)
       else if (info.isFile()) out.push(key)
     }

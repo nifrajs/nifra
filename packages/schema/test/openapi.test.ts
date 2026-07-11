@@ -279,6 +279,42 @@ describe("$ref reuse via $id → components.schemas", () => {
       doc.paths["/users"]?.post?.responses["200"]?.content?.["application/json"]?.schema,
     ).toEqual(ref)
   })
+
+  test("a URI $id becomes a valid component name and resolvable JSON Pointer", () => {
+    const id = "https://schemas.example.com/domain/User"
+    const UriUser = t.object({ id: t.string() }, { $id: id })
+    const uriDoc = toOpenAPI(
+      defineContract({ getUriUser: { method: "GET", path: "/uri-user", response: UriUser } }),
+    )
+
+    const componentNames = Object.keys(uriDoc.components?.schemas ?? {})
+    expect(componentNames).toHaveLength(1)
+    const componentName = componentNames[0] as string
+    expect(componentName).toMatch(/^[A-Za-z0-9._-]+$/)
+    expect(componentName).not.toBe(id)
+    expect(
+      uriDoc.paths["/uri-user"]?.get?.responses["200"]?.content?.["application/json"]?.schema,
+    ).toEqual({ $ref: `#/components/schemas/${componentName}` })
+  })
+
+  test("a valid component name cannot collide with Object.prototype", () => {
+    const PrototypeNamed = t.object({ id: t.string() }, { $id: "__proto__" })
+    const prototypeDoc = toOpenAPI(
+      defineContract({
+        getPrototypeNamed: {
+          method: "GET",
+          path: "/prototype-named",
+          response: PrototypeNamed,
+        },
+      }),
+    )
+
+    expect(Object.hasOwn(prototypeDoc.components?.schemas ?? {}, "__proto__")).toBe(true)
+    expect(
+      prototypeDoc.paths["/prototype-named"]?.get?.responses["200"]?.content?.["application/json"]
+        ?.schema,
+    ).toEqual({ $ref: "#/components/schemas/__proto__" })
+  })
 })
 
 describe("operations override (escape hatch, app + contract)", () => {

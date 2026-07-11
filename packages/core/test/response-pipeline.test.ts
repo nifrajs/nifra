@@ -54,6 +54,37 @@ describe("onResponse", () => {
     const res = await app.fetch(new Request("http://x/"))
     expect(res.headers.get("x-app")).toBe("12")
   })
+
+  test("onResponseFinalized observes the response after every transformation", async () => {
+    let observedStatus: number | undefined
+    const app = server()
+      .onResponse(() => new Response("changed", { status: 202 }))
+      .onResponseFinalized(({ response }) => {
+        observedStatus = response.status
+      })
+      .get("/", () => "ok")
+
+    const res = await app.fetch(new Request("http://x/"))
+    expect(res.status).toBe(202)
+    expect(observedStatus).toBe(202)
+  })
+
+  test("onResponseFinalized observers are ordered and fail-open", async () => {
+    const order: string[] = []
+    const app = server()
+      .onResponseFinalized(async () => {
+        order.push("first")
+        throw new Error("observer failure")
+      })
+      .onResponseFinalized(() => {
+        order.push("second")
+      })
+      .get("/", () => "ok")
+
+    const res = await app.fetch(new Request("http://x/"))
+    expect(res.status).toBe(200)
+    expect(order).toEqual(["first", "second"])
+  })
 })
 
 describe("use(middleware)", () => {

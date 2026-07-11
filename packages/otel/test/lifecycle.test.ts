@@ -35,8 +35,23 @@ describe("observation lifecycle", () => {
 
     expect(child.span.durationMs).toBe(12.5)
     expect(child.span.status).toBe("ok")
-    expect(child.span.attributes["error.message"]).toBe("handled")
+    expect(child.span.attributes["error.recorded"]).toBe(true)
+    expect(child.span.attributes["error.message"]).toBeUndefined()
     expect(ended).toEqual([child.span]) // completion is exactly once
+  })
+
+  test("records error evidence without copying sensitive error text into exported attributes", () => {
+    const ended: NifraSpan[] = []
+    const observation = createObservationLifecycle({
+      adapters: [{ onEnd: (span) => ended.push(span) }],
+    }).start({ name: "GET /private" })
+
+    observation.recordError(new Error("postgres://user:secret@db.internal/private"))
+    observation.end({ statusCode: 500 })
+
+    expect(ended[0]?.attributes["error.recorded"]).toBe(true)
+    expect(JSON.stringify(ended[0]?.attributes)).not.toContain("secret")
+    expect(ended[0]?.attributes["error.message"]).toBeUndefined()
   })
 
   test("isolates every adapter failure", () => {

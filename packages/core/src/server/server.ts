@@ -134,6 +134,7 @@ type RawAround = <T>(ctx: RawContext, next: () => MaybePromise<T>) => MaybePromi
 export type OnRequestResult = Response | Request | undefined
 type RawOnRequest = (req: Request) => MaybePromise<OnRequestResult>
 type RawOnResponse = (response: Response, req: Request) => MaybePromise<Response>
+type RawOnResponseFinalized = (outcome: ResponseFinalization, req: Request) => MaybePromise<void>
 
 interface RouteEntry {
   readonly handler: InternalHandler
@@ -351,7 +352,16 @@ export interface Middleware {
   readonly beforeHandle?: (context: Context) => MaybePromise<unknown>
   readonly afterHandle?: (result: unknown, context: Context) => MaybePromise<unknown>
   readonly onResponse?: (response: Response, req: Request) => MaybePromise<Response>
+  readonly onResponseFinalized?: (outcome: ResponseFinalization, req: Request) => MaybePromise<void>
   readonly onError?: (error: unknown, context: Context) => MaybePromise<unknown>
+}
+
+/** The terminal response-pipeline outcome observed after every transforming `onResponse` hook. */
+export interface ResponseFinalization {
+  /** The final response, or the last response available when a transformation failed. */
+  readonly response: Response
+  /** A response-hook failure. Terminal observers run fail-open before the error is rethrown. */
+  readonly error?: unknown
 }
 
 // A plugin operates over arbitrary Server shapes; `any` here is the standard framework escape hatch
@@ -1112,6 +1122,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private readonly aroundHooks: RawAround[]
   private readonly onRequestHooks: RawOnRequest[]
   private readonly onResponseHooks: RawOnResponse[]
+  private readonly onResponseFinalizedHooks: RawOnResponseFinalized[]
   private readonly responseRequests: WeakMap<Request, Request>
   /** Names of plugins/middleware already applied via `use` — for idempotent dedupe. */
   private readonly appliedPlugins: Set<string>
@@ -1140,6 +1151,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.aroundHooks = []
     this.onRequestHooks = []
     this.onResponseHooks = []
+    this.onResponseFinalizedHooks = []
     this.responseRequests = new WeakMap()
     this.appliedPlugins = new Set()
     this.mcpResourceList = []
@@ -1201,6 +1213,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return this
   }
 
+  /** Observe the terminal response after all transformations. Observers are ordered and fail-open. */
+  onResponseFinalized(
+    fn: (outcome: ResponseFinalization, req: Request) => MaybePromise<void>,
+  ): this {
+    this.onResponseFinalizedHooks.push(fn)
+    return this
+  }
+
   /**
    * Apply a type-**identity** plugin ({@link IdentityPlugin}, from {@link defineIdentityPlugin}) — it
    * registers routes/hooks but doesn't change the types, so this returns `this` with the route registry
@@ -1241,6 +1261,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     if (arg.beforeHandle !== undefined) this.beforeHandle(arg.beforeHandle)
     if (arg.afterHandle !== undefined) this.afterHandle(arg.afterHandle)
     if (arg.onResponse !== undefined) this.onResponse(arg.onResponse)
+    if (arg.onResponseFinalized !== undefined) this.onResponseFinalized(arg.onResponseFinalized)
     if (arg.onError !== undefined) this.onError(arg.onError)
     return this
   }
@@ -1635,14 +1656,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       RESPONSE_TIMEOUT,
       true,
     )
-    if (this.onResponseHooks.length === 0) {
+    if (this.onResponseHooks.length === 0 && this.onResponseFinalizedHooks.length === 0) {
       return outcome
     }
     // onResponse sees every response — success, validation error, 404/405, timeout, onRequest
     // short-circuit; normalize to a promise, then thread through the hooks.
     return outcome instanceof Promise
-      ? outcome.then((response) => this.applyOnResponse(response, this.takeResponseRequest(source)))
-      : this.applyOnResponse(outcome, this.takeResponseRequest(source))
+      ? outcome.then((response) =>
+          this.applyOnResponseAndFinalize(response, this.takeResponseRequest(source)),
+        )
+      : this.applyOnResponseAndFinalize(outcome, this.takeResponseRequest(source))
   }
 
   /**
@@ -1663,7 +1686,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     platform?: Platform<EnvOf<Ctx>>,
   ): MaybePromise<NodeServeOutcome> {
     // onResponse hooks transform a Response, so they force the Web path; wrap its result.
-    if (this.onResponseHooks.length > 0) {
+    if (this.onResponseHooks.length > 0 || this.onResponseFinalizedHooks.length > 0) {
       const response = this.fetchSource(source, platform)
       return response instanceof Promise
         ? response.then((settled) => ({ kind: "response", response: settled }))
@@ -2464,6 +2487,66 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       current = next
     }
     return current
+  }
+
+  private applyOnResponseAndFinalize(response: Response, req: Request): MaybePromise<Response> {
+    try {
+      const transformed = this.applyOnResponse(response, req)
+      return transformed instanceof Promise
+        ? transformed.then(
+            (settled) => this.completeResponseFinalization({ response: settled }, req),
+            (error) => this.failResponseFinalization(response, error, req),
+          )
+        : this.completeResponseFinalization({ response: transformed }, req)
+    } catch (error) {
+      return this.failResponseFinalization(response, error, req)
+    }
+  }
+
+  private completeResponseFinalization(
+    outcome: ResponseFinalization,
+    req: Request,
+  ): MaybePromise<Response> {
+    const notified = this.notifyResponseFinalized(outcome, req)
+    return notified instanceof Promise ? notified.then(() => outcome.response) : outcome.response
+  }
+
+  private failResponseFinalization(
+    response: Response,
+    error: unknown,
+    req: Request,
+  ): Promise<never> | never {
+    const notified = this.notifyResponseFinalized({ response, error }, req)
+    if (notified instanceof Promise) {
+      return notified.then(() => {
+        throw error
+      })
+    }
+    throw error
+  }
+
+  /** Notify terminal observers in order while isolating both sync and async failures. */
+  private notifyResponseFinalized(outcome: ResponseFinalization, req: Request): MaybePromise<void> {
+    let pending: Promise<void> | undefined
+    for (const hook of this.onResponseFinalizedHooks) {
+      if (pending !== undefined) {
+        pending = pending.then(async () => {
+          try {
+            await hook(outcome, req)
+          } catch {
+            // Terminal observation must never change request behavior.
+          }
+        })
+        continue
+      }
+      try {
+        const result = hook(outcome, req)
+        if (result instanceof Promise) pending = result.catch(() => {})
+      } catch {
+        // Terminal observation must never change request behavior.
+      }
+    }
+    return pending
   }
 
   /** Async tail of {@link applyOnResponse}: runs the remaining hooks once one has gone async. */

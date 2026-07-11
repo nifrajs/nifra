@@ -93,6 +93,7 @@ export {
   type OnRequestResult,
   type PromptArgument,
   type PromptMessage,
+  type ResponseFinalization,
   type RouteDescriptor,
   type RunningServer,
   type ScheduledController,
