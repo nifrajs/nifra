@@ -6,7 +6,10 @@
  */
 
 export class StorageKeyError extends Error {
-  override readonly name = "StorageKeyError"
+  constructor(message: string) {
+    super(message)
+    this.name = "StorageKeyError"
+  }
 }
 
 /** Throw {@link StorageKeyError} unless `key` is a safe relative storage key. */

@@ -31,6 +31,11 @@
       "bun": "./src/ws.ts",
       "types": "./dist/ws.d.ts",
       "default": "./dist/ws.js"
+    },
+    "./reflection": {
+      "bun": "./src/reflection.ts",
+      "types": "./dist/reflection.d.ts",
+      "default": "./dist/reflection.js"
     }
   },
   "files": [

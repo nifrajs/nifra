@@ -10,9 +10,22 @@
  */
 
 export {
+  type ActiveObservation,
+  createObservationLifecycle,
+  type EndObservation,
+  type ObservationClock,
+  type ObservationContext,
+  type ObservationLifecycle,
+  type ObservationLifecycleOptions,
+  type ObservationParent,
+  type StartObservation,
+} from "./lifecycle.ts"
+export {
   type AttributeValue,
+  combineObservationAdapters,
   consoleSpanExporter,
   type NifraSpan,
+  type ObservationAdapter,
   type SpanExporter,
   type SpanStatus,
 } from "./span.ts"

@@ -470,7 +470,17 @@ test("renderPage streams __nifraReject for a deferred that rejects (no broken bo
     await renderPage({
       adapter: stub,
       chain: [null],
-      data: { slow: defer(Promise.reject(new Error("boom secret detail"))) },
+      // Pre-armed catch: the render pipeline attaches its handler a microtask later, and Bun's
+      // unhandled-rejection reporter can fire in that gap under full-suite load.
+      data: {
+        slow: defer(
+          (() => {
+            const promise = Promise.reject(new Error("boom secret detail"))
+            promise.catch(() => {})
+            return promise
+          })(),
+        ),
+      },
       clientEntry: "/c.js",
     })
   ).text()

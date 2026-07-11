@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { consoleSpanExporter, type NifraSpan } from "../src/index.ts"
+import { combineObservationAdapters, consoleSpanExporter, type NifraSpan } from "../src/index.ts"
 
 const sampleSpan = (): NifraSpan => ({
   traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
@@ -45,5 +45,37 @@ describe("consoleSpanExporter", () => {
     }
     expect(captured).toHaveLength(1)
     expect(JSON.parse(String(captured[0])).name).toBe("GET /ping")
+  })
+})
+
+describe("combineObservationAdapters", () => {
+  test("fans out start and end while isolating broken adapters", () => {
+    const events: string[] = []
+    const combined = combineObservationAdapters([
+      {
+        onStart() {
+          events.push("first:start")
+          throw new Error("broken start")
+        },
+        onEnd() {
+          events.push("first:end")
+          throw new Error("broken end")
+        },
+      },
+      {
+        onStart: () => events.push("second:start"),
+        onEnd: () => events.push("second:end"),
+      },
+      {
+        // An end-only adapter is a supported lifecycle sink.
+        onEnd: () => events.push("third:end"),
+      },
+    ])
+
+    const span = sampleSpan()
+    combined.onStart?.(span)
+    combined.onEnd(span)
+
+    expect(events).toEqual(["first:start", "second:start", "first:end", "second:end", "third:end"])
   })
 })

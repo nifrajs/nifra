@@ -3,12 +3,22 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
+  assertSafeKey,
+  assertStorageAdapterConformance,
   FileStorage,
   MemoryStorage,
   type R2BucketLike,
   type R2ObjectLike,
   R2Storage,
   type StorageAdapter,
+  StorageAdapterConformanceError,
+  StorageKeyError,
+  type StorageListPage,
+  type StorageListPageOptions,
+  type StoragePresignedUrl,
+  type StoragePresignOperation,
+  type StoragePresignOptions,
+  toBytes,
 } from "../src/index.ts"
 
 /** An in-memory fake of the R2 binding so `R2Storage`'s mapping is exercised without real R2. Uses
@@ -74,7 +84,7 @@ const tmpDirs: string[] = []
 afterAll(() => Promise.all(tmpDirs.map((d) => rm(d, { recursive: true, force: true }))))
 async function freshFileStorage(): Promise<FileStorage> {
   const dir = await mkdtemp(join(tmpdir(), "nifra-storage-"))
-  tmpDirs.push(dir)
+  tmpDirs.push(dir, `${dir}.nifra-metadata`)
   return new FileStorage(dir)
 }
 
@@ -92,6 +102,9 @@ const adapters: Array<[string, () => Promise<StorageAdapter>]> = [
 
 for (const [name, make] of adapters) {
   describe(`StorageAdapter — ${name}`, () => {
+    test("passes the executable public conformance", async () => {
+      await assertStorageAdapterConformance({ createAdapter: make })
+    })
     test("put → get round-trips bytes (string input)", async () => {
       const s = await make()
       await s.put("a/b.txt", "hello")
@@ -150,11 +163,129 @@ describe("contentType + metadata", () => {
     }
   })
 
-  test("File infers contentType from the extension; custom metadata is not persisted", async () => {
+  test("File persists explicit contentType + metadata", async () => {
     const s = await freshFileStorage()
-    await s.put("photo.png", "x", { contentType: "ignored", metadata: { a: "b" } })
+    await s.put("photo.png", "x", { contentType: "image/custom", metadata: { a: "b" } })
     const object = present(await s.get("photo.png"))
-    expect(object.contentType).toBe("image/png") // inferred from `.png`
+    expect(object.contentType).toBe("image/custom")
+    expect(object.metadata).toEqual({ a: "b" })
+    expect(await s.list()).toEqual(["photo.png"])
+  })
+
+  test("File clears stale sidecar metadata on overwrite without options", async () => {
+    const s = await freshFileStorage()
+    await s.put("photo.png", "x", { contentType: "image/custom", metadata: { a: "b" } })
+    await s.put("photo.png", "y")
+    const object = present(await s.get("photo.png"))
+    expect(object.contentType).toBe("image/png")
     expect(object.metadata).toBeUndefined()
+  })
+})
+
+describe("toBytes", () => {
+  test("normalizes string, Uint8Array, and ArrayBuffer payloads", () => {
+    expect(toBytes("hi")).toEqual(new TextEncoder().encode("hi"))
+    const bytes = new Uint8Array([1, 2, 3])
+    expect(toBytes(bytes)).toBe(bytes)
+    const buffer = new Uint8Array([4, 5]).buffer
+    expect(toBytes(buffer)).toEqual(new Uint8Array([4, 5]))
+  })
+})
+
+describe("StorageKeyError", () => {
+  test("carries a stable name and message for every unsafe-key class", () => {
+    for (const key of ["", "/abs", "a\\b", "a\0b", "a/../b", "x".repeat(1025)]) {
+      try {
+        assertSafeKey(key)
+        throw new Error(`expected ${JSON.stringify(key)} to be rejected`)
+      } catch (error) {
+        expect(error).toBeInstanceOf(StorageKeyError)
+        expect((error as StorageKeyError).name).toBe("StorageKeyError")
+      }
+    }
+  })
+})
+
+// MemoryStorage extended with every optional capability, so the conformance suite's capability
+// checks execute against a real in-process implementation.
+class CapableMemoryStorage extends MemoryStorage {
+  async listPage(options: StorageListPageOptions = {}): Promise<StorageListPage> {
+    const all = await this.list({
+      ...(options.prefix !== undefined ? { prefix: options.prefix } : {}),
+    })
+    const start = options.cursor !== undefined ? Number(options.cursor) : 0
+    const limit = options.limit ?? all.length
+    const keys = all.slice(start, start + limit)
+    const next = start + keys.length
+    return { keys, ...(next < all.length ? { cursor: String(next) } : {}) }
+  }
+
+  async presign(
+    key: string,
+    operation: StoragePresignOperation,
+    options: StoragePresignOptions = {},
+  ): Promise<StoragePresignedUrl> {
+    assertSafeKey(key)
+    const ttl = options.expiresInSeconds ?? 300
+    return {
+      url: `https://signed.example/${operation}/${key}`,
+      expiresAt: new Date(Date.now() + ttl * 1000),
+    }
+  }
+
+  async copy(sourceKey: string, destinationKey: string): Promise<void> {
+    assertSafeKey(sourceKey)
+    assertSafeKey(destinationKey)
+    const source = await this.get(sourceKey)
+    if (source === null) throw new Error(`copy source ${sourceKey} missing`)
+    await this.put(destinationKey, source.body, {
+      ...(source.contentType !== undefined ? { contentType: source.contentType } : {}),
+      ...(source.metadata !== undefined ? { metadata: source.metadata } : {}),
+    })
+  }
+
+  async move(sourceKey: string, destinationKey: string): Promise<void> {
+    await this.copy(sourceKey, destinationKey)
+    await this.delete(sourceKey)
+  }
+}
+
+describe("conformance — optional capabilities", () => {
+  test("a fully-capable adapter passes the capability checks too", async () => {
+    await assertStorageAdapterConformance({ createAdapter: () => new CapableMemoryStorage() })
+  })
+
+  test("a move that keeps the source fails conformance with a named check", async () => {
+    class BrokenMove extends CapableMemoryStorage {
+      override async move(sourceKey: string, destinationKey: string): Promise<void> {
+        await this.copy(sourceKey, destinationKey) // forgets to delete the source
+      }
+    }
+    try {
+      await assertStorageAdapterConformance({ createAdapter: () => new BrokenMove() })
+      throw new Error("expected conformance to fail")
+    } catch (error) {
+      expect(error).toBeInstanceOf(StorageAdapterConformanceError)
+      expect((error as StorageAdapterConformanceError).check).toBe("move")
+      expect((error as StorageAdapterConformanceError).name).toBe("StorageAdapterConformanceError")
+    }
+  })
+
+  test("an expired presign fails conformance", async () => {
+    class ExpiredPresign extends CapableMemoryStorage {
+      override async presign(
+        key: string,
+        operation: StoragePresignOperation,
+      ): Promise<StoragePresignedUrl> {
+        return { url: `https://signed.example/${operation}/${key}`, expiresAt: new Date(0) }
+      }
+    }
+    try {
+      await assertStorageAdapterConformance({ createAdapter: () => new ExpiredPresign() })
+      throw new Error("expected conformance to fail")
+    } catch (error) {
+      expect(error).toBeInstanceOf(StorageAdapterConformanceError)
+      expect((error as StorageAdapterConformanceError).check).toBe("presign")
+    }
   })
 })

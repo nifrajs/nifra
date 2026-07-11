@@ -1,8 +1,8 @@
 /**
  * Local-filesystem {@link StorageAdapter} for long-running servers (Bun/Node/Deno). Keys map to paths
  * under `root`; `assertSafeKey` plus a resolved-path containment check keep writes inside `root` (no
- * traversal). Bytes-only: `contentType` is inferred from the key's extension on read, and custom metadata
- * is NOT persisted — use `MemoryStorage`/`R2Storage` (or your own adapter) if you need metadata round-tripped.
+ * traversal). Explicit content type and custom metadata are persisted in an adjacent sidecar tree;
+ * objects created before sidecar support still infer content type from their extension.
  */
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, join, posix, resolve, sep } from "node:path"
@@ -44,9 +44,24 @@ function inferContentType(key: string): string | undefined {
 
 export class FileStorage implements StorageAdapter {
   private readonly root: string
+  private readonly metadataRoot: string
 
   constructor(root: string) {
     this.root = resolve(root)
+    // Keep bookkeeping outside the object tree so every otherwise-safe key remains usable, including
+    // `.nifra-metadata/*`, and list() never needs a reserved-prefix exception.
+    this.metadataRoot = `${this.root}.nifra-metadata`
+  }
+
+  private metadataPathFor(key: string): string {
+    assertSafeKey(key)
+    const full = resolve(this.metadataRoot, `${key}.json`)
+    if (!full.startsWith(this.metadataRoot + sep)) {
+      throw new StorageKeyError(
+        `storage metadata key ${JSON.stringify(key)} escapes the storage root`,
+      )
+    }
+    return full
   }
 
   /** Resolve `key` to an absolute path, asserting it stays inside `root` (defense-in-depth on top of `assertSafeKey`). */
@@ -59,10 +74,23 @@ export class FileStorage implements StorageAdapter {
     return full
   }
 
-  async put(key: string, data: StorageData, _options: PutOptions = {}): Promise<void> {
+  async put(key: string, data: StorageData, options: PutOptions = {}): Promise<void> {
     const path = this.pathFor(key)
     await mkdir(dirname(path), { recursive: true })
     await writeFile(path, toBytes(data))
+    const metadataPath = this.metadataPathFor(key)
+    if (options.contentType !== undefined || options.metadata !== undefined) {
+      await mkdir(dirname(metadataPath), { recursive: true })
+      await writeFile(
+        metadataPath,
+        JSON.stringify({
+          ...(options.contentType !== undefined ? { contentType: options.contentType } : {}),
+          ...(options.metadata !== undefined ? { metadata: options.metadata } : {}),
+        }),
+      )
+    } else {
+      await rm(metadataPath, { force: true })
+    }
   }
 
   async get(key: string): Promise<StorageObject | null> {
@@ -73,19 +101,32 @@ export class FileStorage implements StorageAdapter {
     } catch {
       return null // ENOENT (or unreadable) → treated as missing
     }
-    const contentType = inferContentType(key)
-    return contentType === undefined
-      ? { body, size: body.byteLength }
-      : { body, size: body.byteLength, contentType }
+    let stored: { contentType?: string; metadata?: Readonly<Record<string, string>> } = {}
+    try {
+      stored = JSON.parse(await readFile(this.metadataPathFor(key), "utf8")) as typeof stored
+    } catch {
+      // Objects created before sidecar support still infer a useful MIME type from their extension.
+    }
+    const contentType = stored.contentType ?? inferContentType(key)
+    return {
+      body,
+      size: body.byteLength,
+      ...(contentType !== undefined ? { contentType } : {}),
+      ...(stored.metadata !== undefined ? { metadata: stored.metadata } : {}),
+    }
   }
 
   async delete(key: string): Promise<void> {
-    await rm(this.pathFor(key), { force: true })
+    await Promise.all([
+      rm(this.pathFor(key), { force: true }),
+      rm(this.metadataPathFor(key), { force: true }),
+    ])
   }
 
   async exists(key: string): Promise<boolean> {
+    const path = this.pathFor(key)
     try {
-      await stat(this.pathFor(key))
+      await stat(path)
       return true
     } catch {
       return false

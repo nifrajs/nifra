@@ -2,6 +2,18 @@
 
 Every public export of every package — name, kind, signature, and doc summary — extracted from each `src/index.ts` with the TypeScript compiler API, so it cannot drift from the code. For HTTP route shapes (request/response bodies), see the OpenAPI + Scalar reference your app serves at `/reference`. For prose guides, see `llms-full.txt`.
 
+## @nifrajs/agent-telemetry
+
+- **AgentSpan** _(type)_ — `type AgentSpan = NifraSpan`
+  A tool-call span. Kept as an alias for package-specific naming without duplicating OTel types.
+- **AgentSpanExporter** _(type)_ — `type AgentSpanExporter = SpanExporter`
+  Exporter seam shared with `@nifrajs/otel`.
+- **AgentTelemetryOptions** _(interface)_ — `interface AgentTelemetryOptions`
+- **agentTelemetry** _(function)_ — `agentTelemetry: (options: AgentTelemetryOptions) => { name: string; beforeHandle(context: HookContext): undefined; onError(error: unknown, context: HookContext): undefined; onResponse(response: Response, request: Reques…`
+  Agent telemetry middleware. Register via `app.use(agentTelemetry({ exporter }))`.
+- **consoleAgentExporter** _(function)_ — `consoleAgentExporter: (log?: (line: string) => void) => AgentSpanExporter`
+  Pretty-prints agent tool call traces to the terminal.
+
 ## @nifrajs/auth
 
 - **CsrfOptions** _(interface)_ — `interface CsrfOptions`
@@ -148,6 +160,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ — `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
 - **InferOutput** _(type)_ — `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
+- **JsonSchema** _(type)_ — `type JsonSchema = boolean | Readonly<Record<string, unknown>>`
+  JSON Schema permits either a schema object or the boolean schemas `true` and `false`.
 - **LogFields** _(type)_ — `type LogFields = Record<string, unknown>`
   Structured, redacting logger. The framework logs through this interface so secrets/PII are scrubbed once, centrally (per the project's logging rule), not at each call site. Bring your own by passing `logger` to `server()`.
 - **Logger** _(interface)_ — `interface Logger`
@@ -180,6 +194,10 @@ Every public export of every package — name, kind, signature, and doc summary 
   A message in an MCP prompt's rendered output (see {@link Server.prompt}).
 - **RedactOptions** _(interface)_ — `interface RedactOptions`
   Tunes redaction. Key-name redaction always runs; the rest is **opt-in**: - `keyParts` — extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` — regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the…
+- **ReflectedRoute** _(interface)_ — `interface ReflectedRoute`
+- **ReflectedRouteSchema** _(interface)_ — `interface ReflectedRouteSchema`
+- **ReflectedSchemaField** _(interface)_ — `interface ReflectedSchemaField`
+  One top-level property of an introspectable object schema.
 - **Registry** _(type)_ — `type Registry = Record<string, Record<string, RouteInfo>>`
   The accumulated, type-level map of every route on a Server: path → method → RouteInfo.
 - **RegistryFor** _(type)_ — `type RegistryFor<C extends ContractShape> = { [P in C[keyof C]["path"]]: { [K in keyof C as C[K]["path"] extends P ? C[K]["method"] : never]: RouteInfoForOp<C[K]> } }`
@@ -219,6 +237,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   A Cloudflare Workers-style scheduled (cron) controller. Structural — no Workers type dependency.
 - **ScheduledHandler** _(type)_ — `type ScheduledHandler<Env = unknown> = ( controller: ScheduledController, context: { readonly env: Env; waitUntil(promise: Promise<unknown>): void }, ) => MaybePromise<void>`
   A nifra cron handler: the platform controller + the same typed `env`/`waitUntil` nifra threads into request handlers. Schedule background work with `waitUntil` so it outlives the trigger.
+- **SchemaReflection** _(interface)_ — `interface SchemaReflection`
+  Validation and introspection capabilities discovered for one schema-like value.
 - **Server** _(class)_ — `class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext>`
   The inline server. Routes are chainable and fully type-inferred. `derive`/ `decorate` extend the handler context (`Ctx`) for routes defined *after* them, with full types; `Ctx` is server-only and never touches the client registry.
 - **ServerOptions** _(interface)_ — `interface ServerOptions`
@@ -274,6 +294,10 @@ Every public export of every package — name, kind, signature, and doc summary 
   Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are skipped rather than throwing — a junk `Cookie` header shouldn't fail the request.
 - **redactLogFields** _(function)_ — `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
+- **reflectRoutes** _(function)_ — `reflectRoutes: (source: unknown) => readonly ReflectedRoute[]`
+  Safely enumerate and normalize route descriptors from an app or descriptor array. Invalid entries are ignored; a missing/throwing `routes()` method yields an empty array.
+- **reflectSchema** _(function)_ — `reflectSchema: (value: unknown) => SchemaReflection`
+  Reflect a Standard Schema, Nifra/TypeBox schema carrier, or raw JSON Schema. Never throws. Validation-only schemas have `standard` but no `jsonSchema`; raw JSON Schema has the reverse.
 - **robots** _(function)_ — `robots: (options: RobotsOptions) => string`
   Build a `robots.txt` body from grouped rules plus optional `Sitemap:`/`Host:` lines.
 - **serializeCookie** _(function)_ — `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
@@ -321,6 +345,16 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **ServeOptions** _(interface)_ — `interface ServeOptions`
 - **serve** _(function)_ — `serve: (app: FetchHandler, options: ServeOptions) => Promise<DenoServer>`
   Serve a Web-`fetch` app on Deno. Returns once bound, so `port` is the real one (matters for `port: 0`).
+
+## @nifrajs/devtools
+
+- **DevToolsClientOptions** _(interface)_ — `interface DevToolsClientOptions`
+- **DevToolsEvent** _(interface)_ — `interface DevToolsEvent`
+- **DevToolsOptions** _(interface)_ — `interface DevToolsOptions`
+- **devtools** _(function)_ — `devtools: (options?: DevToolsOptions | undefined) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").AnyServer>`
+  DevTools plugin. Its observation adapter projects the single request span into a `DevToolsEvent`; its middleware only owns the secured SSE transport. When configuring `tracing()` yourself, register it before this plugin so DevTools attaches to that request owner.
+- **devtoolsClientScript** _(function)_ — `devtoolsClientScript: (options?: DevToolsClientOptions) => string`
+  Returns a self-contained JavaScript string that creates a floating DevTools overlay in the browser. Inject via `<script>` tag in dev mode.
 
 ## @nifrajs/env
 
@@ -665,6 +699,20 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **verifyCsrfToken** _(function)_ — `verifyCsrfToken: (token: string, secret: string | Uint8Array) => Promise<boolean>`
 - **verifyJwt** _(function)_ — `verifyJwt: <C extends JwtClaims = JwtClaims>(token: string, options: VerifyJwtOptions) => Promise<VerifiedJwt<C>>`
 
+## @nifrajs/mock
+
+- **MockServer** _(interface)_ — `interface MockServer`
+- **MockServerOptions** _(interface)_ — `interface MockServerOptions`
+- **MockableApp** _(interface)_ — `interface MockableApp`
+  App shape — anything with a `routes()` method.
+- **MockableRoute** _(interface)_ — `interface MockableRoute`
+  Minimal route shape returned by `app.routes()`.
+- **UnsupportedMockSchemaError** _(class)_ — `class UnsupportedMockSchemaError`
+- **createMockServer** _(function)_ — `createMockServer: (app: MockableApp, options?: MockServerOptions | undefined) => MockServer`
+  Create a mock server from a Nifra app's route definitions. For each route with a `schema.response`, generates a handler returning fake data that matches the response schema structure. Routes without response schemas return `{}`.
+- **generateMockValue** _(function)_ — `generateMockValue: (schema: unknown, fieldName?: string | undefined, rng?: (() => number) | undefined) => unknown`
+  Generate a mock value from a schema object. Inspects JSON Schema properties (`type`, `properties`, `items`, `enum`, `format`) that TypeBox / NifraSchema objects carry directly. Unsupported constraints fail closed with {@link UnsupportedMockSchemaError} rather than returning a known-invalid response.
+
 ## @nifrajs/node
 
 - **FetchHandler** _(interface)_ — `interface FetchHandler`
@@ -680,20 +728,34 @@ Every public export of every package — name, kind, signature, and doc summary 
 
 ## @nifrajs/otel
 
+- **ActiveObservation** _(interface)_ — `interface ActiveObservation`
 - **AttributeValue** _(type)_ — `type AttributeValue = string | number | boolean`
+- **EndObservation** _(interface)_ — `interface EndObservation`
 - **NifraSpan** _(interface)_ — `interface NifraSpan`
   A completed (or in-flight) server span for one request.
+- **ObservationAdapter** _(interface)_ — `interface ObservationAdapter`
+  Where ended spans go. Implement this to bridge to the OpenTelemetry SDK (map each field onto a real `Span` from a `Tracer`), ship to a collector, or just log. `onStart` is optional (most backends only need the completed span).
+- **ObservationClock** _(interface)_ — `interface ObservationClock`
+- **ObservationContext** _(interface)_ — `interface ObservationContext`
+- **ObservationLifecycle** _(interface)_ — `interface ObservationLifecycle`
+- **ObservationLifecycleOptions** _(interface)_ — `interface ObservationLifecycleOptions`
+- **ObservationParent** _(interface)_ — `interface ObservationParent`
 - **ParsedTraceparent** _(interface)_ — `interface ParsedTraceparent`
   A parsed inbound `traceparent`.
-- **SpanExporter** _(interface)_ — `interface SpanExporter`
-  Where ended spans go. Implement this to bridge to the OpenTelemetry SDK (map each field onto a real `Span` from a `Tracer`), ship to a collector, or just log. `onStart` is optional (most backends only need the completed span).
+- **SpanExporter** _(type)_ — `type SpanExporter = ObservationAdapter`
+  Backwards-compatible name for an observation sink.
 - **SpanStatus** _(type)_ — `type SpanStatus = "unset" | "ok" | "error"`
-  The span model + exporter seam. Attribute names follow OpenTelemetry HTTP semantic conventions (`http.request.method`, `url.path`, `http.response.status_code`, …) so a span maps cleanly onto an OTel `Span` when bridged — but nothing here depends on the OTel SDK. You supply a {@link SpanExporter} (a…
-- **TraceContext** _(interface)_ — `interface TraceContext`
+  The span model + exporter seam. Attribute names follow OpenTelemetry HTTP semantic conventions (`http.request.method`, `url.path`, `http.response.status_code`, …) so a span maps cleanly onto an OTel `Span` when bridged — but nothing here depends on the OTel SDK. You supply an {@link ObservationAdap…
+- **StartObservation** _(interface)_ — `interface StartObservation`
+- **TraceContext** _(type)_ — `type TraceContext = ObservationContext`
   The trace context exposed on the handler `c.trace` (typed, threaded via `derive`).
 - **TracingOptions** _(interface)_ — `interface TracingOptions`
+- **combineObservationAdapters** _(function)_ — `combineObservationAdapters: (adapters: readonly ObservationAdapter[]) => ObservationAdapter`
+  Fan out lifecycle notifications to several adapters. Each adapter is isolated: an exception in one sink cannot prevent the remaining sinks from observing the span.
 - **consoleSpanExporter** _(function)_ — `consoleSpanExporter: (log?: (line: string) => void) => SpanExporter`
   A no-frills exporter that logs each completed span as one structured line. Useful in dev or as a starting point before wiring a real backend.
+- **createObservationLifecycle** _(function)_ — `createObservationLifecycle: (options?: ObservationLifecycleOptions) => ObservationLifecycle`
+  Creates an independent lifecycle factory. Adapters are always called fail-open.
 - **formatTraceparent** _(function)_ — `formatTraceparent: (traceId: string, spanId: string, sampled: boolean) => string`
   Format a `traceparent` header value (version `00`).
 - **generateSpanId** _(function)_ — `generateSpanId: () => string`
@@ -750,6 +812,12 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **FileStorage** _(class)_ — `class FileStorage`
 - **ListOptions** _(interface)_ — `interface ListOptions`
 - **MemoryStorage** _(class)_ — `class MemoryStorage`
+- **MovableStorageAdapter** _(interface)_ — `interface MovableStorageAdapter`
+  Optional server-side copy/move capability.
+- **PagedStorageAdapter** _(interface)_ — `interface PagedStorageAdapter`
+  Optional cursor-listing capability. Kept out of {@link StorageAdapter} for simple stores.
+- **PresignableStorageAdapter** _(interface)_ — `interface PresignableStorageAdapter`
+  Optional provider-side URL-signing capability. Asset sensitivity and TTL policy stay with callers.
 - **PutOptions** _(interface)_ — `interface PutOptions`
 - **R2BucketLike** _(interface)_ — `interface R2BucketLike`
   The slice of the R2 bucket binding this adapter calls. `env.<BUCKET>` satisfies it.
@@ -758,14 +826,30 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **R2Storage** _(class)_ — `class R2Storage`
 - **StorageAdapter** _(interface)_ — `interface StorageAdapter`
   A blob store keyed by string. Keys are POSIX-ish paths (`avatars/u1.png`); every adapter rejects unsafe keys (absolute, `..` traversal, NUL, backslash) so a key valid in one adapter is valid in all. All methods are async.
+- **StorageAdapterConformanceError** _(class)_ — `class StorageAdapterConformanceError`
+  A failed invariant reported by {@link assertStorageAdapterConformance}.
+- **StorageAdapterConformanceOptions** _(interface)_ — `interface StorageAdapterConformanceOptions`
+  Construction and cleanup hooks for {@link assertStorageAdapterConformance}.
 - **StorageData** _(type)_ — `type StorageData = Uint8Array | ArrayBuffer | string`
   Accepted `put` payloads — normalized to bytes by each adapter.
 - **StorageKeyError** _(class)_ — `class StorageKeyError`
   Storage-key safety. A key is a POSIX-ish relative path (`avatars/u1.png`); we reject anything that could escape a `FileStorage` root or otherwise misbehave — absolute paths, `..` traversal, NUL bytes, and backslashes (Windows traversal). Enforced by EVERY adapter (not just `FileStorage`) so a key i…
+- **StorageListPage** _(interface)_ — `interface StorageListPage`
+  One page of keys from stores that expose cursor-based listing.
+- **StorageListPageOptions** _(interface)_ — `interface StorageListPageOptions`
+  Cursor-aware listing options. `cursor` is adapter-owned and must be treated as opaque.
 - **StorageObject** _(interface)_ — `interface StorageObject`
   An object read back from storage. `body` is buffered (not streamed) — fine for typical uploads.
+- **StoragePresignOperation** _(type)_ — `type StoragePresignOperation = "get" | "put"`
+  Operation represented by a presigned storage URL.
+- **StoragePresignOptions** _(interface)_ — `interface StoragePresignOptions`
+  Mechanical constraints applied while minting a presigned URL.
+- **StoragePresignedUrl** _(interface)_ — `interface StoragePresignedUrl`
+  A provider-minted URL and its known expiry.
 - **assertSafeKey** _(function)_ — `assertSafeKey: (key: string) => void`
   Throw {@link StorageKeyError} unless `key` is a safe relative storage key.
+- **assertStorageAdapterConformance** _(function)_ — `assertStorageAdapterConformance: (options: StorageAdapterConformanceOptions) => Promise<void>`
+  Execute the observable {@link StorageAdapter} contract without depending on a test runner.
 - **toBytes** _(function)_ — `toBytes: (data: StorageData) => Uint8Array`
   Normalize any accepted payload to bytes.
 
@@ -903,7 +987,11 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **RedirectOptions** _(interface)_ — `interface RedirectOptions`
   Options for {@link redirect}.
 - **RenderAdapter** _(interface)_ — `interface RenderAdapter`
-  The seam every render adapter implements.
+  The seam every render adapter implements. New adapters should prove these invariants with {@link assertRenderAdapterConformance}; framework-specific behavior remains locally tested.
+- **RenderAdapterConformanceError** _(class)_ — `class RenderAdapterConformanceError`
+  A failed invariant reported by {@link assertRenderAdapterConformance}.
+- **RenderAdapterConformanceFixture** _(interface)_ — `interface RenderAdapterConformanceFixture`
+  Framework-specific values that let the shared conformance module exercise a render adapter.
 - **RenderPageOptions** _(interface)_ — `interface RenderPageOptions`
 - **RenderProps** _(interface)_ — `interface RenderProps`
   The data handed to a route component. Opaque to the core. `actionData` is the return of a route `action` after a POST (absent on plain GETs). `pending` + `submission` are client-only (absent on SSR): they drive **optimistic UI** — render from `submission.formData` while `pending`.
@@ -935,6 +1023,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   An in-flight client submit — the action it targets + the `FormData` being sent. Set while the submit is pending, cleared when it settles. A component reads `submission.formData` to render an **optimistic** view (the expected result) before the server responds.
 - **SubmitOptions** _(interface)_ — `interface SubmitOptions`
   Per-submit options. `revalidate: false` opts out of the post-action loader re-fetch.
+- **assertRenderAdapterConformance** _(function)_ — `assertRenderAdapterConformance: (adapter: RenderAdapter, fixture: RenderAdapterConformanceFixture) => Promise<void>`
+  Execute the observable {@link RenderAdapter} interface against a framework-specific fixture.
 - **buildManifest** _(function)_ — `buildManifest: (files: readonly string[], importer: (file: string) => () => Promise<RouteModule>) => Manifest`
   Build a manifest from route file paths (relative to the routes dir) + an `importer` that turns a path into a lazy module loader. Pure — no fs. Throws at boot (the loud-and-early RouteConfigError ethos) on duplicate patterns. `_layout`/`_404`/`_error` files are special; other `_`-prefixed files are …
 - **canonical** _(function)_ — `canonical: (href: string) => LinkDescriptor`
@@ -1078,6 +1168,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ — `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
 - **InferOutput** _(type)_ — `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
+- **JsonSchema** _(type)_ — `type JsonSchema = boolean | Readonly<Record<string, unknown>>`
+  JSON Schema permits either a schema object or the boolean schemas `true` and `false`.
 - **LogFields** _(type)_ — `type LogFields = Record<string, unknown>`
   Structured, redacting logger. The framework logs through this interface so secrets/PII are scrubbed once, centrally (per the project's logging rule), not at each call site. Bring your own by passing `logger` to `server()`.
 - **Logger** _(interface)_ — `interface Logger`
@@ -1110,6 +1202,10 @@ Every public export of every package — name, kind, signature, and doc summary 
   A message in an MCP prompt's rendered output (see {@link Server.prompt}).
 - **RedactOptions** _(interface)_ — `interface RedactOptions`
   Tunes redaction. Key-name redaction always runs; the rest is **opt-in**: - `keyParts` — extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` — regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the…
+- **ReflectedRoute** _(interface)_ — `interface ReflectedRoute`
+- **ReflectedRouteSchema** _(interface)_ — `interface ReflectedRouteSchema`
+- **ReflectedSchemaField** _(interface)_ — `interface ReflectedSchemaField`
+  One top-level property of an introspectable object schema.
 - **Registry** _(type)_ — `type Registry = Record<string, Record<string, RouteInfo>>`
   The accumulated, type-level map of every route on a Server: path → method → RouteInfo.
 - **RegistryFor** _(type)_ — `type RegistryFor<C extends ContractShape> = { [P in C[keyof C]["path"]]: { [K in keyof C as C[K]["path"] extends P ? C[K]["method"] : never]: RouteInfoForOp<C[K]> } }`
@@ -1149,6 +1245,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   A Cloudflare Workers-style scheduled (cron) controller. Structural — no Workers type dependency.
 - **ScheduledHandler** _(type)_ — `type ScheduledHandler<Env = unknown> = ( controller: ScheduledController, context: { readonly env: Env; waitUntil(promise: Promise<unknown>): void }, ) => MaybePromise<void>`
   A nifra cron handler: the platform controller + the same typed `env`/`waitUntil` nifra threads into request handlers. Schedule background work with `waitUntil` so it outlives the trigger.
+- **SchemaReflection** _(interface)_ — `interface SchemaReflection`
+  Validation and introspection capabilities discovered for one schema-like value.
 - **Server** _(class)_ — `class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext>`
   The inline server. Routes are chainable and fully type-inferred. `derive`/ `decorate` extend the handler context (`Ctx`) for routes defined *after* them, with full types; `Ctx` is server-only and never touches the client registry.
 - **ServerOptions** _(interface)_ — `interface ServerOptions`
@@ -1204,6 +1302,10 @@ Every public export of every package — name, kind, signature, and doc summary 
   Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are skipped rather than throwing — a junk `Cookie` header shouldn't fail the request.
 - **redactLogFields** _(function)_ — `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
+- **reflectRoutes** _(function)_ — `reflectRoutes: (source: unknown) => readonly ReflectedRoute[]`
+  Safely enumerate and normalize route descriptors from an app or descriptor array. Invalid entries are ignored; a missing/throwing `routes()` method yields an empty array.
+- **reflectSchema** _(function)_ — `reflectSchema: (value: unknown) => SchemaReflection`
+  Reflect a Standard Schema, Nifra/TypeBox schema carrier, or raw JSON Schema. Never throws. Validation-only schemas have `standard` but no `jsonSchema`; raw JSON Schema has the reverse.
 - **robots** _(function)_ — `robots: (options: RobotsOptions) => string`
   Build a `robots.txt` body from grouped rules plus optional `Sitemap:`/`Host:` lines.
 - **serializeCookie** _(function)_ — `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`

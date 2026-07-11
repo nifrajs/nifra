@@ -20,7 +20,11 @@ interface Entry {
 }
 
 export class MemoryStorage implements StorageAdapter {
-  private readonly objects = new Map<string, Entry>()
+  private readonly objects: Map<string, Entry>
+
+  constructor() {
+    this.objects = new Map()
+  }
 
   async put(key: string, data: StorageData, options: PutOptions = {}): Promise<void> {
     assertSafeKey(key)

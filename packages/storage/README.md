@@ -20,11 +20,24 @@ const keys = await storage.list({ prefix: "avatars/" })
 | Adapter | Use | Notes |
 |---|---|---|
 | `MemoryStorage` | dev / tests | not durable, not shared across instances |
-| `FileStorage(root)` | a long-running server (Bun/Node/Deno) | bytes-only: `contentType` inferred from the extension, custom metadata not persisted |
+| `FileStorage(root)` | a long-running server (Bun/Node/Deno) | persists content type + custom metadata in an adjacent sidecar tree; legacy objects still infer MIME from extension |
 | `R2Storage(env.BUCKET)` | the edge (Cloudflare R2) | round-trips `contentType` + metadata; binding typed structurally (no `@cloudflare/workers-types`) |
 
 Implement `StorageAdapter` (`put` / `get` / `delete` / `exists` / `list`) for **S3 / GCS / anything else** —
 the same five methods, and your routes don't change.
+
+Run the executable contract against third-party adapters:
+
+```ts
+import { assertStorageAdapterConformance } from "@nifrajs/storage"
+
+await assertStorageAdapterConformance({ createAdapter: () => new MyStorage() })
+```
+
+Provider-specific mechanics stay optional: implement `PagedStorageAdapter`, `PresignableStorageAdapter`,
+and/or `MovableStorageAdapter` only when the provider supports cursor listing, URL signing, or server-side
+copy/move. Asset sensitivity, bucket routing, credentials, and TTL policy belong in the consuming app or
+private package—not in these mechanical interfaces.
 
 ## Key safety
 
@@ -42,3 +55,5 @@ import { assertSafeKey, StorageKeyError } from "@nifrajs/storage"
 - `put(key, data, { contentType?, metadata? })` — `data` is `Uint8Array | ArrayBuffer | string`.
 - `get(key)` → `{ body, size, contentType?, metadata? } | null` · `delete(key)` · `exists(key)` · `list({ prefix?, limit? })`.
 - `assertSafeKey(key)` / `StorageKeyError` · `toBytes(data)`.
+- `assertStorageAdapterConformance({ createAdapter })` — dependency-free executable adapter contract.
+- Optional interfaces: `PagedStorageAdapter` · `PresignableStorageAdapter` · `MovableStorageAdapter`.

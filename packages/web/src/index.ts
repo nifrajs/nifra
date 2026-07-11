@@ -164,6 +164,12 @@ declare const SERVER_ONLY_BRAND: unique symbol
  */
 export type ServerOnly<T> = T & { readonly [SERVER_ONLY_BRAND]?: never }
 
+export {
+  assertRenderAdapterConformance,
+  RenderAdapterConformanceError,
+  type RenderAdapterConformanceFixture,
+} from "./conformance.ts"
+
 /** The data handed to a route component. Opaque to the core. `actionData` is the return of a
  * route `action` after a POST (absent on plain GETs). `pending` + `submission` are client-only
  * (absent on SSR): they drive **optimistic UI** — render from `submission.formData` while `pending`. */
@@ -176,7 +182,10 @@ export interface RenderProps {
   readonly submission?: Submission
 }
 
-/** The seam every render adapter implements. */
+/**
+ * The seam every render adapter implements. New adapters should prove these invariants with
+ * {@link assertRenderAdapterConformance}; framework-specific behavior remains locally tested.
+ */
 export interface RenderAdapter {
   /**
    * Server: render a route's layout `chain` (outermost layout → page) to a **stream** of HTML

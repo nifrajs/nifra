@@ -7,7 +7,8 @@
     "paths": {
       "@nifrajs/web": ["../web/src/index.ts"],
       "@nifrajs/web/plugins/kit": ["../web/src/plugins/kit.ts"],
-      "@nifrajs/core": ["../core/src/index.ts"]
+      "@nifrajs/core": ["../core/src/index.ts"],
+      "@nifrajs/core/reflection": ["../core/src/reflection.ts"]
     }
   },
   "include": ["src/**/*", "test/**/*"]

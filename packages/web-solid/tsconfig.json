@@ -8,7 +8,8 @@
     // Resolve the workspace core to its source so typecheck needs no prior build.
     "paths": {
       "@nifrajs/web": ["../web/src/index.ts"],
-      "@nifrajs/core": ["../core/src/index.ts"]
+      "@nifrajs/core": ["../core/src/index.ts"],
+      "@nifrajs/core/reflection": ["../core/src/reflection.ts"]
     }
   },
   "include": ["src/**/*", "test/**/*"]

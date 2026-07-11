@@ -5243,8 +5243,9 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 Distributed tracing for nifra. The `tracing()` plugin continues (or starts) a **W3C trace** per
 request, opens an **OpenTelemetry-semantic-convention** span, and exposes `c.trace` so you can
-forward the trace to downstream services. Spans go to a **pluggable exporter** — bridge to the
-OpenTelemetry SDK, or log them directly. No SDK bundled; edge-safe.
+forward the trace to downstream services. One fail-open lifecycle owns parentage, identity, timing,
+errors, final status, and exactly-once completion. Pluggable adapters project that observation into
+the OpenTelemetry SDK, DevTools, private backends, or structured logs. No SDK bundled; edge-safe.
 
 ```ts
 import { tracing, traceHeaders, consoleSpanExporter } from "@nifrajs/otel"
@@ -5267,20 +5268,25 @@ const app = server()
   (`error` for 5xx, `ok` otherwise).
 - **Exposes `c.trace`** (`{ traceId, spanId, parentSpanId?, sampled, traceparent }`) — spread
   `traceHeaders(c.trace)` into any downstream `fetch`/`ctx.api` call to continue the trace.
+- **Exposes `c.observation`** — integrations can start correctly-parented child observations or
+  attach an adapter without rebuilding request lifecycle state.
 - `responseHeader: true` also sets `traceparent` on the response (browser/client correlation).
 
-## Exporters
+## Adapters
 
-Implement `SpanExporter` to send spans wherever you collect them:
+Implement `ObservationAdapter` to send spans wherever you collect them. `SpanExporter` remains as a
+backwards-compatible type alias:
 
 ```ts
-interface SpanExporter {
+interface ObservationAdapter {
   onStart?(span: NifraSpan): void
   onEnd(span: NifraSpan): void
 }
 ```
 
 - `consoleSpanExporter()` — logs each completed span as one structured line (dev / starting point).
+- `tracing({ adapters: [devtoolsAdapter, privateAdapter] })` — fan out the same lifecycle; adapter
+  failures are isolated and never alter the response.
 - **OpenTelemetry SDK bridge** — a ~10-line adapter maps `NifraSpan` onto a real OTel `Span` from a
   `Tracer` (the attribute names already follow OTel conventions, so they pass straight through). Your
   app depends on `@opentelemetry/*`; `@nifrajs/otel` does not.
@@ -5290,6 +5296,9 @@ interface SpanExporter {
 Use `traceparent` and the built-in semantic attributes in every request span, then send spans to
 your own collector through an exporter. Keep the package edge-safe by installing the OpenTelemetry
 SDK only in apps that need that exporter.
+
+For non-HTTP work, `createObservationLifecycle()` exposes the same state machine directly. Prefer
+it over hand-rolling traceparent parsing, clocks, error status, or completion guards.
 
 ## For AI agents
 
@@ -5418,11 +5427,24 @@ const keys = await storage.list({ prefix: "avatars/" })
 | Adapter | Use | Notes |
 |---|---|---|
 | `MemoryStorage` | dev / tests | not durable, not shared across instances |
-| `FileStorage(root)` | a long-running server (Bun/Node/Deno) | bytes-only: `contentType` inferred from the extension, custom metadata not persisted |
+| `FileStorage(root)` | a long-running server (Bun/Node/Deno) | persists content type + custom metadata in an adjacent sidecar tree; legacy objects still infer MIME from extension |
 | `R2Storage(env.BUCKET)` | the edge (Cloudflare R2) | round-trips `contentType` + metadata; binding typed structurally (no `@cloudflare/workers-types`) |
 
 Implement `StorageAdapter` (`put` / `get` / `delete` / `exists` / `list`) for **S3 / GCS / anything else** —
 the same five methods, and your routes don't change.
+
+Run the executable contract against third-party adapters:
+
+```ts
+import { assertStorageAdapterConformance } from "@nifrajs/storage"
+
+await assertStorageAdapterConformance({ createAdapter: () => new MyStorage() })
+```
+
+Provider-specific mechanics stay optional: implement `PagedStorageAdapter`, `PresignableStorageAdapter`,
+and/or `MovableStorageAdapter` only when the provider supports cursor listing, URL signing, or server-side
+copy/move. Asset sensitivity, bucket routing, credentials, and TTL policy belong in the consuming app or
+private package—not in these mechanical interfaces.
 
 ## Key safety
 
@@ -5440,6 +5462,8 @@ import { assertSafeKey, StorageKeyError } from "@nifrajs/storage"
 - `put(key, data, { contentType?, metadata? })` — `data` is `Uint8Array | ArrayBuffer | string`.
 - `get(key)` → `{ body, size, contentType?, metadata? } | null` · `delete(key)` · `exists(key)` · `list({ prefix?, limit? })`.
 - `assertSafeKey(key)` / `StorageKeyError` · `toBytes(data)`.
+- `assertStorageAdapterConformance({ createAdapter })` — dependency-free executable adapter contract.
+- Optional interfaces: `PagedStorageAdapter` · `PresignableStorageAdapter` · `MovableStorageAdapter`.
 
 ## @nifrajs/testing
 
@@ -5799,6 +5823,10 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 # Complete export index (generated from each package's src/index.ts)
 
+## @nifrajs/agent-telemetry
+
+`AgentSpan`, `AgentSpanExporter`, `agentTelemetry`, `AgentTelemetryOptions`, `consoleAgentExporter`
+
 ## @nifrajs/auth
 
 `createSessions`, `csrf`, `CsrfOptions`, `GuardOptions`, `KVNamespaceLike`, `KVSessionStore`, `MemorySessionStore`, `MemorySessionStoreOptions`, `requireSession`, `requireUser`, `Session`, `SessionContext`, `SessionCookieOptions`, `SessionManager`, `SessionOptions`, `SessionRecord`, `SessionStore`
@@ -5831,6 +5859,10 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 `DenoServer`, `FetchHandler`, `serve`, `ServeOptions`
 
+## @nifrajs/devtools
+
+`devtools`, `DevToolsClientOptions`, `devtoolsClientScript`, `DevToolsEvent`, `DevToolsOptions`
+
 ## @nifrajs/env
 
 `boolean`, `defineEnv`, `DefineEnvOptions`, `enumValue`, `env`, `EnvResult`, `EnvShape`, `InferOutput`, `number`, `port`, `StandardResult`, `StandardSchemaV1`, `string`, `url`
@@ -5859,13 +5891,17 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 `apiKey`, `ApiKeyStaticOptions`, `ApiKeyVerifyOptions`, `appendTrailingSlash`, `AuthPlugin`, `basicAuth`, `BasicAuthPlugin`, `BasicAuthStaticOptions`, `BasicAuthVerifyOptions`, `bearer`, `BearerOptions`, `bodyLimit`, `BodyLimitOptions`, `buildOpenApiDocument`, `cache`, `cacheControl`, `CacheControlOptions`, `CachedResponse`, `CacheOptions`, `combine`, `Composable`, `compression`, `CompressionOptions`, `cors`, `CorsOptions`, `createCsrfToken`, `csrf`, `CsrfOptions`, `etag`, `ETagOptions`, `healthcheck`, `HealthcheckOptions`, `idempotency`, `IdempotencyClaim`, `IdempotencyOptions`, `IdempotencyRecord`, `IdempotencyStore`, `IpMatcher`, `ipRestriction`, `IpRestrictionOptions`, `jwk`, `JwkKey`, `jwks`, `JwksOptions`, `jwt`, `JwtAlgorithm`, `JwtClaims`, `JwtHeader`, `JwtKeyResolver`, `JwtOptions`, `JwtPlugin`, `JwtVerificationKey`, `language`, `LanguageMatch`, `LanguageOptions`, `logger`, `LoggerOptions`, `MemoryIdempotencyStore`, `MemoryIdempotencyStoreOptions`, `MemoryResponseCache`, `MemoryResponseCacheOptions`, `MemoryStore`, `MemoryStoreOptions`, `methodOverride`, `MethodOverrideOptions`, `namedCombine`, `openapi`, `OpenApiInfo`, `OpenApiOptions`, `OpenApiServer`, `OpenApiTag`, `OpenApiUiOptions`, `pickLanguage`, `poweredBy`, `PoweredByOptions`, `prettyJson`, `PrettyJsonOptions`, `rateLimit`, `RateLimitOptions`, `RateLimitResult`, `RateLimitStore`, `requestId`, `RequestIdOptions`, `RequestLogFields`, `responseCache`, `ResponseCacheStore`, `RouteLike`, `securityHeaders`, `SecurityHeadersOptions`, `SecurityRequirement`, `timing`, `TimingControls`, `TimingMetric`, `TimingOptions`, `TrailingSlashOptions`, `trimTrailingSlash`, `tryVerifyJwt`, `VerifiedJwt`, `verifyCsrfToken`, `verifyJwt`, `VerifyJwtOptions`, `VerifyJwtResult`
 
+## @nifrajs/mock
+
+`createMockServer`, `generateMockValue`, `MockableApp`, `MockableRoute`, `MockServer`, `MockServerOptions`, `UnsupportedMockSchemaError`
+
 ## @nifrajs/node
 
 `FetchHandler`, `NodeServer`, `RequestProtocol`, `RequestProtocolOption`, `serve`, `ServeOptions`, `ServeStaticOptions`
 
 ## @nifrajs/otel
 
-`AttributeValue`, `consoleSpanExporter`, `formatTraceparent`, `generateSpanId`, `generateTraceId`, `NifraSpan`, `ParsedTraceparent`, `parseTraceparent`, `SpanExporter`, `SpanStatus`, `TraceContext`, `traceHeaders`, `tracing`, `TracingOptions`
+`ActiveObservation`, `AttributeValue`, `combineObservationAdapters`, `consoleSpanExporter`, `createObservationLifecycle`, `EndObservation`, `formatTraceparent`, `generateSpanId`, `generateTraceId`, `NifraSpan`, `ObservationAdapter`, `ObservationClock`, `ObservationContext`, `ObservationLifecycle`, `ObservationLifecycleOptions`, `ObservationParent`, `ParsedTraceparent`, `parseTraceparent`, `SpanExporter`, `SpanStatus`, `StartObservation`, `TraceContext`, `traceHeaders`, `tracing`, `TracingOptions`
 
 ## @nifrajs/runner
 
@@ -5877,7 +5913,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/storage
 
-`assertSafeKey`, `FileStorage`, `ListOptions`, `MemoryStorage`, `PutOptions`, `R2BucketLike`, `R2ObjectLike`, `R2Storage`, `StorageAdapter`, `StorageData`, `StorageKeyError`, `StorageObject`, `toBytes`
+`assertSafeKey`, `assertStorageAdapterConformance`, `FileStorage`, `ListOptions`, `MemoryStorage`, `MovableStorageAdapter`, `PagedStorageAdapter`, `PresignableStorageAdapter`, `PutOptions`, `R2BucketLike`, `R2ObjectLike`, `R2Storage`, `StorageAdapter`, `StorageAdapterConformanceError`, `StorageAdapterConformanceOptions`, `StorageData`, `StorageKeyError`, `StorageListPage`, `StorageListPageOptions`, `StorageObject`, `StoragePresignedUrl`, `StoragePresignOperation`, `StoragePresignOptions`, `toBytes`
 
 ## @nifrajs/testing
 
@@ -5889,7 +5925,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`Action`, `ACTION_GLOBAL`, `apiKey`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumeratePrerenderedPaths`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `GetStaticPaths`, `hashQueryKey`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `openGraph`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `RenderAdapter`, `RenderedPage`, `renderPage`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `routeStyles`, `ScriptDescriptor`, `serializeData`, `ServerOnly`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `styles`, `Submission`, `SubmitOptions`, `withISR`
+`Action`, `ACTION_GLOBAL`, `apiKey`, `assertRenderAdapterConformance`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumeratePrerenderedPaths`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `GetStaticPaths`, `hashQueryKey`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `openGraph`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderedPage`, `renderPage`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `routeStyles`, `ScriptDescriptor`, `serializeData`, `ServerOnly`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `styles`, `Submission`, `SubmitOptions`, `withISR`
 
 ## @nifrajs/web-preact
 

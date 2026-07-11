@@ -18,14 +18,14 @@ Bun-native, contract-first HTTP framework — the router, server, and route desc
 - **jsonLogger** _(function)_ — `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
 - **parseCookies** _(function)_ — `parseCookies: (header: string | null | undefined) => Record<string, string>`
 - **redactLogFields** _(function)_ — `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
+- **reflectRoutes** _(function)_ — `reflectRoutes: (source: unknown) => readonly ReflectedRoute[]`
+- **reflectSchema** _(function)_ — `reflectSchema: (value: unknown) => SchemaReflection`
 - **robots** _(function)_ — `robots: (options: RobotsOptions) => string`
 - **serializeCookie** _(function)_ — `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
 - **server** _(function)_ — `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
 - **signValue** _(function)_ — `signValue: (value: string, secret: string) => Promise<string>`
-- **sitemap** _(function)_ — `sitemap: (entries: readonly SitemapEntry[], options?: SitemapOptions) => string`
-- **sse** _(function)_ — `sse: (c: SSEContext, run: (stream: SSEStream) => void | Promise<void>, init?: SSEInit) => Response`
 
-_…and 85 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
+_…and 92 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 
 ## Footguns
 

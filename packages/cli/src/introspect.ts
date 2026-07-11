@@ -5,38 +5,14 @@
  * *this* project's actual surface, not just generic docs.
  */
 
+import { type ReflectedRoute, reflectRoutes, type SchemaReflection } from "@nifrajs/core/reflection"
 import type { Manifest } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import type { LoadedApp } from "./load.ts"
 
-/** Structural view of a `@nifrajs/core` route descriptor — declared locally so the CLI needs no type
- * dependency on core. `app.routes()` returns these. */
-interface RouteDesc {
-  readonly method: string
-  readonly path: string
-  readonly schema?: unknown
-}
-
 /** Read the backend's registered routes, if it's a `server()` with a `.routes()` method. */
-export function backendRoutes(backend: unknown): RouteDesc[] {
-  if (backend && typeof (backend as { routes?: unknown }).routes === "function") {
-    try {
-      return (backend as { routes(): RouteDesc[] }).routes()
-    } catch {
-      return []
-    }
-  }
-  return []
-}
-
-/** The JSON Schema a `t`/Standard Schema carries (nifra's `t` is TypeBox-backed and exposes `.jsonSchema`),
- * or `undefined` for a validator that doesn't expose one. This is the exact field-level contract. */
-function jsonSchemaOf(schema: unknown): unknown {
-  if (schema && typeof schema === "object" && "jsonSchema" in schema) {
-    const js = (schema as { jsonSchema?: unknown }).jsonSchema
-    if (js !== undefined && js !== null) return js
-  }
-  return undefined
+export function backendRoutes(backend: unknown): ReflectedRoute[] {
+  return [...reflectRoutes(backend)]
 }
 
 interface JsonSchemaNode {
@@ -99,16 +75,16 @@ export function tsTypeOf(schema: unknown, depth = 0): string {
 
 /** One route's request/response field shapes, indented under its line. Reads the declared schemas off the
  * descriptor so an agent gets the exact input + output contract — not just "this route is validated". */
-function schemaLines(schema: unknown): string[] {
-  const s = schema as { body?: unknown; query?: unknown; response?: unknown } | undefined
+function schemaLines(schema: ReflectedRoute["schema"]): string[] {
+  const s = schema
   if (!s) return []
   const out: string[] = []
   for (const key of ["query", "body", "response"] as const) {
     const declared = s[key]
     if (!declared) continue
-    const js = jsonSchemaOf(declared)
+    const js = declared.jsonSchema
     out.push(
-      js
+      js !== undefined
         ? `    - ${key}: \`${tsTypeOf(js)}\``
         : `    - ${key}: _(validated; shape not introspectable from this validator)_`,
     )
@@ -153,7 +129,7 @@ export function clientCall(method: string, path: string, schema: unknown): strin
 }
 
 /** Markdown section listing the backend's API routes with their request + response field shapes. */
-export function apiRoutesSection(routes: readonly RouteDesc[]): string {
+export function apiRoutesSection(routes: readonly ReflectedRoute[]): string {
   if (routes.length === 0) {
     return "## API routes\n\nNo `backend.ts` server routes found (this app may be frontend-only)."
   }
@@ -171,7 +147,7 @@ export function apiRoutesSection(routes: readonly RouteDesc[]): string {
  * body/query/response shapes or the per-route `call` line. Bounds the first-call payload on a big backend:
  * an agent gets the full route list (so it knows what's mounted) plus a pointer to fetch any route's full
  * contract via the `path`/`kind` slice, instead of every schema up front. */
-export function apiRoutesIndexSection(routes: readonly RouteDesc[]): string {
+export function apiRoutesIndexSection(routes: readonly ReflectedRoute[]): string {
   if (routes.length === 0) {
     return "## API routes (backend.ts)\n\nNo `backend.ts` server routes found (this app may be frontend-only)."
   }
@@ -287,8 +263,10 @@ export interface RouteJson {
 export function routesToJson(app: LoadedApp, pathPrefix?: string): RouteJson[] {
   const shape = (v: unknown): string | undefined => {
     if (!v) return undefined
-    const js = jsonSchemaOf(v)
-    return js ? tsTypeOf(js) : "(validated; shape not introspectable from this validator)"
+    const js = (v as SchemaReflection).jsonSchema
+    return js !== undefined
+      ? tsTypeOf(js)
+      : "(validated; shape not introspectable from this validator)"
   }
   let routes = backendRoutes(app.backend)
   if (pathPrefix !== undefined && pathPrefix !== "") {
@@ -297,7 +275,7 @@ export function routesToJson(app: LoadedApp, pathPrefix?: string): RouteJson[] {
   return [...routes]
     .sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))
     .map((r) => {
-      const s = r.schema as { body?: unknown; query?: unknown; response?: unknown } | undefined
+      const s = r.schema
       const body = shape(s?.body)
       const query = shape(s?.query)
       const response = shape(s?.response)
@@ -353,7 +331,7 @@ export interface PageRouteInput {
 
 export interface RouteTableInput {
   readonly pages: readonly PageRouteInput[]
-  readonly api: readonly RouteDesc[]
+  readonly api: ReadonlyArray<Pick<ReflectedRoute, "method" | "path">>
   /** The page router's `apiPrefix` (default `/api`); an API route at/under it is auto-mounted. `""`
    * disables the auto-mount, so no API route is marked auto-mounted. */
   readonly apiPrefix?: string

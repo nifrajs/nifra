@@ -26,6 +26,7 @@
 import { readFile, stat } from "node:fs/promises"
 import { basename, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
+import { type ReflectedRoute, reflectRoutes } from "@nifrajs/core/reflection"
 import { Glob } from "bun"
 import { loadDocsCorpus } from "./docs-search.ts"
 import { loadExamplesCorpus } from "./examples.ts"
@@ -978,17 +979,8 @@ export function projectTools(
   ]
 }
 
-/** A `.tool()`-registered route as seen through the backend's `routes()` introspection. */
-type ToolRoute = {
-  readonly schema?: { readonly body?: unknown; readonly response?: unknown }
-  readonly tool?: {
-    readonly name: string
-    readonly description: string
-    readonly annotations?: McpTool["annotations"]
-  }
-}
 type ToolBackend = {
-  readonly routes?: () => ToolRoute[]
+  readonly routes?: () => readonly unknown[]
   readonly fetch: (req: Request) => Promise<Response>
 }
 
@@ -997,28 +989,15 @@ type ToolBackend = {
 export function extractBackendTools(backend: unknown): McpTool[] {
   const b = backend as ToolBackend | null
   if (!b || typeof b.routes !== "function") return []
-  let routes: ToolRoute[] = []
-  try {
-    routes = b.routes()
-  } catch {
-    return []
-  }
-
-  const jsonSchemaOf = (schema: unknown): unknown => {
-    if (schema && typeof schema === "object" && "jsonSchema" in schema) {
-      const js = (schema as { jsonSchema?: unknown }).jsonSchema
-      if (js !== undefined && js !== null) return js
-    }
-    return undefined
-  }
+  const routes = reflectRoutes(b)
 
   return routes
     .filter(
       (
         r,
-      ): r is ToolRoute & {
-        schema: NonNullable<ToolRoute["schema"]>
-        tool: NonNullable<ToolRoute["tool"]>
+      ): r is ReflectedRoute & {
+        schema: NonNullable<ReflectedRoute["schema"]>
+        tool: NonNullable<ReflectedRoute["tool"]>
       } => r.schema !== undefined && r.tool !== undefined,
     )
     .map((r) => {
@@ -1027,7 +1006,7 @@ export function extractBackendTools(backend: unknown): McpTool[] {
       return {
         name: toolInfo.name,
         description: toolInfo.description,
-        inputSchema: (jsonSchemaOf(s.body) ?? {
+        inputSchema: (s.body?.jsonSchema ?? {
           type: "object",
           properties: {},
         }) as McpTool["inputSchema"],

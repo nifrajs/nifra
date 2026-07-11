@@ -28,6 +28,12 @@
     "doc": "/**\n * The (awaited) data return of an `action`, for typing a page component's `actionData` prop.\n * A `Response` return (redirect/custom) is excluded — it never reaches the component. A\n * `revalidate(paths, data)` wrapper (from `@nifrajs/web`) is transparent: matched structurally (so this\n * stays decoupled from `@nifrajs/web`) and unwrapped to its inner `data` — what the component receives.\n */"
   },
   {
+    "name": "ActiveObservation",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface ActiveObservation {\n    readonly span: NifraSpan;\n    readonly context: ObservationContext;\n    /** Adds a sink to this in-flight span. Re-adding the same adapter is idempotent. */\n    addAdapter(adapter: ObservationAdapter): void;\n    /** Starts a child that inherits this span's trace identity and sampling decision. */\n    startChild(input: Omit<StartObservation, \"parent\" | \"traceparent\">, additionalAdapters?: readonly ObservationAdapter[]): ActiveObservation;\n    /** Records failure evidence without deciding the final status until the response is known. */\n    recordError(error: unknown): void;\n    /** Ends and exports once. Repeated calls return the same completed span without notifying again. */\n    end(input?: EndObservation): NifraSpan;\n}"
+  },
+  {
     "name": "AddRoute",
     "kind": "type",
     "package": "@nifrajs/core",
@@ -66,6 +72,33 @@
     "kind": "interface",
     "package": "create-nifra",
     "signature": "export interface AgentsMdOptions {\n    readonly template: TemplateName;\n    readonly framework: Framework;\n    readonly name: string;\n    /** Drizzle preset, when scaffolded with `--db` — adds a Database section. */\n    readonly db?: DbChoice;\n    /** Auth preset, when scaffolded with `--auth` — adds an Authentication section. */\n    readonly auth?: AuthChoice;\n}"
+  },
+  {
+    "name": "AgentSpan",
+    "kind": "type",
+    "package": "@nifrajs/agent-telemetry",
+    "signature": "export type AgentSpan = NifraSpan;",
+    "doc": "/** A tool-call span. Kept as an alias for package-specific naming without duplicating OTel types. */"
+  },
+  {
+    "name": "AgentSpanExporter",
+    "kind": "type",
+    "package": "@nifrajs/agent-telemetry",
+    "signature": "export type AgentSpanExporter = SpanExporter;",
+    "doc": "/** Exporter seam shared with `@nifrajs/otel`. */"
+  },
+  {
+    "name": "agentTelemetry",
+    "kind": "function",
+    "package": "@nifrajs/agent-telemetry",
+    "signature": "export declare function agentTelemetry(options: AgentTelemetryOptions): {\n    name: string;\n    beforeHandle(context: HookContext): undefined;\n    onError(error: unknown, context: HookContext): undefined;\n    onResponse(response: Response, request: Request): Response;\n};",
+    "doc": "/**\n * Agent telemetry middleware. Register via `app.use(agentTelemetry({ exporter }))`.\n *\n * Creates child spans for requests targeting tool endpoints (`/_nifra/tool/*`)\n * or the MCP endpoint (`/mcp`). Non-matching requests pass through with zero overhead\n * (a single `startsWith` check — O(1), no regex).\n */"
+  },
+  {
+    "name": "AgentTelemetryOptions",
+    "kind": "interface",
+    "package": "@nifrajs/agent-telemetry",
+    "signature": "export interface AgentTelemetryOptions {\n    /** Exporter that receives completed tool-call spans. */\n    readonly exporter: AgentSpanExporter;\n    /** Path prefix for nifra tool routes (default `\"/_nifra/tool/\"`). */\n    readonly toolPathPrefix?: string | undefined;\n    /** Path for the MCP endpoint (default `\"/mcp\"`). */\n    readonly mcpPath?: string | undefined;\n}"
   },
   {
     "name": "aggregateSizeReport",
@@ -124,14 +157,14 @@
     "name": "apiRoutesIndexSection",
     "kind": "function",
     "package": "@nifrajs/cli",
-    "signature": "export declare function apiRoutesIndexSection(routes: readonly RouteDesc[]): string;",
+    "signature": "export declare function apiRoutesIndexSection(routes: readonly ReflectedRoute[]): string;",
     "doc": "/** Compact API-routes INDEX for the no-arg `nifra_context` call — `METHOD path` per route, WITHOUT the\n * body/query/response shapes or the per-route `call` line. Bounds the first-call payload on a big backend:\n * an agent gets the full route list (so it knows what's mounted) plus a pointer to fetch any route's full\n * contract via the `path`/`kind` slice, instead of every schema up front. */"
   },
   {
     "name": "apiRoutesSection",
     "kind": "function",
     "package": "@nifrajs/cli",
-    "signature": "export declare function apiRoutesSection(routes: readonly RouteDesc[]): string;",
+    "signature": "export declare function apiRoutesSection(routes: readonly ReflectedRoute[]): string;",
     "doc": "/** Markdown section listing the backend's API routes with their request + response field shapes. */"
   },
   {
@@ -184,11 +217,25 @@
     "doc": "/**\n * Guard `--auth` against a DB whose ORM has no clean better-auth adapter. Throws an actionable error\n * for Kysely (passing a raw dialect to better-auth is manual wiring we won't fake-scaffold). Called by\n * the CLI before scaffolding so the failure is early and explains the fix.\n */"
   },
   {
+    "name": "assertRenderAdapterConformance",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function assertRenderAdapterConformance(adapter: RenderAdapter, fixture: RenderAdapterConformanceFixture): Promise<void>;",
+    "doc": "/**\n * Execute the observable {@link RenderAdapter} interface against a framework-specific fixture.\n *\n * The promise resolves only when the adapter proves all shared invariants: page props reach a\n * page-only render, streams contain byte chunks, layout chains nest outermost-first, optional\n * buffered rendering is byte-for-byte hydration-equivalent to streaming for non-deferred content,\n * and hydration-head output is a stable string. It rejects with\n * {@link RenderAdapterConformanceError} naming the first failed check.\n *\n * Framework semantics outside the interface—Suspense scheduling, compiler plugins, DOM hydration,\n * error boundaries, and framework-specific primitives—remain the adapter package's local tests.\n */"
+  },
+  {
     "name": "assertSafeKey",
     "kind": "function",
     "package": "@nifrajs/storage",
     "signature": "export declare function assertSafeKey(key: string): void;",
     "doc": "/** Throw {@link StorageKeyError} unless `key` is a safe relative storage key. */"
+  },
+  {
+    "name": "assertStorageAdapterConformance",
+    "kind": "function",
+    "package": "@nifrajs/storage",
+    "signature": "export declare function assertStorageAdapterConformance(options: StorageAdapterConformanceOptions): Promise<void>;",
+    "doc": "/**\n * Execute the observable {@link StorageAdapter} contract without depending on a test runner.\n *\n * The adapter must be isolated because this writes deterministic conformance keys. The promise resolves\n * only after proving byte + metadata round-trips, overwrite, missing/delete semantics, prefix/limit listing,\n * and uniform unsafe-key rejection across every key-taking method.\n */"
   },
   {
     "name": "attachWebSocket",
@@ -291,7 +338,7 @@
     "name": "backendRoutes",
     "kind": "function",
     "package": "@nifrajs/cli",
-    "signature": "export declare function backendRoutes(backend: unknown): RouteDesc[];",
+    "signature": "export declare function backendRoutes(backend: unknown): ReflectedRoute[];",
     "doc": "/** Read the backend's registered routes, if it's a `server()` with a `.routes()` method. */"
   },
   {
@@ -767,6 +814,13 @@
     "doc": "/** Compose middleware/plugins into one reusable bundle. Individual named plugins still dedupe. */"
   },
   {
+    "name": "combineObservationAdapters",
+    "kind": "function",
+    "package": "@nifrajs/otel",
+    "signature": "export declare function combineObservationAdapters(adapters: readonly ObservationAdapter[]): ObservationAdapter;",
+    "doc": "/**\n * Fan out lifecycle notifications to several adapters. Each adapter is isolated: an exception in\n * one sink cannot prevent the remaining sinks from observing the span.\n */"
+  },
+  {
     "name": "commonSecretPatterns",
     "kind": "const",
     "package": "@nifrajs/core",
@@ -847,6 +901,13 @@
     "package": "@nifrajs/islets",
     "signature": "export declare function computed<T>(fn: () => T): () => T;",
     "doc": "/** Derived value, cached into a signal — recomputes when its tracked inputs change. */"
+  },
+  {
+    "name": "consoleAgentExporter",
+    "kind": "function",
+    "package": "@nifrajs/agent-telemetry",
+    "signature": "export declare function consoleAgentExporter(log?: (line: string) => void): AgentSpanExporter;",
+    "doc": "/**\n * Pretty-prints agent tool call traces to the terminal.\n *\n * Output format:\n * ```\n * [agent] tool:get_weather 12ms ok (input: 45B, output: 128B)\n * ```\n */"
   },
   {
     "name": "consoleSpanExporter",
@@ -1075,6 +1136,20 @@
     "kind": "interface",
     "package": "@nifrajs/mcp",
     "signature": "export interface CreateMcpServerOptions {\n    readonly name: string;\n    readonly version: string;\n    readonly tools?: readonly McpTool[];\n    /** MCP Apps widgets — their resources are registered and the UI capability is advertised. */\n    readonly widgets?: readonly McpWidget[];\n    /** Extra (non-widget) resources to expose. */\n    readonly resources?: readonly McpResource[];\n    readonly prompts?: readonly McpPrompt[];\n    /** GET health-page text. */\n    readonly health?: string;\n    /** Max JSON-RPC body size in bytes (default 1 MB). */\n    readonly maxBodyBytes?: number;\n}"
+  },
+  {
+    "name": "createMockServer",
+    "kind": "function",
+    "package": "@nifrajs/mock",
+    "signature": "export declare function createMockServer(app: MockableApp, options?: MockServerOptions | undefined): MockServer;",
+    "doc": "/**\n * Create a mock server from a Nifra app's route definitions. For each route\n * with a `schema.response`, generates a handler returning fake data that\n * matches the response schema structure. Routes without response schemas\n * return `{}`.\n */"
+  },
+  {
+    "name": "createObservationLifecycle",
+    "kind": "function",
+    "package": "@nifrajs/otel",
+    "signature": "export declare function createObservationLifecycle(options?: ObservationLifecycleOptions): ObservationLifecycle;",
+    "doc": "/** Creates an independent lifecycle factory. Adapters are always called fail-open. */"
   },
   {
     "name": "createQuery",
@@ -1444,6 +1519,39 @@
     "signature": "export interface DevServerOptions extends Omit<BuildClientOptions, \"minify\"> {\n    /**\n     * Build the nifra app for the freshly-built client entry. `importQuery` changes on every\n     * rebuild — pass it to `discoverRoutes(routesDir, { importQuery })` so SSR re-imports edited\n     * route modules instead of Bun's cached copies.\n     */\n    readonly createApp: (clientEntry: string, importQuery: string) => FetchApp | Promise<FetchApp>;\n    /** Directories to watch (default: `[routesDir]`). */\n    readonly watch?: readonly string[];\n    /** Port to listen on (default {@link DEFAULT_DEV_PORT}). */\n    readonly port?: number;\n}"
   },
   {
+    "name": "devtools",
+    "kind": "function",
+    "package": "@nifrajs/devtools",
+    "signature": "export declare function devtools(options?: DevToolsOptions | undefined): import(\"@nifrajs/core\").NifraPlugin<import(\"@nifrajs/core\").AnyServer, import(\"@nifrajs/core\").AnyServer>;",
+    "doc": "/**\n * DevTools plugin. Its observation adapter projects the single request span into a\n * `DevToolsEvent`; its middleware only owns the secured SSE transport.\n * When configuring `tracing()` yourself, register it before this plugin so DevTools attaches to\n * that request owner.\n */"
+  },
+  {
+    "name": "DevToolsClientOptions",
+    "kind": "interface",
+    "package": "@nifrajs/devtools",
+    "signature": "export interface DevToolsClientOptions {\n    /** SSE path configured on the server plugin. */\n    readonly path?: string | undefined;\n}"
+  },
+  {
+    "name": "devtoolsClientScript",
+    "kind": "function",
+    "package": "@nifrajs/devtools",
+    "signature": "export declare function devtoolsClientScript(options?: DevToolsClientOptions): string;",
+    "doc": "/**\n * Returns a self-contained JavaScript string that creates a floating DevTools\n * overlay in the browser. Inject via `<script>` tag in dev mode.\n *\n * The overlay:\n * - Connects to `/_nifra/devtools` via EventSource\n * - Shows a scrolling log of request traces\n * - Color-coded method badges and status codes\n * - ISR hit/miss/stale indicators\n * - Collapsible with a ⚡ toggle button\n */"
+  },
+  {
+    "name": "DevToolsEvent",
+    "kind": "interface",
+    "package": "@nifrajs/devtools",
+    "signature": "export interface DevToolsEvent {\n    readonly id: string;\n    readonly traceId: string;\n    readonly spanId: string;\n    readonly parentSpanId?: string | undefined;\n    readonly timestamp: number;\n    readonly method: string;\n    readonly path: string;\n    readonly status: number;\n    readonly durationMs: number;\n    readonly isrStatus?: string | undefined;\n    readonly bodyBytes: number;\n}",
+    "doc": "/**\n * `@nifrajs/devtools` — interactive DevTools overlay for `nifra dev`.\n *\n * Server-side: a middleware plugin that captures request traces into a ring buffer\n * and streams them via SSE at `/_nifra/devtools`.\n *\n * Client-side: a floating browser overlay that connects to the SSE stream and\n * renders a scrolling log of request traces with ISR status badges.\n *\n * **Zero production overhead** — register conditionally:\n * ```ts\n * if (process.env.NODE_ENV !== \"production\") app.use(devtools())\n * ```\n * When not registered, routes stay `bare` and the SSE endpoint doesn't exist.\n */"
+  },
+  {
+    "name": "DevToolsOptions",
+    "kind": "interface",
+    "package": "@nifrajs/devtools",
+    "signature": "export interface DevToolsOptions {\n    /** Maximum events to retain in the ring buffer (default 200). */\n    readonly maxEvents?: number | undefined;\n    /** Maximum simultaneous SSE connections (default 5). */\n    readonly maxConnections?: number | undefined;\n    /** SSE path (default `/_nifra/devtools`). */\n    readonly path?: string | undefined;\n    /** Explicit enable switch. Defaults to true only when `NODE_ENV === \"development\"`. */\n    readonly enabled?: boolean | undefined;\n    /** Permit non-loopback URL hosts. Default false. */\n    readonly allowRemote?: boolean | undefined;\n    /** Additional origins permitted to open the stream. Same-origin requests are always allowed. */\n    readonly allowedOrigins?: readonly string[] | undefined;\n    /** Optional request authorization for the stream. */\n    readonly authorize?: ((request: Request) => boolean | Promise<boolean>) | undefined;\n    /**\n     * Interval for SSE keep-alive comment frames, in milliseconds (default 15000). Pings stop\n     * idle proxies/dev tunnels from dropping the stream and evict dead connections so they no\n     * longer count against `maxConnections`.\n     */\n    readonly pingIntervalMs?: number | undefined;\n}"
+  },
+  {
     "name": "diffManifestRoutes",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -1583,6 +1691,12 @@
     "package": "@nifrajs/schema",
     "signature": "export declare function encodeCursor(value: unknown): string;",
     "doc": "/** Encode any JSON-serializable value (e.g. the last row's sort key) into an opaque cursor string. */"
+  },
+  {
+    "name": "EndObservation",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface EndObservation {\n    readonly statusCode?: number;\n    /** Explicit status wins over status-code and recorded-error classification. */\n    readonly status?: Exclude<SpanStatus, \"unset\">;\n    readonly attributes?: Readonly<Record<string, AttributeValue>>;\n}"
   },
   {
     "name": "EnqueueOptions",
@@ -1878,7 +1992,7 @@
     "name": "FileStorage",
     "kind": "class",
     "package": "@nifrajs/storage",
-    "signature": "export declare class FileStorage implements StorageAdapter {\n    private readonly root;\n    constructor(root: string);\n    /** Resolve `key` to an absolute path, asserting it stays inside `root` (defense-in-depth on top of `assertSafeKey`). */\n    private pathFor;\n    put(key: string, data: StorageData, _options?: PutOptions): Promise<void>;\n    get(key: string): Promise<StorageObject | null>;\n    delete(key: string): Promise<void>;\n    exists(key: string): Promise<boolean>;\n    list(options?: ListOptions): Promise<string[]>;\n    private walk;\n}"
+    "signature": "export declare class FileStorage implements StorageAdapter {\n    private readonly root;\n    private readonly metadataRoot;\n    constructor(root: string);\n    private metadataPathFor;\n    /** Resolve `key` to an absolute path, asserting it stays inside `root` (defense-in-depth on top of `assertSafeKey`). */\n    private pathFor;\n    put(key: string, data: StorageData, _options?: PutOptions): Promise<void>;\n    get(key: string): Promise<StorageObject | null>;\n    delete(key: string): Promise<void>;\n    exists(key: string): Promise<boolean>;\n    list(options?: ListOptions): Promise<string[]>;\n    private walk;\n}"
   },
   {
     "name": "FileType",
@@ -2060,6 +2174,13 @@
     "signature": "export declare function generateLlmsTxt(full: boolean, pageRoutes: ReadonlyArray<{\n    readonly pattern: string;\n    readonly id: string;\n}>, backend: unknown): Promise<string>;"
   },
   {
+    "name": "generateMockValue",
+    "kind": "function",
+    "package": "@nifrajs/mock",
+    "signature": "export declare function generateMockValue(schema: unknown, fieldName?: string | undefined, rng?: (() => number) | undefined): unknown;",
+    "doc": "/**\n * Generate a mock value from a schema object. Inspects JSON Schema properties\n * (`type`, `properties`, `items`, `enum`, `format`) that TypeBox / NifraSchema\n * objects carry directly. Unsupported constraints fail closed with\n * {@link UnsupportedMockSchemaError} rather than returning a known-invalid response.\n *\n * @param schema  A JSON-Schema-shaped object (TypeBox, NifraSchema, or raw JSON Schema)\n * @param fieldName  Optional field name hint for generating contextual string values\n * @param rng  Optional seeded random function for deterministic output\n */"
+  },
+  {
     "name": "generateServerEntry",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -2092,19 +2213,6 @@
     "package": "@nifrajs/otel",
     "signature": "export declare function generateTraceId(): string;",
     "doc": "/** A fresh 16-byte (32-hex) trace id. */"
-  },
-  {
-    "name": "GenerativeView",
-    "kind": "function",
-    "package": "@nifrajs/web-react",
-    "signature": "export declare function GenerativeView({ data, fallback }: GenerativeViewProps): string | number | bigint | true | Iterable<React.ReactNode> | Promise<string | number | bigint | boolean | React.ReactPortal | React.ReactElement<unknown, string | React.JSXElementConstructor<any>> | Iterable<React.ReactNode> | null | undefined> | React.JSX.Element;",
-    "doc": "/**\n * **Starter component** — auto-renders arbitrary structured data (e.g. an MCP `.tool()` / agent result) as a\n * table, cards, metric tiles, or a detail list, chosen from an explicit `intent` (or `_meta.ui.intent`) or a\n * shape heuristic. Meant as a drop-in for previewing agent output, **not** a hardened data grid: it uses\n * array-index keys, inline styles keyed to the host's CSS variables (`--fg`, `--panel`, `--line-2`, …), and\n * a fixed shape vocabulary, with no virtualization. Copy and adapt it for production surfaces.\n */"
-  },
-  {
-    "name": "GenerativeViewProps",
-    "kind": "interface",
-    "package": "@nifrajs/web-react",
-    "signature": "export interface GenerativeViewProps {\n    data: unknown;\n    fallback?: React.ReactNode;\n}"
   },
   {
     "name": "getContext",
@@ -2863,6 +2971,13 @@
     "signature": "export type JsonRpcResponse = {\n    jsonrpc: \"2.0\";\n    id: JsonRpcId;\n    result: unknown;\n} | {\n    jsonrpc: \"2.0\";\n    id: JsonRpcId;\n    error: {\n        code: number;\n        message: string;\n    };\n};"
   },
   {
+    "name": "JsonSchema",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type JsonSchema = boolean | Readonly<Record<string, unknown>>;",
+    "doc": "/** JSON Schema permits either a schema object or the boolean schemas `true` and `false`. */"
+  },
+  {
     "name": "jwk",
     "kind": "function",
     "package": "@nifrajs/middleware",
@@ -3537,6 +3652,32 @@
     "doc": "/**\n * A bundle of lifecycle hooks applied together via {@link Server.use} — the unit\n * `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is\n * optional and wired to its lifecycle point. Middleware is context-agnostic (sees\n * the base `Context`); `use` does no context-type merging — the full type-merging\n * plugin system is deferred, and `.use` is reserved as its future entry point.\n */"
   },
   {
+    "name": "MockableApp",
+    "kind": "interface",
+    "package": "@nifrajs/mock",
+    "signature": "export interface MockableApp {\n    routes(): readonly MockableRoute[];\n}",
+    "doc": "/** App shape — anything with a `routes()` method. */"
+  },
+  {
+    "name": "MockableRoute",
+    "kind": "interface",
+    "package": "@nifrajs/mock",
+    "signature": "export interface MockableRoute {\n    readonly method: string;\n    readonly path: string;\n    readonly schema?: {\n        readonly response?: unknown;\n    } | undefined;\n}",
+    "doc": "/** Minimal route shape returned by `app.routes()`. */"
+  },
+  {
+    "name": "MockServer",
+    "kind": "interface",
+    "package": "@nifrajs/mock",
+    "signature": "export interface MockServer {\n    /** Handle a request against the mock routes. */\n    fetch(request: Request): Promise<Response>;\n    /** The generated mock routes for inspection. */\n    readonly mockRoutes: ReadonlyArray<{\n        method: string;\n        path: string;\n    }>;\n}"
+  },
+  {
+    "name": "MockServerOptions",
+    "kind": "interface",
+    "package": "@nifrajs/mock",
+    "signature": "export interface MockServerOptions {\n    /** Seed for deterministic mock generation. */\n    readonly seed?: number | undefined;\n    /** Log mock requests to console. */\n    readonly verbose?: boolean | undefined;\n}"
+  },
+  {
     "name": "ModuleReader",
     "kind": "type",
     "package": "@nifrajs/cli",
@@ -3605,6 +3746,13 @@
     "package": "@nifrajs/web",
     "signature": "export interface MountRouterOptions {\n    readonly router: ClientRouter;\n    /** routeId → layout chain (outermost layout → page); built by `generateClientEntry`. */\n    readonly routes: Record<string, readonly unknown[]>;\n    /** Hydration container (opaque — the adapter casts it to its DOM element type). */\n    readonly container: unknown;\n}",
     "doc": "/** Options for a per-adapter `mountRouter` (the Router binding that hydrates + re-renders). */"
+  },
+  {
+    "name": "MovableStorageAdapter",
+    "kind": "interface",
+    "package": "@nifrajs/storage",
+    "signature": "export interface MovableStorageAdapter extends StorageAdapter {\n    copy(sourceKey: string, destinationKey: string): Promise<void>;\n    move(sourceKey: string, destinationKey: string): Promise<void>;\n}",
+    "doc": "/** Optional server-side copy/move capability. */"
   },
   {
     "name": "namedCombine",
@@ -3729,6 +3877,43 @@
     "package": "@nifrajs/env",
     "signature": "export declare function number(opts?: Base<number> & Optional): StandardSchemaV1<number | undefined>;",
     "doc": "/** A finite number, coerced from its decimal string. */"
+  },
+  {
+    "name": "ObservationAdapter",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface ObservationAdapter {\n    onStart?(span: NifraSpan): void;\n    onEnd(span: NifraSpan): void;\n}",
+    "doc": "/**\n * Where ended spans go. Implement this to bridge to the OpenTelemetry SDK (map each field onto a\n * real `Span` from a `Tracer`), ship to a collector, or just log. `onStart` is optional (most\n * backends only need the completed span).\n */"
+  },
+  {
+    "name": "ObservationClock",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface ObservationClock {\n    /** Epoch milliseconds for interoperable start/end timestamps. */\n    wallTime(): number;\n    /** Monotonic milliseconds for durations. */\n    monotonicTime(): number;\n}"
+  },
+  {
+    "name": "ObservationContext",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface ObservationContext {\n    readonly traceId: string;\n    readonly spanId: string;\n    readonly parentSpanId?: string;\n    readonly sampled: boolean;\n    /** This span's outbound W3C trace context. */\n    readonly traceparent: string;\n}"
+  },
+  {
+    "name": "ObservationLifecycle",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface ObservationLifecycle {\n    start(input: StartObservation, additionalAdapters?: readonly ObservationAdapter[]): ActiveObservation;\n}"
+  },
+  {
+    "name": "ObservationLifecycleOptions",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface ObservationLifecycleOptions {\n    readonly adapters?: readonly ObservationAdapter[];\n    /** Injectable seams are primarily useful for deterministic tests and constrained runtimes. */\n    readonly clock?: ObservationClock;\n    readonly generateTraceId?: () => string;\n    readonly generateSpanId?: () => string;\n}"
+  },
+  {
+    "name": "ObservationParent",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface ObservationParent {\n    readonly traceId: string;\n    readonly spanId: string;\n    readonly sampled: boolean;\n}"
   },
   {
     "name": "OnRequestResult",
@@ -3860,6 +4045,13 @@
     "package": "@nifrajs/schema",
     "signature": "export interface Page<Item> {\n    readonly items: Item[];\n    readonly nextCursor: string | null;\n}",
     "doc": "/** A cursor-pagination page — matches the shape of `t.paginated(item)`. */"
+  },
+  {
+    "name": "PagedStorageAdapter",
+    "kind": "interface",
+    "package": "@nifrajs/storage",
+    "signature": "export interface PagedStorageAdapter extends StorageAdapter {\n    listPage(options?: StorageListPageOptions): Promise<StorageListPage>;\n}",
+    "doc": "/** Optional cursor-listing capability. Kept out of {@link StorageAdapter} for simple stores. */"
   },
   {
     "name": "PageRouteInput",
@@ -4171,6 +4363,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function prerenderRoutes(options: PrerenderOptions): Promise<PrerenderResult>;",
     "doc": "/**\n * Render every opted-in static route to a static `index.html` under `outDir`. Run AFTER `buildClient`\n * (so the app references the hashed client entry). Returns a report of what was emitted vs skipped —\n * the caller can use `prerendered` to wire a hybrid deploy (e.g. exclude those paths from the SSR\n * worker so the CDN serves the static file). Never throws on a per-route miss: a non-OK response or a\n * non-opted/dynamic route is recorded in `skipped` and the build continues.\n */"
+  },
+  {
+    "name": "PresignableStorageAdapter",
+    "kind": "interface",
+    "package": "@nifrajs/storage",
+    "signature": "export interface PresignableStorageAdapter extends StorageAdapter {\n    presign(key: string, operation: StoragePresignOperation, options?: StoragePresignOptions): Promise<StoragePresignedUrl>;\n}",
+    "doc": "/** Optional provider-side URL-signing capability. Asset sensitivity and TTL policy stay with callers. */"
   },
   {
     "name": "Prettify",
@@ -4492,6 +4691,39 @@
     "doc": "/** Options for {@link redirect}. */"
   },
   {
+    "name": "ReflectedRoute",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ReflectedRoute {\n    readonly method: string;\n    readonly path: string;\n    readonly schema?: ReflectedRouteSchema;\n    readonly tool?: {\n        readonly name: string;\n        readonly description: string;\n        readonly annotations?: ToolAnnotations;\n    };\n}"
+  },
+  {
+    "name": "ReflectedRouteSchema",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ReflectedRouteSchema {\n    readonly body?: SchemaReflection;\n    readonly query?: SchemaReflection;\n    readonly response?: SchemaReflection;\n    readonly errors?: Readonly<Record<string, SchemaReflection>>;\n}"
+  },
+  {
+    "name": "ReflectedSchemaField",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ReflectedSchemaField {\n    readonly name: string;\n    readonly required: boolean;\n    readonly schema: JsonSchema;\n}",
+    "doc": "/** One top-level property of an introspectable object schema. */"
+  },
+  {
+    "name": "reflectRoutes",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function reflectRoutes(source: unknown): readonly ReflectedRoute[];",
+    "doc": "/**\n * Safely enumerate and normalize route descriptors from an app or descriptor array. Invalid entries\n * are ignored; a missing/throwing `routes()` method yields an empty array.\n */"
+  },
+  {
+    "name": "reflectSchema",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function reflectSchema(value: unknown): SchemaReflection;",
+    "doc": "/**\n * Reflect a Standard Schema, Nifra/TypeBox schema carrier, or raw JSON Schema. Never throws.\n * Validation-only schemas have `standard` but no `jsonSchema`; raw JSON Schema has the reverse.\n */"
+  },
+  {
     "name": "registerFormat",
     "kind": "function",
     "package": "@nifrajs/schema",
@@ -4531,7 +4763,21 @@
     "kind": "interface",
     "package": "@nifrajs/web",
     "signature": "export interface RenderAdapter {\n    /**\n     * Server: render a route's layout `chain` (outermost layout → page) to a **stream** of HTML\n     * bytes, including the framework's hydration markers. The page (innermost) receives `props`\n     * (the loader data); each layout wraps the child via its `children`. Returns (or resolves to)\n     * a Web `ReadableStream<Uint8Array>`: a streaming renderer flushes the shell first and streams\n     * Suspense boundaries as they resolve; a non-streaming renderer may return a one-chunk stream.\n     * May be async — e.g. React resolves once the shell is renderable, so a shell-render throw can\n     * still map to an error status before any byte is sent.\n     */\n    renderToStream(chain: readonly unknown[], props: RenderProps): ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>;\n    /**\n     * Server (optional): render the chain to a complete HTML **string** in one pass, with the same\n     * hydration markers `renderToStream` produces. When provided, `renderPage` uses it for any page\n     * that does **not** `defer()` — buffering the document is faster than the streaming pipeline there,\n     * because the framework's synchronous renderer (React `renderToString`, Solid `renderToString`,\n     * Preact `render`, Vue `renderToString`, Svelte `render`) is markedly cheaper than its streaming\n     * renderer — most visibly on Bun, where React Fizz / Solid `renderToStream` are the heaviest. Pages\n     * that `defer()` keep the streaming path (progressive `<Await>` needs it). Markup MUST be\n     * hydration-equivalent to `renderToStream`; a throw surfaces like the streaming shell-readiness\n     * await (the `_error` boundary maps it to a status). Omit it to always stream.\n     */\n    renderToString?(chain: readonly unknown[], props: RenderProps): string | Promise<string>;\n    /**\n     * Server: per-document bootstrap markup injected into `<head>` that the client\n     * `hydrate` requires (Solid: `generateHydrationScript()`). Empty string if none.\n     */\n    hydrationHead(): string;\n}",
-    "doc": "/** The seam every render adapter implements. */"
+    "doc": "/**\n * The seam every render adapter implements. New adapters should prove these invariants with\n * {@link assertRenderAdapterConformance}; framework-specific behavior remains locally tested.\n */"
+  },
+  {
+    "name": "RenderAdapterConformanceError",
+    "kind": "class",
+    "package": "@nifrajs/web",
+    "signature": "export declare class RenderAdapterConformanceError extends Error {\n    readonly check: string;\n    constructor(check: string, message: string, cause?: unknown);\n}",
+    "doc": "/** A failed invariant reported by {@link assertRenderAdapterConformance}. */"
+  },
+  {
+    "name": "RenderAdapterConformanceFixture",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface RenderAdapterConformanceFixture {\n    /** A page that renders the `page`, `data`, and `pending` markers from the supplied props. */\n    readonly page: unknown;\n    /** The outer layout, which renders `markers.outer` before its child. */\n    readonly outerLayout: unknown;\n    /** The inner layout, which renders `markers.inner` before its child. */\n    readonly innerLayout: unknown;\n    /** Props passed to the page. Use values represented by the `data` and `pending` markers. */\n    readonly props: RenderProps;\n    /**\n     * Set when the fixture renders **deferred/streaming-only** content (e.g. Suspense that resolves during\n     * the stream). Streaming and buffered (`renderToString`) output then legitimately differ byte-for-byte,\n     * so the hydration-equivalence check is relaxed to \"buffered output still contains every marker\" instead\n     * of exact equality. Leave unset for plain synchronous content (the stricter, preferred check).\n     */\n    readonly deferred?: boolean;\n    /** Unique text fragments observable in the rendered HTML. */\n    readonly markers: {\n        readonly page: string;\n        readonly data: string;\n        readonly pending: string;\n        readonly outer: string;\n        readonly inner: string;\n    };\n}",
+    "doc": "/** Framework-specific values that let the shared conformance module exercise a render adapter. */"
   },
   {
     "name": "renderDevErrorOverlay",
@@ -5074,7 +5320,7 @@
     "name": "RouteTableInput",
     "kind": "interface",
     "package": "@nifrajs/cli",
-    "signature": "export interface RouteTableInput {\n    readonly pages: readonly PageRouteInput[];\n    readonly api: readonly RouteDesc[];\n    /** The page router's `apiPrefix` (default `/api`); an API route at/under it is auto-mounted. `\"\"`\n     * disables the auto-mount, so no API route is marked auto-mounted. */\n    readonly apiPrefix?: string;\n}"
+    "signature": "export interface RouteTableInput {\n    readonly pages: readonly PageRouteInput[];\n    readonly api: ReadonlyArray<Pick<ReflectedRoute, \"method\" | \"path\">>;\n    /** The page router's `apiPrefix` (default `/api`); an API route at/under it is auto-mounted. `\"\"`\n     * disables the auto-mount, so no API route is marked auto-mounted. */\n    readonly apiPrefix?: string;\n}"
   },
   {
     "name": "routeTableToJson",
@@ -5342,6 +5588,13 @@
     "kind": "interface",
     "package": "@nifrajs/cron",
     "signature": "export interface SchedulerOptions {\n    /** Called when a job handler throws/rejects. Default: `console.error`. A throwing onError is swallowed. */\n    readonly onError?: (error: unknown, jobName: string) => void;\n    /** Injectable clock (tests). Default `() => new Date()`. */\n    readonly now?: () => Date;\n}"
+  },
+  {
+    "name": "SchemaReflection",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface SchemaReflection {\n    /** The Standard Schema validator, when the value implements Standard Schema v1. */\n    readonly standard: StandardSchemaV1 | undefined;\n    /** Raw JSON Schema metadata, when the value exposes it or is itself a raw JSON Schema. */\n    readonly jsonSchema: JsonSchema | undefined;\n    /** Top-level object fields, or `undefined` when the JSON Schema is absent/non-object. */\n    readonly fields: readonly ReflectedSchemaField[] | undefined;\n}",
+    "doc": "/** Validation and introspection capabilities discovered for one schema-like value. */"
   },
   {
     "name": "ScoredExample",
@@ -5816,17 +6069,17 @@
   },
   {
     "name": "SpanExporter",
-    "kind": "interface",
+    "kind": "type",
     "package": "@nifrajs/otel",
-    "signature": "export interface SpanExporter {\n    onStart?(span: NifraSpan): void;\n    onEnd(span: NifraSpan): void;\n}",
-    "doc": "/**\n * Where ended spans go. Implement this to bridge to the OpenTelemetry SDK (map each field onto a\n * real `Span` from a `Tracer`), ship to a collector, or just log. `onStart` is optional (most\n * backends only need the completed span).\n */"
+    "signature": "export type SpanExporter = ObservationAdapter;",
+    "doc": "/** Backwards-compatible name for an observation sink. */"
   },
   {
     "name": "SpanStatus",
     "kind": "type",
     "package": "@nifrajs/otel",
     "signature": "export type SpanStatus = \"unset\" | \"ok\" | \"error\";",
-    "doc": "/**\n * The span model + exporter seam. Attribute names follow OpenTelemetry HTTP semantic conventions\n * (`http.request.method`, `url.path`, `http.response.status_code`, …) so a span maps cleanly onto an\n * OTel `Span` when bridged — but nothing here depends on the OTel SDK. You supply a {@link SpanExporter}\n * (a ~10-line adapter to `@opentelemetry/api`, or the bundled {@link consoleSpanExporter}).\n */"
+    "doc": "/**\n * The span model + exporter seam. Attribute names follow OpenTelemetry HTTP semantic conventions\n * (`http.request.method`, `url.path`, `http.response.status_code`, …) so a span maps cleanly onto an\n * OTel `Span` when bridged — but nothing here depends on the OTel SDK. You supply an\n * {@link ObservationAdapter}\n * (a ~10-line adapter to `@opentelemetry/api`, or the bundled {@link consoleSpanExporter}).\n */"
   },
   {
     "name": "splitSections",
@@ -5958,6 +6211,12 @@
     "doc": "/**\n * A standard server-side `WebSocket` — the half returned by Deno's `Deno.upgradeWebSocket` and the\n * Workers `WebSocketPair`. {@link attachWebSocket} wires one to a nifra handler, so the Deno and Workers\n * bridges share all the dispatch/normalization/error-isolation logic (only the upgrade call differs).\n */"
   },
   {
+    "name": "StartObservation",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface StartObservation {\n    readonly name: string;\n    /** Explicit parent. `null` forces a root span; `undefined` falls back to `traceparent`. */\n    readonly parent?: ObservationParent | null;\n    /** Inbound W3C header used when `parent` is undefined. */\n    readonly traceparent?: string | null;\n    readonly attributes?: Readonly<Record<string, AttributeValue>>;\n}"
+  },
+  {
     "name": "StaticPath",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -5992,6 +6251,20 @@
     "doc": "/**\n * A blob store keyed by string. Keys are POSIX-ish paths (`avatars/u1.png`); every adapter rejects unsafe\n * keys (absolute, `..` traversal, NUL, backslash) so a key valid in one adapter is valid in all. All\n * methods are async.\n */"
   },
   {
+    "name": "StorageAdapterConformanceError",
+    "kind": "class",
+    "package": "@nifrajs/storage",
+    "signature": "export declare class StorageAdapterConformanceError extends Error {\n    readonly check: string;\n    constructor(check: string, message: string, cause?: unknown);\n}",
+    "doc": "/** A failed invariant reported by {@link assertStorageAdapterConformance}. */"
+  },
+  {
+    "name": "StorageAdapterConformanceOptions",
+    "kind": "interface",
+    "package": "@nifrajs/storage",
+    "signature": "export interface StorageAdapterConformanceOptions {\n    /** Return an empty, isolated adapter for this run. */\n    readonly createAdapter: () => StorageAdapter | Promise<StorageAdapter>;\n}",
+    "doc": "/** Construction and cleanup hooks for {@link assertStorageAdapterConformance}. */"
+  },
+  {
     "name": "StorageData",
     "kind": "type",
     "package": "@nifrajs/storage",
@@ -6006,11 +6279,46 @@
     "doc": "/**\n * Storage-key safety. A key is a POSIX-ish relative path (`avatars/u1.png`); we reject anything that\n * could escape a `FileStorage` root or otherwise misbehave — absolute paths, `..` traversal, NUL bytes,\n * and backslashes (Windows traversal). Enforced by EVERY adapter (not just `FileStorage`) so a key is\n * portable across them, and so the check can't be forgotten on the one adapter where it's a vulnerability.\n */"
   },
   {
+    "name": "StorageListPage",
+    "kind": "interface",
+    "package": "@nifrajs/storage",
+    "signature": "export interface StorageListPage {\n    readonly keys: readonly string[];\n    /** Opaque cursor for the next page; absent when this is the final page. */\n    readonly cursor?: string;\n}",
+    "doc": "/** One page of keys from stores that expose cursor-based listing. */"
+  },
+  {
+    "name": "StorageListPageOptions",
+    "kind": "interface",
+    "package": "@nifrajs/storage",
+    "signature": "export interface StorageListPageOptions extends ListOptions {\n    readonly cursor?: string;\n}",
+    "doc": "/** Cursor-aware listing options. `cursor` is adapter-owned and must be treated as opaque. */"
+  },
+  {
     "name": "StorageObject",
     "kind": "interface",
     "package": "@nifrajs/storage",
     "signature": "export interface StorageObject {\n    readonly body: Uint8Array;\n    readonly size: number;\n    readonly contentType?: string;\n    readonly metadata?: Readonly<Record<string, string>>;\n}",
     "doc": "/** An object read back from storage. `body` is buffered (not streamed) — fine for typical uploads. */"
+  },
+  {
+    "name": "StoragePresignedUrl",
+    "kind": "interface",
+    "package": "@nifrajs/storage",
+    "signature": "export interface StoragePresignedUrl {\n    readonly url: string;\n    readonly expiresAt?: Date;\n}",
+    "doc": "/** A provider-minted URL and its known expiry. */"
+  },
+  {
+    "name": "StoragePresignOperation",
+    "kind": "type",
+    "package": "@nifrajs/storage",
+    "signature": "export type StoragePresignOperation = \"get\" | \"put\";",
+    "doc": "/** Operation represented by a presigned storage URL. */"
+  },
+  {
+    "name": "StoragePresignOptions",
+    "kind": "interface",
+    "package": "@nifrajs/storage",
+    "signature": "export interface StoragePresignOptions {\n    readonly expiresInSeconds?: number;\n    /** For PUT URLs, pin the declared MIME type. */\n    readonly contentType?: string;\n    /** For PUT URLs, pin the exact request-body size. */\n    readonly contentLength?: number;\n}",
+    "doc": "/** Mechanical constraints applied while minting a presigned URL. */"
   },
   {
     "name": "StoredEntry",
@@ -6283,9 +6591,9 @@
   },
   {
     "name": "TraceContext",
-    "kind": "interface",
+    "kind": "type",
     "package": "@nifrajs/otel",
-    "signature": "export interface TraceContext {\n    readonly traceId: string;\n    readonly spanId: string;\n    readonly parentSpanId?: string;\n    readonly sampled: boolean;\n    /** This request's outbound `traceparent` — forward it on downstream calls to continue the trace. */\n    readonly traceparent: string;\n}",
+    "signature": "export type TraceContext = ObservationContext;",
     "doc": "/** The trace context exposed on the handler `c.trace` (typed, threaded via `derive`). */"
   },
   {
@@ -6306,7 +6614,7 @@
     "name": "TracingOptions",
     "kind": "interface",
     "package": "@nifrajs/otel",
-    "signature": "export interface TracingOptions {\n    /** Where spans are sent. Default: {@link consoleSpanExporter}. */\n    readonly exporter?: SpanExporter;\n    /** Sets the `service.name` attribute on every span. */\n    readonly serviceName?: string;\n    /**\n     * Set the outbound `traceparent` on the RESPONSE too (handy for browser/client correlation).\n     * Default false — most setups only propagate downstream, not back to the caller.\n     */\n    readonly responseHeader?: boolean;\n}"
+    "signature": "export interface TracingOptions {\n    /** Where spans are sent. Default: {@link consoleSpanExporter}. */\n    readonly exporter?: SpanExporter;\n    /** Additional observation adapters (DevTools, a private redacting backend, metrics, …). */\n    readonly adapters?: readonly ObservationAdapter[];\n    /** Sets the `service.name` attribute on every span. */\n    readonly serviceName?: string;\n    /**\n     * Set the outbound `traceparent` on the RESPONSE too (handy for browser/client correlation).\n     * Default false — most setups only propagate downstream, not back to the caller.\n     */\n    readonly responseHeader?: boolean;\n}"
   },
   {
     "name": "TrailingSlashOptions",
@@ -6403,6 +6711,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function unsignValue(signed: string, secret: string): Promise<string | null>;",
     "doc": "/**\n * Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the\n * signature is missing, malformed, or doesn't match. Verification is **constant-time**\n * (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.\n */"
+  },
+  {
+    "name": "UnsupportedMockSchemaError",
+    "kind": "class",
+    "package": "@nifrajs/mock",
+    "signature": "export declare class UnsupportedMockSchemaError extends Error {\n    readonly keyword: string;\n    constructor(keyword: string, message: string);\n}",
+    "doc": "/**\n * `@nifrajs/mock` — contract-based mock server.\n *\n * Reads a Nifra app's registered routes and their Standard Schema / JSON Schema\n * response definitions, then generates fake responses from supported JSON Schema keywords. Use it\n * for frontend-first development, agent testing, or CI smoke tests.\n */"
   },
   {
     "name": "UploadResult",
@@ -6739,7 +7054,7 @@
     "name": "VERSION",
     "kind": "const",
     "package": "@nifrajs/core",
-    "signature": "export declare const VERSION: \"1.3.0\";",
+    "signature": "export declare const VERSION: \"1.3.1\";",
     "doc": "/**\n * Current package version. A hardcoded literal on purpose — core runs on the edge (no fs), so it can't\n * read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and\n * `check:publish` asserts it equals `@nifrajs/core`'s package version, so the literal can't go stale\n * (it shipped at \"0.0.0\" through 1.0.0 before those guards existed). Kept narrow (`as const`) so\n * consumers can pin it at the type level — see `test/version.test-d.ts`.\n */"
   },
   {

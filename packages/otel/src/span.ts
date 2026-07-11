@@ -1,7 +1,8 @@
 /**
  * The span model + exporter seam. Attribute names follow OpenTelemetry HTTP semantic conventions
  * (`http.request.method`, `url.path`, `http.response.status_code`, …) so a span maps cleanly onto an
- * OTel `Span` when bridged — but nothing here depends on the OTel SDK. You supply a {@link SpanExporter}
+ * OTel `Span` when bridged — but nothing here depends on the OTel SDK. You supply an
+ * {@link ObservationAdapter}
  * (a ~10-line adapter to `@opentelemetry/api`, or the bundled {@link consoleSpanExporter}).
  */
 
@@ -36,9 +37,41 @@ export interface NifraSpan {
  * real `Span` from a `Tracer`), ship to a collector, or just log. `onStart` is optional (most
  * backends only need the completed span).
  */
-export interface SpanExporter {
+export interface ObservationAdapter {
   onStart?(span: NifraSpan): void
   onEnd(span: NifraSpan): void
+}
+
+/** Backwards-compatible name for an observation sink. */
+export type SpanExporter = ObservationAdapter
+
+/**
+ * Fan out lifecycle notifications to several adapters. Each adapter is isolated: an exception in
+ * one sink cannot prevent the remaining sinks from observing the span.
+ */
+export function combineObservationAdapters(
+  adapters: readonly ObservationAdapter[],
+): ObservationAdapter {
+  return {
+    onStart(span) {
+      for (const adapter of adapters) {
+        try {
+          adapter.onStart?.(span)
+        } catch {
+          // Observation is fail-open by contract.
+        }
+      }
+    },
+    onEnd(span) {
+      for (const adapter of adapters) {
+        try {
+          adapter.onEnd(span)
+        } catch {
+          // Observation is fail-open by contract.
+        }
+      }
+    },
+  }
 }
 
 /** A no-frills exporter that logs each completed span as one structured line. Useful in dev or as a

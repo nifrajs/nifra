@@ -14,11 +14,11 @@
   ],
   "scripts": {
     "prepare": "git config core.hooksPath .githooks || true",
-    "test": "bun test packages/core/test packages/client/test packages/schema/test packages/env/test packages/cron/test packages/otel/test packages/middleware/test packages/auth/test packages/better-auth/test packages/i18n/test packages/image/test packages/uploads/test packages/node/test packages/workers/test packages/content/test packages/runner/test packages/web/test packages/web-solid/test packages/web-react/test packages/web-vue/test packages/web-preact/test packages/web-vanilla/test packages/islets/test packages/web-svelte/test packages/create-nifra/test packages/cli/test",
+    "test": "bun test packages/core/test packages/client/test packages/schema/test packages/env/test packages/cron/test packages/otel/test packages/agent-telemetry/test packages/devtools/test packages/mock/test packages/middleware/test packages/auth/test packages/better-auth/test packages/i18n/test packages/image/test packages/uploads/test packages/node/test packages/workers/test packages/content/test packages/runner/test packages/web/test packages/web-solid/test packages/web-react/test packages/web-vue/test packages/web-preact/test packages/web-vanilla/test packages/islets/test packages/web-svelte/test packages/storage/test packages/jobs/test packages/cache/test packages/testing/test packages/create-nifra/test packages/cli/test && bun test packages/mcp/test",
     "test:all": "bun run scripts/test-all.ts",
     "test:deno": "cd packages/deno && deno check src/index.ts && deno test --allow-net --no-check test",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p packages/web/tsconfig.json && tsc --noEmit -p packages/web-solid/tsconfig.json && tsc --noEmit -p packages/web-react/tsconfig.json && tsc --noEmit -p packages/web-vue/tsconfig.json && tsc --noEmit -p packages/web-preact/tsconfig.json && tsc --noEmit -p packages/web-svelte/tsconfig.json && tsc --noEmit -p packages/web-vanilla/tsconfig.json && tsc --noEmit -p packages/islets/tsconfig.json",
-    "build": "bun run --filter '@nifrajs/core' build && bun run --filter '@nifrajs/mcp' --filter '@nifrajs/client' --filter '@nifrajs/cache' --filter '@nifrajs/testing' --filter '@nifrajs/schema' --filter '@nifrajs/middleware' --filter '@nifrajs/auth' --filter '@nifrajs/better-auth' --filter '@nifrajs/i18n' --filter '@nifrajs/image' --filter '@nifrajs/uploads' --filter '@nifrajs/storage' --filter '@nifrajs/node' --filter '@nifrajs/runner' --filter '@nifrajs/env' --filter '@nifrajs/cron' --filter '@nifrajs/jobs' --filter '@nifrajs/otel' --filter '@nifrajs/web' --filter '@nifrajs/cli' --filter 'create-nifra' --filter 'nifra' build && bun run --filter '@nifrajs/web-solid' --filter '@nifrajs/web-react' --filter '@nifrajs/web-vue' --filter '@nifrajs/web-preact' --filter '@nifrajs/web-svelte' --filter '@nifrajs/web-vanilla' --filter '@nifrajs/islets' build",
+    "build": "bun run --filter '@nifrajs/core' build && bun run --filter '@nifrajs/mcp' --filter '@nifrajs/client' --filter '@nifrajs/cache' --filter '@nifrajs/testing' --filter '@nifrajs/schema' --filter '@nifrajs/middleware' --filter '@nifrajs/auth' --filter '@nifrajs/better-auth' --filter '@nifrajs/i18n' --filter '@nifrajs/image' --filter '@nifrajs/uploads' --filter '@nifrajs/storage' --filter '@nifrajs/node' --filter '@nifrajs/runner' --filter '@nifrajs/env' --filter '@nifrajs/cron' --filter '@nifrajs/jobs' --filter '@nifrajs/otel' --filter '@nifrajs/agent-telemetry' --filter '@nifrajs/devtools' --filter '@nifrajs/mock' --filter '@nifrajs/web' --filter '@nifrajs/cli' --filter 'create-nifra' --filter 'nifra' build && bun run --filter '@nifrajs/web-solid' --filter '@nifrajs/web-react' --filter '@nifrajs/web-vue' --filter '@nifrajs/web-preact' --filter '@nifrajs/web-svelte' --filter '@nifrajs/web-vanilla' --filter '@nifrajs/islets' build",
     "check:publish": "bun run scripts/check-publish.ts",
     "check:cold-start": "bun run scripts/check-cold-start.ts",
     "smoke": "bun run scripts/smoke.ts",
@@ -57,6 +57,7 @@
     "react-dom": "19.2.7"
   },
   "devDependencies": {
+    "@upstash/context7-mcp": "3.2.2",
     "@arethetypeswrong/cli": "^0.18.3",
     "@biomejs/biome": "^2.4.16",
     "@changesets/cli": "^2.31.0",
