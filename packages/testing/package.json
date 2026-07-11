@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/testing",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Testing helpers for nifra apps — a cookie jar + a cookie-persisting in-process test session on top of @nifrajs/client's testClient, so stateful auth/session flows test as easily as a single request.",
   "keywords": [
     "bun",

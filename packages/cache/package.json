@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/cache",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Typed KV cache for nifra — TTL, stale-while-revalidate, tag invalidation, and single-flight stampede protection on a pluggable store (in-memory default; bring CF KV / Redis). Dependency-free, runs on Bun/Node/Deno/Workers.",
   "keywords": [
     "bun",

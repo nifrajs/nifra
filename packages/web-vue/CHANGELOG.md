@@ -1,5 +1,13 @@
 # @nifrajs/web-vue
 
+## 1.6.0
+
+### Patch Changes
+
+- @nifrajs/i18n@1.6.0
+- @nifrajs/image@1.6.0
+- @nifrajs/web@1.6.0
+
 ## 1.5.0
 
 ### Patch Changes
