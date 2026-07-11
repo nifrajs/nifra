@@ -1,5 +1,17 @@
 # @nifrajs/cli
 
+## 1.6.0
+
+### Patch Changes
+
+- @nifrajs/client@1.6.0
+- @nifrajs/core@1.6.0
+- @nifrajs/mcp@1.6.0
+- @nifrajs/runner@1.6.0
+- @nifrajs/schema@1.6.0
+- @nifrajs/web@1.6.0
+- create-nifra@1.6.0
+
 ## 1.5.0
 
 ### Minor Changes
