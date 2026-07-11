@@ -1,6 +1,6 @@
 {
   "name": "nifra",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "The nifra full-stack framework — unscoped meta-entry that re-exports @nifrajs/core, so `import { server } from \"nifra\"` works. Scaffold an app with `bun create nifra`; the rest of the framework lives under @nifrajs/*.",
   "keywords": [
     "bun",
