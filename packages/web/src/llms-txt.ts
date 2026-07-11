@@ -1,11 +1,6 @@
-const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/
+import { reflectRoutes } from "@nifrajs/core/reflection"
 
-/** A `t`/Standard Schema exposing its raw JSON Schema → that JSON Schema; anything else → undefined. */
-function jsonSchemaOf(schema: unknown): unknown {
-  return schema && typeof schema === "object" && "jsonSchema" in schema
-    ? (schema as { readonly jsonSchema: unknown }).jsonSchema
-    : undefined
-}
+const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
 /** The subset of JSON Schema fields {@link tsTypeOf} reads to render a TypeScript type string. */
 interface JsonSchemaNode {
@@ -120,15 +115,7 @@ export async function generateLlmsTxt(
 
   // 3. API Routes
   output += `## API Routes\n\n`
-  const backendWithRoutes = backend as { readonly routes?: () => unknown } | null
-  let apiRoutes: Array<{ method: string; path: string; schema?: unknown }> = []
-  if (backendWithRoutes && typeof backendWithRoutes.routes === "function") {
-    try {
-      apiRoutes = (backendWithRoutes.routes() as typeof apiRoutes) ?? []
-    } catch {
-      // ignore
-    }
-  }
+  const apiRoutes = reflectRoutes(backend)
 
   if (apiRoutes.length === 0) {
     output += `No API routes registered.\n`
@@ -137,31 +124,24 @@ export async function generateLlmsTxt(
       output += `- **${route.method}** \`${route.path}\`\n`
       if (full) {
         output += `  - Client Call: \`${clientCall(route.method, route.path, route.schema)}\`\n`
-        const s = route.schema as
-          | {
-              body?: unknown
-              query?: unknown
-              response?: unknown
-              errors?: Record<string, unknown>
-            }
-          | undefined
-        const bodySchema = jsonSchemaOf(s?.body)
-        const querySchema = jsonSchemaOf(s?.query)
-        const responseSchema = jsonSchemaOf(s?.response)
+        const s = route.schema
+        const bodySchema = s?.body?.jsonSchema
+        const querySchema = s?.query?.jsonSchema
+        const responseSchema = s?.response?.jsonSchema
 
-        if (bodySchema) {
+        if (bodySchema !== undefined) {
           output += `  - Body Schema: \`${tsTypeOf(bodySchema)}\`\n`
         }
-        if (querySchema) {
+        if (querySchema !== undefined) {
           output += `  - Query Schema: \`${tsTypeOf(querySchema)}\`\n`
         }
-        if (responseSchema) {
+        if (responseSchema !== undefined) {
           output += `  - Response Schema: \`${tsTypeOf(responseSchema)}\`\n`
         }
         if (s?.errors) {
           for (const [status, errorSchema] of Object.entries(s.errors)) {
-            const errJson = jsonSchemaOf(errorSchema)
-            if (errJson) {
+            const errJson = errorSchema.jsonSchema
+            if (errJson !== undefined) {
               output += `  - Error ${status} Schema: \`${tsTypeOf(errJson)}\`\n`
             }
           }

@@ -1,0 +1,42 @@
+{
+  "name": "@nifrajs/devtools",
+  "version": "1.0.0",
+  "description": "Interactive DevTools overlay for nifra dev — loader traces, ISR status, route metadata.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "bun": "./src/client.ts",
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@nifrajs/otel": "workspace:*"
+  },
+  "peerDependencies": {
+    "@nifrajs/core": "workspace:^"
+  },
+  "devDependencies": {
+    "@nifrajs/core": "workspace:*"
+  }
+}

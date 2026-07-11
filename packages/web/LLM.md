@@ -10,6 +10,7 @@ Framework-agnostic SSR core for nifra — the render seam + HTML document orches
 
 ## Key exports
 
+- **assertRenderAdapterConformance** _(function)_ — `assertRenderAdapterConformance: (adapter: RenderAdapter, fixture: RenderAdapterConformanceFixture) => Promise<void>`
 - **buildManifest** _(function)_ — `buildManifest: (files: readonly string[], importer: (file: string) => () => Promise<RouteModule>) => Manifest`
 - **canonical** _(function)_ — `canonical: (href: string) => LinkDescriptor`
 - **createClientRouter** _(function)_ — `createClientRouter: (options: ClientRouterOptions) => ClientRouter`
@@ -23,9 +24,8 @@ Framework-agnostic SSR core for nifra — the render seam + HTML document orches
 - **enumerateStaticRoutes** _(function)_ — `enumerateStaticRoutes: (routes: readonly RouteEntry[]) => Promise<StaticRoutes>`
 - **filePathToPattern** _(function)_ — `filePathToPattern: (file: string) => string`
 - **filePathToPatterns** _(function)_ — `filePathToPatterns: (file: string) => string[]`
-- **fontFace** _(function)_ — `fontFace: (face: FontFace) => string`
 
-_…and 88 more — see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 91 more — see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 

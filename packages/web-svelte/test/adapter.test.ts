@@ -2,30 +2,32 @@ import { expect, test } from "bun:test"
 
 const asImport = (path: string): string => JSON.stringify(new URL(path, import.meta.url).href)
 
-test("svelteAdapter renders sync and stream output under the real SSR plugin", async () => {
+test("svelteAdapter conforms under the real SSR plugin", async () => {
   const code = `
     import { plugin } from "bun";
+    import { assertRenderAdapterConformance } from ${asImport("../../web/src/conformance.ts")};
     import { svelteBunPlugin } from ${asImport("../src/plugin.ts")};
     plugin(svelteBunPlugin("ssr"));
 
     const { svelteAdapter } = await import(${asImport("../src/index.ts")});
-    const Page = (await import(${asImport("./fixtures/page.svelte")})).default;
-    const Layout = (await import(${asImport("./fixtures/layout.svelte")})).default;
+    const ConformancePage = (await import(${asImport("./fixtures/conformance-page.svelte")})).default;
+    const Outer = (await import(${asImport("./fixtures/conformance-outer.svelte")})).default;
+    const Inner = (await import(${asImport("./fixtures/conformance-inner.svelte")})).default;
 
-    const renderToString = svelteAdapter.renderToString;
-    if (renderToString === undefined) throw new Error("missing renderToString");
-    const sync = await renderToString([Layout, Page], {
-      data: { greeting: "hello from sync svelte" },
+    await assertRenderAdapterConformance(svelteAdapter, {
+      page: ConformancePage,
+      outerLayout: Outer,
+      innerLayout: Inner,
+      props: { data: { name: "conformance-data" }, pending: true },
+      markers: {
+        page: 'data-page="leaf"',
+        data: "conformance-data",
+        pending: 'data-pending="true"',
+        outer: 'data-layout="outer"',
+        inner: 'data-layout="inner"',
+      },
     });
-    if (!sync.includes("hello from sync svelte")) throw new Error(sync);
-    if (!sync.includes("data-layout=\\"outer\\"")) throw new Error(sync);
 
-    const stream = await new Response(
-      svelteAdapter.renderToStream([Page], {
-        data: { greeting: "hello from stream svelte" },
-      }),
-    ).text();
-    if (!stream.includes("hello from stream svelte")) throw new Error(stream);
     if (svelteAdapter.hydrationHead() !== "") throw new Error("unexpected hydration head");
   `
 

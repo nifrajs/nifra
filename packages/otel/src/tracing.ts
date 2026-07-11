@@ -7,31 +7,20 @@
 
 import { definePlugin } from "@nifrajs/core"
 import {
-  type AttributeValue,
-  consoleSpanExporter,
-  type NifraSpan,
-  type SpanExporter,
-} from "./span.ts"
-import {
-  formatTraceparent,
-  generateSpanId,
-  generateTraceId,
-  parseTraceparent,
-} from "./traceparent.ts"
+  type ActiveObservation,
+  createObservationLifecycle,
+  type ObservationContext,
+} from "./lifecycle.ts"
+import { consoleSpanExporter, type ObservationAdapter, type SpanExporter } from "./span.ts"
 
 /** The trace context exposed on the handler `c.trace` (typed, threaded via `derive`). */
-export interface TraceContext {
-  readonly traceId: string
-  readonly spanId: string
-  readonly parentSpanId?: string
-  readonly sampled: boolean
-  /** This request's outbound `traceparent` — forward it on downstream calls to continue the trace. */
-  readonly traceparent: string
-}
+export type TraceContext = ObservationContext
 
 export interface TracingOptions {
   /** Where spans are sent. Default: {@link consoleSpanExporter}. */
   readonly exporter?: SpanExporter
+  /** Additional observation adapters (DevTools, a private redacting backend, metrics, …). */
+  readonly adapters?: readonly ObservationAdapter[]
   /** Sets the `service.name` attribute on every span. */
   readonly serviceName?: string
   /**
@@ -65,60 +54,56 @@ const pathOf = (url: string): string => {
  * ```
  */
 export function tracing(options: TracingOptions = {}) {
-  const exporter = options.exporter ?? consoleSpanExporter()
+  const adapters: ObservationAdapter[] = [
+    ...(options.exporter === undefined && options.adapters === undefined
+      ? [consoleSpanExporter()]
+      : options.exporter === undefined
+        ? []
+        : [options.exporter]),
+    ...(options.adapters ?? []),
+  ]
+  const lifecycle = createObservationLifecycle({ adapters })
   const serviceName = options.serviceName
-  // Span per in-flight request, keyed by the Request — ended in onResponse (mirrors @nifrajs/middleware
-  // timing). A WeakMap so an abandoned request can't leak a span.
-  const inFlight = new WeakMap<Request, NifraSpan>()
+  // A WeakMap so an abandoned request cannot leak its active observation.
+  const inFlight = new WeakMap<Request, ActiveObservation>()
 
   return definePlugin("tracing", (app) =>
     app
       .derive((c) => {
-        const parent = parseTraceparent(c.req.headers.get("traceparent"))
-        const traceId = parent?.traceId ?? generateTraceId()
-        const spanId = generateSpanId()
-        const sampled = parent?.sampled ?? true
         const path = pathOf(c.req.url)
-        const attributes: Record<string, AttributeValue> = {
-          "http.request.method": c.req.method,
-          "url.path": path,
-        }
-        if (serviceName !== undefined) attributes["service.name"] = serviceName
-        const span: NifraSpan = {
-          traceId,
-          spanId,
-          ...(parent !== null ? { parentSpanId: parent.spanId } : {}),
-          sampled,
+        const observation = lifecycle.start({
           name: `${c.req.method} ${path}`,
-          startTime: Date.now(),
-          status: "unset",
-          attributes,
-        }
-        inFlight.set(c.req, span)
-        exporter.onStart?.(span)
-        const traceparent = formatTraceparent(traceId, spanId, sampled)
-        if (options.responseHeader) c.set.headers.traceparent = traceparent
-        const trace: TraceContext = {
-          traceId,
-          spanId,
-          ...(parent !== null ? { parentSpanId: parent.spanId } : {}),
-          sampled,
-          traceparent,
-        }
-        return { trace }
+          traceparent: c.req.headers.get("traceparent"),
+          attributes: {
+            "http.request.method": c.req.method,
+            "url.path": path,
+            ...(serviceName === undefined ? {} : { "service.name": serviceName }),
+          },
+        })
+        inFlight.set(c.req, observation)
+        if (options.responseHeader) c.set.headers.traceparent = observation.context.traceparent
+        return { trace: observation.context, observation }
       })
       .use({
         name: "tracing-end",
+        onError: (error, context) => {
+          inFlight.get(context.request)?.recordError(error)
+          return undefined
+        },
         onResponse: (res, req) => {
-          const span = inFlight.get(req)
-          if (span === undefined) return res
+          const observation = inFlight.get(req)
+          if (observation === undefined) return res
           inFlight.delete(req)
-          span.endTime = Date.now()
-          span.durationMs = span.endTime - span.startTime
-          span.attributes["http.response.status_code"] = res.status
-          // 5xx is a server error; everything else (incl. handled 4xx) is a normal outcome.
-          span.status = res.status >= 500 ? "error" : "ok"
-          exporter.onEnd(span)
+          const bodySize = Number(res.headers.get("content-length") ?? "0") || 0
+          const isrStatus = res.headers.get("x-nifra-isr")
+          observation.end({
+            statusCode: res.status,
+            attributes: {
+              "http.response.status_code": res.status,
+              "http.response.body.size": bodySize,
+              ...(isrStatus === null ? {} : { "nifra.isr.status": isrStatus }),
+            },
+          })
           return res
         },
       }),

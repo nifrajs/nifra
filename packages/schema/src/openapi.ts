@@ -1,4 +1,11 @@
-import type { ContractShape, Server, StandardSchemaV1 } from "@nifrajs/core"
+import type { ContractShape, Server } from "@nifrajs/core"
+import {
+  type JsonSchema,
+  type ReflectedRouteSchema,
+  reflectRoutes,
+  reflectSchema,
+  type SchemaReflection,
+} from "@nifrajs/core/reflection"
 
 /**
  * OpenAPI 3.1 generation. We model a practical slice of the spec — enough to feed Swagger UI / codegen
@@ -50,8 +57,6 @@ export interface ToOpenAPIOptions {
   readonly operations?: Readonly<Record<string, Record<string, unknown>>>
 }
 
-type JsonSchema = Record<string, unknown>
-
 interface OpenAPIParameter {
   readonly name: string
   readonly in: "path" | "query"
@@ -100,27 +105,6 @@ export interface OpenAPIDocument {
   readonly components?: OpenAPIComponents
 }
 
-/** A Standard Schema that also carries a raw JSON Schema (i.e. a `t`/TypeBox schema). */
-type WithJsonSchema = StandardSchemaV1 & { readonly jsonSchema: unknown }
-
-function hasJsonSchema(schema: StandardSchemaV1): schema is WithJsonSchema {
-  return (
-    "jsonSchema" in schema &&
-    (schema as { jsonSchema?: unknown }).jsonSchema !== undefined &&
-    (schema as { jsonSchema?: unknown }).jsonSchema !== null
-  )
-}
-
-/**
- * Extract clean JSON Schema from a schema, or `undefined` for a BYO Standard Schema with no JSON
- * Schema. The `JSON` round-trip strips TypeBox's Symbol-keyed metadata; a string `$id` survives it and
- * drives `$ref` reuse.
- */
-function toJsonSchema(schema: StandardSchemaV1): JsonSchema | undefined {
-  if (!hasJsonSchema(schema)) return undefined
-  return JSON.parse(JSON.stringify(schema.jsonSchema)) as JsonSchema
-}
-
 /**
  * Collects schemas that carry a `$id` into `components.schemas`, returning a `$ref` in their place —
  * so a schema used by N operations is emitted once. Schemas without a `$id` stay inline (the existing
@@ -132,6 +116,7 @@ class SchemaStore {
   /** Hoist a schema with a `$id` into components + return a `$ref`; otherwise return it inline. */
   collect(schema: JsonSchema | undefined): JsonSchema | undefined {
     if (schema === undefined) return undefined
+    if (typeof schema === "boolean") return schema
     const id = typeof schema.$id === "string" ? schema.$id : undefined
     if (id === undefined) return schema
     if (this.schemas[id] === undefined) {
@@ -172,26 +157,24 @@ function pathParameters(path: string): OpenAPIParameter[] {
   return params
 }
 
-function queryParameters(schema: StandardSchemaV1 | undefined): OpenAPIParameter[] {
+function queryParameters(schema: SchemaReflection | undefined): OpenAPIParameter[] {
   if (schema === undefined) return []
-  const json = toJsonSchema(schema)
-  // Only an object schema decomposes into individual query parameters.
-  if (json === undefined || json.type !== "object" || typeof json.properties !== "object") return []
-  const properties = json.properties as Record<string, JsonSchema>
-  const required = Array.isArray(json.required) ? (json.required as string[]) : []
-  return Object.entries(properties).map(([name, propSchema]) => ({
-    name,
+  const fields = schema.fields
+  // Only an introspectable object schema decomposes into individual query parameters.
+  if (fields === undefined) return []
+  return fields.map((field) => ({
+    name: field.name,
     in: "query",
-    required: required.includes(name),
-    schema: propSchema,
+    required: field.required,
+    schema: field.schema,
   }))
 }
 
 interface OperationInput {
   readonly path: string
-  readonly body: StandardSchemaV1 | undefined
-  readonly query: StandardSchemaV1 | undefined
-  readonly response: StandardSchemaV1 | undefined
+  readonly body: SchemaReflection | undefined
+  readonly query: SchemaReflection | undefined
+  readonly response: SchemaReflection | undefined
   readonly operationId: string | undefined
   // `| undefined` (not just `?`) so a contract op's optional fields — `string | undefined` etc. — are
   // assignable under `exactOptionalPropertyTypes` when spread into this literal.
@@ -204,7 +187,7 @@ interface OperationInput {
   readonly responseContentType?: string | undefined
   readonly responses?:
     | Readonly<
-        Record<string, { description?: string; schema?: StandardSchemaV1; contentType?: string }>
+        Record<string, { description?: string; schema?: SchemaReflection; contentType?: string }>
       >
     | undefined
 }
@@ -225,17 +208,17 @@ const STATUS_TEXT: Readonly<Record<string, string>> = {
   "503": "Service Unavailable",
 }
 
-/** Turn a route's `errors` contract (`{ status → schema }`) into the additional-`responses` shape that
- * {@link buildResponses} emits as non-2xx OpenAPI responses. */
-function errorsToResponses(
-  errors: Readonly<Record<number, StandardSchemaV1>> | undefined,
+function reflectedErrorsToResponses(
+  errors: ReflectedRouteSchema["errors"],
 ): OperationInput["responses"] {
   if (errors === undefined) return undefined
-  const out: Record<string, { description?: string; schema?: StandardSchemaV1 }> = {}
-  for (const [status, schema] of Object.entries(errors)) {
-    out[status] = { description: STATUS_TEXT[status] ?? "Error", schema }
+  const out: Record<string, { description?: string; schema?: SchemaReflection }> = {}
+  for (const [status, reflection] of Object.entries(errors)) {
+    if (reflection.jsonSchema !== undefined || reflection.standard !== undefined) {
+      out[status] = { description: STATUS_TEXT[status] ?? "Error", schema: reflection }
+    }
   }
-  return out
+  return Object.keys(out).length > 0 ? out : undefined
 }
 
 function buildResponses(
@@ -244,7 +227,7 @@ function buildResponses(
 ): Record<string, OpenAPIResponse> {
   const responses: Record<string, OpenAPIResponse> = {}
   if (input.response !== undefined) {
-    const schema = store.collect(toJsonSchema(input.response))
+    const schema = store.collect(input.response.jsonSchema)
     responses["200"] =
       schema !== undefined
         ? {
@@ -259,7 +242,7 @@ function buildResponses(
   if (input.responses !== undefined) {
     for (const [status, def] of Object.entries(input.responses)) {
       const response: OpenAPIResponse = { description: def.description ?? "" }
-      const schema = def.schema !== undefined ? store.collect(toJsonSchema(def.schema)) : undefined
+      const schema = def.schema !== undefined ? store.collect(def.schema.jsonSchema) : undefined
       if (schema !== undefined)
         response.content = { [def.contentType ?? "application/json"]: { schema } }
       responses[status] = response
@@ -281,7 +264,7 @@ function buildOperation(input: OperationInput, store: SchemaStore): OpenAPIOpera
   if (parameters.length > 0) operation.parameters = parameters
 
   if (input.body !== undefined) {
-    const schema = store.collect(toJsonSchema(input.body))
+    const schema = store.collect(input.body.jsonSchema)
     if (schema !== undefined) {
       operation.requestBody = {
         required: true,
@@ -325,7 +308,7 @@ export function toOpenAPI(
   const store = new SchemaStore()
 
   if (isApp(input)) {
-    for (const route of input.routes()) {
+    for (const route of reflectRoutes(input)) {
       addOperation(
         paths,
         route.method,
@@ -336,7 +319,7 @@ export function toOpenAPI(
           // A route may now declare a `response` contract — emit it as the 200 body schema.
           response: route.schema?.response,
           // …and an `errors` contract — emit each as a non-2xx response.
-          responses: errorsToResponses(route.schema?.errors),
+          responses: reflectedErrorsToResponses(route.schema?.errors),
           operationId: undefined,
         },
         store,
@@ -350,9 +333,9 @@ export function toOpenAPI(
         op.method,
         {
           path: op.path,
-          body: op.body,
-          query: op.query,
-          response: op.response,
+          body: op.body === undefined ? undefined : reflectSchema(op.body),
+          query: op.query === undefined ? undefined : reflectSchema(op.query),
+          response: op.response === undefined ? undefined : reflectSchema(op.response),
           operationId: name,
           summary: op.summary,
           description: op.description,
@@ -361,7 +344,21 @@ export function toOpenAPI(
           security: op.security,
           requestContentType: op.requestContentType,
           responseContentType: op.responseContentType,
-          responses: op.responses,
+          responses:
+            op.responses === undefined
+              ? undefined
+              : Object.fromEntries(
+                  Object.entries(op.responses).map(([status, response]) => {
+                    const { schema, ...metadata } = response
+                    return [
+                      status,
+                      {
+                        ...metadata,
+                        ...(schema === undefined ? {} : { schema: reflectSchema(schema) }),
+                      },
+                    ]
+                  }),
+                ),
         },
         store,
         options.operations,

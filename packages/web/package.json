@@ -44,6 +44,11 @@
       "types": "./dist/forms.d.ts",
       "default": "./dist/forms.js"
     },
+    "./conformance": {
+      "bun": "./src/conformance.ts",
+      "types": "./dist/conformance.d.ts",
+      "default": "./dist/conformance.js"
+    },
     "./islands": {
       "bun": "./src/islands.ts",
       "types": "./dist/islands.d.ts",

@@ -142,6 +142,15 @@ describe("defer + prepareDeferred", () => {
   })
 })
 
+// A rejection with a pre-armed no-op handler: the deferred pipeline attaches its own handler a
+// microtask later, and Bun's unhandled-rejection reporter can fire in that gap under load —
+// making the whole run exit nonzero with 0 test failures.
+function rejection(message: string): Promise<never> {
+  const promise = Promise.reject(new Error(message))
+  promise.catch(() => {})
+  return promise
+}
+
 // Read an NDJSON ReadableStream to an array of text lines (for asserting ndjsonStream's output).
 async function readLines(stream: ReadableStream<Uint8Array>): Promise<string[]> {
   const text = await new Response(stream).text()
@@ -153,7 +162,7 @@ describe("ndjsonStream (server soft-nav transport)", () => {
     const { forClient, deferred } = prepareDeferred({
       now: 1,
       ok: defer(Promise.resolve(["a", "b"])),
-      bad: defer(Promise.reject(new Error("upstream failed"))),
+      bad: defer(rejection("upstream failed")),
     })
     const lines = (await readLines(ndjsonStream(forClient, deferred))).map((l) => JSON.parse(l))
     expect(lines[0]).toEqual({ now: 1, ok: { __nifra_deferred: 0 }, bad: { __nifra_deferred: 1 } })

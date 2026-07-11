@@ -268,7 +268,8 @@ describe("$ref reuse via $id → components.schemas", () => {
       additionalProperties: false,
     })
     // $id is stripped from the hoisted component (the key is the name).
-    expect(doc.components?.schemas?.User?.$id).toBeUndefined()
+    const component = doc.components?.schemas?.User
+    expect(typeof component === "object" ? component.$id : undefined).toBeUndefined()
     const ref = { $ref: "#/components/schemas/User" }
     expect(
       doc.paths["/users/{id}"]?.get?.responses["200"]?.content?.["application/json"]?.schema,

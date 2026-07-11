@@ -5,7 +5,8 @@
     // DOM-free and typechecked by the root config; this config covers only the client layer.
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "paths": {
-      "@nifrajs/core": ["../core/src/index.ts"]
+      "@nifrajs/core": ["../core/src/index.ts"],
+      "@nifrajs/core/reflection": ["../core/src/reflection.ts"]
     }
   },
   "include": ["src/client.ts", "src/islands.ts", "test/islands.test.ts"]

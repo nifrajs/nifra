@@ -2,8 +2,9 @@
 
 Distributed tracing for nifra. The `tracing()` plugin continues (or starts) a **W3C trace** per
 request, opens an **OpenTelemetry-semantic-convention** span, and exposes `c.trace` so you can
-forward the trace to downstream services. Spans go to a **pluggable exporter** — bridge to the
-OpenTelemetry SDK, or log them directly. No SDK bundled; edge-safe.
+forward the trace to downstream services. One fail-open lifecycle owns parentage, identity, timing,
+errors, final status, and exactly-once completion. Pluggable adapters project that observation into
+the OpenTelemetry SDK, DevTools, private backends, or structured logs. No SDK bundled; edge-safe.
 
 ```ts
 import { tracing, traceHeaders, consoleSpanExporter } from "@nifrajs/otel"
@@ -26,20 +27,25 @@ const app = server()
   (`error` for 5xx, `ok` otherwise).
 - **Exposes `c.trace`** (`{ traceId, spanId, parentSpanId?, sampled, traceparent }`) — spread
   `traceHeaders(c.trace)` into any downstream `fetch`/`ctx.api` call to continue the trace.
+- **Exposes `c.observation`** — integrations can start correctly-parented child observations or
+  attach an adapter without rebuilding request lifecycle state.
 - `responseHeader: true` also sets `traceparent` on the response (browser/client correlation).
 
-## Exporters
+## Adapters
 
-Implement `SpanExporter` to send spans wherever you collect them:
+Implement `ObservationAdapter` to send spans wherever you collect them. `SpanExporter` remains as a
+backwards-compatible type alias:
 
 ```ts
-interface SpanExporter {
+interface ObservationAdapter {
   onStart?(span: NifraSpan): void
   onEnd(span: NifraSpan): void
 }
 ```
 
 - `consoleSpanExporter()` — logs each completed span as one structured line (dev / starting point).
+- `tracing({ adapters: [devtoolsAdapter, privateAdapter] })` — fan out the same lifecycle; adapter
+  failures are isolated and never alter the response.
 - **OpenTelemetry SDK bridge** — a ~10-line adapter maps `NifraSpan` onto a real OTel `Span` from a
   `Tracer` (the attribute names already follow OTel conventions, so they pass straight through). Your
   app depends on `@opentelemetry/*`; `@nifrajs/otel` does not.
@@ -49,6 +55,9 @@ interface SpanExporter {
 Use `traceparent` and the built-in semantic attributes in every request span, then send spans to
 your own collector through an exporter. Keep the package edge-safe by installing the OpenTelemetry
 SDK only in apps that need that exporter.
+
+For non-HTTP work, `createObservationLifecycle()` exposes the same state machine directly. Prefer
+it over hand-rolling traceparent parsing, clocks, error status, or completion guards.
 
 ## For AI agents
 

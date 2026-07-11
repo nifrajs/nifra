@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { renderPageResult } from "@nifrajs/web"
-import { compose, html, type VanillaComponent, vanillaAdapter } from "../src/index.ts"
-
-const toText = (s: ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>) =>
-  Promise.resolve(s).then((stream) => new Response(stream).text())
+import { assertRenderAdapterConformance, renderPageResult } from "@nifrajs/web"
+import { html, type VanillaComponent, vanillaAdapter } from "../src/index.ts"
 
 const Layout: VanillaComponent = ({ children }) =>
   html`<div data-layout="root"><nav>NAV</nav>${children}</div>`
@@ -11,24 +8,26 @@ const Layout: VanillaComponent = ({ children }) =>
 const Page: VanillaComponent = (props) => html`<p>hi ${(props.data as { name: string }).name}</p>`
 
 describe("vanillaAdapter through the RenderAdapter seam", () => {
-  test("renderToString folds a layout chain, data reaches the page", () => {
-    const out = vanillaAdapter.renderToString?.([Layout, Page], { data: { name: "ada" } })
-    expect(out).toBe('<div data-layout="root"><nav>NAV</nav><p>hi ada</p></div>')
-  })
-
-  test("renderToStream emits the same markup as renderToString", async () => {
-    const streamed = await toText(
-      vanillaAdapter.renderToStream([Layout, Page], { data: { name: "ada" } }),
-    )
-    const buffered = vanillaAdapter.renderToString?.([Layout, Page], { data: { name: "ada" } })
-    expect(streamed).toBe(buffered as string)
-  })
-
-  test("three-deep chain wraps outermost-first", () => {
-    const Outer: VanillaComponent = ({ children }) => html`<o>${children}</o>`
-    const Inner: VanillaComponent = ({ children }) => html`<i>${children}</i>`
-    const Leaf: VanillaComponent = () => html`<x/>`
-    expect(compose([Outer, Inner, Leaf], { data: null }).html).toBe("<o><i><x/></i></o>")
+  test("conforms to the executable RenderAdapter interface", async () => {
+    const layout =
+      (marker: string): VanillaComponent =>
+      ({ children }) =>
+        html`<section>${marker}${children}</section>`
+    const ConformancePage: VanillaComponent = (props) =>
+      html`<p>PAGE${(props.data as { name: string }).name}PENDING:${String(props.pending)}</p>`
+    await assertRenderAdapterConformance(vanillaAdapter, {
+      page: ConformancePage,
+      outerLayout: layout("outer"),
+      innerLayout: layout("inner"),
+      props: { data: { name: "conformance-data" }, pending: true },
+      markers: {
+        page: "PAGE",
+        data: "conformance-data",
+        pending: "PENDING:true",
+        outer: "outer",
+        inner: "inner",
+      },
+    })
   })
 
   test("loader data is escaped end to end (hostile data can't break the page)", () => {

@@ -6,6 +6,7 @@
     // packages to their TS source so typecheck/dev needs no build step.
     "paths": {
       "@nifrajs/core": ["./packages/core/src/index.ts"],
+      "@nifrajs/core/reflection": ["./packages/core/src/reflection.ts"],
       "@nifrajs/core/ws": ["./packages/core/src/ws.ts"],
       "@nifrajs/auth": ["./packages/auth/src/index.ts"],
       "@nifrajs/i18n": ["./packages/i18n/src/index.ts"],
@@ -37,6 +38,10 @@
       "@nifrajs/content": ["./packages/content/src/index.ts"],
       "@nifrajs/content/fs": ["./packages/content/src/fs.ts"],
       "@nifrajs/content/mdx": ["./packages/content/src/mdx.ts"],
+      "@nifrajs/mock": ["./packages/mock/src/index.ts"],
+      "@nifrajs/agent-telemetry": ["./packages/agent-telemetry/src/index.ts"],
+      "@nifrajs/devtools": ["./packages/devtools/src/index.ts"],
+      "@nifrajs/devtools/client": ["./packages/devtools/src/client.ts"],
       "@nifrajs/test-utils": ["./internal/test-utils/src/index.ts"],
       "create-nifra/agent-files": ["./packages/create-nifra/src/agent-files.ts"]
     }

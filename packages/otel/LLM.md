@@ -10,20 +10,22 @@ Distributed tracing for nifra — W3C traceparent/tracestate propagation + OpenT
 
 ## Key exports
 
+- **combineObservationAdapters** _(function)_ — `combineObservationAdapters: (adapters: readonly ObservationAdapter[]) => ObservationAdapter`
 - **consoleSpanExporter** _(function)_ — `consoleSpanExporter: (log?: (line: string) => void) => SpanExporter`
+- **createObservationLifecycle** _(function)_ — `createObservationLifecycle: (options?: ObservationLifecycleOptions) => ObservationLifecycle`
 - **formatTraceparent** _(function)_ — `formatTraceparent: (traceId: string, spanId: string, sampled: boolean) => string`
 - **generateSpanId** _(function)_ — `generateSpanId: () => string`
 - **generateTraceId** _(function)_ — `generateTraceId: () => string`
 - **parseTraceparent** _(function)_ — `parseTraceparent: (header: string | null | undefined) => ParsedTraceparent | null`
 - **traceHeaders** _(function)_ — `traceHeaders: (trace: TraceContext) => { traceparent: string; }`
 - **tracing** _(function)_ — `tracing: (options?: TracingOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").Serve…`
+- **ActiveObservation** _(interface)_ — `interface ActiveObservation`
+- **EndObservation** _(interface)_ — `interface EndObservation`
 - **NifraSpan** _(interface)_ — `interface NifraSpan`
-- **ParsedTraceparent** _(interface)_ — `interface ParsedTraceparent`
-- **SpanExporter** _(interface)_ — `interface SpanExporter`
-- **TraceContext** _(interface)_ — `interface TraceContext`
-- **TracingOptions** _(interface)_ — `interface TracingOptions`
-- **AttributeValue** _(type)_ — `type AttributeValue = string | number | boolean`
-- **SpanStatus** _(type)_ — `type SpanStatus = "unset" | "ok" | "error"`
+- **ObservationAdapter** _(interface)_ — `interface ObservationAdapter`
+- **ObservationClock** _(interface)_ — `interface ObservationClock`
+
+_…and 11 more — see [`api-reference.md`](../../api-reference.md#nifrajsotel) for the complete list._
 
 ## Footguns
 

@@ -38,6 +38,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 
 ## Packages
 
+- `@nifrajs/agent-telemetry` — Agent telemetry plugin — child spans for AI tool calls on /_nifra/tool/* and MCP endpoints.
 - `@nifrajs/auth` — Session primitives for nifra — signed-cookie + server-store sessions, CSRF, and route guards. Bring your own identity (Better Auth / Lucia / OAuth); nifra owns the session.
 - `@nifrajs/better-auth` — Mount better-auth into a nifra app — one app.use() wires /api/auth/*, plus typed getSession/requireSession guards. Structural typing: no hard dependency on better-auth.
 - `@nifrajs/cache` — Typed KV cache for nifra — TTL, stale-while-revalidate, tag invalidation, and single-flight stampede protection on a pluggable store (in-memory default; bring CF KV / Redis). Dependency-free, runs on Bun/Node/Deno/Workers.
@@ -47,6 +48,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - `@nifrajs/core` — Bun-native, contract-first HTTP framework — the router, server, and route descriptor.
 - `@nifrajs/cron` — Runtime-agnostic in-process cron for nifra — standard 5-field expressions + @macros, overlap-safe, error-isolated, graceful stop. For long-running servers (Bun/Node/Deno); Workers use the platform scheduled trigger. Dependency-free.
 - `@nifrajs/deno` — Run a nifra app on Deno via Deno.serve — graceful stop() + opt-in signals.
+- `@nifrajs/devtools` — Interactive DevTools overlay for nifra dev — loader traces, ISR status, route metadata.
 - `@nifrajs/env` — Typed, validated environment variables for nifra — define a schema, get a frozen typed object, fail loud at boot listing every problem. Coercing helpers (number/port/boolean/url/enum) + any Standard Schema. Dependency-free, edge-safe.
 - `@nifrajs/i18n` — Framework-agnostic i18n for nifra — locale negotiation + a tiny ICU message formatter on the platform Intl. Dependency-free.
 - `@nifrajs/image` — Image optimization for nifra — a CLS-safe responsive <Image> + pluggable loaders (CDN or self-hosted) + pure-JS dimension reading. Zero-dependency core; optional Bun.Image-backed resize endpoint at @nifrajs/image/server.
@@ -54,11 +56,12 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - `@nifrajs/jobs` — Typed background jobs for nifra — enqueue work off the request path with retries, exponential backoff, and dead-lettering on a pluggable store. In-process worker for Bun/Node/Deno (Workers use CF Queues); the async companion to @nifrajs/cron. Dependency-free.
 - `@nifrajs/mcp` — Build MCP servers — and MCP Apps (interactive `ui://` widgets, SEP-1865) — for a nifra app. The transport-agnostic JSON-RPC core (also used by `@nifrajs/cli`'s dev MCP), a Streamable-HTTP handler you mount at `POST /mcp`, and `defineMcpWidget`/`defineMcpTool` for tool results that render real UI in MCP hosts.
 - `@nifrajs/middleware` — Composable middleware for nifra — auth, CSRF, JWT/JWKS, IP restriction, CORS, body limits, response cache, timing, and operational helpers.
+- `@nifrajs/mock` — Contract-based mock server — reads route schemas and generates fake responses.
 - `@nifrajs/node` — Run a nifra app on Node's http server — a Request<->stream adapter with a graceful stop().
 - `@nifrajs/otel` — Distributed tracing for nifra — W3C traceparent/tracestate propagation + OpenTelemetry-semantic-convention spans via a pluggable exporter. Bridge to the OpenTelemetry SDK or log spans directly; no SDK bundled. Edge-safe.
 - `@nifrajs/runner` — Run requests through a nifra app's fetch and capture structured results — the engine behind the playground and the agent run/verify tool. Dependency-free; runs in the browser, Bun, Node, Deno, and on the edge.
 - `@nifrajs/schema` — Built-in schema builder `t` — TypeBox-backed (free JSON Schema + compiled validators), implements Standard Schema so nifra routes validate it natively.
-- `@nifrajs/storage` — Blob storage for nifra — one StorageAdapter interface with memory, local-filesystem, and Cloudflare R2 adapters (key-traversal-safe). The persistence half of @nifrajs/uploads. Dependency-free; bring your own adapter for S3/GCS.
+- `@nifrajs/storage` — Blob storage mechanics for nifra — traversal-safe memory, filesystem, and R2 adapters, optional provider capabilities, and executable adapter conformance.
 - `@nifrajs/testing` — Testing helpers for nifra apps — a cookie jar + a cookie-persisting in-process test session on top of @nifrajs/client's testClient, so stateful auth/session flows test as easily as a single request.
 - `@nifrajs/uploads` — File-upload hardening for nifra — magic-byte MIME detection, size + type validation, short-TTL signed download URLs, and EXIF/metadata stripping. Dependency-free, edge-safe.
 - `@nifrajs/web` — Framework-agnostic SSR core for nifra — the render seam + HTML document orchestration.

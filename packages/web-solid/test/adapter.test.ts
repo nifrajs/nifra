@@ -1,35 +1,33 @@
 import { expect, test } from "bun:test"
 import { unlinkSync } from "node:fs"
+import { assertRenderAdapterConformance } from "@nifrajs/web"
 import { createComponent, createResource, Suspense } from "solid-js"
 import { solidAdapter, solidBunPlugin } from "../src/index.ts"
 
+test("solidAdapter conforms to the executable RenderAdapter interface", async () => {
+  const layout = (marker: string) => (props: { children: unknown }) => [marker, props.children]
+  const Page = (props: { data: unknown; pending?: boolean }) => [
+    "PAGE",
+    (props.data as { name: string }).name,
+    `PENDING:${String(props.pending)}`,
+  ]
+  await assertRenderAdapterConformance(solidAdapter, {
+    page: Page,
+    outerLayout: layout("OUTER"),
+    innerLayout: layout("INNER"),
+    props: { data: { name: "conformance-data" }, pending: true },
+    markers: {
+      page: "PAGE",
+      data: "conformance-data",
+      pending: "PENDING:true",
+      outer: "OUTER",
+      inner: "INNER",
+    },
+  })
+})
+
 // SSR side runs under bun (server build of solid-js/web). Full hydration interactivity is
 // browser-verified against the real packages (see the example) — bun:test has no DOM.
-
-// Drain the adapter's stream (sync or promised) to a string.
-const toText = (s: ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>) =>
-  Promise.resolve(s).then((stream) => new Response(stream).text())
-
-test("renderToStream renders a single-element chain (page only)", async () => {
-  const html = await toText(solidAdapter.renderToStream([() => "hello world"], { data: null }))
-  expect(html).toContain("hello world")
-})
-
-test("renderToStream folds a layout chain: layout wraps page, data reaches the page", async () => {
-  const Layout = (props: { children: unknown }) => props.children
-  const Page = (props: { data: unknown }) => `hi ${(props.data as { name: string }).name}`
-  const html = await toText(solidAdapter.renderToStream([Layout, Page], { data: { name: "ada" } }))
-  expect(html).toContain("hi ada")
-})
-
-test("renderToString folds the same layout chain for the non-deferred fast path", async () => {
-  const renderToString = solidAdapter.renderToString
-  if (renderToString === undefined) throw new Error("solidAdapter.renderToString is missing")
-  const Layout = (props: { children: unknown }) => props.children
-  const Page = (props: { data: unknown }) => `hi ${(props.data as { name: string }).name}`
-  const html = await renderToString([Layout, Page], { data: { name: "ada" } })
-  expect(html).toContain("hi ada")
-})
 
 test("renderToStream streams a Suspense boundary: fallback bytes precede the resolved content", async () => {
   // No JSX — `createComponent` is what the Solid transform emits; lets this run under bun:test.
@@ -48,7 +46,8 @@ test("renderToStream streams a Suspense boundary: fallback bytes precede the res
         return createComponent(Slow, {})
       },
     })
-  const html = await toText(solidAdapter.renderToStream([App], { data: null }))
+  const stream = await solidAdapter.renderToStream([App], { data: null })
+  const html = await new Response(stream).text()
   expect(html).toContain("RESOLVED") // the resolved content streamed in
   expect(html.indexOf("FALLBACK")).toBeLessThan(html.indexOf("RESOLVED")) // fallback streamed first
 })

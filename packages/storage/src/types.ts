@@ -30,6 +30,36 @@ export interface ListOptions {
   readonly limit?: number
 }
 
+/** One page of keys from stores that expose cursor-based listing. */
+export interface StorageListPage {
+  readonly keys: readonly string[]
+  /** Opaque cursor for the next page; absent when this is the final page. */
+  readonly cursor?: string
+}
+
+/** Cursor-aware listing options. `cursor` is adapter-owned and must be treated as opaque. */
+export interface StorageListPageOptions extends ListOptions {
+  readonly cursor?: string
+}
+
+/** Operation represented by a presigned storage URL. */
+export type StoragePresignOperation = "get" | "put"
+
+/** Mechanical constraints applied while minting a presigned URL. */
+export interface StoragePresignOptions {
+  readonly expiresInSeconds?: number
+  /** For PUT URLs, pin the declared MIME type. */
+  readonly contentType?: string
+  /** For PUT URLs, pin the exact request-body size. */
+  readonly contentLength?: number
+}
+
+/** A provider-minted URL and its known expiry. */
+export interface StoragePresignedUrl {
+  readonly url: string
+  readonly expiresAt?: Date
+}
+
 /**
  * A blob store keyed by string. Keys are POSIX-ish paths (`avatars/u1.png`); every adapter rejects unsafe
  * keys (absolute, `..` traversal, NUL, backslash) so a key valid in one adapter is valid in all. All
@@ -46,6 +76,26 @@ export interface StorageAdapter {
   exists(key: string): Promise<boolean>
   /** List stored keys (optionally filtered by prefix + capped). */
   list(options?: ListOptions): Promise<string[]>
+}
+
+/** Optional cursor-listing capability. Kept out of {@link StorageAdapter} for simple stores. */
+export interface PagedStorageAdapter extends StorageAdapter {
+  listPage(options?: StorageListPageOptions): Promise<StorageListPage>
+}
+
+/** Optional provider-side URL-signing capability. Asset sensitivity and TTL policy stay with callers. */
+export interface PresignableStorageAdapter extends StorageAdapter {
+  presign(
+    key: string,
+    operation: StoragePresignOperation,
+    options?: StoragePresignOptions,
+  ): Promise<StoragePresignedUrl>
+}
+
+/** Optional server-side copy/move capability. */
+export interface MovableStorageAdapter extends StorageAdapter {
+  copy(sourceKey: string, destinationKey: string): Promise<void>
+  move(sourceKey: string, destinationKey: string): Promise<void>
 }
 
 /** Normalize any accepted payload to bytes. */
