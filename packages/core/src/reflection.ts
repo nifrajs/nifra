@@ -35,6 +35,8 @@ export interface ReflectedRouteSchema {
   readonly query?: SchemaReflection
   readonly response?: SchemaReflection
   readonly errors?: Readonly<Record<string, SchemaReflection>>
+  /** The SSE event-payload schema of a typed streaming route (`app.sse()`). */
+  readonly sse?: SchemaReflection
 }
 
 export interface ReflectedRoute {
@@ -156,6 +158,7 @@ const reflectedRouteSchema = (value: unknown): ReflectedRouteSchema | undefined 
     ...(schema.query !== undefined ? { query: reflectSchema(schema.query) } : {}),
     ...(schema.response !== undefined ? { response: reflectSchema(schema.response) } : {}),
     ...(Object.keys(reflectedErrors).length > 0 ? { errors: reflectedErrors } : {}),
+    ...(schema.sse !== undefined ? { sse: reflectSchema(schema.sse) } : {}),
   }
 }
 

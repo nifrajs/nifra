@@ -40,6 +40,14 @@ export interface RouteSchema {
    * it's a compile-time + introspection contract. Example: `{ 404: NotFound, 409: Conflict }`. */
   readonly errors?: Readonly<Record<number, StandardSchemaV1>>
   /**
+   * Optional **SSE event contract**: the Standard Schema of each event's `data` payload on a
+   * streaming route (declared via `app.sse()`). Marks the route as a typed event stream — the
+   * typed client grows a `.subscribe()` for it, and the schema flows into reflection. Like
+   * `response`, it is **not** validated at runtime (zero hot-path cost); the server-side
+   * `stream.send()` is compile-time-checked against it instead.
+   */
+  readonly sse?: StandardSchemaV1
+  /**
    * Hook fired when the request fails `body`/`query` validation, before the handler runs. `kind` says
    * which input failed (`"body"` | `"query"`). Its return value selects one of three outcomes (may be async):
    *   - a **`Response`** → returned as-is, short-circuiting the route (custom error envelope, redirect, …).

@@ -57,6 +57,35 @@ export interface SSEInit {
   readonly keepAlive?: number
 }
 
+/**
+ * The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and
+ * serializes it (JSON) into the SSE `data:` field — the compile-time half of the `sse` contract.
+ */
+export interface TypedSSEStream<Event> {
+  /** Send one typed event. `init` sets the optional SSE frame fields (`event`, `id`, `retry`). */
+  send(event: Event, init?: Pick<SSEMessage, "event" | "id" | "retry">): void
+  /** Send a `: comment` line (e.g. an explicit ping). */
+  comment(text: string): void
+  /** End the stream now. */
+  close(): void
+  /** Aborts when the client disconnects — use it to tear down subscriptions/loops. */
+  readonly signal: AbortSignal
+}
+
+/** Wrap a raw {@link SSEStream} in the typed, JSON-serializing surface `app.sse()` hands out. */
+export function typedSSEStream<Event>(stream: SSEStream): TypedSSEStream<Event> {
+  return {
+    send(event, init = {}) {
+      stream.send({ ...init, data: JSON.stringify(event) })
+    },
+    comment(text) {
+      stream.send({ comment: text })
+    },
+    close: stream.close,
+    signal: stream.signal,
+  }
+}
+
 const CRLF = /[\r\n]/g
 const LINE_SPLIT = /\r\n|\r|\n/
 

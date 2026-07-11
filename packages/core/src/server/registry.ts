@@ -19,6 +19,9 @@ export interface RouteInfo {
   /** Union of the route's declared error-response body types (from `schema.errors`); `unknown` when the
    * route declares none. Surfaced by the typed client as the failure `errorData`. */
   readonly errors?: unknown
+  /** The SSE event payload type (from `schema.sse`, declared via `app.sse()`); `never` for ordinary
+   * routes. The typed client keys `.subscribe()` availability and its event type off this. */
+  readonly sse?: unknown
 }
 
 /** The accumulated, type-level map of every route on a Server: path → method → RouteInfo. */
@@ -51,6 +54,11 @@ type RegistryErrors<S extends RouteSchema> = S extends {
   ? { [K in keyof E]: E[K] extends StandardSchemaV1 ? InferOutput<E[K]> : never }[keyof E]
   : unknown
 
+/** The SSE event payload type from a route's `sse` schema; `never` for ordinary routes. */
+type RegistrySse<S extends RouteSchema> = S extends { sse: infer E extends StandardSchemaV1 }
+  ? InferOutput<E>
+  : never
+
 /** Build a {@link RouteInfo} from a route's path, schema, and handler output type. */
 export type RouteInfoFor<Path extends string, S extends RouteSchema, Output> = {
   readonly params: Params<Path>
@@ -58,6 +66,7 @@ export type RouteInfoFor<Path extends string, S extends RouteSchema, Output> = {
   readonly body: RegistryBody<S>
   readonly output: RegistryOutput<S, Output>
   readonly errors: RegistryErrors<S>
+  readonly sse: RegistrySse<S>
 }
 
 /** The client-visible output of a handler: its awaited return, minus raw `Response`. */

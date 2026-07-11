@@ -25,7 +25,7 @@ Bun-native, contract-first HTTP framework — the router, server, and route desc
 - **server** _(function)_ — `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
 - **signValue** _(function)_ — `signValue: (value: string, secret: string) => Promise<string>`
 
-_…and 92 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
+_…and 94 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 
 ## Footguns
 

@@ -92,6 +92,9 @@ type RouteInfoForOp<O extends OperationDef> = {
   // The error union from the op's non-2xx `responses` — so a decoupled contract client sees typed error
   // bodies, just like an inline route's `errors`. `unknown` when the op declares no error responses.
   readonly errors: OpErrors<O>
+  // Contract operations cannot declare an SSE event contract (yet) — `never` keeps the contract
+  // registry mutually assignable with the inline registry's RouteInfoFor (mode conformance).
+  readonly sse: never
 }
 
 /** Re-key the name-keyed ops into the `path → method → RouteInfo` registry. */
@@ -191,6 +194,8 @@ export type RegistryFromImpl<C extends ContractShape, H extends HandlersFor<C>> 
       // The error union from the op's non-2xx `responses` (see OpErrors) — a graduated contract client sees
       // the same typed error bodies as the inline `errors` path.
       readonly errors: OpErrors<C[K]>
+      // Mirrors RouteInfoForOp: no SSE contract on contract ops (yet) — mode conformance holds.
+      readonly sse: never
     }
   }
 }
