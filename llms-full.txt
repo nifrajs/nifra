@@ -5887,6 +5887,10 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 `bridgeScript`, `createMcpServer`, `CreateMcpServerOptions`, `defineMcpTool`, `DefineMcpToolOptions`, `defineMcpWidget`, `DefineMcpWidgetOptions`, `McpAppBridge`, `McpHttpOptions`, `McpServer`, `McpToolHandlerResult`, `McpUiIntent`, `McpWidget`, `respondMcpHttp`, `uiResourceMeta`, `widgetDocument`
 
+## @nifrajs/mcp-db
+
+`McpDbAuthorizeContext`, `McpDbConfigError`, `RunQueryOptions`, `serveDatabaseAsMcp`, `ServeDatabaseAsMcpOptions`, `SqliteDatabaseLike`
+
 ## @nifrajs/middleware
 
 `apiKey`, `ApiKeyStaticOptions`, `ApiKeyVerifyOptions`, `appendTrailingSlash`, `AuthPlugin`, `basicAuth`, `BasicAuthPlugin`, `BasicAuthStaticOptions`, `BasicAuthVerifyOptions`, `bearer`, `BearerOptions`, `bodyLimit`, `BodyLimitOptions`, `buildOpenApiDocument`, `cache`, `cacheControl`, `CacheControlOptions`, `CachedResponse`, `CacheOptions`, `combine`, `Composable`, `compression`, `CompressionOptions`, `cors`, `CorsOptions`, `createCsrfToken`, `csrf`, `CsrfOptions`, `etag`, `ETagOptions`, `healthcheck`, `HealthcheckOptions`, `idempotency`, `IdempotencyClaim`, `IdempotencyOptions`, `IdempotencyRecord`, `IdempotencyStore`, `IpMatcher`, `ipRestriction`, `IpRestrictionOptions`, `jwk`, `JwkKey`, `jwks`, `JwksOptions`, `jwt`, `JwtAlgorithm`, `JwtClaims`, `JwtHeader`, `JwtKeyResolver`, `JwtOptions`, `JwtPlugin`, `JwtVerificationKey`, `language`, `LanguageMatch`, `LanguageOptions`, `logger`, `LoggerOptions`, `MemoryIdempotencyStore`, `MemoryIdempotencyStoreOptions`, `MemoryResponseCache`, `MemoryResponseCacheOptions`, `MemoryStore`, `MemoryStoreOptions`, `methodOverride`, `MethodOverrideOptions`, `namedCombine`, `openapi`, `OpenApiInfo`, `OpenApiOptions`, `OpenApiServer`, `OpenApiTag`, `OpenApiUiOptions`, `pickLanguage`, `poweredBy`, `PoweredByOptions`, `prettyJson`, `PrettyJsonOptions`, `rateLimit`, `RateLimitOptions`, `RateLimitResult`, `RateLimitStore`, `requestId`, `RequestIdOptions`, `RequestLogFields`, `responseCache`, `ResponseCacheStore`, `RouteLike`, `securityHeaders`, `SecurityHeadersOptions`, `SecurityRequirement`, `timing`, `TimingControls`, `TimingMetric`, `TimingOptions`, `TrailingSlashOptions`, `trimTrailingSlash`, `tryVerifyJwt`, `VerifiedJwt`, `verifyCsrfToken`, `verifyJwt`, `VerifyJwtOptions`, `VerifyJwtResult`
@@ -5902,6 +5906,10 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 ## @nifrajs/otel
 
 `ActiveObservation`, `AttributeValue`, `combineObservationAdapters`, `consoleSpanExporter`, `createObservationLifecycle`, `EndObservation`, `formatTraceparent`, `generateSpanId`, `generateTraceId`, `NifraSpan`, `ObservationAdapter`, `ObservationClock`, `ObservationContext`, `ObservationLifecycle`, `ObservationLifecycleOptions`, `ObservationParent`, `ParsedTraceparent`, `parseTraceparent`, `SpanExporter`, `SpanStatus`, `StartObservation`, `TraceContext`, `traceHeaders`, `tracing`, `TracingOptions`
+
+## @nifrajs/prompt
+
+`prompt`, `Prompt`, `PromptInputError`, `PromptMessage`, `PromptOutputError`, `PromptRequest`, `PromptResponseFormat`, `RunOptions`
 
 ## @nifrajs/runner
 

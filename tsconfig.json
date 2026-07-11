@@ -39,6 +39,8 @@
       "@nifrajs/content/fs": ["./packages/content/src/fs.ts"],
       "@nifrajs/content/mdx": ["./packages/content/src/mdx.ts"],
       "@nifrajs/mock": ["./packages/mock/src/index.ts"],
+      "@nifrajs/prompt": ["./packages/prompt/src/index.ts"],
+      "@nifrajs/mcp-db": ["./packages/mcp-db/src/index.ts"],
       "@nifrajs/agent-telemetry": ["./packages/agent-telemetry/src/index.ts"],
       "@nifrajs/devtools": ["./packages/devtools/src/index.ts"],
       "@nifrajs/devtools/client": ["./packages/devtools/src/client.ts"],

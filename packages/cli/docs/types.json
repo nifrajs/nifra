@@ -235,7 +235,7 @@
     "kind": "function",
     "package": "@nifrajs/storage",
     "signature": "export declare function assertStorageAdapterConformance(options: StorageAdapterConformanceOptions): Promise<void>;",
-    "doc": "/**\n * Execute the observable {@link StorageAdapter} contract without depending on a test runner.\n *\n * The adapter must be isolated because this writes deterministic conformance keys. The promise resolves\n * only after proving byte + metadata round-trips, overwrite, missing/delete semantics, prefix/limit listing,\n * and uniform unsafe-key rejection across every key-taking method.\n */"
+    "doc": "/**\n * Execute the observable {@link StorageAdapter} contract without depending on a test runner.\n *\n * The adapter must be isolated because this writes deterministic conformance keys. The promise resolves\n * only after proving byte + metadata round-trips, overwrite, missing/delete semantics, prefix/limit listing,\n * and uniform unsafe-key rejection across every key-taking method. When the adapter also implements an\n * optional capability ({@link PagedStorageAdapter}, {@link PresignableStorageAdapter},\n * {@link MovableStorageAdapter}), that capability's contract is proven too — implementing a capability\n * partially or unsafely fails conformance rather than silently escaping it.\n */"
   },
   {
     "name": "attachWebSocket",
@@ -1992,7 +1992,7 @@
     "name": "FileStorage",
     "kind": "class",
     "package": "@nifrajs/storage",
-    "signature": "export declare class FileStorage implements StorageAdapter {\n    private readonly root;\n    private readonly metadataRoot;\n    constructor(root: string);\n    private metadataPathFor;\n    /** Resolve `key` to an absolute path, asserting it stays inside `root` (defense-in-depth on top of `assertSafeKey`). */\n    private pathFor;\n    put(key: string, data: StorageData, _options?: PutOptions): Promise<void>;\n    get(key: string): Promise<StorageObject | null>;\n    delete(key: string): Promise<void>;\n    exists(key: string): Promise<boolean>;\n    list(options?: ListOptions): Promise<string[]>;\n    private walk;\n}"
+    "signature": "export declare class FileStorage implements StorageAdapter {\n    private readonly root;\n    private readonly metadataRoot;\n    constructor(root: string);\n    private metadataPathFor;\n    /** Resolve `key` to an absolute path, asserting it stays inside `root` (defense-in-depth on top of `assertSafeKey`). */\n    private pathFor;\n    put(key: string, data: StorageData, options?: PutOptions): Promise<void>;\n    get(key: string): Promise<StorageObject | null>;\n    delete(key: string): Promise<void>;\n    exists(key: string): Promise<boolean>;\n    list(options?: ListOptions): Promise<string[]>;\n    private walk;\n}"
   },
   {
     "name": "FileType",
@@ -3372,6 +3372,19 @@
     "doc": "/** A single content block in a tool result. Today only text — the model-facing representation. */"
   },
   {
+    "name": "McpDbAuthorizeContext",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface McpDbAuthorizeContext {\n    readonly toolName: \"run_query\";\n    readonly request: Request;\n}",
+    "doc": "/** Context forwarded to `authorize` — the inbound HTTP Request carrying the `run_query` call. */"
+  },
+  {
+    "name": "McpDbConfigError",
+    "kind": "class",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare class McpDbConfigError extends Error {\n    constructor(message: string);\n}"
+  },
+  {
     "name": "McpHttpOptions",
     "kind": "interface",
     "package": "@nifrajs/mcp",
@@ -3568,7 +3581,7 @@
     "name": "MemoryStorage",
     "kind": "class",
     "package": "@nifrajs/storage",
-    "signature": "export declare class MemoryStorage implements StorageAdapter {\n    private readonly objects;\n    put(key: string, data: StorageData, options?: PutOptions): Promise<void>;\n    get(key: string): Promise<StorageObject | null>;\n    delete(key: string): Promise<void>;\n    exists(key: string): Promise<boolean>;\n    list(options?: ListOptions): Promise<string[]>;\n}"
+    "signature": "export declare class MemoryStorage implements StorageAdapter {\n    private readonly objects;\n    constructor();\n    put(key: string, data: StorageData, options?: PutOptions): Promise<void>;\n    get(key: string): Promise<StorageObject | null>;\n    delete(key: string): Promise<void>;\n    exists(key: string): Promise<boolean>;\n    list(options?: ListOptions): Promise<string[]>;\n}"
   },
   {
     "name": "MemoryStore",
@@ -4417,6 +4430,19 @@
     "doc": "/** Build the project-scoped tools for `cwd`. */"
   },
   {
+    "name": "prompt",
+    "kind": "function",
+    "package": "@nifrajs/prompt",
+    "signature": "export declare function prompt(instruction: string): Prompt<undefined, string>;",
+    "doc": "/**\n * Define a type-safe prompt. Chain `.input()` / `.output()` with Standard Schemas, then `.run()`\n * with a provider `complete` fn. Immutable — each chain step returns a new prompt.\n */"
+  },
+  {
+    "name": "Prompt",
+    "kind": "interface",
+    "package": "@nifrajs/prompt",
+    "signature": "export interface Prompt<Input, Output> {\n    readonly instruction: string;\n    /** Declare the variables the prompt needs. Validated on every run. */\n    input<Schema extends StandardSchemaV1>(schema: Schema): Prompt<InferOutput<Schema>, Output>;\n    /** Declare the shape the model must return. Sent as the provider's structured-output format. */\n    output<Schema extends StandardSchemaV1>(schema: Schema): Prompt<Input, InferOutput<Schema>>;\n    /** Build the provider request without executing it (for inspection, logging, tests). */\n    request(input: Input, extraMessages?: readonly PromptMessage[]): Promise<PromptRequest>;\n    /** Execute via the given provider `complete` fn and return the validated, typed output. */\n    run(input: Input, options: RunOptions): Promise<Output>;\n}"
+  },
+  {
     "name": "PromptArgument",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -4424,11 +4450,46 @@
     "doc": "/** One declared argument of an MCP prompt, surfaced in `prompts/list`. */"
   },
   {
+    "name": "PromptInputError",
+    "kind": "class",
+    "package": "@nifrajs/prompt",
+    "signature": "export declare class PromptInputError extends Error {\n    readonly issues: ReadonlyArray<StandardIssue>;\n    constructor(issues: ReadonlyArray<StandardIssue>);\n}",
+    "doc": "/** A failed prompt input — the caller's variables did not satisfy the input schema. */"
+  },
+  {
     "name": "PromptMessage",
     "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface PromptMessage {\n    readonly role: \"user\" | \"assistant\";\n    readonly content: {\n        readonly type: \"text\";\n        readonly text: string;\n    };\n}",
     "doc": "/** A message in an MCP prompt's rendered output (see {@link Server.prompt}). */"
+  },
+  {
+    "name": "PromptMessage",
+    "kind": "interface",
+    "package": "@nifrajs/prompt",
+    "signature": "export interface PromptMessage {\n    readonly role: \"system\" | \"user\" | \"assistant\";\n    readonly content: string;\n}",
+    "doc": "/** One chat message. The union every provider API accepts. */"
+  },
+  {
+    "name": "PromptOutputError",
+    "kind": "class",
+    "package": "@nifrajs/prompt",
+    "signature": "export declare class PromptOutputError extends Error {\n    readonly issues: ReadonlyArray<StandardIssue>;\n    /** The raw model reply that failed, for logging/debugging. */\n    readonly raw: string;\n    constructor(issues: ReadonlyArray<StandardIssue>, \n    /** The raw model reply that failed, for logging/debugging. */\n    raw: string);\n}",
+    "doc": "/** The model's reply did not satisfy the output schema (after any heal attempts). */"
+  },
+  {
+    "name": "PromptRequest",
+    "kind": "interface",
+    "package": "@nifrajs/prompt",
+    "signature": "export interface PromptRequest {\n    readonly messages: readonly PromptMessage[];\n    /** Present when the prompt declares `.output()` — pass it as the provider's structured-output format. */\n    readonly responseFormat?: PromptResponseFormat;\n}",
+    "doc": "/** Everything a provider adapter needs to execute one prompt call. */"
+  },
+  {
+    "name": "PromptResponseFormat",
+    "kind": "interface",
+    "package": "@nifrajs/prompt",
+    "signature": "export interface PromptResponseFormat {\n    readonly name: string;\n    readonly strict: true;\n    readonly schema: JsonSchema;\n}",
+    "doc": "/** The structured-output format handed to the provider (OpenAI `json_schema` shape; trivially\n * adaptable to Anthropic tool-input or Gemini `responseSchema`). */"
   },
   {
     "name": "PROTOCOL_VERSION",
@@ -5400,6 +5461,12 @@
   {
     "name": "RunOptions",
     "kind": "interface",
+    "package": "@nifrajs/prompt",
+    "signature": "export interface RunOptions {\n    /** Execute the LLM call and return the raw text of the model's reply. */\n    readonly complete: (request: PromptRequest) => string | Promise<string>;\n    /**\n     * Repair hook: called when the reply fails output validation, with the raw reply and the issues.\n     * Return a corrected raw reply (e.g. by re-asking the model) — it is validated again. Runs at most\n     * `healAttempts` times (default 1). Omit to fail fast.\n     */\n    readonly heal?: (context: {\n        readonly raw: string;\n        readonly issues: ReadonlyArray<StandardIssue>;\n        readonly request: PromptRequest;\n    }) => string | Promise<string>;\n    /** Max heal retries after the first failed validation (default 1). */\n    readonly healAttempts?: number;\n    /** Extra messages appended after the instruction (few-shot examples, prior turns). */\n    readonly messages?: readonly PromptMessage[];\n}"
+  },
+  {
+    "name": "RunOptions",
+    "kind": "interface",
     "package": "@nifrajs/runner",
     "signature": "export interface RunOptions {\n    /** Origin used to resolve relative paths. Default `\"http://nifra.local\"`. */\n    readonly origin?: string;\n    /** Cap on captured body text, in characters. Default 65536. */\n    readonly maxBodyChars?: number;\n}"
   },
@@ -5415,6 +5482,12 @@
     "kind": "interface",
     "package": "@nifrajs/cli",
     "signature": "export interface RunPortOptions {\n    readonly target?: string;\n    readonly json?: boolean;\n    /** Fail (exit non-zero) on a detected unsupported feature for the resolved target. Implied by --target. */\n    readonly ci?: boolean;\n    /** With --ci, also fail on caveats (not just unsupported). */\n    readonly strict?: boolean;\n}"
+  },
+  {
+    "name": "RunQueryOptions",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface RunQueryOptions {\n    /**\n     * REQUIRED. Authorize each `run_query` call at the transport boundary (inspect the inbound\n     * Request's auth). Return false to reject with a JSON-RPC error. There is no unauthenticated\n     * mode — schema tools are the anonymous surface. Note: `run_query` is therefore HTTP-only;\n     * direct `handle()` dispatch rejects it (no Request to authorize — fails closed).\n     */\n    readonly authorize: (context: McpDbAuthorizeContext) => boolean | Promise<boolean>;\n    /** Max rows returned per query (default 100). */\n    readonly maxRows?: number;\n    /** Max serialized result size in bytes (default 100 KB). */\n    readonly maxResultBytes?: number;\n}"
   },
   {
     "name": "runRequest",
@@ -5734,6 +5807,19 @@
     "package": "@nifrajs/node",
     "signature": "export declare function serve(app: FetchHandler, options: ServeOptions): Promise<NodeServer>;",
     "doc": "/**\n * Serve a Web-`fetch` app on a Node `http` server. Resolves once bound — Node binds\n * the port asynchronously, so awaiting gives you the real port (matters for `port: 0`).\n */"
+  },
+  {
+    "name": "serveDatabaseAsMcp",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function serveDatabaseAsMcp(db: SqliteDatabaseLike, options: ServeDatabaseAsMcpOptions): McpServer;",
+    "doc": "/**\n * Serve `db` as a mountable MCP server (`mcp.fetch` at `POST /mcp`). See module docs for the\n * security model. Throws {@link McpDbConfigError} on any unsafe configuration — always at\n * construction (boot), never at request time.\n */"
+  },
+  {
+    "name": "ServeDatabaseAsMcpOptions",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface ServeDatabaseAsMcpOptions {\n    /**\n     * REQUIRED allowlist of tables the MCP surface may see. `list_tables`/`describe_table` are\n     * restricted to it and `run_query` plans are verified against it. Empty array → construction\n     * throws; expose nothing by accident, ever.\n     */\n    readonly tables: readonly string[];\n    /** Enable the `run_query` tool. Omitted → schema tools only. */\n    readonly runQuery?: RunQueryOptions;\n    /** MCP server identity (defaults: name `nifra-db`, version `1.0.0`). */\n    readonly name?: string;\n    readonly version?: string;\n    /**\n     * Set `PRAGMA query_only = ON` on the connection at construction (default true). Disable ONLY\n     * when the same connection must also serve writes elsewhere in the app — with it disabled,\n     * `run_query` still gates on SELECT/WITH + plan verification, but the engine-level guarantee is\n     * yours to provide (e.g. open a second, read-only connection for the MCP mount — preferred).\n     */\n    readonly enforceQueryOnly?: boolean;\n}"
   },
   {
     "name": "ServeOptions",
@@ -6089,6 +6175,13 @@
     "doc": "/** Split the generated doc into its `##` sections (the `# title` intro becomes \"Overview\"). */"
   },
   {
+    "name": "SqliteDatabaseLike",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface SqliteDatabaseLike {\n    /** Prepare a statement; `all` runs it and returns row objects. */\n    prepare(sql: string): {\n        all(...params: unknown[]): unknown[];\n    };\n    /** Execute a statement for its side effect (used only for `PRAGMA query_only`). */\n    run(sql: string): unknown;\n}",
+    "doc": "/** The structural slice of `bun:sqlite`'s `Database` this package needs. */"
+  },
+  {
     "name": "sse",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -6275,7 +6368,7 @@
     "name": "StorageKeyError",
     "kind": "class",
     "package": "@nifrajs/storage",
-    "signature": "export declare class StorageKeyError extends Error {\n    readonly name = \"StorageKeyError\";\n}",
+    "signature": "export declare class StorageKeyError extends Error {\n    constructor(message: string);\n}",
     "doc": "/**\n * Storage-key safety. A key is a POSIX-ish relative path (`avatars/u1.png`); we reject anything that\n * could escape a `FileStorage` root or otherwise misbehave — absolute paths, `..` traversal, NUL bytes,\n * and backslashes (Windows traversal). Enforced by EVERY adapter (not just `FileStorage`) so a key is\n * portable across them, and so the check can't be forgotten on the one adapter where it's a vulnerability.\n */"
   },
   {
@@ -7054,7 +7147,7 @@
     "name": "VERSION",
     "kind": "const",
     "package": "@nifrajs/core",
-    "signature": "export declare const VERSION: \"1.3.1\";",
+    "signature": "export declare const VERSION: \"1.4.0\";",
     "doc": "/**\n * Current package version. A hardcoded literal on purpose — core runs on the edge (no fs), so it can't\n * read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and\n * `check:publish` asserts it equals `@nifrajs/core`'s package version, so the literal can't go stale\n * (it shipped at \"0.0.0\" through 1.0.0 before those guards existed). Kept narrow (`as const`) so\n * consumers can pin it at the type level — see `test/version.test-d.ts`.\n */"
   },
   {

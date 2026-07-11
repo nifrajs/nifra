@@ -33,6 +33,8 @@ const LIBRARIES = [
   "agent-telemetry",
   "devtools",
   "mock",
+  "prompt",
+  "mcp-db",
   "web",
   "web-solid",
   "web-react",

@@ -556,6 +556,18 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **widgetDocument** _(function)_ — `widgetDocument: (opts: DefineMcpWidgetOptions) => string`
   Assemble the full self-contained widget document (bridge inlined in `<head>` so body scripts can use `mcpApp` immediately).
 
+## @nifrajs/mcp-db
+
+- **McpDbAuthorizeContext** _(interface)_ — `interface McpDbAuthorizeContext`
+  Context forwarded to `authorize` — the inbound HTTP Request carrying the `run_query` call.
+- **McpDbConfigError** _(class)_ — `class McpDbConfigError`
+- **RunQueryOptions** _(interface)_ — `interface RunQueryOptions`
+- **ServeDatabaseAsMcpOptions** _(interface)_ — `interface ServeDatabaseAsMcpOptions`
+- **SqliteDatabaseLike** _(interface)_ — `interface SqliteDatabaseLike`
+  The structural slice of `bun:sqlite`'s `Database` this package needs.
+- **serveDatabaseAsMcp** _(function)_ — `serveDatabaseAsMcp: (db: SqliteDatabaseLike, options: ServeDatabaseAsMcpOptions) => McpServer`
+  Serve `db` as a mountable MCP server (`mcp.fetch` at `POST /mcp`). See module docs for the security model. Throws {@link McpDbConfigError} on any unsafe configuration — always at construction (boot), never at request time.
+
 ## @nifrajs/middleware
 
 - **ApiKeyStaticOptions** _(interface)_ — `interface ApiKeyStaticOptions`
@@ -768,6 +780,23 @@ Every public export of every package — name, kind, signature, and doc summary 
   Spread into an outgoing `fetch`/`ctx.api` call's headers to continue the trace downstream: `fetch(url, { headers: traceHeaders(c.trace) })`.
 - **tracing** _(function)_ — `tracing: (options?: TracingOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").Server<any, any>>`
   Distributed-tracing plugin. Each request continues the inbound trace (or starts one), opens a server span, and ends it on response with the status + HTTP attributes. Idempotent.
+
+## @nifrajs/prompt
+
+- **Prompt** _(interface)_ — `interface Prompt<Input, Output>`
+- **PromptInputError** _(class)_ — `class PromptInputError`
+  A failed prompt input — the caller's variables did not satisfy the input schema.
+- **PromptMessage** _(interface)_ — `interface PromptMessage`
+  One chat message. The union every provider API accepts.
+- **PromptOutputError** _(class)_ — `class PromptOutputError`
+  The model's reply did not satisfy the output schema (after any heal attempts).
+- **PromptRequest** _(interface)_ — `interface PromptRequest`
+  Everything a provider adapter needs to execute one prompt call.
+- **PromptResponseFormat** _(interface)_ — `interface PromptResponseFormat`
+  The structured-output format handed to the provider (OpenAI `json_schema` shape; trivially adaptable to Anthropic tool-input or Gemini `responseSchema`).
+- **RunOptions** _(interface)_ — `interface RunOptions`
+- **prompt** _(function)_ — `prompt: (instruction: string) => Prompt<undefined, string>`
+  Define a type-safe prompt. Chain `.input()` / `.output()` with Standard Schemas, then `.run()` with a provider `complete` fn. Immutable — each chain step returns a new prompt.
 
 ## @nifrajs/runner
 
