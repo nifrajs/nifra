@@ -1,5 +1,34 @@
 # @nifrajs/cli
 
+## 1.8.0
+
+### Minor Changes
+
+- e47c4c5: Add reflection-time route assurance: middleware and plugins can publish lifecycle-accurate enforcement
+  evidence, ordered policies fail closed on unclassified/missing/forbidden evidence, official hardening
+  middleware emits canonical evidence, and `nifra assure` exposes a human/JSON CI gate.
+- 9433ad9: Add `nifra upgrade <version>`: an executable, per-release upgrade runner. A recipe declares the
+  mechanical edits a target version needs — a dependency-pin sweep (sets every matching `@nifrajs/*`
+  dependency to the target version across the workspace, preserving each spec's `^`/`~`/exact style and
+  skipping `workspace:`/`link:` specs) and exact import-specifier moves — and the runner applies them
+  `detect → transform → verify`, reusing the existing `nifra check` gate rather than adding a new one.
+  Dry-run by default (`--write` applies, `--no-verify` skips the check, `--list` shows targets); fail-closed
+  on an unknown version or a missing package.json; deterministic and idempotent. Ships the 1.8.0 recipe.
+  Transforms are intentionally string/specifier-level — structural (AST) codemods are deferred until a
+  recipe needs one.
+
+### Patch Changes
+
+- Updated dependencies [e47c4c5]
+- Updated dependencies [1ffd48b]
+  - @nifrajs/core@1.8.0
+  - @nifrajs/web@1.8.0
+  - @nifrajs/client@1.8.0
+  - @nifrajs/schema@1.8.0
+  - @nifrajs/mcp@1.8.0
+  - @nifrajs/runner@1.8.0
+  - create-nifra@1.8.0
+
 ## 1.7.0
 
 ### Patch Changes
