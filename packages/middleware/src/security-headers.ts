@@ -1,4 +1,5 @@
 import type { Middleware } from "@nifrajs/core"
+import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import { withHeaders } from "./_utils.ts"
 
 export interface SecurityHeadersOptions {
@@ -35,17 +36,24 @@ export function securityHeaders(options: SecurityHeadersOptions = {}): Middlewar
     hstsValue = parts.join("; ")
   }
 
-  return {
-    name: "security-headers",
-    // Mutate in place on the common (mutable-headers) response; clone only for an immutable one
-    // (see withHeaders — the old always-clone was ~3% of a realistic request).
-    onResponse: (res) =>
-      withHeaders(res, (headers) => {
-        headers.set("X-Content-Type-Options", "nosniff")
-        headers.set("X-Frame-Options", frameOptions)
-        headers.set("Referrer-Policy", referrerPolicy)
-        if (hstsValue !== undefined) headers.set("Strict-Transport-Security", hstsValue)
-        if (csp !== undefined) headers.set("Content-Security-Policy", csp)
-      }),
-  }
+  return withRouteAssurance<Middleware>(
+    {
+      name: "security-headers",
+      // Mutate in place on the common (mutable-headers) response; clone only for an immutable one
+      // (see withHeaders — the old always-clone was ~3% of a realistic request).
+      onResponse: (res) =>
+        withHeaders(res, (headers) => {
+          headers.set("X-Content-Type-Options", "nosniff")
+          headers.set("X-Frame-Options", frameOptions)
+          headers.set("Referrer-Policy", referrerPolicy)
+          if (hstsValue !== undefined) headers.set("Strict-Transport-Security", hstsValue)
+          if (csp !== undefined) headers.set("Content-Security-Policy", csp)
+        }),
+    },
+    {
+      id: NIFRA_ASSURANCE.SECURITY_HEADERS,
+      source: "security-headers",
+      scope: "global",
+    },
+  )
 }

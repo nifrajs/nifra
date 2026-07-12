@@ -329,9 +329,8 @@
       "version": "1.4.0",
       "dependencies": {
         "@nifrajs/client": "workspace:*",
-      },
-      "devDependencies": {
         "@nifrajs/core": "workspace:*",
+        "@nifrajs/mock": "workspace:*",
       },
     },
     "packages/uploads": {

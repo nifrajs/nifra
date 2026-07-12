@@ -1,4 +1,5 @@
 import type { Middleware } from "@nifrajs/core"
+import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import { jsonError, type MaybePromise } from "./_utils.ts"
 
 export type IpMatcher = string | ((ip: string, request: Request) => MaybePromise<boolean>)
@@ -170,18 +171,28 @@ export function ipRestriction(options: IpRestrictionOptions): Middleware {
   }
   const error = options.error ?? "ip_forbidden"
 
-  return {
-    name: "ip-restriction",
-    async onRequest(req) {
-      const ipText = await resolveClientIp(req, options)
-      if (ipText === null) return jsonError(403, error)
-      const ip = parseIp(ipText)
-      if (ip === null) return jsonError(403, error)
-      if (await matches(ipText, ip, deny, req)) return jsonError(403, error)
-      if (allow.ranges.length + allow.fns.length > 0 && !(await matches(ipText, ip, allow, req))) {
-        return jsonError(403, error)
-      }
-      return undefined
+  return withRouteAssurance<Middleware>(
+    {
+      name: "ip-restriction",
+      async onRequest(req) {
+        const ipText = await resolveClientIp(req, options)
+        if (ipText === null) return jsonError(403, error)
+        const ip = parseIp(ipText)
+        if (ip === null) return jsonError(403, error)
+        if (await matches(ipText, ip, deny, req)) return jsonError(403, error)
+        if (
+          allow.ranges.length + allow.fns.length > 0 &&
+          !(await matches(ipText, ip, allow, req))
+        ) {
+          return jsonError(403, error)
+        }
+        return undefined
+      },
     },
-  }
+    {
+      id: NIFRA_ASSURANCE.IP_RESTRICTED,
+      source: "ip-restriction",
+      scope: "global",
+    },
+  )
 }

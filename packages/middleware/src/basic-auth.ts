@@ -1,4 +1,5 @@
 import { definePlugin, type NifraPlugin } from "@nifrajs/core"
+import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import {
   decodeBase64,
   jsonError,
@@ -98,7 +99,14 @@ export function basicAuth<P>(
       return optional ? undefined : reject(realm)
     }),
   )
-  return Object.assign(plugin, {
+  const instrumented = optional
+    ? plugin
+    : withRouteAssurance(plugin, {
+        id: NIFRA_ASSURANCE.AUTHENTICATED,
+        source: "basicAuth",
+        scope: "subsequent",
+      })
+  return Object.assign(instrumented, {
     principal: (request: Request): P | string | null => store.get(request) ?? null,
     requirePrincipal: (request: Request): P | string => {
       const principal = store.get(request)

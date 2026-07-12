@@ -940,11 +940,11 @@ Every public export of every package — name, kind, signature, and doc summary 
   Stable context passed to request/rejection hooks. It contains no request payloads or secrets.
 - **ContractCaseKind** _(type)_ — `type ContractCaseKind = "input-rejection" | "response-conformance"`
 - **ContractCoverageGap** _(interface)_ — `interface ContractCoverageGap`
-- **ContractCoverageGapCode** _(type)_ — `type ContractCoverageGapCode = | "NO_CONTRACT_TARGETS" | "NO_VALIDATOR" | "NO_WITNESS" | "INVALID_WITNESS" | "WITNESS_TOO_LARGE" | "UNSUPPORTED_BODY_METHOD" | "NO_REJECTED_MUTATION"`
+- **ContractCoverageGapCode** _(type)_ — `type ContractCoverageGapCode`
 - **ContractReplay** _(interface)_ — `interface ContractReplay`
 - **ContractRuntime** _(interface)_ — `interface ContractRuntime`
   A runtime target for the same generated contract cases (for example Bun, Node, and Workers).
-- **ContractTarget** _(type)_ — `type ContractTarget = InputTarget | "response"`
+- **ContractTarget** _(type)_ — `type ContractTarget = "body" | "query" | "response"`
 - **ContractTestApp** _(interface)_ — `interface ContractTestApp`
   Anything that exposes reflected routes and a Web-standard in-process fetch handler.
 - **ContractWitness** _(interface)_ — `interface ContractWitness`
@@ -958,7 +958,7 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **cookieJar** _(function)_ — `cookieJar: () => CookieJar`
   Create an empty cookie jar.
 - **runAdversarialContract** _(function)_ — `runAdversarialContract: (app: ContractTestApp, options?: AdversarialContractOptions) => Promise<AdversarialContractReport>`
-  Execute contract-derived hostile inputs and declared-response conformance against a runtime matrix. The function never throws: inspect `report.ok`, `failures`, and `gaps` (or use {@link assertAdversarialContract} for a throwing test assertion).
+  Execute contract-derived hostile inputs and declared-response conformance against a runtime matrix. Runtime/request failures are captured in the report; inspect `report.ok`, `failures`, and `gaps` (or use {@link assertAdversarialContract} for a throwing test assertion).
 - **testSession** _(function)_ — `testSession: <App extends AppLike>(app: App, options?: TestSessionOptions) => TestSession<App>`
   Create a cookie-persisting in-process test client for `app`.
 

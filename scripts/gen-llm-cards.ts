@@ -144,6 +144,11 @@ const FOOTGUNS: Record<string, readonly string[]> = {
     "Import the server's app **type-only**: `import type { app }` + `client<typeof app>(url)`. The value import would pull server code (and its `node:` deps) into the browser bundle.",
     "`inProcessClient(app)` is a **callable proxy** with the same shape as `client()` but no network — use it in SSR loaders and tests. It mutates/serves the real app in-process; it is not a mock.",
   ],
+  "@nifrajs/testing": [
+    "`assertAdversarialContract` executes one valid request for every declared response schema. Use an isolated test app/database; never point a contract laboratory at production.",
+    'An opaque Standard Schema validates normally but cannot synthesize its own known-good input. Supply `witnesses["METHOD /path"]`; missing/invalid witnesses are coverage gaps, never silent passes.',
+    "Query mutations are proved invalid after URL serialization, and every failure carries `{ seed, caseId, runtime }`; replay one with `only: caseId`.",
+  ],
   "@nifrajs/schema": [
     "`t.object` is **strict** — unknown keys → `400`. Reach for `t.looseObject` only when extra keys are intentional.",
     "`t` is TypeBox-backed and implements **Standard Schema**, so a nifra route accepts it natively (no adapter). zod/valibot/arktype work the same way at the route boundary.",

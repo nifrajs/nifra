@@ -72,6 +72,9 @@ Usage:
                                          request field or a removed response field breaks; widening a
                                          request enum or adding a response field doesn't) and fails
                                          closed. Exits non-zero on any breaking change — run it in CI.
+  nifra assure  [--config <file>] [--json]  Route-assurance gate: load nifra.assurance.ts, classify every
+                                         reflected backend route, and fail when required enforcement
+                                         evidence is missing/forbidden or a route is unclassified.
   nifra doctor  [--json] [--auto-fix]    Flag packages imported in source but missing from package.json
                                          (resolve at Bun runtime, break tsc + standalone install);
                                          --auto-fix writes safe local-version dependency fixes.
@@ -369,6 +372,31 @@ async function main(): Promise<void> {
       if (!(await runDiff(process.cwd(), baseline, { json: argv.includes("--json") }))) {
         process.exitCode = 1
       }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err))
+      process.exitCode = 1
+    }
+    return
+  }
+  // Route assurance intentionally loads only its explicit config (which imports the backend it audits),
+  // not the full SSR app. Like snapshot/diff, this works for API-only projects.
+  if (command === "assure") {
+    const { runAssurance } = await import("./assure.ts")
+    const configIdx = argv.indexOf("--config")
+    const config = configIdx !== -1 ? argv[configIdx + 1] : undefined
+    if (configIdx !== -1 && (config === undefined || config.startsWith("-"))) {
+      console.error("[nifra] --config needs a file path")
+      process.exitCode = 1
+      return
+    }
+    try {
+      if (
+        !(await runAssurance(process.cwd(), {
+          json: argv.includes("--json"),
+          ...(config !== undefined ? { config } : {}),
+        }))
+      )
+        process.exitCode = 1
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err))
       process.exitCode = 1

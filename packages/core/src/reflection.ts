@@ -7,6 +7,7 @@
  * recognizes Nifra/TypeBox carriers and raw JSON Schema without depending on a validator package.
  */
 
+import { type AssuranceEvidence, validEvidence } from "./internal/route-assurance.ts"
 import type { StandardSchemaV1 } from "./schema/standard.ts"
 import type { ToolAnnotations } from "./server/server.ts"
 
@@ -43,6 +44,7 @@ export interface ReflectedRoute {
   readonly method: string
   readonly path: string
   readonly schema?: ReflectedRouteSchema
+  readonly assurance?: readonly AssuranceEvidence[]
   readonly tool?: {
     readonly name: string
     readonly description: string
@@ -174,6 +176,14 @@ const reflectedTool = (value: unknown): ReflectedRoute["tool"] => {
   }
 }
 
+const reflectedAssurance = (value: unknown): readonly AssuranceEvidence[] | undefined => {
+  if (!Array.isArray(value)) return undefined
+  const evidence = value
+    .filter(validEvidence)
+    .map((item) => Object.freeze({ id: item.id, source: item.source.trim() }))
+  return evidence.length > 0 ? Object.freeze(evidence) : undefined
+}
+
 /**
  * Safely enumerate and normalize route descriptors from an app or descriptor array. Invalid entries
  * are ignored; a missing/throwing `routes()` method yields an empty array.
@@ -185,10 +195,12 @@ export function reflectRoutes(source: unknown): readonly ReflectedRoute[] {
     if (typeof route?.method !== "string" || typeof route.path !== "string") continue
     const schema = reflectedRouteSchema(route.schema)
     const tool = reflectedTool(route.tool)
+    const assurance = reflectedAssurance(route.assurance)
     reflected.push({
       method: route.method.toUpperCase(),
       path: route.path,
       ...(schema !== undefined ? { schema } : {}),
+      ...(assurance !== undefined ? { assurance } : {}),
       ...(tool !== undefined ? { tool } : {}),
     })
   }

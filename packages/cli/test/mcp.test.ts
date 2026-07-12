@@ -581,6 +581,21 @@ describe("monorepo detection + tool namespacing", () => {
     }
   })
 
+  test("projectTools exposes route assurance as a structured project gate", async () => {
+    const assure = projectTools("/fake").find((tool) => tool.name === "nifra_assure")
+    expect(assure).toBeDefined()
+    expect(assure?.inputSchema).toMatchObject({
+      properties: { config: { type: "string" }, dir: { type: "string" } },
+    })
+    const escaped = JSON.parse(
+      (await assure?.handler({ config: "../outside.ts" }, {
+        signal: new AbortController().signal,
+      } as never)) as string,
+    )
+    expect(escaped.ok).toBe(false)
+    expect(escaped.error).toContain("inside")
+  })
+
   test("projectFeatures resource URIs are prefixed after namespacing", () => {
     const fakeLoader = async (): Promise<LoadedApp> => {
       throw new Error("should not load")

@@ -41,6 +41,11 @@
       "bun": "./src/diff.ts",
       "types": "./dist/diff.d.ts",
       "default": "./dist/diff.js"
+    },
+    "./assurance": {
+      "bun": "./src/assurance.ts",
+      "types": "./dist/assurance.d.ts",
+      "default": "./dist/assurance.js"
     }
   },
   "files": [

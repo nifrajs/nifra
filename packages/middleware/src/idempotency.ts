@@ -1,4 +1,5 @@
-import type { Middleware } from "@nifrajs/core"
+import { METHODS, type Middleware } from "@nifrajs/core"
+import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 
 /**
  * Idempotency keys for unsafe requests — a client retrying a `POST` (dropped connection, impatient
@@ -280,7 +281,7 @@ export function idempotency(options: IdempotencyOptions): Middleware {
   const keyOf = options.key ?? defaultIdempotencyKey
   const claimed = new WeakMap<Request, string>()
 
-  return {
+  const middleware: Middleware = {
     name: "idempotency",
     async onRequest(req) {
       if (!methods.has(req.method.toUpperCase())) return undefined
@@ -326,4 +327,10 @@ export function idempotency(options: IdempotencyOptions): Middleware {
       return captured.response
     },
   }
+  return withRouteAssurance(middleware, {
+    id: NIFRA_ASSURANCE.IDEMPOTENCY_KEY,
+    source: "idempotency",
+    scope: "global",
+    methods: METHODS.filter((method) => methods.has(method)),
+  })
 }

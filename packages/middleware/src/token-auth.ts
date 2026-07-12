@@ -1,4 +1,5 @@
 import { definePlugin, type NifraPlugin } from "@nifrajs/core"
+import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 
 type MaybePromise<T> = T | Promise<T>
 
@@ -59,7 +60,14 @@ function createTokenAuth<P>(config: TokenAuthConfig<P>): AuthPlugin<P> {
       return config.optional ? undefined : reject() // 401 short-circuits (skips the handler)
     }),
   )
-  return Object.assign(plugin, {
+  const instrumented = config.optional
+    ? plugin
+    : withRouteAssurance(plugin, {
+        id: NIFRA_ASSURANCE.AUTHENTICATED,
+        source: config.name,
+        scope: "subsequent",
+      })
+  return Object.assign(instrumented, {
     principal: (request: Request): P | null => store.get(request) ?? null,
     requirePrincipal: (request: Request): P => {
       const principal = store.get(request)

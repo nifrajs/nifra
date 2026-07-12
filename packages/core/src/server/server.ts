@@ -1,4 +1,11 @@
 import { FrameworkError, RouteConfigError } from "../errors.ts"
+import {
+  type AssuranceDeclaration,
+  type AssuranceEvidence,
+  assuranceDeclarationsOf,
+  assuranceEvidenceFor,
+  NIFRA_ASSURANCE_IDS,
+} from "../internal/route-assurance.ts"
 import { EMPTY_PARAMS, type Method, Router } from "../router/router.ts"
 import type {
   InferOutput,
@@ -289,6 +296,8 @@ export interface RouteDescriptor {
   readonly method: Method
   readonly path: string
   readonly schema: RouteSchema | undefined
+  /** Effective enforcement evidence, populated only during reflection/introspection. */
+  readonly assurance?: readonly AssuranceEvidence[]
   readonly tool?: {
     readonly name: string
     readonly description: string
@@ -1126,6 +1135,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private readonly responseRequests: WeakMap<Request, Request>
   /** Names of plugins/middleware already applied via `use` — for idempotent dedupe. */
   private readonly appliedPlugins: Set<string>
+  /** Order-scoped evidence captured by routes registered after an assured plugin. */
+  private readonly activeAssurance: AssuranceDeclaration[]
+  /** App-wide evidence from global hooks; applies retroactively to every route. */
+  private readonly globalAssurance: AssuranceDeclaration[]
   /** App-declared MCP resources / prompts (via {@link resource} / {@link prompt}), read by `nifra mcp`. */
   private readonly mcpResourceList: McpResourceDescriptor[]
   private readonly mcpPromptList: McpPromptDescriptor[]
@@ -1140,6 +1153,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     readonly path: string
     readonly entry: RouteEntry
     readonly descriptor: RouteDescriptor
+    readonly assurance: readonly AssuranceDeclaration[]
   }>
 
   constructor(options: ServerOptions = {}) {
@@ -1166,6 +1180,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.onResponseFinalizedHooks = []
     this.responseRequests = new WeakMap()
     this.appliedPlugins = new Set()
+    this.activeAssurance = []
+    this.globalAssurance = []
     this.mcpResourceList = []
     this.mcpPromptList = []
     this.rawEntries = []
@@ -1263,12 +1279,32 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         if (this.appliedPlugins.has(name)) return this // idempotent: already applied
         this.appliedPlugins.add(name)
       }
-      return arg(this)
+      const evidence = assuranceDeclarationsOf(arg)
+      const pluginOnly = evidence.filter((item) => item.scope === "plugin")
+      this.globalAssurance.push(...evidence.filter((item) => item.scope === "global"))
+      this.activeAssurance.push(...evidence.filter((item) => item.scope === "subsequent"))
+      this.activeAssurance.push(...pluginOnly)
+      try {
+        return arg(this)
+      } finally {
+        // Remove only this plugin's temporary evidence. Nested assured plugins may deliberately leave
+        // subsequent evidence active, so truncating the whole array would lose real ordering semantics.
+        for (const item of pluginOnly) {
+          const index = this.activeAssurance.indexOf(item)
+          if (index !== -1) this.activeAssurance.splice(index, 1)
+        }
+      }
     }
     if (arg.name !== undefined) {
       if (this.appliedPlugins.has(arg.name)) return this
       this.appliedPlugins.add(arg.name)
     }
+    const evidence = assuranceDeclarationsOf(arg)
+    if (evidence.some((item) => item.scope === "plugin")) {
+      throw new Error('route assurance: scope "plugin" may only annotate a plugin function')
+    }
+    this.globalAssurance.push(...evidence.filter((item) => item.scope === "global"))
+    this.activeAssurance.push(...evidence.filter((item) => item.scope === "subsequent"))
     if (arg.onRequest !== undefined) this.onRequest(arg.onRequest)
     if (arg.around !== undefined) this.around(arg.around)
     if (arg.beforeHandle !== undefined) this.beforeHandle(arg.beforeHandle)
@@ -1633,7 +1669,23 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.router.add(method, path, entry)
     const descriptor: RouteDescriptor = { method, path, schema }
     this.routeList.push(descriptor)
-    this.rawEntries.push({ method, path, entry, descriptor })
+    const routeAssurance: AssuranceDeclaration[] = [...this.activeAssurance]
+    if (schema?.body !== undefined) {
+      routeAssurance.push(
+        Object.freeze({
+          id: NIFRA_ASSURANCE_IDS.BODY_BOUNDED,
+          source: "route-schema",
+          scope: "plugin",
+        }),
+      )
+    }
+    this.rawEntries.push({
+      method,
+      path,
+      entry,
+      descriptor,
+      assurance: Object.freeze(routeAssurance),
+    })
   }
 
   /**
@@ -1663,14 +1715,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         "merge() does not carry WebSocket routes — register .ws() routes on the parent server",
       )
     }
-    for (const { method, path, entry, descriptor } of source.rawEntries) {
+    for (const { method, path, entry, descriptor, assurance } of source.rawEntries) {
       this.router.add(method, path, entry) // throws RouteConfigError on a duplicate — fail closed
       this.routeList.push(descriptor) // shared ref on purpose: carries later .tool() tagging
-      this.rawEntries.push({ method, path, entry, descriptor })
+      this.rawEntries.push({ method, path, entry, descriptor, assurance })
     }
     this.onRequestHooks.push(...source.onRequestHooks)
     this.onResponseHooks.push(...source.onResponseHooks)
     this.onResponseFinalizedHooks.push(...source.onResponseFinalizedHooks)
+    this.globalAssurance.push(...source.globalAssurance)
     this.mcpResourceList.push(...source.mcpResourceList)
     this.mcpPromptList.push(...source.mcpPromptList)
     return this as unknown as Server<R & R2, Ctx>
@@ -1682,7 +1735,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * longer holds the original patterns.
    */
   routes(): ReadonlyArray<RouteDescriptor> {
-    return this.routeList
+    if (this.activeAssurance.length === 0 && this.globalAssurance.length === 0) {
+      const anyRouteEvidence = this.rawEntries.some((entry) => entry.assurance.length > 0)
+      if (!anyRouteEvidence) return this.routeList
+    }
+    return this.rawEntries.map(({ method, path, descriptor, assurance }) => {
+      const effective = assuranceEvidenceFor([...assurance, ...this.globalAssurance], method, path)
+      return effective.length > 0 ? { ...descriptor, assurance: effective } : descriptor
+    })
   }
 
   /**

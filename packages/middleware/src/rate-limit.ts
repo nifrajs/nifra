@@ -1,4 +1,5 @@
 import type { Middleware } from "@nifrajs/core"
+import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 
 export interface RateLimitResult {
   /** Hits recorded in the current window, including this one. */
@@ -216,7 +217,7 @@ export function rateLimit(options: RateLimitOptions): Middleware {
     options.key ?? ((req: Request) => defaultKey(req, trustedProxies, header, allowGlobalKey))
   const quota = new WeakMap<Request, { remaining: number; resetSeconds: number }>()
 
-  return {
+  const middleware: Middleware = {
     name: "rate-limit",
     async onRequest(req) {
       const key = keyOf(req)
@@ -245,4 +246,9 @@ export function rateLimit(options: RateLimitOptions): Middleware {
       return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
     },
   }
+  return withRouteAssurance(middleware, {
+    id: NIFRA_ASSURANCE.RATE_LIMITED,
+    source: "rate-limit",
+    scope: "global",
+  })
 }

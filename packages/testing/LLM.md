@@ -29,4 +29,6 @@ _…and 7 more — see [`api-reference.md`](../../api-reference.md#nifrajstestin
 
 ## Footguns
 
-- No package-specific footguns beyond the framework conventions. See [`AGENTS.md`](../../AGENTS.md) and [`llms-full.txt`](../../llms-full.txt) for the full contract.
+- `assertAdversarialContract` executes one valid request for every declared response schema. Use an isolated test app/database; never point a contract laboratory at production.
+- An opaque Standard Schema validates normally but cannot synthesize its own known-good input. Supply `witnesses["METHOD /path"]`; missing/invalid witnesses are coverage gaps, never silent passes.
+- Query mutations are proved invalid after URL serialization, and every failure carries `{ seed, caseId, runtime }`; replay one with `only: caseId`.
