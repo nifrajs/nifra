@@ -75,7 +75,18 @@ export type OutputOf<H extends (...args: never[]) => unknown> = Exclude<
   Response
 >
 
-/** Merge a new route into the registry, combining methods that share a path. */
+/**
+ * Merge a new route into the registry, combining methods that share a path.
+ *
+ * SCALING CEILING (measured, see many-routes.test-d.ts): each chained route call nests one alias
+ * level (`AddRoute<AddRoute<...`), and TypeScript resolves the whole stack lazily in ONE
+ * recursion on first demand — its instantiation-depth limit fires as TS2589 at ~95-100 calls on
+ * a single server. Eager-flattening variants (mapped remap, `extends infer` force, phantom
+ * constraint params) were all tried and either lower the ceiling or leave spurious diagnostics —
+ * the lazy first-walk is not defeatable from library code. Past ~90 routes on one app, compose
+ * instead: split into domain groups and `.merge()` them (each group resolves its own short
+ * stack), or use contract-first `implement()` (a single object type — no accumulation at all).
+ */
 export type AddRoute<
   R extends Registry,
   Method extends string,
