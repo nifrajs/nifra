@@ -78,14 +78,20 @@ export type OutputOf<H extends (...args: never[]) => unknown> = Exclude<
 /**
  * Merge a new route into the registry, combining methods that share a path.
  *
- * SCALING CEILING (measured, see many-routes.test-d.ts): each chained route call nests one alias
- * level (`AddRoute<AddRoute<...`), and TypeScript resolves the whole stack lazily in ONE
- * recursion on first demand — its instantiation-depth limit fires as TS2589 at ~95-100 calls on
- * a single server. Eager-flattening variants (mapped remap, `extends infer` force, phantom
- * constraint params) were all tried and either lower the ceiling or leave spurious diagnostics —
- * the lazy first-walk is not defeatable from library code. Past ~90 routes on one app, compose
- * instead: split into domain groups and `.merge()` them (each group resolves its own short
- * stack), or use contract-first `implement()` (a single object type — no accumulation at all).
+ * SCALING CEILING (measured — see many-routes.test-d.ts and the isolation study below): a single
+ * fluent chain hits TS2589 at ~95-100 routes. This intersection is NOT the cause — in isolation it
+ * accumulates 1000+ routes cleanly, and heavy per-route `Params<Path>`/schema inference alone
+ * reaches 600+. The wall is an INTERACTION unique to the fluent builder: each `.get(path, handler)`
+ * both (a) computes the handler's context type from the path (`c.params.id` inferred from `:id`)
+ * AND (b) returns `Server<AddRoute<growing-R, …>, Ctx>`. Neither alone strains the compiler; the
+ * PRODUCT — recomputing the handler context while re-threading the ever-larger registry at each of
+ * N steps — exhausts TypeScript's per-expression instantiation budget around N≈95. It is therefore
+ * O(N) and inherent to any builder that infers handler context AND accumulates a typed route
+ * registry (Elysia/tRPC/hono's typed clients cap the same way); it is not fixable by reshaping
+ * AddRoute. Past ~90 routes, use a path that DOESN'T form the product: split into domain groups and
+ * `.merge()` them (each group is a short chain; a merge is one `R & R2` intersection with no
+ * per-call context work), or contract-first `implement()` (the registry is one object type declared
+ * upfront — no grow-R-per-call, so no ceiling at all).
  */
 export type AddRoute<
   R extends Registry,
