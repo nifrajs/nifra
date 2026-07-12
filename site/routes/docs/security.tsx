@@ -120,6 +120,30 @@ const app = server()
   // length-less body. (The schema / c.boundedBody cap is the read-time guard; this is the cheap pre-filter.)
   .use(bodyLimit({ maxBytes: 1_000_000 }))`
 
+const ASSURANCE = `// doc-check: skip — configuration file imports your application backend.
+// nifra.assurance.ts
+import { defineAssuranceConfig, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
+import { app } from "./backend.ts"
+
+export default defineAssuranceConfig({
+  source: app,
+  policy: {
+    // First match owns the route: put narrow exceptions before broad defaults.
+    rules: [
+      { name: "health", match: { paths: ["/health"] }, require: [],
+        forbid: [NIFRA_ASSURANCE.AUTHENTICATED] },
+      { name: "mutation", match: { methods: ["POST", "PUT", "PATCH", "DELETE"] },
+        require: [NIFRA_ASSURANCE.AUTHENTICATED, NIFRA_ASSURANCE.CSRF,
+          NIFRA_ASSURANCE.BODY_BOUNDED] },
+      { name: "read", match: { methods: ["GET", "HEAD"] },
+        require: [NIFRA_ASSURANCE.AUTHENTICATED] },
+    ],
+  },
+})
+
+// CI: nifra assure              # human diagnostics
+// CI: nifra assure --json       # complete machine-readable report`
+
 const LOGGING = `import { server, jsonLogger, commonSecretPatterns } from "@nifrajs/core"
 
 // Key-name redaction is always on; valuePatterns adds opt-in value + message scanning.
@@ -254,6 +278,21 @@ export default function Security() {
           guard above (<code>c.boundedBody</code> / schema cap) remains the source of truth.
         </li>
       </ul>
+
+      <h2>Route assurance — prove every route is guarded</h2>
+      <p>
+        Installing security middleware is not the same as proving it covers every route. Nifra&apos;s
+        official auth, CSRF, body-limit, rate-limit, idempotency, IP-restriction, and security-header
+        modules publish reflection-safe evidence at the hook where they enforce it. A policy then
+        classifies every route and fails closed when evidence is missing or forbidden.
+      </p>
+      <CodeBlock code={ASSURANCE} />
+      <p>
+        Evidence follows real lifecycle semantics: pre-routing and response hooks cover the whole app,
+        while authentication and other order-scoped hooks cover only routes registered after them.
+        Method and path filters prevent a narrow guard from claiming broader coverage. The evaluation
+        runs only through reflection or <code>nifra assure</code>, so requests pay no assurance cost.
+      </p>
 
       <h2>Already built in</h2>
       <p>
