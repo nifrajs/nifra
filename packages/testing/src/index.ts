@@ -27,9 +27,10 @@ export {
 } from "./adversarial.ts"
 export { type CookieJar, cookieJar } from "./cookies.ts"
 export {
-  type CaptureIncidentOptions,
+  assertIncidentReplays,
   type CapturedRequest,
   type CapturedRequestInput,
+  type CaptureIncidentOptions,
   captureIncident,
   type GenerateRegressionTestOptions,
   generateRegressionTest,
@@ -37,7 +38,6 @@ export {
   IncidentReplayError,
   type IncidentReplayResult,
   type ReplayIncidentOptions,
-  assertIncidentReplays,
   redactForEmission,
   replayIncident,
   shapeOf,

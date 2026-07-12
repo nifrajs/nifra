@@ -174,6 +174,6 @@ describe("setAttributes — the mid-request annotation seam", () => {
     await app.fetch(new Request("http://t/leak"))
     expect(c.spans).toHaveLength(1)
     expect(() => leaked?.setAttributes({ late: "write" })).not.toThrow()
-    expect(c.spans[0]?.attributes["late"]).toBeUndefined()
+    expect(c.spans[0]?.attributes.late).toBeUndefined()
   })
 })
