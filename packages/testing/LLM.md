@@ -11,21 +11,21 @@ Contract-derived adversarial tests, runtime-matrix response conformance, and coo
 ## Key exports
 
 - **assertAdversarialContract** _(function)_ — `assertAdversarialContract: (app: ContractTestApp, options?: AdversarialContractOptions) => Promise<AdversarialContractReport>`
+- **assertIncidentReplays** _(function)_ — `assertIncidentReplays: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<void>`
+- **captureIncident** _(function)_ — `captureIncident: (request: Request | CapturedRequestInput, response: Response | { status: number; body?: unknown; }, options?: CaptureIncid…`
 - **cookieJar** _(function)_ — `cookieJar: () => CookieJar`
+- **generateRegressionTest** _(function)_ — `generateRegressionTest: (capsule: IncidentCapsule, options?: GenerateRegressionTestOptions) => string`
+- **redactForEmission** _(function)_ — `redactForEmission: (value: unknown, allow: ReadonlySet<string>, path?: string) => unknown`
+- **replayIncident** _(function)_ — `replayIncident: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<IncidentReplayResult>`
 - **runAdversarialContract** _(function)_ — `runAdversarialContract: (app: ContractTestApp, options?: AdversarialContractOptions) => Promise<AdversarialContractReport>`
+- **shapeOf** _(function)_ — `shapeOf: (value: unknown) => unknown`
 - **testSession** _(function)_ — `testSession: <App extends AppLike>(app: App, options?: TestSessionOptions) => TestSession<App>`
 - **AdversarialContractError** _(class)_ — `class AdversarialContractError`
+- **IncidentReplayError** _(class)_ — `class IncidentReplayError`
 - **AdversarialContractOptions** _(interface)_ — `interface AdversarialContractOptions`
 - **AdversarialContractReport** _(interface)_ — `interface AdversarialContractReport`
-- **AdversarialContractResult** _(interface)_ — `interface AdversarialContractResult`
-- **AppLike** _(interface)_ — `interface AppLike`
-- **ContractCaseContext** _(interface)_ — `interface ContractCaseContext`
-- **ContractCoverageGap** _(interface)_ — `interface ContractCoverageGap`
-- **ContractReplay** _(interface)_ — `interface ContractReplay`
-- **ContractRuntime** _(interface)_ — `interface ContractRuntime`
-- **ContractTestApp** _(interface)_ — `interface ContractTestApp`
 
-_…and 7 more — see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
+_…and 21 more — see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
 
 ## Footguns
 
