@@ -98,7 +98,7 @@ Port: \`dev\` and \`start\` share the default ${DEFAULT_DEV_PORT}. Override with
 \`PORT\` env var (\`--port\` wins over \`PORT\`, which wins over the default).`
 
 // Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
-const CLI_VERSION = "1.7.0"
+const CLI_VERSION = "1.8.0"
 
 // A render adapter + nifra server are opaque to the CLI (it just forwards them); cast at the seam.
 const asAdapter = (v: unknown): RenderAdapter => v as RenderAdapter

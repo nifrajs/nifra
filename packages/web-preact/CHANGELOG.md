@@ -1,5 +1,14 @@
 # @nifrajs/web-preact
 
+## 1.8.0
+
+### Patch Changes
+
+- Updated dependencies [1ffd48b]
+  - @nifrajs/web@1.8.0
+  - @nifrajs/i18n@1.8.0
+  - @nifrajs/image@1.8.0
+
 ## 1.7.0
 
 ### Patch Changes

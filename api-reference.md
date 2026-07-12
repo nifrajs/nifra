@@ -287,7 +287,7 @@ Every public export of every package — name, kind, signature, and doc summary 
   In-process pub/sub for `ws.subscribe(topic)` + `app.publish(topic, data)`. **Single-instance only** — topics live in this process's memory, so a multi-instance deploy (multiple servers behind a load balancer) needs an external fan-out (Redis pub/sub, a Cloudflare Durable Object, NATS, …) bridged to…
 - **TypedSSEStream** _(interface)_ — `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field — the compile-time half of the `sse` contract.
-- **VERSION** _(const)_ — `VERSION: "1.7.0"`
+- **VERSION** _(const)_ — `VERSION: "1.8.0"`
   Current package version. A hardcoded literal on purpose — core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version, so the literal can't go stale (i…
 - **ValidationOutcome** _(type)_ — `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
 - **VerifyWebhookOptions** _(interface)_ — `interface VerifyWebhookOptions`
@@ -1424,7 +1424,7 @@ Every public export of every package — name, kind, signature, and doc summary 
   In-process pub/sub for `ws.subscribe(topic)` + `app.publish(topic, data)`. **Single-instance only** — topics live in this process's memory, so a multi-instance deploy (multiple servers behind a load balancer) needs an external fan-out (Redis pub/sub, a Cloudflare Durable Object, NATS, …) bridged to…
 - **TypedSSEStream** _(interface)_ — `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field — the compile-time half of the `sse` contract.
-- **VERSION** _(const)_ — `VERSION: "1.7.0"`
+- **VERSION** _(const)_ — `VERSION: "1.8.0"`
   Current package version. A hardcoded literal on purpose — core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version, so the literal can't go stale (i…
 - **ValidationOutcome** _(type)_ — `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
 - **VerifyWebhookOptions** _(interface)_ — `interface VerifyWebhookOptions`

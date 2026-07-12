@@ -1,5 +1,13 @@
 # @nifrajs/core
 
+## 1.8.0
+
+### Minor Changes
+
+- e47c4c5: Add reflection-time route assurance: middleware and plugins can publish lifecycle-accurate enforcement
+  evidence, ordered policies fail closed on unclassified/missing/forbidden evidence, official hardening
+  middleware emits canonical evidence, and `nifra assure` exposes a human/JSON CI gate.
+
 ## 1.7.0
 
 ### Minor Changes
