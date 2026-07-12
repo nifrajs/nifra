@@ -5,7 +5,7 @@
  * are Bun-specific and never on the request path (own subpath, like `@nifrajs/web/fs`); the *output*
  * runs on any runtime.
  */
-import { mkdirSync, writeFileSync } from "node:fs"
+import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, relative, resolve as resolvePath } from "node:path"
 import type { BunPlugin } from "bun"
 import { sanitizeOutputNames } from "./chunk-names.ts"
@@ -704,6 +704,11 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
       `[nifra/web] client build failed:\n${result.logs.map((l) => String(l)).join("\n")}`,
     )
   }
+
+  // The generated client-entry SOURCE (`_nifra-entry.ts`) was written into outDir only to serve as a
+  // Bun.build entrypoint; the shipped artifact is the content-hashed `_nifra-entry-<hash>.js` the HTML
+  // references. Remove the leftover source so it never ships in a static deploy dir (nothing links it).
+  rmSync(entryFile, { force: true })
 
   // #4: a `node:` builtin (e.g. `node:crypto`) pulled into a CLIENT chunk builds fine (Bun substitutes
   // a browser polyfill) but breaks/leaks at runtime. Fail the build with a named, actionable error
