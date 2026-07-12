@@ -29,6 +29,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - [Nifra — Dev & HMR](/docs/dev): Use `nifra dev` for a Vite-backed state-preserving HMR loop, or `@nifrajs/web/dev` for a Bun-native live-reload loop. Production builds use Bun.
 - [Nifra — Troubleshooting](/docs/troubleshooting): Fixes keyed on the literal error strings Nifra prints: `reached the client bundle` (a node:/native import in the browser bundle), `server-only module reached the client bundle` (the server-only marker), and `resolveDispatcher` / `Invalid hook call` (duplicate React).
 - [Nifra — Backends & API (dev and prod)](/docs/backends): How a Nifra backend reaches your app: inProcessClient feeds ctx.api to loaders, and createWebApp auto-mounts the backend over HTTP at /api/* — in `nifra dev` and production alike, no hand-dispatch.
+- [Nifra — Request budgets](/docs/budgets): Propagate one absolute deadline through Nifra requests and downstream adapters without resetting time at each hop.
 - [Nifra — Framework contract](/docs/contract): The one-page contract: LoaderContext shape, loader/action/meta/head signatures, the client↔server boundary, and the build-output contract — every signature verified against the source.
 - [Nifra — Databases](/docs/database): Nifra is database-agnostic: use SQLite, Postgres, or any ORM (Drizzle, Prisma, Kysely) from your handlers and loaders, on Bun, Node, Deno, and the edge.
 - [Nifra — Fonts](/docs/fonts): Self-host web fonts with zero layout shift: a build-time Google Fonts downloader (the next/font equivalent) plus CLS-safe @font-face + preload primitives.
@@ -42,6 +43,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - `@nifrajs/agent-telemetry` — Agent telemetry plugin — child spans for AI tool calls on /_nifra/tool/* and MCP endpoints.
 - `@nifrajs/auth` — Session primitives for nifra — signed-cookie + server-store sessions, CSRF, and route guards. Bring your own identity (Better Auth / Lucia / OAuth); nifra owns the session.
 - `@nifrajs/better-auth` — Mount better-auth into a nifra app — one app.use() wires /api/auth/*, plus typed getSession/requireSession guards. Structural typing: no hard dependency on better-auth.
+- `@nifrajs/budget` — Portable request deadlines for Nifra — monotonic remaining time, absolute wire propagation, child reserves, and deterministic clocks.
 - `@nifrajs/cache` — Typed KV cache for nifra — TTL, stale-while-revalidate, tag invalidation, and single-flight stampede protection on a pluggable store (in-memory default; bring CF KV / Redis). Dependency-free, runs on Bun/Node/Deno/Workers.
 - `@nifrajs/cli` — The nifra CLI — zero-config dev/build/start for a nifra app (`nifra dev`, `nifra build`, `nifra start`).
 - `@nifrajs/client` — Browser-safe, end-to-end-typed client for @nifrajs/core servers (Eden-style proxy).
@@ -51,6 +53,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - `@nifrajs/deno` — Run a nifra app on Deno via Deno.serve — graceful stop() + opt-in signals.
 - `@nifrajs/devtools` — Interactive DevTools overlay for nifra dev — loader traces, ISR status, route metadata.
 - `@nifrajs/env` — Typed, validated environment variables for nifra — define a schema, get a frozen typed object, fail loud at boot listing every problem. Coercing helpers (number/port/boolean/url/enum) + any Standard Schema. Dependency-free, edge-safe.
+- `@nifrajs/events` — Portable, versioned event contracts — a typed, transport-agnostic event envelope validated by any Standard Schema.
 - `@nifrajs/i18n` — Framework-agnostic i18n for nifra — locale negotiation + a tiny ICU message formatter on the platform Intl. Dependency-free.
 - `@nifrajs/image` — Image optimization for nifra — a CLS-safe responsive <Image> + pluggable loaders (CDN or self-hosted) + pure-JS dimension reading. Zero-dependency core; optional Bun.Image-backed resize endpoint at @nifrajs/image/server.
 - `@nifrajs/islets` — Fine-grained signals + declarative DOM bindings for nifra islands — interactivity in ~1 KB, no framework runtime. The client companion to @nifrajs/web-vanilla.

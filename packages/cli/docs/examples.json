@@ -36,6 +36,12 @@
     "code": "// server.ts (prod) — createWebApp serves pages AND auto-mounts the backend at /api/*.\nimport { inProcessClient } from \"@nifrajs/client\"\nimport { createWebApp } from \"@nifrajs/web\"\nimport { reactAdapter } from \"@nifrajs/web-react\"\nimport { backend } from \"./backend\"\nimport { clientEntry, manifest } from \"./server-manifest\"\n\nexport const app = createWebApp({\n  adapter: reactAdapter,\n  manifest,\n  clientEntry,\n  api: inProcessClient(backend), // → ctx.api in loaders/actions AND auto-mounted at /api/*\n  // apiPrefix: \"/api\",          // the default; pass \"\" to disable the HTTP mount (pages only)\n})\n\n// Bun: Bun.serve({ fetch: app.fetch }). No `if (pathname.startsWith(\"/api/\")) …` branch needed —\n// POST /api/sync, GET /api/me, etc. are dispatched to the backend BEFORE the page router sees them."
   },
   {
+    "name": "SERVER",
+    "topic": "Nifra — Request budgets",
+    "slug": "budgets",
+    "code": "import { server } from \"@nifrajs/core\"\n\nconst app = server({\n  requestTimeoutMs: 2_000,\n  maxInboundDeadlineMs: 5_000,\n}).get(\"/report\", async (c) => {\n  // c.signal aborts at the SAME effective deadline.\n  // remaining() is monotonic even if the wall clock jumps.\n  return { remainingMs: c.budget.remaining() }\n})"
+  },
+  {
     "name": "DUAL_API",
     "topic": "Nifra — Framework contract",
     "slug": "contract",
@@ -243,7 +249,7 @@
     "name": "BASIC",
     "topic": "Nifra — Contract-derived adversarial testing",
     "slug": "testing",
-    "code": "import { test } from \"bun:test\"\nimport { assertAdversarialContract } from \"@nifrajs/testing\"\nimport { app } from \"../src/app\"\n\ntest(\"the API contract withstands hostile inputs\", async () => {\n  await assertAdversarialContract(app, { seed: 73 })\n})"
+    "code": "import { assertAdversarialContract } from \"@nifrajs/testing\"\nimport { app } from \"../src/app\"\n\nconst { test } = await import(\"bun:test\")\n\ntest(\"the API contract withstands hostile inputs\", async () => {\n  await assertAdversarialContract(app, { seed: 73 })\n})"
   },
   {
     "name": "SERVER_ONLY_MARKER",
