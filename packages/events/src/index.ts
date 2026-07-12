@@ -8,11 +8,11 @@
  */
 
 export {
+  defineEventContract,
   type EventContract,
   EventContractError,
   type EventEnvelope,
   type EventParseResult,
-  defineEventContract,
 } from "./contract.ts"
 export {
   createEventRegistry,

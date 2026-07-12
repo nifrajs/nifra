@@ -15,15 +15,26 @@ const ORIGIN = "http://nifra.internal"
 
 // A tiny app: /echo returns 200 with the posted name; /boom throws (500).
 const good = server()
-  .post("/echo/:id", { body: t.object({ name: t.string() }), response: t.object({ id: t.string(), name: t.string() }) }, (c) => ({
-    id: c.params.id,
-    name: c.body.name,
-  }))
+  .post(
+    "/echo/:id",
+    {
+      body: t.object({ name: t.string() }),
+      response: t.object({ id: t.string(), name: t.string() }),
+    },
+    (c) => ({
+      id: c.params.id,
+      name: c.body.name,
+    }),
+  )
   .get("/ping", { response: t.object({ ok: t.boolean() }) }, () => ({ ok: true }))
 
 describe("shapeOf", () => {
   test("fingerprints structure not values", () => {
-    expect(shapeOf({ a: 1, b: "x", c: [true] })).toEqual({ a: "number", b: "string", c: ["boolean"] })
+    expect(shapeOf({ a: 1, b: "x", c: [true] })).toEqual({
+      a: "number",
+      b: "string",
+      c: ["boolean"],
+    })
     expect(shapeOf(null)).toBe("null")
     expect(shapeOf([])).toBe("[]")
   })
@@ -31,7 +42,10 @@ describe("shapeOf", () => {
 
 describe("redactForEmission", () => {
   test("redacts string leaves by default, keeps non-strings, honours the allow-list", () => {
-    const out = redactForEmission({ name: "alice", age: 30, nested: { token: "sk_live_x" } }, new Set(["name"]))
+    const out = redactForEmission(
+      { name: "alice", age: 30, nested: { token: "sk_live_x" } },
+      new Set(["name"]),
+    )
     expect(out).toEqual({ name: "alice", age: 30, nested: { token: "<redacted>" } })
   })
 })
@@ -88,15 +102,24 @@ describe("replayIncident / assertIncidentReplays", () => {
   test("detects a diverged response and throws IncidentReplayError", async () => {
     // Capsule expects 200 on /echo, but replay against an app whose /echo 404s (route removed).
     const capsule = await captureIncident(
-      { method: "POST", path: "/echo/7", headers: { "content-type": "application/json" }, body: { name: "bob" } },
+      {
+        method: "POST",
+        path: "/echo/7",
+        headers: { "content-type": "application/json" },
+        body: { name: "bob" },
+      },
       { status: 200, body: { id: "7", name: "bob" } },
     )
-    const changed = server().get("/ping", { response: t.object({ ok: t.boolean() }) }, () => ({ ok: true }))
+    const changed = server().get("/ping", { response: t.object({ ok: t.boolean() }) }, () => ({
+      ok: true,
+    }))
     const result = await replayIncident(changed, capsule)
     expect(result.reproduced).toBe(false)
     expect(result.expectedStatus).toBe(200)
     expect(result.status).not.toBe(200)
-    await expect(assertIncidentReplays(changed, capsule)).rejects.toBeInstanceOf(IncidentReplayError)
+    await expect(assertIncidentReplays(changed, capsule)).rejects.toBeInstanceOf(
+      IncidentReplayError,
+    )
   })
 
   test("catches a response-shape regression even when status matches", async () => {
@@ -115,7 +138,12 @@ describe("replayIncident / assertIncidentReplays", () => {
 describe("generateRegressionTest", () => {
   test("emits a redact-by-default, sanitize-bannered test that asserts replay", async () => {
     const capsule = await captureIncident(
-      { method: "POST", path: "/echo/7", headers: { "content-type": "application/json" }, body: { name: "alice", note: "pii" } },
+      {
+        method: "POST",
+        path: "/echo/7",
+        headers: { "content-type": "application/json" },
+        body: { name: "alice", note: "pii" },
+      },
       { status: 200, body: { id: "7", name: "alice" } },
     )
     const code = generateRegressionTest(capsule, { importPath: "../src/app", assertShape: false })

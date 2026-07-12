@@ -93,7 +93,9 @@ export function defineEventContract<Schema extends StandardSchemaV1>(spec: {
     throw new Error(`defineEventContract: version must be a non-negative integer, got ${version}`)
   }
 
-  function validateSync(value: unknown): { ok: true; value: InferOutput<Schema> } | { ok: false; issues: readonly StandardIssue[] } {
+  function validateSync(
+    value: unknown,
+  ): { ok: true; value: InferOutput<Schema> } | { ok: false; issues: readonly StandardIssue[] } {
     const outcome = validateStandard(payload, value)
     if (outcome instanceof Promise) {
       throw new Error(
@@ -126,12 +128,23 @@ export function defineEventContract<Schema extends StandardSchemaV1>(spec: {
       }
       const env = input as Record<string, unknown>
       const issues: StandardIssue[] = []
-      if (typeof env.id !== "string" || env.id === "") issues.push(structuralIssue("missing id", "id"))
+      if (typeof env.id !== "string" || env.id === "")
+        issues.push(structuralIssue("missing id", "id"))
       if (env.type !== type) {
-        issues.push(structuralIssue(`type must be ${JSON.stringify(type)}, got ${JSON.stringify(env.type)}`, "type"))
+        issues.push(
+          structuralIssue(
+            `type must be ${JSON.stringify(type)}, got ${JSON.stringify(env.type)}`,
+            "type",
+          ),
+        )
       }
       if (env.version !== version) {
-        issues.push(structuralIssue(`version must be ${version}, got ${JSON.stringify(env.version)}`, "version"))
+        issues.push(
+          structuralIssue(
+            `version must be ${version}, got ${JSON.stringify(env.version)}`,
+            "version",
+          ),
+        )
       }
       if (typeof env.occurredAt !== "string" || Number.isNaN(Date.parse(env.occurredAt))) {
         issues.push(structuralIssue("occurredAt must be an ISO-8601 string", "occurredAt"))

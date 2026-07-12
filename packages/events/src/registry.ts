@@ -43,7 +43,11 @@ export function createEventRegistry(contracts: readonly EventContract[]): EventR
     },
     parse(input: unknown): RegistryParseResult {
       if (typeof input !== "object" || input === null) {
-        return { success: false, reason: "not-an-object", message: "event envelope must be an object" }
+        return {
+          success: false,
+          reason: "not-an-object",
+          message: "event envelope must be an object",
+        }
       }
       const env = input as Record<string, unknown>
       const type = typeof env.type === "string" ? env.type : ""

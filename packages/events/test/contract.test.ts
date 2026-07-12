@@ -1,10 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
-import {
-  createEventRegistry,
-  defineEventContract,
-  EventContractError,
-} from "../src/index.ts"
+import { createEventRegistry, defineEventContract, EventContractError } from "../src/index.ts"
 
 const OrderPaid = defineEventContract({
   type: "order.paid",
@@ -14,15 +10,15 @@ const OrderPaid = defineEventContract({
 
 describe("@nifrajs/events — defineEventContract", () => {
   test("rejects an invalid type or version at definition time", () => {
-    expect(() => defineEventContract({ type: "Order Paid", version: 1, payload: t.object({}) })).toThrow(
-      /invalid type/,
-    )
-    expect(() => defineEventContract({ type: "order.paid", version: -1, payload: t.object({}) })).toThrow(
-      /non-negative integer/,
-    )
-    expect(() => defineEventContract({ type: "order.paid", version: 1.5, payload: t.object({}) })).toThrow(
-      /non-negative integer/,
-    )
+    expect(() =>
+      defineEventContract({ type: "Order Paid", version: 1, payload: t.object({}) }),
+    ).toThrow(/invalid type/)
+    expect(() =>
+      defineEventContract({ type: "order.paid", version: -1, payload: t.object({}) }),
+    ).toThrow(/non-negative integer/)
+    expect(() =>
+      defineEventContract({ type: "order.paid", version: 1.5, payload: t.object({}) }),
+    ).toThrow(/non-negative integer/)
   })
 
   test("create validates the payload and stamps a full envelope", () => {
@@ -44,7 +40,9 @@ describe("@nifrajs/events — defineEventContract", () => {
   })
 
   test("create throws EventContractError on an invalid payload", () => {
-    expect(() => OrderPaid.create({ orderId: "o_1", cents: "nope" } as never)).toThrow(EventContractError)
+    expect(() => OrderPaid.create({ orderId: "o_1", cents: "nope" } as never)).toThrow(
+      EventContractError,
+    )
     try {
       OrderPaid.create({ orderId: 1 } as never)
     } catch (err) {
@@ -121,13 +119,25 @@ describe("@nifrajs/events — registry", () => {
   })
 
   test("fails closed on an unknown contract", () => {
-    const result = registry.parse({ id: "evt_x", type: "ghost.event", version: 1, occurredAt: new Date().toISOString(), payload: {} })
+    const result = registry.parse({
+      id: "evt_x",
+      type: "ghost.event",
+      version: 1,
+      occurredAt: new Date().toISOString(),
+      payload: {},
+    })
     expect(result.success).toBe(false)
     if (!result.success) expect(result.reason).toBe("unknown-contract")
   })
 
   test("surfaces an invalid payload distinctly from an unknown contract", () => {
-    const bad = { id: "evt_x", type: "order.paid", version: 1, occurredAt: new Date().toISOString(), payload: { orderId: 1 } }
+    const bad = {
+      id: "evt_x",
+      type: "order.paid",
+      version: 1,
+      occurredAt: new Date().toISOString(),
+      payload: { orderId: 1 },
+    }
     const result = registry.parse(bad)
     expect(result.success).toBe(false)
     if (!result.success) expect(result.reason).toBe("invalid-payload")
