@@ -1,4 +1,4 @@
-import { FrameworkError } from "../errors.ts"
+import { FrameworkError, RouteConfigError } from "../errors.ts"
 import { EMPTY_PARAMS, type Method, Router } from "../router/router.ts"
 import type {
   InferOutput,
@@ -1129,6 +1129,18 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   /** App-declared MCP resources / prompts (via {@link resource} / {@link prompt}), read by `nifra mcp`. */
   private readonly mcpResourceList: McpResourceDescriptor[]
   private readonly mcpPromptList: McpPromptDescriptor[]
+  /**
+   * Every registered route's raw router entry + descriptor, in order — the replay source for
+   * {@link merge}. The entry already carries the chains captured at registration (derives,
+   * decorations, before/after/around/onError), so a merged route behaves exactly as it did on
+   * the server that defined it.
+   */
+  private readonly rawEntries: Array<{
+    readonly method: Method
+    readonly path: string
+    readonly entry: RouteEntry
+    readonly descriptor: RouteDescriptor
+  }>
 
   constructor(options: ServerOptions = {}) {
     this.router = new Router<RouteEntry>()
@@ -1156,6 +1168,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.appliedPlugins = new Set()
     this.mcpResourceList = []
     this.mcpPromptList = []
+    this.rawEntries = []
   }
 
   /** Add a per-request, computed context extension for subsequent routes. */
@@ -1583,7 +1596,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
             isContextlessNoArgArrow(handler),
           )
         : undefined
-    this.router.add(method, path, {
+    const entry: RouteEntry = {
       // (context: never) => unknown -> InternalHandler: the framework invokes it
       // with the concrete RawContext the typed handler expects, so this is sound.
       handler: handler as unknown as InternalHandler,
@@ -1616,8 +1629,51 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         this.beforeHandleHooks.length === 0 &&
         this.afterHandleHooks.length === 0 &&
         this.onErrorHooks.length === 0,
-    })
-    this.routeList.push({ method, path, schema })
+    }
+    this.router.add(method, path, entry)
+    const descriptor: RouteDescriptor = { method, path, schema }
+    this.routeList.push(descriptor)
+    this.rawEntries.push({ method, path, entry, descriptor })
+  }
+
+  /**
+   * Merge another server's routes into this one — the composition escape hatch for large apps.
+   *
+   * WHY: the fluent chain accumulates one type-alias level per route, and TypeScript resolves
+   * that stack in one recursion — a single chain hits TS2589 at ~95 routes. Groups keep every
+   * chain short: build each domain (`listings`, `agents`, …) as its own `server()` (its registry
+   * resolves independently), then `app.merge(listings).merge(agents)` — each merge adds ONE level
+   * regardless of group size. 300+ routes stay fully typed (see many-routes.test-d.ts). The
+   * other escape hatch is contract-first `implement()`, whose registry is a single object type.
+   *
+   * Semantics: merged routes keep the chains captured where they were DEFINED — the group's
+   * `derive`/`decorate`/`beforeHandle`/`afterHandle`/`onError`/`around` apply to its routes
+   * exactly as they did standalone, so a group wires its own plugins. The group's request-level
+   * hooks (`onRequest`/`onResponse`/`onResponseFinalized`) are appended to this server's. This
+   * server's route-scoped chains do NOT retroactively wrap merged routes (order-scoped, like
+   * routes registered before a `derive`). Fail closed: a path+method collision throws
+   * `RouteConfigError` at merge time, and a group with WebSocket routes is refused (register
+   * those on the parent).
+   */
+  merge<R2 extends Registry, Ctx2>(other: Server<R2, Ctx2>): Server<R & R2, Ctx> {
+    const source = other as unknown as Server<Registry, EmptyContext>
+    if (source.wsRouteCount > 0) {
+      throw new RouteConfigError(
+        "INVALID_PATH",
+        "merge() does not carry WebSocket routes — register .ws() routes on the parent server",
+      )
+    }
+    for (const { method, path, entry, descriptor } of source.rawEntries) {
+      this.router.add(method, path, entry) // throws RouteConfigError on a duplicate — fail closed
+      this.routeList.push(descriptor) // shared ref on purpose: carries later .tool() tagging
+      this.rawEntries.push({ method, path, entry, descriptor })
+    }
+    this.onRequestHooks.push(...source.onRequestHooks)
+    this.onResponseHooks.push(...source.onResponseHooks)
+    this.onResponseFinalizedHooks.push(...source.onResponseFinalizedHooks)
+    this.mcpResourceList.push(...source.mcpResourceList)
+    this.mcpPromptList.push(...source.mcpPromptList)
+    return this as unknown as Server<R & R2, Ctx>
   }
 
   /**
