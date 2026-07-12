@@ -1,5 +1,0 @@
----
-"@nifrajs/core": minor
----
-
-`app.merge(group)` — domain-group composition for large apps, and the documented answer to the ~95-route TS2589 ceiling. A single fluent chain accumulates one type-alias level per route and TypeScript resolves that stack in one recursion, so one chain hits the compiler's instantiation-depth limit at ~95-100 routes (measured; eager-flattening variants all fail — see registry.ts). Build each domain as its own `server()` (its registry resolves independently) and merge: `app.merge(listings).merge(agents)` — each merge adds one level regardless of group size; 120+ routes typecheck with full param/schema fidelity (pinned in many-routes.test-d.ts). Merged routes keep the chains captured where they were defined (the group's own derive/validation/hooks apply exactly as standalone); the group's request-level hooks append to the parent; collisions and WebSocket groups fail closed at merge time. Contract-first `implement()` remains the other supported path — its registry is a single object type with no accumulation at all.
