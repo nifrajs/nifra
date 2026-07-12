@@ -29,8 +29,12 @@ export type App = typeof app // hand this to @nifrajs/client for end-to-end type
   `onRequest`/`beforeHandle`/`afterHandle`/`onResponse`/`onError` run around handlers;
   `use(middleware)` applies a bundle.
 - **Hardening built in.** `stop({ drainMs })` graceful shutdown (+ opt-in SIGTERM/
-  SIGINT), `requestTimeoutMs` (+ `ctx.signal`), a streaming body-size cap, and a
+  SIGINT), `requestTimeoutMs` (+ `ctx.signal` and `ctx.budget`), a streaming body-size cap, and a
   redacting structured `Logger`.
+- **One request budget.** `ctx.budget` carries the admitted absolute deadline and monotonic
+  `remaining()` time. An inbound `x-nifra-deadline` can only shorten `requestTimeoutMs`/
+  `maxInboundDeadlineMs`; malformed and expired values fail before the handler. `ctx.signal`
+  remains the cancellation primitive and aborts at that same effective deadline.
 - **Route assurance.** Official auth, CSRF, body-limit, rate-limit, idempotency,
   IP-restriction, and security-header modules publish reflection-safe enforcement evidence.
   An ordered `AssurancePolicy` classifies every route and fails closed on missing or forbidden

@@ -63,6 +63,9 @@
   "publishConfig": {
     "access": "public"
   },
+  "dependencies": {
+    "@nifrajs/budget": "workspace:*"
+  },
   "devDependencies": {
     "@nifrajs/test-utils": "workspace:*"
   },

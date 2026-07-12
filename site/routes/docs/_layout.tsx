@@ -38,6 +38,7 @@ const GROUPS: ReadonlyArray<{ title: string; links: ReadonlyArray<{ href: string
     links: [
       { href: "/docs/auth", label: "Auth & sessions" },
       { href: "/docs/security", label: "Security & uploads" },
+      { href: "/docs/budgets", label: "Request budgets" },
       { href: "/docs/plugins", label: "Plugins & middleware" },
       { href: "/docs/edge", label: "Edge & bindings" },
       { href: "/docs/websockets", label: "WebSockets" },

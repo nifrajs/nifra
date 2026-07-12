@@ -129,4 +129,71 @@ describe("Server — verbs and listen", () => {
       instance.stop()
     }
   })
+
+  test("Bun-native listen routes preserve params, lazy query, response hooks, and wildcard fallback", async () => {
+    const app = server()
+      .onResponse((response) => {
+        response.headers.set("x-pipeline", "yes")
+        return response
+      })
+      .get("/users/:id", (c) => ({ id: c.params.id, q: c.query.get("q") }))
+      .get("/files/*path", (c) => ({ path: c.params.path }))
+    const instance = app.listen(0)
+    try {
+      const encoded = await fetch(`http://127.0.0.1:${instance.port}/users/a%20b?q=hello`)
+      expect(await encoded.json()).toEqual({ id: "a b", q: "hello" })
+      expect(encoded.headers.get("x-pipeline")).toBe("yes")
+
+      const malformed = await fetch(`http://127.0.0.1:${instance.port}/users/%C3%28`)
+      expect(malformed.status).toBe(400)
+      expect(await malformed.json()).toEqual({ ok: false, error: "malformed_path" })
+
+      const wildcard = await fetch(`http://127.0.0.1:${instance.port}/files/a/b`)
+      expect(await wildcard.json()).toEqual({ path: "a/b" })
+    } finally {
+      instance.stop()
+    }
+  })
+
+  test("listen keeps onRequest URL rewrites ahead of route selection", async () => {
+    const app = server()
+      .onRequest(
+        (request) =>
+          new Request(new URL("/target", request.url).href, {
+            method: request.method,
+            headers: request.headers,
+          }),
+      )
+      .get("/target", () => "rewritten")
+    const instance = app.listen(0)
+    try {
+      const response = await fetch(`http://127.0.0.1:${instance.port}/source`)
+      expect(await response.json()).toBe("rewritten")
+    } finally {
+      instance.stop()
+    }
+  })
+
+  test("the fused Bun-native lane still enforces inherited deadlines and method errors", async () => {
+    const app = server().get("/fast/:id", (c) => ({ id: c.params.id }))
+    const instance = app.listen(0)
+    const url = `http://127.0.0.1:${instance.port}/fast/42`
+    try {
+      expect(await (await fetch(url)).json()).toEqual({ id: "42" })
+
+      const malformed = await fetch(url, { headers: { "x-nifra-deadline": "bad" } })
+      expect(malformed.status).toBe(400)
+      expect(await malformed.json()).toEqual({ ok: false, error: "malformed_deadline" })
+
+      const expired = await fetch(url, { headers: { "x-nifra-deadline": "1" } })
+      expect(expired.status).toBe(408)
+      expect(await expired.json()).toEqual({ ok: false, error: "deadline_exceeded" })
+
+      const wrongMethod = await fetch(url, { method: "POST" })
+      expect(wrongMethod.status).toBe(405)
+      expect(wrongMethod.headers.get("allow")).toBe("GET")
+    } finally {
+      instance.stop()
+    }
+  })
 })

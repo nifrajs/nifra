@@ -129,6 +129,10 @@
         "better-auth",
       ],
     },
+    "packages/budget": {
+      "name": "@nifrajs/budget",
+      "version": "1.7.0",
+    },
     "packages/cache": {
       "name": "@nifrajs/cache",
       "version": "1.7.0",
@@ -177,6 +181,9 @@
     "packages/core": {
       "name": "@nifrajs/core",
       "version": "1.7.0",
+      "dependencies": {
+        "@nifrajs/budget": "workspace:*",
+      },
       "devDependencies": {
         "@nifrajs/test-utils": "workspace:*",
       },
@@ -760,6 +767,8 @@
     "@nifrajs/bench": ["@nifrajs/bench@workspace:bench"],
 
     "@nifrajs/better-auth": ["@nifrajs/better-auth@workspace:packages/better-auth"],
+
+    "@nifrajs/budget": ["@nifrajs/budget@workspace:packages/budget"],
 
     "@nifrajs/cache": ["@nifrajs/cache@workspace:packages/cache"],
 
