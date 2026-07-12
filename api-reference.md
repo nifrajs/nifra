@@ -951,6 +951,9 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **AdversarialContractResult** _(interface)_ — `interface AdversarialContractResult`
 - **AppLike** _(interface)_ — `interface AppLike`
   The minimal shape a nifra `server()` app satisfies — its own `fetch`.
+- **CaptureIncidentOptions** _(interface)_ — `interface CaptureIncidentOptions`
+- **CapturedRequest** _(interface)_ — `interface CapturedRequest`
+- **CapturedRequestInput** _(interface)_ — `interface CapturedRequestInput`
 - **ContractCaseContext** _(interface)_ — `interface ContractCaseContext`
   Stable context passed to request/rejection hooks. It contains no request payloads or secrets.
 - **ContractCaseKind** _(type)_ — `type ContractCaseKind = "input-rejection" | "response-conformance"`
@@ -966,14 +969,31 @@ Every public export of every package — name, kind, signature, and doc summary 
   A known-good request. Missing body/query values are synthesized from inspectable JSON Schema.
 - **CookieJar** _(interface)_ — `interface CookieJar`
   A tiny cookie jar for in-process tests — parses `Set-Cookie` off responses and emits a `Cookie` request header, so a login → authenticated-request flow works without threading headers by hand. It honours removal (`Max-Age=0` / a past `Expires`) so logout clears the cookie; other attributes (Domain/…
+- **GenerateRegressionTestOptions** _(interface)_ — `interface GenerateRegressionTestOptions`
+- **IncidentCapsule** _(interface)_ — `interface IncidentCapsule`
+- **IncidentReplayError** _(class)_ — `class IncidentReplayError`
+- **IncidentReplayResult** _(interface)_ — `interface IncidentReplayResult`
+- **ReplayIncidentOptions** _(interface)_ — `interface ReplayIncidentOptions`
 - **TestSession** _(interface)_ — `interface TestSession<App>`
 - **TestSessionOptions** _(interface)_ — `interface TestSessionOptions`
 - **assertAdversarialContract** _(function)_ — `assertAdversarialContract: (app: ContractTestApp, options?: AdversarialContractOptions) => Promise<AdversarialContractReport>`
   Run the contract laboratory and throw an {@link AdversarialContractError} unless it is fully green.
+- **assertIncidentReplays** _(function)_ — `assertIncidentReplays: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<void>`
+  Assert a captured incident still reproduces against the current app. Throws {@link IncidentReplayError}.
+- **captureIncident** _(function)_ — `captureIncident: (request: Request | CapturedRequestInput, response: Response | { status: number; body?: unknown; }, options?: CaptureIncidentOptions) => Promise<IncidentCapsule>`
+  Build a capsule from a real `Request`+`Response`, or from plain captured fields.
 - **cookieJar** _(function)_ — `cookieJar: () => CookieJar`
   Create an empty cookie jar.
+- **generateRegressionTest** _(function)_ — `generateRegressionTest: (capsule: IncidentCapsule, options?: GenerateRegressionTestOptions) => string`
+  Emit a committable regression test from a capsule. Request string values are redacted BY DEFAULT with a sanitize banner — replace the `<redacted>` placeholders with safe, reproducing values before you commit. The test asserts the response contract via {@link assertIncidentReplays}.
+- **redactForEmission** _(function)_ — `redactForEmission: (value: unknown, allow: ReadonlySet<string>, path?: string) => unknown`
+  Redact leaf string values by default (unless the dotted key path is allow-listed). Non-strings are kept — they carry the structure that makes the fixture reproduce — so review the emitted file. This is intentionally aggressive: a committed fixture must not leak PII/secrets.
+- **replayIncident** _(function)_ — `replayIncident: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<IncidentReplayResult>`
+  Replay a captured incident against the current app and report whether it reproduces.
 - **runAdversarialContract** _(function)_ — `runAdversarialContract: (app: ContractTestApp, options?: AdversarialContractOptions) => Promise<AdversarialContractReport>`
   Execute contract-derived hostile inputs and declared-response conformance against a runtime matrix. Runtime/request failures are captured in the report; inspect `report.ok`, `failures`, and `gaps` (or use {@link assertAdversarialContract} for a throwing test assertion).
+- **shapeOf** _(function)_ — `shapeOf: (value: unknown) => unknown`
+  A stable structural fingerprint: keys + value *types*, not values. Used for the optional shape check.
 - **testSession** _(function)_ — `testSession: <App extends AppLike>(app: App, options?: TestSessionOptions) => TestSession<App>`
   Create a cookie-persisting in-process test client for `app`.
 
