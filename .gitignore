@@ -52,3 +52,4 @@ bench/**/*.md
 # check:docs snippet sandbox (transient) — lives under site/ so workspace @nifrajs/* symlinks resolve
 site/.tmp-doc-check
 .codex/
+/packages/core/test/.tmp-nifra-many-routes
