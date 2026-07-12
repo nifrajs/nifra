@@ -430,6 +430,21 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **url** _(function)_ — `url: (opts?: Base<string> & Optional) => StandardSchemaV1<string | undefined>`
   A valid absolute URL (parses with the WHATWG `URL`). Returns the normalized href string.
 
+## @nifrajs/events
+
+- **EventContract** _(interface)_ — `interface EventContract<Schema extends StandardSchemaV1 = StandardSchemaV1>`
+- **EventContractError** _(class)_ — `class EventContractError`
+  Thrown by {@link EventContract.create} when the payload fails the contract schema.
+- **EventEnvelope** _(interface)_ — `interface EventEnvelope<Payload = unknown>`
+  The portable wire shape: identity + versioned type + timestamp + validated payload.
+- **EventParseResult** _(type)_ — `type EventParseResult<Payload> = | { readonly success: true; readonly envelope: EventEnvelope<Payload> } | { readonly success: false; readonly issues: readonly StandardIssue[] }`
+- **EventRegistry** _(interface)_ — `interface EventRegistry`
+- **RegistryParseResult** _(type)_ — `type RegistryParseResult`
+- **createEventRegistry** _(function)_ — `createEventRegistry: (contracts: readonly EventContract[]) => EventRegistry`
+  Build a registry from a set of contracts. Throws on a duplicate `type@version`.
+- **defineEventContract** _(function)_ — `defineEventContract: <Schema extends StandardSchemaV1>(spec: { type: string; version: number; payload: Schema; }) => EventContract<Schema>`
+  Define a portable, versioned event contract.
+
 ## @nifrajs/i18n
 
 - **Formatter** _(interface)_ — `interface Formatter`
