@@ -125,6 +125,8 @@ backend in `nifra dev` and in prod alike — no hand-dispatch in `server-bun.ts`
   `/docs/troubleshooting` (keyed on the literal error strings).
 - Run **`nifra check`** (`--json` for agents) as the done-gate: typecheck + typed-client drift +
   server-only-import-in-a-route + raw-`Response`-from-a-route + undeclared dependency.
+- If the project has `nifra.assurance.ts`, also run **`nifra assure`** (`--json` in CI). It fails closed
+  when a route is unclassified or lacks/forbids the enforcement evidence required by its first policy rule.
 
 ## Build & deploy
 
