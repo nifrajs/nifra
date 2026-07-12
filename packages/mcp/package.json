@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/mcp",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Build MCP servers — and MCP Apps (interactive `ui://` widgets, SEP-1865) — for a nifra app. The transport-agnostic JSON-RPC core (also used by `@nifrajs/cli`'s dev MCP), a Streamable-HTTP handler you mount at `POST /mcp`, and `defineMcpWidget`/`defineMcpTool` for tool results that render real UI in MCP hosts.",
   "keywords": [
     "bun",

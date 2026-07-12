@@ -1,5 +1,12 @@
 # @nifrajs/prompt
 
+## 1.7.0
+
+### Patch Changes
+
+- Updated dependencies [bd95181]
+  - @nifrajs/core@1.7.0
+
 ## 1.6.0
 
 ### Patch Changes
