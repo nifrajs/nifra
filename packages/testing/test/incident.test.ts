@@ -84,13 +84,17 @@ describe("captureIncident", () => {
 
 describe("replayIncident / assertIncidentReplays", () => {
   test("reproduces an unchanged response (golden lock)", async () => {
-    const req = new Request(`${ORIGIN}/echo/7`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "bob" }),
-    })
-    const res = await good.fetch(req.clone())
-    const capsule = await captureIncident(req, res)
+    // Two fresh requests (one to fetch, one to capture) rather than `.clone()` — a request body can
+    // only be read once, and `.clone()`'s DOM/undici return type doesn't unify with the Bun `Request`
+    // that `app.fetch` expects under the root tsconfig.
+    const makeReq = (): Request =>
+      new Request(`${ORIGIN}/echo/7`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "bob" }),
+      })
+    const res = await good.fetch(makeReq())
+    const capsule = await captureIncident(makeReq(), res)
 
     const result = await replayIncident(good, capsule, { assertShape: true })
     expect(result.reproduced).toBe(true)
