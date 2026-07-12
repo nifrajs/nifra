@@ -1,3 +1,11 @@
+import {
+  admitDeadline,
+  createRequestBudget,
+  createUnboundedRequestBudget,
+  type DeadlineAdmissionOptions,
+  NIFRA_DEADLINE_HEADER,
+  type RequestBudget,
+} from "@nifrajs/budget"
 import { FrameworkError, RouteConfigError } from "../errors.ts"
 import {
   type AssuranceDeclaration,
@@ -115,6 +123,7 @@ interface RawContext {
   readonly [CONTEXT_SET]: () => CtxSet | undefined
   readonly [CONTEXT_SEARCH]: string
   readonly signal: AbortSignal
+  readonly budget: RequestBudget
   readonly env: unknown
   readonly waitUntil: (promise: Promise<unknown>) => void
   readonly boundedBody: (maxBytes?: number) => Promise<Uint8Array>
@@ -192,8 +201,9 @@ interface RouteEntry {
 type FusedWebRunner = (
   source: RequestSource,
   params: Record<string, string>,
-  search: string,
+  search: string | undefined,
   signal: AbortSignal,
+  budget: RequestBudget,
   platform: Platform | undefined,
 ) => MaybePromise<Response>
 
@@ -206,6 +216,11 @@ interface WsEntry {
 interface BunUpgradeServer {
   upgrade(request: Request, options?: { data?: BunWsData }): boolean
 }
+
+type BunNativeHandler = (request: Request) => MaybePromise<Response>
+type BunNativeMethodTable = Partial<Record<Method, BunNativeHandler>>
+type BunNativeRoutes = Record<string, BunNativeMethodTable>
+type BunRequestWithParams = Request & { readonly params?: Record<string, string> }
 
 const WS_PASS: WebSocketUpgradeOutcome = { kind: "pass" }
 
@@ -255,6 +270,12 @@ export interface ServerOptions {
   readonly wsMaxPayloadBytes?: number
   /** Per-request timeout (ms): a slower request gets a 503 and `ctx.signal` aborts. 0 disables (default). */
   readonly requestTimeoutMs?: number
+  /**
+   * Maximum time accepted from an inbound `x-nifra-deadline`, in milliseconds. An incoming absolute
+   * deadline may shorten this cap (and `requestTimeoutMs`, when configured), never extend it.
+   * Default 30_000; applies only when the header is present.
+   */
+  readonly maxInboundDeadlineMs?: number
   /** When `listen()`ing, install SIGTERM/SIGINT handlers that gracefully `stop()`. Default false. */
   readonly gracefulSignals?: boolean
   /** Structured logger for framework events (redacts secrets). Default: JSON to stderr. */
@@ -475,9 +496,14 @@ const TEXT_DECODER = new TextDecoder()
  * reused at zero per-request cost.
  */
 let neverAbortSignal: AbortSignal | undefined
+let unboundedRequestBudget: RequestBudget | undefined
 const getNeverAbortSignal = (): AbortSignal => {
   neverAbortSignal ??= new AbortController().signal
   return neverAbortSignal
+}
+const getUnboundedRequestBudget = (): RequestBudget => {
+  unboundedRequestBudget ??= createUnboundedRequestBudget(getNeverAbortSignal())
+  return unboundedRequestBudget
 }
 
 function jsonError(status: number, error: string, headers?: Record<string, string>): Response {
@@ -679,6 +705,13 @@ function decodeParams(raw: Record<string, string>): Record<string, string> | nul
   return out ?? raw
 }
 
+function hasReplacementParam(params: Record<string, string>): boolean {
+  for (const key in params) {
+    if (params[key]!.includes("\uFFFD")) return true
+  }
+  return false
+}
+
 /** `ctx.set` carrying the lazy backings (`_headers`, `_cookies`) so `toResponse` can skip allocating
  * anything when no handler touched `c.set.*`. Server-internal. */
 type CtxSet = ResponseControls & {
@@ -744,10 +777,11 @@ function statusInit(init?: ResponseInit | number): ResponseInit | undefined {
 class RequestContext implements RawContext {
   readonly params: Record<string, string>
   readonly signal: AbortSignal
+  readonly budget: RequestBudget
   readonly env: unknown
   readonly waitUntil: (promise: Promise<unknown>) => void
   body: unknown
-  readonly [CONTEXT_SEARCH]: string
+  private searchValue: string | undefined
 
   private setValue: CtxSet | undefined
   private queryValue: unknown
@@ -759,15 +793,17 @@ class RequestContext implements RawContext {
   constructor(
     source: RequestSource,
     params: Record<string, string>,
-    search: string,
+    search: string | undefined,
     signal: AbortSignal,
+    budget: RequestBudget,
     platform: Platform | undefined,
     maxBodyBytes: number,
   ) {
     this.source = source
     this.params = params
-    this[CONTEXT_SEARCH] = search
+    this.searchValue = search
     this.signal = signal
+    this.budget = budget
     this.env = platform?.env
     this.waitUntil = platform?.waitUntil ?? fallbackWaitUntil
     this.maxBodyBytes = maxBodyBytes
@@ -780,6 +816,11 @@ class RequestContext implements RawContext {
 
   [CONTEXT_SET](): CtxSet | undefined {
     return this.setValue
+  }
+
+  get [CONTEXT_SEARCH](): string {
+    this.searchValue ??= searchOf(this.source.url)
+    return this.searchValue
   }
 
   get set(): CtxSet {
@@ -1118,6 +1159,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private readonly maxBodyBytes: number
   private readonly wsMaxPayloadBytes: number
   private readonly requestTimeoutMs: number
+  private readonly maxInboundDeadlineMs: number
+  private readonly deadlineAdmissionOptions: DeadlineAdmissionOptions
   private readonly gracefulSignals: boolean
   private readonly logger: Logger
   /** App-wide validation-error fallback; a route's own `schema.onValidationError` takes precedence. */
@@ -1165,6 +1208,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
     this.wsMaxPayloadBytes = options.wsMaxPayloadBytes ?? this.maxBodyBytes
     this.requestTimeoutMs = options.requestTimeoutMs ?? 0
+    this.maxInboundDeadlineMs = options.maxInboundDeadlineMs ?? 30_000
+    this.deadlineAdmissionOptions = Object.freeze({
+      localTimeoutMs: this.requestTimeoutMs,
+      maxInboundDeadlineMs: this.maxInboundDeadlineMs,
+    })
+    if (!Number.isFinite(this.requestTimeoutMs) || this.requestTimeoutMs < 0) {
+      throw new RangeError("requestTimeoutMs must be a finite non-negative number")
+    }
+    if (!Number.isFinite(this.maxInboundDeadlineMs) || this.maxInboundDeadlineMs <= 0) {
+      throw new RangeError("maxInboundDeadlineMs must be a finite positive number")
+    }
     this.gracefulSignals = options.gracefulSignals ?? false
     this.logger = options.logger ?? jsonLogger()
     this.defaultOnValidationError = options.onValidationError
@@ -1784,6 +1838,32 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       : this.applyOnResponseAndFinalize(outcome, this.takeResponseRequest(source))
   }
 
+  /** Web response path when Bun already matched the route. The lifecycle and response hooks remain
+   * exactly the same as {@link fetchSource}; only portable URL scanning + trie lookup are skipped. */
+  private fetchMatched(
+    source: RequestSource,
+    entry: RouteEntry,
+    params: Record<string, string>,
+  ): MaybePromise<Response> {
+    const outcome = this.runMatched(
+      source,
+      undefined,
+      entry,
+      params,
+      undefined,
+      toResponse,
+      IDENTITY_RESPONSE,
+      RESPONSE_TIMEOUT,
+      true,
+    )
+    if (this.onResponseHooks.length === 0 && this.onResponseFinalizedHooks.length === 0) {
+      return outcome
+    }
+    return outcome instanceof Promise
+      ? outcome.then((response) => this.applyOnResponseAndFinalize(response, requestOf(source)))
+      : this.applyOnResponseAndFinalize(outcome, requestOf(source))
+  }
+
   /**
    * Like {@link fetch}, but renders a plain-data result **without** building a Web `Response` — the
    * `@nifrajs/node` adapter serializes the returned primitives straight to the socket, skipping the undici
@@ -1838,10 +1918,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     const url = urlPartsOf(req.url)
     const match = this.wsRouter.find("GET", url.pathname)
     if (!match.found) return WS_PASS // upgrade header, no WS route here → normal routing decides
-    const params =
-      match.params === EMPTY_PARAMS || !url.pathname.includes("%")
-        ? match.params
-        : decodeParams(match.params)
+    // Inspect only captured values for escapes. Scanning the full pathname repeated work the router
+    // already did and made every plain dynamic route pay for unrelated static path bytes.
+    const params = match.params === EMPTY_PARAMS ? match.params : decodeParams(match.params)
     if (params === null) return { kind: "reject", response: jsonError(400, "malformed_path") }
     const handler = match.payload.handler
     // Non-null: wsRouteCount > 0 ⇒ ws() ran ⇒ the runtime created the registry.
@@ -1866,11 +1945,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     if (handler.upgrade === undefined) {
       return { kind: "upgrade", handler, data: undefined, pubsub }
     }
+    const upgradeSignal = getNeverAbortSignal()
     const ctx = new RequestContext(
       req,
       params,
       url.search,
-      getNeverAbortSignal(),
+      upgradeSignal,
+      createUnboundedRequestBudget(upgradeSignal),
       platform,
       this.maxBodyBytes,
     )
@@ -2042,38 +2123,79 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       return wrapResponse(jsonError(404, "not_found"))
     }
 
-    const params =
-      match.params === EMPTY_PARAMS || !url.pathname.includes("%")
-        ? match.params
-        : decodeParams(match.params)
+    // Inspect only captured values for escapes. Scanning the full pathname repeated work the router
+    // already did and made every plain dynamic route pay for unrelated static path bytes.
+    const params = match.params === EMPTY_PARAMS ? match.params : decodeParams(match.params)
     if (params === null) {
       return wrapResponse(jsonError(400, "malformed_path"))
     }
 
-    const entry = match.payload
-    // A per-request cancellation signal. Only allocate a real controller when a
-    // timeout is armed; otherwise share a never-aborting signal so the (common)
-    // no-timeout path pays nothing.
+    return this.runMatched(
+      source,
+      platform,
+      match.payload,
+      params,
+      url.search,
+      finalize,
+      wrapResponse,
+      onTimeout,
+      webFast,
+    )
+  }
+
+  /** Run a route that has already been matched by the runtime or Nifra's portable router. */
+  private runMatched<T>(
+    source: RequestSource,
+    platform: Platform | undefined,
+    entry: RouteEntry,
+    params: Record<string, string>,
+    search: string | undefined,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+    onTimeout: () => T,
+    webFast: boolean,
+  ): MaybePromise<T> {
+    // Translate the absolute wire deadline once, clamp it to local policy, then use the resulting
+    // duration for both c.signal and c.budget. A client can only shorten work, never extend it.
+    // Most requests have neither a local timeout nor a propagated deadline. Detect that case with
+    // one header lookup and skip policy validation, wall-clock sampling, and admission objects. A
+    // present wire deadline still goes through the full fail-closed parser/clamp below.
+    const admission =
+      this.requestTimeoutMs === 0 && headerOf(source, NIFRA_DEADLINE_HEADER) === null
+        ? undefined
+        : admitDeadline(source.headers, this.deadlineAdmissionOptions)
+    if (admission !== undefined && !admission.ok) {
+      return wrapResponse(jsonError(admission.status, admission.reason))
+    }
+    const effectiveTimeoutMs = admission?.timeoutMs ?? 0
+
+    // Only allocate a controller for a finite budget; the historical no-timeout path remains
+    // allocation-light and exposes an unbounded budget that is never propagated on the wire.
     let controller: AbortController | undefined
     let signal = getNeverAbortSignal()
-    if (this.requestTimeoutMs > 0) {
+    if (effectiveTimeoutMs > 0) {
       controller = new AbortController()
       signal = controller.signal
     }
+    const budget =
+      controller === undefined
+        ? getUnboundedRequestBudget()
+        : createRequestBudget({ deadline: admission!.deadline as number, signal })
     // A bare route runs synchronously (no schema/derives/hooks); everything else keeps the full async
     // lifecycle. `runBare` returns a value directly for a sync handler — no promise.
     let outcome: MaybePromise<T>
     if (webFast && entry.fusedWeb !== undefined) {
       // Fused Web lane (bare route, no around): one closure end to end. Sound cast — webFast is
       // passed only by the `fetch` path, where T = Response by construction.
-      outcome = entry.fusedWeb(source, params, url.search, signal, platform) as MaybePromise<T>
+      outcome = entry.fusedWeb(source, params, search, signal, budget, platform) as MaybePromise<T>
     } else if (entry.contextlessBare) {
       outcome = this.runContextlessBare(
         entry,
         source,
         params,
-        url.search,
+        search,
         signal,
+        budget,
         platform,
         finalize,
         wrapResponse,
@@ -2084,8 +2206,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       const ctx = new RequestContext(
         source,
         params,
-        url.search,
+        search,
         signal,
+        budget,
         platform,
         this.maxBodyBytes,
       )
@@ -2118,7 +2241,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // The request timeout only bounds work that is actually pending — a synchronous (bare) result is
     // already complete and can't time out, so it's returned as-is (no 503 race, no promise).
     if (controller !== undefined && outcome instanceof Promise) {
-      return this.withTimeout(outcome, controller, onTimeout)
+      const timedOut =
+        admission?.inherited === true
+          ? () => wrapResponse(jsonError(504, "deadline_exceeded"))
+          : onTimeout
+      return this.withTimeout(
+        outcome,
+        controller,
+        timedOut,
+        Math.max(0, Math.ceil(budget.remaining())),
+      )
     }
     return outcome
   }
@@ -2129,8 +2261,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     entry: RouteEntry,
     source: RequestSource,
     params: Record<string, string>,
-    search: string,
+    search: string | undefined,
     signal: AbortSignal,
+    budget: RequestBudget,
     platform: Platform | undefined,
     finalize: (result: unknown, set: CtxSet) => T,
     wrapResponse: (response: Response) => T,
@@ -2139,13 +2272,31 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     try {
       result = (entry.handler as unknown as ContextlessHandler)()
     } catch (err) {
-      return this.contextlessBareError(err, source, params, search, signal, platform, wrapResponse)
+      return this.contextlessBareError(
+        err,
+        source,
+        params,
+        search,
+        signal,
+        budget,
+        platform,
+        wrapResponse,
+      )
     }
     if (result instanceof Promise) {
       return result.then(
         (value) => finalize(value, EMPTY_RESPONSE_CONTROLS),
         (err) =>
-          this.contextlessBareError(err, source, params, search, signal, platform, wrapResponse),
+          this.contextlessBareError(
+            err,
+            source,
+            params,
+            search,
+            signal,
+            budget,
+            platform,
+            wrapResponse,
+          ),
       )
     }
     return finalize(result, EMPTY_RESPONSE_CONTROLS)
@@ -2155,13 +2306,22 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     err: unknown,
     source: RequestSource,
     params: Record<string, string>,
-    search: string,
+    search: string | undefined,
     signal: AbortSignal,
+    budget: RequestBudget,
     platform: Platform | undefined,
     wrapResponse: (response: Response) => T,
   ): T {
     if (err instanceof Response) return wrapResponse(err)
-    const ctx = new RequestContext(source, params, search, signal, platform, this.maxBodyBytes)
+    const ctx = new RequestContext(
+      source,
+      params,
+      search,
+      signal,
+      budget,
+      platform,
+      this.maxBodyBytes,
+    )
     this.logRequestError(err, ctx)
     return wrapResponse(jsonError(500, "internal_error"))
   }
@@ -2221,29 +2381,29 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       // `() => ...` can't observe the context — skip allocating one entirely (errors still build
       // one for the structured log, exactly like runContextlessBare).
       const contextlessHandler = handler as unknown as ContextlessHandler
-      return (source, params, search, signal, platform) => {
+      return (source, params, search, signal, budget, platform) => {
         let result: unknown
         try {
           result = contextlessHandler()
         } catch (err) {
           return logError(
             err,
-            new RequestContext(source, params, search, signal, platform, maxBodyBytes),
+            new RequestContext(source, params, search, signal, budget, platform, maxBodyBytes),
           )
         }
         if (result instanceof Promise) {
           return result.then(fusedRespondNoSet, (err) =>
             logError(
               err,
-              new RequestContext(source, params, search, signal, platform, maxBodyBytes),
+              new RequestContext(source, params, search, signal, budget, platform, maxBodyBytes),
             ),
           )
         }
         return fusedRespondNoSet(result)
       }
     }
-    return (source, params, search, signal, platform) => {
-      const ctx = new RequestContext(source, params, search, signal, platform, maxBodyBytes)
+    return (source, params, search, signal, budget, platform) => {
+      const ctx = new RequestContext(source, params, search, signal, budget, platform, maxBodyBytes)
       if (decorations !== undefined) Object.assign(ctx, decorations)
       let result: unknown
       try {
@@ -2688,13 +2848,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     work: Promise<T>,
     controller: AbortController,
     onTimeout: () => T,
+    timeoutMs: number,
   ): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined
     const timeout = new Promise<T>((resolve) => {
       timer = setTimeout(() => {
         controller.abort()
         resolve(onTimeout())
-      }, this.requestTimeoutMs)
+      }, timeoutMs)
     })
     try {
       return await Promise.race([work, timeout])
@@ -2853,6 +3014,59 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return readBoundedJsonSource(req, this.maxBodyBytes)
   }
 
+  /** Compile portable route registrations into Bun's native route table. Apps with request-rewrite
+   * hooks or WebSockets retain the single portable dispatcher because those features must run before
+   * route selection/upgrade. Named wildcards also stay on the fallback until Bun exposes their raw
+   * capture semantics; static and `:param` routes take the native lane. */
+  private buildBunNativeRoutes(): BunNativeRoutes | undefined {
+    if (this.onRequestHooks.length > 0 || this.wsRouteCount > 0) return undefined
+
+    const routes: BunNativeRoutes = Object.create(null) as BunNativeRoutes
+    const mayUseFusedNative =
+      this.requestTimeoutMs === 0 &&
+      this.onResponseHooks.length === 0 &&
+      this.onResponseFinalizedHooks.length === 0
+    const unboundedSignal = mayUseFusedNative ? getNeverAbortSignal() : undefined
+    const unboundedBudget = mayUseFusedNative ? getUnboundedRequestBudget() : undefined
+    let count = 0
+    for (const { method, path, entry } of this.rawEntries) {
+      if (path.includes("*")) continue
+      let methods = routes[path]
+      if (methods === undefined) {
+        methods = Object.create(null) as BunNativeMethodTable
+        routes[path] = methods
+      }
+      const parameterized = path.includes(":")
+      methods[method] = (request) => {
+        const params = parameterized
+          ? ((request as BunRequestWithParams).params ?? EMPTY_PARAMS)
+          : EMPTY_PARAMS
+        if (parameterized && hasReplacementParam(params)) return this.fetchSource(request)
+
+        // Native match + fused route is the common Bun GET lane. Keep deadline admission mandatory,
+        // but when the header is absent all remaining choices were fixed at registration/listen time:
+        // call the fused lifecycle directly instead of replaying the generic branch ladder.
+        if (
+          mayUseFusedNative &&
+          entry.fusedWeb !== undefined &&
+          request.headers.get(NIFRA_DEADLINE_HEADER) === null
+        ) {
+          return entry.fusedWeb(
+            request,
+            params,
+            undefined,
+            unboundedSignal as AbortSignal,
+            unboundedBudget as RequestBudget,
+            undefined,
+          )
+        }
+        return this.fetchMatched(request, entry, params)
+      }
+      count += 1
+    }
+    return count === 0 ? undefined : routes
+  }
+
   /**
    * Start a `Bun.serve` instance bound to `port` (use `0` for an ephemeral port).
    *
@@ -2889,8 +3103,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         ? undefined
         : (getWsRuntime() as WsRuntime).bunHandlers(this.topics as TopicRegistry)
     const reusePort = options?.reusePort === true
+    const nativeRoutes = wsHandlers === undefined ? this.buildBunNativeRoutes() : undefined
     const running = (wsHandlers === undefined
-      ? Bun.serve({ port, reusePort, fetch: (req: Request) => this.fetch(req) })
+      ? Bun.serve({
+          port,
+          reusePort,
+          ...(nativeRoutes === undefined ? {} : { routes: nativeRoutes }),
+          fetch: (req: Request) => this.fetch(req),
+        })
       : Bun.serve<BunWsData>({
           port,
           reusePort,

@@ -1,3 +1,4 @@
+import type { RequestBudget } from "@nifrajs/budget"
 import type { InferOutput, StandardIssue, StandardSchemaV1 } from "../schema/standard.ts"
 import type { CookieOptions } from "./cookies.ts"
 
@@ -133,6 +134,11 @@ export interface Context<Path extends string = string, S extends RouteSchema = R
    * timed-out request stops doing work instead of running on after the 503.
    */
   readonly signal: AbortSignal
+  /**
+   * Absolute request deadline plus monotonic remaining time. It shares {@link signal}; the server
+   * clamps an inbound deadline to local policy before constructing it.
+   */
+  readonly budget: RequestBudget
   /**
    * Platform bindings from `app.fetch(request, { env })` — Workers `env` (KV/D1/secrets), etc.
    * `undefined` off-edge (Bun/Node/Deno). Declare the shape with `server<Env>()` to read it typed

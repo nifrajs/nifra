@@ -13,7 +13,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { $ } from "bun"
 
-const LIBS = ["core", "client", "schema", "middleware"] as const
+const LIBS = ["budget", "core", "client", "schema", "middleware"] as const
 
 console.log("• building all packages")
 await $`bun scripts/build-no-run.ts`.quiet()
@@ -28,7 +28,7 @@ for (const lib of LIBS) {
   )
   if (tgz === undefined) throw new Error(`no tarball produced for @nifrajs/${lib}`)
   tarballs.push(tgz)
-  // Install all four as direct `file:` deps so the @nifrajs/core peerDependency is
+  // Install all five as direct `file:` deps so sibling dependencies and peers are
   // satisfied locally. (Installing tarballs by path alone makes bun resolve the peer
   // from the npm registry — a 404, since nothing is published yet.)
   deps[`@nifrajs/${lib}`] = `file:${tgz}`
@@ -94,5 +94,5 @@ if (!nodeOut.includes("SMOKE_OK")) throw new Error(`Node smoke failed:\n${nodeOu
 
 await $`rm -rf ${app} ${tarballs}`.quiet().nothrow()
 console.log(
-  "\n✓ clean-dir smoke passed — core + client + schema + middleware, Bun (src) & Node (dist)",
+  "\n✓ clean-dir smoke passed — budget + core + client + schema + middleware, Bun (src) & Node (dist)",
 )

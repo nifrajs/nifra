@@ -10,17 +10,19 @@
  *   POST /users       → validate { name: string; age: number }, return { id, name }
  *
  * The POST row uses each framework's *idiomatic* validation — nifra: a Standard
- * Schema; Elysia: TypeBox (`t`); Hono: the built-in `validator`; bun-raw: a manual
+ * Schema; Elysia: TypeBox (`t`); Hono: the built-in `validator`; raw rows: a manual
  * type guard. So that row measures real-world body-parse + validation cost, not
  * pure routing. (Reported as such in BENCHMARKS.md.)
  *
- *   bun run bench/http/serve.ts <nifra|hono|elysia|bun-raw> <port>
+ *   bun run bench/http/serve.ts <nifra|hono|elysia|bun-native|bun-raw> <port>
  */
 const framework = process.argv[2]
 const port = Number(process.argv[3])
 
 if (!Number.isInteger(port)) {
-  throw new Error("usage: bun run bench/http/serve.ts <nifra|hono|elysia|bun-raw> <port>")
+  throw new Error(
+    "usage: bun run bench/http/serve.ts <nifra|hono|elysia|bun-native|bun-raw> <port>",
+  )
 }
 
 /**
@@ -106,9 +108,39 @@ if (framework === "nifra") {
       body: t.Object({ name: t.String(), age: t.Number() }),
     })
     .listen(port)
+} else if (framework === "bun-native") {
+  // The real Bun routing ceiling. `bun-raw` below is a useful fetch-dispatch baseline, but Bun's
+  // compiled `routes` table is the platform primitive used by optimized Bun frameworks.
+  Bun.serve({
+    port,
+    routes: {
+      "/": { GET: () => Response.json({ hello: "world" }) },
+      "/users/:id": {
+        GET: (req) => Response.json({ id: req.params.id }),
+      },
+      "/search": {
+        GET: (req) => {
+          const url = new URL(req.url)
+          const q = url.searchParams.get("q")
+          const limit = url.searchParams.get("limit")
+          return q !== null && limit !== null
+            ? Response.json({ q, limit })
+            : new Response("invalid", { status: 400 })
+        },
+      },
+      "/users": {
+        POST: async (req) => {
+          const body: unknown = await req.json().catch(() => undefined)
+          return isUser(body)
+            ? Response.json({ id: "1", name: body.name })
+            : new Response("invalid", { status: 400 })
+        },
+      },
+    },
+    fetch: () => new Response("not found", { status: 404 }),
+  })
 } else if (framework === "bun-raw") {
-  // The Bun ceiling: hand-routed `Bun.serve`, manual parse + validate. Does the
-  // least work any server could — the baseline nifra's overhead is measured against.
+  // Hand-routed fetch baseline: useful for quantifying route-table wins, but not Bun's ceiling.
   const usersPrefix = "/users/"
   Bun.serve({
     port,
