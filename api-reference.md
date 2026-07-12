@@ -137,6 +137,20 @@ Every public export of every package — name, kind, signature, and doc summary 
 ## @nifrajs/core
 
 - **AnyServer** _(type)_ — `type AnyServer = Server<any, any>`
+- **AssuranceConfig** _(interface)_ — `interface AssuranceConfig`
+- **AssuranceDeclaration** _(interface)_ — `interface AssuranceDeclaration`
+  Metadata installed on a middleware/plugin by {@link withRouteAssurance}.
+- **AssuranceEvidence** _(interface)_ — `interface AssuranceEvidence`
+  Reflection-safe proof that a named enforcement module covered a route.
+- **AssuranceFinding** _(interface)_ — `interface AssuranceFinding`
+- **AssuranceFindingCode** _(type)_ — `type AssuranceFindingCode = | "no-routes" | "unclassified-route" | "missing-evidence" | "forbidden-evidence"`
+- **AssurancePolicy** _(interface)_ — `interface AssurancePolicy`
+- **AssuranceReport** _(interface)_ — `interface AssuranceReport`
+- **AssuranceRouteSelector** _(interface)_ — `interface AssuranceRouteSelector`
+- **AssuranceRule** _(interface)_ — `interface AssuranceRule`
+- **AssuranceScope** _(type)_ — `type AssuranceScope = "global" | "subsequent" | "plugin"`
+  Where enforcement evidence follows Nifra's route-registration semantics.
+- **AssuredRoute** _(interface)_ — `interface AssuredRoute`
 - **Context** _(interface)_ — `interface Context<Path extends string = string, S extends RouteSchema = RouteSchema>`
   Handler context. `params` are inferred from the path; `body` and `query` are the validated outputs of their schemas when declared (else `undefined` / raw `URLSearchParams`).
 - **ContextForOp** _(type)_ — `type ContextForOp<O extends OperationDef> = Context<O["path"], SchemaForOp<O> & RouteSchema>`
@@ -177,6 +191,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **Method** _(type)_ — `type Method = (typeof METHODS)[number]`
 - **Middleware** _(interface)_ — `interface Middleware`
   A bundle of lifecycle hooks applied together via {@link Server.use} — the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware is context-agnostic (sees the base `Context`); `use` does no context-type merging — th…
+- **NIFRA_ASSURANCE** _(const)_ — `NIFRA_ASSURANCE: Readonly<{ readonly AUTHENTICATED: "nifra.authenticated"; readonly BODY_BOUNDED: "nifra.body-bounded"; readonly CSRF: "nifra.csrf"; readonly IDEMPOTENCY_KEY: "nifra.idempotency-key"; readonly IP_RESTRIC…`
+  Canonical evidence ids emitted by Nifra's official middleware modules.
 - **NifraPlugin** _(type)_ — `type NifraPlugin<In extends AnyServer = AnyServer, Out extends AnyServer = In> = (( app: In, ) => Out) & { readonly pluginName?: string }`
   A nifra **plugin**: a function that augments an app — calling `use`/`derive`/`decorate` and/or registering routes — and returns it. Because `derive`/`decorate` are type-threaded, an **inline** `app.use((a) => a.derive(...).decorate(...))` carries the added context to handlers defined after it (the …
 - **NifraWebSocket** _(interface)_ — `interface NifraWebSocket<Data = unknown>`
@@ -292,6 +308,10 @@ Every public export of every package — name, kind, signature, and doc summary 
   Wire a standard server-side `WebSocket` to a nifra {@link WebSocketHandler}, returning the portable {@link NifraWebSocket}. Shared by the Deno and Workers bridges. `openNow` fires `open` immediately (Workers, where the socket is already open after `accept()`); otherwise `open` waits for the socket'…
 - **commonSecretPatterns** _(const)_ — `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} — opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
+- **defineAssuranceConfig** _(function)_ — `defineAssuranceConfig: (config: AssuranceConfig) => AssuranceConfig`
+  Identity helper for a `nifra.assurance.ts` default export.
+- **defineAssurancePolicy** _(function)_ — `defineAssurancePolicy: (policy: AssurancePolicy) => AssurancePolicy`
+  Validate and freeze an ordered assurance policy.
 - **defineContract** _(function)_ — `defineContract: <const C extends ContractShape>(contract: C) => C`
   Define a standalone, versionable contract. Identity at runtime (it returns the contract for type inference via the `const` type parameter, which preserves the path/method literals) plus boot-time (L2) validation: each operation must use a known method, a path starting with `/`, and no two operation…
 - **defineIdentityPlugin** _(function)_ — `defineIdentityPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
@@ -302,10 +322,14 @@ Every public export of every package — name, kind, signature, and doc summary 
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this — not {@link definePlugin} — for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
 - **diffRouteSnapshots** _(function)_ — `diffRouteSnapshots: (before: readonly RouteSnapshot[], after: readonly RouteSnapshot[]) => RoutesDiff`
   Diff two route snapshots (`snapshotRoutes` output, possibly restored from JSON). Every change is classified breaking/compatible/info; `hasBreaking` is the CI-gate bit.
+- **evaluateRouteAssurance** _(function)_ — `evaluateRouteAssurance: (source: unknown, policyInput: AssurancePolicy) => AssuranceReport`
+  Evaluate reflected route evidence against the first matching policy rule.
 - **implement** _(function)_ — `implement: <const C extends ContractShape, H extends HandlersFor<C>>(contract: C, handlers: H) => Server<RegistryFromImpl<C, H>>`
   Bind handlers to a contract, producing a real {@link Server} you can `.listen()` or `.fetch()`. Each op is registered through the same path as the inline builder, so the result is identical to writing the routes inline — handlers lift over **unchanged** ("graduation"), and body/query schemas valida…
 - **jsonLogger** _(function)_ — `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
   The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction — pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
+- **matchesAssuranceSelector** _(function)_ — `matchesAssuranceSelector: (route: Pick<ReflectedRoute, "method" | "path" | "tool">, selector: AssuranceRouteSelector) => boolean`
+  Shared selector semantics for policy rules and framework adapters.
 - **parseCookies** _(function)_ — `parseCookies: (header: string | null | undefined) => Record<string, string>`
   Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are skipped rather than throwing — a junk `Cookie` header shouldn't fail the request.
 - **redactLogFields** _(function)_ — `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
@@ -338,6 +362,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Run a Standard Schema and normalize the result. Sync validators stay sync; async validators are awaited.
 - **verifyWebhook** _(function)_ — `verifyWebhook: (req: Request, secret: string | readonly string[], options?: VerifyWebhookOptions) => Promise<WebhookResult>`
   Verify a webhook request's signature and return its raw payload. Reads `req.body` (bounded), so the body is consumed — parse the returned `payload`, don't re-read the request.
+- **withRouteAssurance** _(function)_ — `withRouteAssurance: <T extends object>(target: T, declaration: AssuranceDeclaration | readonly AssuranceDeclaration[]) => T`
+  Attach enforcement evidence to the middleware/plugin that installs it.
 
 ## @nifrajs/cron
 
@@ -904,14 +930,35 @@ Every public export of every package — name, kind, signature, and doc summary 
 
 ## @nifrajs/testing
 
+- **AdversarialContractError** _(class)_ — `class AdversarialContractError`
+- **AdversarialContractOptions** _(interface)_ — `interface AdversarialContractOptions`
+- **AdversarialContractReport** _(interface)_ — `interface AdversarialContractReport`
+- **AdversarialContractResult** _(interface)_ — `interface AdversarialContractResult`
 - **AppLike** _(interface)_ — `interface AppLike`
   The minimal shape a nifra `server()` app satisfies — its own `fetch`.
+- **ContractCaseContext** _(interface)_ — `interface ContractCaseContext`
+  Stable context passed to request/rejection hooks. It contains no request payloads or secrets.
+- **ContractCaseKind** _(type)_ — `type ContractCaseKind = "input-rejection" | "response-conformance"`
+- **ContractCoverageGap** _(interface)_ — `interface ContractCoverageGap`
+- **ContractCoverageGapCode** _(type)_ — `type ContractCoverageGapCode = | "NO_CONTRACT_TARGETS" | "NO_VALIDATOR" | "NO_WITNESS" | "INVALID_WITNESS" | "WITNESS_TOO_LARGE" | "UNSUPPORTED_BODY_METHOD" | "NO_REJECTED_MUTATION"`
+- **ContractReplay** _(interface)_ — `interface ContractReplay`
+- **ContractRuntime** _(interface)_ — `interface ContractRuntime`
+  A runtime target for the same generated contract cases (for example Bun, Node, and Workers).
+- **ContractTarget** _(type)_ — `type ContractTarget = InputTarget | "response"`
+- **ContractTestApp** _(interface)_ — `interface ContractTestApp`
+  Anything that exposes reflected routes and a Web-standard in-process fetch handler.
+- **ContractWitness** _(interface)_ — `interface ContractWitness`
+  A known-good request. Missing body/query values are synthesized from inspectable JSON Schema.
 - **CookieJar** _(interface)_ — `interface CookieJar`
   A tiny cookie jar for in-process tests — parses `Set-Cookie` off responses and emits a `Cookie` request header, so a login → authenticated-request flow works without threading headers by hand. It honours removal (`Max-Age=0` / a past `Expires`) so logout clears the cookie; other attributes (Domain/…
 - **TestSession** _(interface)_ — `interface TestSession<App>`
 - **TestSessionOptions** _(interface)_ — `interface TestSessionOptions`
+- **assertAdversarialContract** _(function)_ — `assertAdversarialContract: (app: ContractTestApp, options?: AdversarialContractOptions) => Promise<AdversarialContractReport>`
+  Run the contract laboratory and throw an {@link AdversarialContractError} unless it is fully green.
 - **cookieJar** _(function)_ — `cookieJar: () => CookieJar`
   Create an empty cookie jar.
+- **runAdversarialContract** _(function)_ — `runAdversarialContract: (app: ContractTestApp, options?: AdversarialContractOptions) => Promise<AdversarialContractReport>`
+  Execute contract-derived hostile inputs and declared-response conformance against a runtime matrix. The function never throws: inspect `report.ok`, `failures`, and `gaps` (or use {@link assertAdversarialContract} for a throwing test assertion).
 - **testSession** _(function)_ — `testSession: <App extends AppLike>(app: App, options?: TestSessionOptions) => TestSession<App>`
   Create a cookie-persisting in-process test client for `app`.
 
@@ -1192,6 +1239,20 @@ Every public export of every package — name, kind, signature, and doc summary 
 ## nifra
 
 - **AnyServer** _(type)_ — `type AnyServer = Server<any, any>`
+- **AssuranceConfig** _(interface)_ — `interface AssuranceConfig`
+- **AssuranceDeclaration** _(interface)_ — `interface AssuranceDeclaration`
+  Metadata installed on a middleware/plugin by {@link withRouteAssurance}.
+- **AssuranceEvidence** _(interface)_ — `interface AssuranceEvidence`
+  Reflection-safe proof that a named enforcement module covered a route.
+- **AssuranceFinding** _(interface)_ — `interface AssuranceFinding`
+- **AssuranceFindingCode** _(type)_ — `type AssuranceFindingCode = | "no-routes" | "unclassified-route" | "missing-evidence" | "forbidden-evidence"`
+- **AssurancePolicy** _(interface)_ — `interface AssurancePolicy`
+- **AssuranceReport** _(interface)_ — `interface AssuranceReport`
+- **AssuranceRouteSelector** _(interface)_ — `interface AssuranceRouteSelector`
+- **AssuranceRule** _(interface)_ — `interface AssuranceRule`
+- **AssuranceScope** _(type)_ — `type AssuranceScope = "global" | "subsequent" | "plugin"`
+  Where enforcement evidence follows Nifra's route-registration semantics.
+- **AssuredRoute** _(interface)_ — `interface AssuredRoute`
 - **Context** _(interface)_ — `interface Context<Path extends string = string, S extends RouteSchema = RouteSchema>`
   Handler context. `params` are inferred from the path; `body` and `query` are the validated outputs of their schemas when declared (else `undefined` / raw `URLSearchParams`).
 - **ContextForOp** _(type)_ — `type ContextForOp<O extends OperationDef> = Context<O["path"], SchemaForOp<O> & RouteSchema>`
@@ -1232,6 +1293,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **Method** _(type)_ — `type Method = (typeof METHODS)[number]`
 - **Middleware** _(interface)_ — `interface Middleware`
   A bundle of lifecycle hooks applied together via {@link Server.use} — the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware is context-agnostic (sees the base `Context`); `use` does no context-type merging — th…
+- **NIFRA_ASSURANCE** _(const)_ — `NIFRA_ASSURANCE: Readonly<{ readonly AUTHENTICATED: "nifra.authenticated"; readonly BODY_BOUNDED: "nifra.body-bounded"; readonly CSRF: "nifra.csrf"; readonly IDEMPOTENCY_KEY: "nifra.idempotency-key"; readonly IP_RESTRIC…`
+  Canonical evidence ids emitted by Nifra's official middleware modules.
 - **NifraPlugin** _(type)_ — `type NifraPlugin<In extends AnyServer = AnyServer, Out extends AnyServer = In> = (( app: In, ) => Out) & { readonly pluginName?: string }`
   A nifra **plugin**: a function that augments an app — calling `use`/`derive`/`decorate` and/or registering routes — and returns it. Because `derive`/`decorate` are type-threaded, an **inline** `app.use((a) => a.derive(...).decorate(...))` carries the added context to handlers defined after it (the …
 - **NifraWebSocket** _(interface)_ — `interface NifraWebSocket<Data = unknown>`
@@ -1347,6 +1410,10 @@ Every public export of every package — name, kind, signature, and doc summary 
   Wire a standard server-side `WebSocket` to a nifra {@link WebSocketHandler}, returning the portable {@link NifraWebSocket}. Shared by the Deno and Workers bridges. `openNow` fires `open` immediately (Workers, where the socket is already open after `accept()`); otherwise `open` waits for the socket'…
 - **commonSecretPatterns** _(const)_ — `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} — opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
+- **defineAssuranceConfig** _(function)_ — `defineAssuranceConfig: (config: AssuranceConfig) => AssuranceConfig`
+  Identity helper for a `nifra.assurance.ts` default export.
+- **defineAssurancePolicy** _(function)_ — `defineAssurancePolicy: (policy: AssurancePolicy) => AssurancePolicy`
+  Validate and freeze an ordered assurance policy.
 - **defineContract** _(function)_ — `defineContract: <const C extends ContractShape>(contract: C) => C`
   Define a standalone, versionable contract. Identity at runtime (it returns the contract for type inference via the `const` type parameter, which preserves the path/method literals) plus boot-time (L2) validation: each operation must use a known method, a path starting with `/`, and no two operation…
 - **defineIdentityPlugin** _(function)_ — `defineIdentityPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
@@ -1357,10 +1424,14 @@ Every public export of every package — name, kind, signature, and doc summary 
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this — not {@link definePlugin} — for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
 - **diffRouteSnapshots** _(function)_ — `diffRouteSnapshots: (before: readonly RouteSnapshot[], after: readonly RouteSnapshot[]) => RoutesDiff`
   Diff two route snapshots (`snapshotRoutes` output, possibly restored from JSON). Every change is classified breaking/compatible/info; `hasBreaking` is the CI-gate bit.
+- **evaluateRouteAssurance** _(function)_ — `evaluateRouteAssurance: (source: unknown, policyInput: AssurancePolicy) => AssuranceReport`
+  Evaluate reflected route evidence against the first matching policy rule.
 - **implement** _(function)_ — `implement: <const C extends ContractShape, H extends HandlersFor<C>>(contract: C, handlers: H) => Server<RegistryFromImpl<C, H>>`
   Bind handlers to a contract, producing a real {@link Server} you can `.listen()` or `.fetch()`. Each op is registered through the same path as the inline builder, so the result is identical to writing the routes inline — handlers lift over **unchanged** ("graduation"), and body/query schemas valida…
 - **jsonLogger** _(function)_ — `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
   The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction — pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
+- **matchesAssuranceSelector** _(function)_ — `matchesAssuranceSelector: (route: Pick<ReflectedRoute, "method" | "path" | "tool">, selector: AssuranceRouteSelector) => boolean`
+  Shared selector semantics for policy rules and framework adapters.
 - **parseCookies** _(function)_ — `parseCookies: (header: string | null | undefined) => Record<string, string>`
   Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are skipped rather than throwing — a junk `Cookie` header shouldn't fail the request.
 - **redactLogFields** _(function)_ — `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
@@ -1393,3 +1464,5 @@ Every public export of every package — name, kind, signature, and doc summary 
   Run a Standard Schema and normalize the result. Sync validators stay sync; async validators are awaited.
 - **verifyWebhook** _(function)_ — `verifyWebhook: (req: Request, secret: string | readonly string[], options?: VerifyWebhookOptions) => Promise<WebhookResult>`
   Verify a webhook request's signature and return its raw payload. Reads `req.body` (bounded), so the body is consumed — parse the returned `payload`, don't re-read the request.
+- **withRouteAssurance** _(function)_ — `withRouteAssurance: <T extends object>(target: T, declaration: AssuranceDeclaration | readonly AssuranceDeclaration[]) => T`
+  Attach enforcement evidence to the middleware/plugin that installs it.

@@ -124,6 +124,8 @@ test("--target static → prerenders opted-in routes to index.html [#5]", async 
   expect(result.client.entry).toMatch(/\/_nifra-entry-[A-Za-z0-9]+\.js$/)
   expect(html).toContain(`"${result.client.entry}"`)
   expect(existsSync(join(outDir, result.client.entry.replace(/^\//, "")))).toBe(true)
+  // The generated client-entry SOURCE must NOT ship: only the hashed .js belongs in the deploy dir.
+  expect(existsSync(join(outDir, "assets", "_nifra-entry.ts"))).toBe(false)
 }, 60_000)
 
 test("--target static with no prerenderable route throws a clear error [#5]", async () => {
