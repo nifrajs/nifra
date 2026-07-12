@@ -26,4 +26,20 @@ export {
   runAdversarialContract,
 } from "./adversarial.ts"
 export { type CookieJar, cookieJar } from "./cookies.ts"
+export {
+  type CaptureIncidentOptions,
+  type CapturedRequest,
+  type CapturedRequestInput,
+  captureIncident,
+  type GenerateRegressionTestOptions,
+  generateRegressionTest,
+  type IncidentCapsule,
+  IncidentReplayError,
+  type IncidentReplayResult,
+  type ReplayIncidentOptions,
+  assertIncidentReplays,
+  redactForEmission,
+  replayIncident,
+  shapeOf,
+} from "./incident.ts"
 export { type AppLike, type TestSession, type TestSessionOptions, testSession } from "./session.ts"
