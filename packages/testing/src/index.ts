@@ -8,5 +8,22 @@
  *   const { client, cookies } = testSession<typeof app>(app)
  */
 
+export {
+  AdversarialContractError,
+  type AdversarialContractOptions,
+  type AdversarialContractReport,
+  type AdversarialContractResult,
+  assertAdversarialContract,
+  type ContractCaseContext,
+  type ContractCaseKind,
+  type ContractCoverageGap,
+  type ContractCoverageGapCode,
+  type ContractReplay,
+  type ContractRuntime,
+  type ContractTarget,
+  type ContractTestApp,
+  type ContractWitness,
+  runAdversarialContract,
+} from "./adversarial.ts"
 export { type CookieJar, cookieJar } from "./cookies.ts"
 export { type AppLike, type TestSession, type TestSessionOptions, testSession } from "./session.ts"
