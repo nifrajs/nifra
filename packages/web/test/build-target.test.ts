@@ -99,7 +99,10 @@ test("--target cf-pages → _worker.js + _routes.json + /assets bundle [#5]", as
 test("--target static → prerenders opted-in routes to index.html [#5]", async () => {
   const outDir = join(projectRoot, "dist-static")
   const manifest = discoverRoutes(routesDir)
-  const app = createWebApp({ adapter: stubAdapter, manifest, clientEntry: "/assets/entry.js" })
+  // prerenderApp is a FACTORY given the client build's manifest, so the hydration <script> uses the REAL
+  // content-hashed entry that was emitted (not a placeholder that would 404 → no hydration).
+  const app = (client: { entry: string }) =>
+    createWebApp({ adapter: stubAdapter, manifest, clientEntry: client.entry })
 
   const result = await buildTarget("static", {
     routesDir,
@@ -116,13 +119,19 @@ test("--target static → prerenders opted-in routes to index.html [#5]", async 
   expect(html).toContain("nifra")
   // The client bundle is still emitted under /assets for hydration.
   expect(existsSync(join(outDir, "assets"))).toBe(true)
+  // Regression guard (static hydration): the emitted HTML must reference the REAL content-hashed client
+  // entry, and that file must actually exist under /assets — a placeholder 404s → the page never hydrates.
+  expect(result.client.entry).toMatch(/\/_nifra-entry-[A-Za-z0-9]+\.js$/)
+  expect(html).toContain(`"${result.client.entry}"`)
+  expect(existsSync(join(outDir, result.client.entry.replace(/^\//, "")))).toBe(true)
 }, 60_000)
 
 test("--target static with no prerenderable route throws a clear error [#5]", async () => {
   // Replace the opted-in route with one that doesn't opt in.
   writeFileSync(join(routesDir, "index.tsx"), "export default function Home() { return null }\n")
   const manifest = discoverRoutes(routesDir)
-  const app = createWebApp({ adapter: stubAdapter, manifest, clientEntry: "/assets/entry.js" })
+  const app = (client: { entry: string }) =>
+    createWebApp({ adapter: stubAdapter, manifest, clientEntry: client.entry })
   const promise = buildTarget("static", {
     routesDir,
     outDir: join(projectRoot, "dist-empty"),

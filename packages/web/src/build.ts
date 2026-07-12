@@ -1310,9 +1310,12 @@ export interface BuildTargetOptions {
   readonly adapterImport: string
   /** Import specifier (resolvable from `workDir`) of the module exporting `backend`, or `undefined`. */
   readonly backendImport?: string
-  /** A pre-built app instance for `static` prerendering (a `createWebApp` result). Required for
-   * `target: "static"` (SSG drives `app.fetch`); ignored otherwise. */
-  readonly prerenderApp?: PrerenderAppLike
+  /** Factory that builds the app for `static` prerendering, GIVEN the client build's manifest — so the
+   * emitted hydration `<script src>` uses the REAL content-hashed entry (`client.entry`) plus the same
+   * styles/route-preload the server targets use. A pre-built instance can't work here: the hash isn't known
+   * until `buildClient` runs inside `buildTarget`, so a hardcoded entry 404s → pages render but never
+   * hydrate. Required for `target: "static"` (SSG drives `app.fetch`); ignored otherwise. */
+  readonly prerenderApp?: (client: BuildManifest) => PrerenderAppLike | Promise<PrerenderAppLike>
   /** Client-build plugins (e.g. the MDX/Vue/Solid Bun plugins). */
   readonly clientPlugins?: readonly BunPlugin[]
   /** Server-build plugins (e.g. the SSR variants). */
@@ -1385,12 +1388,16 @@ export async function buildTarget(
   if (target === "static") {
     if (options.prerenderApp === undefined) {
       throw new Error(
-        "[nifra/web] buildTarget(static) requires `prerenderApp` (a built createWebApp)",
+        "[nifra/web] buildTarget(static) requires `prerenderApp` (a factory `(client) => createWebApp`)",
       )
     }
     const manifest = discoverRoutes(routesDir)
+    // Build the prerender app with the REAL content-hashed client entry (+ styles/preload) from the client
+    // build above, so the hydration `<script src>` the prerendered HTML emits matches the emitted bundle.
+    // A stale/placeholder entry here 404s → the pages render but never hydrate (inert controls).
+    const app = await options.prerenderApp(client)
     const result = await prerenderRoutes({
-      app: options.prerenderApp,
+      app,
       routes: manifest.routes,
       outDir,
     })

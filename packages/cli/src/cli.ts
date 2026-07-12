@@ -181,24 +181,28 @@ async function buildForTarget(app: LoadedApp, target: string, report: boolean): 
   if (report) console.log(`\n${renderSizeReport(result.size)}`)
 }
 
-/** Build a fetch-capable app instance for the `static` target's prerender pass. Mirrors `nifra start`:
- * register the framework's SSR Bun plugins (so `.vue`/`.svelte`/Solid routes import), discover routes,
- * and wire the in-process backend so build-time loaders can read data. The returned `Server` already
- * satisfies `buildTarget`'s `PrerenderAppLike` (a `fetch(req)` yielding a `Response`). */
+/** Build the app FACTORY for the `static` target's prerender pass. Mirrors `nifra start`: register the
+ * framework's SSR Bun plugins (so `.vue`/`.svelte`/Solid routes import) once, then return a factory that
+ * `createWebApp`s the app for the client build's manifest. The client entry MUST be the real content-hashed
+ * bundle (`client.entry`) — it's the hydration `<script src>` the prerendered HTML emits, so a placeholder
+ * would 404 and the pages would render but never hydrate (inert controls). Styles/route-preload are wired
+ * from the same manifest so the static HTML matches what `nifra start` serves. */
 async function buildPrerenderApp(
   app: LoadedApp,
-): Promise<{ fetch(req: Request): Response | Promise<Response> }> {
+): Promise<(client: BuiltManifest) => { fetch(req: Request): Response | Promise<Response> }> {
   const { plugin } = await import("bun")
   const { framework: fw, routesDir, backend } = app
   for (const p of asBunPlugins(await resolvePlugins(fw.serverPlugins))) plugin(p)
-  return createWebApp({
-    adapter: asAdapter(fw.adapter),
-    manifest: discoverRoutes(routesDir),
-    // The client entry is irrelevant to the static HTML (it's a hydration script tag) — a placeholder
-    // is fine; the real hashed bundle is emitted to /assets by buildTarget's client build.
-    clientEntry: "/assets/_nifra-entry.js",
-    ...apiOf(backend),
-  })
+  return (client) =>
+    createWebApp({
+      adapter: asAdapter(fw.adapter),
+      manifest: discoverRoutes(routesDir),
+      clientEntry: client.entry,
+      ...(client.routes ? { routePreload: client.routes } : {}),
+      ...(client.css ? { styles: client.css } : {}),
+      ...(client.routeStyles ? { routeStyles: client.routeStyles } : {}),
+      ...apiOf(backend),
+    })
 }
 
 interface BuiltManifest {
