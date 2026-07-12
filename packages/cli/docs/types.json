@@ -41,6 +41,13 @@
     "doc": "/**\n * Merge a new route into the registry, combining methods that share a path.\n *\n * SCALING CEILING (measured — see many-routes.test-d.ts and the isolation study below): a single\n * fluent chain hits TS2589 at ~95-100 routes. This intersection is NOT the cause — in isolation it\n * accumulates 1000+ routes cleanly, and heavy per-route `Params<Path>`/schema inference alone\n * reaches 600+. The wall is an INTERACTION unique to the fluent builder: each `.get(path, handler)`\n * both (a) computes the handler's context type from the path (`c.params.id` inferred from `:id`)\n * AND (b) returns `Server<AddRoute<growing-R, …>, Ctx>`. Neither alone strains the compiler; the\n * PRODUCT — recomputing the handler context while re-threading the ever-larger registry at each of\n * N steps — exhausts TypeScript's per-expression instantiation budget around N≈95. It is therefore\n * O(N) and inherent to any builder that infers handler context AND accumulates a typed route\n * registry (Elysia/tRPC/hono's typed clients cap the same way); it is not fixable by reshaping\n * AddRoute. Past ~90 routes, use a path that DOESN'T form the product: split into domain groups and\n * `.merge()` them (each group is a short chain; a merge is one `R & R2` intersection with no\n * per-call context work), or contract-first `implement()` (the registry is one object type declared\n * upfront — no grow-R-per-call, so no ceiling at all).\n */"
   },
   {
+    "name": "admitDeadline",
+    "kind": "function",
+    "package": "@nifrajs/budget",
+    "signature": "export declare function admitDeadline(headers: Headers, options?: DeadlineAdmissionOptions): DeadlineAdmission;",
+    "doc": "/**\n * Validate and clamp an inbound absolute deadline. This is pure admission mechanics: callers supply\n * local policy, then own the timer that drives their existing cancellation signal.\n */"
+  },
+  {
     "name": "AdversarialContractError",
     "kind": "class",
     "package": "@nifrajs/testing",
@@ -227,6 +234,13 @@
     "doc": "/**\n * Sync the document head to a route's resolved {@link Meta} on client navigation. Sets the title\n * (when provided) and replaces the **managed** (`data-nifra`) `<meta>`/`<link>` tags — static head\n * content (charset, hand-written tags) is never touched. SSR injects the same `data-nifra` tags, so\n * the first navigation cleanly takes over from the server-rendered head.\n */"
   },
   {
+    "name": "applyImportMoves",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function applyImportMoves(text: string, moves: readonly {\n    from: string;\n    to: string;\n}[]): {\n    text: string;\n    changes: Array<{\n        from: string;\n        to: string;\n        count: number;\n    }>;\n};",
+    "doc": "/** Rewrite exact import/export/require/dynamic-import specifiers in one source file's text. */"
+  },
+  {
     "name": "applyResponseHeaders",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -246,6 +260,20 @@
     "package": "create-nifra",
     "signature": "export declare function assertAuthableDb(db: DbChoice): void;",
     "doc": "/**\n * Guard `--auth` against a DB whose ORM has no clean better-auth adapter. Throws an actionable error\n * for Kysely (passing a raw dialect to better-auth is manual wiring we won't fake-scaffold). Called by\n * the CLI before scaffolding so the failure is early and explains the fix.\n */"
+  },
+  {
+    "name": "assertBudgetRemaining",
+    "kind": "function",
+    "package": "@nifrajs/budget",
+    "signature": "export declare function assertBudgetRemaining(budget: RequestBudget, requiredMs?: number): void;",
+    "doc": "/** Fail before starting work that cannot fit inside the remaining time. */"
+  },
+  {
+    "name": "assertIncidentReplays",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function assertIncidentReplays(app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions): Promise<void>;",
+    "doc": "/** Assert a captured incident still reproduces against the current app. Throws {@link IncidentReplayError}. */"
   },
   {
     "name": "assertRenderAdapterConformance",
@@ -585,6 +613,13 @@
     "doc": "/** The bridge source, as a string for inlining in a `<script>`. Self-contained, no imports. */"
   },
   {
+    "name": "BudgetClock",
+    "kind": "interface",
+    "package": "@nifrajs/budget",
+    "signature": "export interface BudgetClock {\n    /** Monotonic milliseconds; must never move backwards during the process lifetime. */\n    monotonic(): number;\n    /** Unix epoch milliseconds; used only to translate an absolute wire deadline on admission. */\n    wall(): number;\n}",
+    "doc": "/** The only clocks deadline mechanics need. Inject both for deterministic tests. */"
+  },
+  {
     "name": "BUILD_TARGETS",
     "kind": "const",
     "package": "@nifrajs/web",
@@ -778,11 +813,43 @@
     "doc": "/**\n * Pluggable ISR cache backend. **Production deploys MUST use a shared/durable store** (Workers KV,\n * Redis, the platform Cache API) so cached pages *and* revalidation hold across instances;\n * {@link MemoryCacheStore} is dev / single-instance only. Implementations are async so a network store\n * (KV/Redis) fits the same interface.\n */"
   },
   {
+    "name": "canAttempt",
+    "kind": "function",
+    "package": "@nifrajs/budget",
+    "signature": "export declare function canAttempt(budget: RequestBudget, estimatedAttemptMs: number, reserveMs?: number): boolean;",
+    "doc": "/** True only when a new attempt plus a caller-owned reserve can still fit. */"
+  },
+  {
     "name": "canonical",
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function canonical(href: string): LinkDescriptor;",
     "doc": "/**\n * A `<link rel=\"canonical\">` descriptor for a route's `meta.link`. The canonical URL tells search\n * engines which URL is authoritative for a page (deduping query-string / tracking variants).\n *\n * ```ts\n * export const meta = (a) => ({ link: [canonical(`https://site.com/posts/${a.params.slug}`)] })\n * ```\n */"
+  },
+  {
+    "name": "CapturedRequest",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface CapturedRequest {\n    readonly method: string;\n    readonly path: string;\n    readonly query?: Record<string, string>;\n    readonly headers?: Record<string, string>;\n    readonly body?: unknown;\n}"
+  },
+  {
+    "name": "CapturedRequestInput",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface CapturedRequestInput {\n    readonly method?: string;\n    readonly path: string;\n    readonly query?: Record<string, string>;\n    readonly headers?: Record<string, string>;\n    readonly body?: unknown;\n}"
+  },
+  {
+    "name": "captureIncident",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function captureIncident(request: Request | CapturedRequestInput, response: Response | {\n    status: number;\n    body?: unknown;\n}, options?: CaptureIncidentOptions): Promise<IncidentCapsule>;",
+    "doc": "/** Build a capsule from a real `Request`+`Response`, or from plain captured fields. */"
+  },
+  {
+    "name": "CaptureIncidentOptions",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface CaptureIncidentOptions {\n    readonly id?: string;\n    readonly capturedAt?: string;\n    /** Header names to keep on the capsule (lowercased match). Default: only `content-type`. */\n    readonly headerAllowList?: readonly string[];\n    readonly note?: string;\n}"
   },
   {
     "name": "CheckDiagnostic",
@@ -1021,6 +1088,13 @@
     "doc": "/** Derived value, cached into a signal — recomputes when its tracked inputs change. */"
   },
   {
+    "name": "computeUpgrade",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function computeUpgrade(cwd: string, recipe: UpgradeRecipe, write: boolean): UpgradePlan;",
+    "doc": "/** Compute the plan (and, when `write`, apply it) for a target recipe against `cwd`. */"
+  },
+  {
     "name": "consoleAgentExporter",
     "kind": "function",
     "package": "@nifrajs/agent-telemetry",
@@ -1097,7 +1171,7 @@
     "name": "Context",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface Context<Path extends string = string, S extends RouteSchema = RouteSchema> {\n    readonly req: Request;\n    /**\n     * Alias of {@link req} — the same `Request`. Page loaders/actions receive their request as `request`;\n     * this alias lets route handlers and loaders share one name, so `c.request` and `ctx.req` both work\n     * everywhere (no more `c.req` vs `ctx.request` mismatch).\n     */\n    readonly request: Request;\n    readonly params: Params<Path>;\n    readonly query: QueryOf<S>;\n    readonly body: BodyOf<S>;\n    /** The request's cookies, parsed from the `Cookie` header (values URL-decoded). Parsed lazily on\n     * first access + cached. Signed cookies arrive as `value.signature` — verify with `unsignValue`. */\n    readonly cookies: Readonly<Record<string, string>>;\n    readonly set: ResponseControls;\n    /**\n     * Aborts when the server's `requestTimeoutMs` elapses (and never, when no timeout\n     * is configured). Pass it to cancellation-aware work — DB drivers, `fetch` — so a\n     * timed-out request stops doing work instead of running on after the 503.\n     */\n    readonly signal: AbortSignal;\n    /**\n     * Platform bindings from `app.fetch(request, { env })` — Workers `env` (KV/D1/secrets), etc.\n     * `undefined` off-edge (Bun/Node/Deno). Declare the shape with `server<Env>()` to read it typed\n     * (`c.env: Env`); otherwise `unknown`. Validate at the trust boundary before use either way.\n     */\n    readonly env: unknown;\n    /**\n     * Schedule background work. On edge runtimes it extends the response lifetime (Workers\n     * `ctx.waitUntil`); off-edge it runs the promise fire-and-forget (a rejection is swallowed,\n     * never an unhandled rejection).\n     */\n    readonly waitUntil: (promise: Promise<unknown>) => void;\n    /**\n     * Read the raw request body as bytes, **capped** at `maxBytes` (default: the server's\n     * `maxBodyBytes`). For routes with **no body schema** — raw bodies, file uploads,\n     * BYO-validation — where the automatic schema cap doesn't apply. An over-cap body (by\n     * `Content-Length` or while streaming) throws a flat `413`; a malformed `Content-Length`\n     * throws `400`. Consumes the body stream (call once). Pass a larger `maxBytes` for an\n     * upload route, a smaller one to tighten a specific endpoint.\n     */\n    readonly boundedBody: (maxBytes?: number) => Promise<Uint8Array>;\n    /**\n     * `boundedBody` + `JSON.parse` (UTF-8). Same cap + `413`/`400` semantics; additionally\n     * throws a flat `400` on invalid JSON. Use for a schema-less JSON endpoint that still\n     * wants the body bounded.\n     */\n    readonly boundedJson: <T = unknown>(maxBytes?: number) => Promise<T>;\n    /**\n     * Build a JSON `Response`. Pass a status number or a full `ResponseInit` as the second arg. `return` it\n     * from a handler, or `throw` it from `derive`/`beforeHandle` to short-circuit — both work:\n     * `throw c.json({ error: \"unauthorized\" }, 401)`. A terser alternative to\n     * `new Response(JSON.stringify(...), { status, headers: { \"content-type\": \"application/json\" } })`.\n     */\n    readonly json: (body: unknown, init?: ResponseInit | number) => Response;\n    /** Build a `text/plain; charset=utf-8` `Response`. Like {@link json}, pass a status or `ResponseInit`. */\n    readonly text: (body: string, init?: ResponseInit | number) => Response;\n}",
+    "signature": "export interface Context<Path extends string = string, S extends RouteSchema = RouteSchema> {\n    readonly req: Request;\n    /**\n     * Alias of {@link req} — the same `Request`. Page loaders/actions receive their request as `request`;\n     * this alias lets route handlers and loaders share one name, so `c.request` and `ctx.req` both work\n     * everywhere (no more `c.req` vs `ctx.request` mismatch).\n     */\n    readonly request: Request;\n    readonly params: Params<Path>;\n    readonly query: QueryOf<S>;\n    readonly body: BodyOf<S>;\n    /** The request's cookies, parsed from the `Cookie` header (values URL-decoded). Parsed lazily on\n     * first access + cached. Signed cookies arrive as `value.signature` — verify with `unsignValue`. */\n    readonly cookies: Readonly<Record<string, string>>;\n    readonly set: ResponseControls;\n    /**\n     * Aborts when the server's `requestTimeoutMs` elapses (and never, when no timeout\n     * is configured). Pass it to cancellation-aware work — DB drivers, `fetch` — so a\n     * timed-out request stops doing work instead of running on after the 503.\n     */\n    readonly signal: AbortSignal;\n    /**\n     * Absolute request deadline plus monotonic remaining time. It shares {@link signal}; the server\n     * clamps an inbound deadline to local policy before constructing it.\n     */\n    readonly budget: RequestBudget;\n    /**\n     * Platform bindings from `app.fetch(request, { env })` — Workers `env` (KV/D1/secrets), etc.\n     * `undefined` off-edge (Bun/Node/Deno). Declare the shape with `server<Env>()` to read it typed\n     * (`c.env: Env`); otherwise `unknown`. Validate at the trust boundary before use either way.\n     */\n    readonly env: unknown;\n    /**\n     * Schedule background work. On edge runtimes it extends the response lifetime (Workers\n     * `ctx.waitUntil`); off-edge it runs the promise fire-and-forget (a rejection is swallowed,\n     * never an unhandled rejection).\n     */\n    readonly waitUntil: (promise: Promise<unknown>) => void;\n    /**\n     * Read the raw request body as bytes, **capped** at `maxBytes` (default: the server's\n     * `maxBodyBytes`). For routes with **no body schema** — raw bodies, file uploads,\n     * BYO-validation — where the automatic schema cap doesn't apply. An over-cap body (by\n     * `Content-Length` or while streaming) throws a flat `413`; a malformed `Content-Length`\n     * throws `400`. Consumes the body stream (call once). Pass a larger `maxBytes` for an\n     * upload route, a smaller one to tighten a specific endpoint.\n     */\n    readonly boundedBody: (maxBytes?: number) => Promise<Uint8Array>;\n    /**\n     * `boundedBody` + `JSON.parse` (UTF-8). Same cap + `413`/`400` semantics; additionally\n     * throws a flat `400` on invalid JSON. Use for a schema-less JSON endpoint that still\n     * wants the body bounded.\n     */\n    readonly boundedJson: <T = unknown>(maxBytes?: number) => Promise<T>;\n    /**\n     * Build a JSON `Response`. Pass a status number or a full `ResponseInit` as the second arg. `return` it\n     * from a handler, or `throw` it from `derive`/`beforeHandle` to short-circuit — both work:\n     * `throw c.json({ error: \"unauthorized\" }, 401)`. A terser alternative to\n     * `new Response(JSON.stringify(...), { status, headers: { \"content-type\": \"application/json\" } })`.\n     */\n    readonly json: (body: unknown, init?: ResponseInit | number) => Response;\n    /** Build a `text/plain; charset=utf-8` `Response`. Like {@link json}, pass a status or `ResponseInit`. */\n    readonly text: (body: string, init?: ResponseInit | number) => Response;\n}",
     "doc": "/**\n * Handler context. `params` are inferred from the path; `body` and `query` are\n * the validated outputs of their schemas when declared (else `undefined` /\n * raw `URLSearchParams`).\n */"
   },
   {
@@ -1268,6 +1342,13 @@
     "doc": "/** Start the dev server: build → serve → watch → rebuild + reload on change. */"
   },
   {
+    "name": "createEventRegistry",
+    "kind": "function",
+    "package": "@nifrajs/events",
+    "signature": "export declare function createEventRegistry(contracts: readonly EventContract[]): EventRegistry;",
+    "doc": "/** Build a registry from a set of contracts. Throws on a duplicate `type@version`. */"
+  },
+  {
     "name": "createFetcher",
     "kind": "function",
     "package": "@nifrajs/web-solid",
@@ -1355,6 +1436,19 @@
     "doc": "/** Create a job queue. Define jobs, enqueue payloads, and `start()` a worker (or `drain()` once). */"
   },
   {
+    "name": "createRequestBudget",
+    "kind": "function",
+    "package": "@nifrajs/budget",
+    "signature": "export declare function createRequestBudget(options: CreateRequestBudgetOptions): RequestBudget;",
+    "doc": "/**\n * Create a budget from an admitted absolute deadline. Wall time is sampled once; every subsequent\n * `remaining()` call is monotonic. This function does not arm a timer—the owner of `signal` does.\n */"
+  },
+  {
+    "name": "CreateRequestBudgetOptions",
+    "kind": "interface",
+    "package": "@nifrajs/budget",
+    "signature": "export interface CreateRequestBudgetOptions {\n    /** Absolute Unix epoch deadline. */\n    readonly deadline: number;\n    readonly signal: AbortSignal;\n    readonly clock?: BudgetClock;\n}"
+  },
+  {
     "name": "createScheduler",
     "kind": "function",
     "package": "@nifrajs/cron",
@@ -1373,6 +1467,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function createStylesheetEmitter(build: PluginBuilder, namespace: string): StylesheetEmitter;",
     "doc": "/**\n * Wire the virtual-CSS-module handlers onto `build` for `namespace`, returning an {@link StylesheetEmitter}.\n * The `namespace` must be a plain identifier (letters/`-`); it's used verbatim as the import suffix and\n * the Bun namespace. Only the `\"dom\"` build should emit CSS — the `\"ssr\"` build ships no stylesheet.\n */"
+  },
+  {
+    "name": "createUnboundedRequestBudget",
+    "kind": "function",
+    "package": "@nifrajs/budget",
+    "signature": "export declare function createUnboundedRequestBudget(signal: AbortSignal): RequestBudget;",
+    "doc": "/** Create a local no-deadline view. Outbound header propagation deliberately omits it. */"
   },
   {
     "name": "createViteDevServer",
@@ -1507,6 +1608,37 @@
     "signature": "export interface DbPreset {\n    /** Human label for messages, e.g. \"Drizzle + libSQL\". */\n    readonly label: string;\n    /** Which ORM/query-layer this preset wires (its query idiom + migration story differ). */\n    readonly orm: Orm;\n    /** SQL dialect, for the auth adapter's `provider` mapping. */\n    readonly dialect: \"postgres\" | \"sqlite\";\n    /** One-line runtime-fit note (next-steps message + AGENTS.md). */\n    readonly note: string;\n    readonly deps: Readonly<Record<string, string>>;\n    readonly devDeps: Readonly<Record<string, string>>;\n    readonly scripts: Readonly<Record<string, string>>;\n    /** Relative path → file contents to write into the scaffolded app. */\n    readonly files: Readonly<Record<string, string>>;\n}"
   },
   {
+    "name": "DeadlineAdmission",
+    "kind": "type",
+    "package": "@nifrajs/budget",
+    "signature": "export type DeadlineAdmission = {\n    readonly ok: true;\n    readonly inherited: boolean;\n    readonly timeoutMs: number;\n    /** Absent only for the unbounded no-header/no-local-timeout case. */\n    readonly deadline?: number;\n} | {\n    readonly ok: false;\n    readonly status: 400 | 408;\n    readonly reason: \"malformed_deadline\" | \"deadline_exceeded\";\n};"
+  },
+  {
+    "name": "DeadlineAdmissionOptions",
+    "kind": "interface",
+    "package": "@nifrajs/budget",
+    "signature": "export interface DeadlineAdmissionOptions {\n    /** Local request timeout. `0` keeps requests without a wire deadline unbounded. */\n    readonly localTimeoutMs?: number;\n    /** Hard cap for a request carrying the wire header. Default 30 seconds. */\n    readonly maxInboundDeadlineMs?: number;\n    /** Injected wall clock for deterministic admission tests. */\n    readonly wallNow?: () => number;\n}"
+  },
+  {
+    "name": "DeadlineExceededError",
+    "kind": "class",
+    "package": "@nifrajs/budget",
+    "signature": "export declare class DeadlineExceededError extends Error {\n    readonly remainingMs: number;\n    readonly requiredMs: number;\n    readonly code: \"NIFRA_DEADLINE_EXCEEDED\";\n    readonly status: 504;\n    constructor(remainingMs: number, requiredMs: number);\n}"
+  },
+  {
+    "name": "DeadlineHeaderResult",
+    "kind": "type",
+    "package": "@nifrajs/budget",
+    "signature": "export type DeadlineHeaderResult = {\n    readonly ok: true;\n    readonly deadline: number;\n} | {\n    readonly ok: false;\n    readonly reason: \"missing\" | \"malformed\";\n};"
+  },
+  {
+    "name": "DeadlineHeadersInit",
+    "kind": "type",
+    "package": "@nifrajs/budget",
+    "signature": "export type DeadlineHeadersInit = Headers | Readonly<Record<string, string>> | string[][] | undefined;",
+    "doc": "/** DOM-lib-independent subset accepted by the Web `Headers` constructor. */"
+  },
+  {
     "name": "declarationApplies",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -1612,6 +1744,13 @@
     "kind": "interface",
     "package": "@nifrajs/env",
     "signature": "export interface DefineEnvOptions {\n    /**\n     * Where to read variables from. Defaults to `process.env` (Bun/Node). On Cloudflare Workers there\n     * is no `process.env` — pass the request's `env` bindings: `defineEnv(shape, { source: env })`.\n     */\n    readonly source?: Record<string, string | undefined>;\n}"
+  },
+  {
+    "name": "defineEventContract",
+    "kind": "function",
+    "package": "@nifrajs/events",
+    "signature": "export declare function defineEventContract<Schema extends StandardSchemaV1>(spec: {\n    type: string;\n    version: number;\n    payload: Schema;\n}): EventContract<Schema>;",
+    "doc": "/** Define a portable, versioned event contract. */"
   },
   {
     "name": "defineIdentityPlugin",
@@ -2037,6 +2176,38 @@
     "doc": "/** Evaluate reflected route evidence against the first matching policy rule. */"
   },
   {
+    "name": "EventContract",
+    "kind": "interface",
+    "package": "@nifrajs/events",
+    "signature": "export interface EventContract<Schema extends StandardSchemaV1 = StandardSchemaV1> {\n    readonly type: string;\n    readonly version: number;\n    readonly payload: Schema;\n    /**\n     * Validate a payload and stamp a full envelope (`id`, `occurredAt`). Throws {@link EventContractError}\n     * on an invalid payload. Sync validators only — an async schema throws (use a sync payload schema for\n     * events; the whole point is a cheap boundary check).\n     */\n    create(payload: InferInput<Schema>, options?: {\n        id?: string;\n        occurredAt?: string;\n    }): EventEnvelope<InferOutput<Schema>>;\n    /** Parse untrusted input against this exact contract (type + version + payload). Never throws. */\n    parse(input: unknown): EventParseResult<InferOutput<Schema>>;\n    /** Boolean guard form of {@link parse}. */\n    is(input: unknown): input is EventEnvelope<InferOutput<Schema>>;\n}"
+  },
+  {
+    "name": "EventContractError",
+    "kind": "class",
+    "package": "@nifrajs/events",
+    "signature": "export declare class EventContractError extends Error {\n    readonly type: string;\n    readonly version: number;\n    readonly issues: readonly StandardIssue[];\n    constructor(type: string, version: number, issues: readonly StandardIssue[]);\n}",
+    "doc": "/** Thrown by {@link EventContract.create} when the payload fails the contract schema. */"
+  },
+  {
+    "name": "EventEnvelope",
+    "kind": "interface",
+    "package": "@nifrajs/events",
+    "signature": "export interface EventEnvelope<Payload = unknown> {\n    /** Unique event id (`evt_<uuid>`), stable across redeliveries. */\n    readonly id: string;\n    /** Event type name, e.g. `order.paid`. */\n    readonly type: string;\n    /** Contract version. Bump on a breaking payload change; old + new versions coexist in a registry. */\n    readonly version: number;\n    /** ISO-8601 instant the event occurred. */\n    readonly occurredAt: string;\n    readonly payload: Payload;\n}",
+    "doc": "/** The portable wire shape: identity + versioned type + timestamp + validated payload. */"
+  },
+  {
+    "name": "EventParseResult",
+    "kind": "type",
+    "package": "@nifrajs/events",
+    "signature": "export type EventParseResult<Payload> = {\n    readonly success: true;\n    readonly envelope: EventEnvelope<Payload>;\n} | {\n    readonly success: false;\n    readonly issues: readonly StandardIssue[];\n};"
+  },
+  {
+    "name": "EventRegistry",
+    "kind": "interface",
+    "package": "@nifrajs/events",
+    "signature": "export interface EventRegistry {\n    readonly contracts: readonly EventContract[];\n    /** Look up a contract by type + version (defaults to version 0). */\n    get(type: string, version?: number): EventContract | undefined;\n    /** Dispatch untrusted input to its contract by `type`/`version` and parse. Never throws. */\n    parse(input: unknown): RegistryParseResult;\n}"
+  },
+  {
     "name": "Evidence",
     "kind": "interface",
     "package": "@nifrajs/cli",
@@ -2422,6 +2593,19 @@
     "doc": "/**\n * Generate a mock value from a schema object. Inspects JSON Schema properties\n * (`type`, `properties`, `items`, `enum`, `format`) that TypeBox / NifraSchema\n * objects carry directly. Unsupported constraints fail closed with\n * {@link UnsupportedMockSchemaError} rather than returning a known-invalid response.\n *\n * @param schema  A JSON-Schema-shaped object (TypeBox, NifraSchema, or raw JSON Schema)\n * @param fieldName  Optional field name hint for generating contextual string values\n * @param rng  Optional seeded random function for deterministic output\n */"
   },
   {
+    "name": "generateRegressionTest",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function generateRegressionTest(capsule: IncidentCapsule, options?: GenerateRegressionTestOptions): string;",
+    "doc": "/**\n * Emit a committable regression test from a capsule. Request string values are redacted BY DEFAULT with\n * a sanitize banner — replace the `<redacted>` placeholders with safe, reproducing values before you\n * commit. The test asserts the response contract via {@link assertIncidentReplays}.\n */"
+  },
+  {
+    "name": "GenerateRegressionTestOptions",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface GenerateRegressionTestOptions {\n    /** Import specifier for the app under test. Default `\"../src/app\"`. */\n    readonly importPath?: string;\n    /** Named export of the app. Default `\"app\"`. */\n    readonly appExport?: string;\n    /** Also assert the response shape. Default false (status-only is the robust regression signal). */\n    readonly assertShape?: boolean;\n    /** Dotted key paths in the request body whose string values are safe to embed verbatim. */\n    readonly allow?: readonly string[];\n}"
+  },
+  {
     "name": "generateServerEntry",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -2461,6 +2645,12 @@
     "package": "@nifrajs/middleware",
     "signature": "export declare function getContext<C extends Context = Context>(): C;",
     "doc": "/** Return the current request context, or throw when no context-storage wrapper is active. */"
+  },
+  {
+    "name": "getRecipe",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function getRecipe(version: string): UpgradeRecipe | undefined;"
   },
   {
     "name": "getSession",
@@ -2873,10 +3063,41 @@
     "doc": "/**\n * Bind handlers to a contract, producing a real {@link Server} you can `.listen()`\n * or `.fetch()`. Each op is registered through the same path as the inline\n * builder, so the result is identical to writing the routes inline — handlers\n * lift over **unchanged** (\"graduation\"), and body/query schemas validate at the\n * request boundary exactly as in inline mode.\n */"
   },
   {
+    "name": "ImportChange",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface ImportChange {\n    readonly file: string;\n    readonly from: string;\n    readonly to: string;\n    readonly count: number;\n}"
+  },
+  {
     "name": "importHmacKey",
     "kind": "function",
     "package": "@nifrajs/middleware",
     "signature": "export declare function importHmacKey(secret: string | Uint8Array, hash?: string): Promise<CryptoKey>;"
+  },
+  {
+    "name": "ImportMove",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface ImportMove {\n    readonly from: string;\n    readonly to: string;\n}",
+    "doc": "/** An exact import-specifier rewrite (string-level, not AST): `from` → `to`. */"
+  },
+  {
+    "name": "IncidentCapsule",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface IncidentCapsule {\n    readonly id: string;\n    readonly capturedAt: string;\n    readonly request: CapturedRequest;\n    readonly response: {\n        readonly status: number;\n        readonly bodyShape?: unknown;\n    };\n    readonly note?: string;\n}"
+  },
+  {
+    "name": "IncidentReplayError",
+    "kind": "class",
+    "package": "@nifrajs/testing",
+    "signature": "export declare class IncidentReplayError extends Error {\n    readonly result: IncidentReplayResult;\n    readonly capsuleId: string;\n    constructor(capsule: IncidentCapsule, result: IncidentReplayResult);\n}"
+  },
+  {
+    "name": "IncidentReplayResult",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface IncidentReplayResult {\n    readonly reproduced: boolean;\n    readonly status: number;\n    readonly expectedStatus: number;\n    readonly statusMatches: boolean;\n    /** null when shape was not checked. */\n    readonly shapeMatches: boolean | null;\n}"
   },
   {
     "name": "InferInput",
@@ -3362,6 +3583,13 @@
     "kind": "interface",
     "package": "@nifrajs/storage",
     "signature": "export interface ListOptions {\n    /** Only keys starting with this prefix. */\n    readonly prefix?: string;\n    /** Cap the number of keys returned. */\n    readonly limit?: number;\n}"
+  },
+  {
+    "name": "listRecipeVersions",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function listRecipeVersions(): string[];",
+    "doc": "/** Available target versions, ascending. */"
   },
   {
     "name": "load",
@@ -4069,6 +4297,13 @@
     "signature": "export declare const NIFRA_ASSURANCE_IDS: Readonly<{\n    readonly AUTHENTICATED: \"nifra.authenticated\";\n    readonly BODY_BOUNDED: \"nifra.body-bounded\";\n    readonly CSRF: \"nifra.csrf\";\n    readonly IDEMPOTENCY_KEY: \"nifra.idempotency-key\";\n    readonly IP_RESTRICTED: \"nifra.ip-restricted\";\n    readonly RATE_LIMITED: \"nifra.rate-limited\";\n    readonly SECURITY_HEADERS: \"nifra.security-headers\";\n}>;"
   },
   {
+    "name": "NIFRA_DEADLINE_HEADER",
+    "kind": "const",
+    "package": "@nifrajs/budget",
+    "signature": "export declare const NIFRA_DEADLINE_HEADER = \"x-nifra-deadline\";",
+    "doc": "/** Canonical wire header carrying an absolute Unix epoch deadline in milliseconds. */"
+  },
+  {
     "name": "NifraFramework",
     "kind": "interface",
     "package": "@nifrajs/cli",
@@ -4394,6 +4629,13 @@
     "doc": "/** Parse a 5-field cron expression (or a `@macro`) into matchable {@link CronFields}. */"
   },
   {
+    "name": "parseDeadlineHeader",
+    "kind": "function",
+    "package": "@nifrajs/budget",
+    "signature": "export declare function parseDeadlineHeader(headers: Headers): DeadlineHeaderResult;",
+    "doc": "/** Parse the canonical deadline header without trusting or clamping it. */"
+  },
+  {
     "name": "ParsedFontFace",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -4474,6 +4716,26 @@
     "package": "@nifrajs/middleware",
     "signature": "export declare function pickLanguage<const L extends readonly string[]>(header: string | null, supported: L, defaultLanguage: L[number]): LanguageMatch;",
     "doc": "/**\n * Pick the best supported language for an `Accept-Language` header. Exact tags win, then compatible\n * base-language matches, then `*`, then the configured default.\n */"
+  },
+  {
+    "name": "PinChange",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface PinChange {\n    readonly file: string;\n    readonly field: string;\n    readonly name: string;\n    readonly from: string;\n    readonly to: string;\n}"
+  },
+  {
+    "name": "PinRule",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface PinRule {\n    /** Package-name prefix, e.g. `@nifrajs/` or an exact name `@platform/cache`. */\n    readonly match: string;\n    /** Bare target version, e.g. `1.8.0`. The range operator (`^`/`~`/exact) is preserved per-spec. */\n    readonly to: string;\n}",
+    "doc": "/** A pin rule: every dependency whose name starts with `match` is set to version `to`. */"
+  },
+  {
+    "name": "pinSweepText",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function pinSweepText(text: string, rules: readonly {\n    match: string;\n    to: string;\n}[]): {\n    text: string;\n    changes: Array<Omit<PinChange, \"file\">>;\n};",
+    "doc": "/**\n * Apply pin rules to one package.json's TEXT (format-preserving — targeted string replaces, never a\n * JSON re-serialize that would reorder keys or drop comments-as-formatting). Returns the new text and\n * the changes made.\n */"
   },
   {
     "name": "pipeWebBodyToNode",
@@ -4991,6 +5253,20 @@
     "doc": "/**\n * Read just the leading bytes of an image file (via the platform `Bun.file`/`fetch` blob) and parse its\n * dimensions. Build-time tooling: pre-read dimensions into a manifest so `<Image>` is CLS-safe without\n * hardcoding sizes. Reads at most `maxBytes` (default 64 KB — enough for any header).\n */"
   },
   {
+    "name": "recipe",
+    "kind": "const",
+    "package": "@nifrajs/cli",
+    "signature": "export declare const recipe: UpgradeRecipe;",
+    "doc": "/**\n * Upgrade recipe for nifra 1.8.0.\n *\n * 1.8.0 is a fixed-group bump: every `@nifrajs/*` package moves in lockstep. The pin sweep sets them\n * all to 1.8.0 (preserving each spec's `^`/`~`/exact style). 1.8.0 introduced no breaking import moves\n * in the public packages — the new surfaces (route assurance, adversarial testing, `@nifrajs/events`)\n * are additive — so `importMoves` is empty. The notes flag the additive follow-ups a bump can't do for\n * you (wiring the new assurance config), keeping the runner honest about what it did and didn't touch.\n */"
+  },
+  {
+    "name": "redactForEmission",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function redactForEmission(value: unknown, allow: ReadonlySet<string>, path?: string): unknown;",
+    "doc": "/**\n * Redact leaf string values by default (unless the dotted key path is allow-listed). Non-strings are\n * kept — they carry the structure that makes the fixture reproduce — so review the emitted file. This\n * is intentionally aggressive: a committed fixture must not leak PII/secrets.\n */"
+  },
+  {
     "name": "redactLogFields",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -5092,6 +5368,12 @@
     "package": "@nifrajs/client",
     "signature": "export type RegistryOf<App> = App extends Server<infer R, infer _Ctx> ? R : never;",
     "doc": "/** Extract the accumulated route registry from a server's type (`typeof app`), ignoring its middleware context. */"
+  },
+  {
+    "name": "RegistryParseResult",
+    "kind": "type",
+    "package": "@nifrajs/events",
+    "signature": "export type RegistryParseResult = {\n    readonly success: true;\n    readonly envelope: EventEnvelope;\n    readonly contract: EventContract;\n} | {\n    readonly success: false;\n    readonly reason: \"not-an-object\" | \"unknown-contract\" | \"invalid-payload\";\n    readonly message: string;\n};"
   },
   {
     "name": "RenderAdapter",
@@ -5224,11 +5506,31 @@
     "doc": "/**\n * Render the tool result. `name` → the exact declaration(s); else `query` → the top matches; else a\n * per-package index of type names. The signatures are authoritative (generated from the built `.d.ts`),\n * so this is the complete answer — there is no need to read a `.d.ts` file.\n */"
   },
   {
+    "name": "replayIncident",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function replayIncident(app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions): Promise<IncidentReplayResult>;",
+    "doc": "/** Replay a captured incident against the current app and report whether it reproduces. */"
+  },
+  {
+    "name": "ReplayIncidentOptions",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface ReplayIncidentOptions {\n    readonly origin?: string;\n    /** Also require the response body SHAPE to match the captured shape (not just status). Default false. */\n    readonly assertShape?: boolean;\n}"
+  },
+  {
     "name": "reproduciblePath",
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function reproduciblePath(absolutePath: string): string;",
     "doc": "/**\n * A **package-root-relative**, forward-slashed form of an absolute path — the input to {@link hash8} for\n * any build-stable identifier (e.g. CSS-module scoped names). Anchoring on the file's nearest\n * `package.json` (not the absolute path, not `process.cwd()`) makes the result independent of BOTH the\n * machine's directory layout AND the working directory: the dom build and the ssr runtime — even on\n * different machines or from different cwds — derive the SAME relative path for a given file, so their\n * scoped class maps always agree. (Hashing the absolute path would differ across CI/host; a\n * cwd-relative path would silently desync if the SSR server started from a non-project-root cwd.)\n */"
+  },
+  {
+    "name": "RequestBudget",
+    "kind": "interface",
+    "package": "@nifrajs/budget",
+    "signature": "export interface RequestBudget {\n    /** Absolute Unix epoch deadline for wire propagation. */\n    readonly deadline: number;\n    /** The request cancellation signal. Nifra drives this when its effective deadline elapses. */\n    readonly signal: AbortSignal;\n    /** Non-negative milliseconds remaining, measured with the monotonic clock. */\n    remaining(): number;\n    /** A view that finishes `reserveMs` before this budget, preserving time for response cleanup. */\n    child(reserveMs: number): RequestBudget;\n}",
+    "doc": "/** A time budget shared by one request and every downstream hop it initiates. */"
   },
   {
     "name": "requestId",
@@ -5477,6 +5779,13 @@
     "package": "@nifrajs/web",
     "signature": "export interface RevalidateResult<T> {\n    readonly __nifraRevalidate: readonly string[];\n    readonly data: T;\n}",
     "doc": "/** The wrapper `revalidate()` returns: the action's `data` plus the paths it changed. A plain tagged\n * shape (not a class) so `@nifrajs/client`'s `ActionData` can unwrap it structurally without importing\n * from `@nifrajs/web`. `createWebApp` strips the wrapper — the client receives `data` as the body and\n * the paths via the `X-Nifra-Revalidate` header. */"
+  },
+  {
+    "name": "rewriteVersionSpec",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function rewriteVersionSpec(spec: string, toVersion: string): string | null;",
+    "doc": "/**\n * Rewrite a dependency version spec to `toVersion`, preserving the range operator (`^`, `~`, …).\n * Returns null when the spec is not a plain semver spec (→ skip it) or already equals the target.\n */"
   },
   {
     "name": "robots",
@@ -5844,6 +6153,13 @@
     "doc": "/** `nifra snapshot`: write the current contract as the CI baseline. */"
   },
   {
+    "name": "runUpgrade",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function runUpgrade(cwd: string, options: UpgradeOptions): Promise<boolean>;",
+    "doc": "/** CLI entry. Returns false (→ non-zero exit) on an unknown version, no project, or a failed verify. */"
+  },
+  {
     "name": "runWebSocket",
     "kind": "function",
     "package": "@nifrajs/cli",
@@ -6185,7 +6501,7 @@
     "name": "Server",
     "kind": "class",
     "package": "@nifrajs/core",
-    "signature": "export declare class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {\n    private readonly router;\n    /** WebSocket routes, matched separately at upgrade time (a GET + `Upgrade: websocket`). */\n    private readonly wsRouter;\n    private wsRouteCount;\n    /** In-process pub/sub backing `ws.subscribe(topic)` + `app.publish(topic, data)` (single-instance).\n     * Created by the first `app.ws()` via the `@nifrajs/core/ws` runtime — `undefined` until then, so a\n     * no-WebSocket app never constructs (or bundles) it. */\n    private topics;\n    private readonly routeList;\n    private readonly maxBodyBytes;\n    private readonly wsMaxPayloadBytes;\n    private readonly requestTimeoutMs;\n    private readonly gracefulSignals;\n    private readonly logger;\n    /** App-wide validation-error fallback; a route's own `schema.onValidationError` takes precedence. */\n    private readonly defaultOnValidationError?;\n    private bunServer;\n    private readonly derives;\n    private readonly decorations;\n    private readonly beforeHandleHooks;\n    private readonly afterHandleHooks;\n    private readonly onErrorHooks;\n    private readonly aroundHooks;\n    private readonly onRequestHooks;\n    private readonly onResponseHooks;\n    private readonly onResponseFinalizedHooks;\n    private readonly responseRequests;\n    /** Names of plugins/middleware already applied via `use` — for idempotent dedupe. */\n    private readonly appliedPlugins;\n    /** Order-scoped evidence captured by routes registered after an assured plugin. */\n    private readonly activeAssurance;\n    /** App-wide evidence from global hooks; applies retroactively to every route. */\n    private readonly globalAssurance;\n    /** App-declared MCP resources / prompts (via {@link resource} / {@link prompt}), read by `nifra mcp`. */\n    private readonly mcpResourceList;\n    private readonly mcpPromptList;\n    /**\n     * Every registered route's raw router entry + descriptor, in order — the replay source for\n     * {@link merge}. The entry already carries the chains captured at registration (derives,\n     * decorations, before/after/around/onError), so a merged route behaves exactly as it did on\n     * the server that defined it.\n     */\n    private readonly rawEntries;\n    constructor(options?: ServerOptions);\n    /** Add a per-request, computed context extension for subsequent routes. */\n    derive<D extends object>(fn: (context: Context & Ctx) => MaybePromise<D>): Server<R, Ctx & D>;\n    /** Add a static context value for subsequent routes. */\n    decorate<const K extends string, V>(key: K, value: V): Server<R, Ctx & Record<K, V>>;\n    /**\n     * Run before routing on the raw request. Return a `Response` to short-circuit, or a replacement\n     * `Request` to continue routing with a rewritten method/URL/headers. Global.\n     */\n    onRequest(fn: (req: Request) => MaybePromise<OnRequestResult>): this;\n    /** Run after validation, before the handler; a non-`undefined` return short-circuits. Order-scoped. */\n    beforeHandle(fn: (context: Context & Ctx) => MaybePromise<unknown>): this;\n    /**\n     * Wrap the matched route lifecycle for subsequent routes. This is intentionally generic over the\n     * route output, so wrappers like async context storage do not force Node's direct JSON path through\n     * a Web `Response`. The first registered wrapper is outermost.\n     */\n    around(fn: <T>(context: Context & Ctx, next: () => MaybePromise<T>) => MaybePromise<T>): this;\n    /** Transform the handler's result before it is serialized. Order-scoped. */\n    afterHandle(fn: (result: unknown, context: Context & Ctx) => MaybePromise<unknown>): this;\n    /** Handle a thrown error; a non-`undefined` return becomes the response (else the default 500). Order-scoped. */\n    onError(fn: (error: unknown, context: Context & Ctx) => MaybePromise<unknown>): this;\n    /** Transform every outgoing response — success, error, 404, 405, short-circuit. Global. */\n    onResponse(fn: (response: Response, req: Request) => MaybePromise<Response>): this;\n    /** Observe the terminal response after all transformations. Observers are ordered and fail-open. */\n    onResponseFinalized(fn: (outcome: ResponseFinalization, req: Request) => MaybePromise<void>): this;\n    /**\n     * Apply a type-**identity** plugin ({@link IdentityPlugin}, from {@link defineIdentityPlugin}) — it\n     * registers routes/hooks but doesn't change the types, so this returns `this` with the route registry\n     * and context fully intact. This overload exists specifically so a *named* identity plugin (e.g.\n     * `@nifrajs/better-auth`) threads the registry: its `& { pluginName }` intersection would otherwise\n     * defeat the generic inference of the transforming overload below and collapse the result to `any`.\n     */\n    use(plugin: IdentityPlugin): this;\n    /**\n     * Apply a **plugin function** — `(app) => app`, typically built with {@link definePlugin}. It's\n     * called with `this` and its result is returned, so an inline plugin's `derive`/`decorate` thread\n     * the added context to handlers defined after `use` (the overload is generic over the concrete\n     * `this`). A named plugin already applied is skipped (idempotent dedupe).\n     */\n    use<Out extends AnyServer>(plugin: (app: this) => Out): Out;\n    /**\n     * Apply a {@link Middleware} bundle — wire each hook it provides to its lifecycle point. Returns\n     * `this` (no context-type merging); call it before the routes its `beforeHandle`/`afterHandle`\n     * should cover (those are order-scoped; `onRequest`/`onResponse` are global). A named bundle already\n     * applied is skipped (idempotent).\n     */\n    use(mw: Middleware): this;\n    get<Path extends string, S extends RouteSchema, H extends Handler<Path, S, Ctx>>(path: Path, schema: S, handler: H): Server<AddRoute<R, \"GET\", Path, RouteInfoFor<Path, S, OutputOf<H>>>, Ctx>;\n    get<Path extends string, H extends Handler<Path, RouteSchema, Ctx>>(path: Path, handler: H): Server<AddRoute<R, \"GET\", Path, RouteInfoFor<Path, Record<never, never>, OutputOf<H>>>, Ctx>;\n    /**\n     * Register a **typed SSE route** — a GET endpoint streaming `text/event-stream` whose event\n     * payloads are contracted by `schema.sse`. The handler receives the validated context plus a\n     * {@link TypedSSEStream}: `stream.send(event)` is compile-time-checked against the schema and\n     * JSON-serialized into the SSE `data:` field. The typed client sees the marker and grows a\n     * `.subscribe(onEvent)` for the route with the same payload type — end-to-end typed streaming.\n     *\n     *   const app = server().sse(\"/feed\", { sse: t.object({ id: t.integer(), title: t.string() }) },\n     *     async (c, stream) => {\n     *       stream.send({ id: 1, title: \"hello\" })          // typed\n     *       await waitForDisconnect(stream.signal)\n     *     },\n     *     { keepAlive: 15_000 })\n     *\n     *   // client: const off = api.feed.subscribe((post) => console.log(post.title))\n     *\n     * `init` passes through to the underlying {@link sse} helper (`keepAlive`, extra headers). The\n     * connection closes when the handler resolves, `stream.close()` runs, or the client disconnects\n     * (`stream.signal`). Query/body schemas validate exactly as on any other route.\n     */\n    sse<Path extends string, S extends RouteSchema & {\n        sse: StandardSchemaV1;\n    }>(path: Path, schema: S, run: (context: Context<Path, S> & Ctx, stream: TypedSSEStream<InferOutput<S[\"sse\"]>>) => void | Promise<void>, init?: SSEInit): Server<AddRoute<R, \"GET\", Path, RouteInfoFor<Path, S, Response>>, Ctx>;\n    post<Path extends string, S extends RouteSchema, H extends Handler<Path, S, Ctx>>(path: Path, schema: S, handler: H): Server<AddRoute<R, \"POST\", Path, RouteInfoFor<Path, S, OutputOf<H>>>, Ctx>;\n    post<Path extends string, H extends Handler<Path, RouteSchema, Ctx>>(path: Path, handler: H): Server<AddRoute<R, \"POST\", Path, RouteInfoFor<Path, Record<never, never>, OutputOf<H>>>, Ctx>;\n    put<Path extends string, S extends RouteSchema, H extends Handler<Path, S, Ctx>>(path: Path, schema: S, handler: H): Server<AddRoute<R, \"PUT\", Path, RouteInfoFor<Path, S, OutputOf<H>>>, Ctx>;\n    put<Path extends string, H extends Handler<Path, RouteSchema, Ctx>>(path: Path, handler: H): Server<AddRoute<R, \"PUT\", Path, RouteInfoFor<Path, Record<never, never>, OutputOf<H>>>, Ctx>;\n    patch<Path extends string, S extends RouteSchema, H extends Handler<Path, S, Ctx>>(path: Path, schema: S, handler: H): Server<AddRoute<R, \"PATCH\", Path, RouteInfoFor<Path, S, OutputOf<H>>>, Ctx>;\n    patch<Path extends string, H extends Handler<Path, RouteSchema, Ctx>>(path: Path, handler: H): Server<AddRoute<R, \"PATCH\", Path, RouteInfoFor<Path, Record<never, never>, OutputOf<H>>>, Ctx>;\n    delete<Path extends string, S extends RouteSchema, H extends Handler<Path, S, Ctx>>(path: Path, schema: S, handler: H): Server<AddRoute<R, \"DELETE\", Path, RouteInfoFor<Path, S, OutputOf<H>>>, Ctx>;\n    delete<Path extends string, H extends Handler<Path, RouteSchema, Ctx>>(path: Path, handler: H): Server<AddRoute<R, \"DELETE\", Path, RouteInfoFor<Path, Record<never, never>, OutputOf<H>>>, Ctx>;\n    tool<Name extends string, S extends {\n        description: string;\n        input: StandardSchemaV1;\n        output?: StandardSchemaV1;\n        annotations?: ToolAnnotations;\n    }, H extends (input: InferOutput<S[\"input\"]>, ctx: Context & Ctx) => MaybePromise<S[\"output\"] extends StandardSchemaV1 ? InferOutput<S[\"output\"]> : unknown>>(name: Name, config: S, handler: H): Server<AddRoute<R, \"POST\", `/_nifra/tool/${Name}`, RouteInfoFor<`/_nifra/tool/${Name}`, S[\"output\"] extends StandardSchemaV1 ? {\n        body: S[\"input\"];\n        response: S[\"output\"];\n    } : {\n        body: S[\"input\"];\n    }, OutputOf<H>>>, Ctx>;\n    /**\n     * Declare an MCP **resource** — read-only data an agent can fetch through `nifra mcp` (app config, a\n     * generated document, …). `read` runs in the app process, so capture whatever app state it needs in the\n     * closure. `uri` is the MCP resource identifier (e.g. `\"myapp://config\"`). The sibling of {@link tool}\n     * for the resource half of MCP.\n     */\n    resource(uri: string, config: {\n        readonly name: string;\n        readonly description?: string;\n        readonly mimeType?: string;\n    }, read: McpResourceDescriptor[\"read\"]): Server<R, Ctx>;\n    /**\n     * Declare an MCP **prompt** — a reusable prompt template an agent can fetch through `nifra mcp`.\n     * `handler` receives the caller's arguments and returns the rendered messages.\n     */\n    prompt(name: string, config: {\n        readonly description: string;\n        readonly arguments?: readonly PromptArgument[];\n    }, handler: McpPromptDescriptor[\"handler\"]): Server<R, Ctx>;\n    /** The MCP resources declared via {@link resource} — enumerated by `nifra mcp`. */\n    mcpResources(): readonly McpResourceDescriptor[];\n    /** The MCP prompts declared via {@link prompt} — enumerated by `nifra mcp`. */\n    mcpPrompts(): readonly McpPromptDescriptor[];\n    /**\n     * Register a **WebSocket** route. The connection upgrades on a `GET` to `path` carrying\n     * `Upgrade: websocket`; the optional `handler.upgrade(c)` runs in the request context first and may\n     * reject (return a `Response`) or seed per-connection `ws.data`. WebSockets are served by the\n     * adapter (`listen()`, `@nifrajs/node`, `@nifrajs/deno`, `toFetchHandler`) — not by bare `app.fetch`, which\n     * has no socket (a WS path through `app.fetch` is a normal HTTP response).\n     *\n     *   app.ws(\"/chat\", { open: (ws) => ws.send(\"hi\"), message: (ws, data) => ws.send(data) })\n     */\n    ws<Data = unknown, Schema extends StandardSchemaV1 | undefined = undefined>(path: string, handler: WebSocketHandler<Data, EnvOf<Ctx>, Schema>): this;\n    /**\n     * Broadcast `data` to every WebSocket connection subscribed to `topic` (via `ws.subscribe(topic)`).\n     * In-process and **single-instance** (see {@link TopicRegistry}) — a multi-instance deploy must bridge\n     * an external fan-out (Redis, a Durable Object) to this. A no-op when nobody is subscribed.\n     */\n    publish(topic: string, data: string | ArrayBufferView | ArrayBuffer): void;\n    private route;\n    /**\n     * Low-level route registration shared by the inline builder and `implement()`.\n     * Captures the server's current `derive`/`decorate` chain into the route — this\n     * is the \"compiled\", order-scoped per-route chain.\n     */\n    register(method: Method, path: string, schema: RouteSchema | undefined, handler: (context: never) => unknown): void;\n    /**\n     * Merge another server's routes into this one — the composition escape hatch for large apps.\n     *\n     * WHY: the fluent chain accumulates one type-alias level per route, and TypeScript resolves\n     * that stack in one recursion — a single chain hits TS2589 at ~95 routes. Groups keep every\n     * chain short: build each domain (`listings`, `agents`, …) as its own `server()` (its registry\n     * resolves independently), then `app.merge(listings).merge(agents)` — each merge adds ONE level\n     * regardless of group size. 300+ routes stay fully typed (see many-routes.test-d.ts). The\n     * other escape hatch is contract-first `implement()`, whose registry is a single object type.\n     *\n     * Semantics: merged routes keep the chains captured where they were DEFINED — the group's\n     * `derive`/`decorate`/`beforeHandle`/`afterHandle`/`onError`/`around` apply to its routes\n     * exactly as they did standalone, so a group wires its own plugins. The group's request-level\n     * hooks (`onRequest`/`onResponse`/`onResponseFinalized`) are appended to this server's. This\n     * server's route-scoped chains do NOT retroactively wrap merged routes (order-scoped, like\n     * routes registered before a `derive`). Fail closed: a path+method collision throws\n     * `RouteConfigError` at merge time, and a group with WebSocket routes is refused (register\n     * those on the parent).\n     */\n    merge<R2 extends Registry, Ctx2>(other: Server<R2, Ctx2>): Server<R & R2, Ctx>;\n    /**\n     * Enumerate the registered routes (method, path, input schemas), in registration\n     * order. Powers `toOpenAPI` and other introspection; the router trie itself no\n     * longer holds the original patterns.\n     */\n    routes(): ReadonlyArray<RouteDescriptor>;\n    /**\n     * Resolve a `Request` to a `Response` — the whole lifecycle, testable without a port. The\n     * optional `platform` carries edge inputs (`env`, `waitUntil`); edge adapters pass it, and\n     * Bun/Node/Deno omit it (then `c.env` is `undefined` and `c.waitUntil` runs fire-and-forget).\n     */\n    fetch(req: Request, platform?: Platform<EnvOf<Ctx>>): MaybePromise<Response>;\n    private fetchSource;\n    /**\n     * Like {@link fetch}, but renders a plain-data result **without** building a Web `Response` — the\n     * `@nifrajs/node` adapter serializes the returned primitives straight to the socket, skipping the undici\n     * `Response` build + body drain (the bulk of the Node bridge cost, measured ≈4µs/req). A handler that\n     * returns a `Response`, an error/short-circuit, or any registered `onResponse` hook falls back to the\n     * full Web path (`{ kind: \"response\" }`), so behavior is identical — only the common JSON-data case is\n     * faster. Same lifecycle as {@link fetch} (body cap, validation, hooks all run); only the final\n     * render differs.\n     */\n    resolveNode(req: Request, platform?: Platform<EnvOf<Ctx>>): MaybePromise<NodeServeOutcome>;\n    resolveNodeSource(source: RequestSource, platform?: Platform<EnvOf<Ctx>>): MaybePromise<NodeServeOutcome>;\n    /**\n     * Resolve a WebSocket upgrade — the seam every serving adapter uses. Returns `pass` (not a WS\n     * upgrade for a registered route → handle as normal HTTP), `reject` (a WS route matched but\n     * `upgrade()` rejected, or the path was malformed → return `response`), or `upgrade` (perform the\n     * runtime upgrade, then dispatch the native socket's events to `handler`, seeding `ws.data` with\n     * `data`). Runs the route's `upgrade(c)` guard in a real request context. Synchronous unless\n     * `upgrade()` is async; a throw rejects with a flat 500 (no detail leaked).\n     */\n    resolveWebSocketUpgrade(req: Request, platform?: Platform<EnvOf<Ctx>>): MaybePromise<WebSocketUpgradeOutcome>;\n    /** Bun `fetch` when WS routes exist: try a WS upgrade first, else run the normal HTTP lifecycle.\n     * `undefined` ⇒ Bun owns the upgraded socket; a `Response` ⇒ a normal reply or a rejected upgrade.\n     * (The socket dispatch itself lives in `ws-bun.ts`, loaded via `@nifrajs/core/ws`.) */\n    private bunFetchWithWebSocket;\n    /**\n     * The shared lifecycle, generic over how the final value is rendered: `finalize` turns a handler's\n     * result + `set` into the output `T` (`toResponse` → a Web `Response`; `toNodeOutcome` → node-direct\n     * primitives), `wrapResponse` lifts an early/error `Response` into that same `T`, and `onTimeout`\n     * produces the 503. The Web `fetch` and `resolveNode` are thin callers over this one routing +\n     * context + lifecycle implementation — no duplication across the trust boundary.\n     */\n    private dispatch;\n    /**\n     * onRequest short-circuit path. Synchronous as long as every hook returns synchronously (the\n     * common case — e.g. CORS returning `undefined` for a non-preflight request): an `async` version\n     * here put EVERY request of any app with one onRequest hook onto the promise machinery, profiled\n     * at ~13% of a realistic request. The first hook that returns a Promise hands the REMAINING\n     * hooks to the async continuation; behavior is identical.\n     */\n    private runWithOnRequest;\n    /** Async tail of {@link runWithOnRequest}: applies the first awaited hook's outcome, then runs\n     * the remaining hooks (awaiting freely — we're already async here). */\n    private continueOnRequest;\n    private takeResponseRequest;\n    /**\n     * Route → build context → run. Synchronous through to the handler for a **bare** route\n     * ({@link RouteEntry.bare}), so a sync handler produces its result with zero promise allocations;\n     * routes with validation/hooks keep the full async {@link runLifecycle}, unchanged.\n     */\n    private routeAndRun;\n    /** The narrowest bare route: a syntactic `() => ...` handler cannot observe the context argument, so\n     * successful requests can skip allocating `RequestContext`. Errors still allocate one for logging. */\n    private runContextlessBare;\n    private contextlessBareError;\n    /**\n     * The synchronous fast path for a {@link RouteEntry.bare} route: apply static decorations, call the\n     * handler, render the result — **no `await`** unless the handler itself returns a promise. It mirrors\n     * the bare slice of {@link runLifecycle} (which a bare route would otherwise no-op through) and shares\n     * {@link logRequestError}; a bare route has no `onError` hooks, so error handling is fully synchronous\n     * (a thrown `Response` is control flow; anything else is a logged flat 500). This is where nifra skips\n     * the per-request async-frame tax — the same win codegen routers get, but without `eval`.\n     */\n    private runBare;\n    /** Bare-route error rendering — identical to {@link runLifecycle}'s catch minus the (absent) onError\n     * loop: a thrown `Response` is returned as deliberate control flow; anything else is logged + 500. */\n    /**\n     * Build a route's fused Web lane (see {@link RouteEntry.fusedWeb}). Composition happens once at\n     * registration; the returned closure is what every request to the route runs. Behavior is\n     * byte-identical to the generic `runBare`/`runContextlessBare` + `toResponse` pair — same\n     * decoration order, same error routing (thrown `Response` = control flow; anything else logs and\n     * 500s), same respond semantics (the lifecycle parity suite pins it).\n     */\n    private buildFusedWeb;\n    private bareError;\n    private runWithAround;\n    private runAround;\n    private runBodyOnly;\n    /** Validate + run the handler for the bodyOnly path — shared by the inline fast path and the\n     * streaming fallback. A method (not per-request closures) so the hot path allocates nothing\n     * beyond the one `.then` continuation. */\n    private finishBodyOnly;\n    private executeHandler;\n    private handleValidationErrorRecovery;\n    private applyBodyValidation;\n    private runQueryOnly;\n    /** Validate-result → set `ctx.query` → run handler. A method (not a per-request closure), the\n     * query analogue of {@link applyBodyValidation}. */\n    private applyQueryValidation;\n    /**\n     * Thread the response through each global `onResponse` hook. Stays SYNCHRONOUS until a hook\n     * actually returns a Promise — an `async` version forced a promise + microtask on EVERY response\n     * of any app with an onResponse hook (cors/securityHeaders/etag/timing all use onResponse), the\n     * same ~13%/req tax the onRequest walk was de-async'd to avoid. The first async hook hands the\n     * rest to {@link continueOnResponse}.\n     */\n    private applyOnResponse;\n    private applyOnResponseAndFinalize;\n    private completeResponseFinalization;\n    private failResponseFinalization;\n    /** Notify terminal observers in order while isolating both sync and async failures. */\n    private notifyResponseFinalized;\n    /** Async tail of {@link applyOnResponse}: runs the remaining hooks once one has gone async. */\n    private continueOnResponse;\n    /**\n     * Bound the response time. On timeout we abort `ctx.signal` (so cancellation-aware\n     * handlers can bail) and return 503; the in-flight work keeps running but its\n     * result is discarded — JS can't forcibly cancel a promise.\n     */\n    private withTimeout;\n    /**\n     * The post-match lifecycle: validate → derive → beforeHandle → handler → afterHandle, with onError.\n     * Generic over the render: a success value goes through `finalize(result, set)` (a Web `Response`, or\n     * node-direct primitives); an early/error `Response` (validation, thrown, 500) through `wrapResponse`.\n     */\n    private runLifecycle;\n    private handleLifecycleError;\n    /** Log an unhandled request error to the (redacting) logger — shared by {@link runLifecycle} and the\n     * bare fast path ({@link bareError}) so both record the same fields. Never throws; never leaks. */\n    private logRequestError;\n    private readAndValidateBody;\n    /**\n     * Read the body as text, capped at `maxBodyBytes`. Rejects (`null`) on a\n     * `Content-Length` over the cap *before* buffering, and aborts mid-stream once the\n     * running byte count exceeds it — so a lying or absent length can't force us to\n     * buffer an oversized payload.\n     *\n     * Fast path: when a non-chunked request carries a `Content-Length` within the cap,\n     * a native `req.json()` is already bounded — under HTTP/1.1 + HTTP/2 framing the\n     * runtime delivers at most `Content-Length` bytes — so we skip the manual stream\n     * loop and a separate text decode. It trusts the wire\n     * *framing*, not the header value: nifra only ever receives framed Requests from the\n     * runtime's HTTP server, never a hand-built one with a mismatched length. Chunked or\n     * length-less bodies fall through to the streaming byte-cap guard below.\n     */\n    private readBoundedJson;\n    /**\n     * Start a `Bun.serve` instance bound to `port` (use `0` for an ephemeral port).\n     *\n     * `reusePort` sets `SO_REUSEPORT` so **multiple processes can bind the same port** and the kernel\n     * load-balances connections across them — the standard way to use every core (Bun is\n     * single-threaded per process). Spawn one process per core, each calling\n     * `app.listen(PORT, { reusePort: true })`; see `examples/cluster.ts`. Every process must opt in,\n     * and all of them must be the same app. Linux balances ~evenly; macOS accepts the flag but may\n     * favor one socket (fine for dev, measure on Linux for production numbers).\n     */\n    listen(port: number, options?: {\n        readonly reusePort?: boolean;\n    }): RunningServer;\n    /**\n     * Gracefully stop: wait for in-flight requests to finish (up to `drainMs`), then\n     * issue a single terminal stop — graceful if everything drained, forced if\n     * stragglers remain. Safe to call when not listening.\n     *\n     * The Bun semantics: poll `pendingRequests` (awaiting\n     * `stop()`'s promise drops in-flight requests), and decide graceful-vs-forced in\n     * ONE call (Bun can't escalate an already-graceful `stop()` to a forced close).\n     * New connections may be accepted during the drain window; in a real deploy the\n     * load balancer has already stopped routing here, and `drainMs` bounds it.\n     */\n    stop({ drainMs }?: {\n        drainMs?: number;\n    }): Promise<void>;\n    private installSignalHandlers;\n}",
+    "signature": "export declare class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {\n    private readonly router;\n    /** WebSocket routes, matched separately at upgrade time (a GET + `Upgrade: websocket`). */\n    private readonly wsRouter;\n    private wsRouteCount;\n    /** In-process pub/sub backing `ws.subscribe(topic)` + `app.publish(topic, data)` (single-instance).\n     * Created by the first `app.ws()` via the `@nifrajs/core/ws` runtime — `undefined` until then, so a\n     * no-WebSocket app never constructs (or bundles) it. */\n    private topics;\n    private readonly routeList;\n    private readonly maxBodyBytes;\n    private readonly wsMaxPayloadBytes;\n    private readonly requestTimeoutMs;\n    private readonly maxInboundDeadlineMs;\n    private readonly gracefulSignals;\n    private readonly logger;\n    /** App-wide validation-error fallback; a route's own `schema.onValidationError` takes precedence. */\n    private readonly defaultOnValidationError?;\n    private bunServer;\n    private readonly derives;\n    private readonly decorations;\n    private readonly beforeHandleHooks;\n    private readonly afterHandleHooks;\n    private readonly onErrorHooks;\n    private readonly aroundHooks;\n    private readonly onRequestHooks;\n    private readonly onResponseHooks;\n    private readonly onResponseFinalizedHooks;\n    private readonly responseRequests;\n    /** Names of plugins/middleware already applied via `use` — for idempotent dedupe. */\n    private readonly appliedPlugins;\n    /** Order-scoped evidence captured by routes registered after an assured plugin. */\n    private readonly activeAssurance;\n    /** App-wide evidence from global hooks; applies retroactively to every route. */\n    private readonly globalAssurance;\n    /** App-declared MCP resources / prompts (via {@link resource} / {@link prompt}), read by `nifra mcp`. */\n    private readonly mcpResourceList;\n    private readonly mcpPromptList;\n    /**\n     * Every registered route's raw router entry + descriptor, in order — the replay source for\n     * {@link merge}. The entry already carries the chains captured at registration (derives,\n     * decorations, before/after/around/onError), so a merged route behaves exactly as it did on\n     * the server that defined it.\n     */\n    private readonly rawEntries;\n    constructor(options?: ServerOptions);\n    /** Add a per-request, computed context extension for subsequent routes. */\n    derive<D extends object>(fn: (context: Context & Ctx) => MaybePromise<D>): Server<R, Ctx & D>;\n    /** Add a static context value for subsequent routes. */\n    decorate<const K extends string, V>(key: K, value: V): Server<R, Ctx & Record<K, V>>;\n    /**\n     * Run before routing on the raw request. Return a `Response` to short-circuit, or a replacement\n     * `Request` to continue routing with a rewritten method/URL/headers. Global.\n     */\n    onRequest(fn: (req: Request) => MaybePromise<OnRequestResult>): this;\n    /** Run after validation, before the handler; a non-`undefined` return short-circuits. Order-scoped. */\n    beforeHandle(fn: (context: Context & Ctx) => MaybePromise<unknown>): this;\n    /**\n     * Wrap the matched route lifecycle for subsequent routes. This is intentionally generic over the\n     * route output, so wrappers like async context storage do not force Node's direct JSON path through\n     * a Web `Response`. The first registered wrapper is outermost.\n     */\n    around(fn: <T>(context: Context & Ctx, next: () => MaybePromise<T>) => MaybePromise<T>): this;\n    /** Transform the handler's result before it is serialized. Order-scoped. */\n    afterHandle(fn: (result: unknown, context: Context & Ctx) => MaybePromise<unknown>): this;\n    /** Handle a thrown error; a non-`undefined` return becomes the response (else the default 500). Order-scoped. */\n    onError(fn: (error: unknown, context: Context & Ctx) => MaybePromise<unknown>): this;\n    /** Transform every outgoing response — success, error, 404, 405, short-circuit. Global. */\n    onResponse(fn: (response: Response, req: Request) => MaybePromise<Response>): this;\n    /** Observe the terminal response after all transformations. Observers are ordered and fail-open. */\n    onResponseFinalized(fn: (outcome: ResponseFinalization, req: Request) => MaybePromise<void>): this;\n    /**\n     * Apply a type-**identity** plugin ({@link IdentityPlugin}, from {@link defineIdentityPlugin}) — it\n     * registers routes/hooks but doesn't change the types, so this returns `this` with the route registry\n     * and context fully intact. This overload exists specifically so a *named* identity plugin (e.g.\n     * `@nifrajs/better-auth`) threads the registry: its `& { pluginName }` intersection would otherwise\n     * defeat the generic inference of the transforming overload below and collapse the result to `any`.\n     */\n    use(plugin: IdentityPlugin): this;\n    /**\n     * Apply a **plugin function** — `(app) => app`, typically built with {@link definePlugin}. It's\n     * called with `this` and its result is returned, so an inline plugin's `derive`/`decorate` thread\n     * the added context to handlers defined after `use` (the overload is generic over the concrete\n     * `this`). A named plugin already applied is skipped (idempotent dedupe).\n     */\n    use<Out extends AnyServer>(plugin: (app: this) => Out): Out;\n    /**\n     * Apply a {@link Middleware} bundle — wire each hook it provides to its lifecycle point. Returns\n     * `this` (no context-type merging); call it before the routes its `beforeHandle`/`afterHandle`\n     * should cover (those are order-scoped; `onRequest`/`onResponse` are global). A named bundle already\n     * applied is skipped (idempotent).\n     */\n    use(mw: Middleware): this;\n    get<Path extends string, S extends RouteSchema, H extends Handler<Path, S, Ctx>>(path: Path, schema: S, handler: H): Server<AddRoute<R, \"GET\", Path, RouteInfoFor<Path, S, OutputOf<H>>>, Ctx>;\n    get<Path extends string, H extends Handler<Path, RouteSchema, Ctx>>(path: Path, handler: H): Server<AddRoute<R, \"GET\", Path, RouteInfoFor<Path, Record<never, never>, OutputOf<H>>>, Ctx>;\n    /**\n     * Register a **typed SSE route** — a GET endpoint streaming `text/event-stream` whose event\n     * payloads are contracted by `schema.sse`. The handler receives the validated context plus a\n     * {@link TypedSSEStream}: `stream.send(event)` is compile-time-checked against the schema and\n     * JSON-serialized into the SSE `data:` field. The typed client sees the marker and grows a\n     * `.subscribe(onEvent)` for the route with the same payload type — end-to-end typed streaming.\n     *\n     *   const app = server().sse(\"/feed\", { sse: t.object({ id: t.integer(), title: t.string() }) },\n     *     async (c, stream) => {\n     *       stream.send({ id: 1, title: \"hello\" })          // typed\n     *       await waitForDisconnect(stream.signal)\n     *     },\n     *     { keepAlive: 15_000 })\n     *\n     *   // client: const off = api.feed.subscribe((post) => console.log(post.title))\n     *\n     * `init` passes through to the underlying {@link sse} helper (`keepAlive`, extra headers). The\n     * connection closes when the handler resolves, `stream.close()` runs, or the client disconnects\n     * (`stream.signal`). Query/body schemas validate exactly as on any other route.\n     */\n    sse<Path extends string, S extends RouteSchema & {\n        sse: StandardSchemaV1;\n    }>(path: Path, schema: S, run: (context: Context<Path, S> & Ctx, stream: TypedSSEStream<InferOutput<S[\"sse\"]>>) => void | Promise<void>, init?: SSEInit): Server<AddRoute<R, \"GET\", Path, RouteInfoFor<Path, S, Response>>, Ctx>;\n    post<Path extends string, S extends RouteSchema, H extends Handler<Path, S, Ctx>>(path: Path, schema: S, handler: H): Server<AddRoute<R, \"POST\", Path, RouteInfoFor<Path, S, OutputOf<H>>>, Ctx>;\n    post<Path extends string, H extends Handler<Path, RouteSchema, Ctx>>(path: Path, handler: H): Server<AddRoute<R, \"POST\", Path, RouteInfoFor<Path, Record<never, never>, OutputOf<H>>>, Ctx>;\n    put<Path extends string, S extends RouteSchema, H extends Handler<Path, S, Ctx>>(path: Path, schema: S, handler: H): Server<AddRoute<R, \"PUT\", Path, RouteInfoFor<Path, S, OutputOf<H>>>, Ctx>;\n    put<Path extends string, H extends Handler<Path, RouteSchema, Ctx>>(path: Path, handler: H): Server<AddRoute<R, \"PUT\", Path, RouteInfoFor<Path, Record<never, never>, OutputOf<H>>>, Ctx>;\n    patch<Path extends string, S extends RouteSchema, H extends Handler<Path, S, Ctx>>(path: Path, schema: S, handler: H): Server<AddRoute<R, \"PATCH\", Path, RouteInfoFor<Path, S, OutputOf<H>>>, Ctx>;\n    patch<Path extends string, H extends Handler<Path, RouteSchema, Ctx>>(path: Path, handler: H): Server<AddRoute<R, \"PATCH\", Path, RouteInfoFor<Path, Record<never, never>, OutputOf<H>>>, Ctx>;\n    delete<Path extends string, S extends RouteSchema, H extends Handler<Path, S, Ctx>>(path: Path, schema: S, handler: H): Server<AddRoute<R, \"DELETE\", Path, RouteInfoFor<Path, S, OutputOf<H>>>, Ctx>;\n    delete<Path extends string, H extends Handler<Path, RouteSchema, Ctx>>(path: Path, handler: H): Server<AddRoute<R, \"DELETE\", Path, RouteInfoFor<Path, Record<never, never>, OutputOf<H>>>, Ctx>;\n    tool<Name extends string, S extends {\n        description: string;\n        input: StandardSchemaV1;\n        output?: StandardSchemaV1;\n        annotations?: ToolAnnotations;\n    }, H extends (input: InferOutput<S[\"input\"]>, ctx: Context & Ctx) => MaybePromise<S[\"output\"] extends StandardSchemaV1 ? InferOutput<S[\"output\"]> : unknown>>(name: Name, config: S, handler: H): Server<AddRoute<R, \"POST\", `/_nifra/tool/${Name}`, RouteInfoFor<`/_nifra/tool/${Name}`, S[\"output\"] extends StandardSchemaV1 ? {\n        body: S[\"input\"];\n        response: S[\"output\"];\n    } : {\n        body: S[\"input\"];\n    }, OutputOf<H>>>, Ctx>;\n    /**\n     * Declare an MCP **resource** — read-only data an agent can fetch through `nifra mcp` (app config, a\n     * generated document, …). `read` runs in the app process, so capture whatever app state it needs in the\n     * closure. `uri` is the MCP resource identifier (e.g. `\"myapp://config\"`). The sibling of {@link tool}\n     * for the resource half of MCP.\n     */\n    resource(uri: string, config: {\n        readonly name: string;\n        readonly description?: string;\n        readonly mimeType?: string;\n    }, read: McpResourceDescriptor[\"read\"]): Server<R, Ctx>;\n    /**\n     * Declare an MCP **prompt** — a reusable prompt template an agent can fetch through `nifra mcp`.\n     * `handler` receives the caller's arguments and returns the rendered messages.\n     */\n    prompt(name: string, config: {\n        readonly description: string;\n        readonly arguments?: readonly PromptArgument[];\n    }, handler: McpPromptDescriptor[\"handler\"]): Server<R, Ctx>;\n    /** The MCP resources declared via {@link resource} — enumerated by `nifra mcp`. */\n    mcpResources(): readonly McpResourceDescriptor[];\n    /** The MCP prompts declared via {@link prompt} — enumerated by `nifra mcp`. */\n    mcpPrompts(): readonly McpPromptDescriptor[];\n    /**\n     * Register a **WebSocket** route. The connection upgrades on a `GET` to `path` carrying\n     * `Upgrade: websocket`; the optional `handler.upgrade(c)` runs in the request context first and may\n     * reject (return a `Response`) or seed per-connection `ws.data`. WebSockets are served by the\n     * adapter (`listen()`, `@nifrajs/node`, `@nifrajs/deno`, `toFetchHandler`) — not by bare `app.fetch`, which\n     * has no socket (a WS path through `app.fetch` is a normal HTTP response).\n     *\n     *   app.ws(\"/chat\", { open: (ws) => ws.send(\"hi\"), message: (ws, data) => ws.send(data) })\n     */\n    ws<Data = unknown, Schema extends StandardSchemaV1 | undefined = undefined>(path: string, handler: WebSocketHandler<Data, EnvOf<Ctx>, Schema>): this;\n    /**\n     * Broadcast `data` to every WebSocket connection subscribed to `topic` (via `ws.subscribe(topic)`).\n     * In-process and **single-instance** (see {@link TopicRegistry}) — a multi-instance deploy must bridge\n     * an external fan-out (Redis, a Durable Object) to this. A no-op when nobody is subscribed.\n     */\n    publish(topic: string, data: string | ArrayBufferView | ArrayBuffer): void;\n    private route;\n    /**\n     * Low-level route registration shared by the inline builder and `implement()`.\n     * Captures the server's current `derive`/`decorate` chain into the route — this\n     * is the \"compiled\", order-scoped per-route chain.\n     */\n    register(method: Method, path: string, schema: RouteSchema | undefined, handler: (context: never) => unknown): void;\n    /**\n     * Merge another server's routes into this one — the composition escape hatch for large apps.\n     *\n     * WHY: the fluent chain accumulates one type-alias level per route, and TypeScript resolves\n     * that stack in one recursion — a single chain hits TS2589 at ~95 routes. Groups keep every\n     * chain short: build each domain (`listings`, `agents`, …) as its own `server()` (its registry\n     * resolves independently), then `app.merge(listings).merge(agents)` — each merge adds ONE level\n     * regardless of group size. 300+ routes stay fully typed (see many-routes.test-d.ts). The\n     * other escape hatch is contract-first `implement()`, whose registry is a single object type.\n     *\n     * Semantics: merged routes keep the chains captured where they were DEFINED — the group's\n     * `derive`/`decorate`/`beforeHandle`/`afterHandle`/`onError`/`around` apply to its routes\n     * exactly as they did standalone, so a group wires its own plugins. The group's request-level\n     * hooks (`onRequest`/`onResponse`/`onResponseFinalized`) are appended to this server's. This\n     * server's route-scoped chains do NOT retroactively wrap merged routes (order-scoped, like\n     * routes registered before a `derive`). Fail closed: a path+method collision throws\n     * `RouteConfigError` at merge time, and a group with WebSocket routes is refused (register\n     * those on the parent).\n     */\n    merge<R2 extends Registry, Ctx2>(other: Server<R2, Ctx2>): Server<R & R2, Ctx>;\n    /**\n     * Enumerate the registered routes (method, path, input schemas), in registration\n     * order. Powers `toOpenAPI` and other introspection; the router trie itself no\n     * longer holds the original patterns.\n     */\n    routes(): ReadonlyArray<RouteDescriptor>;\n    /**\n     * Resolve a `Request` to a `Response` — the whole lifecycle, testable without a port. The\n     * optional `platform` carries edge inputs (`env`, `waitUntil`); edge adapters pass it, and\n     * Bun/Node/Deno omit it (then `c.env` is `undefined` and `c.waitUntil` runs fire-and-forget).\n     */\n    fetch(req: Request, platform?: Platform<EnvOf<Ctx>>): MaybePromise<Response>;\n    private fetchSource;\n    /**\n     * Like {@link fetch}, but renders a plain-data result **without** building a Web `Response` — the\n     * `@nifrajs/node` adapter serializes the returned primitives straight to the socket, skipping the undici\n     * `Response` build + body drain (the bulk of the Node bridge cost, measured ≈4µs/req). A handler that\n     * returns a `Response`, an error/short-circuit, or any registered `onResponse` hook falls back to the\n     * full Web path (`{ kind: \"response\" }`), so behavior is identical — only the common JSON-data case is\n     * faster. Same lifecycle as {@link fetch} (body cap, validation, hooks all run); only the final\n     * render differs.\n     */\n    resolveNode(req: Request, platform?: Platform<EnvOf<Ctx>>): MaybePromise<NodeServeOutcome>;\n    resolveNodeSource(source: RequestSource, platform?: Platform<EnvOf<Ctx>>): MaybePromise<NodeServeOutcome>;\n    /**\n     * Resolve a WebSocket upgrade — the seam every serving adapter uses. Returns `pass` (not a WS\n     * upgrade for a registered route → handle as normal HTTP), `reject` (a WS route matched but\n     * `upgrade()` rejected, or the path was malformed → return `response`), or `upgrade` (perform the\n     * runtime upgrade, then dispatch the native socket's events to `handler`, seeding `ws.data` with\n     * `data`). Runs the route's `upgrade(c)` guard in a real request context. Synchronous unless\n     * `upgrade()` is async; a throw rejects with a flat 500 (no detail leaked).\n     */\n    resolveWebSocketUpgrade(req: Request, platform?: Platform<EnvOf<Ctx>>): MaybePromise<WebSocketUpgradeOutcome>;\n    /** Bun `fetch` when WS routes exist: try a WS upgrade first, else run the normal HTTP lifecycle.\n     * `undefined` ⇒ Bun owns the upgraded socket; a `Response` ⇒ a normal reply or a rejected upgrade.\n     * (The socket dispatch itself lives in `ws-bun.ts`, loaded via `@nifrajs/core/ws`.) */\n    private bunFetchWithWebSocket;\n    /**\n     * The shared lifecycle, generic over how the final value is rendered: `finalize` turns a handler's\n     * result + `set` into the output `T` (`toResponse` → a Web `Response`; `toNodeOutcome` → node-direct\n     * primitives), `wrapResponse` lifts an early/error `Response` into that same `T`, and `onTimeout`\n     * produces the 503. The Web `fetch` and `resolveNode` are thin callers over this one routing +\n     * context + lifecycle implementation — no duplication across the trust boundary.\n     */\n    private dispatch;\n    /**\n     * onRequest short-circuit path. Synchronous as long as every hook returns synchronously (the\n     * common case — e.g. CORS returning `undefined` for a non-preflight request): an `async` version\n     * here put EVERY request of any app with one onRequest hook onto the promise machinery, profiled\n     * at ~13% of a realistic request. The first hook that returns a Promise hands the REMAINING\n     * hooks to the async continuation; behavior is identical.\n     */\n    private runWithOnRequest;\n    /** Async tail of {@link runWithOnRequest}: applies the first awaited hook's outcome, then runs\n     * the remaining hooks (awaiting freely — we're already async here). */\n    private continueOnRequest;\n    private takeResponseRequest;\n    /**\n     * Route → build context → run. Synchronous through to the handler for a **bare** route\n     * ({@link RouteEntry.bare}), so a sync handler produces its result with zero promise allocations;\n     * routes with validation/hooks keep the full async {@link runLifecycle}, unchanged.\n     */\n    private routeAndRun;\n    /** The narrowest bare route: a syntactic `() => ...` handler cannot observe the context argument, so\n     * successful requests can skip allocating `RequestContext`. Errors still allocate one for logging. */\n    private runContextlessBare;\n    private contextlessBareError;\n    /**\n     * The synchronous fast path for a {@link RouteEntry.bare} route: apply static decorations, call the\n     * handler, render the result — **no `await`** unless the handler itself returns a promise. It mirrors\n     * the bare slice of {@link runLifecycle} (which a bare route would otherwise no-op through) and shares\n     * {@link logRequestError}; a bare route has no `onError` hooks, so error handling is fully synchronous\n     * (a thrown `Response` is control flow; anything else is a logged flat 500). This is where nifra skips\n     * the per-request async-frame tax — the same win codegen routers get, but without `eval`.\n     */\n    private runBare;\n    /** Bare-route error rendering — identical to {@link runLifecycle}'s catch minus the (absent) onError\n     * loop: a thrown `Response` is returned as deliberate control flow; anything else is logged + 500. */\n    /**\n     * Build a route's fused Web lane (see {@link RouteEntry.fusedWeb}). Composition happens once at\n     * registration; the returned closure is what every request to the route runs. Behavior is\n     * byte-identical to the generic `runBare`/`runContextlessBare` + `toResponse` pair — same\n     * decoration order, same error routing (thrown `Response` = control flow; anything else logs and\n     * 500s), same respond semantics (the lifecycle parity suite pins it).\n     */\n    private buildFusedWeb;\n    private bareError;\n    private runWithAround;\n    private runAround;\n    private runBodyOnly;\n    /** Validate + run the handler for the bodyOnly path — shared by the inline fast path and the\n     * streaming fallback. A method (not per-request closures) so the hot path allocates nothing\n     * beyond the one `.then` continuation. */\n    private finishBodyOnly;\n    private executeHandler;\n    private handleValidationErrorRecovery;\n    private applyBodyValidation;\n    private runQueryOnly;\n    /** Validate-result → set `ctx.query` → run handler. A method (not a per-request closure), the\n     * query analogue of {@link applyBodyValidation}. */\n    private applyQueryValidation;\n    /**\n     * Thread the response through each global `onResponse` hook. Stays SYNCHRONOUS until a hook\n     * actually returns a Promise — an `async` version forced a promise + microtask on EVERY response\n     * of any app with an onResponse hook (cors/securityHeaders/etag/timing all use onResponse), the\n     * same ~13%/req tax the onRequest walk was de-async'd to avoid. The first async hook hands the\n     * rest to {@link continueOnResponse}.\n     */\n    private applyOnResponse;\n    private applyOnResponseAndFinalize;\n    private completeResponseFinalization;\n    private failResponseFinalization;\n    /** Notify terminal observers in order while isolating both sync and async failures. */\n    private notifyResponseFinalized;\n    /** Async tail of {@link applyOnResponse}: runs the remaining hooks once one has gone async. */\n    private continueOnResponse;\n    /**\n     * Bound the response time. On timeout we abort `ctx.signal` (so cancellation-aware\n     * handlers can bail) and return 503; the in-flight work keeps running but its\n     * result is discarded — JS can't forcibly cancel a promise.\n     */\n    private withTimeout;\n    /**\n     * The post-match lifecycle: validate → derive → beforeHandle → handler → afterHandle, with onError.\n     * Generic over the render: a success value goes through `finalize(result, set)` (a Web `Response`, or\n     * node-direct primitives); an early/error `Response` (validation, thrown, 500) through `wrapResponse`.\n     */\n    private runLifecycle;\n    private handleLifecycleError;\n    /** Log an unhandled request error to the (redacting) logger — shared by {@link runLifecycle} and the\n     * bare fast path ({@link bareError}) so both record the same fields. Never throws; never leaks. */\n    private logRequestError;\n    private readAndValidateBody;\n    /**\n     * Read the body as text, capped at `maxBodyBytes`. Rejects (`null`) on a\n     * `Content-Length` over the cap *before* buffering, and aborts mid-stream once the\n     * running byte count exceeds it — so a lying or absent length can't force us to\n     * buffer an oversized payload.\n     *\n     * Fast path: when a non-chunked request carries a `Content-Length` within the cap,\n     * a native `req.json()` is already bounded — under HTTP/1.1 + HTTP/2 framing the\n     * runtime delivers at most `Content-Length` bytes — so we skip the manual stream\n     * loop and a separate text decode. It trusts the wire\n     * *framing*, not the header value: nifra only ever receives framed Requests from the\n     * runtime's HTTP server, never a hand-built one with a mismatched length. Chunked or\n     * length-less bodies fall through to the streaming byte-cap guard below.\n     */\n    private readBoundedJson;\n    /**\n     * Start a `Bun.serve` instance bound to `port` (use `0` for an ephemeral port).\n     *\n     * `reusePort` sets `SO_REUSEPORT` so **multiple processes can bind the same port** and the kernel\n     * load-balances connections across them — the standard way to use every core (Bun is\n     * single-threaded per process). Spawn one process per core, each calling\n     * `app.listen(PORT, { reusePort: true })`; see `examples/cluster.ts`. Every process must opt in,\n     * and all of them must be the same app. Linux balances ~evenly; macOS accepts the flag but may\n     * favor one socket (fine for dev, measure on Linux for production numbers).\n     */\n    listen(port: number, options?: {\n        readonly reusePort?: boolean;\n    }): RunningServer;\n    /**\n     * Gracefully stop: wait for in-flight requests to finish (up to `drainMs`), then\n     * issue a single terminal stop — graceful if everything drained, forced if\n     * stragglers remain. Safe to call when not listening.\n     *\n     * The Bun semantics: poll `pendingRequests` (awaiting\n     * `stop()`'s promise drops in-flight requests), and decide graceful-vs-forced in\n     * ONE call (Bun can't escalate an already-graceful `stop()` to a forced close).\n     * New connections may be accepted during the drain window; in a real deploy the\n     * load balancer has already stopped routing here, and `drainMs` bounds it.\n     */\n    stop({ drainMs }?: {\n        drainMs?: number;\n    }): Promise<void>;\n    private installSignalHandlers;\n}",
     "doc": "/**\n * The inline server. Routes are chainable and fully type-inferred. `derive`/\n * `decorate` extend the handler context (`Ctx`) for routes defined *after* them,\n * with full types; `Ctx` is server-only and never touches the client registry.\n *\n *   app.decorate(\"db\", db).derive((c) => ({ user: auth(c) }))\n *      .get(\"/me\", (c) => c.user)            // c.user + c.db are typed\n */"
   },
   {
@@ -6233,7 +6549,7 @@
     "name": "ServerOptions",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface ServerOptions {\n    /**\n     * Max request body size (bytes), enforced **only when a route declares a body schema** — the cap\n     * lives in the schema-validated read path. Default 1_000_000.\n     *\n     * A route WITHOUT a body schema (raw body, file upload, BYO-validation) that reads `c.req` directly\n     * is not auto-bounded — use **`c.boundedBody(maxBytes?)`** / **`c.boundedJson(maxBytes?)`**, which\n     * apply this same cap (override per route by passing `maxBytes` — larger for an upload endpoint,\n     * smaller to tighten one).\n     */\n    readonly maxBodyBytes?: number;\n    /** Max inbound WebSocket message size (bytes) when `listen()`ing on Bun — frames over this are rejected\n     * by the runtime before reaching your handler (so a huge frame can't be JSON-parsed into memory).\n     * Default: `maxBodyBytes` (1 MB). */\n    readonly wsMaxPayloadBytes?: number;\n    /** Per-request timeout (ms): a slower request gets a 503 and `ctx.signal` aborts. 0 disables (default). */\n    readonly requestTimeoutMs?: number;\n    /** When `listen()`ing, install SIGTERM/SIGINT handlers that gracefully `stop()`. Default false. */\n    readonly gracefulSignals?: boolean;\n    /** Structured logger for framework events (redacts secrets). Default: JSON to stderr. */\n    readonly logger?: Logger;\n    /**\n     * App-wide fallback fired when a route **without its own `onValidationError`** fails body/query\n     * validation. Same contract as the per-route hook (`(issues, ctx, kind) => Response | repaired-value |\n     * undefined`): a route's own hook takes precedence, and a route can fall through to the plain `422` by\n     * returning `undefined`. Use it for one app-wide error envelope (like tRPC's `errorFormatter` /\n     * Fastify's `setErrorHandler`) instead of repeating a formatter per route.\n     */\n    readonly onValidationError?: RouteSchema[\"onValidationError\"];\n}"
+    "signature": "export interface ServerOptions {\n    /**\n     * Max request body size (bytes), enforced **only when a route declares a body schema** — the cap\n     * lives in the schema-validated read path. Default 1_000_000.\n     *\n     * A route WITHOUT a body schema (raw body, file upload, BYO-validation) that reads `c.req` directly\n     * is not auto-bounded — use **`c.boundedBody(maxBytes?)`** / **`c.boundedJson(maxBytes?)`**, which\n     * apply this same cap (override per route by passing `maxBytes` — larger for an upload endpoint,\n     * smaller to tighten one).\n     */\n    readonly maxBodyBytes?: number;\n    /** Max inbound WebSocket message size (bytes) when `listen()`ing on Bun — frames over this are rejected\n     * by the runtime before reaching your handler (so a huge frame can't be JSON-parsed into memory).\n     * Default: `maxBodyBytes` (1 MB). */\n    readonly wsMaxPayloadBytes?: number;\n    /** Per-request timeout (ms): a slower request gets a 503 and `ctx.signal` aborts. 0 disables (default). */\n    readonly requestTimeoutMs?: number;\n    /**\n     * Maximum time accepted from an inbound `x-nifra-deadline`, in milliseconds. An incoming absolute\n     * deadline may shorten this cap (and `requestTimeoutMs`, when configured), never extend it.\n     * Default 30_000; applies only when the header is present.\n     */\n    readonly maxInboundDeadlineMs?: number;\n    /** When `listen()`ing, install SIGTERM/SIGINT handlers that gracefully `stop()`. Default false. */\n    readonly gracefulSignals?: boolean;\n    /** Structured logger for framework events (redacts secrets). Default: JSON to stderr. */\n    readonly logger?: Logger;\n    /**\n     * App-wide fallback fired when a route **without its own `onValidationError`** fails body/query\n     * validation. Same contract as the per-route hook (`(issues, ctx, kind) => Response | repaired-value |\n     * undefined`): a route's own hook takes precedence, and a route can fall through to the plain `422` by\n     * returning `undefined`. Use it for one app-wide error envelope (like tRPC's `errorFormatter` /\n     * Fastify's `setErrorHandler`) instead of repeating a formatter per route.\n     */\n    readonly onValidationError?: RouteSchema[\"onValidationError\"];\n}"
   },
   {
     "name": "ServeStaticOptions",
@@ -6349,6 +6665,13 @@
     "kind": "function",
     "package": "@nifrajs/middleware",
     "signature": "export declare function sha256(input: string | Uint8Array): Promise<Uint8Array<ArrayBuffer>>;"
+  },
+  {
+    "name": "shapeOf",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function shapeOf(value: unknown): unknown;",
+    "doc": "/** A stable structural fingerprint: keys + value *types*, not values. Used for the optional shape check. */"
   },
   {
     "name": "sharpImageBackend",
@@ -7186,6 +7509,13 @@
     "doc": "/** The MCP Apps `_meta.ui.resourceUri` link, emitted nested (current spec) AND flat (the deprecated\n * `ui/resourceUri`, still read by some hosts) so a tool renders across the transition. */"
   },
   {
+    "name": "UNBOUNDED_DEADLINE",
+    "kind": "const",
+    "package": "@nifrajs/budget",
+    "signature": "export declare const UNBOUNDED_DEADLINE: number;",
+    "doc": "/** Sentinel used only for an unbounded local budget. It is never written to the wire. */"
+  },
+  {
     "name": "unsignValue",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -7198,6 +7528,24 @@
     "package": "@nifrajs/mock",
     "signature": "export declare class UnsupportedMockSchemaError extends Error {\n    readonly keyword: string;\n    constructor(keyword: string, message: string);\n}",
     "doc": "/**\n * `@nifrajs/mock` — contract-based mock server.\n *\n * Reads a Nifra app's registered routes and their Standard Schema / JSON Schema\n * response definitions, then generates fake responses from supported JSON Schema keywords. Use it\n * for frontend-first development, agent testing, or CI smoke tests.\n */"
+  },
+  {
+    "name": "UpgradeOptions",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface UpgradeOptions {\n    /** Target version, e.g. \"1.8.0\". Required unless `list` is set. */\n    readonly version?: string;\n    /** Apply the edits. Without it, the run is a dry-run that only prints the plan. */\n    readonly write?: boolean;\n    /** Emit a machine-readable plan/result instead of the human report. */\n    readonly json?: boolean;\n    /** Print the available target versions and return. */\n    readonly list?: boolean;\n    /** After `--write`, run `nifra check` and fail the command if it fails. Default true. */\n    readonly verify?: boolean;\n}"
+  },
+  {
+    "name": "UpgradePlan",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface UpgradePlan {\n    readonly version: string;\n    readonly pins: readonly PinChange[];\n    readonly importMoves: readonly ImportChange[];\n    readonly notes: readonly string[];\n}"
+  },
+  {
+    "name": "UpgradeRecipe",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface UpgradeRecipe {\n    readonly version: string;\n    readonly pins: readonly PinRule[];\n    readonly importMoves: readonly ImportMove[];\n    /** Human notes printed after the plan — e.g. structural changes the runner deliberately can't do. */\n    readonly notes?: readonly string[];\n}"
   },
   {
     "name": "UploadResult",
@@ -7674,6 +8022,13 @@
     "package": "@nifrajs/mcp",
     "signature": "export declare function widgetDocument(opts: DefineMcpWidgetOptions): string;",
     "doc": "/** Assemble the full self-contained widget document (bridge inlined in `<head>` so body scripts can use\n * `mcpApp` immediately). */"
+  },
+  {
+    "name": "withDeadlineHeader",
+    "kind": "function",
+    "package": "@nifrajs/budget",
+    "signature": "export declare function withDeadlineHeader(input: DeadlineHeadersInit, budget: RequestBudget, reserveMs?: number): Headers;",
+    "doc": "/** Add this budget's absolute deadline to an outbound request. */"
   },
   {
     "name": "withHeaders",

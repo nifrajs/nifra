@@ -190,6 +190,7 @@ Bun is the first-class runtime (`app.listen()`), but the whole lifecycle is `app
 | Package | What it is |
 |---|---|
 | [`@nifrajs/core`](packages/core) | Router, fully-inferred server, contracts, lifecycle middleware, hardening |
+| [`@nifrajs/budget`](packages/budget) | Absolute request deadlines, monotonic remaining time, child reserves, wire propagation |
 | [`@nifrajs/client`](packages/client) | End-to-end-typed, never-throwing client (Eden-style proxy) |
 | [`@nifrajs/schema`](packages/schema) | TypeBox-backed `t` builder + `toOpenAPI` |
 | [`@nifrajs/middleware`](packages/middleware) | CORS, security headers, rate limiting |
