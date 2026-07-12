@@ -78,6 +78,12 @@ Usage:
   nifra doctor  [--json] [--auto-fix]    Flag packages imported in source but missing from package.json
                                          (resolve at Bun runtime, break tsc + standalone install);
                                          --auto-fix writes safe local-version dependency fixes.
+  nifra upgrade <version>                Run the per-release upgrade recipe for <version>: sweep every
+                [--write] [--no-verify]  matching dependency pin (preserving ^/~/exact) + apply exact
+                [--list] [--json]        import moves across the workspace, then verify with nifra check.
+                                         Dry-run by default; --write applies then verifies (--no-verify
+                                         to skip). --list shows available targets. Fail-closed on an
+                                         unknown version. Deterministic + idempotent.
   nifra port    [--target <t>] [--json]  Portability linter: print a feature × deploy-target capability
                 [--ci] [--strict]        matrix (in-memory stores, in-process cron/WebSocket, Bun/Deno
                                          globals, node: builtins) with file:line evidence. --target auto-
@@ -397,6 +403,27 @@ async function main(): Promise<void> {
         }))
       )
         process.exitCode = 1
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err))
+      process.exitCode = 1
+    }
+    return
+  }
+  // `upgrade` is a pure cwd file-transformer (package.json pins + import moves) driven by a per-release
+  // recipe, then verified with `nifra check`. Dispatch before the eager `loadApp` — it must run on any
+  // repo (API-only, not built, or mid-upgrade with edits that don't yet typecheck under dry-run).
+  if (command === "upgrade") {
+    const { runUpgrade } = await import("./upgrade.ts")
+    const version = argv.slice(1).find((arg) => !arg.startsWith("-"))
+    try {
+      const ok = await runUpgrade(process.cwd(), {
+        ...(version !== undefined ? { version } : {}),
+        write: argv.includes("--write"),
+        json: argv.includes("--json"),
+        list: argv.includes("--list"),
+        verify: !argv.includes("--no-verify"),
+      })
+      if (!ok) process.exitCode = 1
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err))
       process.exitCode = 1
