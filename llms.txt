@@ -34,6 +34,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - [Nifra — Fonts](/docs/fonts): Self-host web fonts with zero layout shift: a build-time Google Fonts downloader (the next/font equivalent) plus CLS-safe @font-face + preload primitives.
 - [Nifra — Migrating from Express, Hono, Fastify & Elysia](/docs/migrate-backend): Move a backend to Nifra: routing, middleware, validation, and body parsing map directly from Express, Hono, Fastify, and Elysia — and you gain a typed client, multi-runtime deploy, and optional SSR.
 - [Nifra — Migrating from Next.js, Nuxt, SvelteKit & SolidStart](/docs/migrate-frontend): Move from a meta-framework to Nifra: file routes, data loading, API routes, layouts, and SSG/ISR map across React (Next), Vue (Nuxt), Svelte (SvelteKit), and Solid (SolidStart).
+- [Nifra — Contract-derived adversarial testing](/docs/testing): Turn route schemas into hostile input, response-conformance, replay, shrinking, and runtime-matrix tests with @nifrajs/testing.
 - [Nifra — Types-first architecture](/docs/types-first): One schema is the single source of truth: it drives runtime validation, inferred TypeScript types, the no-codegen typed client, an OpenAPI document, and the MCP contract your agents read.
 
 ## Packages
@@ -64,7 +65,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - `@nifrajs/runner` — Run requests through a nifra app's fetch and capture structured results — the engine behind the playground and the agent run/verify tool. Dependency-free; runs in the browser, Bun, Node, Deno, and on the edge.
 - `@nifrajs/schema` — Built-in schema builder `t` — TypeBox-backed (free JSON Schema + compiled validators), implements Standard Schema so nifra routes validate it natively.
 - `@nifrajs/storage` — Blob storage mechanics for nifra — traversal-safe memory, filesystem, and R2 adapters, optional provider capabilities, and executable adapter conformance.
-- `@nifrajs/testing` — Testing helpers for nifra apps — a cookie jar + a cookie-persisting in-process test session on top of @nifrajs/client's testClient, so stateful auth/session flows test as easily as a single request.
+- `@nifrajs/testing` — Contract-derived adversarial tests, runtime-matrix response conformance, and cookie-aware in-process sessions for Nifra apps.
 - `@nifrajs/uploads` — File-upload hardening for nifra — magic-byte MIME detection, size + type validation, short-TTL signed download URLs, and EXIF/metadata stripping. Dependency-free, edge-safe.
 - `@nifrajs/web` — Framework-agnostic SSR core for nifra — the render seam + HTML document orchestration.
 - `@nifrajs/web-preact` — Preact render adapter for @nifrajs/web — streaming SSR + hydration (no build plugin).
