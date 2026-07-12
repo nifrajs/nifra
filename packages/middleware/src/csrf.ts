@@ -1,4 +1,5 @@
-import type { Middleware } from "@nifrajs/core"
+import { METHODS, type Middleware } from "@nifrajs/core"
+import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import {
   base64UrlEncode,
   hmacSha256,
@@ -84,7 +85,7 @@ export function csrf(options: CsrfOptions): Middleware {
   const origins = options.origins !== undefined ? new Set(options.origins) : undefined
   const checkOrigin = options.checkOrigin !== false
 
-  return {
+  const middleware: Middleware = {
     name: "csrf",
     async onRequest(req) {
       if (!protectedMethod(req.method, methods)) return undefined
@@ -99,4 +100,15 @@ export function csrf(options: CsrfOptions): Middleware {
       return (await verifyCsrfToken(cookieToken, key)) ? undefined : jsonError(403, "csrf_failed")
     },
   }
+  return withRouteAssurance(middleware, {
+    id: NIFRA_ASSURANCE.CSRF,
+    source: "csrf",
+    scope: "global",
+    // Middleware may intentionally mention methods the Nifra router does not expose (for example
+    // TRACE). Keep runtime behavior unchanged, but publish evidence only for registerable routes.
+    methods:
+      options.methods === undefined
+        ? ["POST", "PUT", "PATCH", "DELETE"]
+        : METHODS.filter((method) => methods?.has(method)),
+  })
 }

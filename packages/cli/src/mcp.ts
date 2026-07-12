@@ -14,6 +14,7 @@
  *     so it can't hallucinate a drifted nifra API).
  *   - `nifra_scaffold`— map a URL path to the correct `routes/` file + a contract-correct page stub.
  *   - `nifra_check`   — the drift gate (typecheck + lints, each with a structured fix), for an agent to fix against.
+ *   - `nifra_assure`  — route classification + enforcement-evidence gate.
  *   - `nifra_doctor`  — package.json dependency drift detector, with safe local-version auto-fix.
  *
  * Wire it into a client (e.g. Claude Desktop / Cursor) as: command `nifra`, args `["mcp"]`, run in the
@@ -949,6 +950,42 @@ export function projectTools(
           null,
           2,
         )
+      },
+    },
+    {
+      name: "nifra_assure",
+      description:
+        "Evaluate nifra.assurance.ts and return the complete route-assurance report: every reflected route's first matching policy rule, enforcement evidence, missing/forbidden evidence, and the fail-closed ok bit. Use after adding or changing routes/security middleware; fix every finding before finishing.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          config: {
+            type: "string",
+            description:
+              "Config path relative to the selected project directory. Default: nifra.assurance.ts.",
+          },
+          dir: {
+            type: "string",
+            description:
+              'Evaluate this project subdirectory (relative to the MCP root), e.g. "apps/api". Default: the project root.',
+          },
+        },
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const opts = args as { config?: string; dir?: string }
+        const target = resolveProjectDir(cwd, opts.dir)
+        if (target === null) return dirError(opts.dir)
+        const config = opts.config === undefined ? undefined : resolve(target, opts.config)
+        if (config !== undefined && config !== target && !config.startsWith(target + sep)) {
+          return JSON.stringify(
+            { ok: false, error: "config must stay inside the selected project directory" },
+            null,
+            2,
+          )
+        }
+        const { collectAssuranceReport } = await import("./assure.ts")
+        return JSON.stringify(await collectAssuranceReport(target, config), null, 2)
       },
     },
     {

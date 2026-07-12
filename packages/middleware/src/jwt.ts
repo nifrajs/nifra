@@ -1,4 +1,5 @@
 import { definePlugin, type NifraPlugin } from "@nifrajs/core"
+import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import {
   base64UrlDecode,
   jsonError,
@@ -318,7 +319,14 @@ export function jwt<C extends JwtClaims = JwtClaims>(options: JwtOptions): JwtPl
       }
     }),
   )
-  return Object.assign(plugin, {
+  const instrumented = optional
+    ? plugin
+    : withRouteAssurance(plugin, {
+        id: NIFRA_ASSURANCE.AUTHENTICATED,
+        source: "jwt",
+        scope: "subsequent",
+      })
+  return Object.assign(instrumented, {
     claims: (request: Request): C | null => store.get(request) ?? null,
     requireClaims: (request: Request): C => {
       const claims = store.get(request)

@@ -1,4 +1,5 @@
-import type { Middleware } from "@nifrajs/core"
+import { METHODS, type Middleware } from "@nifrajs/core"
+import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import { jsonError, SAFE_METHODS } from "./_utils.ts"
 
 export interface BodyLimitOptions {
@@ -35,7 +36,7 @@ export function bodyLimit(options: BodyLimitOptions): Middleware {
   const error = options.error ?? "payload_too_large"
   const allowLengthless = options.allowLengthless === true
 
-  return {
+  const middleware: Middleware = {
     name: "body-limit",
     onRequest(req) {
       if (methods !== undefined ? !methods.has(req.method) : SAFE_METHODS.has(req.method)) {
@@ -50,4 +51,16 @@ export function bodyLimit(options: BodyLimitOptions): Middleware {
       return undefined
     },
   }
+  // Lengthless bodies are deliberately allowed in this mode, so claiming BODY_BOUNDED for the
+  // whole route would be false. The middleware still enforces declared Content-Length at runtime.
+  if (allowLengthless) return middleware
+  return withRouteAssurance(middleware, {
+    id: NIFRA_ASSURANCE.BODY_BOUNDED,
+    source: "body-limit",
+    scope: "global",
+    methods:
+      options.methods === undefined
+        ? ["POST", "PUT", "PATCH", "DELETE"]
+        : METHODS.filter((method) => methods?.has(method)),
+  })
 }
