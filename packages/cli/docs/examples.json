@@ -240,6 +240,12 @@
     "code": "import { server, sse } from \"@nifrajs/core\"\n\nconst app = server()\n// Your pub-sub of choice — subscribe returns an unsubscribe function.\ndeclare const notifications: { subscribe(on: (n: { id: string }) => void): () => void }\n\n// A live feed — push events until the client disconnects.\napp.get(\"/notifications\", (c) =>\n  sse(c, (stream) => {\n    const off = notifications.subscribe((n) =>\n      stream.send({ event: \"notification\", id: n.id, data: JSON.stringify(n) }),\n    )\n    // Keep the connection open until the client leaves, then tear down.\n    return new Promise<void>((resolve) =>\n      stream.signal.addEventListener(\"abort\", () => { off(); resolve() }, { once: true }),\n    )\n  }, { keepAlive: 15_000 }),\n)"
   },
   {
+    "name": "BASIC",
+    "topic": "Nifra — Contract-derived adversarial testing",
+    "slug": "testing",
+    "code": "import { test } from \"bun:test\"\nimport { assertAdversarialContract } from \"@nifrajs/testing\"\nimport { app } from \"../src/app\"\n\ntest(\"the API contract withstands hostile inputs\", async () => {\n  await assertAdversarialContract(app, { seed: 73 })\n})"
+  },
+  {
     "name": "SERVER_ONLY_MARKER",
     "topic": "Nifra — Troubleshooting",
     "slug": "troubleshooting",

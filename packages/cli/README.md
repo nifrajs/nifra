@@ -11,8 +11,17 @@ nifra start   [--port <n>] [--out <dir>]  Serve the built app (client + SSR) on 
 nifra context                             Print this project's API + page routes + conventions.
 nifra mcp                                 MCP server (stdio) exposing this project to a coding agent.
 nifra check   [--json]                    Gate: typecheck + lints; --json includes fixes/suggestions.
+nifra assure  [--config <file>] [--json]  Gate reflected routes against enforcement evidence.
 nifra doctor  [--json] [--auto-fix]       Catch undeclared imported packages; auto-fix safe local versions.
 ```
+
+## `nifra assure` — the route-enforcement gate
+
+Create `nifra.assurance.ts` with a default `defineAssuranceConfig({ source, policy })` export, then run
+`nifra assure` in CI. Official middleware publishes evidence at the same seam where it installs its
+hooks; the gate classifies every reflected route with the first matching rule and exits non-zero for an
+unclassified route, missing evidence, or forbidden evidence. Evaluation is startup/CI-only and adds no
+request-path overhead. Use `--json` for the complete per-route report or `--config` for another file.
 
 ## `nifra check` — the drift gate (run as "done")
 
@@ -66,6 +75,7 @@ an agent can act on the project, not just read about it. Core tools:
 - **`nifra_test`** — run bounded `bun test` with structured output.
 - **`nifra_check`** — run the drift gate and get the structured `{ ok, typecheck, diagnostics[] }`
   result with suggestions, so the agent verifies its own work and fixes each diagnostic before finishing.
+- **`nifra_assure`** — evaluate `nifra.assurance.ts` and return the complete per-route evidence report.
 - **`nifra_doctor`** — catch imported packages missing from `package.json`; with `autoFix:true`, write
   safe dependency entries when a version can be inferred locally and return exact `bun add` commands
   for anything that needs a package-manager decision.

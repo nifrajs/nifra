@@ -70,7 +70,7 @@ claude mcp add nifra -- bunx nifra mcp
 # { "mcpServers": { "nifra": { "command": "bunx", "args": ["nifra", "mcp"] } } }
 ```
 
-Once connected, the agent has twelve tools — no setup per prompt:
+Once connected, the agent has fifteen tools — no setup per prompt:
 
 | Tool | What it does |
 |---|---|
@@ -78,6 +78,7 @@ Once connected, the agent has twelve tools — no setup per prompt:
 | `nifra_routes` | The same routes as **structured JSON** (`{ method, path, call, body?, query?, response? }`) — for programmatic use. |
 | `nifra_openapi` | OpenAPI 3.1 generated from backend route schemas, as JSON or YAML. |
 | `nifra_check` | Typecheck + drift lint, returned as **structured JSON** with safe fix suggestions. |
+| `nifra_assure` | Classify every route and verify required/forbidden enforcement evidence. |
 | `nifra_doctor` | Flags packages imported in source but missing from `package.json` (resolve at runtime, break `tsc`). |
 | `nifra_run` | Calls a route **in-process** (via `@nifrajs/runner`) — the agent self-verifies an endpoint without booting a server. |
 | `nifra_render` | Server-renders a page to HTML — verify SSR output. |
@@ -85,12 +86,15 @@ Once connected, the agent has twelve tools — no setup per prompt:
 | `nifra_test` | Runs bounded `bun test` and returns structured stdout, stderr, timing, and summary. |
 | `nifra_scaffold` | URL pattern → the correct `routes/` file for the chosen UI framework. |
 | `nifra_docs` / `nifra_example` | Search the docs / fetch a **version-checked** snippet that compiles as-is (no hallucinated APIs). |
+| `nifra_types` | Look up the exact current TypeScript signature for any public Nifra export. |
+| `nifra_fix` | Apply safe mechanical fixes, then return unresolved diagnostics. |
 
 No MCP? The same data is available as plain commands — paste into any prompt, or run in CI:
 
 ```sh
 nifra context          # routes + schemas (+ per-route call signatures) as Markdown
 nifra check            # typecheck + typed-client drift lint; --json for agents, --lints-only to skip tsc
+nifra assure           # policy gate for route auth/CSRF/rate/body/idempotency evidence; --json for CI
 nifra doctor           # packages imported but not declared in package.json (--json for agents)
 ```
 
@@ -165,6 +169,11 @@ const app = server()
 server({ requestTimeoutMs: 5_000, gracefulSignals: true })
 ```
 
+Official hardening modules also publish route evidence. Add a `nifra.assurance.ts` policy and run
+`nifra assure` in CI to fail when a new route is unclassified or misses required authentication, CSRF,
+rate-limit, body-limit, idempotency, IP, or security-header enforcement. The proof is built from route
+reflection, so it adds no request-path work. See [Security & hardening](site/routes/docs/security.tsx).
+
 ## Runs on the edge, too
 
 Bun is the first-class runtime (`app.listen()`), but the whole lifecycle is `app.fetch(Request): Promise<Response>` with zero Bun APIs — so the same `app` deploys to **Cloudflare Workers** (`export default app`), **Deno** (`Deno.serve(app.fetch)`), or **Node** (via the [`@nifrajs/node`](packages/node) adapter). See [Deployment](site/routes/docs/deployment.tsx) and [Edge & bindings](site/routes/docs/edge.tsx).
@@ -184,6 +193,7 @@ Bun is the first-class runtime (`app.listen()`), but the whole lifecycle is `app
 | [`@nifrajs/client`](packages/client) | End-to-end-typed, never-throwing client (Eden-style proxy) |
 | [`@nifrajs/schema`](packages/schema) | TypeBox-backed `t` builder + `toOpenAPI` |
 | [`@nifrajs/middleware`](packages/middleware) | CORS, security headers, rate limiting |
+| [`@nifrajs/testing`](packages/testing) | Contract-derived hostile inputs, response conformance, runtime matrices, test sessions |
 | [`@nifrajs/node`](packages/node) | Run a nifra app on Node's `http` server (opt-in) |
 | [`@nifrajs/cli`](packages/cli) | `nifra check`, `nifra context`, `nifra mcp` — the agent toolchain |
 

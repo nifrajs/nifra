@@ -1682,6 +1682,44 @@ trustworthy client IP can be derived, and never trusts `X-Forwarded-For` unless 
 bodies before routing (fails closed with `411` on a length-less body). The read-time
 guard above (`c.boundedBody` / schema cap) remains the source of truth.
 
+### Route assurance — prove every route is guarded
+
+Installing security middleware is not the same as proving it covers every route. Nifra&apos;s
+official auth, CSRF, body-limit, rate-limit, idempotency, IP-restriction, and security-header
+modules publish reflection-safe evidence at the hook where they enforce it. A policy then
+classifies every route and fails closed when evidence is missing or forbidden.
+
+```ts
+// doc-check: skip — configuration file imports your application backend.
+// nifra.assurance.ts
+import { defineAssuranceConfig, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
+import { app } from "./backend.ts"
+
+export default defineAssuranceConfig({
+  source: app,
+  policy: {
+    // First match owns the route: put narrow exceptions before broad defaults.
+    rules: [
+      { name: "health", match: { paths: ["/health"] }, require: [],
+        forbid: [NIFRA_ASSURANCE.AUTHENTICATED] },
+      { name: "mutation", match: { methods: ["POST", "PUT", "PATCH", "DELETE"] },
+        require: [NIFRA_ASSURANCE.AUTHENTICATED, NIFRA_ASSURANCE.CSRF,
+          NIFRA_ASSURANCE.BODY_BOUNDED] },
+      { name: "read", match: { methods: ["GET", "HEAD"] },
+        require: [NIFRA_ASSURANCE.AUTHENTICATED] },
+    ],
+  },
+})
+
+// CI: nifra assure              # human diagnostics
+// CI: nifra assure --json       # complete machine-readable report
+```
+
+Evidence follows real lifecycle semantics: pre-routing and response hooks cover the whole app,
+while authentication and other order-scoped hooks cover only routes registered after them.
+Method and path filters prevent a narrow guard from claiming broader coverage. The evaluation
+runs only through reflection or `nifra assure`, so requests pay no assurance cost.
+
 ### Already built in
 
 These add to Nifra's standing defaults: strict-by-default schema validation (unknown fields
@@ -4160,6 +4198,116 @@ backend you can also ship on its own. Start with [Getting started](/docs).
 Moving a backend (Express, Hono, Fastify, Elysia) instead? See
 [Migrating a backend](/docs/migrate-backend).
 
+## Nifra — Contract-derived adversarial testing
+
+> Turn route schemas into hostile input, response-conformance, replay, shrinking, and runtime-matrix tests with @nifrajs/testing.
+
+A route contract should be more than documentation. `@nifrajs/testing` turns it
+into a laboratory: valid requests, hostile inputs, real boundary rejection, response
+conformance, shrinking, replay seeds, and adapter parity from one small test interface.
+
+### One assertion, every contracted boundary
+
+```ts
+import { test } from "bun:test"
+import { assertAdversarialContract } from "@nifrajs/testing"
+import { app } from "../src/app"
+
+test("the API contract withstands hostile inputs", async () => {
+  await assertAdversarialContract(app, { seed: 73 })
+})
+```
+
+For every selected route, the laboratory synthesizes a valid **contract witness**. It then
+changes types, removes required fields, crosses numeric and length bounds, inserts unknown
+properties, and descends into nested objects and arrays. A mutation is sent only after the
+route&apos;s own Standard Schema validator proves it invalid. Query values are proved after URL
+serialization, exactly as the server receives them.
+
+Invalid inputs must produce 422 by default. A valid witness is also executed for every
+declared `response`, and the real JSON body is validated off the request hot path.
+Use `expectedValidationStatuses` or `isRejected` when your app deliberately
+has a different validation response.
+
+### Opaque schemas stay validator-neutral
+
+Nifra&apos;s `t` schemas carry inspectable JSON Schema, so witness generation is
+automatic. Other Standard Schema libraries do not have to expose structure. Supply a known-good
+witness; their own validator still proves every hostile mutation.
+
+```ts
+// Standard Schema guarantees validation, not introspection.
+// Give opaque Zod/Valibot/ArkType routes only their known-good request values.
+await assertAdversarialContract(app, {
+  witnesses: {
+    "POST /users/:id": {
+      params: { id: "user-1" },
+      body: { name: "Ada" },
+      query: { notify: "true" },
+    },
+  },
+})
+```
+
+Missing, invalid, or unsynthesizable witnesses become explicit coverage gaps. The default is
+fail-closed; `requireCoverage: false` makes gaps advisory.
+
+### Auth and tenant context
+
+`prepareRequest` runs for every case and runtime. Use it to attach a test session,
+tenant identity, signed headers, or platform bindings without putting secrets into reports.
+
+```ts
+await assertAdversarialContract(app, {
+  prepareRequest(request, context) {
+    const headers = new Headers(request.headers)
+    headers.set("authorization", "Bearer test-session")
+    headers.set("x-tenant-id", context.runtime === "worker" ? "edge-test" : "local-test")
+    return new Request(request, { headers })
+  },
+})
+```
+
+### One contract, many runtimes
+
+Supply fetch targets to exercise the identical cases through Bun, Node, Deno, or Workers
+adapters. Reflection still comes from the original app, so there is one authoritative contract.
+
+```ts
+const report = await assertAdversarialContract(app, {
+  runtimes: [
+    { name: "bun",    fetch: (request) => bunApp.fetch(request) },
+    { name: "node",   fetch: (request) => nodeAdapter.fetch(request) },
+    { name: "worker", fetch: (request) => worker.fetch(request, env) },
+  ],
+})
+
+// Each target receives the same case IDs and deterministic witnesses.
+console.log(report.seed, report.counts)
+```
+
+### Shrink and replay failures
+
+Unexpectedly accepted hostile inputs are greedily reduced to a smaller validator-invalid
+request. Results do not print request bodies or headers; the stable case ID, runtime, and seed
+are enough to replay deterministically.
+
+```ts
+const report = await runAdversarialContract(app, { seed: 73 })
+const failure = report.failures[0]
+
+// CI can print this small, payload-free replay tuple.
+console.error(failure.replay) // { seed: 73, caseId: "...", runtime: "worker" }
+
+await assertAdversarialContract(app, {
+  seed: failure.replay.seed,
+  only: failure.replay.caseId,
+})
+```
+
+The response-conformance pass executes handlers, including POST/DELETE handlers. Run it with
+isolated fixtures and a test database. Never point a contract laboratory at production.
+
 ## Nifra — Types-first architecture
 
 > One schema is the single source of truth: it drives runtime validation, inferred TypeScript types, the no-codegen typed client, an OpenAPI document, and the MCP contract your agents read.
@@ -4479,8 +4627,17 @@ nifra start   [--port <n>] [--out <dir>]  Serve the built app (client + SSR) on 
 nifra context                             Print this project's API + page routes + conventions.
 nifra mcp                                 MCP server (stdio) exposing this project to a coding agent.
 nifra check   [--json]                    Gate: typecheck + lints; --json includes fixes/suggestions.
+nifra assure  [--config <file>] [--json]  Gate reflected routes against enforcement evidence.
 nifra doctor  [--json] [--auto-fix]       Catch undeclared imported packages; auto-fix safe local versions.
 ```
+
+## `nifra assure` — the route-enforcement gate
+
+Create `nifra.assurance.ts` with a default `defineAssuranceConfig({ source, policy })` export, then run
+`nifra assure` in CI. Official middleware publishes evidence at the same seam where it installs its
+hooks; the gate classifies every reflected route with the first matching rule and exits non-zero for an
+unclassified route, missing evidence, or forbidden evidence. Evaluation is startup/CI-only and adds no
+request-path overhead. Use `--json` for the complete per-route report or `--config` for another file.
 
 ## `nifra check` — the drift gate (run as "done")
 
@@ -4534,6 +4691,7 @@ an agent can act on the project, not just read about it. Core tools:
 - **`nifra_test`** — run bounded `bun test` with structured output.
 - **`nifra_check`** — run the drift gate and get the structured `{ ok, typecheck, diagnostics[] }`
   result with suggestions, so the agent verifies its own work and fixes each diagnostic before finishing.
+- **`nifra_assure`** — evaluate `nifra.assurance.ts` and return the complete per-route evidence report.
 - **`nifra_doctor`** — catch imported packages missing from `package.json`; with `autoFix:true`, write
   safe dependency entries when a version can be inferred locally and return exact `bun add` commands
   for anything that needs a package-manager decision.
@@ -4673,6 +4831,26 @@ export type App = typeof app // hand this to @nifrajs/client for end-to-end type
 - **Hardening built in.** `stop({ drainMs })` graceful shutdown (+ opt-in SIGTERM/
   SIGINT), `requestTimeoutMs` (+ `ctx.signal`), a streaming body-size cap, and a
   redacting structured `Logger`.
+- **Route assurance.** Official auth, CSRF, body-limit, rate-limit, idempotency,
+  IP-restriction, and security-header modules publish reflection-safe enforcement evidence.
+  An ordered `AssurancePolicy` classifies every route and fails closed on missing or forbidden
+  evidence without adding work to the request path.
+
+```ts
+import { defineAssurancePolicy, evaluateRouteAssurance, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
+
+const policy = defineAssurancePolicy({
+  rules: [
+    { name: "health", match: { paths: ["/health"] }, require: [] },
+    { name: "mutation", match: { methods: ["POST", "PUT", "PATCH", "DELETE"] },
+      require: [NIFRA_ASSURANCE.AUTHENTICATED, NIFRA_ASSURANCE.CSRF] },
+    { name: "read", match: { methods: ["GET", "HEAD"] },
+      require: [NIFRA_ASSURANCE.AUTHENTICATED] },
+  ],
+})
+
+evaluateRouteAssurance(app, policy).ok // pure reflection-time evaluation
+```
 
 ESM-only; requires Bun at runtime. MIT.
 
@@ -5467,10 +5645,79 @@ import { assertSafeKey, StorageKeyError } from "@nifrajs/storage"
 
 ## @nifrajs/testing
 
-Testing helpers for nifra apps. [`@nifrajs/client`](../client)'s **`testClient`** is already the typed,
-no-network in-process request client (nifra's supertest / `inject`). This package adds what it doesn't: a
-**cookie jar** and a **cookie-persisting `testSession`**, so a login → authenticated-request flow tests as
-easily as a single request.
+Contract-derived adversarial testing and stateful in-process helpers for Nifra apps.
+
+## Contract laboratory
+
+`assertAdversarialContract` turns the schemas already registered on an app into executable tests. It:
+
+- synthesizes a valid **contract witness** from inspectable JSON Schema;
+- makes small nested **hostile mutations** and sends only values the route's own Standard Schema
+  validator has proved invalid after HTTP transport normalization;
+- expects rejection at the real request boundary (422 by default);
+- executes a valid witness and validates the real success body against `response`;
+- runs the same stable case IDs across a Bun/Node/Workers runtime matrix; and
+- retains a replay seed and greedily shrinks unexpected acceptance failures.
+
+```ts
+import { test } from "bun:test"
+import { assertAdversarialContract } from "@nifrajs/testing"
+import { app } from "../src/app"
+
+test("the API contract withstands hostile inputs", async () => {
+  await assertAdversarialContract(app, {
+    seed: 73,
+    prepareRequest(request) {
+      const headers = new Headers(request.headers)
+      headers.set("authorization", "Bearer test-session")
+      return new Request(request, { headers })
+    },
+  })
+})
+```
+
+Nifra's `t` schemas carry JSON Schema, so witnesses are automatic. Standard Schema deliberately does
+not require introspection; for an opaque Zod/Valibot/ArkType schema, provide only its known-good values:
+
+```ts
+await assertAdversarialContract(app, {
+  witnesses: {
+    "POST /users/:id": {
+      params: { id: "user-1" },
+      body: { name: "Ada" },
+      query: { notify: "true" },
+    },
+  },
+})
+```
+
+The validator still decides which generated mutations are truly invalid; the supplied witness does not
+weaken validation. A missing/invalid witness is a coverage gap, not a silent pass. Set
+`requireCoverage: false` only when gaps are intentionally advisory.
+
+To exercise adapter parity, pass runtime fetch targets. The reflected `app` remains the one source of
+the contract:
+
+```ts
+const report = await assertAdversarialContract(app, {
+  runtimes: [
+    { name: "bun", fetch: (request) => bunApp.fetch(request) },
+    { name: "node", fetch: (request) => nodeAdapter.fetch(request) },
+    { name: "worker", fetch: (request) => worker.fetch(request, env) },
+  ],
+})
+```
+
+`runAdversarialContract` returns the same structured report without throwing. Every failure includes
+`replay: { seed, caseId, runtime }`; rerun one case with `only: caseId`. Contract runs execute one valid
+request for each declared response schema, so use an isolated test app/database—never point the
+laboratory at production.
+
+## Stateful sessions
+
+[`@nifrajs/client`](../client)'s **`testClient`** is already the typed, no-network in-process request
+client (Nifra's supertest / `inject`). `testSession` adds a **cookie jar**, so a login → authenticated
+request flow tests as easily as a single request.
 
 ```ts
 import { testSession } from "@nifrajs/testing"
@@ -5493,6 +5740,8 @@ that every call carries and captures cookies via a shared jar.
 
 ## API
 
+- `assertAdversarialContract(app, options?)` → green report or throws `AdversarialContractError`.
+- `runAdversarialContract(app, options?)` → structured `{ ok, results, failures, gaps, seed }` report.
 - `testSession<App>(app, { origin?, cookies? })` → `{ client: Treaty<App>, cookies: CookieJar }`.
 - `cookieJar()` → `CookieJar` — `header()` · `applyTo(headers)` · `store(response)` · `set` · `get` · `clear` · `size`.
   Honours removal (`Max-Age=0` / past `Expires`); other cookie attributes are ignored (in-process, same-origin).
@@ -5849,7 +6098,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/core
 
-`AnyServer`, `attachWebSocket`, `commonSecretPatterns`, `Context`, `ContextForOp`, `ContractShape`, `CookieOptions`, `defineContract`, `defineIdentityPlugin`, `definePlugin`, `defineRouterPlugin`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FRAMEWORK_NAME`, `FrameworkError`, `FrameworkName`, `Handler`, `HandlersFor`, `IdentityPlugin`, `implement`, `InferInput`, `InferOutput`, `jsonLogger`, `LogFields`, `Logger`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `METHODS`, `Middleware`, `NifraPlugin`, `NifraWebSocket`, `NodeServeOutcome`, `OnRequestResult`, `OperationDef`, `Params`, `parseCookies`, `Platform`, `Prettify`, `PromptArgument`, `PromptMessage`, `redactLogFields`, `RedactOptions`, `Registry`, `RegistryFor`, `RegistryFromImpl`, `ResponseControls`, `ResponseDef`, `robots`, `RobotsOptions`, `RobotsRule`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `Router`, `RouterMatch`, `RouteSchema`, `RunningServer`, `ScheduledController`, `ScheduledHandler`, `serializeCookie`, `server`, `Server`, `ServerOptions`, `SignatureEncoding`, `signValue`, `silentLogger`, `sitemap`, `SitemapChangeFreq`, `SitemapEntry`, `SitemapOptions`, `sse`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `toFetchHandler`, `ToolAnnotations`, `TopicRegistry`, `typedSSEStream`, `TypedSSEStream`, `unsignValue`, `validateStandard`, `ValidationOutcome`, `verifyWebhook`, `VerifyWebhookOptions`, `Version`, `VERSION`, `WebhookFailureReason`, `WebhookProvider`, `WebhookResult`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`
+`AnyServer`, `attachWebSocket`, `commonSecretPatterns`, `Context`, `ContextForOp`, `ContractShape`, `CookieOptions`, `defineContract`, `defineIdentityPlugin`, `definePlugin`, `defineRouterPlugin`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FRAMEWORK_NAME`, `FrameworkError`, `FrameworkName`, `Handler`, `HandlersFor`, `IdentityPlugin`, `implement`, `InferInput`, `InferOutput`, `jsonLogger`, `LogFields`, `Logger`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `METHODS`, `Middleware`, `NifraPlugin`, `NifraWebSocket`, `NodeServeOutcome`, `OnRequestResult`, `OperationDef`, `Params`, `parseCookies`, `Platform`, `Prettify`, `PromptArgument`, `PromptMessage`, `redactLogFields`, `RedactOptions`, `Registry`, `RegistryFor`, `RegistryFromImpl`, `ResponseControls`, `ResponseDef`, `ResponseFinalization`, `robots`, `RobotsOptions`, `RobotsRule`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `Router`, `RouterMatch`, `RouteSchema`, `RunningServer`, `ScheduledController`, `ScheduledHandler`, `serializeCookie`, `server`, `Server`, `ServerOptions`, `SignatureEncoding`, `signValue`, `silentLogger`, `sitemap`, `SitemapChangeFreq`, `SitemapEntry`, `SitemapOptions`, `sse`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `toFetchHandler`, `ToolAnnotations`, `TopicRegistry`, `typedSSEStream`, `TypedSSEStream`, `unsignValue`, `validateStandard`, `ValidationOutcome`, `verifyWebhook`, `VerifyWebhookOptions`, `Version`, `VERSION`, `WebhookFailureReason`, `WebhookProvider`, `WebhookResult`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`
 
 ## @nifrajs/cron
 
@@ -5925,7 +6174,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/testing
 
-`AppLike`, `cookieJar`, `CookieJar`, `testSession`, `TestSession`, `TestSessionOptions`
+`AdversarialContractError`, `AdversarialContractOptions`, `AdversarialContractReport`, `AdversarialContractResult`, `AppLike`, `assertAdversarialContract`, `ContractCaseContext`, `ContractCaseKind`, `ContractCoverageGap`, `ContractCoverageGapCode`, `ContractReplay`, `ContractRuntime`, `ContractTarget`, `ContractTestApp`, `ContractWitness`, `cookieJar`, `CookieJar`, `runAdversarialContract`, `testSession`, `TestSession`, `TestSessionOptions`
 
 ## @nifrajs/uploads
 

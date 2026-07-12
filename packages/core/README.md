@@ -31,6 +31,26 @@ export type App = typeof app // hand this to @nifrajs/client for end-to-end type
 - **Hardening built in.** `stop({ drainMs })` graceful shutdown (+ opt-in SIGTERM/
   SIGINT), `requestTimeoutMs` (+ `ctx.signal`), a streaming body-size cap, and a
   redacting structured `Logger`.
+- **Route assurance.** Official auth, CSRF, body-limit, rate-limit, idempotency,
+  IP-restriction, and security-header modules publish reflection-safe enforcement evidence.
+  An ordered `AssurancePolicy` classifies every route and fails closed on missing or forbidden
+  evidence without adding work to the request path.
+
+```ts
+import { defineAssurancePolicy, evaluateRouteAssurance, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
+
+const policy = defineAssurancePolicy({
+  rules: [
+    { name: "health", match: { paths: ["/health"] }, require: [] },
+    { name: "mutation", match: { methods: ["POST", "PUT", "PATCH", "DELETE"] },
+      require: [NIFRA_ASSURANCE.AUTHENTICATED, NIFRA_ASSURANCE.CSRF] },
+    { name: "read", match: { methods: ["GET", "HEAD"] },
+      require: [NIFRA_ASSURANCE.AUTHENTICATED] },
+  ],
+})
+
+evaluateRouteAssurance(app, policy).ok // pure reflection-time evaluation
+```
 
 ESM-only; requires Bun at runtime. MIT.
 
