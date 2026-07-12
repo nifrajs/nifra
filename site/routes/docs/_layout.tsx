@@ -11,6 +11,7 @@ const GROUPS: ReadonlyArray<{ title: string; links: ReadonlyArray<{ href: string
       { href: "/docs/contract", label: "Framework contract" },
       { href: "/docs/api", label: "API & typed client" },
       { href: "/docs/types-first", label: "Types-first" },
+      { href: "/docs/testing", label: "Contract testing" },
       { href: "/docs/database", label: "Database" },
       { href: "/docs/comparison", label: "vs other frameworks" },
     ],
