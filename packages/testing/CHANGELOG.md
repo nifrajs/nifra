@@ -1,5 +1,28 @@
 # @nifrajs/testing
 
+## 1.8.0
+
+### Minor Changes
+
+- 6b375fc: Add a deterministic contract laboratory that synthesizes valid request witnesses, proves hostile
+  mutations invalid with each route's own Standard Schema validator, checks boundary rejection across a
+  runtime matrix, validates declared success responses, shrinks failures, and retains replay seeds.
+- eeb6075: Add incident → regression: turn a failed request into a committed test — the one thing a generic error
+  tracker (Sentry/PostHog) can't do, because it needs the framework's contract + in-process replay.
+  `captureIncident(request, response)` records a request + observed response; `replayIncident` /
+  `assertIncidentReplays` re-run it against the CURRENT app and assert the response contract (status, and
+  optionally shape) still reproduces; `generateRegressionTest` emits a committable `.test.ts`. In-memory
+  replay uses the real captured inputs (exact, no leak); the emitted fixture redacts request string values
+  BY DEFAULT behind a sanitize banner, so a committed test never carries PII/secrets. This complements
+  error tracking — it does not store incidents or replace observability.
+
+### Patch Changes
+
+- Updated dependencies [e47c4c5]
+  - @nifrajs/core@1.8.0
+  - @nifrajs/client@1.8.0
+  - @nifrajs/mock@1.8.0
+
 ## 1.7.0
 
 ### Patch Changes
