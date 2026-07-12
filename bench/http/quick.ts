@@ -26,11 +26,11 @@ const DIR = import.meta.dir
 // + its Node adapter and Web-Standard adapter on Deno), so it's benched in every section.
 const SETS = {
   node: ["nifra", "hono", "fastify", "express", "elysia", "node-raw"],
-  bun: ["nifra", "hono", "elysia", "bun-raw"],
+  bun: ["nifra", "hono", "elysia", "bun-raw", "bun-native"],
   deno: ["nifra", "hono", "elysia", "deno-raw"],
 } as const
 type RuntimeKey = keyof typeof SETS
-const CEILING = { node: "node-raw", bun: "bun-raw", deno: "deno-raw" } as const
+const CEILING = { node: "node-raw", bun: "bun-native", deno: "deno-raw" } as const
 const isRuntime = (a: string): a is RuntimeKey => a in SETS
 
 interface Measure {

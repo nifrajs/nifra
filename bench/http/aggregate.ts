@@ -69,11 +69,15 @@ const WORKLOADS: readonly string[] = FULL
   : ["GET /users/:id", "POST /users"]
 // Canonical row order per section (ceiling last in each list is fine — rows are re-sorted by rps).
 const FRAMEWORKS: Record<string, readonly string[]> = {
-  bun: ["nifra", "elysia", "hono", "bun-raw"],
+  bun: ["nifra", "elysia", "hono", "bun-raw", "bun-native"],
   node: ["nifra", "hono", "fastify", "express", "elysia", "node-raw"],
   deno: ["nifra", "hono", "elysia", "deno-raw"],
 }
-const CEILING: Record<string, string> = { bun: "bun-raw", node: "node-raw", deno: "deno-raw" }
+const CEILING: Record<string, string> = {
+  bun: "bun-native",
+  node: "node-raw",
+  deno: "deno-raw",
+}
 
 function parseArgs(argv: readonly string[]): { runtime?: string; runs: number; write: boolean } {
   const write = argv.includes("--write")
@@ -107,14 +111,14 @@ function fmt(n: number): string {
   return Math.round(n).toLocaleString("en-US")
 }
 
-/** Render one workload's table, rows sorted by rps desc, nifra bolded, `% of raw` vs the ceiling. */
+/** Render one workload's table, rows sorted by rps desc, nifra bolded, vs the runtime ceiling. */
 function table(runtime: string, workload: string, cells: Record<string, Measure>): string {
   const ceilRps = cells[CEILING[runtime] ?? ""]?.rps ?? 0
   const rows = (FRAMEWORKS[runtime] ?? Object.keys(cells))
     .map((f) => ({ f, m: cells[f] ?? { rps: 0, p50ms: 0, p99ms: 0 } }))
     .filter((r) => r.m.rps > 0)
     .sort((a, b) => b.m.rps - a.m.rps)
-  const head = `| \`${workload}\` | req/s | p50 | p99 | % of raw |\n| --- | ---: | ---: | ---: | ---: |`
+  const head = `| \`${workload}\` | req/s | p50 | p99 | % of ceiling |\n| --- | ---: | ---: | ---: | ---: |`
   const body = rows
     .map(({ f, m }) => {
       const pct = ceilRps > 0 ? `${Math.round((m.rps / ceilRps) * 100)}%` : "—"

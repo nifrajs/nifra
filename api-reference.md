@@ -61,6 +61,38 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **requireSession** _(function)_ — `requireSession: <A extends BetterAuthLike>(auth: A, request: Request, options?: RequireSessionOptions) => Promise<SessionOf<A>>`
   Require an authenticated better-auth session at the top of a protected handler/loader/action. Returns the (non-null) session when present; otherwise **throws a `Response`** (302/401) — nifra returns a thrown `Response` as-is, short-circuiting the rest of the handler.
 
+## @nifrajs/budget
+
+- **BudgetClock** _(interface)_ — `interface BudgetClock`
+  The only clocks deadline mechanics need. Inject both for deterministic tests.
+- **CreateRequestBudgetOptions** _(interface)_ — `interface CreateRequestBudgetOptions`
+- **DeadlineAdmission** _(type)_ — `type DeadlineAdmission`
+- **DeadlineAdmissionOptions** _(interface)_ — `interface DeadlineAdmissionOptions`
+- **DeadlineExceededError** _(class)_ — `class DeadlineExceededError`
+- **DeadlineHeaderResult** _(type)_ — `type DeadlineHeaderResult = | { readonly ok: true; readonly deadline: number } | { readonly ok: false; readonly reason: "missing" | "malformed" }`
+- **DeadlineHeadersInit** _(type)_ — `type DeadlineHeadersInit = | Headers | Readonly<Record<string, string>> | string[][] | undefined`
+  DOM-lib-independent subset accepted by the Web `Headers` constructor.
+- **NIFRA_DEADLINE_HEADER** _(const)_ — `NIFRA_DEADLINE_HEADER: "x-nifra-deadline"`
+  Canonical wire header carrying an absolute Unix epoch deadline in milliseconds.
+- **RequestBudget** _(interface)_ — `interface RequestBudget`
+  A time budget shared by one request and every downstream hop it initiates.
+- **UNBOUNDED_DEADLINE** _(const)_ — `UNBOUNDED_DEADLINE: number`
+  Sentinel used only for an unbounded local budget. It is never written to the wire.
+- **admitDeadline** _(function)_ — `admitDeadline: (headers: Headers, options?: DeadlineAdmissionOptions) => DeadlineAdmission`
+  Validate and clamp an inbound absolute deadline. This is pure admission mechanics: callers supply local policy, then own the timer that drives their existing cancellation signal.
+- **assertBudgetRemaining** _(function)_ — `assertBudgetRemaining: (budget: RequestBudget, requiredMs?: number) => void`
+  Fail before starting work that cannot fit inside the remaining time.
+- **canAttempt** _(function)_ — `canAttempt: (budget: RequestBudget, estimatedAttemptMs: number, reserveMs?: number) => boolean`
+  True only when a new attempt plus a caller-owned reserve can still fit.
+- **createRequestBudget** _(function)_ — `createRequestBudget: (options: CreateRequestBudgetOptions) => RequestBudget`
+  Create a budget from an admitted absolute deadline. Wall time is sampled once; every subsequent `remaining()` call is monotonic. This function does not arm a timer—the owner of `signal` does.
+- **createUnboundedRequestBudget** _(function)_ — `createUnboundedRequestBudget: (signal: AbortSignal) => RequestBudget`
+  Create a local no-deadline view. Outbound header propagation deliberately omits it.
+- **parseDeadlineHeader** _(function)_ — `parseDeadlineHeader: (headers: Headers) => DeadlineHeaderResult`
+  Parse the canonical deadline header without trusting or clamping it.
+- **withDeadlineHeader** _(function)_ — `withDeadlineHeader: (input: DeadlineHeadersInit, budget: RequestBudget, reserveMs?: number) => Headers`
+  Add this budget's absolute deadline to an outbound request.
+
 ## @nifrajs/cache
 
 - **Cache** _(interface)_ — `interface Cache`

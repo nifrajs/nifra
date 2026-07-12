@@ -8,7 +8,7 @@
  * READ THE RATIOS, NOT THE ABSOLUTES. This shares one (likely virtualized) box with
  * the load client, so absolute req/s is noisy and not publication-grade — but every
  * framework pays that tax equally in the SAME run, so the same-run ratio (nifra vs
- * Elysia vs the raw ceiling) is the trustworthy signal. See BENCHMARKS.md.
+ * Elysia vs the runtime ceiling) is the trustworthy signal. See BENCHMARKS.md.
  *
  *   bun run bench/http/run.ts            # every section this build knows
  *   bun run bench/http/run.ts bun        # one section only (bun | node | deno)
@@ -51,7 +51,7 @@ interface Target {
   readonly spawn: (port: number) => readonly string[]
   /** One-time setup before this target's first spawn (e.g. build a bundle). */
   readonly prepare?: () => Promise<void>
-  /** The framework treated as the section's ceiling (for the "% of raw" column). */
+  /** The framework treated as the section's ceiling (for the "% of ceiling" column). */
   readonly isCeiling?: boolean
 }
 
@@ -113,7 +113,8 @@ const SECTIONS: readonly Section[] = [
       bunTarget("nifra"),
       bunTarget("elysia"),
       bunTarget("hono"),
-      { ...bunTarget("bun-raw"), isCeiling: true },
+      bunTarget("bun-raw"),
+      { ...bunTarget("bun-native"), isCeiling: true },
     ],
   },
   {
@@ -339,7 +340,8 @@ for (const section of sections) {
     const ceil = ceiling ? (got[ceiling]?.[w.name]?.rps ?? 0) : 0
     for (const { f, m } of rows) {
       const ofTop = Math.round((m.rps / top) * 100)
-      const ofCeil = ceil > 0 ? `${pad(String(Math.round((m.rps / ceil) * 100)), 3)}% of raw` : ""
+      const ofCeil =
+        ceil > 0 ? `${pad(String(Math.round((m.rps / ceil) * 100)), 3)}% of ceiling` : ""
       console.log(
         `    ${f.padEnd(9)} ${pad(m.rps.toLocaleString(), 9)} req/s   ` +
           `p50 ${pad(m.p50ms.toFixed(2), 6)}ms   p99 ${pad(m.p99ms.toFixed(2), 7)}ms   ` +
