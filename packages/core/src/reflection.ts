@@ -99,7 +99,7 @@ const normalizeJsonSchema = (value: unknown): JsonSchema | undefined => {
     // carrier (a JSON Schema object that also carries `~standard`, with no separate `.jsonSchema`) would
     // otherwise leak the marker into emitted OpenAPI / mock / form output.
     if (!("~standard" in record)) return record
-    const { ["~standard"]: _omitted, ...rest } = record
+    const { "~standard": _omitted, ...rest } = record
     return rest
   } catch {
     return undefined

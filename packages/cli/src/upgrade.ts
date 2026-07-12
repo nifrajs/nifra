@@ -64,7 +64,8 @@ const DEP_FIELDS = [
 
 // Only a bare semver spec is rewritten. Anything else — workspace:*, link:/file:, npm: aliases, git
 // urls, "*", "latest", or a multi-part range — is intentionally left untouched (skipped, not guessed).
-const SEMVER_SPEC = /^([\^~]|>=|<=|>|<|=)?\s*(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
+const SEMVER_SPEC =
+  /^([\^~]|>=|<=|>|<|=)?\s*(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
 
 /**
  * Rewrite a dependency version spec to `toVersion`, preserving the range operator (`^`, `~`, …).
@@ -159,11 +160,7 @@ function scan(cwd: string, pattern: string): string[] {
 }
 
 /** Compute the plan (and, when `write`, apply it) for a target recipe against `cwd`. */
-export function computeUpgrade(
-  cwd: string,
-  recipe: UpgradeRecipe,
-  write: boolean,
-): UpgradePlan {
+export function computeUpgrade(cwd: string, recipe: UpgradeRecipe, write: boolean): UpgradePlan {
   const pins: PinChange[] = []
   const importMoves: ImportChange[] = []
 
@@ -243,7 +240,9 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
   try {
     readFileSync(join(cwd, "package.json"), "utf8")
   } catch {
-    console.error(`[nifra] no package.json in ${relative(process.cwd(), cwd) || "."} — run from a project root`)
+    console.error(
+      `[nifra] no package.json in ${relative(process.cwd(), cwd) || "."} — run from a project root`,
+    )
     return false
   }
 
@@ -261,7 +260,8 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
     const { runCheck } = await import("./check.ts")
     const ok = await runCheck(cwd, { json: false })
     if (!ok) {
-      if (!options.json) console.error("\n[nifra] upgrade applied but `nifra check` failed — review above.")
+      if (!options.json)
+        console.error("\n[nifra] upgrade applied but `nifra check` failed — review above.")
       return false
     }
   }
