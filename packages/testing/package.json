@@ -1,7 +1,7 @@
 {
   "name": "@nifrajs/testing",
   "version": "1.7.0",
-  "description": "Testing helpers for nifra apps — a cookie jar + a cookie-persisting in-process test session on top of @nifrajs/client's testClient, so stateful auth/session flows test as easily as a single request.",
+  "description": "Contract-derived adversarial tests, runtime-matrix response conformance, and cookie-aware in-process sessions for Nifra apps.",
   "keywords": [
     "bun",
     "typescript",
@@ -32,10 +32,9 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@nifrajs/client": "workspace:*"
-  },
-  "devDependencies": {
-    "@nifrajs/core": "workspace:*"
+    "@nifrajs/client": "workspace:*",
+    "@nifrajs/core": "workspace:*",
+    "@nifrajs/mock": "workspace:*"
   },
   "publishConfig": {
     "access": "public"
