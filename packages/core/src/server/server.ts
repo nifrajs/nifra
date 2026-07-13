@@ -254,6 +254,27 @@ export type Handler<
   Ctx = EmptyContext,
 > = (ctx: Context<Path, S> & Ctx) => MaybePromise<ResponseOf<S>>
 
+/**
+ * The outcome of a capacity-admission decision. `admitted` requests carry a `release` the server calls
+ * exactly once when the response is finalized; a shed request carries a ready `429` Response.
+ */
+export type AdmissionDecision =
+  | { readonly admitted: true; release(): void }
+  | { readonly admitted: false; readonly response: Response }
+
+/**
+ * A capacity-admission gate. Decides, per request, whether the instance has capacity to run it now —
+ * bounding *concurrency*, which rate limits (frequency) and deadlines (duration) do not. Provide an
+ * implementation (see `@nifrajs/middleware`'s `createAdmissionController`) as {@link ServerOptions.admission}.
+ *
+ * Enabling it trades the fused native-route lane for native matching + this gate (the gate cannot be a
+ * per-request `onRequest` hook without disabling native routes entirely); when unset, the request path
+ * is untouched.
+ */
+export interface AdmissionController {
+  admit(req: Request): AdmissionDecision | Promise<AdmissionDecision>
+}
+
 export interface ServerOptions {
   /**
    * Max request body size (bytes), enforced **only when a route declares a body schema** — the cap
@@ -285,6 +306,13 @@ export interface ServerOptions {
   readonly maxInboundDeadlineMs?: number
   /** When `listen()`ing, install SIGTERM/SIGINT handlers that gracefully `stop()`. Default false. */
   readonly gracefulSignals?: boolean
+  /**
+   * Capacity-admission gate (see {@link AdmissionController}). Bounds concurrent in-flight work so a
+   * healthy instance sheds load (`429` + `Retry-After`) instead of accepting more than it can finish.
+   * Off by default. Enabling it disables the fused native-route fast path (requests route through the
+   * shared matched lane where the gate runs); when unset, the request path pays nothing.
+   */
+  readonly admission?: AdmissionController
   /** Structured logger for framework events (redacts secrets). Default: JSON to stderr. */
   readonly logger?: Logger
   /**
@@ -1203,6 +1231,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private readonly maxInboundDeadlineMs: number
   private readonly deadlineAdmissionOptions: DeadlineAdmissionOptions
   private readonly gracefulSignals: boolean
+  /** Capacity-admission gate; `undefined` = off (the request path pays nothing). */
+  private readonly capacityGate: AdmissionController | undefined
   private readonly logger: Logger
   /** App-wide validation-error fallback; a route's own `schema.onValidationError` takes precedence. */
   private readonly defaultOnValidationError?: RouteSchema["onValidationError"]
@@ -1262,6 +1292,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       throw new RangeError("maxInboundDeadlineMs must be a finite positive number")
     }
     this.gracefulSignals = options.gracefulSignals ?? false
+    this.capacityGate = options.admission
     this.logger = options.logger ?? jsonLogger()
     this.defaultOnValidationError = options.onValidationError
     this.bunServer = undefined
@@ -1856,6 +1887,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     source: RequestSource,
     platform?: Platform<EnvOf<Ctx>>,
   ): MaybePromise<Response> {
+    // Off path (default): straight through — one property check, no closure, no promise.
+    if (this.capacityGate === undefined) return this.fetchSourceInner(source, platform)
+    return this.admitGated(requestOf(source), () => this.fetchSourceInner(source, platform))
+  }
+
+  private fetchSourceInner(
+    source: RequestSource,
+    platform?: Platform<EnvOf<Ctx>>,
+  ): MaybePromise<Response> {
     // Non-`async` on purpose: `dispatch` may return a `Response` *synchronously* (the bare-route fast
     // path, see RouteEntry.bare), and an `async fetch` would wrap every such result in a redundant
     // promise + microtask. Returning `Response | Promise<Response>` matches Web/edge handlers, while
@@ -1887,6 +1927,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     entry: RouteEntry,
     params: Record<string, string>,
   ): MaybePromise<Response> {
+    if (this.capacityGate === undefined) return this.fetchMatchedInner(source, entry, params)
+    return this.admitGated(requestOf(source), () => this.fetchMatchedInner(source, entry, params))
+  }
+
+  private fetchMatchedInner(
+    source: RequestSource,
+    entry: RouteEntry,
+    params: Record<string, string>,
+  ): MaybePromise<Response> {
     const outcome = this.runMatched(
       source,
       undefined,
@@ -1907,6 +1956,56 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   }
 
   /**
+   * Run `produce` under the capacity gate: admit → run → release exactly once when the response is
+   * produced (or the run throws). Only reached when {@link capacityGate} is set, so the off path pays
+   * nothing. The slot is held for the duration of handler execution, not the streaming of the body —
+   * capacity here bounds concurrent *work*, matching how in-flight is counted.
+   */
+  private admitGated(
+    req: Request,
+    produce: () => MaybePromise<Response>,
+  ): MaybePromise<Response> {
+    const decision = (this.capacityGate as AdmissionController).admit(req)
+    return decision instanceof Promise
+      ? decision.then((settled) => this.runAdmitted(settled, produce))
+      : this.runAdmitted(decision, produce)
+  }
+
+  private runAdmitted(
+    decision: AdmissionDecision,
+    produce: () => MaybePromise<Response>,
+  ): MaybePromise<Response> {
+    if (!decision.admitted) return decision.response // shed: ready 429, no slot held
+    let released = false
+    const release = (): void => {
+      if (released) return
+      released = true
+      decision.release()
+    }
+    let outcome: MaybePromise<Response>
+    try {
+      outcome = produce()
+    } catch (error) {
+      release()
+      throw error
+    }
+    if (outcome instanceof Promise) {
+      return outcome.then(
+        (response) => {
+          release()
+          return response
+        },
+        (error) => {
+          release()
+          throw error
+        },
+      )
+    }
+    release()
+    return outcome
+  }
+
+  /**
    * Like {@link fetch}, but renders a plain-data result **without** building a Web `Response` — the
    * `@nifrajs/node` adapter serializes the returned primitives straight to the socket, skipping the undici
    * `Response` build + body drain (the bulk of the Node bridge cost, measured ≈4µs/req). A handler that
@@ -1923,8 +2022,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     source: RequestSource,
     platform?: Platform<EnvOf<Ctx>>,
   ): MaybePromise<NodeServeOutcome> {
-    // onResponse hooks transform a Response, so they force the Web path; wrap its result.
-    if (this.onResponseHooks.length > 0 || this.onResponseFinalizedHooks.length > 0) {
+    // onResponse hooks transform a Response, and the capacity gate wraps the Web response path — both
+    // force the Web path here (the gated `fetchSource` admits/sheds/releases); wrap its result.
+    if (
+      this.onResponseHooks.length > 0 ||
+      this.onResponseFinalizedHooks.length > 0 ||
+      this.capacityGate !== undefined
+    ) {
       const response = this.fetchSource(source, platform)
       return response instanceof Promise
         ? response.then((settled) => ({ kind: "response", response: settled }))
@@ -3097,7 +3201,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     const mayUseFusedNative =
       this.requestTimeoutMs === 0 &&
       this.onResponseHooks.length === 0 &&
-      this.onResponseFinalizedHooks.length === 0
+      this.onResponseFinalizedHooks.length === 0 &&
+      // The capacity gate must wrap every request; the fused lane bypasses fetchMatched, so enabling
+      // admission drops fusion (native matching stays) and routes through the gated matched lane.
+      this.capacityGate === undefined
     const unboundedSignal = mayUseFusedNative ? getNeverAbortSignal() : undefined
     const unboundedBudget = mayUseFusedNative ? getUnboundedRequestBudget() : undefined
     let count = 0

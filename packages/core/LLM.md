@@ -25,7 +25,7 @@ Bun-native, contract-first HTTP framework — the router, server, and route desc
 - **redactLogFields** _(function)_ — `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
 - **reflectRoutes** _(function)_ — `reflectRoutes: (source: unknown) => readonly ReflectedRoute[]`
 
-_…and 120 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
+_…and 122 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 
 ## Footguns
 
