@@ -39,7 +39,7 @@
     "name": "SERVER",
     "topic": "Nifra — Request budgets",
     "slug": "budgets",
-    "code": "import { server } from \"@nifrajs/core\"\n\nconst app = server({\n  requestTimeoutMs: 2_000,\n  maxInboundDeadlineMs: 5_000,\n}).get(\"/report\", async (c) => {\n  // c.signal aborts at the SAME effective deadline.\n  // remaining() is monotonic even if the wall clock jumps.\n  return { remainingMs: c.budget.remaining() }\n})"
+    "code": "import { server } from \"@nifrajs/core\"\n\nconst app = server({\n  requestTimeoutMs: 2_000,\n  acceptInboundDeadlines: true,\n  maxInboundDeadlineMs: 5_000,\n}).get(\"/report\", async (c) => {\n  // c.signal aborts at the SAME effective deadline.\n  // remaining() is monotonic even if the wall clock jumps.\n  return { remainingMs: c.budget.remaining() }\n})"
   },
   {
     "name": "DUAL_API",
