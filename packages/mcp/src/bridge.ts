@@ -10,7 +10,7 @@
  * Theming follows the shadcn/Tailwind semantic-token convention (`--background`, `--foreground`,
  * `--primary`, `--card`, `--border`, `--radius`, …). The host pushes its resolved tokens; the bridge
  * applies them to the document root, so a widget that styles with `var(--primary)` etc. matches the host
- * app (e.g. a ShipNow-generated app injecting its theme preset) with zero per-widget work.
+ * app with zero per-widget work.
  *
  * It exposes a small global the widget author scripts against, so authoring a widget is just
  * `mcpApp.onData(render)` + (optionally) `mcpApp.callTool(name, args)` — no postMessage plumbing.

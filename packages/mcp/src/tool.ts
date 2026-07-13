@@ -25,7 +25,7 @@ export type McpToolHandlerResult =
     }
 
 /**
- * A render-intent hint for GENERATIVE hosts (e.g. the ShipNow builder): how to present the result's
+ * A render-intent hint for GENERATIVE hosts: how to present the result's
  * `structuredContent` when the host renders its OWN themed UI rather than an iframe widget. The host maps
  * the intent to a component in its design system (a shadcn/Tailwind table, form, metric card, …). Open
  * union — pick a known tag or a custom one.
@@ -49,7 +49,7 @@ export interface DefineMcpToolOptions {
   readonly widget?: McpWidget
   /** Render-intent for generative hosts that build their own themed UI from `structuredContent`. Lands
    * in `_meta.ui.intent`. Independent of `widget` — a tool can offer both (widget for MCP Apps hosts,
-   * intent for builders like ShipNow). */
+   * intent for generative builders). */
   readonly intent?: McpUiIntent
   readonly handler: (
     args: Record<string, unknown>,
