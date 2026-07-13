@@ -5,6 +5,7 @@
  * a full page load). DOM-only — never imported on the server, so the store stays SSR-safe.
  */
 import type { Meta } from "./manifest.ts"
+import { type BrowserNavigate, setBrowserNavigate } from "./navigation.ts"
 import type { ClientRouter } from "./router.ts"
 
 export interface InstallHistoryOptions {
@@ -80,9 +81,14 @@ export function installHistory(
     for (const p of [vt.ready, vt.finished, vt.updateCallbackDone]) p.catch(() => {})
   }
 
-  const go = (path: string, push: boolean): void => {
+  const go = (path: string, mode: "push" | "replace"): void => {
     const url = new URL(path, location.origin)
-    if (push) {
+    if (mode === "replace") {
+      // Replace the current entry with the new URL. The entry we're leaving is discarded, so its scroll
+      // isn't worth saving; the new route scrolls to its fragment target, else the top.
+      history.replaceState({}, "", path)
+      pendingScroll = url.hash !== "" ? { hash: hashId(url.hash) } : { pos: [0, 0] }
+    } else {
       // Save the leaving entry's scroll, push a fresh entry (URL incl. any #hash), then scroll the new
       // route: to the fragment target if one was given, else to the top.
       history.replaceState({ ...(history.state ?? {}), nifraScroll: [scrollX, scrollY] }, "")
@@ -92,6 +98,20 @@ export function installHistory(
     // The data layer fetches by path+search; the #hash is client-only (never sent to the server).
     transition(() => router.navigate(url.pathname + url.search).catch(() => fallback(path)))
   }
+
+  // Programmatic navigation for adapter `useNavigate` bindings, published through the DOM-free bridge
+  // (`@nifrajs/web`'s `getBrowserNavigate`). A string path pushes (or replaces); a number is a history
+  // delta (`-1` back / `1` forward), matching `history.go`. An off-route / cross-origin push still goes
+  // through `go`, whose `router.navigate` no-ops an unmatched path and whose fetch-failure falls back to
+  // a full load — same graceful degradation as a link click.
+  const navigate: BrowserNavigate = (to, navOptions) => {
+    if (typeof to === "number") {
+      history.go(to)
+      return
+    }
+    go(to, navOptions?.replace === true ? "replace" : "push")
+  }
+  setBrowserNavigate(navigate)
 
   // Resolve an event target to an in-app route path, or null (cross-origin, unknown route, or an
   // anchor opting out via target/download/rel=external). Shared by click + hover/focus prefetch.
@@ -121,7 +141,7 @@ export function installHistory(
     const href = inAppHref(event.target)
     if (href === null) return
     event.preventDefault()
-    go(href, true)
+    go(href, "push")
   }
 
   // Hover/focus an in-app link → warm its chunk + data (the store dedupes the spam).
@@ -165,6 +185,7 @@ export function installHistory(
   window.addEventListener("popstate", onPopState)
   return () => {
     unsubscribe()
+    setBrowserNavigate(undefined) // stop routing `useNavigate` to a torn-down router
     document.removeEventListener("click", onClick)
     document.removeEventListener("pointerover", onPrefetch)
     document.removeEventListener("focusin", onPrefetch)
