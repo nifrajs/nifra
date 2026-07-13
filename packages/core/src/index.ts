@@ -78,6 +78,8 @@ export {
 } from "./server/logger.ts"
 export type { Registry, RouteInfo } from "./server/registry.ts"
 export {
+  type AdmissionController,
+  type AdmissionDecision,
   type AnyServer,
   type DurableObjectNamespaceLike,
   defineIdentityPlugin,

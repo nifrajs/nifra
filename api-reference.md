@@ -168,6 +168,10 @@ Every public export of every package — name, kind, signature, and doc summary 
 
 ## @nifrajs/core
 
+- **AdmissionController** _(interface)_ — `interface AdmissionController`
+  A capacity-admission gate. Decides, per request, whether the instance has capacity to run it now — bounding *concurrency*, which rate limits (frequency) and deadlines (duration) do not. Provide an implementation (see `@nifrajs/middleware`'s `createAdmissionController`) as {@link ServerOptions.admis…
+- **AdmissionDecision** _(type)_ — `type AdmissionDecision = | { readonly admitted: true; release(): void } | { readonly admitted: false; readonly response: Response }`
+  The outcome of a capacity-admission decision. `admitted` requests carry a `release` the server calls exactly once when the response is finalized; a shed request carries a ready `429` Response.
 - **AnyServer** _(type)_ — `type AnyServer = Server<any, any>`
 - **AssuranceConfig** _(interface)_ — `interface AssuranceConfig`
 - **AssuranceDeclaration** _(interface)_ — `interface AssuranceDeclaration`
@@ -623,7 +627,7 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **McpToolResult** _(interface)_ — `interface McpToolResult`
   The rich result a tool handler may return instead of a bare string (MCP Apps). `content` is the model-facing text (also shown by text-only hosts); `structuredContent` is the data a linked `ui://` widget renders and is deliberately NOT added to the model's context; `_meta` carries the `ui.resourceUr…
 - **McpUiIntent** _(type)_ — `type McpUiIntent = | "table" | "list" | "cards" | "form" | "metric" | "detail" | "chart" | (string & {})`
-  A render-intent hint for GENERATIVE hosts (e.g. the ShipNow builder): how to present the result's `structuredContent` when the host renders its OWN themed UI rather than an iframe widget. The host maps the intent to a component in its design system (a shadcn/Tailwind table, form, metric card, …). O…
+  A render-intent hint for GENERATIVE hosts (e.g. an AI app builder): how to present the result's `structuredContent` when the host renders its OWN themed UI rather than an iframe widget. The host maps the intent to a component in its design system (a shadcn/Tailwind table, form, metric card, …). Ope…
 - **McpWidget** _(interface)_ — `interface McpWidget`
   A widget: the resource to register on the server, its `ui://` URI, and the `_meta` link for its tool.
 - **PROTOCOL_VERSION** _(const)_ — `PROTOCOL_VERSION: "2024-11-05"`
@@ -663,6 +667,13 @@ Every public export of every package — name, kind, signature, and doc summary 
 
 ## @nifrajs/middleware
 
+- **AdmissionControllerHandle** _(interface)_ — `interface AdmissionControllerHandle`
+- **AdmissionEvidence** _(interface)_ — `interface AdmissionEvidence`
+  Pure capacity evidence handed to the private policy. The mechanics never invent tenant concepts.
+- **AdmissionOptions** _(interface)_ — `interface AdmissionOptions`
+- **AdmissionPolicy** _(type)_ — `type AdmissionPolicy = ( req: Request, evidence: AdmissionEvidence, ) => { decision: "admit" | "shed"; retryAfterSec?: number } | undefined`
+  Private admission policy (lives in `@platform`). Return a decision to override the default mechanics for this request, or `undefined` to defer to them. `admit` may draw from reserved headroom above `maxInFlight`; `shed` forces rejection.
+- **AdmissionSnapshot** _(interface)_ — `interface AdmissionSnapshot`
 - **ApiKeyStaticOptions** _(interface)_ — `interface ApiKeyStaticOptions`
 - **ApiKeyVerifyOptions** _(interface)_ — `interface ApiKeyVerifyOptions<P>`
 - **AuthPlugin** _(type)_ — `type AuthPlugin<P>`
@@ -731,6 +742,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **SecurityHeadersOptions** _(interface)_ — `interface SecurityHeadersOptions`
 - **SecurityRequirement** _(type)_ — `type SecurityRequirement = Readonly<Record<string, readonly string[]>>`
   A security requirement: scheme name → required scopes (`[]` = no scopes).
+- **ShedReason** _(type)_ — `type ShedReason = "inflight" | "loop-lag" | "queue-timeout" | "policy"`
+  Adaptive capacity admission. Rate limiting bounds request *frequency* and `@nifrajs/budget` bounds request *duration*; neither stops a healthy instance from accepting more *concurrent* work than it can finish. This gate admits on live capacity evidence — in-flight count + event-loop lag — briefly q…
 - **TimingControls** _(interface)_ — `interface TimingControls`
 - **TimingMetric** _(interface)_ — `interface TimingMetric`
 - **TimingOptions** _(interface)_ — `interface TimingOptions`
@@ -760,7 +773,11 @@ Every public export of every package — name, kind, signature, and doc summary 
   Transparently **gzip** responses when the client sends `Accept-Encoding: gzip` and the body is a compressible type larger than `threshold`. Uses the Web-standard `CompressionStream` (streaming, no full-body buffering), so it runs on every nifra runtime including the edge. gzip is the one encoding `…
 - **cors** _(function)_ — `cors: (options?: CorsOptions) => Middleware`
   CORS as a {@link Middleware}. Preflight (`OPTIONS` + `Access-Control-Request-Method`) short-circuits to `204` via `onRequest`; the origin/credentials headers are added in `onResponse`, so they also land on errors, 404s, and the preflight itself.
+- **createAdmissionController** _(function)_ — `createAdmissionController: (options: AdmissionOptions) => AdmissionControllerHandle`
+  Build a capacity-admission controller. Pass the returned handle as the server's `admission` option.
 - **createCsrfToken** _(function)_ — `createCsrfToken: (secret: string | Uint8Array, nonce?: string) => Promise<string>`
+- **createEventLoopLagSampler** _(function)_ — `createEventLoopLagSampler: (resolutionMs?: number) => () => number`
+  A default event-loop-lag sampler backed by `perf_hooks.monitorEventLoopDelay`. Returns the mean lag (ms) observed since the previous call, resetting each read so shedding reacts to *recent* stalls, not cumulative history. Falls back to a constant `0` on runtimes without the histogram.
 - **csrf** _(function)_ — `csrf: (options: CsrfOptions) => Middleware`
   Signed double-submit CSRF protection. A protected request must carry the same signed token in a cookie and a header, and must come from an allowed Origin/Referer unless `checkOrigin:false` is set.
 - **etag** _(function)_ — `etag: (options?: ETagOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").AnyServer>`
@@ -1333,6 +1350,10 @@ Every public export of every package — name, kind, signature, and doc summary 
 
 ## nifra
 
+- **AdmissionController** _(interface)_ — `interface AdmissionController`
+  A capacity-admission gate. Decides, per request, whether the instance has capacity to run it now — bounding *concurrency*, which rate limits (frequency) and deadlines (duration) do not. Provide an implementation (see `@nifrajs/middleware`'s `createAdmissionController`) as {@link ServerOptions.admis…
+- **AdmissionDecision** _(type)_ — `type AdmissionDecision = | { readonly admitted: true; release(): void } | { readonly admitted: false; readonly response: Response }`
+  The outcome of a capacity-admission decision. `admitted` requests carry a `release` the server calls exactly once when the response is finalized; a shed request carries a ready `429` Response.
 - **AnyServer** _(type)_ — `type AnyServer = Server<any, any>`
 - **AssuranceConfig** _(interface)_ — `interface AssuranceConfig`
 - **AssuranceDeclaration** _(interface)_ — `interface AssuranceDeclaration`
