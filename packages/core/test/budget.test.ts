@@ -35,9 +35,23 @@ describe("request deadline admission", () => {
     expect(remaining).toBe(Number.POSITIVE_INFINITY)
   })
 
+  test("ignores an inbound deadline unless the trust boundary explicitly opts in", async () => {
+    let calls = 0
+    let remaining = 0
+    const app = server().get("/budget", (c) => {
+      calls++
+      remaining = c.budget.remaining()
+      return "ok"
+    })
+    const response = await app.fetch(deadlineRequest("hostile-or-untrusted"))
+    expect(response.status).toBe(200)
+    expect(calls).toBe(1)
+    expect(remaining).toBe(Number.POSITIVE_INFINITY)
+  })
+
   test("malformed and already-expired wire deadlines fail before the handler", async () => {
     let calls = 0
-    const app = server().get("/budget", () => {
+    const app = server({ acceptInboundDeadlines: true }).get("/budget", () => {
       calls++
       return "unreachable"
     })
@@ -53,12 +67,15 @@ describe("request deadline admission", () => {
   test("a hostile far-future deadline is clamped by the local inbound cap", async () => {
     let observed = Number.POSITIVE_INFINITY
     let signal: AbortSignal | undefined
-    const app = server({ maxInboundDeadlineMs: 20 }).get("/budget", async (c) => {
-      observed = c.budget.remaining()
-      signal = c.signal
-      await new Promise((resolve) => setTimeout(resolve, 80))
-      return "late"
-    })
+    const app = server({ acceptInboundDeadlines: true, maxInboundDeadlineMs: 20 }).get(
+      "/budget",
+      async (c) => {
+        observed = c.budget.remaining()
+        signal = c.signal
+        await new Promise((resolve) => setTimeout(resolve, 80))
+        return "late"
+      },
+    )
     const response = await app.fetch(deadlineRequest(String(Date.now() + 3_600_000)))
     expect(observed).toBeLessThanOrEqual(20)
     expect(response.status).toBe(504)
@@ -68,14 +85,15 @@ describe("request deadline admission", () => {
 
   test("requestTimeoutMs remains the tighter cap when a client asks for longer", async () => {
     let observed = Number.POSITIVE_INFINITY
-    const app = server({ requestTimeoutMs: 15, maxInboundDeadlineMs: 500 }).get(
-      "/budget",
-      async (c) => {
-        observed = c.budget.remaining()
-        await new Promise((resolve) => setTimeout(resolve, 60))
-        return "late"
-      },
-    )
+    const app = server({
+      requestTimeoutMs: 15,
+      acceptInboundDeadlines: true,
+      maxInboundDeadlineMs: 500,
+    }).get("/budget", async (c) => {
+      observed = c.budget.remaining()
+      await new Promise((resolve) => setTimeout(resolve, 60))
+      return "late"
+    })
     const response = await app.fetch(deadlineRequest(String(Date.now() + 10_000)))
     expect(observed).toBeLessThanOrEqual(15)
     expect(response.status).toBe(504)
