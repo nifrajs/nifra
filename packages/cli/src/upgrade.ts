@@ -5,7 +5,7 @@
  *
  *   1. **pin sweep** — set every matching dependency to the target version across the workspace's
  *      package.json files, preserving the caret/tilde/exact style and skipping `workspace:`/`link:` specs.
- *   2. **import moves** — rewrite exact import specifiers (e.g. `old-lib` → `old-lib/nifra`).
+ *   2. **import moves** — rewrite exact import specifiers to their updated module paths.
  *   3. **verify** — reuse the existing `nifra check` gate; no new verification surface.
  *
  * Dry-run by default (prints the plan, writes nothing); `--write` applies. Fail-closed on an unknown

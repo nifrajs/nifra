@@ -53,3 +53,6 @@ bench/**/*.md
 site/.tmp-doc-check
 .codex/
 /packages/core/test/.tmp-nifra-many-routes
+
+# Local scratch + private test files
+/.private/

@@ -137,9 +137,7 @@ describe("computeUpgrade / runUpgrade", () => {
     expect(plan.importMoves).toHaveLength(1)
     // Files unchanged on dry-run.
     expect(await readFile(join(root, "package.json"), "utf8")).toContain("^1.7.0")
-    expect(await readFile(join(root, "packages/web/src/app.ts"), "utf8")).toContain(
-      '"old-lib"',
-    )
+    expect(await readFile(join(root, "packages/web/src/app.ts"), "utf8")).toContain('"old-lib"')
   })
 
   test("--write applies edits across the workspace and is idempotent", async () => {
