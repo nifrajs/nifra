@@ -15,6 +15,7 @@ Framework-agnostic SSR core for nifra — the render seam + HTML document orches
 - **canonical** _(function)_ — `canonical: (href: string) => LinkDescriptor`
 - **createClientRouter** _(function)_ — `createClientRouter: (options: ClientRouterOptions) => ClientRouter`
 - **createMatcher** _(function)_ — `createMatcher: (patterns: readonly RoutePattern[]) => (path: string) => RouteMatch | null`
+- **createMutation** _(function)_ — `createMutation: <TData, TVariables>(fn: (variables: TVariables) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => Mut…`
 - **createQueryClient** _(function)_ — `createQueryClient: (options: QueryClientOptions) => QueryClient`
 - **createWebApp** _(function)_ — `createWebApp: <Env = unknown>(options: CreateWebAppOptions) => ReturnType<typeof server<Env>>`
 - **defer** _(function)_ — `defer: <T>(promise: Promise<T>) => Deferred<T>`
@@ -23,9 +24,8 @@ Framework-agnostic SSR core for nifra — the render seam + HTML document orches
 - **enumeratePrerenderedPaths** _(function)_ — `enumeratePrerenderedPaths: (routes: readonly RouteEntry[]) => Promise<string[]>`
 - **enumerateStaticRoutes** _(function)_ — `enumerateStaticRoutes: (routes: readonly RouteEntry[]) => Promise<StaticRoutes>`
 - **filePathToPattern** _(function)_ — `filePathToPattern: (file: string) => string`
-- **filePathToPatterns** _(function)_ — `filePathToPatterns: (file: string) => string[]`
 
-_…and 95 more — see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 105 more — see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 

@@ -1409,6 +1409,13 @@
     "doc": "/**\n * Create a mock server from a Nifra app's route definitions. For each route\n * with a `schema.response`, generates a handler returning fake data that\n * matches the response schema structure. Routes without response schemas\n * return `{}`.\n */"
   },
   {
+    "name": "createMutation",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function createMutation<TData, TVariables>(fn: (variables: TVariables) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>): MutationHandle<TData, TVariables>;",
+    "doc": "/**\n * Create a standalone mutation state machine — framework-agnostic, so a per-adapter `useMutation`\n * binding just subscribes to it. Single-flight by a monotonic token: overlapping `mutate` calls each\n * run their `fn`, but only the latest publishes state (an older, slower response can't clobber a newer\n * one). The callbacks fire in TanStack order: `onMutate` (before), then `onSuccess`/`onError`, then\n * `onSettled`.\n */"
+  },
+  {
     "name": "createObservationLifecycle",
     "kind": "function",
     "package": "@nifrajs/otel",
@@ -1803,6 +1810,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare const defineRouterPlugin: typeof defineIdentityPlugin;",
     "doc": "/**\n * Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts\n * routes/hooks but adds no context type** (an auth router, an audit logger). Use this — not\n * {@link definePlugin} — for any such plugin, or the typed client silently collapses to `any`. The\n * \"identity\" in {@link defineIdentityPlugin} refers to the type-identity it preserves; `defineRouterPlugin`\n * is the same thing under a clearer name.\n *\n * Mount routes as a **side effect**, then return the app unchanged (registering via `.get`/`.post` would\n * change the type away from the identity `S`; the mounted routes run but aren't in the caller's typed\n * registry — that's the trade that keeps everything else typed):\n *\n * ```ts\n * export const scim = defineRouterPlugin(\"scim\", (app) => {\n *   app.get(\"/scim/v2/Users\", listUsers) // side effect: mounted at runtime\n *   return app                           // return S unchanged → routes added after .use(scim) stay typed\n * })\n * const api = server().get(\"/a\", h).use(scim).get(\"/b\", h) // /a AND /b stay typed\n * ```\n */"
+  },
+  {
+    "name": "DehydratedState",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DehydratedState {\n    readonly queries: ReadonlyArray<{\n        readonly key: unknown;\n        readonly data: unknown;\n        readonly updatedAt: number;\n    }>;\n}",
+    "doc": "/** A serializable snapshot of the cache's successful queries — the SSR→client bridge payload. */"
   },
   {
     "name": "describeProject",
@@ -2846,6 +2860,13 @@
     "doc": "/** Hydrate a server-rendered Vue layout `chain` (with the loader `props`) inside `container`. */"
   },
   {
+    "name": "HydrationBoundary",
+    "kind": "function",
+    "package": "@nifrajs/web-react",
+    "signature": "export declare function HydrationBoundary(props: {\n    readonly state: DehydratedState | undefined;\n    readonly children?: ReactNode;\n}): ReactNode;",
+    "doc": "/**\n * Seed the context's {@link QueryClient} from a server {@link dehydrate} snapshot — the SSR data bridge.\n * Wrap the app (inside `QueryClientProvider`) so server-prefetched queries are in the cache before the\n * first client render, avoiding a loading flash. Hydration runs during render (idempotent, fresher-wins),\n * so the data is available synchronously to child `useQuery`s.\n */"
+  },
+  {
     "name": "I18nProvider",
     "kind": "function",
     "package": "@nifrajs/web-preact",
@@ -3131,6 +3152,27 @@
     "package": "@nifrajs/env",
     "signature": "export type InferOutput<S extends StandardSchemaV1> = NonNullable<S[\"~standard\"][\"types\"]>[\"output\"];",
     "doc": "/** Extract a Standard Schema's validated output type. */"
+  },
+  {
+    "name": "InfiniteData",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface InfiniteData<T, P> {\n    readonly pages: readonly T[];\n    readonly pageParams: readonly P[];\n}",
+    "doc": "/** An infinite (paged) query's accumulated data: the fetched `pages` in order + the `pageParam` each\n * was fetched with (so the next/previous param can be derived). */"
+  },
+  {
+    "name": "InfiniteQueryHandle",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface InfiniteQueryHandle<T, P> {\n    snapshot: () => QueryState<InfiniteData<T, P>>;\n    subscribe: (listener: () => void) => () => void;\n    /** Fetch the first page when absent/stale (fresh ⇒ no-op). */\n    fetch: () => Promise<InfiniteData<T, P>>;\n    /** Refetch every currently-loaded page (in order), replacing the data. */\n    refetch: () => Promise<InfiniteData<T, P>>;\n    /** Append the next page (a no-op when `hasNextPage()` is false or a fetch is already in flight). */\n    fetchNextPage: () => Promise<InfiniteData<T, P>>;\n    /** Prepend the previous page (a no-op without `getPreviousPageParam` or when there is none). */\n    fetchPreviousPage: () => Promise<InfiniteData<T, P>>;\n    /** Whether another page can be appended (derived from `getNextPageParam` of the last page). */\n    hasNextPage: () => boolean;\n    /** Whether a page can be prepended (derived from `getPreviousPageParam` of the first page). */\n    hasPreviousPage: () => boolean;\n}",
+    "doc": "/** A stable per-key handle for an infinite (paged) query. */"
+  },
+  {
+    "name": "InfiniteQueryOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface InfiniteQueryOptions<T, P> extends QueryOptions {\n    /** The param the FIRST page is fetched with. */\n    readonly initialPageParam: P;\n    /** Derive the next page's param from the last fetched page (and all pages/params). `undefined`/`null`\n     * ⇒ no next page (`hasNextPage` is false). */\n    readonly getNextPageParam: (lastPage: T, allPages: readonly T[], lastPageParam: P, allPageParams: readonly P[]) => P | undefined | null;\n    /** Derive the previous page's param (for bidirectional infinite lists). Omit ⇒ no previous page. */\n    readonly getPreviousPageParam?: (firstPage: T, allPages: readonly T[], firstPageParam: P, allPageParams: readonly P[]) => P | undefined | null;\n}",
+    "doc": "/** Options for an {@link InfiniteQueryHandle}. `getNextPageParam` (required) derives the param for the\n * next page from the last page — return `undefined`/`null` to signal there is no next page. */"
   },
   {
     "name": "initAgents",
@@ -4285,6 +4327,34 @@
     "doc": "/** Optional server-side copy/move capability. */"
   },
   {
+    "name": "MutationCallbacks",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface MutationCallbacks<TData, TVariables> {\n    readonly onMutate?: (variables: TVariables) => void | Promise<void>;\n    readonly onSuccess?: (data: TData, variables: TVariables) => void | Promise<void>;\n    readonly onError?: (error: unknown, variables: TVariables) => void | Promise<void>;\n    readonly onSettled?: (data: TData | undefined, error: unknown, variables: TVariables) => void | Promise<void>;\n}",
+    "doc": "/** Lifecycle callbacks for a mutation. All optional; `onSettled` runs after success OR error. */"
+  },
+  {
+    "name": "MutationHandle",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface MutationHandle<TData, TVariables> {\n    snapshot: () => MutationState<TData, TVariables>;\n    subscribe: (listener: () => void) => () => void;\n    /** Run the mutation. Resolves to the data (and runs onSuccess/onSettled) or rejects (onError/onSettled).\n     * The latest concurrent call wins the published state (older results are dropped). */\n    mutate: (variables: TVariables) => Promise<TData>;\n    /** Rebind the latest `fn`/callbacks (closures change between renders) without losing state. */\n    rebind: (fn: (variables: TVariables) => Promise<TData>, callbacks: MutationCallbacks<TData, TVariables>) => void;\n    /** Reset to the idle state (clears data/error/variables). */\n    reset: () => void;\n}",
+    "doc": "/** A standalone mutation store: subscribe to its state, fire `mutate`, `reset` back to idle. */"
+  },
+  {
+    "name": "MutationState",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface MutationState<TData, TVariables> {\n    readonly status: MutationStatus;\n    readonly data: TData | undefined;\n    readonly error: unknown;\n    /** The variables of the in-flight / last mutation (`undefined` before the first call). */\n    readonly variables: TVariables | undefined;\n}",
+    "doc": "/** A mutation's observable state. A new (frozen) object per transition (reference-comparable). */"
+  },
+  {
+    "name": "MutationStatus",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type MutationStatus = \"idle\" | \"pending\" | \"success\" | \"error\";",
+    "doc": "/** A mutation's lifecycle status. */"
+  },
+  {
     "name": "namedCombine",
     "kind": "function",
     "package": "@nifrajs/middleware",
@@ -5142,7 +5212,7 @@
     "name": "QueryClient",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface QueryClient {\n    /** Get the stable {@link QueryHandle} for `key`, fetched via `fn`. Re-binds the latest `fn` each\n     * call (closures change between renders); returns the same handle for the same (hashed) key. */\n    query: <T>(key: unknown, fn: () => Promise<T>) => QueryHandle<T>;\n    /** Mark matching cached queries stale and refetch the **mounted** ones (subscribers > 0). Array\n     * keys match by **prefix** (`[\"todo\"]` ⇒ every `[\"todo\", …]`); other keys match exactly. */\n    invalidateQueries: (keyOrPrefix: unknown) => void;\n}",
+    "signature": "export interface QueryClient {\n    /** Get the stable {@link QueryHandle} for `key`, fetched via `fn`. Re-binds the latest `fn` (and\n     * `options`) each call (closures change between renders); returns the same handle for the same\n     * (hashed) key. */\n    query: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => QueryHandle<T>;\n    /** Get the stable {@link InfiniteQueryHandle} for `key`, whose pages are fetched via `fn(pageParam)`. */\n    infiniteQuery: <T, P>(key: unknown, fn: (pageParam: P) => Promise<T>, options: InfiniteQueryOptions<T, P>) => InfiniteQueryHandle<T, P>;\n    /** Mark matching cached queries stale and refetch the **mounted** ones (subscribers > 0). Array\n     * keys match by **prefix** (`[\"todo\"]` ⇒ every `[\"todo\", …]`); other keys match exactly. */\n    invalidateQueries: (keyOrPrefix: unknown) => void;\n    /** Read a cached query's data (`undefined` if absent or not yet successful). Synchronous, no fetch. */\n    getQueryData: <T>(key: unknown) => T | undefined;\n    /** Write a query's data directly (optimistic updates, or seeding). Creates the entry if absent; marks\n     * it fresh (`updatedAt = now`). `updater` may be a value or a function of the previous data. */\n    setQueryData: <T>(key: unknown, updater: T | ((prev: T | undefined) => T)) => void;\n    /** Fetch + cache a query's data WITHOUT subscribing (SSR prefetch, hover warm). Resolves when cached;\n     * a fresh entry is a no-op. Rejects if the fetch throws (caller may swallow). */\n    prefetchQuery: <T>(key: unknown, fn: () => Promise<T>, options?: QueryOptions) => Promise<void>;\n    /** Serialize every successful query to a transferable snapshot (server → client SSR bridge). */\n    dehydrate: () => DehydratedState;\n    /** Seed the cache from a {@link dehydrate} snapshot (client boot). Existing fresher entries win. */\n    hydrate: (state: DehydratedState) => void;\n}",
     "doc": "/** The keyed query cache. One per app (a binding registers it like the router). */"
   },
   {
@@ -5150,6 +5220,13 @@
     "kind": "interface",
     "package": "@nifrajs/web",
     "signature": "export interface QueryClientOptions {\n    /** Monotonic clock in ms — injected so the core stays deterministic + testable; the adapter binding\n     * passes `() => Date.now()`. */\n    readonly now: () => number;\n    /** Data stays fresh this long after a fetch; older ⇒ refetch on the next `fetch()` (default `0`). */\n    readonly staleTime?: number;\n    /** Evict an entry this long (ms) after its last subscriber leaves (default 5 min). */\n    readonly gcTime?: number;\n    /** Hard cap on cached entries — LRU-evict the oldest *unsubscribed* entry past it (default 1000). */\n    readonly max?: number;\n}"
+  },
+  {
+    "name": "QueryClientProvider",
+    "kind": "function",
+    "package": "@nifrajs/web-react",
+    "signature": "export declare function QueryClientProvider(props: {\n    readonly client: QueryClient;\n    readonly children?: ReactNode;\n}): ReactNode;",
+    "doc": "/** Provide a {@link QueryClient} to the tree — required for SSR dehydrate/hydrate and for tests; a\n * client-only app can omit it and rely on the built-in client-side singleton. */"
   },
   {
     "name": "QueryHandle",
@@ -5163,6 +5240,13 @@
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function queryObjectOf(search: string): Record<string, QueryValue>;"
+  },
+  {
+    "name": "QueryOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface QueryOptions {\n    /** Data stays fresh this long (ms) after a fetch; older ⇒ refetch on the next `fetch()`. Overrides\n     * the client default for this key. */\n    readonly staleTime?: number;\n}",
+    "doc": "/** Per-query overrides passed alongside the fetcher. */"
   },
   {
     "name": "QueryState",
@@ -7750,6 +7834,27 @@
     "doc": "/**\n * Subscribe to the whole live fetcher collection — for a global busy view (e.g. \"3 saving…\"). Read\n * each entry's `.snapshot()` for its state. The ref updates whenever any fetcher transitions or a new\n * one is created.\n */"
   },
   {
+    "name": "useInfiniteQuery",
+    "kind": "function",
+    "package": "@nifrajs/web-react",
+    "signature": "export declare function useInfiniteQuery<T, P>(key: unknown, fn: (pageParam: P) => Promise<T>, options: UseInfiniteQueryOptions<T, P>): UseInfiniteQueryResult<T, P>;",
+    "doc": "/**\n * Subscribe to a paged (infinite-scroll) query. Returns the accumulated `data.pages` plus\n * `fetchNextPage`/`fetchPreviousPage`/`hasNextPage`/`hasPreviousPage`. Fetches the first page on mount.\n * SSR-idle unless a `QueryClientProvider` supplies a hydrated client.\n */"
+  },
+  {
+    "name": "UseInfiniteQueryOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web-react",
+    "signature": "export interface UseInfiniteQueryOptions<T, P> extends InfiniteQueryOptions<T, P> {\n    readonly enabled?: boolean;\n}",
+    "doc": "/** Options for {@link useInfiniteQuery} — the engine's {@link InfiniteQueryOptions} plus `enabled`. */"
+  },
+  {
+    "name": "UseInfiniteQueryResult",
+    "kind": "interface",
+    "package": "@nifrajs/web-react",
+    "signature": "export interface UseInfiniteQueryResult<T, P> extends QueryState<InfiniteData<T, P>> {\n    readonly isPending: boolean;\n    readonly isError: boolean;\n    readonly isSuccess: boolean;\n    readonly fetchNextPage: () => Promise<InfiniteData<T, P>>;\n    readonly fetchPreviousPage: () => Promise<InfiniteData<T, P>>;\n    readonly hasNextPage: boolean;\n    readonly hasPreviousPage: boolean;\n    readonly refetch: () => Promise<InfiniteData<T, P>>;\n}",
+    "doc": "/** An infinite query's reactive state + paging controls. */"
+  },
+  {
     "name": "useLocation",
     "kind": "function",
     "package": "@nifrajs/web-react",
@@ -7762,6 +7867,20 @@
     "package": "@nifrajs/web-solid",
     "signature": "export declare function useMDXComponents(): Record<string, (props: Record<string, unknown>) => unknown>;",
     "doc": "/** Returns the intrinsic-element → Solid-component map MDX content uses. Merge in your own overrides by\n * passing `components` to the MDX content component (they take precedence). */"
+  },
+  {
+    "name": "useMutation",
+    "kind": "function",
+    "package": "@nifrajs/web-react",
+    "signature": "export declare function useMutation<TData, TVariables = void>(fn: (variables: TVariables) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>): UseMutationResult<TData, TVariables>;",
+    "doc": "/**\n * A mutation hook (create/update/delete). Returns `{ mutate, mutateAsync, data, error, variables, isIdle,\n * isPending, isError, isSuccess, reset }`. Invalidate affected queries from `onSuccess` via\n * `useQueryClient().invalidateQueries(...)`. The handle is stable across renders; the latest `fn`/\n * callbacks re-bind each render.\n */"
+  },
+  {
+    "name": "UseMutationResult",
+    "kind": "interface",
+    "package": "@nifrajs/web-react",
+    "signature": "export interface UseMutationResult<TData, TVariables> extends MutationState<TData, TVariables> {\n    readonly isIdle: boolean;\n    readonly isPending: boolean;\n    readonly isError: boolean;\n    readonly isSuccess: boolean;\n    /** Fire-and-forget: runs the mutation and swallows rejection (read `error`/`isError` for failures). */\n    readonly mutate: (variables: TVariables) => void;\n    /** Run the mutation and return the promise (rejects on failure) — for `await`. */\n    readonly mutateAsync: (variables: TVariables) => Promise<TData>;\n    /** Reset back to idle. */\n    readonly reset: () => void;\n}",
+    "doc": "/** A mutation's reactive state + imperative controls (the TanStack `useMutation` shape). */"
   },
   {
     "name": "useNavigate",
@@ -7788,8 +7907,8 @@
     "name": "useQuery",
     "kind": "function",
     "package": "@nifrajs/web-react",
-    "signature": "export declare function useQuery<T>(key: unknown, fn: () => Promise<T>): UseQueryResult<T>;",
-    "doc": "/**\n * Subscribe to the keyed query for `key`, fetched via `fn`. Returns `{ status, data, error, isFetching,\n * updatedAt, isPending, refetch }`. Concurrent `useQuery`s with the same key share one cache entry +\n * one in-flight fetch (dedup). Refetches on mount and when the key changes; SSR-idle.\n */"
+    "signature": "export declare function useQuery<T>(key: unknown, fn: () => Promise<T>, options?: UseQueryOptions): UseQueryResult<T>;",
+    "doc": "/**\n * Subscribe to the keyed query for `key`, fetched via `fn`. Returns `{ status, data, error, isFetching,\n * updatedAt, isPending, isError, isSuccess, refetch }`. Concurrent `useQuery`s with the same key share\n * one cache entry + one in-flight fetch (dedup). Fetches on mount and when the key changes; `enabled:\n * false` keeps it idle (dependent queries). SSR-idle unless a `QueryClientProvider` supplies a hydrated\n * client.\n */"
   },
   {
     "name": "useQuery",
@@ -7816,8 +7935,8 @@
     "name": "useQueryClient",
     "kind": "function",
     "package": "@nifrajs/web-react",
-    "signature": "export declare function useQueryClient(): Pick<QueryClient, \"invalidateQueries\">;",
-    "doc": "/** Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation). */"
+    "signature": "export declare function useQueryClient(): QueryClient;",
+    "doc": "/** The active {@link QueryClient}: a `QueryClientProvider`'s client, else the client-side singleton,\n * else a no-op (server / pre-hydration). Use it to `invalidateQueries`/`setQueryData`/`prefetchQuery`. */"
   },
   {
     "name": "useQueryClient",
@@ -7841,6 +7960,13 @@
     "doc": "/** Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation). */"
   },
   {
+    "name": "UseQueryOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web-react",
+    "signature": "export interface UseQueryOptions extends QueryOptions {\n    /** When `false`, don't fetch (the query stays idle) — for dependent queries. Default `true`. */\n    readonly enabled?: boolean;\n}",
+    "doc": "/** Options for {@link useQuery}. */"
+  },
+  {
     "name": "UseQueryResult",
     "kind": "interface",
     "package": "@nifrajs/web-preact",
@@ -7851,7 +7977,7 @@
     "name": "UseQueryResult",
     "kind": "interface",
     "package": "@nifrajs/web-react",
-    "signature": "export interface UseQueryResult<T> extends QueryState<T> {\n    /** `status === \"pending\"` — no data yet (initial load). */\n    readonly isPending: boolean;\n    /** Force a refetch (ignores `staleTime`). */\n    readonly refetch: () => Promise<T>;\n}",
+    "signature": "export interface UseQueryResult<T> extends QueryState<T> {\n    /** `status === \"pending\"` — no data yet (initial load). */\n    readonly isPending: boolean;\n    /** `status === \"error\"`. */\n    readonly isError: boolean;\n    /** `status === \"success\"`. */\n    readonly isSuccess: boolean;\n    /** Force a refetch (ignores `staleTime`). */\n    readonly refetch: () => Promise<T>;\n}",
     "doc": "/** A query's reactive {@link QueryState} plus `isPending` + `refetch`. */"
   },
   {
