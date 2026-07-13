@@ -1,5 +1,11 @@
 # @nifrajs/mcp
 
+## 1.9.1
+
+### Patch Changes
+
+- 3eb27ae: Internal tidy — remove a dead local variable in the query engine and clean up example wording in doc comments. No API or behavior change.
+
 ## 1.9.0
 
 ## 1.8.0

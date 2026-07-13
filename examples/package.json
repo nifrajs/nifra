@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/examples",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "type": "module",
   "private": true,
   "description": "Runnable, type-checked examples for nifra. Not published.",
