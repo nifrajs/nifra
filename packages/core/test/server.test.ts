@@ -198,4 +198,57 @@ describe("Server — verbs and listen", () => {
       instance.stop()
     }
   })
+
+  test("the fused Bun-native lane serves zero-param deadline routes on both admission arms", async () => {
+    const app = server({ acceptInboundDeadlines: true }).get("/edge", () => ({ ok: true }))
+    const instance = app.listen(0)
+    const url = `http://127.0.0.1:${instance.port}/edge`
+    try {
+      // No inbound deadline → the zero-admission fused fast path still serves the route.
+      expect(await (await fetch(url)).json()).toEqual({ ok: true })
+
+      // A live inherited deadline → clamped propagation through the matched lane.
+      const live = await fetch(url, {
+        headers: { "x-nifra-deadline": String(Date.now() + 60_000) },
+      })
+      expect(await live.json()).toEqual({ ok: true })
+
+      // An expired inherited deadline is rejected before the handler.
+      const expired = await fetch(url, { headers: { "x-nifra-deadline": "1" } })
+      expect(expired.status).toBe(408)
+    } finally {
+      instance.stop()
+    }
+  })
+
+  test("the fused Bun-native lane serves multi-param deadline routes and reports handler errors", async () => {
+    const app = server({ acceptInboundDeadlines: true, logger: silentLogger })
+      .get("/pair/:a/:b", (c) => ({ a: c.params.a, b: c.params.b }))
+      .get("/blow/:id", () => {
+        throw new Error("boom: secret detail")
+      })
+    const instance = app.listen(0)
+    const base = `http://127.0.0.1:${instance.port}`
+    try {
+      // Multi-param, no deadline → fused fast path preserves both params.
+      expect(await (await fetch(`${base}/pair/1/2`)).json()).toEqual({ a: "1", b: "2" })
+
+      // Multi-param with a live inherited deadline → matched lane, same result.
+      const live = await fetch(`${base}/pair/3/4`, {
+        headers: { "x-nifra-deadline": String(Date.now() + 60_000) },
+      })
+      expect(await live.json()).toEqual({ a: "3", b: "4" })
+
+      // An undecodable multi-param segment falls back to the source lifecycle (400).
+      const malformed = await fetch(`${base}/pair/%C3%28/x`)
+      expect(malformed.status).toBe(400)
+
+      // A throwing single-param handler on the deadline lane is a clean 500 (no leak).
+      const boom = await fetch(`${base}/blow/9`)
+      expect(boom.status).toBe(500)
+      expect(await boom.json()).toEqual({ ok: false, error: "internal_error" })
+    } finally {
+      instance.stop()
+    }
+  })
 })
