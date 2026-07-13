@@ -1,5 +1,19 @@
 # @nifrajs/cli
 
+## 1.9.1
+
+### Patch Changes
+
+- 3eb27ae: Internal tidy — remove a dead local variable in the query engine and clean up example wording in doc comments. No API or behavior change.
+- Updated dependencies [3eb27ae]
+  - @nifrajs/web@1.9.1
+  - @nifrajs/mcp@1.9.1
+  - @nifrajs/client@1.9.1
+  - @nifrajs/core@1.9.1
+  - @nifrajs/runner@1.9.1
+  - @nifrajs/schema@1.9.1
+  - create-nifra@1.9.1
+
 ## 1.9.0
 
 ### Patch Changes

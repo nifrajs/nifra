@@ -1,5 +1,16 @@
 # @nifrajs/web-react
 
+## 1.9.1
+
+### Patch Changes
+
+- 3eb27ae: Tidy the `@nifrajs/web-react/query` module documentation comment. Docs only — no API or behavior change.
+- Updated dependencies [3eb27ae]
+  - @nifrajs/web@1.9.1
+  - @nifrajs/core@1.9.1
+  - @nifrajs/i18n@1.9.1
+  - @nifrajs/image@1.9.1
+
 ## 1.9.0
 
 ### Minor Changes
