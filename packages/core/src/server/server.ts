@@ -205,6 +205,7 @@ type FusedWebRunner = (
   signal: AbortSignal,
   budget: RequestBudget,
   platform: Platform | undefined,
+  nativeContext: boolean,
 ) => MaybePromise<Response>
 
 /** A registered WebSocket route — just its handler; matching reuses {@link Router} under the GET verb. */
@@ -271,9 +272,15 @@ export interface ServerOptions {
   /** Per-request timeout (ms): a slower request gets a 503 and `ctx.signal` aborts. 0 disables (default). */
   readonly requestTimeoutMs?: number
   /**
+   * Admit the public `x-nifra-deadline` header and let it shorten local work. Disabled by default:
+   * services that participate in trusted cross-service deadline propagation opt in explicitly,
+   * while ordinary/public HTTP routes pay no header-admission tax and ignore hostile client values.
+   */
+  readonly acceptInboundDeadlines?: boolean
+  /**
    * Maximum time accepted from an inbound `x-nifra-deadline`, in milliseconds. An incoming absolute
    * deadline may shorten this cap (and `requestTimeoutMs`, when configured), never extend it.
-   * Default 30_000; applies only when the header is present.
+   * Default 30_000; applies only when `acceptInboundDeadlines` is enabled and the header is present.
    */
   readonly maxInboundDeadlineMs?: number
   /** When `listen()`ing, install SIGTERM/SIGINT handlers that gracefully `stop()`. Default false. */
@@ -775,21 +782,23 @@ function statusInit(init?: ResponseInit | number): ResponseInit | undefined {
 }
 
 class RequestContext implements RawContext {
-  readonly params: Record<string, string>
-  readonly signal: AbortSignal
-  readonly budget: RequestBudget
-  readonly env: unknown
-  readonly waitUntil: (promise: Promise<unknown>) => void
-  body: unknown
-  private searchValue: string | undefined
+  // `declare` keeps TypeScript's class-field emit from first writing `undefined` to every slot; the
+  // constructor initializes only the eager request state, while lazy fields remain absent until used.
+  declare readonly params: Record<string, string>
+  declare body: unknown
+  private declare searchValue: string | undefined
+  private declare signalValue: AbortSignal | undefined
+  private declare budgetValue: RequestBudget | undefined
+  private declare platformValue: Platform | undefined
 
-  private setValue: CtxSet | undefined
-  private queryValue: unknown
-  private queryReady: boolean
-  private cookiesValue: Readonly<Record<string, string>> | undefined
-  private readonly source: RequestSource
-  private readonly maxBodyBytes: number
+  private declare setValue: CtxSet | undefined
+  private declare queryValue: unknown
+  private declare queryReady: boolean
+  private declare cookiesValue: Readonly<Record<string, string>> | undefined
+  private declare readonly source: RequestSource
+  private declare readonly maxBodyBytes: number
 
+  constructor(source: RequestSource, params: Record<string, string>, maxBodyBytes: number)
   constructor(
     source: RequestSource,
     params: Record<string, string>,
@@ -798,20 +807,35 @@ class RequestContext implements RawContext {
     budget: RequestBudget,
     platform: Platform | undefined,
     maxBodyBytes: number,
+  )
+  constructor(
+    source: RequestSource,
+    params: Record<string, string>,
+    searchOrMaxBodyBytes: string | number | undefined,
+    signal?: AbortSignal,
+    budget?: RequestBudget,
+    platform?: Platform,
+    maxBodyBytes?: number,
   ) {
     this.source = source
     this.params = params
-    this.searchValue = search
-    this.signal = signal
-    this.budget = budget
-    this.env = platform?.env
-    this.waitUntil = platform?.waitUntil ?? fallbackWaitUntil
-    this.maxBodyBytes = maxBodyBytes
-    this.setValue = undefined
-    this.body = undefined
-    this.queryValue = undefined
-    this.queryReady = false
-    this.cookiesValue = undefined
+    if (typeof searchOrMaxBodyBytes === "number") {
+      this.maxBodyBytes = searchOrMaxBodyBytes
+      return
+    }
+    if (searchOrMaxBodyBytes !== undefined) this.searchValue = searchOrMaxBodyBytes
+    this.signalValue = signal
+    this.budgetValue = budget
+    if (platform !== undefined) this.platformValue = platform
+    this.maxBodyBytes = maxBodyBytes as number
+  }
+
+  static native(
+    source: RequestSource,
+    params: Record<string, string>,
+    maxBodyBytes: number,
+  ): RequestContext {
+    return new RequestContext(source, params, maxBodyBytes)
   }
 
   [CONTEXT_SET](): CtxSet | undefined {
@@ -826,6 +850,22 @@ class RequestContext implements RawContext {
   get set(): CtxSet {
     this.setValue ??= new LazyResponseControls()
     return this.setValue
+  }
+
+  get signal(): AbortSignal {
+    return this.signalValue ?? getNeverAbortSignal()
+  }
+
+  get budget(): RequestBudget {
+    return this.budgetValue ?? getUnboundedRequestBudget()
+  }
+
+  get env(): unknown {
+    return this.platformValue?.env
+  }
+
+  get waitUntil(): (promise: Promise<unknown>) => void {
+    return this.platformValue?.waitUntil ?? fallbackWaitUntil
   }
 
   get req(): Request {
@@ -963,8 +1003,9 @@ const JSON_CT_HEADERS = new Headers({
 })
 const JSON_INIT_200: ResponseInit = { status: 200, headers: JSON_CT_HEADERS }
 
-/** Fused-lane respond when the handler ran with NO context (so `c.set` can't exist): the fast
- * JSON respond directly, with `toResponse` + the empty controls as the exact-semantics fallback. */
+/** Fused-lane respond when `c.set` is untouched. Bun 1.3's native `Response.json` now beats the
+ * older hand-inlined stringify + Response construction on this lane while preserving the exact
+ * body/content-type contract; keep the generic fallback for non-JSON values. */
 function fusedRespondNoSet(result: unknown): Response {
   if (
     result !== undefined &&
@@ -973,8 +1014,7 @@ function fusedRespondNoSet(result: unknown): Response {
     result !== null &&
     !isResponseResult(result)
   ) {
-    const body = JSON.stringify(result) as string | undefined
-    if (body !== undefined) return new Response(body, JSON_INIT_200)
+    return Response.json(result)
   }
   return toResponse(result as HandlerResult, EMPTY_RESPONSE_CONTROLS)
 }
@@ -1159,6 +1199,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private readonly maxBodyBytes: number
   private readonly wsMaxPayloadBytes: number
   private readonly requestTimeoutMs: number
+  private readonly acceptInboundDeadlines: boolean
   private readonly maxInboundDeadlineMs: number
   private readonly deadlineAdmissionOptions: DeadlineAdmissionOptions
   private readonly gracefulSignals: boolean
@@ -1208,6 +1249,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
     this.wsMaxPayloadBytes = options.wsMaxPayloadBytes ?? this.maxBodyBytes
     this.requestTimeoutMs = options.requestTimeoutMs ?? 0
+    this.acceptInboundDeadlines = options.acceptInboundDeadlines ?? false
     this.maxInboundDeadlineMs = options.maxInboundDeadlineMs ?? 30_000
     this.deadlineAdmissionOptions = Object.freeze({
       localTimeoutMs: this.requestTimeoutMs,
@@ -2160,8 +2202,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // Most requests have neither a local timeout nor a propagated deadline. Detect that case with
     // one header lookup and skip policy validation, wall-clock sampling, and admission objects. A
     // present wire deadline still goes through the full fail-closed parser/clamp below.
-    const admission =
-      this.requestTimeoutMs === 0 && headerOf(source, NIFRA_DEADLINE_HEADER) === null
+    const admission = !this.acceptInboundDeadlines
+      ? this.requestTimeoutMs === 0
+        ? undefined
+        : {
+            ok: true as const,
+            inherited: false,
+            timeoutMs: this.requestTimeoutMs,
+            deadline: Math.floor(Date.now() + this.requestTimeoutMs),
+          }
+      : this.requestTimeoutMs === 0 && headerOf(source, NIFRA_DEADLINE_HEADER) === null
         ? undefined
         : admitDeadline(source.headers, this.deadlineAdmissionOptions)
     if (admission !== undefined && !admission.ok) {
@@ -2187,7 +2237,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     if (webFast && entry.fusedWeb !== undefined) {
       // Fused Web lane (bare route, no around): one closure end to end. Sound cast — webFast is
       // passed only by the `fetch` path, where T = Response by construction.
-      outcome = entry.fusedWeb(source, params, search, signal, budget, platform) as MaybePromise<T>
+      outcome = entry.fusedWeb(
+        source,
+        params,
+        search,
+        signal,
+        budget,
+        platform,
+        false,
+      ) as MaybePromise<T>
     } else if (entry.contextlessBare) {
       outcome = this.runContextlessBare(
         entry,
@@ -2381,29 +2439,43 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       // `() => ...` can't observe the context — skip allocating one entirely (errors still build
       // one for the structured log, exactly like runContextlessBare).
       const contextlessHandler = handler as unknown as ContextlessHandler
-      return (source, params, search, signal, budget, platform) => {
+      return (source, params, search, signal, budget, platform, nativeContext) => {
         let result: unknown
         try {
           result = contextlessHandler()
         } catch (err) {
           return logError(
             err,
-            new RequestContext(source, params, search, signal, budget, platform, maxBodyBytes),
+            nativeContext
+              ? RequestContext.native(source, params, maxBodyBytes)
+              : new RequestContext(source, params, search, signal, budget, platform, maxBodyBytes),
           )
         }
         if (result instanceof Promise) {
           return result.then(fusedRespondNoSet, (err) =>
             logError(
               err,
-              new RequestContext(source, params, search, signal, budget, platform, maxBodyBytes),
+              nativeContext
+                ? RequestContext.native(source, params, maxBodyBytes)
+                : new RequestContext(
+                    source,
+                    params,
+                    search,
+                    signal,
+                    budget,
+                    platform,
+                    maxBodyBytes,
+                  ),
             ),
           )
         }
         return fusedRespondNoSet(result)
       }
     }
-    return (source, params, search, signal, budget, platform) => {
-      const ctx = new RequestContext(source, params, search, signal, budget, platform, maxBodyBytes)
+    return (source, params, search, signal, budget, platform, nativeContext) => {
+      const ctx = nativeContext
+        ? RequestContext.native(source, params, maxBodyBytes)
+        : new RequestContext(source, params, search, signal, budget, platform, maxBodyBytes)
       if (decorations !== undefined) Object.assign(ctx, decorations)
       let result: unknown
       try {
@@ -3036,31 +3108,135 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         methods = Object.create(null) as BunNativeMethodTable
         routes[path] = methods
       }
-      const parameterized = path.includes(":")
-      methods[method] = (request) => {
-        const params = parameterized
-          ? ((request as BunRequestWithParams).params ?? EMPTY_PARAMS)
-          : EMPTY_PARAMS
-        if (parameterized && hasReplacementParam(params)) return this.fetchSource(request)
+      const paramNames = path
+        .split("/")
+        .filter((segment) => segment.charCodeAt(0) === 58 /* : */)
+        .map((segment) => segment.slice(1))
+      const fused = mayUseFusedNative ? entry.fusedWeb : undefined
 
-        // Native match + fused route is the common Bun GET lane. Keep deadline admission mandatory,
-        // but when the header is absent all remaining choices were fixed at registration/listen time:
-        // call the fused lifecycle directly instead of replaying the generic branch ladder.
-        if (
-          mayUseFusedNative &&
-          entry.fusedWeb !== undefined &&
-          request.headers.get(NIFRA_DEADLINE_HEADER) === null
-        ) {
-          return entry.fusedWeb(
-            request,
-            params,
-            undefined,
-            unboundedSignal as AbortSignal,
-            unboundedBudget as RequestBudget,
-            undefined,
-          )
+      if (fused !== undefined) {
+        // Deliberately choose deadline-aware vs zero-admission closures HERE instead of branching on
+        // `acceptInboundDeadlines` per request. JSC can then flatten the default closure through the
+        // handler + Response.json; retaining that route-invariant branch cost ~7% on a dynamic GET.
+        if (paramNames.length === 0) {
+          methods[method] = this.acceptInboundDeadlines
+            ? (request) =>
+                request.headers.get(NIFRA_DEADLINE_HEADER) !== null
+                  ? this.fetchMatched(request, entry, EMPTY_PARAMS)
+                  : fused(
+                      request,
+                      EMPTY_PARAMS,
+                      undefined,
+                      unboundedSignal as AbortSignal,
+                      unboundedBudget as RequestBudget,
+                      undefined,
+                      true,
+                    )
+            : (request) =>
+                fused(
+                  request,
+                  EMPTY_PARAMS,
+                  undefined,
+                  unboundedSignal as AbortSignal,
+                  unboundedBudget as RequestBudget,
+                  undefined,
+                  true,
+                )
+        } else if (paramNames.length === 1) {
+          const paramName = paramNames[0]!
+          const handler = entry.handler
+          const decorations = entry.hasDecorations ? entry.decorations : undefined
+          const fail = (error: unknown, ctx: RawContext): Response => {
+            if (error instanceof Response) return error
+            this.logRequestError(error, ctx)
+            return jsonError(500, "internal_error")
+          }
+          methods[method] = this.acceptInboundDeadlines
+            ? (request) => {
+                const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
+                if (params[paramName]?.includes("\uFFFD") === true) return this.fetchSource(request)
+                if (request.headers.get(NIFRA_DEADLINE_HEADER) !== null) {
+                  return this.fetchMatched(request, entry, params)
+                }
+                const ctx = RequestContext.native(request, params, this.maxBodyBytes)
+                if (decorations !== undefined) Object.assign(ctx, decorations)
+                let result: unknown
+                try {
+                  result = handler(ctx)
+                } catch (error) {
+                  return fail(error, ctx)
+                }
+                return result instanceof Promise
+                  ? result.then(
+                      (value) => fusedRespond(value, ctx),
+                      (error) => fail(error, ctx),
+                    )
+                  : fusedRespond(result, ctx)
+              }
+            : (request) => {
+                const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
+                if (params[paramName]?.includes("\uFFFD") === true) return this.fetchSource(request)
+                const ctx = RequestContext.native(request, params, this.maxBodyBytes)
+                if (decorations !== undefined) Object.assign(ctx, decorations)
+                let result: unknown
+                try {
+                  result = handler(ctx)
+                } catch (error) {
+                  return fail(error, ctx)
+                }
+                return result instanceof Promise
+                  ? result.then(
+                      (value) => fusedRespond(value, ctx),
+                      (error) => fail(error, ctx),
+                    )
+                  : fusedRespond(result, ctx)
+              }
+        } else {
+          methods[method] = this.acceptInboundDeadlines
+            ? (request) => {
+                const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
+                if (hasReplacementParam(params)) return this.fetchSource(request)
+                return request.headers.get(NIFRA_DEADLINE_HEADER) !== null
+                  ? this.fetchMatched(request, entry, params)
+                  : fused(
+                      request,
+                      params,
+                      undefined,
+                      unboundedSignal as AbortSignal,
+                      unboundedBudget as RequestBudget,
+                      undefined,
+                      true,
+                    )
+              }
+            : (request) => {
+                const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
+                if (hasReplacementParam(params)) return this.fetchSource(request)
+                return fused(
+                  request,
+                  params,
+                  undefined,
+                  unboundedSignal as AbortSignal,
+                  unboundedBudget as RequestBudget,
+                  undefined,
+                  true,
+                )
+              }
         }
-        return this.fetchMatched(request, entry, params)
+      } else if (paramNames.length === 0) {
+        methods[method] = (request) => this.fetchMatched(request, entry, EMPTY_PARAMS)
+      } else if (paramNames.length === 1) {
+        const paramName = paramNames[0]!
+        methods[method] = (request) => {
+          const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
+          if (params[paramName]?.includes("\uFFFD") === true) return this.fetchSource(request)
+          return this.fetchMatched(request, entry, params)
+        }
+      } else {
+        methods[method] = (request) => {
+          const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
+          if (hasReplacementParam(params)) return this.fetchSource(request)
+          return this.fetchMatched(request, entry, params)
+        }
       }
       count += 1
     }

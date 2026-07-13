@@ -175,7 +175,9 @@ describe("Server — verbs and listen", () => {
   })
 
   test("the fused Bun-native lane still enforces inherited deadlines and method errors", async () => {
-    const app = server().get("/fast/:id", (c) => ({ id: c.params.id }))
+    const app = server({ acceptInboundDeadlines: true }).get("/fast/:id", (c) => ({
+      id: c.params.id,
+    }))
     const instance = app.listen(0)
     const url = `http://127.0.0.1:${instance.port}/fast/42`
     try {
