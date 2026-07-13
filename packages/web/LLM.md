@@ -25,7 +25,7 @@ Framework-agnostic SSR core for nifra — the render seam + HTML document orches
 - **filePathToPattern** _(function)_ — `filePathToPattern: (file: string) => string`
 - **filePathToPatterns** _(function)_ — `filePathToPatterns: (file: string) => string[]`
 
-_…and 91 more — see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 95 more — see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 

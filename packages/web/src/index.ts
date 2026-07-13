@@ -101,6 +101,14 @@ export {
   type StaticPaths,
   type StaticRoutes,
 } from "./manifest.ts"
+// Navigation bridge — a DOM-free seam the browser layer (`installHistory`) populates so an adapter's
+// `useNavigate` (a route component, importing only this agnostic entry) reaches history-aware nav.
+export {
+  type BrowserNavigate,
+  getBrowserNavigate,
+  type NavigateOptions,
+  setBrowserNavigate,
+} from "./navigation.ts"
 // Keyed query-cache (agnostic) — a `query(key, fn)` primitive (dedup + staleness + invalidation + GC)
 // consumed by the per-adapter `useQuery`/`createQuery` bindings.
 export {
@@ -180,6 +188,14 @@ export interface RenderProps {
   readonly pending?: boolean
   /** The in-flight client submit, for optimistic UI (client-only; absent on SSR + when idle). */
   readonly submission?: Submission
+  /** The matched route's decoded path params (`/users/:id` → `{ id: "7" }`). Threaded identically on
+   * SSR (from the request match) and on client navigation (from router state) so an adapter's
+   * `useParams` reads the same value on both, with no hydration mismatch. Absent ⇒ no params (`{}`). */
+  readonly params?: Readonly<Record<string, string>>
+  /** The current URL's `pathname + search` (no hash — the hash never reaches the server). Threaded on
+   * SSR and client alike so an adapter's `useLocation`/`useSearchParams` hydrate consistently. Absent
+   * on adapters/callers that don't supply it (treated as `""`). */
+  readonly path?: string
 }
 
 /**
@@ -316,6 +332,14 @@ export interface RenderPageOptions {
   readonly revalidate?: number
   /** Matched route id; written to `window.__NIFRA_ROUTE__` so the client hydrates this chain. */
   readonly routeId?: string
+  /** The matched route's decoded path params — surfaced to the page as `params` (via {@link RenderProps})
+   * so an adapter's `useParams` is SSR-correct. Omit ⇒ `{}` (a route with no dynamic segments, or an
+   * error/404 render). */
+  readonly params?: Readonly<Record<string, string>>
+  /** The request's `pathname + search` — surfaced as `path` (via {@link RenderProps}) so an adapter's
+   * `useLocation`/`useSearchParams` render the right URL server-side and hydrate without drift. Omit ⇒
+   * `""`. */
+  readonly path?: string
   /** HTTP status for the response (default 200; e.g. 404 for a not-found page). */
   readonly status?: number
   /** Document title (fallback when `head.title` is unset). */
@@ -455,7 +479,15 @@ export function renderPageResult(options: RenderPageOptions): MaybePromise<Rende
   // dedicated header (not the action-revalidation `x-nifra-revalidate`) so the TTL channel never aliases
   // the client's path-list channel.
   if (revalidate !== undefined) headers[ISR_REVALIDATE_HEADER] = String(revalidate)
-  const renderProps: RenderProps = { data: forComponent, actionData: actionSplit?.forComponent }
+  const renderProps: RenderProps = {
+    data: forComponent,
+    actionData: actionSplit?.forComponent,
+    // `params`/`path` thread the matched route + URL to the adapter's `useParams`/`useLocation` so they
+    // render SSR-correct. Spread only when supplied (exactOptionalPropertyTypes) — an adapter with no
+    // router bindings simply never reads them.
+    ...(options.params !== undefined ? { params: options.params } : {}),
+    ...(options.path !== undefined ? { path: options.path } : {}),
+  }
 
   // Fast path: nothing `defer()`s and the adapter can render synchronously to a string → buffer the
   // whole document in one pass. Progressive streaming only benefits pages with deferred boundaries
@@ -1126,6 +1158,19 @@ export function createWebApp<Env = unknown>(
     }
   }
 
+  // The request's `pathname + search` — threaded into `renderPage` so an adapter's `useLocation`/
+  // `useSearchParams` render the current URL server-side and hydrate against the client's initial state
+  // (which the client entry seeds from `location.pathname + location.search`). No hash: it never reaches
+  // the server. A malformed `req.url` degrades to "/" rather than throwing during render.
+  const pathOf = (req: Request): string => {
+    try {
+      const u = new URL(req.url)
+      return u.pathname + u.search
+    } catch {
+      return "/"
+    }
+  }
+
   /**
    * Render the **nearest `_error` boundary** when a route's loader throws (the agnostic, server-side
    * half of error UI — works on every adapter, no client takeover). The boundary renders in place of
@@ -1166,7 +1211,7 @@ export function createWebApp<Env = unknown>(
   // The 404 response — the `_404` page (status 404) or a plain-text fallback. Shared by the wildcard
   // catch-all (unmatched paths) and the `fallback: "404"` enforcement (unlisted paths under a route
   // that opted out of on-demand SSR).
-  const renderNotFound = async (): Promise<Response | RenderedPage> => {
+  const renderNotFound = async (path?: string): Promise<Response | RenderedPage> => {
     if (manifest.notFound === undefined) {
       return new Response("Not Found", {
         status: 404,
@@ -1180,6 +1225,9 @@ export function createWebApp<Env = unknown>(
       data: null,
       clientEntry,
       routeId: "_404",
+      // `_404` hydrates, so its SSR `path` must equal the client's initial `location.pathname+search`
+      // (an unmatched path yields no params → `{}`), or a `useLocation` on the 404 page would drift.
+      ...(path !== undefined ? { path } : {}),
       status: 404,
       ...preloadOf("_404"),
       ...stylesOf("_404"),
@@ -1197,7 +1245,7 @@ export function createWebApp<Env = unknown>(
       // Covers hard navigation directly; a client soft-nav's data fetch gets the 404, throws, and the
       // history layer falls back to a full-page navigation (which lands here again, as a document).
       if (is404Fallback && !prerenderedSet.has(new URL(c.req.url).pathname)) {
-        return renderNotFound()
+        return renderNotFound(pathOf(c.req))
       }
       const mod = await route.load()
       const draft = await draftFlag(c.req)
@@ -1266,6 +1314,8 @@ export function createWebApp<Env = unknown>(
           head,
           clientEntry,
           routeId: route.id,
+          params: c.params,
+          path: pathOf(c.req),
           hydrate: hydrateRoute,
           ...preloadOf(route.id),
           ...stylesOf(route.id),
@@ -1360,6 +1410,8 @@ export function createWebApp<Env = unknown>(
         head,
         clientEntry,
         routeId: route.id,
+        params: c.params,
+        path: pathOf(c.req),
         hydrate: hydrateRoute,
         ...preloadOf(route.id),
         ...stylesOf(route.id),
@@ -1385,7 +1437,7 @@ export function createWebApp<Env = unknown>(
   })
 
   // Wildcard catch-all: unmatched paths render `_404` (404), or a plain text 404 if absent.
-  app.register("GET", "/*", undefined, () => renderNotFound())
+  app.register("GET", "/*", undefined, (c: RouteContext) => renderNotFound(pathOf(c.req)))
 
   return app
 }
@@ -1498,7 +1550,10 @@ export function generateClientEntry(
     "const initial = {",
     `  routeId: matched ? matched.routeId : (window.${ROUTE_GLOBAL} ?? ""),`,
     "  params: matched ? matched.params : {},",
-    "  path: location.pathname,",
+    // pathname + search (NOT just pathname): the SSR render threads `pathname+search` into
+    // `useLocation`/`useSearchParams`, so the hydrating initial state must carry the query too or a
+    // page reading the search string would hydrate-mismatch. The #hash is client-only (never SSR'd).
+    "  path: location.pathname + location.search,",
     `  data: mapDeferred(window.${DATA_GLOBAL}),`,
     // actionData (only set after a form POST) is in the initial state so the binding hydrates
     // consistently with the server-rendered markup; mapped through `mapDeferred` too so a deferred

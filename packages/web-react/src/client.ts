@@ -34,6 +34,10 @@ export function mountRouter(options: MountRouterOptions): void {
       data: state.data,
       actionData: state.actionData,
       pending: state.pending,
+      // `params`/`path` feed the routing hooks (useParams/useLocation) via compose's RouterContext —
+      // sourced from router state here, matching the SSR render's request-derived values on hydration.
+      params: state.params,
+      path: state.path,
       // The in-flight submission (for optimistic UI) — spread only when present.
       ...(state.submission ? { submission: state.submission } : {}),
     })

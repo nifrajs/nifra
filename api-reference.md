@@ -1057,6 +1057,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Global the server serializes an action's data return into (absent on GETs); the client reads it so hydration after a native form POST matches the server-rendered markup.
 - **Action** _(type)_ — `type Action = (ctx: LoaderContext) => unknown | Promise<unknown>`
   A route's optional mutation, run on POST. Shares the loader context (params/request/api); read the form/JSON body off `request`. Returns either a `Response` (e.g. a redirect — passed straight through) or data, surfaced to the page component as `actionData`.
+- **BrowserNavigate** _(type)_ — `type BrowserNavigate = (to: string | number, options?: NavigateOptions) => void`
+  A history-aware navigate. A **string** `to` is a same-origin path (`/users/7?tab=a`) navigated to (push, or replace with `{ replace: true }`); a **number** is a history delta (`-1` back, `1` forward), matching the browser's `history.go`. Registered by `installHistory`.
 - **CacheStore** _(interface)_ — `interface CacheStore`
   Pluggable ISR cache backend. **Production deploys MUST use a shared/durable store** (Workers KV, Redis, the platform Cache API) so cached pages *and* revalidation hold across instances; {@link MemoryCacheStore} is dev / single-instance only. Implementations are async so a network store (KV/Redis) f…
 - **CachedResponse** _(interface)_ — `interface CachedResponse`
@@ -1128,6 +1130,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   A route's `meta`: a static {@link Meta}, or a function of the loader data + params + the request origin ({@link MetaArgs}). Use the `origin` arg for absolute `canonical`/`og:url`/`og:image` URLs — it's resolved server-side from the request and matches the client's `location.origin`.
 - **MountRouterOptions** _(interface)_ — `interface MountRouterOptions`
   Options for a per-adapter `mountRouter` (the Router binding that hydrates + re-renders).
+- **NavigateOptions** _(interface)_ — `interface NavigateOptions`
+  Options for a programmatic navigation.
 - **OpenGraphInput** _(interface)_ — `interface OpenGraphInput`
   Inputs for {@link openGraph} — the common Open Graph properties. All optional; only the provided ones become tags. `type` defaults to `"website"`.
 - **PRE_HYDRATION_GUARD** _(const)_ — `PRE_HYDRATION_GUARD: string`
@@ -1221,6 +1225,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Codegen: emit a client-entry module (as source) that lazily imports each route's layout chain (so `Bun.build` with `splitting` code-splits one chunk per route), builds a `patterns` list, then creates the agnostic router store (with a `loadModule` hook), installs history + form interception, loads t…
 - **generateServerManifest** _(function)_ — `generateServerManifest: (manifest: Manifest, options: GenerateServerManifestOptions) => string`
   Codegen: emit a **server manifest** module (as source) for disk-less edge runtimes (Cloudflare Workers, …) — and, with a `target`, any portable server bundle. `discoverRoutes` scans `node:fs` and dynamic-imports each route by a *runtime* path — neither exists on workerd. This instead emits **static…
+- **getBrowserNavigate** _(function)_ — `getBrowserNavigate: () => BrowserNavigate | undefined`
+  The active browser navigate, or `undefined` on the server / before `installHistory` has run. A binding calls it when present and falls back to native navigation otherwise.
 - **hashQueryKey** _(function)_ — `hashQueryKey: (key: unknown) => string`
   Hash a query key to a stable cache string. Object keys are sorted (so `{a,b}` ≡ `{b,a}`); arrays keep order. Keys must be serializable — a function/symbol in the key throws (it can't be a stable identity). Mirrors TanStack Query's structural hashing.
 - **isDraftEnabled** _(function)_ — `isDraftEnabled: (request: Request, secret: string) => Promise<boolean>`
@@ -1244,6 +1250,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   An **on-demand revalidation** (purge) endpoint — a `fetch` handler that drops a path's cached entry so the next request re-renders. `POST` with the secret in the token header and the path as `?path=` or a JSON `{ "path": "/blog/x" }` body. The token is checked in **constant time** (wrong/missing → …
 - **serializeData** _(function)_ — `serializeData: (data: unknown) => string`
   Serialize loader data for embedding inside an inline `<script>`. `JSON.stringify` alone is NOT safe there: a string containing `</script>` or `<!--` would break out of the script element (an XSS vector). Escape `<`/`>` to `\uXXXX`, plus the U+2028/U+2029 separators.
+- **setBrowserNavigate** _(function)_ — `setBrowserNavigate: (navigate: BrowserNavigate | undefined) => void`
+  Register (or clear, with `undefined`) the browser navigate — called by `installHistory`. Not for app use.
 - **withISR** _(function)_ — `withISR: (app: ISRApp, options: ISROptions) => (req: Request, platform?: ISRPlatform) => Promise<Response>`
   Wrap a nifra app with **Incremental Static Regeneration**: a cacheable page is served from {@link CacheStore} when fresh, served **stale while a fresh copy regenerates in the background** (`platform.waitUntil` on edge), or rendered + stored on a miss. Framework-agnostic (it caches the rendered byte…
 
