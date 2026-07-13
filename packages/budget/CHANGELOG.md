@@ -1,5 +1,17 @@
 # @nifrajs/budget
 
+## 1.10.0
+
+### Patch Changes
+
+- 92181be: Move request-deadline mechanics to the dependency-free `@nifrajs/core/budget` subpath while keeping
+  `@nifrajs/budget` as a compatible re-export. Harden adaptive admission across ESM runtimes, reserved
+  capacity, disconnected queued requests, and invalid capacity evidence.
+- Updated dependencies [92181be]
+- Updated dependencies [3773f0a]
+- Updated dependencies [92181be]
+  - @nifrajs/core@1.10.0
+
 ## 1.9.1
 
 ## 1.9.0
