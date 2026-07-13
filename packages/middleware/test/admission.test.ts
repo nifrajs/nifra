@@ -37,7 +37,12 @@ describe("createAdmissionController — mechanics", () => {
 
   test("saturation sheds with 429 + Retry-After + reason header", async () => {
     const c = controller({ maxInFlight: 2, maxQueue: 0 })
-    const results = await Promise.all([c.admit(req()), c.admit(req()), c.admit(req()), c.admit(req())])
+    const results = await Promise.all([
+      c.admit(req()),
+      c.admit(req()),
+      c.admit(req()),
+      c.admit(req()),
+    ])
     const admitted = results.filter((r) => r.admitted)
     const shed = results.filter((r) => !r.admitted)
     expect(admitted).toHaveLength(2)
@@ -69,7 +74,8 @@ describe("createAdmissionController — mechanics", () => {
     const second = await c.admit(req()) // queues, then times out
     expect(first.admitted).toBe(true)
     expect(second.admitted).toBe(false)
-    if (!second.admitted) expect(second.response.headers.get("x-nifra-shed-reason")).toBe("queue-timeout")
+    if (!second.admitted)
+      expect(second.response.headers.get("x-nifra-shed-reason")).toBe("queue-timeout")
   })
 
   test("loop-lag sheds even with free slots", async () => {
@@ -123,10 +129,13 @@ describe("server({ admission }) — request-path integration", () => {
     const gate = new Promise<void>((r) => {
       release = r
     })
-    const app = server({ admission: controller({ maxInFlight: 1, maxQueue: 0 }) }).get("/slow", async () => {
-      await gate // hold the single slot open
-      return "done"
-    })
+    const app = server({ admission: controller({ maxInFlight: 1, maxQueue: 0 }) }).get(
+      "/slow",
+      async () => {
+        await gate // hold the single slot open
+        return "done"
+      },
+    )
 
     const inflight = app.fetch(req("/slow")) // occupies the only slot
     await Promise.resolve()

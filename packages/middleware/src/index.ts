@@ -7,6 +7,16 @@
  */
 
 export {
+  type AdmissionControllerHandle,
+  type AdmissionEvidence,
+  type AdmissionOptions,
+  type AdmissionPolicy,
+  type AdmissionSnapshot,
+  createAdmissionController,
+  createEventLoopLagSampler,
+  type ShedReason,
+} from "./admission.ts"
+export {
   type BasicAuthPlugin,
   type BasicAuthStaticOptions,
   type BasicAuthVerifyOptions,
@@ -82,16 +92,6 @@ export {
   type RouteLike,
   type SecurityRequirement,
 } from "./openapi.ts"
-export {
-  type AdmissionControllerHandle,
-  type AdmissionEvidence,
-  type AdmissionOptions,
-  type AdmissionPolicy,
-  type AdmissionSnapshot,
-  createAdmissionController,
-  createEventLoopLagSampler,
-  type ShedReason,
-} from "./admission.ts"
 export { type PoweredByOptions, poweredBy } from "./powered-by.ts"
 export { type PrettyJsonOptions, prettyJson } from "./pretty-json.ts"
 export {
