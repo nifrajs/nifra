@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/uploads",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "File-upload hardening for nifra — magic-byte MIME detection, size + type validation, short-TTL signed download URLs, and EXIF/metadata stripping. Dependency-free, edge-safe.",
   "keywords": [
     "bun",
