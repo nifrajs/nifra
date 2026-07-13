@@ -77,7 +77,9 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   expect(code).toContain("window.__nifraDeferred(d.__nifra_deferred)")
   expect(code).toContain("d.map(mapDeferred)")
   expect(code).toContain("actionData: mapDeferred(window.__NIFRA_ACTION__)")
-  expect(code).toContain("path: location.pathname")
+  // Initial `path` carries the query too (`pathname + search`) — SSR threads `pathname+search` into
+  // useLocation/useSearchParams, so the hydrating state must match or a query-reading page would drift.
+  expect(code).toContain("path: location.pathname + location.search")
 })
 
 test("generateClientEntry wires the client error boundary for routes with a nearest _error", () => {

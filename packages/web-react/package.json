@@ -41,6 +41,11 @@
       "types": "./dist/fetcher.d.ts",
       "default": "./dist/fetcher.js"
     },
+    "./router": {
+      "bun": "./src/router.ts",
+      "types": "./dist/router.d.ts",
+      "default": "./dist/router.js"
+    },
     "./query": {
       "bun": "./src/query.ts",
       "types": "./dist/query.d.ts",
