@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { createQueryClient, hashQueryKey } from "../src/index.ts"
+import { createMutation, createQueryClient, hashQueryKey } from "../src/index.ts"
 
 describe("hashQueryKey", () => {
   test("is stable + order-independent for objects, ordered for arrays, nested", () => {
@@ -325,5 +325,230 @@ describe("invalidation epoch (M3) + emit (Perf-6)", () => {
     g.resolve(0, "v")
     await p
     expect(seen).toContain("one") // notified without throwing despite the mid-emit unsubscribe
+  })
+})
+
+describe("imperative cache: getQueryData / setQueryData / prefetchQuery", () => {
+  test("getQueryData is undefined until success, then returns the data", async () => {
+    const c = createQueryClient({ now: () => 0 })
+    expect(c.getQueryData(["k"])).toBeUndefined() // no entry
+    c.query(["k"], async () => "v")
+    expect(c.getQueryData(["k"])).toBeUndefined() // entry exists but pending
+    await c.query(["k"], async () => "v").fetch()
+    expect(c.getQueryData<string>(["k"])).toBe("v")
+  })
+
+  test("setQueryData writes a value (and via an updater) without a fetch", () => {
+    const c = createQueryClient({ now: () => 5 })
+    c.setQueryData(["count"], 1)
+    expect(c.getQueryData<number>(["count"])).toBe(1)
+    expect(c.query(["count"], async () => 99).snapshot()).toMatchObject({
+      status: "success",
+      data: 1,
+      updatedAt: 5,
+    })
+    c.setQueryData<number>(["count"], (prev) => (prev ?? 0) + 10)
+    expect(c.getQueryData<number>(["count"])).toBe(11)
+  })
+
+  test("a setQueryData-only key never fetches on its own", async () => {
+    const c = createQueryClient({ now: () => 0 })
+    c.setQueryData(["seeded"], "S")
+    // No fetcher was ever bound; reading the (fresh, staleTime 0 but success) entry via a handle with a
+    // real fn now would fetch — but simply reading data must not. The seeded value stands.
+    expect(c.getQueryData<string>(["seeded"])).toBe("S")
+  })
+
+  test("prefetchQuery caches so a later fetch() is a fresh hit (no second fn call)", async () => {
+    let t = 0
+    const c = createQueryClient({ now: () => t, staleTime: 1000 })
+    let calls = 0
+    const fn = async () => {
+      calls++
+      return "P"
+    }
+    await c.prefetchQuery(["k"], fn)
+    expect(calls).toBe(1)
+    expect(c.getQueryData<string>(["k"])).toBe("P")
+    t = 500 // still within staleTime
+    await c.query(["k"], fn).fetch()
+    expect(calls).toBe(1) // fresh cache hit — no refetch
+  })
+
+  test("setQueryData supersedes an in-flight fetch (optimistic write wins)", async () => {
+    let t = 0
+    const g = gated()
+    const c = createQueryClient({ now: () => t })
+    const h = c.query(["k"], g.fn)
+    const p = h.fetch()
+    c.setQueryData(["k"], "OPTIMISTIC") // write while the fetch is in flight
+    t = 10
+    g.resolve(0, "STALE") // the fetch resolves late — must NOT overwrite the optimistic value
+    await p
+    expect(c.getQueryData<string>(["k"])).toBe("OPTIMISTIC")
+  })
+})
+
+describe("SSR bridge: dehydrate / hydrate", () => {
+  test("dehydrate captures successful queries; hydrate seeds a fresh client", async () => {
+    const server = createQueryClient({ now: () => 100 })
+    await server.prefetchQuery(["user", 1], async () => ({ name: "Ada" }))
+    server.query(["pending"], async () => "never fetched") // pending → not dehydrated
+    const state = server.dehydrate()
+    expect(state.queries).toEqual([{ key: ["user", 1], data: { name: "Ada" }, updatedAt: 100 }])
+
+    const client = createQueryClient({ now: () => 200 })
+    client.hydrate(state)
+    expect(client.getQueryData<{ name: string }>(["user", 1])).toEqual({ name: "Ada" })
+  })
+
+  test("hydrate does not clobber a client entry that is already fresher", () => {
+    const client = createQueryClient({ now: () => 0 })
+    client.setQueryData(["k"], "CLIENT") // updatedAt 0
+    client.hydrate({ queries: [{ key: ["k"], data: "SERVER", updatedAt: -50 }] }) // older snapshot
+    expect(client.getQueryData<string>(["k"])).toBe("CLIENT")
+    client.hydrate({ queries: [{ key: ["k"], data: "NEWER", updatedAt: 50 }] }) // newer snapshot wins
+    expect(client.getQueryData<string>(["k"])).toBe("NEWER")
+  })
+})
+
+describe("infiniteQuery", () => {
+  const opts = {
+    initialPageParam: 0,
+    getNextPageParam: (last: string[], _all: readonly string[][], lastParam: number) =>
+      last.length === 0 ? undefined : lastParam + 1,
+  }
+  // A pager: page N is [`a{N}`, `b{N}`], and page 2 is empty (end of list).
+  const pager = (n: number): Promise<string[]> => Promise.resolve(n >= 2 ? [] : [`a${n}`, `b${n}`])
+
+  test("fetch loads the first page; fetchNextPage appends", async () => {
+    const c = createQueryClient({ now: () => 0 })
+    const h = c.infiniteQuery(["feed"], pager, opts)
+    await h.fetch()
+    expect(h.snapshot().data).toEqual({ pages: [["a0", "b0"]], pageParams: [0] })
+    expect(h.hasNextPage()).toBe(true)
+    await h.fetchNextPage()
+    expect(h.snapshot().data).toEqual({
+      pages: [
+        ["a0", "b0"],
+        ["a1", "b1"],
+      ],
+      pageParams: [0, 1],
+    })
+  })
+
+  test("hasNextPage is false once getNextPageParam returns undefined", async () => {
+    const c = createQueryClient({ now: () => 0 })
+    const h = c.infiniteQuery(["feed"], pager, opts)
+    await h.fetch()
+    await h.fetchNextPage() // page 1
+    await h.fetchNextPage() // page 2 is empty → end
+    expect(h.snapshot().data?.pages.length).toBe(3)
+    expect(h.hasNextPage()).toBe(false)
+    const before = h.snapshot().data
+    expect(await h.fetchNextPage()).toBe(before as never) // no-op once exhausted
+  })
+
+  test("refetch re-runs every loaded page in order", async () => {
+    let gen = "v1"
+    const c = createQueryClient({ now: () => 0 })
+    const h = c.infiniteQuery(["feed"], (n: number) => Promise.resolve([`${gen}-${n}`]), {
+      initialPageParam: 0,
+      getNextPageParam: (_l: string[], _a: readonly string[][], p: number) => p + 1,
+    })
+    await h.fetch()
+    await h.fetchNextPage()
+    expect(h.snapshot().data?.pages).toEqual([["v1-0"], ["v1-1"]])
+    gen = "v2"
+    await h.refetch()
+    expect(h.snapshot().data?.pages).toEqual([["v2-0"], ["v2-1"]]) // both pages refetched
+  })
+
+  test("returns the same handle per key and rebinds the latest fn/opts", () => {
+    const c = createQueryClient({ now: () => 0 })
+    const h = c.infiniteQuery(["feed"], pager, opts)
+    expect(c.infiniteQuery(["feed"], pager, opts)).toBe(h)
+  })
+
+  test("fetchPreviousPage prepends when getPreviousPageParam is provided", async () => {
+    const c = createQueryClient({ now: () => 0 })
+    const h = c.infiniteQuery(["feed"], (n: number) => Promise.resolve([`p${n}`]), {
+      initialPageParam: 5,
+      getNextPageParam: (_l: string[], _a: readonly string[][], p: number) => p + 1,
+      getPreviousPageParam: (_f: string[], _a: readonly string[][], p: number) =>
+        p > 0 ? p - 1 : undefined,
+    })
+    await h.fetch()
+    expect(h.hasPreviousPage()).toBe(true)
+    await h.fetchPreviousPage()
+    expect(h.snapshot().data).toEqual({ pages: [["p4"], ["p5"]], pageParams: [4, 5] })
+  })
+})
+
+describe("createMutation", () => {
+  test("idle → pending → success, with data + variables + callback order", async () => {
+    const order: string[] = []
+    const m = createMutation(async (v: number) => v * 2, {
+      onMutate: (v) => {
+        order.push(`mutate:${v}`)
+      },
+      onSuccess: (d) => {
+        order.push(`success:${d}`)
+      },
+      onSettled: (d, e) => {
+        order.push(`settled:${d}:${e}`)
+      },
+    })
+    expect(m.snapshot().status).toBe("idle")
+    const p = m.mutate(21)
+    expect(m.snapshot()).toMatchObject({ status: "pending", variables: 21 })
+    expect(await p).toBe(42)
+    expect(m.snapshot()).toMatchObject({ status: "success", data: 42, variables: 21 })
+    expect(order).toEqual(["mutate:21", "success:42", "settled:42:undefined"])
+  })
+
+  test("error path sets error state and runs onError + onSettled, then reset() clears it", async () => {
+    const order: string[] = []
+    const boom = new Error("boom")
+    const m = createMutation(
+      async () => {
+        throw boom
+      },
+      {
+        onError: (e) => {
+          order.push(`error:${(e as Error).message}`)
+        },
+        onSettled: (_d, e) => {
+          order.push(`settled:${(e as Error).message}`)
+        },
+      },
+    )
+    await expect(m.mutate(undefined)).rejects.toThrow("boom")
+    expect(m.snapshot()).toMatchObject({ status: "error", error: boom })
+    expect(order).toEqual(["error:boom", "settled:boom"])
+    m.reset()
+    expect(m.snapshot().status).toBe("idle")
+  })
+
+  test("concurrent mutations: only the latest publishes state (older result dropped)", async () => {
+    const g = gated()
+    const m = createMutation((_v: number) => g.fn() as Promise<number>)
+    const p1 = m.mutate(1)
+    const p2 = m.mutate(2) // supersedes p1
+    await new Promise((r) => setTimeout(r, 0)) // let both mutationFn calls register their resolvers
+    g.resolve(1, 20) // resolve the SECOND call first
+    g.resolve(0, 10) // then the first (older) — must not clobber
+    expect(await p1).toBe(10)
+    expect(await p2).toBe(20)
+    expect(m.snapshot()).toMatchObject({ status: "success", data: 20, variables: 2 })
+  })
+
+  test("rebind swaps the fn without losing state", async () => {
+    const m = createMutation(async (v: number) => v + 1)
+    await m.mutate(1)
+    expect(m.snapshot().data).toBe(2)
+    m.rebind(async (v: number) => v + 100, {})
+    await m.mutate(1)
+    expect(m.snapshot().data).toBe(101)
   })
 })

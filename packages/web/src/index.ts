@@ -112,11 +112,21 @@ export {
 // Keyed query-cache (agnostic) — a `query(key, fn)` primitive (dedup + staleness + invalidation + GC)
 // consumed by the per-adapter `useQuery`/`createQuery` bindings.
 export {
+  createMutation,
   createQueryClient,
+  type DehydratedState,
   hashQueryKey,
+  type InfiniteData,
+  type InfiniteQueryHandle,
+  type InfiniteQueryOptions,
+  type MutationCallbacks,
+  type MutationHandle,
+  type MutationState,
+  type MutationStatus,
   type QueryClient,
   type QueryClientOptions,
   type QueryHandle,
+  type QueryOptions,
   type QueryState,
   type QueryStatus,
 } from "./query.ts"

@@ -1077,6 +1077,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   The cookie name nifra uses for draft/preview mode.
 - **Deferred** _(interface)_ — `interface Deferred<T>`
   A loader value marked to stream in after the shell. The component consumes it with the adapter's `<Await resolve={...}>`; until the promise settles the shell shows the `<Suspense>` fallback. `id` is assigned by the server at serialization time — the streamed resolve script keys off it.
+- **DehydratedState** _(interface)_ — `interface DehydratedState`
+  A serializable snapshot of the cache's successful queries — the SSR→client bridge payload.
 - **DraftCookieControls** _(interface)_ — `interface DraftCookieControls`
   The response-cookie surface `enableDraft`/`disableDraft` need — nifra's `c.set`. Structural, so any nifra handler context satisfies it without importing the full `Context`.
 - **EnableDraftOptions** _(interface)_ — `interface EnableDraftOptions`
@@ -1104,6 +1106,12 @@ Every public export of every package — name, kind, signature, and doc summary 
   Response header a route uses to advertise its ISR freshness (**seconds**) to a {@link withISR} wrapper — `createWebApp` emits it from a route's `export const revalidate`. Deliberately distinct from the action-revalidation `x-nifra-revalidate` header (a CSV path list the *client* parses to refetch):…
 - **ISR_STATUS_HEADER** _(const)_ — `ISR_STATUS_HEADER: "x-nifra-isr"`
   Response header marking how an ISR response was served: a cache `hit` (fresh), `stale` (served + regenerating behind it), or `miss` (rendered now + stored). Useful for debugging + tests.
+- **InfiniteData** _(interface)_ — `interface InfiniteData<T, P>`
+  An infinite (paged) query's accumulated data: the fetched `pages` in order + the `pageParam` each was fetched with (so the next/previous param can be derived).
+- **InfiniteQueryHandle** _(interface)_ — `interface InfiniteQueryHandle<T, P>`
+  A stable per-key handle for an infinite (paged) query.
+- **InfiniteQueryOptions** _(interface)_ — `interface InfiniteQueryOptions<T, P>`
+  Options for an {@link InfiniteQueryHandle}. `getNextPageParam` (required) derives the param for the next page from the last page — return `undefined`/`null` to signal there is no next page.
 - **KVCacheStore** _(class)_ — `class KVCacheStore`
   A {@link CacheStore} backed by a **Cloudflare Workers KV** namespace (or any {@link KVNamespaceLike} binding) — the production-grade shared/durable store ISR wants: cached pages and on-demand purges hold *across* worker instances (unlike the per-instance {@link MemoryCacheStore}). Entries serialize…
 - **KVCacheStoreOptions** _(interface)_ — `interface KVCacheStoreOptions`
@@ -1130,6 +1138,14 @@ Every public export of every package — name, kind, signature, and doc summary 
   A route's `meta`: a static {@link Meta}, or a function of the loader data + params + the request origin ({@link MetaArgs}). Use the `origin` arg for absolute `canonical`/`og:url`/`og:image` URLs — it's resolved server-side from the request and matches the client's `location.origin`.
 - **MountRouterOptions** _(interface)_ — `interface MountRouterOptions`
   Options for a per-adapter `mountRouter` (the Router binding that hydrates + re-renders).
+- **MutationCallbacks** _(interface)_ — `interface MutationCallbacks<TData, TVariables>`
+  Lifecycle callbacks for a mutation. All optional; `onSettled` runs after success OR error.
+- **MutationHandle** _(interface)_ — `interface MutationHandle<TData, TVariables>`
+  A standalone mutation store: subscribe to its state, fire `mutate`, `reset` back to idle.
+- **MutationState** _(interface)_ — `interface MutationState<TData, TVariables>`
+  A mutation's observable state. A new (frozen) object per transition (reference-comparable).
+- **MutationStatus** _(type)_ — `type MutationStatus = "idle" | "pending" | "success" | "error"`
+  A mutation's lifecycle status.
 - **NavigateOptions** _(interface)_ — `interface NavigateOptions`
   Options for a programmatic navigation.
 - **OpenGraphInput** _(interface)_ — `interface OpenGraphInput`
@@ -1141,6 +1157,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **QueryClientOptions** _(interface)_ — `interface QueryClientOptions`
 - **QueryHandle** _(interface)_ — `interface QueryHandle<T = unknown>`
   A stable per-key handle: subscribe to its state, read a snapshot, trigger a fetch/refetch.
+- **QueryOptions** _(interface)_ — `interface QueryOptions`
+  Per-query overrides passed alongside the fetcher.
 - **QueryState** _(interface)_ — `interface QueryState<T = unknown>`
   A query's observable state — what a binding renders. A new (frozen) object per transition, so a `useSyncExternalStore`/signal binding can compare by reference.
 - **QueryStatus** _(type)_ — `type QueryStatus = "pending" | "success" | "error"`
@@ -1200,6 +1218,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Create the agnostic router store. `navigate` is guarded by a monotonic token so that when navigations overlap, only the latest result is applied (rapid clicks don't flash stale data). A failed fetch clears `pending` and rethrows so the caller can fall back to a full-page load.
 - **createMatcher** _(function)_ — `createMatcher: (patterns: readonly RoutePattern[]) => (path: string) => RouteMatch | null`
   Build a matcher from route patterns (built from the SAME manifest the server routes from, so client and server agree). Returns the first matching route + decoded params, or null. The query string is ignored for matching (it is not part of the route pattern).
+- **createMutation** _(function)_ — `createMutation: <TData, TVariables>(fn: (variables: TVariables) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => MutationHandle<TData, TVariables>`
+  Create a standalone mutation state machine — framework-agnostic, so a per-adapter `useMutation` binding just subscribes to it. Single-flight by a monotonic token: overlapping `mutate` calls each run their `fn`, but only the latest publishes state (an older, slower response can't clobber a newer one…
 - **createQueryClient** _(function)_ — `createQueryClient: (options: QueryClientOptions) => QueryClient`
 - **createWebApp** _(function)_ — `createWebApp: <Env = unknown>(options: CreateWebAppOptions) => ReturnType<typeof server<Env>>`
   Build a nifra app from a route manifest: every route SSRs its layout chain via `renderPage`, and a wildcard catch-all renders `_404` (or a plain 404). Reuses
