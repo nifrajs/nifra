@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/auth",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "Session primitives for nifra — signed-cookie + server-store sessions, CSRF, and route guards. Bring your own identity (Better Auth / Lucia / OAuth); nifra owns the session.",
   "keywords": [
     "bun",
