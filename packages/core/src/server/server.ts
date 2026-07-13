@@ -1986,18 +1986,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       release()
       throw error
     }
-    if (outcome instanceof Promise) {
-      return outcome.then(
-        (response) => {
-          release()
-          return response
-        },
-        (error) => {
-          release()
-          throw error
-        },
-      )
-    }
+    // Release the slot once the response settles — on resolve OR reject — via `finally`, which passes
+    // the value/rejection through unchanged. (A single settle hook, rather than separate then-arms: the
+    // request pipeline resolves handler errors to a Response, so a rejection arm would be unreachable.)
+    if (outcome instanceof Promise) return outcome.finally(release)
     release()
     return outcome
   }
