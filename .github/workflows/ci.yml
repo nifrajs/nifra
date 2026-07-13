@@ -65,11 +65,10 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
-      - name: Build @nifrajs/budget + @nifrajs/core (Deno loads core's built dist)
-        # core's dist imports @nifrajs/budget at runtime (createRequestBudget/admitDeadline/…), so
-        # budget's dist must exist first — both for the core build's type resolution and for Deno's
-        # runtime module resolution when it loads core.
-        run: bun run --filter '@nifrajs/budget' build && bun run --filter '@nifrajs/core' build
+      - name: Build @nifrajs/core + compatibility budget package (Deno loads built dist)
+        # Core owns deadline mechanics and has no package dependency. The compatibility budget package
+        # re-exports core/budget, so core's dist must exist first for clean installs and Deno's resolver.
+        run: bun run --filter '@nifrajs/core' build && bun run --filter '@nifrajs/budget' build
 
       - uses: denoland/setup-deno@v2
         with:

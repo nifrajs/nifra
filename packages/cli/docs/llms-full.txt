@@ -1720,6 +1720,51 @@ while authentication and other order-scoped hooks cover only routes registered a
 Method and path filters prevent a narrow guard from claiming broader coverage. The evaluation
 runs only through reflection or `nifra assure`, so requests pay no assurance cost.
 
+### Effect assurance — declared capability versus provenance
+
+Authentication does not reveal what a route can do. Capability assurance compares an exact
+route declaration against every approved effect import reachable through that route&apos;s local
+module graph. Static, dynamic, `require`, and re-export edges are scanned; raw provider
+imports fail `nifra check`. Runtime beacons add denial at owned adapters, but are never
+treated as a substitute for static provenance.
+
+```ts
+// doc-check: skip — combines route and assurance-config excerpts.
+// route: exact effect declaration + runtime beacon at the owned adapter seam
+import { useCapability } from "@nifrajs/core/capabilities"
+
+app.post("/orders", { capabilities: ["db.write"] }, async (c) => {
+  useCapability(c, "db.write") // undeclared use fails before the effect
+  return orders.write(c.body)
+})
+
+// in nifra.assurance.ts, alongside policy:
+capabilities: {
+  definitions: [
+    { id: "db.read", zone: "domain", access: "read" },
+    { id: "db.write", zone: "domain", access: "write", idempotency: "request" },
+    { id: "telemetry.write", zone: "operational", access: "write" },
+  ],
+  provenance: {
+    // Use effect-specific facades. A broad module that mixes reads/writes cannot prove either.
+    imports: [
+      { specifier: "@app/db/read", capabilities: ["db.read"] },
+      { specifier: "@app/db/write", capabilities: ["db.write"] },
+    ],
+    forbiddenImports: [
+      { specifier: "postgres", reason: "use the tenant-scoped DB facade" },
+    ],
+  },
+}
+
+// developer: nifra capabilities snapshot
+// CI:        nifra check && nifra assure && nifra capabilities check
+```
+
+Domain writes on `GET`/`HEAD` are hard violations. Each write definition may
+require request idempotency or durable command/provider-key evidence. The lockfile contains only
+method, path, and capability tokens—no payloads or tenant data—and CI never rewrites it.
+
 ### Already built in
 
 These add to Nifra's standing defaults: strict-by-default schema validation (unknown fields
@@ -4611,7 +4656,9 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/budget
 
-Portable request-deadline mechanics for Nifra, Hono, and any Fetch runtime.
+Compatibility import for the request-deadline mechanics owned by `@nifrajs/core/budget`. Existing
+Nifra, Hono, and Fetch consumers can keep this import unchanged; new core consumers may use the
+subpath directly. Both paths resolve to the same implementation and classes.
 
 ```ts
 import {
@@ -6174,10 +6221,6 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 `betterAuth`, `BetterAuthLike`, `BetterAuthOptions`, `getSession`, `requireSession`, `RequireSessionOptions`, `SessionOf`
 
-## @nifrajs/budget
-
-`admitDeadline`, `assertBudgetRemaining`, `BudgetClock`, `canAttempt`, `createRequestBudget`, `CreateRequestBudgetOptions`, `createUnboundedRequestBudget`, `DeadlineAdmission`, `DeadlineAdmissionOptions`, `DeadlineExceededError`, `DeadlineHeaderResult`, `DeadlineHeadersInit`, `NIFRA_DEADLINE_HEADER`, `parseDeadlineHeader`, `RequestBudget`, `UNBOUNDED_DEADLINE`, `withDeadlineHeader`
-
 ## @nifrajs/cache
 
 `Cache`, `CacheOptions`, `CacheStore`, `createCache`, `MemoryCache`, `MemoryCacheOptions`, `SetOptions`, `StoredEntry`, `WrapOptions`
@@ -6240,7 +6283,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/middleware
 
-`AdmissionControllerHandle`, `AdmissionEvidence`, `AdmissionOptions`, `AdmissionPolicy`, `AdmissionSnapshot`, `apiKey`, `ApiKeyStaticOptions`, `ApiKeyVerifyOptions`, `appendTrailingSlash`, `AuthPlugin`, `basicAuth`, `BasicAuthPlugin`, `BasicAuthStaticOptions`, `BasicAuthVerifyOptions`, `bearer`, `BearerOptions`, `bodyLimit`, `BodyLimitOptions`, `buildOpenApiDocument`, `cache`, `cacheControl`, `CacheControlOptions`, `CachedResponse`, `CacheOptions`, `combine`, `Composable`, `compression`, `CompressionOptions`, `cors`, `CorsOptions`, `createAdmissionController`, `createCsrfToken`, `createEventLoopLagSampler`, `csrf`, `CsrfOptions`, `etag`, `ETagOptions`, `healthcheck`, `HealthcheckOptions`, `idempotency`, `IdempotencyClaim`, `IdempotencyOptions`, `IdempotencyRecord`, `IdempotencyStore`, `IpMatcher`, `ipRestriction`, `IpRestrictionOptions`, `jwk`, `JwkKey`, `jwks`, `JwksOptions`, `jwt`, `JwtAlgorithm`, `JwtClaims`, `JwtHeader`, `JwtKeyResolver`, `JwtOptions`, `JwtPlugin`, `JwtVerificationKey`, `language`, `LanguageMatch`, `LanguageOptions`, `logger`, `LoggerOptions`, `MemoryIdempotencyStore`, `MemoryIdempotencyStoreOptions`, `MemoryResponseCache`, `MemoryResponseCacheOptions`, `MemoryStore`, `MemoryStoreOptions`, `methodOverride`, `MethodOverrideOptions`, `namedCombine`, `openapi`, `OpenApiInfo`, `OpenApiOptions`, `OpenApiServer`, `OpenApiTag`, `OpenApiUiOptions`, `pickLanguage`, `poweredBy`, `PoweredByOptions`, `prettyJson`, `PrettyJsonOptions`, `rateLimit`, `RateLimitOptions`, `RateLimitResult`, `RateLimitStore`, `requestId`, `RequestIdOptions`, `RequestLogFields`, `responseCache`, `ResponseCacheStore`, `RouteLike`, `securityHeaders`, `SecurityHeadersOptions`, `SecurityRequirement`, `ShedReason`, `timing`, `TimingControls`, `TimingMetric`, `TimingOptions`, `TrailingSlashOptions`, `trimTrailingSlash`, `tryVerifyJwt`, `VerifiedJwt`, `verifyCsrfToken`, `verifyJwt`, `VerifyJwtOptions`, `VerifyJwtResult`
+`AdmissionControllerHandle`, `AdmissionEvidence`, `AdmissionOptions`, `AdmissionPolicy`, `AdmissionSnapshot`, `apiKey`, `ApiKeyStaticOptions`, `ApiKeyVerifyOptions`, `appendTrailingSlash`, `AuthPlugin`, `basicAuth`, `BasicAuthPlugin`, `BasicAuthStaticOptions`, `BasicAuthVerifyOptions`, `bearer`, `BearerOptions`, `bodyLimit`, `BodyLimitOptions`, `buildOpenApiDocument`, `cache`, `cacheControl`, `CacheControlOptions`, `CachedResponse`, `CacheOptions`, `combine`, `Composable`, `compression`, `CompressionOptions`, `cors`, `CorsOptions`, `createAdmissionController`, `createCsrfToken`, `createEventLoopLagSampler`, `csrf`, `CsrfOptions`, `etag`, `ETagOptions`, `healthcheck`, `HealthcheckOptions`, `idempotency`, `IdempotencyClaim`, `IdempotencyOptions`, `IdempotencyRecord`, `IdempotencyStore`, `IpMatcher`, `ipRestriction`, `IpRestrictionOptions`, `jwk`, `JwkKey`, `jwks`, `JwksOptions`, `jwt`, `JwtAlgorithm`, `JwtClaims`, `JwtHeader`, `JwtKeyResolver`, `JwtOptions`, `JwtPlugin`, `JwtVerificationKey`, `language`, `LanguageMatch`, `LanguageOptions`, `logger`, `LoggerOptions`, `LoopDelayHistogram`, `LoopDelayMonitor`, `MemoryIdempotencyStore`, `MemoryIdempotencyStoreOptions`, `MemoryResponseCache`, `MemoryResponseCacheOptions`, `MemoryStore`, `MemoryStoreOptions`, `methodOverride`, `MethodOverrideOptions`, `namedCombine`, `openapi`, `OpenApiInfo`, `OpenApiOptions`, `OpenApiServer`, `OpenApiTag`, `OpenApiUiOptions`, `pickLanguage`, `poweredBy`, `PoweredByOptions`, `prettyJson`, `PrettyJsonOptions`, `rateLimit`, `RateLimitOptions`, `RateLimitResult`, `RateLimitStore`, `requestId`, `RequestIdOptions`, `RequestLogFields`, `responseCache`, `ResponseCacheStore`, `RouteLike`, `securityHeaders`, `SecurityHeadersOptions`, `SecurityRequirement`, `ShedReason`, `timing`, `TimingControls`, `TimingMetric`, `TimingOptions`, `TrailingSlashOptions`, `trimTrailingSlash`, `tryVerifyJwt`, `VerifiedJwt`, `verifyCsrfToken`, `verifyJwt`, `VerifyJwtOptions`, `VerifyJwtResult`
 
 ## @nifrajs/mock
 

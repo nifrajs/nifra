@@ -124,9 +124,13 @@ backend in `nifra dev` and in prod alike — no hand-dispatch in `server-bun.ts`
   client bundle via <chain>`. `nifra check` reports the same transitive chain pre-build. See
   `/docs/troubleshooting` (keyed on the literal error strings).
 - Run **`nifra check`** (`--json` for agents) as the done-gate: typecheck + typed-client drift +
-  server-only-import-in-a-route + raw-`Response`-from-a-route + undeclared dependency.
+  server-only-import-in-a-route + raw-`Response`-from-a-route + undeclared dependency. When capability
+  assurance is configured, this also fails on raw effect-import bypasses and declaration/evidence drift.
 - If the project has `nifra.assurance.ts`, also run **`nifra assure`** (`--json` in CI). It fails closed
   when a route is unclassified or lacks/forbids the enforcement evidence required by its first policy rule.
+- If that config declares `capabilities`, commit the output of **`nifra capabilities snapshot`** and run
+  **`nifra capabilities check`** in CI. Never auto-update the lockfile in CI; privilege additions need a
+  reviewed lockfile diff.
 
 ## Build & deploy
 

@@ -75,6 +75,12 @@ Usage:
   nifra assure  [--config <file>] [--json]  Route-assurance gate: load nifra.assurance.ts, classify every
                                          reflected backend route, and fail when required enforcement
                                          evidence is missing/forbidden or a route is unclassified.
+  nifra capabilities snapshot [--out <file>] [--config <file>]
+                                         Write the deterministic, token-only capability lockfile, but
+                                         only after provenance + idempotency assurance passes.
+  nifra capabilities check [--lockfile <file>] [--config <file>] [--json]
+                                         CI gate: fail on raw effect-import bypasses, declaration/evidence
+                                         drift, unsafe GET/HEAD writes, idempotency gaps, or lockfile drift.
   nifra doctor  [--json] [--auto-fix]    Flag packages imported in source but missing from package.json
                                          (resolve at Bun runtime, break tsc + standalone install);
                                          --auto-fix writes safe local-version dependency fixes.
@@ -403,6 +409,47 @@ async function main(): Promise<void> {
         }))
       )
         process.exitCode = 1
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err))
+      process.exitCode = 1
+    }
+    return
+  }
+  if (command === "capabilities") {
+    const action = argv[1]
+    const valueAfter = (flag: string): string | undefined => {
+      const index = argv.indexOf(flag)
+      const value = index === -1 ? undefined : argv[index + 1]
+      if (index !== -1 && (value === undefined || value.startsWith("-"))) {
+        throw new Error(`[nifra] ${flag} needs a file path`)
+      }
+      return value
+    }
+    try {
+      const { runCapabilityCheck, runCapabilitySnapshot } = await import("./capabilities-tool.ts")
+      const config = valueAfter("--config")
+      if (action === "snapshot") {
+        const out = valueAfter("--out")
+        if (
+          !(await runCapabilitySnapshot(process.cwd(), {
+            ...(config !== undefined ? { config } : {}),
+            ...(out !== undefined ? { out } : {}),
+          }))
+        )
+          process.exitCode = 1
+      } else if (action === "check") {
+        const lockfile = valueAfter("--lockfile")
+        if (
+          !(await runCapabilityCheck(process.cwd(), {
+            ...(config !== undefined ? { config } : {}),
+            ...(lockfile !== undefined ? { lockfile } : {}),
+            json: argv.includes("--json"),
+          }))
+        )
+          process.exitCode = 1
+      } else {
+        throw new Error("[nifra] capabilities needs `snapshot` or `check`")
+      }
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err))
       process.exitCode = 1

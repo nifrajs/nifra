@@ -87,6 +87,13 @@ describe("scanStaticRouteText — conservative source-only route collection", ()
     expect(scanStaticRouteText("router.ts", 'app.get("/users", handler)')).toEqual([])
     expect(scanStaticRouteText("backend.ts", 'app.get("/users", handler)')).toEqual([])
   })
+
+  test("collects Hono registrations for dual-framework provenance assurance", () => {
+    const src = 'import { Hono } from "hono"\nconst app = new Hono().get("/legacy", handler)'
+    expect(
+      scanStaticRouteText("legacy.ts", src).map((route) => `${route.method} ${route.path}`),
+    ).toEqual(["GET /legacy"])
+  })
 })
 
 describe("scanServerOnlyImports — server-only imports in route modules", () => {

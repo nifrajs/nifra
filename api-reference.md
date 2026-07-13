@@ -69,8 +69,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **DeadlineAdmission** _(type)_ — `type DeadlineAdmission`
 - **DeadlineAdmissionOptions** _(interface)_ — `interface DeadlineAdmissionOptions`
 - **DeadlineExceededError** _(class)_ — `class DeadlineExceededError`
-- **DeadlineHeaderResult** _(type)_ — `type DeadlineHeaderResult = | { readonly ok: true; readonly deadline: number } | { readonly ok: false; readonly reason: "missing" | "malformed" }`
-- **DeadlineHeadersInit** _(type)_ — `type DeadlineHeadersInit = | Headers | Readonly<Record<string, string>> | string[][] | undefined`
+- **DeadlineHeaderResult** _(type)_ — `type DeadlineHeaderResult = { readonly ok: true; readonly deadline: number; } | { readonly ok: false; readonly reason: "missing" | "malformed"; }`
+- **DeadlineHeadersInit** _(type)_ — `type DeadlineHeadersInit = Headers | Readonly<Record<string, string>> | [string, string][] | undefined`
   DOM-lib-independent subset accepted by the Web `Headers` constructor.
 - **NIFRA_DEADLINE_HEADER** _(const)_ — `NIFRA_DEADLINE_HEADER: "x-nifra-deadline"`
   Canonical wire header carrying an absolute Unix epoch deadline in milliseconds.
@@ -186,7 +186,27 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **AssuranceRule** _(interface)_ — `interface AssuranceRule`
 - **AssuranceScope** _(type)_ — `type AssuranceScope = "global" | "subsequent" | "plugin"`
   Where enforcement evidence follows Nifra's route-registration semantics.
+- **AssuredCapabilityRoute** _(interface)_ — `interface AssuredCapabilityRoute`
 - **AssuredRoute** _(interface)_ — `interface AssuredRoute`
+- **CapabilityAccess** _(type)_ — `type CapabilityAccess = "read" | "write"`
+- **CapabilityAssuranceReport** _(interface)_ — `interface CapabilityAssuranceReport`
+- **CapabilityDefinition** _(interface)_ — `interface CapabilityDefinition`
+- **CapabilityEvidence** _(interface)_ — `interface CapabilityEvidence`
+  Token-only effect evidence. `source` is an adapter/module id, never request or business data.
+- **CapabilityEvidenceKind** _(type)_ — `type CapabilityEvidenceKind = "static" | "runtime"`
+- **CapabilityEvidenceSet** _(interface)_ — `interface CapabilityEvidenceSet`
+- **CapabilityFinding** _(interface)_ — `interface CapabilityFinding`
+- **CapabilityFindingCode** _(type)_ — `type CapabilityFindingCode = | "unknown-capability" | "provenance-uncovered" | "undeclared-capability-evidence" | "safe-method-domain-write" | "missing-request-idempotency" | "missing-durable-idempotency" | "forbidden-e…`
+- **CapabilityIdempotency** _(type)_ — `type CapabilityIdempotency = "none" | "request" | "durable"`
+- **CapabilityImportRule** _(interface)_ — `interface CapabilityImportRule`
+- **CapabilityPolicy** _(interface)_ — `interface CapabilityPolicy`
+- **CapabilityProvenancePolicy** _(interface)_ — `interface CapabilityProvenancePolicy`
+- **CapabilityRouteModule** _(interface)_ — `interface CapabilityRouteModule`
+- **CapabilityRouteSelector** _(interface)_ — `interface CapabilityRouteSelector`
+- **CapabilitySnapshot** _(interface)_ — `interface CapabilitySnapshot`
+- **CapabilitySnapshotRoute** _(interface)_ — `interface CapabilitySnapshotRoute`
+- **CapabilityUseEvent** _(interface)_ — `interface CapabilityUseEvent`
+- **CapabilityZone** _(type)_ — `type CapabilityZone = "domain" | "operational"`
 - **Context** _(interface)_ — `interface Context<Path extends string = string, S extends RouteSchema = RouteSchema>`
   Handler context. `params` are inferred from the path; `body` and `query` are the validated outputs of their schemas when declared (else `undefined` / raw `URLSearchParams`).
 - **ContextForOp** _(type)_ — `type ContextForOp<O extends OperationDef> = Context<O["path"], SchemaForOp<O> & RouteSchema>`
@@ -202,6 +222,7 @@ Every public export of every package — name, kind, signature, and doc summary 
   A Cloudflare Workers-style execution context (the `fetch` 3rd arg). Structural — only `waitUntil` is used; declared here so `@nifrajs/core` needs no Workers type dependency.
 - **FRAMEWORK_NAME** _(const)_ — `FRAMEWORK_NAME: "Nifra"`
   Single source of truth for the framework's user-facing name.
+- **ForbiddenCapabilityImport** _(interface)_ — `interface ForbiddenCapabilityImport`
 - **FrameworkError** _(class)_ — `class FrameworkError`
   Base class for every error the framework throws. Carries a stable, string `code` so callers can branch on the failure programmatically rather than matching on message text. Messages are prefixed with the brand name.
 - **FrameworkName** _(type)_ — `type FrameworkName = typeof FRAMEWORK_NAME`
@@ -227,7 +248,7 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **Method** _(type)_ — `type Method = (typeof METHODS)[number]`
 - **Middleware** _(interface)_ — `interface Middleware`
   A bundle of lifecycle hooks applied together via {@link Server.use} — the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware is context-agnostic (sees the base `Context`); `use` does no context-type merging — th…
-- **NIFRA_ASSURANCE** _(const)_ — `NIFRA_ASSURANCE: Readonly<{ readonly AUTHENTICATED: "nifra.authenticated"; readonly BODY_BOUNDED: "nifra.body-bounded"; readonly CSRF: "nifra.csrf"; readonly IDEMPOTENCY_KEY: "nifra.idempotency-key"; readonly IP_RESTRIC…`
+- **NIFRA_ASSURANCE** _(const)_ — `NIFRA_ASSURANCE: Readonly<{ readonly AUTHENTICATED: "nifra.authenticated"; readonly BODY_BOUNDED: "nifra.body-bounded"; readonly CSRF: "nifra.csrf"; readonly DURABLE_COMMAND: "nifra.durable-command"; readonly IDEMPOTENC…`
   Canonical evidence ids emitted by Nifra's official middleware modules.
 - **NifraPlugin** _(type)_ — `type NifraPlugin<In extends AnyServer = AnyServer, Out extends AnyServer = In> = (( app: In, ) => Out) & { readonly pluginName?: string }`
   A nifra **plugin**: a function that augments an app — calling `use`/`derive`/`decorate` and/or registering routes — and returns it. Because `derive`/`decorate` are type-threaded, an **inline** `app.use((a) => a.derive(...).decorate(...))` carries the added context to handlers defined after it (the …
@@ -267,10 +288,11 @@ Every public export of every package — name, kind, signature, and doc summary 
   The terminal response-pipeline outcome observed after every transforming `onResponse` hook.
 - **RobotsOptions** _(interface)_ — `interface RobotsOptions`
 - **RobotsRule** _(interface)_ — `interface RobotsRule`
+- **RouteCapabilityEvidence** _(interface)_ — `interface RouteCapabilityEvidence`
 - **RouteChange** _(interface)_ — `interface RouteChange`
 - **RouteConfigError** _(class)_ — `class RouteConfigError`
   Thrown at route registration when a route is misconfigured. This is the boot-time rejection layer: loud and early, never deferred to the first request.
-- **RouteConfigErrorCode** _(type)_ — `type RouteConfigErrorCode = | "DUPLICATE_ROUTE" | "DUPLICATE_PARAM" | "PARAM_NAME_CONFLICT" | "INVALID_PATH" | "INVALID_PARAM_NAME" | "WILDCARD_NOT_LAST" | "INVALID_METHOD"`
+- **RouteConfigErrorCode** _(type)_ — `type RouteConfigErrorCode = | "DUPLICATE_ROUTE" | "DUPLICATE_PARAM" | "PARAM_NAME_CONFLICT" | "INVALID_PATH" | "INVALID_PARAM_NAME" | "WILDCARD_NOT_LAST" | "INVALID_METHOD" | "INVALID_ASSURANCE"`
   Stable codes for boot-time (L2) route configuration failures.
 - **RouteDescriptor** _(interface)_ — `interface RouteDescriptor`
   A registered route's public descriptor — method, path, and input schemas. The router trie discards the original patterns, so this flat list is what lets tools (e.g. `toOpenAPI`) enumerate routes after registration.
@@ -348,6 +370,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Identity helper for a `nifra.assurance.ts` default export.
 - **defineAssurancePolicy** _(function)_ — `defineAssurancePolicy: (policy: AssurancePolicy) => AssurancePolicy`
   Validate and freeze an ordered assurance policy.
+- **defineCapabilityPolicy** _(function)_ — `defineCapabilityPolicy: (policy: CapabilityPolicy) => CapabilityPolicy`
+  Validate and freeze a capability/provenance policy.
 - **defineContract** _(function)_ — `defineContract: <const C extends ContractShape>(contract: C) => C`
   Define a standalone, versionable contract. Identity at runtime (it returns the contract for type inference via the `const` type parameter, which preserves the path/method literals) plus boot-time (L2) validation: each operation must use a known method, a path starting with `/`, and no two operation…
 - **defineIdentityPlugin** _(function)_ — `defineIdentityPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
@@ -358,6 +382,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this — not {@link definePlugin} — for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
 - **diffRouteSnapshots** _(function)_ — `diffRouteSnapshots: (before: readonly RouteSnapshot[], after: readonly RouteSnapshot[]) => RoutesDiff`
   Diff two route snapshots (`snapshotRoutes` output, possibly restored from JSON). Every change is classified breaking/compatible/info; `hasBreaking` is the CI-gate bit.
+- **evaluateCapabilityAssurance** _(function)_ — `evaluateCapabilityAssurance: (source: unknown, policyInput: CapabilityPolicy, evidenceSet: CapabilityEvidenceSet) => CapabilityAssuranceReport`
+  Compare declared route capabilities against coverage-qualified static/runtime evidence.
 - **evaluateRouteAssurance** _(function)_ — `evaluateRouteAssurance: (source: unknown, policyInput: AssurancePolicy) => AssuranceReport`
   Evaluate reflected route evidence against the first matching policy rule.
 - **implement** _(function)_ — `implement: <const C extends ContractShape, H extends HandlersFor<C>>(contract: C, handlers: H) => Server<RegistryFromImpl<C, H>>`
@@ -386,6 +412,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Discards everything — for tests, or when log output is handled elsewhere.
 - **sitemap** _(function)_ — `sitemap: (entries: readonly SitemapEntry[], options?: SitemapOptions) => string`
   Build a `<urlset>` sitemap XML document from `entries`. Throws on out-of-spec input (dev-time data).
+- **snapshotCapabilities** _(function)_ — `snapshotCapabilities: (report: CapabilityAssuranceReport) => CapabilitySnapshot`
+  Deterministic, PII-free lockfile material.
 - **snapshotRoutes** _(function)_ — `snapshotRoutes: (source: unknown) => readonly RouteSnapshot[]`
   Snapshot an app's routes (anything `reflectRoutes` accepts) as plain JSON. Validators are dropped; only introspectable JSON Schema metadata is kept, so the result round-trips through `JSON.stringify` unchanged.
 - **sse** _(function)_ — `sse: (c: SSEContext, run: (stream: SSEStream) => void | Promise<void>, init?: SSEInit) => Response`
@@ -394,6 +422,9 @@ Every public export of every package — name, kind, signature, and doc summary 
   Wrap a raw {@link SSEStream} in the typed, JSON-serializing surface `app.sse()` hands out.
 - **unsignValue** _(function)_ — `unsignValue: (signed: string, secret: string) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
+- **useCapability** _(function)_ — `useCapability: (context: object, capability: string) => void`
+  Runtime effect beacon for owned adapters. It fails closed when the route omitted the capability or when no route guard is present. Static provenance is still required: code can bypass a beacon.
+- **validCapabilityId** _(function)_ — `validCapabilityId: (value: string) => boolean`
 - **validateStandard** _(function)_ — `validateStandard: <Schema extends StandardSchemaV1>(schema: Schema, value: unknown) => ValidationOutcome<InferOutput<Schema>> | Promise<ValidationOutcome<InferOutput<Schema>>>`
   Run a Standard Schema and normalize the result. Sync validators stay sync; async validators are awaited.
 - **verifyWebhook** _(function)_ — `verifyWebhook: (req: Request, secret: string | readonly string[], options?: VerifyWebhookOptions) => Promise<WebhookResult>`
@@ -715,7 +746,7 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **LoopDelayHistogram** _(interface)_ — `interface LoopDelayHistogram`
   The slice of a `perf_hooks` event-loop-delay histogram the sampler needs.
 - **LoopDelayMonitor** _(type)_ — `type LoopDelayMonitor = (resolutionMs: number) => LoopDelayHistogram | undefined`
-  Acquires a loop-delay histogram for a resolution, or `undefined` when the runtime has none. Inject one in {@link createEventLoopLagSampler} for non-Node runtimes or tests; the default reads `node:perf_hooks`.
+  Acquires a loop-delay histogram for a resolution, or `undefined` when the runtime has none. This is an optional test/runtime seam; the default sampler is a portable timer-drift monitor.
 - **MemoryIdempotencyStore** _(class)_ — `class MemoryIdempotencyStore`
   In-process store. Refuses to run in production unless explicitly allowed (per-instance ⇒ no cross-instance dedupe).
 - **MemoryIdempotencyStoreOptions** _(interface)_ — `interface MemoryIdempotencyStoreOptions`
@@ -746,7 +777,7 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **SecurityHeadersOptions** _(interface)_ — `interface SecurityHeadersOptions`
 - **SecurityRequirement** _(type)_ — `type SecurityRequirement = Readonly<Record<string, readonly string[]>>`
   A security requirement: scheme name → required scopes (`[]` = no scopes).
-- **ShedReason** _(type)_ — `type ShedReason = "inflight" | "loop-lag" | "queue-timeout" | "policy"`
+- **ShedReason** _(type)_ — `type ShedReason = "inflight" | "loop-lag" | "queue-timeout" | "policy" | "cancelled"`
   Adaptive capacity admission. Rate limiting bounds request *frequency* and `@nifrajs/budget` bounds request *duration*; neither stops a healthy instance from accepting more *concurrent* work than it can finish. This gate admits on live capacity evidence — in-flight count + event-loop lag — briefly q…
 - **TimingControls** _(interface)_ — `interface TimingControls`
 - **TimingMetric** _(interface)_ — `interface TimingMetric`
@@ -781,7 +812,7 @@ Every public export of every package — name, kind, signature, and doc summary 
   Build a capacity-admission controller. Pass the returned handle as the server's `admission` option.
 - **createCsrfToken** _(function)_ — `createCsrfToken: (secret: string | Uint8Array, nonce?: string) => Promise<string>`
 - **createEventLoopLagSampler** _(function)_ — `createEventLoopLagSampler: (resolutionMs?: number, monitor?: LoopDelayMonitor) => () => number`
-  A default event-loop-lag sampler backed by `perf_hooks.monitorEventLoopDelay`. Returns the mean lag (ms) observed since the previous call, resetting each read so shedding reacts to *recent* stalls, not cumulative history. Falls back to a constant `0` when the runtime exposes no histogram (or `monit…
+  Event-loop-lag sampler. By default it measures timer drift using only Web/JS runtime primitives, so it works under Node ESM, Bun, Deno, and workers without a hidden CommonJS `require` fallback. An injected histogram remains available for deterministic tests or a runtime-native monitor. Each read re…
 - **csrf** _(function)_ — `csrf: (options: CsrfOptions) => Middleware`
   Signed double-submit CSRF protection. A protected request must carry the same signed token in a cookie and a header, and must come from an allowed Origin/Referer unless `checkOrigin:false` is set.
 - **etag** _(function)_ — `etag: (options?: ETagOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").AnyServer>`
@@ -1372,7 +1403,27 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **AssuranceRule** _(interface)_ — `interface AssuranceRule`
 - **AssuranceScope** _(type)_ — `type AssuranceScope = "global" | "subsequent" | "plugin"`
   Where enforcement evidence follows Nifra's route-registration semantics.
+- **AssuredCapabilityRoute** _(interface)_ — `interface AssuredCapabilityRoute`
 - **AssuredRoute** _(interface)_ — `interface AssuredRoute`
+- **CapabilityAccess** _(type)_ — `type CapabilityAccess = "read" | "write"`
+- **CapabilityAssuranceReport** _(interface)_ — `interface CapabilityAssuranceReport`
+- **CapabilityDefinition** _(interface)_ — `interface CapabilityDefinition`
+- **CapabilityEvidence** _(interface)_ — `interface CapabilityEvidence`
+  Token-only effect evidence. `source` is an adapter/module id, never request or business data.
+- **CapabilityEvidenceKind** _(type)_ — `type CapabilityEvidenceKind = "static" | "runtime"`
+- **CapabilityEvidenceSet** _(interface)_ — `interface CapabilityEvidenceSet`
+- **CapabilityFinding** _(interface)_ — `interface CapabilityFinding`
+- **CapabilityFindingCode** _(type)_ — `type CapabilityFindingCode = | "unknown-capability" | "provenance-uncovered" | "undeclared-capability-evidence" | "safe-method-domain-write" | "missing-request-idempotency" | "missing-durable-idempotency" | "forbidden-e…`
+- **CapabilityIdempotency** _(type)_ — `type CapabilityIdempotency = "none" | "request" | "durable"`
+- **CapabilityImportRule** _(interface)_ — `interface CapabilityImportRule`
+- **CapabilityPolicy** _(interface)_ — `interface CapabilityPolicy`
+- **CapabilityProvenancePolicy** _(interface)_ — `interface CapabilityProvenancePolicy`
+- **CapabilityRouteModule** _(interface)_ — `interface CapabilityRouteModule`
+- **CapabilityRouteSelector** _(interface)_ — `interface CapabilityRouteSelector`
+- **CapabilitySnapshot** _(interface)_ — `interface CapabilitySnapshot`
+- **CapabilitySnapshotRoute** _(interface)_ — `interface CapabilitySnapshotRoute`
+- **CapabilityUseEvent** _(interface)_ — `interface CapabilityUseEvent`
+- **CapabilityZone** _(type)_ — `type CapabilityZone = "domain" | "operational"`
 - **Context** _(interface)_ — `interface Context<Path extends string = string, S extends RouteSchema = RouteSchema>`
   Handler context. `params` are inferred from the path; `body` and `query` are the validated outputs of their schemas when declared (else `undefined` / raw `URLSearchParams`).
 - **ContextForOp** _(type)_ — `type ContextForOp<O extends OperationDef> = Context<O["path"], SchemaForOp<O> & RouteSchema>`
@@ -1388,6 +1439,7 @@ Every public export of every package — name, kind, signature, and doc summary 
   A Cloudflare Workers-style execution context (the `fetch` 3rd arg). Structural — only `waitUntil` is used; declared here so `@nifrajs/core` needs no Workers type dependency.
 - **FRAMEWORK_NAME** _(const)_ — `FRAMEWORK_NAME: "Nifra"`
   Single source of truth for the framework's user-facing name.
+- **ForbiddenCapabilityImport** _(interface)_ — `interface ForbiddenCapabilityImport`
 - **FrameworkError** _(class)_ — `class FrameworkError`
   Base class for every error the framework throws. Carries a stable, string `code` so callers can branch on the failure programmatically rather than matching on message text. Messages are prefixed with the brand name.
 - **FrameworkName** _(type)_ — `type FrameworkName = typeof FRAMEWORK_NAME`
@@ -1413,7 +1465,7 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **Method** _(type)_ — `type Method = (typeof METHODS)[number]`
 - **Middleware** _(interface)_ — `interface Middleware`
   A bundle of lifecycle hooks applied together via {@link Server.use} — the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware is context-agnostic (sees the base `Context`); `use` does no context-type merging — th…
-- **NIFRA_ASSURANCE** _(const)_ — `NIFRA_ASSURANCE: Readonly<{ readonly AUTHENTICATED: "nifra.authenticated"; readonly BODY_BOUNDED: "nifra.body-bounded"; readonly CSRF: "nifra.csrf"; readonly IDEMPOTENCY_KEY: "nifra.idempotency-key"; readonly IP_RESTRIC…`
+- **NIFRA_ASSURANCE** _(const)_ — `NIFRA_ASSURANCE: Readonly<{ readonly AUTHENTICATED: "nifra.authenticated"; readonly BODY_BOUNDED: "nifra.body-bounded"; readonly CSRF: "nifra.csrf"; readonly DURABLE_COMMAND: "nifra.durable-command"; readonly IDEMPOTENC…`
   Canonical evidence ids emitted by Nifra's official middleware modules.
 - **NifraPlugin** _(type)_ — `type NifraPlugin<In extends AnyServer = AnyServer, Out extends AnyServer = In> = (( app: In, ) => Out) & { readonly pluginName?: string }`
   A nifra **plugin**: a function that augments an app — calling `use`/`derive`/`decorate` and/or registering routes — and returns it. Because `derive`/`decorate` are type-threaded, an **inline** `app.use((a) => a.derive(...).decorate(...))` carries the added context to handlers defined after it (the …
@@ -1453,10 +1505,11 @@ Every public export of every package — name, kind, signature, and doc summary 
   The terminal response-pipeline outcome observed after every transforming `onResponse` hook.
 - **RobotsOptions** _(interface)_ — `interface RobotsOptions`
 - **RobotsRule** _(interface)_ — `interface RobotsRule`
+- **RouteCapabilityEvidence** _(interface)_ — `interface RouteCapabilityEvidence`
 - **RouteChange** _(interface)_ — `interface RouteChange`
 - **RouteConfigError** _(class)_ — `class RouteConfigError`
   Thrown at route registration when a route is misconfigured. This is the boot-time rejection layer: loud and early, never deferred to the first request.
-- **RouteConfigErrorCode** _(type)_ — `type RouteConfigErrorCode = | "DUPLICATE_ROUTE" | "DUPLICATE_PARAM" | "PARAM_NAME_CONFLICT" | "INVALID_PATH" | "INVALID_PARAM_NAME" | "WILDCARD_NOT_LAST" | "INVALID_METHOD"`
+- **RouteConfigErrorCode** _(type)_ — `type RouteConfigErrorCode = | "DUPLICATE_ROUTE" | "DUPLICATE_PARAM" | "PARAM_NAME_CONFLICT" | "INVALID_PATH" | "INVALID_PARAM_NAME" | "WILDCARD_NOT_LAST" | "INVALID_METHOD" | "INVALID_ASSURANCE"`
   Stable codes for boot-time (L2) route configuration failures.
 - **RouteDescriptor** _(interface)_ — `interface RouteDescriptor`
   A registered route's public descriptor — method, path, and input schemas. The router trie discards the original patterns, so this flat list is what lets tools (e.g. `toOpenAPI`) enumerate routes after registration.
@@ -1534,6 +1587,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Identity helper for a `nifra.assurance.ts` default export.
 - **defineAssurancePolicy** _(function)_ — `defineAssurancePolicy: (policy: AssurancePolicy) => AssurancePolicy`
   Validate and freeze an ordered assurance policy.
+- **defineCapabilityPolicy** _(function)_ — `defineCapabilityPolicy: (policy: CapabilityPolicy) => CapabilityPolicy`
+  Validate and freeze a capability/provenance policy.
 - **defineContract** _(function)_ — `defineContract: <const C extends ContractShape>(contract: C) => C`
   Define a standalone, versionable contract. Identity at runtime (it returns the contract for type inference via the `const` type parameter, which preserves the path/method literals) plus boot-time (L2) validation: each operation must use a known method, a path starting with `/`, and no two operation…
 - **defineIdentityPlugin** _(function)_ — `defineIdentityPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
@@ -1544,6 +1599,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this — not {@link definePlugin} — for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
 - **diffRouteSnapshots** _(function)_ — `diffRouteSnapshots: (before: readonly RouteSnapshot[], after: readonly RouteSnapshot[]) => RoutesDiff`
   Diff two route snapshots (`snapshotRoutes` output, possibly restored from JSON). Every change is classified breaking/compatible/info; `hasBreaking` is the CI-gate bit.
+- **evaluateCapabilityAssurance** _(function)_ — `evaluateCapabilityAssurance: (source: unknown, policyInput: CapabilityPolicy, evidenceSet: CapabilityEvidenceSet) => CapabilityAssuranceReport`
+  Compare declared route capabilities against coverage-qualified static/runtime evidence.
 - **evaluateRouteAssurance** _(function)_ — `evaluateRouteAssurance: (source: unknown, policyInput: AssurancePolicy) => AssuranceReport`
   Evaluate reflected route evidence against the first matching policy rule.
 - **implement** _(function)_ — `implement: <const C extends ContractShape, H extends HandlersFor<C>>(contract: C, handlers: H) => Server<RegistryFromImpl<C, H>>`
@@ -1572,6 +1629,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Discards everything — for tests, or when log output is handled elsewhere.
 - **sitemap** _(function)_ — `sitemap: (entries: readonly SitemapEntry[], options?: SitemapOptions) => string`
   Build a `<urlset>` sitemap XML document from `entries`. Throws on out-of-spec input (dev-time data).
+- **snapshotCapabilities** _(function)_ — `snapshotCapabilities: (report: CapabilityAssuranceReport) => CapabilitySnapshot`
+  Deterministic, PII-free lockfile material.
 - **snapshotRoutes** _(function)_ — `snapshotRoutes: (source: unknown) => readonly RouteSnapshot[]`
   Snapshot an app's routes (anything `reflectRoutes` accepts) as plain JSON. Validators are dropped; only introspectable JSON Schema metadata is kept, so the result round-trips through `JSON.stringify` unchanged.
 - **sse** _(function)_ — `sse: (c: SSEContext, run: (stream: SSEStream) => void | Promise<void>, init?: SSEInit) => Response`
@@ -1580,6 +1639,9 @@ Every public export of every package — name, kind, signature, and doc summary 
   Wrap a raw {@link SSEStream} in the typed, JSON-serializing surface `app.sse()` hands out.
 - **unsignValue** _(function)_ — `unsignValue: (signed: string, secret: string) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
+- **useCapability** _(function)_ — `useCapability: (context: object, capability: string) => void`
+  Runtime effect beacon for owned adapters. It fails closed when the route omitted the capability or when no route guard is present. Static provenance is still required: code can bypass a beacon.
+- **validCapabilityId** _(function)_ — `validCapabilityId: (value: string) => boolean`
 - **validateStandard** _(function)_ — `validateStandard: <Schema extends StandardSchemaV1>(schema: Schema, value: unknown) => ValidationOutcome<InferOutput<Schema>> | Promise<ValidationOutcome<InferOutput<Schema>>>`
   Run a Standard Schema and normalize the result. Sync validators stay sync; async validators are awaited.
 - **verifyWebhook** _(function)_ — `verifyWebhook: (req: Request, secret: string | readonly string[], options?: VerifyWebhookOptions) => Promise<WebhookResult>`

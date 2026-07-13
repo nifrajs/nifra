@@ -1,4 +1,4 @@
-import type { RequestBudget } from "@nifrajs/budget"
+import type { RequestBudget } from "../budget.ts"
 import type { InferOutput, StandardIssue, StandardSchemaV1 } from "../schema/standard.ts"
 import type { CookieOptions } from "./cookies.ts"
 
@@ -25,6 +25,8 @@ export type Params<Path extends string> = Prettify<RawParams<Path>>
 
 /** Per-route input schemas. Each is any Standard Schema (zod/valibot/arktype/…). */
 export interface RouteSchema {
+  /** Declared effect tokens. Reflected for assurance; never read by validation or serialization. */
+  readonly capabilities?: readonly string[]
   readonly body?: StandardSchemaV1
   readonly query?: StandardSchemaV1
   /** Optional **response contract**. When declared: the handler's return is type-checked against it
