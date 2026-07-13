@@ -1,6 +1,8 @@
 # @nifrajs/budget
 
-Portable request-deadline mechanics for Nifra, Hono, and any Fetch runtime.
+Compatibility import for the request-deadline mechanics owned by `@nifrajs/core/budget`. Existing
+Nifra, Hono, and Fetch consumers can keep this import unchanged; new core consumers may use the
+subpath directly. Both paths resolve to the same implementation and classes.
 
 ```ts
 import {

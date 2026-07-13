@@ -78,6 +78,24 @@ describe("createAdmissionController — mechanics", () => {
       expect(second.response.headers.get("x-nifra-shed-reason")).toBe("queue-timeout")
   })
 
+  test("an aborted queued request is removed immediately without consuming a future slot", async () => {
+    const c = controller({ maxInFlight: 1, maxQueue: 1, queueTimeoutMs: 10_000 })
+    const first = await c.admit(req())
+    const aborted = new AbortController()
+    const queued = c.admit(new Request("http://x/", { signal: aborted.signal }))
+    expect(c.snapshot().queued).toBe(1)
+    aborted.abort()
+    const cancelled = await queued
+    expect(cancelled.admitted).toBe(false)
+    if (!cancelled.admitted) {
+      expect(cancelled.response.status).toBe(499)
+      expect(cancelled.response.headers.get("x-nifra-shed-reason")).toBe("cancelled")
+    }
+    expect(c.snapshot().queued).toBe(0)
+    if (first.admitted) first.release()
+    expect(c.snapshot().inFlight).toBe(0)
+  })
+
   test("loop-lag sheds even with free slots", async () => {
     let lag = 0
     const c = controller({ maxInFlight: 10, maxLagMs: 50, lagMs: () => lag })
@@ -105,8 +123,81 @@ describe("createAdmissionController — mechanics", () => {
     expect(c.snapshot().inFlight).toBe(2)
   })
 
+  test("reserved policy headroom is never transferred to an ordinary queued request", async () => {
+    const c = createAdmissionController({
+      maxInFlight: 1,
+      maxQueue: 1,
+      queueTimeoutMs: 1000,
+      reservedForPolicy: 1,
+      policy: (r) => (r.headers.get("x-tier") === "priority" ? { decision: "admit" } : undefined),
+    })
+    const ordinary = await c.admit(req())
+    const queued = c.admit(req())
+    const priority = await c.admit(new Request("http://x/", { headers: { "x-tier": "priority" } }))
+    expect(c.snapshot()).toMatchObject({ inFlight: 2, queued: 1 })
+
+    if (priority.admitted) priority.release()
+    await Promise.resolve()
+    // The reserved slot disappeared; it did not leak to the normal FIFO.
+    expect(c.snapshot()).toMatchObject({ inFlight: 1, queued: 1 })
+
+    if (ordinary.admitted) ordinary.release()
+    const admitted = await queued
+    expect(admitted.admitted).toBe(true)
+    expect(c.snapshot()).toMatchObject({ inFlight: 1, queued: 0 })
+    if (admitted.admitted) admitted.release()
+  })
+
+  test("policy Retry-After is an override, not an addition to the base delay", async () => {
+    const c = createAdmissionController({
+      maxInFlight: 1,
+      baseRetryAfterSec: 5,
+      policy: () => ({ decision: "shed", retryAfterSec: 2 }),
+    })
+    const result = await c.admit(req())
+    expect(result.admitted).toBe(false)
+    if (!result.admitted) expect(result.response.headers.get("retry-after")).toBe("2")
+  })
+
+  test("invalid custom capacity evidence fails closed with a valid Retry-After", async () => {
+    const badLag = createAdmissionController({
+      maxInFlight: 2,
+      maxLagMs: 10,
+      lagMs: () => Number.NaN,
+    })
+    const lagged = await badLag.admit(req())
+    expect(lagged.admitted).toBe(false)
+    if (!lagged.admitted) {
+      expect(lagged.response.headers.get("x-nifra-shed-reason")).toBe("loop-lag")
+    }
+    const badPolicy = createAdmissionController({
+      maxInFlight: 2,
+      baseRetryAfterSec: 3,
+      policy: () => ({ decision: "shed", retryAfterSec: Number.NaN }),
+    })
+    const shed = await badPolicy.admit(req())
+    expect(shed.admitted).toBe(false)
+    if (!shed.admitted) expect(shed.response.headers.get("retry-after")).toBe("3")
+  })
+
   test("rejects an invalid maxInFlight", () => {
     expect(() => createAdmissionController({ maxInFlight: 0 })).toThrow(/positive integer/)
+  })
+
+  test("rejects non-finite or negative admission policy knobs", () => {
+    expect(() => createAdmissionController({ maxInFlight: 1, maxLagMs: Number.NaN })).toThrow(
+      /maxLagMs/,
+    )
+    expect(() => createAdmissionController({ maxInFlight: 1, queueTimeoutMs: -1 })).toThrow(
+      /queueTimeoutMs/,
+    )
+    expect(() => createAdmissionController({ maxInFlight: 1, reservedForPolicy: -1 })).toThrow(
+      /reservedForPolicy/,
+    )
+    expect(() => createAdmissionController({ maxInFlight: 1, baseRetryAfterSec: 0 })).toThrow(
+      /baseRetryAfterSec/,
+    )
+    expect(() => createEventLoopLagSampler(0)).toThrow(/resolutionMs/)
   })
 
   test("event-loop lag sampler returns a finite non-negative number", () => {

@@ -24,6 +24,7 @@ export type RouteConfigErrorCode =
   | "INVALID_PARAM_NAME"
   | "WILDCARD_NOT_LAST"
   | "INVALID_METHOD"
+  | "INVALID_ASSURANCE"
 
 /**
  * Thrown at route registration when a route is misconfigured. This is the

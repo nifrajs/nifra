@@ -7,6 +7,7 @@
  * recognizes Nifra/TypeBox carriers and raw JSON Schema without depending on a validator package.
  */
 
+import { normalizeRouteCapabilities } from "./internal/capability-runtime.ts"
 import { type AssuranceEvidence, validEvidence } from "./internal/route-assurance.ts"
 import type { StandardSchemaV1 } from "./schema/standard.ts"
 import type { ToolAnnotations } from "./server/server.ts"
@@ -45,6 +46,7 @@ export interface ReflectedRoute {
   readonly path: string
   readonly schema?: ReflectedRouteSchema
   readonly assurance?: readonly AssuranceEvidence[]
+  readonly capabilities?: readonly string[]
   readonly tool?: {
     readonly name: string
     readonly description: string
@@ -196,11 +198,15 @@ export function reflectRoutes(source: unknown): readonly ReflectedRoute[] {
     const schema = reflectedRouteSchema(route.schema)
     const tool = reflectedTool(route.tool)
     const assurance = reflectedAssurance(route.assurance)
+    const capabilities = normalizeRouteCapabilities(
+      Array.isArray(route.capabilities) ? (route.capabilities as readonly string[]) : undefined,
+    )
     reflected.push({
       method: route.method.toUpperCase(),
       path: route.path,
       ...(schema !== undefined ? { schema } : {}),
       ...(assurance !== undefined ? { assurance } : {}),
+      ...(capabilities.length > 0 ? { capabilities } : {}),
       ...(tool !== undefined ? { tool } : {}),
     })
   }

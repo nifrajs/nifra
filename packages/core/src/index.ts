@@ -17,6 +17,7 @@ export const VERSION = "1.9.1" as const
 export type Version = typeof VERSION
 
 export * from "./assurance.ts"
+export * from "./capabilities.ts"
 export * from "./diff.ts"
 export { FrameworkError, RouteConfigError, type RouteConfigErrorCode } from "./errors.ts"
 export { FRAMEWORK_NAME, type FrameworkName } from "./internal/brand.ts"

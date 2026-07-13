@@ -26,6 +26,7 @@ export const NIFRA_ASSURANCE_IDS = Object.freeze({
   AUTHENTICATED: "nifra.authenticated",
   BODY_BOUNDED: "nifra.body-bounded",
   CSRF: "nifra.csrf",
+  DURABLE_COMMAND: "nifra.durable-command",
   IDEMPOTENCY_KEY: "nifra.idempotency-key",
   IP_RESTRICTED: "nifra.ip-restricted",
   RATE_LIMITED: "nifra.rate-limited",

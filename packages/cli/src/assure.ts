@@ -44,10 +44,16 @@ export async function loadAssuranceConfig(
 
 export function formatAssuranceReport(report: AssuranceReport): string {
   if (report.ok) {
-    return `✓ route assurance: ${report.routes.length} route${report.routes.length === 1 ? "" : "s"} classified; all required evidence is present.`
+    const capability = report.capabilities
+      ? ` Capability assurance covered ${report.capabilities.routes.length} route${report.capabilities.routes.length === 1 ? "" : "s"}.`
+      : ""
+    return `✓ route assurance: ${report.routes.length} route${report.routes.length === 1 ? "" : "s"} classified; all required evidence is present.${capability}`
   }
-  const lines = report.findings.map((finding) => `✖ ${finding.message}`)
-  return `${lines.join("\n")}\n\n${report.findings.length} route assurance failure${report.findings.length === 1 ? "" : "s"} across ${report.routes.length} route${report.routes.length === 1 ? "" : "s"}.`
+  const messages = [
+    ...report.findings.map((finding) => finding.message),
+    ...(report.capabilities?.findings.map((finding) => finding.message) ?? []),
+  ]
+  return `${messages.map((message) => `✖ ${message}`).join("\n")}\n\n${messages.length} assurance failure${messages.length === 1 ? "" : "s"} across ${report.routes.length} route${report.routes.length === 1 ? "" : "s"}.`
 }
 
 export async function collectAssuranceReport(
@@ -55,7 +61,19 @@ export async function collectAssuranceReport(
   configPath?: string,
 ): Promise<AssuranceReport> {
   const config = await loadAssuranceConfig(cwd, configPath)
-  return evaluateRouteAssurance(config.source, config.policy)
+  const routeReport = evaluateRouteAssurance(config.source, config.policy)
+  if (config.capabilities === undefined) return routeReport
+  const { collectCapabilityProjectReport } = await import("./capabilities-tool.ts")
+  const capabilityProject = await collectCapabilityProjectReport(
+    cwd,
+    config.source,
+    config.capabilities,
+  )
+  return Object.freeze({
+    ...routeReport,
+    ok: routeReport.ok && capabilityProject.report.ok,
+    capabilities: capabilityProject.report,
+  })
 }
 
 export async function runAssurance(

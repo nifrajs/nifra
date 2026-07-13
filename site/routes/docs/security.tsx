@@ -144,6 +144,37 @@ export default defineAssuranceConfig({
 // CI: nifra assure              # human diagnostics
 // CI: nifra assure --json       # complete machine-readable report`
 
+const CAPABILITIES = `// doc-check: skip — combines route and assurance-config excerpts.
+// route: exact effect declaration + runtime beacon at the owned adapter seam
+import { useCapability } from "@nifrajs/core/capabilities"
+
+app.post("/orders", { capabilities: ["db.write"] }, async (c) => {
+  useCapability(c, "db.write") // undeclared use fails before the effect
+  return orders.write(c.body)
+})
+
+// in nifra.assurance.ts, alongside policy:
+capabilities: {
+  definitions: [
+    { id: "db.read", zone: "domain", access: "read" },
+    { id: "db.write", zone: "domain", access: "write", idempotency: "request" },
+    { id: "telemetry.write", zone: "operational", access: "write" },
+  ],
+  provenance: {
+    // Use effect-specific facades. A broad module that mixes reads/writes cannot prove either.
+    imports: [
+      { specifier: "@app/db/read", capabilities: ["db.read"] },
+      { specifier: "@app/db/write", capabilities: ["db.write"] },
+    ],
+    forbiddenImports: [
+      { specifier: "postgres", reason: "use the tenant-scoped DB facade" },
+    ],
+  },
+}
+
+// developer: nifra capabilities snapshot
+// CI:        nifra check && nifra assure && nifra capabilities check`
+
 const LOGGING = `import { server, jsonLogger, commonSecretPatterns } from "@nifrajs/core"
 
 // Key-name redaction is always on; valuePatterns adds opt-in value + message scanning.
@@ -292,6 +323,21 @@ export default function Security() {
         while authentication and other order-scoped hooks cover only routes registered after them.
         Method and path filters prevent a narrow guard from claiming broader coverage. The evaluation
         runs only through reflection or <code>nifra assure</code>, so requests pay no assurance cost.
+      </p>
+
+      <h2>Effect assurance — declared capability versus provenance</h2>
+      <p>
+        Authentication does not reveal what a route can do. Capability assurance compares an exact
+        route declaration against every approved effect import reachable through that route&apos;s local
+        module graph. Static, dynamic, <code>require</code>, and re-export edges are scanned; raw provider
+        imports fail <code>nifra check</code>. Runtime beacons add denial at owned adapters, but are never
+        treated as a substitute for static provenance.
+      </p>
+      <CodeBlock code={CAPABILITIES} />
+      <p>
+        Domain writes on <code>GET</code>/<code>HEAD</code> are hard violations. Each write definition may
+        require request idempotency or durable command/provider-key evidence. The lockfile contains only
+        method, path, and capability tokens—no payloads or tenant data—and CI never rewrites it.
       </p>
 
       <h2>Already built in</h2>

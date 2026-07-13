@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { NIFRA_DEADLINE_HEADER } from "@nifrajs/budget"
+import { NIFRA_DEADLINE_HEADER } from "../src/budget.ts"
 import { server } from "../src/index.ts"
 
 const deadlineRequest = (deadline: string): Request =>
