@@ -1,5 +1,13 @@
 # @nifrajs/workers
 
+## 1.9.0
+
+### Patch Changes
+
+- Updated dependencies [03cd76f]
+- Updated dependencies [03cd76f]
+  - @nifrajs/core@1.9.0
+
 ## 1.8.0
 
 ### Patch Changes

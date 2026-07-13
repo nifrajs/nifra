@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/cli",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "The nifra CLI — zero-config dev/build/start for a nifra app (`nifra dev`, `nifra build`, `nifra start`).",
   "keywords": [
     "bun",
