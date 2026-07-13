@@ -136,7 +136,7 @@ export interface Context<Path extends string = string, S extends RouteSchema = R
   readonly signal: AbortSignal
   /**
    * Absolute request deadline plus monotonic remaining time. It shares {@link signal}; the server
-   * clamps an inbound deadline to local policy before constructing it.
+   * clamps an inbound deadline to local policy when `acceptInboundDeadlines` is enabled.
    */
   readonly budget: RequestBudget
   /**

@@ -27,3 +27,11 @@ _Avoid_: Random bad data, fuzz value
 **Contract laboratory**:
 An off-hot-path exercise that runs hostile mutations and declared-response conformance against one or more fetch runtimes, retaining stable case IDs and a replay seed.
 _Avoid_: Integration test helper, schema fuzzer
+
+**Request budget**:
+One admitted absolute deadline, a monotonic remaining-time view, and the existing cancellation signal shared by a request and every downstream hop.
+_Avoid_: Per-call timeout, retry duration
+
+**Wire deadline**:
+The absolute Unix epoch millisecond carried in `x-nifra-deadline`; receivers that opt in with `acceptInboundDeadlines` clamp it to local policy before translating it to monotonic time.
+_Avoid_: Client timeout, timeout reset

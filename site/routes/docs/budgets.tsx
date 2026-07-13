@@ -12,6 +12,7 @@ const SERVER = `import { server } from "@nifrajs/core"
 
 const app = server({
   requestTimeoutMs: 2_000,
+  acceptInboundDeadlines: true,
   maxInboundDeadlineMs: 5_000,
 }).get("/report", async (c) => {
   // c.signal aborts at the SAME effective deadline.
@@ -39,9 +40,11 @@ export default function RequestBudgets() {
       <h2>Clamp once at admission</h2>
       <CodeBlock code={SERVER} lang="ts" />
       <p>
-        The canonical header is <code>x-nifra-deadline</code>, containing Unix epoch milliseconds. A
-        client value can only shorten local work. Malformed values return 400, expired values return
-        408, and a request that exhausts an inherited deadline returns 504.
+        The canonical header is <code>x-nifra-deadline</code>, containing Unix epoch milliseconds.
+        Admission is an explicit trust-boundary choice via <code>acceptInboundDeadlines</code>; ordinary
+        public routes ignore the header by default. Once enabled, a client value can only shorten
+        local work. Malformed values return 400, expired values return 408, and a request that exhausts
+        an inherited deadline returns 504.
       </p>
 
       <h2>Reserve time for the caller</h2>
