@@ -3,6 +3,7 @@
  * are a fail-closed defence at owned effect seams. Static provenance remains the security anchor.
  */
 
+import type { DataClassification } from "./classification.ts"
 import {
   CAPABILITY_GUARD,
   type CapabilityGuard,
@@ -111,6 +112,8 @@ export interface AssuredCapabilityRoute {
   /** Declared capabilities without static/runtime evidence. Informational, never treated as proof. */
   readonly unproven: readonly string[]
   readonly covered: boolean
+  /** Highest data-sensitivity the response carries, when the route declares it. */
+  readonly classification?: DataClassification
 }
 
 export interface CapabilityAssuranceReport {
@@ -125,6 +128,8 @@ export interface CapabilitySnapshotRoute {
   readonly declared: readonly string[]
   readonly evidenced: readonly string[]
   readonly unproven: readonly string[]
+  /** Recorded so a route that starts returning `pii`/`secret` flips the lockfile and forces a review. */
+  readonly classification?: DataClassification
 }
 
 export interface CapabilitySnapshot {
@@ -372,6 +377,7 @@ export function evaluateCapabilityAssurance(
         evidence: Object.freeze(evidence),
         unproven: Object.freeze(declared.filter((id) => !evidenceIds.has(id))),
         covered,
+        ...(route.classification !== undefined ? { classification: route.classification } : {}),
       }),
     )
   }
@@ -416,6 +422,7 @@ export function snapshotCapabilities(report: CapabilityAssuranceReport): Capabil
         declared: Object.freeze([...route.declared].sort()),
         evidenced: Object.freeze([...new Set(route.evidence.map((item) => item.id))].sort()),
         unproven: Object.freeze([...route.unproven].sort()),
+        ...(route.classification !== undefined ? { classification: route.classification } : {}),
       }),
     )
     .sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))

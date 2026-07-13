@@ -1,6 +1,24 @@
 import type { RequestBudget } from "../budget.ts"
+import type { DataClassification } from "../classification.ts"
+import type { IdempotencyScope, IdempotencyStore } from "../idempotency.ts"
 import type { InferOutput, StandardIssue, StandardSchemaV1 } from "../schema/standard.ts"
 import type { CookieOptions } from "./cookies.ts"
+
+/**
+ * Declares a mutating route as idempotent: the server dedupes retries on an `Idempotency-Key` header
+ * (see {@link RouteSchema.idempotency}). Satisfies the capability-assurance idempotency requirement
+ * for a `write` capability — `scope: "durable"` additionally clears the durable-command requirement.
+ */
+export interface IdempotencyConfig {
+  /** `request` = in-process dedupe; `durable` = cross-restart, backed by a durable store. */
+  readonly scope: IdempotencyScope
+  /** Retention for the stored response. Default 24h. */
+  readonly ttlMs?: number
+  /** Store override. Defaults to the server's shared in-memory store; inject a durable store here. */
+  readonly store?: IdempotencyStore
+  /** Header carrying the key. Default `idempotency-key`. */
+  readonly headerName?: string
+}
 
 /** Flattens an intersection into a single object type for readable hovers. */
 export type Prettify<T> = { [K in keyof T]: T[K] } & {}
@@ -27,6 +45,20 @@ export type Params<Path extends string> = Prettify<RawParams<Path>>
 export interface RouteSchema {
   /** Declared effect tokens. Reflected for assurance; never read by validation or serialization. */
   readonly capabilities?: readonly string[]
+  /**
+   * Dedupe retries of this (mutating) route on an `Idempotency-Key` header. The first request runs and
+   * its response is stored; a retry with the same key replays that response without re-running the
+   * handler, and a key reused with a different body is rejected (409). A missing key on an
+   * idempotency-required route fails closed (400). Off the hot path — routes without it are unchanged.
+   */
+  readonly idempotency?: IdempotencyConfig
+  /**
+   * Highest data-sensitivity this route's response body carries (`public` | `pii` | `secret`). A
+   * declarative, compile-time + introspection fact — never validated at runtime. Reflected for tooling,
+   * recorded in the capability lockfile (so a route that starts returning PII is a reviewable change),
+   * and read by downstream policy (e.g. a partner-API surface refusing to expose `pii`/`secret`).
+   */
+  readonly classification?: DataClassification
   readonly body?: StandardSchemaV1
   readonly query?: StandardSchemaV1
   /** Optional **response contract**. When declared: the handler's return is type-checked against it

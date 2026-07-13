@@ -11,6 +11,9 @@ Bun-native, contract-first HTTP framework — the router, server, and route desc
 ## Key exports
 
 - **attachWebSocket** _(function)_ — `attachWebSocket: (socket: StandardWebSocket, handler: WebSocketHandler, data: unknown, options: { openNow: boolean; pubsub: TopicRegistry; …`
+- **classificationAtLeast** _(function)_ — `classificationAtLeast: (value: DataClassification, floor: DataClassification) => boolean`
+- **computeIdempotencyFingerprint** _(function)_ — `computeIdempotencyFingerprint: (method: string, path: string, body: Uint8Array) => Promise<string>`
+- **createMemoryIdempotencyStore** _(function)_ — `createMemoryIdempotencyStore: (options?: MemoryIdempotencyStoreOptions) => MemoryIdempotencyStore`
 - **defineAssuranceConfig** _(function)_ — `defineAssuranceConfig: (config: AssuranceConfig) => AssuranceConfig`
 - **defineAssurancePolicy** _(function)_ — `defineAssurancePolicy: (policy: AssurancePolicy) => AssurancePolicy`
 - **defineCapabilityPolicy** _(function)_ — `defineCapabilityPolicy: (policy: CapabilityPolicy) => CapabilityPolicy`
@@ -21,11 +24,8 @@ Bun-native, contract-first HTTP framework — the router, server, and route desc
 - **evaluateCapabilityAssurance** _(function)_ — `evaluateCapabilityAssurance: (source: unknown, policyInput: CapabilityPolicy, evidenceSet: CapabilityEvidenceSet) => CapabilityAssuranceRep…`
 - **evaluateRouteAssurance** _(function)_ — `evaluateRouteAssurance: (source: unknown, policyInput: AssurancePolicy) => AssuranceReport`
 - **implement** _(function)_ — `implement: <const C extends ContractShape, H extends HandlersFor<C>>(contract: C, handlers: H) => Server<RegistryFromImpl<C, H>>`
-- **jsonLogger** _(function)_ — `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
-- **matchesAssuranceSelector** _(function)_ — `matchesAssuranceSelector: (route: Pick<ReflectedRoute, "method" | "path" | "tool">, selector: AssuranceRouteSelector) => boolean`
-- **parseCookies** _(function)_ — `parseCookies: (header: string | null | undefined) => Record<string, string>`
 
-_…and 148 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
+_…and 167 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 
 ## Footguns
 

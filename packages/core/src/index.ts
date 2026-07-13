@@ -18,8 +18,10 @@ export type Version = typeof VERSION
 
 export * from "./assurance.ts"
 export * from "./capabilities.ts"
+export * from "./classification.ts"
 export * from "./diff.ts"
 export { FrameworkError, RouteConfigError, type RouteConfigErrorCode } from "./errors.ts"
+export * from "./idempotency.ts"
 export { FRAMEWORK_NAME, type FrameworkName } from "./internal/brand.ts"
 export * from "./reflection.ts"
 export { METHODS, type Method, Router, type RouterMatch } from "./router/router.ts"
