@@ -8,7 +8,7 @@ import { recipe as v1_8_0 } from "./1.8.0.ts"
 
 /** A pin rule: every dependency whose name starts with `match` is set to version `to`. */
 export interface PinRule {
-  /** Package-name prefix, e.g. `@nifrajs/` or an exact name `old-lib`. */
+  /** Package-name prefix, e.g. `@nifrajs/`, or an exact package name. */
   readonly match: string
   /** Bare target version, e.g. `1.8.0`. The range operator (`^`/`~`/exact) is preserved per-spec. */
   readonly to: string

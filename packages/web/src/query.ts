@@ -448,7 +448,6 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     let state: QueryState<InfiniteData<T, P>> = PENDING as QueryState<InfiniteData<T, P>>
     let generation = 0
     let promise: Promise<InfiniteData<T, P>> | undefined
-    let subscribers = 0
     const listeners = new Set<() => void>()
     const emit = (): void => {
       for (const l of listeners) l()
@@ -512,11 +511,9 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     const handle: InfiniteQueryHandle<T, P> = {
       snapshot: () => state,
       subscribe: (listener) => {
-        subscribers++
         listeners.add(listener)
         return () => {
           listeners.delete(listener)
-          subscribers--
         }
       },
       fetch: () => fetchFirst(false),

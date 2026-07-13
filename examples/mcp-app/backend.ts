@@ -19,7 +19,7 @@ const ORDERS = [
   { id: 1003, customer: "Grace Hopper", total: 7 },
 ]
 
-// A host's design tokens (here: a ShipNow theme preset — shadcn semantic HSL tokens). The harness pushes
+// A host's design tokens (here: an example theme preset — shadcn semantic HSL tokens). The harness pushes
 // these over the bridge so the widget restyles to match the embedding app. Swap to demo a different theme.
 const HOST_THEME = {
   mode: "light",

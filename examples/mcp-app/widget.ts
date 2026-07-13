@@ -5,7 +5,7 @@
  *
  * Styled with the shadcn/Tailwind semantic tokens (`hsl(var(--primary))`, `var(--card)`, `var(--border)`,
  * `var(--radius)`, …) with sensible fallbacks. A host that pushes its theme over the bridge
- * (`ui/notifications/theme`) — e.g. a ShipNow-generated app injecting its preset — restyles this widget to
+ * (`ui/notifications/theme`) restyles this widget to
  * match, with zero per-widget work. The author writes plain markup + `mcpApp.onData(render)` /
  * `mcpApp.callTool(...)`; `defineMcpWidget` inlines the bridge and serves it as `text/html;profile=mcp-app`.
  */

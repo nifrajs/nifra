@@ -1,6 +1,6 @@
 # MCP Apps theming + render-intent — the host/widget contract
 
-How a host (e.g. the ShipNow builder) makes nifra MCP-App widgets and tool results match its design system.
+How a host makes nifra MCP-App widgets and tool results match its design system.
 A tool can serve **two** kinds of host from one definition:
 
 - **Generative hosts** that render their OWN UI from data — they read `structuredContent` + `_meta.ui.intent`.
@@ -28,7 +28,7 @@ optional and independent; a tool may offer both.
 
 A `ui://` widget is a sandboxed iframe — the host can't reach in and apply classes. Instead the host
 **pushes its design tokens** and the widget reads them. The vocabulary is the **shadcn/Tailwind semantic
-tokens** (the de-facto standard; what ShipNow's `@shipnow/ui` already uses):
+tokens** (the de-facto standard; shadcn/ui and similar design systems use them):
 
 ```
 --background --foreground --card --card-foreground --popover --popover-foreground
@@ -57,4 +57,4 @@ for custom handling.
 2. On a tool result with `_meta.ui.resourceUri`, `resources/read` the `ui://` widget, embed it in a
    sandboxed iframe, and push `ui/notifications/theme` with your resolved tokens (+ on theme change).
 
-See `examples/mcp-app/` — the widget styles with these tokens; the host harness pushes a ShipNow preset.
+See `examples/mcp-app/` — the widget styles with these tokens; the host harness pushes a sample preset.
