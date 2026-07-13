@@ -82,25 +82,51 @@ interface Waiter {
 
 const OVERLOADED_BODY = JSON.stringify({ ok: false, error: "overloaded" })
 
+/** The slice of a `perf_hooks` event-loop-delay histogram the sampler needs. */
+export interface LoopDelayHistogram {
+  enable(): void
+  reset(): void
+  readonly mean: number
+}
+
+/**
+ * Acquires a loop-delay histogram for a resolution, or `undefined` when the runtime has none. Inject
+ * one in {@link createEventLoopLagSampler} for non-Node runtimes or tests; the default reads
+ * `node:perf_hooks`.
+ */
+export type LoopDelayMonitor = (resolutionMs: number) => LoopDelayHistogram | undefined
+
+/** Shared no-op sampler — the fallback when no histogram is available. */
+const NO_LAG: () => number = () => 0
+
+function defaultLoopDelayMonitor(resolutionMs: number): LoopDelayHistogram | undefined {
+  // Lazy require so bundles for runtimes without perf_hooks (workers) don't pull it in.
+  const perfHooks = require("node:perf_hooks") as typeof import("node:perf_hooks")
+  return perfHooks.monitorEventLoopDelay?.({ resolution: resolutionMs })
+}
+
 /**
  * A default event-loop-lag sampler backed by `perf_hooks.monitorEventLoopDelay`. Returns the mean lag
  * (ms) observed since the previous call, resetting each read so shedding reacts to *recent* stalls, not
- * cumulative history. Falls back to a constant `0` on runtimes without the histogram.
+ * cumulative history. Falls back to a constant `0` when the runtime exposes no histogram (or `monitor`
+ * throws) — pass a custom {@link LoopDelayMonitor} for non-Node runtimes.
  */
-export function createEventLoopLagSampler(resolutionMs = 20): () => number {
+export function createEventLoopLagSampler(
+  resolutionMs = 20,
+  monitor: LoopDelayMonitor = defaultLoopDelayMonitor,
+): () => number {
+  let histogram: LoopDelayHistogram | undefined
   try {
-    // Lazy require so bundles for runtimes without perf_hooks (workers) don't pull it in.
-    const perfHooks = require("node:perf_hooks") as typeof import("node:perf_hooks")
-    const histogram = perfHooks.monitorEventLoopDelay?.({ resolution: resolutionMs })
-    if (histogram === undefined) return () => 0
-    histogram.enable()
-    return () => {
-      const meanNs = histogram.mean
-      histogram.reset()
-      return Number.isFinite(meanNs) ? Math.max(0, meanNs / 1e6 - resolutionMs) : 0
-    }
+    histogram = monitor(resolutionMs)
   } catch {
-    return () => 0
+    return NO_LAG
+  }
+  if (histogram === undefined) return NO_LAG
+  histogram.enable()
+  return () => {
+    const meanNs = histogram.mean
+    histogram.reset()
+    return Number.isFinite(meanNs) ? Math.max(0, meanNs / 1e6 - resolutionMs) : 0
   }
 }
 

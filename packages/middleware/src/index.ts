@@ -14,6 +14,8 @@ export {
   type AdmissionSnapshot,
   createAdmissionController,
   createEventLoopLagSampler,
+  type LoopDelayHistogram,
+  type LoopDelayMonitor,
   type ShedReason,
 } from "./admission.ts"
 export {

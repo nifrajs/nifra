@@ -712,6 +712,10 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **LanguageMatch** _(interface)_ — `interface LanguageMatch`
 - **LanguageOptions** _(interface)_ — `interface LanguageOptions<L extends readonly string[]>`
 - **LoggerOptions** _(interface)_ — `interface LoggerOptions`
+- **LoopDelayHistogram** _(interface)_ — `interface LoopDelayHistogram`
+  The slice of a `perf_hooks` event-loop-delay histogram the sampler needs.
+- **LoopDelayMonitor** _(type)_ — `type LoopDelayMonitor = (resolutionMs: number) => LoopDelayHistogram | undefined`
+  Acquires a loop-delay histogram for a resolution, or `undefined` when the runtime has none. Inject one in {@link createEventLoopLagSampler} for non-Node runtimes or tests; the default reads `node:perf_hooks`.
 - **MemoryIdempotencyStore** _(class)_ — `class MemoryIdempotencyStore`
   In-process store. Refuses to run in production unless explicitly allowed (per-instance ⇒ no cross-instance dedupe).
 - **MemoryIdempotencyStoreOptions** _(interface)_ — `interface MemoryIdempotencyStoreOptions`
@@ -776,8 +780,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **createAdmissionController** _(function)_ — `createAdmissionController: (options: AdmissionOptions) => AdmissionControllerHandle`
   Build a capacity-admission controller. Pass the returned handle as the server's `admission` option.
 - **createCsrfToken** _(function)_ — `createCsrfToken: (secret: string | Uint8Array, nonce?: string) => Promise<string>`
-- **createEventLoopLagSampler** _(function)_ — `createEventLoopLagSampler: (resolutionMs?: number) => () => number`
-  A default event-loop-lag sampler backed by `perf_hooks.monitorEventLoopDelay`. Returns the mean lag (ms) observed since the previous call, resetting each read so shedding reacts to *recent* stalls, not cumulative history. Falls back to a constant `0` on runtimes without the histogram.
+- **createEventLoopLagSampler** _(function)_ — `createEventLoopLagSampler: (resolutionMs?: number, monitor?: LoopDelayMonitor) => () => number`
+  A default event-loop-lag sampler backed by `perf_hooks.monitorEventLoopDelay`. Returns the mean lag (ms) observed since the previous call, resetting each read so shedding reacts to *recent* stalls, not cumulative history. Falls back to a constant `0` when the runtime exposes no histogram (or `monit…
 - **csrf** _(function)_ — `csrf: (options: CsrfOptions) => Middleware`
   Signed double-submit CSRF protection. A protected request must carry the same signed token in a cookie and a header, and must come from an allowed Origin/Referer unless `checkOrigin:false` is set.
 - **etag** _(function)_ — `etag: (options?: ETagOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").AnyServer>`

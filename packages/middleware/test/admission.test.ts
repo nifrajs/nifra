@@ -114,6 +114,32 @@ describe("createAdmissionController — mechanics", () => {
     expect(sample()).toBeGreaterThanOrEqual(0)
     expect(Number.isFinite(sample())).toBe(true)
   })
+
+  test("lag sampler samples an injected histogram (mean converted ns→ms, baseline subtracted)", () => {
+    let mean = 25_000_000 // 25ms in ns
+    const sample = createEventLoopLagSampler(20, () => ({
+      enable() {},
+      reset() {},
+      get mean() {
+        return mean
+      },
+    }))
+    expect(sample()).toBeCloseTo(5, 5) // 25ms mean - 20ms resolution baseline
+    mean = Number.NaN
+    expect(sample()).toBe(0) // non-finite mean -> 0
+  })
+
+  test("lag sampler falls back to 0 when the runtime exposes no histogram", () => {
+    const sample = createEventLoopLagSampler(20, () => undefined)
+    expect(sample()).toBe(0)
+  })
+
+  test("lag sampler falls back to 0 when the monitor throws", () => {
+    const sample = createEventLoopLagSampler(20, () => {
+      throw new Error("no perf_hooks here")
+    })
+    expect(sample()).toBe(0)
+  })
 })
 
 describe("server({ admission }) — request-path integration", () => {
@@ -162,6 +188,53 @@ describe("server({ admission }) — request-path integration", () => {
     const boom = await app.fetch(req("/boom"))
     expect(boom.status).toBe(500)
     expect(c.snapshot().inFlight).toBe(0) // slot released despite the throw
+    const ok = await app.fetch(req("/ok"))
+    expect(ok.status).toBe(200)
+  })
+
+  test("gates the context path too (an onRequest hook forces the non-native pipeline)", async () => {
+    const c = controller({ maxInFlight: 5 })
+    const app = server({ admission: c })
+      .onRequest(() => undefined)
+      .get("/ctx", () => "ok")
+    const res = await app.fetch(req("/ctx"))
+    expect(res.status).toBe(200)
+    expect(c.snapshot().inFlight).toBe(0) // slot admitted + released through the context path
+  })
+
+  test("queued request (admit resolves asynchronously) is served once a slot frees", async () => {
+    const c = controller({ maxInFlight: 1, maxQueue: 1 })
+    let open: () => void = () => {}
+    const gate = new Promise<void>((r) => {
+      open = r
+    })
+    const app = server({ admission: c })
+      .get("/slow", async () => {
+        await gate // hold the only slot
+        return "slow"
+      })
+      .get("/queued", () => "queued")
+    const first = app.fetch(req("/slow")) // takes the slot
+    await new Promise((r) => setTimeout(r, 0))
+    const second = app.fetch(req("/queued")) // no slot → queues → admit returns a Promise (admitGated.then)
+    await new Promise((r) => setTimeout(r, 0))
+    open()
+    const [r1, r2] = await Promise.all([first, second])
+    expect(r1.status).toBe(200)
+    expect(r2.status).toBe(200)
+    expect(c.snapshot().inFlight).toBe(0)
+  })
+
+  test("releases the slot when an async handler rejects", async () => {
+    const c = controller({ maxInFlight: 1, maxQueue: 0 })
+    const app = server({ admission: c })
+      .get("/boom", async () => {
+        throw new Error("async-kaboom")
+      })
+      .get("/ok", () => "ok")
+    const boom = await app.fetch(req("/boom"))
+    expect(boom.status).toBe(500)
+    expect(c.snapshot().inFlight).toBe(0) // slot released on the async-rejection path too
     const ok = await app.fetch(req("/ok"))
     expect(ok.status).toBe(200)
   })
