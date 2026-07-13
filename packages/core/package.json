@@ -46,6 +46,16 @@
       "bun": "./src/assurance.ts",
       "types": "./dist/assurance.d.ts",
       "default": "./dist/assurance.js"
+    },
+    "./capabilities": {
+      "bun": "./src/capabilities.ts",
+      "types": "./dist/capabilities.d.ts",
+      "default": "./dist/capabilities.js"
+    },
+    "./budget": {
+      "bun": "./src/budget.ts",
+      "types": "./dist/budget.d.ts",
+      "default": "./dist/budget.js"
     }
   },
   "files": [
@@ -62,9 +72,6 @@
   "license": "MIT",
   "publishConfig": {
     "access": "public"
-  },
-  "dependencies": {
-    "@nifrajs/budget": "workspace:*"
   },
   "devDependencies": {
     "@nifrajs/test-utils": "workspace:*"

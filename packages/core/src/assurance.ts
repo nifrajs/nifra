@@ -3,6 +3,11 @@
  * evidence its policy requires. Evaluation is pure and never runs on the request hot path.
  */
 
+import {
+  type CapabilityAssuranceReport,
+  type CapabilityPolicy,
+  defineCapabilityPolicy,
+} from "./capabilities.ts"
 import type {
   AssuranceDeclaration,
   AssuranceEvidence,
@@ -80,11 +85,14 @@ export interface AssuranceReport {
   readonly ok: boolean
   readonly routes: readonly AssuredRoute[]
   readonly findings: readonly AssuranceFinding[]
+  /** Present when the config enables capability/effect assurance. */
+  readonly capabilities?: CapabilityAssuranceReport
 }
 
 export interface AssuranceConfig {
   readonly source: unknown
   readonly policy: AssurancePolicy
+  readonly capabilities?: CapabilityPolicy
 }
 
 const nonEmpty = (value: string): boolean => value.trim() !== ""
@@ -171,7 +179,13 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
 
 /** Identity helper for a `nifra.assurance.ts` default export. */
 export function defineAssuranceConfig(config: AssuranceConfig): AssuranceConfig {
-  return Object.freeze({ source: config.source, policy: defineAssurancePolicy(config.policy) })
+  return Object.freeze({
+    source: config.source,
+    policy: defineAssurancePolicy(config.policy),
+    ...(config.capabilities !== undefined
+      ? { capabilities: defineCapabilityPolicy(config.capabilities) }
+      : {}),
+  })
 }
 
 /** Shared selector semantics for policy rules and framework adapters. */

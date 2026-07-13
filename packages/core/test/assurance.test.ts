@@ -18,6 +18,24 @@ const evidence = (app: { routes(): readonly unknown[] }, path: string): readonly
 }
 
 describe("route assurance evidence", () => {
+  test("handler evidence is route-local and invalid scopes fail before registration", () => {
+    const local = withRouteAssurance(() => ({ ok: true }), {
+      id: "test.command",
+      source: "command",
+      scope: "plugin",
+    })
+    const app = server().post("/command", local)
+    expect(evidence(app, "/command")).toEqual(["test.command"])
+
+    const invalid = withRouteAssurance(() => ({ ok: true }), {
+      id: "test.invalid",
+      source: "invalid",
+      scope: "global",
+    })
+    expect(() => app.post("/invalid", invalid)).toThrow("handler assurance")
+    expect(app.routes().some((route) => route.path === "/invalid")).toBe(false)
+  })
+
   test("global evidence covers routes registered before and after use, filtered by method", () => {
     const mutationGuard = withRouteAssurance<Middleware>(
       { name: "mutation-guard", onRequest: () => undefined },

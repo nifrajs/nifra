@@ -5,8 +5,14 @@ import {
   type DeadlineAdmissionOptions,
   NIFRA_DEADLINE_HEADER,
   type RequestBudget,
-} from "@nifrajs/budget"
+} from "../budget.ts"
 import { FrameworkError, RouteConfigError } from "../errors.ts"
+import {
+  CAPABILITY_GUARD,
+  type CapabilityUseEvent,
+  createCapabilityGuard,
+  normalizeRouteCapabilities,
+} from "../internal/capability-runtime.ts"
 import {
   type AssuranceDeclaration,
   type AssuranceEvidence,
@@ -158,7 +164,7 @@ interface RouteEntry {
   /** Per-request context extensions captured at registration (order-scoped). */
   readonly derives: ReadonlyArray<RawDerive>
   /** Static context extensions captured at registration. */
-  readonly decorations: Record<string, unknown>
+  readonly decorations: Record<PropertyKey, unknown>
   /** Whether {@link decorations} has any keys — precomputed so the hot path skips a no-op
    * `Object.assign` on the (common) no-decoration route. */
   readonly hasDecorations: boolean
@@ -313,6 +319,11 @@ export interface ServerOptions {
    * shared matched lane where the gate runs); when unset, the request path pays nothing.
    */
   readonly admission?: AdmissionController
+  /**
+   * Optional token-only observation hook called by `useCapability(c, id)`. It receives no request,
+   * parameters, body, tenant, or values. Routes without capability declarations keep the old hot path.
+   */
+  readonly onCapabilityUse?: (event: CapabilityUseEvent) => void
   /** Structured logger for framework events (redacts secrets). Default: JSON to stderr. */
   readonly logger?: Logger
   /**
@@ -354,6 +365,8 @@ export interface RouteDescriptor {
   readonly schema: RouteSchema | undefined
   /** Effective enforcement evidence, populated only during reflection/introspection. */
   readonly assurance?: readonly AssuranceEvidence[]
+  /** Normalized declared effect tokens, populated only when the route declares any. */
+  readonly capabilities?: readonly string[]
   readonly tool?: {
     readonly name: string
     readonly description: string
@@ -1233,6 +1246,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private readonly gracefulSignals: boolean
   /** Capacity-admission gate; `undefined` = off (the request path pays nothing). */
   private readonly capacityGate: AdmissionController | undefined
+  private readonly onCapabilityUse: ((event: CapabilityUseEvent) => void) | undefined
   private readonly logger: Logger
   /** App-wide validation-error fallback; a route's own `schema.onValidationError` takes precedence. */
   private readonly defaultOnValidationError?: RouteSchema["onValidationError"]
@@ -1293,6 +1307,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
     this.gracefulSignals = options.gracefulSignals ?? false
     this.capacityGate = options.admission
+    this.onCapabilityUse = options.onCapabilityUse
     this.logger = options.logger ?? jsonLogger()
     this.defaultOnValidationError = options.onValidationError
     this.bunServer = undefined
@@ -1744,6 +1759,27 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     schema: RouteSchema | undefined,
     handler: (context: never) => unknown,
   ): void {
+    const capabilities = normalizeRouteCapabilities(schema?.capabilities)
+    const handlerAssurance = assuranceDeclarationsOf(handler as unknown as object)
+    const invalidHandlerScope = handlerAssurance.find(
+      (declaration) => declaration.scope !== "plugin",
+    )
+    if (invalidHandlerScope !== undefined) {
+      throw new RouteConfigError(
+        "INVALID_ASSURANCE",
+        `route handler assurance must use plugin scope (received ${invalidHandlerScope.scope})`,
+      )
+    }
+    const routeDecorations: Record<PropertyKey, unknown> = { ...this.decorations }
+    if (capabilities.length > 0) {
+      routeDecorations[CAPABILITY_GUARD] = createCapabilityGuard(
+        capabilities,
+        method,
+        path,
+        this.onCapabilityUse,
+      )
+    }
+    const hasDecorations = Reflect.ownKeys(routeDecorations).length > 0
     const bare =
       schema?.body === undefined &&
       schema?.query === undefined &&
@@ -1755,7 +1791,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       bare && this.aroundHooks.length === 0
         ? this.buildFusedWeb(
             handler as unknown as InternalHandler,
-            Object.keys(this.decorations).length > 0 ? { ...this.decorations } : undefined,
+            hasDecorations ? routeDecorations : undefined,
             isContextlessNoArgArrow(handler),
           )
         : undefined
@@ -1766,8 +1802,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       schema,
       fusedWeb,
       derives: [...this.derives],
-      decorations: { ...this.decorations },
-      hasDecorations: Object.keys(this.decorations).length > 0,
+      decorations: routeDecorations,
+      hasDecorations,
       beforeHandle: [...this.beforeHandleHooks],
       afterHandle: [...this.afterHandleHooks],
       onError: [...this.onErrorHooks],
@@ -1794,9 +1830,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         this.onErrorHooks.length === 0,
     }
     this.router.add(method, path, entry)
-    const descriptor: RouteDescriptor = { method, path, schema }
+    const descriptor: RouteDescriptor = {
+      method,
+      path,
+      schema,
+      ...(capabilities.length > 0 ? { capabilities } : {}),
+    }
     this.routeList.push(descriptor)
-    const routeAssurance: AssuranceDeclaration[] = [...this.activeAssurance]
+    const routeAssurance: AssuranceDeclaration[] = [...this.activeAssurance, ...handlerAssurance]
     if (schema?.body !== undefined) {
       routeAssurance.push(
         Object.freeze({
@@ -2519,7 +2560,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    */
   private buildFusedWeb(
     handler: InternalHandler,
-    decorations: Record<string, unknown> | undefined,
+    decorations: Record<PropertyKey, unknown> | undefined,
     contextless: boolean,
   ): FusedWebRunner {
     const maxBodyBytes = this.maxBodyBytes

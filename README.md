@@ -95,6 +95,7 @@ No MCP? The same data is available as plain commands — paste into any prompt, 
 nifra context          # routes + schemas (+ per-route call signatures) as Markdown
 nifra check            # typecheck + typed-client drift lint; --json for agents, --lints-only to skip tsc
 nifra assure           # policy gate for route auth/CSRF/rate/body/idempotency evidence; --json for CI
+nifra capabilities check # effect provenance + capability lockfile gate; --json for CI
 nifra doctor           # packages imported but not declared in package.json (--json for agents)
 ```
 
@@ -173,6 +174,15 @@ Official hardening modules also publish route evidence. Add a `nifra.assurance.t
 `nifra assure` in CI to fail when a new route is unclassified or misses required authentication, CSRF,
 rate-limit, body-limit, idempotency, IP, or security-header enforcement. The proof is built from route
 reflection, so it adds no request-path work. See [Security & hardening](site/routes/docs/security.tsx).
+
+Routes may also declare effect tokens (`{ capabilities: ["db.read"] }`). Add capability definitions and
+approved/forbidden import provenance to the same `nifra.assurance.ts`: `nifra check` then blocks raw
+effect imports and declaration/evidence drift, while `nifra capabilities check` also compares the
+deterministic `capabilities.lock.json`. `GET`/`HEAD` domain writes fail unconditionally; mutating effects
+must carry the request-idempotency or durable-command evidence required by their definition. Disabled
+apps retain the existing request hot path; enabled routes pay only when they call `useCapability`.
+An approved provenance import is the explicit trust boundary: its provider internals are not scanned,
+while every unapproved local wrapper remains transitively scanned for raw-effect bypasses.
 
 ## Runs on the edge, too
 

@@ -16,7 +16,7 @@
  * anything fails. Pure scanners (`scanFetchText`, `scanServerOnlyImports`) are unit-tested.
  */
 
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { dirname, isAbsolute, join } from "node:path"
 import { Glob } from "bun"
 
@@ -195,8 +195,13 @@ function parseSimpleFetchCall(snippet: string): SimpleFetchCall | undefined {
   return { path, method, start: match.index, end: close + 1 }
 }
 
-function isPotentialNifraBackendSource(code: string): boolean {
-  return code.includes("@nifrajs/core") || /(?<![.\w])server\s*\(/.test(code)
+function isPotentialBackendSource(code: string): boolean {
+  return (
+    code.includes("@nifrajs/core") ||
+    /(?<![.\w])server\s*\(/.test(code) ||
+    /(?:from\s*|import\s*)["']hono["']/.test(code) ||
+    /new\s+Hono(?:<[^>]+>)?\s*\(/.test(code)
+  )
 }
 
 function scanRoutePattern(
@@ -289,7 +294,7 @@ export function scanFetchText(file: string, content: string): SourceFinding[] {
 /** Statically collect simple Nifra route registrations from source, without importing app code. */
 export function scanStaticRouteText(file: string, content: string): StaticRouteFinding[] {
   const code = stripComments(content)
-  if (!isPotentialNifraBackendSource(code)) return []
+  if (!isPotentialBackendSource(code)) return []
   return [
     ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_DQ),
     ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_SQ),
@@ -766,6 +771,8 @@ export interface CheckDiagnostic {
     | "response-route"
     | "undeclared-dependency"
     | "server-manifest-drift"
+    | "capability-assurance"
+    | "capability-config"
   /** `error` fails the gate (a real contract break); `warning` is advisory — surfaced to the agent but
    * does NOT fail `nifra check`, for patterns that are sometimes intentional (a route returning a raw
    * `Response`, which silently drops the typed client to `data: never` but is valid for files/redirects). */
@@ -826,6 +833,8 @@ const UNDECLARED_DEP_HINT =
   "imported package is not declared in package.json dependencies — run bun add to declare it"
 const MANIFEST_DRIFT_HINT =
   "server-manifest.ts is out of sync with routes/ — re-run the build to regenerate it (a disk-less worker bakes this route table, so the drift is a silent edge break), then commit it"
+const CAPABILITY_HINT =
+  "effect/capability assurance failed — align the route declaration with approved adapter provenance; never bypass an owned effect seam"
 
 function oneLineDiff(file: string, line: number, before: string, after: string): string {
   return `--- ${file}:${line}\n+++ ${file}:${line}\n@@\n-${before}\n+${after}`
@@ -1150,19 +1159,73 @@ export async function collectCheckResult(
     })
   }
 
+  // G+B+D+F: when the project opts into capability assurance, `nifra check` becomes the static
+  // provenance firewall as well as the typed-contract gate. Loading is explicit/config-owned; projects
+  // without nifra.assurance.ts retain the historical scan and hot path unchanged.
+  const assuranceConfigPath = join(cwd, "nifra.assurance.ts")
+  if (existsSync(assuranceConfigPath)) {
+    try {
+      const { loadAssuranceConfig } = await import("./assure.ts")
+      const config = await loadAssuranceConfig(cwd)
+      if (config.capabilities !== undefined) {
+        const { collectCapabilityProjectReport } = await import("./capabilities-tool.ts")
+        const project = await collectCapabilityProjectReport(
+          cwd,
+          config.source,
+          config.capabilities,
+        )
+        for (const finding of project.report.findings) {
+          const violation =
+            finding.code === "forbidden-effect-import"
+              ? project.violations.find(
+                  (candidate) =>
+                    candidate.method === finding.method && candidate.path === finding.path,
+                )
+              : undefined
+          diagnostics.push({
+            rule: "capability-assurance",
+            severity: "error",
+            ...(violation !== undefined ? { file: violation.module, chain: violation.chain } : {}),
+            message: `${finding.message} — ${CAPABILITY_HINT}`,
+            fix: CAPABILITY_HINT,
+            suggestion: {
+              kind: "manual",
+              title: "Restore declared effect provenance",
+              steps: [
+                "Route effectful work through an import listed in capabilities.provenance.imports.",
+                "Declare the exact capability token on the route; do not widen unrelated routes in the same file.",
+                "For domain writes, add the request-idempotency or durable-command adapter required by the capability definition.",
+                "Run `nifra capabilities snapshot` only after assurance passes, then review the lockfile diff.",
+              ],
+            },
+          })
+        }
+      }
+    } catch (err) {
+      diagnostics.push({
+        rule: "capability-config",
+        severity: "error",
+        file: "nifra.assurance.ts",
+        message: `capability assurance config could not be evaluated: ${err instanceof Error ? err.message : String(err)}`,
+        suggestion: {
+          kind: "manual",
+          title: "Repair the assurance config",
+          steps: [
+            "Ensure nifra.assurance.ts default-exports defineAssuranceConfig({ source, policy, capabilities }).",
+            "Fix configuration/import errors; the provenance firewall fails closed when its policy cannot load.",
+          ],
+        },
+      })
+    }
+  }
+
   // Cap the diagnostics when asked (the MCP path), so a project with thousands of findings can't return a
   // message that breaks the stdio transport. `ok` reflects the FULL set — truncation never flips it.
   const total = diagnostics.length
   const max = opts.maxDiagnostics
   const shown = max !== undefined && total > max ? diagnostics.slice(0, max) : diagnostics
   return {
-    ok:
-      tc.ok &&
-      fetches.length === 0 &&
-      untypedClients.length === 0 &&
-      serverImports.length === 0 &&
-      manifestDrift.length === 0 &&
-      (!dr.ran || dr.findings.length === 0),
+    ok: !diagnostics.some((diagnostic) => diagnostic.severity === "error"),
     typecheck: tc.ran ? (tc.ok ? "pass" : "fail") : "skipped",
     diagnostics: shown,
     ...(shown.length < total ? { truncated: { shown: shown.length, total } } : {}),
@@ -1198,6 +1261,8 @@ export async function runCheck(
     ["response-route", "route returns a raw Response (typed client → data: never)"],
     ["undeclared-dependency", "undeclared dependency in package.json"],
     ["server-manifest-drift", "server-manifest.ts drifted from routes/"],
+    ["capability-assurance", "effect/capability assurance"],
+    ["capability-config", "capability assurance config"],
   ] as const) {
     const ds = counts(rule)
     if (rule === "response-route") {

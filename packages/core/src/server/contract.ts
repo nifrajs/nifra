@@ -1,4 +1,5 @@
 import { RouteConfigError } from "../errors.ts"
+import { normalizeRouteCapabilities } from "../internal/capability-runtime.ts"
 import { METHODS, type Method } from "../router/router.ts"
 import type { InferOutput, StandardSchemaV1 } from "../schema/standard.ts"
 import type { Context, Params, RouteSchema } from "./context.ts"
@@ -27,6 +28,8 @@ export interface OperationDef {
   readonly body?: StandardSchemaV1
   readonly query?: StandardSchemaV1
   readonly response?: StandardSchemaV1
+  /** Declared effect tokens, carried into route reflection and capability assurance. */
+  readonly capabilities?: readonly string[]
   /** Short summary (OpenAPI `summary`). */
   readonly summary?: string
   /** Longer description (OpenAPI `description`, CommonMark). */
@@ -167,6 +170,7 @@ export function defineContract<const C extends ContractShape>(contract: C): C {
     if (seen.has(key)) {
       throw new RouteConfigError("DUPLICATE_ROUTE", `duplicate operation route: ${key}`)
     }
+    normalizeRouteCapabilities(op.capabilities)
     seen.add(key)
   }
   return contract
@@ -219,11 +223,15 @@ export function implement<const C extends ContractShape, H extends HandlersFor<C
     // once here at bind time, not per request — it just carries a reference to the op's existing schema.
     // A response-less op still yields `undefined`, byte-identical to before.
     const schema: RouteSchema | undefined =
-      op.body !== undefined || op.query !== undefined || op.response !== undefined
+      op.body !== undefined ||
+      op.query !== undefined ||
+      op.response !== undefined ||
+      op.capabilities !== undefined
         ? {
             ...(op.body !== undefined ? { body: op.body } : {}),
             ...(op.query !== undefined ? { query: op.query } : {}),
             ...(op.response !== undefined ? { response: op.response } : {}),
+            ...(op.capabilities !== undefined ? { capabilities: op.capabilities } : {}),
           }
         : undefined
     app.register(
