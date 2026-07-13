@@ -8,6 +8,7 @@ import {
   Navigate,
   NavLink,
   RouterContext,
+  type SetSearchParams,
   useLocation,
   useNavigate,
   useParams,
@@ -139,4 +140,109 @@ test("useNavigate forwards through the registered browser bridge", () => {
   renderToStaticMarkup(compose([Page], { data: null }))
   navigate?.("/next", { replace: true })
   expect(calls).toEqual([["/next", { replace: true }]])
+})
+
+// Capture the setSearchParams setter for a given router path (renders a probe component that stashes it).
+function captureSetSearchParams(path: string): SetSearchParams {
+  let setter: SetSearchParams | undefined
+  const Probe = () => {
+    const [, set] = useSearchParams()
+    setter = set
+    return null
+  }
+  renderToStaticMarkup(
+    createElement(RouterContext.Provider, { value: { params: {}, path } }, createElement(Probe)),
+  )
+  if (setter === undefined) throw new Error("setter not captured")
+  return setter
+}
+
+test("setSearchParams navigates with the new query — record/string/URLSearchParams/updater/array/empty", () => {
+  const calls: string[] = []
+  setBrowserNavigate((to) => calls.push(to as string))
+  const set = captureSetSearchParams("/s?q=old")
+  set({ q: "new" }) // record
+  set("q=raw&p=2") // raw string
+  set(new URLSearchParams("a=1")) // URLSearchParams
+  set((prev) => {
+    prev.set("q", "up")
+    return prev
+  }) // updater over the current query (?q=old)
+  set({ tags: ["a", "b"] }) // array value → repeated key
+  set({}) // empty → no "?" suffix
+  expect(calls).toEqual(["/s?q=new", "/s?q=raw&p=2", "/s?a=1", "/s?q=up", "/s?tags=a&tags=b", "/s"])
+})
+
+// A minimal MouseEvent stand-in for driving Link's click handler without a DOM. `preventDefault`
+// flips `defaultPrevented` so the handler's guard behaves like a real event.
+interface MockClick {
+  defaultPrevented: boolean
+  button: number
+  metaKey?: boolean
+  ctrlKey?: boolean
+  shiftKey?: boolean
+  altKey?: boolean
+  preventDefault: () => void
+}
+function mockClick(over: Partial<MockClick> = {}): MockClick {
+  const e: MockClick = {
+    defaultPrevented: false,
+    button: 0,
+    preventDefault() {
+      e.defaultPrevented = true
+    },
+    ...over,
+  }
+  return e
+}
+// Pull Link's rendered <a> onClick out of the forwardRef render (no DOM needed to exercise its logic).
+function linkOnClick(props: Record<string, unknown>): (e: MockClick) => void {
+  const rendered = (
+    Link as unknown as {
+      render: (p: unknown, r: unknown) => { props: { onClick: (e: MockClick) => void } }
+    }
+  ).render(props, null)
+  return rendered.props.onClick
+}
+
+test("Link intercepts a plain left-click → preventDefault + navigate(to, {replace})", () => {
+  const calls: Array<[unknown, unknown]> = []
+  setBrowserNavigate((to, o) => calls.push([to, o]))
+  const e = mockClick()
+  linkOnClick({ to: "/x", replace: true })(e)
+  expect(e.defaultPrevented).toBe(true)
+  expect(calls).toEqual([["/x", { replace: true }]])
+})
+
+test("Link leaves modified / non-left / already-handled clicks to the browser", () => {
+  const calls: unknown[] = []
+  setBrowserNavigate((to) => calls.push(to))
+  linkOnClick({ to: "/x" })(mockClick({ button: 1 })) // middle-click
+  linkOnClick({ to: "/x" })(mockClick({ metaKey: true })) // cmd/ctrl-click (new tab)
+  linkOnClick({ to: "/x" })(mockClick({ defaultPrevented: true })) // an upstream handler took it
+  linkOnClick({ to: "/x", target: "_blank" })(mockClick()) // target opts out
+  expect(calls).toEqual([])
+})
+
+test("Link runs the user onClick first; a user preventDefault suppresses navigation", () => {
+  const calls: unknown[] = []
+  setBrowserNavigate((to) => calls.push(to))
+  let userCalled = false
+  const e = mockClick()
+  linkOnClick({
+    to: "/x",
+    onClick: (ev: MockClick) => {
+      userCalled = true
+      ev.preventDefault()
+    },
+  })(e)
+  expect(userCalled).toBe(true)
+  expect(calls).toEqual([]) // defaultPrevented after the user handler → bail
+})
+
+test("Link click before hydration (no bridge) is a no-op — the native <a href> handles it", () => {
+  setBrowserNavigate(undefined)
+  const e = mockClick()
+  linkOnClick({ to: "/x" })(e)
+  expect(e.defaultPrevented).toBe(false) // no preventDefault → browser does the full-page navigation
 })
