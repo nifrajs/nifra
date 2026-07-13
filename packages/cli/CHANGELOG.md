@@ -1,5 +1,29 @@
 # @nifrajs/cli
 
+## 1.10.0
+
+### Minor Changes
+
+- 92181be: Add hardened effect and capability assurance: reflected route declarations, fail-closed runtime
+  beacons, static effect-provenance analysis, deterministic capability lockfiles, HTTP safe-method
+  guards, and effect-specific request or durable idempotency requirements.
+
+  Add `nifra capabilities snapshot` and `nifra capabilities check` so capability drift and raw
+  provider bypasses can be enforced in CI without adding work to the default request path.
+
+### Patch Changes
+
+- Updated dependencies [92181be]
+- Updated dependencies [3773f0a]
+- Updated dependencies [92181be]
+  - @nifrajs/core@1.10.0
+  - @nifrajs/client@1.10.0
+  - @nifrajs/schema@1.10.0
+  - @nifrajs/web@1.10.0
+  - @nifrajs/mcp@1.10.0
+  - @nifrajs/runner@1.10.0
+  - create-nifra@1.10.0
+
 ## 1.9.1
 
 ### Patch Changes
