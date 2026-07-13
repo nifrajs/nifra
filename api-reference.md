@@ -215,6 +215,14 @@ Every public export of every package — name, kind, signature, and doc summary 
   A contract: named operations. Names are the handler keys and OpenAPI operationIds.
 - **CookieOptions** _(interface)_ — `interface CookieOptions`
   Attributes for a `Set-Cookie`. `expires` is a `Date`; `maxAge` is in **seconds**.
+- **DATA_CLASSIFICATION_RANK** _(const)_ — `DATA_CLASSIFICATION_RANK: Readonly<Record<DataClassification, number>>`
+  Total order over classifications; higher = more sensitive.
+- **DEFAULT_IDEMPOTENCY_HEADER** _(const)_ — `DEFAULT_IDEMPOTENCY_HEADER: "idempotency-key"`
+  Canonical request header carrying the client-chosen idempotency key.
+- **DEFAULT_IDEMPOTENCY_TTL_MS** _(const)_ — `DEFAULT_IDEMPOTENCY_TTL_MS: 86400000`
+  Default retention for a stored idempotent response: 24 hours.
+- **DataClassification** _(type)_ — `type DataClassification = "public" | "pii" | "secret"`
+  Sensitivity of the data a response carries. Ordered `public` < `pii` < `secret`.
 - **DiffSeverity** _(type)_ — `type DiffSeverity = "breaking" | "compatible" | "info"`
 - **DurableObjectNamespaceLike** _(interface)_ — `interface DurableObjectNamespaceLike`
   Structural view of a Cloudflare Durable Object namespace binding — keeps `@cloudflare/workers-types` out of `@nifrajs/core`. The real `DurableObjectNamespace` satisfies it.
@@ -230,6 +238,14 @@ Every public export of every package — name, kind, signature, and doc summary 
   Public handler shape: context typed from the path, the (optional) schema, and any accumulated middleware context `Ctx` (from `derive`/`decorate`).
 - **HandlersFor** _(type)_ — `type HandlersFor<C extends ContractShape> = { [K in keyof C]: (context: ContextForOp<C[K]>) => MaybePromise<HandlerReturnForOp<C[K]>> }`
   The handlers `implement` requires: one per operation, typed from the op's input + response contract.
+- **IDEMPOTENT_REPLAY_HEADER** _(const)_ — `IDEMPOTENT_REPLAY_HEADER: "x-nifra-idempotent-replay"`
+  Header stamped on a replayed response so clients/proxies can tell a replay from a fresh run.
+- **IdempotencyBeginResult** _(type)_ — `type IdempotencyBeginResult = | { readonly state: "new" } | { readonly state: "replay"; readonly response: StoredResponse } | { readonly state: "mismatch" } | { readonly state: "in-flight" }`
+  Outcome of reserving a key. `new` → the caller runs the handler and later calls {@link * IdempotencyStore.complete}. `replay` → return the stored response, handler never runs. `mismatch` → same key, different request fingerprint (client bug) → 409. `in-flight` → the key is reserved but not yet comp…
+- **IdempotencyScope** _(type)_ — `type IdempotencyScope = "request" | "durable"`
+  Whether a route's idempotency is satisfied by an in-process store or a durable (cross-restart) one.
+- **IdempotencyStore** _(interface)_ — `interface IdempotencyStore`
+  Storage seam for idempotent responses. `begin` MUST be atomic: for one key, exactly one concurrent caller sees `new`; the rest see `in-flight` (or `replay` once completed). The in-memory store gets this free from the single-threaded event loop; a durable store uses an atomic insert.
 - **IdentityPlugin** _(type)_ — `type IdentityPlugin = (<S extends AnyServer>(app: S) => S) & { readonly pluginName?: string }`
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ — `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
@@ -245,6 +261,9 @@ Every public export of every package — name, kind, signature, and doc summary 
   An app-declared MCP prompt — a reusable prompt template an agent can fetch through `nifra mcp`.
 - **McpResourceDescriptor** _(interface)_ — `interface McpResourceDescriptor`
   An app-declared MCP resource — read-only data an agent can fetch through `nifra mcp`.
+- **MemoryIdempotencyStore** _(class)_ — `class MemoryIdempotencyStore`
+  In-process idempotency store. Reservation is atomic by construction — `begin` never awaits, so the single-threaded event loop serializes concurrent callers for one key. Expired entries are treated as absent (lazy eviction on access); a periodic {@link MemoryIdempotencyStore.sweep} bounds memory.
+- **MemoryIdempotencyStoreOptions** _(interface)_ — `interface MemoryIdempotencyStoreOptions`
 - **Method** _(type)_ — `type Method = (typeof METHODS)[number]`
 - **Middleware** _(interface)_ — `interface Middleware`
   A bundle of lifecycle hooks applied together via {@link Server.use} — the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware is context-agnostic (sees the base `Context`); `use` does no context-type merging — th…
@@ -339,6 +358,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **StandardTypes** _(interface)_ — `interface StandardTypes<Input = unknown, Output = Input>`
 - **StandardWebSocket** _(interface)_ — `interface StandardWebSocket`
   A standard server-side `WebSocket` — the half returned by Deno's `Deno.upgradeWebSocket` and the Workers `WebSocketPair`. {@link attachWebSocket} wires one to a nifra handler, so the Deno and Workers bridges share all the dispatch/normalization/error-isolation logic (only the upgrade call differs).
+- **StoredResponse** _(interface)_ — `interface StoredResponse`
+  A serialized response held by a store. `body` is base64 so binary payloads round-trip intact.
 - **ToolAnnotations** _(interface)_ — `interface ToolAnnotations`
   MCP tool safety hints, surfaced in `tools/list`, that tell an agent how risky a `.tool()` call is — so it can decide whether to auto-invoke or confirm first. All optional; an omitted hint means "unknown". Mirrors the MCP spec's tool `annotations`.
 - **TopicRegistry** _(class)_ — `class TopicRegistry`
@@ -364,8 +385,14 @@ Every public export of every package — name, kind, signature, and doc summary 
   Verified ⇒ the raw `payload` text (parse it with your schema). Rejected ⇒ a stable `reason`.
 - **attachWebSocket** _(function)_ — `attachWebSocket: (socket: StandardWebSocket, handler: WebSocketHandler, data: unknown, options: { openNow: boolean; pubsub: TopicRegistry; }) => NifraWebSocket`
   Wire a standard server-side `WebSocket` to a nifra {@link WebSocketHandler}, returning the portable {@link NifraWebSocket}. Shared by the Deno and Workers bridges. `openNow` fires `open` immediately (Workers, where the socket is already open after `accept()`); otherwise `open` waits for the socket'…
+- **classificationAtLeast** _(function)_ — `classificationAtLeast: (value: DataClassification, floor: DataClassification) => boolean`
+  True when `value` is at least as sensitive as `floor` (e.g. `classificationAtLeast(x, "pii")`).
 - **commonSecretPatterns** _(const)_ — `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} — opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
+- **computeIdempotencyFingerprint** _(function)_ — `computeIdempotencyFingerprint: (method: string, path: string, body: Uint8Array) => Promise<string>`
+  SHA-256 fingerprint binding a key to one request: method, path (+ query), and the raw body bytes. A collision-resistant hash matters — a weak hash would let a crafted body replay another's response.
+- **createMemoryIdempotencyStore** _(function)_ — `createMemoryIdempotencyStore: (options?: MemoryIdempotencyStoreOptions) => MemoryIdempotencyStore`
+  Convenience factory mirroring the other core primitives' `create*` style.
 - **defineAssuranceConfig** _(function)_ — `defineAssuranceConfig: (config: AssuranceConfig) => AssuranceConfig`
   Identity helper for a `nifra.assurance.ts` default export.
 - **defineAssurancePolicy** _(function)_ — `defineAssurancePolicy: (policy: AssurancePolicy) => AssurancePolicy`
@@ -388,10 +415,14 @@ Every public export of every package — name, kind, signature, and doc summary 
   Evaluate reflected route evidence against the first matching policy rule.
 - **implement** _(function)_ — `implement: <const C extends ContractShape, H extends HandlersFor<C>>(contract: C, handlers: H) => Server<RegistryFromImpl<C, H>>`
   Bind handlers to a contract, producing a real {@link Server} you can `.listen()` or `.fetch()`. Each op is registered through the same path as the inline builder, so the result is identical to writing the routes inline — handlers lift over **unchanged** ("graduation"), and body/query schemas valida…
+- **isDataClassification** _(function)_ — `isDataClassification: (value: unknown) => value is DataClassification`
+  Whether `value` is a known classification token.
 - **jsonLogger** _(function)_ — `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
   The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction — pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
 - **matchesAssuranceSelector** _(function)_ — `matchesAssuranceSelector: (route: Pick<ReflectedRoute, "method" | "path" | "tool">, selector: AssuranceRouteSelector) => boolean`
   Shared selector semantics for policy rules and framework adapters.
+- **maxClassification** _(function)_ — `maxClassification: (values: Iterable<DataClassification>) => DataClassification`
+  The most sensitive classification among the inputs; `"public"` when none are given.
 - **parseCookies** _(function)_ — `parseCookies: (header: string | null | undefined) => Record<string, string>`
   Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are skipped rather than throwing — a junk `Cookie` header shouldn't fail the request.
 - **redactLogFields** _(function)_ — `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
@@ -400,10 +431,14 @@ Every public export of every package — name, kind, signature, and doc summary 
   Safely enumerate and normalize route descriptors from an app or descriptor array. Invalid entries are ignored; a missing/throwing `routes()` method yields an empty array.
 - **reflectSchema** _(function)_ — `reflectSchema: (value: unknown) => SchemaReflection`
   Reflect a Standard Schema, Nifra/TypeBox schema carrier, or raw JSON Schema. Never throws. Validation-only schemas have `standard` but no `jsonSchema`; raw JSON Schema has the reverse.
+- **responseFromStored** _(function)_ — `responseFromStored: (stored: StoredResponse) => Response`
+  Rebuild a live response from storage, stamping the replay marker header.
 - **robots** _(function)_ — `robots: (options: RobotsOptions) => string`
   Build a `robots.txt` body from grouped rules plus optional `Sitemap:`/`Host:` lines.
 - **serializeCookie** _(function)_ — `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
   Serialize a `Set-Cookie` header value. Pure — applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, or an oversized result — a serialization bug shou…
+- **serializeResponse** _(function)_ — `serializeResponse: (response: Response) => Promise<StoredResponse>`
+  Buffer a response into a storable form. Clones first so the live response body stays intact.
 - **server** _(function)_ — `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
   Create a new {@link Server}. Pass an `Env` to type the platform bindings — `server<Env>()` makes `c.env: Env` in every handler + middleware, and types the `env` argument of `app.fetch` / `toFetchHandler`. Omit it and `c.env` is `unknown` (validate/cast before use).
 - **signValue** _(function)_ — `signValue: (value: string, secret: string) => Promise<string>`
@@ -425,6 +460,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **useCapability** _(function)_ — `useCapability: (context: object, capability: string) => void`
   Runtime effect beacon for owned adapters. It fails closed when the route omitted the capability or when no route guard is present. Static provenance is still required: code can bypass a beacon.
 - **validCapabilityId** _(function)_ — `validCapabilityId: (value: string) => boolean`
+- **validIdempotencyKey** _(function)_ — `validIdempotencyKey: (key: string) => boolean`
+  A key must be a non-empty, bounded, control-char-free token. Fail closed on anything else.
 - **validateStandard** _(function)_ — `validateStandard: <Schema extends StandardSchemaV1>(schema: Schema, value: unknown) => ValidationOutcome<InferOutput<Schema>> | Promise<ValidationOutcome<InferOutput<Schema>>>`
   Run a Standard Schema and normalize the result. Sync validators stay sync; async validators are awaited.
 - **verifyWebhook** _(function)_ — `verifyWebhook: (req: Request, secret: string | readonly string[], options?: VerifyWebhookOptions) => Promise<WebhookResult>`
@@ -1432,6 +1469,14 @@ Every public export of every package — name, kind, signature, and doc summary 
   A contract: named operations. Names are the handler keys and OpenAPI operationIds.
 - **CookieOptions** _(interface)_ — `interface CookieOptions`
   Attributes for a `Set-Cookie`. `expires` is a `Date`; `maxAge` is in **seconds**.
+- **DATA_CLASSIFICATION_RANK** _(const)_ — `DATA_CLASSIFICATION_RANK: Readonly<Record<DataClassification, number>>`
+  Total order over classifications; higher = more sensitive.
+- **DEFAULT_IDEMPOTENCY_HEADER** _(const)_ — `DEFAULT_IDEMPOTENCY_HEADER: "idempotency-key"`
+  Canonical request header carrying the client-chosen idempotency key.
+- **DEFAULT_IDEMPOTENCY_TTL_MS** _(const)_ — `DEFAULT_IDEMPOTENCY_TTL_MS: 86400000`
+  Default retention for a stored idempotent response: 24 hours.
+- **DataClassification** _(type)_ — `type DataClassification = "public" | "pii" | "secret"`
+  Sensitivity of the data a response carries. Ordered `public` < `pii` < `secret`.
 - **DiffSeverity** _(type)_ — `type DiffSeverity = "breaking" | "compatible" | "info"`
 - **DurableObjectNamespaceLike** _(interface)_ — `interface DurableObjectNamespaceLike`
   Structural view of a Cloudflare Durable Object namespace binding — keeps `@cloudflare/workers-types` out of `@nifrajs/core`. The real `DurableObjectNamespace` satisfies it.
@@ -1447,6 +1492,14 @@ Every public export of every package — name, kind, signature, and doc summary 
   Public handler shape: context typed from the path, the (optional) schema, and any accumulated middleware context `Ctx` (from `derive`/`decorate`).
 - **HandlersFor** _(type)_ — `type HandlersFor<C extends ContractShape> = { [K in keyof C]: (context: ContextForOp<C[K]>) => MaybePromise<HandlerReturnForOp<C[K]>> }`
   The handlers `implement` requires: one per operation, typed from the op's input + response contract.
+- **IDEMPOTENT_REPLAY_HEADER** _(const)_ — `IDEMPOTENT_REPLAY_HEADER: "x-nifra-idempotent-replay"`
+  Header stamped on a replayed response so clients/proxies can tell a replay from a fresh run.
+- **IdempotencyBeginResult** _(type)_ — `type IdempotencyBeginResult = | { readonly state: "new" } | { readonly state: "replay"; readonly response: StoredResponse } | { readonly state: "mismatch" } | { readonly state: "in-flight" }`
+  Outcome of reserving a key. `new` → the caller runs the handler and later calls {@link * IdempotencyStore.complete}. `replay` → return the stored response, handler never runs. `mismatch` → same key, different request fingerprint (client bug) → 409. `in-flight` → the key is reserved but not yet comp…
+- **IdempotencyScope** _(type)_ — `type IdempotencyScope = "request" | "durable"`
+  Whether a route's idempotency is satisfied by an in-process store or a durable (cross-restart) one.
+- **IdempotencyStore** _(interface)_ — `interface IdempotencyStore`
+  Storage seam for idempotent responses. `begin` MUST be atomic: for one key, exactly one concurrent caller sees `new`; the rest see `in-flight` (or `replay` once completed). The in-memory store gets this free from the single-threaded event loop; a durable store uses an atomic insert.
 - **IdentityPlugin** _(type)_ — `type IdentityPlugin = (<S extends AnyServer>(app: S) => S) & { readonly pluginName?: string }`
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ — `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
@@ -1462,6 +1515,9 @@ Every public export of every package — name, kind, signature, and doc summary 
   An app-declared MCP prompt — a reusable prompt template an agent can fetch through `nifra mcp`.
 - **McpResourceDescriptor** _(interface)_ — `interface McpResourceDescriptor`
   An app-declared MCP resource — read-only data an agent can fetch through `nifra mcp`.
+- **MemoryIdempotencyStore** _(class)_ — `class MemoryIdempotencyStore`
+  In-process idempotency store. Reservation is atomic by construction — `begin` never awaits, so the single-threaded event loop serializes concurrent callers for one key. Expired entries are treated as absent (lazy eviction on access); a periodic {@link MemoryIdempotencyStore.sweep} bounds memory.
+- **MemoryIdempotencyStoreOptions** _(interface)_ — `interface MemoryIdempotencyStoreOptions`
 - **Method** _(type)_ — `type Method = (typeof METHODS)[number]`
 - **Middleware** _(interface)_ — `interface Middleware`
   A bundle of lifecycle hooks applied together via {@link Server.use} — the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware is context-agnostic (sees the base `Context`); `use` does no context-type merging — th…
@@ -1556,6 +1612,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **StandardTypes** _(interface)_ — `interface StandardTypes<Input = unknown, Output = Input>`
 - **StandardWebSocket** _(interface)_ — `interface StandardWebSocket`
   A standard server-side `WebSocket` — the half returned by Deno's `Deno.upgradeWebSocket` and the Workers `WebSocketPair`. {@link attachWebSocket} wires one to a nifra handler, so the Deno and Workers bridges share all the dispatch/normalization/error-isolation logic (only the upgrade call differs).
+- **StoredResponse** _(interface)_ — `interface StoredResponse`
+  A serialized response held by a store. `body` is base64 so binary payloads round-trip intact.
 - **ToolAnnotations** _(interface)_ — `interface ToolAnnotations`
   MCP tool safety hints, surfaced in `tools/list`, that tell an agent how risky a `.tool()` call is — so it can decide whether to auto-invoke or confirm first. All optional; an omitted hint means "unknown". Mirrors the MCP spec's tool `annotations`.
 - **TopicRegistry** _(class)_ — `class TopicRegistry`
@@ -1581,8 +1639,14 @@ Every public export of every package — name, kind, signature, and doc summary 
   Verified ⇒ the raw `payload` text (parse it with your schema). Rejected ⇒ a stable `reason`.
 - **attachWebSocket** _(function)_ — `attachWebSocket: (socket: StandardWebSocket, handler: WebSocketHandler, data: unknown, options: { openNow: boolean; pubsub: TopicRegistry; }) => NifraWebSocket`
   Wire a standard server-side `WebSocket` to a nifra {@link WebSocketHandler}, returning the portable {@link NifraWebSocket}. Shared by the Deno and Workers bridges. `openNow` fires `open` immediately (Workers, where the socket is already open after `accept()`); otherwise `open` waits for the socket'…
+- **classificationAtLeast** _(function)_ — `classificationAtLeast: (value: DataClassification, floor: DataClassification) => boolean`
+  True when `value` is at least as sensitive as `floor` (e.g. `classificationAtLeast(x, "pii")`).
 - **commonSecretPatterns** _(const)_ — `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} — opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
+- **computeIdempotencyFingerprint** _(function)_ — `computeIdempotencyFingerprint: (method: string, path: string, body: Uint8Array) => Promise<string>`
+  SHA-256 fingerprint binding a key to one request: method, path (+ query), and the raw body bytes. A collision-resistant hash matters — a weak hash would let a crafted body replay another's response.
+- **createMemoryIdempotencyStore** _(function)_ — `createMemoryIdempotencyStore: (options?: MemoryIdempotencyStoreOptions) => MemoryIdempotencyStore`
+  Convenience factory mirroring the other core primitives' `create*` style.
 - **defineAssuranceConfig** _(function)_ — `defineAssuranceConfig: (config: AssuranceConfig) => AssuranceConfig`
   Identity helper for a `nifra.assurance.ts` default export.
 - **defineAssurancePolicy** _(function)_ — `defineAssurancePolicy: (policy: AssurancePolicy) => AssurancePolicy`
@@ -1605,10 +1669,14 @@ Every public export of every package — name, kind, signature, and doc summary 
   Evaluate reflected route evidence against the first matching policy rule.
 - **implement** _(function)_ — `implement: <const C extends ContractShape, H extends HandlersFor<C>>(contract: C, handlers: H) => Server<RegistryFromImpl<C, H>>`
   Bind handlers to a contract, producing a real {@link Server} you can `.listen()` or `.fetch()`. Each op is registered through the same path as the inline builder, so the result is identical to writing the routes inline — handlers lift over **unchanged** ("graduation"), and body/query schemas valida…
+- **isDataClassification** _(function)_ — `isDataClassification: (value: unknown) => value is DataClassification`
+  Whether `value` is a known classification token.
 - **jsonLogger** _(function)_ — `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
   The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction — pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
 - **matchesAssuranceSelector** _(function)_ — `matchesAssuranceSelector: (route: Pick<ReflectedRoute, "method" | "path" | "tool">, selector: AssuranceRouteSelector) => boolean`
   Shared selector semantics for policy rules and framework adapters.
+- **maxClassification** _(function)_ — `maxClassification: (values: Iterable<DataClassification>) => DataClassification`
+  The most sensitive classification among the inputs; `"public"` when none are given.
 - **parseCookies** _(function)_ — `parseCookies: (header: string | null | undefined) => Record<string, string>`
   Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are skipped rather than throwing — a junk `Cookie` header shouldn't fail the request.
 - **redactLogFields** _(function)_ — `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
@@ -1617,10 +1685,14 @@ Every public export of every package — name, kind, signature, and doc summary 
   Safely enumerate and normalize route descriptors from an app or descriptor array. Invalid entries are ignored; a missing/throwing `routes()` method yields an empty array.
 - **reflectSchema** _(function)_ — `reflectSchema: (value: unknown) => SchemaReflection`
   Reflect a Standard Schema, Nifra/TypeBox schema carrier, or raw JSON Schema. Never throws. Validation-only schemas have `standard` but no `jsonSchema`; raw JSON Schema has the reverse.
+- **responseFromStored** _(function)_ — `responseFromStored: (stored: StoredResponse) => Response`
+  Rebuild a live response from storage, stamping the replay marker header.
 - **robots** _(function)_ — `robots: (options: RobotsOptions) => string`
   Build a `robots.txt` body from grouped rules plus optional `Sitemap:`/`Host:` lines.
 - **serializeCookie** _(function)_ — `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
   Serialize a `Set-Cookie` header value. Pure — applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, or an oversized result — a serialization bug shou…
+- **serializeResponse** _(function)_ — `serializeResponse: (response: Response) => Promise<StoredResponse>`
+  Buffer a response into a storable form. Clones first so the live response body stays intact.
 - **server** _(function)_ — `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
   Create a new {@link Server}. Pass an `Env` to type the platform bindings — `server<Env>()` makes `c.env: Env` in every handler + middleware, and types the `env` argument of `app.fetch` / `toFetchHandler`. Omit it and `c.env` is `unknown` (validate/cast before use).
 - **signValue** _(function)_ — `signValue: (value: string, secret: string) => Promise<string>`
@@ -1642,6 +1714,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **useCapability** _(function)_ — `useCapability: (context: object, capability: string) => void`
   Runtime effect beacon for owned adapters. It fails closed when the route omitted the capability or when no route guard is present. Static provenance is still required: code can bypass a beacon.
 - **validCapabilityId** _(function)_ — `validCapabilityId: (value: string) => boolean`
+- **validIdempotencyKey** _(function)_ — `validIdempotencyKey: (key: string) => boolean`
+  A key must be a non-empty, bounded, control-char-free token. Fail closed on anything else.
 - **validateStandard** _(function)_ — `validateStandard: <Schema extends StandardSchemaV1>(schema: Schema, value: unknown) => ValidationOutcome<InferOutput<Schema>> | Promise<ValidationOutcome<InferOutput<Schema>>>`
   Run a Standard Schema and normalize the result. Sync validators stay sync; async validators are awaited.
 - **verifyWebhook** _(function)_ — `verifyWebhook: (req: Request, secret: string | readonly string[], options?: VerifyWebhookOptions) => Promise<WebhookResult>`

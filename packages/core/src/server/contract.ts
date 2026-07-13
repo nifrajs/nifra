@@ -1,8 +1,9 @@
+import type { DataClassification } from "../classification.ts"
 import { RouteConfigError } from "../errors.ts"
 import { normalizeRouteCapabilities } from "../internal/capability-runtime.ts"
 import { METHODS, type Method } from "../router/router.ts"
 import type { InferOutput, StandardSchemaV1 } from "../schema/standard.ts"
-import type { Context, Params, RouteSchema } from "./context.ts"
+import type { Context, IdempotencyConfig, Params, RouteSchema } from "./context.ts"
 import type { OutputOf } from "./registry.ts"
 import { Server } from "./server.ts"
 
@@ -30,6 +31,10 @@ export interface OperationDef {
   readonly response?: StandardSchemaV1
   /** Declared effect tokens, carried into route reflection and capability assurance. */
   readonly capabilities?: readonly string[]
+  /** Dedupe retries of this operation on an `Idempotency-Key` header (see {@link RouteSchema.idempotency}). */
+  readonly idempotency?: IdempotencyConfig
+  /** Highest data-sensitivity the response carries (see {@link RouteSchema.classification}). */
+  readonly classification?: DataClassification
   /** Short summary (OpenAPI `summary`). */
   readonly summary?: string
   /** Longer description (OpenAPI `description`, CommonMark). */
@@ -226,12 +231,16 @@ export function implement<const C extends ContractShape, H extends HandlersFor<C
       op.body !== undefined ||
       op.query !== undefined ||
       op.response !== undefined ||
-      op.capabilities !== undefined
+      op.capabilities !== undefined ||
+      op.idempotency !== undefined ||
+      op.classification !== undefined
         ? {
             ...(op.body !== undefined ? { body: op.body } : {}),
             ...(op.query !== undefined ? { query: op.query } : {}),
             ...(op.response !== undefined ? { response: op.response } : {}),
             ...(op.capabilities !== undefined ? { capabilities: op.capabilities } : {}),
+            ...(op.idempotency !== undefined ? { idempotency: op.idempotency } : {}),
+            ...(op.classification !== undefined ? { classification: op.classification } : {}),
           }
         : undefined
     app.register(

@@ -8,6 +8,16 @@ import {
 } from "../budget.ts"
 import { FrameworkError, RouteConfigError } from "../errors.ts"
 import {
+  computeIdempotencyFingerprint,
+  DEFAULT_IDEMPOTENCY_HEADER,
+  DEFAULT_IDEMPOTENCY_TTL_MS,
+  type IdempotencyStore,
+  MemoryIdempotencyStore,
+  responseFromStored,
+  serializeResponse,
+  validIdempotencyKey,
+} from "../idempotency.ts"
+import {
   CAPABILITY_GUARD,
   type CapabilityUseEvent,
   createCapabilityGuard,
@@ -158,9 +168,18 @@ type RawOnRequest = (req: Request) => MaybePromise<OnRequestResult>
 type RawOnResponse = (response: Response, req: Request) => MaybePromise<Response>
 type RawOnResponseFinalized = (outcome: ResponseFinalization, req: Request) => MaybePromise<void>
 
+/** Registration-resolved idempotency for a route: the config with its store + defaults pinned. */
+interface ResolvedIdempotency {
+  readonly store: IdempotencyStore
+  readonly ttlMs: number
+  readonly headerName: string
+}
+
 interface RouteEntry {
   readonly handler: InternalHandler
   readonly schema: RouteSchema | undefined
+  /** Resolved idempotency config; `undefined` = off (the dedupe lane is never entered). */
+  readonly idempotent: ResolvedIdempotency | undefined
   /** Per-request context extensions captured at registration (order-scoped). */
   readonly derives: ReadonlyArray<RawDerive>
   /** Static context extensions captured at registration. */
@@ -324,6 +343,12 @@ export interface ServerOptions {
    * parameters, body, tenant, or values. Routes without capability declarations keep the old hot path.
    */
   readonly onCapabilityUse?: (event: CapabilityUseEvent) => void
+  /**
+   * Default store backing routes that declare `schema.idempotency` without their own `store`. Defaults
+   * to a shared in-process {@link MemoryIdempotencyStore} (created lazily on first idempotent route).
+   * Inject a durable store here to make request-scoped dedupe survive restarts app-wide.
+   */
+  readonly idempotencyStore?: IdempotencyStore
   /** Structured logger for framework events (redacts secrets). Default: JSON to stderr. */
   readonly logger?: Logger
   /**
@@ -1247,6 +1272,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   /** Capacity-admission gate; `undefined` = off (the request path pays nothing). */
   private readonly capacityGate: AdmissionController | undefined
   private readonly onCapabilityUse: ((event: CapabilityUseEvent) => void) | undefined
+  /** App-wide idempotency store (explicit option, else a lazily-created in-process default). */
+  private readonly configuredIdempotencyStore: IdempotencyStore | undefined
+  private lazyIdempotencyStore: IdempotencyStore | undefined
   private readonly logger: Logger
   /** App-wide validation-error fallback; a route's own `schema.onValidationError` takes precedence. */
   private readonly defaultOnValidationError?: RouteSchema["onValidationError"]
@@ -1308,6 +1336,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.gracefulSignals = options.gracefulSignals ?? false
     this.capacityGate = options.admission
     this.onCapabilityUse = options.onCapabilityUse
+    this.configuredIdempotencyStore = options.idempotencyStore
+    this.lazyIdempotencyStore = undefined
     this.logger = options.logger ?? jsonLogger()
     this.defaultOnValidationError = options.onValidationError
     this.bunServer = undefined
@@ -1780,9 +1810,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       )
     }
     const hasDecorations = Reflect.ownKeys(routeDecorations).length > 0
+    // An idempotency route runs a dedupe lane that must buffer the body and capture the response, so it
+    // never takes the fused/native fast path — force it onto the portable matched lane (which routes
+    // through `fetchMatched`, where the dedupe wrapper lives).
+    const idempotent = this.resolveIdempotency(schema)
     const bare =
       schema?.body === undefined &&
       schema?.query === undefined &&
+      idempotent === undefined &&
       this.derives.length === 0 &&
       this.beforeHandleHooks.length === 0 &&
       this.afterHandleHooks.length === 0 &&
@@ -1800,6 +1835,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       // with the concrete RawContext the typed handler expects, so this is sound.
       handler: handler as unknown as InternalHandler,
       schema,
+      idempotent,
       fusedWeb,
       derives: [...this.derives],
       decorations: routeDecorations,
@@ -1847,6 +1883,27 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         }),
       )
     }
+    // Declaring `schema.idempotency` is the evidence that satisfies a write capability's idempotency
+    // requirement (capability assurance reads these ids). `durable` scope additionally proves the
+    // durable-command requirement.
+    if (schema?.idempotency !== undefined) {
+      routeAssurance.push(
+        Object.freeze({
+          id: NIFRA_ASSURANCE_IDS.IDEMPOTENCY_KEY,
+          source: "route-schema",
+          scope: "plugin",
+        }),
+      )
+      if (schema.idempotency.scope === "durable") {
+        routeAssurance.push(
+          Object.freeze({
+            id: NIFRA_ASSURANCE_IDS.DURABLE_COMMAND,
+            source: "route-schema",
+            scope: "plugin",
+          }),
+        )
+      }
+    }
     this.rawEntries.push({
       method,
       path,
@@ -1854,6 +1911,24 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       descriptor,
       assurance: Object.freeze(routeAssurance),
     })
+  }
+
+  /** Resolve a route's declared idempotency into a pinned store + defaults, or `undefined` when off. */
+  private resolveIdempotency(schema: RouteSchema | undefined): ResolvedIdempotency | undefined {
+    const config = schema?.idempotency
+    if (config === undefined) return undefined
+    return Object.freeze({
+      store: config.store ?? this.defaultIdempotencyStore(),
+      ttlMs: config.ttlMs ?? DEFAULT_IDEMPOTENCY_TTL_MS,
+      headerName: (config.headerName ?? DEFAULT_IDEMPOTENCY_HEADER).toLowerCase(),
+    })
+  }
+
+  /** The app-wide idempotency store: the configured one, else a lazily-created shared in-process store. */
+  private defaultIdempotencyStore(): IdempotencyStore {
+    if (this.configuredIdempotencyStore !== undefined) return this.configuredIdempotencyStore
+    this.lazyIdempotencyStore ??= new MemoryIdempotencyStore()
+    return this.lazyIdempotencyStore
   }
 
   /**
@@ -2321,6 +2396,111 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
 
   /** Run a route that has already been matched by the runtime or Nifra's portable router. */
   private runMatched<T>(
+    source: RequestSource,
+    platform: Platform | undefined,
+    entry: RouteEntry,
+    params: Record<string, string>,
+    search: string | undefined,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+    onTimeout: () => T,
+    webFast: boolean,
+  ): MaybePromise<T> {
+    // An idempotency route runs its dedupe lane first; on a fresh key it delegates to the normal lanes
+    // (with the body buffered). All non-idempotent routes skip straight to the lanes — no added cost.
+    if (entry.idempotent !== undefined) {
+      return this.runIdempotent(source, platform, entry, params, search, wrapResponse)
+    }
+    return this.runMatchedLanes(
+      source,
+      platform,
+      entry,
+      params,
+      search,
+      finalize,
+      wrapResponse,
+      onTimeout,
+      webFast,
+    )
+  }
+
+  /**
+   * Idempotency dedupe lane. Reads the `Idempotency-Key`, fingerprints the request, and consults the
+   * store: a fresh key runs the handler (via {@link runMatchedLanes} with the body buffered) and stores
+   * the response; a repeat key replays it without re-running; a key reused with a different body or an
+   * in-flight duplicate is rejected. Every branch materializes a `Response`, then adapts to `T` via the
+   * caller's `wrapResponse`, so it works on the Web fetch path and the Node-native outcome path alike.
+   */
+  private async runIdempotent<T>(
+    source: RequestSource,
+    platform: Platform | undefined,
+    entry: RouteEntry,
+    params: Record<string, string>,
+    search: string | undefined,
+    wrapResponse: (response: Response) => T,
+  ): Promise<T> {
+    const config = entry.idempotent as ResolvedIdempotency
+    const req = requestOf(source)
+    const key = req.headers.get(config.headerName)
+    if (key === null || !validIdempotencyKey(key)) {
+      return wrapResponse(jsonError(400, "idempotency_key_required"))
+    }
+    const read = await readBoundedBytes(req, this.maxBodyBytes)
+    if (!read.ok) {
+      return wrapResponse(
+        jsonError(read.status, read.status === 413 ? "payload_too_large" : "bad_request"),
+      )
+    }
+    const url = urlPartsOf(req.url)
+    const fingerprint = await computeIdempotencyFingerprint(
+      req.method,
+      `${url.pathname}${url.search}`,
+      read.bytes,
+    )
+
+    const begin = await config.store.begin(key, fingerprint, config.ttlMs)
+    if (begin.state === "replay") return wrapResponse(responseFromStored(begin.response))
+    if (begin.state === "mismatch") return wrapResponse(jsonError(409, "idempotency_key_reused"))
+    if (begin.state === "in-flight") {
+      return wrapResponse(jsonError(409, "idempotency_in_progress", { "Retry-After": "1" }))
+    }
+
+    // Fresh key: re-expose the buffered body as a Request so the normal lanes can read + validate it,
+    // then run those lanes to a concrete Response.
+    const bufferedInit: RequestInit = { method: req.method, headers: req.headers }
+    if (read.bytes.byteLength > 0)
+      bufferedInit.body = read.bytes as NonNullable<RequestInit["body"]>
+    const buffered: RequestSource = new Request(req.url, bufferedInit)
+    let response: Response
+    try {
+      response = await this.runMatchedLanes(
+        buffered,
+        platform,
+        entry,
+        params,
+        search,
+        toResponse,
+        IDENTITY_RESPONSE,
+        RESPONSE_TIMEOUT,
+        false,
+      )
+    } catch (err) {
+      // The lanes never throw (errors resolve to a 500 Response), but stay fail-safe: release the
+      // reservation so a retry isn't wedged, then re-throw.
+      await config.store.abandon(key)
+      throw err
+    }
+    // Cache only successful responses; release the key on any error so the client can retry.
+    if (response.status >= 200 && response.status < 300) {
+      await config.store.complete(key, await serializeResponse(response))
+    } else {
+      await config.store.abandon(key)
+    }
+    return wrapResponse(response)
+  }
+
+  /** Run a matched route through its selected execution lane (fused/bare/bodyOnly/queryOnly/lifecycle). */
+  private runMatchedLanes<T>(
     source: RequestSource,
     platform: Platform | undefined,
     entry: RouteEntry,
