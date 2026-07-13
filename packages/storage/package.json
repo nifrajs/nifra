@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/storage",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "description": "Blob storage mechanics for nifra — traversal-safe memory, filesystem, and R2 adapters, optional provider capabilities, and executable adapter conformance.",
   "keywords": [
     "bun",
