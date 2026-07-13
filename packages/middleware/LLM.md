@@ -21,11 +21,11 @@ Composable middleware for nifra — auth, CSRF, JWT/JWKS, IP restriction, CORS, 
 - **combine** _(function)_ — `combine: (...items: readonly Composable[]) => NifraPlugin`
 - **compression** _(function)_ — `compression: (options?: CompressionOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core…`
 - **cors** _(function)_ — `cors: (options?: CorsOptions) => Middleware`
+- **createAdmissionController** _(function)_ — `createAdmissionController: (options: AdmissionOptions) => AdmissionControllerHandle`
 - **createCsrfToken** _(function)_ — `createCsrfToken: (secret: string | Uint8Array, nonce?: string) => Promise<string>`
-- **csrf** _(function)_ — `csrf: (options: CsrfOptions) => Middleware`
-- **etag** _(function)_ — `etag: (options?: ETagOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").AnyServer>`
+- **createEventLoopLagSampler** _(function)_ — `createEventLoopLagSampler: (resolutionMs?: number) => () => number`
 
-_…and 88 more — see [`api-reference.md`](../../api-reference.md#nifrajsmiddleware) for the complete list._
+_…and 96 more — see [`api-reference.md`](../../api-reference.md#nifrajsmiddleware) for the complete list._
 
 ## Footguns
 
