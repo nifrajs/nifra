@@ -178,7 +178,13 @@ export function createAdmissionController(options: AdmissionOptions): AdmissionC
 
   function admit(req: Request): AdmissionDecision | Promise<AdmissionDecision> {
     const lag = lagMs()
-    const evidence: AdmissionEvidence = { inFlight, maxInFlight, lagMs: lag, maxLagMs, queued: queue.length }
+    const evidence: AdmissionEvidence = {
+      inFlight,
+      maxInFlight,
+      lagMs: lag,
+      maxLagMs,
+      queued: queue.length,
+    }
 
     // Private policy first: may force-admit (reserved headroom) or force-shed.
     if (policy !== undefined) {
