@@ -1961,10 +1961,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * nothing. The slot is held for the duration of handler execution, not the streaming of the body —
    * capacity here bounds concurrent *work*, matching how in-flight is counted.
    */
-  private admitGated(
-    req: Request,
-    produce: () => MaybePromise<Response>,
-  ): MaybePromise<Response> {
+  private admitGated(req: Request, produce: () => MaybePromise<Response>): MaybePromise<Response> {
     const decision = (this.capacityGate as AdmissionController).admit(req)
     return decision instanceof Promise
       ? decision.then((settled) => this.runAdmitted(settled, produce))
