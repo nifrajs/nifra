@@ -10,9 +10,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@nifrajs/client": "^1.10.0",
-    "@nifrajs/core": "^1.10.0",
-    "@nifrajs/schema": "^1.10.0"
+    "@nifrajs/client": "^1.11.0",
+    "@nifrajs/core": "^1.11.0",
+    "@nifrajs/schema": "^1.11.0"
   },
   "devDependencies": {
     "@types/bun": "latest",

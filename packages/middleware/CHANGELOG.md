@@ -1,5 +1,12 @@
 # @nifrajs/middleware
 
+## 1.11.0
+
+### Patch Changes
+
+- 2dde7e5: Documentation polish for the adaptive-admission module.
+  - @nifrajs/schema@1.11.0
+
 ## 1.10.0
 
 ### Patch Changes
