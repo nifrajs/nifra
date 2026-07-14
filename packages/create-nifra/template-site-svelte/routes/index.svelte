@@ -11,7 +11,7 @@ export const meta = {
 // client submit the loader revalidates with no full reload (progressive enhancement).
 export async function loader({ api }: LoaderArgs<typeof backend>) {
   const res = await api.count.get()
-  return { count: res.data?.count ?? 0 }
+  return { count: res.ok ? res.data.count : 0 }
 }
 
 export async function action({ api }: ActionArgs<typeof backend>) {

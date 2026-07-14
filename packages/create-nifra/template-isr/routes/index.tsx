@@ -14,7 +14,7 @@ export const revalidate = 10
 
 export async function loader({ api }: LoaderArgs<typeof backend>) {
   const res = await api.page.get()
-  return { renders: res.data?.renders ?? 0 }
+  return { renders: res.ok ? res.data.renders : 0 }
 }
 
 export default function Home(props: { data: LoaderData<typeof loader> }) {

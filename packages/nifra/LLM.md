@@ -10,22 +10,22 @@ The nifra full-stack framework — unscoped meta-entry that re-exports @nifrajs/
 
 ## Key exports
 
+- **attachEffectLedger** _(function)_ — `attachEffectLedger: (context: object, ledger: RequestLedger) => void`
 - **attachWebSocket** _(function)_ — `attachWebSocket: (socket: StandardWebSocket, handler: WebSocketHandler, data: unknown, options: { openNow: boolean; pubsub: TopicRegistry; …`
 - **buildNifraManifest** _(function)_ — `buildNifraManifest: (input: BuildNifraManifestInput) => Promise<NifraManifest>`
 - **canonicalizeIdempotencyBody** _(function)_ — `canonicalizeIdempotencyBody: (body: Uint8Array, contentType: string | null) => Uint8Array`
 - **canonicalManifest** _(function)_ — `canonicalManifest: (manifest: Pick<NifraManifest, "manifestVersion" | "routes">) => string`
 - **classificationAtLeast** _(function)_ — `classificationAtLeast: (value: DataClassification, floor: DataClassification) => boolean`
 - **classified** _(function)_ — `classified: <S extends object>(schema: S, classification: DataClassification) => ClassifiedSchema<S>`
+- **computeEffectDigest** _(function)_ — `computeEffectDigest: (key: Uint8Array | CryptoKey, payload: Uint8Array) => Promise<string>`
 - **computeIdempotencyFingerprint** _(function)_ — `computeIdempotencyFingerprint: (method: string, path: string, body: Uint8Array, contentType?: string) => Promise<string>`
 - **createMemoryIdempotencyStore** _(function)_ — `createMemoryIdempotencyStore: (options?: MemoryIdempotencyStoreOptions) => MemoryIdempotencyStore`
+- **createMemoryLedgerSink** _(function)_ — `createMemoryLedgerSink: (options?: MemoryLedgerSinkOptions) => MemoryLedgerSink`
+- **createRequestLedger** _(function)_ — `createRequestLedger: (options: CreateRequestLedgerOptions) => RequestLedger`
 - **declaredCapabilities** _(function)_ — `declaredCapabilities: (context: object) => readonly string[]`
 - **defineAssuranceConfig** _(function)_ — `defineAssuranceConfig: (config: AssuranceConfig) => AssuranceConfig`
-- **defineAssurancePolicy** _(function)_ — `defineAssurancePolicy: (policy: AssurancePolicy) => AssurancePolicy`
-- **defineCapabilityPolicy** _(function)_ — `defineCapabilityPolicy: (policy: CapabilityPolicy) => CapabilityPolicy`
-- **defineContract** _(function)_ — `defineContract: <const C extends ContractShape>(contract: C) => C`
-- **defineIdentityPlugin** _(function)_ — `defineIdentityPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
 
-_…and 198 more — see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
+_…and 222 more — see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
 
 ## Footguns
 

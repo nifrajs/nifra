@@ -349,8 +349,18 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
   // --link: replace @nifrajs/* semver refs with file: paths pointing at the local monorepo's packages/
   // directory — lets an app consume nifra from a sibling repo before the packages are published.
   if (opts.link !== undefined) {
-    const linkPackages = resolve(opts.link, "packages")
-    const targetAbs = resolve(opts.target)
+    // realpath both ends before computing the relative file: path — otherwise a symlinked
+    // segment on either side (macOS tmpdir: /var/folders → /private/var/folders) skews the
+    // ../ count and every linked dependency resolves to a nonexistent directory.
+    const real = (p: string): string => {
+      try {
+        return realpathSync(p)
+      } catch {
+        return p
+      }
+    }
+    const linkPackages = real(resolve(opts.link, "packages"))
+    const targetAbs = real(resolve(opts.target))
     for (const section of ["dependencies", "devDependencies"] as const) {
       const deps = pkg[section]
       if (deps === undefined) continue

@@ -217,17 +217,36 @@ Every public export of every package — name, kind, signature, and doc summary 
   A contract: named operations. Names are the handler keys and OpenAPI operationIds.
 - **CookieOptions** _(interface)_ — `interface CookieOptions`
   Attributes for a `Set-Cookie`. `expires` is a `Date`; `maxAge` is in **seconds**.
+- **CreateRequestLedgerOptions** _(interface)_ — `interface CreateRequestLedgerOptions`
 - **DATA_CLASSIFICATION_RANK** _(const)_ — `DATA_CLASSIFICATION_RANK: Readonly<Record<DataClassification, number>>`
   Total order over classifications; higher = more sensitive.
 - **DEFAULT_IDEMPOTENCY_HEADER** _(const)_ — `DEFAULT_IDEMPOTENCY_HEADER: "idempotency-key"`
   Canonical request header carrying the client-chosen idempotency key.
 - **DEFAULT_IDEMPOTENCY_TTL_MS** _(const)_ — `DEFAULT_IDEMPOTENCY_TTL_MS: 86400000`
   Default retention for a stored idempotent response: 24 hours.
+- **DEFAULT_MAX_ENTRIES** _(const)_ — `DEFAULT_MAX_ENTRIES: 1000`
+  Per-request entry bound. Generous for real handlers, small enough to stop a runaway loop.
 - **DataClassification** _(type)_ — `type DataClassification = "public" | "pii" | "secret"`
   Sensitivity of the data a response carries. Ordered `public` < `pii` < `secret`.
 - **DiffSeverity** _(type)_ — `type DiffSeverity = "breaking" | "compatible" | "info"`
 - **DurableObjectNamespaceLike** _(interface)_ — `interface DurableObjectNamespaceLike`
   Structural view of a Cloudflare Durable Object namespace binding — keeps `@cloudflare/workers-types` out of `@nifrajs/core`. The real `DurableObjectNamespace` satisfies it.
+- **EffectChain** _(interface)_ — `interface EffectChain`
+  Tamper-evidence over the sealed entries: per-entry hash chain plus the resulting head.
+- **EffectCost** _(type)_ — `type EffectCost = Readonly<Record<string, number>>`
+  Dimensionless resource counters (`{ ms: 12, calls: 1, bytes: 512 }`). Counters carry *how much resource* an effect consumed; mapping counters to money/pricing is deliberately out of scope here.
+- **EffectEntry** _(interface)_ — `interface EffectEntry`
+  One recorded effect. Frozen; token-only by construction (no payload field exists).
+- **EffectEntryInput** _(interface)_ — `interface EffectEntryInput`
+  Caller-supplied fields for one entry. Everything else (`seq`, `at`) is assigned by the ledger.
+- **EffectLedgerOptions** _(interface)_ — `interface EffectLedgerOptions`
+  Server-level effect ledger configuration (see `server({ effectLedger })`).
+- **EffectLedgerOverflowError** _(class)_ — `class EffectLedgerOverflowError`
+  Thrown by `append` when the per-request entry bound is exceeded. Fails the request closed.
+- **EffectLedgerSealedError** _(class)_ — `class EffectLedgerSealedError`
+  Thrown by `append` after `seal()` — e.g. an effect attempted while streaming a response body.
+- **EffectPhase** _(type)_ — `type EffectPhase = "intent" | "committed" | "failed" | "compensated"`
+  Lifecycle phase of one effect. `intent` precedes execution; the rest describe its outcome.
 - **ExecutionContext** _(interface)_ — `interface ExecutionContext`
   A Cloudflare Workers-style execution context (the `fetch` 3rd arg). Structural — only `waitUntil` is used; declared here so `@nifrajs/core` needs no Workers type dependency.
 - **FRAMEWORK_NAME** _(const)_ — `FRAMEWORK_NAME: "Nifra"`
@@ -260,11 +279,17 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **InferOutput** _(type)_ — `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
 - **JsonSchema** _(type)_ — `type JsonSchema = boolean | Readonly<Record<string, unknown>>`
   JSON Schema permits either a schema object or the boolean schemas `true` and `false`.
+- **LedgerSink** _(type)_ — `type LedgerSink = (ledger: SealedEffectLedger) => void | Promise<void>`
+  Receives each sealed ledger once per request (only when it has entries). Implementations must not assume a payload: the ledger is token-only. A durable/tenant-scoped sink lives behind this seam.
 - **LogFields** _(type)_ — `type LogFields = Record<string, unknown>`
   Structured, redacting logger. The framework logs through this interface so secrets/PII are scrubbed once, centrally (per the project's logging rule), not at each call site. Bring your own by passing `logger` to `server()`.
 - **Logger** _(interface)_ — `interface Logger`
+- **MAX_COST_AXES** _(const)_ — `MAX_COST_AXES: 8`
+  Most cost axes one entry may carry.
 - **METHODS** _(const)_ — `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]`
   HTTP methods the router accepts.
+- **MIN_DIGEST_KEY_BYTES** _(const)_ — `MIN_DIGEST_KEY_BYTES: 16`
+  Minimum digest key material. A short key would make the keyed digest brute-forceable.
 - **McpPromptDescriptor** _(interface)_ — `interface McpPromptDescriptor`
   An app-declared MCP prompt — a reusable prompt template an agent can fetch through `nifra mcp`.
 - **McpResourceDescriptor** _(interface)_ — `interface McpResourceDescriptor`
@@ -272,6 +297,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **MemoryIdempotencyStore** _(class)_ — `class MemoryIdempotencyStore`
   In-process idempotency store. Reservation is atomic by construction — `begin` never awaits, so the single-threaded event loop serializes concurrent callers for one key. Expired entries are treated as absent (lazy eviction on access); a periodic {@link MemoryIdempotencyStore.sweep} bounds memory.
 - **MemoryIdempotencyStoreOptions** _(interface)_ — `interface MemoryIdempotencyStoreOptions`
+- **MemoryLedgerSink** _(interface)_ — `interface MemoryLedgerSink`
+- **MemoryLedgerSinkOptions** _(interface)_ — `interface MemoryLedgerSinkOptions`
 - **Method** _(type)_ — `type Method = (typeof METHODS)[number]`
 - **Middleware** _(interface)_ — `interface Middleware`
   A bundle of lifecycle hooks applied together via {@link Server.use} — the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware is context-agnostic (sees the base `Context`); `use` does no context-type merging — th…
@@ -315,6 +342,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Re-key the name-keyed ops into the `path → method → RouteInfo` registry.
 - **RegistryFromImpl** _(type)_ — `type RegistryFromImpl<C extends ContractShape, H extends HandlersFor<C>>`
   The registry produced by `implement`: input from the contract op; `output` is the declared `response` contract when present (it wins — exactly as in the inline path), else the bound HANDLER's return — so the implemented server stays route-for-route identical to the equivalent inline server (the mod…
+- **RequestLedger** _(interface)_ — `interface RequestLedger`
+  Per-request ledger. `append` is synchronous (hot-path safe); `seal` is idempotent and async.
 - **ResponseClassification** _(interface)_ — `interface ResponseClassification`
   Field paths use JSON Pointer segments; array items use a `*` segment.
 - **ResponseControls** _(interface)_ — `interface ResponseControls`
@@ -362,6 +391,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Validation and introspection capabilities discovered for one schema-like value.
 - **SchemaSnapshot** _(interface)_ — `interface SchemaSnapshot`
   One schema position in a snapshot: JSON Schema metadata only, no validator.
+- **SealedEffectLedger** _(interface)_ — `interface SealedEffectLedger`
+  The immutable result of sealing a request's ledger. Token-only; safe to hand to any sink.
 - **Server** _(class)_ — `class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext>`
   The inline server. Routes are chainable and fully type-inferred. `derive`/ `decorate` extend the handler context (`Ctx`) for routes defined *after* them, with full types; `Ctx` is server-only and never touches the client registry.
 - **ServerOptions** _(interface)_ — `interface ServerOptions`
@@ -384,6 +415,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   In-process pub/sub for `ws.subscribe(topic)` + `app.publish(topic, data)`. **Single-instance only** — topics live in this process's memory, so a multi-instance deploy (multiple servers behind a load balancer) needs an external fan-out (Redis pub/sub, a Cloudflare Durable Object, NATS, …) bridged to…
 - **TypedSSEStream** _(interface)_ — `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field — the compile-time half of the `sse` contract.
+- **UseCapabilityOptions** _(interface)_ — `interface UseCapabilityOptions`
+  Optional effect-ledger fields for one `useCapability` beacon. Token-only by design: an adapter names *what* it touched and *how much resource* it used — never the value it read or wrote.
 - **VERSION** _(const)_ — `VERSION: "1.10.0"`
   Current package version. A hardcoded literal on purpose — core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version, so the literal can't go stale (i…
 - **ValidationOutcome** _(type)_ — `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
@@ -401,6 +434,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **WebhookProvider** _(type)_ — `type WebhookProvider = "stripe" | "github" | "generic"`
 - **WebhookResult** _(type)_ — `type WebhookResult = | { readonly ok: true; readonly payload: string } | { readonly ok: false; readonly reason: WebhookFailureReason }`
   Verified ⇒ the raw `payload` text (parse it with your schema). Rejected ⇒ a stable `reason`.
+- **attachEffectLedger** _(function)_ — `attachEffectLedger: (context: object, ledger: RequestLedger) => void`
+  Framework wiring: attach a per-request ledger to a handler context. Not for application code.
 - **attachWebSocket** _(function)_ — `attachWebSocket: (socket: StandardWebSocket, handler: WebSocketHandler, data: unknown, options: { openNow: boolean; pubsub: TopicRegistry; }) => NifraWebSocket`
   Wire a standard server-side `WebSocket` to a nifra {@link WebSocketHandler}, returning the portable {@link NifraWebSocket}. Shared by the Deno and Workers bridges. `openNow` fires `open` immediately (Workers, where the socket is already open after `accept()`); otherwise `open` waits for the socket'…
 - **buildNifraManifest** _(function)_ — `buildNifraManifest: (input: BuildNifraManifestInput) => Promise<NifraManifest>`
@@ -415,10 +450,16 @@ Every public export of every package — name, kind, signature, and doc summary 
   Attach data-classification metadata without changing validation or inferred input/output types. For Nifra/TypeBox carriers the raw JSON Schema node is tagged too, so metadata survives composition through `t.object`, `t.array`, `t.optional`, and unions.
 - **commonSecretPatterns** _(const)_ — `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} — opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
+- **computeEffectDigest** _(function)_ — `computeEffectDigest: (key: Uint8Array | CryptoKey, payload: Uint8Array) => Promise<string>`
+  Keyed HMAC-SHA-256 digest (hex) of an effect payload, for replay/reconciliation matching without storing the payload. Keyed on purpose: a bare hash of low-entropy data (an email, a flag) is brute-forceable and would itself leak. Digest the **whole** effect payload, never a single field.
 - **computeIdempotencyFingerprint** _(function)_ — `computeIdempotencyFingerprint: (method: string, path: string, body: Uint8Array, contentType?: string) => Promise<string>`
   SHA-256 fingerprint binding a key to one request: method, path (+ query), and the raw body bytes. A collision-resistant hash matters — a weak hash would let a crafted body replay another's response.
 - **createMemoryIdempotencyStore** _(function)_ — `createMemoryIdempotencyStore: (options?: MemoryIdempotencyStoreOptions) => MemoryIdempotencyStore`
   Convenience factory mirroring the other core primitives' `create*` style.
+- **createMemoryLedgerSink** _(function)_ — `createMemoryLedgerSink: (options?: MemoryLedgerSinkOptions) => MemoryLedgerSink`
+  Bounded in-memory sink for tests and local development. Token-only, like every sink.
+- **createRequestLedger** _(function)_ — `createRequestLedger: (options: CreateRequestLedgerOptions) => RequestLedger`
+  Create a bounded per-request ledger. The server wires one per capability-declaring route.
 - **declaredCapabilities** _(function)_ — `declaredCapabilities: (context: object) => readonly string[]`
   Read the route's token-only declaration for admission plugins. This intentionally exposes neither the request nor runtime evidence; it is the stable public seam for private entitlement policy.
 - **defineAssuranceConfig** _(function)_ — `defineAssuranceConfig: (config: AssuranceConfig) => AssuranceConfig`
@@ -439,6 +480,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Contract changes reuse the route-diff engine; governance changes fail closed on expanded risk.
 - **diffRouteSnapshots** _(function)_ — `diffRouteSnapshots: (before: readonly RouteSnapshot[], after: readonly RouteSnapshot[]) => RoutesDiff`
   Diff two route snapshots (`snapshotRoutes` output, possibly restored from JSON). Every change is classified breaking/compatible/info; `hasBreaking` is the CI-gate bit.
+- **effectLedgerOf** _(function)_ — `effectLedgerOf: (context: object) => RequestLedger | undefined`
+  The request's effect ledger, when the server enabled one for this route. Read-only access.
 - **evaluateCapabilityAssurance** _(function)_ — `evaluateCapabilityAssurance: (source: unknown, policyInput: CapabilityPolicy, evidenceSet: CapabilityEvidenceSet) => CapabilityAssuranceReport`
   Compare declared route capabilities against coverage-qualified static/runtime evidence.
 - **evaluateRouteAssurance** _(function)_ — `evaluateRouteAssurance: (source: unknown, policyInput: AssurancePolicy) => AssuranceReport`
@@ -459,6 +502,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Parse and hash-verify an emitted manifest before it is trusted by diff/codegen tooling.
 - **parseNifraManifestSignature** _(function)_ — `parseNifraManifestSignature: (content: string, source?: string) => NifraManifestSignature`
   Parse the detached sidecar before selecting its operator-controlled public key.
+- **randomEffectDigestKey** _(function)_ — `randomEffectDigestKey: () => Uint8Array`
+  Fresh random digest key (32 bytes). Per-process by default — persist one externally to correlate across restarts.
 - **redactLogFields** _(function)_ — `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
 - **reflectClassification** _(function)_ — `reflectClassification: (schema: unknown) => ResponseClassification | undefined`
@@ -501,8 +546,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Wrap a raw {@link SSEStream} in the typed, JSON-serializing surface `app.sse()` hands out.
 - **unsignValue** _(function)_ — `unsignValue: (signed: string, secret: string) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
-- **useCapability** _(function)_ — `useCapability: (context: object, capability: string) => void`
-  Runtime effect beacon for owned adapters. It fails closed when the route omitted the capability or when no route guard is present. Static provenance is still required: code can bypass a beacon.
+- **useCapability** _(function)_ — `useCapability: (context: object, capability: string, options?: UseCapabilityOptions) => void`
+  Runtime effect beacon for owned adapters. It fails closed when the route omitted the capability or when no route guard is present. Static provenance is still required: code can bypass a beacon. When the server enabled the effect ledger, each beacon call also appends one token-only entry.
 - **validCapabilityId** _(function)_ — `validCapabilityId: (value: string) => boolean`
 - **validIdempotencyKey** _(function)_ — `validIdempotencyKey: (key: string) => boolean`
   A key must be a non-empty, bounded, control-char-free token. Fail closed on anything else.
@@ -1519,17 +1564,36 @@ Every public export of every package — name, kind, signature, and doc summary 
   A contract: named operations. Names are the handler keys and OpenAPI operationIds.
 - **CookieOptions** _(interface)_ — `interface CookieOptions`
   Attributes for a `Set-Cookie`. `expires` is a `Date`; `maxAge` is in **seconds**.
+- **CreateRequestLedgerOptions** _(interface)_ — `interface CreateRequestLedgerOptions`
 - **DATA_CLASSIFICATION_RANK** _(const)_ — `DATA_CLASSIFICATION_RANK: Readonly<Record<DataClassification, number>>`
   Total order over classifications; higher = more sensitive.
 - **DEFAULT_IDEMPOTENCY_HEADER** _(const)_ — `DEFAULT_IDEMPOTENCY_HEADER: "idempotency-key"`
   Canonical request header carrying the client-chosen idempotency key.
 - **DEFAULT_IDEMPOTENCY_TTL_MS** _(const)_ — `DEFAULT_IDEMPOTENCY_TTL_MS: 86400000`
   Default retention for a stored idempotent response: 24 hours.
+- **DEFAULT_MAX_ENTRIES** _(const)_ — `DEFAULT_MAX_ENTRIES: 1000`
+  Per-request entry bound. Generous for real handlers, small enough to stop a runaway loop.
 - **DataClassification** _(type)_ — `type DataClassification = "public" | "pii" | "secret"`
   Sensitivity of the data a response carries. Ordered `public` < `pii` < `secret`.
 - **DiffSeverity** _(type)_ — `type DiffSeverity = "breaking" | "compatible" | "info"`
 - **DurableObjectNamespaceLike** _(interface)_ — `interface DurableObjectNamespaceLike`
   Structural view of a Cloudflare Durable Object namespace binding — keeps `@cloudflare/workers-types` out of `@nifrajs/core`. The real `DurableObjectNamespace` satisfies it.
+- **EffectChain** _(interface)_ — `interface EffectChain`
+  Tamper-evidence over the sealed entries: per-entry hash chain plus the resulting head.
+- **EffectCost** _(type)_ — `type EffectCost = Readonly<Record<string, number>>`
+  Dimensionless resource counters (`{ ms: 12, calls: 1, bytes: 512 }`). Counters carry *how much resource* an effect consumed; mapping counters to money/pricing is deliberately out of scope here.
+- **EffectEntry** _(interface)_ — `interface EffectEntry`
+  One recorded effect. Frozen; token-only by construction (no payload field exists).
+- **EffectEntryInput** _(interface)_ — `interface EffectEntryInput`
+  Caller-supplied fields for one entry. Everything else (`seq`, `at`) is assigned by the ledger.
+- **EffectLedgerOptions** _(interface)_ — `interface EffectLedgerOptions`
+  Server-level effect ledger configuration (see `server({ effectLedger })`).
+- **EffectLedgerOverflowError** _(class)_ — `class EffectLedgerOverflowError`
+  Thrown by `append` when the per-request entry bound is exceeded. Fails the request closed.
+- **EffectLedgerSealedError** _(class)_ — `class EffectLedgerSealedError`
+  Thrown by `append` after `seal()` — e.g. an effect attempted while streaming a response body.
+- **EffectPhase** _(type)_ — `type EffectPhase = "intent" | "committed" | "failed" | "compensated"`
+  Lifecycle phase of one effect. `intent` precedes execution; the rest describe its outcome.
 - **ExecutionContext** _(interface)_ — `interface ExecutionContext`
   A Cloudflare Workers-style execution context (the `fetch` 3rd arg). Structural — only `waitUntil` is used; declared here so `@nifrajs/core` needs no Workers type dependency.
 - **FRAMEWORK_NAME** _(const)_ — `FRAMEWORK_NAME: "Nifra"`
@@ -1562,11 +1626,17 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **InferOutput** _(type)_ — `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
 - **JsonSchema** _(type)_ — `type JsonSchema = boolean | Readonly<Record<string, unknown>>`
   JSON Schema permits either a schema object or the boolean schemas `true` and `false`.
+- **LedgerSink** _(type)_ — `type LedgerSink = (ledger: SealedEffectLedger) => void | Promise<void>`
+  Receives each sealed ledger once per request (only when it has entries). Implementations must not assume a payload: the ledger is token-only. A durable/tenant-scoped sink lives behind this seam.
 - **LogFields** _(type)_ — `type LogFields = Record<string, unknown>`
   Structured, redacting logger. The framework logs through this interface so secrets/PII are scrubbed once, centrally (per the project's logging rule), not at each call site. Bring your own by passing `logger` to `server()`.
 - **Logger** _(interface)_ — `interface Logger`
+- **MAX_COST_AXES** _(const)_ — `MAX_COST_AXES: 8`
+  Most cost axes one entry may carry.
 - **METHODS** _(const)_ — `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]`
   HTTP methods the router accepts.
+- **MIN_DIGEST_KEY_BYTES** _(const)_ — `MIN_DIGEST_KEY_BYTES: 16`
+  Minimum digest key material. A short key would make the keyed digest brute-forceable.
 - **McpPromptDescriptor** _(interface)_ — `interface McpPromptDescriptor`
   An app-declared MCP prompt — a reusable prompt template an agent can fetch through `nifra mcp`.
 - **McpResourceDescriptor** _(interface)_ — `interface McpResourceDescriptor`
@@ -1574,6 +1644,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **MemoryIdempotencyStore** _(class)_ — `class MemoryIdempotencyStore`
   In-process idempotency store. Reservation is atomic by construction — `begin` never awaits, so the single-threaded event loop serializes concurrent callers for one key. Expired entries are treated as absent (lazy eviction on access); a periodic {@link MemoryIdempotencyStore.sweep} bounds memory.
 - **MemoryIdempotencyStoreOptions** _(interface)_ — `interface MemoryIdempotencyStoreOptions`
+- **MemoryLedgerSink** _(interface)_ — `interface MemoryLedgerSink`
+- **MemoryLedgerSinkOptions** _(interface)_ — `interface MemoryLedgerSinkOptions`
 - **Method** _(type)_ — `type Method = (typeof METHODS)[number]`
 - **Middleware** _(interface)_ — `interface Middleware`
   A bundle of lifecycle hooks applied together via {@link Server.use} — the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware is context-agnostic (sees the base `Context`); `use` does no context-type merging — th…
@@ -1617,6 +1689,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Re-key the name-keyed ops into the `path → method → RouteInfo` registry.
 - **RegistryFromImpl** _(type)_ — `type RegistryFromImpl<C extends ContractShape, H extends HandlersFor<C>>`
   The registry produced by `implement`: input from the contract op; `output` is the declared `response` contract when present (it wins — exactly as in the inline path), else the bound HANDLER's return — so the implemented server stays route-for-route identical to the equivalent inline server (the mod…
+- **RequestLedger** _(interface)_ — `interface RequestLedger`
+  Per-request ledger. `append` is synchronous (hot-path safe); `seal` is idempotent and async.
 - **ResponseClassification** _(interface)_ — `interface ResponseClassification`
   Field paths use JSON Pointer segments; array items use a `*` segment.
 - **ResponseControls** _(interface)_ — `interface ResponseControls`
@@ -1664,6 +1738,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Validation and introspection capabilities discovered for one schema-like value.
 - **SchemaSnapshot** _(interface)_ — `interface SchemaSnapshot`
   One schema position in a snapshot: JSON Schema metadata only, no validator.
+- **SealedEffectLedger** _(interface)_ — `interface SealedEffectLedger`
+  The immutable result of sealing a request's ledger. Token-only; safe to hand to any sink.
 - **Server** _(class)_ — `class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext>`
   The inline server. Routes are chainable and fully type-inferred. `derive`/ `decorate` extend the handler context (`Ctx`) for routes defined *after* them, with full types; `Ctx` is server-only and never touches the client registry.
 - **ServerOptions** _(interface)_ — `interface ServerOptions`
@@ -1686,6 +1762,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   In-process pub/sub for `ws.subscribe(topic)` + `app.publish(topic, data)`. **Single-instance only** — topics live in this process's memory, so a multi-instance deploy (multiple servers behind a load balancer) needs an external fan-out (Redis pub/sub, a Cloudflare Durable Object, NATS, …) bridged to…
 - **TypedSSEStream** _(interface)_ — `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field — the compile-time half of the `sse` contract.
+- **UseCapabilityOptions** _(interface)_ — `interface UseCapabilityOptions`
+  Optional effect-ledger fields for one `useCapability` beacon. Token-only by design: an adapter names *what* it touched and *how much resource* it used — never the value it read or wrote.
 - **VERSION** _(const)_ — `VERSION: "1.10.0"`
   Current package version. A hardcoded literal on purpose — core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version, so the literal can't go stale (i…
 - **ValidationOutcome** _(type)_ — `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
@@ -1703,6 +1781,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **WebhookProvider** _(type)_ — `type WebhookProvider = "stripe" | "github" | "generic"`
 - **WebhookResult** _(type)_ — `type WebhookResult = | { readonly ok: true; readonly payload: string } | { readonly ok: false; readonly reason: WebhookFailureReason }`
   Verified ⇒ the raw `payload` text (parse it with your schema). Rejected ⇒ a stable `reason`.
+- **attachEffectLedger** _(function)_ — `attachEffectLedger: (context: object, ledger: RequestLedger) => void`
+  Framework wiring: attach a per-request ledger to a handler context. Not for application code.
 - **attachWebSocket** _(function)_ — `attachWebSocket: (socket: StandardWebSocket, handler: WebSocketHandler, data: unknown, options: { openNow: boolean; pubsub: TopicRegistry; }) => NifraWebSocket`
   Wire a standard server-side `WebSocket` to a nifra {@link WebSocketHandler}, returning the portable {@link NifraWebSocket}. Shared by the Deno and Workers bridges. `openNow` fires `open` immediately (Workers, where the socket is already open after `accept()`); otherwise `open` waits for the socket'…
 - **buildNifraManifest** _(function)_ — `buildNifraManifest: (input: BuildNifraManifestInput) => Promise<NifraManifest>`
@@ -1717,10 +1797,16 @@ Every public export of every package — name, kind, signature, and doc summary 
   Attach data-classification metadata without changing validation or inferred input/output types. For Nifra/TypeBox carriers the raw JSON Schema node is tagged too, so metadata survives composition through `t.object`, `t.array`, `t.optional`, and unions.
 - **commonSecretPatterns** _(const)_ — `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} — opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
+- **computeEffectDigest** _(function)_ — `computeEffectDigest: (key: Uint8Array | CryptoKey, payload: Uint8Array) => Promise<string>`
+  Keyed HMAC-SHA-256 digest (hex) of an effect payload, for replay/reconciliation matching without storing the payload. Keyed on purpose: a bare hash of low-entropy data (an email, a flag) is brute-forceable and would itself leak. Digest the **whole** effect payload, never a single field.
 - **computeIdempotencyFingerprint** _(function)_ — `computeIdempotencyFingerprint: (method: string, path: string, body: Uint8Array, contentType?: string) => Promise<string>`
   SHA-256 fingerprint binding a key to one request: method, path (+ query), and the raw body bytes. A collision-resistant hash matters — a weak hash would let a crafted body replay another's response.
 - **createMemoryIdempotencyStore** _(function)_ — `createMemoryIdempotencyStore: (options?: MemoryIdempotencyStoreOptions) => MemoryIdempotencyStore`
   Convenience factory mirroring the other core primitives' `create*` style.
+- **createMemoryLedgerSink** _(function)_ — `createMemoryLedgerSink: (options?: MemoryLedgerSinkOptions) => MemoryLedgerSink`
+  Bounded in-memory sink for tests and local development. Token-only, like every sink.
+- **createRequestLedger** _(function)_ — `createRequestLedger: (options: CreateRequestLedgerOptions) => RequestLedger`
+  Create a bounded per-request ledger. The server wires one per capability-declaring route.
 - **declaredCapabilities** _(function)_ — `declaredCapabilities: (context: object) => readonly string[]`
   Read the route's token-only declaration for admission plugins. This intentionally exposes neither the request nor runtime evidence; it is the stable public seam for private entitlement policy.
 - **defineAssuranceConfig** _(function)_ — `defineAssuranceConfig: (config: AssuranceConfig) => AssuranceConfig`
@@ -1741,6 +1827,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Contract changes reuse the route-diff engine; governance changes fail closed on expanded risk.
 - **diffRouteSnapshots** _(function)_ — `diffRouteSnapshots: (before: readonly RouteSnapshot[], after: readonly RouteSnapshot[]) => RoutesDiff`
   Diff two route snapshots (`snapshotRoutes` output, possibly restored from JSON). Every change is classified breaking/compatible/info; `hasBreaking` is the CI-gate bit.
+- **effectLedgerOf** _(function)_ — `effectLedgerOf: (context: object) => RequestLedger | undefined`
+  The request's effect ledger, when the server enabled one for this route. Read-only access.
 - **evaluateCapabilityAssurance** _(function)_ — `evaluateCapabilityAssurance: (source: unknown, policyInput: CapabilityPolicy, evidenceSet: CapabilityEvidenceSet) => CapabilityAssuranceReport`
   Compare declared route capabilities against coverage-qualified static/runtime evidence.
 - **evaluateRouteAssurance** _(function)_ — `evaluateRouteAssurance: (source: unknown, policyInput: AssurancePolicy) => AssuranceReport`
@@ -1761,6 +1849,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Parse and hash-verify an emitted manifest before it is trusted by diff/codegen tooling.
 - **parseNifraManifestSignature** _(function)_ — `parseNifraManifestSignature: (content: string, source?: string) => NifraManifestSignature`
   Parse the detached sidecar before selecting its operator-controlled public key.
+- **randomEffectDigestKey** _(function)_ — `randomEffectDigestKey: () => Uint8Array`
+  Fresh random digest key (32 bytes). Per-process by default — persist one externally to correlate across restarts.
 - **redactLogFields** _(function)_ — `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
 - **reflectClassification** _(function)_ — `reflectClassification: (schema: unknown) => ResponseClassification | undefined`
@@ -1803,8 +1893,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Wrap a raw {@link SSEStream} in the typed, JSON-serializing surface `app.sse()` hands out.
 - **unsignValue** _(function)_ — `unsignValue: (signed: string, secret: string) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
-- **useCapability** _(function)_ — `useCapability: (context: object, capability: string) => void`
-  Runtime effect beacon for owned adapters. It fails closed when the route omitted the capability or when no route guard is present. Static provenance is still required: code can bypass a beacon.
+- **useCapability** _(function)_ — `useCapability: (context: object, capability: string, options?: UseCapabilityOptions) => void`
+  Runtime effect beacon for owned adapters. It fails closed when the route omitted the capability or when no route guard is present. Static provenance is still required: code can bypass a beacon. When the server enabled the effect ledger, each beacon call also appends one token-only entry.
 - **validCapabilityId** _(function)_ — `validCapabilityId: (value: string) => boolean`
 - **validIdempotencyKey** _(function)_ — `validIdempotencyKey: (key: string) => boolean`
   A key must be a non-empty, bounded, control-char-free token. Fail closed on anything else.
