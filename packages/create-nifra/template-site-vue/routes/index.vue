@@ -16,7 +16,7 @@ export const meta = {
 // Loader runs on the server (in-process during SSR). The action handles the form POST.
 export async function loader({ api }: LoaderArgs<typeof backend>) {
   const res = await api.count.get()
-  return { count: res.data?.count ?? 0 }
+  return { count: res.ok ? res.data.count : 0 }
 }
 
 export async function action({ api }: ActionArgs<typeof backend>) {
