@@ -22,10 +22,10 @@ Bun-native, contract-first HTTP framework — the router, server, and route desc
 - **createMemoryIdempotencyStore** _(function)_ — `createMemoryIdempotencyStore: (options?: MemoryIdempotencyStoreOptions) => MemoryIdempotencyStore`
 - **createMemoryLedgerSink** _(function)_ — `createMemoryLedgerSink: (options?: MemoryLedgerSinkOptions) => MemoryLedgerSink`
 - **createRequestLedger** _(function)_ — `createRequestLedger: (options: CreateRequestLedgerOptions) => RequestLedger`
+- **createSeededRandom** _(function)_ — `createSeededRandom: (seed: number) => () => number`
 - **declaredCapabilities** _(function)_ — `declaredCapabilities: (context: object) => readonly string[]`
-- **defineAssuranceConfig** _(function)_ — `defineAssuranceConfig: (config: AssuranceConfig) => AssuranceConfig`
 
-_…and 222 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
+_…and 232 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 
 ## Footguns
 

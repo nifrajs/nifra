@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, test } from "bun:test"
+import { readdirSync } from "node:fs"
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { readdirSync } from "node:fs"
 
 // Regression guard for the "fresh scaffold fails its own `nifra check`" bug:
 // (1) demo backends must lock output shapes with a `response` schema (AGENTS.md doctrine);
@@ -49,53 +49,60 @@ afterAll(async () => {
 // packages — the exact combination a user gets, and the one that shipped broken (template
 // stale vs published client types). --link is deliberately not used: linked source packages
 // carry workspace:* interdeps that can't resolve outside this monorepo.
-describe.if(SMOKE)("templates: fresh scaffold passes `nifra check` (live, SMOKE_SCAFFOLD=1)", () => {
-  const CLI = join(import.meta.dir, "../src/cli.ts")
+describe.if(SMOKE)(
+  "templates: fresh scaffold passes `nifra check` (live, SMOKE_SCAFFOLD=1)",
+  () => {
+    const CLI = join(import.meta.dir, "../src/cli.ts")
 
-  const cases: Array<{ label: string; args: string[] }> = [
-    { label: "site-react", args: ["--template", "site", "--framework", "react"] },
-    { label: "isr", args: ["--template", "isr"] },
-  ]
+    const cases: Array<{ label: string; args: string[] }> = [
+      { label: "site-react", args: ["--template", "site", "--framework", "react"] },
+      { label: "isr", args: ["--template", "isr"] },
+    ]
 
-  for (const { label, args } of cases) {
-    test(
-      `${label}: scaffold --link → install → nifra check`,
-      async () => {
-        // realpath: macOS tmpdir is a symlink (/var/folders → /private/var/folders); bun
-        // resolves file: deps against the real path, so the app must live at its real spelling.
-        const root = await realpath(await mkdtemp(join(tmpdir(), "nifra-smoke-")))
-        roots.push(root)
-        const app = join(root, `smoke-${label}`)
+    for (const { label, args } of cases) {
+      test(
+        `${label}: scaffold --link → install → nifra check`,
+        async () => {
+          // realpath: macOS tmpdir is a symlink (/var/folders → /private/var/folders); bun
+          // resolves file: deps against the real path, so the app must live at its real spelling.
+          const root = await realpath(await mkdtemp(join(tmpdir(), "nifra-smoke-")))
+          roots.push(root)
+          const app = join(root, `smoke-${label}`)
 
-        const scaffoldProc = Bun.spawn(["bun", CLI, app, ...args], {
-          stdout: "pipe",
-          stderr: "pipe",
-        })
-        expect(await scaffoldProc.exited).toBe(0)
+          const scaffoldProc = Bun.spawn(["bun", CLI, app, ...args], {
+            stdout: "pipe",
+            stderr: "pipe",
+          })
+          expect(await scaffoldProc.exited).toBe(0)
 
-        const install = Bun.spawn(["bun", "install"], { cwd: app, stdout: "pipe", stderr: "pipe" })
-        const [iout, ierr] = await Promise.all([
-          new Response(install.stdout).text(),
-          new Response(install.stderr).text(),
-        ])
-        const icode = await install.exited
-        if (icode !== 0) console.error(`[${label}] bun install failed:\n${iout}\n${ierr}`)
-        expect(icode).toBe(0)
+          const install = Bun.spawn(["bun", "install"], {
+            cwd: app,
+            stdout: "pipe",
+            stderr: "pipe",
+          })
+          const [iout, ierr] = await Promise.all([
+            new Response(install.stdout).text(),
+            new Response(install.stderr).text(),
+          ])
+          const icode = await install.exited
+          if (icode !== 0) console.error(`[${label}] bun install failed:\n${iout}\n${ierr}`)
+          expect(icode).toBe(0)
 
-        const check = Bun.spawn(["bunx", "nifra", "check"], {
-          cwd: app,
-          stdout: "pipe",
-          stderr: "pipe",
-        })
-        const [out, err] = await Promise.all([
-          new Response(check.stdout).text(),
-          new Response(check.stderr).text(),
-        ])
-        const code = await check.exited
-        if (code !== 0) console.error(`[${label}] nifra check failed:\n${out}\n${err}`)
-        expect(code).toBe(0)
-      },
-      { timeout: 300_000 },
-    )
-  }
-})
+          const check = Bun.spawn(["bunx", "nifra", "check"], {
+            cwd: app,
+            stdout: "pipe",
+            stderr: "pipe",
+          })
+          const [out, err] = await Promise.all([
+            new Response(check.stdout).text(),
+            new Response(check.stderr).text(),
+          ])
+          const code = await check.exited
+          if (code !== 0) console.error(`[${label}] nifra check failed:\n${out}\n${err}`)
+          expect(code).toBe(0)
+        },
+        { timeout: 300_000 },
+      )
+    }
+  },
+)

@@ -62,6 +62,16 @@
       "types": "./dist/idempotency.d.ts",
       "default": "./dist/idempotency.js"
     },
+    "./invariants": {
+      "bun": "./src/invariants.ts",
+      "types": "./dist/invariants.d.ts",
+      "default": "./dist/invariants.js"
+    },
+    "./ledger": {
+      "bun": "./src/ledger.ts",
+      "types": "./dist/ledger.d.ts",
+      "default": "./dist/ledger.js"
+    },
     "./manifest": {
       "bun": "./src/manifest.ts",
       "types": "./dist/manifest.d.ts",

@@ -11,6 +11,7 @@ import {
   validCapabilityId,
 } from "./internal/capability-runtime.ts"
 import { NIFRA_ASSURANCE_IDS } from "./internal/route-assurance.ts"
+import { type EffectCost, type EffectPhase, effectLedgerOf } from "./ledger.ts"
 import { reflectRoutes } from "./reflection.ts"
 
 export type { CapabilityUseEvent }
@@ -389,10 +390,26 @@ export function evaluateCapabilityAssurance(
 }
 
 /**
- * Runtime effect beacon for owned adapters. It fails closed when the route omitted the capability or
- * when no route guard is present. Static provenance is still required: code can bypass a beacon.
+ * Optional effect-ledger fields for one `useCapability` beacon. Token-only by design: an adapter
+ * names *what* it touched and *how much resource* it used — never the value it read or wrote.
  */
-export function useCapability(context: object, capability: string): void {
+export interface UseCapabilityOptions {
+  /** Adapter/resource token recorded on the ledger entry (`repo:orders`). */
+  readonly target?: string
+  /** Dimensionless resource counters recorded on the ledger entry. */
+  readonly cost?: EffectCost
+  /** Keyed payload digest (see `computeEffectDigest`). */
+  readonly digest?: string
+}
+
+export interface CapabilityOutcomeOptions extends UseCapabilityOptions {
+  /** An outcome can only be recorded after the intent beacon succeeded. */
+  readonly phase: Exclude<EffectPhase, "intent">
+  /** Outcome error as a bounded token code. */
+  readonly error?: { readonly code: string }
+}
+
+function guardFor(context: object, capability: string): CapabilityGuard {
   if (!validCapabilityId(capability)) {
     throw new Error(
       `capability assurance: invalid runtime capability ${JSON.stringify(capability)}`,
@@ -409,7 +426,37 @@ export function useCapability(context: object, capability: string): void {
       `capability assurance: ${capability} is not declared for ${guard.method} ${guard.path}`,
     )
   }
+  return guard
+}
+
+/**
+ * Runtime effect beacon for owned adapters. It fails closed when the route omitted the capability or
+ * when no route guard is present. Static provenance is still required: code can bypass a beacon.
+ * When the server enabled the effect ledger, each beacon call also appends one token-only entry.
+ */
+export function useCapability(
+  context: object,
+  capability: string,
+  options?: UseCapabilityOptions,
+): void {
+  const guard = guardFor(context, capability)
+  const ledger = effectLedgerOf(context)
+  // Validate/append the intent before private admission hooks debit budgets. Overflow or malformed
+  // evidence therefore cannot consume quota and then fail the request.
+  ledger?.append({ capability, ...options, phase: "intent" })
   guard.onUse?.({ capability, method: guard.method, path: guard.path })
+}
+
+/** Record the terminal outcome of an already-admitted capability without debiting admission twice. */
+export function recordCapabilityOutcome(
+  context: object,
+  capability: string,
+  options: CapabilityOutcomeOptions,
+): void {
+  guardFor(context, capability)
+  const ledger = effectLedgerOf(context)
+  if (ledger === undefined) return
+  ledger.append({ capability, ...options })
 }
 
 /**

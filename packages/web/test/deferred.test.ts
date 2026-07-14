@@ -142,13 +142,15 @@ describe("defer + prepareDeferred", () => {
   })
 })
 
-// A rejection with a pre-armed no-op handler: the deferred pipeline attaches its own handler a
-// microtask later, and Bun's unhandled-rejection reporter can fire in that gap under load —
-// making the whole run exit nonzero with 0 test failures.
+// A rejection that settles on a LATER macrotask, after the deferred pipeline has attached its
+// handlers. An eagerly-rejected promise raced Bun's unhandled-rejection reporter under full-suite
+// load (a pre-armed no-op handler covers the original promise, but not the pipeline's derived
+// promises) — exiting the run nonzero with 0 test failures. Rejecting after attachment removes the
+// unhandled window entirely; the stream still waits for settlement, so assertions are unchanged.
 function rejection(message: string): Promise<never> {
-  const promise = Promise.reject(new Error(message))
-  promise.catch(() => {})
-  return promise
+  return new Promise((_, reject) => {
+    setTimeout(() => reject(new Error(message)), 1)
+  })
 }
 
 // Read an NDJSON ReadableStream to an array of text lines (for asserting ndjsonStream's output).

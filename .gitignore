@@ -56,3 +56,4 @@ site/.tmp-doc-check
 
 # Local scratch + private test files
 /.private/
+/.serena/

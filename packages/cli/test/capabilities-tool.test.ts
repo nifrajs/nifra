@@ -29,9 +29,7 @@ const policy = defineCapabilityPolicy({
       { specifier: "app-db/read", capabilities: ["db.read"] },
       { specifier: "app-db/write", capabilities: ["db.write"] },
     ],
-    forbiddenImports: [
-      { specifier: "postgres", reason: "use the tenant-scoped app-db adapter" },
-    ],
+    forbiddenImports: [{ specifier: "postgres", reason: "use the tenant-scoped app-db adapter" }],
   },
 })
 
@@ -47,13 +45,7 @@ describe("effect import scanner", () => {
         const templated = await import(\`app-db/read\`)
         // import(\`commented\`)
       `),
-    ).toEqual([
-      "app-db/read",
-      "postgres",
-      "app-db/write",
-      "./helper",
-      "app-db/read",
-    ])
+    ).toEqual(["app-db/read", "postgres", "app-db/write", "./helper", "app-db/read"])
   })
 })
 

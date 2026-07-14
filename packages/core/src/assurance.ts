@@ -20,6 +20,7 @@ import {
   validMethod,
   withRouteAssurance,
 } from "./internal/route-assurance.ts"
+import type { InvariantExecutor } from "./invariants.ts"
 import type { NifraManifestSigner } from "./manifest.ts"
 import { type ReflectedRoute, reflectRoutes } from "./reflection.ts"
 import type { Method } from "./router/router.ts"
@@ -100,6 +101,10 @@ export interface AssuranceConfig {
     readonly path?: string
     /** Resolve an operator key reference to a signer (KMS/HSM/local WebCrypto). */
     readonly signer?: (keyRef: string) => NifraManifestSigner | Promise<NifraManifestSigner>
+  }
+  /** Dynamic invariant execution is opt-in and must use a disposable/sandboxed target. */
+  readonly invariants?: {
+    readonly executor: InvariantExecutor
   }
 }
 
@@ -193,6 +198,9 @@ export function defineAssuranceConfig(config: AssuranceConfig): AssuranceConfig 
   if (config.manifest?.signer !== undefined && typeof config.manifest.signer !== "function") {
     throw new Error("route assurance: manifest signer must be a function")
   }
+  if (config.invariants !== undefined && typeof config.invariants.executor !== "function") {
+    throw new Error("route assurance: invariant executor must be a function")
+  }
   return Object.freeze({
     source: config.source,
     policy: defineAssurancePolicy(config.policy),
@@ -206,6 +214,9 @@ export function defineAssuranceConfig(config: AssuranceConfig): AssuranceConfig 
             ...(config.manifest.signer !== undefined ? { signer: config.manifest.signer } : {}),
           }),
         }
+      : {}),
+    ...(config.invariants !== undefined
+      ? { invariants: Object.freeze({ executor: config.invariants.executor }) }
       : {}),
   })
 }
