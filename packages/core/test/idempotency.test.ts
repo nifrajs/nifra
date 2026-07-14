@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
+  canonicalizeIdempotencyBody,
   computeIdempotencyFingerprint,
   createMemoryIdempotencyStore,
   evaluateCapabilityAssurance,
@@ -22,47 +23,76 @@ const post = (body: unknown, key?: string, extra?: Record<string, string>): Requ
     body: JSON.stringify(body),
   })
 
+const begin = (
+  store: MemoryIdempotencyStore,
+  key: string,
+  fingerprint: string,
+  ttlMs: number,
+  namespace = "global",
+) => store.begin({ namespace, key, fingerprint, ttlMs })
+
 describe("MemoryIdempotencyStore", () => {
   test("first begin is new; a second with the same fingerprint is in-flight until completed", () => {
     const store = new MemoryIdempotencyStore()
-    expect(store.begin("k1", "fp", 1000).state).toBe("new")
-    expect(store.begin("k1", "fp", 1000).state).toBe("in-flight")
-    store.complete("k1", { status: 200, headers: [], body: "" })
-    const replay = store.begin("k1", "fp", 1000)
+    const first = begin(store, "k1", "fp", 1000)
+    expect(first.state).toBe("new")
+    expect(begin(store, "k1", "fp", 1000).state).toBe("in-flight")
+    if (first.state !== "new") throw new Error("expected reservation")
+    store.complete({
+      namespace: "global",
+      key: "k1",
+      reservation: first.reservation,
+      response: { status: 200, headers: [], body: "" },
+    })
+    const replay = begin(store, "k1", "fp", 1000)
     expect(replay.state).toBe("replay")
     if (replay.state === "replay") expect(replay.response.status).toBe(200)
   })
 
   test("same key, different fingerprint is a mismatch", () => {
     const store = new MemoryIdempotencyStore()
-    store.begin("k1", "fp-a", 1000)
-    expect(store.begin("k1", "fp-b", 1000).state).toBe("mismatch")
+    begin(store, "k1", "fp-a", 1000)
+    expect(begin(store, "k1", "fp-b", 1000).state).toBe("mismatch")
   })
 
   test("an expired entry is treated as absent (new again)", () => {
     let now = 1_000
     const store = new MemoryIdempotencyStore({ now: () => now })
-    store.begin("k1", "fp", 100)
-    store.complete("k1", { status: 200, headers: [], body: "" })
-    expect(store.begin("k1", "fp", 100).state).toBe("replay")
+    const first = begin(store, "k1", "fp", 100)
+    if (first.state !== "new") throw new Error("expected reservation")
+    store.complete({
+      namespace: "global",
+      key: "k1",
+      reservation: first.reservation,
+      response: { status: 200, headers: [], body: "" },
+    })
+    expect(begin(store, "k1", "fp", 100).state).toBe("replay")
     now = 1_101 // past the 100ms ttl
-    expect(store.begin("k1", "fp", 100).state).toBe("new")
+    expect(begin(store, "k1", "fp", 100).state).toBe("new")
   })
 
   test("abandon releases a pending reservation but never a completed one", () => {
     const store = new MemoryIdempotencyStore()
-    store.begin("k1", "fp", 1000)
-    store.abandon("k1")
-    expect(store.begin("k1", "fp", 1000).state).toBe("new") // released → fresh
-    store.complete("k1", { status: 200, headers: [], body: "" })
-    store.abandon("k1")
-    expect(store.begin("k1", "fp", 1000).state).toBe("replay") // completed → retained
+    const first = begin(store, "k1", "fp", 1000)
+    if (first.state !== "new") throw new Error("expected reservation")
+    store.abandon({ namespace: "global", key: "k1", reservation: first.reservation })
+    const second = begin(store, "k1", "fp", 1000)
+    expect(second.state).toBe("new") // released → fresh
+    if (second.state !== "new") throw new Error("expected reservation")
+    store.complete({
+      namespace: "global",
+      key: "k1",
+      reservation: second.reservation,
+      response: { status: 200, headers: [], body: "" },
+    })
+    store.abandon({ namespace: "global", key: "k1", reservation: second.reservation })
+    expect(begin(store, "k1", "fp", 1000).state).toBe("replay") // completed → retained
   })
 
   test("sweep evicts expired entries", () => {
     let now = 0
     const store = new MemoryIdempotencyStore({ now: () => now })
-    store.begin("k1", "fp", 10)
+    begin(store, "k1", "fp", 10)
     expect(store.size).toBe(1)
     now = 100
     store.sweep()
@@ -71,7 +101,61 @@ describe("MemoryIdempotencyStore", () => {
 
   test("createMemoryIdempotencyStore factory yields a working store", () => {
     const store = createMemoryIdempotencyStore()
-    expect(store.begin("k", "fp", 1000).state).toBe("new")
+    expect(begin(store, "k", "fp", 1000).state).toBe("new")
+  })
+
+  test("the same client key is isolated by namespace", () => {
+    const store = new MemoryIdempotencyStore()
+    expect(begin(store, "same", "fp-a", 1000, "tenant-a").state).toBe("new")
+    expect(begin(store, "same", "fp-b", 1000, "tenant-b").state).toBe("new")
+  })
+
+  test("a stale reservation cannot complete or abandon a newer owner", () => {
+    let now = 0
+    const store = new MemoryIdempotencyStore({ now: () => now })
+    const old = begin(store, "k", "fp", 10)
+    if (old.state !== "new") throw new Error("expected reservation")
+    now = 11
+    const current = begin(store, "k", "fp", 10)
+    if (current.state !== "new") throw new Error("expected replacement reservation")
+    expect(
+      store.complete({
+        namespace: "global",
+        key: "k",
+        reservation: old.reservation,
+        response: { status: 200, headers: [], body: "old" },
+      }),
+    ).toBe(false)
+    expect(store.abandon({ namespace: "global", key: "k", reservation: old.reservation })).toBe(
+      false,
+    )
+    expect(begin(store, "k", "fp", 10).state).toBe("in-flight")
+  })
+
+  test("an expired owner cannot complete or abandon before another caller re-reserves", () => {
+    let now = 0
+    const store = new MemoryIdempotencyStore({ now: () => now })
+    const expired = begin(store, "k", "fp", 10)
+    if (expired.state !== "new") throw new Error("expected reservation")
+    now = 11
+    expect(
+      store.complete({
+        namespace: "global",
+        key: "k",
+        reservation: expired.reservation,
+        response: { status: 200, headers: [], body: "" },
+      }),
+    ).toBe(false)
+    expect(store.abandon({ namespace: "global", key: "k", reservation: expired.reservation })).toBe(
+      false,
+    )
+    expect(store.size).toBe(0)
+  })
+
+  test("capacity fails closed instead of evicting a live replay/pending reservation", () => {
+    const store = new MemoryIdempotencyStore({ maxEntries: 1 })
+    expect(begin(store, "a", "fp", 1000).state).toBe("new")
+    expect(begin(store, "b", "fp", 1000).state).toBe("capacity")
   })
 })
 
@@ -92,6 +176,18 @@ describe("idempotency primitives", () => {
     expect(a).toMatch(/^[0-9a-f]{64}$/)
   })
 
+  test("JSON canonicalization ignores whitespace and object property order", async () => {
+    const a = canonicalizeIdempotencyBody(
+      new TextEncoder().encode('{"amount":10,"currency":"INR"}'),
+      "application/json",
+    )
+    const b = canonicalizeIdempotencyBody(
+      new TextEncoder().encode('{ "currency": "INR", "amount": 10 }'),
+      "application/json; charset=utf-8",
+    )
+    expect(new TextDecoder().decode(a)).toBe(new TextDecoder().decode(b))
+  })
+
   test("serialize/replay round-trips status, headers, and a binary body + stamps the replay header", async () => {
     const bytes = new Uint8Array([0, 1, 2, 255, 254])
     const original = new Response(bytes, { status: 201, headers: { "x-test": "v" } })
@@ -103,9 +199,25 @@ describe("idempotency primitives", () => {
     expect(replayed.headers.get(IDEMPOTENT_REPLAY_HEADER)).toBe("1")
     expect(new Uint8Array(await replayed.arrayBuffer())).toEqual(bytes)
   })
+
+  test("replay enforces the configured response bound before decoding store data", () => {
+    expect(() =>
+      responseFromStored({ status: 200, headers: [], body: "AQID" }, { maxBytes: 2 }),
+    ).toThrow(/response exceeds/i)
+  })
 })
 
 describe("server({ idempotency }) — request path", () => {
+  test("durable scope rejects an in-memory store at registration", () => {
+    expect(() =>
+      server().post(
+        "/pay",
+        { idempotency: { scope: "durable", store: new MemoryIdempotencyStore() } },
+        () => ({ ok: true }),
+      ),
+    ).toThrow(/durable idempotency requires a durable store/i)
+  })
+
   test("replays the stored response on a repeated key without re-running the handler", async () => {
     let runs = 0
     const app = server().post("/pay", { idempotency: { scope: "request" } }, () => {
@@ -178,14 +290,70 @@ describe("server({ idempotency }) — request path", () => {
     expect(runs).toBe(1)
   })
 
+  test("a namespace resolver isolates identical keys for different tenants", async () => {
+    let runs = 0
+    const app = server().post(
+      "/pay",
+      {
+        idempotency: {
+          scope: "request",
+          namespace: (request) => request.headers.get("x-tenant") ?? "missing",
+        },
+      },
+      () => ({ run: ++runs }),
+    )
+    const request = (tenant: string) => post({ amount: 1 }, "same", { "x-tenant": tenant })
+    expect(await (await app.fetch(request("a"))).json()).toEqual({ run: 1 })
+    expect(await (await app.fetch(request("b"))).json()).toEqual({ run: 2 })
+    expect(await (await app.fetch(request("a"))).json()).toEqual({ run: 1 })
+  })
+
+  test("registration rejects invalid TTL/header configuration and idempotent SSE", () => {
+    expect(() =>
+      server().post("/x", { idempotency: { scope: "request", ttlMs: 0 } }, () => ({})),
+    ).toThrow(/ttlMs/)
+    expect(() =>
+      server().post(
+        "/x",
+        { idempotency: { scope: "request", ttlMs: Number.MAX_SAFE_INTEGER + 1 } },
+        () => ({}),
+      ),
+    ).toThrow(/ttlMs/)
+    expect(() =>
+      server().post(
+        "/x",
+        { idempotency: { scope: "request", headerName: "bad header" } },
+        () => ({}),
+      ),
+    ).toThrow(/header name/)
+    expect(() =>
+      server().post("/stream", { idempotency: { scope: "request" }, sse: {} as never }, () => ({})),
+    ).toThrow(/streaming/i)
+  })
+
+  test("an oversized response is replaced and replayed without re-running the effect", async () => {
+    let runs = 0
+    const app = server().post(
+      "/pay",
+      { idempotency: { scope: "request", maxResponseBytes: 8 } },
+      () => ({ value: "this is intentionally too large", run: ++runs }),
+    )
+    const first = await app.fetch(post({ amount: 1 }, "large"))
+    const replay = await app.fetch(post({ amount: 1 }, "large"))
+    expect(first.status).toBe(507)
+    expect(replay.status).toBe(507)
+    expect(replay.headers.get(IDEMPOTENT_REPLAY_HEADER)).toBe("1")
+    expect(runs).toBe(1)
+  })
+
   test("an injected store receives the completed response", async () => {
     const store = new MemoryIdempotencyStore()
-    const app = server().post("/pay", { idempotency: { scope: "durable", store } }, () => ({
+    const app = server().post("/pay", { idempotency: { scope: "request", store } }, () => ({
       ok: true,
     }))
     await app.fetch(post({ a: 1 }, "s1"))
     expect(store.size).toBe(1)
-    const replay = store.begin("s1", await fingerprintOf({ a: 1 }), 1000)
+    const replay = begin(store, "s1", await fingerprintOf({ a: 1 }), 1000)
     expect(replay.state).toBe("replay")
   })
 })
@@ -195,6 +363,7 @@ async function fingerprintOf(body: unknown): Promise<string> {
     "POST",
     "/pay",
     new TextEncoder().encode(JSON.stringify(body)),
+    "application/json",
   )
 }
 
@@ -236,5 +405,43 @@ describe("idempotency ↔ capability assurance (F-loop closure)", () => {
       ],
     })
     expect(report.findings.some((f) => f.code === "missing-request-idempotency")).toBe(true)
+  })
+
+  test("durable response replay does not falsely prove a durable command", () => {
+    const durableStore = Object.assign(new MemoryIdempotencyStore(), {
+      durability: "durable" as const,
+    })
+    const app = server().post(
+      "/charge",
+      { capabilities: ["billing.charge"], idempotency: { scope: "durable", store: durableStore } },
+      () => ({ ok: true }),
+    )
+    const report = evaluateCapabilityAssurance(
+      app,
+      {
+        definitions: [
+          {
+            id: "billing.charge",
+            zone: "domain",
+            access: "write",
+            idempotency: "durable",
+          },
+        ],
+        provenance: { imports: [], forbiddenImports: [] },
+      },
+      {
+        routes: [
+          {
+            method: "POST",
+            path: "/charge",
+            covered: true,
+            evidence: [{ id: "billing.charge", kind: "static", source: "billing" }],
+          },
+        ],
+      },
+    )
+    expect(report.findings.some((finding) => finding.code === "missing-durable-idempotency")).toBe(
+      true,
+    )
   })
 })

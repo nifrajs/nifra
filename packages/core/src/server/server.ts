@@ -8,14 +8,17 @@ import {
 } from "../budget.ts"
 import { FrameworkError, RouteConfigError } from "../errors.ts"
 import {
+  canonicalizeIdempotencyBody,
   computeIdempotencyFingerprint,
   DEFAULT_IDEMPOTENCY_HEADER,
   DEFAULT_IDEMPOTENCY_TTL_MS,
+  IdempotencyResponseTooLargeError,
   type IdempotencyStore,
   MemoryIdempotencyStore,
   responseFromStored,
   serializeResponse,
   validIdempotencyKey,
+  validIdempotencyNamespace,
 } from "../idempotency.ts"
 import {
   CAPABILITY_GUARD,
@@ -173,6 +176,8 @@ interface ResolvedIdempotency {
   readonly store: IdempotencyStore
   readonly ttlMs: number
   readonly headerName: string
+  readonly namespace: NonNullable<NonNullable<RouteSchema["idempotency"]>["namespace"]>
+  readonly maxResponseBytes: number
 }
 
 interface RouteEntry {
@@ -1883,9 +1888,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         }),
       )
     }
-    // Declaring `schema.idempotency` is the evidence that satisfies a write capability's idempotency
-    // requirement (capability assurance reads these ids). `durable` scope additionally proves the
-    // durable-command requirement.
+    // Declaring `schema.idempotency` is evidence for request replay only. It deliberately never proves
+    // durable command execution; that stronger evidence belongs to a command/outbox adapter.
     if (schema?.idempotency !== undefined) {
       routeAssurance.push(
         Object.freeze({
@@ -1894,15 +1898,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           scope: "plugin",
         }),
       )
-      if (schema.idempotency.scope === "durable") {
-        routeAssurance.push(
-          Object.freeze({
-            id: NIFRA_ASSURANCE_IDS.DURABLE_COMMAND,
-            source: "route-schema",
-            scope: "plugin",
-          }),
-        )
-      }
     }
     this.rawEntries.push({
       method,
@@ -1917,10 +1912,55 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private resolveIdempotency(schema: RouteSchema | undefined): ResolvedIdempotency | undefined {
     const config = schema?.idempotency
     if (config === undefined) return undefined
+    if (schema?.sse !== undefined) {
+      throw new RouteConfigError(
+        "INVALID_IDEMPOTENCY",
+        "streaming/SSE responses cannot be used on an idempotency route",
+      )
+    }
+    const store = config.store ?? this.defaultIdempotencyStore()
+    if (config.scope === "durable" && store.durability !== "durable") {
+      throw new RouteConfigError(
+        "INVALID_IDEMPOTENCY",
+        'durable idempotency requires a durable store (store.durability must be "durable")',
+      )
+    }
+    const ttlMs = config.ttlMs ?? DEFAULT_IDEMPOTENCY_TTL_MS
+    if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0) {
+      throw new RouteConfigError(
+        "INVALID_IDEMPOTENCY",
+        "idempotency ttlMs must be a finite positive number",
+      )
+    }
+    const headerName = (config.headerName ?? DEFAULT_IDEMPOTENCY_HEADER).toLowerCase()
+    try {
+      new Headers().set(headerName, "probe")
+    } catch {
+      throw new RouteConfigError(
+        "INVALID_IDEMPOTENCY",
+        `invalid idempotency header name ${JSON.stringify(headerName)}`,
+      )
+    }
+    const namespace = config.namespace ?? "global"
+    if (typeof namespace === "string" && !validIdempotencyNamespace(namespace)) {
+      throw new RouteConfigError(
+        "INVALID_IDEMPOTENCY",
+        `invalid idempotency namespace ${JSON.stringify(namespace)}`,
+      )
+    }
+    const maxResponseBytes = config.maxResponseBytes ?? this.maxBodyBytes
+    if (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 1) {
+      throw new RouteConfigError(
+        "INVALID_IDEMPOTENCY",
+        "idempotency maxResponseBytes must be a positive integer",
+      )
+    }
     return Object.freeze({
-      store: config.store ?? this.defaultIdempotencyStore(),
-      ttlMs: config.ttlMs ?? DEFAULT_IDEMPOTENCY_TTL_MS,
-      headerName: (config.headerName ?? DEFAULT_IDEMPOTENCY_HEADER).toLowerCase(),
+      store,
+      ttlMs,
+      headerName,
+      namespace,
+      maxResponseBytes,
     })
   }
 
@@ -2445,6 +2485,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     if (key === null || !validIdempotencyKey(key)) {
       return wrapResponse(jsonError(400, "idempotency_key_required"))
     }
+    const namespace =
+      typeof config.namespace === "function"
+        ? await config.namespace(req.clone(), platform)
+        : config.namespace
+    if (!validIdempotencyNamespace(namespace)) {
+      return wrapResponse(jsonError(500, "idempotency_namespace_invalid"))
+    }
     const read = await readBoundedBytes(req, this.maxBodyBytes)
     if (!read.ok) {
       return wrapResponse(
@@ -2452,22 +2499,34 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       )
     }
     const url = urlPartsOf(req.url)
+    const canonicalBody = canonicalizeIdempotencyBody(read.bytes, req.headers.get("content-type"))
     const fingerprint = await computeIdempotencyFingerprint(
       req.method,
       `${url.pathname}${url.search}`,
-      read.bytes,
+      canonicalBody,
+      req.headers.get("content-type") ?? "",
     )
 
-    const begin = await config.store.begin(key, fingerprint, config.ttlMs)
-    if (begin.state === "replay") return wrapResponse(responseFromStored(begin.response))
+    const begin = await config.store.begin({ namespace, key, fingerprint, ttlMs: config.ttlMs })
+    if (begin.state === "replay") {
+      return wrapResponse(responseFromStored(begin.response, { maxBytes: config.maxResponseBytes }))
+    }
     if (begin.state === "mismatch") return wrapResponse(jsonError(409, "idempotency_key_reused"))
     if (begin.state === "in-flight") {
       return wrapResponse(jsonError(409, "idempotency_in_progress", { "Retry-After": "1" }))
     }
+    if (begin.state === "capacity") {
+      return wrapResponse(jsonError(503, "idempotency_store_capacity", { "Retry-After": "1" }))
+    }
+    const reservation = begin.reservation
 
     // Fresh key: re-expose the buffered body as a Request so the normal lanes can read + validate it,
     // then run those lanes to a concrete Response.
-    const bufferedInit: RequestInit = { method: req.method, headers: req.headers }
+    const bufferedInit: RequestInit = {
+      method: req.method,
+      headers: req.headers,
+      signal: req.signal,
+    }
     if (read.bytes.byteLength > 0)
       bufferedInit.body = read.bytes as NonNullable<RequestInit["body"]>
     const buffered: RequestSource = new Request(req.url, bufferedInit)
@@ -2487,14 +2546,44 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     } catch (err) {
       // The lanes never throw (errors resolve to a 500 Response), but stay fail-safe: release the
       // reservation so a retry isn't wedged, then re-throw.
-      await config.store.abandon(key)
+      await config.store.abandon({ namespace, key, reservation })
       throw err
     }
     // Cache only successful responses; release the key on any error so the client can retry.
     if (response.status >= 200 && response.status < 300) {
-      await config.store.complete(key, await serializeResponse(response))
+      let storedResponse: Awaited<ReturnType<typeof serializeResponse>>
+      try {
+        storedResponse = await serializeResponse(response, { maxBytes: config.maxResponseBytes })
+      } catch (error) {
+        if (!(error instanceof IdempotencyResponseTooLargeError)) throw error
+        // The effect may already have happened, so never abandon and permit a duplicate execution.
+        // Commit a small terminal response under the winning key and return that same response now.
+        response = jsonError(507, "idempotency_response_too_large")
+        try {
+          storedResponse = await serializeResponse(response, {
+            maxBytes: config.maxResponseBytes,
+          })
+        } catch (terminalError) {
+          if (!(terminalError instanceof IdempotencyResponseTooLargeError)) throw terminalError
+          // Even an intentionally tiny bound must remain truthful. An empty 507 preserves terminal
+          // status + replay safety without silently storing more bytes than the route permits.
+          response = new Response(null, { status: 507 })
+          storedResponse = await serializeResponse(response, {
+            maxBytes: config.maxResponseBytes,
+          })
+        }
+      }
+      const completed = await config.store.complete({
+        namespace,
+        key,
+        reservation,
+        response: storedResponse,
+      })
+      if (!completed) {
+        return wrapResponse(jsonError(503, "idempotency_reservation_lost", { "Retry-After": "1" }))
+      }
     } else {
-      await config.store.abandon(key)
+      await config.store.abandon({ namespace, key, reservation })
     }
     return wrapResponse(response)
   }

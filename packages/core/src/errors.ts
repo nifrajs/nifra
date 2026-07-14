@@ -25,6 +25,7 @@ export type RouteConfigErrorCode =
   | "WILDCARD_NOT_LAST"
   | "INVALID_METHOD"
   | "INVALID_ASSURANCE"
+  | "INVALID_IDEMPOTENCY"
 
 /**
  * Thrown at route registration when a route is misconfigured. This is the

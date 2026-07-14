@@ -56,6 +56,16 @@
       "bun": "./src/budget.ts",
       "types": "./dist/budget.d.ts",
       "default": "./dist/budget.js"
+    },
+    "./idempotency": {
+      "bun": "./src/idempotency.ts",
+      "types": "./dist/idempotency.d.ts",
+      "default": "./dist/idempotency.js"
+    },
+    "./manifest": {
+      "bun": "./src/manifest.ts",
+      "types": "./dist/manifest.d.ts",
+      "default": "./dist/manifest.js"
     }
   },
   "files": [

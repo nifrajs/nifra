@@ -7,7 +7,8 @@ import type { CookieOptions } from "./cookies.ts"
 /**
  * Declares a mutating route as idempotent: the server dedupes retries on an `Idempotency-Key` header
  * (see {@link RouteSchema.idempotency}). Satisfies the capability-assurance idempotency requirement
- * for a `write` capability — `scope: "durable"` additionally clears the durable-command requirement.
+ * for a request-idempotent `write` capability. Durable response replay is deliberately NOT durable-
+ * command evidence: a command/provider key must still prove the side effect itself is deduplicated.
  */
 export interface IdempotencyConfig {
   /** `request` = in-process dedupe; `durable` = cross-restart, backed by a durable store. */
@@ -18,6 +19,23 @@ export interface IdempotencyConfig {
   readonly store?: IdempotencyStore
   /** Header carrying the key. Default `idempotency-key`. */
   readonly headerName?: string
+  /** Maximum response bytes retained for replay. Defaults to the server body limit. */
+  readonly maxResponseBytes?: number
+  /**
+   * Server-owned key namespace. Use a tenant/subject-scoped opaque token for shared stores so two
+   * principals choosing the same header key never collide. The resolver receives a clone and must not
+   * derive the namespace from attacker-controlled input without authentication.
+   */
+  readonly namespace?:
+    | string
+    | ((
+        request: {
+          readonly method: string
+          readonly url: string
+          readonly headers: { get(name: string): string | null }
+        },
+        platform: Platform | undefined,
+      ) => string | Promise<string>)
 }
 
 /** Flattens an intersection into a single object type for readable hovers. */

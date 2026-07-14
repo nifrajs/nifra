@@ -20,6 +20,7 @@ import {
   validMethod,
   withRouteAssurance,
 } from "./internal/route-assurance.ts"
+import type { NifraManifestSigner } from "./manifest.ts"
 import { type ReflectedRoute, reflectRoutes } from "./reflection.ts"
 import type { Method } from "./router/router.ts"
 
@@ -93,6 +94,13 @@ export interface AssuranceConfig {
   readonly source: unknown
   readonly policy: AssurancePolicy
   readonly capabilities?: CapabilityPolicy
+  /** Off-request-path manifest artifact/signing integration. Private keys remain behind `signer`. */
+  readonly manifest?: {
+    /** Default `nifra.manifest.json`. */
+    readonly path?: string
+    /** Resolve an operator key reference to a signer (KMS/HSM/local WebCrypto). */
+    readonly signer?: (keyRef: string) => NifraManifestSigner | Promise<NifraManifestSigner>
+  }
 }
 
 const nonEmpty = (value: string): boolean => value.trim() !== ""
@@ -179,11 +187,25 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
 
 /** Identity helper for a `nifra.assurance.ts` default export. */
 export function defineAssuranceConfig(config: AssuranceConfig): AssuranceConfig {
+  if (config.manifest?.path !== undefined && config.manifest.path.trim() === "") {
+    throw new Error("route assurance: manifest path must be non-empty")
+  }
+  if (config.manifest?.signer !== undefined && typeof config.manifest.signer !== "function") {
+    throw new Error("route assurance: manifest signer must be a function")
+  }
   return Object.freeze({
     source: config.source,
     policy: defineAssurancePolicy(config.policy),
     ...(config.capabilities !== undefined
       ? { capabilities: defineCapabilityPolicy(config.capabilities) }
+      : {}),
+    ...(config.manifest !== undefined
+      ? {
+          manifest: Object.freeze({
+            ...(config.manifest.path !== undefined ? { path: config.manifest.path } : {}),
+            ...(config.manifest.signer !== undefined ? { signer: config.manifest.signer } : {}),
+          }),
+        }
       : {}),
   })
 }

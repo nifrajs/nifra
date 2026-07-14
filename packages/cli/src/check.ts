@@ -17,7 +17,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs"
-import { dirname, isAbsolute, join } from "node:path"
+import { dirname, isAbsolute, join, resolve } from "node:path"
 import { Glob } from "bun"
 
 export interface SourceFinding {
@@ -771,6 +771,7 @@ export interface CheckDiagnostic {
     | "response-route"
     | "undeclared-dependency"
     | "server-manifest-drift"
+    | "manifest-drift"
     | "capability-assurance"
     | "capability-config"
   /** `error` fails the gate (a real contract break); `warning` is advisory — surfaced to the agent but
@@ -833,6 +834,8 @@ const UNDECLARED_DEP_HINT =
   "imported package is not declared in package.json dependencies — run bun add to declare it"
 const MANIFEST_DRIFT_HINT =
   "server-manifest.ts is out of sync with routes/ — re-run the build to regenerate it (a disk-less worker bakes this route table, so the drift is a silent edge break), then commit it"
+const TRUST_MANIFEST_DRIFT_HINT =
+  "nifra.manifest.json is missing, invalid, or out of sync — run `nifra manifest emit`, review it, and commit the regenerated trust artifact"
 const CAPABILITY_HINT =
   "effect/capability assurance failed — align the route declaration with approved adapter provenance; never bypass an owned effect seam"
 
@@ -1167,6 +1170,11 @@ export async function collectCheckResult(
     try {
       const { loadAssuranceConfig } = await import("./assure.ts")
       const config = await loadAssuranceConfig(cwd)
+      let capabilityReport:
+        | Awaited<
+            ReturnType<typeof import("./capabilities-tool.ts")["collectCapabilityProjectReport"]>
+          >["report"]
+        | undefined
       if (config.capabilities !== undefined) {
         const { collectCapabilityProjectReport } = await import("./capabilities-tool.ts")
         const project = await collectCapabilityProjectReport(
@@ -1174,6 +1182,7 @@ export async function collectCheckResult(
           config.source,
           config.capabilities,
         )
+        capabilityReport = project.report
         for (const finding of project.report.findings) {
           const violation =
             finding.code === "forbidden-effect-import"
@@ -1196,6 +1205,54 @@ export async function collectCheckResult(
                 "Declare the exact capability token on the route; do not widen unrelated routes in the same file.",
                 "For domain writes, add the request-idempotency or durable-command adapter required by the capability definition.",
                 "Run `nifra capabilities snapshot` only after assurance passes, then review the lockfile diff.",
+              ],
+            },
+          })
+        }
+      }
+      if (config.manifest !== undefined) {
+        const { evaluateRouteAssurance } = await import("@nifrajs/core/assurance")
+        const { buildNifraManifest, parseNifraManifest, serializeNifraManifest } = await import(
+          "@nifrajs/core/manifest"
+        )
+        const assurance = evaluateRouteAssurance(config.source, config.policy)
+        const path = resolve(cwd, config.manifest.path ?? "nifra.manifest.json")
+        let message: string | undefined
+        if (!assurance.ok || (capabilityReport !== undefined && !capabilityReport.ok)) {
+          message =
+            "the configured assurance policy is failing, so a trusted manifest cannot be built"
+        } else if (!existsSync(path)) {
+          message = "the configured trust manifest is missing"
+        } else {
+          try {
+            const current = await buildNifraManifest({
+              source: config.source,
+              assurance,
+              ...(capabilityReport !== undefined ? { capabilities: capabilityReport } : {}),
+            })
+            const storedText = await Bun.file(path).text()
+            const stored = await parseNifraManifest(storedText, path)
+            const expectedText = `${serializeNifraManifest(current)}\n`
+            if (storedText !== expectedText || stored.contentHash !== current.contentHash) {
+              message = "the configured trust manifest does not match live route reflection"
+            }
+          } catch (error) {
+            message = `the configured trust manifest is invalid: ${error instanceof Error ? error.message : String(error)}`
+          }
+        }
+        if (message !== undefined) {
+          diagnostics.push({
+            rule: "manifest-drift",
+            severity: "error",
+            file: path,
+            message: `${message} — ${TRUST_MANIFEST_DRIFT_HINT}`,
+            fix: TRUST_MANIFEST_DRIFT_HINT,
+            suggestion: {
+              kind: "command",
+              title: "Regenerate the signed-manifest input artifact",
+              command: ["nifra", "manifest", "emit"],
+              steps: [
+                "Review the route, assurance, capability, and classification delta before committing it.",
               ],
             },
           })
@@ -1261,6 +1318,7 @@ export async function runCheck(
     ["response-route", "route returns a raw Response (typed client → data: never)"],
     ["undeclared-dependency", "undeclared dependency in package.json"],
     ["server-manifest-drift", "server-manifest.ts drifted from routes/"],
+    ["manifest-drift", "versioned trust manifest drift"],
     ["capability-assurance", "effect/capability assurance"],
     ["capability-config", "capability assurance config"],
   ] as const) {

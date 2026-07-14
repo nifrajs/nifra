@@ -11,21 +11,21 @@ Bun-native, contract-first HTTP framework — the router, server, and route desc
 ## Key exports
 
 - **attachWebSocket** _(function)_ — `attachWebSocket: (socket: StandardWebSocket, handler: WebSocketHandler, data: unknown, options: { openNow: boolean; pubsub: TopicRegistry; …`
+- **buildNifraManifest** _(function)_ — `buildNifraManifest: (input: BuildNifraManifestInput) => Promise<NifraManifest>`
+- **canonicalizeIdempotencyBody** _(function)_ — `canonicalizeIdempotencyBody: (body: Uint8Array, contentType: string | null) => Uint8Array`
+- **canonicalManifest** _(function)_ — `canonicalManifest: (manifest: Pick<NifraManifest, "manifestVersion" | "routes">) => string`
 - **classificationAtLeast** _(function)_ — `classificationAtLeast: (value: DataClassification, floor: DataClassification) => boolean`
-- **computeIdempotencyFingerprint** _(function)_ — `computeIdempotencyFingerprint: (method: string, path: string, body: Uint8Array) => Promise<string>`
+- **classified** _(function)_ — `classified: <S extends object>(schema: S, classification: DataClassification) => ClassifiedSchema<S>`
+- **computeIdempotencyFingerprint** _(function)_ — `computeIdempotencyFingerprint: (method: string, path: string, body: Uint8Array, contentType?: string) => Promise<string>`
 - **createMemoryIdempotencyStore** _(function)_ — `createMemoryIdempotencyStore: (options?: MemoryIdempotencyStoreOptions) => MemoryIdempotencyStore`
+- **declaredCapabilities** _(function)_ — `declaredCapabilities: (context: object) => readonly string[]`
 - **defineAssuranceConfig** _(function)_ — `defineAssuranceConfig: (config: AssuranceConfig) => AssuranceConfig`
 - **defineAssurancePolicy** _(function)_ — `defineAssurancePolicy: (policy: AssurancePolicy) => AssurancePolicy`
 - **defineCapabilityPolicy** _(function)_ — `defineCapabilityPolicy: (policy: CapabilityPolicy) => CapabilityPolicy`
 - **defineContract** _(function)_ — `defineContract: <const C extends ContractShape>(contract: C) => C`
 - **defineIdentityPlugin** _(function)_ — `defineIdentityPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
-- **definePlugin** _(function)_ — `definePlugin: <In extends AnyServer, Out extends AnyServer>(name: string, apply: (app: In) => Out) => NifraPlugin<In, Out>`
-- **diffRouteSnapshots** _(function)_ — `diffRouteSnapshots: (before: readonly RouteSnapshot[], after: readonly RouteSnapshot[]) => RoutesDiff`
-- **evaluateCapabilityAssurance** _(function)_ — `evaluateCapabilityAssurance: (source: unknown, policyInput: CapabilityPolicy, evidenceSet: CapabilityEvidenceSet) => CapabilityAssuranceRep…`
-- **evaluateRouteAssurance** _(function)_ — `evaluateRouteAssurance: (source: unknown, policyInput: AssurancePolicy) => AssuranceReport`
-- **implement** _(function)_ — `implement: <const C extends ContractShape, H extends HandlersFor<C>>(contract: C, handlers: H) => Server<RegistryFromImpl<C, H>>`
 
-_…and 167 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
+_…and 198 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 
 ## Footguns
 
