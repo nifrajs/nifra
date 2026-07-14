@@ -3231,9 +3231,10 @@ backend over HTTP — so a browser `POST /api/sync` hit the page router and 404/
 until you hand-wrote a dispatch branch in `server-bun.ts`. Now
 `createWebApp` mounts it for you: a request whose pathname is exactly
 `apiPrefix` (default `/api`) or starts with
-`apiPrefix + "/"` is dispatched to `api.fetch(req.url, req)`
-**before** page routing, and the backend's `Response` is returned
-untouched (the request body is passed through, never pre-read).
+`apiPrefix + "/"` is dispatched through Nifra's platform-aware backend mount
+interface **before** page routing. The backend receives the same Workers
+`env` bindings and `waitUntil` lifetime as the web app, and its
+`Response` is returned untouched (the request body is passed through, never pre-read).
 
 ```ts
 // server.ts (prod) — createWebApp serves pages AND auto-mounts the backend at /api/*.
@@ -6242,7 +6243,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/client
 
-`ActionArgs`, `ActionData`, `ApiError`, `ApiProxy`, `client`, `ClientOptions`, `FetchFn`, `inProcessClient`, `Jsonify`, `LoaderArgs`, `LoaderData`, `RegistryOf`, `Result`, `SubscribeOptions`, `Subscription`, `testClient`, `Treaty`, `TreatyFromRegistry`
+`ActionArgs`, `ActionData`, `ApiError`, `ApiProxy`, `client`, `ClientOptions`, `FetchFn`, `inProcessClient`, `InProcessClient`, `Jsonify`, `LoaderArgs`, `LoaderData`, `RegistryOf`, `Result`, `SubscribeOptions`, `Subscription`, `testClient`, `Treaty`, `TreatyFromRegistry`
 
 ## @nifrajs/content
 

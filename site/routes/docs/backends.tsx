@@ -100,9 +100,10 @@ export default function Backends() {
         until you hand-wrote a dispatch branch in <code>server-bun.ts</code>. Now{" "}
         <code>createWebApp</code> mounts it for you: a request whose pathname is exactly{" "}
         <code>apiPrefix</code> (default <code>/api</code>) or starts with{" "}
-        <code>apiPrefix + "/"</code> is dispatched to <code>api.fetch(req.url, req)</code>{" "}
-        <strong>before</strong> page routing, and the backend's <code>Response</code> is returned
-        untouched (the request body is passed through, never pre-read).
+        <code>apiPrefix + "/"</code> is dispatched through Nifra's platform-aware backend mount
+        interface <strong>before</strong> page routing. The backend receives the same Workers{" "}
+        <code>env</code> bindings and <code>waitUntil</code> lifetime as the web app, and its{" "}
+        <code>Response</code> is returned untouched (the request body is passed through, never pre-read).
       </p>
       <CodeBlock code={WIRE} />
       <p>

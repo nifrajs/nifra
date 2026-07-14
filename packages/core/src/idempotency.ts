@@ -24,6 +24,33 @@ export const IDEMPOTENT_REPLAY_HEADER = "x-nifra-idempotent-replay"
 
 const KEY_MAX_LENGTH = 255
 
+// A replay is a new HTTP exchange, not a byte-for-byte resurrection of connection state. Session
+// setters and hop-by-hop headers belong only to the winning response. Filter on both write and read:
+// durable stores may still contain records created by an older Nifra version.
+const REPLAY_UNSAFE_RESPONSE_HEADERS: ReadonlySet<string> = new Set([
+  "authentication-info",
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authentication-info",
+  "proxy-authorization",
+  "set-cookie",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+])
+
+function replaySafeHeaders(
+  headers: Iterable<readonly [string, string]>,
+): readonly (readonly [string, string])[] {
+  const safe: Array<readonly [string, string]> = []
+  for (const [name, value] of headers) {
+    if (!REPLAY_UNSAFE_RESPONSE_HEADERS.has(name.toLowerCase())) safe.push([name, value])
+  }
+  return safe
+}
+
 /** A serialized response held by a store. `body` is base64 so binary payloads round-trip intact. */
 export interface StoredResponse {
   readonly status: number
@@ -245,7 +272,7 @@ export async function serializeResponse(
       : await boundedResponseBytes(response, maxBytes)
   return {
     status: response.status,
-    headers: [...response.headers] as readonly (readonly [string, string])[],
+    headers: replaySafeHeaders(response.headers),
     body: bytes.length > 0 ? bytesToBase64(bytes) : "",
   }
 }
@@ -267,7 +294,7 @@ export function responseFromStored(
       throw new IdempotencyResponseTooLargeError(options.maxBytes)
     }
   }
-  const headers = new Headers(stored.headers as [string, string][])
+  const headers = new Headers(replaySafeHeaders(stored.headers) as [string, string][])
   headers.set(IDEMPOTENT_REPLAY_HEADER, "1")
   // Reference the Response body type structurally: `BodyInit` isn't a named type under every lib config,
   // but a fresh `Uint8Array` is a valid body — the cast bridges the `ArrayBufferLike` generic variance.

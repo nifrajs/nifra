@@ -25,7 +25,7 @@ The nifra full-stack framework — unscoped meta-entry that re-exports @nifrajs/
 - **createSeededRandom** _(function)_ — `createSeededRandom: (seed: number) => () => number`
 - **declaredCapabilities** _(function)_ — `declaredCapabilities: (context: object) => readonly string[]`
 
-_…and 232 more — see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
+_…and 235 more — see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
 
 ## Footguns
 

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { inProcessClient } from "@nifrajs/client"
 import { server } from "@nifrajs/core"
 import {
   createWebApp,
@@ -796,6 +797,36 @@ test("createWebApp auto-mounts the api backend: POST /api/echo reaches the backe
   )
   expect(res.status).toBe(200) // not a 405 from the page router
   expect(await res.json()).toEqual({ echoed: { hi: "there" } }) // backend ran, body passed through
+})
+
+test("createWebApp auto-mount forwards platform env and waitUntil to the backend", async () => {
+  const background: Promise<unknown>[] = []
+  let backgroundCompleted = false
+  const backend = server<{ DB: string }>().get("/api/platform", (c) => {
+    c.waitUntil(
+      Promise.resolve().then(() => {
+        backgroundCompleted = true
+      }),
+    )
+    return { binding: c.env.DB }
+  })
+  const app = createWebApp<{ DB: string }>({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api: inProcessClient(backend),
+  })
+
+  const res = await app.fetch(new Request("http://x/api/platform"), {
+    env: { DB: "worker-binding" },
+    waitUntil: (promise) => background.push(promise),
+  })
+
+  expect(res.status).toBe(200)
+  expect(await res.json()).toEqual({ binding: "worker-binding" })
+  expect(background).toHaveLength(1)
+  await Promise.all(background)
+  expect(backgroundCompleted).toBe(true)
 })
 
 // The REAL inProcessClient(app) is a CALLABLE Eden proxy (`typeof === "function"`), not a plain object,

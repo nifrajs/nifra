@@ -8,6 +8,7 @@ export {
   type ClientOptions,
   client,
   type FetchFn,
+  type InProcessClient,
   inProcessClient,
   testClient,
 } from "./client.ts"

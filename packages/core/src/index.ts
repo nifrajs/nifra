@@ -26,6 +26,7 @@ export { FRAMEWORK_NAME, type FrameworkName } from "./internal/brand.ts"
 export * from "./invariants.ts"
 export * from "./ledger.ts"
 export * from "./manifest.ts"
+export * from "./mount.ts"
 export * from "./reflection.ts"
 export { METHODS, type Method, Router, type RouterMatch } from "./router/router.ts"
 export type {
