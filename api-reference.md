@@ -69,8 +69,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **DeadlineAdmission** _(type)_ — `type DeadlineAdmission`
 - **DeadlineAdmissionOptions** _(interface)_ — `interface DeadlineAdmissionOptions`
 - **DeadlineExceededError** _(class)_ — `class DeadlineExceededError`
-- **DeadlineHeaderResult** _(type)_ — `type DeadlineHeaderResult = { readonly ok: true; readonly deadline: number; } | { readonly ok: false; readonly reason: "missing" | "malformed"; }`
-- **DeadlineHeadersInit** _(type)_ — `type DeadlineHeadersInit = Headers | Readonly<Record<string, string>> | [string, string][] | undefined`
+- **DeadlineHeaderResult** _(type)_ — `type DeadlineHeaderResult = | { readonly ok: true; readonly deadline: number } | { readonly ok: false; readonly reason: "missing" | "malformed" }`
+- **DeadlineHeadersInit** _(type)_ — `type DeadlineHeadersInit = | Headers | Readonly<Record<string, string>> | [string, string][] | undefined`
   DOM-lib-independent subset accepted by the Web `Headers` constructor.
 - **NIFRA_DEADLINE_HEADER** _(const)_ — `NIFRA_DEADLINE_HEADER: "x-nifra-deadline"`
   Canonical wire header carrying an absolute Unix epoch deadline in milliseconds.
@@ -200,6 +200,7 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **CapabilityFindingCode** _(type)_ — `type CapabilityFindingCode = | "unknown-capability" | "provenance-uncovered" | "undeclared-capability-evidence" | "safe-method-domain-write" | "missing-request-idempotency" | "missing-durable-idempotency" | "forbidden-e…`
 - **CapabilityIdempotency** _(type)_ — `type CapabilityIdempotency = "none" | "request" | "durable"`
 - **CapabilityImportRule** _(interface)_ — `interface CapabilityImportRule`
+- **CapabilityOutcomeOptions** _(interface)_ — `interface CapabilityOutcomeOptions`
 - **CapabilityPolicy** _(interface)_ — `interface CapabilityPolicy`
 - **CapabilityProvenancePolicy** _(interface)_ — `interface CapabilityProvenancePolicy`
 - **CapabilityRouteModule** _(interface)_ — `interface CapabilityRouteModule`
@@ -232,7 +233,7 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **DurableObjectNamespaceLike** _(interface)_ — `interface DurableObjectNamespaceLike`
   Structural view of a Cloudflare Durable Object namespace binding — keeps `@cloudflare/workers-types` out of `@nifrajs/core`. The real `DurableObjectNamespace` satisfies it.
 - **EffectChain** _(interface)_ — `interface EffectChain`
-  Tamper-evidence over the sealed entries: per-entry hash chain plus the resulting head.
+  Tamper-evidence over the route identity, declarations, and sealed entries.
 - **EffectCost** _(type)_ — `type EffectCost = Readonly<Record<string, number>>`
   Dimensionless resource counters (`{ ms: 12, calls: 1, bytes: 512 }`). Counters carry *how much resource* an effect consumed; mapping counters to money/pricing is deliberately out of scope here.
 - **EffectEntry** _(interface)_ — `interface EffectEntry`
@@ -277,6 +278,10 @@ Every public export of every package — name, kind, signature, and doc summary 
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ — `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
 - **InferOutput** _(type)_ — `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
+- **InvariantExecutor** _(type)_ — `type InvariantExecutor = (request: Request) => Response | Promise<Response>`
+- **InvariantFinding** _(interface)_ — `interface InvariantFinding`
+- **InvariantFindingCode** _(type)_ — `type InvariantFindingCode = | "classification-understated" | "server-error-on-valid-input" | "response-schema-violation" | "validation-bypass" | "server-error-on-invalid-input"`
+- **InvariantReport** _(interface)_ — `interface InvariantReport`
 - **JsonSchema** _(type)_ — `type JsonSchema = boolean | Readonly<Record<string, unknown>>`
   JSON Schema permits either a schema object or the boolean schemas `true` and `false`.
 - **LedgerSink** _(type)_ — `type LedgerSink = (ledger: SealedEffectLedger) => void | Promise<void>`
@@ -374,6 +379,7 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **RouterMatch** _(type)_ — `type RouterMatch<T>`
   Result of {@link Router.find}. The `found: false` cases deliberately separate a missing path (404) from a path that exists for other methods (405), so the server layer can answer correctly and populate an `Allow` header.
 - **RoutesDiff** _(interface)_ — `interface RoutesDiff`
+- **RunInvariantsOptions** _(interface)_ — `interface RunInvariantsOptions`
 - **RunningServer** _(interface)_ — `interface RunningServer`
   The handle `listen()` returns — the slice of Bun's server nifra holds and exposes. Declared explicitly (rather than `ReturnType<typeof Bun.serve>`) so the public type surface doesn't leak the ambient `Bun` global into consumers' `.d.ts` resolution.
 - **SSEContext** _(interface)_ — `interface SSEContext`
@@ -400,6 +406,7 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **SitemapChangeFreq** _(type)_ — `type SitemapChangeFreq = | "always" | "hourly" | "daily" | "weekly" | "monthly" | "yearly" | "never"`
 - **SitemapEntry** _(interface)_ — `interface SitemapEntry`
 - **SitemapOptions** _(interface)_ — `interface SitemapOptions`
+- **SkippedRoute** _(interface)_ — `interface SkippedRoute`
 - **StandardIssue** _(interface)_ — `interface StandardIssue`
 - **StandardResult** _(type)_ — `type StandardResult<Output> = StandardSuccess<Output> | StandardFailure`
 - **StandardSchemaV1** _(interface)_ — `interface StandardSchemaV1<Input = unknown, Output = Input>`
@@ -460,6 +467,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Bounded in-memory sink for tests and local development. Token-only, like every sink.
 - **createRequestLedger** _(function)_ — `createRequestLedger: (options: CreateRequestLedgerOptions) => RequestLedger`
   Create a bounded per-request ledger. The server wires one per capability-declaring route.
+- **createSeededRandom** _(function)_ — `createSeededRandom: (seed: number) => () => number`
+  Deterministic PRNG (mulberry32). Ambient randomness would make failures unreproducible.
 - **declaredCapabilities** _(function)_ — `declaredCapabilities: (context: object) => readonly string[]`
   Read the route's token-only declaration for admission plugins. This intentionally exposes neither the request nor runtime evidence; it is the stable public seam for private entitlement policy.
 - **defineAssuranceConfig** _(function)_ — `defineAssuranceConfig: (config: AssuranceConfig) => AssuranceConfig`
@@ -504,6 +513,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Parse the detached sidecar before selecting its operator-controlled public key.
 - **randomEffectDigestKey** _(function)_ — `randomEffectDigestKey: () => Uint8Array`
   Fresh random digest key (32 bytes). Per-process by default — persist one externally to correlate across restarts.
+- **recordCapabilityOutcome** _(function)_ — `recordCapabilityOutcome: (context: object, capability: string, options: CapabilityOutcomeOptions) => void`
+  Record the terminal outcome of an already-admitted capability without debiting admission twice.
 - **redactLogFields** _(function)_ — `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
 - **reflectClassification** _(function)_ — `reflectClassification: (schema: unknown) => ResponseClassification | undefined`
@@ -518,6 +529,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Build a `robots.txt` body from grouped rules plus optional `Sitemap:`/`Host:` lines.
 - **routeClassification** _(function)_ — `routeClassification: (responseSchema: unknown, fallback: DataClassification | undefined) => ResponseClassification | undefined`
   Merge field metadata with an optional route-level sensitivity fallback.
+- **runContractInvariants** _(function)_ — `runContractInvariants: (app: ReflectableApp, options?: RunInvariantsOptions) => Promise<InvariantReport>`
+  Run the contract-derived invariant suite against a reflectable app. Pure; no ambient state.
 - **serializeCookie** _(function)_ — `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
   Serialize a `Set-Cookie` header value. Pure — applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, or an oversized result — a serialization bug shou…
 - **serializeNifraManifest** _(function)_ — `serializeNifraManifest: (manifest: NifraManifest) => string`
@@ -1547,6 +1560,7 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **CapabilityFindingCode** _(type)_ — `type CapabilityFindingCode = | "unknown-capability" | "provenance-uncovered" | "undeclared-capability-evidence" | "safe-method-domain-write" | "missing-request-idempotency" | "missing-durable-idempotency" | "forbidden-e…`
 - **CapabilityIdempotency** _(type)_ — `type CapabilityIdempotency = "none" | "request" | "durable"`
 - **CapabilityImportRule** _(interface)_ — `interface CapabilityImportRule`
+- **CapabilityOutcomeOptions** _(interface)_ — `interface CapabilityOutcomeOptions`
 - **CapabilityPolicy** _(interface)_ — `interface CapabilityPolicy`
 - **CapabilityProvenancePolicy** _(interface)_ — `interface CapabilityProvenancePolicy`
 - **CapabilityRouteModule** _(interface)_ — `interface CapabilityRouteModule`
@@ -1579,7 +1593,7 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **DurableObjectNamespaceLike** _(interface)_ — `interface DurableObjectNamespaceLike`
   Structural view of a Cloudflare Durable Object namespace binding — keeps `@cloudflare/workers-types` out of `@nifrajs/core`. The real `DurableObjectNamespace` satisfies it.
 - **EffectChain** _(interface)_ — `interface EffectChain`
-  Tamper-evidence over the sealed entries: per-entry hash chain plus the resulting head.
+  Tamper-evidence over the route identity, declarations, and sealed entries.
 - **EffectCost** _(type)_ — `type EffectCost = Readonly<Record<string, number>>`
   Dimensionless resource counters (`{ ms: 12, calls: 1, bytes: 512 }`). Counters carry *how much resource* an effect consumed; mapping counters to money/pricing is deliberately out of scope here.
 - **EffectEntry** _(interface)_ — `interface EffectEntry`
@@ -1624,6 +1638,10 @@ Every public export of every package — name, kind, signature, and doc summary 
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ — `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
 - **InferOutput** _(type)_ — `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
+- **InvariantExecutor** _(type)_ — `type InvariantExecutor = (request: Request) => Response | Promise<Response>`
+- **InvariantFinding** _(interface)_ — `interface InvariantFinding`
+- **InvariantFindingCode** _(type)_ — `type InvariantFindingCode = | "classification-understated" | "server-error-on-valid-input" | "response-schema-violation" | "validation-bypass" | "server-error-on-invalid-input"`
+- **InvariantReport** _(interface)_ — `interface InvariantReport`
 - **JsonSchema** _(type)_ — `type JsonSchema = boolean | Readonly<Record<string, unknown>>`
   JSON Schema permits either a schema object or the boolean schemas `true` and `false`.
 - **LedgerSink** _(type)_ — `type LedgerSink = (ledger: SealedEffectLedger) => void | Promise<void>`
@@ -1721,6 +1739,7 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **RouterMatch** _(type)_ — `type RouterMatch<T>`
   Result of {@link Router.find}. The `found: false` cases deliberately separate a missing path (404) from a path that exists for other methods (405), so the server layer can answer correctly and populate an `Allow` header.
 - **RoutesDiff** _(interface)_ — `interface RoutesDiff`
+- **RunInvariantsOptions** _(interface)_ — `interface RunInvariantsOptions`
 - **RunningServer** _(interface)_ — `interface RunningServer`
   The handle `listen()` returns — the slice of Bun's server nifra holds and exposes. Declared explicitly (rather than `ReturnType<typeof Bun.serve>`) so the public type surface doesn't leak the ambient `Bun` global into consumers' `.d.ts` resolution.
 - **SSEContext** _(interface)_ — `interface SSEContext`
@@ -1747,6 +1766,7 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **SitemapChangeFreq** _(type)_ — `type SitemapChangeFreq = | "always" | "hourly" | "daily" | "weekly" | "monthly" | "yearly" | "never"`
 - **SitemapEntry** _(interface)_ — `interface SitemapEntry`
 - **SitemapOptions** _(interface)_ — `interface SitemapOptions`
+- **SkippedRoute** _(interface)_ — `interface SkippedRoute`
 - **StandardIssue** _(interface)_ — `interface StandardIssue`
 - **StandardResult** _(type)_ — `type StandardResult<Output> = StandardSuccess<Output> | StandardFailure`
 - **StandardSchemaV1** _(interface)_ — `interface StandardSchemaV1<Input = unknown, Output = Input>`
@@ -1807,6 +1827,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Bounded in-memory sink for tests and local development. Token-only, like every sink.
 - **createRequestLedger** _(function)_ — `createRequestLedger: (options: CreateRequestLedgerOptions) => RequestLedger`
   Create a bounded per-request ledger. The server wires one per capability-declaring route.
+- **createSeededRandom** _(function)_ — `createSeededRandom: (seed: number) => () => number`
+  Deterministic PRNG (mulberry32). Ambient randomness would make failures unreproducible.
 - **declaredCapabilities** _(function)_ — `declaredCapabilities: (context: object) => readonly string[]`
   Read the route's token-only declaration for admission plugins. This intentionally exposes neither the request nor runtime evidence; it is the stable public seam for private entitlement policy.
 - **defineAssuranceConfig** _(function)_ — `defineAssuranceConfig: (config: AssuranceConfig) => AssuranceConfig`
@@ -1851,6 +1873,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Parse the detached sidecar before selecting its operator-controlled public key.
 - **randomEffectDigestKey** _(function)_ — `randomEffectDigestKey: () => Uint8Array`
   Fresh random digest key (32 bytes). Per-process by default — persist one externally to correlate across restarts.
+- **recordCapabilityOutcome** _(function)_ — `recordCapabilityOutcome: (context: object, capability: string, options: CapabilityOutcomeOptions) => void`
+  Record the terminal outcome of an already-admitted capability without debiting admission twice.
 - **redactLogFields** _(function)_ — `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
 - **reflectClassification** _(function)_ — `reflectClassification: (schema: unknown) => ResponseClassification | undefined`
@@ -1865,6 +1889,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Build a `robots.txt` body from grouped rules plus optional `Sitemap:`/`Host:` lines.
 - **routeClassification** _(function)_ — `routeClassification: (responseSchema: unknown, fallback: DataClassification | undefined) => ResponseClassification | undefined`
   Merge field metadata with an optional route-level sensitivity fallback.
+- **runContractInvariants** _(function)_ — `runContractInvariants: (app: ReflectableApp, options?: RunInvariantsOptions) => Promise<InvariantReport>`
+  Run the contract-derived invariant suite against a reflectable app. Pure; no ambient state.
 - **serializeCookie** _(function)_ — `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
   Serialize a `Set-Cookie` header value. Pure — applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, or an oversized result — a serialization bug shou…
 - **serializeNifraManifest** _(function)_ — `serializeNifraManifest: (manifest: NifraManifest) => string`

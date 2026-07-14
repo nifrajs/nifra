@@ -33,6 +33,13 @@ import {
   assuranceEvidenceFor,
   NIFRA_ASSURANCE_IDS,
 } from "../internal/route-assurance.ts"
+import {
+  attachEffectLedger,
+  createRequestLedger,
+  DEFAULT_MAX_ENTRIES,
+  type EffectLedgerOptions,
+  type RequestLedger,
+} from "../ledger.ts"
 import { EMPTY_PARAMS, type Method, Router } from "../router/router.ts"
 import type {
   InferOutput,
@@ -180,11 +187,25 @@ interface ResolvedIdempotency {
   readonly maxResponseBytes: number
 }
 
+/** Registration-resolved effect-ledger wiring for one capability-declaring route. */
+interface ResolvedEffectLedger {
+  readonly sink: EffectLedgerOptions["sink"]
+  readonly maxEntries: number
+  readonly chain: boolean
+  /** The registered route pattern — what the sealed ledger names (never the concrete URL). */
+  readonly method: string
+  readonly path: string
+  /** The route's declared capability tokens, surfaced on the sealed ledger. */
+  readonly declared: readonly string[]
+}
+
 interface RouteEntry {
   readonly handler: InternalHandler
   readonly schema: RouteSchema | undefined
   /** Resolved idempotency config; `undefined` = off (the dedupe lane is never entered). */
   readonly idempotent: ResolvedIdempotency | undefined
+  /** Resolved effect-ledger wiring; `undefined` = off (no per-request ledger, no settle step). */
+  readonly ledgered: ResolvedEffectLedger | undefined
   /** Per-request context extensions captured at registration (order-scoped). */
   readonly derives: ReadonlyArray<RawDerive>
   /** Static context extensions captured at registration. */
@@ -348,6 +369,16 @@ export interface ServerOptions {
    * parameters, body, tenant, or values. Routes without capability declarations keep the old hot path.
    */
   readonly onCapabilityUse?: (event: CapabilityUseEvent) => void
+  /**
+   * Enable the per-request effect ledger. Each route that declares `schema.capabilities` gets a
+   * bounded, token-only ledger; `useCapability(c, id, …)` appends one entry per effect, and the sink
+   * receives the sealed ledger when the response settles (only when it recorded entries). Token-only
+   * by construction — capability ids, phases, counters, digests; never payloads, values, or the
+   * concrete URL (the route *pattern* is recorded). Enabling it moves capability-declaring routes off
+   * the fused fast path (they need a per-request context + a settle step); all other routes are
+   * unaffected, and when unset the request path pays nothing.
+   */
+  readonly effectLedger?: EffectLedgerOptions
   /**
    * Default store backing routes that declare `schema.idempotency` without their own `store`. Defaults
    * to a shared in-process {@link MemoryIdempotencyStore} (created lazily on first idempotent route).
@@ -1277,6 +1308,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   /** Capacity-admission gate; `undefined` = off (the request path pays nothing). */
   private readonly capacityGate: AdmissionController | undefined
   private readonly onCapabilityUse: ((event: CapabilityUseEvent) => void) | undefined
+  /** Effect-ledger defaults pinned at construction; per-route `ledgered` copies add route identity. */
+  private readonly effectLedger:
+    | Omit<ResolvedEffectLedger, "method" | "path" | "declared">
+    | undefined
   /** App-wide idempotency store (explicit option, else a lazily-created in-process default). */
   private readonly configuredIdempotencyStore: IdempotencyStore | undefined
   private lazyIdempotencyStore: IdempotencyStore | undefined
@@ -1341,6 +1376,23 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.gracefulSignals = options.gracefulSignals ?? false
     this.capacityGate = options.admission
     this.onCapabilityUse = options.onCapabilityUse
+    if (options.effectLedger !== undefined) {
+      const ledger = options.effectLedger
+      if (typeof ledger.sink !== "function") {
+        throw new TypeError("effectLedger.sink must be a function")
+      }
+      const maxEntries = ledger.maxEntries ?? DEFAULT_MAX_ENTRIES
+      if (!Number.isSafeInteger(maxEntries) || maxEntries < 1) {
+        throw new RangeError("effectLedger.maxEntries must be a positive safe integer")
+      }
+      this.effectLedger = Object.freeze({
+        sink: ledger.sink,
+        maxEntries,
+        chain: ledger.chain ?? false,
+      })
+    } else {
+      this.effectLedger = undefined
+    }
     this.configuredIdempotencyStore = options.idempotencyStore
     this.lazyIdempotencyStore = undefined
     this.logger = options.logger ?? jsonLogger()
@@ -1819,10 +1871,18 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // never takes the fused/native fast path — force it onto the portable matched lane (which routes
     // through `fetchMatched`, where the dedupe wrapper lives).
     const idempotent = this.resolveIdempotency(schema)
+    // A ledgered route (capabilities declared + `server({ effectLedger })`) needs a per-request
+    // context to carry the ledger and a settle step to seal + sink it, so it too leaves the
+    // fused/contextless fast path. Resolved per route, at registration — like the capability guard.
+    const ledgered: ResolvedEffectLedger | undefined =
+      capabilities.length > 0 && this.effectLedger !== undefined
+        ? Object.freeze({ ...this.effectLedger, method, path, declared: capabilities })
+        : undefined
     const bare =
       schema?.body === undefined &&
       schema?.query === undefined &&
       idempotent === undefined &&
+      ledgered === undefined &&
       this.derives.length === 0 &&
       this.beforeHandleHooks.length === 0 &&
       this.afterHandleHooks.length === 0 &&
@@ -1841,6 +1901,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       handler: handler as unknown as InternalHandler,
       schema,
       idempotent,
+      ledgered,
       fusedWeb,
       derives: [...this.derives],
       decorations: routeDecorations,
@@ -2673,6 +2734,20 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         platform,
         this.maxBodyBytes,
       )
+      // Ledgered routes (capabilities + effectLedger) carry a bounded per-request ledger; the
+      // `useCapability` beacon appends to it, and the settle step below seals + sinks it. The route
+      // was forced off the fused/contextless lanes at registration, so this branch always runs.
+      let ledger: RequestLedger | undefined
+      if (entry.ledgered !== undefined) {
+        ledger = createRequestLedger({
+          method: entry.ledgered.method,
+          path: entry.ledgered.path,
+          declared: entry.ledgered.declared,
+          maxEntries: entry.ledgered.maxEntries,
+          chain: entry.ledgered.chain,
+        })
+        attachEffectLedger(ctx, ledger)
+      }
 
       if (entry.around.length === 0) {
         outcome = entry.bare
@@ -2698,6 +2773,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           wrapResponse,
         )
       }
+      // Settle step: seal the ledger and hand it to the sink BEFORE the response is released, on
+      // success and error responses alike (partial work is exactly what an audit must capture). The
+      // lanes above resolve handler errors to responses, so a plain resolve arm is sufficient.
+      if (ledger !== undefined) {
+        const resolved = entry.ledgered as ResolvedEffectLedger
+        const active = ledger
+        outcome = (outcome instanceof Promise ? outcome : Promise.resolve(outcome)).then((value) =>
+          this.settleEffectLedger(active, resolved, value),
+        )
+      }
     }
     // The request timeout only bounds work that is actually pending — a synchronous (bare) result is
     // already complete and can't time out, so it's returned as-is (no 503 race, no promise).
@@ -2714,6 +2799,34 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       )
     }
     return outcome
+  }
+
+  /**
+   * Seal a ledgered request and deliver the sealed ledger to the sink. An empty ledger (declared
+   * capabilities, none exercised) is not delivered — there is nothing to audit. This post-effect
+   * ledger is observational: transactional/durable audit belongs in
+   * the owned effect transaction, so a sink outage must not turn a successful effect into a retryable
+   * 500 that can duplicate it.
+   */
+  private async settleEffectLedger<T>(
+    ledger: RequestLedger,
+    resolved: ResolvedEffectLedger,
+    value: T,
+  ): Promise<T> {
+    const sealed = await ledger.seal()
+    if (sealed.entries.length === 0) return value
+    try {
+      await resolved.sink(sealed)
+    } catch (err) {
+      // Token-only logging: the route pattern and the failure name — never entry payloads (there are
+      // none) and never the request.
+      this.logger.error("effect ledger sink failed", {
+        method: resolved.method,
+        path: resolved.path,
+        name: err instanceof Error ? err.name : "Error",
+      })
+    }
+    return value
   }
 
   /** The narrowest bare route: a syntactic `() => ...` handler cannot observe the context argument, so

@@ -7,7 +7,11 @@ import { t } from "@nifrajs/schema"
 // Replace it with real data (KV/D1/Postgres/…); on the edge, reach bindings via `c.env`.
 let renders = 0
 
-export const backend = server().get("/page", { response: t.object({ renders: t.number() }) }, () => {
-  renders += 1
-  return { renders }
-})
+export const backend = server().get(
+  "/page",
+  { response: t.object({ renders: t.number() }) },
+  () => {
+    renders += 1
+    return { renders }
+  },
+)

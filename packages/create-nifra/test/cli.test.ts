@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { githubDeployWorkflow, parseArgs, run, scaffold } from "../src/cli.ts"
@@ -693,5 +693,48 @@ describe("scaffold — --auth (better-auth, composes with --db)", () => {
     await expect(scaffold({ target: dir, db: "drizzle-libsql", auth: "clerk" })).rejects.toThrow(
       /unknown --auth/,
     )
+  })
+})
+
+describe("run — db/auth next steps + --link dependency rewriting", () => {
+  test("db + auth scaffold surfaces the migration workflow in order", async () => {
+    const { code, message } = await run([
+      await freshDir("with-auth"),
+      "--db",
+      "drizzle-sqlite",
+      "--auth",
+      "better-auth",
+    ])
+    expect(code).toBe(0)
+    expect(message).toContain("BETTER_AUTH_SECRET")
+    expect(message).toContain("@better-auth/cli@latest generate")
+    expect(message).toContain("bun run db:generate")
+    expect(message).toContain("bun run db:migrate")
+    expect(message).toContain("better-auth") // preset tag in the header
+  })
+
+  test("--link rewrites @nifrajs/* deps that exist in the linked repo to file: paths", async () => {
+    // A fake nifra monorepo exposing only @nifrajs/core — other deps must stay on the registry.
+    const linkRoot = await mkdtemp(join(tmpdir(), "nifra-link-"))
+    roots.push(linkRoot)
+    await mkdir(join(linkRoot, "packages/core"), { recursive: true })
+    await writeFile(
+      join(linkRoot, "packages/core/package.json"),
+      JSON.stringify({ name: "@nifrajs/core", version: "0.0.0" }),
+    )
+    const dir = await freshDir("linked-app")
+    const { code, message } = await run([dir, "--link", linkRoot])
+    expect(code).toBe(0)
+    expect(message).toContain("packages linked from")
+    const pkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as {
+      dependencies: Record<string, string>
+    }
+    expect(pkg.dependencies["@nifrajs/core"]).toStartWith("file:")
+    // Every remaining @nifrajs dep keeps its registry range (not present in the fake link repo).
+    for (const [name, range] of Object.entries(pkg.dependencies)) {
+      if (name.startsWith("@nifrajs/") && name !== "@nifrajs/core") {
+        expect(range).not.toStartWith("file:")
+      }
+    }
   })
 })
