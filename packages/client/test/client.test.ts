@@ -242,10 +242,9 @@ describe("testClient", () => {
     expect(missing.ok).toBe(false)
   })
 
-  test("exposes a real .fetch(url, init) bridge for createWebApp's /api/* auto-mount", async () => {
-    // `createWebApp({ api: inProcessClient(backend) })` mounts the backend over HTTP by dispatching
-    // `api.fetch(req.url, req)`. That requires `.fetch` to be the in-process bridge (→ a `Response`),
-    // NOT a route sub-proxy (a `/fetch` call). Assert the bridge dispatches GET + POST with the body.
+  test("retains the legacy .fetch(url, init) bridge for custom auto-mount integrations", async () => {
+    // The platform-aware path uses the symbol-keyed BackendMount interface. Keep the released
+    // `.fetch` bridge working rather than exposing the typed proxy's ordinary `/fetch` route.
     const backend = server()
       .get("/api/x", () => ({ x: 1 }))
       .post("/api/echo", async (c) => ({ echoed: await c.req.json() }))

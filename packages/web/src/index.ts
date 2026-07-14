@@ -9,6 +9,11 @@
  */
 import { server } from "@nifrajs/core"
 import {
+  type BackendMount,
+  type BackendMountHandler,
+  NIFRA_BACKEND_MOUNT,
+} from "@nifrajs/core/mount"
+import {
   DEFERRED_ERROR_CODE,
   DEFERRED_RUNTIME,
   type Deferred,
@@ -958,21 +963,19 @@ export interface CreateWebAppOptions {
   /** Injected into each loader's `ctx.api` — typically an `inProcessClient(app)` (typed
    * per-route via `@nifrajs/client`'s `createRoutes`). Opaque to the core.
    *
-   * **Auto-mount.** When `api` exposes a callable `.fetch(url, init)` (every `inProcessClient(backend)`
-   * does — see {@link isMountableApi}), `createWebApp` also serves that backend over HTTP at
+   * **Auto-mount.** Every `inProcessClient(backend)` exposes the symbol-keyed platform-aware backend
+   * mount interface from `@nifrajs/core/mount`; `createWebApp` also serves that backend over HTTP at
    * {@link apiPrefix} (default `/api`): a request whose pathname starts with the prefix is dispatched
-   * straight to `api.fetch(req.url, req)` before page routing, and the backend's `Response` is returned
-   * untouched. This closes the reported gap where `POST /api/sync` / `/api/auth/*` 404/405'd against the
-   * page router until the app author hand-wrote an `if (pathname.startsWith("/api/")) …` branch in
-   * `server-bun.ts`. The mount runs in `nifra dev` too (the Vite dev server dispatches every request
-   * through this same app). Pass `apiPrefix: ""` to disable it (pages-only). */
+   * before page routing with the same `env`/`waitUntil` platform context, and the backend's `Response`
+   * is returned untouched. Legacy custom `.fetch(url, init)` bridges remain mountable but cannot
+   * receive platform context. The mount runs in `nifra dev` too. Pass `apiPrefix: ""` to disable it. */
   readonly api?: unknown
   /** HTTP path prefix the {@link api} backend is auto-mounted at (default `"/api"`). A request whose
    * pathname is exactly the prefix or starts with `prefix + "/"` is dispatched to the backend before
    * page routing; the backend therefore defines its routes at the **full** path (`server().post("/api/
    * sync", …)`), matching the in-process `inProcessClient` call sites. Set to `""` to disable the
    * auto-mount entirely (the app serves pages only and `api` stays a loader-only `ctx.api`). Mounting
-   * is also a no-op when `api` has no callable `.fetch` (e.g. a plain object passed as `ctx.api`). */
+   * is also a no-op when `api` has neither the symbol mount nor a legacy callable `.fetch`. */
   readonly apiPrefix?: string
   /** Secret for **draft / preview mode** (see `enableDraft`). When set, a request carrying a valid
    * signed `__nifra_draft` cookie gets `ctx.draft === true` in loaders/actions (else always `false`).
@@ -1024,29 +1027,24 @@ interface RouteContext {
   readonly env: unknown
 }
 
-/** The minimal shape the `/api/*` auto-mount needs: a `fetch(url, init)` that yields a `Response`.
- * `inProcessClient(backend)` exposes exactly this (its in-process bridge); a raw `@nifrajs/core`
- * `Server` does not match (its `fetch` takes a `Request`, not `(url, init)`) — which is intended,
- * since the documented `api` is the `inProcessClient` proxy, not the bare server. */
-interface MountableApi {
+/** Legacy pre-symbol mount bridge. Kept for custom integrations; it cannot receive platform context. */
+interface LegacyMountableApi {
   readonly fetch: (url: string, init?: RequestInit) => Response | Promise<Response>
 }
 
 /**
- * Narrow an opaque `api` to a {@link MountableApi}. Guards the `/api/*` auto-mount: an `api` set to a
- * plain loader-only value (no `.fetch`) leaves the app pages-only rather than crashing. Kept a
- * structural shape check (not an `instanceof`) so any in-process bridge — `inProcessClient`, a test
- * stub, a custom agent — is mountable without `@nifrajs/web` depending on `@nifrajs/client`.
+ * Resolve the explicit backend mount interface, then fall back to the released `.fetch(url, init)`
+ * convention. The symbol seam forwards platform context without making web depend on client.
  */
-function isMountableApi(api: unknown): api is MountableApi {
-  // inProcessClient(backend) is a CALLABLE Eden proxy — `typeof` is "function", not "object" — so the
-  // guard must accept both; it only needs a callable `.fetch` (the in-process bridge the outer proxy
-  // exposes for the mount). An object-only check silently disabled the whole /api/* auto-mount.
-  return (
-    (typeof api === "object" || typeof api === "function") &&
-    api !== null &&
-    typeof (api as { fetch?: unknown }).fetch === "function"
-  )
+function backendMountOf(api: unknown): BackendMountHandler | undefined {
+  if ((typeof api !== "object" && typeof api !== "function") || api === null) return undefined
+  const explicit = (api as Partial<BackendMount>)[NIFRA_BACKEND_MOUNT]
+  if (typeof explicit === "function") {
+    return (request, platform) => explicit.call(api, request, platform)
+  }
+  const legacy = (api as Partial<LegacyMountableApi>).fetch
+  if (typeof legacy !== "function") return undefined
+  return (request) => legacy.call(api, request.url, request)
 }
 
 /**
@@ -1105,14 +1103,14 @@ export function createWebApp<Env = unknown>(
   // ever called, so that branch returns first and this hook never sees the request — no double
   // handling. Apps that drop the hand-dispatch now rely on this mount instead (dev + prod alike).
   const apiPrefix = options.apiPrefix ?? "/api"
-  if (apiPrefix !== "" && isMountableApi(api)) {
-    const mountedApi = api
-    app.onRequest((req) => {
+  const mountedApi = backendMountOf(api)
+  if (apiPrefix !== "" && mountedApi !== undefined) {
+    app.onRequest((req, platform) => {
       const { pathname } = new URL(req.url)
       // Exactly the prefix (`/api`) or a sub-path (`/api/…`) — NOT a sibling like `/apixyz` that merely
       // shares the prefix as a string head. Dispatch the original `req` (body intact) to the backend.
       if (pathname === apiPrefix || pathname.startsWith(`${apiPrefix}/`)) {
-        return mountedApi.fetch(req.url, req)
+        return mountedApi(req, platform)
       }
       return undefined // not an API path → continue to page routing
     })

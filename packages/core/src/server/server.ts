@@ -174,7 +174,7 @@ type RawAfterHandle = (result: unknown, ctx: RawContext) => MaybePromise<unknown
 type RawErrorHandler = (error: unknown, ctx: RawContext) => MaybePromise<unknown>
 type RawAround = <T>(ctx: RawContext, next: () => MaybePromise<T>) => MaybePromise<T>
 export type OnRequestResult = Response | Request | undefined
-type RawOnRequest = (req: Request) => MaybePromise<OnRequestResult>
+type RawOnRequest = (req: Request, platform?: Platform) => MaybePromise<OnRequestResult>
 type RawOnResponse = (response: Response, req: Request) => MaybePromise<Response>
 type RawOnResponseFinalized = (outcome: ResponseFinalization, req: Request) => MaybePromise<void>
 
@@ -183,7 +183,7 @@ interface ResolvedIdempotency {
   readonly store: IdempotencyStore
   readonly ttlMs: number
   readonly headerName: string
-  readonly namespace: NonNullable<NonNullable<RouteSchema["idempotency"]>["namespace"]>
+  readonly namespace: NonNullable<RouteSchema["idempotency"]>["namespace"]
   readonly maxResponseBytes: number
 }
 
@@ -486,7 +486,7 @@ export interface RunningServer {
  */
 export interface Middleware {
   readonly name?: string
-  readonly onRequest?: (req: Request) => MaybePromise<OnRequestResult>
+  readonly onRequest?: (req: Request, platform?: Platform) => MaybePromise<OnRequestResult>
   readonly around?: <T>(context: Context, next: () => MaybePromise<T>) => MaybePromise<T>
   readonly beforeHandle?: (context: Context) => MaybePromise<unknown>
   readonly afterHandle?: (result: unknown, context: Context) => MaybePromise<unknown>
@@ -1432,8 +1432,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * Run before routing on the raw request. Return a `Response` to short-circuit, or a replacement
    * `Request` to continue routing with a rewritten method/URL/headers. Global.
    */
-  onRequest(fn: (req: Request) => MaybePromise<OnRequestResult>): this {
-    this.onRequestHooks.push(fn)
+  onRequest(
+    fn: (req: Request, platform?: Platform<EnvOf<Ctx>>) => MaybePromise<OnRequestResult>,
+  ): this {
+    this.onRequestHooks.push(fn as RawOnRequest)
     return this
   }
 
@@ -1857,6 +1859,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         `route handler assurance must use plugin scope (received ${invalidHandlerScope.scope})`,
       )
     }
+    const authenticated = assuranceEvidenceFor(
+      [...this.activeAssurance, ...handlerAssurance, ...this.globalAssurance],
+      method,
+      path,
+    ).some((evidence) => evidence.id === NIFRA_ASSURANCE_IDS.AUTHENTICATED)
     const routeDecorations: Record<PropertyKey, unknown> = { ...this.decorations }
     if (capabilities.length > 0) {
       routeDecorations[CAPABILITY_GUARD] = createCapabilityGuard(
@@ -1870,7 +1877,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // An idempotency route runs a dedupe lane that must buffer the body and capture the response, so it
     // never takes the fused/native fast path — force it onto the portable matched lane (which routes
     // through `fetchMatched`, where the dedupe wrapper lives).
-    const idempotent = this.resolveIdempotency(schema)
+    const idempotent = this.resolveIdempotency(schema, authenticated)
     // A ledgered route (capabilities declared + `server({ effectLedger })`) needs a per-request
     // context to carry the ledger and a settle step to seal + sink it, so it too leaves the
     // fused/contextless fast path. Resolved per route, at registration — like the capability guard.
@@ -1970,7 +1977,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   }
 
   /** Resolve a route's declared idempotency into a pinned store + defaults, or `undefined` when off. */
-  private resolveIdempotency(schema: RouteSchema | undefined): ResolvedIdempotency | undefined {
+  private resolveIdempotency(
+    schema: RouteSchema | undefined,
+    authenticated: boolean,
+  ): ResolvedIdempotency | undefined {
     const config = schema?.idempotency
     if (config === undefined) return undefined
     if (schema?.sse !== undefined) {
@@ -2002,11 +2012,23 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         `invalid idempotency header name ${JSON.stringify(headerName)}`,
       )
     }
-    const namespace = config.namespace ?? "global"
+    const namespace = config.namespace
+    if (namespace === undefined) {
+      throw new RouteConfigError(
+        "INVALID_IDEMPOTENCY",
+        "idempotency namespace is required; use a principal resolver or an explicit shared scope",
+      )
+    }
     if (typeof namespace === "string" && !validIdempotencyNamespace(namespace)) {
       throw new RouteConfigError(
         "INVALID_IDEMPOTENCY",
         `invalid idempotency namespace ${JSON.stringify(namespace)}`,
+      )
+    }
+    if (authenticated && typeof namespace !== "function") {
+      throw new RouteConfigError(
+        "INVALID_IDEMPOTENCY",
+        "authenticated idempotency routes require a principal namespace resolver",
       )
     }
     const maxResponseBytes = config.maxResponseBytes ?? this.maxBodyBytes
@@ -2386,7 +2408,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     const originalRequest = requestOf(source)
     let current: RequestSource = source
     for (let i = 0; i < hooks.length; i++) {
-      const outcome = (hooks[i] as RawOnRequest)(requestOf(current))
+      const outcome = (hooks[i] as RawOnRequest)(requestOf(current), platform)
       if (outcome instanceof Promise) {
         return outcome.then((early) =>
           this.continueOnRequest(
@@ -2436,7 +2458,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         return wrapResponse(early)
       }
       if (index >= this.onRequestHooks.length) break
-      const outcome = (this.onRequestHooks[index] as RawOnRequest)(requestOf(current))
+      const outcome = (this.onRequestHooks[index] as RawOnRequest)(requestOf(current), platform)
       early = outcome instanceof Promise ? await outcome : outcome
       index++
     }

@@ -121,6 +121,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **ClientOptions** _(interface)_ — `interface ClientOptions`
 - **FetchFn** _(type)_ — `type FetchFn = (input: string, init?: RequestInit) => Promise<Response>`
   The fetch shape the client needs — looser than `typeof fetch` so an in-process bridge or a test mock satisfies it without the extra members (`.preconnect`, overloads) of the global.
+- **InProcessClient** _(type)_ — `type InProcessClient<App> = Treaty<App> & BackendMount`
+  Typed route client plus the explicit platform-aware backend mount capability.
 - **Jsonify** _(type)_ — `type Jsonify<T>`
   Maps a value to the shape it takes after a JSON round-trip, so the client's `data` type reflects the wire — not the handler's in-memory return.
 - **LoaderArgs** _(interface)_ — `interface LoaderArgs<Api, Env = unknown>`
@@ -139,9 +141,9 @@ Every public export of every package — name, kind, signature, and doc summary 
   The Eden-style proxy type for a route registry — the shared core used by both `Treaty<App>` (coupled, from `typeof app`) and `client(contract, url)` (decoupled, from a contract's `RegistryFor`).
 - **client** _(function)_ — `client: { <App>(baseUrl: string, options?: ClientOptions): Treaty<App>; <const C extends ContractShape>(contract: C, baseUrl: string, options?: ClientOptions): TreatyFromRegistry<RegistryFor<C>>; }`
   Create an end-to-end-typed client for a nifra server. Two modes:
-- **inProcessClient** _(function)_ — `inProcessClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: Omit<ClientOptions, "fetch">) => Treaty<App>`
+- **inProcessClient** _(function)_ — `inProcessClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: Omit<ClientOptions, "fetch">) => InProcessClient<App>`
   A {@link client} whose `fetch` calls a nifra app's own `fetch` in-process — no network, full lifecycle (validation, middleware, contracts). For SSR loaders. Typed from `App` exactly like the network client. The `(url, init) → Request` bridge is required because the client calls `fetch(url, init)` w…
-- **testClient** _(const)_ — `testClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: Omit<ClientOptions, "fetch">) => Treaty<App>`
+- **testClient** _(const)_ — `testClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: Omit<ClientOptions, "fetch">) => InProcessClient<App>`
   The in-process test client — the Fastify-`inject` / supertest equivalent for nifra. Drives the app's own `fetch` directly: no server, no port, no network, the full real lifecycle (validation, middleware, contracts, auth), and end-to-end types from `App`. Calls never throw — branch on `res.ok`. An a…
 
 ## @nifrajs/content
@@ -188,6 +190,10 @@ Every public export of every package — name, kind, signature, and doc summary 
   Where enforcement evidence follows Nifra's route-registration semantics.
 - **AssuredCapabilityRoute** _(interface)_ — `interface AssuredCapabilityRoute`
 - **AssuredRoute** _(interface)_ — `interface AssuredRoute`
+- **BackendMount** _(interface)_ — `interface BackendMount<Env = unknown>`
+  Structural mount capability exposed by an in-process typed client.
+- **BackendMountHandler** _(type)_ — `type BackendMountHandler<Env = unknown> = ( request: Request, platform?: Platform<Env>, ) => Response | Promise<Response>`
+  Dispatch one already-materialized request into a backend with its outer runtime platform context.
 - **BuildNifraManifestInput** _(interface)_ — `interface BuildNifraManifestInput`
 - **CapabilityAccess** _(type)_ — `type CapabilityAccess = "read" | "write"`
 - **CapabilityAssuranceReport** _(interface)_ — `interface CapabilityAssuranceReport`
@@ -309,6 +315,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   A bundle of lifecycle hooks applied together via {@link Server.use} — the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware is context-agnostic (sees the base `Context`); `use` does no context-type merging — th…
 - **NIFRA_ASSURANCE** _(const)_ — `NIFRA_ASSURANCE: Readonly<{ readonly AUTHENTICATED: "nifra.authenticated"; readonly BODY_BOUNDED: "nifra.body-bounded"; readonly CSRF: "nifra.csrf"; readonly DURABLE_COMMAND: "nifra.durable-command"; readonly IDEMPOTENC…`
   Canonical evidence ids emitted by Nifra's official middleware modules.
+- **NIFRA_BACKEND_MOUNT** _(const)_ — `NIFRA_BACKEND_MOUNT: typeof NIFRA_BACKEND_MOUNT`
+  Global symbol so independently bundled copies of core/client/web still agree on the mount seam.
 - **NifraManifest** _(interface)_ — `interface NifraManifest`
 - **NifraManifestAssurance** _(interface)_ — `interface NifraManifestAssurance`
 - **NifraManifestCapabilities** _(interface)_ — `interface NifraManifestCapabilities`
@@ -1548,6 +1556,10 @@ Every public export of every package — name, kind, signature, and doc summary 
   Where enforcement evidence follows Nifra's route-registration semantics.
 - **AssuredCapabilityRoute** _(interface)_ — `interface AssuredCapabilityRoute`
 - **AssuredRoute** _(interface)_ — `interface AssuredRoute`
+- **BackendMount** _(interface)_ — `interface BackendMount<Env = unknown>`
+  Structural mount capability exposed by an in-process typed client.
+- **BackendMountHandler** _(type)_ — `type BackendMountHandler<Env = unknown> = ( request: Request, platform?: Platform<Env>, ) => Response | Promise<Response>`
+  Dispatch one already-materialized request into a backend with its outer runtime platform context.
 - **BuildNifraManifestInput** _(interface)_ — `interface BuildNifraManifestInput`
 - **CapabilityAccess** _(type)_ — `type CapabilityAccess = "read" | "write"`
 - **CapabilityAssuranceReport** _(interface)_ — `interface CapabilityAssuranceReport`
@@ -1669,6 +1681,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   A bundle of lifecycle hooks applied together via {@link Server.use} — the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware is context-agnostic (sees the base `Context`); `use` does no context-type merging — th…
 - **NIFRA_ASSURANCE** _(const)_ — `NIFRA_ASSURANCE: Readonly<{ readonly AUTHENTICATED: "nifra.authenticated"; readonly BODY_BOUNDED: "nifra.body-bounded"; readonly CSRF: "nifra.csrf"; readonly DURABLE_COMMAND: "nifra.durable-command"; readonly IDEMPOTENC…`
   Canonical evidence ids emitted by Nifra's official middleware modules.
+- **NIFRA_BACKEND_MOUNT** _(const)_ — `NIFRA_BACKEND_MOUNT: typeof NIFRA_BACKEND_MOUNT`
+  Global symbol so independently bundled copies of core/client/web still agree on the mount seam.
 - **NifraManifest** _(interface)_ — `interface NifraManifest`
 - **NifraManifestAssurance** _(interface)_ — `interface NifraManifestAssurance`
 - **NifraManifestCapabilities** _(interface)_ — `interface NifraManifestCapabilities`

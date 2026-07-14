@@ -1,4 +1,9 @@
 import type { ContractShape, RegistryFor } from "@nifrajs/core"
+import {
+  type BackendMount,
+  type BackendMountHandler,
+  NIFRA_BACKEND_MOUNT,
+} from "@nifrajs/core/mount"
 import type { ApiError, Result } from "./result.ts"
 import type { Subscription, Treaty, TreatyFromRegistry } from "./treaty.ts"
 
@@ -25,6 +30,9 @@ export interface ClientOptions {
   /** Override the `fetch` implementation (tests, an in-process bridge, a custom agent, etc.). */
   readonly fetch?: FetchFn
 }
+
+/** Typed route client plus the explicit platform-aware backend mount capability. */
+export type InProcessClient<App> = Treaty<App> & BackendMount
 
 interface CallOptions {
   readonly query?: Record<string, unknown>
@@ -73,32 +81,30 @@ export function client(
  * the network client. The `(url, init) → Request` bridge is required because the client calls
  * `fetch(url, init)` while `app.fetch` takes a `Request`.
  *
- * The returned typed proxy ALSO carries a real `fetch(url, init)` method — the same in-process
- * bridge — so `createWebApp({ api: inProcessClient(backend) })` can **auto-mount** the backend over
- * HTTP at `/api/*` (it dispatches `api.fetch(req.url, req)` to the backend, no hand-written
- * `server-bun.ts` `/api/*` branch). Without this, `api.fetch` would resolve to a *route* sub-proxy
- * (a call to `/fetch`), not the backend's own `fetch` — so the mount can't reach the app. The `fetch`
- * key is intercepted on the proxy and shadows any (non-existent) `/fetch` route segment; no app
- * defines a literal `/fetch` route reached via the typed proxy, so this is backward-compatible.
+ * The returned proxy also implements the explicit symbol-keyed {@link BackendMount} interface, so
+ * `createWebApp({ api: inProcessClient(backend) })` can auto-mount the backend while forwarding the
+ * outer runtime's `env` and `waitUntil`. The released `.fetch(url, init)` bridge remains available as
+ * a compatibility surface for custom integrations, but the platform-aware mount never relies on it.
  */
 export function inProcessClient<
   App extends { fetch(request: Request): Response | Promise<Response> },
->(app: App, options?: Omit<ClientOptions, "fetch">): Treaty<App> {
+>(app: App, options?: Omit<ClientOptions, "fetch">): InProcessClient<App> {
   // The in-process bridge: the client speaks `fetch(url, init)` (the `FetchFn` shape) while the app's
-  // own `fetch` takes a `Request`. Reused both as the proxy's per-call transport (below) and as the
-  // mount hook exposed as `.fetch`.
+  // own `fetch` takes a `Request`. Kept as the proxy's per-call transport and the released legacy
+  // `.fetch` mount bridge; the symbol-keyed mount below is the platform-aware path.
   const bridge: FetchFn = (url, init) => Promise.resolve(app.fetch(new Request(url, init)))
+  const mount: BackendMountHandler = (request, platform) =>
+    Promise.resolve((app.fetch as BackendMountHandler)(request, platform))
   const proxy = client<App>("http://nifra.internal", { ...options, fetch: bridge })
-  // Expose the bridge as a real `.fetch` for `createWebApp`'s `/api/*` auto-mount. An outer Proxy
-  // intercepts only the `fetch` key and delegates everything else to the typed route proxy, so the
-  // end-to-end-typed call surface (`api.users({ id }).get()`) is unchanged. The declared return type
-  // stays `Treaty<App>`: `.fetch` is an internal mount seam, not part of the public typed API.
+  // An outer Proxy intercepts only the explicit mount symbol and legacy `fetch` key, delegating every
+  // typed route segment unchanged (`api.users({ id }).get()`).
   return new Proxy(proxy as object, {
     get(targetProxy, key, receiver) {
+      if (key === NIFRA_BACKEND_MOUNT) return mount
       if (key === "fetch") return bridge
       return Reflect.get(targetProxy, key, receiver)
     },
-  }) as Treaty<App>
+  }) as InProcessClient<App>
 }
 
 /**

@@ -12,7 +12,7 @@ Browser-safe, end-to-end-typed client for @nifrajs/core servers (Eden-style prox
 
 - **client** _(function)_ — `client: { <App>(baseUrl: string, options?: ClientOptions): Treaty<App>; <const C extends ContractShape>(contract: C, baseUrl: string, optio…`
 - **inProcessClient** _(function)_ — `inProcessClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: Omit<ClientOptions, "fetch">)…`
-- **testClient** _(const)_ — `testClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: Omit<ClientOptions, "fetch">) => T…`
+- **testClient** _(const)_ — `testClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: Omit<ClientOptions, "fetch">) => I…`
 - **ApiError** _(interface)_ — `interface ApiError`
 - **ClientOptions** _(interface)_ — `interface ClientOptions`
 - **LoaderArgs** _(interface)_ — `interface LoaderArgs<Api, Env = unknown>`
@@ -22,10 +22,10 @@ Browser-safe, end-to-end-typed client for @nifrajs/core servers (Eden-style prox
 - **ActionData** _(type)_ — `type ActionData<A>`
 - **ApiProxy** _(type)_ — `type ApiProxy<Api> = Api extends ContractShape ? TreatyFromRegistry<RegistryFor<Api>> : Treaty<Api>`
 - **FetchFn** _(type)_ — `type FetchFn = (input: string, init?: RequestInit) => Promise<Response>`
+- **InProcessClient** _(type)_ — `type InProcessClient<App> = Treaty<App> & BackendMount`
 - **Jsonify** _(type)_ — `type Jsonify<T>`
-- **LoaderData** _(type)_ — `type LoaderData<L> = L extends (...args: never[]) => infer R ? Awaited<R> : never`
 
-_…and 4 more — see [`api-reference.md`](../../api-reference.md#nifrajsclient) for the complete list._
+_…and 5 more — see [`api-reference.md`](../../api-reference.md#nifrajsclient) for the complete list._
 
 ## Footguns
 
