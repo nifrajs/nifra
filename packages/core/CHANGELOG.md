@@ -1,5 +1,73 @@
 # @nifrajs/core
 
+## 1.11.0
+
+### Minor Changes
+
+- 2dde7e5: Add the effect ledger, sandboxed contract-generated invariant tests, and the verification ladder.
+
+  **Effect ledger** — a per-request, append-only, ordered record of side-effect intents and outcomes.
+  Routes that declare `schema.capabilities` get a bounded, token-only ledger when the server enables
+  `server({ effectLedger })`; each `useCapability(c, id, { target, cost, digest })` beacon
+  records an intent, `recordCapabilityOutcome` records its terminal result without double-debiting
+  admission, and the sink receives the sealed ledger when the response settles — on success and
+  error responses alike, so partial work is audited. Entries carry capability ids, phases, adapter
+  tokens, dimensionless cost counters, an optional keyed-HMAC payload digest, and bounded error codes;
+  the entry type has no payload field, and the sealed ledger names the route _pattern_ plus the declared
+  capability set, never the concrete URL — redaction holds by construction. Includes an optional
+  tamper-evident hash chain, a bounded in-memory sink,
+  and `computeEffectDigest` (keyed HMAC-SHA-256, so low-entropy data cannot be brute-forced from a
+  stored digest). The hash chain binds route identity, declarations, timestamps, and entries. Sink
+  failures are logged without their potentially-sensitive message and do not turn a successful effect
+  into a retryable 500; transactional audit belongs in the effect's owning transaction. Routes without
+  capability declarations keep the existing fast path unchanged.
+
+  **Contract-generated invariant tests** — `runContractInvariants(app, { executor })` fuzzes each route from its
+  declared JSON Schema with a deterministic seeded generator and verifies what the contract promises:
+  valid inputs never crash, 2xx responses conform to the declared response schema, schema-violating
+  bodies are rejected (never accepted, never a crash), and a route-level classification never
+  understates its field-level tags. Findings carry the case seed for exact reproduction; ungeneratable
+  routes are reported as skipped, never silently dropped.
+  Dynamic execution requires an explicit `invariants.executor` backed by a disposable app/sandbox;
+  verification never invokes a live app implicitly, and any skipped route prevents L4.
+
+  **Verification ladder** — `nifra levels` computes L0 typed contract → L1 route assurance → L2
+  capability lockfile → L3 route manifest → L4 invariant-tested from the existing gates. Levels are
+  cumulative and computed, never self-declared; `--min <n>` gates CI on a required floor.
+
+- 279f80c: Harden the idempotency primitive and add field-level response classification.
+
+  Idempotency now requires a server-resolved namespace (a static string for explicitly shared/public
+  responses or a `(request, platform) => string` principal resolver — never a raw client identity).
+  Routes carrying authenticated assurance must use the resolver form, so the same client key cannot
+  collide across principals. Stored and legacy responses cannot replay `Set-Cookie`, authentication
+  state, or hop-by-hop headers. `begin` returns an opaque reservation token that `complete`/`abandon` must
+  present, so an expired-and-re-reserved key can no longer be overwritten by an older in-flight request.
+  Stored responses are captured under a byte bound (`maxResponseBytes`, throwing
+  `IdempotencyResponseTooLargeError`), fingerprints canonicalize JSON bodies and bind the content type,
+  and a store advertises an honest `durability` marker — a route declaring `scope: "durable"` is rejected
+  at registration unless its store is durable. SSE routes cannot be idempotent.
+
+  `classified(schema, tag)` attaches field-level sensitivity that survives composition through nested
+  objects, arrays, and unions; reflection exposes both the JSON-pointer field tags and the maximum
+  (`public` | `pii` | `secret`). Route-level `schema.classification` remains the fallback, and the
+  capability lockfile continues to record the maximum.
+
+- 5638ada: Add an explicit symbol-keyed in-process backend mount interface. `inProcessClient` implements the
+  interface and `createWebApp` forwards the outer request's platform context through it, so an
+  auto-mounted backend receives the same Workers `env` bindings and `waitUntil` lifetime as the web app.
+
+  The released `.fetch(url, init)` duck-typed mount remains as a compatibility fallback for custom
+  bridges. `Server.onRequest` now receives the optional platform object as its second argument.
+
+- 279f80c: Add a deterministic versioned Nifra manifest that joins route schemas, assurance evidence,
+  capabilities, and field-level response classification in one hash-verified artifact. Manifests can be
+  signed through an operator-provided Ed25519 KMS/HSM callback; Nifra never handles private keys.
+
+  `nifra manifest emit` refuses failing assurance and writes byte-stable output, while
+  `nifra manifest diff <before> <after>` hash-verifies both artifacts and fails deployment promotion on
+  breaking contract, lost assurance, expanded effects, or increased data sensitivity.
+
 ## 1.10.0
 
 ### Minor Changes
