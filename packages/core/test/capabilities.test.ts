@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { NIFRA_ASSURANCE, withRouteAssurance } from "../src/assurance.ts"
 import {
+  declaredCapabilities,
   defineCapabilityPolicy,
   evaluateCapabilityAssurance,
   snapshotCapabilities,
@@ -30,6 +31,7 @@ describe("route capabilities", () => {
       "/orders",
       { capabilities: ["db.write", "db.write"] },
       (c) => {
+        expect(declaredCapabilities(c)).toEqual(["db.write"])
         useCapability(c, "db.write")
         expect(() => useCapability(c, "payments.charge")).toThrow("not declared")
         return { ok: true }

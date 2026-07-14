@@ -45,7 +45,7 @@ describe("route classification — reflection + lockfile", () => {
   test("a declared classification is reflected on the route", () => {
     const app = server().get("/me", { classification: "pii" }, () => ({ email: "x@y.z" }))
     const [route] = reflectRoutes(app)
-    expect(route?.classification).toBe("pii")
+    expect(route?.classification).toEqual({ fields: {}, max: "pii" })
   })
 
   test("an undeclared classification is absent (defaults to nothing, not public)", () => {

@@ -188,6 +188,7 @@ Every public export of every package — name, kind, signature, and doc summary 
   Where enforcement evidence follows Nifra's route-registration semantics.
 - **AssuredCapabilityRoute** _(interface)_ — `interface AssuredCapabilityRoute`
 - **AssuredRoute** _(interface)_ — `interface AssuredRoute`
+- **BuildNifraManifestInput** _(interface)_ — `interface BuildNifraManifestInput`
 - **CapabilityAccess** _(type)_ — `type CapabilityAccess = "read" | "write"`
 - **CapabilityAssuranceReport** _(interface)_ — `interface CapabilityAssuranceReport`
 - **CapabilityDefinition** _(interface)_ — `interface CapabilityDefinition`
@@ -207,6 +208,7 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **CapabilitySnapshotRoute** _(interface)_ — `interface CapabilitySnapshotRoute`
 - **CapabilityUseEvent** _(interface)_ — `interface CapabilityUseEvent`
 - **CapabilityZone** _(type)_ — `type CapabilityZone = "domain" | "operational"`
+- **ClassifiedSchema** _(type)_ — `type ClassifiedSchema<S extends object> = S & { readonly [CLASSIFICATION]: DataClassification }`
 - **Context** _(interface)_ — `interface Context<Path extends string = string, S extends RouteSchema = RouteSchema>`
   Handler context. `params` are inferred from the path; `body` and `query` are the validated outputs of their schemas when declared (else `undefined` / raw `URLSearchParams`).
 - **ContextForOp** _(type)_ — `type ContextForOp<O extends OperationDef> = Context<O["path"], SchemaForOp<O> & RouteSchema>`
@@ -240,8 +242,14 @@ Every public export of every package — name, kind, signature, and doc summary 
   The handlers `implement` requires: one per operation, typed from the op's input + response contract.
 - **IDEMPOTENT_REPLAY_HEADER** _(const)_ — `IDEMPOTENT_REPLAY_HEADER: "x-nifra-idempotent-replay"`
   Header stamped on a replayed response so clients/proxies can tell a replay from a fresh run.
-- **IdempotencyBeginResult** _(type)_ — `type IdempotencyBeginResult = | { readonly state: "new" } | { readonly state: "replay"; readonly response: StoredResponse } | { readonly state: "mismatch" } | { readonly state: "in-flight" }`
+- **IdempotencyAbandonInput** _(interface)_ — `interface IdempotencyAbandonInput`
+- **IdempotencyBeginInput** _(interface)_ — `interface IdempotencyBeginInput`
+- **IdempotencyBeginResult** _(type)_ — `type IdempotencyBeginResult`
   Outcome of reserving a key. `new` → the caller runs the handler and later calls {@link * IdempotencyStore.complete}. `replay` → return the stored response, handler never runs. `mismatch` → same key, different request fingerprint (client bug) → 409. `in-flight` → the key is reserved but not yet comp…
+- **IdempotencyCompletionInput** _(interface)_ — `interface IdempotencyCompletionInput`
+- **IdempotencyEntryKey** _(interface)_ — `interface IdempotencyEntryKey`
+  Namespaces isolate the same client key across tenants/subjects without putting identity in a header.
+- **IdempotencyResponseTooLargeError** _(class)_ — `class IdempotencyResponseTooLargeError`
 - **IdempotencyScope** _(type)_ — `type IdempotencyScope = "request" | "durable"`
   Whether a route's idempotency is satisfied by an in-process store or a durable (cross-restart) one.
 - **IdempotencyStore** _(interface)_ — `interface IdempotencyStore`
@@ -269,6 +277,14 @@ Every public export of every package — name, kind, signature, and doc summary 
   A bundle of lifecycle hooks applied together via {@link Server.use} — the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware is context-agnostic (sees the base `Context`); `use` does no context-type merging — th…
 - **NIFRA_ASSURANCE** _(const)_ — `NIFRA_ASSURANCE: Readonly<{ readonly AUTHENTICATED: "nifra.authenticated"; readonly BODY_BOUNDED: "nifra.body-bounded"; readonly CSRF: "nifra.csrf"; readonly DURABLE_COMMAND: "nifra.durable-command"; readonly IDEMPOTENC…`
   Canonical evidence ids emitted by Nifra's official middleware modules.
+- **NifraManifest** _(interface)_ — `interface NifraManifest`
+- **NifraManifestAssurance** _(interface)_ — `interface NifraManifestAssurance`
+- **NifraManifestCapabilities** _(interface)_ — `interface NifraManifestCapabilities`
+- **NifraManifestChange** _(interface)_ — `interface NifraManifestChange`
+- **NifraManifestDiff** _(interface)_ — `interface NifraManifestDiff`
+- **NifraManifestRoute** _(interface)_ — `interface NifraManifestRoute`
+- **NifraManifestSignature** _(interface)_ — `interface NifraManifestSignature`
+- **NifraManifestSigner** _(interface)_ — `interface NifraManifestSigner`
 - **NifraPlugin** _(type)_ — `type NifraPlugin<In extends AnyServer = AnyServer, Out extends AnyServer = In> = (( app: In, ) => Out) & { readonly pluginName?: string }`
   A nifra **plugin**: a function that augments an app — calling `use`/`derive`/`decorate` and/or registering routes — and returns it. Because `derive`/`decorate` are type-threaded, an **inline** `app.use((a) => a.derive(...).decorate(...))` carries the added context to handlers defined after it (the …
 - **NifraWebSocket** _(interface)_ — `interface NifraWebSocket<Data = unknown>`
@@ -299,6 +315,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Re-key the name-keyed ops into the `path → method → RouteInfo` registry.
 - **RegistryFromImpl** _(type)_ — `type RegistryFromImpl<C extends ContractShape, H extends HandlersFor<C>>`
   The registry produced by `implement`: input from the contract op; `output` is the declared `response` contract when present (it wins — exactly as in the inline path), else the bound HANDLER's return — so the implemented server stays route-for-route identical to the equivalent inline server (the mod…
+- **ResponseClassification** _(interface)_ — `interface ResponseClassification`
+  Field paths use JSON Pointer segments; array items use a `*` segment.
 - **ResponseControls** _(interface)_ — `interface ResponseControls`
   Mutable response controls a handler may write to before returning.
 - **ResponseDef** _(interface)_ — `interface ResponseDef`
@@ -311,7 +329,7 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **RouteChange** _(interface)_ — `interface RouteChange`
 - **RouteConfigError** _(class)_ — `class RouteConfigError`
   Thrown at route registration when a route is misconfigured. This is the boot-time rejection layer: loud and early, never deferred to the first request.
-- **RouteConfigErrorCode** _(type)_ — `type RouteConfigErrorCode = | "DUPLICATE_ROUTE" | "DUPLICATE_PARAM" | "PARAM_NAME_CONFLICT" | "INVALID_PATH" | "INVALID_PARAM_NAME" | "WILDCARD_NOT_LAST" | "INVALID_METHOD" | "INVALID_ASSURANCE"`
+- **RouteConfigErrorCode** _(type)_ — `type RouteConfigErrorCode = | "DUPLICATE_ROUTE" | "DUPLICATE_PARAM" | "PARAM_NAME_CONFLICT" | "INVALID_PATH" | "INVALID_PARAM_NAME" | "WILDCARD_NOT_LAST" | "INVALID_METHOD" | "INVALID_ASSURANCE" | "INVALID_IDEMPOTENCY"`
   Stable codes for boot-time (L2) route configuration failures.
 - **RouteDescriptor** _(interface)_ — `interface RouteDescriptor`
   A registered route's public descriptor — method, path, and input schemas. The router trie discards the original patterns, so this flat list is what lets tools (e.g. `toOpenAPI`) enumerate routes after registration.
@@ -385,14 +403,24 @@ Every public export of every package — name, kind, signature, and doc summary 
   Verified ⇒ the raw `payload` text (parse it with your schema). Rejected ⇒ a stable `reason`.
 - **attachWebSocket** _(function)_ — `attachWebSocket: (socket: StandardWebSocket, handler: WebSocketHandler, data: unknown, options: { openNow: boolean; pubsub: TopicRegistry; }) => NifraWebSocket`
   Wire a standard server-side `WebSocket` to a nifra {@link WebSocketHandler}, returning the portable {@link NifraWebSocket}. Shared by the Deno and Workers bridges. `openNow` fires `open` immediately (Workers, where the socket is already open after `accept()`); otherwise `open` waits for the socket'…
+- **buildNifraManifest** _(function)_ — `buildNifraManifest: (input: BuildNifraManifestInput) => Promise<NifraManifest>`
+  Build one fail-closed, deterministic manifest from already-evaluated assurance reports.
+- **canonicalManifest** _(function)_ — `canonicalManifest: (manifest: Pick<NifraManifest, "manifestVersion" | "routes">) => string`
+  Canonical bytes are stable across runtime, object-key order, and route registration order.
+- **canonicalizeIdempotencyBody** _(function)_ — `canonicalizeIdempotencyBody: (body: Uint8Array, contentType: string | null) => Uint8Array`
+  Canonicalize JSON bodies so whitespace/property-order retries bind to the same semantic request.
 - **classificationAtLeast** _(function)_ — `classificationAtLeast: (value: DataClassification, floor: DataClassification) => boolean`
   True when `value` is at least as sensitive as `floor` (e.g. `classificationAtLeast(x, "pii")`).
+- **classified** _(function)_ — `classified: <S extends object>(schema: S, classification: DataClassification) => ClassifiedSchema<S>`
+  Attach data-classification metadata without changing validation or inferred input/output types. For Nifra/TypeBox carriers the raw JSON Schema node is tagged too, so metadata survives composition through `t.object`, `t.array`, `t.optional`, and unions.
 - **commonSecretPatterns** _(const)_ — `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} — opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
-- **computeIdempotencyFingerprint** _(function)_ — `computeIdempotencyFingerprint: (method: string, path: string, body: Uint8Array) => Promise<string>`
+- **computeIdempotencyFingerprint** _(function)_ — `computeIdempotencyFingerprint: (method: string, path: string, body: Uint8Array, contentType?: string) => Promise<string>`
   SHA-256 fingerprint binding a key to one request: method, path (+ query), and the raw body bytes. A collision-resistant hash matters — a weak hash would let a crafted body replay another's response.
 - **createMemoryIdempotencyStore** _(function)_ — `createMemoryIdempotencyStore: (options?: MemoryIdempotencyStoreOptions) => MemoryIdempotencyStore`
   Convenience factory mirroring the other core primitives' `create*` style.
+- **declaredCapabilities** _(function)_ — `declaredCapabilities: (context: object) => readonly string[]`
+  Read the route's token-only declaration for admission plugins. This intentionally exposes neither the request nor runtime evidence; it is the stable public seam for private entitlement policy.
 - **defineAssuranceConfig** _(function)_ — `defineAssuranceConfig: (config: AssuranceConfig) => AssuranceConfig`
   Identity helper for a `nifra.assurance.ts` default export.
 - **defineAssurancePolicy** _(function)_ — `defineAssurancePolicy: (policy: AssurancePolicy) => AssurancePolicy`
@@ -407,6 +435,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)` applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
 - **defineRouterPlugin** _(const)_ — `defineRouterPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this — not {@link definePlugin} — for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
+- **diffNifraManifests** _(function)_ — `diffNifraManifests: (before: NifraManifest, after: NifraManifest) => NifraManifestDiff`
+  Contract changes reuse the route-diff engine; governance changes fail closed on expanded risk.
 - **diffRouteSnapshots** _(function)_ — `diffRouteSnapshots: (before: readonly RouteSnapshot[], after: readonly RouteSnapshot[]) => RoutesDiff`
   Diff two route snapshots (`snapshotRoutes` output, possibly restored from JSON). Every change is classified breaking/compatible/info; `hasBreaking` is the CI-gate bit.
 - **evaluateCapabilityAssurance** _(function)_ — `evaluateCapabilityAssurance: (source: unknown, policyInput: CapabilityPolicy, evidenceSet: CapabilityEvidenceSet) => CapabilityAssuranceReport`
@@ -425,22 +455,36 @@ Every public export of every package — name, kind, signature, and doc summary 
   The most sensitive classification among the inputs; `"public"` when none are given.
 - **parseCookies** _(function)_ — `parseCookies: (header: string | null | undefined) => Record<string, string>`
   Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are skipped rather than throwing — a junk `Cookie` header shouldn't fail the request.
+- **parseNifraManifest** _(function)_ — `parseNifraManifest: (content: string, source?: string) => Promise<NifraManifest>`
+  Parse and hash-verify an emitted manifest before it is trusted by diff/codegen tooling.
+- **parseNifraManifestSignature** _(function)_ — `parseNifraManifestSignature: (content: string, source?: string) => NifraManifestSignature`
+  Parse the detached sidecar before selecting its operator-controlled public key.
 - **redactLogFields** _(function)_ — `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
+- **reflectClassification** _(function)_ — `reflectClassification: (schema: unknown) => ResponseClassification | undefined`
+  Read field-level metadata from an introspectable response schema. Never invokes its validator.
 - **reflectRoutes** _(function)_ — `reflectRoutes: (source: unknown) => readonly ReflectedRoute[]`
   Safely enumerate and normalize route descriptors from an app or descriptor array. Invalid entries are ignored; a missing/throwing `routes()` method yields an empty array.
 - **reflectSchema** _(function)_ — `reflectSchema: (value: unknown) => SchemaReflection`
   Reflect a Standard Schema, Nifra/TypeBox schema carrier, or raw JSON Schema. Never throws. Validation-only schemas have `standard` but no `jsonSchema`; raw JSON Schema has the reverse.
-- **responseFromStored** _(function)_ — `responseFromStored: (stored: StoredResponse) => Response`
+- **responseFromStored** _(function)_ — `responseFromStored: (stored: StoredResponse, options?: { readonly maxBytes?: number; }) => Response`
   Rebuild a live response from storage, stamping the replay marker header.
 - **robots** _(function)_ — `robots: (options: RobotsOptions) => string`
   Build a `robots.txt` body from grouped rules plus optional `Sitemap:`/`Host:` lines.
+- **routeClassification** _(function)_ — `routeClassification: (responseSchema: unknown, fallback: DataClassification | undefined) => ResponseClassification | undefined`
+  Merge field metadata with an optional route-level sensitivity fallback.
 - **serializeCookie** _(function)_ — `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
   Serialize a `Set-Cookie` header value. Pure — applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, or an oversized result — a serialization bug shou…
-- **serializeResponse** _(function)_ — `serializeResponse: (response: Response) => Promise<StoredResponse>`
+- **serializeNifraManifest** _(function)_ — `serializeNifraManifest: (manifest: NifraManifest) => string`
+  Byte-stable artifact serialization (including `contentHash`).
+- **serializeNifraManifestSignature** _(function)_ — `serializeNifraManifestSignature: (signature: NifraManifestSignature) => string`
+  Byte-stable serialization for the detached signature sidecar.
+- **serializeResponse** _(function)_ — `serializeResponse: (response: Response, options?: { readonly maxBytes?: number; }) => Promise<StoredResponse>`
   Buffer a response into a storable form. Clones first so the live response body stays intact.
 - **server** _(function)_ — `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
   Create a new {@link Server}. Pass an `Env` to type the platform bindings — `server<Env>()` makes `c.env: Env` in every handler + middleware, and types the `env` argument of `app.fetch` / `toFetchHandler`. Omit it and `c.env` is `unknown` (validate/cast before use).
+- **signNifraManifest** _(function)_ — `signNifraManifest: (manifest: NifraManifest, signer: NifraManifestSigner) => Promise<NifraManifestSignature>`
+  Sign without handling private keys: the operator-supplied signer may call KMS/HSM/local WebCrypto.
 - **signValue** _(function)_ — `signValue: (value: string, secret: string) => Promise<string>`
   Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies.
 - **silentLogger** _(const)_ — `silentLogger: Logger`
@@ -462,8 +506,12 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **validCapabilityId** _(function)_ — `validCapabilityId: (value: string) => boolean`
 - **validIdempotencyKey** _(function)_ — `validIdempotencyKey: (key: string) => boolean`
   A key must be a non-empty, bounded, control-char-free token. Fail closed on anything else.
+- **validIdempotencyNamespace** _(function)_ — `validIdempotencyNamespace: (namespace: string) => boolean`
+  Namespace values are server-resolved, bounded opaque tokens (normally a tenant/subject hash).
 - **validateStandard** _(function)_ — `validateStandard: <Schema extends StandardSchemaV1>(schema: Schema, value: unknown) => ValidationOutcome<InferOutput<Schema>> | Promise<ValidationOutcome<InferOutput<Schema>>>`
   Run a Standard Schema and normalize the result. Sync validators stay sync; async validators are awaited.
+- **verifyNifraManifestSignature** _(function)_ — `verifyNifraManifestSignature: (manifest: NifraManifest, signature: NifraManifestSignature, publicKey: CryptoKey) => Promise<boolean>`
+  Verify the hash first, then the detached Ed25519 signature. Malformed/tampered input returns false.
 - **verifyWebhook** _(function)_ — `verifyWebhook: (req: Request, secret: string | readonly string[], options?: VerifyWebhookOptions) => Promise<WebhookResult>`
   Verify a webhook request's signature and return its raw payload. Reads `req.body` (bounded), so the body is consumed — parse the returned `payload`, don't re-read the request.
 - **withRouteAssurance** _(function)_ — `withRouteAssurance: <T extends object>(target: T, declaration: AssuranceDeclaration | readonly AssuranceDeclaration[]) => T`
@@ -1442,6 +1490,7 @@ Every public export of every package — name, kind, signature, and doc summary 
   Where enforcement evidence follows Nifra's route-registration semantics.
 - **AssuredCapabilityRoute** _(interface)_ — `interface AssuredCapabilityRoute`
 - **AssuredRoute** _(interface)_ — `interface AssuredRoute`
+- **BuildNifraManifestInput** _(interface)_ — `interface BuildNifraManifestInput`
 - **CapabilityAccess** _(type)_ — `type CapabilityAccess = "read" | "write"`
 - **CapabilityAssuranceReport** _(interface)_ — `interface CapabilityAssuranceReport`
 - **CapabilityDefinition** _(interface)_ — `interface CapabilityDefinition`
@@ -1461,6 +1510,7 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **CapabilitySnapshotRoute** _(interface)_ — `interface CapabilitySnapshotRoute`
 - **CapabilityUseEvent** _(interface)_ — `interface CapabilityUseEvent`
 - **CapabilityZone** _(type)_ — `type CapabilityZone = "domain" | "operational"`
+- **ClassifiedSchema** _(type)_ — `type ClassifiedSchema<S extends object> = S & { readonly [CLASSIFICATION]: DataClassification }`
 - **Context** _(interface)_ — `interface Context<Path extends string = string, S extends RouteSchema = RouteSchema>`
   Handler context. `params` are inferred from the path; `body` and `query` are the validated outputs of their schemas when declared (else `undefined` / raw `URLSearchParams`).
 - **ContextForOp** _(type)_ — `type ContextForOp<O extends OperationDef> = Context<O["path"], SchemaForOp<O> & RouteSchema>`
@@ -1494,8 +1544,14 @@ Every public export of every package — name, kind, signature, and doc summary 
   The handlers `implement` requires: one per operation, typed from the op's input + response contract.
 - **IDEMPOTENT_REPLAY_HEADER** _(const)_ — `IDEMPOTENT_REPLAY_HEADER: "x-nifra-idempotent-replay"`
   Header stamped on a replayed response so clients/proxies can tell a replay from a fresh run.
-- **IdempotencyBeginResult** _(type)_ — `type IdempotencyBeginResult = | { readonly state: "new" } | { readonly state: "replay"; readonly response: StoredResponse } | { readonly state: "mismatch" } | { readonly state: "in-flight" }`
+- **IdempotencyAbandonInput** _(interface)_ — `interface IdempotencyAbandonInput`
+- **IdempotencyBeginInput** _(interface)_ — `interface IdempotencyBeginInput`
+- **IdempotencyBeginResult** _(type)_ — `type IdempotencyBeginResult`
   Outcome of reserving a key. `new` → the caller runs the handler and later calls {@link * IdempotencyStore.complete}. `replay` → return the stored response, handler never runs. `mismatch` → same key, different request fingerprint (client bug) → 409. `in-flight` → the key is reserved but not yet comp…
+- **IdempotencyCompletionInput** _(interface)_ — `interface IdempotencyCompletionInput`
+- **IdempotencyEntryKey** _(interface)_ — `interface IdempotencyEntryKey`
+  Namespaces isolate the same client key across tenants/subjects without putting identity in a header.
+- **IdempotencyResponseTooLargeError** _(class)_ — `class IdempotencyResponseTooLargeError`
 - **IdempotencyScope** _(type)_ — `type IdempotencyScope = "request" | "durable"`
   Whether a route's idempotency is satisfied by an in-process store or a durable (cross-restart) one.
 - **IdempotencyStore** _(interface)_ — `interface IdempotencyStore`
@@ -1523,6 +1579,14 @@ Every public export of every package — name, kind, signature, and doc summary 
   A bundle of lifecycle hooks applied together via {@link Server.use} — the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware is context-agnostic (sees the base `Context`); `use` does no context-type merging — th…
 - **NIFRA_ASSURANCE** _(const)_ — `NIFRA_ASSURANCE: Readonly<{ readonly AUTHENTICATED: "nifra.authenticated"; readonly BODY_BOUNDED: "nifra.body-bounded"; readonly CSRF: "nifra.csrf"; readonly DURABLE_COMMAND: "nifra.durable-command"; readonly IDEMPOTENC…`
   Canonical evidence ids emitted by Nifra's official middleware modules.
+- **NifraManifest** _(interface)_ — `interface NifraManifest`
+- **NifraManifestAssurance** _(interface)_ — `interface NifraManifestAssurance`
+- **NifraManifestCapabilities** _(interface)_ — `interface NifraManifestCapabilities`
+- **NifraManifestChange** _(interface)_ — `interface NifraManifestChange`
+- **NifraManifestDiff** _(interface)_ — `interface NifraManifestDiff`
+- **NifraManifestRoute** _(interface)_ — `interface NifraManifestRoute`
+- **NifraManifestSignature** _(interface)_ — `interface NifraManifestSignature`
+- **NifraManifestSigner** _(interface)_ — `interface NifraManifestSigner`
 - **NifraPlugin** _(type)_ — `type NifraPlugin<In extends AnyServer = AnyServer, Out extends AnyServer = In> = (( app: In, ) => Out) & { readonly pluginName?: string }`
   A nifra **plugin**: a function that augments an app — calling `use`/`derive`/`decorate` and/or registering routes — and returns it. Because `derive`/`decorate` are type-threaded, an **inline** `app.use((a) => a.derive(...).decorate(...))` carries the added context to handlers defined after it (the …
 - **NifraWebSocket** _(interface)_ — `interface NifraWebSocket<Data = unknown>`
@@ -1553,6 +1617,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Re-key the name-keyed ops into the `path → method → RouteInfo` registry.
 - **RegistryFromImpl** _(type)_ — `type RegistryFromImpl<C extends ContractShape, H extends HandlersFor<C>>`
   The registry produced by `implement`: input from the contract op; `output` is the declared `response` contract when present (it wins — exactly as in the inline path), else the bound HANDLER's return — so the implemented server stays route-for-route identical to the equivalent inline server (the mod…
+- **ResponseClassification** _(interface)_ — `interface ResponseClassification`
+  Field paths use JSON Pointer segments; array items use a `*` segment.
 - **ResponseControls** _(interface)_ — `interface ResponseControls`
   Mutable response controls a handler may write to before returning.
 - **ResponseDef** _(interface)_ — `interface ResponseDef`
@@ -1565,7 +1631,7 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **RouteChange** _(interface)_ — `interface RouteChange`
 - **RouteConfigError** _(class)_ — `class RouteConfigError`
   Thrown at route registration when a route is misconfigured. This is the boot-time rejection layer: loud and early, never deferred to the first request.
-- **RouteConfigErrorCode** _(type)_ — `type RouteConfigErrorCode = | "DUPLICATE_ROUTE" | "DUPLICATE_PARAM" | "PARAM_NAME_CONFLICT" | "INVALID_PATH" | "INVALID_PARAM_NAME" | "WILDCARD_NOT_LAST" | "INVALID_METHOD" | "INVALID_ASSURANCE"`
+- **RouteConfigErrorCode** _(type)_ — `type RouteConfigErrorCode = | "DUPLICATE_ROUTE" | "DUPLICATE_PARAM" | "PARAM_NAME_CONFLICT" | "INVALID_PATH" | "INVALID_PARAM_NAME" | "WILDCARD_NOT_LAST" | "INVALID_METHOD" | "INVALID_ASSURANCE" | "INVALID_IDEMPOTENCY"`
   Stable codes for boot-time (L2) route configuration failures.
 - **RouteDescriptor** _(interface)_ — `interface RouteDescriptor`
   A registered route's public descriptor — method, path, and input schemas. The router trie discards the original patterns, so this flat list is what lets tools (e.g. `toOpenAPI`) enumerate routes after registration.
@@ -1639,14 +1705,24 @@ Every public export of every package — name, kind, signature, and doc summary 
   Verified ⇒ the raw `payload` text (parse it with your schema). Rejected ⇒ a stable `reason`.
 - **attachWebSocket** _(function)_ — `attachWebSocket: (socket: StandardWebSocket, handler: WebSocketHandler, data: unknown, options: { openNow: boolean; pubsub: TopicRegistry; }) => NifraWebSocket`
   Wire a standard server-side `WebSocket` to a nifra {@link WebSocketHandler}, returning the portable {@link NifraWebSocket}. Shared by the Deno and Workers bridges. `openNow` fires `open` immediately (Workers, where the socket is already open after `accept()`); otherwise `open` waits for the socket'…
+- **buildNifraManifest** _(function)_ — `buildNifraManifest: (input: BuildNifraManifestInput) => Promise<NifraManifest>`
+  Build one fail-closed, deterministic manifest from already-evaluated assurance reports.
+- **canonicalManifest** _(function)_ — `canonicalManifest: (manifest: Pick<NifraManifest, "manifestVersion" | "routes">) => string`
+  Canonical bytes are stable across runtime, object-key order, and route registration order.
+- **canonicalizeIdempotencyBody** _(function)_ — `canonicalizeIdempotencyBody: (body: Uint8Array, contentType: string | null) => Uint8Array`
+  Canonicalize JSON bodies so whitespace/property-order retries bind to the same semantic request.
 - **classificationAtLeast** _(function)_ — `classificationAtLeast: (value: DataClassification, floor: DataClassification) => boolean`
   True when `value` is at least as sensitive as `floor` (e.g. `classificationAtLeast(x, "pii")`).
+- **classified** _(function)_ — `classified: <S extends object>(schema: S, classification: DataClassification) => ClassifiedSchema<S>`
+  Attach data-classification metadata without changing validation or inferred input/output types. For Nifra/TypeBox carriers the raw JSON Schema node is tagged too, so metadata survives composition through `t.object`, `t.array`, `t.optional`, and unions.
 - **commonSecretPatterns** _(const)_ — `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} — opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
-- **computeIdempotencyFingerprint** _(function)_ — `computeIdempotencyFingerprint: (method: string, path: string, body: Uint8Array) => Promise<string>`
+- **computeIdempotencyFingerprint** _(function)_ — `computeIdempotencyFingerprint: (method: string, path: string, body: Uint8Array, contentType?: string) => Promise<string>`
   SHA-256 fingerprint binding a key to one request: method, path (+ query), and the raw body bytes. A collision-resistant hash matters — a weak hash would let a crafted body replay another's response.
 - **createMemoryIdempotencyStore** _(function)_ — `createMemoryIdempotencyStore: (options?: MemoryIdempotencyStoreOptions) => MemoryIdempotencyStore`
   Convenience factory mirroring the other core primitives' `create*` style.
+- **declaredCapabilities** _(function)_ — `declaredCapabilities: (context: object) => readonly string[]`
+  Read the route's token-only declaration for admission plugins. This intentionally exposes neither the request nor runtime evidence; it is the stable public seam for private entitlement policy.
 - **defineAssuranceConfig** _(function)_ — `defineAssuranceConfig: (config: AssuranceConfig) => AssuranceConfig`
   Identity helper for a `nifra.assurance.ts` default export.
 - **defineAssurancePolicy** _(function)_ — `defineAssurancePolicy: (policy: AssurancePolicy) => AssurancePolicy`
@@ -1661,6 +1737,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)` applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
 - **defineRouterPlugin** _(const)_ — `defineRouterPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this — not {@link definePlugin} — for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
+- **diffNifraManifests** _(function)_ — `diffNifraManifests: (before: NifraManifest, after: NifraManifest) => NifraManifestDiff`
+  Contract changes reuse the route-diff engine; governance changes fail closed on expanded risk.
 - **diffRouteSnapshots** _(function)_ — `diffRouteSnapshots: (before: readonly RouteSnapshot[], after: readonly RouteSnapshot[]) => RoutesDiff`
   Diff two route snapshots (`snapshotRoutes` output, possibly restored from JSON). Every change is classified breaking/compatible/info; `hasBreaking` is the CI-gate bit.
 - **evaluateCapabilityAssurance** _(function)_ — `evaluateCapabilityAssurance: (source: unknown, policyInput: CapabilityPolicy, evidenceSet: CapabilityEvidenceSet) => CapabilityAssuranceReport`
@@ -1679,22 +1757,36 @@ Every public export of every package — name, kind, signature, and doc summary 
   The most sensitive classification among the inputs; `"public"` when none are given.
 - **parseCookies** _(function)_ — `parseCookies: (header: string | null | undefined) => Record<string, string>`
   Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are skipped rather than throwing — a junk `Cookie` header shouldn't fail the request.
+- **parseNifraManifest** _(function)_ — `parseNifraManifest: (content: string, source?: string) => Promise<NifraManifest>`
+  Parse and hash-verify an emitted manifest before it is trusted by diff/codegen tooling.
+- **parseNifraManifestSignature** _(function)_ — `parseNifraManifestSignature: (content: string, source?: string) => NifraManifestSignature`
+  Parse the detached sidecar before selecting its operator-controlled public key.
 - **redactLogFields** _(function)_ — `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
+- **reflectClassification** _(function)_ — `reflectClassification: (schema: unknown) => ResponseClassification | undefined`
+  Read field-level metadata from an introspectable response schema. Never invokes its validator.
 - **reflectRoutes** _(function)_ — `reflectRoutes: (source: unknown) => readonly ReflectedRoute[]`
   Safely enumerate and normalize route descriptors from an app or descriptor array. Invalid entries are ignored; a missing/throwing `routes()` method yields an empty array.
 - **reflectSchema** _(function)_ — `reflectSchema: (value: unknown) => SchemaReflection`
   Reflect a Standard Schema, Nifra/TypeBox schema carrier, or raw JSON Schema. Never throws. Validation-only schemas have `standard` but no `jsonSchema`; raw JSON Schema has the reverse.
-- **responseFromStored** _(function)_ — `responseFromStored: (stored: StoredResponse) => Response`
+- **responseFromStored** _(function)_ — `responseFromStored: (stored: StoredResponse, options?: { readonly maxBytes?: number; }) => Response`
   Rebuild a live response from storage, stamping the replay marker header.
 - **robots** _(function)_ — `robots: (options: RobotsOptions) => string`
   Build a `robots.txt` body from grouped rules plus optional `Sitemap:`/`Host:` lines.
+- **routeClassification** _(function)_ — `routeClassification: (responseSchema: unknown, fallback: DataClassification | undefined) => ResponseClassification | undefined`
+  Merge field metadata with an optional route-level sensitivity fallback.
 - **serializeCookie** _(function)_ — `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
   Serialize a `Set-Cookie` header value. Pure — applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, or an oversized result — a serialization bug shou…
-- **serializeResponse** _(function)_ — `serializeResponse: (response: Response) => Promise<StoredResponse>`
+- **serializeNifraManifest** _(function)_ — `serializeNifraManifest: (manifest: NifraManifest) => string`
+  Byte-stable artifact serialization (including `contentHash`).
+- **serializeNifraManifestSignature** _(function)_ — `serializeNifraManifestSignature: (signature: NifraManifestSignature) => string`
+  Byte-stable serialization for the detached signature sidecar.
+- **serializeResponse** _(function)_ — `serializeResponse: (response: Response, options?: { readonly maxBytes?: number; }) => Promise<StoredResponse>`
   Buffer a response into a storable form. Clones first so the live response body stays intact.
 - **server** _(function)_ — `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
   Create a new {@link Server}. Pass an `Env` to type the platform bindings — `server<Env>()` makes `c.env: Env` in every handler + middleware, and types the `env` argument of `app.fetch` / `toFetchHandler`. Omit it and `c.env` is `unknown` (validate/cast before use).
+- **signNifraManifest** _(function)_ — `signNifraManifest: (manifest: NifraManifest, signer: NifraManifestSigner) => Promise<NifraManifestSignature>`
+  Sign without handling private keys: the operator-supplied signer may call KMS/HSM/local WebCrypto.
 - **signValue** _(function)_ — `signValue: (value: string, secret: string) => Promise<string>`
   Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies.
 - **silentLogger** _(const)_ — `silentLogger: Logger`
@@ -1716,8 +1808,12 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **validCapabilityId** _(function)_ — `validCapabilityId: (value: string) => boolean`
 - **validIdempotencyKey** _(function)_ — `validIdempotencyKey: (key: string) => boolean`
   A key must be a non-empty, bounded, control-char-free token. Fail closed on anything else.
+- **validIdempotencyNamespace** _(function)_ — `validIdempotencyNamespace: (namespace: string) => boolean`
+  Namespace values are server-resolved, bounded opaque tokens (normally a tenant/subject hash).
 - **validateStandard** _(function)_ — `validateStandard: <Schema extends StandardSchemaV1>(schema: Schema, value: unknown) => ValidationOutcome<InferOutput<Schema>> | Promise<ValidationOutcome<InferOutput<Schema>>>`
   Run a Standard Schema and normalize the result. Sync validators stay sync; async validators are awaited.
+- **verifyNifraManifestSignature** _(function)_ — `verifyNifraManifestSignature: (manifest: NifraManifest, signature: NifraManifestSignature, publicKey: CryptoKey) => Promise<boolean>`
+  Verify the hash first, then the detached Ed25519 signature. Malformed/tampered input returns false.
 - **verifyWebhook** _(function)_ — `verifyWebhook: (req: Request, secret: string | readonly string[], options?: VerifyWebhookOptions) => Promise<WebhookResult>`
   Verify a webhook request's signature and return its raw payload. Reads `req.body` (bounded), so the body is consumed — parse the returned `payload`, don't re-read the request.
 - **withRouteAssurance** _(function)_ — `withRouteAssurance: <T extends object>(target: T, declaration: AssuranceDeclaration | readonly AssuranceDeclaration[]) => T`

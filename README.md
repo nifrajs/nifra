@@ -96,6 +96,8 @@ nifra context          # routes + schemas (+ per-route call signatures) as Markd
 nifra check            # typecheck + typed-client drift lint; --json for agents, --lints-only to skip tsc
 nifra assure           # policy gate for route auth/CSRF/rate/body/idempotency evidence; --json for CI
 nifra capabilities check # effect provenance + capability lockfile gate; --json for CI
+nifra manifest emit    # deterministic contract + assurance + effects + classification artifact
+nifra manifest diff old.json new.json # deploy-promotion breaking-change gate
 nifra doctor           # packages imported but not declared in package.json (--json for agents)
 ```
 
@@ -183,6 +185,11 @@ must carry the request-idempotency or durable-command evidence required by their
 apps retain the existing request hot path; enabled routes pay only when they call `useCapability`.
 An approved provenance import is the explicit trust boundary: its provider internals are not scanned,
 while every unapproved local wrapper remains transitively scanned for raw-effect bypasses.
+
+For deployment promotion, `nifra manifest emit` combines those schemas and proofs with field-level
+response sensitivity (`classified(schema, "pii")`) in one deterministic, hash-verified artifact.
+Operator code may sign it with Ed25519 through a KMS/HSM callback; `nifra manifest diff` fails closed on
+breaking contracts, lost assurance, expanded effects, or increased response sensitivity.
 
 ## Runs on the edge, too
 

@@ -377,7 +377,7 @@ export function evaluateCapabilityAssurance(
         evidence: Object.freeze(evidence),
         unproven: Object.freeze(declared.filter((id) => !evidenceIds.has(id))),
         covered,
-        ...(route.classification !== undefined ? { classification: route.classification } : {}),
+        ...(route.classification !== undefined ? { classification: route.classification.max } : {}),
       }),
     )
   }
@@ -410,6 +410,15 @@ export function useCapability(context: object, capability: string): void {
     )
   }
   guard.onUse?.({ capability, method: guard.method, path: guard.path })
+}
+
+/**
+ * Read the route's token-only declaration for admission plugins. This intentionally exposes neither
+ * the request nor runtime evidence; it is the stable public seam for private entitlement policy.
+ */
+export function declaredCapabilities(context: object): readonly string[] {
+  const guard = (context as { readonly [CAPABILITY_GUARD]?: CapabilityGuard })[CAPABILITY_GUARD]
+  return guard?.allowed ?? Object.freeze([])
 }
 
 /** Deterministic, PII-free lockfile material. */

@@ -81,6 +81,12 @@ Usage:
   nifra capabilities check [--lockfile <file>] [--config <file>] [--json]
                                          CI gate: fail on raw effect-import bypasses, declaration/evidence
                                          drift, unsafe GET/HEAD writes, idempotency gaps, or lockfile drift.
+  nifra manifest emit [--out <file>] [--config <file>] [--sign <key-ref>]
+                                         Emit a deterministic route trust artifact after assurance passes;
+                                         optionally write an Ed25519 signature via the configured KMS signer.
+  nifra manifest diff <before> <after> [--json]
+                                         Hash-verify and compare two manifests; fail on contract, assurance,
+                                         capability, or response-classification regressions.
   nifra doctor  [--json] [--auto-fix]    Flag packages imported in source but missing from package.json
                                          (resolve at Bun runtime, break tsc + standalone install);
                                          --auto-fix writes safe local-version dependency fixes.
@@ -449,6 +455,48 @@ async function main(): Promise<void> {
           process.exitCode = 1
       } else {
         throw new Error("[nifra] capabilities needs `snapshot` or `check`")
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err))
+      process.exitCode = 1
+    }
+    return
+  }
+  if (command === "manifest") {
+    const action = argv[1]
+    const valueAfter = (flag: string): string | undefined => {
+      const index = argv.indexOf(flag)
+      const value = index === -1 ? undefined : argv[index + 1]
+      if (index !== -1 && (value === undefined || value.startsWith("-"))) {
+        throw new Error(`[nifra] ${flag} needs a value`)
+      }
+      return value
+    }
+    try {
+      const { runManifestDiff, runManifestEmit } = await import("./manifest-tool.ts")
+      if (action === "emit") {
+        const config = valueAfter("--config")
+        const out = valueAfter("--out")
+        const sign = valueAfter("--sign")
+        if (
+          !(await runManifestEmit(process.cwd(), {
+            ...(config !== undefined ? { config } : {}),
+            ...(out !== undefined ? { out } : {}),
+            ...(sign !== undefined ? { sign } : {}),
+          }))
+        )
+          process.exitCode = 1
+      } else if (action === "diff") {
+        const paths = argv.slice(2).filter((arg) => !arg.startsWith("-"))
+        if (paths.length !== 2) throw new Error("[nifra] manifest diff needs <before> <after>")
+        if (
+          !(await runManifestDiff(process.cwd(), paths[0]!, paths[1]!, {
+            json: argv.includes("--json"),
+          }))
+        )
+          process.exitCode = 1
+      } else {
+        throw new Error("[nifra] manifest needs `emit` or `diff`")
       }
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err))

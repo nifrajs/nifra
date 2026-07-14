@@ -12,6 +12,9 @@ nifra context                             Print this project's API + page routes
 nifra mcp                                 MCP server (stdio) exposing this project to a coding agent.
 nifra check   [--json]                    Gate: typecheck + lints; --json includes fixes/suggestions.
 nifra assure  [--config <file>] [--json]  Gate reflected routes against enforcement evidence.
+nifra capabilities check [--json]        Gate effect provenance + the reviewed capability lockfile.
+nifra manifest emit [--sign <key-ref>]   Emit the hash-verified route trust artifact after assurance.
+nifra manifest diff <before> <after>      Block promotion on contract/governance regressions.
 nifra doctor  [--json] [--auto-fix]       Catch undeclared imported packages; auto-fix safe local versions.
 ```
 
@@ -22,6 +25,18 @@ Create `nifra.assurance.ts` with a default `defineAssuranceConfig({ source, poli
 hooks; the gate classifies every reflected route with the first matching rule and exits non-zero for an
 unclassified route, missing evidence, or forbidden evidence. Evaluation is startup/CI-only and adds no
 request-path overhead. Use `--json` for the complete per-route report or `--config` for another file.
+
+## `nifra manifest` — the deploy trust artifact
+
+Add optional `manifest: { path, signer }` settings to `nifra.assurance.ts`, then run
+`nifra manifest emit`. Emission refuses failing route or capability assurance and joins the route
+schemas, enforcement evidence, effect tokens, and field-level response classification into one
+deterministic SHA-256 artifact. `--sign <key-ref>` asks the configured callback to produce a detached
+Ed25519 sidecar, so the private key can stay inside KMS/HSM infrastructure.
+
+At promotion time, `nifra manifest diff previous.json candidate.json` hash-verifies both files and exits
+non-zero on a breaking API change, removed assurance, expanded effect, lost provenance coverage, or
+increased data sensitivity. This is separate from the frontend asset `dist/manifest.json`.
 
 ## `nifra check` — the drift gate (run as "done")
 
