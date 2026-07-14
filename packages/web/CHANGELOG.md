@@ -1,5 +1,24 @@
 # @nifrajs/web
 
+## 1.11.0
+
+### Minor Changes
+
+- 5638ada: Add an explicit symbol-keyed in-process backend mount interface. `inProcessClient` implements the
+  interface and `createWebApp` forwards the outer request's platform context through it, so an
+  auto-mounted backend receives the same Workers `env` bindings and `waitUntil` lifetime as the web app.
+
+  The released `.fetch(url, init)` duck-typed mount remains as a compatibility fallback for custom
+  bridges. `Server.onRequest` now receives the optional platform object as its second argument.
+
+### Patch Changes
+
+- Updated dependencies [2dde7e5]
+- Updated dependencies [279f80c]
+- Updated dependencies [5638ada]
+- Updated dependencies [279f80c]
+  - @nifrajs/core@1.11.0
+
 ## 1.10.0
 
 ### Patch Changes

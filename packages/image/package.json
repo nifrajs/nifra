@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/image",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Image optimization for nifra — a CLS-safe responsive <Image> + pluggable loaders (CDN or self-hosted) + pure-JS dimension reading. Zero-dependency core; optional Bun.Image-backed resize endpoint at @nifrajs/image/server.",
   "keywords": [
     "bun",
