@@ -10,8 +10,9 @@
  * when a monorepo would hoist it. Relative paths, runtime builtins (node core, `node:`/`bun:`, `bun`),
  * the package's own name, and tsconfig `paths` aliases are excluded — none of them are npm deps.
  */
+import { realpath } from "node:fs/promises"
 import { builtinModules } from "node:module"
-import { dirname, join } from "node:path"
+import { dirname, join, relative } from "node:path"
 import { type SourceFinding, stripComments, walkSource } from "./check.ts"
 
 // Runtime-provided modules that are never an npm dependency: Node core (bare + `node:` form) and Bun's
@@ -117,10 +118,26 @@ export interface DoctorResult {
   /** `false` when no `package.json` was found at cwd — doctor can't run (reported, not a crash). */
   readonly ran: boolean
   readonly findings: readonly DoctorFinding[]
+  /** Packages that resolve to more than one physical install across this workspace. */
+  readonly duplicateInstalls: readonly DuplicateInstallFinding[]
   /** Dependencies written by `--auto-fix` / MCP `autoFix:true`. */
   readonly fixed?: readonly DoctorAppliedFix[]
   /** Findings that were safe to report but not safe to write automatically. */
   readonly skippedFixes?: readonly DoctorSkippedFix[]
+}
+
+export interface DuplicateInstallCopy {
+  /** Installed version, or `unknown` when package metadata is incomplete. */
+  readonly version: string
+  /** Physical package directory, relative to the doctor root when possible. */
+  readonly path: string
+  /** Workspace package roots whose normal Node/Bun resolution selects this copy. */
+  readonly importers: readonly string[]
+}
+
+export interface DuplicateInstallFinding {
+  readonly package: string
+  readonly copies: readonly DuplicateInstallCopy[]
 }
 
 export interface DoctorAppliedFix {
@@ -158,6 +175,132 @@ const depNames = (pkg: Record<string, unknown>, field: string): string[] => {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
+
+const MAX_WORKSPACE_IMPORTERS = 2_048
+const IDENTITY_SENSITIVE_PACKAGES = new Set(["@nifrajs/core", "react", "react-dom"])
+
+function workspacePatterns(pkg: Record<string, unknown>): string[] {
+  const raw = pkg.workspaces
+  const entries = Array.isArray(raw)
+    ? raw
+    : isRecord(raw) && Array.isArray(raw.packages)
+      ? raw.packages
+      : []
+  return entries
+    .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+    .sort()
+}
+
+/** Discover package roots declared by npm/Bun's two workspace manifest shapes. Bounded so a hostile
+ * `**` pattern cannot turn a diagnostic into an unbounded filesystem crawl. */
+async function workspaceImporters(
+  cwd: string,
+  rootPackage: Record<string, unknown>,
+): Promise<Array<{ root: string; package: Record<string, unknown> }>> {
+  const manifests = new Set<string>([join(cwd, "package.json")])
+  for (const pattern of workspacePatterns(rootPackage)) {
+    const packagePattern = `${pattern.replace(/\/$/, "")}/package.json`
+    for await (const rel of new Bun.Glob(packagePattern).scan({ cwd, dot: false })) {
+      if (rel.split(/[\\/]/).includes("node_modules")) continue
+      manifests.add(join(cwd, rel))
+      // A pathological workspace pattern should not make doctor unbounded. Duplicate detection is
+      // skipped, while the existing source/declaration diagnostic still runs normally.
+      if (manifests.size > MAX_WORKSPACE_IMPORTERS) return []
+    }
+  }
+
+  const out: Array<{ root: string; package: Record<string, unknown> }> = []
+  for (const manifest of [...manifests].sort()) {
+    const pkg = await readJson(manifest)
+    if (pkg !== undefined) out.push({ root: dirname(manifest), package: pkg })
+  }
+  return out
+}
+
+function duplicateTargets(pkg: Record<string, unknown>): string[] {
+  const targets = new Set<string>()
+  for (const field of DEPENDENCY_FIELDS) {
+    for (const name of depNames(pkg, field)) {
+      if (name.startsWith("@nifrajs/") || IDENTITY_SENSITIVE_PACKAGES.has(name)) targets.add(name)
+    }
+  }
+  return [...targets].sort()
+}
+
+async function resolvedInstalledCopy(
+  importer: string,
+  boundary: string,
+  name: string,
+): Promise<{ path: string; version: string } | undefined> {
+  const parts = name.split("/")
+  for (let dir = importer; ; dir = dirname(dir)) {
+    const packageDir = join(dir, "node_modules", ...parts)
+    const meta = await readJson(join(packageDir, "package.json"))
+    if (meta !== undefined) {
+      try {
+        return {
+          path: await realpath(packageDir),
+          version:
+            typeof meta.version === "string" && meta.version.length > 0 ? meta.version : "unknown",
+        }
+      } catch {
+        return undefined
+      }
+    }
+    if (dir === boundary) return undefined
+    const parent = dirname(dir)
+    if (parent === dir) return undefined
+  }
+}
+
+const displayPath = (cwd: string, path: string): string => {
+  const rel = relative(cwd, path)
+  return rel === "" ? "." : rel
+}
+
+/** Find identity-sensitive dependencies that resolve to multiple physical directories. Two copies at
+ * the same version still fail: module identity (React hooks, Nifra symbols/registries) is path-based. */
+export async function collectDuplicateInstalls(
+  cwd: string,
+  rootPackage: Record<string, unknown>,
+): Promise<DuplicateInstallFinding[]> {
+  const importers = await workspaceImporters(cwd, rootPackage)
+  const byPackage = new Map<string, Map<string, { version: string; importers: Set<string> }>>()
+  for (const importer of importers) {
+    for (const name of duplicateTargets(importer.package)) {
+      if (importer.package.name === name) continue
+      const copy = await resolvedInstalledCopy(importer.root, cwd, name)
+      if (copy === undefined) continue
+      let copies = byPackage.get(name)
+      if (copies === undefined) {
+        copies = new Map()
+        byPackage.set(name, copies)
+      }
+      const record = copies.get(copy.path) ?? {
+        version: copy.version,
+        importers: new Set<string>(),
+      }
+      record.importers.add(displayPath(cwd, importer.root))
+      copies.set(copy.path, record)
+    }
+  }
+
+  const findings: DuplicateInstallFinding[] = []
+  for (const [name, copies] of [...byPackage.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    if (copies.size < 2) continue
+    findings.push({
+      package: name,
+      copies: [...copies.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([path, copy]) => ({
+          version: copy.version,
+          path: displayPath(cwd, path),
+          importers: [...copy.importers].sort(),
+        })),
+    })
+  }
+  return findings
+}
 
 function depRecord(
   pkg: Record<string, unknown>,
@@ -217,7 +360,7 @@ async function inferDependencyFix(
 /** Run doctor against the project at `cwd`: diff source imports vs declared deps. */
 export async function collectDoctorResult(cwd: string): Promise<DoctorResult> {
   const pkg = await readJson(join(cwd, "package.json"))
-  if (pkg === undefined) return { ok: true, ran: false, findings: [] }
+  if (pkg === undefined) return { ok: true, ran: false, findings: [], duplicateInstalls: [] }
 
   const declared = new Set<string>()
   if (typeof pkg.name === "string") declared.add(pkg.name) // a package may import its own name (exports map)
@@ -238,7 +381,13 @@ export async function collectDoctorResult(cwd: string): Promise<DoctorResult> {
     }
   })
   findings.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)
-  return { ok: findings.length === 0, ran: true, findings }
+  const duplicateInstalls = await collectDuplicateInstalls(cwd, pkg)
+  return {
+    ok: findings.length === 0 && duplicateInstalls.length === 0,
+    ran: true,
+    findings,
+    duplicateInstalls,
+  }
 }
 
 /** Safely add undeclared imports to package.json when the version can be inferred without network I/O. */
@@ -327,7 +476,9 @@ export async function runDoctor(
     console.log("")
   }
   if (result.ok) {
-    console.log("✓ every imported package is declared in package.json")
+    console.log(
+      "✓ every imported package is declared and identity-sensitive installs are deduplicated",
+    )
     return true
   }
   // Group by package so the fix ("add X to dependencies") is stated once with its import sites.
@@ -337,13 +488,30 @@ export async function runDoctor(
     list.push(f)
     byPkg.set(f.package, list)
   }
-  console.log(`✗ ${byPkg.size} package(s) imported but not declared in package.json:\n`)
-  for (const [pkg, sites] of [...byPkg.entries()].sort()) {
-    console.log(`  ${pkg} — add to dependencies (\`bun add ${pkg}\`)`)
-    for (const s of sites) console.log(`      ${s.file}:${s.line}`)
+  if (byPkg.size > 0) {
+    console.log(`✗ ${byPkg.size} package(s) imported but not declared in package.json:\n`)
+    for (const [pkg, sites] of [...byPkg.entries()].sort()) {
+      console.log(`  ${pkg} - add to dependencies (\`bun add ${pkg}\`)`)
+      for (const s of sites) console.log(`      ${s.file}:${s.line}`)
+    }
   }
-  console.log(
-    "\nThese resolve at Bun runtime via hoisting/workspace but break `tsc` and a standalone install.",
-  )
+  if (result.duplicateInstalls.length > 0) {
+    console.log(
+      `${byPkg.size > 0 ? "\n" : ""}✗ identity-sensitive packages resolve to multiple physical copies:\n`,
+    )
+    for (const finding of result.duplicateInstalls) {
+      console.log(`  ${finding.package}`)
+      for (const copy of finding.copies) {
+        console.log(`      ${copy.version} at ${copy.path} ← ${copy.importers.join(", ")}`)
+      }
+    }
+    console.log(
+      "\n  Align dependency ranges and reinstall from the workspace root; doctor never deletes installs.",
+    )
+  }
+  if (byPkg.size > 0)
+    console.log(
+      "\nThese resolve at Bun runtime via hoisting/workspace but break `tsc` and a standalone install.",
+    )
   return false
 }

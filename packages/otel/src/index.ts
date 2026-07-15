@@ -9,6 +9,7 @@
  *   app.use(tracing({ exporter: consoleSpanExporter(), serviceName: "orders-api" }))
  */
 
+export { causalitySpanLink } from "./causality.ts"
 export {
   type ActiveObservation,
   createObservationLifecycle,
@@ -26,6 +27,7 @@ export {
   consoleSpanExporter,
   type NifraSpan,
   type ObservationAdapter,
+  type ObservationLink,
   type SpanExporter,
   type SpanStatus,
 } from "./span.ts"

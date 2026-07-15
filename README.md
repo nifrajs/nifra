@@ -79,7 +79,7 @@ Once connected, the agent has fifteen tools — no setup per prompt:
 | `nifra_openapi` | OpenAPI 3.1 generated from backend route schemas, as JSON or YAML. |
 | `nifra_check` | Typecheck + drift lint, returned as **structured JSON** with safe fix suggestions. |
 | `nifra_assure` | Classify every route and verify required/forbidden enforcement evidence. |
-| `nifra_doctor` | Flags packages imported in source but missing from `package.json` (resolve at runtime, break `tsc`). |
+| `nifra_doctor` | Flags undeclared imports and duplicate physical Nifra/React installs. |
 | `nifra_run` | Calls a route **in-process** (via `@nifrajs/runner`) — the agent self-verifies an endpoint without booting a server. |
 | `nifra_render` | Server-renders a page to HTML — verify SSR output. |
 | `nifra_ws` | Opens a real Bun WebSocket against the current app, sends test frames, and returns structured evidence. |
@@ -98,7 +98,7 @@ nifra assure           # policy gate for route auth/CSRF/rate/body/idempotency e
 nifra capabilities check # effect provenance + capability lockfile gate; --json for CI
 nifra manifest emit    # deterministic contract + assurance + effects + classification artifact
 nifra manifest diff old.json new.json # deploy-promotion breaking-change gate
-nifra doctor           # packages imported but not declared in package.json (--json for agents)
+nifra doctor           # undeclared imports + duplicate identity-sensitive installs
 ```
 
 ## Install

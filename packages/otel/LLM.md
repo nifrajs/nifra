@@ -10,6 +10,7 @@ Distributed tracing for nifra — W3C traceparent/tracestate propagation + OpenT
 
 ## Key exports
 
+- **causalitySpanLink** _(function)_ — `causalitySpanLink: (context: CausalityContext) => ObservationLink | undefined`
 - **combineObservationAdapters** _(function)_ — `combineObservationAdapters: (adapters: readonly ObservationAdapter[]) => ObservationAdapter`
 - **consoleSpanExporter** _(function)_ — `consoleSpanExporter: (log?: (line: string) => void) => SpanExporter`
 - **createObservationLifecycle** _(function)_ — `createObservationLifecycle: (options?: ObservationLifecycleOptions) => ObservationLifecycle`
@@ -17,15 +18,14 @@ Distributed tracing for nifra — W3C traceparent/tracestate propagation + OpenT
 - **generateSpanId** _(function)_ — `generateSpanId: () => string`
 - **generateTraceId** _(function)_ — `generateTraceId: () => string`
 - **parseTraceparent** _(function)_ — `parseTraceparent: (header: string | null | undefined) => ParsedTraceparent | null`
-- **traceHeaders** _(function)_ — `traceHeaders: (trace: TraceContext) => { traceparent: string; }`
+- **traceHeaders** _(function)_ — `traceHeaders: (trace: TraceContext, causality?: CausalityContext) => { readonly traceparent: string; } & Readonly<Record<string, string>>`
 - **tracing** _(function)_ — `tracing: (options?: TracingOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").Serve…`
 - **ActiveObservation** _(interface)_ — `interface ActiveObservation`
 - **EndObservation** _(interface)_ — `interface EndObservation`
 - **NifraSpan** _(interface)_ — `interface NifraSpan`
 - **ObservationAdapter** _(interface)_ — `interface ObservationAdapter`
-- **ObservationClock** _(interface)_ — `interface ObservationClock`
 
-_…and 11 more — see [`api-reference.md`](../../api-reference.md#nifrajsotel) for the complete list._
+_…and 13 more — see [`api-reference.md`](../../api-reference.md#nifrajsotel) for the complete list._
 
 ## Footguns
 

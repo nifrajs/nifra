@@ -4,7 +4,13 @@
  * should adapt completed spans; they should not reimplement this state machine.
  */
 
-import type { AttributeValue, NifraSpan, ObservationAdapter, SpanStatus } from "./span.ts"
+import type {
+  AttributeValue,
+  NifraSpan,
+  ObservationAdapter,
+  ObservationLink,
+  SpanStatus,
+} from "./span.ts"
 import {
   formatTraceparent,
   generateSpanId,
@@ -34,6 +40,8 @@ export interface StartObservation {
   /** Inbound W3C header used when `parent` is undefined. */
   readonly traceparent?: string | null
   readonly attributes?: Readonly<Record<string, AttributeValue>>
+  /** Non-parent causal relationships, for example an outbox event that resumed this workflow. */
+  readonly links?: readonly ObservationLink[]
 }
 
 export interface EndObservation {
@@ -142,6 +150,21 @@ export function createObservationLifecycle(
       startTime,
       status: "unset",
       attributes: { ...input.attributes },
+      ...(input.links === undefined
+        ? {}
+        : {
+            links: Object.freeze(
+              input.links.map((link) =>
+                Object.freeze({
+                  traceId: link.traceId,
+                  spanId: link.spanId,
+                  ...(link.attributes === undefined
+                    ? {}
+                    : { attributes: Object.freeze({ ...link.attributes }) }),
+                }),
+              ),
+            ),
+          }),
     }
     const context: ObservationContext = {
       traceId,

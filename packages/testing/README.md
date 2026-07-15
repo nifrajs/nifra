@@ -68,6 +68,66 @@ const report = await assertAdversarialContract(app, {
 request for each declared response schema, so use an isolated test app/database—never point the
 laboratory at production.
 
+`nifra levels` L4 uses this same deep engine through the explicitly configured isolated executor;
+the older core invariant runner remains only as a compatibility export.
+
+## Durable failure laboratory
+
+`createFailureLab` injects replayable failures at named seams in a disposable test adapter. It
+supports crash-after-commit, duplicate delivery, event reordering, virtual delay, budget expiry,
+lost provider replies, and checkpoint contention. It never sleeps and its evidence records only
+the schedule tokens - not requests, events, provider results, error messages, or stacks.
+
+```ts
+import { FailureInjectedError, runFailureScenario } from "@nifrajs/testing"
+
+let committed = false
+const report = await runFailureScenario({
+  name: "outbox-crash-after-commit",
+  execute(lab) {
+    committed = true // the real disposable transaction committed
+    lab.checkpoint("outbox.after_commit")
+  },
+  verify: ({ error }) => committed && error instanceof FailureInjectedError,
+}, {
+  seed: 73,
+  schedule: [{ kind: "crash", point: "outbox.after_commit" }],
+})
+
+expect(report.ok).toBe(true)
+// Re-run with report.replay.seed + report.replay.schedule.
+```
+
+Use `lab.deliveries()` around a relay batch, `lab.provider()` around a provider call,
+`lab.remaining()` before a deadline-bound hop, and `lab.checkpointContended()` at a projection CAS.
+The laboratory is a test port: production code does not import it and pays no hot-path cost.
+
+## Adapter certification
+
+`@nifrajs/testing/certification` turns an adapter interface into portable, hash-verifiable evidence.
+Built-in profiles cover storage (including optional paging/signing/copy-move), cache, jobs, Node/Deno-
+style runtimes, and durable event delivery. Every check receives a fresh adapter, capability status is
+explicit, and failures retain only the error class - never provider messages or credentials.
+
+```ts
+import {
+  certifyAdapter,
+  storageAdapterCertificationProfile,
+  verifyAdapterCertification,
+} from "@nifrajs/testing/certification"
+
+const report = await certifyAdapter({
+  profile: storageAdapterCertificationProfile({ paging: true, presign: true, move: true }),
+  adapterId: "s3-production-shape",
+  createAdapter: () => createDisposableS3Adapter(),
+})
+
+if (!report.ok || !(await verifyAdapterCertification(report))) throw new Error("adapter uncertified")
+```
+
+Run profiles only against disposable namespaces. The certification module is structural and
+dependency-free, so adapter packages keep it in test/CI and acquire no production runtime dependency.
+
 ## Stateful sessions
 
 [`@nifrajs/client`](../client)'s **`testClient`** is already the typed, no-network in-process request
@@ -97,6 +157,10 @@ that every call carries and captures cookies via a shared jar.
 
 - `assertAdversarialContract(app, options?)` → green report or throws `AdversarialContractError`.
 - `runAdversarialContract(app, options?)` → structured `{ ok, results, failures, gaps, seed }` report.
+- `createFailureLab(options)` → deterministic controller for isolated durable adapters.
+- `runFailureScenario(scenario, options)` → token-only `{ ok, replay, evidence, error? }` report.
+- `certifyAdapter({ profile, adapterId, createAdapter })` → capability matrix + SHA-256 evidence.
+- `verifyAdapterCertification(report)` → recompute and verify portable certification evidence.
 - `testSession<App>(app, { origin?, cookies? })` → `{ client: Treaty<App>, cookies: CookieJar }`.
 - `cookieJar()` → `CookieJar` — `header()` · `applyTo(headers)` · `store(response)` · `set` · `get` · `clear` · `size`.
   Honours removal (`Max-Age=0` / past `Expires`); other cookie attributes are ignored (in-process, same-origin).

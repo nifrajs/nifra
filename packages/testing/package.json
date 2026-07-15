@@ -20,6 +20,11 @@
       "bun": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./certification": {
+      "bun": "./src/certification.ts",
+      "types": "./dist/certification.d.ts",
+      "default": "./dist/certification.js"
     }
   },
   "files": [

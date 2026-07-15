@@ -12,6 +12,7 @@ import {
   type StandardSchemaV1,
   validateStandard,
 } from "@nifrajs/core"
+import { type CausalityContext, parseCausalityContext } from "@nifrajs/core/causality"
 
 /** The portable wire shape: identity + versioned type + timestamp + validated payload. */
 export interface EventEnvelope<Payload = unknown> {
@@ -23,6 +24,8 @@ export interface EventEnvelope<Payload = unknown> {
   readonly version: number
   /** ISO-8601 instant the event occurred. */
   readonly occurredAt: string
+  /** Optional durable lineage. Its current node must be this exact event id. */
+  readonly causality?: CausalityContext
   readonly payload: Payload
 }
 
@@ -58,7 +61,7 @@ export interface EventContract<Schema extends StandardSchemaV1 = StandardSchemaV
    */
   create(
     payload: InferInput<Schema>,
-    options?: { id?: string; occurredAt?: string },
+    options?: { id?: string; occurredAt?: string; causality?: CausalityContext },
   ): EventEnvelope<InferOutput<Schema>>
   /** Parse untrusted input against this exact contract (type + version + payload). Never throws. */
   parse(input: unknown): EventParseResult<InferOutput<Schema>>
@@ -114,11 +117,26 @@ export function defineEventContract<Schema extends StandardSchemaV1>(spec: {
     create(input, options): EventEnvelope<InferOutput<Schema>> {
       const validated = validateSync(input)
       if (!validated.ok) throw new EventContractError(type, version, validated.issues)
+      const id = options?.id ?? newId()
+      let causality: CausalityContext | undefined
+      if (options?.causality !== undefined) {
+        const parsed = parseCausalityContext(options.causality)
+        if (!parsed.success) {
+          throw new TypeError(`event contract ${type}@${version}: invalid causality context`)
+        }
+        if (parsed.context.current.kind !== "event" || parsed.context.current.id !== id) {
+          throw new TypeError(
+            `event contract ${type}@${version}: causality current node must be event ${id}`,
+          )
+        }
+        causality = parsed.context
+      }
       return Object.freeze({
-        id: options?.id ?? newId(),
+        id,
         type,
         version,
         occurredAt: options?.occurredAt ?? new Date().toISOString(),
+        ...(causality === undefined ? {} : { causality }),
         payload: validated.value,
       })
     },
@@ -149,6 +167,19 @@ export function defineEventContract<Schema extends StandardSchemaV1>(spec: {
       if (typeof env.occurredAt !== "string" || Number.isNaN(Date.parse(env.occurredAt))) {
         issues.push(structuralIssue("occurredAt must be an ISO-8601 string", "occurredAt"))
       }
+      let causality: CausalityContext | undefined
+      if (env.causality !== undefined) {
+        const parsed = parseCausalityContext(env.causality)
+        if (
+          !parsed.success ||
+          parsed.context.current.kind !== "event" ||
+          parsed.context.current.id !== env.id
+        ) {
+          issues.push(structuralIssue("causality must identify this exact event node", "causality"))
+        } else {
+          causality = parsed.context
+        }
+      }
       if (issues.length > 0) return { success: false, issues }
 
       const validated = validateSync(env.payload)
@@ -169,6 +200,7 @@ export function defineEventContract<Schema extends StandardSchemaV1>(spec: {
           type,
           version,
           occurredAt: env.occurredAt as string,
+          ...(causality === undefined ? {} : { causality }),
           payload: validated.value,
         },
       }

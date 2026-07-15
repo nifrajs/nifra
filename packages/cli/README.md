@@ -15,8 +15,15 @@ nifra assure  [--config <file>] [--json]  Gate reflected routes against enforcem
 nifra capabilities check [--json]        Gate effect provenance + the reviewed capability lockfile.
 nifra manifest emit [--sign <key-ref>]   Emit the hash-verified route trust artifact after assurance.
 nifra manifest diff <before> <after>      Block promotion on contract/governance regressions.
-nifra doctor  [--json] [--auto-fix]       Catch undeclared imported packages; auto-fix safe local versions.
+nifra doctor  [--json] [--auto-fix]       Catch undeclared imports and duplicate Nifra/React installs.
 ```
+
+## `nifra doctor` - dependency health
+
+Doctor diffs source imports against declared dependencies, then resolves identity-sensitive
+dependencies from every workspace package. More than one physical `@nifrajs/*`, `react`, or
+`react-dom` copy fails even when versions match; module identity is path-based. Doctor reports
+paths/importers and never deletes installations.
 
 ## `nifra assure` — the route-enforcement gate
 

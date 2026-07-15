@@ -9,6 +9,13 @@
 export type SpanStatus = "unset" | "ok" | "error"
 export type AttributeValue = string | number | boolean
 
+/** A non-parent causal relationship to a span in another trace (the OTel `Link` model). */
+export interface ObservationLink {
+  readonly traceId: string
+  readonly spanId: string
+  readonly attributes?: Readonly<Record<string, AttributeValue>>
+}
+
 /** A completed (or in-flight) server span for one request. */
 export interface NifraSpan {
   /** 32-hex W3C trace id — shared across every span/service in the trace. */
@@ -30,6 +37,8 @@ export interface NifraSpan {
   status: SpanStatus
   /** OTel-semantic-convention attributes. */
   readonly attributes: Record<string, AttributeValue>
+  /** Durable/asynchronous parents that are related but are not this span's single trace parent. */
+  readonly links?: readonly ObservationLink[]
 }
 
 /**

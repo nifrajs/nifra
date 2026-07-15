@@ -15,8 +15,8 @@ import { existsSync } from "node:fs"
 import { resolve } from "node:path"
 import { evaluateRouteAssurance } from "@nifrajs/core/assurance"
 import { type evaluateCapabilityAssurance, snapshotCapabilities } from "@nifrajs/core/capabilities"
-import { runContractInvariants } from "@nifrajs/core/invariants"
 import { buildNifraManifest, parseNifraManifest } from "@nifrajs/core/manifest"
+import { type ContractTestApp, runAdversarialContract } from "@nifrajs/testing"
 import { loadAssuranceConfig } from "./assure.ts"
 import {
   collectCapabilityProjectReport,
@@ -153,17 +153,27 @@ export async function collectVerificationLevels(
       "no isolated invariant executor configured — add `invariants.executor` in nifra.assurance.ts",
     )
   } else {
-    const invariants = await runContractInvariants(config.source as object, {
+    const invariants = await runAdversarialContract(config.source as ContractTestApp, {
       seed: options.seed ?? 1,
-      executor: config.invariants.executor,
+      runtimes: [{ name: "isolated", fetch: config.invariants.executor }],
+      expectedValidationStatuses: [400, 422],
+      requireCoverage: true,
     })
-    if (!invariants.ok) l4Reasons.push(...invariants.findings.map((f) => f.message).slice(0, 5))
-    if (invariants.skipped.length > 0) {
+    if (!invariants.ok) {
       l4Reasons.push(
-        ...invariants.skipped
+        ...invariants.failures
           .slice(0, 5)
           .map(
-            (route) => `${route.method} ${route.path} was not invariant-tested: ${route.reason}`,
+            (failure) =>
+              `${failure.runtime}: ${failure.id} - ${failure.message} (replay seed ${failure.replay.seed})`,
+          ),
+      )
+      l4Reasons.push(
+        ...invariants.gaps
+          .slice(0, Math.max(0, 5 - l4Reasons.length))
+          .map(
+            (gap) =>
+              `${gap.route ?? "contract"}${gap.target ? ` ${gap.target}` : ""}: ${gap.message}`,
           ),
       )
     }

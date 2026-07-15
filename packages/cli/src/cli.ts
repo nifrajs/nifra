@@ -59,7 +59,7 @@ Usage:
                                          agent: nifra_context, nifra_routes (routes+schemas as JSON),
                                          nifra_run (backend), nifra_render (SSR a page), nifra_docs,
                                          nifra_example (verified snippets), nifra_scaffold (route→file),
-                                         nifra_check (drift gate + fixes), nifra_doctor (undeclared deps).
+                                         nifra_check (drift gate + fixes), nifra_doctor (deps + duplicate installs).
   nifra docs-mcp [--port <n>]            Serve the PUBLIC docs MCP over HTTP (nifra_docs + nifra_example) —
                                          self-host on a VPS so any remote agent can learn nifra. Default :8787.
   nifra check   [--json] [--lints-only]  Gate: typecheck + lints (hand-rolled fetch(), untyped client("…"),
@@ -91,8 +91,8 @@ Usage:
                                          Compute the verification ladder (L0 typed contract → L1 route
                                          assurance → L2 capability lockfile → L3 route manifest → L4
                                          invariant-tested); --min <n> fails the exit code below level n.
-  nifra doctor  [--json] [--auto-fix]    Flag packages imported in source but missing from package.json
-                                         (resolve at Bun runtime, break tsc + standalone install);
+  nifra doctor  [--json] [--auto-fix]    Flag undeclared imports and multiple physical copies of
+                                         @nifrajs/core/React identity-sensitive dependencies;
                                          --auto-fix writes safe local-version dependency fixes.
   nifra upgrade <version>                Run the per-release upgrade recipe for <version>: sweep every
                 [--write] [--no-verify]  matching dependency pin (preserving ^/~/exact) + apply exact

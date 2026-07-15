@@ -195,6 +195,10 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **BackendMountHandler** _(type)_ — `type BackendMountHandler<Env = unknown> = ( request: Request, platform?: Platform<Env>, ) => Response | Promise<Response>`
   Dispatch one already-materialized request into a backend with its outer runtime platform context.
 - **BuildNifraManifestInput** _(interface)_ — `interface BuildNifraManifestInput`
+- **CAUSALITY_EXECUTION_HEADER** _(const)_ — `CAUSALITY_EXECUTION_HEADER: "x-nifra-execution-id"`
+- **CAUSALITY_KIND_HEADER** _(const)_ — `CAUSALITY_KIND_HEADER: "x-nifra-causality-kind"`
+- **CAUSALITY_NODE_HEADER** _(const)_ — `CAUSALITY_NODE_HEADER: "x-nifra-causality-id"`
+- **CAUSALITY_TRACE_HEADER** _(const)_ — `CAUSALITY_TRACE_HEADER: "x-nifra-causality-trace"`
 - **CapabilityAccess** _(type)_ — `type CapabilityAccess = "read" | "write"`
 - **CapabilityAssuranceReport** _(interface)_ — `interface CapabilityAssuranceReport`
 - **CapabilityDefinition** _(interface)_ — `interface CapabilityDefinition`
@@ -215,11 +219,35 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **CapabilitySnapshotRoute** _(interface)_ — `interface CapabilitySnapshotRoute`
 - **CapabilityUseEvent** _(interface)_ — `interface CapabilityUseEvent`
 - **CapabilityZone** _(type)_ — `type CapabilityZone = "domain" | "operational"`
+- **CausalityCapacityError** _(class)_ — `class CausalityCapacityError`
+- **CausalityConflictError** _(class)_ — `class CausalityConflictError`
+- **CausalityContext** _(interface)_ — `interface CausalityContext`
+  The propagation shape carried across commands/events/jobs.
+- **CausalityGraphStore** _(type)_ — `type CausalityGraphStore<Tx = unknown> = CausalityRecorder<Tx> & CausalityReader`
+- **CausalityKind** _(type)_ — `type CausalityKind = string`
+  A node category such as `request`, `command`, `event`, `workflow`, `projection`, or `repair`.
+- **CausalityParent** _(interface)_ — `interface CausalityParent`
+  One immediate parent edge. Relation is a bounded token (`caused`, `emitted`, `projected`, …).
+- **CausalityParseResult** _(type)_ — `type CausalityParseResult = | { readonly success: true; readonly context: CausalityContext } | { readonly success: false readonly reason: "missing" | "incomplete" | "invalid" | "unknown-field" }`
+- **CausalityReader** _(interface)_ — `interface CausalityReader`
+- **CausalityRecord** _(interface)_ — `interface CausalityRecord`
+  One append-only graph record. It intentionally has no payload or metadata field.
+- **CausalityRecordParseResult** _(type)_ — `type CausalityRecordParseResult = | { readonly success: true; readonly record: CausalityRecord } | { readonly success: false readonly reason: "incomplete" | "invalid" | "unknown-field" }`
+- **CausalityRecorder** _(interface)_ — `interface CausalityRecorder<Tx = unknown>`
+- **CausalityRef** _(interface)_ — `interface CausalityRef`
+  A bounded identity within one execution graph.
+- **CausalityStep** _(interface)_ — `interface CausalityStep`
+  A propagation context plus the graph record a durable adapter should append.
+- **CausalityTimelineItem** _(interface)_ — `interface CausalityTimelineItem`
+- **CausalityTimelinePage** _(interface)_ — `interface CausalityTimelinePage`
+- **CausalityTrace** _(interface)_ — `interface CausalityTrace`
+  Optional OpenTelemetry anchor for the nearest observed ancestor.
 - **ClassifiedSchema** _(type)_ — `type ClassifiedSchema<S extends object> = S & { readonly [CLASSIFICATION]: DataClassification }`
 - **Context** _(interface)_ — `interface Context<Path extends string = string, S extends RouteSchema = RouteSchema>`
   Handler context. `params` are inferred from the path; `body` and `query` are the validated outputs of their schemas when declared (else `undefined` / raw `URLSearchParams`).
 - **ContextForOp** _(type)_ — `type ContextForOp<O extends OperationDef> = Context<O["path"], SchemaForOp<O> & RouteSchema>`
   The handler context for an op — identical to the inline `Context<Path, S>`, so a handler written for an inline route type-checks unchanged under `implement` (the graduation guarantee).
+- **ContinueCausalityOptions** _(interface)_ — `interface ContinueCausalityOptions`
 - **ContractShape** _(type)_ — `type ContractShape = Record<string, OperationDef>`
   A contract: named operations. Names are the handler keys and OpenAPI operationIds.
 - **CookieOptions** _(interface)_ — `interface CookieOptions`
@@ -305,6 +333,7 @@ Every public export of every package — name, kind, signature, and doc summary 
   An app-declared MCP prompt — a reusable prompt template an agent can fetch through `nifra mcp`.
 - **McpResourceDescriptor** _(interface)_ — `interface McpResourceDescriptor`
   An app-declared MCP resource — read-only data an agent can fetch through `nifra mcp`.
+- **MemoryCausalityStoreOptions** _(interface)_ — `interface MemoryCausalityStoreOptions`
 - **MemoryIdempotencyStore** _(class)_ — `class MemoryIdempotencyStore`
   In-process idempotency store. Reservation is atomic by construction — `begin` never awaits, so the single-threaded event loop serializes concurrent callers for one key. Expired entries are treated as absent (lazy eviction on access); a periodic {@link MemoryIdempotencyStore.sweep} bounds memory.
 - **MemoryIdempotencyStoreOptions** _(interface)_ — `interface MemoryIdempotencyStoreOptions`
@@ -422,6 +451,7 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **StandardTypes** _(interface)_ — `interface StandardTypes<Input = unknown, Output = Input>`
 - **StandardWebSocket** _(interface)_ — `interface StandardWebSocket`
   A standard server-side `WebSocket` — the half returned by Deno's `Deno.upgradeWebSocket` and the Workers `WebSocketPair`. {@link attachWebSocket} wires one to a nifra handler, so the Deno and Workers bridges share all the dispatch/normalization/error-isolation logic (only the upgrade call differs).
+- **StartCausalityOptions** _(interface)_ — `interface StartCausalityOptions`
 - **StoredResponse** _(interface)_ — `interface StoredResponse`
   A serialized response held by a store. `body` is base64 so binary payloads round-trip intact.
 - **ToolAnnotations** _(interface)_ — `interface ToolAnnotations`
@@ -459,6 +489,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Canonical bytes are stable across runtime, object-key order, and route registration order.
 - **canonicalizeIdempotencyBody** _(function)_ — `canonicalizeIdempotencyBody: (body: Uint8Array, contentType: string | null) => Uint8Array`
   Canonicalize JSON bodies so whitespace/property-order retries bind to the same semantic request.
+- **causalityHeaders** _(function)_ — `causalityHeaders: (context: CausalityContext) => Readonly<Record<string, string>>`
+  Serialize the propagation context into bounded HTTP headers.
 - **classificationAtLeast** _(function)_ — `classificationAtLeast: (value: DataClassification, floor: DataClassification) => boolean`
   True when `value` is at least as sensitive as `floor` (e.g. `classificationAtLeast(x, "pii")`).
 - **classified** _(function)_ — `classified: <S extends object>(schema: S, classification: DataClassification) => ClassifiedSchema<S>`
@@ -469,6 +501,10 @@ Every public export of every package — name, kind, signature, and doc summary 
   Keyed HMAC-SHA-256 digest (hex) of an effect payload, for replay/reconciliation matching without storing the payload. Keyed on purpose: a bare hash of low-entropy data (an email, a flag) is brute-forceable and would itself leak. Digest the **whole** effect payload, never a single field.
 - **computeIdempotencyFingerprint** _(function)_ — `computeIdempotencyFingerprint: (method: string, path: string, body: Uint8Array, contentType?: string) => Promise<string>`
   SHA-256 fingerprint binding a key to one request: method, path (+ query), and the raw body bytes. A collision-resistant hash matters — a weak hash would let a crafted body replay another's response.
+- **continueCausality** _(function)_ — `continueCausality: (parent: CausalityContext, nodeKind: CausalityKind, id: string, options?: ContinueCausalityOptions) => CausalityStep`
+  Continue one execution from a single immediate parent.
+- **createMemoryCausalityStore** _(function)_ — `createMemoryCausalityStore: (options?: MemoryCausalityStoreOptions) => CausalityGraphStore`
+  Bounded dev/test graph store. Production callers should provide a durable adapter.
 - **createMemoryIdempotencyStore** _(function)_ — `createMemoryIdempotencyStore: (options?: MemoryIdempotencyStoreOptions) => MemoryIdempotencyStore`
   Convenience factory mirroring the other core primitives' `create*` style.
 - **createMemoryLedgerSink** _(function)_ — `createMemoryLedgerSink: (options?: MemoryLedgerSinkOptions) => MemoryLedgerSink`
@@ -507,12 +543,18 @@ Every public export of every package — name, kind, signature, and doc summary 
   Bind handlers to a contract, producing a real {@link Server} you can `.listen()` or `.fetch()`. Each op is registered through the same path as the inline builder, so the result is identical to writing the routes inline — handlers lift over **unchanged** ("graduation"), and body/query schemas valida…
 - **isDataClassification** _(function)_ — `isDataClassification: (value: unknown) => value is DataClassification`
   Whether `value` is a known classification token.
+- **joinCausality** _(function)_ — `joinCausality: (parents: readonly CausalityContext[], nodeKind: CausalityKind, id: string, options?: ContinueCausalityOptions) => CausalityStep`
+  Join several immediate parents. Cross-execution joins fail closed.
 - **jsonLogger** _(function)_ — `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
   The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction — pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
 - **matchesAssuranceSelector** _(function)_ — `matchesAssuranceSelector: (route: Pick<ReflectedRoute, "method" | "path" | "tool">, selector: AssuranceRouteSelector) => boolean`
   Shared selector semantics for policy rules and framework adapters.
 - **maxClassification** _(function)_ — `maxClassification: (values: Iterable<DataClassification>) => DataClassification`
   The most sensitive classification among the inputs; `"public"` when none are given.
+- **parseCausalityContext** _(function)_ — `parseCausalityContext: (input: unknown) => CausalityParseResult`
+  Parse an untrusted JSON causality context. Unknown fields fail closed so payloads cannot hitchhike.
+- **parseCausalityRecord** _(function)_ — `parseCausalityRecord: (input: unknown) => CausalityRecordParseResult`
+  Parse an untrusted durable graph record. Unknown fields fail closed at every nesting level.
 - **parseCookies** _(function)_ — `parseCookies: (header: string | null | undefined) => Record<string, string>`
   Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are skipped rather than throwing — a junk `Cookie` header shouldn't fail the request.
 - **parseNifraManifest** _(function)_ — `parseNifraManifest: (content: string, source?: string) => Promise<NifraManifest>`
@@ -521,6 +563,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Parse the detached sidecar before selecting its operator-controlled public key.
 - **randomEffectDigestKey** _(function)_ — `randomEffectDigestKey: () => Uint8Array`
   Fresh random digest key (32 bytes). Per-process by default — persist one externally to correlate across restarts.
+- **readCausalityHeaders** _(function)_ — `readCausalityHeaders: (headers: Headers) => CausalityParseResult`
+  Parse the public header convention without ever throwing on hostile input.
 - **recordCapabilityOutcome** _(function)_ — `recordCapabilityOutcome: (context: object, capability: string, options: CapabilityOutcomeOptions) => void`
   Record the terminal outcome of an already-admitted capability without debiting admission twice.
 - **redactLogFields** _(function)_ — `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
@@ -538,7 +582,6 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **routeClassification** _(function)_ — `routeClassification: (responseSchema: unknown, fallback: DataClassification | undefined) => ResponseClassification | undefined`
   Merge field metadata with an optional route-level sensitivity fallback.
 - **runContractInvariants** _(function)_ — `runContractInvariants: (app: ReflectableApp, options?: RunInvariantsOptions) => Promise<InvariantReport>`
-  Run the contract-derived invariant suite against a reflectable app. Pure; no ambient state.
 - **serializeCookie** _(function)_ — `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
   Serialize a `Set-Cookie` header value. Pure — applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, or an oversized result — a serialization bug shou…
 - **serializeNifraManifest** _(function)_ — `serializeNifraManifest: (manifest: NifraManifest) => string`
@@ -562,6 +605,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **snapshotRoutes** _(function)_ — `snapshotRoutes: (source: unknown) => readonly RouteSnapshot[]`
   Snapshot an app's routes (anything `reflectRoutes` accepts) as plain JSON. Validators are dropped; only introspectable JSON Schema metadata is kept, so the result round-trips through `JSON.stringify` unchanged.
 - **sse** _(function)_ — `sse: (c: SSEContext, run: (stream: SSEStream) => void | Promise<void>, init?: SSEInit) => Response`
+- **startCausality** _(function)_ — `startCausality: (nodeKind: CausalityKind, id: string, options: StartCausalityOptions) => CausalityStep`
+  Start a root execution node at an ingress boundary.
 - **toFetchHandler** _(function)_ — `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
 - **typedSSEStream** _(function)_ — `typedSSEStream: <Event>(stream: SSEStream) => TypedSSEStream<Event>`
   Wrap a raw {@link SSEStream} in the typed, JSON-serializing surface `app.sse()` hands out.
@@ -1047,6 +1092,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **ObservationContext** _(interface)_ — `interface ObservationContext`
 - **ObservationLifecycle** _(interface)_ — `interface ObservationLifecycle`
 - **ObservationLifecycleOptions** _(interface)_ — `interface ObservationLifecycleOptions`
+- **ObservationLink** _(interface)_ — `interface ObservationLink`
+  A non-parent causal relationship to a span in another trace (the OTel `Link` model).
 - **ObservationParent** _(interface)_ — `interface ObservationParent`
 - **ParsedTraceparent** _(interface)_ — `interface ParsedTraceparent`
   A parsed inbound `traceparent`.
@@ -1058,6 +1105,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **TraceContext** _(type)_ — `type TraceContext = ObservationContext`
   The trace context exposed on the handler `c.trace` (typed, threaded via `derive`).
 - **TracingOptions** _(interface)_ — `interface TracingOptions`
+- **causalitySpanLink** _(function)_ — `causalitySpanLink: (context: CausalityContext) => ObservationLink | undefined`
+  Convert the nearest observed causal ancestor into an OTel span link. Returns `undefined` instead of inventing a trace identity when the durable context has no observation anchor.
 - **combineObservationAdapters** _(function)_ — `combineObservationAdapters: (adapters: readonly ObservationAdapter[]) => ObservationAdapter`
   Fan out lifecycle notifications to several adapters. Each adapter is isolated: an exception in one sink cannot prevent the remaining sinks from observing the span.
 - **consoleSpanExporter** _(function)_ — `consoleSpanExporter: (log?: (line: string) => void) => SpanExporter`
@@ -1072,7 +1121,7 @@ Every public export of every package — name, kind, signature, and doc summary 
   A fresh 16-byte (32-hex) trace id.
 - **parseTraceparent** _(function)_ — `parseTraceparent: (header: string | null | undefined) => ParsedTraceparent | null`
   Parse a `traceparent` header, or `null` if it's absent/malformed/version-unknown — per the spec, a bad header means "start a fresh trace", never an error. Only version `00` is accepted.
-- **traceHeaders** _(function)_ — `traceHeaders: (trace: TraceContext) => { traceparent: string; }`
+- **traceHeaders** _(function)_ — `traceHeaders: (trace: TraceContext, causality?: CausalityContext) => { readonly traceparent: string; } & Readonly<Record<string, string>>`
   Spread into an outgoing `fetch`/`ctx.api` call's headers to continue the trace downstream: `fetch(url, { headers: traceHeaders(c.trace) })`.
 - **tracing** _(function)_ — `tracing: (options?: TracingOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").Server<any, any>>`
   Distributed-tracing plugin. Each request continues the inbound trace (or starts one), opens a server span, and ends it on response with the status + HTTP attributes. Idempotent.
@@ -1180,6 +1229,9 @@ Every public export of every package — name, kind, signature, and doc summary 
 
 ## @nifrajs/testing
 
+- **AdapterCertificationError** _(class)_ — `class AdapterCertificationError`
+- **AdapterCertificationProfile** _(interface)_ — `interface AdapterCertificationProfile<Adapter>`
+- **AdapterCertificationReport** _(interface)_ — `interface AdapterCertificationReport`
 - **AdversarialContractError** _(class)_ — `class AdversarialContractError`
 - **AdversarialContractOptions** _(interface)_ — `interface AdversarialContractOptions`
 - **AdversarialContractReport** _(interface)_ — `interface AdversarialContractReport`
@@ -1189,6 +1241,18 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **CaptureIncidentOptions** _(interface)_ — `interface CaptureIncidentOptions`
 - **CapturedRequest** _(interface)_ — `interface CapturedRequest`
 - **CapturedRequestInput** _(interface)_ — `interface CapturedRequestInput`
+- **CertifiableCacheEntry** _(interface)_ — `interface CertifiableCacheEntry`
+- **CertifiableCacheStore** _(interface)_ — `interface CertifiableCacheStore`
+- **CertifiableDomainEvent** _(interface)_ — `interface CertifiableDomainEvent`
+- **CertifiableEventDeliveryAdapter** _(interface)_ — `interface CertifiableEventDeliveryAdapter`
+- **CertifiableEventRecord** _(interface)_ — `interface CertifiableEventRecord`
+- **CertifiableJobStore** _(interface)_ — `interface CertifiableJobStore`
+- **CertifiableRuntimeAdapter** _(interface)_ — `interface CertifiableRuntimeAdapter`
+- **CertifiableRuntimeServer** _(interface)_ — `interface CertifiableRuntimeServer`
+- **CertifiableStorageAdapter** _(interface)_ — `interface CertifiableStorageAdapter`
+- **CertificationCapabilityEvidence** _(interface)_ — `interface CertificationCapabilityEvidence`
+- **CertificationCheck** _(interface)_ — `interface CertificationCheck<Adapter>`
+- **CertificationCheckEvidence** _(interface)_ — `interface CertificationCheckEvidence`
 - **ContractCaseContext** _(interface)_ — `interface ContractCaseContext`
   Stable context passed to request/rejection hooks. It contains no request payloads or secrets.
 - **ContractCaseKind** _(type)_ — `type ContractCaseKind = "input-rejection" | "response-conformance"`
@@ -1204,6 +1268,16 @@ Every public export of every package — name, kind, signature, and doc summary 
   A known-good request. Missing body/query values are synthesized from inspectable JSON Schema.
 - **CookieJar** _(interface)_ — `interface CookieJar`
   A tiny cookie jar for in-process tests — parses `Set-Cookie` off responses and emits a `Cookie` request header, so a login → authenticated-request flow works without threading headers by hand. It honours removal (`Max-Age=0` / a past `Expires`) so logout clears the cookie; other attributes (Domain/…
+- **FailureDirective** _(type)_ — `type FailureDirective`
+- **FailureEvidence** _(interface)_ — `interface FailureEvidence`
+- **FailureInjectedError** _(class)_ — `class FailureInjectedError`
+- **FailureKind** _(type)_ — `type FailureKind = | "crash" | "duplicate-delivery" | "reorder-events" | "delay" | "expire-budget" | "lose-provider-reply" | "contend-checkpoint"`
+  Deterministic durable-failure laboratory.
+- **FailureLab** _(interface)_ — `interface FailureLab`
+- **FailureLabOptions** _(interface)_ — `interface FailureLabOptions`
+- **FailureReplay** _(interface)_ — `interface FailureReplay`
+- **FailureScenario** _(interface)_ — `interface FailureScenario<Output>`
+- **FailureScenarioReport** _(interface)_ — `interface FailureScenarioReport`
 - **GenerateRegressionTestOptions** _(interface)_ — `interface GenerateRegressionTestOptions`
 - **IncidentCapsule** _(interface)_ — `interface IncidentCapsule`
 - **IncidentReplayError** _(class)_ — `class IncidentReplayError`
@@ -1211,26 +1285,41 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **ReplayIncidentOptions** _(interface)_ — `interface ReplayIncidentOptions`
 - **TestSession** _(interface)_ — `interface TestSession<App>`
 - **TestSessionOptions** _(interface)_ — `interface TestSessionOptions`
+- **assertAdapterCertification** _(function)_ — `assertAdapterCertification: (report: AdapterCertificationReport) => void`
 - **assertAdversarialContract** _(function)_ — `assertAdversarialContract: (app: ContractTestApp, options?: AdversarialContractOptions) => Promise<AdversarialContractReport>`
   Run the contract laboratory and throw an {@link AdversarialContractError} unless it is fully green.
 - **assertIncidentReplays** _(function)_ — `assertIncidentReplays: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<void>`
   Assert a captured incident still reproduces against the current app. Throws {@link IncidentReplayError}.
+- **cacheStoreCertificationProfile** _(function)_ — `cacheStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableCacheStore>`
 - **captureIncident** _(function)_ — `captureIncident: (request: Request | CapturedRequestInput, response: Response | { status: number; body?: unknown; }, options?: CaptureIncidentOptions) => Promise<IncidentCapsule>`
   Build a capsule from a real `Request`+`Response`, or from plain captured fields.
+- **certifyAdapter** _(function)_ — `certifyAdapter: <Adapter>(options: { readonly profile: AdapterCertificationProfile<Adapter>; readonly adapterId: string; readonly createAdapter: () => Adapter | Promise<Adapter>; readonly cleanup?: (adapter: Adapter) =>…`
 - **cookieJar** _(function)_ — `cookieJar: () => CookieJar`
   Create an empty cookie jar.
+- **createFailureLab** _(function)_ — `createFailureLab: (options: FailureLabOptions) => FailureLab`
+  Build one isolated deterministic controller. Construct a fresh lab for every replay.
+- **defineCertificationProfile** _(function)_ — `defineCertificationProfile: <Adapter>(profile: AdapterCertificationProfile<Adapter>) => AdapterCertificationProfile<Adapter>`
+  Define and validate a custom domain/provider profile at module initialization.
+- **eventDeliveryCertificationProfile** _(function)_ — `eventDeliveryCertificationProfile: () => AdapterCertificationProfile<CertifiableEventDeliveryAdapter>`
 - **generateRegressionTest** _(function)_ — `generateRegressionTest: (capsule: IncidentCapsule, options?: GenerateRegressionTestOptions) => string`
   Emit a committable regression test from a capsule. Request string values are redacted BY DEFAULT with a sanitize banner — replace the `<redacted>` placeholders with safe, reproducing values before you commit. The test asserts the response contract via {@link assertIncidentReplays}.
+- **jobStoreCertificationProfile** _(function)_ — `jobStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableJobStore>`
 - **redactForEmission** _(function)_ — `redactForEmission: (value: unknown, allow: ReadonlySet<string>, path?: string) => unknown`
   Redact leaf string values by default (unless the dotted key path is allow-listed). Non-strings are kept — they carry the structure that makes the fixture reproduce — so review the emitted file. This is intentionally aggressive: a committed fixture must not leak PII/secrets.
 - **replayIncident** _(function)_ — `replayIncident: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<IncidentReplayResult>`
   Replay a captured incident against the current app and report whether it reproduces.
 - **runAdversarialContract** _(function)_ — `runAdversarialContract: (app: ContractTestApp, options?: AdversarialContractOptions) => Promise<AdversarialContractReport>`
   Execute contract-derived hostile inputs and declared-response conformance against a runtime matrix. Runtime/request failures are captured in the report; inspect `report.ok`, `failures`, and `gaps` (or use {@link assertAdversarialContract} for a throwing test assertion).
+- **runFailureScenario** _(function)_ — `runFailureScenario: <Output>(scenario: FailureScenario<Output>, options: FailureLabOptions) => Promise<FailureScenarioReport>`
+  Run one scenario and evaluate its post-failure invariant without leaking its result or error text.
+- **runtimeAdapterCertificationProfile** _(function)_ — `runtimeAdapterCertificationProfile: () => AdapterCertificationProfile<CertifiableRuntimeAdapter>`
 - **shapeOf** _(function)_ — `shapeOf: (value: unknown) => unknown`
   A stable structural fingerprint: keys + value *types*, not values. Used for the optional shape check.
+- **storageAdapterCertificationProfile** _(function)_ — `storageAdapterCertificationProfile: (options?: { readonly paging?: boolean; readonly presign?: boolean; readonly move?: boolean; }) => AdapterCertificationProfile<CertifiableStorageAdapter>`
 - **testSession** _(function)_ — `testSession: <App extends AppLike>(app: App, options?: TestSessionOptions) => TestSession<App>`
   Create a cookie-persisting in-process test client for `app`.
+- **verifyAdapterCertification** _(function)_ — `verifyAdapterCertification: (report: AdapterCertificationReport) => Promise<boolean>`
+  Recompute the portable evidence hash. Consumers should verify before trusting a stored report.
 
 ## @nifrajs/uploads
 
@@ -1561,6 +1650,10 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **BackendMountHandler** _(type)_ — `type BackendMountHandler<Env = unknown> = ( request: Request, platform?: Platform<Env>, ) => Response | Promise<Response>`
   Dispatch one already-materialized request into a backend with its outer runtime platform context.
 - **BuildNifraManifestInput** _(interface)_ — `interface BuildNifraManifestInput`
+- **CAUSALITY_EXECUTION_HEADER** _(const)_ — `CAUSALITY_EXECUTION_HEADER: "x-nifra-execution-id"`
+- **CAUSALITY_KIND_HEADER** _(const)_ — `CAUSALITY_KIND_HEADER: "x-nifra-causality-kind"`
+- **CAUSALITY_NODE_HEADER** _(const)_ — `CAUSALITY_NODE_HEADER: "x-nifra-causality-id"`
+- **CAUSALITY_TRACE_HEADER** _(const)_ — `CAUSALITY_TRACE_HEADER: "x-nifra-causality-trace"`
 - **CapabilityAccess** _(type)_ — `type CapabilityAccess = "read" | "write"`
 - **CapabilityAssuranceReport** _(interface)_ — `interface CapabilityAssuranceReport`
 - **CapabilityDefinition** _(interface)_ — `interface CapabilityDefinition`
@@ -1581,11 +1674,35 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **CapabilitySnapshotRoute** _(interface)_ — `interface CapabilitySnapshotRoute`
 - **CapabilityUseEvent** _(interface)_ — `interface CapabilityUseEvent`
 - **CapabilityZone** _(type)_ — `type CapabilityZone = "domain" | "operational"`
+- **CausalityCapacityError** _(class)_ — `class CausalityCapacityError`
+- **CausalityConflictError** _(class)_ — `class CausalityConflictError`
+- **CausalityContext** _(interface)_ — `interface CausalityContext`
+  The propagation shape carried across commands/events/jobs.
+- **CausalityGraphStore** _(type)_ — `type CausalityGraphStore<Tx = unknown> = CausalityRecorder<Tx> & CausalityReader`
+- **CausalityKind** _(type)_ — `type CausalityKind = string`
+  A node category such as `request`, `command`, `event`, `workflow`, `projection`, or `repair`.
+- **CausalityParent** _(interface)_ — `interface CausalityParent`
+  One immediate parent edge. Relation is a bounded token (`caused`, `emitted`, `projected`, …).
+- **CausalityParseResult** _(type)_ — `type CausalityParseResult = | { readonly success: true; readonly context: CausalityContext } | { readonly success: false readonly reason: "missing" | "incomplete" | "invalid" | "unknown-field" }`
+- **CausalityReader** _(interface)_ — `interface CausalityReader`
+- **CausalityRecord** _(interface)_ — `interface CausalityRecord`
+  One append-only graph record. It intentionally has no payload or metadata field.
+- **CausalityRecordParseResult** _(type)_ — `type CausalityRecordParseResult = | { readonly success: true; readonly record: CausalityRecord } | { readonly success: false readonly reason: "incomplete" | "invalid" | "unknown-field" }`
+- **CausalityRecorder** _(interface)_ — `interface CausalityRecorder<Tx = unknown>`
+- **CausalityRef** _(interface)_ — `interface CausalityRef`
+  A bounded identity within one execution graph.
+- **CausalityStep** _(interface)_ — `interface CausalityStep`
+  A propagation context plus the graph record a durable adapter should append.
+- **CausalityTimelineItem** _(interface)_ — `interface CausalityTimelineItem`
+- **CausalityTimelinePage** _(interface)_ — `interface CausalityTimelinePage`
+- **CausalityTrace** _(interface)_ — `interface CausalityTrace`
+  Optional OpenTelemetry anchor for the nearest observed ancestor.
 - **ClassifiedSchema** _(type)_ — `type ClassifiedSchema<S extends object> = S & { readonly [CLASSIFICATION]: DataClassification }`
 - **Context** _(interface)_ — `interface Context<Path extends string = string, S extends RouteSchema = RouteSchema>`
   Handler context. `params` are inferred from the path; `body` and `query` are the validated outputs of their schemas when declared (else `undefined` / raw `URLSearchParams`).
 - **ContextForOp** _(type)_ — `type ContextForOp<O extends OperationDef> = Context<O["path"], SchemaForOp<O> & RouteSchema>`
   The handler context for an op — identical to the inline `Context<Path, S>`, so a handler written for an inline route type-checks unchanged under `implement` (the graduation guarantee).
+- **ContinueCausalityOptions** _(interface)_ — `interface ContinueCausalityOptions`
 - **ContractShape** _(type)_ — `type ContractShape = Record<string, OperationDef>`
   A contract: named operations. Names are the handler keys and OpenAPI operationIds.
 - **CookieOptions** _(interface)_ — `interface CookieOptions`
@@ -1671,6 +1788,7 @@ Every public export of every package — name, kind, signature, and doc summary 
   An app-declared MCP prompt — a reusable prompt template an agent can fetch through `nifra mcp`.
 - **McpResourceDescriptor** _(interface)_ — `interface McpResourceDescriptor`
   An app-declared MCP resource — read-only data an agent can fetch through `nifra mcp`.
+- **MemoryCausalityStoreOptions** _(interface)_ — `interface MemoryCausalityStoreOptions`
 - **MemoryIdempotencyStore** _(class)_ — `class MemoryIdempotencyStore`
   In-process idempotency store. Reservation is atomic by construction — `begin` never awaits, so the single-threaded event loop serializes concurrent callers for one key. Expired entries are treated as absent (lazy eviction on access); a periodic {@link MemoryIdempotencyStore.sweep} bounds memory.
 - **MemoryIdempotencyStoreOptions** _(interface)_ — `interface MemoryIdempotencyStoreOptions`
@@ -1788,6 +1906,7 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **StandardTypes** _(interface)_ — `interface StandardTypes<Input = unknown, Output = Input>`
 - **StandardWebSocket** _(interface)_ — `interface StandardWebSocket`
   A standard server-side `WebSocket` — the half returned by Deno's `Deno.upgradeWebSocket` and the Workers `WebSocketPair`. {@link attachWebSocket} wires one to a nifra handler, so the Deno and Workers bridges share all the dispatch/normalization/error-isolation logic (only the upgrade call differs).
+- **StartCausalityOptions** _(interface)_ — `interface StartCausalityOptions`
 - **StoredResponse** _(interface)_ — `interface StoredResponse`
   A serialized response held by a store. `body` is base64 so binary payloads round-trip intact.
 - **ToolAnnotations** _(interface)_ — `interface ToolAnnotations`
@@ -1825,6 +1944,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Canonical bytes are stable across runtime, object-key order, and route registration order.
 - **canonicalizeIdempotencyBody** _(function)_ — `canonicalizeIdempotencyBody: (body: Uint8Array, contentType: string | null) => Uint8Array`
   Canonicalize JSON bodies so whitespace/property-order retries bind to the same semantic request.
+- **causalityHeaders** _(function)_ — `causalityHeaders: (context: CausalityContext) => Readonly<Record<string, string>>`
+  Serialize the propagation context into bounded HTTP headers.
 - **classificationAtLeast** _(function)_ — `classificationAtLeast: (value: DataClassification, floor: DataClassification) => boolean`
   True when `value` is at least as sensitive as `floor` (e.g. `classificationAtLeast(x, "pii")`).
 - **classified** _(function)_ — `classified: <S extends object>(schema: S, classification: DataClassification) => ClassifiedSchema<S>`
@@ -1835,6 +1956,10 @@ Every public export of every package — name, kind, signature, and doc summary 
   Keyed HMAC-SHA-256 digest (hex) of an effect payload, for replay/reconciliation matching without storing the payload. Keyed on purpose: a bare hash of low-entropy data (an email, a flag) is brute-forceable and would itself leak. Digest the **whole** effect payload, never a single field.
 - **computeIdempotencyFingerprint** _(function)_ — `computeIdempotencyFingerprint: (method: string, path: string, body: Uint8Array, contentType?: string) => Promise<string>`
   SHA-256 fingerprint binding a key to one request: method, path (+ query), and the raw body bytes. A collision-resistant hash matters — a weak hash would let a crafted body replay another's response.
+- **continueCausality** _(function)_ — `continueCausality: (parent: CausalityContext, nodeKind: CausalityKind, id: string, options?: ContinueCausalityOptions) => CausalityStep`
+  Continue one execution from a single immediate parent.
+- **createMemoryCausalityStore** _(function)_ — `createMemoryCausalityStore: (options?: MemoryCausalityStoreOptions) => CausalityGraphStore`
+  Bounded dev/test graph store. Production callers should provide a durable adapter.
 - **createMemoryIdempotencyStore** _(function)_ — `createMemoryIdempotencyStore: (options?: MemoryIdempotencyStoreOptions) => MemoryIdempotencyStore`
   Convenience factory mirroring the other core primitives' `create*` style.
 - **createMemoryLedgerSink** _(function)_ — `createMemoryLedgerSink: (options?: MemoryLedgerSinkOptions) => MemoryLedgerSink`
@@ -1873,12 +1998,18 @@ Every public export of every package — name, kind, signature, and doc summary 
   Bind handlers to a contract, producing a real {@link Server} you can `.listen()` or `.fetch()`. Each op is registered through the same path as the inline builder, so the result is identical to writing the routes inline — handlers lift over **unchanged** ("graduation"), and body/query schemas valida…
 - **isDataClassification** _(function)_ — `isDataClassification: (value: unknown) => value is DataClassification`
   Whether `value` is a known classification token.
+- **joinCausality** _(function)_ — `joinCausality: (parents: readonly CausalityContext[], nodeKind: CausalityKind, id: string, options?: ContinueCausalityOptions) => CausalityStep`
+  Join several immediate parents. Cross-execution joins fail closed.
 - **jsonLogger** _(function)_ — `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
   The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction — pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
 - **matchesAssuranceSelector** _(function)_ — `matchesAssuranceSelector: (route: Pick<ReflectedRoute, "method" | "path" | "tool">, selector: AssuranceRouteSelector) => boolean`
   Shared selector semantics for policy rules and framework adapters.
 - **maxClassification** _(function)_ — `maxClassification: (values: Iterable<DataClassification>) => DataClassification`
   The most sensitive classification among the inputs; `"public"` when none are given.
+- **parseCausalityContext** _(function)_ — `parseCausalityContext: (input: unknown) => CausalityParseResult`
+  Parse an untrusted JSON causality context. Unknown fields fail closed so payloads cannot hitchhike.
+- **parseCausalityRecord** _(function)_ — `parseCausalityRecord: (input: unknown) => CausalityRecordParseResult`
+  Parse an untrusted durable graph record. Unknown fields fail closed at every nesting level.
 - **parseCookies** _(function)_ — `parseCookies: (header: string | null | undefined) => Record<string, string>`
   Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are skipped rather than throwing — a junk `Cookie` header shouldn't fail the request.
 - **parseNifraManifest** _(function)_ — `parseNifraManifest: (content: string, source?: string) => Promise<NifraManifest>`
@@ -1887,6 +2018,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Parse the detached sidecar before selecting its operator-controlled public key.
 - **randomEffectDigestKey** _(function)_ — `randomEffectDigestKey: () => Uint8Array`
   Fresh random digest key (32 bytes). Per-process by default — persist one externally to correlate across restarts.
+- **readCausalityHeaders** _(function)_ — `readCausalityHeaders: (headers: Headers) => CausalityParseResult`
+  Parse the public header convention without ever throwing on hostile input.
 - **recordCapabilityOutcome** _(function)_ — `recordCapabilityOutcome: (context: object, capability: string, options: CapabilityOutcomeOptions) => void`
   Record the terminal outcome of an already-admitted capability without debiting admission twice.
 - **redactLogFields** _(function)_ — `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
@@ -1904,7 +2037,6 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **routeClassification** _(function)_ — `routeClassification: (responseSchema: unknown, fallback: DataClassification | undefined) => ResponseClassification | undefined`
   Merge field metadata with an optional route-level sensitivity fallback.
 - **runContractInvariants** _(function)_ — `runContractInvariants: (app: ReflectableApp, options?: RunInvariantsOptions) => Promise<InvariantReport>`
-  Run the contract-derived invariant suite against a reflectable app. Pure; no ambient state.
 - **serializeCookie** _(function)_ — `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
   Serialize a `Set-Cookie` header value. Pure — applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, or an oversized result — a serialization bug shou…
 - **serializeNifraManifest** _(function)_ — `serializeNifraManifest: (manifest: NifraManifest) => string`
@@ -1928,6 +2060,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **snapshotRoutes** _(function)_ — `snapshotRoutes: (source: unknown) => readonly RouteSnapshot[]`
   Snapshot an app's routes (anything `reflectRoutes` accepts) as plain JSON. Validators are dropped; only introspectable JSON Schema metadata is kept, so the result round-trips through `JSON.stringify` unchanged.
 - **sse** _(function)_ — `sse: (c: SSEContext, run: (stream: SSEStream) => void | Promise<void>, init?: SSEInit) => Response`
+- **startCausality** _(function)_ — `startCausality: (nodeKind: CausalityKind, id: string, options: StartCausalityOptions) => CausalityStep`
+  Start a root execution node at an ingress boundary.
 - **toFetchHandler** _(function)_ — `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
 - **typedSSEStream** _(function)_ — `typedSSEStream: <Event>(stream: SSEStream) => TypedSSEStream<Event>`
   Wrap a raw {@link SSEStream} in the typed, JSON-serializing surface `app.sse()` hands out.

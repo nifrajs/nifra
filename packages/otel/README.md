@@ -27,9 +27,37 @@ const app = server()
   (`error` for 5xx, `ok` otherwise).
 - **Exposes `c.trace`** (`{ traceId, spanId, parentSpanId?, sampled, traceparent }`) — spread
   `traceHeaders(c.trace)` into any downstream `fetch`/`ctx.api` call to continue the trace.
+- **Exposes `c.causality`** - a bounded, payload-free request node that survives durable command,
+  event, workflow, projection, and repair seams. `traceHeaders(c.trace, c.causality)` forwards both
+  conventions to a trusted downstream service.
 - **Exposes `c.observation`** — integrations can start correctly-parented child observations or
   attach an adapter without rebuilding request lifecycle state.
 - `responseHeader: true` also sets `traceparent` on the response (browser/client correlation).
+
+## Durable causality and trust
+
+Pass a durable recorder to append the request root before the handler runs. An explicitly configured
+recorder is correctness evidence, so its failure fails the request closed:
+
+```ts
+app.use(tracing({
+  exporter,
+  causality: {
+    recorder: durableGraphStore,
+    acceptInbound: (request) => verifyInternalServiceCredential(request),
+  },
+}))
+```
+
+Inbound causality headers are **not trusted by default**. This prevents an internet client from
+injecting fake parents into another execution timeline. Supply `acceptInbound` only at an authenticated
+service-to-service boundary; a false, thrown, or rejected decision starts a fresh graph. W3C
+`traceparent` remains normal observability context, but a fresh durable execution id includes the
+server-generated span id and is not copied from the untrusted header.
+
+Use `causalitySpanLink(context)` when durable work opens a later observation. It creates a real OTel
+link to the nearest observed causal ancestor and drops invalid/unanchored contexts rather than
+inventing trace identity.
 
 ## Adapters
 

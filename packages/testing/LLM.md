@@ -10,22 +10,22 @@ Contract-derived adversarial tests, runtime-matrix response conformance, and coo
 
 ## Key exports
 
+- **assertAdapterCertification** _(function)_ — `assertAdapterCertification: (report: AdapterCertificationReport) => void`
 - **assertAdversarialContract** _(function)_ — `assertAdversarialContract: (app: ContractTestApp, options?: AdversarialContractOptions) => Promise<AdversarialContractReport>`
 - **assertIncidentReplays** _(function)_ — `assertIncidentReplays: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<void>`
+- **cacheStoreCertificationProfile** _(function)_ — `cacheStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableCacheStore>`
 - **captureIncident** _(function)_ — `captureIncident: (request: Request | CapturedRequestInput, response: Response | { status: number; body?: unknown; }, options?: CaptureIncid…`
+- **certifyAdapter** _(function)_ — `certifyAdapter: <Adapter>(options: { readonly profile: AdapterCertificationProfile<Adapter>; readonly adapterId: string; readonly createAda…`
 - **cookieJar** _(function)_ — `cookieJar: () => CookieJar`
+- **createFailureLab** _(function)_ — `createFailureLab: (options: FailureLabOptions) => FailureLab`
+- **defineCertificationProfile** _(function)_ — `defineCertificationProfile: <Adapter>(profile: AdapterCertificationProfile<Adapter>) => AdapterCertificationProfile<Adapter>`
+- **eventDeliveryCertificationProfile** _(function)_ — `eventDeliveryCertificationProfile: () => AdapterCertificationProfile<CertifiableEventDeliveryAdapter>`
 - **generateRegressionTest** _(function)_ — `generateRegressionTest: (capsule: IncidentCapsule, options?: GenerateRegressionTestOptions) => string`
+- **jobStoreCertificationProfile** _(function)_ — `jobStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableJobStore>`
 - **redactForEmission** _(function)_ — `redactForEmission: (value: unknown, allow: ReadonlySet<string>, path?: string) => unknown`
 - **replayIncident** _(function)_ — `replayIncident: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<IncidentReplayResult>`
-- **runAdversarialContract** _(function)_ — `runAdversarialContract: (app: ContractTestApp, options?: AdversarialContractOptions) => Promise<AdversarialContractReport>`
-- **shapeOf** _(function)_ — `shapeOf: (value: unknown) => unknown`
-- **testSession** _(function)_ — `testSession: <App extends AppLike>(app: App, options?: TestSessionOptions) => TestSession<App>`
-- **AdversarialContractError** _(class)_ — `class AdversarialContractError`
-- **IncidentReplayError** _(class)_ — `class IncidentReplayError`
-- **AdversarialContractOptions** _(interface)_ — `interface AdversarialContractOptions`
-- **AdversarialContractReport** _(interface)_ — `interface AdversarialContractReport`
 
-_…and 21 more — see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
+_…and 56 more — see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
 
 ## Footguns
 

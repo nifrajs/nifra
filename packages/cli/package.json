@@ -46,6 +46,7 @@
     "@nifrajs/mcp": "workspace:*",
     "@nifrajs/runner": "workspace:*",
     "@nifrajs/schema": "workspace:*",
+    "@nifrajs/testing": "workspace:*",
     "@nifrajs/web": "workspace:*",
     "create-nifra": "workspace:*"
   },

@@ -81,6 +81,11 @@
       "bun": "./src/mount.ts",
       "types": "./dist/mount.d.ts",
       "default": "./dist/mount.js"
+    },
+    "./causality": {
+      "bun": "./src/causality.ts",
+      "types": "./dist/causality.d.ts",
+      "default": "./dist/causality.js"
     }
   },
   "files": [

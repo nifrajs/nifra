@@ -30,6 +30,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
   },
+  "devDependencies": {
+    "@nifrajs/testing": "workspace:*"
+  },
   "license": "MIT",
   "publishConfig": {
     "access": "public"

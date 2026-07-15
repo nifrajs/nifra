@@ -770,6 +770,7 @@ export interface CheckDiagnostic {
     | "server-only-import"
     | "response-route"
     | "undeclared-dependency"
+    | "duplicate-install"
     | "server-manifest-drift"
     | "manifest-drift"
     | "capability-assurance"
@@ -1139,6 +1140,24 @@ export async function collectCheckResult(
         },
       })
     }
+    for (const finding of dr.duplicateInstalls) {
+      const copies = finding.copies.map((copy) => `${copy.version} at ${copy.path}`).join("; ")
+      diagnostics.push({
+        rule: "duplicate-install",
+        severity: "error",
+        message: `${finding.package} resolves to multiple physical copies (${copies}) - module identity is unsafe`,
+        fix: "align dependency ranges and reinstall from the workspace root",
+        suggestion: {
+          kind: "manual",
+          title: `Deduplicate ${finding.package}`,
+          steps: [
+            "Align workspace dependency and peer ranges on one compatible version.",
+            "Remove stale nested installs and run the package manager from the workspace root.",
+            "Run `nifra doctor` again; do not suppress same-version duplicate paths.",
+          ],
+        },
+      })
+    }
   }
   // #7: a committed server-manifest.ts that drifted from routes/ — name the exact missing/extra routes.
   for (const f of manifestDrift) {
@@ -1317,6 +1336,7 @@ export async function runCheck(
     ["server-only-import", "server-only import in a route module"],
     ["response-route", "route returns a raw Response (typed client → data: never)"],
     ["undeclared-dependency", "undeclared dependency in package.json"],
+    ["duplicate-install", "duplicate identity-sensitive dependency install"],
     ["server-manifest-drift", "server-manifest.ts drifted from routes/"],
     ["manifest-drift", "versioned trust manifest drift"],
     ["capability-assurance", "effect/capability assurance"],

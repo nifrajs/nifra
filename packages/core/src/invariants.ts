@@ -334,6 +334,10 @@ interface RoutePlan {
 const FUZZABLE_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"])
 
 /** Run the contract-derived invariant suite against a reflectable app. Pure; no ambient state. */
+/**
+ * @deprecated Use `runAdversarialContract` from `@nifrajs/testing`. The testing package is the
+ * authoritative deep contract laboratory and powers CLI L4; this export remains for compatibility.
+ */
 export async function runContractInvariants(
   app: ReflectableApp,
   options: RunInvariantsOptions = {},

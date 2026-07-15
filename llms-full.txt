@@ -4759,8 +4759,15 @@ nifra assure  [--config <file>] [--json]  Gate reflected routes against enforcem
 nifra capabilities check [--json]        Gate effect provenance + the reviewed capability lockfile.
 nifra manifest emit [--sign <key-ref>]   Emit the hash-verified route trust artifact after assurance.
 nifra manifest diff <before> <after>      Block promotion on contract/governance regressions.
-nifra doctor  [--json] [--auto-fix]       Catch undeclared imported packages; auto-fix safe local versions.
+nifra doctor  [--json] [--auto-fix]       Catch undeclared imports and duplicate Nifra/React installs.
 ```
+
+## `nifra doctor` - dependency health
+
+Doctor diffs source imports against declared dependencies, then resolves identity-sensitive
+dependencies from every workspace package. More than one physical `@nifrajs/*`, `react`, or
+`react-dom` copy fails even when versions match; module identity is path-based. Doctor reports
+paths/importers and never deletes installations.
 
 ## `nifra assure` — the route-enforcement gate
 
@@ -5202,6 +5209,10 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 Portable, versioned event contracts — a typed, transport-agnostic event envelope validated by any Standard Schema.
 
+An envelope may carry the bounded `@nifrajs/core/causality` context for its exact event id. Creation
+and parsing reject mismatched nodes and unknown fields, so arbitrary payloads cannot hitchhike in the
+lineage metadata.
+
 See the [nifra docs](https://github.com/nifrajs/nifra#readme).
 
 ## @nifrajs/i18n
@@ -5599,9 +5610,37 @@ const app = server()
   (`error` for 5xx, `ok` otherwise).
 - **Exposes `c.trace`** (`{ traceId, spanId, parentSpanId?, sampled, traceparent }`) — spread
   `traceHeaders(c.trace)` into any downstream `fetch`/`ctx.api` call to continue the trace.
+- **Exposes `c.causality`** - a bounded, payload-free request node that survives durable command,
+  event, workflow, projection, and repair seams. `traceHeaders(c.trace, c.causality)` forwards both
+  conventions to a trusted downstream service.
 - **Exposes `c.observation`** — integrations can start correctly-parented child observations or
   attach an adapter without rebuilding request lifecycle state.
 - `responseHeader: true` also sets `traceparent` on the response (browser/client correlation).
+
+## Durable causality and trust
+
+Pass a durable recorder to append the request root before the handler runs. An explicitly configured
+recorder is correctness evidence, so its failure fails the request closed:
+
+```ts
+app.use(tracing({
+  exporter,
+  causality: {
+    recorder: durableGraphStore,
+    acceptInbound: (request) => verifyInternalServiceCredential(request),
+  },
+}))
+```
+
+Inbound causality headers are **not trusted by default**. This prevents an internet client from
+injecting fake parents into another execution timeline. Supply `acceptInbound` only at an authenticated
+service-to-service boundary; a false, thrown, or rejected decision starts a fresh graph. W3C
+`traceparent` remains normal observability context, but a fresh durable execution id includes the
+server-generated span id and is not copied from the untrusted header.
+
+Use `causalitySpanLink(context)` when durable work opens a later observation. It creates a real OTel
+link to the nearest observed causal ancestor and drops invalid/unanchored contexts rather than
+inventing trace identity.
 
 ## Adapters
 
@@ -5866,6 +5905,66 @@ const report = await assertAdversarialContract(app, {
 request for each declared response schema, so use an isolated test app/database—never point the
 laboratory at production.
 
+`nifra levels` L4 uses this same deep engine through the explicitly configured isolated executor;
+the older core invariant runner remains only as a compatibility export.
+
+## Durable failure laboratory
+
+`createFailureLab` injects replayable failures at named seams in a disposable test adapter. It
+supports crash-after-commit, duplicate delivery, event reordering, virtual delay, budget expiry,
+lost provider replies, and checkpoint contention. It never sleeps and its evidence records only
+the schedule tokens - not requests, events, provider results, error messages, or stacks.
+
+```ts
+import { FailureInjectedError, runFailureScenario } from "@nifrajs/testing"
+
+let committed = false
+const report = await runFailureScenario({
+  name: "outbox-crash-after-commit",
+  execute(lab) {
+    committed = true // the real disposable transaction committed
+    lab.checkpoint("outbox.after_commit")
+  },
+  verify: ({ error }) => committed && error instanceof FailureInjectedError,
+}, {
+  seed: 73,
+  schedule: [{ kind: "crash", point: "outbox.after_commit" }],
+})
+
+expect(report.ok).toBe(true)
+// Re-run with report.replay.seed + report.replay.schedule.
+```
+
+Use `lab.deliveries()` around a relay batch, `lab.provider()` around a provider call,
+`lab.remaining()` before a deadline-bound hop, and `lab.checkpointContended()` at a projection CAS.
+The laboratory is a test port: production code does not import it and pays no hot-path cost.
+
+## Adapter certification
+
+`@nifrajs/testing/certification` turns an adapter interface into portable, hash-verifiable evidence.
+Built-in profiles cover storage (including optional paging/signing/copy-move), cache, jobs, Node/Deno-
+style runtimes, and durable event delivery. Every check receives a fresh adapter, capability status is
+explicit, and failures retain only the error class - never provider messages or credentials.
+
+```ts
+import {
+  certifyAdapter,
+  storageAdapterCertificationProfile,
+  verifyAdapterCertification,
+} from "@nifrajs/testing/certification"
+
+const report = await certifyAdapter({
+  profile: storageAdapterCertificationProfile({ paging: true, presign: true, move: true }),
+  adapterId: "s3-production-shape",
+  createAdapter: () => createDisposableS3Adapter(),
+})
+
+if (!report.ok || !(await verifyAdapterCertification(report))) throw new Error("adapter uncertified")
+```
+
+Run profiles only against disposable namespaces. The certification module is structural and
+dependency-free, so adapter packages keep it in test/CI and acquire no production runtime dependency.
+
 ## Stateful sessions
 
 [`@nifrajs/client`](../client)'s **`testClient`** is already the typed, no-network in-process request
@@ -5895,6 +5994,10 @@ that every call carries and captures cookies via a shared jar.
 
 - `assertAdversarialContract(app, options?)` → green report or throws `AdversarialContractError`.
 - `runAdversarialContract(app, options?)` → structured `{ ok, results, failures, gaps, seed }` report.
+- `createFailureLab(options)` → deterministic controller for isolated durable adapters.
+- `runFailureScenario(scenario, options)` → token-only `{ ok, replay, evidence, error? }` report.
+- `certifyAdapter({ profile, adapterId, createAdapter })` → capability matrix + SHA-256 evidence.
+- `verifyAdapterCertification(report)` → recompute and verify portable certification evidence.
 - `testSession<App>(app, { origin?, cookies? })` → `{ client: Treaty<App>, cookies: CookieJar }`.
 - `cookieJar()` → `CookieJar` — `header()` · `applyTo(headers)` · `store(response)` · `set` · `get` · `clear` · `size`.
   Honours removal (`Max-Age=0` / past `Expires`); other cookie attributes are ignored (in-process, same-origin).
@@ -6311,7 +6414,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/otel
 
-`ActiveObservation`, `AttributeValue`, `combineObservationAdapters`, `consoleSpanExporter`, `createObservationLifecycle`, `EndObservation`, `formatTraceparent`, `generateSpanId`, `generateTraceId`, `NifraSpan`, `ObservationAdapter`, `ObservationClock`, `ObservationContext`, `ObservationLifecycle`, `ObservationLifecycleOptions`, `ObservationParent`, `ParsedTraceparent`, `parseTraceparent`, `SpanExporter`, `SpanStatus`, `StartObservation`, `TraceContext`, `traceHeaders`, `tracing`, `TracingOptions`
+`ActiveObservation`, `AttributeValue`, `causalitySpanLink`, `combineObservationAdapters`, `consoleSpanExporter`, `createObservationLifecycle`, `EndObservation`, `formatTraceparent`, `generateSpanId`, `generateTraceId`, `NifraSpan`, `ObservationAdapter`, `ObservationClock`, `ObservationContext`, `ObservationLifecycle`, `ObservationLifecycleOptions`, `ObservationLink`, `ObservationParent`, `ParsedTraceparent`, `parseTraceparent`, `SpanExporter`, `SpanStatus`, `StartObservation`, `TraceContext`, `traceHeaders`, `tracing`, `TracingOptions`
 
 ## @nifrajs/prompt
 
@@ -6331,7 +6434,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/testing
 
-`AdversarialContractError`, `AdversarialContractOptions`, `AdversarialContractReport`, `AdversarialContractResult`, `AppLike`, `assertAdversarialContract`, `assertIncidentReplays`, `CapturedRequest`, `CapturedRequestInput`, `captureIncident`, `CaptureIncidentOptions`, `ContractCaseContext`, `ContractCaseKind`, `ContractCoverageGap`, `ContractCoverageGapCode`, `ContractReplay`, `ContractRuntime`, `ContractTarget`, `ContractTestApp`, `ContractWitness`, `cookieJar`, `CookieJar`, `generateRegressionTest`, `GenerateRegressionTestOptions`, `IncidentCapsule`, `IncidentReplayError`, `IncidentReplayResult`, `redactForEmission`, `replayIncident`, `ReplayIncidentOptions`, `runAdversarialContract`, `shapeOf`, `testSession`, `TestSession`, `TestSessionOptions`
+`AdapterCertificationError`, `AdapterCertificationProfile`, `AdapterCertificationReport`, `AdversarialContractError`, `AdversarialContractOptions`, `AdversarialContractReport`, `AdversarialContractResult`, `AppLike`, `assertAdapterCertification`, `assertAdversarialContract`, `assertIncidentReplays`, `cacheStoreCertificationProfile`, `CapturedRequest`, `CapturedRequestInput`, `captureIncident`, `CaptureIncidentOptions`, `CertifiableCacheEntry`, `CertifiableCacheStore`, `CertifiableDomainEvent`, `CertifiableEventDeliveryAdapter`, `CertifiableEventRecord`, `CertifiableJobStore`, `CertifiableRuntimeAdapter`, `CertifiableRuntimeServer`, `CertifiableStorageAdapter`, `CertificationCapabilityEvidence`, `CertificationCheck`, `CertificationCheckEvidence`, `certifyAdapter`, `ContractCaseContext`, `ContractCaseKind`, `ContractCoverageGap`, `ContractCoverageGapCode`, `ContractReplay`, `ContractRuntime`, `ContractTarget`, `ContractTestApp`, `ContractWitness`, `cookieJar`, `CookieJar`, `createFailureLab`, `defineCertificationProfile`, `eventDeliveryCertificationProfile`, `FailureDirective`, `FailureEvidence`, `FailureInjectedError`, `FailureKind`, `FailureLab`, `FailureLabOptions`, `FailureReplay`, `FailureScenario`, `FailureScenarioReport`, `generateRegressionTest`, `GenerateRegressionTestOptions`, `IncidentCapsule`, `IncidentReplayError`, `IncidentReplayResult`, `jobStoreCertificationProfile`, `redactForEmission`, `replayIncident`, `ReplayIncidentOptions`, `runAdversarialContract`, `runFailureScenario`, `runtimeAdapterCertificationProfile`, `shapeOf`, `storageAdapterCertificationProfile`, `testSession`, `TestSession`, `TestSessionOptions`, `verifyAdapterCertification`
 
 ## @nifrajs/uploads
 

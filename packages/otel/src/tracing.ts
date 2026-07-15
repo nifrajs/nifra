@@ -5,7 +5,15 @@
  * your {@link SpanExporter} (bridge to the OTel SDK, or log via `consoleSpanExporter`).
  */
 
-import { definePlugin } from "@nifrajs/core"
+import {
+  type CausalityContext,
+  type CausalityRecorder,
+  causalityHeaders,
+  continueCausality,
+  definePlugin,
+  readCausalityHeaders,
+  startCausality,
+} from "@nifrajs/core"
 import {
   type ActiveObservation,
   createObservationLifecycle,
@@ -28,12 +36,35 @@ export interface TracingOptions {
    * Default false — most setups only propagate downstream, not back to the caller.
    */
   readonly responseHeader?: boolean
+  /**
+   * Optional durable graph recorder. When configured, the request root is appended before the
+   * handler runs and recorder failure fails closed. Without one, `c.causality` is still propagated.
+   */
+  readonly causality?: {
+    readonly recorder?: CausalityRecorder
+    /** Injectable epoch clock for deterministic tests. */
+    readonly now?: () => number
+    /**
+     * Explicit trust gate for service-to-service causality headers. Internet clients are untrusted
+     * by default; a false result or thrown/rejected check starts a fresh execution graph.
+     */
+    readonly acceptInbound?: (
+      request: Request,
+      context: CausalityContext,
+    ) => boolean | Promise<boolean>
+  }
 }
 
 /** Spread into an outgoing `fetch`/`ctx.api` call's headers to continue the trace downstream:
  * `fetch(url, { headers: traceHeaders(c.trace) })`. */
-export function traceHeaders(trace: TraceContext): { traceparent: string } {
-  return { traceparent: trace.traceparent }
+export function traceHeaders(
+  trace: TraceContext,
+  causality?: CausalityContext,
+): { readonly traceparent: string } & Readonly<Record<string, string>> {
+  return {
+    traceparent: trace.traceparent,
+    ...(causality === undefined ? {} : causalityHeaders(causality)),
+  }
 }
 
 const pathOf = (url: string): string => {
@@ -81,8 +112,52 @@ export function tracing(options: TracingOptions = {}) {
           },
         })
         inFlight.set(c.req, observation)
-        if (options.responseHeader) c.set.headers.traceparent = observation.context.traceparent
-        return { trace: observation.context, observation }
+        const causalAt = options.causality?.now?.()
+        const derive = (parent?: CausalityContext) => {
+          const causal =
+            parent === undefined
+              ? startCausality("request", `req_${observation.context.spanId}`, {
+                  // `traceparent` is untrusted. The server-generated span id keeps graph identity fresh.
+                  executionId: `exec_${observation.context.traceId}_${observation.context.spanId}`,
+                  ...(causalAt === undefined ? {} : { at: causalAt }),
+                  trace: {
+                    traceId: observation.context.traceId,
+                    spanId: observation.context.spanId,
+                  },
+                })
+              : continueCausality(parent, "request", `req_${observation.context.spanId}`, {
+                  relation: "called",
+                  ...(causalAt === undefined ? {} : { at: causalAt }),
+                  trace: {
+                    traceId: observation.context.traceId,
+                    spanId: observation.context.spanId,
+                  },
+                })
+          const derived = { trace: observation.context, observation, causality: causal.context }
+          if (options.responseHeader) c.set.headers.traceparent = observation.context.traceparent
+          const recorder = options.causality?.recorder
+          return recorder === undefined
+            ? derived
+            : recorder.record(causal.record).then(() => derived)
+        }
+
+        const inbound = readCausalityHeaders(c.req.headers)
+        const acceptInbound = options.causality?.acceptInbound
+        if (!inbound.success || acceptInbound === undefined) return derive()
+        let accepted: boolean | Promise<boolean>
+        try {
+          accepted = acceptInbound(c.req, inbound.context)
+        } catch {
+          return derive()
+        }
+        // Keep recorder execution outside the trust-gate catch. A synchronous recorder failure is a
+        // durability failure, not a rejected inbound parent, and must fail closed without retrying.
+        return typeof accepted === "boolean"
+          ? derive(accepted ? inbound.context : undefined)
+          : Promise.resolve(accepted).then(
+              (allowed) => derive(allowed === true ? inbound.context : undefined),
+              () => derive(),
+            )
       })
       .use({
         name: "tracing-end",

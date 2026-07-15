@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { server } from "@nifrajs/core"
+import {
+  type CausalityContext,
+  type CausalityRecord,
+  causalityHeaders,
+  server,
+  startCausality,
+} from "@nifrajs/core"
 import {
   type NifraSpan,
   type SpanExporter,
@@ -73,6 +79,197 @@ describe("tracing plugin", () => {
     await app.fetch(new Request("http://t/h"))
     const span = c.spans[0]!
     expect(forwarded).toBe(`00-${span.traceId}-${span.spanId}-01`) // this request's own span continues the trace
+  })
+
+  test("creates and durably records the HTTP root before the handler runs", async () => {
+    const c = collector()
+    const records: CausalityRecord[] = []
+    let context: CausalityContext | undefined
+    const app = server()
+      .use(
+        tracing({
+          exporter: c.exporter,
+          causality: {
+            now: () => 42,
+            recorder: {
+              async record(record) {
+                records.push(record)
+                return "inserted"
+              },
+            },
+          },
+        }),
+      )
+      .get("/causal", (ctx) => {
+        context = ctx.causality
+        return { ok: true }
+      })
+
+    await app.fetch(new Request("http://t/causal"))
+
+    expect(records).toHaveLength(1)
+    expect(records[0]).toMatchObject({
+      executionId: `exec_${c.spans[0]?.traceId}_${c.spans[0]?.spanId}`,
+      node: {
+        kind: "request",
+        at: 42,
+        trace: { traceId: c.spans[0]?.traceId, spanId: c.spans[0]?.spanId },
+      },
+      parents: [],
+    })
+    expect(context?.current).toEqual({ kind: "request", id: `req_${c.spans[0]?.spanId}` })
+  })
+
+  test("continues inbound durable causality and forwards both conventions downstream", async () => {
+    const c = collector()
+    const parent = startCausality("event", "evt_inbound", {
+      executionId: "exec_inbound",
+      at: 1,
+    })
+    const records: CausalityRecord[] = []
+    let forwarded: Readonly<Record<string, string>> = {}
+    const app = server()
+      .use(
+        tracing({
+          exporter: c.exporter,
+          causality: {
+            now: () => 2,
+            acceptInbound: () => true,
+            recorder: {
+              async record(record) {
+                records.push(record)
+                return "inserted"
+              },
+            },
+          },
+        }),
+      )
+      .get("/resume", (ctx) => {
+        forwarded = traceHeaders(ctx.trace, ctx.causality)
+        return { ok: true }
+      })
+
+    await app.fetch(new Request("http://t/resume", { headers: causalityHeaders(parent.context) }))
+
+    expect(records[0]).toMatchObject({
+      executionId: "exec_inbound",
+      parents: [{ kind: "event", id: "evt_inbound", relation: "called" }],
+    })
+    expect(forwarded.traceparent).toBe(`00-${c.spans[0]?.traceId}-${c.spans[0]?.spanId}-01`)
+    expect(forwarded["x-nifra-execution-id"]).toBe("exec_inbound")
+    expect(forwarded["x-nifra-causality-kind"]).toBe("request")
+  })
+
+  test("does not trust client-supplied durable lineage without an explicit gate", async () => {
+    const c = collector()
+    const forged = startCausality("command", "cmd_forged", {
+      executionId: "exec_victim",
+      at: 1,
+    })
+    let context: CausalityContext | undefined
+    const app = server()
+      .use(tracing({ exporter: c.exporter }))
+      .get("/public", (ctx) => {
+        context = ctx.causality
+        return { ok: true }
+      })
+
+    await app.fetch(new Request("http://t/public", { headers: causalityHeaders(forged.context) }))
+
+    expect(context?.executionId).not.toBe("exec_victim")
+    expect(context?.current.kind).toBe("request")
+  })
+
+  test("fails closed before the handler if an explicitly configured graph recorder fails", async () => {
+    const c = collector()
+    let handled = false
+    const app = server({ logger: { debug() {}, info() {}, warn() {}, error() {} } })
+      .use(
+        tracing({
+          exporter: c.exporter,
+          causality: {
+            recorder: {
+              async record() {
+                throw new Error("causality store unavailable")
+              },
+            },
+          },
+        }),
+      )
+      .get("/closed", () => {
+        handled = true
+        return { ok: true }
+      })
+
+    const response = await app.fetch(new Request("http://t/closed"))
+    expect(response.status).toBe(500)
+    expect(handled).toBe(false)
+  })
+
+  test("does not swallow recorder failure behind an asynchronous inbound trust gate", async () => {
+    const c = collector()
+    const parent = startCausality("event", "evt_async", {
+      executionId: "exec_async",
+      at: 1,
+    })
+    let calls = 0
+    const app = server({ logger: { debug() {}, info() {}, warn() {}, error() {} } })
+      .use(
+        tracing({
+          exporter: c.exporter,
+          causality: {
+            acceptInbound: async () => true,
+            recorder: {
+              async record() {
+                calls += 1
+                throw new Error("graph unavailable")
+              },
+            },
+          },
+        }),
+      )
+      .get("/async-gate", () => ({ ok: true }))
+
+    const response = await app.fetch(
+      new Request("http://t/async-gate", {
+        headers: causalityHeaders(parent.context),
+      }),
+    )
+    expect(response.status).toBe(500)
+    expect(calls).toBe(1)
+  })
+
+  test("does not retry a synchronous recorder failure behind a synchronous inbound trust gate", async () => {
+    const c = collector()
+    const parent = startCausality("event", "evt_sync", {
+      executionId: "exec_sync",
+      at: 1,
+    })
+    let calls = 0
+    const app = server({ logger: { debug() {}, info() {}, warn() {}, error() {} } })
+      .use(
+        tracing({
+          exporter: c.exporter,
+          causality: {
+            acceptInbound: () => true,
+            recorder: {
+              record() {
+                calls += 1
+                throw new Error("graph unavailable")
+              },
+            },
+          },
+        }),
+      )
+      .get("/sync-gate", () => ({ ok: true }))
+
+    const response = await app.fetch(
+      new Request("http://t/sync-gate", {
+        headers: causalityHeaders(parent.context),
+      }),
+    )
+    expect(response.status).toBe(500)
+    expect(calls).toBe(1)
   })
 
   test("5xx marks the span status error", async () => {

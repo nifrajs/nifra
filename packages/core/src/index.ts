@@ -18,6 +18,7 @@ export type Version = typeof VERSION
 
 export * from "./assurance.ts"
 export * from "./capabilities.ts"
+export * from "./causality.ts"
 export * from "./classification.ts"
 export * from "./diff.ts"
 export { FrameworkError, RouteConfigError, type RouteConfigErrorCode } from "./errors.ts"

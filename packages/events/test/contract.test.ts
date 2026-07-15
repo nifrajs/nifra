@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { continueCausality, startCausality } from "@nifrajs/core/causality"
 import { t } from "@nifrajs/schema"
 import { createEventRegistry, defineEventContract, EventContractError } from "../src/index.ts"
 
@@ -37,6 +38,28 @@ describe("@nifrajs/events — defineEventContract", () => {
     )
     expect(env.id).toBe("evt_fixed")
     expect(env.occurredAt).toBe("2026-07-13T00:00:00.000Z")
+  })
+
+  test("carries validated causal lineage across the durable event boundary", () => {
+    const request = startCausality("request", "req_1", { executionId: "exec_1", at: 1 })
+    const command = continueCausality(request.context, "command", "cmd_1", { at: 2 })
+    const event = continueCausality(command.context, "event", "evt_fixed", {
+      relation: "emitted",
+      at: 3,
+    })
+    const envelope = OrderPaid.create(
+      { orderId: "o_1", cents: 500 },
+      { id: "evt_fixed", causality: event.context },
+    )
+
+    expect(envelope.causality).toEqual(event.context)
+    expect(OrderPaid.parse(JSON.parse(JSON.stringify(envelope))).success).toBe(true)
+    expect(
+      OrderPaid.parse({
+        ...envelope,
+        causality: { ...event.context, payload: { secret: "not lineage" } },
+      }).success,
+    ).toBe(false)
   })
 
   test("create throws EventContractError on an invalid payload", () => {
