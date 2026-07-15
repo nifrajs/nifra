@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/events",
-  "version": "1.12.0",
+  "version": "1.13.0",
   "description": "Portable, versioned event contracts — a typed, transport-agnostic event envelope validated by any Standard Schema.",
   "keywords": [
     "bun",

@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/prompt",
-  "version": "1.12.0",
+  "version": "1.13.0",
   "description": "Type-safe prompts — bind an instruction to input/output Standard Schemas and get validated, typed LLM results from any provider.",
   "keywords": [
     "bun",

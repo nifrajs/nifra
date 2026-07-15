@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/budget",
-  "version": "1.12.0",
+  "version": "1.13.0",
   "description": "Portable request deadlines for Nifra — monotonic remaining time, absolute wire propagation, child reserves, and deterministic clocks.",
   "keywords": [
     "bun",

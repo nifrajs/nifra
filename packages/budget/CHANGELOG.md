@@ -1,5 +1,13 @@
 # @nifrajs/budget
 
+## 1.13.0
+
+### Patch Changes
+
+- Updated dependencies [aae8614]
+- Updated dependencies [5b6127a]
+  - @nifrajs/core@1.13.0
+
 ## 1.12.0
 
 ### Patch Changes

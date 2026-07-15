@@ -1,5 +1,23 @@
 # @nifrajs/cli
 
+## 1.13.0
+
+### Patch Changes
+
+- f644556: `nifra doctor` also probes the workspace root for identity-sensitive packages, so it reports the split
+  where every declaring package resolves one physical copy and the root holds another. Consulting only
+  the packages that declare the dependency saw a single copy and stayed quiet.
+- Updated dependencies [aae8614]
+- Updated dependencies [5b6127a]
+  - @nifrajs/core@1.13.0
+  - @nifrajs/client@1.13.0
+  - @nifrajs/web@1.13.0
+  - @nifrajs/schema@1.13.0
+  - @nifrajs/testing@1.13.0
+  - @nifrajs/mcp@1.13.0
+  - @nifrajs/runner@1.13.0
+  - create-nifra@1.13.0
+
 ## 1.12.0
 
 ### Minor Changes
