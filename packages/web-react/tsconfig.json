@@ -9,6 +9,7 @@
       "@nifrajs/web": ["../web/src/index.ts"],
       "@nifrajs/web/islands": ["../web/src/islands.ts"],
       "@nifrajs/core": ["../core/src/index.ts"],
+      "@nifrajs/core/pattern": ["../core/src/router/pattern.ts"],
       "@nifrajs/core/reflection": ["../core/src/reflection.ts"],
       "@nifrajs/i18n": ["../i18n/src/index.ts"]
     }

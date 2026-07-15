@@ -145,34 +145,38 @@ describe("collectDoctorResult — project-level import vs declared-deps diff", (
     // The real split: every declaring package nests onto one copy while the root holds another. Only
     // consulting declarers sees one path and reports nothing.
     const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-hoisted-"))
-    const app = join(dir, "packages", "app")
-    await mkdir(join(app, "src"), { recursive: true })
-    await mkdir(join(dir, "node_modules", "@nifrajs", "core"), { recursive: true })
-    await mkdir(join(app, "node_modules", "@nifrajs", "core"), { recursive: true })
-    await writeFile(
-      join(dir, "package.json"),
-      JSON.stringify({ name: "workspace", private: true, workspaces: ["packages/*"] }),
-    )
-    await writeFile(
-      join(app, "package.json"),
-      JSON.stringify({ name: "app", dependencies: { "@nifrajs/core": "1.13.0" } }),
-    )
-    await writeFile(join(app, "src", "x.ts"), 'import { server } from "@nifrajs/core"')
-    await writeFile(
-      join(dir, "node_modules", "@nifrajs", "core", "package.json"),
-      JSON.stringify({ name: "@nifrajs/core", version: "1.13.0" }),
-    )
-    await writeFile(
-      join(app, "node_modules", "@nifrajs", "core", "package.json"),
-      JSON.stringify({ name: "@nifrajs/core", version: "1.12.0" }),
-    )
+    try {
+      const app = join(dir, "packages", "app")
+      await mkdir(join(app, "src"), { recursive: true })
+      await mkdir(join(dir, "node_modules", "@nifrajs", "core"), { recursive: true })
+      await mkdir(join(app, "node_modules", "@nifrajs", "core"), { recursive: true })
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "workspace", private: true, workspaces: ["packages/*"] }),
+      )
+      await writeFile(
+        join(app, "package.json"),
+        JSON.stringify({ name: "app", dependencies: { "@nifrajs/core": "1.13.0" } }),
+      )
+      await writeFile(join(app, "src", "x.ts"), 'import { server } from "@nifrajs/core"')
+      await writeFile(
+        join(dir, "node_modules", "@nifrajs", "core", "package.json"),
+        JSON.stringify({ name: "@nifrajs/core", version: "1.13.0" }),
+      )
+      await writeFile(
+        join(app, "node_modules", "@nifrajs", "core", "package.json"),
+        JSON.stringify({ name: "@nifrajs/core", version: "1.12.0" }),
+      )
 
-    const result = await collectDoctorResult(dir)
-    expect(result.duplicateInstalls).toHaveLength(1)
-    expect(result.duplicateInstalls[0]?.copies.map((copy) => copy.version).sort()).toEqual([
-      "1.12.0",
-      "1.13.0",
-    ])
+      const result = await collectDoctorResult(dir)
+      expect(result.duplicateInstalls).toHaveLength(1)
+      expect(result.duplicateInstalls[0]?.copies.map((copy) => copy.version).sort()).toEqual([
+        "1.12.0",
+        "1.13.0",
+      ])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 
   test("fails when workspaces resolve different physical copies even at the same version", async () => {

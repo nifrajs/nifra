@@ -125,6 +125,28 @@ describe("onValidationError recovery", () => {
     expect(await res.json()).toEqual({ name: "Ada", age: 36 })
   })
 
+  test("body: adding a derive does not disable validation recovery", async () => {
+    const app = server()
+      .derive(() => ({ source: "derived" as const }))
+      .post(
+        "/users",
+        { body: bodySchema(false), onValidationError: () => ({ name: "Ada", age: 36 }) },
+        (c) => ({ age: c.body.age, source: c.source }),
+      )
+    const res = await app.fetch(new Request("http://localhost/users", badBody))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ age: 36, source: "derived" })
+
+    const running = app.listen(0, { hostname: "127.0.0.1" })
+    try {
+      const native = await fetch(`http://127.0.0.1:${running.port}/users`, badBody)
+      expect(native.status).toBe(200)
+      expect(await native.json()).toEqual({ age: 36, source: "derived" })
+    } finally {
+      running.stop()
+    }
+  })
+
   test("body: a sync healer whose result still fails keeps the 422", async () => {
     const app = server().post(
       "/users",

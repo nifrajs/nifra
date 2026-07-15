@@ -18,14 +18,14 @@ Bun-native, contract-first HTTP framework — the router, server, and route desc
 - **causalityHeaders** _(function)_ — `causalityHeaders: (context: CausalityContext) => Readonly<Record<string, string>>`
 - **classificationAtLeast** _(function)_ — `classificationAtLeast: (value: DataClassification, floor: DataClassification) => boolean`
 - **classified** _(function)_ — `classified: <S extends object>(schema: S, classification: DataClassification) => ClassifiedSchema<S>`
+- **compareRoutePatternSpecificity** _(function)_ — `compareRoutePatternSpecificity: (left: CompiledRoutePattern, right: CompiledRoutePattern) => number`
+- **compileRoutePattern** _(function)_ — `compileRoutePattern: (pattern: string) => CompiledRoutePattern`
 - **computeEffectDigest** _(function)_ — `computeEffectDigest: (key: Uint8Array | CryptoKey, payload: Uint8Array) => Promise<string>`
 - **computeIdempotencyFingerprint** _(function)_ — `computeIdempotencyFingerprint: (method: string, path: string, body: Uint8Array, contentType?: string) => Promise<string>`
 - **continueCausality** _(function)_ — `continueCausality: (parent: CausalityContext, nodeKind: CausalityKind, id: string, options?: ContinueCausalityOptions) => CausalityStep`
 - **createMemoryCausalityStore** _(function)_ — `createMemoryCausalityStore: (options?: MemoryCausalityStoreOptions) => CausalityGraphStore`
-- **createMemoryIdempotencyStore** _(function)_ — `createMemoryIdempotencyStore: (options?: MemoryIdempotencyStoreOptions) => MemoryIdempotencyStore`
-- **createMemoryLedgerSink** _(function)_ — `createMemoryLedgerSink: (options?: MemoryLedgerSinkOptions) => MemoryLedgerSink`
 
-_…and 266 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
+_…and 273 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 
 ## Footguns
 

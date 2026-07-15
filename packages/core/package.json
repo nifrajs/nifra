@@ -82,6 +82,11 @@
       "types": "./dist/mount.d.ts",
       "default": "./dist/mount.js"
     },
+    "./pattern": {
+      "bun": "./src/router/pattern.ts",
+      "types": "./dist/router/pattern.d.ts",
+      "default": "./dist/router/pattern.js"
+    },
     "./causality": {
       "bun": "./src/causality.ts",
       "types": "./dist/causality.d.ts",

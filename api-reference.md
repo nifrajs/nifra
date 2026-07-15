@@ -243,6 +243,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **CausalityTrace** _(interface)_ — `interface CausalityTrace`
   Optional OpenTelemetry anchor for the nearest observed ancestor.
 - **ClassifiedSchema** _(type)_ — `type ClassifiedSchema<S extends object> = S & { readonly [CLASSIFICATION]: DataClassification }`
+- **CompiledRoutePattern** _(interface)_ — `interface CompiledRoutePattern`
+  Compiled route grammar shared by runtime routers, browser navigation, mocks, and adapters.
 - **Context** _(interface)_ — `interface Context<Path extends string = string, S extends RouteSchema = RouteSchema>`
   Handler context. `params` are inferred from the path; `body` and `query` are the validated outputs of their schemas when declared (else `undefined` / raw `URLSearchParams`).
 - **ContextForOp** _(type)_ — `type ContextForOp<O extends OperationDef> = Context<O["path"], SchemaForOp<O> & RouteSchema>`
@@ -406,6 +408,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   A registered route's public descriptor — method, path, and input schemas. The router trie discards the original patterns, so this flat list is what lets tools (e.g. `toOpenAPI`) enumerate routes after registration.
 - **RouteInfo** _(interface)_ — `interface RouteInfo`
   One route's input/output shape as the **client** will consume it. `query`/`body` are `never` when the route declares no schema for them, so the client can detect "this route takes no body" via `[body] extends [never]`. `output` is the handler's raw return type (the client applies `Jsonify` when rea…
+- **RoutePatternMatch** _(type)_ — `type RoutePatternMatch = | { readonly matched: true; readonly params: Record<string, string> } | { readonly matched: false; readonly reason: "not-found" | "malformed" }`
+- **RoutePatternSegment** _(type)_ — `type RoutePatternSegment = | { readonly kind: "static"; readonly value: string } | { readonly kind: "param"; readonly name: string } | { readonly kind: "wildcard"; readonly name: string }`
 - **RouteSchema** _(interface)_ — `interface RouteSchema`
   Per-route input schemas. Each is any Standard Schema (zod/valibot/arktype/…).
 - **RouteSnapshot** _(interface)_ — `interface RouteSnapshot`
@@ -497,6 +501,10 @@ Every public export of every package — name, kind, signature, and doc summary 
   Attach data-classification metadata without changing validation or inferred input/output types. For Nifra/TypeBox carriers the raw JSON Schema node is tagged too, so metadata survives composition through `t.object`, `t.array`, `t.optional`, and unions.
 - **commonSecretPatterns** _(const)_ — `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} — opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
+- **compareRoutePatternSpecificity** _(function)_ — `compareRoutePatternSpecificity: (left: CompiledRoutePattern, right: CompiledRoutePattern) => number`
+  Core precedence: static > param > wildcard at the first differing segment, independent of order.
+- **compileRoutePattern** _(function)_ — `compileRoutePattern: (pattern: string) => CompiledRoutePattern`
+  Parse and validate Nifra's strict route grammar once. Trailing slashes remain significant.
 - **computeEffectDigest** _(function)_ — `computeEffectDigest: (key: Uint8Array | CryptoKey, payload: Uint8Array) => Promise<string>`
   Keyed HMAC-SHA-256 digest (hex) of an effect payload, for replay/reconciliation matching without storing the payload. Keyed on purpose: a bare hash of low-entropy data (an email, a flag) is brute-forceable and would itself leak. Digest the **whole** effect payload, never a single field.
 - **computeIdempotencyFingerprint** _(function)_ — `computeIdempotencyFingerprint: (method: string, path: string, body: Uint8Array, contentType?: string) => Promise<string>`
@@ -515,6 +523,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Deterministic PRNG (mulberry32). Ambient randomness would make failures unreproducible.
 - **declaredCapabilities** _(function)_ — `declaredCapabilities: (context: object) => readonly string[]`
   Read the route's token-only declaration for admission plugins. This intentionally exposes neither the request nor runtime evidence; it is the stable public seam for private entitlement policy.
+- **decodeRouteParams** _(function)_ — `decodeRouteParams: (raw: Record<string, string>) => Record<string, string> | null`
+  Decode router captures under one rule. Plain values take the zero-allocation path; malformed escapes return `null`, allowing HTTP to emit 400 while client navigation declines the match.
 - **defineAssuranceConfig** _(function)_ — `defineAssuranceConfig: (config: AssuranceConfig) => AssuranceConfig`
   Identity helper for a `nifra.assurance.ts` default export.
 - **defineAssurancePolicy** _(function)_ — `defineAssurancePolicy: (policy: AssurancePolicy) => AssurancePolicy`
@@ -547,6 +557,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Join several immediate parents. Cross-execution joins fail closed.
 - **jsonLogger** _(function)_ — `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
   The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction — pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
+- **matchRoutePattern** _(function)_ — `matchRoutePattern: (compiled: CompiledRoutePattern, pathname: string) => RoutePatternMatch`
+  Match one compiled pattern and return decoded captures. The caller decides cross-pattern order.
 - **matchesAssuranceSelector** _(function)_ — `matchesAssuranceSelector: (route: Pick<ReflectedRoute, "method" | "path" | "tool">, selector: AssuranceRouteSelector) => boolean`
   Shared selector semantics for policy rules and framework adapters.
 - **maxClassification** _(function)_ — `maxClassification: (values: Iterable<DataClassification>) => DataClassification`
@@ -1698,6 +1710,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **CausalityTrace** _(interface)_ — `interface CausalityTrace`
   Optional OpenTelemetry anchor for the nearest observed ancestor.
 - **ClassifiedSchema** _(type)_ — `type ClassifiedSchema<S extends object> = S & { readonly [CLASSIFICATION]: DataClassification }`
+- **CompiledRoutePattern** _(interface)_ — `interface CompiledRoutePattern`
+  Compiled route grammar shared by runtime routers, browser navigation, mocks, and adapters.
 - **Context** _(interface)_ — `interface Context<Path extends string = string, S extends RouteSchema = RouteSchema>`
   Handler context. `params` are inferred from the path; `body` and `query` are the validated outputs of their schemas when declared (else `undefined` / raw `URLSearchParams`).
 - **ContextForOp** _(type)_ — `type ContextForOp<O extends OperationDef> = Context<O["path"], SchemaForOp<O> & RouteSchema>`
@@ -1861,6 +1875,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   A registered route's public descriptor — method, path, and input schemas. The router trie discards the original patterns, so this flat list is what lets tools (e.g. `toOpenAPI`) enumerate routes after registration.
 - **RouteInfo** _(interface)_ — `interface RouteInfo`
   One route's input/output shape as the **client** will consume it. `query`/`body` are `never` when the route declares no schema for them, so the client can detect "this route takes no body" via `[body] extends [never]`. `output` is the handler's raw return type (the client applies `Jsonify` when rea…
+- **RoutePatternMatch** _(type)_ — `type RoutePatternMatch = | { readonly matched: true; readonly params: Record<string, string> } | { readonly matched: false; readonly reason: "not-found" | "malformed" }`
+- **RoutePatternSegment** _(type)_ — `type RoutePatternSegment = | { readonly kind: "static"; readonly value: string } | { readonly kind: "param"; readonly name: string } | { readonly kind: "wildcard"; readonly name: string }`
 - **RouteSchema** _(interface)_ — `interface RouteSchema`
   Per-route input schemas. Each is any Standard Schema (zod/valibot/arktype/…).
 - **RouteSnapshot** _(interface)_ — `interface RouteSnapshot`
@@ -1952,6 +1968,10 @@ Every public export of every package — name, kind, signature, and doc summary 
   Attach data-classification metadata without changing validation or inferred input/output types. For Nifra/TypeBox carriers the raw JSON Schema node is tagged too, so metadata survives composition through `t.object`, `t.array`, `t.optional`, and unions.
 - **commonSecretPatterns** _(const)_ — `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} — opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
+- **compareRoutePatternSpecificity** _(function)_ — `compareRoutePatternSpecificity: (left: CompiledRoutePattern, right: CompiledRoutePattern) => number`
+  Core precedence: static > param > wildcard at the first differing segment, independent of order.
+- **compileRoutePattern** _(function)_ — `compileRoutePattern: (pattern: string) => CompiledRoutePattern`
+  Parse and validate Nifra's strict route grammar once. Trailing slashes remain significant.
 - **computeEffectDigest** _(function)_ — `computeEffectDigest: (key: Uint8Array | CryptoKey, payload: Uint8Array) => Promise<string>`
   Keyed HMAC-SHA-256 digest (hex) of an effect payload, for replay/reconciliation matching without storing the payload. Keyed on purpose: a bare hash of low-entropy data (an email, a flag) is brute-forceable and would itself leak. Digest the **whole** effect payload, never a single field.
 - **computeIdempotencyFingerprint** _(function)_ — `computeIdempotencyFingerprint: (method: string, path: string, body: Uint8Array, contentType?: string) => Promise<string>`
@@ -1970,6 +1990,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Deterministic PRNG (mulberry32). Ambient randomness would make failures unreproducible.
 - **declaredCapabilities** _(function)_ — `declaredCapabilities: (context: object) => readonly string[]`
   Read the route's token-only declaration for admission plugins. This intentionally exposes neither the request nor runtime evidence; it is the stable public seam for private entitlement policy.
+- **decodeRouteParams** _(function)_ — `decodeRouteParams: (raw: Record<string, string>) => Record<string, string> | null`
+  Decode router captures under one rule. Plain values take the zero-allocation path; malformed escapes return `null`, allowing HTTP to emit 400 while client navigation declines the match.
 - **defineAssuranceConfig** _(function)_ — `defineAssuranceConfig: (config: AssuranceConfig) => AssuranceConfig`
   Identity helper for a `nifra.assurance.ts` default export.
 - **defineAssurancePolicy** _(function)_ — `defineAssurancePolicy: (policy: AssurancePolicy) => AssurancePolicy`
@@ -2002,6 +2024,8 @@ Every public export of every package — name, kind, signature, and doc summary 
   Join several immediate parents. Cross-execution joins fail closed.
 - **jsonLogger** _(function)_ — `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
   The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction — pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
+- **matchRoutePattern** _(function)_ — `matchRoutePattern: (compiled: CompiledRoutePattern, pathname: string) => RoutePatternMatch`
+  Match one compiled pattern and return decoded captures. The caller decides cross-pattern order.
 - **matchesAssuranceSelector** _(function)_ — `matchesAssuranceSelector: (route: Pick<ReflectedRoute, "method" | "path" | "tool">, selector: AssuranceRouteSelector) => boolean`
   Shared selector semantics for policy rules and framework adapters.
 - **maxClassification** _(function)_ — `maxClassification: (values: Iterable<DataClassification>) => DataClassification`

@@ -29,6 +29,7 @@ export * from "./ledger.ts"
 export * from "./manifest.ts"
 export * from "./mount.ts"
 export * from "./reflection.ts"
+export * from "./router/pattern.ts"
 export { METHODS, type Method, Router, type RouterMatch } from "./router/router.ts"
 export type {
   InferInput,

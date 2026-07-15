@@ -145,4 +145,26 @@ describe("implement(contract, handlers, app) - the middleware seam", () => {
     const app = implement(contract, { me: () => ({ u: 2 }) })
     expect(await (await app.fetch(new Request("http://x/me"))).json()).toEqual({ u: 2 })
   })
+
+  test("a failed batch leaves the supplied app unchanged", async () => {
+    const host = server().get("/taken", () => ({ host: true }))
+    const conflicting = defineContract({
+      added: { method: "GET", path: "/added" },
+      taken: { method: "GET", path: "/taken" },
+    })
+
+    expect(() =>
+      implement(
+        conflicting,
+        {
+          added: () => ({ ghost: true }),
+          taken: () => ({ shadowed: true }),
+        },
+        host,
+      ),
+    ).toThrow(RouteConfigError)
+
+    expect(host.routes().map(({ method, path }) => `${method} ${path}`)).toEqual(["GET /taken"])
+    expect((await host.fetch(new Request("http://x/added"))).status).toBe(404)
+  })
 })

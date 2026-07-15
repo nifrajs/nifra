@@ -244,7 +244,7 @@ export function implement<
   Ctx = NonNullable<unknown>,
 >(contract: C, handlers: H, app?: Server<R, Ctx>): Server<R & RegistryFromImpl<C, H, Ctx>, Ctx> {
   const target = (app ?? new Server()) as Server<R, Ctx>
-  for (const [name, op] of Object.entries(contract)) {
+  const routes = Object.entries(contract).map(([name, op]) => {
     // body/query are validated at the request boundary; `response` is a type + introspection contract
     // ONLY — never validated at runtime and never read on the request hot path (the lifecycle reads
     // schema.body/query by name; the `bare`/bodyOnly/queryOnly fast-path gates ignore `response`). Built
@@ -266,13 +266,14 @@ export function implement<
             ...(op.classification !== undefined ? { classification: op.classification } : {}),
           }
         : undefined
-    target.register(
-      op.method,
-      op.path,
+    return {
+      method: op.method,
+      path: op.path,
       schema,
-      handlers[name as keyof H] as (context: never) => unknown,
-    )
-  }
+      handler: handlers[name as keyof H] as (context: never) => unknown,
+    }
+  })
+  target.registerBatch(routes)
   // Runtime registered exactly the contract's routes through the inline path; the
   // registry type is computed from the contract inputs + handler return types.
   return target as unknown as Server<R & RegistryFromImpl<C, H, Ctx>, Ctx>

@@ -8,6 +8,7 @@
       "@nifrajs/budget": ["./packages/budget/src/index.ts"],
       "@nifrajs/core": ["./packages/core/src/index.ts"],
       "@nifrajs/core/*": ["./packages/core/src/*.ts"],
+      "@nifrajs/core/pattern": ["./packages/core/src/router/pattern.ts"],
       "@nifrajs/core/reflection": ["./packages/core/src/reflection.ts"],
       "@nifrajs/core/ws": ["./packages/core/src/ws.ts"],
       "@nifrajs/auth": ["./packages/auth/src/index.ts"],

@@ -18,6 +18,13 @@ describe("createMatcher", () => {
     expect(match("/about")).toEqual({ routeId: "about", params: {} })
     expect(match("/")).toEqual({ routeId: "index", params: {} })
   })
+  test("static routes beat params regardless of manifest order, matching core", () => {
+    const ordered = createMatcher([
+      { routeId: "user", pattern: "/users/:id" },
+      { routeId: "new-user", pattern: "/users/new" },
+    ])
+    expect(ordered("/users/new")).toEqual({ routeId: "new-user", params: {} })
+  })
   test("extracts single + multiple params", () => {
     expect(match("/users/7")).toEqual({ routeId: "user", params: { id: "7" } })
     expect(match("/blog/2026/hello")).toEqual({
@@ -28,9 +35,12 @@ describe("createMatcher", () => {
   test("decodes percent-encoded params", () => {
     expect(match("/users/a%20b")).toEqual({ routeId: "user", params: { id: "a b" } })
   })
-  test("ignores the query string and tolerates a trailing slash", () => {
+  test("returns null instead of throwing for malformed encoded params", () => {
+    expect(match("/users/%")).toBeNull()
+  })
+  test("ignores the query string and matches the server's strict trailing-slash rule", () => {
     expect(match("/users/7?tab=info")).toEqual({ routeId: "user", params: { id: "7" } })
-    expect(match("/users/7/")).toEqual({ routeId: "user", params: { id: "7" } })
+    expect(match("/users/7/")).toBeNull()
   })
   test("returns null for unmatched paths (incl. an extra segment past a :param)", () => {
     expect(match("/nope/extra/deep")).toBeNull()

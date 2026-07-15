@@ -40,7 +40,12 @@ import {
   type EffectLedgerOptions,
   type RequestLedger,
 } from "../ledger.ts"
-import { EMPTY_PARAMS, type Method, Router } from "../router/router.ts"
+import {
+  type CompiledRoutePattern,
+  compileRoutePattern,
+  decodeRouteParams,
+} from "../router/pattern.ts"
+import { EMPTY_PARAMS, type Method, Router, type RouterMatch } from "../router/router.ts"
 import type {
   InferOutput,
   StandardIssue,
@@ -199,6 +204,35 @@ interface ResolvedEffectLedger {
   readonly declared: readonly string[]
 }
 
+type RouteExecutionRunner = <T, R extends Registry, Ctx>(
+  runtime: Server<R, Ctx>,
+  entry: RouteEntry,
+  source: RequestSource,
+  params: Record<string, string>,
+  search: string | undefined,
+  signal: AbortSignal,
+  budget: RequestBudget,
+  platform: Platform | undefined,
+  finalize: (result: unknown, set: CtxSet) => T,
+  wrapResponse: (response: Response) => T,
+) => MaybePromise<T>
+
+type ContextRouteRunner = <T, R extends Registry, Ctx>(
+  runtime: Server<R, Ctx>,
+  entry: RouteEntry,
+  source: RequestSource,
+  ctx: RawContext,
+  finalize: (result: unknown, set: CtxSet) => T,
+  wrapResponse: (response: Response) => T,
+) => MaybePromise<T>
+
+/** Registration-compiled route behavior. Every adapter invokes the same runner; the optional fused
+ * renderer is only a response-format specialization of that same selected route semantics. */
+interface RouteExecutionPlan {
+  readonly run: RouteExecutionRunner
+  readonly fusedWeb: FusedWebRunner | undefined
+}
+
 interface RouteEntry {
   readonly handler: InternalHandler
   readonly schema: RouteSchema | undefined
@@ -219,33 +253,75 @@ interface RouteEntry {
   readonly onError: ReadonlyArray<RawErrorHandler>
   /** Wraps the matched route lifecycle. Empty for the common no-around path. */
   readonly around: ReadonlyArray<RawAround>
-  /**
-   * Precomputed: the route has no body/query schema and no derive/beforeHandle/afterHandle/onError
-   * hooks — so its lifecycle reduces to `finalize(handler(ctx), set)` with simple error handling, no
-   * `await` unless the handler itself is async. Such routes take the **synchronous fast path**
-   * ({@link Server.runBare}), which skips the `async` machinery of the full {@link Server.runLifecycle}
-   * (≈2 promise frames/req — the per-request tax codegen routers avoid; nifra avoids it here without
-   * `eval`, so it stays edge-safe). Static decorations are still applied (they're a sync `Object.assign`).
-   */
-  readonly bare: boolean
-  /**
-   * A narrower bare-route path for syntactic zero-parameter arrow handlers (`() => ...`). Unlike
-   * `handler.length === 0`, this intentionally excludes `function () { arguments }`, rest params,
-   * default params, bound/native functions, and anything else that can observe the passed context.
-   */
-  readonly contextlessBare: boolean
-  /** Precomputed body-schema-only path: JSON body validation + handler, no other lifecycle hooks. */
-  readonly bodyOnly: boolean
-  /** Precomputed query-schema-only path: query validation + handler, no other lifecycle hooks. */
-  readonly queryOnly: boolean
-  /**
-   * Registration-time-fused Web lane for a {@link bare} route with no `around` hooks: context (when
-   * the handler can observe one), handler, and the JSON respond collapsed into ONE monomorphic
-   * closure — no per-request branch ladder, no `responseSet` lookup, no codegen (`new Function`
-   * measured equivalent to closures on JSC). Only the Web finalizer
-   * (`fetch`) uses it — the node-direct path keeps the generic lifecycle.
-   */
-  readonly fusedWeb: FusedWebRunner | undefined
+  /** The single immutable execution decision consumed by portable, Node-direct, and Bun-native paths. */
+  readonly execution: RouteExecutionPlan
+}
+
+/** One canonical runtime route fact. The catalog owns matching, reflection, assurance, tool metadata,
+ * replay, and native compilation input so batch registration has one commit point. */
+interface CatalogRoute {
+  readonly method: Method
+  readonly path: string
+  readonly pattern: CompiledRoutePattern
+  readonly entry: RouteEntry
+  readonly descriptor: RouteDescriptor
+  readonly assurance: readonly AssuranceDeclaration[]
+}
+
+/**
+ * Runtime route catalog. Single-route registration mutates directly; multi-route registration replays
+ * the existing catalog plus the candidate batch into a staged router, then swaps the complete state only
+ * after every route validates. Failed `implement()`/`merge()` batches therefore leave matching and
+ * reflection unchanged.
+ */
+class RouteCatalog {
+  private matcher = new Router<RouteEntry>()
+  private records: CatalogRoute[] = []
+  /** Allocation-free reflection view for the common no-assurance case. Derived only at commit time. */
+  private descriptors: RouteDescriptor[] = []
+  private assurancePresent = false
+
+  add(route: CatalogRoute): void {
+    this.matcher.add(route.method, route.pattern, route.entry)
+    this.records.push(route)
+    this.descriptors.push(route.descriptor)
+    if (route.assurance.length > 0) this.assurancePresent = true
+  }
+
+  addBatch(routes: readonly CatalogRoute[]): void {
+    if (routes.length === 0) return
+    const nextRecords = this.records.concat(routes)
+    const nextDescriptors = this.descriptors.concat(routes.map(({ descriptor }) => descriptor))
+    const nextAssurancePresent =
+      this.assurancePresent || routes.some((route) => route.assurance.length > 0)
+    const staged = new Router<RouteEntry>()
+    for (const route of this.records) staged.add(route.method, route.pattern, route.entry)
+    for (const route of routes) staged.add(route.method, route.pattern, route.entry)
+    this.matcher = staged
+    this.records = nextRecords
+    this.descriptors = nextDescriptors
+    this.assurancePresent = nextAssurancePresent
+  }
+
+  find(method: string, path: string): RouterMatch<RouteEntry> {
+    return this.matcher.find(method, path)
+  }
+
+  entries(): readonly CatalogRoute[] {
+    return this.records
+  }
+
+  routeDescriptors(): ReadonlyArray<RouteDescriptor> {
+    return this.descriptors
+  }
+
+  lastDescriptor(): RouteDescriptor | undefined {
+    return this.records[this.records.length - 1]?.descriptor
+  }
+
+  hasAssurance(): boolean {
+    return this.assurancePresent
+  }
 }
 
 /** The fused Web lane: same inputs `routeAndRun` would hand the generic path, a `Response` out. */
@@ -793,27 +869,6 @@ async function readBoundedForm(
   return out
 }
 
-function decodeParams(raw: Record<string, string>): Record<string, string> | null {
-  let out: Record<string, string> | undefined
-  for (const key in raw) {
-    const value = raw[key]!
-    // `decodeURIComponent` only changes strings containing `%`; for the common
-    // unencoded param (`/users/123`) skip the call and its throw-check entirely —
-    // semantically identical (no `%` ⇒ no escapes to decode), ~3× cheaper on that path. If every
-    // param is already plain, return the router's per-request object directly and skip a clone.
-    if (!value.includes("%")) {
-      continue
-    }
-    try {
-      out ??= { ...raw }
-      out[key] = decodeURIComponent(value)
-    } catch {
-      return null
-    }
-  }
-  return out ?? raw
-}
-
 function hasReplacementParam(params: Record<string, string>): boolean {
   for (const key in params) {
     if (params[key]!.includes("\uFFFD")) return true
@@ -1289,7 +1344,7 @@ function appendCookiesToNodeHeaders(
  *      .get("/me", (c) => c.user)            // c.user + c.db are typed
  */
 export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
-  private readonly router: Router<RouteEntry>
+  private readonly catalog: RouteCatalog
   /** WebSocket routes, matched separately at upgrade time (a GET + `Upgrade: websocket`). */
   private readonly wsRouter: Router<WsEntry>
   private wsRouteCount: number
@@ -1297,7 +1352,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * Created by the first `app.ws()` via the `@nifrajs/core/ws` runtime — `undefined` until then, so a
    * no-WebSocket app never constructs (or bundles) it. */
   private topics: TopicRegistry | undefined
-  private readonly routeList: RouteDescriptor[]
   private readonly maxBodyBytes: number
   private readonly wsMaxPayloadBytes: number
   private readonly requestTimeoutMs: number
@@ -1319,6 +1373,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   /** App-wide validation-error fallback; a route's own `schema.onValidationError` takes precedence. */
   private readonly defaultOnValidationError?: RouteSchema["onValidationError"]
   private bunServer: RunningServer | undefined
+  private sealed: boolean
   private readonly derives: RawDerive[]
   private readonly decorations: Record<string, unknown>
   private readonly beforeHandleHooks: RawBeforeHandle[]
@@ -1338,26 +1393,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   /** App-declared MCP resources / prompts (via {@link resource} / {@link prompt}), read by `nifra mcp`. */
   private readonly mcpResourceList: McpResourceDescriptor[]
   private readonly mcpPromptList: McpPromptDescriptor[]
-  /**
-   * Every registered route's raw router entry + descriptor, in order — the replay source for
-   * {@link merge}. The entry already carries the chains captured at registration (derives,
-   * decorations, before/after/around/onError), so a merged route behaves exactly as it did on
-   * the server that defined it.
-   */
-  private readonly rawEntries: Array<{
-    readonly method: Method
-    readonly path: string
-    readonly entry: RouteEntry
-    readonly descriptor: RouteDescriptor
-    readonly assurance: readonly AssuranceDeclaration[]
-  }>
-
   constructor(options: ServerOptions = {}) {
-    this.router = new Router<RouteEntry>()
+    this.catalog = new RouteCatalog()
     this.wsRouter = new Router<WsEntry>()
     this.wsRouteCount = 0
     this.topics = undefined
-    this.routeList = []
     this.maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
     this.wsMaxPayloadBytes = options.wsMaxPayloadBytes ?? this.maxBodyBytes
     this.requestTimeoutMs = options.requestTimeoutMs ?? 0
@@ -1398,6 +1438,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.logger = options.logger ?? jsonLogger()
     this.defaultOnValidationError = options.onValidationError
     this.bunServer = undefined
+    this.sealed = false
     this.derives = []
     this.decorations = {}
     this.beforeHandleHooks = []
@@ -1413,17 +1454,27 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.globalAssurance = []
     this.mcpResourceList = []
     this.mcpPromptList = []
-    this.rawEntries = []
+  }
+
+  private assertConfigurable(operation: string): void {
+    if (this.sealed) {
+      throw new FrameworkError(
+        "SERVER_SEALED",
+        `server configuration is sealed after listen(); call ${operation} before listen()`,
+      )
+    }
   }
 
   /** Add a per-request, computed context extension for subsequent routes. */
   derive<D extends object>(fn: (context: Context & Ctx) => MaybePromise<D>): Server<R, Ctx & D> {
+    this.assertConfigurable("derive()")
     this.derives.push(fn as unknown as RawDerive)
     return this as unknown as Server<R, Ctx & D>
   }
 
   /** Add a static context value for subsequent routes. */
   decorate<const K extends string, V>(key: K, value: V): Server<R, Ctx & Record<K, V>> {
+    this.assertConfigurable("decorate()")
     this.decorations[key] = value
     return this as unknown as Server<R, Ctx & Record<K, V>>
   }
@@ -1435,12 +1486,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   onRequest(
     fn: (req: Request, platform?: Platform<EnvOf<Ctx>>) => MaybePromise<OnRequestResult>,
   ): this {
+    this.assertConfigurable("onRequest()")
     this.onRequestHooks.push(fn as RawOnRequest)
     return this
   }
 
   /** Run after validation, before the handler; a non-`undefined` return short-circuits. Order-scoped. */
   beforeHandle(fn: (context: Context & Ctx) => MaybePromise<unknown>): this {
+    this.assertConfigurable("beforeHandle()")
     this.beforeHandleHooks.push(fn as unknown as RawBeforeHandle)
     return this
   }
@@ -1451,24 +1504,28 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * a Web `Response`. The first registered wrapper is outermost.
    */
   around(fn: <T>(context: Context & Ctx, next: () => MaybePromise<T>) => MaybePromise<T>): this {
+    this.assertConfigurable("around()")
     this.aroundHooks.push(fn as unknown as RawAround)
     return this
   }
 
   /** Transform the handler's result before it is serialized. Order-scoped. */
   afterHandle(fn: (result: unknown, context: Context & Ctx) => MaybePromise<unknown>): this {
+    this.assertConfigurable("afterHandle()")
     this.afterHandleHooks.push(fn as unknown as RawAfterHandle)
     return this
   }
 
   /** Handle a thrown error; a non-`undefined` return becomes the response (else the default 500). Order-scoped. */
   onError(fn: (error: unknown, context: Context & Ctx) => MaybePromise<unknown>): this {
+    this.assertConfigurable("onError()")
     this.onErrorHooks.push(fn as unknown as RawErrorHandler)
     return this
   }
 
   /** Transform every outgoing response — success, error, 404, 405, short-circuit. Global. */
   onResponse(fn: (response: Response, req: Request) => MaybePromise<Response>): this {
+    this.assertConfigurable("onResponse()")
     this.onResponseHooks.push(fn)
     return this
   }
@@ -1477,6 +1534,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   onResponseFinalized(
     fn: (outcome: ResponseFinalization, req: Request) => MaybePromise<void>,
   ): this {
+    this.assertConfigurable("onResponseFinalized()")
     this.onResponseFinalizedHooks.push(fn)
     return this
   }
@@ -1504,6 +1562,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    */
   use(mw: Middleware): this
   use(arg: Middleware | ((app: this) => AnyServer)): AnyServer {
+    this.assertConfigurable("use()")
     if (typeof arg === "function") {
       const name = (arg as { pluginName?: string }).pluginName
       if (name !== undefined) {
@@ -1720,7 +1779,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.register("POST", path, routeSchema, run as (context: never) => unknown)
     // Tag the just-registered descriptor as an MCP tool. `tool` is readonly on RouteDescriptor (an
     // introspection field), so write it through a narrow mutable view — not `any`.
-    const lastRoute = this.routeList[this.routeList.length - 1]
+    const lastRoute = this.catalog.lastDescriptor()
     if (lastRoute) {
       ;(lastRoute as { tool?: RouteDescriptor["tool"] }).tool = {
         name,
@@ -1742,6 +1801,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     config: { readonly name: string; readonly description?: string; readonly mimeType?: string },
     read: McpResourceDescriptor["read"],
   ): Server<R, Ctx> {
+    this.assertConfigurable("resource()")
     this.mcpResourceList.push({
       uri,
       name: config.name,
@@ -1761,6 +1821,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     config: { readonly description: string; readonly arguments?: readonly PromptArgument[] },
     handler: McpPromptDescriptor["handler"],
   ): Server<R, Ctx> {
+    this.assertConfigurable("prompt()")
     this.mcpPromptList.push({
       name,
       description: config.description,
@@ -1793,6 +1854,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     path: string,
     handler: WebSocketHandler<Data, EnvOf<Ctx>, Schema>,
   ): this {
+    this.assertConfigurable("ws()")
     // Boot-time guard: the WS runtime is a subpath (`@nifrajs/core/ws`) so no-WebSocket apps don't
     // bundle it. Registration is the loud, early failure point — never the first connection.
     const runtime = requireWsRuntime()
@@ -1848,6 +1910,34 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     schema: RouteSchema | undefined,
     handler: (context: never) => unknown,
   ): void {
+    this.assertConfigurable("route registration")
+    this.catalog.add(this.prepareRoute(method, path, schema, handler))
+  }
+
+  /** Register a contract/group route batch atomically. Every route captures the same current chain it
+   * would capture through {@link register}; no route becomes visible unless the full batch validates. */
+  registerBatch(
+    routes: readonly {
+      readonly method: Method
+      readonly path: string
+      readonly schema: RouteSchema | undefined
+      readonly handler: (context: never) => unknown
+    }[],
+  ): void {
+    this.assertConfigurable("route registration")
+    const staged = routes.map(({ method, path, schema, handler }) =>
+      this.prepareRoute(method, path, schema, handler),
+    )
+    this.catalog.addBatch(staged)
+  }
+
+  private prepareRoute(
+    method: Method,
+    path: string,
+    schema: RouteSchema | undefined,
+    handler: (context: never) => unknown,
+  ): CatalogRoute {
+    const pattern = compileRoutePattern(path)
     const capabilities = normalizeRouteCapabilities(schema?.capabilities)
     const handlerAssurance = assuranceDeclarationsOf(handler as unknown as object)
     const invalidHandlerScope = handlerAssurance.find(
@@ -1902,6 +1992,31 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
             isContextlessNoArgArrow(handler),
           )
         : undefined
+    const contextless = bare && this.aroundHooks.length === 0 && isContextlessNoArgArrow(handler)
+    const lane = bare
+      ? "bare"
+      : schema?.body !== undefined &&
+          schema.query === undefined &&
+          this.derives.length === 0 &&
+          this.beforeHandleHooks.length === 0 &&
+          this.afterHandleHooks.length === 0 &&
+          this.onErrorHooks.length === 0
+        ? "body"
+        : schema?.body === undefined &&
+            schema?.query !== undefined &&
+            this.derives.length === 0 &&
+            this.beforeHandleHooks.length === 0 &&
+            this.afterHandleHooks.length === 0 &&
+            this.onErrorHooks.length === 0
+          ? "query"
+          : "lifecycle"
+    const execution = this.compileExecutionPlan(
+      lane,
+      contextless,
+      this.aroundHooks.length > 0,
+      ledgered !== undefined,
+      fusedWeb,
+    )
     const entry: RouteEntry = {
       // (context: never) => unknown -> InternalHandler: the framework invokes it
       // with the concrete RawContext the typed handler expects, so this is sound.
@@ -1909,7 +2024,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       schema,
       idempotent,
       ledgered,
-      fusedWeb,
       derives: [...this.derives],
       decorations: routeDecorations,
       hasDecorations,
@@ -1917,35 +2031,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       afterHandle: [...this.afterHandleHooks],
       onError: [...this.onErrorHooks],
       around: [...this.aroundHooks],
-      // Sync-fast-path eligibility (see RouteEntry.bare). Validation + every hook kind must be absent;
-      // decorations and generic around wrappers are fine: around wraps the inner bare route in
-      // `routeAndRun`, while the inner validation/derive/before/after/onError lifecycle remains empty.
-      // Most GET/no-schema routes qualify.
-      bare,
-      contextlessBare: bare && this.aroundHooks.length === 0 && isContextlessNoArgArrow(handler),
-      bodyOnly:
-        schema?.body !== undefined &&
-        schema.query === undefined &&
-        this.derives.length === 0 &&
-        this.beforeHandleHooks.length === 0 &&
-        this.afterHandleHooks.length === 0 &&
-        this.onErrorHooks.length === 0,
-      queryOnly:
-        schema?.body === undefined &&
-        schema?.query !== undefined &&
-        this.derives.length === 0 &&
-        this.beforeHandleHooks.length === 0 &&
-        this.afterHandleHooks.length === 0 &&
-        this.onErrorHooks.length === 0,
+      execution,
     }
-    this.router.add(method, path, entry)
     const descriptor: RouteDescriptor = {
       method,
       path,
       schema,
       ...(capabilities.length > 0 ? { capabilities } : {}),
     }
-    this.routeList.push(descriptor)
     const routeAssurance: AssuranceDeclaration[] = [...this.activeAssurance, ...handlerAssurance]
     if (schema?.body !== undefined) {
       routeAssurance.push(
@@ -1967,13 +2060,124 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         }),
       )
     }
-    this.rawEntries.push({
+    return {
       method,
       path,
+      pattern,
       entry,
       descriptor,
       assurance: Object.freeze(routeAssurance),
-    })
+    }
+  }
+
+  /** Collapse route-invariant lifecycle decisions into one runner at registration. The request path
+   * performs no eligibility ladder: it supplies request state to this already-selected plan. */
+  private compileExecutionPlan(
+    lane: "bare" | "body" | "query" | "lifecycle",
+    contextless: boolean,
+    hasAround: boolean,
+    hasLedger: boolean,
+    fusedWeb: FusedWebRunner | undefined,
+  ): RouteExecutionPlan {
+    if (contextless) {
+      const run: RouteExecutionRunner = (
+        runtime,
+        entry,
+        source,
+        params,
+        search,
+        signal,
+        budget,
+        platform,
+        finalize,
+        wrapResponse,
+      ) =>
+        runtime.runContextlessBare(
+          entry,
+          source,
+          params,
+          search,
+          signal,
+          budget,
+          platform,
+          finalize,
+          wrapResponse,
+        )
+      return Object.freeze({ run, fusedWeb })
+    }
+
+    let inner: ContextRouteRunner
+    switch (lane) {
+      case "bare":
+        inner = (runtime, entry, _source, ctx, finalize, wrapResponse) =>
+          runtime.runBare(entry, ctx, finalize, wrapResponse)
+        break
+      case "body":
+        inner = (runtime, entry, source, ctx, finalize, wrapResponse) =>
+          runtime.runBodyOnly(entry, source, ctx, finalize, wrapResponse)
+        break
+      case "query":
+        inner = (runtime, entry, _source, ctx, finalize, wrapResponse) =>
+          runtime.runQueryOnly(entry, ctx, finalize, wrapResponse)
+        break
+      default:
+        inner = (runtime, entry, source, ctx, finalize, wrapResponse) =>
+          runtime.runLifecycle(entry, source, ctx, finalize, wrapResponse)
+    }
+    const execute: ContextRouteRunner = hasAround
+      ? (runtime, entry, source, ctx, finalize, wrapResponse) =>
+          runtime.runWithAround(
+            entry,
+            ctx,
+            () => inner(runtime, entry, source, ctx, finalize, wrapResponse),
+            finalize,
+            wrapResponse,
+          )
+      : inner
+    const run: RouteExecutionRunner = (
+      runtime,
+      entry,
+      source,
+      params,
+      search,
+      signal,
+      budget,
+      platform,
+      finalize,
+      wrapResponse,
+    ) => {
+      const ctx = new RequestContext(
+        source,
+        params,
+        search,
+        signal,
+        budget,
+        platform,
+        runtime.maxBodyBytes,
+      )
+      let ledger: RequestLedger | undefined
+      if (hasLedger) {
+        const resolved = entry.ledgered as ResolvedEffectLedger
+        ledger = createRequestLedger({
+          method: resolved.method,
+          path: resolved.path,
+          declared: resolved.declared,
+          maxEntries: resolved.maxEntries,
+          chain: resolved.chain,
+        })
+        attachEffectLedger(ctx, ledger)
+      }
+      let outcome = execute(runtime, entry, source, ctx, finalize, wrapResponse)
+      if (ledger !== undefined) {
+        const active = ledger
+        const resolved = entry.ledgered as ResolvedEffectLedger
+        outcome = (outcome instanceof Promise ? outcome : Promise.resolve(outcome)).then((value) =>
+          runtime.settleEffectLedger(active, resolved, value),
+        )
+      }
+      return outcome
+    }
+    return Object.freeze({ run, fusedWeb })
   }
 
   /** Resolve a route's declared idempotency into a pinned store + defaults, or `undefined` when off. */
@@ -2074,6 +2278,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * those on the parent).
    */
   merge<R2 extends Registry, Ctx2>(other: Server<R2, Ctx2>): Server<R & R2, Ctx> {
+    this.assertConfigurable("merge()")
     const source = other as unknown as Server<Registry, EmptyContext>
     if (source.wsRouteCount > 0) {
       throw new RouteConfigError(
@@ -2081,11 +2286,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         "merge() does not carry WebSocket routes — register .ws() routes on the parent server",
       )
     }
-    for (const { method, path, entry, descriptor, assurance } of source.rawEntries) {
-      this.router.add(method, path, entry) // throws RouteConfigError on a duplicate — fail closed
-      this.routeList.push(descriptor) // shared ref on purpose: carries later .tool() tagging
-      this.rawEntries.push({ method, path, entry, descriptor, assurance })
-    }
+    this.catalog.addBatch(source.catalog.entries().map((route) => this.bindFusedRuntime(route)))
     this.onRequestHooks.push(...source.onRequestHooks)
     this.onResponseHooks.push(...source.onResponseHooks)
     this.onResponseFinalizedHooks.push(...source.onResponseFinalizedHooks)
@@ -2095,6 +2296,25 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return this as unknown as Server<R & R2, Ctx>
   }
 
+  /** A fused renderer closes over runtime services to keep its seven-argument JSC fast path. Merging
+   * rebinds that closure once to the executing server; generic plans already receive the runtime. */
+  private bindFusedRuntime(route: CatalogRoute): CatalogRoute {
+    const { entry } = route
+    if (entry.execution.fusedWeb === undefined) return route
+    const fusedWeb = this.buildFusedWeb(
+      entry.handler,
+      entry.hasDecorations ? entry.decorations : undefined,
+      isContextlessNoArgArrow(entry.handler),
+    )
+    return {
+      ...route,
+      entry: {
+        ...entry,
+        execution: Object.freeze({ ...entry.execution, fusedWeb }),
+      },
+    }
+  }
+
   /**
    * Enumerate the registered routes (method, path, input schemas), in registration
    * order. Powers `toOpenAPI` and other introspection; the router trie itself no
@@ -2102,10 +2322,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    */
   routes(): ReadonlyArray<RouteDescriptor> {
     if (this.activeAssurance.length === 0 && this.globalAssurance.length === 0) {
-      const anyRouteEvidence = this.rawEntries.some((entry) => entry.assurance.length > 0)
-      if (!anyRouteEvidence) return this.routeList
+      if (!this.catalog.hasAssurance()) {
+        return this.catalog.routeDescriptors()
+      }
     }
-    return this.rawEntries.map(({ method, path, descriptor, assurance }) => {
+    return this.catalog.entries().map(({ method, path, descriptor, assurance }) => {
       const effective = assuranceEvidenceFor([...assurance, ...this.globalAssurance], method, path)
       return effective.length > 0 ? { ...descriptor, assurance: effective } : descriptor
     })
@@ -2136,7 +2357,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     platform?: Platform<EnvOf<Ctx>>,
   ): MaybePromise<Response> {
     // Non-`async` on purpose: `dispatch` may return a `Response` *synchronously* (the bare-route fast
-    // path, see RouteEntry.bare), and an `async fetch` would wrap every such result in a redundant
+    // path, selected by the compiled execution plan), and an `async fetch` would wrap every such result in a redundant
     // promise + microtask. Returning `Response | Promise<Response>` matches Web/edge handlers, while
     // `await app.fetch(...)` continues to work exactly as before.
     const outcome = this.dispatch<Response>(
@@ -2262,7 +2483,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         ? response.then((settled) => ({ kind: "response", response: settled }))
         : { kind: "response", response }
     }
-    // May resolve **synchronously** for a bare route + sync handler (RouteEntry.bare) — the `@nifrajs/node`
+    // May resolve **synchronously** for a compiled bare route + sync handler - the `@nifrajs/node`
     // adapter `await`s the result, so it transparently handles either; the sync case allocates no promise
     // at all on the Node hot path.
     return this.dispatch<NodeServeOutcome>(
@@ -2294,7 +2515,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     if (!match.found) return WS_PASS // upgrade header, no WS route here → normal routing decides
     // Inspect only captured values for escapes. Scanning the full pathname repeated work the router
     // already did and made every plain dynamic route pay for unrelated static path bytes.
-    const params = match.params === EMPTY_PARAMS ? match.params : decodeParams(match.params)
+    const params = match.params === EMPTY_PARAMS ? match.params : decodeRouteParams(match.params)
     if (params === null) return { kind: "reject", response: jsonError(400, "malformed_path") }
     const handler = match.payload.handler
     // Non-null: wsRouteCount > 0 ⇒ ws() ran ⇒ the runtime created the registry.
@@ -2475,7 +2696,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
 
   /**
    * Route → build context → run. Synchronous through to the handler for a **bare** route
-   * ({@link RouteEntry.bare}), so a sync handler produces its result with zero promise allocations;
+   * (selected by its compiled plan), so a sync handler produces its result with zero promise allocations;
    * routes with validation/hooks keep the full async {@link runLifecycle}, unchanged.
    */
   private routeAndRun<T>(
@@ -2487,7 +2708,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     webFast: boolean,
   ): MaybePromise<T> {
     const url = urlPartsOf(source.url)
-    const match = this.router.find(source.method, url.pathname)
+    const match = this.catalog.find(source.method, url.pathname)
     if (!match.found) {
       if (match.reason === "method-not-allowed") {
         return wrapResponse(
@@ -2499,7 +2720,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
 
     // Inspect only captured values for escapes. Scanning the full pathname repeated work the router
     // already did and made every plain dynamic route pay for unrelated static path bytes.
-    const params = match.params === EMPTY_PARAMS ? match.params : decodeParams(match.params)
+    const params = match.params === EMPTY_PARAMS ? match.params : decodeRouteParams(match.params)
     if (params === null) {
       return wrapResponse(jsonError(400, "malformed_path"))
     }
@@ -2671,7 +2892,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return wrapResponse(response)
   }
 
-  /** Run a matched route through its selected execution lane (fused/bare/bodyOnly/queryOnly/lifecycle). */
+  /** Supply request-specific deadline state to the route's precompiled execution plan. */
   private runMatchedLanes<T>(
     source: RequestSource,
     platform: Platform | undefined,
@@ -2717,95 +2938,30 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       controller === undefined
         ? getUnboundedRequestBudget()
         : createRequestBudget({ deadline: admission!.deadline as number, signal })
-    // A bare route runs synchronously (no schema/derives/hooks); everything else keeps the full async
-    // lifecycle. `runBare` returns a value directly for a sync handler — no promise.
-    let outcome: MaybePromise<T>
-    if (webFast && entry.fusedWeb !== undefined) {
-      // Fused Web lane (bare route, no around): one closure end to end. Sound cast — webFast is
-      // passed only by the `fetch` path, where T = Response by construction.
-      outcome = entry.fusedWeb(
-        source,
-        params,
-        search,
-        signal,
-        budget,
-        platform,
-        false,
-      ) as MaybePromise<T>
-    } else if (entry.contextlessBare) {
-      outcome = this.runContextlessBare(
-        entry,
-        source,
-        params,
-        search,
-        signal,
-        budget,
-        platform,
-        finalize,
-        wrapResponse,
-      )
-    } else {
-      // Build the context up front so `onError` always has it. Query, cookies, headers, and body helpers
-      // stay lazy, but their accessors live on the prototype instead of allocating per-request closures.
-      const ctx = new RequestContext(
-        source,
-        params,
-        search,
-        signal,
-        budget,
-        platform,
-        this.maxBodyBytes,
-      )
-      // Ledgered routes (capabilities + effectLedger) carry a bounded per-request ledger; the
-      // `useCapability` beacon appends to it, and the settle step below seals + sinks it. The route
-      // was forced off the fused/contextless lanes at registration, so this branch always runs.
-      let ledger: RequestLedger | undefined
-      if (entry.ledgered !== undefined) {
-        ledger = createRequestLedger({
-          method: entry.ledgered.method,
-          path: entry.ledgered.path,
-          declared: entry.ledgered.declared,
-          maxEntries: entry.ledgered.maxEntries,
-          chain: entry.ledgered.chain,
-        })
-        attachEffectLedger(ctx, ledger)
-      }
-
-      if (entry.around.length === 0) {
-        outcome = entry.bare
-          ? this.runBare(entry, ctx, finalize, wrapResponse)
-          : entry.bodyOnly
-            ? this.runBodyOnly(entry, source, ctx, finalize, wrapResponse)
-            : entry.queryOnly
-              ? this.runQueryOnly(entry, ctx, finalize, wrapResponse)
-              : this.runLifecycle(entry, source, ctx, finalize, wrapResponse)
-      } else {
-        outcome = this.runWithAround(
-          entry,
-          ctx,
-          () =>
-            entry.bare
-              ? this.runBare(entry, ctx, finalize, wrapResponse)
-              : entry.bodyOnly
-                ? this.runBodyOnly(entry, source, ctx, finalize, wrapResponse)
-                : entry.queryOnly
-                  ? this.runQueryOnly(entry, ctx, finalize, wrapResponse)
-                  : this.runLifecycle(entry, source, ctx, finalize, wrapResponse),
-          finalize,
-          wrapResponse,
-        )
-      }
-      // Settle step: seal the ledger and hand it to the sink BEFORE the response is released, on
-      // success and error responses alike (partial work is exactly what an audit must capture). The
-      // lanes above resolve handler errors to responses, so a plain resolve arm is sufficient.
-      if (ledger !== undefined) {
-        const resolved = entry.ledgered as ResolvedEffectLedger
-        const active = ledger
-        outcome = (outcome instanceof Promise ? outcome : Promise.resolve(outcome)).then((value) =>
-          this.settleEffectLedger(active, resolved, value),
-        )
-      }
-    }
+    const plan = entry.execution
+    const outcome: MaybePromise<T> =
+      webFast && plan.fusedWeb !== undefined
+        ? (plan.fusedWeb(
+            source,
+            params,
+            search,
+            signal,
+            budget,
+            platform,
+            false,
+          ) as MaybePromise<T>)
+        : plan.run(
+            this,
+            entry,
+            source,
+            params,
+            search,
+            signal,
+            budget,
+            platform,
+            finalize,
+            wrapResponse,
+          )
     // The request timeout only bounds work that is actually pending — a synchronous (bare) result is
     // already complete and can't time out, so it's returned as-is (no 503 race, no promise).
     if (controller !== undefined && outcome instanceof Promise) {
@@ -2923,7 +3079,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   }
 
   /**
-   * The synchronous fast path for a {@link RouteEntry.bare} route: apply static decorations, call the
+   * The synchronous fast path selected by a route's execution plan: apply static decorations, call the
    * handler, render the result — **no `await`** unless the handler itself returns a promise. It mirrors
    * the bare slice of {@link runLifecycle} (which a bare route would otherwise no-op through) and shares
    * {@link logRequestError}; a bare route has no `onError` hooks, so error handling is fully synchronous
@@ -2956,7 +3112,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   /** Bare-route error rendering — identical to {@link runLifecycle}'s catch minus the (absent) onError
    * loop: a thrown `Response` is returned as deliberate control flow; anything else is logged + 500. */
   /**
-   * Build a route's fused Web lane (see {@link RouteEntry.fusedWeb}). Composition happens once at
+   * Build a route's fused Web renderer. Composition happens once at
    * registration; the returned closure is what every request to the route runs. Behavior is
    * byte-identical to the generic `runBare`/`runContextlessBare` + `toResponse` pair — same
    * decoration order, same error routing (thrown `Response` = control flow; anything else logs and
@@ -2967,7 +3123,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     decorations: Record<PropertyKey, unknown> | undefined,
     contextless: boolean,
   ): FusedWebRunner {
-    const maxBodyBytes = this.maxBodyBytes
     const logError = (err: unknown, ctx: RawContext): Response => {
       if (err instanceof Response) return err
       this.logRequestError(err, ctx)
@@ -2985,8 +3140,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           return logError(
             err,
             nativeContext
-              ? RequestContext.native(source, params, maxBodyBytes)
-              : new RequestContext(source, params, search, signal, budget, platform, maxBodyBytes),
+              ? RequestContext.native(source, params, this.maxBodyBytes)
+              : new RequestContext(
+                  source,
+                  params,
+                  search,
+                  signal,
+                  budget,
+                  platform,
+                  this.maxBodyBytes,
+                ),
           )
         }
         if (result instanceof Promise) {
@@ -2994,7 +3157,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
             logError(
               err,
               nativeContext
-                ? RequestContext.native(source, params, maxBodyBytes)
+                ? RequestContext.native(source, params, this.maxBodyBytes)
                 : new RequestContext(
                     source,
                     params,
@@ -3002,7 +3165,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
                     signal,
                     budget,
                     platform,
-                    maxBodyBytes,
+                    this.maxBodyBytes,
                   ),
             ),
           )
@@ -3012,8 +3175,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
     return (source, params, search, signal, budget, platform, nativeContext) => {
       const ctx = nativeContext
-        ? RequestContext.native(source, params, maxBodyBytes)
-        : new RequestContext(source, params, search, signal, budget, platform, maxBodyBytes)
+        ? RequestContext.native(source, params, this.maxBodyBytes)
+        : new RequestContext(source, params, search, signal, budget, platform, this.maxBodyBytes)
       if (decorations !== undefined) Object.assign(ctx, decorations)
       let result: unknown
       try {
@@ -3488,7 +3651,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   ): Promise<T> {
     try {
       if (entry.schema?.body !== undefined) {
-        const bodyError = await this.readAndValidateBody(source, entry.schema.body, ctx)
+        const bodyError = await this.readAndValidateBody(source, entry, ctx)
         if (bodyError !== undefined) return wrapResponse(bodyError)
       }
       if (entry.schema?.query !== undefined) {
@@ -3499,8 +3662,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           queryObjectOf(ctx[CONTEXT_SEARCH]),
         )
         const result = validation instanceof Promise ? await validation : validation
-        if (result.issues !== undefined) return wrapResponse(validationError(result.issues))
-        ctx.query = result.value
+        const queryError = await this.applyLifecycleValidation(entry, result, ctx, "query")
+        if (queryError !== undefined) return wrapResponse(queryError)
       }
 
       // Context extensions: static decorations, then per-request derives.
@@ -3581,7 +3744,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
 
   private async readAndValidateBody(
     req: RequestSource,
-    schema: StandardSchemaV1,
+    entry: RouteEntry,
     ctx: RawContext,
   ): Promise<Response | undefined> {
     const contentType = headerOf(req, "content-type") ?? ""
@@ -3599,10 +3762,36 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       // fit a value schema; use a schema-less route + @nifrajs/uploads helpers for those.
       return jsonError(415, "unsupported_media_type")
     }
-    const validation = schema["~standard"].validate(parsed)
+    const validation = entry.schema!.body!["~standard"].validate(parsed)
     const result = validation instanceof Promise ? await validation : validation
-    if (result.issues !== undefined) return validationError(result.issues)
-    ctx.body = result.value
+    return this.applyLifecycleValidation(entry, result, ctx, "body")
+  }
+
+  /** Apply validation and its recovery hook on the generic lifecycle lane. Recovery is completed
+   * before derives/beforeHandle run, matching the body-only and query-only execution lanes. */
+  private async applyLifecycleValidation(
+    entry: RouteEntry,
+    result: StandardResult<unknown>,
+    ctx: RawContext,
+    kind: "body" | "query",
+  ): Promise<Response | undefined> {
+    if (result.issues === undefined) {
+      if (kind === "body") ctx.body = result.value
+      else ctx.query = result.value
+      return undefined
+    }
+    const hook = entry.schema?.onValidationError ?? this.defaultOnValidationError
+    if (hook === undefined) return validationError(result.issues)
+    const attempted = hook(result.issues, ctx as unknown as Context, kind)
+    const recovery = attempted instanceof Promise ? await attempted : attempted
+    if (recovery === undefined) return validationError(result.issues)
+    if (recovery instanceof Response) return recovery
+    const schema = kind === "body" ? entry.schema?.body : entry.schema?.query
+    const retried = schema!["~standard"].validate(recovery)
+    const settled = retried instanceof Promise ? await retried : retried
+    if (settled.issues !== undefined) return validationError(settled.issues)
+    if (kind === "body") ctx.body = settled.value
+    else ctx.query = settled.value
     return undefined
   }
 
@@ -3624,6 +3813,55 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return readBoundedJsonSource(req, this.maxBodyBytes)
   }
 
+  /** Adapt one route's compiled execution plan to Bun's already-matched request shape. Route
+   * semantics remain in the plan; this closure only supplies native params and deadline fallback. */
+  private compileBunNativeHandler(
+    entry: RouteEntry,
+    paramNames: readonly string[],
+    fused: FusedWebRunner | undefined,
+    signal: AbortSignal | undefined,
+    budget: RequestBudget | undefined,
+  ): BunNativeHandler {
+    if (paramNames.length === 0) {
+      if (fused === undefined) {
+        return (request) => this.fetchMatched(request, entry, EMPTY_PARAMS)
+      }
+      if (this.acceptInboundDeadlines) {
+        return (request) =>
+          request.headers.get(NIFRA_DEADLINE_HEADER) !== null
+            ? this.fetchMatched(request, entry, EMPTY_PARAMS)
+            : fused(request, EMPTY_PARAMS, undefined, signal!, budget!, undefined, true)
+      }
+      return (request) => fused(request, EMPTY_PARAMS, undefined, signal!, budget!, undefined, true)
+    }
+
+    const malformed =
+      paramNames.length === 1
+        ? (params: Record<string, string>) => params[paramNames[0]!]?.includes("\uFFFD") === true
+        : hasReplacementParam
+    if (fused === undefined) {
+      return (request) => {
+        const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
+        if (malformed(params)) return this.fetchSource(request)
+        return this.fetchMatched(request, entry, params)
+      }
+    }
+    if (this.acceptInboundDeadlines) {
+      return (request) => {
+        const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
+        if (malformed(params)) return this.fetchSource(request)
+        return request.headers.get(NIFRA_DEADLINE_HEADER) !== null
+          ? this.fetchMatched(request, entry, params)
+          : fused(request, params, undefined, signal!, budget!, undefined, true)
+      }
+    }
+    return (request) => {
+      const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
+      if (malformed(params)) return this.fetchSource(request)
+      return fused(request, params, undefined, signal!, budget!, undefined, true)
+    }
+  }
+
   /** Compile portable route registrations into Bun's native route table. Apps with request-rewrite
    * hooks or WebSockets retain the single portable dispatcher because those features must run before
    * route selection/upgrade. Named wildcards also stay on the fallback until Bun exposes their raw
@@ -3642,143 +3880,22 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     const unboundedSignal = mayUseFusedNative ? getNeverAbortSignal() : undefined
     const unboundedBudget = mayUseFusedNative ? getUnboundedRequestBudget() : undefined
     let count = 0
-    for (const { method, path, entry } of this.rawEntries) {
-      if (path.includes("*")) continue
+    for (const { method, path, pattern, entry } of this.catalog.entries()) {
+      if (pattern.segments.some((segment) => segment.kind === "wildcard")) continue
       let methods = routes[path]
       if (methods === undefined) {
         methods = Object.create(null) as BunNativeMethodTable
         routes[path] = methods
       }
-      const paramNames = path
-        .split("/")
-        .filter((segment) => segment.charCodeAt(0) === 58 /* : */)
-        .map((segment) => segment.slice(1))
-      const fused = mayUseFusedNative ? entry.fusedWeb : undefined
-
-      if (fused !== undefined) {
-        // Deliberately choose deadline-aware vs zero-admission closures HERE instead of branching on
-        // `acceptInboundDeadlines` per request. JSC can then flatten the default closure through the
-        // handler + Response.json; retaining that route-invariant branch cost ~7% on a dynamic GET.
-        if (paramNames.length === 0) {
-          methods[method] = this.acceptInboundDeadlines
-            ? (request) =>
-                request.headers.get(NIFRA_DEADLINE_HEADER) !== null
-                  ? this.fetchMatched(request, entry, EMPTY_PARAMS)
-                  : fused(
-                      request,
-                      EMPTY_PARAMS,
-                      undefined,
-                      unboundedSignal as AbortSignal,
-                      unboundedBudget as RequestBudget,
-                      undefined,
-                      true,
-                    )
-            : (request) =>
-                fused(
-                  request,
-                  EMPTY_PARAMS,
-                  undefined,
-                  unboundedSignal as AbortSignal,
-                  unboundedBudget as RequestBudget,
-                  undefined,
-                  true,
-                )
-        } else if (paramNames.length === 1) {
-          const paramName = paramNames[0]!
-          const handler = entry.handler
-          const decorations = entry.hasDecorations ? entry.decorations : undefined
-          const fail = (error: unknown, ctx: RawContext): Response => {
-            if (error instanceof Response) return error
-            this.logRequestError(error, ctx)
-            return jsonError(500, "internal_error")
-          }
-          methods[method] = this.acceptInboundDeadlines
-            ? (request) => {
-                const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
-                if (params[paramName]?.includes("\uFFFD") === true) return this.fetchSource(request)
-                if (request.headers.get(NIFRA_DEADLINE_HEADER) !== null) {
-                  return this.fetchMatched(request, entry, params)
-                }
-                const ctx = RequestContext.native(request, params, this.maxBodyBytes)
-                if (decorations !== undefined) Object.assign(ctx, decorations)
-                let result: unknown
-                try {
-                  result = handler(ctx)
-                } catch (error) {
-                  return fail(error, ctx)
-                }
-                return result instanceof Promise
-                  ? result.then(
-                      (value) => fusedRespond(value, ctx),
-                      (error) => fail(error, ctx),
-                    )
-                  : fusedRespond(result, ctx)
-              }
-            : (request) => {
-                const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
-                if (params[paramName]?.includes("\uFFFD") === true) return this.fetchSource(request)
-                const ctx = RequestContext.native(request, params, this.maxBodyBytes)
-                if (decorations !== undefined) Object.assign(ctx, decorations)
-                let result: unknown
-                try {
-                  result = handler(ctx)
-                } catch (error) {
-                  return fail(error, ctx)
-                }
-                return result instanceof Promise
-                  ? result.then(
-                      (value) => fusedRespond(value, ctx),
-                      (error) => fail(error, ctx),
-                    )
-                  : fusedRespond(result, ctx)
-              }
-        } else {
-          methods[method] = this.acceptInboundDeadlines
-            ? (request) => {
-                const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
-                if (hasReplacementParam(params)) return this.fetchSource(request)
-                return request.headers.get(NIFRA_DEADLINE_HEADER) !== null
-                  ? this.fetchMatched(request, entry, params)
-                  : fused(
-                      request,
-                      params,
-                      undefined,
-                      unboundedSignal as AbortSignal,
-                      unboundedBudget as RequestBudget,
-                      undefined,
-                      true,
-                    )
-              }
-            : (request) => {
-                const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
-                if (hasReplacementParam(params)) return this.fetchSource(request)
-                return fused(
-                  request,
-                  params,
-                  undefined,
-                  unboundedSignal as AbortSignal,
-                  unboundedBudget as RequestBudget,
-                  undefined,
-                  true,
-                )
-              }
-        }
-      } else if (paramNames.length === 0) {
-        methods[method] = (request) => this.fetchMatched(request, entry, EMPTY_PARAMS)
-      } else if (paramNames.length === 1) {
-        const paramName = paramNames[0]!
-        methods[method] = (request) => {
-          const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
-          if (params[paramName]?.includes("\uFFFD") === true) return this.fetchSource(request)
-          return this.fetchMatched(request, entry, params)
-        }
-      } else {
-        methods[method] = (request) => {
-          const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
-          if (hasReplacementParam(params)) return this.fetchSource(request)
-          return this.fetchMatched(request, entry, params)
-        }
-      }
+      const paramNames = pattern.paramNames
+      const fused = mayUseFusedNative ? entry.execution.fusedWeb : undefined
+      methods[method] = this.compileBunNativeHandler(
+        entry,
+        paramNames,
+        fused,
+        unboundedSignal,
+        unboundedBudget,
+      )
       count += 1
     }
     return count === 0 ? undefined : routes
@@ -3858,6 +3975,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           },
         })) as unknown as RunningServer
     this.bunServer = running
+    this.sealed = true
     if (this.gracefulSignals) this.installSignalHandlers()
     return running
   }

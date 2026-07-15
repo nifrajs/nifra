@@ -1,4 +1,5 @@
 import { RouteConfigError } from "../errors.ts"
+import { type CompiledRoutePattern, compileRoutePattern } from "./pattern.ts"
 
 /** HTTP methods the router accepts. */
 export const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const
@@ -11,24 +12,7 @@ function isMethod(value: string): value is Method {
   return METHOD_SET.has(value)
 }
 
-/** Parameter names must be valid identifiers — mirrors the global identifier rule. */
-const PARAM_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
-
-/** Object-prototype keys are rejected as param names: a route like `/:__proto__` could let a captured
- * value reach a prototype-polluting key. Param *names* come from the route pattern (never from request
- * input) and are validated here at registration, so a reserved key can never reach `buildParams` —
- * this boot-time guard is the whole protection. The runtime params object stays a plain `{}` (only
- * user-controlled *values* land in it, under these validated keys), keeping the param path
- * allocation-cheap; a null-prototype object would add cost for no added safety. */
-const RESERVED_PARAM_NAMES = new Set(["__proto__", "constructor", "prototype"])
-
-/** A param name is valid when it's an identifier AND not a reserved object-prototype key. */
-const validParamName = (name: string): boolean =>
-  PARAM_NAME.test(name) && !RESERVED_PARAM_NAMES.has(name)
-
 const SLASH = 47
-const COLON = 58
-const STAR = 42
 export const EMPTY_PARAMS: Record<string, string> = Object.freeze({})
 const DYNAMIC_MATCH_CACHE_MAX = 2048
 
@@ -245,7 +229,7 @@ export class Router<T> {
    * (boot-time, L2) on a duplicate route, a malformed pattern, or conflicting
    * parameter names for the same path shape.
    */
-  add(method: Method, path: string, payload: T): void {
+  add(method: Method, pattern: string | CompiledRoutePattern, payload: T): void {
     DYNAMIC_MATCH_CACHES.delete(this)
     const upper = method.toUpperCase()
     // The `Method` parameter type is the compile-time guard; this re-checks at
@@ -253,66 +237,24 @@ export class Router<T> {
     if (!isMethod(upper)) {
       throw new RouteConfigError("INVALID_METHOD", `unsupported HTTP method "${method}"`)
     }
-    if (path.length === 0 || path.charCodeAt(0) !== SLASH) {
-      throw new RouteConfigError("INVALID_PATH", `path must start with "/": "${path}"`)
-    }
-
-    const segments = path === "/" ? [] : path.slice(1).split("/")
-    const paramNames: string[] = []
-    let isStatic = true
+    const compiled = typeof pattern === "string" ? compileRoutePattern(pattern) : pattern
+    const path = compiled.pattern
+    const paramNames = compiled.paramNames
+    const isStatic = paramNames.length === 0
     let node = this.root
 
-    for (let i = 0; i < segments.length; i++) {
-      const seg = segments[i]!
-      const marker = seg.charCodeAt(0)
-
-      if (marker === COLON) {
-        isStatic = false
-        const name = seg.slice(1)
-        if (!validParamName(name)) {
-          throw new RouteConfigError(
-            "INVALID_PARAM_NAME",
-            `invalid parameter ":${name}" in "${path}"`,
-          )
-        }
-        if (paramNames.includes(name)) {
-          throw new RouteConfigError(
-            "DUPLICATE_PARAM",
-            `duplicate parameter ":${name}" in "${path}"`,
-          )
-        }
-        paramNames.push(name)
+    for (const segment of compiled.segments) {
+      if (segment.kind === "param") {
         node.paramChild ??= createNode<T>()
         node = node.paramChild
-      } else if (marker === STAR) {
-        isStatic = false
-        if (i !== segments.length - 1) {
-          throw new RouteConfigError(
-            "WILDCARD_NOT_LAST",
-            `wildcard must be the final segment in "${path}"`,
-          )
-        }
-        const name = seg.length === 1 ? "*" : seg.slice(1)
-        if (name !== "*" && !validParamName(name)) {
-          throw new RouteConfigError(
-            "INVALID_PARAM_NAME",
-            `invalid wildcard "*${name}" in "${path}"`,
-          )
-        }
-        if (paramNames.includes(name)) {
-          throw new RouteConfigError(
-            "DUPLICATE_PARAM",
-            `duplicate parameter "${name}" in "${path}"`,
-          )
-        }
-        paramNames.push(name)
+      } else if (segment.kind === "wildcard") {
         node.wildcardChild ??= createNode<T>()
         node = node.wildcardChild
       } else {
-        let child = node.staticChildren.get(seg)
+        let child = node.staticChildren.get(segment.value)
         if (child === undefined) {
           child = createNode<T>()
-          node.staticChildren.set(seg, child)
+          node.staticChildren.set(segment.value, child)
         }
         node = child
       }

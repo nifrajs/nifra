@@ -4,6 +4,11 @@
  * browser-only `installHistory` (history + link interception) wires on top. Kept DOM-free so it
  * unit-tests without a browser and is safe to import from the SSR core's main entry.
  */
+import {
+  compareRoutePatternSpecificity,
+  compileRoutePattern,
+  matchRoutePattern,
+} from "@nifrajs/core/pattern"
 import { parseNdjsonData } from "./deferred.ts"
 
 /**
@@ -69,29 +74,6 @@ export interface RoutePattern {
   readonly pattern: string
 }
 
-function compile(pattern: string): { regex: RegExp; keys: string[] } {
-  const keys: string[] = []
-  const src = pattern
-    .split("/")
-    .map((seg) => {
-      if (seg.startsWith(":")) {
-        keys.push(seg.slice(1))
-        return "([^/]+)"
-      }
-      if (seg.startsWith("*")) {
-        // Catch-all (`*slug`, or bare `*` → key "*"): capture the rest of the path, slashes included.
-        // Always the final segment (the manifest/core enforce it), so the greedy `.` is safe.
-        keys.push(seg.length === 1 ? "*" : seg.slice(1))
-        return "(.+)"
-      }
-      // Escape regex-special chars. `$`/`{`/`}` are ordered so no literal `${` appears (it can
-      // trip tooling that scans for template-literal interpolation, e.g. coverage sourcemaps).
-      return seg.replace(/[.*+?^()|[\]\\{}$]/g, "\\$&")
-    })
-    .join("/")
-  return { regex: new RegExp(`^${src}/?$`), keys }
-}
-
 /**
  * Build a matcher from route patterns (built from the SAME manifest the server routes from, so
  * client and server agree). Returns the first matching route + decoded params, or null. The
@@ -100,22 +82,20 @@ function compile(pattern: string): { regex: RegExp; keys: string[] } {
 export function createMatcher(
   patterns: readonly RoutePattern[],
 ): (path: string) => RouteMatch | null {
-  const compiled = patterns.map((p) => ({ routeId: p.routeId, ...compile(p.pattern) }))
+  const compiled = patterns
+    .map((pattern) => ({ routeId: pattern.routeId, pattern: compileRoutePattern(pattern.pattern) }))
+    .sort((left, right) => compareRoutePatternSpecificity(left.pattern, right.pattern))
   return (path) => {
     // Strip the query without allocating a `split("?")` array — matcher runs per match.
     const q = path.indexOf("?")
     const clean = q === -1 ? path : path.slice(0, q)
     for (const c of compiled) {
-      const m = c.regex.exec(clean)
-      if (m === null) continue
-      const params: Record<string, string> = {}
-      // for-of (no per-match `forEach` closure); `i` indexes the capture groups (`m[0]` is the match).
-      let i = 0
-      for (const k of c.keys) {
-        params[k] = decodeURIComponent(m[i + 1] ?? "")
-        i++
+      const match = matchRoutePattern(c.pattern, clean)
+      if (!match.matched) {
+        if (match.reason === "malformed") return null
+        continue
       }
-      return { routeId: c.routeId, params }
+      return { routeId: c.routeId, params: match.params }
     }
     return null
   }

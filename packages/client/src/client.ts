@@ -394,7 +394,12 @@ function subscribeSse(
 function buildQuery(query: Record<string, unknown>): string {
   const params = new URLSearchParams()
   for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined) params.set(key, String(value))
+    if (value === undefined) continue
+    if (Array.isArray(value)) {
+      for (const item of value) params.append(key, String(item))
+    } else {
+      params.set(key, String(value))
+    }
   }
   return params.toString()
 }

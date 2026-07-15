@@ -224,6 +224,18 @@ describe("createMockServer", () => {
     expect((await mock.fetch(new Request("http://localhost/users//posts"))).status).toBe(404)
   })
 
+  test("uses core precedence when param and wildcard patterns overlap", async () => {
+    const fakeApp = {
+      routes: () => [
+        { method: "GET", path: "/files/*path", schema: { response: { const: "wildcard" } } },
+        { method: "GET", path: "/files/:name", schema: { response: { const: "param" } } },
+      ],
+    }
+    const mock = createMockServer(fakeApp)
+    const response = await mock.fetch(new Request("http://localhost/files/readme"))
+    expect(await response.json()).toBe("param")
+  })
+
   test("exposes mockRoutes for inspection", () => {
     const fakeApp = {
       routes: () => [

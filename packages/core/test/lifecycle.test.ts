@@ -335,3 +335,22 @@ describe("listen({ hostname })", () => {
     await wide.stop()
   })
 })
+
+describe("listen() configuration seal", () => {
+  test("rejects policy mutation after native routes are compiled", async () => {
+    const app = server().get("/a", () => ({ ok: true }))
+    const running = app.listen(0, { hostname: "127.0.0.1" })
+    try {
+      expect(() => app.onRequest(() => new Response("blocked", { status: 403 }))).toThrow(
+        /sealed after listen/,
+      )
+      expect(() => app.get("/late", () => "late")).toThrow(/sealed after listen/)
+      expect((await app.fetch(new Request("http://x/a"))).status).toBe(200)
+      expect((await app.fetch(new Request("http://x/late"))).status).toBe(404)
+      expect((await fetch(`http://127.0.0.1:${running.port}/a`)).status).toBe(200)
+      expect((await fetch(`http://127.0.0.1:${running.port}/late`)).status).toBe(404)
+    } finally {
+      await running.stop(true)
+    }
+  })
+})

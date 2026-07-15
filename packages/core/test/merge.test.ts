@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
-import { RouteConfigError, server } from "../src/index.ts"
+import { type Logger, RouteConfigError, server } from "../src/index.ts"
 import "../src/ws.ts" // ws runtime, for the "merge refuses WebSocket groups" case
 
 describe("merge — domain-group composition", () => {
@@ -41,6 +41,31 @@ describe("merge — domain-group composition", () => {
     expect(bad.status).toBe(422)
   })
 
+  test("merged routes use the executing server's runtime services in every lane", async () => {
+    const parentLogs: string[] = []
+    const groupLogs: string[] = []
+    const logger = (sink: string[]): Logger => ({
+      debug() {},
+      info() {},
+      warn() {},
+      error(message) {
+        sink.push(message)
+      },
+    })
+    const group = server({ logger: logger(groupLogs) }).get("/merged-boom", () => {
+      throw new Error("boom")
+    })
+    const app = server({ logger: logger(parentLogs) }).merge(group)
+
+    expect((await app.fetch(new Request("http://x/merged-boom"))).status).toBe(500)
+    const node = await app.resolveNode(new Request("http://x/merged-boom"))
+    expect(node.kind).toBe("response")
+    if (node.kind !== "response") throw new Error("unreachable")
+    expect(node.response.status).toBe(500)
+    expect(parentLogs).toEqual(["unhandled request error", "unhandled request error"])
+    expect(groupLogs).toEqual([])
+  })
+
   test("a group's request-level hooks ride along; introspection sees every route", async () => {
     const seen: string[] = []
     const group = server()
@@ -72,6 +97,17 @@ describe("merge — domain-group composition", () => {
 
     const wsGroup = server().ws("/live", { message: () => {} })
     expect(() => server().merge(wsGroup)).toThrow(/WebSocket/)
+  })
+
+  test("a failed multi-route merge leaves the parent unchanged", async () => {
+    const parent = server().get("/taken", () => ({ parent: true }))
+    const group = server()
+      .get("/added", () => ({ ghost: true }))
+      .get("/taken", () => ({ shadowed: true }))
+
+    expect(() => parent.merge(group)).toThrow(RouteConfigError)
+    expect(parent.routes().map(({ method, path }) => `${method} ${path}`)).toEqual(["GET /taken"])
+    expect((await parent.fetch(new Request("http://x/added"))).status).toBe(404)
   })
 
   test("MCP tools/resources defined in a group survive the merge", () => {

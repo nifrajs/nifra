@@ -6,6 +6,12 @@
  * for frontend-first development, agent testing, or CI smoke tests.
  */
 
+import {
+  type CompiledRoutePattern,
+  compareRoutePatternSpecificity,
+  compileRoutePattern,
+  matchRoutePattern,
+} from "@nifrajs/core/pattern"
 import { reflectRoutes, reflectSchema } from "@nifrajs/core/reflection"
 
 // ---------------------------------------------------------------------------
@@ -305,6 +311,12 @@ export function createMockServer(
   // Pre-generate mock responses for each route
   const mockMap = new Map<string, unknown>()
   const mockRoutes: Array<{ method: string; path: string }> = []
+  const compiledRoutes: Array<{
+    method: string
+    path: string
+    pattern: CompiledRoutePattern
+    value: unknown
+  }> = []
 
   for (const route of routes) {
     const key = `${route.method.toUpperCase()} ${route.path}`
@@ -313,7 +325,14 @@ export function createMockServer(
     const mockValue = responseSchema ? generateMockValue(responseSchema, undefined, rng) : {}
     mockMap.set(key, mockValue)
     mockRoutes.push({ method: route.method.toUpperCase(), path: route.path })
+    compiledRoutes.push({
+      method: route.method.toUpperCase(),
+      path: route.path,
+      pattern: compileRoutePattern(route.path),
+      value: mockValue,
+    })
   }
+  compiledRoutes.sort((left, right) => compareRoutePatternSpecificity(left.pattern, right.pattern))
 
   return {
     mockRoutes,
@@ -337,13 +356,12 @@ export function createMockServer(
       }
 
       // Try matching parameterized routes (e.g. /users/:id → /users/123)
-      for (const [key, value] of mockMap) {
-        const [routeMethod, routePath] = key.split(" ", 2)
-        if (routeMethod !== method || !routePath) continue
-
-        if (matchParameterizedPath(routePath, pathname)) {
-          if (verbose) console.log(`[mock] ${method} ${pathname} → ${routePath} → 200`)
-          return new Response(JSON.stringify(value), {
+      for (const route of compiledRoutes) {
+        if (route.method !== method) continue
+        const matched = matchRoutePattern(route.pattern, pathname)
+        if (matched.matched) {
+          if (verbose) console.log(`[mock] ${method} ${pathname} → ${route.path} → 200`)
+          return new Response(JSON.stringify(route.value), {
             status: 200,
             headers: {
               "content-type": "application/json",
@@ -360,32 +378,4 @@ export function createMockServer(
       })
     },
   }
-}
-
-/**
- * Match a parameterized route pattern (e.g. `/users/:id`) against a concrete pathname.
- * Supports non-empty `:param` segments and Nifra's trailing `*wildcard` segment.
- */
-function matchParameterizedPath(pattern: string, pathname: string): boolean {
-  const patternParts = pattern.split("/")
-  const pathParts = pathname.split("/")
-
-  const wildcardIndex = patternParts.findIndex((part) => part.startsWith("*"))
-  if (wildcardIndex === -1 && patternParts.length !== pathParts.length) return false
-  if (wildcardIndex !== -1 && wildcardIndex !== patternParts.length - 1) return false
-  if (wildcardIndex !== -1 && pathParts.length < wildcardIndex + 1) return false
-
-  for (let i = 0; i < patternParts.length; i++) {
-    const pp = patternParts[i]
-    const actual = pathParts[i]
-    if (pp === undefined || actual === undefined) return false
-    if (pp.startsWith("*")) return true
-    if (pp.startsWith(":")) {
-      if (actual.length === 0) return false
-      continue
-    }
-    if (pp !== actual) return false
-  }
-
-  return true
 }

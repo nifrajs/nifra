@@ -28,6 +28,15 @@ const pageQuery = schema<{ page: string }>((v) =>
     ? { value: { page: v.page } }
     : { issues: [{ message: "page is required", path: ["page"] }] },
 )
+const tagsQuery = schema<{ tag: string[] }>((v) =>
+  typeof v === "object" &&
+  v !== null &&
+  "tag" in v &&
+  Array.isArray(v.tag) &&
+  v.tag.every((tag) => typeof tag === "string")
+    ? { value: { tag: v.tag } }
+    : { issues: [{ message: "tag must be an array", path: ["tag"] }] },
+)
 const notFoundError = schema<{ code: "no_such_item"; item: string }>((v) => ({
   value: v as { code: "no_such_item"; item: string },
 }))
@@ -39,6 +48,7 @@ const app = server()
   .get("/users/:id/posts/:postId", (c) => ({ id: c.params.id, postId: c.params.postId }))
   .post("/users", { body: nameBody }, (c) => ({ created: c.body.name }))
   .get("/search", { query: pageQuery }, (c) => ({ page: c.query.page }))
+  .get("/filters", { query: tagsQuery }, (c) => ({ tag: c.query.tag }))
   .get("/files/*path", (c) => ({ path: c.params.path }))
   .post("/ping", () => ({ pong: true }))
   .post("/orders", { body: nameBody, errors: { 404: notFoundError } }, (c) => {
@@ -121,6 +131,12 @@ describe("client — success paths", () => {
 
   test("query is serialized", async () => {
     expect((await api.search.get({ query: { page: "3" } })).data).toEqual({ page: "3" })
+  })
+
+  test("query arrays serialize as repeated keys", async () => {
+    expect((await api.filters.get({ query: { tag: ["a", "b"] } })).data).toEqual({
+      tag: ["a", "b"],
+    })
   })
 
   test("wildcard with slashes round-trips", async () => {
