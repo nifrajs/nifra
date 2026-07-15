@@ -1,5 +1,14 @@
 # @nifrajs/core
 
+## 1.12.0
+
+### Minor Changes
+
+- 63d3845: Add bounded execution-causality contracts and propagation, OpenTelemetry causal links, event-envelope lineage, and a deterministic durable failure laboratory. `nifra levels` L4 now uses the deep adversarial contract engine through its explicitly isolated executor. Also add hash-verifiable adapter certification profiles and duplicate physical Nifra/React install detection in `nifra doctor`/`nifra check`.
+- 246f498: `app.listen(port, { hostname })` selects the bind address. It defaults to every interface, as before;
+  pass `"127.0.0.1"` to bind loopback only for an admin surface, a sidecar, or any app that must not be
+  reachable off the box.
+
 ## 1.11.0
 
 ### Minor Changes

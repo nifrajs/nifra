@@ -1,5 +1,11 @@
 # @nifrajs/middleware
 
+## 1.12.0
+
+### Patch Changes
+
+- @nifrajs/schema@1.12.0
+
 ## 1.11.0
 
 ### Patch Changes
