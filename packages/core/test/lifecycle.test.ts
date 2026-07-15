@@ -1,6 +1,19 @@
 import { describe, expect, test } from "bun:test"
+import { networkInterfaces } from "node:os"
 import type { StandardSchemaV1 } from "../src/index.ts"
 import { server } from "../src/index.ts"
+
+/** A non-loopback local IPv4, so "bound to loopback only" is observable. Skipped-safe: falls back
+ *  to loopback when the box has no external interface, which makes the negative assertion vacuous
+ *  rather than flaky. */
+const LOCAL_IPV4 = (() => {
+  for (const nets of Object.values(networkInterfaces())) {
+    for (const net of nets ?? []) {
+      if (net.family === "IPv4" && !net.internal) return net.address
+    }
+  }
+  return "127.0.0.1"
+})()
 
 const passThrough: StandardSchemaV1 = {
   "~standard": { version: 1, vendor: "test", validate: (value) => ({ value }) },
@@ -294,5 +307,31 @@ describe("fused web lane parity (bare routes)", () => {
     expect(res.status).toBe(500)
     expect(await res.text()).not.toContain("secret detail")
     expect(logs.length).toBe(1)
+  })
+})
+
+describe("listen({ hostname })", () => {
+  test("binds the given hostname, and defaults to every interface without it", async () => {
+    const app = server().get("/x", () => "ok")
+    const srv = app.listen(0, { hostname: "127.0.0.1" })
+    expect(srv.hostname).toBe("127.0.0.1")
+    // Reachable on loopback...
+    expect(await fetch(`http://127.0.0.1:${srv.port}/x`).then((r) => r.json())).toBe("ok")
+    // ...and NOT on another local interface - the point of binding at all. Asserting the bind
+    // took effect, not merely that the option was accepted: a silently ignored hostname is the
+    // whole hazard (a service meant for loopback answering the network).
+    const external = await fetch(`http://${LOCAL_IPV4}:${srv.port}/x`).then(
+      (r) => r.status as number | string,
+      () => "unreachable",
+    )
+    expect(external).toBe("unreachable")
+    await app.stop()
+
+    // No hostname → Bun's default bind, every interface. (Bun REPORTS `hostname` as "localhost"
+    // here while binding 0.0.0.0, so assert the reachability rather than the label.)
+    const wide = server().get("/x", () => "ok")
+    const wideSrv = wide.listen(0)
+    expect(await fetch(`http://${LOCAL_IPV4}:${wideSrv.port}/x`).then((r) => r.json())).toBe("ok")
+    await wide.stop()
   })
 })

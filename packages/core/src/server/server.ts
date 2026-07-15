@@ -3793,8 +3793,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * `app.listen(PORT, { reusePort: true })`; see `examples/cluster.ts`. Every process must opt in,
    * and all of them must be the same app. Linux balances ~evenly; macOS accepts the flag but may
    * favor one socket (fine for dev, measure on Linux for production numbers).
+   *
+   * `hostname` is the bind address, defaulting to Bun's `0.0.0.0` (every interface). Pass
+   * `"127.0.0.1"` to bind loopback only - an admin surface, a sidecar, or anything that must not be
+   * reachable off the box. Omitting it when you meant to restrict is a real exposure, so it is a
+   * first-class option rather than something a caller has to drop down to `Bun.serve` for.
    */
-  listen(port: number, options?: { readonly reusePort?: boolean }): RunningServer {
+  listen(
+    port: number,
+    options?: { readonly reusePort?: boolean; readonly hostname?: string },
+  ): RunningServer {
     if (typeof Bun === "undefined") {
       // listen() is the one Bun-specific seam. Off Bun, fail loud + actionable rather
       // than letting the Bun.serve call below throw a bare `ReferenceError: Bun is not
@@ -3820,17 +3828,22 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         ? undefined
         : (getWsRuntime() as WsRuntime).bunHandlers(this.topics as TopicRegistry)
     const reusePort = options?.reusePort === true
+    // Spread rather than pass `hostname: undefined` - Bun treats an explicit undefined as a value
+    // on some option paths, and omitting is what selects its 0.0.0.0 default.
+    const bind = options?.hostname === undefined ? {} : { hostname: options.hostname }
     const nativeRoutes = wsHandlers === undefined ? this.buildBunNativeRoutes() : undefined
     const running = (wsHandlers === undefined
       ? Bun.serve({
           port,
           reusePort,
+          ...bind,
           ...(nativeRoutes === undefined ? {} : { routes: nativeRoutes }),
           fetch: (req: Request) => this.fetch(req),
         })
       : Bun.serve<BunWsData>({
           port,
           reusePort,
+          ...bind,
           fetch: (req, server) => this.bunFetchWithWebSocket(req, server),
           // Bun's `ServerWebSocket<BunWsData>` is runtime-compatible with the handlers' structural
           // `BunSocket` view (kept local so `Bun.*` types never leak into the published .d.ts); the
