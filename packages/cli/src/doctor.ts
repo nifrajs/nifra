@@ -266,23 +266,38 @@ export async function collectDuplicateInstalls(
 ): Promise<DuplicateInstallFinding[]> {
   const importers = await workspaceImporters(cwd, rootPackage)
   const byPackage = new Map<string, Map<string, { version: string; importers: Set<string> }>>()
+  const record = (
+    name: string,
+    copy: { path: string; version: string },
+    importer: string,
+  ): void => {
+    let copies = byPackage.get(name)
+    if (copies === undefined) {
+      copies = new Map()
+      byPackage.set(name, copies)
+    }
+    const entry = copies.get(copy.path) ?? { version: copy.version, importers: new Set<string>() }
+    entry.importers.add(importer)
+    copies.set(copy.path, entry)
+  }
+
+  const targets = new Set<string>()
   for (const importer of importers) {
     for (const name of duplicateTargets(importer.package)) {
       if (importer.package.name === name) continue
+      targets.add(name)
       const copy = await resolvedInstalledCopy(importer.root, cwd, name)
-      if (copy === undefined) continue
-      let copies = byPackage.get(name)
-      if (copies === undefined) {
-        copies = new Map()
-        byPackage.set(name, copies)
-      }
-      const record = copies.get(copy.path) ?? {
-        version: copy.version,
-        importers: new Set<string>(),
-      }
-      record.importers.add(displayPath(cwd, importer.root))
-      copies.set(copy.path, record)
+      if (copy !== undefined) record(name, copy, displayPath(cwd, importer.root))
     }
+  }
+
+  // Probe the workspace root for every target too, even when the root manifest doesn't declare it.
+  // A hoisted root copy is reachable from any package that lacks its own nested one, so leaving it
+  // out hides the very split it should catch: every declaring package nested onto one copy while the
+  // root resolved a different one, which reads as a single copy when only declarers are consulted.
+  for (const name of targets) {
+    const copy = await resolvedInstalledCopy(cwd, cwd, name)
+    if (copy !== undefined) record(name, copy, ".")
   }
 
   const findings: DuplicateInstallFinding[] = []
