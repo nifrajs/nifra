@@ -4,7 +4,7 @@ import { normalizeRouteCapabilities } from "../internal/capability-runtime.ts"
 import { METHODS, type Method } from "../router/router.ts"
 import type { InferOutput, StandardSchemaV1 } from "../schema/standard.ts"
 import type { Context, IdempotencyConfig, Params, RouteSchema } from "./context.ts"
-import type { OutputOf } from "./registry.ts"
+import type { EmptyRegistry, OutputOf, Registry } from "./registry.ts"
 import { Server } from "./server.ts"
 
 /** An additional (non-success) response a contract operation can document, e.g. a `404`. */
@@ -140,9 +140,13 @@ type HandlerReturnForOp<O extends OperationDef> = O extends {
   ? Response | InferOutput<R>
   : unknown
 
-/** The handlers `implement` requires: one per operation, typed from the op's input + response contract. */
-export type HandlersFor<C extends ContractShape> = {
-  [K in keyof C]: (context: ContextForOp<C[K]>) => MaybePromise<HandlerReturnForOp<C[K]>>
+/**
+ * The handlers `implement` requires: one per operation, typed from the op's input + response contract,
+ * intersected with the host app's accumulated `derive`/`decorate` context - the same
+ * `Context & Ctx` an inline {@link Handler} receives, so a handler graduates either way unchanged.
+ */
+export type HandlersFor<C extends ContractShape, Ctx = NonNullable<unknown>> = {
+  [K in keyof C]: (context: ContextForOp<C[K]> & Ctx) => MaybePromise<HandlerReturnForOp<C[K]>>
 }
 
 const METHOD_SET: ReadonlySet<string> = new Set(METHODS)
@@ -189,7 +193,11 @@ type AnyFn = (...args: never[]) => unknown
  * the implemented server stays route-for-route identical to the equivalent inline server (the
  * mode-conformance guarantee), and a contract-typed client and a `typeof app`-typed client agree.
  */
-export type RegistryFromImpl<C extends ContractShape, H extends HandlersFor<C>> = {
+export type RegistryFromImpl<
+  C extends ContractShape,
+  H extends HandlersFor<C, Ctx>,
+  Ctx = NonNullable<unknown>,
+> = {
   [P in C[keyof C]["path"]]: {
     [K in keyof C as C[K]["path"] extends P ? C[K]["method"] : never]: {
       readonly params: Params<C[K]["path"]>
@@ -215,12 +223,27 @@ export type RegistryFromImpl<C extends ContractShape, H extends HandlersFor<C>> 
  * builder, so the result is identical to writing the routes inline — handlers
  * lift over **unchanged** ("graduation"), and body/query schemas validate at the
  * request boundary exactly as in inline mode.
+ *
+ * Pass a pre-configured `app` to give the contract's routes a middleware chain. A route captures the
+ * server's `derive`/`decorate`/assurance chain **at registration**, so anything applied to the
+ * returned server afterwards reaches the contract's routes not at all - the app must already carry it:
+ *
+ * ```ts
+ * const app = implement(contract, handlers, server().use(auth).derive(sessionOf))
+ * ```
+ *
+ * That is also the seam that lets `nifra assure` prove rather than merely classify a contract-first
+ * app: the plugin that installs the enforcement is what declares the evidence
+ * ({@link withRouteAssurance}), and only a plugin installed *before* registration is captured. Handlers
+ * then see the app's `Ctx`, and the returned server keeps any routes the app already had.
  */
-export function implement<const C extends ContractShape, H extends HandlersFor<C>>(
-  contract: C,
-  handlers: H,
-): Server<RegistryFromImpl<C, H>> {
-  const app = new Server()
+export function implement<
+  const C extends ContractShape,
+  H extends HandlersFor<C, Ctx>,
+  R extends Registry = EmptyRegistry,
+  Ctx = NonNullable<unknown>,
+>(contract: C, handlers: H, app?: Server<R, Ctx>): Server<R & RegistryFromImpl<C, H, Ctx>, Ctx> {
+  const target = (app ?? new Server()) as Server<R, Ctx>
   for (const [name, op] of Object.entries(contract)) {
     // body/query are validated at the request boundary; `response` is a type + introspection contract
     // ONLY — never validated at runtime and never read on the request hot path (the lifecycle reads
@@ -243,7 +266,7 @@ export function implement<const C extends ContractShape, H extends HandlersFor<C
             ...(op.classification !== undefined ? { classification: op.classification } : {}),
           }
         : undefined
-    app.register(
+    target.register(
       op.method,
       op.path,
       schema,
@@ -252,5 +275,5 @@ export function implement<const C extends ContractShape, H extends HandlersFor<C
   }
   // Runtime registered exactly the contract's routes through the inline path; the
   // registry type is computed from the contract inputs + handler return types.
-  return app as unknown as Server<RegistryFromImpl<C, H>>
+  return target as unknown as Server<R & RegistryFromImpl<C, H, Ctx>, Ctx>
 }

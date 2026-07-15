@@ -1,5 +1,5 @@
 import type { ContextForOp, Registry, RegistryFor, Server, StandardSchemaV1 } from "@nifrajs/core"
-import { defineContract, implement } from "@nifrajs/core"
+import { defineContract, implement, server } from "@nifrajs/core"
 import type { Equal, Expect } from "@nifrajs/test-utils"
 
 declare const name: StandardSchemaV1<unknown, { name: string }>
@@ -74,4 +74,59 @@ const noRespApp = implement(defineContract({ ping: { method: "GET", path: "/ping
 })
 export type _ImplNoResponseUsesHandler = Expect<
   Equal<RegistryOfServer<typeof noRespApp>["/ping"]["GET"]["output"], { pong: boolean }>
+>
+
+// ── implement(app): the contract's routes get the host app's middleware chain ────────────────────
+
+// A route captures the server's derive/decorate chain AT REGISTRATION, so a contract-first app can
+// only carry context if `implement` registers into an app that already has it.
+const derived = server()
+  .decorate("db", { find: (): { id: string } => ({ id: "u1" }) })
+  .derive(() => ({ actor: "alice" }))
+
+const ctxApp = implement(
+  defineContract({ me: { method: "GET", path: "/me" } }),
+  {
+    me: (c) => ({ actor: c.actor, id: c.db.find().id }),
+  },
+  derived,
+)
+
+// The derived/decorated members are genuinely typed on the contract handler's context (not `any`):
+// `c.actor` narrows to string, and the handler's return still drives the registry output.
+implement(
+  defineContract({ me: { method: "GET", path: "/me" } }),
+  {
+    me: (c) => {
+      // @ts-expect-error - actor is string, so a number annotation must fail
+      const wrong: number = c.actor
+      return { wrong }
+    },
+  },
+  derived,
+)
+
+export type _ImplCtxOutput = Expect<
+  Equal<RegistryOfServer<typeof ctxApp>["/me"]["GET"]["output"], { actor: string; id: string }>
+>
+
+implement(
+  defineContract({ me: { method: "GET", path: "/me" } }),
+  {
+    // @ts-expect-error - `missing` is not on the host app's derived context
+    me: (c) => ({ x: c.missing }),
+  },
+  derived,
+)
+
+// Routes already on the host app survive alongside the contract's in the returned registry.
+const hosted = implement(
+  defineContract({ me: { method: "GET", path: "/me" } }),
+  {
+    me: () => ({ ok: true }),
+  },
+  server().get("/health", () => ({ up: true })),
+)
+export type _ImplKeepsHostRoutes = Expect<
+  Equal<RegistryOfServer<typeof hosted>["/health"]["GET"]["output"], { up: boolean }>
 >

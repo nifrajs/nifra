@@ -292,8 +292,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **FrameworkName** _(type)_ — `type FrameworkName = typeof FRAMEWORK_NAME`
 - **Handler** _(type)_ — `type Handler<Path extends string, S extends RouteSchema = RouteSchema, Ctx = EmptyContext> = (ctx: Context<Path, S> & Ctx) => MaybePromise<ResponseOf<S>>`
   Public handler shape: context typed from the path, the (optional) schema, and any accumulated middleware context `Ctx` (from `derive`/`decorate`).
-- **HandlersFor** _(type)_ — `type HandlersFor<C extends ContractShape> = { [K in keyof C]: (context: ContextForOp<C[K]>) => MaybePromise<HandlerReturnForOp<C[K]>> }`
-  The handlers `implement` requires: one per operation, typed from the op's input + response contract.
+- **HandlersFor** _(type)_ — `type HandlersFor<C extends ContractShape, Ctx = NonNullable<unknown>> = { [K in keyof C]: (context: ContextForOp<C[K]> & Ctx) => MaybePromise<HandlerReturnForOp<C[K]>> }`
+  The handlers `implement` requires: one per operation, typed from the op's input + response contract, intersected with the host app's accumulated `derive`/`decorate` context - the same `Context & Ctx` an inline {@link Handler} receives, so a handler graduates either way unchanged.
 - **IDEMPOTENT_REPLAY_HEADER** _(const)_ — `IDEMPOTENT_REPLAY_HEADER: "x-nifra-idempotent-replay"`
   Header stamped on a replayed response so clients/proxies can tell a replay from a fresh run.
 - **IdempotencyAbandonInput** _(interface)_ — `interface IdempotencyAbandonInput`
@@ -382,7 +382,7 @@ Every public export of every package — name, kind, signature, and doc summary 
   The accumulated, type-level map of every route on a Server: path → method → RouteInfo.
 - **RegistryFor** _(type)_ — `type RegistryFor<C extends ContractShape> = { [P in C[keyof C]["path"]]: { [K in keyof C as C[K]["path"] extends P ? C[K]["method"] : never]: RouteInfoForOp<C[K]> } }`
   Re-key the name-keyed ops into the `path → method → RouteInfo` registry.
-- **RegistryFromImpl** _(type)_ — `type RegistryFromImpl<C extends ContractShape, H extends HandlersFor<C>>`
+- **RegistryFromImpl** _(type)_ — `type RegistryFromImpl<C extends ContractShape, H extends HandlersFor<C, Ctx>, Ctx = NonNullable<unknown>>`
   The registry produced by `implement`: input from the contract op; `output` is the declared `response` contract when present (it wins — exactly as in the inline path), else the bound HANDLER's return — so the implemented server stays route-for-route identical to the equivalent inline server (the mod…
 - **RequestLedger** _(interface)_ — `interface RequestLedger`
   Per-request ledger. `append` is synchronous (hot-path safe); `seal` is idempotent and async.
@@ -539,7 +539,7 @@ Every public export of every package — name, kind, signature, and doc summary 
   Compare declared route capabilities against coverage-qualified static/runtime evidence.
 - **evaluateRouteAssurance** _(function)_ — `evaluateRouteAssurance: (source: unknown, policyInput: AssurancePolicy) => AssuranceReport`
   Evaluate reflected route evidence against the first matching policy rule.
-- **implement** _(function)_ — `implement: <const C extends ContractShape, H extends HandlersFor<C>>(contract: C, handlers: H) => Server<RegistryFromImpl<C, H>>`
+- **implement** _(function)_ — `implement: <const C extends ContractShape, H extends HandlersFor<C, Ctx>, R extends Registry = {}, Ctx = {}>(contract: C, handlers: H, app?: Server<R, Ctx>) => Server<R & RegistryFromImpl<C, H, Ctx>, Ctx>`
   Bind handlers to a contract, producing a real {@link Server} you can `.listen()` or `.fetch()`. Each op is registered through the same path as the inline builder, so the result is identical to writing the routes inline — handlers lift over **unchanged** ("graduation"), and body/query schemas valida…
 - **isDataClassification** _(function)_ — `isDataClassification: (value: unknown) => value is DataClassification`
   Whether `value` is a known classification token.
@@ -1747,8 +1747,8 @@ Every public export of every package — name, kind, signature, and doc summary 
 - **FrameworkName** _(type)_ — `type FrameworkName = typeof FRAMEWORK_NAME`
 - **Handler** _(type)_ — `type Handler<Path extends string, S extends RouteSchema = RouteSchema, Ctx = EmptyContext> = (ctx: Context<Path, S> & Ctx) => MaybePromise<ResponseOf<S>>`
   Public handler shape: context typed from the path, the (optional) schema, and any accumulated middleware context `Ctx` (from `derive`/`decorate`).
-- **HandlersFor** _(type)_ — `type HandlersFor<C extends ContractShape> = { [K in keyof C]: (context: ContextForOp<C[K]>) => MaybePromise<HandlerReturnForOp<C[K]>> }`
-  The handlers `implement` requires: one per operation, typed from the op's input + response contract.
+- **HandlersFor** _(type)_ — `type HandlersFor<C extends ContractShape, Ctx = NonNullable<unknown>> = { [K in keyof C]: (context: ContextForOp<C[K]> & Ctx) => MaybePromise<HandlerReturnForOp<C[K]>> }`
+  The handlers `implement` requires: one per operation, typed from the op's input + response contract, intersected with the host app's accumulated `derive`/`decorate` context - the same `Context & Ctx` an inline {@link Handler} receives, so a handler graduates either way unchanged.
 - **IDEMPOTENT_REPLAY_HEADER** _(const)_ — `IDEMPOTENT_REPLAY_HEADER: "x-nifra-idempotent-replay"`
   Header stamped on a replayed response so clients/proxies can tell a replay from a fresh run.
 - **IdempotencyAbandonInput** _(interface)_ — `interface IdempotencyAbandonInput`
@@ -1837,7 +1837,7 @@ Every public export of every package — name, kind, signature, and doc summary 
   The accumulated, type-level map of every route on a Server: path → method → RouteInfo.
 - **RegistryFor** _(type)_ — `type RegistryFor<C extends ContractShape> = { [P in C[keyof C]["path"]]: { [K in keyof C as C[K]["path"] extends P ? C[K]["method"] : never]: RouteInfoForOp<C[K]> } }`
   Re-key the name-keyed ops into the `path → method → RouteInfo` registry.
-- **RegistryFromImpl** _(type)_ — `type RegistryFromImpl<C extends ContractShape, H extends HandlersFor<C>>`
+- **RegistryFromImpl** _(type)_ — `type RegistryFromImpl<C extends ContractShape, H extends HandlersFor<C, Ctx>, Ctx = NonNullable<unknown>>`
   The registry produced by `implement`: input from the contract op; `output` is the declared `response` contract when present (it wins — exactly as in the inline path), else the bound HANDLER's return — so the implemented server stays route-for-route identical to the equivalent inline server (the mod…
 - **RequestLedger** _(interface)_ — `interface RequestLedger`
   Per-request ledger. `append` is synchronous (hot-path safe); `seal` is idempotent and async.
@@ -1994,7 +1994,7 @@ Every public export of every package — name, kind, signature, and doc summary 
   Compare declared route capabilities against coverage-qualified static/runtime evidence.
 - **evaluateRouteAssurance** _(function)_ — `evaluateRouteAssurance: (source: unknown, policyInput: AssurancePolicy) => AssuranceReport`
   Evaluate reflected route evidence against the first matching policy rule.
-- **implement** _(function)_ — `implement: <const C extends ContractShape, H extends HandlersFor<C>>(contract: C, handlers: H) => Server<RegistryFromImpl<C, H>>`
+- **implement** _(function)_ — `implement: <const C extends ContractShape, H extends HandlersFor<C, Ctx>, R extends Registry = {}, Ctx = {}>(contract: C, handlers: H, app?: Server<R, Ctx>) => Server<R & RegistryFromImpl<C, H, Ctx>, Ctx>`
   Bind handlers to a contract, producing a real {@link Server} you can `.listen()` or `.fetch()`. Each op is registered through the same path as the inline builder, so the result is identical to writing the routes inline — handlers lift over **unchanged** ("graduation"), and body/query schemas valida…
 - **isDataClassification** _(function)_ — `isDataClassification: (value: unknown) => value is DataClassification`
   Whether `value` is a known classification token.

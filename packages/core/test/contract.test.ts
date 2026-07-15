@@ -1,5 +1,16 @@
 import { describe, expect, test } from "bun:test"
-import { defineContract, implement, RouteConfigError, type StandardSchemaV1 } from "@nifrajs/core"
+import {
+  defineContract,
+  implement,
+  RouteConfigError,
+  type StandardSchemaV1,
+  server,
+} from "@nifrajs/core"
+import {
+  evaluateRouteAssurance,
+  NIFRA_ASSURANCE,
+  withRouteAssurance,
+} from "@nifrajs/core/assurance"
 
 const passThrough: StandardSchemaV1 = {
   "~standard": { version: 1, vendor: "test", validate: (value) => ({ value }) },
@@ -74,5 +85,64 @@ describe("implement() — response contract on the descriptor", () => {
     })
     // No body/query/response ⇒ no schema object at all ⇒ the sync fast path is preserved untouched.
     expect(app.routes()[0]?.schema).toBeUndefined()
+  })
+})
+
+describe("implement(contract, handlers, app) - the middleware seam", () => {
+  const contract = defineContract({ me: { method: "GET", path: "/me" } })
+  const authPolicy = {
+    rules: [
+      {
+        name: "authed",
+        match: { paths: ["/me"] },
+        require: [NIFRA_ASSURANCE.AUTHENTICATED],
+      },
+    ],
+  }
+
+  test("the host app's derive reaches the contract's handlers", async () => {
+    const app = implement(
+      contract,
+      { me: (c) => ({ actor: c.actor }) },
+      server().derive(() => ({ actor: "alice" })),
+    )
+    expect(await (await app.fetch(new Request("http://x/me"))).json()).toEqual({ actor: "alice" })
+  })
+
+  test("a derive applied AFTER implement does not reach them (chains are captured at registration)", async () => {
+    const app = implement(contract, {
+      me: (c) => ({ actor: (c as { actor?: string }).actor ?? "none" }),
+    }).derive(() => ({ actor: "alice" }))
+    expect(await (await app.fetch(new Request("http://x/me"))).json()).toEqual({ actor: "none" })
+  })
+
+  test("an assurance-declaring plugin installed on the app satisfies the policy", () => {
+    const auth = withRouteAssurance((app: ReturnType<typeof server>) => app, {
+      id: NIFRA_ASSURANCE.AUTHENTICATED,
+      source: "test-auth",
+      scope: "subsequent",
+    })
+    const app = implement(contract, { me: () => ({ ok: true }) }, server().use(auth))
+    expect(evaluateRouteAssurance(app, authPolicy as never).ok).toBe(true)
+  })
+
+  test("without that plugin the same policy fails - evidence is never assumed", () => {
+    const app = implement(contract, { me: () => ({ ok: true }) })
+    expect(evaluateRouteAssurance(app, authPolicy as never).ok).toBe(false)
+  })
+
+  test("routes already on the host app are served alongside the contract's", async () => {
+    const app = implement(
+      contract,
+      { me: () => ({ u: 1 }) },
+      server().get("/health", () => ({ up: true })),
+    )
+    expect(await (await app.fetch(new Request("http://x/health"))).json()).toEqual({ up: true })
+    expect(await (await app.fetch(new Request("http://x/me"))).json()).toEqual({ u: 1 })
+  })
+
+  test("the two-argument form is unchanged", async () => {
+    const app = implement(contract, { me: () => ({ u: 2 }) })
+    expect(await (await app.fetch(new Request("http://x/me"))).json()).toEqual({ u: 2 })
   })
 })
