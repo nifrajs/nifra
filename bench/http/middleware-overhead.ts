@@ -5,7 +5,7 @@
  * derive + beforeHandle + afterHandle stack: the delta is the middleware overhead
  * and a check that the "compiled per-route chain" stays cheap.
  */
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 
 const bare = server().get("/users/:id", (c) => ({ id: c.params.id }))
 

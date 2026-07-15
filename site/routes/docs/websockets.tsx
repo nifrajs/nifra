@@ -9,7 +9,7 @@ export const meta = pageMeta(
   "app.ws(path, handler) registers a typed WebSocket route — an upgrade guard, a portable socket, contract-validated messages, and topic pub/sub — served on Bun, Deno, Node, and Cloudflare Workers.",
 )
 
-const BASIC = `import { server } from "@nifrajs/core"
+const BASIC = `import { server } from "@nifrajs/core/server"
 import "@nifrajs/core/ws" // registers the WebSocket runtime app.ws() needs
 
 const app = server()

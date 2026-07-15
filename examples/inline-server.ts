@@ -3,7 +3,7 @@
  *
  *   bun run examples/inline-server.ts
  */
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 
 const app = server()
   .get("/", () => ({ hello: "world" }))

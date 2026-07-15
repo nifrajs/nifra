@@ -1,4 +1,4 @@
-import { definePlugin, type Middleware, type NifraPlugin } from "@nifrajs/core"
+import { definePlugin, type Middleware, type NifraPlugin } from "@nifrajs/core/server"
 
 export type Composable = Middleware | NifraPlugin
 

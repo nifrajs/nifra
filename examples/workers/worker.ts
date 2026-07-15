@@ -1,4 +1,4 @@
-import { server, toFetchHandler } from "@nifrajs/core"
+import { server, toFetchHandler } from "@nifrajs/core/server"
 
 /**
  * nifra on Cloudflare Workers. `toFetchHandler` adapts the app to the Workers `ExportedHandler`

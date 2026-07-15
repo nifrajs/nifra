@@ -106,7 +106,7 @@ export type NewNote = typeof notes.$inferInsert
 // Each prints the same usage header so an agent sees how to wire it (decorate) and query it.
 
 const WIRE_DOC = `// Wire it into your backend ONCE, then read \`c.db\` in handlers:
-//   import { server } from "@nifrajs/core"
+//   import { server } from "@nifrajs/core/server"
 //   import { db, notes } from "./db"
 //   export const app = server().decorate("db", db)
 //     .get("/notes", async (c) => c.db.select().from(notes))
@@ -272,7 +272,7 @@ model Note {
 const PRISMA_CLIENT = `import { PrismaClient } from "@prisma/client"
 
 // Wire it into your backend ONCE, then read \`c.db\` in handlers:
-//   import { server } from "@nifrajs/core"
+//   import { server } from "@nifrajs/core/server"
 //   import { db } from "./db"
 //   export const app = server().decorate("db", db)
 //     .get("/notes", async (c) => c.db.note.findMany({ where: { deletedAt: null } }))
@@ -326,7 +326,7 @@ import { Pool } from "pg"
 import type { DB } from "./schema.ts"
 
 // Wire it into your backend ONCE, then read \`c.db\` in handlers:
-//   import { server } from "@nifrajs/core"
+//   import { server } from "@nifrajs/core/server"
 //   import { db } from "./db"
 //   export const app = server().decorate("db", db)
 //     .get("/notes", async (c) =>

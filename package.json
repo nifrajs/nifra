@@ -50,7 +50,8 @@
     "changeset:publish": "bun run build && bun run gen:llms && bun run scripts/resolve-workspace-deps.ts && changeset publish && bun run scripts/point-latest.ts",
     "bench:p99": "bun run bench/ops/p99-mixed.ts",
     "bench:soak": "bun run bench/ops/memory-soak.ts",
-    "bench:coldboot": "bun run bench/ops/cold-boot.ts"
+    "bench:coldboot": "bun run bench/ops/cold-boot.ts",
+    "bench:core-import": "bun run bench/ops/core-import-cost.ts"
   },
   "overrides": {
     "react": "19.2.7",

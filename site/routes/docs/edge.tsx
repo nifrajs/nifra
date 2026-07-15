@@ -30,7 +30,7 @@ app.post("/event", (c) => {
 })`
 
 const CRON = `// doc-check: skip — \`env.KV\` is typed by your app's \`Env\` (the ./app import), supplied by the reader.
-import { toFetchHandler } from "@nifrajs/core"
+import { toFetchHandler } from "@nifrajs/core/server"
 import { app } from "./app"
 
 // Export fetch + a cron handler. Wire the schedule in wrangler.toml: [triggers] crons = ["0 * * * *"]

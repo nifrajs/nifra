@@ -1,4 +1,4 @@
-import type { AdmissionController, AdmissionDecision } from "@nifrajs/core"
+import type { AdmissionController, AdmissionDecision } from "@nifrajs/core/server"
 
 /**
  * Adaptive capacity admission. Rate limiting bounds request *frequency* and `@nifrajs/budget` bounds

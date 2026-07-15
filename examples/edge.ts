@@ -12,7 +12,7 @@
  *
  *   bun run examples/edge.ts
  */
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { cors } from "@nifrajs/middleware"
 import { t } from "@nifrajs/schema"
 

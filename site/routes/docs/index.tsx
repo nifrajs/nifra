@@ -10,7 +10,7 @@ export const meta = pageMeta(
   "Get started with Nifra: install, server, typed client, loaders, deploy.",
 )
 
-const HELLO = `import { server } from "@nifrajs/core"
+const HELLO = `import { server } from "@nifrajs/core/server"
 
 server()
   .get("/", () => ({ hello: "world" }))

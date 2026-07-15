@@ -1,4 +1,4 @@
-import { definePlugin } from "@nifrajs/core"
+import { definePlugin } from "@nifrajs/core/server"
 import { withHeaders } from "./_utils.ts"
 
 export interface TimingMetric {

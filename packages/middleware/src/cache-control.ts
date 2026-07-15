@@ -1,4 +1,4 @@
-import { definePlugin } from "@nifrajs/core"
+import { definePlugin } from "@nifrajs/core/server"
 
 export interface CacheControlOptions {
   /** Methods whose responses get the header. Default `["GET", "HEAD"]`. */

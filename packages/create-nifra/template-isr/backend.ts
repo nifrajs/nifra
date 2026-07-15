@@ -1,4 +1,4 @@
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
 // Your backend contract — page loaders/actions call it in-process during SSR (no network). This demo

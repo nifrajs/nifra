@@ -14,7 +14,7 @@
  *   createWebApp({ ..., draftSecret: env.DRAFT_SECRET })   // → loaders get ctx.draft
  *   withISR(app, { ..., draftSecret: env.DRAFT_SECRET })   // → editors bypass the cache
  */
-import { type CookieOptions, parseCookies, signValue, unsignValue } from "@nifrajs/core"
+import { type CookieOptions, parseCookies, signValue, unsignValue } from "@nifrajs/core/server"
 
 /** The cookie name nifra uses for draft/preview mode. */
 export const DRAFT_COOKIE = "__nifra_draft"

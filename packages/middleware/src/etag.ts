@@ -1,4 +1,4 @@
-import { definePlugin } from "@nifrajs/core"
+import { definePlugin } from "@nifrajs/core/server"
 
 /** 32-bit FNV-1a over bytes → hex. A fast, dependency-free content fingerprint for ETags — not crypto. */
 function fnv1a(bytes: Uint8Array): string {

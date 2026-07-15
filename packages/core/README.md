@@ -9,7 +9,7 @@ bun add @nifrajs/core
 ```
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 
 const app = server()
   .get("/users/:id", (c) => ({ id: c.params.id }))
@@ -17,6 +17,16 @@ const app = server()
   .listen(3000)
 
 export type App = typeof app // hand this to @nifrajs/client for end-to-end types
+```
+
+`@nifrajs/core/server` is the lean common-runtime entry and is the recommended import for new apps.
+The package root remains a backwards-compatible full barrel, but it eagerly loads opt-in systems that
+an ordinary HTTP server does not need. Import those features from their explicit seams instead:
+
+```ts
+import { defineContract, implement } from "@nifrajs/core/contract"
+import { startCausality } from "@nifrajs/core/causality"
+import { defineAssurancePolicy } from "@nifrajs/core/assurance"
 ```
 
 - **Inline or contract-first.** Write routes inline (types inferred from the

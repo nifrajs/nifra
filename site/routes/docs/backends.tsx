@@ -13,7 +13,7 @@ export const meta = pageMeta(
 // The backend: an @nifrajs/core server defining its routes at the FULL /api/... path (the mount does
 // no path stripping). The handler returns a plain object → JSON; `c.req` is the Web Request.
 const BACKEND = `// backend.ts — a normal @nifrajs/core server. Routes live at the full /api/... path.
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
 export const backend = server()

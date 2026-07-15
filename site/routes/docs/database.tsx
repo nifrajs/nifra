@@ -10,7 +10,7 @@ export const meta = pageMeta(
   "Nifra is database-agnostic: use SQLite, Postgres, or any ORM (Drizzle, Prisma, Kysely) from your handlers and loaders, on Bun, Node, Deno, and the edge.",
 )
 
-const SQLITE = `import { server } from "@nifrajs/core"
+const SQLITE = `import { server } from "@nifrajs/core/server"
 import { Database } from "bun:sqlite"        // Node: better-sqlite3 · edge: Turso/libSQL
 
 // Open the connection ONCE at module scope (the driver pools internally).
@@ -23,7 +23,7 @@ export const app = server().get("/users/:id", (c) =>
 )`
 
 const POSTGRES = `// doc-check: skip — illustrates a third-party driver (postgres + drizzle); install those to run it.
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { drizzle } from "drizzle-orm/postgres-js"   // or node-postgres / neon-http
 import postgres from "postgres"
 import { eq } from "drizzle-orm"
@@ -37,7 +37,7 @@ export const app = server().get("/users/:id", async (c) => {
 })`
 
 const EDGE = `// doc-check: skip — uses the Workers \`D1Database\` global (from @cloudflare/workers-types).
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 
 // On Workers there's no raw TCP, so use an HTTP-based driver. D1 is a typed platform binding:
 interface Env { DB: D1Database }
@@ -96,7 +96,7 @@ bun create nifra notes-api --db drizzle-libsql     # SQLite everywhere incl. the
 bun create nifra notes-api --db drizzle-postgres   # Postgres (postgres.js) on Bun/Node/Deno
 bun create nifra notes-api --db drizzle-sqlite     # Bun's built-in bun:sqlite, local file`
 
-const DECORATE = `import { server } from "@nifrajs/core"
+const DECORATE = `import { server } from "@nifrajs/core/server"
 import { desc } from "drizzle-orm"
 import { db, notes } from "./db"   // your Drizzle client + schema (what the scaffold generates)
 

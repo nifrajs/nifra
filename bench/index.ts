@@ -9,7 +9,7 @@
  * honest, not publication-grade. Treat the ratios, not the absolute ops/s, as
  * the signal.
  */
-import { Router } from "@nifrajs/core"
+import { Router } from "@nifrajs/core/server"
 import { RegExpRouter } from "hono/router/reg-exp-router"
 import { Memoirist } from "memoirist"
 import { type BenchResult, bench, formatOps } from "./src/harness.ts"

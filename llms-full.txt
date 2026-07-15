@@ -39,7 +39,7 @@ production backend (routing, validation, middleware, auth, WebSockets). Run it o
 `.listen()`:
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 
 server()
   .get("/", () => ({ hello: "world" }))
@@ -362,7 +362,7 @@ and `c.query` are the _validated_ types, and a bad request gets a structured
 
 ```ts
 // doc-check: skip — uses the third-party `zod` schema lib (any Standard Schema works); install it to run this.
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { z } from "zod"   // any Standard Schema works: zod, valibot, arktype…
 
 export const app = server()
@@ -427,7 +427,7 @@ builder produces.
 
 ```ts
 // doc-check: skip — uses the third-party `zod` schema lib + an illustrative `users` repo; install zod to run this.
-import { defineContract, implement } from "@nifrajs/core"
+import { defineContract, implement } from "@nifrajs/core/contract"
 import { z } from "zod"
 
 // 1. Declare the contract — methods, paths, and input schemas, no handlers.
@@ -945,7 +945,7 @@ resolves, you call `stream.close()`, or the client disconnects (
 Node, Deno, and the edge — no `new Function`, no per-runtime API.
 
 ```ts
-import { server, sse } from "@nifrajs/core"
+import { server, sse } from "@nifrajs/core/server"
 
 const app = server()
 // Your pub-sub of choice — subscribe returns an unsubscribe function.
@@ -1171,7 +1171,7 @@ plugins both depend on it), it wires its hooks once.
 
 ```ts
 // doc-check: skip — fragment: the outer `app`, `verify`, and `db` are your application's.
-import { definePlugin } from "@nifrajs/core"
+import { definePlugin } from "@nifrajs/core/server"
 
 // A plugin is just (app) => app — call use/derive/decorate or register routes.
 // definePlugin adds a name so applying it twice (even transitively) is a no-op.
@@ -1206,7 +1206,7 @@ client — to `any`, with **no type error and no runtime error**.
 `server().use(betterAuth(auth)).get(...)` keeps every route typed.
 
 ```ts
-import { defineRouterPlugin, server } from "@nifrajs/core"
+import { defineRouterPlugin, server } from "@nifrajs/core/server"
 
 // A plugin that mounts routes/hooks but adds NO context type: defineRouterPlugin (the clearer name for
 // defineIdentityPlugin) keeps app.use()'s return type EXACTLY the caller's server, so routes added after
@@ -1228,7 +1228,7 @@ short-circuit), `beforeHandle`/`afterHandle` (around the handler),
 error, 404). Hardening middleware uses the same hook model:
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { cors, rateLimit, securityHeaders, MemoryStore } from "@nifrajs/middleware"
 
 // Hardening middleware is a hook bundle (context-agnostic) — same app.use():
@@ -1244,7 +1244,7 @@ const app = server()
 `@nifrajs/middleware` seeds a few `definePlugin` plugins to build on:
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { requestId, logger, etag } from "@nifrajs/middleware"
 
 const app = server()
@@ -1309,7 +1309,7 @@ does custom, typed verification.
 clobbering one a handler already set.
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { compression, cacheControl } from "@nifrajs/middleware"
 
 const app = server()
@@ -1356,7 +1356,7 @@ connection. It short-circuits before the handler; a concurrent retry gets a `409
 guidance (shared store + DB constraint), and the `Set-Cookie` rule.
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { idempotency, MemoryIdempotencyStore } from "@nifrajs/middleware"
 
 // A retried POST with the same Idempotency-Key replays the first response instead of
@@ -1376,7 +1376,7 @@ Read the typed claims off the returned plugin — `auth.requireClaims(c.req)` (t
 compares static credentials in **constant time** (or takes a `verify` callback).
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { jwt, jwks, basicAuth } from "@nifrajs/middleware"
 
 // JWT (WebCrypto): an explicit algorithm allowlist is REQUIRED; alg:none and RSA/HMAC confusion are rejected.
@@ -1400,7 +1400,7 @@ user's response to another. `MemoryResponseCache` is per-instance and refuses
 pretty-prints JSON responses (capped, with an optional query toggle).
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { cache, MemoryResponseCache, prettyJson } from "@nifrajs/middleware"
 
 // Full response cache: pluggable store, Vary-aware keys, byte cap. Bypasses Set-Cookie and respects
@@ -1422,7 +1422,7 @@ no open redirect); `language` negotiates `Accept-Language` into
 is opt-in; `combine` bundles several middleware into one.
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { methodOverride, trimTrailingSlash, language, timing, poweredBy, combine } from "@nifrajs/middleware"
 
 const app = server()
@@ -1475,7 +1475,7 @@ bypasses that read path. `c.boundedBody(maxBytes?)` and
 `c.boundedJson<T>(maxBytes?)` extend the **same** cap to those routes.
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 
 const app = server()
 
@@ -1566,7 +1566,7 @@ the verified text for you to parse with your own schema.
 
 ```ts
 // doc-check: skip — fragment: `app`, `env`, `StripeEvent`, and the rotation keys are your application's.
-import { verifyWebhook } from "@nifrajs/core"
+import { verifyWebhook } from "@nifrajs/core/webhook"
 
 app.post("/webhooks/stripe", async (c) => {
   // Reads the raw body BOUNDED (DoS guard), verifies the HMAC CONSTANT-TIME, and only
@@ -1646,7 +1646,7 @@ Transient `5xx` aren't cached, so a failed call stays retryable.
 Every one is constant-time where it compares secrets and **fails closed** by default.
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { jwt, csrf, ipRestriction, bodyLimit } from "@nifrajs/middleware"
 
 const app = server()
@@ -1782,7 +1782,7 @@ embeds a token), pass opt-in `valuePatterns` — `commonSecretPatterns` covers
 bearer tokens, JWTs, emails, and a few well-known key formats, or supply your own:
 
 ```ts
-import { server, jsonLogger, commonSecretPatterns } from "@nifrajs/core"
+import { server, jsonLogger, commonSecretPatterns } from "@nifrajs/core/server"
 
 // Key-name redaction is always on; valuePatterns adds opt-in value + message scanning.
 const app = server({
@@ -2350,7 +2350,7 @@ typed `env` and `waitUntil` as your request handlers.
 
 ```ts
 // doc-check: skip — `env.KV` is typed by your app's `Env` (the ./app import), supplied by the reader.
-import { toFetchHandler } from "@nifrajs/core"
+import { toFetchHandler } from "@nifrajs/core/server"
 import { app } from "./app"
 
 // Export fetch + a cron handler. Wire the schedule in wrangler.toml: [triggers] crons = ["0 * * * *"]
@@ -2374,7 +2374,7 @@ it once at your server entry; `app.ws()` without it fails loud at boot with
 `WS_RUNTIME_MISSING`. (`@nifrajs/workers` imports it for you.)
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import "@nifrajs/core/ws" // registers the WebSocket runtime app.ws() needs
 
 const app = server()
@@ -2665,7 +2665,7 @@ SSR verified on real workerd — **this very site runs there**.
 
 ```ts
 // _worker.ts — the edge SSR entry
-import { toFetchHandler } from "@nifrajs/core"
+import { toFetchHandler } from "@nifrajs/core/server"
 import { createWebApp } from "@nifrajs/web"
 import { reactAdapter } from "@nifrajs/web-react"
 import { clientEntry, manifest } from "./server-manifest"  // generated by buildServer
@@ -3195,7 +3195,7 @@ _over HTTP_. Both run the identical lifecycle — validation, middleware, contra
 
 ```ts
 // backend.ts — a normal @nifrajs/core server. Routes live at the full /api/... path.
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
 export const backend = server()
@@ -3318,7 +3318,7 @@ to local policy, and exposes monotonic remaining time beside the existing cancel
 ### Clamp once at admission
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 
 const app = server({
   requestTimeoutMs: 2_000,
@@ -3767,7 +3767,7 @@ server, and every handler reads it as a typed `c.db`. This is how the scaffold w
 it — and it keeps the client out of each handler's imports.
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { desc } from "drizzle-orm"
 import { db, notes } from "./db"   // your Drizzle client + schema (what the scaffold generates)
 
@@ -3786,7 +3786,7 @@ Node, or `libSQL`/Turso anywhere. Open the connection once and query from your
 routes:
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { Database } from "bun:sqlite"        // Node: better-sqlite3 · edge: Turso/libSQL
 
 // Open the connection ONCE at module scope (the driver pools internally).
@@ -3920,7 +3920,7 @@ directly:
 
 ```ts
 // doc-check: skip — illustrates a third-party driver (postgres + drizzle); install those to run it.
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { drizzle } from "drizzle-orm/postgres-js"   // or node-postgres / neon-http
 import postgres from "postgres"
 import { eq } from "drizzle-orm"
@@ -4438,7 +4438,7 @@ boundary _before_ your handler runs — invalid input is rejected with a 422, so
 handler only ever sees well-formed data.
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { GetUser } from "./schema"
 
 export const app = server().get("/users/:id", GetUser, (c) => {
@@ -4481,7 +4481,7 @@ routes and their schemas — generated lazily on first request, never hand-writt
 `ui: true` to also serve a Scalar reference page.
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { openapi } from "@nifrajs/middleware"
 import { GetUser } from "./schema"   // the contract defined above
 
@@ -4586,7 +4586,7 @@ export const auth = createBetterAuth({
 
 ```ts
 // server.ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { betterAuth } from "@nifrajs/better-auth"
 import { auth } from "./auth"
 
@@ -4842,6 +4842,10 @@ an agent can act on the project, not just read about it. Core tools:
 - **`nifra_check`** — run the drift gate and get the structured `{ ok, typecheck, diagnostics[] }`
   result with suggestions, so the agent verifies its own work and fixes each diagnostic before finishing.
 - **`nifra_assure`** — evaluate `nifra.assurance.ts` and return the complete per-route evidence report.
+- **`nifra_levels`** - compute the cumulative verification ladder (L0 typed contract, L1 route
+  assurance, L2 capability lockfile, L3 trust manifest, L4 contract invariants) and return
+  `{ achieved, levels[] }`, so an agent can see what its change proves and read why a level it lost
+  no longer holds.
 - **`nifra_doctor`** — catch imported packages missing from `package.json`; with `autoFix:true`, write
   safe dependency entries when a version can be inferred locally and return exact `bun add` commands
   for anything that needs a package-manager decision.
@@ -4959,7 +4963,7 @@ bun add @nifrajs/core
 ```
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 
 const app = server()
   .get("/users/:id", (c) => ({ id: c.params.id }))
@@ -4967,6 +4971,16 @@ const app = server()
   .listen(3000)
 
 export type App = typeof app // hand this to @nifrajs/client for end-to-end types
+```
+
+`@nifrajs/core/server` is the lean common-runtime entry and is the recommended import for new apps.
+The package root remains a backwards-compatible full barrel, but it eagerly loads opt-in systems that
+an ordinary HTTP server does not need. Import those features from their explicit seams instead:
+
+```ts
+import { defineContract, implement } from "@nifrajs/core/contract"
+import { startCausality } from "@nifrajs/core/causality"
+import { defineAssurancePolicy } from "@nifrajs/core/assurance"
 ```
 
 - **Inline or contract-first.** Write routes inline (types inferred from the
@@ -5094,7 +5108,7 @@ deno add npm:@nifrajs/deno   # or import npm:@nifrajs/deno directly
 ```
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { serve } from "@nifrajs/deno"
 
 const app = server().get("/users/:id", (c) => ({ id: c.params.id }))
@@ -5433,7 +5447,7 @@ bun add @nifrajs/middleware
 ```
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import {
   bodyLimit,
   cors,
@@ -5520,7 +5534,7 @@ bun add @nifrajs/node   # or: npm add @nifrajs/node
 ```
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { serve } from "@nifrajs/node"
 
 const app = server().get("/users/:id", (c) => ({ id: c.params.id }))
@@ -5727,7 +5741,7 @@ bun add @nifrajs/schema
 ```
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { t, toOpenAPI } from "@nifrajs/schema"
 
 const app = server().post("/users", { body: t.object({ name: t.string(), age: t.integer() }) }, (c) => ({

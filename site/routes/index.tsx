@@ -14,7 +14,7 @@ export const meta = pageMeta(
 export const hydrate = false
 export const islandScripts = [HOME_COUNTER_ENTRY]
 
-const BACKEND_CODE = `import { server } from "@nifrajs/core"
+const BACKEND_CODE = `import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
 // A typed API — no frontend required. Use nifra like Hono or Elysia.
@@ -63,7 +63,7 @@ export default { port: 3000, fetch: app.fetch }
 // Deno            import { serve } from "@nifrajs/deno"   → serve(app, { port: 3000 })
 
 // Cloudflare Workers / Pages · Vercel edge
-import { toFetchHandler } from "@nifrajs/core"
+import { toFetchHandler } from "@nifrajs/core/server"
 export default toFetchHandler(app)`
 
 // The five UI adapters, shown as a CSS-only switcher: the SAME routes/loaders/actions/islands —
@@ -194,10 +194,10 @@ export const GetUserSchema = {
   },
   {
     step: "02",
-    pkg: "@nifrajs/core",
+    pkg: "@nifrajs/core/server",
     title: "Mount the Typed Router",
     body: "Implement the endpoint. Path parameters are automatically parsed from the literal path, and the incoming request body and query parameters are typechecked at the runtime boundary.",
-    code: `import { server } from "@nifrajs/core"
+    code: `import { server } from "@nifrajs/core/server"
 import { GetUserSchema } from "./schema"
 
 export const app = server()

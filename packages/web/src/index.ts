@@ -7,12 +7,13 @@
  * the adapter interprets them. That keeps this package both framework-agnostic and free
  * of DOM types: it is pure server orchestration + string building.
  */
-import { server } from "@nifrajs/core"
+
 import {
   type BackendMount,
   type BackendMountHandler,
   NIFRA_BACKEND_MOUNT,
 } from "@nifrajs/core/mount"
+import { server } from "@nifrajs/core/server"
 import {
   DEFERRED_ERROR_CODE,
   DEFERRED_RUNTIME,

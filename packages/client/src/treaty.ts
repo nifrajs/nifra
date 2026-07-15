@@ -1,4 +1,4 @@
-import type { RouteInfo, Server } from "@nifrajs/core"
+import type { RouteInfo, Server } from "@nifrajs/core/server"
 import type { Jsonify } from "./jsonify.ts"
 import type { Result } from "./result.ts"
 

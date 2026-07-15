@@ -5,14 +5,14 @@
  * transport (queue, SSE, webhook, an outbox relay) is somebody else's concern.
  */
 
+import { type CausalityContext, parseCausalityContext } from "@nifrajs/core/causality"
 import {
   type InferInput,
   type InferOutput,
   type StandardIssue,
   type StandardSchemaV1,
   validateStandard,
-} from "@nifrajs/core"
-import { type CausalityContext, parseCausalityContext } from "@nifrajs/core/causality"
+} from "@nifrajs/core/schema"
 
 /** The portable wire shape: identity + versioned type + timestamp + validated payload. */
 export interface EventEnvelope<Payload = unknown> {

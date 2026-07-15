@@ -1,4 +1,4 @@
-import { definePlugin, METHODS, type Method } from "@nifrajs/core"
+import { definePlugin, METHODS, type Method } from "@nifrajs/core/server"
 import { jsonError } from "./_utils.ts"
 
 export interface MethodOverrideOptions {

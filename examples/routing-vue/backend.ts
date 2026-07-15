@@ -1,4 +1,4 @@
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
 // In-memory demo state — single-process example only, NOT a production pattern (a real app

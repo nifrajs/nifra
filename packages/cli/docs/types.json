@@ -266,7 +266,7 @@
     "name": "appendTrailingSlash",
     "kind": "function",
     "package": "@nifrajs/middleware",
-    "signature": "export declare function appendTrailingSlash(options?: TrailingSlashOptions): import(\"@nifrajs/core\").NifraPlugin<import(\"@nifrajs/core\").AnyServer, import(\"@nifrajs/core\").AnyServer>;",
+    "signature": "export declare function appendTrailingSlash(options?: TrailingSlashOptions): import(\"@nifrajs/core/server\").NifraPlugin<import(\"@nifrajs/core/server\").AnyServer, import(\"@nifrajs/core/server\").AnyServer>;",
     "doc": "/**\n * Append a trailing slash to non-root paths. By default it skips file-looking paths such as\n * `/app.css`, which keeps static assets and extensionful API routes stable.\n */"
   },
   {
@@ -646,7 +646,7 @@
     "name": "betterAuth",
     "kind": "function",
     "package": "@nifrajs/better-auth",
-    "signature": "export declare function betterAuth(auth: BetterAuthLike, options?: BetterAuthOptions): import(\"@nifrajs/core\").IdentityPlugin;",
+    "signature": "export declare function betterAuth(auth: BetterAuthLike, options?: BetterAuthOptions): import(\"@nifrajs/core/server\").IdentityPlugin;",
     "doc": "/**\n * Mount a better-auth instance into a nifra app: registers its handler at `${basePath}/*`\n * (default `/api/auth/*`) for `GET` + `POST`, so every better-auth endpoint — sign-in/up/out, OAuth\n * callbacks, session, 2FA, magic links, … — is served by your nifra server.\n *\n * ```ts\n * import { betterAuth, requireSession } from \"@nifrajs/better-auth\"\n * import { auth } from \"./auth\"           // your configured better-auth instance\n *\n * const app = server().use(betterAuth(auth))            // wires /api/auth/*\n *   .get(\"/me\", async (c) => (await requireSession(auth, c.req)).user)\n * ```\n *\n * Idempotent (named `\"better-auth\"` — applying twice mounts once). Read the session with\n * {@link getSession} / {@link requireSession}, which infer your better-auth types.\n */"
   },
   {
@@ -875,7 +875,7 @@
     "name": "cacheControl",
     "kind": "function",
     "package": "@nifrajs/middleware",
-    "signature": "export declare function cacheControl(value: string | ((request: Request) => string | undefined), options?: CacheControlOptions): import(\"@nifrajs/core\").NifraPlugin<import(\"@nifrajs/core\").AnyServer, import(\"@nifrajs/core\").AnyServer>;",
+    "signature": "export declare function cacheControl(value: string | ((request: Request) => string | undefined), options?: CacheControlOptions): import(\"@nifrajs/core/server\").NifraPlugin<import(\"@nifrajs/core/server\").AnyServer, import(\"@nifrajs/core/server\").AnyServer>;",
     "doc": "/**\n * Set a `Cache-Control` header on matching responses. `value` is either a fixed directive string or a\n * function of the request (return `undefined` to leave a response untouched — e.g. cache by path).\n * Defaults to `GET`/`HEAD` + 2xx, and never clobbers a `Cache-Control` the handler set itself.\n *\n * ```ts\n * app.use(cacheControl(\"public, max-age=3600, stale-while-revalidate=60\"))\n * // or per-path:\n * app.use(cacheControl((req) =>\n *   new URL(req.url).pathname.startsWith(\"/assets/\") ? \"public, max-age=31536000, immutable\" : undefined,\n * ))\n * ```\n */"
   },
   {
@@ -1585,7 +1585,7 @@
     "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface CompiledRoutePattern {\n    readonly [COMPILED_ROUTE_PATTERN]: true;\n    readonly pattern: string;\n    readonly segments: readonly RoutePatternSegment[];\n    readonly paramNames: readonly string[];\n}",
-    "doc": "/**\n * Compiled route grammar shared by runtime routers, browser navigation, mocks, and adapters.\n *\n * The result and its two arrays are frozen because every consumer shares one instance, so a stray\n * write would re-route an app globally rather than locally. That costs ~0.8us per route at\n * registration and nothing at request time. Individual segments are left unfrozen: the array freeze\n * already blocks structural edits, and deep-freezing every segment measured 3.7x the parse for a\n * field nothing writes.\n */"
+    "doc": "/**\n * Compiled route grammar shared by runtime routers, browser navigation, mocks, and adapters.\n *\n * The result, its two arrays, and every segment are frozen because consumers share one instance. In\n * particular, a segment must not diverge from the lazily cached regex after first match. The measured\n * sub-microsecond cost per route is paid only at registration and preserves that runtime invariant.\n */"
   },
   {
     "name": "compileRoutePattern",
@@ -1653,7 +1653,7 @@
     "name": "compression",
     "kind": "function",
     "package": "@nifrajs/middleware",
-    "signature": "export declare function compression(options?: CompressionOptions): import(\"@nifrajs/core\").NifraPlugin<import(\"@nifrajs/core\").AnyServer, import(\"@nifrajs/core\").AnyServer>;",
+    "signature": "export declare function compression(options?: CompressionOptions): import(\"@nifrajs/core/server\").NifraPlugin<import(\"@nifrajs/core/server\").AnyServer, import(\"@nifrajs/core/server\").AnyServer>;",
     "doc": "/**\n * Transparently **gzip** responses when the client sends `Accept-Encoding: gzip` and the body is a\n * compressible type larger than `threshold`. Uses the Web-standard `CompressionStream` (streaming, no\n * full-body buffering), so it runs on every nifra runtime including the edge. gzip is the one encoding\n * `CompressionStream` guarantees everywhere; brotli isn't part of the standard, so it's not offered.\n *\n * The body is **peeked** up to `threshold` bytes to enforce the size floor: a response that ends below\n * the threshold is sent uncompressed (gzip's ~20-byte overhead would enlarge it), and only larger\n * bodies are compressed — the buffered prefix is replayed and the remainder streamed. (Runtimes rarely\n * set `Content-Length` on a constructed `Response`, so the header alone can't gate this.)\n *\n * Skips: clients that don't accept gzip, already-encoded responses, bodyless responses (204/304/HEAD),\n * `Range` responses (206 / `Content-Range`), `Cache-Control: no-transform`, and non-compressible types.\n * Adds `Vary: Accept-Encoding`.\n *\n * ```ts\n * app.use(compression())\n * ```\n */"
   },
   {
@@ -2629,7 +2629,7 @@
     "name": "devtools",
     "kind": "function",
     "package": "@nifrajs/devtools",
-    "signature": "export declare function devtools(options?: DevToolsOptions | undefined): import(\"@nifrajs/core\").NifraPlugin<import(\"@nifrajs/core\").AnyServer, import(\"@nifrajs/core\").AnyServer>;",
+    "signature": "export declare function devtools(options?: DevToolsOptions | undefined): import(\"@nifrajs/core/server\").NifraPlugin<import(\"@nifrajs/core/server\").AnyServer, import(\"@nifrajs/core/server\").AnyServer>;",
     "doc": "/**\n * DevTools plugin. Its observation adapter projects the single request span into a\n * `DevToolsEvent`; its middleware only owns the secured SSE transport.\n * When configuring `tracing()` yourself, register it before this plugin so DevTools attaches to\n * that request owner.\n */"
   },
   {
@@ -3008,7 +3008,7 @@
     "name": "etag",
     "kind": "function",
     "package": "@nifrajs/middleware",
-    "signature": "export declare function etag(options?: ETagOptions): import(\"@nifrajs/core\").NifraPlugin<import(\"@nifrajs/core\").AnyServer, import(\"@nifrajs/core\").AnyServer>;",
+    "signature": "export declare function etag(options?: ETagOptions): import(\"@nifrajs/core/server\").NifraPlugin<import(\"@nifrajs/core/server\").AnyServer, import(\"@nifrajs/core/server\").AnyServer>;",
     "doc": "/**\n * A {@link definePlugin} plugin that adds a content-hash `ETag` to `GET` `200` responses and returns\n * **`304 Not Modified`** when the client's `If-None-Match` matches — saving bandwidth on unchanged\n * responses. It reads and rebuilds small bodies only; larger responses pass through unchanged.\n * Idempotent.\n */"
   },
   {
@@ -3682,7 +3682,7 @@
     "name": "healthcheck",
     "kind": "function",
     "package": "@nifrajs/middleware",
-    "signature": "export declare function healthcheck(options?: HealthcheckOptions): import(\"@nifrajs/core\").NifraPlugin<import(\"@nifrajs/core\").AnyServer, import(\"@nifrajs/core\").AnyServer>;",
+    "signature": "export declare function healthcheck(options?: HealthcheckOptions): import(\"@nifrajs/core/server\").NifraPlugin<import(\"@nifrajs/core/server\").AnyServer, import(\"@nifrajs/core/server\").AnyServer>;",
     "doc": "/**\n * Register **liveness** (`/health`) and **readiness** (`/ready`) endpoints. Liveness is a flat `200`\n * (the process is serving). Readiness runs each `check` and returns `200 { status: \"ok\", checks }`\n * when all pass, or `503 { status: \"error\", checks }` when any fail (a thrown check counts as failed).\n * Both are `Cache-Control: no-store`.\n *\n * Apply it **before** auth guards so the endpoints stay public (`beforeHandle` is order-scoped):\n *\n * ```ts\n * app.use(healthcheck({ checks: { db: () => db.ping() } })).use(bearer({ verify }))\n * ```\n */"
   },
   {
@@ -4631,7 +4631,7 @@
     "name": "language",
     "kind": "function",
     "package": "@nifrajs/middleware",
-    "signature": "export declare function language<const L extends readonly string[]>(options: LanguageOptions<L>): import(\"@nifrajs/core\").NifraPlugin<import(\"@nifrajs/core\").AnyServer, import(\"@nifrajs/core\").Server<any, any>>;",
+    "signature": "export declare function language<const L extends readonly string[]>(options: LanguageOptions<L>): import(\"@nifrajs/core/server\").NifraPlugin<import(\"@nifrajs/core/server\").AnyServer, import(\"@nifrajs/core/server\").Server<any, any>>;",
     "doc": "/**\n * Derives `c.language` from `Accept-Language` and emits `Content-Language` by default.\n */"
   },
   {
@@ -4839,7 +4839,7 @@
     "name": "logger",
     "kind": "function",
     "package": "@nifrajs/middleware",
-    "signature": "export declare function logger(options?: LoggerOptions): import(\"@nifrajs/core\").NifraPlugin<import(\"@nifrajs/core\").AnyServer, import(\"@nifrajs/core\").AnyServer>;",
+    "signature": "export declare function logger(options?: LoggerOptions): import(\"@nifrajs/core/server\").NifraPlugin<import(\"@nifrajs/core/server\").AnyServer, import(\"@nifrajs/core/server\").AnyServer>;",
     "doc": "/**\n * A {@link definePlugin} plugin that logs one structured line per request — method, path, status,\n * and duration — via `onRequest`/`onResponse` (so it covers 404s and errors too). The start time is\n * paired to the request through a `WeakMap` (no per-request allocation leak). Idempotent.\n */"
   },
   {
@@ -5299,7 +5299,7 @@
     "name": "methodOverride",
     "kind": "function",
     "package": "@nifrajs/middleware",
-    "signature": "export declare function methodOverride(options?: MethodOverrideOptions): import(\"@nifrajs/core\").NifraPlugin<import(\"@nifrajs/core\").AnyServer, import(\"@nifrajs/core\").AnyServer>;",
+    "signature": "export declare function methodOverride(options?: MethodOverrideOptions): import(\"@nifrajs/core/server\").NifraPlugin<import(\"@nifrajs/core/server\").AnyServer, import(\"@nifrajs/core/server\").AnyServer>;",
     "doc": "/**\n * HTTP method override for clients that can only send `POST`. The middleware rewrites the request\n * before routing, so handlers, validation, and response hooks all see the overridden method.\n *\n * Header override is enabled by default; query override is opt-in. Form-body override is deliberately\n * not implemented because reading the body before routing would consume or buffer it for every write.\n */"
   },
   {
@@ -5768,7 +5768,7 @@
     "name": "openapi",
     "kind": "function",
     "package": "@nifrajs/middleware",
-    "signature": "export declare function openapi(options?: OpenApiOptions): import(\"@nifrajs/core\").NifraPlugin<import(\"@nifrajs/core\").AnyServer, import(\"@nifrajs/core\").AnyServer>;",
+    "signature": "export declare function openapi(options?: OpenApiOptions): import(\"@nifrajs/core/server\").NifraPlugin<import(\"@nifrajs/core/server\").AnyServer, import(\"@nifrajs/core/server\").AnyServer>;",
     "doc": "/**\n * Serve an OpenAPI 3.1 document (a structural subset — see {@link buildOpenApiDocument}) at\n * `options.path` (default `/openapi.json`), generated from the app's registered routes. Generation is\n * **lazy + memoized**: it reads `app.routes()` on the first request, by which point every route is\n * registered — so the plugin's own position in the chain doesn't matter.\n *\n * Pass `ui: true` (or `ui: { path, title, cdn }`) to also serve a Scalar API-reference page (default\n * `/reference`) that renders the spec. The page loads Scalar from a CDN; pin/self-host via `ui.cdn`,\n * and remember to allow that origin if you ship a `script-src` Content-Security-Policy.\n *\n * ```ts\n * app.use(openapi({ info: { title: \"My API\", version: \"1.0.0\" }, ui: true }))\n * ```\n */"
   },
   {
@@ -6293,7 +6293,7 @@
     "name": "prettyJson",
     "kind": "function",
     "package": "@nifrajs/middleware",
-    "signature": "export declare function prettyJson(options?: PrettyJsonOptions): import(\"@nifrajs/core\").NifraPlugin<import(\"@nifrajs/core\").AnyServer, import(\"@nifrajs/core\").AnyServer>;",
+    "signature": "export declare function prettyJson(options?: PrettyJsonOptions): import(\"@nifrajs/core/server\").NifraPlugin<import(\"@nifrajs/core/server\").AnyServer, import(\"@nifrajs/core/server\").AnyServer>;",
     "doc": "/**\n * Pretty-print JSON responses for debugging and developer-facing APIs. It only touches JSON content,\n * skips encoded responses, caps inspection size, and leaves invalid JSON untouched.\n */"
   },
   {
@@ -6940,7 +6940,7 @@
     "name": "requestId",
     "kind": "function",
     "package": "@nifrajs/middleware",
-    "signature": "export declare function requestId(options?: RequestIdOptions): import(\"@nifrajs/core\").NifraPlugin<import(\"@nifrajs/core\").AnyServer, import(\"@nifrajs/core\").Server<any, any>>;",
+    "signature": "export declare function requestId(options?: RequestIdOptions): import(\"@nifrajs/core/server\").NifraPlugin<import(\"@nifrajs/core/server\").AnyServer, import(\"@nifrajs/core/server\").Server<any, any>>;",
     "doc": "/**\n * A {@link definePlugin} plugin that gives every request a stable id: it reuses an inbound\n * `x-request-id` (or generates one), exposes it on the handler context as **`c.requestId`** (typed,\n * threaded by `derive`), and echoes it on the response header. Idempotent — applying it twice is a\n * no-op.\n *\n * ```ts\n * app.use(requestId())          // c.requestId available downstream; X-Request-Id on responses\n * ```\n */"
   },
   {
@@ -8920,7 +8920,7 @@
     "name": "timing",
     "kind": "function",
     "package": "@nifrajs/middleware",
-    "signature": "export declare function timing(options?: TimingOptions): import(\"@nifrajs/core\").NifraPlugin<import(\"@nifrajs/core\").AnyServer, import(\"@nifrajs/core\").Server<any, any>>;",
+    "signature": "export declare function timing(options?: TimingOptions): import(\"@nifrajs/core/server\").NifraPlugin<import(\"@nifrajs/core/server\").AnyServer, import(\"@nifrajs/core/server\").Server<any, any>>;",
     "doc": "/**\n * Adds a `Server-Timing` response header and typed `c.timing` controls for custom metrics.\n * Put request-rewriting middleware (for example `methodOverride`) before `timing()` so timing is\n * attached to the final routed request.\n */"
   },
   {
@@ -9030,7 +9030,7 @@
     "name": "tracing",
     "kind": "function",
     "package": "@nifrajs/otel",
-    "signature": "export declare function tracing(options?: TracingOptions): import(\"@nifrajs/core\").NifraPlugin<import(\"@nifrajs/core\").AnyServer, import(\"@nifrajs/core\").Server<any, any>>;",
+    "signature": "export declare function tracing(options?: TracingOptions): import(\"@nifrajs/core/server\").NifraPlugin<import(\"@nifrajs/core/server\").AnyServer, import(\"@nifrajs/core/server\").Server<any, any>>;",
     "doc": "/**\n * Distributed-tracing plugin. Each request continues the inbound trace (or starts one), opens a\n * server span, and ends it on response with the status + HTTP attributes. Idempotent.\n *\n * ```ts\n * app.use(tracing({ exporter: myOtelExporter, serviceName: \"orders-api\" }))\n * // in a handler: fetch(url, { headers: traceHeaders(c.trace) })  // continue the trace downstream\n * ```\n */"
   },
   {
@@ -9077,7 +9077,7 @@
     "name": "trimTrailingSlash",
     "kind": "function",
     "package": "@nifrajs/middleware",
-    "signature": "export declare function trimTrailingSlash(options?: TrailingSlashOptions): import(\"@nifrajs/core\").NifraPlugin<import(\"@nifrajs/core\").AnyServer, import(\"@nifrajs/core\").AnyServer>;",
+    "signature": "export declare function trimTrailingSlash(options?: TrailingSlashOptions): import(\"@nifrajs/core/server\").NifraPlugin<import(\"@nifrajs/core/server\").AnyServer, import(\"@nifrajs/core/server\").AnyServer>;",
     "doc": "/**\n * Remove trailing slashes from non-root paths. Redirect mode is the production default because it\n * canonicalizes URLs for clients and caches; rewrite mode is available for compatibility migrations.\n */"
   },
   {

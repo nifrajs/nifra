@@ -6,7 +6,7 @@
  *   bun run examples/web-svelte/build.ts
  *   bun --preload examples/web-svelte/ssr-preload.ts examples/web-svelte/server.ts
  */
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { renderPage } from "@nifrajs/web"
 import { svelteAdapter } from "@nifrajs/web-svelte"
 import App from "./App.svelte"

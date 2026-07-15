@@ -1,4 +1,4 @@
-import { type AnyServer, defineIdentityPlugin } from "@nifrajs/core"
+import { type AnyServer, defineIdentityPlugin } from "@nifrajs/core/server"
 
 /**
  * The structural slice of a [better-auth](https://better-auth.com) instance this package needs.

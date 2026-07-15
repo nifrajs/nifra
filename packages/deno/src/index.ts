@@ -2,7 +2,7 @@
  * Run a nifra app (or any Web-`fetch` handler) on Deno via `Deno.serve`.
  *
  *   import { serve } from "@nifrajs/deno"
- *   import { server } from "@nifrajs/core"
+ *   import { server } from "@nifrajs/core/server"
  *   const app = server().get("/", () => ({ ok: true }))
  *   await serve(app, { port: 3000 })
  *

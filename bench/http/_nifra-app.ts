@@ -5,8 +5,8 @@
  * validation as every other framework's bench server.
  */
 
-import type { StandardResult, StandardSchemaV1, StandardTypes } from "@nifrajs/core"
-import { server } from "@nifrajs/core"
+import type { StandardResult, StandardSchemaV1, StandardTypes } from "@nifrajs/core/server"
+import { server } from "@nifrajs/core/server"
 
 function isUser(v: unknown): v is { name: string; age: number } {
   return (

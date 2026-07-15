@@ -1,4 +1,4 @@
-import type { Middleware } from "@nifrajs/core"
+import type { Middleware } from "@nifrajs/core/server"
 import { withHeaders } from "./_utils.ts"
 
 export interface PoweredByOptions {

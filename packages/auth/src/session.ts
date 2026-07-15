@@ -9,7 +9,7 @@
  * cookie is always `HttpOnly`. Reads **fail closed** — a tampered/missing/expired cookie yields a fresh
  * anonymous session, never an error.
  */
-import { type CookieOptions, parseCookies, signValue, unsignValue } from "@nifrajs/core"
+import { type CookieOptions, parseCookies, signValue, unsignValue } from "@nifrajs/core/cookies"
 import type { SessionRecord, SessionStore } from "./store.ts"
 
 /** The cookie + response surface the manager needs — a structural subset of nifra's `Context`, so any

@@ -1,8 +1,10 @@
 /**
- * @nifrajs/core — Bun-native, contract-first HTTP framework.
+ * @nifrajs/core — backwards-compatible full framework barrel.
  *
- * The router is the perf-critical heart; the server and inline API are built on
- * the unified route descriptor.
+ * New server applications should import the common runtime from
+ * `@nifrajs/core/server` and opt-in systems from their dedicated subpaths. This
+ * root keeps every historical export available, which is convenient but makes
+ * direct runtime imports parse the complete feature graph.
  */
 
 /**

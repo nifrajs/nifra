@@ -10,10 +10,10 @@ import {
   type CausalityRecorder,
   causalityHeaders,
   continueCausality,
-  definePlugin,
   readCausalityHeaders,
   startCausality,
-} from "@nifrajs/core"
+} from "@nifrajs/core/causality"
+import { definePlugin } from "@nifrajs/core/server"
 import {
   type ActiveObservation,
   createObservationLifecycle,

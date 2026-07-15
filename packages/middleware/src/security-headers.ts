@@ -1,5 +1,5 @@
-import type { Middleware } from "@nifrajs/core"
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
+import type { Middleware } from "@nifrajs/core/server"
 import { withHeaders } from "./_utils.ts"
 
 export interface SecurityHeadersOptions {

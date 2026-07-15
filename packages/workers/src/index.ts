@@ -8,8 +8,7 @@
  * with their normal nifra semantics. Route upgrades to it with `toFetchHandler(app, { webSocketHub })`.
  *
  *   // worker.ts
- *   import { server } from "@nifrajs/core"
- *   import { toFetchHandler } from "@nifrajs/core"
+ *   import { server, toFetchHandler } from "@nifrajs/core/server"
  *   import { createWebSocketHub } from "@nifrajs/workers"
  *
  *   const app = server().ws("/chat", {
@@ -31,7 +30,7 @@
 // The `/ws` subpath registers core's WebSocket runtime as a side effect — so importing the hub is
 // enough to enable `app.ws()`; worker entries don't need a separate `import "@nifrajs/core/ws"`.
 
-import type { StandardWebSocket, WebSocketUpgradeOutcome } from "@nifrajs/core"
+import type { StandardWebSocket, WebSocketUpgradeOutcome } from "@nifrajs/core/server"
 import { attachWebSocket } from "@nifrajs/core/ws"
 
 /** The nifra-app surface the hub needs — every `server()` app satisfies it. */

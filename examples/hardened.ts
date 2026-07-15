@@ -4,7 +4,7 @@
  *
  *   bun run examples/hardened.ts
  */
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { cors, MemoryStore, rateLimit, securityHeaders } from "@nifrajs/middleware"
 
 const app = server()

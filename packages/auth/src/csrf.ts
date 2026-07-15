@@ -4,7 +4,7 @@
  * a cross-origin or same-origin *unsafe* request; it must match an allowed origin, else `403`. Safe
  * methods (GET/HEAD/OPTIONS) pass. Apply with `app.use(csrf({ origins: ["https://example.com"] }))`.
  */
-import type { Middleware } from "@nifrajs/core"
+import type { Middleware } from "@nifrajs/core/server"
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
 

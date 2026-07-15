@@ -1,4 +1,4 @@
-import { definePlugin } from "@nifrajs/core"
+import { definePlugin } from "@nifrajs/core/server"
 
 export interface CompressionOptions {
   /** Don't compress bodies smaller than this many bytes. Default `1024`. Enforced by peeking the body

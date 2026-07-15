@@ -1,4 +1,4 @@
-import type { ContractShape, Server } from "@nifrajs/core"
+import type { ContractShape } from "@nifrajs/core/contract"
 import {
   type JsonSchema,
   type ReflectedRouteSchema,
@@ -6,6 +6,7 @@ import {
   reflectSchema,
   type SchemaReflection,
 } from "@nifrajs/core/reflection"
+import type { Server } from "@nifrajs/core/server"
 
 /**
  * OpenAPI 3.1 generation. We model a practical slice of the spec — enough to feed Swagger UI / codegen

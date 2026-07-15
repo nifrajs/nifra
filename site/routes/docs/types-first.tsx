@@ -22,7 +22,7 @@ export const GetUser = {
   }),
 }`
 
-const ROUTE = `import { server } from "@nifrajs/core"
+const ROUTE = `import { server } from "@nifrajs/core/server"
 import { GetUser } from "./schema"
 
 export const app = server().get("/users/:id", GetUser, (c) => {
@@ -43,7 +43,7 @@ if (res.ok) {
   res.error            // client-call failures are returned, never thrown
 }`
 
-const OPENAPI = `import { server } from "@nifrajs/core"
+const OPENAPI = `import { server } from "@nifrajs/core/server"
 import { openapi } from "@nifrajs/middleware"
 import { GetUser } from "./schema"   // the contract defined above
 

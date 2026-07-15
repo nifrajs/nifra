@@ -1,4 +1,4 @@
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 import { desc, eq } from "drizzle-orm"
 import { db, ready } from "./db"

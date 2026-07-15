@@ -10,7 +10,7 @@
  *   Cloudflare Workers: export default toFetchHandler(app)       (per-connection only; broadcast
  *                       across clients needs a Durable Object — see the WebSockets guide)
  */
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import "@nifrajs/core/ws" // registers the WebSocket runtime app.ws() needs (kept out of no-WS bundles)
 
 const PAGE = /* html */ `<!doctype html><meta charset=utf-8><title>nifra chat</title>

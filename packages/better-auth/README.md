@@ -30,7 +30,7 @@ export const auth = createBetterAuth({
 
 ```ts
 // server.ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { betterAuth } from "@nifrajs/better-auth"
 import { auth } from "./auth"
 

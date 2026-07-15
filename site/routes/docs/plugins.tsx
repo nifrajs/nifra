@@ -11,7 +11,7 @@ export const meta = pageMeta(
 )
 
 const PLUGIN = `// doc-check: skip — fragment: the outer \`app\`, \`verify\`, and \`db\` are your application's.
-import { definePlugin } from "@nifrajs/core"
+import { definePlugin } from "@nifrajs/core/server"
 
 // A plugin is just (app) => app — call use/derive/decorate or register routes.
 // definePlugin adds a name so applying it twice (even transitively) is a no-op.
@@ -26,7 +26,7 @@ app
 // Inline plugins thread context too — no definePlugin needed for one-offs:
 app.use((a) => a.decorate("db", db).derive((c) => ({ now: Date.now() })))`
 
-const MIDDLEWARE = `import { server } from "@nifrajs/core"
+const MIDDLEWARE = `import { server } from "@nifrajs/core/server"
 import { cors, rateLimit, securityHeaders, MemoryStore } from "@nifrajs/middleware"
 
 // Hardening middleware is a hook bundle (context-agnostic) — same app.use():
@@ -36,7 +36,7 @@ const app = server()
   // MemoryStore is dev/single-instance only — use a shared store (Redis, etc.) in production.
   .use(rateLimit({ store: new MemoryStore(), max: 100, windowMs: 60_000 }))`
 
-const OFFICIAL = `import { server } from "@nifrajs/core"
+const OFFICIAL = `import { server } from "@nifrajs/core/server"
 import { requestId, logger, etag } from "@nifrajs/middleware"
 
 const app = server()
@@ -58,7 +58,7 @@ app.use(apiKey({ keys: [process.env.API_KEY!] }))              // matched key be
 // …or custom (DB-backed) verification; 'optional' lets unauthenticated requests through:
 app.use(apiKey({ verify: (key) => db.apiKeys.find(key), optional: true }))`
 
-const PERF = `import { server } from "@nifrajs/core"
+const PERF = `import { server } from "@nifrajs/core/server"
 import { compression, cacheControl } from "@nifrajs/middleware"
 
 const app = server()
@@ -79,7 +79,7 @@ app
   // GET /openapi.json from your routes (paths, methods, params); ui adds a Scalar page at /reference.
   .use(openapi({ info: { title: "My API", version: "1.0.0" }, ui: true }))`
 
-const RELIABILITY = `import { server } from "@nifrajs/core"
+const RELIABILITY = `import { server } from "@nifrajs/core/server"
 import { idempotency, MemoryIdempotencyStore } from "@nifrajs/middleware"
 
 // A retried POST with the same Idempotency-Key replays the first response instead of
@@ -87,7 +87,7 @@ import { idempotency, MemoryIdempotencyStore } from "@nifrajs/middleware"
 const app = server()
 app.use(idempotency({ store: new MemoryIdempotencyStore() }))`
 
-const JWT_BASIC = `import { server } from "@nifrajs/core"
+const JWT_BASIC = `import { server } from "@nifrajs/core/server"
 import { jwt, jwks, basicAuth } from "@nifrajs/middleware"
 
 // JWT (WebCrypto): an explicit algorithm allowlist is REQUIRED; alg:none and RSA/HMAC confusion are rejected.
@@ -100,7 +100,7 @@ const app = server()
 // HTTP Basic — static creds compared in CONSTANT TIME (SHA-256 + timing-safe), or a verify callback.
 app.use(basicAuth({ username: "admin", password: process.env.PASS!, realm: "staging" }))`
 
-const CACHING = `import { server } from "@nifrajs/core"
+const CACHING = `import { server } from "@nifrajs/core/server"
 import { cache, MemoryResponseCache, prettyJson } from "@nifrajs/middleware"
 
 // Full response cache: pluggable store, Vary-aware keys, byte cap. Bypasses Set-Cookie and respects
@@ -109,7 +109,7 @@ const app = server()
 app.use(cache({ store: new MemoryResponseCache(), ttlMs: 30_000, vary: ["accept-language"] }))
 app.use(prettyJson())   // pretty-print JSON responses (size-capped; optional ?pretty query toggle)`
 
-const SHAPING = `import { server } from "@nifrajs/core"
+const SHAPING = `import { server } from "@nifrajs/core/server"
 import { methodOverride, trimTrailingSlash, language, timing, poweredBy, combine } from "@nifrajs/middleware"
 
 const app = server()
@@ -127,7 +127,7 @@ createWebApp({
 // Fires before the nearest _error boundary renders — so errors the boundary
 // would hide still reach your reporter. (Control-flow redirects aren't reported.)`
 
-const IDENTITY = `import { defineRouterPlugin, server } from "@nifrajs/core"
+const IDENTITY = `import { defineRouterPlugin, server } from "@nifrajs/core/server"
 
 // A plugin that mounts routes/hooks but adds NO context type: defineRouterPlugin (the clearer name for
 // defineIdentityPlugin) keeps app.use()'s return type EXACTLY the caller's server, so routes added after

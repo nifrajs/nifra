@@ -29,7 +29,7 @@ export default function Page(props: { data: LoaderData<typeof loader> }) {
   )
 }`
 
-const SSE = `import { server, sse } from "@nifrajs/core"
+const SSE = `import { server, sse } from "@nifrajs/core/server"
 
 const app = server()
 // Your pub-sub of choice — subscribe returns an unsubscribe function.

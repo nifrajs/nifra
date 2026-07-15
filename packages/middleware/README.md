@@ -9,7 +9,7 @@ bun add @nifrajs/middleware
 ```
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import {
   bodyLimit,
   cors,

@@ -18,7 +18,7 @@
  * runtime is a trivial pass-through — all the work is in the types. It checks the field KEY, never the
  * MEANING (a `field("email")` collecting a phone is still valid here); that stays an app/AI concern.
  */
-import type { RouteInfo, Server } from "@nifrajs/core"
+import type { RouteInfo, Server } from "@nifrajs/core/server"
 
 // Derived from `FormData` itself (not the `FormDataEntryValue` global) so this file stays DOM-lib-free:
 // `@nifrajs/web`'s server surface is typechecked by the root config, which has no DOM lib.

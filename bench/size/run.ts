@@ -77,7 +77,7 @@ function table(title: string, rows: ReadonlyArray<Size>, baseline?: string): voi
 const SERVER: Record<string, string> = {
   "bun-raw": `const routes = { "/": () => Response.json({ hello: "world" }) }
 export default { fetch(req: Request) { const u = new URL(req.url); return (routes as Record<string, () => Response>)[u.pathname]?.() ?? new Response("nf", { status: 404 }) } }`,
-  nifra: `import { server } from "@nifrajs/core"
+  nifra: `import { server } from "@nifrajs/core/server"
 export default server().get("/", () => ({ hello: "world" })).get("/users/:id", (c) => ({ id: c.params.id }))`,
   hono: `import { Hono } from "hono"
 export default new Hono().get("/", (c) => c.json({ hello: "world" })).get("/users/:id", (c) => c.json({ id: c.req.param("id") }))`,

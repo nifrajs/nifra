@@ -1,5 +1,5 @@
-import { METHODS, type Middleware } from "@nifrajs/core"
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
+import { METHODS, type Middleware } from "@nifrajs/core/server"
 import {
   base64UrlEncode,
   hmacSha256,

@@ -6,7 +6,7 @@
  *   bun run examples/web-react/build.ts
  *   bun examples/web-react/server.ts        # no SSR preload — React JSX is Bun-native
  */
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { renderPage } from "@nifrajs/web"
 import { reactAdapter } from "@nifrajs/web-react"
 import { App, type PageData } from "./app.tsx"

@@ -1,4 +1,4 @@
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 
 /** Your app. Exported (without `listen`) so tests can drive it via `app.fetch`. */
 export const app = server()

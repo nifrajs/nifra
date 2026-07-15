@@ -1,4 +1,4 @@
-import { definePlugin } from "@nifrajs/core"
+import { definePlugin } from "@nifrajs/core/server"
 
 export interface LanguageMatch {
   readonly language: string

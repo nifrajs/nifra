@@ -2,7 +2,7 @@
  * Run a nifra app (or any Web-`fetch` handler) on Node's `http` server.
  *
  *   import { serve } from "@nifrajs/node"
- *   import { server } from "@nifrajs/core"
+ *   import { server } from "@nifrajs/core/server"
  *   const app = server().get("/", () => ({ ok: true }))
  *   serve(app, { port: 3000 })
  *

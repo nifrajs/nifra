@@ -1,4 +1,9 @@
-import type { StandardIssue, StandardResult, StandardSchemaV1, StandardTypes } from "@nifrajs/core"
+import type {
+  StandardIssue,
+  StandardResult,
+  StandardSchemaV1,
+  StandardTypes,
+} from "@nifrajs/core/schema"
 import type { Static, TSchema } from "@sinclair/typebox"
 import { type TypeCheck, TypeCompiler } from "@sinclair/typebox/compiler"
 import { Value } from "@sinclair/typebox/value"

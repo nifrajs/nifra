@@ -10,7 +10,7 @@ export const meta = pageMeta(
   "Bounded request bodies, magic-byte file-upload validation, constant-time webhook verification, and idempotency-key replay — the hardening primitives every production app needs, built in.",
 )
 
-const BOUNDED = `import { server } from "@nifrajs/core"
+const BOUNDED = `import { server } from "@nifrajs/core/server"
 
 const app = server()
 
@@ -67,7 +67,7 @@ import { bunImageBackend } from "@nifrajs/image/backends"
 const clean = await stripImageMetadata(result.bytes, bunImageBackend())`
 
 const WEBHOOK = `// doc-check: skip — fragment: \`app\`, \`env\`, \`StripeEvent\`, and the rotation keys are your application's.
-import { verifyWebhook } from "@nifrajs/core"
+import { verifyWebhook } from "@nifrajs/core/webhook"
 
 app.post("/webhooks/stripe", async (c) => {
   // Reads the raw body BOUNDED (DoS guard), verifies the HMAC CONSTANT-TIME, and only
@@ -105,7 +105,7 @@ app.post("/charge", async (c) => {
 // retry, while the first is still in flight, gets 409 { error: "idempotency_in_progress" }.
 // Transient 5xx are NOT cached (a failed call stays retryable).`
 
-const GATING = `import { server } from "@nifrajs/core"
+const GATING = `import { server } from "@nifrajs/core/server"
 import { jwt, csrf, ipRestriction, bodyLimit } from "@nifrajs/middleware"
 
 const app = server()
@@ -175,7 +175,7 @@ capabilities: {
 // developer: nifra capabilities snapshot
 // CI:        nifra check && nifra assure && nifra capabilities check`
 
-const LOGGING = `import { server, jsonLogger, commonSecretPatterns } from "@nifrajs/core"
+const LOGGING = `import { server, jsonLogger, commonSecretPatterns } from "@nifrajs/core/server"
 
 // Key-name redaction is always on; valuePatterns adds opt-in value + message scanning.
 const app = server({

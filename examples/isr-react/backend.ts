@@ -1,4 +1,4 @@
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 
 // In-memory render counter — single-process demo only (a real backend would read its data from a
 // shared store). It increments on every *server render* of the page, so the ISR cache lifecycle is

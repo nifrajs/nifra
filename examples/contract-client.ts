@@ -5,7 +5,7 @@
  *   bun run examples/contract-client.ts
  */
 import { client } from "@nifrajs/client"
-import { defineContract, implement } from "@nifrajs/core"
+import { defineContract, implement } from "@nifrajs/core/contract"
 import { t } from "@nifrajs/schema"
 
 const contract = defineContract({

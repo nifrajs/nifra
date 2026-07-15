@@ -1,5 +1,5 @@
-import { definePlugin, type NifraPlugin } from "@nifrajs/core"
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
+import { definePlugin, type NifraPlugin } from "@nifrajs/core/server"
 
 type MaybePromise<T> = T | Promise<T>
 

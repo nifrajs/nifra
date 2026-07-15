@@ -9,6 +9,7 @@
     "paths": {
       "@nifrajs/web": ["../web/src/index.ts"],
       "@nifrajs/core": ["../core/src/index.ts"],
+      "@nifrajs/core/server": ["../core/src/server.ts"],
       "@nifrajs/core/pattern": ["../core/src/router/pattern.ts"],
       "@nifrajs/core/reflection": ["../core/src/reflection.ts"]
     }

@@ -8,7 +8,7 @@ the Workers `ExportedHandler` shape and threads the platform into the nifra cont
 - **`c.waitUntil(promise)`** — background work that outlives the response.
 
 ```ts
-import { server, toFetchHandler } from "@nifrajs/core"
+import { server, toFetchHandler } from "@nifrajs/core/server"
 interface Env {
   readonly GREETING?: string
 }
@@ -30,7 +30,7 @@ The same `app` is portable: `app.listen()` on Bun, `@nifrajs/node` on Node, `@ni
 
 > Monorepo note: when running this from the nifra monorepo (where `@nifrajs/core` isn't installed into
 > `node_modules`), point wrangler at the local build with an alias, e.g. add to `wrangler.toml`:
-> `alias = { "@nifrajs/core" = "../../packages/core/dist/index.js" }` (run `bun run build` first). In a
+> `alias = { "@nifrajs/core/server" = "../../packages/core/dist/server.js" }` (run `bun run build` first). In a
 > real project `@nifrajs/core` resolves from `node_modules` and no alias is needed.
 
 ## Frontend SSR on the edge

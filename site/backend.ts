@@ -1,4 +1,4 @@
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
 let count = 0
@@ -72,7 +72,7 @@ export const backend = server()
       const plural = entity === "weather" ? "weather" : `${entity}s`
       const capitalizedEntity = entity.charAt(0).toUpperCase() + entity.slice(1)
 
-      const code = `import { server } from "@nifrajs/core"
+      const code = `import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
 // Local memory store for playground simulation

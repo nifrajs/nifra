@@ -5,7 +5,7 @@
  *   bun run examples/web-vue/build.ts
  *   bun examples/web-vue/server.ts
  */
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { renderPage } from "@nifrajs/web"
 import { vueAdapter } from "@nifrajs/web-vue"
 import { App, type PageData } from "./app.ts"

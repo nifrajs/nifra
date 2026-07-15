@@ -1166,7 +1166,7 @@ export function generateServerEntry(options: {
   lines.push('import { clientEntry, manifest, styles, routeStyles } from "./server-manifest"')
   // cf-pages/vercel/deno need the fetch-handler shape; bun/node call app.fetch directly.
   const usesToFetch = target === "cf-pages" || target === "vercel" || target === "deno"
-  if (usesToFetch) lines.push('import { toFetchHandler } from "@nifrajs/core"')
+  if (usesToFetch) lines.push('import { toFetchHandler } from "@nifrajs/core/server"')
   if (target === "node") lines.push('import { serve } from "@nifrajs/node"')
   lines.push(
     "",

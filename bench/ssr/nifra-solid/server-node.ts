@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs"
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { serve } from "@nifrajs/node"
 import { renderPageResult } from "@nifrajs/web"
 import { solidAdapter } from "@nifrajs/web-solid"

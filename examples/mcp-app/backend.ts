@@ -6,7 +6,7 @@
  *   bun run examples/mcp-app/server.ts
  *   curl -s localhost:3000/mcp -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_orders"}}'
  */
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { createMcpServer, defineMcpTool } from "@nifrajs/mcp"
 import { reactWidget } from "@nifrajs/mcp/react"
 import { hostDemoPage } from "./host-demo"

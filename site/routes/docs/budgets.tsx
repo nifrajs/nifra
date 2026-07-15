@@ -8,7 +8,7 @@ export const meta = pageMeta(
   "Propagate one absolute deadline through Nifra requests and downstream adapters without resetting time at each hop.",
 )
 
-const SERVER = `import { server } from "@nifrajs/core"
+const SERVER = `import { server } from "@nifrajs/core/server"
 
 const app = server({
   requestTimeoutMs: 2_000,

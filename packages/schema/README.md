@@ -9,7 +9,7 @@ bun add @nifrajs/schema
 ```
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { t, toOpenAPI } from "@nifrajs/schema"
 
 const app = server().post("/users", { body: t.object({ name: t.string(), age: t.integer() }) }, (c) => ({

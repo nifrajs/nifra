@@ -6,7 +6,7 @@
  *   bun run examples/web-solid/build.ts                                    # build the client first
  *   bun --preload examples/web-solid/ssr-preload.ts examples/web-solid/server.ts
  */
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { renderPage } from "@nifrajs/web"
 import { solidAdapter } from "@nifrajs/web-solid"
 import { App, type PageData } from "./app.tsx"

@@ -1,4 +1,4 @@
-import { toFetchHandler } from "@nifrajs/core"
+import { toFetchHandler } from "@nifrajs/core/server"
 import { app } from "./app"
 
 // Cloudflare Workers. Workers Assets (wrangler.toml `assets`) serves /assets/* from ./public; the

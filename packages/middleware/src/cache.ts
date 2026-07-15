@@ -1,4 +1,4 @@
-import type { Middleware } from "@nifrajs/core"
+import type { Middleware } from "@nifrajs/core/server"
 import type { MaybePromise } from "./_utils.ts"
 
 export interface CachedResponse {

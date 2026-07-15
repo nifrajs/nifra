@@ -5,7 +5,7 @@
  * The only Workers-specific wiring is the two lines at the bottom + the wrangler.toml DO binding;
  * the `app.ws()` route is identical to the Bun/Deno/Node version.
  */
-import { type DurableObjectNamespaceLike, server, toFetchHandler } from "@nifrajs/core"
+import { type DurableObjectNamespaceLike, server, toFetchHandler } from "@nifrajs/core/server"
 import { createWebSocketHub } from "@nifrajs/workers"
 
 interface Env {

@@ -1,4 +1,4 @@
-import { definePlugin } from "@nifrajs/core"
+import { definePlugin } from "@nifrajs/core/server"
 
 export interface RequestIdOptions {
   /** Header read for an inbound id (trace propagation) + echoed on the response. Default `"x-request-id"`. */

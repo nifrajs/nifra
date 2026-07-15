@@ -1,4 +1,4 @@
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { renderPage } from "@nifrajs/web"
 import { solidAdapter } from "@nifrajs/web-solid"
 import { type CatalogPageData, catalogItems } from "../shared/catalog.ts"

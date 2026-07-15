@@ -1,4 +1,4 @@
-import type { ContractShape, RegistryFor } from "@nifrajs/core"
+import type { ContractShape, RegistryFor } from "@nifrajs/core/contract"
 import {
   type BackendMount,
   type BackendMountHandler,

@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks"
-import type { Context, Middleware } from "@nifrajs/core"
+import type { Context, Middleware } from "@nifrajs/core/server"
 
 const storage = new AsyncLocalStorage<Context>()
 

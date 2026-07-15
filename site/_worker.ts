@@ -1,6 +1,6 @@
 import { docsTools, type Example, respondMcpHttp, type TypeEntry } from "@nifrajs/cli/mcp"
 import { inProcessClient } from "@nifrajs/client"
-import { toFetchHandler } from "@nifrajs/core"
+import { toFetchHandler } from "@nifrajs/core/server"
 import { UI_MIME } from "@nifrajs/mcp"
 import { createWebApp } from "@nifrajs/web"
 import { reactAdapter } from "@nifrajs/web-react"

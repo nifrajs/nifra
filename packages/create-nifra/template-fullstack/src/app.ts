@@ -1,5 +1,5 @@
 import { createCache } from "@nifrajs/cache"
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { createQueue } from "@nifrajs/jobs"
 import { decodeCursor, paginate, t } from "@nifrajs/schema"
 import { MemoryStorage } from "@nifrajs/storage"

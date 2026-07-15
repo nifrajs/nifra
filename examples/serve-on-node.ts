@@ -6,7 +6,7 @@
  *   bun run examples/serve-on-node.ts
  *   node --experimental-strip-types examples/serve-on-node.ts   # real Node
  */
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { serve } from "@nifrajs/node"
 
 const app = server()

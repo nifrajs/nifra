@@ -14,7 +14,7 @@
  * When not registered, routes stay `bare` and the SSE endpoint doesn't exist.
  */
 
-import { definePlugin } from "@nifrajs/core"
+import { definePlugin } from "@nifrajs/core/server"
 import {
   type ActiveObservation,
   type NifraSpan,

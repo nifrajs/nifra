@@ -4,7 +4,7 @@
  *
  *   bun run examples/schema-openapi.ts
  */
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { t, toOpenAPI } from "@nifrajs/schema"
 
 const app = server().post(

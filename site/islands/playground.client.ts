@@ -9,7 +9,7 @@
  * the devtools console), and it never leaves the browser.
  */
 
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { type RunResult, runApp } from "@nifrajs/runner"
 import { t } from "@nifrajs/schema"
 import { decodeState, encodeState, readShareHash, shareHash } from "./share-codec"

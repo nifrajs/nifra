@@ -1,6 +1,6 @@
 /** The shared fixture app for the ops benches (p99 / soak / cold-boot): realistic mixed surface —
  * a bare route, a param route, a validated query, a validated JSON POST. */
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
 export const app = server()

@@ -5,7 +5,7 @@
  *   bun run bench/ssr/nifra/build.ts      # build dist/client.js (the JS payload)
  *   PORT=4200 bun run bench/ssr/nifra/server.ts
  */
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { renderPage } from "@nifrajs/web"
 import { reactAdapter } from "@nifrajs/web-react"
 import { type CatalogPageData, catalogItems } from "../shared/catalog.ts"

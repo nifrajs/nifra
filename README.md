@@ -21,7 +21,7 @@ bun create nifra my-app
 ## The backend
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
 export const app = server()
@@ -79,6 +79,7 @@ Once connected, the agent has fifteen tools — no setup per prompt:
 | `nifra_openapi` | OpenAPI 3.1 generated from backend route schemas, as JSON or YAML. |
 | `nifra_check` | Typecheck + drift lint, returned as **structured JSON** with safe fix suggestions. |
 | `nifra_assure` | Classify every route and verify required/forbidden enforcement evidence. |
+| `nifra_levels` | The cumulative verification ladder (L0 typed contract → L4 invariants): what the project proves, and why each level it misses does not hold. |
 | `nifra_doctor` | Flags undeclared imports and duplicate physical Nifra/React installs. |
 | `nifra_run` | Calls a route **in-process** (via `@nifrajs/runner`) — the agent self-verifies an endpoint without booting a server. |
 | `nifra_render` | Server-renders a page to HTML — verify SSR output. |
@@ -112,12 +113,16 @@ bun add @nifrajs/middleware      # CORS, security headers, rate limiting (option
 
 nifra is **ESM-only** and **Bun-native** (it uses `Bun.serve`). It runs on Bun; the client is environment-agnostic.
 
+Use `@nifrajs/core/server` for the ordinary HTTP runtime. The `@nifrajs/core` package root remains a
+compatibility barrel containing every feature; specialized systems such as contracts, causality,
+assurance, invariants, and manifests have dedicated subpaths so processes only parse what they use.
+
 ## Validate input with `t` (and get OpenAPI for free)
 
 `@nifrajs/schema`'s `t` is a TypeBox-backed builder: it validates at the request boundary *and* — because a TypeBox schema **is** a JSON Schema — generates OpenAPI with no extra work. Bring your own [Standard Schema][standard-schema] (zod, valibot, arktype) too; they validate identically.
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { t, toOpenAPI } from "@nifrajs/schema"
 
 const app = server().post("/users", { body: t.object({ name: t.string() }) }, (c) => ({
@@ -135,7 +140,7 @@ Invalid bodies are rejected with a structured `422` before your handler runs.
 When you want a decoupled, versionable API surface, lift the same routes into a contract. Handlers written inline lift over **unchanged**.
 
 ```ts
-import { defineContract, implement } from "@nifrajs/core"
+import { defineContract, implement } from "@nifrajs/core/contract"
 import { t } from "@nifrajs/schema"
 
 const contract = defineContract({
@@ -154,7 +159,7 @@ The client can now be built from the **contract** alone (`client(contract, url)`
 ## Harden it
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { cors, securityHeaders, rateLimit, MemoryStore } from "@nifrajs/middleware"
 
 const app = server()

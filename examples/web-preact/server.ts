@@ -6,7 +6,7 @@
  *   bun run examples/web-preact/build.ts
  *   bun examples/web-preact/server.ts
  */
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { renderPage } from "@nifrajs/web"
 import { preactAdapter } from "@nifrajs/web-preact"
 import { App, type PageData } from "./app.ts"

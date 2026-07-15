@@ -1,5 +1,5 @@
-import { METHODS, type Middleware } from "@nifrajs/core"
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
+import { METHODS, type Middleware } from "@nifrajs/core/server"
 
 /**
  * Idempotency keys for unsafe requests — a client retrying a `POST` (dropped connection, impatient

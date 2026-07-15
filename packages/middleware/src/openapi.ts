@@ -1,4 +1,4 @@
-import { definePlugin } from "@nifrajs/core"
+import { definePlugin } from "@nifrajs/core/server"
 // The OpenAPI generator only — `@nifrajs/schema/openapi` is pure (no TypeBox runtime), so the openapi()
 // plugin gets full `t`-schema introspection without pulling the `t` builder into every consumer.
 import { toOpenAPI } from "@nifrajs/schema/openapi"

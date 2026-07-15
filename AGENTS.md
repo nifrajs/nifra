@@ -8,7 +8,7 @@ copy-paste cookbook so you don't have to read the source. Deeper docs live in `d
 ## 1 · Define a route (typed, chainable)
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 
 export const app = server()
   .get("/users/:id", (c) => ({ id: c.params.id })) // c.params typed from the path literal

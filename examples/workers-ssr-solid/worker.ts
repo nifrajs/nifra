@@ -1,5 +1,5 @@
 import { inProcessClient } from "@nifrajs/client"
-import { toFetchHandler } from "@nifrajs/core"
+import { toFetchHandler } from "@nifrajs/core/server"
 import { createWebApp } from "@nifrajs/web"
 import { solidAdapter } from "@nifrajs/web-solid"
 import { backend } from "./backend"

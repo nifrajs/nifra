@@ -8,7 +8,7 @@ bun add @nifrajs/node   # or: npm add @nifrajs/node
 ```
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { serve } from "@nifrajs/node"
 
 const app = server().get("/users/:id", (c) => ({ id: c.params.id }))

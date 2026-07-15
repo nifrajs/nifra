@@ -1,4 +1,4 @@
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 
 // In-memory demo state — single-process example only (a real app would use a shared store).
 let count = 0

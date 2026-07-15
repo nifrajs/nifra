@@ -7,7 +7,7 @@ deno add npm:@nifrajs/deno   # or import npm:@nifrajs/deno directly
 ```
 
 ```ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { serve } from "@nifrajs/deno"
 
 const app = server().get("/users/:id", (c) => ({ id: c.params.id }))

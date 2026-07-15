@@ -23,7 +23,7 @@ const FRAMEWORK_LABEL: Readonly<Record<Framework, string>> = {
 const API_RULES = `## The backend: \`server()\`
 
 \`\`\`ts
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
 export const app = server()
@@ -129,7 +129,7 @@ singleton \`PrismaClient\`).
 
 - **Wire it into the backend once**, then read \`c.db\` in handlers:
   \`\`\`ts
-  import { server } from "@nifrajs/core"
+  import { server } from "@nifrajs/core/server"
   import { t } from "@nifrajs/schema"
   import { db } from "./db"
 
@@ -150,7 +150,7 @@ run by \`db/migrate.ts\`).
 
 - **Wire it into the backend once**, then read \`c.db\` in handlers:
   \`\`\`ts
-  import { server } from "@nifrajs/core"
+  import { server } from "@nifrajs/core/server"
   import { t } from "@nifrajs/schema"
   import { db } from "./db"
 
@@ -169,7 +169,7 @@ typed client).
 
 - **Wire it into the backend once**, then read \`c.db\` in handlers:
   \`\`\`ts
-  import { server } from "@nifrajs/core"
+  import { server } from "@nifrajs/core/server"
   import { t } from "@nifrajs/schema"
   import { db, notes } from "./db"
 
@@ -205,7 +205,7 @@ its ORM adapter). nifra mounts it and gives you typed session guards via \`@nifr
 
 - **Mount it once** on the backend — it serves every auth endpoint under \`/api/auth/*\`:
   \`\`\`ts
-  import { server } from "@nifrajs/core"
+  import { server } from "@nifrajs/core/server"
   import { betterAuth } from "@nifrajs/better-auth"
   import { auth } from "./auth"
   export const app = server().use(betterAuth(auth))

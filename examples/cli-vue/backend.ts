@@ -1,4 +1,4 @@
-import { server } from "@nifrajs/core"
+import { server } from "@nifrajs/core/server"
 
 // In-memory demo state — single-process example only (see the global DB defaults for the real pattern).
 let count = 0

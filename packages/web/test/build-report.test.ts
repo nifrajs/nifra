@@ -182,7 +182,7 @@ describe("generateServerEntry", () => {
       backendImport: "../backend.ts",
       title: "my site",
     })
-    expect(src).toContain('import { toFetchHandler } from "@nifrajs/core"')
+    expect(src).toContain('import { toFetchHandler } from "@nifrajs/core/server"')
     expect(src).toContain("export default toFetchHandler(app)")
     expect(src).toContain("api: inProcessClient(backend)")
     expect(src).toContain('title: "my site"')

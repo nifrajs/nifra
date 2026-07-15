@@ -30,14 +30,13 @@
  * optional `heal` hook for provider-side repair retries.
  */
 
+import { type JsonSchema, reflectSchema } from "@nifrajs/core/reflection"
 import {
   type InferOutput,
-  type JsonSchema,
-  reflectSchema,
   type StandardIssue,
   type StandardSchemaV1,
   validateStandard,
-} from "@nifrajs/core"
+} from "@nifrajs/core/schema"
 
 /** One chat message. The union every provider API accepts. */
 export interface PromptMessage {
