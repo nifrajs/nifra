@@ -1,5 +1,13 @@
 # @nifrajs/web
 
+## 1.12.0
+
+### Patch Changes
+
+- Updated dependencies [63d3845]
+- Updated dependencies [246f498]
+  - @nifrajs/core@1.12.0
+
 ## 1.11.0
 
 ### Minor Changes

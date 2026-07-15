@@ -1,5 +1,11 @@
 # @nifrajs/otel
 
+## 1.12.0
+
+### Minor Changes
+
+- 63d3845: Add bounded execution-causality contracts and propagation, OpenTelemetry causal links, event-envelope lineage, and a deterministic durable failure laboratory. `nifra levels` L4 now uses the deep adversarial contract engine through its explicitly isolated executor. Also add hash-verifiable adapter certification profiles and duplicate physical Nifra/React install detection in `nifra doctor`/`nifra check`.
+
 ## 1.11.0
 
 ## 1.10.0
