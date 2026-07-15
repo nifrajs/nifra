@@ -33,6 +33,7 @@
       "@nifrajs/client": ["./packages/client/src/index.ts"],
       "@nifrajs/cache": ["./packages/cache/src/index.ts"],
       "@nifrajs/testing": ["./packages/testing/src/index.ts"],
+      "@nifrajs/testing/certification": ["./packages/testing/src/certification.ts"],
       "@nifrajs/cron": ["./packages/cron/src/index.ts"],
       "@nifrajs/jobs": ["./packages/jobs/src/index.ts"],
       "@nifrajs/otel": ["./packages/otel/src/index.ts"],

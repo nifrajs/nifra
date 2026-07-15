@@ -3357,6 +3357,177 @@ Configure a finite `requestTimeoutMs` before handing `c.budget` to a
 production adapter. The no-timeout compatibility path is deliberately unbounded and is not
 written to the wire.
 
+## Nifra - Execution causality
+
+> Carry one bounded, payload-free lineage across the durable seams a trace cannot span: commands, events, workflows, projections, and repairs.
+
+A trace describes one observation tree. Causality survives the seams a trace cannot: a command
+commits an event, a workflow resumes tomorrow, a projection consumes that event, and
+reconciliation repairs the drift. Same execution, four identities that used to stop at the
+boundary.
+
+### Tokens only, by construction
+
+A causality record has **no payload field**. There is nowhere to put a request
+body, a tenant identifier, or a URL, and unknown fields are rejected at every nesting level
+rather than carried along. Identities are bounded tokens, edge relations are bounded tokens,
+and the lineage stays safe to store and read during an incident.
+
+### Start at the boundary
+
+```ts
+import { createMemoryCausalityStore, startCausality } from "@nifrajs/core/causality"
+
+const recorder = createMemoryCausalityStore()
+const requestId = crypto.randomUUID()
+
+// One root node at the ingress boundary. executionId is the graph's identity:
+// generate it once, then propagate it.
+const step = startCausality("request", requestId, { executionId: crypto.randomUUID() })
+
+// step.context propagates; step.record is what a durable adapter appends.
+await recorder.record(step.record)
+```
+
+### Continue across seams
+
+```ts
+import { continueCausality, startCausality } from "@nifrajs/core/causality"
+
+const step = startCausality("request", crypto.randomUUID(), {
+  executionId: crypto.randomUUID(),
+})
+
+// The command this request caused. The edge relation is a bounded token.
+const command = continueCausality(step.context, "command", crypto.randomUUID(), {
+  relation: "caused",
+})
+
+// The event that command emitted, inside the same commit.
+const event = continueCausality(command.context, "event", crypto.randomUUID(), {
+  relation: "emitted",
+})
+```
+
+`joinCausality` merges several parents into one node, and refuses to join contexts
+from different executions: a graph that silently spanned two requests would be worse than no
+graph.
+
+### Propagation is a trust boundary
+
+```ts
+import {
+  causalityHeaders,
+  readCausalityHeaders,
+  startCausality,
+} from "@nifrajs/core/causality"
+
+const step = startCausality("request", crypto.randomUUID(), {
+  executionId: crypto.randomUUID(),
+})
+
+// Outbound: bounded headers only.
+await fetch("https://billing.internal/charge", {
+  headers: causalityHeaders(step.context),
+})
+
+// Inbound: never throws on hostile input.
+const request = new Request("https://api.example/charge")
+const parsed = readCausalityHeaders(request.headers)
+if (!parsed.success) {
+  // "missing" | "incomplete" | "invalid" | "unknown-field" - start a fresh graph.
+}
+```
+
+Inbound headers are **untrusted by default**. A caller does not get to attach
+their request to your graph unless you say so, so a service-to-service seam opts in explicitly
+and anything that fails the check starts a fresh execution instead of being believed.
+
+### Storage is yours
+
+`createMemoryCausalityStore()` is for development and tests. It is bounded, and it
+refuses to construct under `NODE_ENV=production`: in-memory evidence disappears on
+restart, which is exactly when an incident timeline matters. Production supplies a durable
+adapter behind the same `CausalityRecorder` interface, ideally appending in the same
+transaction as the effect it describes.
+
+### Traces still apply
+
+The two models compose. `@nifrajs/otel` turns the nearest observed ancestor into a
+span link, so an event consumed tomorrow links back to the request that emitted it rather than
+inventing a trace identity that never existed.
+
+## Nifra - Adapter certification
+
+> Prove a storage, cache, job, runtime, or event adapter against its interface and emit a hash-verifiable capability matrix.
+
+An interface is a promise. Certification is how an adapter proves it kept it, in a form someone
+else can check.
+
+### Profiles
+
+A profile is a named set of checks written against an interface, not an implementation:
+`cacheStoreCertificationProfile`, `jobStoreCertificationProfile`,
+`storageAdapterCertificationProfile`, `runtimeAdapterCertificationProfile`
+, and `eventDeliveryCertificationProfile`. Domain-specific seams define their own
+with `defineCertificationProfile`, which validates the profile at module load, so a
+check naming an undeclared capability fails before any adapter runs.
+
+### Certify an adapter
+
+```ts
+// doc-check: skip - createRedisCache stands in for the adapter under test
+import { test } from "bun:test"
+import {
+  assertAdapterCertification,
+  cacheStoreCertificationProfile,
+  certifyAdapter,
+} from "@nifrajs/testing/certification"
+
+test("the Redis cache adapter satisfies the cache contract", async () => {
+  const report = await certifyAdapter({
+    profile: cacheStoreCertificationProfile(),
+    adapterId: "redis-cache",
+    // A FRESH adapter per check, so one failure cannot contaminate the next.
+    createAdapter: () => createRedisCache(url),
+    cleanup: (adapter) => adapter.clear(),
+  })
+
+  assertAdapterCertification(report) // throws, naming every failed check
+})
+```
+
+Profiles are structural and dependency-free. A third-party adapter can certify itself in its own
+test suite without adopting anything else, which is the point: trust becomes portable rather
+than something we vouch for.
+
+### The report is the evidence
+
+```ts
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "profile": { "id": "cache-store", "version": 1 },
+  "adapterId": "redis-cache",
+  "capabilities": [
+    { "capability": "read-write", "status": "passed", "checks": ["set-get", "delete"] },
+    { "capability": "tag-invalidation", "status": "passed", "checks": ["invalidate-tag"] }
+  ],
+  "evidenceHash": "9f2c..."
+}
+```
+
+The capability matrix is the useful artifact. It says what an adapter supports, per capability,
+with the checks that back each one. `verifyAdapterCertification` recomputes
+`evidenceHash`, so a stored report can be checked rather than believed.
+
+### Failures carry a class, not a message
+
+A failed check records the error _class_ only. Provider messages routinely carry
+connection strings, tokens, and payload fragments, and evidence is meant to be shared, so it
+never becomes a place credentials leak. Cleanup errors cannot turn a failed functional check
+into a pass.
+
 ## Nifra — Framework contract
 
 > The one-page contract: LoaderContext shape, loader/action/meta/head signatures, the client↔server boundary, and the build-output contract — every signature verified against the source.
@@ -3994,6 +4165,98 @@ Complete runnable references — a typed CRUD API you can diff your own against:
 `examples/db-sqlite` (the same API on raw `bun:sqlite`, parameterized
 queries, boundary validation).
 
+## Nifra - Failure laboratory
+
+> Replayable durable-failure schedules on virtual time: crash after commit, duplicate delivery, reordering, budget expiry, and checkpoint contention.
+
+Durable systems fail on a schedule you never chose: the crash lands between the commit and the
+publish, the queue delivers twice, the events arrive backwards. The laboratory lets you choose
+that schedule, then replay it exactly.
+
+### Seven failures worth testing
+
+-
+`crash` - stop dead at a named durability seam.
+
+-
+`duplicate-delivery` - deliver the same batch N times.
+
+-
+`reorder-events` - rotate a batch out of order.
+
+-
+`delay` - advance virtual time, with no real sleeping.
+
+-
+`expire-budget` - report zero remaining at a budget seam.
+
+-
+`lose-provider-reply` - run the call, then lose only its reply.
+
+-
+`contend-checkpoint` - make a checkpoint conflict.
+
+### Place the seams, schedule the failure
+
+```ts
+import { createFailureLab } from "@nifrajs/testing"
+
+const lab = createFailureLab({
+  seed: 77,
+  schedule: [
+    { kind: "duplicate-delivery", point: "relay.batch", copies: 3 },
+    { kind: "reorder-events", point: "relay.batch" },
+  ],
+})
+
+// The adapter under test just names its seams. Same seed, same schedule,
+// same result - every run.
+const delivered = lab.deliveries("relay.batch", ["evt-a", "evt-b", "evt-c"])
+```
+
+The controller is an off-hot-path port. Your adapter names its seams; the schedule decides what
+happens at them. Time is virtual, so a 24-hour delay costs nothing and nothing is flaky.
+
+### Assert the invariant, not the output
+
+```ts
+// doc-check: skip - commit/publish/outboxStillPending stand in for the system under test
+import { runFailureScenario } from "@nifrajs/testing"
+
+const report = await runFailureScenario(
+  {
+    name: "crash-after-commit",
+    execute: async (lab) => {
+      await commit()
+      lab.checkpoint("outbox.after-commit") // crashes here, per the schedule
+      await publish()
+      return "published"
+    },
+    // The scenario passes only if the invariant survives the failure.
+    verify: async ({ error }) => error !== undefined && (await outboxStillPending()),
+  },
+  { seed: 1, schedule: [{ kind: "crash", point: "outbox.after-commit" }] },
+)
+
+report.ok // did the invariant hold?
+report.replay // { seed, schedule } - reproduces this exact run
+```
+
+A scenario passes only when `verify` returns true after the failure. Losing the
+provider reply is not a bug; losing the money is. That distinction is the whole point.
+
+### Evidence is tokens only
+
+Injection evidence records the kind, the point, the occurrence, and the virtual time. Never
+payloads, provider results, exception messages, or stacks. A failing report carries the error
+_class_ and the exact `replay` inputs, so it reproduces from the report alone
+without leaking what flowed through the system.
+
+### Where it fits
+
+The same engine backs `nifra levels` L4. Contract invariants fuzz the HTTP surface;
+the laboratory covers the durable paths underneath, where the interesting failures live.
+
 ## Nifra — Fonts
 
 > Self-host web fonts with zero layout shift: a build-time Google Fonts downloader (the next/font equivalent) plus CLS-safe @font-face + preload primitives.
@@ -4522,6 +4785,102 @@ coupling — server code never ships to the client.
 -
 The generated OpenAPI document is a structural subset of 3.1 derived from your schemas;
 it reflects exactly what the routes declare, not hand-authored prose.
+
+## Nifra - Verification ladder
+
+> Five cumulative levels, from a typed contract to contract-derived invariant tests, that say what a Nifra project actually proves.
+
+"It compiles" and "it is secure" are different claims. The ladder makes the difference
+legible: five levels, each earned, so a project can state what it proves instead of what it
+hopes.
+
+### The five levels
+
+Levels are **cumulative**. A level only counts when every level below it holds,
+so `achieved` is the highest rung with unbroken support underneath, and it is
+`-1` when even L0 fails.
+
+-
+**L0 typed contract** - `nifra check` passes: the frontend and
+backend cannot have silently diverged.
+
+-
+**L1 route assurance** - every route is classified, and the enforcement a rule
+requires is actually installed.
+
+-
+**L2 capability lockfile** - declared effects match a reviewed lockfile, so a
+route that starts writing to the database shows up in review.
+
+-
+**L3 route manifest** - the committed trust artifact still matches the routes,
+evidence, effects, and response classification it was emitted from.
+
+-
+**L4 invariant-tested** - contract-derived invariants ran against an isolated
+executor with nothing skipped.
+
+### Run it
+
+```ts
+# What does this project prove right now?
+nifra levels
+
+# Fail CI below a level the project already reached.
+nifra levels --min 2
+
+# The same report an agent reads over MCP (nifra_levels).
+nifra levels --json
+```
+
+```ts
+L0  typed contract        ok
+L1  route assurance       ok
+L2  capability lockfile   ok
+L3  route manifest        FAIL  manifest drifted from routes: run `nifra manifest emit`
+L4  invariant-tested      FAIL  no isolated invariant executor configured
+
+achieved: 2
+```
+
+Every level that does not hold explains itself, so the output is a work list rather than a
+verdict. `--min <n>` is the CI floor: pin it to the level you have reached and
+the build fails when a change quietly costs you a rung.
+
+### Wiring the levels
+
+L0 needs nothing. L1 through L4 hang off `nifra.assurance.ts`, and each one you
+configure is a level you can start claiming.
+
+```ts
+// nifra.assurance.ts
+// doc-check: skip - policy rules and the isolated executor are app-specific
+import { defineAssuranceConfig } from "@nifrajs/core/assurance"
+import { backend } from "./backend"
+
+export default defineAssuranceConfig({
+  source: backend,
+  policy: { rules: [/* ... */] },
+  capabilities: { lockfile: "capabilities.lock.json", policy: { /* ... */ } },
+  manifest: { path: "nifra.manifest.json" },
+  invariants: {
+    // L4 fuzzes the contract, so it needs an app you are willing to throw hostile
+    // input at. Point this at an isolated instance, never a live one.
+    executor: (request) => backend.fetch(request),
+  },
+})
+```
+
+L4 requires an **explicit** executor. Invariant runs send deliberately hostile
+input, so nifra will not guess which app to point them at; a level that fuzzed your live
+server by default would be a footgun, and a skipped route is reported rather than passed over
+in silence.
+
+### For coding agents
+
+The `nifra_levels` MCP tool returns the same
+`{ achieved, levels[] }` report. An agent can read what its change proved, and a
+level that regressed comes back with the reason it broke.
 
 ---
 

@@ -45,6 +45,15 @@ const GROUPS: ReadonlyArray<{ title: string; links: ReadonlyArray<{ href: string
     ],
   },
   {
+    title: "Proof",
+    links: [
+      { href: "/docs/verification", label: "Verification ladder" },
+      { href: "/docs/causality", label: "Execution causality" },
+      { href: "/docs/failure-lab", label: "Failure laboratory" },
+      { href: "/docs/certification", label: "Adapter certification" },
+    ],
+  },
+  {
     title: "Build & deploy",
     links: [
       { href: "/docs/rendering", label: "SSG & ISR" },

@@ -30,13 +30,17 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - [Nifra — Troubleshooting](/docs/troubleshooting): Fixes keyed on the literal error strings Nifra prints: `reached the client bundle` (a node:/native import in the browser bundle), `server-only module reached the client bundle` (the server-only marker), and `resolveDispatcher` / `Invalid hook call` (duplicate React).
 - [Nifra — Backends & API (dev and prod)](/docs/backends): How a Nifra backend reaches your app: inProcessClient feeds ctx.api to loaders, and createWebApp auto-mounts the backend over HTTP at /api/* — in `nifra dev` and production alike, no hand-dispatch.
 - [Nifra — Request budgets](/docs/budgets): Propagate one absolute deadline through Nifra requests and downstream adapters without resetting time at each hop.
+- [Nifra - Execution causality](/docs/causality): Carry one bounded, payload-free lineage across the durable seams a trace cannot span: commands, events, workflows, projections, and repairs.
+- [Nifra - Adapter certification](/docs/certification): Prove a storage, cache, job, runtime, or event adapter against its interface and emit a hash-verifiable capability matrix.
 - [Nifra — Framework contract](/docs/contract): The one-page contract: LoaderContext shape, loader/action/meta/head signatures, the client↔server boundary, and the build-output contract — every signature verified against the source.
 - [Nifra — Databases](/docs/database): Nifra is database-agnostic: use SQLite, Postgres, or any ORM (Drizzle, Prisma, Kysely) from your handlers and loaders, on Bun, Node, Deno, and the edge.
+- [Nifra - Failure laboratory](/docs/failure-lab): Replayable durable-failure schedules on virtual time: crash after commit, duplicate delivery, reordering, budget expiry, and checkpoint contention.
 - [Nifra — Fonts](/docs/fonts): Self-host web fonts with zero layout shift: a build-time Google Fonts downloader (the next/font equivalent) plus CLS-safe @font-face + preload primitives.
 - [Nifra — Migrating from Express, Hono, Fastify & Elysia](/docs/migrate-backend): Move a backend to Nifra: routing, middleware, validation, and body parsing map directly from Express, Hono, Fastify, and Elysia — and you gain a typed client, multi-runtime deploy, and optional SSR.
 - [Nifra — Migrating from Next.js, Nuxt, SvelteKit & SolidStart](/docs/migrate-frontend): Move from a meta-framework to Nifra: file routes, data loading, API routes, layouts, and SSG/ISR map across React (Next), Vue (Nuxt), Svelte (SvelteKit), and Solid (SolidStart).
 - [Nifra — Contract-derived adversarial testing](/docs/testing): Turn route schemas into hostile input, response-conformance, replay, shrinking, and runtime-matrix tests with @nifrajs/testing.
 - [Nifra — Types-first architecture](/docs/types-first): One schema is the single source of truth: it drives runtime validation, inferred TypeScript types, the no-codegen typed client, an OpenAPI document, and the MCP contract your agents read.
+- [Nifra - Verification ladder](/docs/verification): Five cumulative levels, from a typed contract to contract-derived invariant tests, that say what a Nifra project actually proves.
 
 ## Packages
 
