@@ -59,7 +59,8 @@ Usage:
                                          agent: nifra_context, nifra_routes (routes+schemas as JSON),
                                          nifra_run (backend), nifra_render (SSR a page), nifra_docs,
                                          nifra_example (verified snippets), nifra_scaffold (route→file),
-                                         nifra_check (drift gate + fixes), nifra_doctor (deps + duplicate installs).
+                                         nifra_check (drift gate + fixes), nifra_levels (verification
+                                         ladder), nifra_doctor (deps + duplicate installs).
   nifra docs-mcp [--port <n>]            Serve the PUBLIC docs MCP over HTTP (nifra_docs + nifra_example) —
                                          self-host on a VPS so any remote agent can learn nifra. Default :8787.
   nifra check   [--json] [--lints-only]  Gate: typecheck + lints (hand-rolled fetch(), untyped client("…"),

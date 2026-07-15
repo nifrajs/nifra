@@ -15,6 +15,8 @@
  *   - `nifra_scaffold`— map a URL path to the correct `routes/` file + a contract-correct page stub.
  *   - `nifra_check`   — the drift gate (typecheck + lints, each with a structured fix), for an agent to fix against.
  *   - `nifra_assure`  — route classification + enforcement-evidence gate.
+ *   - `nifra_levels`  - the cumulative verification ladder (L0 contract → L4 invariants): what the
+ *     project actually proves, and why each level it misses does not hold.
  *   - `nifra_doctor`  — package.json dependency drift detector, with safe local-version auto-fix.
  *
  * Wire it into a client (e.g. Claude Desktop / Cursor) as: command `nifra`, args `["mcp"]`, run in the
@@ -986,6 +988,56 @@ export function projectTools(
         }
         const { collectAssuranceReport } = await import("./assure.ts")
         return JSON.stringify(await collectAssuranceReport(target, config), null, 2)
+      },
+    },
+    {
+      name: "nifra_levels",
+      description:
+        "Compute this project's verification ladder and return { achieved, levels[] }, where each level carries { level, name, ok, reasons[] }. The ladder is cumulative: L0 typed contract (nifra check), L1 route assurance, L2 reviewed capability lockfile, L3 route trust manifest in sync, L4 contract invariants, so a level only holds when every level below it holds, and `achieved` is -1 when even L0 fails. This is the single gate that reports what a change actually proves: run it after finishing work, and treat any `reasons` on a level the project already claimed as a regression to fix.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          config: {
+            type: "string",
+            description:
+              "Assurance config path relative to the selected project directory. Default: nifra.assurance.ts.",
+          },
+          seed: {
+            type: "number",
+            description: "Deterministic seed for the L4 invariant run. Default 1.",
+          },
+          dir: {
+            type: "string",
+            description:
+              'Evaluate this project subdirectory (relative to the MCP root), e.g. "apps/api". Default: the project root.',
+          },
+        },
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const opts = args as { config?: string; seed?: number; dir?: string }
+        const target = resolveProjectDir(cwd, opts.dir)
+        if (target === null) return dirError(opts.dir)
+        if (opts.seed !== undefined && !Number.isSafeInteger(opts.seed)) {
+          return JSON.stringify({ ok: false, error: "seed must be a safe integer" }, null, 2)
+        }
+        const config = opts.config === undefined ? undefined : resolve(target, opts.config)
+        if (config !== undefined && config !== target && !config.startsWith(target + sep)) {
+          return JSON.stringify(
+            { ok: false, error: "config must stay inside the selected project directory" },
+            null,
+            2,
+          )
+        }
+        const { collectVerificationLevels } = await import("./levels-tool.ts")
+        return JSON.stringify(
+          await collectVerificationLevels(target, {
+            ...(opts.config === undefined ? {} : { config: opts.config }),
+            ...(opts.seed === undefined ? {} : { seed: opts.seed }),
+          }),
+          null,
+          2,
+        )
       },
     },
     {

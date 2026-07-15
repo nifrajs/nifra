@@ -596,6 +596,51 @@ describe("monorepo detection + tool namespacing", () => {
     expect(escaped.error).toContain("inside")
   })
 
+  test("projectTools exposes the verification ladder and keeps config inside the project", async () => {
+    const levels = projectTools("/fake").find((tool) => tool.name === "nifra_levels")
+    expect(levels).toBeDefined()
+    expect(levels?.inputSchema).toMatchObject({
+      properties: { config: { type: "string" }, seed: { type: "number" }, dir: { type: "string" } },
+    })
+    const escaped = JSON.parse(
+      (await levels?.handler({ config: "../outside.ts" }, {
+        signal: new AbortController().signal,
+      } as never)) as string,
+    )
+    expect(escaped.ok).toBe(false)
+    expect(escaped.error).toContain("inside")
+
+    const badSeed = JSON.parse(
+      (await levels?.handler({ seed: 1.5 }, {
+        signal: new AbortController().signal,
+      } as never)) as string,
+    )
+    expect(badSeed.ok).toBe(false)
+  })
+
+  test("nifra_levels reports the ladder for a real project, not just its own shape", async () => {
+    // No assurance config: the ladder must still answer, stopping at L0 by definition rather than
+    // throwing - an agent needs the reasons, not a crash.
+    const dir = await mkdtemp(join(tmpdir(), "nifra-mcp-levels-"))
+    try {
+      await writeFile(join(dir, "package.json"), JSON.stringify({ name: "app" }))
+      const levels = projectTools(dir).find((tool) => tool.name === "nifra_levels")
+      const report = JSON.parse(
+        (await levels?.handler({}, { signal: new AbortController().signal } as never)) as string,
+      )
+      expect(typeof report.achieved).toBe("number")
+      expect(Array.isArray(report.levels)).toBe(true)
+      expect(report.levels.length).toBeGreaterThan(0)
+      expect(report.levels[0]).toMatchObject({ level: 0, ok: expect.any(Boolean) })
+      // Every failing level explains itself.
+      for (const level of report.levels) {
+        if (!level.ok) expect(level.reasons.length).toBeGreaterThan(0)
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   test("projectFeatures resource URIs are prefixed after namespacing", () => {
     const fakeLoader = async (): Promise<LoadedApp> => {
       throw new Error("should not load")

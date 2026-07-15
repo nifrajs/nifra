@@ -98,6 +98,10 @@ an agent can act on the project, not just read about it. Core tools:
 - **`nifra_check`** — run the drift gate and get the structured `{ ok, typecheck, diagnostics[] }`
   result with suggestions, so the agent verifies its own work and fixes each diagnostic before finishing.
 - **`nifra_assure`** — evaluate `nifra.assurance.ts` and return the complete per-route evidence report.
+- **`nifra_levels`** - compute the cumulative verification ladder (L0 typed contract, L1 route
+  assurance, L2 capability lockfile, L3 trust manifest, L4 contract invariants) and return
+  `{ achieved, levels[] }`, so an agent can see what its change proves and read why a level it lost
+  no longer holds.
 - **`nifra_doctor`** — catch imported packages missing from `package.json`; with `autoFix:true`, write
   safe dependency entries when a version can be inferred locally and return exact `bun add` commands
   for anything that needs a package-manager decision.
