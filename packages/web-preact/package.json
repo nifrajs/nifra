@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/web-preact",
-  "version": "1.12.0",
+  "version": "1.13.0",
   "description": "Preact render adapter for @nifrajs/web — streaming SSR + hydration (no build plugin).",
   "keywords": [
     "bun",

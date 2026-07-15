@@ -1,5 +1,14 @@
 # @nifrajs/web-svelte
 
+## 1.13.0
+
+### Patch Changes
+
+- Updated dependencies [5b6127a]
+  - @nifrajs/web@1.13.0
+  - @nifrajs/i18n@1.13.0
+  - @nifrajs/image@1.13.0
+
 ## 1.12.0
 
 ### Patch Changes
