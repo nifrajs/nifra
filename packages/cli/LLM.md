@@ -10,9 +10,17 @@ The nifra CLI — zero-config dev/build/start for a nifra app (`nifra dev`, `nif
 
 ## Key exports
 
-_No public value/type exports (CLI or side-effect package)._
+- **docsTools** _(function)_ — `docsTools: (loadDocs: () => Promise<string | undefined>, loadExamples: () => Promise<Example[] | undefined>, loadTypes: () => Promise<TypeE…`
+- **handleMcpHttp** _(function)_ — `handleMcpHttp: (request: Request) => Promise<Response>`
+- **publicDocsTools** _(function)_ — `publicDocsTools: () => McpTool[]`
+- **respondMcpHttp** _(function)_ — `respondMcpHttp: (request: Request, tools: McpTool[], options?: McpHttpOptions) => Promise<Response>`
+- **default** _(const)_ — `default: { port: number; fetch: (request: Request) => Promise<Response>; }`
+- **Example** _(interface)_ — `interface Example`
+- **McpHttpOptions** _(interface)_ — `interface McpHttpOptions`
+- **TypeEntry** _(interface)_ — `interface TypeEntry`
 
 ## Footguns
 
 - `nifra check` (`--json` for agents) is the **done-gate**: typecheck + typed-client drift + server-only-import-in-a-route (with the transitive import chain) + raw-`Response`-from-a-route + undeclared dependency.
-- `nifra dev` uses Vite for HMR; **production builds use Bun**. `nifra mcp` exposes live project tools (`nifra_docs`, `nifra_example`, `nifra_check`) to an agent.
+- `nifra dev` uses Vite for HMR; `nifra build` emits a complete deploy and defaults to Bun (`--target` selects node/deno/cf-pages/vercel/static). Keep the deploy-safe adapter in `framework.ts` and Vite/compiler tooling in CLI-only `nifra.config.ts`.
+- `nifra mcp` exposes live project tools (`nifra_docs`, `nifra_example`, `nifra_check`) to an agent.

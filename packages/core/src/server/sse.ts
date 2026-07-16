@@ -21,6 +21,10 @@
  *       stream.signal.addEventListener("abort", () => { off(); resolve() }, { once: true }))
  *   }, { keepAlive: 15_000 }))
  */
+import { INSTALL_SSE } from "./install.ts"
+import type { IdentityPlugin } from "./plugin.ts"
+import type { AnyServer } from "./server.ts"
+import type { SseRuntime } from "./sse-hook.ts"
 
 /** One SSE frame. Every field is optional; `data` may be multi-line (emitted as multiple `data:` lines). */
 export interface SSEMessage {
@@ -187,4 +191,26 @@ export function sse(
   headers.set("cache-control", "no-cache, no-transform")
   if (!headers.has("x-accel-buffering")) headers.set("x-accel-buffering", "no") // defeat proxy buffering
   return new Response(body, { status: init.status ?? 200, headers })
+}
+
+/** The install seam a server exposes so the `streaming()` plugin can hand it the runtime. */
+interface SseInstallable {
+  [INSTALL_SSE](runtime: SseRuntime): void
+}
+
+/**
+ * Enable `.sse()` streaming routes: `.use(streaming())` installs the SSE runtime. Without it, an
+ * `.sse()` route is a registration error, so the ReadableStream framing stays out of non-SSE bundles.
+ * The `sse()` / `typedSSEStream()` helpers ship from this same subpath for use inside handlers.
+ */
+export function streaming(): IdentityPlugin {
+  const apply = <S extends AnyServer>(app: S): S => {
+    ;(app as unknown as SseInstallable)[INSTALL_SSE]({
+      response(context, run, init) {
+        return sse(context, (stream) => run(typedSSEStream(stream)), init)
+      },
+    })
+    return app
+  }
+  return Object.assign(apply, { pluginName: "nifra:streaming" }) as IdentityPlugin
 }

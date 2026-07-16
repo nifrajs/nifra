@@ -8,13 +8,17 @@ Interactive DevTools overlay for nifra dev — loader traces, ISR status, route 
 > reference see [`api-reference.md`](../../api-reference.md) (every export + signature) and
 > [`llms-full.txt`](../../llms-full.txt) (the prose guides). One cheap read instead of the whole corpus.
 
+## Public entrypoints
+
+`@nifrajs/devtools` · `@nifrajs/devtools/client`
+
 ## Key exports
 
-- **devtools** _(function)_ — `devtools: (options?: DevToolsOptions | undefined) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifraj…`
-- **devtoolsClientScript** _(function)_ — `devtoolsClientScript: (options?: DevToolsClientOptions) => string`
-- **DevToolsClientOptions** _(interface)_ — `interface DevToolsClientOptions`
-- **DevToolsEvent** _(interface)_ — `interface DevToolsEvent`
-- **DevToolsOptions** _(interface)_ — `interface DevToolsOptions`
+- **devtools** _(function)_ — `devtools: (options?: DevToolsOptions | undefined) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifraj…` · from `@nifrajs/devtools`
+- **devtoolsClientScript** _(function)_ — `devtoolsClientScript: (options?: DevToolsClientOptions) => string` · from `@nifrajs/devtools`
+- **DevToolsClientOptions** _(interface)_ — `interface DevToolsClientOptions` · from `@nifrajs/devtools`
+- **DevToolsEvent** _(interface)_ — `interface DevToolsEvent` · from `@nifrajs/devtools`
+- **DevToolsOptions** _(interface)_ — `interface DevToolsOptions` · from `@nifrajs/devtools`
 
 ## Footguns
 

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { StandardSchemaV1 } from "../src/index.ts"
-import { defineContract, implement, server } from "../src/index.ts"
+import { server } from "../src/index.ts"
+import { defineContract, implement } from "../src/server/contract.ts"
 
 const passThrough: StandardSchemaV1 = {
   "~standard": { version: 1, vendor: "test", validate: (value) => ({ value }) },

@@ -8,9 +8,28 @@ Preact render adapter for @nifrajs/web — streaming SSR + hydration (no build p
 > reference see [`api-reference.md`](../../api-reference.md) (every export + signature) and
 > [`llms-full.txt`](../../llms-full.txt) (the prose guides). One cheap read instead of the whole corpus.
 
+## Public entrypoints
+
+`@nifrajs/web-preact` · `@nifrajs/web-preact/await` · `@nifrajs/web-preact/client` · `@nifrajs/web-preact/content` · `@nifrajs/web-preact/fetcher` · `@nifrajs/web-preact/i18n` · `@nifrajs/web-preact/image` · `@nifrajs/web-preact/query`
+
 ## Key exports
 
-- **preactAdapter** _(const)_ — `preactAdapter: RenderAdapter`
+- **Await** _(function)_ — `Await: <T>(props: AwaitProps<T>) => VNode | ComponentChildren` · from `@nifrajs/web-preact/await`
+- **Content** _(function)_ — `Content: ({ html, as, ...rest }: ContentProps) => VNode` · from `@nifrajs/web-preact/content`
+- **errorBoundary** _(function)_ — `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-preact/client`
+- **hydrate** _(function)_ — `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void` · from `@nifrajs/web-preact/client`
+- **I18nProvider** _(function)_ — `I18nProvider: (props: I18nProviderProps) => VNode` · from `@nifrajs/web-preact/i18n`
+- **Image** _(function)_ — `Image: (props: ImageComponentProps) => VNode` · from `@nifrajs/web-preact/image`
+- **mountRouter** _(function)_ — `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-preact/client`
+- **setMountedRouter** _(function)_ — `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-preact/fetcher`
+- **useFetcher** _(function)_ — `useFetcher: (key: string) => FetcherHandle` · from `@nifrajs/web-preact/fetcher`
+- **useFetchers** _(function)_ — `useFetchers: () => readonly Fetcher[]` · from `@nifrajs/web-preact/fetcher`
+- **useQuery** _(function)_ — `useQuery: <T>(key: unknown, fn: () => Promise<T>) => UseQueryResult<T>` · from `@nifrajs/web-preact/query`
+- **useQueryClient** _(function)_ — `useQueryClient: () => Pick<QueryClient, "invalidateQueries">` · from `@nifrajs/web-preact/query`
+- **useT** _(function)_ — `useT: () => Formatter` · from `@nifrajs/web-preact/i18n`
+- **preactAdapter** _(const)_ — `preactAdapter: RenderAdapter` · from `@nifrajs/web-preact`
+
+_…and 6 more — see [`api-reference.md`](../../api-reference.md#nifrajswebpreact) for the complete list._
 
 ## Footguns
 

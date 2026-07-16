@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { sse } from "../src/index.ts"
+import { sse } from "../src/server/sse.ts"
 
 function ctx(signal?: AbortSignal): { req: Request } {
   return { req: new Request("http://test/", signal ? { signal } : undefined) }

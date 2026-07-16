@@ -8,9 +8,28 @@ Vue render adapter for @nifrajs/web — streaming SSR + hydration, with a .vue S
 > reference see [`api-reference.md`](../../api-reference.md) (every export + signature) and
 > [`llms-full.txt`](../../llms-full.txt) (the prose guides). One cheap read instead of the whole corpus.
 
+## Public entrypoints
+
+`@nifrajs/web-vue` · `@nifrajs/web-vue/await` · `@nifrajs/web-vue/client` · `@nifrajs/web-vue/content` · `@nifrajs/web-vue/fetcher` · `@nifrajs/web-vue/i18n` · `@nifrajs/web-vue/image` · `@nifrajs/web-vue/plugin` · `@nifrajs/web-vue/query`
+
 ## Key exports
 
-- **vueAdapter** _(const)_ — `vueAdapter: RenderAdapter`
+- **compileVue** _(function)_ — `compileVue: (source: string, filename: string, generate: "dom" | "ssr") => string` · from `@nifrajs/web-vue/plugin`
+- **compileVueStyles** _(function)_ — `compileVueStyles: (source: string, filename: string) => string` · from `@nifrajs/web-vue/plugin`
+- **errorBoundary** _(function)_ — `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-vue/client`
+- **hydrate** _(function)_ — `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void` · from `@nifrajs/web-vue/client`
+- **mountRouter** _(function)_ — `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-vue/client`
+- **setMountedRouter** _(function)_ — `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-vue/fetcher`
+- **useFetcher** _(function)_ — `useFetcher: (key: string) => FetcherHandle` · from `@nifrajs/web-vue/fetcher`
+- **useFetchers** _(function)_ — `useFetchers: () => Readonly<ShallowRef<readonly Fetcher[]>>` · from `@nifrajs/web-vue/fetcher`
+- **useQuery** _(function)_ — `useQuery: <T>(key: unknown, fn: () => Promise<T>) => UseQueryResult<T>` · from `@nifrajs/web-vue/query`
+- **useQueryClient** _(function)_ — `useQueryClient: () => Pick<QueryClient, "invalidateQueries">` · from `@nifrajs/web-vue/query`
+- **useT** _(function)_ — `useT: () => Formatter` · from `@nifrajs/web-vue/i18n`
+- **vueBunPlugin** _(function)_ — `vueBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-vue/plugin`
+- **Await** _(const)_ — `Await: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ resolve: { required: true; }; }>, () => VNode | undefined, {}, {}, {}…` · from `@nifrajs/web-vue/await`
+- **Content** _(const)_ — `Content: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ html: { type: StringConstructor; required: true; }; as: { type: Str…` · from `@nifrajs/web-vue/content`
+
+_…and 5 more — see [`api-reference.md`](../../api-reference.md#nifrajswebvue) for the complete list._
 
 ## Footguns
 

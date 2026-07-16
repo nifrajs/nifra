@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { type Context, server } from "@nifrajs/core"
+import { nodeDirect } from "@nifrajs/core/node-direct"
 import { contextStorage, getContext, tryGetContext } from "@nifrajs/middleware/context-storage"
 
 function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
@@ -20,6 +21,7 @@ describe("contextStorage()", () => {
     const app = server()
       .get("/before", () => ({ stored: tryGetContext() !== undefined }))
       .use(contextStorage())
+      .use(nodeDirect())
       .get("/users/:id", async () => {
         const before = getContext()
         await Promise.resolve()
@@ -47,6 +49,7 @@ describe("contextStorage()", () => {
     const arrivals: string[] = []
     const app = server()
       .use(contextStorage())
+      .use(nodeDirect())
       .get("/wait/:id", async () => {
         const before = getContext<Context<"/wait/:id">>().params.id
         arrivals.push(before)
@@ -77,6 +80,7 @@ describe("contextStorage()", () => {
           : undefined,
       )
       .use(contextStorage())
+      .use(nodeDirect())
       .get("/to", () => ({ path: new URL(getContext().req.url).pathname }))
 
     expect(await (await app.fetch(new Request("http://x/from"))).json()).toEqual({ path: "/to" })
@@ -85,6 +89,7 @@ describe("contextStorage()", () => {
   test("is available in order-scoped error handlers", async () => {
     const app = server()
       .use(contextStorage())
+      .use(nodeDirect())
       .onError(() => ({ id: getContext().params.id }))
       .get("/boom/:id", () => {
         throw new Error("boom")
@@ -96,6 +101,7 @@ describe("contextStorage()", () => {
   test("does not force Node direct JSON outcomes through a Web Response", async () => {
     const app = server()
       .use(contextStorage())
+      .use(nodeDirect())
       .get("/node/:id", () => ({ id: getContext().params.id }))
 
     const outcome = await app.resolveNode(new Request("http://x/node/9"))
@@ -107,6 +113,7 @@ describe("contextStorage()", () => {
     const readUserId = (): string => getContext<Context<"/typed/:id">>().params.id
     const app = server()
       .use(contextStorage())
+      .use(nodeDirect())
       .get("/typed/:id", () => ({ id: readUserId() }))
 
     expect(await (await app.fetch(new Request("http://x/typed/abc"))).json()).toEqual({

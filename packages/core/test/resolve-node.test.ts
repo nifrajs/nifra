@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { server, silentLogger } from "../src/index.ts"
+import { nodeDirect } from "../src/node-direct.ts"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "../src/schema/standard.ts"
 
 /**
@@ -39,7 +40,9 @@ function req(path: string, init?: RequestInit): Request {
 
 describe("resolveNode — JSON-data fast path", () => {
   test("plain object → kind:json, status 200, pre-stringified body, no headers/cookies", async () => {
-    const app = server().get("/u/:id", (c) => ({ id: c.params.id }))
+    const app = server()
+      .use(nodeDirect())
+      .get("/u/:id", (c) => ({ id: c.params.id }))
     const outcome = await app.resolveNode(req("/u/42"))
     expect(outcome.kind).toBe("json")
     if (outcome.kind !== "json") throw new Error("unreachable")
@@ -50,7 +53,9 @@ describe("resolveNode — JSON-data fast path", () => {
   })
 
   test("body is byte-identical to what app.fetch serializes", async () => {
-    const app = server().get("/data", () => ({ a: 1, b: [true, null, "x"], n: 3.14 }))
+    const app = server()
+      .use(nodeDirect())
+      .get("/data", () => ({ a: 1, b: [true, null, "x"], n: 3.14 }))
     const outcome = await app.resolveNode(req("/data"))
     const viaFetch = await app.fetch(req("/data"))
     expect(outcome.kind).toBe("json")
@@ -60,10 +65,12 @@ describe("resolveNode — JSON-data fast path", () => {
   })
 
   test("undefined result → 204 with null body (matches app.fetch)", async () => {
-    const app = server().get("/empty", (c) => {
-      c.set.status = 204
-      return undefined
-    })
+    const app = server()
+      .use(nodeDirect())
+      .get("/empty", (c) => {
+        c.set.status = 204
+        return undefined
+      })
     const outcome = await app.resolveNode(req("/empty"))
     const viaFetch = await app.fetch(req("/empty"))
     expect(outcome.kind).toBe("json")
@@ -75,7 +82,9 @@ describe("resolveNode — JSON-data fast path", () => {
   })
 
   test("a bare undefined (no explicit status) defaults to 204/null", async () => {
-    const app = server().get("/void", () => undefined)
+    const app = server()
+      .use(nodeDirect())
+      .get("/void", () => undefined)
     const outcome = await app.resolveNode(req("/void"))
     expect(outcome.kind).toBe("json")
     if (outcome.kind !== "json") throw new Error("unreachable")
@@ -84,11 +93,13 @@ describe("resolveNode — JSON-data fast path", () => {
   })
 
   test("c.set.status + c.set.headers flow through to the json outcome", async () => {
-    const app = server().post("/make", (c) => {
-      c.set.status = 201
-      c.set.headers["x-made"] = "yes"
-      return { ok: true }
-    })
+    const app = server()
+      .use(nodeDirect())
+      .post("/make", (c) => {
+        c.set.status = 201
+        c.set.headers["x-made"] = "yes"
+        return { ok: true }
+      })
     const outcome = await app.resolveNode(req("/make", { method: "POST" }))
     expect(outcome.kind).toBe("json")
     if (outcome.kind !== "json") throw new Error("unreachable")
@@ -98,11 +109,13 @@ describe("resolveNode — JSON-data fast path", () => {
   })
 
   test("queued Set-Cookie lines ride on the json outcome (one entry per cookie)", async () => {
-    const app = server().get("/login", (c) => {
-      c.set.cookie("sid", "a")
-      c.set.cookie("csrf", "b")
-      return { ok: true }
-    })
+    const app = server()
+      .use(nodeDirect())
+      .get("/login", (c) => {
+        c.set.cookie("sid", "a")
+        c.set.cookie("csrf", "b")
+        return { ok: true }
+      })
     const outcome = await app.resolveNode(req("/login"))
     expect(outcome.kind).toBe("json")
     if (outcome.kind !== "json") throw new Error("unreachable")
@@ -112,7 +125,9 @@ describe("resolveNode — JSON-data fast path", () => {
   })
 
   test("validated body still reaches the handler on the node path", async () => {
-    const app = server().post("/users", { body: nameBody }, (c) => ({ created: c.body.name }))
+    const app = server()
+      .use(nodeDirect())
+      .post("/users", { body: nameBody }, (c) => ({ created: c.body.name }))
     const outcome = await app.resolveNode(
       req("/users", {
         method: "POST",
@@ -131,23 +146,25 @@ describe("resolveNode — fallback to a Response", () => {
     const responseResult = Symbol.for("nifra.response.result")
     let builtResponse = false
     const html = "<!doctype html><h1>lazy</h1>"
-    const app = server().get("/lazy", (c) => {
-      c.set.cookie("sid", "tok")
-      return {
-        [responseResult]: true,
-        toResponse() {
-          builtResponse = true
-          return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } })
-        },
-        toNodeBody() {
-          return {
-            status: 202,
-            headers: { "content-type": "text/html; charset=utf-8" },
-            body: html,
-          }
-        },
-      }
-    })
+    const app = server()
+      .use(nodeDirect())
+      .get("/lazy", (c) => {
+        c.set.cookie("sid", "tok")
+        return {
+          [responseResult]: true,
+          toResponse() {
+            builtResponse = true
+            return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } })
+          },
+          toNodeBody() {
+            return {
+              status: 202,
+              headers: { "content-type": "text/html; charset=utf-8" },
+              body: html,
+            }
+          },
+        }
+      })
     const outcome = await app.resolveNode(req("/lazy"))
     expect(builtResponse).toBe(false)
     expect(outcome.kind).toBe("body")
@@ -162,15 +179,17 @@ describe("resolveNode — fallback to a Response", () => {
   test("a marked buffered Response becomes a node-direct body outcome", async () => {
     const nodeBody = Symbol.for("nifra.response.body")
     const html = "<!doctype html><h1>fast</h1>"
-    const app = server().get("/html", (c) => {
-      c.set.cookie("sid", "tok")
-      const response = new Response(html, {
-        status: 201,
-        headers: { "content-type": "text/html; charset=utf-8", "x-page": "home" },
+    const app = server()
+      .use(nodeDirect())
+      .get("/html", (c) => {
+        c.set.cookie("sid", "tok")
+        const response = new Response(html, {
+          status: 201,
+          headers: { "content-type": "text/html; charset=utf-8", "x-page": "home" },
+        })
+        Object.defineProperty(response, nodeBody, { value: html })
+        return response
       })
-      Object.defineProperty(response, nodeBody, { value: html })
-      return response
-    })
     const outcome = await app.resolveNode(req("/html"))
     const viaFetch = await app.fetch(req("/html"))
     expect(outcome.kind).toBe("body")
@@ -186,7 +205,9 @@ describe("resolveNode — fallback to a Response", () => {
   })
 
   test("a handler-returned Response is wrapped, status preserved", async () => {
-    const app = server().get("/r", () => new Response("raw", { status: 202 }))
+    const app = server()
+      .use(nodeDirect())
+      .get("/r", () => new Response("raw", { status: 202 }))
     const outcome = await app.resolveNode(req("/r"))
     expect(outcome.kind).toBe("response")
     if (outcome.kind !== "response") throw new Error("unreachable")
@@ -195,10 +216,12 @@ describe("resolveNode — fallback to a Response", () => {
   })
 
   test("queued cookies are appended to a handler-returned Response (set-then-redirect)", async () => {
-    const app = server().get("/login-redirect", (c) => {
-      c.set.cookie("sid", "tok")
-      return new Response(null, { status: 302, headers: { location: "/home" } })
-    })
+    const app = server()
+      .use(nodeDirect())
+      .get("/login-redirect", (c) => {
+        c.set.cookie("sid", "tok")
+        return new Response(null, { status: 302, headers: { location: "/home" } })
+      })
     const outcome = await app.resolveNode(req("/login-redirect"))
     expect(outcome.kind).toBe("response")
     if (outcome.kind !== "response") throw new Error("unreachable")
@@ -209,7 +232,9 @@ describe("resolveNode — fallback to a Response", () => {
   })
 
   test("404 → response", async () => {
-    const app = server().get("/here", () => ({}))
+    const app = server()
+      .use(nodeDirect())
+      .get("/here", () => ({}))
     const outcome = await app.resolveNode(req("/missing"))
     expect(outcome.kind).toBe("response")
     if (outcome.kind !== "response") throw new Error("unreachable")
@@ -217,7 +242,9 @@ describe("resolveNode — fallback to a Response", () => {
   })
 
   test("405 → response with Allow header", async () => {
-    const app = server().get("/only-get", () => ({}))
+    const app = server()
+      .use(nodeDirect())
+      .get("/only-get", () => ({}))
     const outcome = await app.resolveNode(req("/only-get", { method: "POST" }))
     expect(outcome.kind).toBe("response")
     if (outcome.kind !== "response") throw new Error("unreachable")
@@ -226,7 +253,9 @@ describe("resolveNode — fallback to a Response", () => {
   })
 
   test("malformed percent-encoded path → 400 response", async () => {
-    const app = server().get("/x/:id", (c) => ({ id: c.params.id }))
+    const app = server()
+      .use(nodeDirect())
+      .get("/x/:id", (c) => ({ id: c.params.id }))
     const outcome = await app.resolveNode(req("/x/%ZZ"))
     expect(outcome.kind).toBe("response")
     if (outcome.kind !== "response") throw new Error("unreachable")
@@ -234,7 +263,9 @@ describe("resolveNode — fallback to a Response", () => {
   })
 
   test("a validation failure → response (never a json fast-path)", async () => {
-    const app = server().post("/users", { body: nameBody }, (c) => ({ created: c.body.name }))
+    const app = server()
+      .use(nodeDirect())
+      .post("/users", { body: nameBody }, (c) => ({ created: c.body.name }))
     const outcome = await app.resolveNode(
       req("/users", {
         method: "POST",
@@ -248,9 +279,11 @@ describe("resolveNode — fallback to a Response", () => {
   })
 
   test("a thrown Response (redirect) is returned as control flow", async () => {
-    const app = server().get("/guard", () => {
-      throw new Response(null, { status: 303, headers: { location: "/login" } })
-    })
+    const app = server()
+      .use(nodeDirect())
+      .get("/guard", () => {
+        throw new Response(null, { status: 303, headers: { location: "/login" } })
+      })
     const outcome = await app.resolveNode(req("/guard"))
     expect(outcome.kind).toBe("response")
     if (outcome.kind !== "response") throw new Error("unreachable")
@@ -259,9 +292,11 @@ describe("resolveNode — fallback to a Response", () => {
   })
 
   test("a thrown Error → flat 500 response (no leak), via the same path as app.fetch", async () => {
-    const app = server({ logger: silentLogger }).get("/boom", () => {
-      throw new Error("kaboom")
-    })
+    const app = server({ logger: silentLogger })
+      .use(nodeDirect())
+      .get("/boom", () => {
+        throw new Error("kaboom")
+      })
     const outcome = await app.resolveNode(req("/boom"))
     expect(outcome.kind).toBe("response")
     if (outcome.kind !== "response") throw new Error("unreachable")
@@ -271,6 +306,7 @@ describe("resolveNode — fallback to a Response", () => {
 
   test("onError hook result is rendered through the node path", async () => {
     const app = server({ logger: silentLogger })
+      .use(nodeDirect())
       .onError(() => new Response("handled", { status: 418 }))
       .get("/boom", () => {
         throw new Error("x")
@@ -282,10 +318,12 @@ describe("resolveNode — fallback to a Response", () => {
   })
 
   test("request timeout → 503 response", async () => {
-    const app = server({ requestTimeoutMs: 20 }).get("/slow", async () => {
-      await Bun.sleep(200)
-      return { done: true }
-    })
+    const app = server({ requestTimeoutMs: 20 })
+      .use(nodeDirect())
+      .get("/slow", async () => {
+        await Bun.sleep(200)
+        return { done: true }
+      })
     const outcome = await app.resolveNode(req("/slow"))
     expect(outcome.kind).toBe("response")
     if (outcome.kind !== "response") throw new Error("unreachable")
@@ -296,6 +334,7 @@ describe("resolveNode — fallback to a Response", () => {
   test("an onResponse hook forces the Web path even for plain JSON data", async () => {
     let ran = false
     const app = server()
+      .use(nodeDirect())
       .onResponse((res) => {
         ran = true
         const headers = new Headers(res.headers)

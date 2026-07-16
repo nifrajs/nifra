@@ -1,8 +1,8 @@
 /**
  * Lean server entry for the common Nifra runtime.
  *
- * Use `@nifrajs/core/server` when building an HTTP app. The package root remains a
- * backwards-compatible "everything" barrel, while optional systems such as
+ * Use `@nifrajs/core/server` or the equivalent lean package root when building an HTTP app.
+ * Optional systems such as
  * causality, invariants, manifests, reflection, and capability tooling live at
  * their dedicated subpaths. Keeping this entry curated is intentional: do not
  * export an opt-in module here unless the Server implementation already loads it.
@@ -75,14 +75,12 @@ export {
   type ToolAnnotations,
   toFetchHandler,
 } from "./server/server.ts"
-export {
-  type SSEContext,
-  type SSEInit,
-  type SSEMessage,
-  type SSEStream,
-  sse,
-  type TypedSSEStream,
-  typedSSEStream,
+export type {
+  SSEContext,
+  SSEInit,
+  SSEMessage,
+  SSEStream,
+  TypedSSEStream,
 } from "./server/sse.ts"
 export type {
   NifraWebSocket,

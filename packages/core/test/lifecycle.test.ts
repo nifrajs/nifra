@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { networkInterfaces } from "node:os"
 import type { StandardSchemaV1 } from "../src/index.ts"
 import { server } from "../src/index.ts"
+import { nodeDirect } from "../src/node-direct.ts"
 
 /** A non-loopback local IPv4, so "bound to loopback only" is observable. Skipped-safe: falls back
  *  to loopback when the box has no external interface, which makes the negative assertion vacuous
@@ -237,6 +238,7 @@ describe("fused web lane parity (bare routes)", () => {
   test("fetch (fused) and resolveNode (generic) agree on body/status", async () => {
     const make = () =>
       server()
+        .use(nodeDirect())
         .get("/sync", (c) => ({ id: c.params, ok: true }))
         .get("/async", async () => ({ later: 1 }))
         .get("/set", (c) => {

@@ -8,24 +8,28 @@ Contract-derived adversarial tests, runtime-matrix response conformance, and coo
 > reference see [`api-reference.md`](../../api-reference.md) (every export + signature) and
 > [`llms-full.txt`](../../llms-full.txt) (the prose guides). One cheap read instead of the whole corpus.
 
+## Public entrypoints
+
+`@nifrajs/testing` · `@nifrajs/testing/certification`
+
 ## Key exports
 
-- **assertAdapterCertification** _(function)_ — `assertAdapterCertification: (report: AdapterCertificationReport) => void`
-- **assertAdversarialContract** _(function)_ — `assertAdversarialContract: (app: ContractTestApp, options?: AdversarialContractOptions) => Promise<AdversarialContractReport>`
-- **assertIncidentReplays** _(function)_ — `assertIncidentReplays: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<void>`
-- **cacheStoreCertificationProfile** _(function)_ — `cacheStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableCacheStore>`
-- **captureIncident** _(function)_ — `captureIncident: (request: Request | CapturedRequestInput, response: Response | { status: number; body?: unknown; }, options?: CaptureIncid…`
-- **certifyAdapter** _(function)_ — `certifyAdapter: <Adapter>(options: { readonly profile: AdapterCertificationProfile<Adapter>; readonly adapterId: string; readonly createAda…`
-- **cookieJar** _(function)_ — `cookieJar: () => CookieJar`
-- **createFailureLab** _(function)_ — `createFailureLab: (options: FailureLabOptions) => FailureLab`
-- **defineCertificationProfile** _(function)_ — `defineCertificationProfile: <Adapter>(profile: AdapterCertificationProfile<Adapter>) => AdapterCertificationProfile<Adapter>`
-- **eventDeliveryCertificationProfile** _(function)_ — `eventDeliveryCertificationProfile: () => AdapterCertificationProfile<CertifiableEventDeliveryAdapter>`
-- **generateRegressionTest** _(function)_ — `generateRegressionTest: (capsule: IncidentCapsule, options?: GenerateRegressionTestOptions) => string`
-- **jobStoreCertificationProfile** _(function)_ — `jobStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableJobStore>`
-- **redactForEmission** _(function)_ — `redactForEmission: (value: unknown, allow: ReadonlySet<string>, path?: string) => unknown`
-- **replayIncident** _(function)_ — `replayIncident: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<IncidentReplayResult>`
+- **assertAdapterCertification** _(function)_ — `assertAdapterCertification: (report: AdapterCertificationReport) => void` · from `@nifrajs/testing`
+- **assertAdversarialContract** _(function)_ — `assertAdversarialContract: (app: ContractTestApp, options?: AdversarialContractOptions) => Promise<AdversarialContractReport>` · from `@nifrajs/testing`
+- **assertIncidentReplays** _(function)_ — `assertIncidentReplays: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<void>` · from `@nifrajs/testing`
+- **cacheStoreCertificationProfile** _(function)_ — `cacheStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableCacheStore>` · from `@nifrajs/testing`
+- **captureIncident** _(function)_ — `captureIncident: (request: Request | CapturedRequestInput, response: Response | { status: number; body?: unknown; }, options?: CaptureIncid…` · from `@nifrajs/testing`
+- **certifyAdapter** _(function)_ — `certifyAdapter: <Adapter>(options: { readonly profile: AdapterCertificationProfile<Adapter>; readonly adapterId: string; readonly createAda…` · from `@nifrajs/testing`
+- **cookieJar** _(function)_ — `cookieJar: () => CookieJar` · from `@nifrajs/testing`
+- **createFailureLab** _(function)_ — `createFailureLab: (options: FailureLabOptions) => FailureLab` · from `@nifrajs/testing`
+- **defineCertificationProfile** _(function)_ — `defineCertificationProfile: <Adapter>(profile: AdapterCertificationProfile<Adapter>) => AdapterCertificationProfile<Adapter>` · from `@nifrajs/testing`
+- **eventDeliveryCertificationProfile** _(function)_ — `eventDeliveryCertificationProfile: () => AdapterCertificationProfile<CertifiableEventDeliveryAdapter>` · from `@nifrajs/testing`
+- **generateRegressionTest** _(function)_ — `generateRegressionTest: (capsule: IncidentCapsule, options?: GenerateRegressionTestOptions) => string` · from `@nifrajs/testing`
+- **jobStoreCertificationProfile** _(function)_ — `jobStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableJobStore>` · from `@nifrajs/testing`
+- **redactForEmission** _(function)_ — `redactForEmission: (value: unknown, allow: ReadonlySet<string>, path?: string) => unknown` · from `@nifrajs/testing`
+- **replayIncident** _(function)_ — `replayIncident: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<IncidentReplayResult>` · from `@nifrajs/testing`
 
-_…and 56 more — see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
+_…and 59 more — see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
 
 ## Footguns
 

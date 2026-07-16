@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { validateStandard } from "@nifrajs/core"
+import { validateStandard } from "@nifrajs/core/schema"
 import { t } from "../src/index.ts"
 
 /**

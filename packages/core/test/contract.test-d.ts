@@ -1,5 +1,11 @@
-import type { ContextForOp, Registry, RegistryFor, Server, StandardSchemaV1 } from "@nifrajs/core"
-import { defineContract, implement, server } from "@nifrajs/core"
+import type { Registry, Server, StandardSchemaV1 } from "@nifrajs/core"
+import { server } from "@nifrajs/core"
+import {
+  type ContextForOp,
+  defineContract,
+  implement,
+  type RegistryFor,
+} from "@nifrajs/core/contract"
 import type { Equal, Expect } from "@nifrajs/test-utils"
 
 declare const name: StandardSchemaV1<unknown, { name: string }>

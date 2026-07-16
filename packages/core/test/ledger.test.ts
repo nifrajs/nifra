@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import { recordCapabilityOutcome, useCapability } from "../src/capabilities.ts"
+import { effectLedger } from "../src/effect-ledger.ts"
+import { server } from "../src/index.ts"
 import {
   computeEffectDigest,
   createMemoryLedgerSink,
@@ -8,11 +11,8 @@ import {
   EffectLedgerSealedError,
   effectLedgerOf,
   randomEffectDigestKey,
-  recordCapabilityOutcome,
   type SealedEffectLedger,
-  server,
-  useCapability,
-} from "../src/index.ts"
+} from "../src/ledger.ts"
 
 const ledgerOptions = { method: "POST", path: "/pay" }
 
@@ -210,10 +210,9 @@ describe("server({ effectLedger }) — request path", () => {
 
   test("beacon appends entries; the sink receives the sealed ledger with the route pattern", async () => {
     const memory = createMemoryLedgerSink()
-    const app = server({ effectLedger: { sink: memory.sink } }).post(
-      "/orders/:id",
-      { capabilities: ["db.write", "payments.charge"] },
-      (c) => {
+    const app = server()
+      .use(effectLedger({ sink: memory.sink }))
+      .post("/orders/:id", { capabilities: ["db.write", "payments.charge"] }, (c) => {
         useCapability(c, "db.write", { target: "repo:orders", cost: { ms: 2 } })
         recordCapabilityOutcome(c, "db.write", {
           phase: "committed",
@@ -225,8 +224,7 @@ describe("server({ effectLedger }) — request path", () => {
           cost: { calls: 1 },
         })
         return { ok: true }
-      },
-    )
+      })
     const res = await app.fetch(post("/orders/12345"))
     expect(res.status).toBe(200)
     expect(memory.ledgers).toHaveLength(1)
@@ -251,11 +249,9 @@ describe("server({ effectLedger }) — request path", () => {
 
   test("declared-but-unused capabilities produce no sink delivery", async () => {
     const memory = createMemoryLedgerSink()
-    const app = server({ effectLedger: { sink: memory.sink } }).post(
-      "/noop",
-      { capabilities: ["db.write"] },
-      () => ({ ok: true }),
-    )
+    const app = server()
+      .use(effectLedger({ sink: memory.sink }))
+      .post("/noop", { capabilities: ["db.write"] }, () => ({ ok: true }))
     expect((await app.fetch(post("/noop"))).status).toBe(200)
     expect(memory.ledgers).toHaveLength(0)
   })
@@ -263,11 +259,6 @@ describe("server({ effectLedger }) — request path", () => {
   test("a failing post-effect sink does not turn success into a duplicate-inducing 500", async () => {
     const logged: Record<string, unknown>[] = []
     const app = server({
-      effectLedger: {
-        sink: () => {
-          throw new Error("sink unavailable: secret-token")
-        },
-      },
       logger: {
         debug() {},
         info() {},
@@ -276,10 +267,18 @@ describe("server({ effectLedger }) — request path", () => {
           logged.push(fields ?? {})
         },
       },
-    }).post("/pay", { capabilities: ["payments.charge"] }, (c) => {
-      useCapability(c, "payments.charge")
-      return { ok: true }
     })
+      .use(
+        effectLedger({
+          sink: () => {
+            throw new Error("sink unavailable: secret-token")
+          },
+        }),
+      )
+      .post("/pay", { capabilities: ["payments.charge"] }, (c) => {
+        useCapability(c, "payments.charge")
+        return { ok: true }
+      })
     const res = await app.fetch(post("/pay"))
     expect(res.status).toBe(200)
     expect(JSON.stringify(logged)).not.toContain("secret-token")
@@ -288,21 +287,24 @@ describe("server({ effectLedger }) — request path", () => {
   test("awaits thenable sinks without relying on instanceof Promise", async () => {
     let settled = false
     const app = server({
-      effectLedger: {
-        sink: () =>
-          ({
-            // biome-ignore lint/suspicious/noThenProperty: this regression deliberately uses a non-Promise thenable
-            then(resolve: () => void) {
-              settled = true
-              resolve()
-            },
-          }) as unknown as Promise<void>,
-      },
       logger: { debug() {}, info() {}, warn() {}, error() {} },
-    }).post("/pay", { capabilities: ["payments.charge"] }, (c) => {
-      useCapability(c, "payments.charge")
-      return { ok: true }
     })
+      .use(
+        effectLedger({
+          sink: () =>
+            ({
+              // biome-ignore lint/suspicious/noThenProperty: this regression deliberately uses a non-Promise thenable
+              then(resolve: () => void) {
+                settled = true
+                resolve()
+              },
+            }) as unknown as Promise<void>,
+        }),
+      )
+      .post("/pay", { capabilities: ["payments.charge"] }, (c) => {
+        useCapability(c, "payments.charge")
+        return { ok: true }
+      })
     const res = await app.fetch(post("/pay"))
     expect(res.status).toBe(200)
     expect(settled).toBe(true)
@@ -311,12 +313,13 @@ describe("server({ effectLedger }) — request path", () => {
   test("a handler error still delivers the partial intent ledger", async () => {
     const memory = createMemoryLedgerSink()
     const app = server({
-      effectLedger: { sink: memory.sink },
       logger: { debug() {}, info() {}, warn() {}, error() {} },
-    }).post("/boom", { capabilities: ["db.write"] }, (c) => {
-      useCapability(c, "db.write", { target: "repo:orders" })
-      throw new Error("kaboom after the write")
     })
+      .use(effectLedger({ sink: memory.sink }))
+      .post("/boom", { capabilities: ["db.write"] }, (c) => {
+        useCapability(c, "db.write", { target: "repo:orders" })
+        throw new Error("kaboom after the write")
+      })
     const res = await app.fetch(post("/boom"))
     expect(res.status).toBe(500)
     expect(memory.ledgers).toHaveLength(1)
@@ -327,12 +330,13 @@ describe("server({ effectLedger }) — request path", () => {
   test("ledger overflow inside the handler fails the request; entries up to the bound are audited", async () => {
     const memory = createMemoryLedgerSink()
     const app = server({
-      effectLedger: { sink: memory.sink, maxEntries: 3 },
       logger: { debug() {}, info() {}, warn() {}, error() {} },
-    }).post("/loop", { capabilities: ["db.write"] }, (c) => {
-      for (let index = 0; index < 10; index++) useCapability(c, "db.write")
-      return { ok: true }
     })
+      .use(effectLedger({ sink: memory.sink, maxEntries: 3 }))
+      .post("/loop", { capabilities: ["db.write"] }, (c) => {
+        for (let index = 0; index < 10; index++) useCapability(c, "db.write")
+        return { ok: true }
+      })
     const res = await app.fetch(post("/loop"))
     expect(res.status).toBe(500)
     expect(memory.ledgers[0]?.entries).toHaveLength(3)
@@ -340,14 +344,12 @@ describe("server({ effectLedger }) — request path", () => {
 
   test("chain: true produces tamper-evident hashes on the sealed ledger", async () => {
     const memory = createMemoryLedgerSink()
-    const app = server({ effectLedger: { sink: memory.sink, chain: true } }).post(
-      "/pay",
-      { capabilities: ["payments.charge"] },
-      (c) => {
+    const app = server()
+      .use(effectLedger({ sink: memory.sink, chain: true }))
+      .post("/pay", { capabilities: ["payments.charge"] }, (c) => {
         useCapability(c, "payments.charge")
         return { ok: true }
-      },
-    )
+      })
     expect((await app.fetch(post("/pay"))).status).toBe(200)
     expect(memory.ledgers[0]?.chain?.hashes).toHaveLength(1)
     expect(memory.ledgers[0]?.chain?.head).toMatch(/^[0-9a-f]{64}$/)
@@ -355,7 +357,8 @@ describe("server({ effectLedger }) — request path", () => {
 
   test("routes without capabilities are untouched: no ledger, no sink, fast path intact", async () => {
     const memory = createMemoryLedgerSink()
-    const app = server({ effectLedger: { sink: memory.sink } })
+    const app = server()
+      .use(effectLedger({ sink: memory.sink }))
       .get("/plain", () => ({ ok: true }))
       .post("/ledgered", { capabilities: ["db.write"] }, (c) => {
         expect(effectLedgerOf(c)).toBeDefined()
@@ -385,19 +388,20 @@ describe("server({ effectLedger }) — request path", () => {
   test("beacon ordering: an undeclared capability throws before anything reaches the ledger", async () => {
     const memory = createMemoryLedgerSink()
     const app = server({
-      effectLedger: { sink: memory.sink },
       logger: { debug() {}, info() {}, warn() {}, error() {} },
-    }).post("/pay", { capabilities: ["db.write"] }, (c) => {
-      useCapability(c, "payments.charge") // not declared -> throws
-      return { ok: true }
     })
+      .use(effectLedger({ sink: memory.sink }))
+      .post("/pay", { capabilities: ["db.write"] }, (c) => {
+        useCapability(c, "payments.charge") // not declared -> throws
+        return { ok: true }
+      })
     const res = await app.fetch(post("/pay"))
     expect(res.status).toBe(500)
     expect(memory.ledgers).toHaveLength(0) // nothing sanctioned, nothing recorded
   })
 
   test("server option validation fails closed at construction", () => {
-    expect(() => server({ effectLedger: { sink: 42 as never } })).toThrow(/sink/)
-    expect(() => server({ effectLedger: { sink: () => {}, maxEntries: 0 } })).toThrow(/maxEntries/)
+    expect(() => effectLedger({ sink: 42 as never })).toThrow(/sink/)
+    expect(() => effectLedger({ sink: () => {}, maxEntries: 0 })).toThrow(/maxEntries/)
   })
 })

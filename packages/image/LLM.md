@@ -8,24 +8,28 @@ Image optimization for nifra — a CLS-safe responsive <Image> + pluggable loade
 > reference see [`api-reference.md`](../../api-reference.md) (every export + signature) and
 > [`llms-full.txt`](../../llms-full.txt) (the prose guides). One cheap read instead of the whole corpus.
 
+## Public entrypoints
+
+`@nifrajs/image` · `@nifrajs/image/backends` · `@nifrajs/image/server`
+
 ## Key exports
 
-- **cloudflareLoader** _(function)_ — `cloudflareLoader: (options?: CloudflareLoaderOptions) => ImageLoader`
-- **imageDimensions** _(function)_ — `imageDimensions: (bytes: Uint8Array) => ImageInfo | null`
-- **readImageDimensions** _(function)_ — `readImageDimensions: (source: { arrayBuffer(): Promise<ArrayBuffer>; stream?: () => ReadableStream<Uint8Array>; }, maxBytes?: number) => Pr…`
-- **resolveImage** _(function)_ — `resolveImage: (props: ImageProps, loader?: ImageLoader) => ResolvedImage`
-- **selfHostedLoader** _(function)_ — `selfHostedLoader: (options: SelfHostedLoaderOptions) => ImageLoader`
-- **signImageUrl** _(function)_ — `signImageUrl: (endpoint: string, image: { src: string; width: number; quality?: number; }, options: SignImageUrlOptions) => string`
-- **toHtmlAttrs** _(function)_ — `toHtmlAttrs: (resolved: ResolvedImage) => HtmlImageAttrs`
-- **identityLoader** _(const)_ — `identityLoader: ImageLoader`
-- **CloudflareLoaderOptions** _(interface)_ — `interface CloudflareLoaderOptions`
-- **HtmlImageAttrs** _(interface)_ — `interface HtmlImageAttrs`
-- **ImageInfo** _(interface)_ — `interface ImageInfo`
-- **ImageProps** _(interface)_ — `interface ImageProps`
-- **ResolvedImage** _(interface)_ — `interface ResolvedImage`
-- **SelfHostedLoaderOptions** _(interface)_ — `interface SelfHostedLoaderOptions`
+- **bunImageBackend** _(function)_ — `bunImageBackend: () => ImageBackend` · from `@nifrajs/image/backends`
+- **cloudflareLoader** _(function)_ — `cloudflareLoader: (options?: CloudflareLoaderOptions) => ImageLoader` · from `@nifrajs/image`
+- **createImageHandler** _(function)_ — `createImageHandler: (options?: ImageHandlerOptions) => (req: Request) => Promise<Response>` · from `@nifrajs/image/server`
+- **imageDimensions** _(function)_ — `imageDimensions: (bytes: Uint8Array) => ImageInfo | null` · from `@nifrajs/image`
+- **readImageDimensions** _(function)_ — `readImageDimensions: (source: { arrayBuffer(): Promise<ArrayBuffer>; stream?: () => ReadableStream<Uint8Array>; }, maxBytes?: number) => Pr…` · from `@nifrajs/image`
+- **resolveImage** _(function)_ — `resolveImage: (props: ImageProps, loader?: ImageLoader) => ResolvedImage` · from `@nifrajs/image`
+- **selfHostedLoader** _(function)_ — `selfHostedLoader: (options: SelfHostedLoaderOptions) => ImageLoader` · from `@nifrajs/image`
+- **sharpImageBackend** _(function)_ — `sharpImageBackend: (sharp: SharpLike) => ImageBackend` · from `@nifrajs/image/backends`
+- **signImageUrl** _(function)_ — `signImageUrl: (endpoint: string, image: { src: string; width: number; quality?: number; }, options: SignImageUrlOptions) => string` · from `@nifrajs/image`
+- **toHtmlAttrs** _(function)_ — `toHtmlAttrs: (resolved: ResolvedImage) => HtmlImageAttrs` · from `@nifrajs/image`
+- **wasmImageBackend** _(function)_ — `wasmImageBackend: (codecs: WasmImageCodecs) => ImageBackend` · from `@nifrajs/image/backends`
+- **ImageProcessingError** _(class)_ — `class ImageProcessingError` · from `@nifrajs/image/backends`
+- **CONTENT_TYPE** _(const)_ — `CONTENT_TYPE: Record<OutputFormat, string>` · from `@nifrajs/image/backends`
+- **identityLoader** _(const)_ — `identityLoader: ImageLoader` · from `@nifrajs/image`
 
-_…and 3 more — see [`api-reference.md`](../../api-reference.md#nifrajsimage) for the complete list._
+_…and 18 more — see [`api-reference.md`](../../api-reference.md#nifrajsimage) for the complete list._
 
 ## Footguns
 

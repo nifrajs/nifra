@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { StandardSchemaV1 } from "../src/index.ts"
 import { server } from "../src/index.ts"
+import { mcp } from "../src/mcp.ts"
 
 interface WeatherInput {
   location: string
@@ -41,17 +42,19 @@ const outputSchema: StandardSchemaV1 = {
 
 describe("Server.tool()", () => {
   test("registers a POST route under /_nifra/tool/:name with correct schemas and metadata", () => {
-    const app = server().tool(
-      "get_weather",
-      {
-        description: "Get weather for location",
-        input: inputSchema,
-        output: outputSchema,
-      },
-      (input) => {
-        return { temp: 22, condition: "Sunny", location: input.location }
-      },
-    )
+    const app = server()
+      .use(mcp())
+      .tool(
+        "get_weather",
+        {
+          description: "Get weather for location",
+          input: inputSchema,
+          output: outputSchema,
+        },
+        (input) => {
+          return { temp: 22, condition: "Sunny", location: input.location }
+        },
+      )
 
     const routes = app.routes()
     const toolRoute = routes.find((r) => r.path === "/_nifra/tool/get_weather")
@@ -66,15 +69,17 @@ describe("Server.tool()", () => {
   })
 
   test("attaches MCP tool annotations (safety hints) to the descriptor", () => {
-    const app = server().tool(
-      "delete_city",
-      {
-        description: "Delete a city",
-        input: inputSchema,
-        annotations: { title: "Delete City", destructiveHint: true, idempotentHint: true },
-      },
-      (input) => ({ deleted: input.location }),
-    )
+    const app = server()
+      .use(mcp())
+      .tool(
+        "delete_city",
+        {
+          description: "Delete a city",
+          input: inputSchema,
+          annotations: { title: "Delete City", destructiveHint: true, idempotentHint: true },
+        },
+        (input) => ({ deleted: input.location }),
+      )
     const toolRoute = app.routes().find((r) => r.path === "/_nifra/tool/delete_city")
     expect(toolRoute?.tool).toEqual({
       name: "delete_city",
@@ -84,16 +89,18 @@ describe("Server.tool()", () => {
   })
 
   test("runs the route handler and handles body validation at the boundary", async () => {
-    const app = server().tool(
-      "get_weather",
-      {
-        description: "Get weather for location",
-        input: inputSchema,
-      },
-      (input) => {
-        return { temp: 22, condition: "Sunny", location: input.location }
-      },
-    )
+    const app = server()
+      .use(mcp())
+      .tool(
+        "get_weather",
+        {
+          description: "Get weather for location",
+          input: inputSchema,
+        },
+        (input) => {
+          return { temp: 22, condition: "Sunny", location: input.location }
+        },
+      )
 
     // 1. Successful execution
     const reqOk = new Request("http://localhost/_nifra/tool/get_weather", {
@@ -119,6 +126,7 @@ describe("Server.tool()", () => {
   test("properly forwards the request context to the handler", async () => {
     const app = server<{ API_KEY: string }>()
       .decorate("api_key", "secret-key")
+      .use(mcp())
       .tool(
         "auth_test",
         {

@@ -18,6 +18,7 @@ import { gzipSync } from "bun"
 
 const here = dirname(Bun.fileURLToPath(import.meta.url))
 const tmp = join(here, ".tmp") // inside bench/ so node_modules (workspace @nifrajs/* + hono/elysia) resolve
+const CHECK = process.argv.includes("--check")
 mkdirSync(tmp, { recursive: true })
 
 const kb = (n: number): string => `${(n / 1024).toFixed(1)} KB`
@@ -65,11 +66,14 @@ function table(title: string, rows: ReadonlyArray<Size>, baseline?: string): voi
   console.log(`\n## ${title}\n`)
   const top = Math.max(...rows.map((r) => r.gz))
   const base = baseline ? rows.find((r) => r.label === baseline) : undefined
-  console.log(`  ${pad("", 16)}${pad("minified", 12)}${pad("gzipped", 12)}bar`)
+  const labelWidth = Math.max(16, ...rows.map((row) => row.label.length + 2))
+  console.log(`  ${pad("", labelWidth)}${pad("minified", 12)}${pad("gzipped", 12)}bar`)
   for (const r of [...rows].sort((a, b) => a.gz - b.gz)) {
     const bar = "█".repeat(Math.round((r.gz / top) * 24))
     const rel = base && base.gz > 0 ? `  ${(r.gz / base.gz).toFixed(1)}× ${baseline}` : ""
-    console.log(`  ${pad(r.label, 16)}${pad(kb(r.min), 12)}${pad(kb(r.gz), 12)}${bar}${rel}`)
+    console.log(
+      `  ${pad(r.label, labelWidth)}${pad(kb(r.min), 12)}${pad(kb(r.gz), 12)}${bar}${rel}`,
+    )
   }
 }
 
@@ -85,6 +89,48 @@ export default new Hono().get("/", (c) => c.json({ hello: "world" })).get("/user
 export default new Elysia().get("/", () => ({ hello: "world" })).get("/users/:id", ({ params }: { params: { id: string } }) => ({ id: params.id }))`,
 }
 
+// Feature rows pin the marginal cost of optional lanes and validator choices. Keep these app shapes
+// intentionally tiny and deterministic: the point is to catch accidental runtime reachability, not to
+// model a whole production service.
+const NIFRA_FEATURES: Record<string, string> = {
+  "nifra-bare": SERVER.nifra as string,
+  "nifra-idempotency": `import { server } from "@nifrajs/core/server"
+import { idempotency } from "@nifrajs/core/idempotency-plugin"
+export default server().use(idempotency()).post("/pay", { idempotency: { scope: "request", namespace: "public:pay" } }, () => ({ ok: true }))`,
+  "nifra-effect-ledger": `import { server } from "@nifrajs/core/server"
+import { effectLedger } from "@nifrajs/core/effect-ledger"
+import { useCapability } from "@nifrajs/core/capabilities"
+export default server().use(effectLedger({ sink: () => {} })).post("/write", { capabilities: ["db.write"] }, (c) => { useCapability(c, "db.write"); return { ok: true } })`,
+  "nifra-sse": `import { server } from "@nifrajs/core/server"
+import "@nifrajs/core/sse"
+const event = { "~standard": { version: 1, vendor: "bench", validate: (value: unknown) => ({ value }) } } as const
+export default server().sse("/events", { sse: event }, (_c, stream) => stream.close())`,
+  "nifra-mcp": `import { server } from "@nifrajs/core/server"
+import "@nifrajs/core/mcp-runtime"
+const input = { "~standard": { version: 1, vendor: "bench", validate: (value: unknown) => ({ value }) } } as const
+export default server().tool("ping", { description: "Ping", input }, () => ({ ok: true }))`,
+  "nifra-valibot": `import { server } from "@nifrajs/core/server"
+import * as v from "valibot"
+const body = v.object({ name: v.string(), age: v.number() })
+export default server().post("/users", { body }, (c) => ({ name: c.body.name }))`,
+  "nifra-typebox-t": `import { server } from "@nifrajs/core/server"
+import { t } from "@nifrajs/schema"
+const body = t.object({ name: t.string(), age: t.number() })
+export default server().post("/users", { body }, (c) => ({ name: c.body.name }))`,
+}
+
+// Gzip ceilings are deliberately just above measured values: enough headroom for minifier noise, tight
+// enough that a newly reachable optional subsystem fails CI. Update only with an explained benchmark diff.
+const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
+  "nifra-bare": 15.5,
+  "nifra-idempotency": 18,
+  "nifra-effect-ledger": 17,
+  "nifra-mcp": 16,
+  "nifra-sse": 16,
+  "nifra-valibot": 16.5,
+  "nifra-typebox-t": 46,
+}
+
 const main = async (): Promise<void> => {
   console.log(`\nBundle size — Bun.build({ minify: true }) + gzip  (Bun ${Bun.version})`)
   console.log("Deterministic: identical app shape per row, same minifier. Lower is better.")
@@ -95,6 +141,22 @@ const main = async (): Promise<void> => {
     if (s) server.push(s)
   }
   table("Server bundle — minimal 2-route JSON app (target: bun)", server, "bun-raw")
+
+  const features: Size[] = []
+  for (const [label, source] of Object.entries(NIFRA_FEATURES)) {
+    const measured = await measure(label, source, { target: "bun" })
+    if (measured) features.push(measured)
+  }
+  table("Nifra feature matrix — marginal runtime reachability", features, "nifra-bare")
+
+  const budgetFailures = features.flatMap((row) => {
+    const budgetKb = FEATURE_GZIP_BUDGET_KB[row.label]
+    if (budgetKb === undefined || row.gz <= budgetKb * 1024) return []
+    return [`${row.label}: ${kb(row.gz)} exceeds ${budgetKb.toFixed(1)} KB gzip budget`]
+  })
+  if (budgetFailures.length > 0) {
+    throw new Error(`Bundle size budget failed:\n  ${budgetFailures.join("\n  ")}`)
+  }
 
   console.log("\nRows are each framework's own bundled code (tree-shaken) on top of the runtime's")
   console.log("native HTTP — what ships in your server artifact, not the package install size.")
@@ -110,13 +172,12 @@ const main = async (): Promise<void> => {
       ...(s.label === "nifra" ? { you: true as const } : {}),
     }))
     .sort((a, b) => a.kb - b.kb)
-  if (bundle.length === Object.keys(SITE_LABELS).length) {
+  if (!CHECK && bundle.length === Object.keys(SITE_LABELS).length) {
     const { writeSiteBench } = await import("../site-bench.ts")
     await writeSiteBench({ bundle })
-  } else {
+  } else if (bundle.length !== Object.keys(SITE_LABELS).length) {
     console.error("  ! site bundle slice NOT updated — a framework row failed to build")
   }
-  rmSync(tmp, { recursive: true, force: true })
 }
 
-await main()
+await main().finally(() => rmSync(tmp, { recursive: true, force: true }))

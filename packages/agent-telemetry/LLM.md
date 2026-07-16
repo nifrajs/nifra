@@ -11,10 +11,8 @@ Agent telemetry plugin — child spans for AI tool calls on /_nifra/tool/* and M
 ## Key exports
 
 - **agentTelemetry** _(function)_ — `agentTelemetry: (options: AgentTelemetryOptions) => { name: string; beforeHandle(context: HookContext): undefined; onError(error: unknown, …`
-- **consoleAgentExporter** _(function)_ — `consoleAgentExporter: (log?: (line: string) => void) => AgentSpanExporter`
+- **consoleAgentExporter** _(function)_ — `consoleAgentExporter: (log?: (line: string) => void) => ObservationAdapter`
 - **AgentTelemetryOptions** _(interface)_ — `interface AgentTelemetryOptions`
-- **AgentSpan** _(type)_ — `type AgentSpan = NifraSpan`
-- **AgentSpanExporter** _(type)_ — `type AgentSpanExporter = SpanExporter`
 
 ## Footguns
 

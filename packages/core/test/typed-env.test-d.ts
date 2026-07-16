@@ -31,7 +31,7 @@ const handler = toFetchHandler(_typedApp)
 type WorkerEnv = Parameters<typeof handler.fetch>[1]
 export type _WorkerEnvIsAppEnv = Expect<Equal<WorkerEnv, AppEnv>>
 
-// Negative: an UNDECLARED `server()` keeps `c.env: unknown` — back-compat + the secure default. A
+// Negative: an UNDECLARED `server()` keeps `c.env: unknown` — the secure default. A
 // property access off it must NOT typecheck without first narrowing; `@ts-expect-error` proves it's
 // `unknown`, not silently `any` (an `any` `c.env` would make this access compile and fail the test).
 export const _untypedApp = server().get("/raw", (c) => {

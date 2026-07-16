@@ -8,24 +8,28 @@ Composable middleware for nifra — auth, CSRF, JWT/JWKS, IP restriction, CORS, 
 > reference see [`api-reference.md`](../../api-reference.md) (every export + signature) and
 > [`llms-full.txt`](../../llms-full.txt) (the prose guides). One cheap read instead of the whole corpus.
 
+## Public entrypoints
+
+`@nifrajs/middleware` · `@nifrajs/middleware/context-storage`
+
 ## Key exports
 
-- **apiKey** _(function)_ — `apiKey: { (options: ApiKeyStaticOptions): AuthPlugin<string>; <P>(options: ApiKeyVerifyOptions<P>): AuthPlugin<P>; }`
-- **appendTrailingSlash** _(function)_ — `appendTrailingSlash: (options?: TrailingSlashOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@ni…`
-- **basicAuth** _(function)_ — `basicAuth: { (options: BasicAuthStaticOptions): BasicAuthPlugin<string>; <P>(options: BasicAuthStaticOptions<P>): BasicAuthPlugin<P>; <P>(o…`
-- **bearer** _(function)_ — `bearer: <P>(options: BearerOptions<P>) => AuthPlugin<P>`
-- **bodyLimit** _(function)_ — `bodyLimit: (options: BodyLimitOptions) => Middleware`
-- **buildOpenApiDocument** _(function)_ — `buildOpenApiDocument: (routes: readonly RouteLike[], options?: OpenApiOptions) => Record<string, unknown>`
-- **cache** _(function)_ — `cache: (options: CacheOptions) => Middleware`
-- **cacheControl** _(function)_ — `cacheControl: (value: string | ((request: Request) => string | undefined), options?: CacheControlOptions) => import("@nifrajs/core").NifraP…`
-- **combine** _(function)_ — `combine: (...items: readonly Composable[]) => NifraPlugin`
-- **compression** _(function)_ — `compression: (options?: CompressionOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core…`
-- **cors** _(function)_ — `cors: (options?: CorsOptions) => Middleware`
-- **createAdmissionController** _(function)_ — `createAdmissionController: (options: AdmissionOptions) => AdmissionControllerHandle`
-- **createCsrfToken** _(function)_ — `createCsrfToken: (secret: string | Uint8Array, nonce?: string) => Promise<string>`
-- **createEventLoopLagSampler** _(function)_ — `createEventLoopLagSampler: (resolutionMs?: number, monitor?: LoopDelayMonitor) => () => number`
+- **idempotency** _(function)_ — `idempotency: (options: IdempotencyOptions) => Middleware` · from `@nifrajs/middleware`
+- **apiKey** _(function)_ — `apiKey: { (options: ApiKeyStaticOptions): AuthPlugin<string>; <P>(options: ApiKeyVerifyOptions<P>): AuthPlugin<P>; }` · from `@nifrajs/middleware`
+- **appendTrailingSlash** _(function)_ — `appendTrailingSlash: (options?: TrailingSlashOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@ni…` · from `@nifrajs/middleware`
+- **basicAuth** _(function)_ — `basicAuth: { (options: BasicAuthStaticOptions): BasicAuthPlugin<string>; <P>(options: BasicAuthStaticOptions<P>): BasicAuthPlugin<P>; <P>(o…` · from `@nifrajs/middleware`
+- **bearer** _(function)_ — `bearer: <P>(options: BearerOptions<P>) => AuthPlugin<P>` · from `@nifrajs/middleware`
+- **bodyLimit** _(function)_ — `bodyLimit: (options: BodyLimitOptions) => Middleware` · from `@nifrajs/middleware`
+- **buildOpenApiDocument** _(function)_ — `buildOpenApiDocument: (routes: readonly RouteLike[], options?: OpenApiOptions) => Record<string, unknown>` · from `@nifrajs/middleware`
+- **cache** _(function)_ — `cache: (options: CacheOptions) => Middleware` · from `@nifrajs/middleware`
+- **cacheControl** _(function)_ — `cacheControl: (value: string | ((request: Request) => string | undefined), options?: CacheControlOptions) => import("@nifrajs/core").NifraP…` · from `@nifrajs/middleware`
+- **combine** _(function)_ — `combine: (...items: readonly Composable[]) => NifraPlugin` · from `@nifrajs/middleware`
+- **compression** _(function)_ — `compression: (options?: CompressionOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core…` · from `@nifrajs/middleware`
+- **contextStorage** _(function)_ — `contextStorage: () => Middleware` · from `@nifrajs/middleware/context-storage`
+- **cors** _(function)_ — `cors: (options?: CorsOptions) => Middleware` · from `@nifrajs/middleware`
+- **createAdmissionController** _(function)_ — `createAdmissionController: (options: AdmissionOptions) => AdmissionControllerHandle` · from `@nifrajs/middleware`
 
-_…and 98 more — see [`api-reference.md`](../../api-reference.md#nifrajsmiddleware) for the complete list._
+_…and 101 more — see [`api-reference.md`](../../api-reference.md#nifrajsmiddleware) for the complete list._
 
 ## Footguns
 

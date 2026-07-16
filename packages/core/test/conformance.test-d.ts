@@ -7,7 +7,8 @@
  */
 
 import type { Context, Server, StandardSchemaV1 } from "@nifrajs/core"
-import { defineContract, implement, server } from "@nifrajs/core"
+import { server } from "@nifrajs/core"
+import { defineContract, implement } from "@nifrajs/core/contract"
 import type { Expect } from "@nifrajs/test-utils"
 
 declare const nameBody: StandardSchemaV1<unknown, { name: string }>

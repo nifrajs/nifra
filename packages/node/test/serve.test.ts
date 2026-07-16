@@ -25,6 +25,8 @@ const nameBody: StandardSchemaV1<unknown, { name: string }> = {
 }
 
 function demoApp() {
+  const responseResult = Symbol.for("nifra.response.result")
+  const nodeBody = Symbol.for("nifra.response.body")
   return server()
     .get("/users/:id", (c) => ({ id: c.params.id }))
     .post("/echo", (c) => c.req.json())
@@ -38,6 +40,30 @@ function demoApp() {
       return { ok: true }
     })
     .get("/redirect", () => new Response(null, { status: 302, headers: { location: "/dest" } }))
+    .get("/lazy-body", (c) => {
+      c.set.cookie("csrf", "fresh")
+      return {
+        [responseResult]: true,
+        toResponse() {
+          throw new Error("node-direct body should not build a Response")
+        },
+        toNodeBody() {
+          return {
+            status: 202,
+            headers: { "content-type": "text/plain", "set-cookie": "sid=existing; Path=/" },
+            body: "lazy-body",
+          }
+        },
+      }
+    })
+    .get("/marked-body", (c) => {
+      c.set.cookie("sid", "marked")
+      const response = new Response(null, {
+        headers: { "content-type": "text/plain", "x-fast": "1" },
+      })
+      Object.defineProperty(response, nodeBody, { value: "marked-body" })
+      return response
+    })
     .get(
       "/stream",
       () =>
@@ -90,6 +116,16 @@ test("JSON responses carry the application/json content-type (node-direct fast p
   const res = await fetch(`http://localhost:${running.port}/users/7`)
   expect(res.headers.get("content-type")).toContain("application/json")
   expect(await res.json()).toEqual({ id: "7" })
+})
+
+test("serve() installs node-direct on the app - app.resolveNode() works with no user .use()", async () => {
+  // Node-direct is adapter plumbing, not a user opt-in: serving on Node enables it, so a direct
+  // `app.resolveNode()` call (e.g. a custom integration) renders the plain-data fast path.
+  const app = server().get("/u/:id", (c) => ({ id: c.params.id }))
+  running = await serve(app, { port: 0 })
+  const outcome = await app.resolveNode(new Request("http://x/u/9"))
+  expect(outcome.kind).toBe("json")
+  if (outcome.kind === "json") expect(outcome.body).toBe(JSON.stringify({ id: "9" }))
 })
 
 test("a handler-returned Response (redirect) round-trips via the response fallback", async () => {
@@ -150,6 +186,21 @@ test("writes node-direct buffered body outcomes with headers and cookies", async
   expect(res.headers.get("x-fast")).toBe("body")
   expect(res.headers.getSetCookie()).toEqual(["sid=a; Path=/", "csrf=b; Path=/"])
   expect(await res.text()).toBe("<h1>node-direct</h1>")
+})
+
+test("renders response-result and marked-Response bodies through the adapter-supplied runtime", async () => {
+  running = await serve(demoApp(), { port: 0 })
+
+  const lazy = await fetch(`http://localhost:${running.port}/lazy-body`)
+  expect(lazy.status).toBe(202)
+  expect(await lazy.text()).toBe("lazy-body")
+  expect(lazy.headers.getSetCookie()[0]).toBe("sid=existing; Path=/")
+  expect(lazy.headers.getSetCookie()[1]?.startsWith("csrf=fresh; Path=/")).toBe(true)
+
+  const marked = await fetch(`http://localhost:${running.port}/marked-body`)
+  expect(marked.headers.get("x-fast")).toBe("1")
+  expect(marked.headers.getSetCookie()[0]?.startsWith("sid=marked; Path=/")).toBe(true)
+  expect(await marked.text()).toBe("marked-body")
 })
 
 test("waits for Node drain when the socket applies response backpressure", async () => {
@@ -332,7 +383,7 @@ test("cancels the Web response body if the socket closes before waiting for drai
 })
 
 test("a plain { fetch } handler (no resolveNode) still works via the Web path", async () => {
-  // Backward-compat: the adapter bridges *any* Web-fetch handler, not only nifra apps. Without a
+  // The adapter bridges *any* Web-fetch handler, not only nifra apps. Without a
   // `resolveNode` seam it falls back to `app.fetch` + the Response writer.
   running = await serve({ fetch: async () => Response.json({ plain: true }) }, { port: 0 })
   const res = await fetch(`http://localhost:${running.port}/`)
@@ -434,7 +485,7 @@ test("a resolveNode (Web seam) whose promise REJECTS (async) yields a flat 500 (
 })
 
 test("a plain { fetch } whose promise REJECTS (async) yields a flat 500 (no stack leak)", async () => {
-  // Backward-compat Web path: even a non-nifra handler whose fetch rejects must not leak a stack.
+  // Web path: even a non-nifra handler whose fetch rejects must not leak a stack.
   running = await serve(
     { fetch: (): Promise<Response> => Promise.reject(new Error("boom secret detail")) },
     { port: 0 },

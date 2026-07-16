@@ -6,6 +6,8 @@
  *   bun run examples/mcp-app/server.ts
  *   curl -s localhost:3000/mcp -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_orders"}}'
  */
+
+import { mcp as mcpPlugin } from "@nifrajs/core/mcp"
 import { server } from "@nifrajs/core/server"
 import { createMcpServer, defineMcpTool } from "@nifrajs/mcp"
 import { reactWidget } from "@nifrajs/mcp/react"
@@ -76,6 +78,7 @@ const mcp = createMcpServer({
 
 /** The nifra app. Handlers may return a raw `Response`, so mounting the MCP server is one line per verb. */
 export const app = server()
+  .use(mcpPlugin())
   .get("/mcp", (c) => mcp.fetch(c.req))
   .post("/mcp", (c) => mcp.fetch(c.req))
   // Browser-viewable host harnesses (what an MCP Apps host does) so the widgets are visible without one.

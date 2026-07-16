@@ -8,19 +8,28 @@ Built-in schema builder `t` — TypeBox-backed (free JSON Schema + compiled vali
 > reference see [`api-reference.md`](../../api-reference.md) (every export + signature) and
 > [`llms-full.txt`](../../llms-full.txt) (the prose guides). One cheap read instead of the whole corpus.
 
+## Public entrypoints
+
+`@nifrajs/schema` · `@nifrajs/schema/openapi`
+
 ## Key exports
 
-- **decodeCursor** _(function)_ — `decodeCursor: <T = unknown>(cursor: string | null | undefined) => T | undefined`
-- **encodeCursor** _(function)_ — `encodeCursor: (value: unknown) => string`
-- **fromTypeBox** _(function)_ — `fromTypeBox: <T extends TSchema>(schema: T, options?: { readonly coerce?: boolean; }) => NifraSchema<T>`
-- **paginate** _(function)_ — `paginate: <Row>(rows: readonly Row[], limit: number, cursorOf: (row: Row) => unknown) => Page<Row>`
-- **registerFormat** _(function)_ — `registerFormat: (name: string, validate: (value: string) => boolean) => void`
-- **toOpenAPI** _(function)_ — `toOpenAPI: (input: ContractShape | Server, options?: ToOpenAPIOptions) => OpenAPIDocument`
-- **t** _(const)_ — `t: { readonly string: (options?: StringOptions) => NifraSchema<import("@sinclair/typebox").TString>; readonly number: (options?: NumberOpti…`
-- **OpenAPIDocument** _(interface)_ — `interface OpenAPIDocument`
-- **OpenAPIInfo** _(interface)_ — `interface OpenAPIInfo`
-- **Page** _(interface)_ — `interface Page<Item>`
-- **NifraSchema** _(type)_ — `type NifraSchema<T extends TSchema = TSchema> = StandardSchemaV1<Static<T>, Static<T>> & { readonly jsonSchema: T }`
+- **t** _(const)_ — `t: { readonly string: (options?: StringOptions) => NifraSchema<import("@sinclair/typebox").TString>; readonly number: (options?: NumberOpti…` · from `@nifrajs/schema`
+- **decodeCursor** _(function)_ — `decodeCursor: <T = unknown>(cursor: string | null | undefined) => T | undefined` · from `@nifrajs/schema`
+- **encodeCursor** _(function)_ — `encodeCursor: (value: unknown) => string` · from `@nifrajs/schema`
+- **fromTypeBox** _(function)_ — `fromTypeBox: <T extends TSchema>(schema: T, options?: { readonly coerce?: boolean; }) => NifraSchema<T>` · from `@nifrajs/schema`
+- **paginate** _(function)_ — `paginate: <Row>(rows: readonly Row[], limit: number, cursorOf: (row: Row) => unknown) => Page<Row>` · from `@nifrajs/schema`
+- **registerFormat** _(function)_ — `registerFormat: (name: string, validate: (value: string) => boolean) => void` · from `@nifrajs/schema`
+- **toOpenAPI** _(function)_ — `toOpenAPI: (input: ContractShape | Server, options?: ToOpenAPIOptions) => OpenAPIDocument` · from `@nifrajs/schema`
+- **OpenAPIDocument** _(interface)_ — `interface OpenAPIDocument` · from `@nifrajs/schema`
+- **OpenAPIInfo** _(interface)_ — `interface OpenAPIInfo` · from `@nifrajs/schema`
+- **OpenAPIServer** _(interface)_ — `interface OpenAPIServer` · from `@nifrajs/schema/openapi`
+- **OpenAPITag** _(interface)_ — `interface OpenAPITag` · from `@nifrajs/schema/openapi`
+- **Page** _(interface)_ — `interface Page<Item>` · from `@nifrajs/schema`
+- **ToOpenAPIOptions** _(interface)_ — `interface ToOpenAPIOptions` · from `@nifrajs/schema/openapi`
+- **NifraSchema** _(type)_ — `type NifraSchema<T extends TSchema = TSchema> = StandardSchemaV1<Static<T>, Static<T>> & { readonly jsonSchema: T }` · from `@nifrajs/schema`
+
+_…and 1 more — see [`api-reference.md`](../../api-reference.md#nifrajsschema) for the complete list._
 
 ## Footguns
 

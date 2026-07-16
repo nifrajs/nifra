@@ -135,11 +135,27 @@ interface NodeRequestSource {
   readonly request: Request
 }
 
+interface NodeContextSet {
+  readonly status?: number
+  readonly _headers?: Record<string, string>
+  readonly _cookies?: string[]
+}
+
+interface NodeOutcomeRuntime {
+  toOutcome(result: unknown, set: NodeContextSet): NodeServeOutcome
+  fromResponse(response: Response): NodeServeOutcome
+  timeout(): NodeServeOutcome
+}
+
 /** A `FetchHandler` that *also* exposes the node-direct fast path (every nifra app does). May resolve
  * **synchronously** (a bare route + sync handler allocates no promise) — we `await` it regardless. */
 interface NodeFastHandler extends FetchHandler {
   resolveNode(request: Request): NodeServeOutcome | Promise<NodeServeOutcome>
-  resolveNodeSource(source: NodeRequestSource): NodeServeOutcome | Promise<NodeServeOutcome>
+  resolveNodeSource(
+    source: NodeRequestSource,
+    platform: undefined,
+    runtime: NodeOutcomeRuntime,
+  ): NodeServeOutcome | Promise<NodeServeOutcome>
 }
 
 /**
@@ -152,6 +168,108 @@ const JSON_CONTENT_TYPE = Response.json(0).headers.get("content-type") ?? "appli
 const INTERNAL_ERROR_BODY = '{"ok":false,"error":"internal_error"}'
 const EMPTY_BUFFER = Buffer.alloc(0)
 const NODE_RESPONSE_BODY = Symbol.for("nifra.response.body")
+const RESPONSE_RESULT = Symbol.for("nifra.response.result")
+
+const NODE_OUTCOME_RUNTIME: NodeOutcomeRuntime = {
+  toOutcome(result, set) {
+    if (isResponseResult(result)) {
+      const body = result.toNodeBody?.()
+      if (body !== undefined) {
+        return {
+          kind: "body",
+          status: body.status,
+          headers: appendCookiesToNodeHeaders(body.headers, set._cookies),
+          body: body.body,
+        }
+      }
+      return nodeOutcomeFromResponse(appendCookiesToResponse(result.toResponse(), set._cookies))
+    }
+    if (result instanceof Response) {
+      return nodeOutcomeFromResponse(appendCookiesToResponse(result, set._cookies))
+    }
+    return {
+      kind: "json",
+      status: set.status ?? (result === undefined ? 204 : 200),
+      headers: set._headers,
+      cookies: set._cookies,
+      body: result === undefined ? null : JSON.stringify(result),
+    }
+  },
+  fromResponse: nodeOutcomeFromResponse,
+  timeout: () => ({
+    kind: "response",
+    response: Response.json({ ok: false, error: "request_timeout" }, { status: 503 }),
+  }),
+}
+
+interface NodeResponseResult {
+  readonly [RESPONSE_RESULT]: true
+  toResponse(): Response
+  toNodeBody?(): {
+    readonly status: number
+    readonly headers: Readonly<Record<string, string | readonly string[]>> | undefined
+    readonly body: string | Uint8Array
+  }
+}
+
+function isResponseResult(value: unknown): value is NodeResponseResult {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { readonly [RESPONSE_RESULT]?: unknown })[RESPONSE_RESULT] === true &&
+    typeof (value as { readonly toResponse?: unknown }).toResponse === "function"
+  )
+}
+
+function appendCookiesToResponse(
+  response: Response,
+  cookies: readonly string[] | undefined,
+): Response {
+  if (cookies !== undefined) {
+    for (const cookie of cookies) response.headers.append("set-cookie", cookie)
+  }
+  return response
+}
+
+function nodeOutcomeFromResponse(response: Response): NodeServeOutcome {
+  if (!response.bodyUsed) {
+    const body = (response as { readonly [NODE_RESPONSE_BODY]?: unknown })[NODE_RESPONSE_BODY]
+    if (typeof body === "string" || body instanceof Uint8Array) {
+      return { kind: "body", status: response.status, headers: responseHeaders(response), body }
+    }
+  }
+  return { kind: "response", response }
+}
+
+function responseHeaders(
+  response: Response,
+): Readonly<Record<string, string | readonly string[]>> | undefined {
+  let headers: Record<string, string | readonly string[]> | undefined
+  response.headers.forEach((value, key) => {
+    headers ??= {}
+    headers[key] = value
+  })
+  const cookies = response.headers.getSetCookie?.()
+  if (cookies !== undefined && cookies.length > 0) {
+    headers ??= {}
+    headers["set-cookie"] = cookies
+  }
+  return headers
+}
+
+function appendCookiesToNodeHeaders(
+  headers: Readonly<Record<string, string | readonly string[]>> | undefined,
+  cookies: readonly string[] | undefined,
+): Readonly<Record<string, string | readonly string[]>> | undefined {
+  if (cookies === undefined || cookies.length === 0) return headers
+  const out: Record<string, string | readonly string[]> =
+    headers === undefined ? {} : { ...headers }
+  const existing = out["set-cookie"]
+  const setCookies =
+    existing === undefined ? [] : typeof existing === "string" ? [existing] : [...existing]
+  out["set-cookie"] = [...setCookies, ...cookies]
+  return out
+}
 
 /**
  * Serve static files from a directory (e.g. the client build) under a URL prefix — so a self-hosted
@@ -330,7 +448,24 @@ async function readStatic(
  * Serve a Web-`fetch` app on a Node `http` server. Resolves once bound — Node binds
  * the port asynchronously, so awaiting gives you the real port (matters for `port: 0`).
  */
+// The node-direct fast path renders plain data instead of building + draining a `Response`. Serving on
+// Node installs it on the app via the registered install symbol, so `app.resolveNode()` works because
+// you are on the Node runtime - no `.use()` opt-in. Decoupled by design: we reference the symbol, not
+// @nifrajs/core, and no-op on a handler that does not expose the seam (a plain `{ fetch }`) or one that
+// is already frozen (the per-request `resolveNodeSource` path supplies the runtime regardless).
+const INSTALL_NODE_DIRECT = Symbol.for("@nifrajs/core/install-node-direct")
+function enableNodeDirect(app: FetchHandler): void {
+  const install = (app as unknown as Record<symbol, unknown>)[INSTALL_NODE_DIRECT]
+  if (typeof install !== "function") return
+  try {
+    ;(install as (runtime: NodeOutcomeRuntime) => void).call(app, NODE_OUTCOME_RUNTIME)
+  } catch {
+    // Already frozen (served/listened before) - node-direct still works via the per-call supply.
+  }
+}
+
 export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeServer> {
+  enableNodeDirect(app)
   let inFlight = 0
   let closed = false
   const protocol = protocolResolver(options.protocol)
@@ -437,7 +572,12 @@ function handle(
   const resolveNodeSource = (app as Partial<NodeFastHandler>).resolveNodeSource
   if (typeof resolveNodeSource === "function") {
     try {
-      const outcome = resolveNodeSource.call(app, toNodeRequestSource(nodeReq, protocol))
+      const outcome = resolveNodeSource.call(
+        app,
+        toNodeRequestSource(nodeReq, protocol),
+        undefined,
+        NODE_OUTCOME_RUNTIME,
+      )
       return outcome instanceof Promise
         ? outcome.then(
             (settled) => writeNodeOutcome(settled, nodeRes),

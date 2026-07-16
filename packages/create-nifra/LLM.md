@@ -10,7 +10,20 @@ Scaffold a new nifra app — `bun create nifra <dir>`.
 
 ## Key exports
 
-_No public value/type exports (CLI or side-effect package)._
+- **agentsMcpSection** _(function)_ — `agentsMcpSection: () => string`
+- **claudeMd** _(function)_ — `claudeMd: () => string`
+- **mcpJson** _(function)_ — `mcpJson: () => string`
+- **AGENTS_MD_PATH** _(const)_ — `AGENTS_MD_PATH: "AGENTS.md"`
+- **CLAUDE_MD_PATH** _(const)_ — `CLAUDE_MD_PATH: "CLAUDE.md"`
+- **CURSOR_MCP_JSON_PATH** _(const)_ — `CURSOR_MCP_JSON_PATH: ".cursor/mcp.json"`
+- **MCP_CLI_VERSION** _(const)_ — `MCP_CLI_VERSION: string`
+- **MCP_CONFIG** _(const)_ — `MCP_CONFIG: McpConfig`
+- **MCP_JSON_PATH** _(const)_ — `MCP_JSON_PATH: ".mcp.json"`
+- **MCP_SERVER_ARGS** _(const)_ — `MCP_SERVER_ARGS: readonly [`@nifrajs/cli@${string}`, "mcp"]`
+- **MCP_SERVER_COMMAND** _(const)_ — `MCP_SERVER_COMMAND: "bunx"`
+- **AgentFileSpec** _(interface)_ — `interface AgentFileSpec`
+- **McpConfig** _(interface)_ — `interface McpConfig`
+- **McpServerConfig** _(interface)_ — `interface McpServerConfig`
 
 ## Footguns
 

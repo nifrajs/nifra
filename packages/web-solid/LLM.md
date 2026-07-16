@@ -8,10 +8,28 @@ Solid render adapter for @nifrajs/web — SSR + hydration + the Solid Babel buil
 > reference see [`api-reference.md`](../../api-reference.md) (every export + signature) and
 > [`llms-full.txt`](../../llms-full.txt) (the prose guides). One cheap read instead of the whole corpus.
 
+## Public entrypoints
+
+`@nifrajs/web-solid` · `@nifrajs/web-solid/await` · `@nifrajs/web-solid/client` · `@nifrajs/web-solid/content` · `@nifrajs/web-solid/fetcher` · `@nifrajs/web-solid/i18n` · `@nifrajs/web-solid/image` · `@nifrajs/web-solid/mdx` · `@nifrajs/web-solid/mdx-runtime` · `@nifrajs/web-solid/query`
+
 ## Key exports
 
-- **solidBunPlugin** _(function)_ — `solidBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
-- **solidAdapter** _(const)_ — `solidAdapter: RenderAdapter`
+- **Await** _(function)_ — `Await: <T>(props: AwaitProps<T>) => JSX.Element` · from `@nifrajs/web-solid/await`
+- **Content** _(function)_ — `Content: (props: ContentProps) => JSX.Element` · from `@nifrajs/web-solid/content`
+- **createFetcher** _(function)_ — `createFetcher: (key: string) => FetcherHandle` · from `@nifrajs/web-solid/fetcher`
+- **createQuery** _(function)_ — `createQuery: <T>(key: unknown, fn: () => Promise<T>) => CreateQueryResult<T>` · from `@nifrajs/web-solid/query`
+- **errorBoundary** _(function)_ — `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-solid/client`
+- **hydrate** _(function)_ — `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void` · from `@nifrajs/web-solid/client`
+- **I18nProvider** _(function)_ — `I18nProvider: (props: I18nProviderProps) => JSX.Element` · from `@nifrajs/web-solid/i18n`
+- **Image** _(function)_ — `Image: (props: ImageComponentProps) => JSX.Element` · from `@nifrajs/web-solid/image`
+- **mountRouter** _(function)_ — `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-solid/client`
+- **setMountedRouter** _(function)_ — `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-solid/fetcher`
+- **solidBunPlugin** _(function)_ — `solidBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-solid`
+- **solidMdxBunPlugin** _(function)_ — `solidMdxBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-solid/mdx`
+- **useFetchers** _(function)_ — `useFetchers: () => Accessor<readonly Fetcher[]>` · from `@nifrajs/web-solid/fetcher`
+- **useMDXComponents** _(function)_ — `useMDXComponents: () => Record<string, (props: Record<string, unknown>) => unknown>` · from `@nifrajs/web-solid/mdx-runtime`
+
+_…and 9 more — see [`api-reference.md`](../../api-reference.md#nifrajswebsolid) for the complete list._
 
 ## Footguns
 

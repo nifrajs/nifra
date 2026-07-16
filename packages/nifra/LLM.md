@@ -10,22 +10,22 @@ The nifra full-stack framework — unscoped meta-entry that re-exports @nifrajs/
 
 ## Key exports
 
-- **attachEffectLedger** _(function)_ — `attachEffectLedger: (context: object, ledger: RequestLedger) => void`
-- **attachWebSocket** _(function)_ — `attachWebSocket: (socket: StandardWebSocket, handler: WebSocketHandler, data: unknown, options: { openNow: boolean; pubsub: TopicRegistry; …`
-- **buildNifraManifest** _(function)_ — `buildNifraManifest: (input: BuildNifraManifestInput) => Promise<NifraManifest>`
-- **canonicalizeIdempotencyBody** _(function)_ — `canonicalizeIdempotencyBody: (body: Uint8Array, contentType: string | null) => Uint8Array`
-- **canonicalManifest** _(function)_ — `canonicalManifest: (manifest: Pick<NifraManifest, "manifestVersion" | "routes">) => string`
-- **causalityHeaders** _(function)_ — `causalityHeaders: (context: CausalityContext) => Readonly<Record<string, string>>`
-- **classificationAtLeast** _(function)_ — `classificationAtLeast: (value: DataClassification, floor: DataClassification) => boolean`
-- **classified** _(function)_ — `classified: <S extends object>(schema: S, classification: DataClassification) => ClassifiedSchema<S>`
-- **compareRoutePatternSpecificity** _(function)_ — `compareRoutePatternSpecificity: (left: CompiledRoutePattern, right: CompiledRoutePattern) => number`
-- **compileRoutePattern** _(function)_ — `compileRoutePattern: (pattern: string) => CompiledRoutePattern`
-- **computeEffectDigest** _(function)_ — `computeEffectDigest: (key: Uint8Array | CryptoKey, payload: Uint8Array) => Promise<string>`
-- **computeIdempotencyFingerprint** _(function)_ — `computeIdempotencyFingerprint: (method: string, path: string, body: Uint8Array, contentType?: string) => Promise<string>`
-- **continueCausality** _(function)_ — `continueCausality: (parent: CausalityContext, nodeKind: CausalityKind, id: string, options?: ContinueCausalityOptions) => CausalityStep`
-- **createMemoryCausalityStore** _(function)_ — `createMemoryCausalityStore: (options?: MemoryCausalityStoreOptions) => CausalityGraphStore`
+- **server** _(function)_ — `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
+- **definePlugin** _(function)_ — `definePlugin: <In extends AnyServer, Out extends AnyServer>(name: string, apply: (app: In) => Out) => NifraPlugin<In, Out>`
+- **defineIdentityPlugin** _(function)_ — `defineIdentityPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
+- **jsonLogger** _(function)_ — `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
+- **parseCookies** _(function)_ — `parseCookies: (header: string | null | undefined) => Record<string, string>`
+- **redactLogFields** _(function)_ — `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
+- **serializeCookie** _(function)_ — `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
+- **signValue** _(function)_ — `signValue: (value: string, secret: string) => Promise<string>`
+- **toFetchHandler** _(function)_ — `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(…`
+- **unsignValue** _(function)_ — `unsignValue: (signed: string, secret: string) => Promise<string | null>`
+- **FrameworkError** _(class)_ — `class FrameworkError`
+- **RouteConfigError** _(class)_ — `class RouteConfigError`
+- **Router** _(class)_ — `class Router<T>`
+- **Server** _(class)_ — `class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext>`
 
-_…and 273 more — see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
+_…and 63 more — see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
 
 ## Footguns
 

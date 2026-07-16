@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
+import { useCapability } from "../src/capabilities.ts"
+import { effectLedger } from "../src/effect-ledger.ts"
+import { idempotency } from "../src/idempotency-plugin.ts"
 import { type Logger, RouteConfigError, server } from "../src/index.ts"
 import "../src/ws.ts" // ws runtime, for the "merge refuses WebSocket groups" case
+import { mcp } from "../src/mcp.ts"
+import { nodeDirect } from "../src/node-direct.ts"
 
 describe("merge — domain-group composition", () => {
   test("merged routes serve with the chains captured where they were DEFINED", async () => {
@@ -55,7 +60,9 @@ describe("merge — domain-group composition", () => {
     const group = server({ logger: logger(groupLogs) }).get("/merged-boom", () => {
       throw new Error("boom")
     })
-    const app = server({ logger: logger(parentLogs) }).merge(group)
+    const app = server({ logger: logger(parentLogs) })
+      .use(nodeDirect())
+      .merge(group)
 
     expect((await app.fetch(new Request("http://x/merged-boom"))).status).toBe(500)
     const node = await app.resolveNode(new Request("http://x/merged-boom"))
@@ -64,6 +71,44 @@ describe("merge — domain-group composition", () => {
     expect(node.response.status).toBe(500)
     expect(parentLogs).toEqual(["unhandled request error", "unhandled request error"])
     expect(groupLogs).toEqual([])
+  })
+
+  test("merged routes retain a group's opt-in idempotency and effect-ledger runtimes", async () => {
+    let runs = 0
+    const ledgers: unknown[] = []
+    const group = server()
+      .use(idempotency())
+      .use(
+        effectLedger({
+          sink: (ledger) => {
+            ledgers.push(ledger)
+          },
+        }),
+      )
+      .post(
+        "/merged-pay",
+        {
+          capabilities: ["payments.charge"],
+          idempotency: { scope: "request", namespace: "public:merged-pay" },
+        },
+        (c) => {
+          runs += 1
+          useCapability(c, "payments.charge")
+          return { run: runs }
+        },
+      )
+    const app = server().merge(group)
+    const request = () =>
+      new Request("http://x/merged-pay", {
+        method: "POST",
+        headers: { "content-type": "application/json", "idempotency-key": "merged-key" },
+        body: "{}",
+      })
+
+    expect(await (await app.fetch(request())).json()).toEqual({ run: 1 })
+    expect(await (await app.fetch(request())).json()).toEqual({ run: 1 })
+    expect(runs).toBe(1)
+    expect(ledgers).toHaveLength(1)
   })
 
   test("a group's request-level hooks ride along; introspection sees every route", async () => {
@@ -111,11 +156,13 @@ describe("merge — domain-group composition", () => {
   })
 
   test("MCP tools/resources defined in a group survive the merge", () => {
-    const group = server().tool(
-      "echo",
-      { description: "echo a value", input: t.object({ v: t.string() }) },
-      (input) => ({ v: input.v }),
-    )
+    const group = server()
+      .use(mcp())
+      .tool(
+        "echo",
+        { description: "echo a value", input: t.object({ v: t.string() }) },
+        (input) => ({ v: input.v }),
+      )
     const app = server().merge(group)
     const toolRoute = app.routes().find((r) => r.tool?.name === "echo")
     expect(toolRoute).toBeDefined()

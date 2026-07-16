@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { defineContract, implement, server, silentLogger } from "../src/index.ts"
+import { server, silentLogger } from "../src/index.ts"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "../src/schema/standard.ts"
+import { defineContract, implement } from "../src/server/contract.ts"
 
 /**
  * The synchronous fast path (RouteEntry.bare → `runBare`): a route with no body/query schema and no

@@ -7,7 +7,8 @@ import {
   snapshotCapabilities,
   useCapability,
 } from "../src/capabilities.ts"
-import { defineContract, implement, server } from "../src/index.ts"
+import { server } from "../src/index.ts"
+import { defineContract, implement } from "../src/server/contract.ts"
 
 const policy = defineCapabilityPolicy({
   definitions: [

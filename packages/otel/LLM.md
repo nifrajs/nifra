@@ -12,7 +12,7 @@ Distributed tracing for nifra — W3C traceparent/tracestate propagation + OpenT
 
 - **causalitySpanLink** _(function)_ — `causalitySpanLink: (context: CausalityContext) => ObservationLink | undefined`
 - **combineObservationAdapters** _(function)_ — `combineObservationAdapters: (adapters: readonly ObservationAdapter[]) => ObservationAdapter`
-- **consoleSpanExporter** _(function)_ — `consoleSpanExporter: (log?: (line: string) => void) => SpanExporter`
+- **consoleSpanExporter** _(function)_ — `consoleSpanExporter: (log?: (line: string) => void) => ObservationAdapter`
 - **createObservationLifecycle** _(function)_ — `createObservationLifecycle: (options?: ObservationLifecycleOptions) => ObservationLifecycle`
 - **formatTraceparent** _(function)_ — `formatTraceparent: (traceId: string, spanId: string, sampled: boolean) => string`
 - **generateSpanId** _(function)_ — `generateSpanId: () => string`
@@ -25,7 +25,7 @@ Distributed tracing for nifra — W3C traceparent/tracestate propagation + OpenT
 - **NifraSpan** _(interface)_ — `interface NifraSpan`
 - **ObservationAdapter** _(interface)_ — `interface ObservationAdapter`
 
-_…and 13 more — see [`api-reference.md`](../../api-reference.md#nifrajsotel) for the complete list._
+_…and 12 more — see [`api-reference.md`](../../api-reference.md#nifrajsotel) for the complete list._
 
 ## Footguns
 

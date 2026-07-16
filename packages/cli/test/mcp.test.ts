@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { StandardSchemaV1 } from "@nifrajs/core"
 import { server } from "@nifrajs/core"
+import { mcp } from "@nifrajs/core/mcp"
 import type { LoadedApp } from "../src/load.ts"
 import { detectMonorepo, loadMonorepoApps } from "../src/load.ts"
 import {
@@ -711,11 +712,13 @@ describe("extractBackendTools (.tool() → MCP)", () => {
   }
 
   const weatherApp = () =>
-    server().tool(
-      "get_weather",
-      { description: "Get weather for a location", input: weatherSchema },
-      (input) => ({ temp: 22, location: input.location }),
-    )
+    server()
+      .use(mcp())
+      .tool(
+        "get_weather",
+        { description: "Get weather for a location", input: weatherSchema },
+        (input) => ({ temp: 22, location: input.location }),
+      )
 
   test("a .tool() route surfaces as an MCP tool with its name, description, and input schema", () => {
     const backendTools = extractBackendTools(weatherApp())
@@ -764,15 +767,17 @@ describe("extractBackendTools (.tool() → MCP)", () => {
   })
 
   test("tool annotations (safety hints) surface in tools/list", async () => {
-    const app = server().tool(
-      "read_weather",
-      {
-        description: "Read the weather",
-        input: weatherSchema,
-        annotations: { readOnlyHint: true, openWorldHint: true },
-      },
-      (input) => ({ location: input.location }),
-    )
+    const app = server()
+      .use(mcp())
+      .tool(
+        "read_weather",
+        {
+          description: "Read the weather",
+          input: weatherSchema,
+          annotations: { readOnlyHint: true, openWorldHint: true },
+        },
+        (input) => ({ location: input.location }),
+      )
     const backendTools = extractBackendTools(app)
     const res = (await handleRpc({ id: 9, method: "tools/list" }, backendTools, INFO)) as {
       result: { tools: Array<Record<string, unknown>> }
@@ -791,6 +796,7 @@ describe("extractBackendTools (.tool() → MCP)", () => {
 describe("extractBackendResources / extractBackendPrompts (.resource()/.prompt() → MCP)", () => {
   const app = () =>
     server()
+      .use(mcp())
       .resource("app://config", { name: "config", mimeType: "application/json" }, () =>
         JSON.stringify({ ok: true }),
       )

@@ -67,15 +67,20 @@
       "types": "./dist/idempotency.d.ts",
       "default": "./dist/idempotency.js"
     },
-    "./invariants": {
-      "bun": "./src/invariants.ts",
-      "types": "./dist/invariants.d.ts",
-      "default": "./dist/invariants.js"
+    "./idempotency-plugin": {
+      "bun": "./src/idempotency-plugin.ts",
+      "types": "./dist/idempotency-plugin.d.ts",
+      "default": "./dist/idempotency-plugin.js"
     },
     "./ledger": {
       "bun": "./src/ledger.ts",
       "types": "./dist/ledger.d.ts",
       "default": "./dist/ledger.js"
+    },
+    "./effect-ledger": {
+      "bun": "./src/effect-ledger.ts",
+      "types": "./dist/effect-ledger.d.ts",
+      "default": "./dist/effect-ledger.js"
     },
     "./manifest": {
       "bun": "./src/manifest.ts",
@@ -86,6 +91,16 @@
       "bun": "./src/mount.ts",
       "types": "./dist/mount.d.ts",
       "default": "./dist/mount.js"
+    },
+    "./mcp": {
+      "bun": "./src/mcp.ts",
+      "types": "./dist/mcp.d.ts",
+      "default": "./dist/mcp.js"
+    },
+    "./node-direct": {
+      "bun": "./src/node-direct.ts",
+      "types": "./dist/node-direct.d.ts",
+      "default": "./dist/node-direct.js"
     },
     "./pattern": {
       "bun": "./src/router/pattern.ts",
@@ -149,7 +164,13 @@
   ],
   "sideEffects": [
     "./src/ws.ts",
-    "./dist/ws.js"
+    "./dist/ws.js",
+    "./src/server/sse.ts",
+    "./dist/server/sse.js",
+    "./src/node-direct.ts",
+    "./dist/node-direct.js",
+    "./src/mcp-runtime.ts",
+    "./dist/mcp-runtime.js"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"

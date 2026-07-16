@@ -20,13 +20,15 @@ import {
   validMethod,
   withRouteAssurance,
 } from "./internal/route-assurance.ts"
-import type { InvariantExecutor } from "./invariants.ts"
 import type { NifraManifestSigner } from "./manifest.ts"
 import { type ReflectedRoute, reflectRoutes } from "./reflection.ts"
 import type { Method } from "./router/router.ts"
 
 export type { AssuranceDeclaration, AssuranceEvidence, AssuranceScope }
 export { withRouteAssurance }
+
+/** Isolated request executor used by adversarial contract verification. */
+export type InvariantExecutor = (request: Request) => Response | Promise<Response>
 
 /** Canonical evidence ids emitted by Nifra's official middleware modules. */
 export const NIFRA_ASSURANCE = NIFRA_ASSURANCE_IDS

@@ -8,24 +8,28 @@ Build MCP servers — and MCP Apps (interactive `ui://` widgets, SEP-1865) — f
 > reference see [`api-reference.md`](../../api-reference.md) (every export + signature) and
 > [`llms-full.txt`](../../llms-full.txt) (the prose guides). One cheap read instead of the whole corpus.
 
+## Public entrypoints
+
+`@nifrajs/mcp` · `@nifrajs/mcp/http` · `@nifrajs/mcp/protocol` · `@nifrajs/mcp/react`
+
 ## Key exports
 
-- **bridgeScript** _(function)_ — `bridgeScript: () => string`
-- **createMcpProtocolState** _(function)_ — `createMcpProtocolState: () => McpProtocolState`
-- **createMcpServer** _(function)_ — `createMcpServer: (opts: CreateMcpServerOptions) => McpServer`
-- **defineMcpTool** _(function)_ — `defineMcpTool: (opts: DefineMcpToolOptions) => McpTool`
-- **defineMcpWidget** _(function)_ — `defineMcpWidget: (opts: DefineMcpWidgetOptions) => McpWidget`
-- **handleRpc** _(function)_ — `handleRpc: (message: JsonRpcRequest, tools: readonly McpTool[], serverInfo: { name: string; version: string; }, features?: McpServerFeature…`
-- **respondMcpHttp** _(function)_ — `respondMcpHttp: (request: Request, tools: McpTool[], serverInfo: { name: string; version: string; }, options?: McpHttpOptions) => Promise<R…`
-- **uiResourceMeta** _(function)_ — `uiResourceMeta: (uri: string) => Record<string, unknown>`
-- **widgetDocument** _(function)_ — `widgetDocument: (opts: DefineMcpWidgetOptions) => string`
-- **PROTOCOL_VERSION** _(const)_ — `PROTOCOL_VERSION: "2024-11-05"`
-- **rpcError** _(const)_ — `rpcError: (id: JsonRpcId, code: number, message: string) => JsonRpcResponse`
-- **rpcResult** _(const)_ — `rpcResult: (id: JsonRpcId, value: unknown) => JsonRpcResponse`
-- **UI_EXTENSION_KEY** _(const)_ — `UI_EXTENSION_KEY: "io.modelcontextprotocol/ui"`
-- **UI_MIME** _(const)_ — `UI_MIME: "text/html;profile=mcp-app"`
+- **bridgeScript** _(function)_ — `bridgeScript: () => string` · from `@nifrajs/mcp`
+- **createMcpProtocolState** _(function)_ — `createMcpProtocolState: () => McpProtocolState` · from `@nifrajs/mcp`
+- **createMcpServer** _(function)_ — `createMcpServer: (opts: CreateMcpServerOptions) => McpServer` · from `@nifrajs/mcp`
+- **defineMcpTool** _(function)_ — `defineMcpTool: (opts: DefineMcpToolOptions) => McpTool` · from `@nifrajs/mcp`
+- **defineMcpWidget** _(function)_ — `defineMcpWidget: (opts: DefineMcpWidgetOptions) => McpWidget` · from `@nifrajs/mcp`
+- **handleRpc** _(function)_ — `handleRpc: (message: JsonRpcRequest, tools: readonly McpTool[], serverInfo: { name: string; version: string; }, features?: McpServerFeature…` · from `@nifrajs/mcp`
+- **reactWidget** _(function)_ — `reactWidget: (opts: ReactWidgetOptions) => Promise<McpWidget>` · from `@nifrajs/mcp/react`
+- **respondMcpHttp** _(function)_ — `respondMcpHttp: (request: Request, tools: McpTool[], serverInfo: { name: string; version: string; }, options?: McpHttpOptions) => Promise<R…` · from `@nifrajs/mcp`
+- **uiResourceMeta** _(function)_ — `uiResourceMeta: (uri: string) => Record<string, unknown>` · from `@nifrajs/mcp`
+- **widgetDocument** _(function)_ — `widgetDocument: (opts: DefineMcpWidgetOptions) => string` · from `@nifrajs/mcp`
+- **PROTOCOL_VERSION** _(const)_ — `PROTOCOL_VERSION: "2024-11-05"` · from `@nifrajs/mcp`
+- **rpcError** _(const)_ — `rpcError: (id: JsonRpcId, code: number, message: string) => JsonRpcResponse` · from `@nifrajs/mcp`
+- **rpcResult** _(const)_ — `rpcResult: (id: JsonRpcId, value: unknown) => JsonRpcResponse` · from `@nifrajs/mcp`
+- **UI_EXTENSION_KEY** _(const)_ — `UI_EXTENSION_KEY: "io.modelcontextprotocol/ui"` · from `@nifrajs/mcp`
 
-_…and 23 more — see [`api-reference.md`](../../api-reference.md#nifrajsmcp) for the complete list._
+_…and 25 more — see [`api-reference.md`](../../api-reference.md#nifrajsmcp) for the complete list._
 
 ## Footguns
 

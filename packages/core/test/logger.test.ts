@@ -45,7 +45,7 @@ describe("redactLogFields", () => {
     expect(out.count).toBe(5) // non-strings untouched
   })
 
-  test("default (no valuePatterns) does NOT scan values — back-compatible", () => {
+  test("default (no valuePatterns) does NOT scan values", () => {
     const out = redactLogFields({ detail: "token leaked: a@b.com" })
     expect(out.detail).toBe("token leaked: a@b.com") // unchanged; only key-name redaction by default
   })

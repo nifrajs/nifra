@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { type RunningServer, robots, server, sitemap } from "../src/index.ts"
+import { type RunningServer, server } from "../src/index.ts"
+import { robots, sitemap } from "../src/seo.ts"
 
 describe("sitemap()", () => {
   test("emits a valid urlset and makes path-only urls absolute via hostname", () => {

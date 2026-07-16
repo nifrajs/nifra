@@ -8,9 +8,28 @@ React render adapter for @nifrajs/web — SSR + hydration (Bun-native JSX, no Ba
 > reference see [`api-reference.md`](../../api-reference.md) (every export + signature) and
 > [`llms-full.txt`](../../llms-full.txt) (the prose guides). One cheap read instead of the whole corpus.
 
+## Public entrypoints
+
+`@nifrajs/web-react` · `@nifrajs/web-react/await` · `@nifrajs/web-react/client` · `@nifrajs/web-react/content` · `@nifrajs/web-react/fetcher` · `@nifrajs/web-react/i18n` · `@nifrajs/web-react/image` · `@nifrajs/web-react/island` · `@nifrajs/web-react/query` · `@nifrajs/web-react/router`
+
 ## Key exports
 
-- **reactAdapter** _(const)_ — `reactAdapter: RenderAdapter`
+- **Await** _(function)_ — `Await: <T>(props: AwaitProps<T>) => ReactNode` · from `@nifrajs/web-react/await`
+- **Content** _(function)_ — `Content: ({ html, as, ...rest }: ContentProps) => ReactElement` · from `@nifrajs/web-react/content`
+- **errorBoundary** _(function)_ — `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-react/client`
+- **hydrate** _(function)_ — `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void` · from `@nifrajs/web-react/client`
+- **HydrationBoundary** _(function)_ — `HydrationBoundary: (props: { readonly state: DehydratedState | undefined; readonly children?: ReactNode; }) => ReactNode` · from `@nifrajs/web-react/query`
+- **I18nProvider** _(function)_ — `I18nProvider: (props: I18nProviderProps) => ReactNode` · from `@nifrajs/web-react/i18n`
+- **Image** _(function)_ — `Image: (props: ImageComponentProps) => ReactElement` · from `@nifrajs/web-react/image`
+- **Island** _(function)_ — `Island: ({ id, props, strategy, children }: IslandProps) => ReactNode` · from `@nifrajs/web-react/island`
+- **mountRouter** _(function)_ — `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-react/client`
+- **Navigate** _(function)_ — `Navigate: ({ to, replace }: NavigateProps) => null` · from `@nifrajs/web-react/router`
+- **QueryClientProvider** _(function)_ — `QueryClientProvider: (props: { readonly client: QueryClient; readonly children?: ReactNode; }) => ReactNode` · from `@nifrajs/web-react/query`
+- **setMountedRouter** _(function)_ — `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-react/fetcher`
+- **useFetcher** _(function)_ — `useFetcher: (key: string) => FetcherHandle` · from `@nifrajs/web-react/fetcher`
+- **useFetchers** _(function)_ — `useFetchers: () => readonly Fetcher[]` · from `@nifrajs/web-react/fetcher`
+
+_…and 34 more — see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
 
 ## Footguns
 

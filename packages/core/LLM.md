@@ -8,27 +8,32 @@ Bun-native, contract-first HTTP framework — the router, server, and route desc
 > reference see [`api-reference.md`](../../api-reference.md) (every export + signature) and
 > [`llms-full.txt`](../../llms-full.txt) (the prose guides). One cheap read instead of the whole corpus.
 
+## Public entrypoints
+
+`@nifrajs/core` · `@nifrajs/core/assurance` · `@nifrajs/core/budget` · `@nifrajs/core/capabilities` · `@nifrajs/core/causality` · `@nifrajs/core/classification` · `@nifrajs/core/contract` · `@nifrajs/core/cookies` · `@nifrajs/core/diff` · `@nifrajs/core/effect-ledger` · `@nifrajs/core/idempotency` · `@nifrajs/core/idempotency-plugin` · `@nifrajs/core/ledger` · `@nifrajs/core/logger` · `@nifrajs/core/manifest` · `@nifrajs/core/mcp` · `@nifrajs/core/mount` · `@nifrajs/core/node-direct` · `@nifrajs/core/pattern` · `@nifrajs/core/reflection` · `@nifrajs/core/router` · `@nifrajs/core/schema` · `@nifrajs/core/seo` · `@nifrajs/core/server` · `@nifrajs/core/sse` · `@nifrajs/core/webhook` · `@nifrajs/core/ws`
+
 ## Key exports
 
-- **attachEffectLedger** _(function)_ — `attachEffectLedger: (context: object, ledger: RequestLedger) => void`
-- **attachWebSocket** _(function)_ — `attachWebSocket: (socket: StandardWebSocket, handler: WebSocketHandler, data: unknown, options: { openNow: boolean; pubsub: TopicRegistry; …`
-- **buildNifraManifest** _(function)_ — `buildNifraManifest: (input: BuildNifraManifestInput) => Promise<NifraManifest>`
-- **canonicalizeIdempotencyBody** _(function)_ — `canonicalizeIdempotencyBody: (body: Uint8Array, contentType: string | null) => Uint8Array`
-- **canonicalManifest** _(function)_ — `canonicalManifest: (manifest: Pick<NifraManifest, "manifestVersion" | "routes">) => string`
-- **causalityHeaders** _(function)_ — `causalityHeaders: (context: CausalityContext) => Readonly<Record<string, string>>`
-- **classificationAtLeast** _(function)_ — `classificationAtLeast: (value: DataClassification, floor: DataClassification) => boolean`
-- **classified** _(function)_ — `classified: <S extends object>(schema: S, classification: DataClassification) => ClassifiedSchema<S>`
-- **compareRoutePatternSpecificity** _(function)_ — `compareRoutePatternSpecificity: (left: CompiledRoutePattern, right: CompiledRoutePattern) => number`
-- **compileRoutePattern** _(function)_ — `compileRoutePattern: (pattern: string) => CompiledRoutePattern`
-- **computeEffectDigest** _(function)_ — `computeEffectDigest: (key: Uint8Array | CryptoKey, payload: Uint8Array) => Promise<string>`
-- **computeIdempotencyFingerprint** _(function)_ — `computeIdempotencyFingerprint: (method: string, path: string, body: Uint8Array, contentType?: string) => Promise<string>`
-- **continueCausality** _(function)_ — `continueCausality: (parent: CausalityContext, nodeKind: CausalityKind, id: string, options?: ContinueCausalityOptions) => CausalityStep`
-- **createMemoryCausalityStore** _(function)_ — `createMemoryCausalityStore: (options?: MemoryCausalityStoreOptions) => CausalityGraphStore`
+- **server** _(function)_ — `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>` · from `@nifrajs/core`
+- **defineContract** _(function)_ — `defineContract: <const C extends ContractShape>(contract: C) => C` · from `@nifrajs/core/contract`
+- **implement** _(function)_ — `implement: <const C extends ContractShape, H extends HandlersFor<C, Ctx>, R extends Registry = {}, Ctx = {}>(contract: C, handlers: H, app?…` · from `@nifrajs/core/contract`
+- **definePlugin** _(function)_ — `definePlugin: <In extends AnyServer, Out extends AnyServer>(name: string, apply: (app: In) => Out) => NifraPlugin<In, Out>` · from `@nifrajs/core`
+- **sse** _(function)_ — `sse: (c: SSEContext, run: (stream: SSEStream) => void | Promise<void>, init?: SSEInit) => Response` · from `@nifrajs/core/sse`
+- **idempotency** _(function)_ — `idempotency: (options?: IdempotencyPluginOptions) => IdentityPlugin` · from `@nifrajs/core/idempotency-plugin`
+- **effectLedger** _(function)_ — `effectLedger: (options: EffectLedgerOptions) => IdentityPlugin` · from `@nifrajs/core/effect-ledger`
+- **admitDeadline** _(function)_ — `admitDeadline: (headers: Headers, options?: DeadlineAdmissionOptions) => DeadlineAdmission` · from `@nifrajs/core/budget`
+- **assertBudgetRemaining** _(function)_ — `assertBudgetRemaining: (budget: RequestBudget, requiredMs?: number) => void` · from `@nifrajs/core/budget`
+- **attachEffectLedger** _(function)_ — `attachEffectLedger: (context: object, ledger: RequestLedger) => void` · from `@nifrajs/core/ledger`
+- **attachWebSocket** _(function)_ — `attachWebSocket: (socket: StandardWebSocket, handler: WebSocketHandler, data: unknown, options: { openNow: boolean; pubsub: TopicRegistry; …` · from `@nifrajs/core/ws`
+- **buildNifraManifest** _(function)_ — `buildNifraManifest: (input: BuildNifraManifestInput) => Promise<NifraManifest>` · from `@nifrajs/core/manifest`
+- **canAttempt** _(function)_ — `canAttempt: (budget: RequestBudget, estimatedAttemptMs: number, reserveMs?: number) => boolean` · from `@nifrajs/core/budget`
+- **canonicalizeIdempotencyBody** _(function)_ — `canonicalizeIdempotencyBody: (body: Uint8Array, contentType: string | null) => Uint8Array` · from `@nifrajs/core/idempotency`
 
-_…and 273 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
+_…and 295 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 
 ## Footguns
 
+- The package root is the lean HTTP server API. Enable optional systems with `.use()` plugins from their subpaths - `.use(mcp())` from `@nifrajs/core/mcp`, `.use(streaming())` from `@nifrajs/core/sse`, `.use(idempotency())`, `.use(effectLedger())`; the root activates none of them.
 - `t.object({...})` (and any object schema) rejects **unknown fields** by default (`additionalProperties: false`) → a structured `422 { path: [...] }` **before** the handler runs. Use `t.looseObject` to allow extras.
 - **Throw rule:** `throw new Response("", { status: 404 })` is control flow — returned as-is, bypasses `_error`. `throw new Error(…)` hits the nearest `_error` boundary / a 500. Do not throw a `Response` to signal a bug, and do not `throw new Error` to send a 4xx.
 - Type the env ONCE on `server<Env>()` → `c.env` is typed on every route below (no per-binding cast). Without `<Env>`, `c.env` is `unknown`. Still validate untrusted env at the boundary.

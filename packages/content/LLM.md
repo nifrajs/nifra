@@ -8,18 +8,28 @@ Typed, schema-validated content collections for nifra — Markdown + frontmatter
 > reference see [`api-reference.md`](../../api-reference.md) (every export + signature) and
 > [`llms-full.txt`](../../llms-full.txt) (the prose guides). One cheap read instead of the whole corpus.
 
+## Public entrypoints
+
+`@nifrajs/content` · `@nifrajs/content/fs` · `@nifrajs/content/mdx`
+
 ## Key exports
 
-- **bakeCollection** _(function)_ — `bakeCollection: <Frontmatter>(collection: { all(): Promise<ReadonlyArray<Entry<Frontmatter>>>; }) => Promise<BakedCollection<Frontmatter>>`
-- **fromBaked** _(function)_ — `fromBaked: <Frontmatter>(baked: BakedCollection<Frontmatter>) => StaticCollection<Frontmatter>`
-- **parseEntry** _(function)_ — `parseEntry: <S extends StandardSchemaV1>(options: ParseEntryOptions<S>) => Promise<Entry<InferSchema<S>>>`
-- **parseFrontmatter** _(function)_ — `parseFrontmatter: (raw: string) => { data: unknown; body: string; }`
-- **BakedCollection** _(interface)_ — `interface BakedCollection<Frontmatter>`
-- **Entry** _(interface)_ — `interface Entry<Frontmatter>`
-- **ParseEntryOptions** _(interface)_ — `interface ParseEntryOptions<S extends StandardSchemaV1>`
-- **StandardSchemaV1** _(interface)_ — `interface StandardSchemaV1<Output = unknown>`
-- **StaticCollection** _(interface)_ — `interface StaticCollection<Frontmatter>`
-- **InferSchema** _(type)_ — `type InferSchema<S> = S extends StandardSchemaV1<infer Output> ? Output : never`
+- **bakeCollection** _(function)_ — `bakeCollection: <Frontmatter>(collection: { all(): Promise<ReadonlyArray<Entry<Frontmatter>>>; }) => Promise<BakedCollection<Frontmatter>>` · from `@nifrajs/content`
+- **defineCollection** _(function)_ — `defineCollection: <S extends StandardSchemaV1>(config: CollectionConfig<S>) => Collection<InferSchema<S>>` · from `@nifrajs/content/fs`
+- **fromBaked** _(function)_ — `fromBaked: <Frontmatter>(baked: BakedCollection<Frontmatter>) => StaticCollection<Frontmatter>` · from `@nifrajs/content`
+- **mdxBunPlugin** _(function)_ — `mdxBunPlugin: (options?: MdxPluginOptions) => BunPlugin` · from `@nifrajs/content/mdx`
+- **parseEntry** _(function)_ — `parseEntry: <S extends StandardSchemaV1>(options: ParseEntryOptions<S>) => Promise<Entry<InferSchema<S>>>` · from `@nifrajs/content`
+- **parseFrontmatter** _(function)_ — `parseFrontmatter: (raw: string) => { data: unknown; body: string; }` · from `@nifrajs/content`
+- **BakedCollection** _(interface)_ — `interface BakedCollection<Frontmatter>` · from `@nifrajs/content`
+- **Collection** _(interface)_ — `interface Collection<Frontmatter>` · from `@nifrajs/content/fs`
+- **CollectionConfig** _(interface)_ — `interface CollectionConfig<S extends StandardSchemaV1>` · from `@nifrajs/content/fs`
+- **Entry** _(interface)_ — `interface Entry<Frontmatter>` · from `@nifrajs/content`
+- **MdxPluginOptions** _(interface)_ — `interface MdxPluginOptions` · from `@nifrajs/content/mdx`
+- **ParseEntryOptions** _(interface)_ — `interface ParseEntryOptions<S extends StandardSchemaV1>` · from `@nifrajs/content`
+- **StandardSchemaV1** _(interface)_ — `interface StandardSchemaV1<Output = unknown>` · from `@nifrajs/content`
+- **StaticCollection** _(interface)_ — `interface StaticCollection<Frontmatter>` · from `@nifrajs/content`
+
+_…and 1 more — see [`api-reference.md`](../../api-reference.md#nifrajscontent) for the complete list._
 
 ## Footguns
 

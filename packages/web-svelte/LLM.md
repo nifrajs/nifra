@@ -8,10 +8,28 @@ Svelte 5 render adapter for @nifrajs/web — SSR + hydration + the .svelte compi
 > reference see [`api-reference.md`](../../api-reference.md) (every export + signature) and
 > [`llms-full.txt`](../../llms-full.txt) (the prose guides). One cheap read instead of the whole corpus.
 
+## Public entrypoints
+
+`@nifrajs/web-svelte` · `@nifrajs/web-svelte/await` · `@nifrajs/web-svelte/client` · `@nifrajs/web-svelte/content` · `@nifrajs/web-svelte/fetcher` · `@nifrajs/web-svelte/i18n` · `@nifrajs/web-svelte/image` · `@nifrajs/web-svelte/mdx` · `@nifrajs/web-svelte/plugin` · `@nifrajs/web-svelte/query`
+
 ## Key exports
 
-- **svelteBunPlugin** _(function)_ — `svelteBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
-- **svelteAdapter** _(const)_ — `svelteAdapter: RenderAdapter`
+- **errorBoundary** _(function)_ — `errorBoundary: (fallback: unknown) => NifraSvelteErrorBoundary` · from `@nifrajs/web-svelte/client`
+- **hydrate** _(function)_ — `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void` · from `@nifrajs/web-svelte/client`
+- **mountRouter** _(function)_ — `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-svelte/client`
+- **setMountedRouter** _(function)_ — `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-svelte/fetcher`
+- **svelteBunPlugin** _(function)_ — `svelteBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-svelte`
+- **svelteMdxBunPlugin** _(function)_ — `svelteMdxBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-svelte/mdx`
+- **useFetcher** _(function)_ — `useFetcher: (key: string) => FetcherStore` · from `@nifrajs/web-svelte/fetcher`
+- **useFetchers** _(function)_ — `useFetchers: () => Readable<readonly Fetcher[]>` · from `@nifrajs/web-svelte/fetcher`
+- **useQuery** _(function)_ — `useQuery: <T>(key: unknown, fn: () => Promise<T>) => QueryStore<T>` · from `@nifrajs/web-svelte/query`
+- **useQueryClient** _(function)_ — `useQueryClient: () => Pick<QueryClient, "invalidateQueries">` · from `@nifrajs/web-svelte/query`
+- **useT** _(function)_ — `useT: () => Formatter` · from `@nifrajs/web-svelte/i18n`
+- **I18nProvider** _(const)_ — `I18nProvider: Component<I18nProviderProps, {}, string>` · from `@nifrajs/web-svelte/i18n`
+- **svelteAdapter** _(const)_ — `svelteAdapter: RenderAdapter` · from `@nifrajs/web-svelte`
+- **I18nProviderProps** _(interface)_ — `interface I18nProviderProps` · from `@nifrajs/web-svelte/i18n`
+
+_…and 2 more — see [`api-reference.md`](../../api-reference.md#nifrajswebsvelte) for the complete list._
 
 ## Footguns
 

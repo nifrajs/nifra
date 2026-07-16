@@ -1,14 +1,13 @@
 import { describe, expect, test } from "bun:test"
+import { evaluateCapabilityAssurance, snapshotCapabilities } from "../src/capabilities.ts"
 import {
   classificationAtLeast,
   DATA_CLASSIFICATION_RANK,
-  evaluateCapabilityAssurance,
   isDataClassification,
   maxClassification,
-  reflectRoutes,
-  server,
-  snapshotCapabilities,
-} from "../src/index.ts"
+} from "../src/classification.ts"
+import { server } from "../src/index.ts"
+import { reflectRoutes } from "../src/reflection.ts"
 
 describe("data-classification helpers", () => {
   test("rank orders public < pii < secret", () => {

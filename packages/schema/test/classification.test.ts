@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { classified, reflectRoutes, server } from "@nifrajs/core"
+import { server } from "@nifrajs/core"
+import { classified } from "@nifrajs/core/classification"
+import { reflectRoutes } from "@nifrajs/core/reflection"
 import { t } from "../src/index.ts"
 
 describe("classified response schemas", () => {

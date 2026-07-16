@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { StandardSchemaV1 } from "@nifrajs/core"
-import { defineContract, server } from "@nifrajs/core"
+import { server } from "@nifrajs/core"
+import { defineContract } from "@nifrajs/core/contract"
 import { t, toOpenAPI } from "../src/index.ts"
 
 // A BYO Standard Schema: validates at runtime but exposes no JSON Schema.

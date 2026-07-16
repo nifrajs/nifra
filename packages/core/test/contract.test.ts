@@ -1,16 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import {
-  defineContract,
-  implement,
-  RouteConfigError,
-  type StandardSchemaV1,
-  server,
-} from "@nifrajs/core"
+import { RouteConfigError, type StandardSchemaV1, server } from "@nifrajs/core"
 import {
   evaluateRouteAssurance,
   NIFRA_ASSURANCE,
   withRouteAssurance,
 } from "@nifrajs/core/assurance"
+import { defineContract, implement } from "@nifrajs/core/contract"
 
 const passThrough: StandardSchemaV1 = {
   "~standard": { version: 1, vendor: "test", validate: (value) => ({ value }) },

@@ -8,24 +8,28 @@ Framework-agnostic SSR core for nifra — the render seam + HTML document orches
 > reference see [`api-reference.md`](../../api-reference.md) (every export + signature) and
 > [`llms-full.txt`](../../llms-full.txt) (the prose guides). One cheap read instead of the whole corpus.
 
+## Public entrypoints
+
+`@nifrajs/web` · `@nifrajs/web/build` · `@nifrajs/web/client` · `@nifrajs/web/conformance` · `@nifrajs/web/dev` · `@nifrajs/web/fonts` · `@nifrajs/web/forms` · `@nifrajs/web/fs` · `@nifrajs/web/islands` · `@nifrajs/web/plugins/css-modules` · `@nifrajs/web/plugins/kit` · `@nifrajs/web/plugins/scss` · `@nifrajs/web/server-only` · `@nifrajs/web/vite`
+
 ## Key exports
 
-- **assertRenderAdapterConformance** _(function)_ — `assertRenderAdapterConformance: (adapter: RenderAdapter, fixture: RenderAdapterConformanceFixture) => Promise<void>`
-- **buildManifest** _(function)_ — `buildManifest: (files: readonly string[], importer: (file: string) => () => Promise<RouteModule>) => Manifest`
-- **canonical** _(function)_ — `canonical: (href: string) => LinkDescriptor`
-- **createClientRouter** _(function)_ — `createClientRouter: (options: ClientRouterOptions) => ClientRouter`
-- **createMatcher** _(function)_ — `createMatcher: (patterns: readonly RoutePattern[]) => (path: string) => RouteMatch | null`
-- **createMutation** _(function)_ — `createMutation: <TData, TVariables>(fn: (variables: TVariables) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => Mut…`
-- **createQueryClient** _(function)_ — `createQueryClient: (options: QueryClientOptions) => QueryClient`
-- **createWebApp** _(function)_ — `createWebApp: <Env = unknown>(options: CreateWebAppOptions) => ReturnType<typeof server<Env>>`
-- **defer** _(function)_ — `defer: <T>(promise: Promise<T>) => Deferred<T>`
-- **disableDraft** _(function)_ — `disableDraft: (c: { readonly set: DraftCookieControls; }, options?: { readonly path?: string; }) => void`
-- **enableDraft** _(function)_ — `enableDraft: (c: { readonly set: DraftCookieControls; }, secret: string, options?: EnableDraftOptions) => Promise<void>`
-- **enumeratePrerenderedPaths** _(function)_ — `enumeratePrerenderedPaths: (routes: readonly RouteEntry[]) => Promise<string[]>`
-- **enumerateStaticRoutes** _(function)_ — `enumerateStaticRoutes: (routes: readonly RouteEntry[]) => Promise<StaticRoutes>`
-- **filePathToPattern** _(function)_ — `filePathToPattern: (file: string) => string`
+- **createWebApp** _(function)_ — `createWebApp: <Env = unknown>(options: CreateWebAppOptions) => ReturnType<typeof server<Env>>` · from `@nifrajs/web`
+- **aggregateSizeReport** _(function)_ — `aggregateSizeReport: (chunks: readonly ChunkSize[]) => SizeReport` · from `@nifrajs/web/build`
+- **applyHead** _(function)_ — `applyHead: (head: Meta) => void` · from `@nifrajs/web/client`
+- **applyResponseHeaders** _(function)_ — `applyResponseHeaders: (headers: Headers, res: NodeHeaderSink) => void` · from `@nifrajs/web/vite`
+- **assertRenderAdapterConformance** _(function)_ — `assertRenderAdapterConformance: (adapter: RenderAdapter, fixture: RenderAdapterConformanceFixture) => Promise<void>` · from `@nifrajs/web`
+- **buildClient** _(function)_ — `buildClient: (options: BuildClientOptions) => Promise<BuildManifest>` · from `@nifrajs/web/build`
+- **buildManifest** _(function)_ — `buildManifest: (files: readonly string[], importer: (file: string) => () => Promise<RouteModule>) => Manifest` · from `@nifrajs/web`
+- **buildServer** _(function)_ — `buildServer: (options: BuildServerOptions) => Promise<ServerBuild>` · from `@nifrajs/web/build`
+- **buildTarget** _(function)_ — `buildTarget: (target: BuildTarget, options: BuildTargetOptions) => Promise<BuildTargetResult>` · from `@nifrajs/web/build`
+- **canonical** _(function)_ — `canonical: (href: string) => LinkDescriptor` · from `@nifrajs/web`
+- **cloudflarePagesRoutes** _(function)_ — `cloudflarePagesRoutes: (options: CloudflarePagesRoutesOptions) => CloudflarePagesRoutes` · from `@nifrajs/web/build`
+- **createClientRouter** _(function)_ — `createClientRouter: (options: ClientRouterOptions) => ClientRouter` · from `@nifrajs/web`
+- **createDevServer** _(function)_ — `createDevServer: (options: DevServerOptions) => Promise<DevServer>` · from `@nifrajs/web/dev`
+- **createMatcher** _(function)_ — `createMatcher: (patterns: readonly RoutePattern[]) => (path: string) => RouteMatch | null` · from `@nifrajs/web`
 
-_…and 105 more — see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 196 more — see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 

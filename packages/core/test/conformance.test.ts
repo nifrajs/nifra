@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { Context, StandardResult, StandardSchemaV1, StandardTypes } from "@nifrajs/core"
-import { defineContract, implement, server } from "@nifrajs/core"
+import { server } from "@nifrajs/core"
+import { defineContract, implement } from "@nifrajs/core/contract"
 
 function schema<O>(
   validate: (value: unknown) => StandardResult<O> | Promise<StandardResult<O>>,

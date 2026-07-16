@@ -1,18 +1,18 @@
 import { describe, expect, test } from "bun:test"
+import { NIFRA_ASSURANCE, withRouteAssurance } from "../src/assurance.ts"
+import { evaluateCapabilityAssurance } from "../src/capabilities.ts"
 import {
   canonicalizeIdempotencyBody,
   computeIdempotencyFingerprint,
   createMemoryIdempotencyStore,
-  evaluateCapabilityAssurance,
   IDEMPOTENT_REPLAY_HEADER,
   MemoryIdempotencyStore,
-  NIFRA_ASSURANCE,
   responseFromStored,
   serializeResponse,
-  server,
   validIdempotencyKey,
-  withRouteAssurance,
-} from "../src/index.ts"
+} from "../src/idempotency.ts"
+import { idempotency } from "../src/idempotency-plugin.ts"
+import { server } from "../src/index.ts"
 
 const post = (body: unknown, key?: string, extra?: Record<string, string>): Request =>
   new Request("http://test/pay", {
@@ -230,30 +230,30 @@ describe("idempotency primitives", () => {
 describe("server({ idempotency }) — request path", () => {
   test("durable scope rejects an in-memory store at registration", () => {
     expect(() =>
-      server().post(
-        "/pay",
-        {
-          idempotency: {
-            scope: "durable",
-            namespace: "public:pay",
-            store: new MemoryIdempotencyStore(),
+      server()
+        .use(idempotency())
+        .post(
+          "/pay",
+          {
+            idempotency: {
+              scope: "durable",
+              namespace: "public:pay",
+              store: new MemoryIdempotencyStore(),
+            },
           },
-        },
-        () => ({ ok: true }),
-      ),
+          () => ({ ok: true }),
+        ),
     ).toThrow(/durable idempotency requires a durable store/i)
   })
 
   test("replays the stored response on a repeated key without re-running the handler", async () => {
     let runs = 0
-    const app = server().post(
-      "/pay",
-      { idempotency: { scope: "request", namespace: "public:pay" } },
-      () => {
+    const app = server()
+      .use(idempotency())
+      .post("/pay", { idempotency: { scope: "request", namespace: "public:pay" } }, () => {
         runs += 1
         return { charged: true, run: runs }
-      },
-    )
+      })
     const first = await app.fetch(post({ amount: 10 }, "key-1"))
     const second = await app.fetch(post({ amount: 10 }, "key-1"))
     expect(runs).toBe(1) // handler ran once
@@ -265,17 +265,19 @@ describe("server({ idempotency }) — request path", () => {
 
   test("never replays a session cookie from a successful response", async () => {
     let runs = 0
-    const app = server().post(
-      "/session",
-      { idempotency: { scope: "request", namespace: "principal:user-1" } },
-      () =>
-        new Response(JSON.stringify({ run: ++runs }), {
-          headers: {
-            "content-type": "application/json",
-            "set-cookie": "sid=secret-session; Path=/; HttpOnly; Secure",
-          },
-        }),
-    )
+    const app = server()
+      .use(idempotency())
+      .post(
+        "/session",
+        { idempotency: { scope: "request", namespace: "principal:user-1" } },
+        () =>
+          new Response(JSON.stringify({ run: ++runs }), {
+            headers: {
+              "content-type": "application/json",
+              "set-cookie": "sid=secret-session; Path=/; HttpOnly; Secure",
+            },
+          }),
+      )
     const request = () =>
       new Request("http://x/session", {
         method: "POST",
@@ -294,21 +296,21 @@ describe("server({ idempotency }) — request path", () => {
   })
 
   test("a missing key on an idempotency-required route fails closed with 400", async () => {
-    const app = server().post(
-      "/pay",
-      { idempotency: { scope: "request", namespace: "public:pay" } },
-      () => ({ ok: true }),
-    )
+    const app = server()
+      .use(idempotency())
+      .post("/pay", { idempotency: { scope: "request", namespace: "public:pay" } }, () => ({
+        ok: true,
+      }))
     const res = await app.fetch(post({ amount: 1 }))
     expect(res.status).toBe(400)
   })
 
   test("reusing a key with a different body is rejected 409", async () => {
-    const app = server().post(
-      "/pay",
-      { idempotency: { scope: "request", namespace: "public:pay" } },
-      () => ({ ok: true }),
-    )
+    const app = server()
+      .use(idempotency())
+      .post("/pay", { idempotency: { scope: "request", namespace: "public:pay" } }, () => ({
+        ok: true,
+      }))
     expect((await app.fetch(post({ amount: 1 }, "k"))).status).toBe(200)
     const reused = await app.fetch(post({ amount: 999 }, "k"))
     expect(reused.status).toBe(409)
@@ -319,14 +321,12 @@ describe("server({ idempotency }) — request path", () => {
     const gate = new Promise<void>((r) => {
       release = r
     })
-    const app = server().post(
-      "/pay",
-      { idempotency: { scope: "request", namespace: "public:pay" } },
-      async () => {
+    const app = server()
+      .use(idempotency())
+      .post("/pay", { idempotency: { scope: "request", namespace: "public:pay" } }, async () => {
         await gate
         return { ok: true }
-      },
-    )
+      })
     const first = app.fetch(post({ amount: 1 }, "dup"))
     await new Promise((r) => setTimeout(r, 0))
     const second = await app.fetch(post({ amount: 1 }, "dup")) // key reserved, not completed
@@ -338,14 +338,12 @@ describe("server({ idempotency }) — request path", () => {
 
   test("an error response is not cached — a retry re-runs the handler", async () => {
     let runs = 0
-    const app = server().post(
-      "/pay",
-      { idempotency: { scope: "request", namespace: "public:pay" } },
-      (c) => {
+    const app = server()
+      .use(idempotency())
+      .post("/pay", { idempotency: { scope: "request", namespace: "public:pay" } }, (c) => {
         runs += 1
         return c.json({ error: "boom" }, 500)
-      },
-    )
+      })
     expect((await app.fetch(post({ amount: 1 }, "e"))).status).toBe(500)
     expect((await app.fetch(post({ amount: 1 }, "e"))).status).toBe(500)
     expect(runs).toBe(2) // not replayed; the key was released
@@ -353,20 +351,22 @@ describe("server({ idempotency }) — request path", () => {
 
   test("honors a custom header name", async () => {
     let runs = 0
-    const app = server().post(
-      "/pay",
-      {
-        idempotency: {
-          scope: "request",
-          namespace: "public:pay",
-          headerName: "X-Idem",
+    const app = server()
+      .use(idempotency())
+      .post(
+        "/pay",
+        {
+          idempotency: {
+            scope: "request",
+            namespace: "public:pay",
+            headerName: "X-Idem",
+          },
         },
-      },
-      () => {
-        runs += 1
-        return { ok: true }
-      },
-    )
+        () => {
+          runs += 1
+          return { ok: true }
+        },
+      )
     await app.fetch(post({ a: 1 }, undefined, { "x-idem": "ck" }))
     await app.fetch(post({ a: 1 }, undefined, { "x-idem": "ck" }))
     expect(runs).toBe(1)
@@ -374,16 +374,18 @@ describe("server({ idempotency }) — request path", () => {
 
   test("a namespace resolver isolates identical keys for different tenants", async () => {
     let runs = 0
-    const app = server().post(
-      "/pay",
-      {
-        idempotency: {
-          scope: "request",
-          namespace: (request) => request.headers.get("x-tenant") ?? "missing",
+    const app = server()
+      .use(idempotency())
+      .post(
+        "/pay",
+        {
+          idempotency: {
+            scope: "request",
+            namespace: (request) => request.headers.get("x-tenant") ?? "missing",
+          },
         },
-      },
-      () => ({ run: ++runs }),
-    )
+        () => ({ run: ++runs }),
+      )
     const request = (tenant: string) => post({ amount: 1 }, "same", { "x-tenant": tenant })
     expect(await (await app.fetch(request("a"))).json()).toEqual({ run: 1 })
     expect(await (await app.fetch(request("b"))).json()).toEqual({ run: 2 })
@@ -392,50 +394,80 @@ describe("server({ idempotency }) — request path", () => {
 
   test("registration rejects invalid TTL/header configuration and idempotent SSE", () => {
     expect(() =>
-      server().post("/x", { idempotency: { scope: "request" } as never }, () => ({})),
+      server()
+        .use(idempotency())
+        .post("/x", { idempotency: { scope: "request" } as never }, () => ({})),
     ).toThrow(/namespace.*required/i)
     expect(() =>
-      server().post(
-        "/x",
-        { idempotency: { scope: "request", namespace: "public:x", ttlMs: 0 } },
-        () => ({}),
-      ),
+      server()
+        .use(idempotency())
+        .post(
+          "/x",
+          { idempotency: { scope: "request", namespace: "public:x", ttlMs: 0 } },
+          () => ({}),
+        ),
     ).toThrow(/ttlMs/)
     expect(() =>
-      server().post(
-        "/x",
-        {
-          idempotency: {
-            scope: "request",
-            namespace: "public:x",
-            ttlMs: Number.MAX_SAFE_INTEGER + 1,
+      server()
+        .use(idempotency())
+        .post(
+          "/x",
+          {
+            idempotency: {
+              scope: "request",
+              namespace: "public:x",
+              ttlMs: Number.MAX_SAFE_INTEGER + 1,
+            },
           },
-        },
-        () => ({}),
-      ),
+          () => ({}),
+        ),
     ).toThrow(/ttlMs/)
     expect(() =>
-      server().post(
-        "/x",
-        {
-          idempotency: {
-            scope: "request",
-            namespace: "public:x",
-            headerName: "bad header",
+      server()
+        .use(idempotency())
+        .post(
+          "/x",
+          {
+            idempotency: {
+              scope: "request",
+              namespace: "public:x",
+              headerName: "bad header",
+            },
           },
-        },
-        () => ({}),
-      ),
+          () => ({}),
+        ),
     ).toThrow(/header name/)
     expect(() =>
-      server().post(
-        "/stream",
-        {
-          idempotency: { scope: "request", namespace: "public:stream" },
-          sse: {} as never,
-        },
-        () => ({}),
-      ),
+      server()
+        .use(idempotency())
+        .post("/x", { idempotency: { scope: "request", namespace: "not namespaced" } }, () => ({})),
+    ).toThrow(/invalid idempotency namespace/i)
+    expect(() =>
+      server()
+        .use(idempotency())
+        .post(
+          "/x",
+          {
+            idempotency: {
+              scope: "request",
+              namespace: "public:x",
+              maxResponseBytes: 0,
+            },
+          },
+          () => ({}),
+        ),
+    ).toThrow(/maxResponseBytes/i)
+    expect(() =>
+      server()
+        .use(idempotency())
+        .post(
+          "/stream",
+          {
+            idempotency: { scope: "request", namespace: "public:stream" },
+            sse: {} as never,
+          },
+          () => ({}),
+        ),
     ).toThrow(/streaming/i)
   })
 
@@ -451,6 +483,7 @@ describe("server({ idempotency }) — request path", () => {
 
     expect(() =>
       server()
+        .use(idempotency())
         .use(authenticated)
         .post("/account", { idempotency: { scope: "request", namespace: "shared" } }, () => ({
           ok: true,
@@ -459,6 +492,7 @@ describe("server({ idempotency }) — request path", () => {
 
     expect(() =>
       server()
+        .use(idempotency())
         .use(authenticated)
         .post(
           "/account",
@@ -470,17 +504,19 @@ describe("server({ idempotency }) — request path", () => {
 
   test("an oversized response is replaced and replayed without re-running the effect", async () => {
     let runs = 0
-    const app = server().post(
-      "/pay",
-      {
-        idempotency: {
-          scope: "request",
-          namespace: "public:pay",
-          maxResponseBytes: 8,
+    const app = server()
+      .use(idempotency())
+      .post(
+        "/pay",
+        {
+          idempotency: {
+            scope: "request",
+            namespace: "public:pay",
+            maxResponseBytes: 8,
+          },
         },
-      },
-      () => ({ value: "this is intentionally too large", run: ++runs }),
-    )
+        () => ({ value: "this is intentionally too large", run: ++runs }),
+      )
     const first = await app.fetch(post({ amount: 1 }, "large"))
     const replay = await app.fetch(post({ amount: 1 }, "large"))
     expect(first.status).toBe(507)
@@ -491,11 +527,11 @@ describe("server({ idempotency }) — request path", () => {
 
   test("an injected store receives the completed response", async () => {
     const store = new MemoryIdempotencyStore()
-    const app = server().post(
-      "/pay",
-      { idempotency: { scope: "request", namespace: "public:pay", store } },
-      () => ({ ok: true }),
-    )
+    const app = server()
+      .use(idempotency())
+      .post("/pay", { idempotency: { scope: "request", namespace: "public:pay", store } }, () => ({
+        ok: true,
+      }))
     await app.fetch(post({ a: 1 }, "s1"))
     expect(store.size).toBe(1)
     const replay = begin(store, "s1", await fingerprintOf({ a: 1 }), 1000, "public:pay")
@@ -519,14 +555,16 @@ describe("idempotency ↔ capability assurance (F-loop closure)", () => {
   } as const
 
   test("declaring idempotency clears the missing-request-idempotency finding for a write capability", () => {
-    const withIdem = server().post(
-      "/pay",
-      {
-        capabilities: ["db.write"],
-        idempotency: { scope: "request", namespace: "public:pay" },
-      },
-      () => ({ ok: true }),
-    )
+    const withIdem = server()
+      .use(idempotency())
+      .post(
+        "/pay",
+        {
+          capabilities: ["db.write"],
+          idempotency: { scope: "request", namespace: "public:pay" },
+        },
+        () => ({ ok: true }),
+      )
     const report = evaluateCapabilityAssurance(withIdem, writePolicy, {
       routes: [
         {
@@ -541,7 +579,9 @@ describe("idempotency ↔ capability assurance (F-loop closure)", () => {
   })
 
   test("without idempotency, the write capability still reports missing-request-idempotency", () => {
-    const noIdem = server().post("/pay", { capabilities: ["db.write"] }, () => ({ ok: true }))
+    const noIdem = server()
+      .use(idempotency())
+      .post("/pay", { capabilities: ["db.write"] }, () => ({ ok: true }))
     const report = evaluateCapabilityAssurance(noIdem, writePolicy, {
       routes: [
         {
@@ -559,18 +599,20 @@ describe("idempotency ↔ capability assurance (F-loop closure)", () => {
     const durableStore = Object.assign(new MemoryIdempotencyStore(), {
       durability: "durable" as const,
     })
-    const app = server().post(
-      "/charge",
-      {
-        capabilities: ["billing.charge"],
-        idempotency: {
-          scope: "durable",
-          namespace: "public:charge",
-          store: durableStore,
+    const app = server()
+      .use(idempotency())
+      .post(
+        "/charge",
+        {
+          capabilities: ["billing.charge"],
+          idempotency: {
+            scope: "durable",
+            namespace: "public:charge",
+            store: durableStore,
+          },
         },
-      },
-      () => ({ ok: true }),
-    )
+        () => ({ ok: true }),
+      )
     const report = evaluateCapabilityAssurance(
       app,
       {

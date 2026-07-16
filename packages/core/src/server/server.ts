@@ -8,19 +8,6 @@ import {
 } from "../budget.ts"
 import { FrameworkError, RouteConfigError } from "../errors.ts"
 import {
-  canonicalizeIdempotencyBody,
-  computeIdempotencyFingerprint,
-  DEFAULT_IDEMPOTENCY_HEADER,
-  DEFAULT_IDEMPOTENCY_TTL_MS,
-  IdempotencyResponseTooLargeError,
-  type IdempotencyStore,
-  MemoryIdempotencyStore,
-  responseFromStored,
-  serializeResponse,
-  validIdempotencyKey,
-  validIdempotencyNamespace,
-} from "../idempotency.ts"
-import {
   CAPABILITY_GUARD,
   type CapabilityUseEvent,
   createCapabilityGuard,
@@ -28,18 +15,11 @@ import {
 } from "../internal/capability-runtime.ts"
 import {
   type AssuranceDeclaration,
-  type AssuranceEvidence,
   assuranceDeclarationsOf,
   assuranceEvidenceFor,
   NIFRA_ASSURANCE_IDS,
 } from "../internal/route-assurance.ts"
-import {
-  attachEffectLedger,
-  createRequestLedger,
-  DEFAULT_MAX_ENTRIES,
-  type EffectLedgerOptions,
-  type RequestLedger,
-} from "../ledger.ts"
+import type { RequestLedger } from "../ledger.ts"
 import {
   type CompiledRoutePattern,
   compileRoutePattern,
@@ -52,12 +32,64 @@ import type {
   StandardResult,
   StandardSchemaV1,
 } from "../schema/standard.ts"
-import { drainCapped, parseContentLength, readBoundedBytes } from "./body.ts"
+import { parseContentLength } from "./body.ts"
 import type { Context, Platform, ResponseControls, RouteSchema } from "./context.ts"
-import { type CookieOptions, parseCookies, serializeCookie } from "./cookies.ts"
+import { jsonError, pathnameOf, urlPartsOf } from "./http.ts"
+import type { NodeServeOutcome } from "./node-outcome.ts"
+import type { NodeOutcomeRuntime } from "./node-outcome-hook.ts"
+import {
+  isUrlEncodedForm,
+  type QueryValue,
+  queryObjectOf,
+  readBoundedForm,
+  searchOf,
+} from "./query.ts"
+import { RequestContext, readBoundedJsonSource } from "./request-context.ts"
+import { fusedRespond, fusedRespondNoSet, toResponse } from "./respond.ts"
+import {
+  CONTEXT_SEARCH,
+  CONTEXT_SET,
+  EMPTY_RESPONSE_CONTROLS,
+  getNeverAbortSignal,
+  getUnboundedRequestBudget,
+  type HandlerResult,
+  headerOf,
+  requestOf,
+} from "./runtime-core.ts"
+
+// NodeServeOutcome (the nifra<->node bridge render form) now lives in `./node-outcome.ts`; re-exported
+// so existing importers keep resolving it from the server module.
+export type { NodeServeOutcome }
+
+import type { IdempotencyRuntime, ResolvedIdempotency } from "./idempotency-lane.ts"
+import {
+  INSTALL_EFFECT_LEDGER,
+  INSTALL_IDEMPOTENCY,
+  INSTALL_MCP,
+  INSTALL_NODE_DIRECT,
+  INSTALL_SSE,
+} from "./install.ts"
+import type { EffectLedgerRuntime, ResolvedEffectLedger } from "./ledger-lane.ts"
 import { jsonLogger, type Logger } from "./logger.ts"
+import type { McpRuntime } from "./mcp-hook.ts"
+import type { IdentityPlugin } from "./plugin.ts"
 import type { AddRoute, EmptyRegistry, OutputOf, Registry, RouteInfoFor } from "./registry.ts"
-import { type SSEInit, sse, type TypedSSEStream, typedSSEStream } from "./sse.ts"
+import type {
+  AdmissionController,
+  AdmissionDecision,
+  McpPromptDescriptor,
+  McpResourceDescriptor,
+  Middleware,
+  PromptArgument,
+  PromptMessage,
+  ResponseFinalization,
+  RouteDescriptor,
+  RunningServer,
+  ServerOptions,
+  ToolAnnotations,
+} from "./server-types.ts"
+import type { SSEInit, TypedSSEStream } from "./sse.ts"
+import type { SseRuntime } from "./sse-hook.ts"
 import type {
   StandardWebSocket,
   TopicRegistry,
@@ -68,7 +100,7 @@ import type {
 import type { BunWsData } from "./ws-bun.ts"
 import { getWsRuntime, type WsRuntime } from "./ws-hook.ts"
 
-type MaybePromise<T> = T | Promise<T>
+export type MaybePromise<T> = T | Promise<T>
 
 /**
  * Internal request view. A real Web `Request` already satisfies this shape, so Web/edge runtimes pass
@@ -90,17 +122,6 @@ export interface RequestSource {
   readonly request?: Request
 }
 
-/** The concrete `Request` for a source — itself when a real `Request` was passed (the Web path), or the
- * lazily-built one (the Node adapter). A real `Request` IS a `RequestSource`, so no wrapper is allocated
- * on the Web hot path. */
-function requestOf(source: RequestSource): Request {
-  return source.request ?? (source as unknown as Request)
-}
-
-function headerOf(source: RequestSource, name: string): string | null {
-  return source.header?.(name) ?? source.headers.get(name)
-}
-
 /** The empty context extension. `NonNullable<unknown>` is `{}` without tripping noBannedTypes. */
 type EmptyContext = NonNullable<unknown>
 
@@ -111,37 +132,13 @@ type EmptyContext = NonNullable<unknown>
  */
 type EnvOf<Ctx> = Ctx extends { readonly env: infer E } ? E : unknown
 
-/** A handler returns a `Response` (used as-is) or any value (serialized to JSON). */
-type HandlerResult = Response | unknown
 type ContextlessHandler = () => MaybePromise<HandlerResult>
 
-const RESPONSE_RESULT = Symbol.for("nifra.response.result")
-const CONTEXT_SET = Symbol("nifra.context.set")
-const CONTEXT_SEARCH = Symbol("nifra.context.search")
 const functionToString = Function.prototype.toString
 const CONTEXTLESS_ARROW = /^(?:async\s*)?\(\s*\)\s*(?::[\s\S]*?)?=>/
 
-interface ResponseResult {
-  readonly [RESPONSE_RESULT]: true
-  toResponse(): Response
-  toNodeBody?(): {
-    readonly status: number
-    readonly headers: Readonly<Record<string, string | readonly string[]>> | undefined
-    readonly body: string | Uint8Array
-  }
-}
-
-function isResponseResult(value: unknown): value is ResponseResult {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    (value as { readonly [RESPONSE_RESULT]?: unknown })[RESPONSE_RESULT] === true &&
-    typeof (value as { readonly toResponse?: unknown }).toResponse === "function"
-  )
-}
-
 /** Internal, path-erased runtime context. The typed `Context<Path, S>` is a structural view of this. */
-interface RawContext {
+export interface RawContext {
   readonly req: Request
   readonly request: Request
   readonly json: (body: unknown, init?: ResponseInit | number) => Response
@@ -161,12 +158,6 @@ interface RawContext {
   readonly boundedJson: <T = unknown>(maxBytes?: number) => Promise<T>
 }
 
-/** Off-edge `waitUntil`: run the background work fire-and-forget, never leaking an unhandled
- * rejection. Edge runtimes pass their own (Workers `ctx.waitUntil`) via the platform arg. */
-const fallbackWaitUntil = (promise: Promise<unknown>): void => {
-  void promise.catch(() => {})
-}
-
 type InternalHandler = (ctx: RawContext) => MaybePromise<HandlerResult>
 
 /** Broad shape so the implementation signature is compatible with both typed overloads. */
@@ -182,27 +173,6 @@ export type OnRequestResult = Response | Request | undefined
 type RawOnRequest = (req: Request, platform?: Platform) => MaybePromise<OnRequestResult>
 type RawOnResponse = (response: Response, req: Request) => MaybePromise<Response>
 type RawOnResponseFinalized = (outcome: ResponseFinalization, req: Request) => MaybePromise<void>
-
-/** Registration-resolved idempotency for a route: the config with its store + defaults pinned. */
-interface ResolvedIdempotency {
-  readonly store: IdempotencyStore
-  readonly ttlMs: number
-  readonly headerName: string
-  readonly namespace: NonNullable<RouteSchema["idempotency"]>["namespace"]
-  readonly maxResponseBytes: number
-}
-
-/** Registration-resolved effect-ledger wiring for one capability-declaring route. */
-interface ResolvedEffectLedger {
-  readonly sink: EffectLedgerOptions["sink"]
-  readonly maxEntries: number
-  readonly chain: boolean
-  /** The registered route pattern — what the sealed ledger names (never the concrete URL). */
-  readonly method: string
-  readonly path: string
-  /** The route's declared capability tokens, surfaced on the sealed ledger. */
-  readonly declared: readonly string[]
-}
 
 type RouteExecutionRunner = <T, R extends Registry, Ctx>(
   runtime: Server<R, Ctx>,
@@ -364,6 +334,26 @@ function requireWsRuntime(): WsRuntime {
   return runtime
 }
 
+function requireSseRuntime(runtime: SseRuntime | undefined): SseRuntime {
+  if (runtime === undefined) {
+    throw new FrameworkError(
+      "SSE_RUNTIME_MISSING",
+      "app.sse() needs the streaming runtime, which ships as a subpath so non-SSE apps stay lean. Add `.use(streaming())` (from `@nifrajs/core/sse`) at your server setup.",
+    )
+  }
+  return runtime
+}
+
+function requireMcpRuntime(runtime: McpRuntime | undefined): McpRuntime {
+  if (runtime === undefined) {
+    throw new FrameworkError(
+      "MCP_RUNTIME_MISSING",
+      "MCP declarations ship as an opt-in runtime so ordinary HTTP apps stay lean. Add `.use(mcp())` (from `@nifrajs/core/mcp`) at your server setup.",
+    )
+  }
+  return runtime
+}
+
 /** The handler's permitted return type. When the route declares a `response` schema, the return is
  * constrained to the contract's type (or a raw `Response`) — so the implementation can't drift from the
  * declared contract. Without a `response` schema it's unconstrained (`HandlerResult`), exactly as before. */
@@ -381,202 +371,21 @@ export type Handler<
   Ctx = EmptyContext,
 > = (ctx: Context<Path, S> & Ctx) => MaybePromise<ResponseOf<S>>
 
-/**
- * The outcome of a capacity-admission decision. `admitted` requests carry a `release` the server calls
- * exactly once when the response is finalized; a shed request carries a ready `429` Response.
- */
-export type AdmissionDecision =
-  | { readonly admitted: true; release(): void }
-  | { readonly admitted: false; readonly response: Response }
-
-/**
- * A capacity-admission gate. Decides, per request, whether the instance has capacity to run it now —
- * bounding *concurrency*, which rate limits (frequency) and deadlines (duration) do not. Provide an
- * implementation (see `@nifrajs/middleware`'s `createAdmissionController`) as {@link ServerOptions.admission}.
- *
- * Enabling it trades the fused native-route lane for native matching + this gate (the gate cannot be a
- * per-request `onRequest` hook without disabling native routes entirely); when unset, the request path
- * is untouched.
- */
-export interface AdmissionController {
-  admit(req: Request): AdmissionDecision | Promise<AdmissionDecision>
-}
-
-export interface ServerOptions {
-  /**
-   * Max request body size (bytes), enforced **only when a route declares a body schema** — the cap
-   * lives in the schema-validated read path. Default 1_000_000.
-   *
-   * A route WITHOUT a body schema (raw body, file upload, BYO-validation) that reads `c.req` directly
-   * is not auto-bounded — use **`c.boundedBody(maxBytes?)`** / **`c.boundedJson(maxBytes?)`**, which
-   * apply this same cap (override per route by passing `maxBytes` — larger for an upload endpoint,
-   * smaller to tighten one).
-   */
-  readonly maxBodyBytes?: number
-  /** Max inbound WebSocket message size (bytes) when `listen()`ing on Bun — frames over this are rejected
-   * by the runtime before reaching your handler (so a huge frame can't be JSON-parsed into memory).
-   * Default: `maxBodyBytes` (1 MB). */
-  readonly wsMaxPayloadBytes?: number
-  /** Per-request timeout (ms): a slower request gets a 503 and `ctx.signal` aborts. 0 disables (default). */
-  readonly requestTimeoutMs?: number
-  /**
-   * Admit the public `x-nifra-deadline` header and let it shorten local work. Disabled by default:
-   * services that participate in trusted cross-service deadline propagation opt in explicitly,
-   * while ordinary/public HTTP routes pay no header-admission tax and ignore hostile client values.
-   */
-  readonly acceptInboundDeadlines?: boolean
-  /**
-   * Maximum time accepted from an inbound `x-nifra-deadline`, in milliseconds. An incoming absolute
-   * deadline may shorten this cap (and `requestTimeoutMs`, when configured), never extend it.
-   * Default 30_000; applies only when `acceptInboundDeadlines` is enabled and the header is present.
-   */
-  readonly maxInboundDeadlineMs?: number
-  /** When `listen()`ing, install SIGTERM/SIGINT handlers that gracefully `stop()`. Default false. */
-  readonly gracefulSignals?: boolean
-  /**
-   * Capacity-admission gate (see {@link AdmissionController}). Bounds concurrent in-flight work so a
-   * healthy instance sheds load (`429` + `Retry-After`) instead of accepting more than it can finish.
-   * Off by default. Enabling it disables the fused native-route fast path (requests route through the
-   * shared matched lane where the gate runs); when unset, the request path pays nothing.
-   */
-  readonly admission?: AdmissionController
-  /**
-   * Optional token-only observation hook called by `useCapability(c, id)`. It receives no request,
-   * parameters, body, tenant, or values. Routes without capability declarations keep the old hot path.
-   */
-  readonly onCapabilityUse?: (event: CapabilityUseEvent) => void
-  /**
-   * Enable the per-request effect ledger. Each route that declares `schema.capabilities` gets a
-   * bounded, token-only ledger; `useCapability(c, id, …)` appends one entry per effect, and the sink
-   * receives the sealed ledger when the response settles (only when it recorded entries). Token-only
-   * by construction — capability ids, phases, counters, digests; never payloads, values, or the
-   * concrete URL (the route *pattern* is recorded). Enabling it moves capability-declaring routes off
-   * the fused fast path (they need a per-request context + a settle step); all other routes are
-   * unaffected, and when unset the request path pays nothing.
-   */
-  readonly effectLedger?: EffectLedgerOptions
-  /**
-   * Default store backing routes that declare `schema.idempotency` without their own `store`. Defaults
-   * to a shared in-process {@link MemoryIdempotencyStore} (created lazily on first idempotent route).
-   * Inject a durable store here to make request-scoped dedupe survive restarts app-wide.
-   */
-  readonly idempotencyStore?: IdempotencyStore
-  /** Structured logger for framework events (redacts secrets). Default: JSON to stderr. */
-  readonly logger?: Logger
-  /**
-   * App-wide fallback fired when a route **without its own `onValidationError`** fails body/query
-   * validation. Same contract as the per-route hook (`(issues, ctx, kind) => Response | repaired-value |
-   * undefined`): a route's own hook takes precedence, and a route can fall through to the plain `422` by
-   * returning `undefined`. Use it for one app-wide error envelope (like tRPC's `errorFormatter` /
-   * Fastify's `setErrorHandler`) instead of repeating a formatter per route.
-   */
-  readonly onValidationError?: RouteSchema["onValidationError"]
-}
-
-/**
- * MCP tool safety hints, surfaced in `tools/list`, that tell an agent how risky a `.tool()` call is — so it
- * can decide whether to auto-invoke or confirm first. All optional; an omitted hint means "unknown". Mirrors
- * the MCP spec's tool `annotations`.
- */
-export interface ToolAnnotations {
-  /** Human-readable display title for the tool, distinct from the machine `name`. */
-  readonly title?: string
-  /** The tool does not modify its environment (a pure read). */
-  readonly readOnlyHint?: boolean
-  /** The tool may perform destructive updates — only meaningful when `readOnlyHint` is not `true`. */
-  readonly destructiveHint?: boolean
-  /** Repeated calls with the same arguments have no additional effect beyond the first. */
-  readonly idempotentHint?: boolean
-  /** The tool interacts with external entities (an "open world" beyond this server). */
-  readonly openWorldHint?: boolean
-}
-
-/**
- * A registered route's public descriptor — method, path, and input schemas. The
- * router trie discards the original patterns, so this flat list is what lets tools
- * (e.g. `toOpenAPI`) enumerate routes after registration.
- */
-export interface RouteDescriptor {
-  readonly method: Method
-  readonly path: string
-  readonly schema: RouteSchema | undefined
-  /** Effective enforcement evidence, populated only during reflection/introspection. */
-  readonly assurance?: readonly AssuranceEvidence[]
-  /** Normalized declared effect tokens, populated only when the route declares any. */
-  readonly capabilities?: readonly string[]
-  readonly tool?: {
-    readonly name: string
-    readonly description: string
-    readonly annotations?: ToolAnnotations
-  }
-}
-
-/** A message in an MCP prompt's rendered output (see {@link Server.prompt}). */
-export interface PromptMessage {
-  readonly role: "user" | "assistant"
-  readonly content: { readonly type: "text"; readonly text: string }
-}
-
-/** One declared argument of an MCP prompt, surfaced in `prompts/list`. */
-export interface PromptArgument {
-  readonly name: string
-  readonly description?: string
-  readonly required?: boolean
-}
-
-/** An app-declared MCP resource — read-only data an agent can fetch through `nifra mcp`. */
-export interface McpResourceDescriptor {
-  readonly uri: string
-  readonly name: string
-  readonly description?: string
-  readonly mimeType?: string
-  readonly read: () => MaybePromise<string | { readonly text: string; readonly mimeType?: string }>
-}
-
-/** An app-declared MCP prompt — a reusable prompt template an agent can fetch through `nifra mcp`. */
-export interface McpPromptDescriptor {
-  readonly name: string
-  readonly description: string
-  readonly arguments?: readonly PromptArgument[]
-  readonly handler: (args: Record<string, string>) => MaybePromise<readonly PromptMessage[]>
-}
-
-/**
- * The handle `listen()` returns — the slice of Bun's server nifra holds and exposes.
- * Declared explicitly (rather than `ReturnType<typeof Bun.serve>`) so the public type
- * surface doesn't leak the ambient `Bun` global into consumers' `.d.ts` resolution.
- */
-export interface RunningServer {
-  readonly port: number
-  readonly hostname: string
-  readonly pendingRequests: number
-  stop(closeActiveConnections?: boolean): void
-}
-
-/**
- * A bundle of lifecycle hooks applied together via {@link Server.use} — the unit
- * `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is
- * optional and wired to its lifecycle point. Middleware is context-agnostic (sees
- * the base `Context`); `use` does no context-type merging — the full type-merging
- * plugin system is deferred, and `.use` is reserved as its future entry point.
- */
-export interface Middleware {
-  readonly name?: string
-  readonly onRequest?: (req: Request, platform?: Platform) => MaybePromise<OnRequestResult>
-  readonly around?: <T>(context: Context, next: () => MaybePromise<T>) => MaybePromise<T>
-  readonly beforeHandle?: (context: Context) => MaybePromise<unknown>
-  readonly afterHandle?: (result: unknown, context: Context) => MaybePromise<unknown>
-  readonly onResponse?: (response: Response, req: Request) => MaybePromise<Response>
-  readonly onResponseFinalized?: (outcome: ResponseFinalization, req: Request) => MaybePromise<void>
-  readonly onError?: (error: unknown, context: Context) => MaybePromise<unknown>
-}
-
-/** The terminal response-pipeline outcome observed after every transforming `onResponse` hook. */
-export interface ResponseFinalization {
-  /** The final response, or the last response available when a transformation failed. */
-  readonly response: Response
-  /** A response-hook failure. Terminal observers run fail-open before the error is rethrown. */
-  readonly error?: unknown
+// Route/option/descriptor + middleware-bundle types now live in `./server-types.ts`; re-exported so
+// existing importers keep resolving them from the server module.
+export type {
+  AdmissionController,
+  AdmissionDecision,
+  McpPromptDescriptor,
+  McpResourceDescriptor,
+  Middleware,
+  PromptArgument,
+  PromptMessage,
+  ResponseFinalization,
+  RouteDescriptor,
+  RunningServer,
+  ServerOptions,
+  ToolAnnotations,
 }
 
 // A plugin operates over arbitrary Server shapes; `any` here is the standard framework escape hatch
@@ -584,119 +393,19 @@ export interface ResponseFinalization {
 // biome-ignore lint/suspicious/noExplicitAny: plugins are generic over any Server's Registry/Context
 export type AnyServer = Server<any, any>
 
-/**
- * A nifra **plugin**: a function that augments an app — calling `use`/`derive`/`decorate` and/or
- * registering routes — and returns it. Because `derive`/`decorate` are type-threaded, an **inline**
- * `app.use((a) => a.derive(...).decorate(...))` carries the added context to handlers defined after
- * it (the `use` overload is generic over the concrete `this`). Wrap with {@link definePlugin} to
- * attach a name for idempotent dedupe (applying the same named plugin twice — e.g. transitively — is
- * a no-op).
- */
-export type NifraPlugin<In extends AnyServer = AnyServer, Out extends AnyServer = In> = ((
-  app: In,
-) => Out) & { readonly pluginName?: string }
-
-/**
- * A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete
- * server type it receives, preserving the caller's typed registry and context across `.use()` while
- * still allowing the plugin to register runtime hooks or handlers.
- */
-export type IdentityPlugin = (<S extends AnyServer>(app: S) => S) & {
-  readonly pluginName?: string
-}
-
-/**
- * Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)`
- * applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each
- * other without double-registering hooks.
- *
- * ```ts
- * export const requestId = definePlugin("requestId", (app) => app.derive(() => ({ requestId: uuid() })))
- * app.use(requestId)   // downstream handlers see c.requestId
- * ```
- *
- * FOOTGUN: only use this for a plugin that adds context. For a plugin that **mounts routes/hooks but adds
- * NO context** (an auth router, an audit logger), use {@link defineRouterPlugin} ({@link defineIdentityPlugin}).
- * `definePlugin((app) => app.get(...))` infers `app: Server<any, any>`, so `.use()` returns `Server<any, any>`
- * and your whole typed client silently collapses to `any` — no type error, no runtime error.
- */
-export function definePlugin<In extends AnyServer, Out extends AnyServer>(
-  name: string,
-  apply: (app: In) => Out,
-): NifraPlugin<In, Out> {
-  return Object.assign(apply, { pluginName: name }) as NifraPlugin<In, Out>
-}
-
-/**
- * Define a type-**identity** plugin: it registers routes/hooks as a side effect but returns the app with
- * its `Registry` + `Context` UNCHANGED. Use this (not {@link definePlugin}) for any plugin that doesn't
- * add context types — e.g. one mounting an auth handler. It threads the caller's *concrete* server type
- * through `use`, so routes declared after `app.use(plugin)` keep their types.
- *
- * Why a dedicated helper: `definePlugin((app) => app)` infers `app: Server<any, any>`, so `use` returns
- * `Server<any, any>` and the whole typed client collapses to `any`. The explicit generic return type here
- * (which a plain `Object.assign` can't preserve) is what keeps `use` returning the precise server type.
- *
- * ```ts
- * export const audit = defineIdentityPlugin("audit", (app) => app.onResponse(logResponse))
- * const api = server().get("/a", h).use(audit).get("/b", h) // /a AND /b stay typed
- * ```
- */
-export function defineIdentityPlugin(
-  name: string,
-  apply: <S extends AnyServer>(app: S) => S,
-): IdentityPlugin {
-  return Object.assign(apply, { pluginName: name }) as IdentityPlugin
-}
-
-/**
- * Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts
- * routes/hooks but adds no context type** (an auth router, an audit logger). Use this — not
- * {@link definePlugin} — for any such plugin, or the typed client silently collapses to `any`. The
- * "identity" in {@link defineIdentityPlugin} refers to the type-identity it preserves; `defineRouterPlugin`
- * is the same thing under a clearer name.
- *
- * Mount routes as a **side effect**, then return the app unchanged (registering via `.get`/`.post` would
- * change the type away from the identity `S`; the mounted routes run but aren't in the caller's typed
- * registry — that's the trade that keeps everything else typed):
- *
- * ```ts
- * export const scim = defineRouterPlugin("scim", (app) => {
- *   app.get("/scim/v2/Users", listUsers) // side effect: mounted at runtime
- *   return app                           // return S unchanged → routes added after .use(scim) stay typed
- * })
- * const api = server().get("/a", h).use(scim).get("/b", h) // /a AND /b stay typed
- * ```
- */
-export const defineRouterPlugin: typeof defineIdentityPlugin = defineIdentityPlugin
+// Plugin definers + their types now live in `./plugin.ts`; re-exported here so `.use()` callers and
+// existing importers keep resolving them from the server module.
+export {
+  defineIdentityPlugin,
+  definePlugin,
+  defineRouterPlugin,
+  type NifraPlugin,
+} from "./plugin.ts"
+export type { IdentityPlugin }
 
 const DEFAULT_MAX_BODY_BYTES = 1_000_000
 const DEFAULT_DRAIN_MS = 10_000
 const DRAIN_POLL_MS = 10
-const TEXT_DECODER = new TextDecoder()
-/**
- * Shared never-aborting signal for `ctx.signal` when no timeout is armed — created lazily and
- * cached. NOT a module-scope `new AbortController()`: edge runtimes (Cloudflare workerd) forbid
- * constructing one in global scope; the first request builds it inside the handler, then it's
- * reused at zero per-request cost.
- */
-let neverAbortSignal: AbortSignal | undefined
-let unboundedRequestBudget: RequestBudget | undefined
-const getNeverAbortSignal = (): AbortSignal => {
-  neverAbortSignal ??= new AbortController().signal
-  return neverAbortSignal
-}
-const getUnboundedRequestBudget = (): RequestBudget => {
-  unboundedRequestBudget ??= createUnboundedRequestBudget(getNeverAbortSignal())
-  return unboundedRequestBudget
-}
-
-function jsonError(status: number, error: string, headers?: Record<string, string>): Response {
-  return Response.json(
-    { ok: false, error },
-    headers !== undefined ? { status, headers } : { status },
-  )
-}
 
 /** Same-origin check for a WebSocket handshake (CSWSH default): the `Origin`'s host[:port] must equal the
  * request's own host (from `req.url`, which the runtime builds from the `Host` header). Scheme differs
@@ -717,157 +426,12 @@ function validationError(issues: ReadonlyArray<StandardIssue>): Response {
   return Response.json({ ok: false, error: "validation", issues: serialized }, { status: 422 })
 }
 
-interface UrlParts {
-  readonly pathname: string
-  readonly search: string
-}
-
-// Extract pathname + query WITHOUT a full WHATWG `new URL(req.url)` parse.
-// `req.url` from every supported runtime is an absolute, already-normalized URL, so the pathname is
-// the substring after `scheme://host[:port]` up to `?`/`#`. Query-schema routes also need the search
-// string; parsing both in one scanner avoids the old `pathnameOf()` + `searchOf()` double scan.
-export function urlPartsOf(url: string): UrlParts {
-  const schemeEnd = url.indexOf("://")
-  const start = schemeEnd === -1 ? url.indexOf("/") : url.indexOf("/", schemeEnd + 3)
-  if (start === -1) return { pathname: "/", search: "" }
-
-  let pathEnd = url.length
-  let searchStart = -1
-  let searchEnd = url.length
-  for (let i = start; i < url.length; i++) {
-    const c = url.charCodeAt(i)
-    if (c === 63 /* ? */ && searchStart === -1) {
-      pathEnd = i
-      searchStart = i
-    } else if (c === 35 /* # */) {
-      if (searchStart === -1) pathEnd = i
-      searchEnd = i
-      break
-    }
-  }
-
-  return {
-    pathname: url.slice(start, pathEnd),
-    search: searchStart === -1 ? "" : url.slice(searchStart, searchEnd),
-  }
-}
-
-// Extract the pathname WITHOUT a full WHATWG `new URL(req.url)` parse. Kept as a public-ish helper
-// for tests and callers that only need the path; the request hot path uses `urlPartsOf()` once.
-export function pathnameOf(url: string): string {
-  return urlPartsOf(url).pathname
-}
-
-// The query string ("?a=1", or "" when absent) — for lazily building `c.query` only when read.
-// The fragment (after the first `#`) bounds the search: a `?` that appears only inside the fragment
-// is NOT a query (matches WHATWG). Fragments never reach the server in `req.url`, so this is purely
-// for provable equivalence with `new URL(req.url).search`.
-export function searchOf(url: string): string {
-  return urlPartsOf(url).search
-}
-
-/** A query value: a single occurrence is a string; a repeated key promotes to a string[] so an
- * array query schema (`t.array(t.string())`) can validate `?tag=a&tag=b` — last-wins silently
- * dropped values before (audit 2026-06). Single-occurrence keys stay plain strings, so existing
- * `t.string()` schemas are untouched; a repeated key against a string schema now FAILS validation
- * (an explicit 400 beats silently picking one). */
-export type QueryValue = string | string[]
-
-/** Accumulate into a NULL-PROTOTYPE record (every call site below creates one): with no inherited
- * `constructor`/`toString`/`__proto__` accessors, a hostile key is just an own data key — the
- * promotion logic can't collide with `Object.prototype` members, and `__proto__` needs no special
- * case (direct assignment on a null-proto object creates an own property). */
-function setQueryValue(out: Record<string, QueryValue>, key: string, value: string): void {
-  const existing = out[key]
-  if (existing === undefined) {
-    out[key] = value
-  } else if (typeof existing === "string") {
-    out[key] = [existing, value]
-  } else {
-    existing.push(value)
-  }
-}
-
-function queryObjectFallback(search: string): Record<string, QueryValue> {
-  // Manual iteration instead of Object.fromEntries: repeated keys must promote to arrays
-  // (fromEntries is last-wins), and __proto__ needs the same own-property guard.
-  const out: Record<string, QueryValue> = Object.create(null) as Record<string, QueryValue>
-  for (const [key, value] of new URLSearchParams(search)) {
-    setQueryValue(out, key, value)
-  }
-  return out
-}
-
-/**
- * Build the plain object passed to query schemas. Plain ASCII-ish queries avoid
- * `URLSearchParams` + iterator allocations; encoded queries fall back to the Web API so `+`,
- * percent-decoding, malformed escapes, and empty-key behavior stay exact. Repeated keys promote
- * to `string[]` on BOTH paths (see {@link setQueryValue}).
- */
-// Shared empty result for no-query requests: frozen + null-prototype (same shape contract as the
-// populated path), allocated once instead of per request.
-const EMPTY_QUERY = Object.freeze(Object.create(null)) as Record<string, QueryValue>
-
-export function queryObjectOf(search: string): Record<string, QueryValue> {
-  const start = search.charCodeAt(0) === 63 /* ? */ ? 1 : 0
-  if (start >= search.length) return EMPTY_QUERY
-
-  for (let i = start; i < search.length; i++) {
-    const c = search.charCodeAt(i)
-    if (c === 37 /* % */ || c === 43 /* + */) return queryObjectFallback(search)
-  }
-
-  const out: Record<string, QueryValue> = Object.create(null) as Record<string, QueryValue>
-  let pos = start
-  while (pos <= search.length) {
-    const amp = search.indexOf("&", pos)
-    const end = amp === -1 ? search.length : amp
-    if (end > pos) {
-      const eq = search.indexOf("=", pos)
-      const split = eq !== -1 && eq < end ? eq : end
-      const key = search.slice(pos, split)
-      const value = split === end ? "" : search.slice(split + 1, end)
-      setQueryValue(out, key, value)
-    }
-    if (amp === -1) break
-    pos = amp + 1
-  }
-  return out
-}
-
-/** `application/x-www-form-urlencoded`, with or without a charset suffix. */
-function isUrlEncodedForm(contentType: string): boolean {
-  return (
-    contentType === "application/x-www-form-urlencoded" ||
-    contentType.startsWith("application/x-www-form-urlencoded;")
-  )
-}
-
-const FORM_DECODER = new TextDecoder()
-
-/**
- * Read an HTML-form body (urlencoded) into the plain object a body schema validates — same byte
- * cap as the JSON path (a lying/absent Content-Length can't force an oversized buffer), same
- * repeated-key → `string[]` promotion as query parsing, same `__proto__` guard.
- */
-async function readBoundedForm(
-  req: RequestSource,
-  maxBytes: number,
-): Promise<Record<string, QueryValue> | Response> {
-  const read = await readBoundedBytes(req, maxBytes)
-  if (!read.ok) {
-    return read.status === 413
-      ? jsonError(413, "payload_too_large")
-      : jsonError(400, "invalid_content_length")
-  }
-  const out: Record<string, QueryValue> = Object.create(null) as Record<string, QueryValue>
-  // URLSearchParams owns the format's quirks (`+` as space, percent-decoding, empty keys);
-  // it never throws on junk input, so no try/catch is needed here.
-  for (const [key, value] of new URLSearchParams(FORM_DECODER.decode(read.bytes))) {
-    setQueryValue(out, key, value)
-  }
-  return out
-}
+// `jsonError`, `urlPartsOf`, `pathnameOf` moved to `./http.ts` (a dependency-free leaf shared with the
+// opt-in request lanes); re-exported so existing importers keep resolving from here.
+export { pathnameOf, urlPartsOf } from "./http.ts"
+// Query-string + urlencoded-form parsing now lives in `./query.ts`; re-exported so existing
+// importers keep resolving `searchOf`/`queryObjectOf`/`QueryValue` from here.
+export { type QueryValue, queryObjectOf, searchOf }
 
 function hasReplacementParam(params: Record<string, string>): boolean {
   for (const key in params) {
@@ -878,47 +442,11 @@ function hasReplacementParam(params: Record<string, string>): boolean {
 
 /** `ctx.set` carrying the lazy backings (`_headers`, `_cookies`) so `toResponse` can skip allocating
  * anything when no handler touched `c.set.*`. Server-internal. */
-type CtxSet = ResponseControls & {
+export type CtxSet = ResponseControls & {
   _headers?: Record<string, string>
   /** Accumulated `Set-Cookie` values — a list, since a `Record` would collapse multiple cookies. */
   _cookies?: string[]
 }
-
-class LazyResponseControls implements CtxSet {
-  status?: number
-  _headers?: Record<string, string>
-  _cookies?: string[]
-
-  get headers(): Record<string, string> {
-    this._headers ??= {}
-    return this._headers
-  }
-
-  cookie(name: string, value: string, options?: CookieOptions): void {
-    // Secure-by-default: HttpOnly + Secure + SameSite=Lax + Path=/, overridable per call.
-    const merged: CookieOptions = {
-      httpOnly: true,
-      secure: true,
-      sameSite: "lax",
-      path: "/",
-      ...options,
-    }
-    this._cookies ??= []
-    this._cookies.push(serializeCookie(name, value, merged))
-  }
-
-  deleteCookie(name: string, options?: Pick<CookieOptions, "path" | "domain">): void {
-    // Expire immediately; default Path=/, and match the original path/domain or the browser keeps it.
-    this._cookies ??= []
-    this._cookies.push(
-      serializeCookie(name, "", { path: "/", ...options, maxAge: 0, expires: EPOCH }),
-    )
-  }
-}
-
-// Finalization only reads `status`, `_headers`, and `_cookies`. The user-visible mutator methods
-// live on `LazyResponseControls`, created by the `c.set` getter only when user code touches it.
-const EMPTY_RESPONSE_CONTROLS = Object.freeze({}) as CtxSet
 
 function responseSet(ctx: RawContext): CtxSet {
   return ctx[CONTEXT_SET]() ?? EMPTY_RESPONSE_CONTROLS
@@ -933,407 +461,9 @@ function isContextlessNoArgArrow(handler: (context: never) => unknown): boolean 
   }
 }
 
-/** Coerce `c.json`/`c.text`'s second arg — a status number (the common case) or a full `ResponseInit`. */
-function statusInit(init?: ResponseInit | number): ResponseInit | undefined {
-  return typeof init === "number" ? { status: init } : init
-}
-
-class RequestContext implements RawContext {
-  // `declare` keeps TypeScript's class-field emit from first writing `undefined` to every slot; the
-  // constructor initializes only the eager request state, while lazy fields remain absent until used.
-  declare readonly params: Record<string, string>
-  declare body: unknown
-  private declare searchValue: string | undefined
-  private declare signalValue: AbortSignal | undefined
-  private declare budgetValue: RequestBudget | undefined
-  private declare platformValue: Platform | undefined
-
-  private declare setValue: CtxSet | undefined
-  private declare queryValue: unknown
-  private declare queryReady: boolean
-  private declare cookiesValue: Readonly<Record<string, string>> | undefined
-  private declare readonly source: RequestSource
-  private declare readonly maxBodyBytes: number
-
-  constructor(source: RequestSource, params: Record<string, string>, maxBodyBytes: number)
-  constructor(
-    source: RequestSource,
-    params: Record<string, string>,
-    search: string | undefined,
-    signal: AbortSignal,
-    budget: RequestBudget,
-    platform: Platform | undefined,
-    maxBodyBytes: number,
-  )
-  constructor(
-    source: RequestSource,
-    params: Record<string, string>,
-    searchOrMaxBodyBytes: string | number | undefined,
-    signal?: AbortSignal,
-    budget?: RequestBudget,
-    platform?: Platform,
-    maxBodyBytes?: number,
-  ) {
-    this.source = source
-    this.params = params
-    if (typeof searchOrMaxBodyBytes === "number") {
-      this.maxBodyBytes = searchOrMaxBodyBytes
-      return
-    }
-    if (searchOrMaxBodyBytes !== undefined) this.searchValue = searchOrMaxBodyBytes
-    this.signalValue = signal
-    this.budgetValue = budget
-    if (platform !== undefined) this.platformValue = platform
-    this.maxBodyBytes = maxBodyBytes as number
-  }
-
-  static native(
-    source: RequestSource,
-    params: Record<string, string>,
-    maxBodyBytes: number,
-  ): RequestContext {
-    return new RequestContext(source, params, maxBodyBytes)
-  }
-
-  [CONTEXT_SET](): CtxSet | undefined {
-    return this.setValue
-  }
-
-  get [CONTEXT_SEARCH](): string {
-    this.searchValue ??= searchOf(this.source.url)
-    return this.searchValue
-  }
-
-  get set(): CtxSet {
-    this.setValue ??= new LazyResponseControls()
-    return this.setValue
-  }
-
-  get signal(): AbortSignal {
-    return this.signalValue ?? getNeverAbortSignal()
-  }
-
-  get budget(): RequestBudget {
-    return this.budgetValue ?? getUnboundedRequestBudget()
-  }
-
-  get env(): unknown {
-    return this.platformValue?.env
-  }
-
-  get waitUntil(): (promise: Promise<unknown>) => void {
-    return this.platformValue?.waitUntil ?? fallbackWaitUntil
-  }
-
-  get req(): Request {
-    return requestOf(this.source)
-  }
-
-  get request(): Request {
-    return requestOf(this.source)
-  }
-
-  json(body: unknown, init?: ResponseInit | number): Response {
-    return Response.json(body, statusInit(init))
-  }
-
-  text(body: string, init?: ResponseInit | number): Response {
-    const i = statusInit(init)
-    // Default to text/plain; if the caller passes their own headers, they own the content-type.
-    if (i?.headers !== undefined) return new Response(body, i)
-    return new Response(body, { ...i, headers: { "content-type": "text/plain; charset=utf-8" } })
-  }
-
-  get query(): unknown {
-    if (!this.queryReady) {
-      this.queryValue = new URLSearchParams(this[CONTEXT_SEARCH])
-      this.queryReady = true
-    }
-    return this.queryValue
-  }
-
-  set query(v: unknown) {
-    this.queryValue = v
-    this.queryReady = true
-  }
-
-  get cookies(): Readonly<Record<string, string>> {
-    this.cookiesValue ??= parseCookies(headerOf(this.source, "cookie"))
-    return this.cookiesValue
-  }
-
-  boundedBody(maxBytes?: number): Promise<Uint8Array> {
-    return readBoundedBodyOrThrow(this.source, this.maxBodyBytes, maxBytes)
-  }
-
-  boundedJson<T = unknown>(maxBytes?: number): Promise<T> {
-    return readBoundedJsonBodyOrThrow<T>(this.source, this.maxBodyBytes, maxBytes)
-  }
-}
-
-/** Backs `c.boundedBody`: bounded byte read that throws a flat 413/400 `Response` (caught by
- * `runLifecycle` as control flow, like `throw redirect(...)`), so a handler can't ignore the cap.
- * The byte-cap itself lives in `./body.ts` (shared with the schema path and `verifyWebhook`). */
-async function readBoundedBodyOrThrow(
-  req: RequestSource,
-  maxBodyBytes: number,
-  maxBytes?: number,
-): Promise<Uint8Array> {
-  const r = await readBoundedBytes(req, maxBytes ?? maxBodyBytes)
-  if (r.ok) return r.bytes
-  throw r.status === 413
-    ? jsonError(413, "payload_too_large")
-    : jsonError(400, "invalid_content_length")
-}
-
-/** Backs `c.boundedJson`: `readBoundedBodyOrThrow` + `JSON.parse`, throwing a flat 400 on bad JSON. */
-async function readBoundedJsonBodyOrThrow<T>(
-  req: RequestSource,
-  maxBodyBytes: number,
-  maxBytes?: number,
-): Promise<T> {
-  const parsed = await readBoundedJsonSource(req, maxBytes ?? maxBodyBytes)
-  if (parsed instanceof Response) throw parsed
-  return parsed as T
-}
-
-/**
- * Read a JSON body with the same byte cap used by schema validation and `c.boundedJson`.
- * Non-chunked, framed requests with an in-cap `Content-Length` use the runtime-native `req.json()`;
- * chunked or length-less requests fall back to the streaming byte-cap guard.
- */
-async function readBoundedJsonSource(
-  req: RequestSource,
-  maxBytes: number,
-): Promise<unknown | Response> {
-  const declared = headerOf(req, "content-length")
-  if (declared !== null) {
-    // A present Content-Length must be a non-negative integer (HTTP grammar: `1*DIGIT`). A
-    // non-numeric / negative / fractional / exponential value (`Number()` would happily accept
-    // "abc"→NaN, "-5", "1.5", "1e3", "0x10") is malformed → 400, rather than silently falling
-    // through to the streaming guard — which is an UPPER-bound cap only, so a lying SMALLER length
-    // would otherwise be read in full. Real HTTP servers only hand us a valid framed length; this
-    // hardens hand-built Requests (tests, the in-process client) and crafted input.
-    const length = parseContentLength(declared)
-    if (length === undefined) return jsonError(400, "invalid_content_length")
-    if (length > maxBytes) return jsonError(413, "payload_too_large")
-    const chunked = headerOf(req, "transfer-encoding") !== null
-    if (!chunked) {
-      try {
-        return await req.json()
-      } catch {
-        return jsonError(400, "invalid_json")
-      }
-    }
-  }
-  const body = req.body
-  if (body === null) return jsonError(400, "invalid_json")
-  const drained = await drainCapped(body, maxBytes)
-  if (!drained.ok) return jsonError(413, "payload_too_large")
-  try {
-    return JSON.parse(TEXT_DECODER.decode(drained.bytes))
-  } catch {
-    return jsonError(400, "invalid_json")
-  }
-}
-
-/** A fixed past instant for cookie deletion (`Expires`). A literal epoch — deterministic, unlike an
- * argless `new Date()`. */
-const EPOCH = new Date(0)
-
-/** Build the response headers init. The common path (no `c.set`) returns `undefined` so `Response`
- * gets no `headers` at all. Cookies force a `Headers` object — multiple `Set-Cookie`s can't live in a
- * `Record<string,string>` (the 2nd would overwrite the 1st), so they're `append`ed individually. */
-function headersInit(set: CtxSet): Record<string, string> | Headers | undefined {
-  const cookies = set._cookies
-  if (cookies === undefined || cookies.length === 0) return set._headers
-  const headers = new Headers(set._headers)
-  for (const cookie of cookies) headers.append("set-cookie", cookie)
-  return headers
-}
-
-// Keep the fast JSON respond path byte-identical to `Response.json` without probing it at module
-// scope: workerd forbids `Response.json()` during startup. A shared `Headers` is safe to reuse
-// across responses: the Response constructor copies `init.headers` into its own list.
-const JSON_CT_HEADERS = new Headers({
-  "content-type": "application/json;charset=utf-8",
-})
-const JSON_INIT_200: ResponseInit = { status: 200, headers: JSON_CT_HEADERS }
-
-/** Fused-lane respond when `c.set` is untouched. Bun 1.3's native `Response.json` now beats the
- * older hand-inlined stringify + Response construction on this lane while preserving the exact
- * body/content-type contract; keep the generic fallback for non-JSON values. */
-function fusedRespondNoSet(result: unknown): Response {
-  if (
-    result !== undefined &&
-    !(result instanceof Response) &&
-    typeof result === "object" &&
-    result !== null &&
-    !isResponseResult(result)
-  ) {
-    return Response.json(result)
-  }
-  return toResponse(result as HandlerResult, EMPTY_RESPONSE_CONTROLS)
-}
-
-/** Fused-lane respond with a context: read `c.set` once; untouched (the common case) → the fast
- * JSON respond; touched → the generic `toResponse` with those controls (statuses, headers, cookies). */
-function fusedRespond(result: unknown, ctx: RawContext): Response {
-  const set = ctx[CONTEXT_SET]()
-  if (set === undefined) return fusedRespondNoSet(result)
-  return toResponse(result as HandlerResult, set)
-}
-
-function toResponse(result: HandlerResult, set: CtxSet): Response {
-  if (isResponseResult(result)) {
-    return appendCookiesToResponse(result.toResponse(), set)
-  }
-  if (result instanceof Response) {
-    return appendCookiesToResponse(result, set)
-  }
-  const headers = headersInit(set)
-  const status = set.status ?? (result === undefined ? 204 : 200)
-  if (headers === undefined && result !== undefined) {
-    // Fast respond (profiled ≈ −50 ns/req on every plain-JSON return): `JSON.stringify` + a
-    // prebuilt init beats `Response.json`'s internal init handling. Output is byte-identical —
-    // same body bytes, same probed content-type. `undefined` from stringify (a function/symbol
-    // result) delegates to Response.json so its TypeError contract stays the single source.
-    const body = JSON.stringify(result) as string | undefined
-    if (body !== undefined) {
-      return new Response(
-        body,
-        status === 200 ? JSON_INIT_200 : { status, headers: JSON_CT_HEADERS },
-      )
-    }
-  }
-  const init: ResponseInit = headers === undefined ? { status } : { status, headers }
-  return result === undefined ? new Response(null, init) : Response.json(result, init)
-}
-
-function appendCookiesToResponse(response: Response, set: CtxSet): Response {
-  // A handler may queue cookies (`c.set.cookie` — e.g. a session cookie) AND return its own Response
-  // (e.g. `redirect("/")` after login). Cookies accumulate additively, so append them to the
-  // returned Response — otherwise the canonical set-session-then-redirect pattern would silently drop
-  // the cookie. (Other `c.set` fields stay the returned Response's own concern.)
-  const cookies = set._cookies
-  if (cookies !== undefined && cookies.length > 0) {
-    for (const cookie of cookies) response.headers.append("set-cookie", cookie)
-  }
-  return response
-}
-
-/**
- * What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes
- * to the socket directly (`kind: "json"` — status + headers + cookies + a pre-stringified body, **no**
- * undici `Response` built or drained), a marked buffered response body (`kind: "body"` — e.g.
- * @nifrajs/web's non-deferred SSR HTML), or a `Response` (`kind: "response"`) for everything else
- * (redirects, 404/405/errors, unmarked or streaming bodies). Internal to the nifra↔node bridge.
- */
-export type NodeServeOutcome =
-  | { readonly kind: "response"; readonly response: Response }
-  | {
-      readonly kind: "json"
-      readonly status: number
-      /** `c.set.headers` backing, or `undefined` when the handler never set a header. */
-      readonly headers: Readonly<Record<string, string>> | undefined
-      /** Queued `Set-Cookie` lines, or `undefined`; the adapter emits one header line each. */
-      readonly cookies: readonly string[] | undefined
-      /** The JSON body already stringified, or `null` for an empty (204) response. */
-      readonly body: string | null
-    }
-  | {
-      readonly kind: "body"
-      readonly status: number
-      readonly headers: Readonly<Record<string, string | readonly string[]>> | undefined
-      readonly body: string | Uint8Array
-    }
-
-/**
- * `finalize` for the node-direct path — mirror of {@link toResponse} that skips the `Response` build:
- * a plain value becomes pre-stringified JSON primitives (the adapter `JSON.stringify`s once, here, not
- * via `Response.json` + a body drain); a handler-returned `Response` is wrapped as-is, with queued
- * cookies appended exactly as `toResponse` does (so the set-cookie-then-`redirect()` pattern still
- * works on Node).
- */
-function toNodeOutcome(result: HandlerResult, set: CtxSet): NodeServeOutcome {
-  if (isResponseResult(result)) {
-    const body = result.toNodeBody?.()
-    if (body !== undefined) {
-      return {
-        kind: "body",
-        status: body.status,
-        headers: appendCookiesToNodeHeaders(body.headers, set._cookies),
-        body: body.body,
-      }
-    }
-    return nodeOutcomeFromResponse(appendCookiesToResponse(result.toResponse(), set))
-  }
-  if (result instanceof Response) {
-    return nodeOutcomeFromResponse(appendCookiesToResponse(result, set))
-  }
-  const status = set.status ?? (result === undefined ? 204 : 200)
-  return {
-    kind: "json",
-    status,
-    headers: set._headers,
-    cookies: set._cookies,
-    body: result === undefined ? null : JSON.stringify(result),
-  }
-}
-
 // Stable module-level finalizers so `fetch`/`resolveNode` allocate no per-request closures.
 const IDENTITY_RESPONSE = (response: Response): Response => response
 const RESPONSE_TIMEOUT = (): Response => jsonError(503, "request_timeout")
-const NODE_RESPONSE_BODY = Symbol.for("nifra.response.body")
-const NODE_FROM_RESPONSE = (response: Response): NodeServeOutcome =>
-  nodeOutcomeFromResponse(response)
-const NODE_TIMEOUT = (): NodeServeOutcome => ({
-  kind: "response",
-  response: jsonError(503, "request_timeout"),
-})
-
-function nodeOutcomeFromResponse(response: Response): NodeServeOutcome {
-  const body = nodeResponseBody(response)
-  return body === undefined
-    ? { kind: "response", response }
-    : { kind: "body", status: response.status, headers: responseHeadersForNode(response), body }
-}
-
-function nodeResponseBody(response: Response): string | Uint8Array | undefined {
-  if (response.bodyUsed) return undefined
-  const body = (response as { readonly [NODE_RESPONSE_BODY]?: unknown })[NODE_RESPONSE_BODY]
-  return typeof body === "string" || body instanceof Uint8Array ? body : undefined
-}
-
-function responseHeadersForNode(
-  response: Response,
-): Readonly<Record<string, string | readonly string[]>> | undefined {
-  let headers: Record<string, string | readonly string[]> | undefined
-  response.headers.forEach((value, key) => {
-    headers ??= {}
-    headers[key] = value
-  })
-  const setCookies = response.headers.getSetCookie?.()
-  if (setCookies !== undefined && setCookies.length > 0) {
-    headers ??= {}
-    headers["set-cookie"] = setCookies
-  }
-  return headers
-}
-
-function appendCookiesToNodeHeaders(
-  headers: Readonly<Record<string, string | readonly string[]>> | undefined,
-  cookies: readonly string[] | undefined,
-): Readonly<Record<string, string | readonly string[]>> | undefined {
-  if (cookies === undefined || cookies.length === 0) return headers
-  const out: Record<string, string | readonly string[]> =
-    headers === undefined ? {} : { ...headers }
-  const existing = out["set-cookie"]
-  const setCookies =
-    existing === undefined ? [] : typeof existing === "string" ? [existing] : [...existing]
-  out["set-cookie"] = [...setCookies, ...cookies]
-  return out
-}
 
 /**
  * The inline server. Routes are chainable and fully type-inferred. `derive`/
@@ -1362,13 +492,18 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   /** Capacity-admission gate; `undefined` = off (the request path pays nothing). */
   private readonly capacityGate: AdmissionController | undefined
   private readonly onCapabilityUse: ((event: CapabilityUseEvent) => void) | undefined
-  /** Effect-ledger defaults pinned at construction; per-route `ledgered` copies add route identity. */
-  private readonly effectLedger:
-    | Omit<ResolvedEffectLedger, "method" | "path" | "declared">
-    | undefined
-  /** App-wide idempotency store (explicit option, else a lazily-created in-process default). */
-  private readonly configuredIdempotencyStore: IdempotencyStore | undefined
-  private lazyIdempotencyStore: IdempotencyStore | undefined
+  /** The installed effect-ledger runtime (owns the sink + per-route resolution + settle), or
+   * `undefined` when the effect-ledger plugin is not installed. */
+  private effectLedgerRuntime: EffectLedgerRuntime | undefined
+  /** The installed idempotency runtime (owns the app-wide default store + the dedupe lane), or
+   * `undefined` when the idempotency plugin is not installed. */
+  private idempotencyRuntime: IdempotencyRuntime | undefined
+  /** Installed opt-in runtime for `.tool()`/`.resource()`/`.prompt()`; `undefined` until `.use(mcp())`. */
+  private mcpRuntime: McpRuntime | undefined
+  /** Installed Node-direct renderer for direct `resolveNode()` callers; `undefined` until `.use(nodeDirect())`. */
+  private nodeOutcomeRuntime: NodeOutcomeRuntime | undefined
+  /** Installed streaming runtime for `.sse()` routes; `undefined` until `.use(streaming())`. */
+  private sseRuntime: SseRuntime | undefined
   private readonly logger: Logger
   /** App-wide validation-error fallback; a route's own `schema.onValidationError` takes precedence. */
   private readonly defaultOnValidationError?: RouteSchema["onValidationError"]
@@ -1416,25 +551,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.gracefulSignals = options.gracefulSignals ?? false
     this.capacityGate = options.admission
     this.onCapabilityUse = options.onCapabilityUse
-    if (options.effectLedger !== undefined) {
-      const ledger = options.effectLedger
-      if (typeof ledger.sink !== "function") {
-        throw new TypeError("effectLedger.sink must be a function")
-      }
-      const maxEntries = ledger.maxEntries ?? DEFAULT_MAX_ENTRIES
-      if (!Number.isSafeInteger(maxEntries) || maxEntries < 1) {
-        throw new RangeError("effectLedger.maxEntries must be a positive safe integer")
-      }
-      this.effectLedger = Object.freeze({
-        sink: ledger.sink,
-        maxEntries,
-        chain: ledger.chain ?? false,
-      })
-    } else {
-      this.effectLedger = undefined
-    }
-    this.configuredIdempotencyStore = options.idempotencyStore
-    this.lazyIdempotencyStore = undefined
+    // The effect-ledger runtime is installed by `.use(effectLedger())`; a bare app never imports it, so
+    // the ledger machinery tree-shakes out. Capability-declaring routes simply carry no ledger without it.
+    this.effectLedgerRuntime = undefined
+    // The idempotency runtime is installed by `.use(idempotency())`; a bare app never imports it, so the
+    // dedupe machinery tree-shakes out. A route that declares idempotency without it is a build error.
+    this.idempotencyRuntime = undefined
     this.logger = options.logger ?? jsonLogger()
     this.defaultOnValidationError = options.onValidationError
     this.bunServer = undefined
@@ -1629,7 +751,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * JSON-serialized into the SSE `data:` field. The typed client sees the marker and grows a
    * `.subscribe(onEvent)` for the route with the same payload type — end-to-end typed streaming.
    *
-   *   const app = server().sse("/feed", { sse: t.object({ id: t.integer(), title: t.string() }) },
+   *   import { streaming } from "@nifrajs/core/sse"   // .use(streaming()) enables .sse()
+   *   const app = server().use(streaming()).sse("/feed", { sse: t.object({ id: t.integer(), title: t.string() }) },
    *     async (c, stream) => {
    *       stream.send({ id: 1, title: "hello" })          // typed
    *       await waitForDisconnect(stream.signal)
@@ -1652,7 +775,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     init?: SSEInit,
   ): Server<AddRoute<R, "GET", Path, RouteInfoFor<Path, S, Response>>, Ctx> {
     const handler = (context: Context<Path, S> & Ctx): Response =>
-      sse(context, (stream) => run(context, typedSSEStream(stream)), init)
+      requireSseRuntime(this.sseRuntime).response(context, (stream) => run(context, stream), init)
     return this.route("GET", path, schema, handler as unknown as ErasedHandler) as Server<
       AddRoute<R, "GET", Path, RouteInfoFor<Path, S, Response>>,
       Ctx
@@ -1727,6 +850,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return this.route("DELETE", path, schemaOrHandler, handler)
   }
 
+  /**
+   * Declare an **MCP tool** an agent can call (via `nifra mcp`, or a mounted MCP endpoint): a typed
+   * `POST /_nifra/tool/<name>` route whose `input`/`output` schemas contract the call and surface in
+   * `tools/list`. Requires `.use(mcp())` - without it, `.tool()` is a registration error, so an
+   * ordinary HTTP app never bundles the MCP wiring. Siblings: {@link resource}, {@link prompt}.
+   *
+   *   import { mcp } from "@nifrajs/core/mcp"
+   *   const app = server().use(mcp()).tool(
+   *     "search",
+   *     { description: "Search posts", input: t.object({ q: t.string() }) },
+   *     ({ q }) => findPosts(q),
+   *   )
+   */
   tool<
     Name extends string,
     S extends {
@@ -1768,24 +904,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     },
     handler: (input: unknown, ctx: Context & Ctx) => unknown,
   ): Server<Registry, Ctx> {
-    const path = `/_nifra/tool/${name}`
-    const routeSchema: RouteSchema =
-      config.output !== undefined
-        ? { body: config.input, response: config.output }
-        : { body: config.input }
-    // register's handler is the erased `(context: never) => unknown`; the tool's typed input/ctx come from
-    // the overload above, so bridge with a single cast rather than `any`.
-    const run = (c: Context & Ctx): unknown => handler(c.body, c)
-    this.register("POST", path, routeSchema, run as (context: never) => unknown)
+    const plan = requireMcpRuntime(this.mcpRuntime).tool(
+      name,
+      config,
+      handler as (input: unknown, context: Context) => unknown,
+    )
+    this.register("POST", plan.path, plan.schema, plan.run as (context: never) => unknown)
     // Tag the just-registered descriptor as an MCP tool. `tool` is readonly on RouteDescriptor (an
     // introspection field), so write it through a narrow mutable view — not `any`.
     const lastRoute = this.catalog.lastDescriptor()
     if (lastRoute) {
-      ;(lastRoute as { tool?: RouteDescriptor["tool"] }).tool = {
-        name,
-        description: config.description,
-        ...(config.annotations !== undefined ? { annotations: config.annotations } : {}),
-      }
+      ;(lastRoute as { tool?: RouteDescriptor["tool"] }).tool = plan.descriptor
     }
     return this as unknown as Server<Registry, Ctx>
   }
@@ -1802,13 +931,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     read: McpResourceDescriptor["read"],
   ): Server<R, Ctx> {
     this.assertConfigurable("resource()")
-    this.mcpResourceList.push({
-      uri,
-      name: config.name,
-      ...(config.description !== undefined ? { description: config.description } : {}),
-      ...(config.mimeType !== undefined ? { mimeType: config.mimeType } : {}),
-      read,
-    })
+    this.mcpResourceList.push(requireMcpRuntime(this.mcpRuntime).resource(uri, config, read))
     return this
   }
 
@@ -1822,12 +945,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     handler: McpPromptDescriptor["handler"],
   ): Server<R, Ctx> {
     this.assertConfigurable("prompt()")
-    this.mcpPromptList.push({
-      name,
-      description: config.description,
-      ...(config.arguments !== undefined ? { arguments: config.arguments } : {}),
-      handler,
-    })
+    this.mcpPromptList.push(requireMcpRuntime(this.mcpRuntime).prompt(name, config, handler))
     return this
   }
 
@@ -1966,15 +1084,24 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     const hasDecorations = Reflect.ownKeys(routeDecorations).length > 0
     // An idempotency route runs a dedupe lane that must buffer the body and capture the response, so it
     // never takes the fused/native fast path — force it onto the portable matched lane (which routes
-    // through `fetchMatched`, where the dedupe wrapper lives).
-    const idempotent = this.resolveIdempotency(schema, authenticated)
-    // A ledgered route (capabilities declared + `server({ effectLedger })`) needs a per-request
+    // through `fetchMatched`, where the dedupe wrapper lives). Fail closed: a route may not declare
+    // idempotency unless the idempotency runtime is installed, so the safety gate can never be silently
+    // dropped by a missing plugin.
+    if (schema?.idempotency !== undefined && this.idempotencyRuntime === undefined) {
+      throw new RouteConfigError(
+        "INVALID_IDEMPOTENCY",
+        "route declares idempotency but the idempotency plugin is not installed; add .use(idempotency())",
+      )
+    }
+    const idempotent = this.idempotencyRuntime?.resolve(schema, authenticated, this.maxBodyBytes)
+    // A ledgered route (capabilities declared + `.use(effectLedger())`) needs a per-request
     // context to carry the ledger and a settle step to seal + sink it, so it too leaves the
     // fused/contextless fast path. Resolved per route, at registration — like the capability guard.
-    const ledgered: ResolvedEffectLedger | undefined =
-      capabilities.length > 0 && this.effectLedger !== undefined
-        ? Object.freeze({ ...this.effectLedger, method, path, declared: capabilities })
-        : undefined
+    const ledgered: ResolvedEffectLedger | undefined = this.effectLedgerRuntime?.resolve(
+      capabilities,
+      method,
+      path,
+    )
     const bare =
       schema?.body === undefined &&
       schema?.query === undefined &&
@@ -2156,23 +1283,21 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         runtime.maxBodyBytes,
       )
       let ledger: RequestLedger | undefined
-      if (hasLedger) {
+      // The runtime is always present when a route resolved a ledger (enforced at registration).
+      const ledgerRuntime = runtime.effectLedgerRuntime
+      if (hasLedger && ledgerRuntime !== undefined) {
         const resolved = entry.ledgered as ResolvedEffectLedger
-        ledger = createRequestLedger({
-          method: resolved.method,
-          path: resolved.path,
-          declared: resolved.declared,
-          maxEntries: resolved.maxEntries,
-          chain: resolved.chain,
-        })
-        attachEffectLedger(ctx, ledger)
+        ledger = ledgerRuntime.create(resolved)
+        ledgerRuntime.attach(ctx, ledger)
       }
       let outcome = execute(runtime, entry, source, ctx, finalize, wrapResponse)
-      if (ledger !== undefined) {
+      if (ledger !== undefined && ledgerRuntime !== undefined) {
         const active = ledger
         const resolved = entry.ledgered as ResolvedEffectLedger
         outcome = (outcome instanceof Promise ? outcome : Promise.resolve(outcome)).then((value) =>
-          runtime.settleEffectLedger(active, resolved, value),
+          ledgerRuntime.settle(active, resolved, value, (fields) =>
+            runtime.logger.error("effect ledger sink failed", fields),
+          ),
         )
       }
       return outcome
@@ -2180,82 +1305,52 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return Object.freeze({ run, fusedWeb })
   }
 
-  /** Resolve a route's declared idempotency into a pinned store + defaults, or `undefined` when off. */
-  private resolveIdempotency(
-    schema: RouteSchema | undefined,
-    authenticated: boolean,
-  ): ResolvedIdempotency | undefined {
-    const config = schema?.idempotency
-    if (config === undefined) return undefined
-    if (schema?.sse !== undefined) {
-      throw new RouteConfigError(
-        "INVALID_IDEMPOTENCY",
-        "streaming/SSE responses cannot be used on an idempotency route",
-      )
-    }
-    const store = config.store ?? this.defaultIdempotencyStore()
-    if (config.scope === "durable" && store.durability !== "durable") {
-      throw new RouteConfigError(
-        "INVALID_IDEMPOTENCY",
-        'durable idempotency requires a durable store (store.durability must be "durable")',
-      )
-    }
-    const ttlMs = config.ttlMs ?? DEFAULT_IDEMPOTENCY_TTL_MS
-    if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0) {
-      throw new RouteConfigError(
-        "INVALID_IDEMPOTENCY",
-        "idempotency ttlMs must be a finite positive number",
-      )
-    }
-    const headerName = (config.headerName ?? DEFAULT_IDEMPOTENCY_HEADER).toLowerCase()
-    try {
-      new Headers().set(headerName, "probe")
-    } catch {
-      throw new RouteConfigError(
-        "INVALID_IDEMPOTENCY",
-        `invalid idempotency header name ${JSON.stringify(headerName)}`,
-      )
-    }
-    const namespace = config.namespace
-    if (namespace === undefined) {
-      throw new RouteConfigError(
-        "INVALID_IDEMPOTENCY",
-        "idempotency namespace is required; use a principal resolver or an explicit shared scope",
-      )
-    }
-    if (typeof namespace === "string" && !validIdempotencyNamespace(namespace)) {
-      throw new RouteConfigError(
-        "INVALID_IDEMPOTENCY",
-        `invalid idempotency namespace ${JSON.stringify(namespace)}`,
-      )
-    }
-    if (authenticated && typeof namespace !== "function") {
-      throw new RouteConfigError(
-        "INVALID_IDEMPOTENCY",
-        "authenticated idempotency routes require a principal namespace resolver",
-      )
-    }
-    const maxResponseBytes = config.maxResponseBytes ?? this.maxBodyBytes
-    if (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 1) {
-      throw new RouteConfigError(
-        "INVALID_IDEMPOTENCY",
-        "idempotency maxResponseBytes must be a positive integer",
-      )
-    }
-    return Object.freeze({
-      store,
-      ttlMs,
-      headerName,
-      namespace,
-      maxResponseBytes,
-    })
+  /** The idempotency lane's bridge back into the normal matched lanes, resolved to a concrete Response
+   * (the lane buffers the body, then replays it through the route's real validation + handler). */
+  private idempotencyRunLanes(
+    buffered: RequestSource,
+    platform: Platform | undefined,
+    entry: RouteEntry,
+    params: Record<string, string>,
+    search: string | undefined,
+  ): Promise<Response> {
+    return Promise.resolve(
+      this.runMatchedLanes(
+        buffered,
+        platform,
+        entry,
+        params,
+        search,
+        toResponse,
+        IDENTITY_RESPONSE,
+        RESPONSE_TIMEOUT,
+        false,
+      ),
+    )
   }
 
-  /** The app-wide idempotency store: the configured one, else a lazily-created shared in-process store. */
-  private defaultIdempotencyStore(): IdempotencyStore {
-    if (this.configuredIdempotencyStore !== undefined) return this.configuredIdempotencyStore
-    this.lazyIdempotencyStore ??= new MemoryIdempotencyStore()
-    return this.lazyIdempotencyStore
+  /** @internal Symbol-keyed install seam for the `idempotency()` plugin. Off the public typed surface. */
+  [INSTALL_IDEMPOTENCY](runtime: IdempotencyRuntime): void {
+    this.assertConfigurable("idempotency()")
+    this.idempotencyRuntime = runtime
+  }
+
+  /** @internal Symbol-keyed install seam for the `mcp()` plugin. Off the public typed surface. */
+  [INSTALL_MCP](runtime: McpRuntime): void {
+    this.assertConfigurable("mcp()")
+    this.mcpRuntime = runtime
+  }
+
+  /** @internal Symbol-keyed install seam for the `nodeDirect()` plugin. Off the public typed surface. */
+  [INSTALL_NODE_DIRECT](runtime: NodeOutcomeRuntime): void {
+    this.assertConfigurable("nodeDirect()")
+    this.nodeOutcomeRuntime = runtime
+  }
+
+  /** @internal Symbol-keyed install seam for the `streaming()` plugin. Off the public typed surface. */
+  [INSTALL_SSE](runtime: SseRuntime): void {
+    this.assertConfigurable("streaming()")
+    this.sseRuntime = runtime
   }
 
   /**
@@ -2287,6 +1382,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       )
     }
     this.catalog.addBatch(source.catalog.entries().map((route) => this.bindFusedRuntime(route)))
+    // Resolved idempotency/ledger route entries carry their own store/sink configuration, while the
+    // runtime object supplies the generic execution machinery. Preserve a group's installed runtime
+    // when the parent has none so merging cannot silently disable a safety lane. If the parent already
+    // has a runtime, either implementation can execute every resolved entry because route-specific
+    // options were pinned during registration.
+    this.idempotencyRuntime ??= source.idempotencyRuntime
+    this.effectLedgerRuntime ??= source.effectLedgerRuntime
+    this.mcpRuntime ??= source.mcpRuntime
+    this.nodeOutcomeRuntime ??= source.nodeOutcomeRuntime
+    this.sseRuntime ??= source.sseRuntime
     this.onRequestHooks.push(...source.onRequestHooks)
     this.onResponseHooks.push(...source.onResponseHooks)
     this.onResponseFinalizedHooks.push(...source.onResponseFinalizedHooks)
@@ -2470,6 +1575,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   resolveNodeSource(
     source: RequestSource,
     platform?: Platform<EnvOf<Ctx>>,
+    suppliedRuntime?: NodeOutcomeRuntime,
   ): MaybePromise<NodeServeOutcome> {
     // onResponse hooks transform a Response, and the capacity gate wraps the Web response path — both
     // force the Web path here (the gated `fetchSource` admits/sheds/releases); wrap its result.
@@ -2486,12 +1592,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // May resolve **synchronously** for a compiled bare route + sync handler - the `@nifrajs/node`
     // adapter `await`s the result, so it transparently handles either; the sync case allocates no promise
     // at all on the Node hot path.
+    const runtime = suppliedRuntime ?? this.nodeOutcomeRuntime
+    if (runtime === undefined) {
+      throw new FrameworkError(
+        "NODE_DIRECT_RUNTIME_MISSING",
+        "resolveNode() needs the Node-direct renderer. Normal @nifrajs/node serving installs it automatically; direct callers should add `.use(nodeDirect())` (from `@nifrajs/core/node-direct`).",
+      )
+    }
     return this.dispatch<NodeServeOutcome>(
       source,
       platform,
-      toNodeOutcome,
-      NODE_FROM_RESPONSE,
-      NODE_TIMEOUT,
+      runtime.toOutcome,
+      runtime.fromResponse,
+      runtime.timeout,
       false,
     )
   }
@@ -2752,8 +1865,22 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   ): MaybePromise<T> {
     // An idempotency route runs its dedupe lane first; on a fresh key it delegates to the normal lanes
     // (with the body buffered). All non-idempotent routes skip straight to the lanes — no added cost.
-    if (entry.idempotent !== undefined) {
-      return this.runIdempotent(source, platform, entry, params, search, wrapResponse)
+    // The runtime is always present when a route resolved idempotency (enforced at registration).
+    if (entry.idempotent !== undefined && this.idempotencyRuntime !== undefined) {
+      return this.idempotencyRuntime.run(
+        entry.idempotent,
+        requestOf(source),
+        platform,
+        entry,
+        params,
+        search,
+        wrapResponse,
+        {
+          maxBodyBytes: this.maxBodyBytes,
+          runLanes: (buffered, plat, ent, prm, srch) =>
+            this.idempotencyRunLanes(buffered, plat, ent as RouteEntry, prm, srch),
+        },
+      )
     }
     return this.runMatchedLanes(
       source,
@@ -2766,130 +1893,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       onTimeout,
       webFast,
     )
-  }
-
-  /**
-   * Idempotency dedupe lane. Reads the `Idempotency-Key`, fingerprints the request, and consults the
-   * store: a fresh key runs the handler (via {@link runMatchedLanes} with the body buffered) and stores
-   * the response; a repeat key replays it without re-running; a key reused with a different body or an
-   * in-flight duplicate is rejected. Every branch materializes a `Response`, then adapts to `T` via the
-   * caller's `wrapResponse`, so it works on the Web fetch path and the Node-native outcome path alike.
-   */
-  private async runIdempotent<T>(
-    source: RequestSource,
-    platform: Platform | undefined,
-    entry: RouteEntry,
-    params: Record<string, string>,
-    search: string | undefined,
-    wrapResponse: (response: Response) => T,
-  ): Promise<T> {
-    const config = entry.idempotent as ResolvedIdempotency
-    const req = requestOf(source)
-    const key = req.headers.get(config.headerName)
-    if (key === null || !validIdempotencyKey(key)) {
-      return wrapResponse(jsonError(400, "idempotency_key_required"))
-    }
-    const namespace =
-      typeof config.namespace === "function"
-        ? await config.namespace(req.clone(), platform)
-        : config.namespace
-    if (!validIdempotencyNamespace(namespace)) {
-      return wrapResponse(jsonError(500, "idempotency_namespace_invalid"))
-    }
-    const read = await readBoundedBytes(req, this.maxBodyBytes)
-    if (!read.ok) {
-      return wrapResponse(
-        jsonError(read.status, read.status === 413 ? "payload_too_large" : "bad_request"),
-      )
-    }
-    const url = urlPartsOf(req.url)
-    const canonicalBody = canonicalizeIdempotencyBody(read.bytes, req.headers.get("content-type"))
-    const fingerprint = await computeIdempotencyFingerprint(
-      req.method,
-      `${url.pathname}${url.search}`,
-      canonicalBody,
-      req.headers.get("content-type") ?? "",
-    )
-
-    const begin = await config.store.begin({ namespace, key, fingerprint, ttlMs: config.ttlMs })
-    if (begin.state === "replay") {
-      return wrapResponse(responseFromStored(begin.response, { maxBytes: config.maxResponseBytes }))
-    }
-    if (begin.state === "mismatch") return wrapResponse(jsonError(409, "idempotency_key_reused"))
-    if (begin.state === "in-flight") {
-      return wrapResponse(jsonError(409, "idempotency_in_progress", { "Retry-After": "1" }))
-    }
-    if (begin.state === "capacity") {
-      return wrapResponse(jsonError(503, "idempotency_store_capacity", { "Retry-After": "1" }))
-    }
-    const reservation = begin.reservation
-
-    // Fresh key: re-expose the buffered body as a Request so the normal lanes can read + validate it,
-    // then run those lanes to a concrete Response.
-    const bufferedInit: RequestInit = {
-      method: req.method,
-      headers: req.headers,
-      signal: req.signal,
-    }
-    if (read.bytes.byteLength > 0)
-      bufferedInit.body = read.bytes as NonNullable<RequestInit["body"]>
-    const buffered: RequestSource = new Request(req.url, bufferedInit)
-    let response: Response
-    try {
-      response = await this.runMatchedLanes(
-        buffered,
-        platform,
-        entry,
-        params,
-        search,
-        toResponse,
-        IDENTITY_RESPONSE,
-        RESPONSE_TIMEOUT,
-        false,
-      )
-    } catch (err) {
-      // The lanes never throw (errors resolve to a 500 Response), but stay fail-safe: release the
-      // reservation so a retry isn't wedged, then re-throw.
-      await config.store.abandon({ namespace, key, reservation })
-      throw err
-    }
-    // Cache only successful responses; release the key on any error so the client can retry.
-    if (response.status >= 200 && response.status < 300) {
-      let storedResponse: Awaited<ReturnType<typeof serializeResponse>>
-      try {
-        storedResponse = await serializeResponse(response, { maxBytes: config.maxResponseBytes })
-      } catch (error) {
-        if (!(error instanceof IdempotencyResponseTooLargeError)) throw error
-        // The effect may already have happened, so never abandon and permit a duplicate execution.
-        // Commit a small terminal response under the winning key and return that same response now.
-        response = jsonError(507, "idempotency_response_too_large")
-        try {
-          storedResponse = await serializeResponse(response, {
-            maxBytes: config.maxResponseBytes,
-          })
-        } catch (terminalError) {
-          if (!(terminalError instanceof IdempotencyResponseTooLargeError)) throw terminalError
-          // Even an intentionally tiny bound must remain truthful. An empty 507 preserves terminal
-          // status + replay safety without silently storing more bytes than the route permits.
-          response = new Response(null, { status: 507 })
-          storedResponse = await serializeResponse(response, {
-            maxBytes: config.maxResponseBytes,
-          })
-        }
-      }
-      const completed = await config.store.complete({
-        namespace,
-        key,
-        reservation,
-        response: storedResponse,
-      })
-      if (!completed) {
-        return wrapResponse(jsonError(503, "idempotency_reservation_lost", { "Retry-After": "1" }))
-      }
-    } else {
-      await config.store.abandon({ namespace, key, reservation })
-    }
-    return wrapResponse(response)
   }
 
   /** Supply request-specific deadline state to the route's precompiled execution plan. */
@@ -2979,32 +1982,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return outcome
   }
 
-  /**
-   * Seal a ledgered request and deliver the sealed ledger to the sink. An empty ledger (declared
-   * capabilities, none exercised) is not delivered — there is nothing to audit. This post-effect
-   * ledger is observational: transactional/durable audit belongs in
-   * the owned effect transaction, so a sink outage must not turn a successful effect into a retryable
-   * 500 that can duplicate it.
-   */
-  private async settleEffectLedger<T>(
-    ledger: RequestLedger,
-    resolved: ResolvedEffectLedger,
-    value: T,
-  ): Promise<T> {
-    const sealed = await ledger.seal()
-    if (sealed.entries.length === 0) return value
-    try {
-      await resolved.sink(sealed)
-    } catch (err) {
-      // Token-only logging: the route pattern and the failure name — never entry payloads (there are
-      // none) and never the request.
-      this.logger.error("effect ledger sink failed", {
-        method: resolved.method,
-        path: resolved.path,
-        name: err instanceof Error ? err.name : "Error",
-      })
-    }
-    return value
+  /** @internal Symbol-keyed install seam for the `effectLedger()` plugin. Off the public typed surface. */
+  [INSTALL_EFFECT_LEDGER](runtime: EffectLedgerRuntime): void {
+    this.assertConfigurable("effectLedger()")
+    this.effectLedgerRuntime = runtime
   }
 
   /** The narrowest bare route: a syntactic `() => ...` handler cannot observe the context argument, so

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { verifyWebhook } from "../src/index.ts"
+import { verifyWebhook } from "../src/server/webhook.ts"
 
 const enc = new TextEncoder()
 

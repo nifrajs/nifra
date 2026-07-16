@@ -1,18 +1,18 @@
 import { describe, expect, test } from "bun:test"
+import { evaluateRouteAssurance } from "../src/assurance.ts"
+import { evaluateCapabilityAssurance } from "../src/capabilities.ts"
+import { server } from "../src/index.ts"
 import {
   buildNifraManifest,
   canonicalManifest,
   diffNifraManifests,
-  evaluateCapabilityAssurance,
-  evaluateRouteAssurance,
   parseNifraManifest,
   parseNifraManifestSignature,
   serializeNifraManifest,
   serializeNifraManifestSignature,
-  server,
   signNifraManifest,
   verifyNifraManifestSignature,
-} from "../src/index.ts"
+} from "../src/manifest.ts"
 
 const policy = {
   rules: [{ name: "all", match: {}, require: [] }],
