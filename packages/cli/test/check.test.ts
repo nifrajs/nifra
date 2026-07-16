@@ -49,6 +49,15 @@ describe("scanFetchText — own-API fetch detection", () => {
     expect(scanFetchText("a.ts", "fetch(url)")).toHaveLength(0) // variable — undecidable, left alone
     expect(scanFetchText("a.ts", "fetch(`" + "$" + "{base}/x`)")).toHaveLength(0) // not relative
   })
+
+  test("does NOT flag calls shown inside comments or documentation strings", () => {
+    const src = [
+      '// fetch("/comment")',
+      "const docs = 'use fetch(\"/users\") here'",
+      'const template = `fetch("/template")`',
+    ].join("\n")
+    expect(scanFetchText("a.ts", src)).toEqual([])
+  })
 })
 
 describe("scanProject — walks source, skips deps/build/tests", () => {
@@ -113,6 +122,16 @@ describe("scanServerOnlyImports — server-only imports in route modules", () =>
     expect(flag('const { db } = await import("../db")')).toHaveLength(0) // lazy, server-side only
     expect(flag('import { useState } from "react"')).toHaveLength(0)
     expect(flag('import { client } from "@nifrajs/client"')).toHaveLength(0)
+  })
+
+  test("does NOT flag server-only imports shown inside comments or code-sample strings", () => {
+    const src = [
+      '// import { readFile } from "node:fs"',
+      'const docs = `import { Database } from "bun:sqlite"`',
+      "const inline = 'import postgres from \"postgres\"'",
+    ].join("\n")
+    expect(scanServerOnlyImports("routes/docs.tsx", src)).toEqual([])
+    expect(parseStaticImports(src)).toEqual([])
   })
 
   test("only applies to routes/ files (server modules may import server-only code freely)", () => {
@@ -318,6 +337,15 @@ describe("scanUntypedClient (audit 2026-06: missing <typeof app> bypasses anti-d
       "const b = client(contract, url)",
       'const c = thing.client("x")',
       'const d = myclient("x")',
+    ].join("\n")
+    expect(scanUntypedClient("src/api.ts", src)).toEqual([])
+  })
+
+  test("does NOT flag client examples inside comments or documentation strings", () => {
+    const src = [
+      '// client("https://example.com")',
+      "const docs = 'client(\"https://example.com\")'",
+      'const template = `client("https://example.com")`',
     ].join("\n")
     expect(scanUntypedClient("src/api.ts", src)).toEqual([])
   })

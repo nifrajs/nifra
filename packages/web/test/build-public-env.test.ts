@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { buildClient, publicEnvDefines } from "../src/build.ts"
 
@@ -64,6 +65,7 @@ test('skips undefined values so `"undefined"` is never baked in [#3b]', () => {
 const WORKSPACE_TMP_BASE = `${import.meta.dir}/.tmp-public-env-`
 const ENV_KEYS = ["PUBLIC_E2E_API_URL", "SECRET_E2E_KEY"] as const
 let projectRoot: string
+let externalOut: string | undefined
 const savedEnv: Record<string, string | undefined> = {}
 
 beforeEach(() => {
@@ -72,11 +74,32 @@ beforeEach(() => {
 })
 afterEach(() => {
   rmSync(projectRoot, { recursive: true, force: true })
+  if (externalOut !== undefined) rmSync(externalOut, { recursive: true, force: true })
+  externalOut = undefined
   // Restore the build environment exactly — never leak the test's PUBLIC_*/SECRET_* into later tests.
   for (const k of ENV_KEYS) {
     if (savedEnv[k] === undefined) delete (Bun.env as Record<string, string>)[k]
     else (Bun.env as Record<string, string>)[k] = savedEnv[k] as string
   }
+})
+
+test("buildClient resolves app dependencies when outDir is outside the project", async () => {
+  const routesDir = join(projectRoot, "routes")
+  mkdirSync(routesDir, { recursive: true })
+  writeFileSync(join(routesDir, "index.tsx"), "export default function Index() { return null }\n")
+  const clientModule = join(projectRoot, "client-stub.ts")
+  writeFileSync(clientModule, "export function mountRouter() {}\n")
+  externalOut = mkdtempSync(join(tmpdir(), "nifra-client-output-"))
+
+  const manifest = await buildClient({
+    routesDir,
+    outDir: externalOut,
+    clientModule,
+    minify: false,
+  })
+
+  expect(manifest.entry).toStartWith("/assets/_nifra-entry-")
+  expect(readdirSync(externalOut)).toContain("manifest.json")
 })
 
 test("buildClient bakes a PUBLIC_ var's value into the client bundle, never a secret [#3b]", async () => {

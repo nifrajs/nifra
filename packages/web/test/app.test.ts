@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { inProcessClient } from "@nifrajs/client"
 import { server } from "@nifrajs/core"
+import { NIFRA_BACKEND_MOUNT } from "@nifrajs/core/mount"
 import {
   createWebApp,
   defer,
@@ -12,14 +13,12 @@ import {
   revalidate,
 } from "../src/index.ts"
 
-// The in-process backend mount target — the exact `{ fetch(url, init) }` bridge `inProcessClient(app)`
-// returns (it wraps `app.fetch(new Request(url, init))`). Reproduced here so the web test exercises the
-// real `createWebApp` `/api/*` auto-mount contract WITHOUT a runtime dependency on `@nifrajs/client`
-// (web doesn't depend on it; the bridge shape, not the client proxy, is what the mount consumes).
-const inProcessBridge = (app: {
-  fetch(request: Request): Response | Promise<Response>
-}): { fetch: (url: string, init?: RequestInit) => Promise<Response> } => ({
-  fetch: (url, init) => Promise.resolve(app.fetch(new Request(url, init))),
+// The in-process backend mount target — the symbol-keyed `BackendMount` shape `inProcessClient(app)`
+// returns. Reproduced here so the web test exercises the real `createWebApp` `/api/*` auto-mount
+// contract WITHOUT a runtime dependency on `@nifrajs/client` (web doesn't depend on it; the symbol
+// mount, not the client proxy, is what the mount consumes).
+const inProcessBridge = (app: { fetch(request: Request): Response | Promise<Response> }) => ({
+  [NIFRA_BACKEND_MOUNT]: (request: Request) => Promise.resolve(app.fetch(request)),
 })
 
 // Turn a string into a one-chunk byte stream — the minimal `renderToStream` an adapter returns.
@@ -759,11 +758,11 @@ test("createWebApp modulepreloads the matched route's chunks when routePreload i
   expect(user).toContain('<link rel="modulepreload" href="/assets/u.js">')
 })
 
-test("redirect() allows same-origin paths; numeric + options 2nd arg [AUDIT Sec-4]", () => {
+test("redirect() allows same-origin paths and status options [AUDIT Sec-4]", () => {
   expect(redirect("/thanks").status).toBe(303)
   expect(redirect("/thanks").headers.get("location")).toBe("/thanks")
-  expect(redirect("/x", 307).status).toBe(307) // back-compat numeric 2nd arg
-  expect(redirect("/x", { status: 308 }).status).toBe(308) // options form
+  expect(redirect("/x", { status: 307 }).status).toBe(307)
+  expect(redirect("/x", { status: 308 }).status).toBe(308)
 })
 
 test("redirect() rejects off-origin destinations unless { external: true } [AUDIT Sec-4]", () => {
@@ -832,11 +831,9 @@ test("createWebApp auto-mount forwards platform env and waitUntil to the backend
 // The REAL inProcessClient(app) is a CALLABLE Eden proxy (`typeof === "function"`), not a plain object,
 // so the mount guard must accept function-typed apis. An object-only guard silently skipped the mount
 // for every real inProcessClient (the prior object-stub tests above missed it). Mirror that shape:
-const inProcessBridgeFn = (app: {
-  fetch(request: Request): Response | Promise<Response>
-}): (() => undefined) & { fetch: (url: string, init?: RequestInit) => Promise<Response> } =>
+const inProcessBridgeFn = (app: { fetch(request: Request): Response | Promise<Response> }) =>
   Object.assign(() => undefined, {
-    fetch: (url: string, init?: RequestInit) => Promise.resolve(app.fetch(new Request(url, init))),
+    [NIFRA_BACKEND_MOUNT]: (request: Request) => Promise.resolve(app.fetch(request)),
   })
 
 test("createWebApp auto-mount: a FUNCTION-typed api (real inProcessClient proxy shape) still mounts", async () => {

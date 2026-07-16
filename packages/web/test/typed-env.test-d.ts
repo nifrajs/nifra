@@ -51,7 +51,7 @@ export function _bindingAccessNeedsNoCast(env: WorkerEnv): { kv: KVNamespace; se
   return { kv: env.MY_KV, secret: env.API_SECRET }
 }
 
-// Negative: an undeclared app keeps `env: unknown` — back-compat + secure default. A binding access
+// Negative: an undeclared app keeps `env: unknown` — the secure default. A binding access
 // off it would NOT typecheck (it's `unknown`), which is the intended "validate before use" contract.
 type UntypedWorkerEnv = Parameters<ReturnType<typeof toFetchHandler<unknown>>["fetch"]>[1]
 export type _UntypedEnvIsUnknown = Expect<

@@ -60,10 +60,8 @@ for (const dir of readdirSync(CREATE_NIFRA).filter((d) => d.startsWith("template
 // `check:cards` fail on the release commit unless we regenerate here. The "chore: version packages"
 // commit is made by CI and never runs the pre-commit hook, so we regenerate explicitly.
 //
-// Build FIRST. The generators read each `src/index.ts` via the TS compiler API, but a package that
-// re-exports a built subpath of another package (e.g. `@nifrajs/budget` → `export * from
-// "@nifrajs/core/budget"`, whose `./budget` subpath resolves to `dist/`) only resolves those exports
-// once that dist exists. The CI `check` job builds before `check:api`, so we must match it — a buildless
-// regeneration silently omits such re-export sections and drifts from what `check:api` verifies.
+// Build FIRST. The generators read each `src/index.ts` via the TS compiler API and resolve package
+// subpaths through their built declarations. The CI `check` job builds before `check:api`, so we must
+// match it — buildless regeneration can silently omit re-exported sections and drift from CI.
 execSync("bun run build && bun run gen:api && bun run gen:cards", { stdio: "inherit" })
 console.log("✓ built + regenerated api-reference.md + LLM.md cards for the new version")

@@ -63,7 +63,7 @@ describe("renderOpenApi", () => {
     expect(doc.paths["/health"]).toBeUndefined()
   })
 
-  test("an empty/absent `path` prefix returns the whole document (back-compat)", () => {
+  test("an empty/absent `path` prefix returns the whole document", () => {
     const app = server()
       .get("/api/orders", () => ({ ok: true }))
       .get("/health", () => ({ ok: true }))

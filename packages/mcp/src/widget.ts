@@ -31,10 +31,9 @@ export interface DefineMcpWidgetOptions {
   readonly html: string
 }
 
-/** The MCP Apps `_meta.ui.resourceUri` link, emitted nested (current spec) AND flat (the deprecated
- * `ui/resourceUri`, still read by some hosts) so a tool renders across the transition. */
+/** The MCP Apps `_meta.ui.resourceUri` link. */
 export function uiResourceMeta(uri: string): Record<string, unknown> {
-  return { ui: { resourceUri: uri }, "ui/resourceUri": uri }
+  return { ui: { resourceUri: uri } }
 }
 
 /** A widget: the resource to register on the server, its `ui://` URI, and the `_meta` link for its tool. */

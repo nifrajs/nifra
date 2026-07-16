@@ -63,10 +63,7 @@ function toolMeta(widget?: McpWidget, intent?: string): Record<string, unknown> 
   const ui: Record<string, unknown> = {}
   if (widget !== undefined) ui.resourceUri = widget.uri
   if (intent !== undefined) ui.intent = intent
-  const meta: Record<string, unknown> = { ui }
-  // Deprecated-flat alias for hosts that still read it.
-  if (widget !== undefined) meta["ui/resourceUri"] = widget.uri
-  return meta
+  return { ui }
 }
 
 const EMPTY_OBJECT_SCHEMA: Record<string, unknown> = {

@@ -15,10 +15,10 @@
     {@const Page = chain[0]}
     <Page {...props} />
   {/if}
-{:else if chain[0] && chain[0].__veloErrorBoundary}
+{:else if chain[0] && chain[0].__nifraErrorBoundary}
   <!-- nifra `_error` boundary marker (from errorBoundary()): wrap the rest in <svelte:boundary>; the
        `failed` snippet renders the route's _error component with the serialized error. -->
-  {@const Fallback = chain[0].__veloErrorBoundary}
+  {@const Fallback = chain[0].__nifraErrorBoundary}
   <svelte:boundary>
     <Self chain={chain.slice(1)} {props} />
     {#snippet failed(error)}

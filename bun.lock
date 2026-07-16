@@ -28,12 +28,13 @@
         "react": "19.2.7",
         "react-dom": "19.2.7",
         "typescript": "6.0.3",
+        "valibot": "^1.4.2",
         "ws": "^8.21.0",
       },
     },
     "bench": {
       "name": "@nifrajs/bench",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "devDependencies": {
         "@nifrajs/core": "workspace:*",
         "@nifrajs/node": "workspace:*",
@@ -56,7 +57,7 @@
     },
     "examples": {
       "name": "@nifrajs/examples",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "dependencies": {
         "@nifrajs/cli": "workspace:*",
         "@nifrajs/client": "workspace:*",
@@ -88,11 +89,11 @@
     },
     "internal/test-utils": {
       "name": "@nifrajs/test-utils",
-      "version": "1.11.0",
+      "version": "1.12.0",
     },
     "packages/agent-telemetry": {
       "name": "@nifrajs/agent-telemetry",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "dependencies": {
         "@nifrajs/otel": "workspace:*",
       },
@@ -105,7 +106,7 @@
     },
     "packages/auth": {
       "name": "@nifrajs/auth",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "devDependencies": {
         "@nifrajs/core": "workspace:*",
       },
@@ -115,7 +116,7 @@
     },
     "packages/better-auth": {
       "name": "@nifrajs/better-auth",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "devDependencies": {
         "@nifrajs/client": "workspace:*",
         "@nifrajs/core": "workspace:*",
@@ -129,23 +130,16 @@
         "better-auth",
       ],
     },
-    "packages/budget": {
-      "name": "@nifrajs/budget",
-      "version": "1.11.0",
-      "dependencies": {
-        "@nifrajs/core": "workspace:*",
-      },
-    },
     "packages/cache": {
       "name": "@nifrajs/cache",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "devDependencies": {
         "@nifrajs/testing": "workspace:*",
       },
     },
     "packages/cli": {
       "name": "@nifrajs/cli",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "bin": {
         "nifra": "./dist/cli.js",
       },
@@ -162,7 +156,7 @@
     },
     "packages/client": {
       "name": "@nifrajs/client",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "devDependencies": {
         "@nifrajs/core": "workspace:*",
         "@nifrajs/test-utils": "workspace:*",
@@ -173,7 +167,7 @@
     },
     "packages/content": {
       "name": "@nifrajs/content",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "dependencies": {
         "marked": "^15.0.0",
         "yaml": "^2.6.0",
@@ -187,32 +181,32 @@
     },
     "packages/core": {
       "name": "@nifrajs/core",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "devDependencies": {
         "@nifrajs/test-utils": "workspace:*",
       },
     },
     "packages/create-nifra": {
       "name": "create-nifra",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "bin": {
         "create-nifra": "./dist/cli.js",
       },
     },
     "packages/cron": {
       "name": "@nifrajs/cron",
-      "version": "1.11.0",
+      "version": "1.12.0",
     },
     "packages/deno": {
       "name": "@nifrajs/deno",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "devDependencies": {
         "@nifrajs/core": "workspace:*",
       },
     },
     "packages/devtools": {
       "name": "@nifrajs/devtools",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "dependencies": {
         "@nifrajs/otel": "workspace:*",
       },
@@ -225,11 +219,11 @@
     },
     "packages/env": {
       "name": "@nifrajs/env",
-      "version": "1.11.0",
+      "version": "1.12.0",
     },
     "packages/events": {
       "name": "@nifrajs/events",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "devDependencies": {
         "@nifrajs/core": "workspace:*",
         "@nifrajs/schema": "workspace:*",
@@ -241,37 +235,37 @@
     },
     "packages/i18n": {
       "name": "@nifrajs/i18n",
-      "version": "1.11.0",
+      "version": "1.12.0",
     },
     "packages/image": {
       "name": "@nifrajs/image",
-      "version": "1.11.0",
+      "version": "1.12.0",
     },
     "packages/islets": {
       "name": "@nifrajs/islets",
-      "version": "1.11.0",
+      "version": "1.12.0",
     },
     "packages/jobs": {
       "name": "@nifrajs/jobs",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "devDependencies": {
         "@nifrajs/testing": "workspace:*",
       },
     },
     "packages/mcp": {
       "name": "@nifrajs/mcp",
-      "version": "1.11.0",
+      "version": "1.12.0",
     },
     "packages/mcp-db": {
       "name": "@nifrajs/mcp-db",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "dependencies": {
         "@nifrajs/mcp": "workspace:*",
       },
     },
     "packages/middleware": {
       "name": "@nifrajs/middleware",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "dependencies": {
         "@nifrajs/schema": "workspace:*",
       },
@@ -286,21 +280,21 @@
     },
     "packages/mock": {
       "name": "@nifrajs/mock",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "dependencies": {
         "@nifrajs/core": "workspace:*",
       },
     },
     "packages/nifra": {
       "name": "nifra",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "dependencies": {
         "@nifrajs/core": "workspace:*",
       },
     },
     "packages/node": {
       "name": "@nifrajs/node",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "peerDependencies": {
         "ws": "^8.18.0",
       },
@@ -310,7 +304,7 @@
     },
     "packages/otel": {
       "name": "@nifrajs/otel",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "devDependencies": {
         "@nifrajs/core": "workspace:*",
       },
@@ -320,7 +314,7 @@
     },
     "packages/prompt": {
       "name": "@nifrajs/prompt",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "dependencies": {
         "@nifrajs/core": "workspace:*",
       },
@@ -330,11 +324,11 @@
     },
     "packages/runner": {
       "name": "@nifrajs/runner",
-      "version": "1.11.0",
+      "version": "1.12.0",
     },
     "packages/schema": {
       "name": "@nifrajs/schema",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "dependencies": {
         "@sinclair/typebox": "^0.34.49",
       },
@@ -348,14 +342,14 @@
     },
     "packages/storage": {
       "name": "@nifrajs/storage",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "devDependencies": {
         "@nifrajs/testing": "workspace:*",
       },
     },
     "packages/testing": {
       "name": "@nifrajs/testing",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "dependencies": {
         "@nifrajs/client": "workspace:*",
         "@nifrajs/core": "workspace:*",
@@ -364,11 +358,11 @@
     },
     "packages/uploads": {
       "name": "@nifrajs/uploads",
-      "version": "1.11.0",
+      "version": "1.12.0",
     },
     "packages/web": {
       "name": "@nifrajs/web",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "dependencies": {
         "@nifrajs/core": "workspace:*",
       },
@@ -389,7 +383,7 @@
     },
     "packages/web-preact": {
       "name": "@nifrajs/web-preact",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "dependencies": {
         "@nifrajs/i18n": "workspace:*",
         "@nifrajs/image": "workspace:*",
@@ -405,7 +399,7 @@
     },
     "packages/web-react": {
       "name": "@nifrajs/web-react",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "dependencies": {
         "@nifrajs/core": "workspace:*",
         "@nifrajs/i18n": "workspace:*",
@@ -425,7 +419,7 @@
     },
     "packages/web-solid": {
       "name": "@nifrajs/web-solid",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "dependencies": {
         "@babel/core": "^7.26.0",
         "@babel/preset-typescript": "^7.26.0",
@@ -448,7 +442,7 @@
     },
     "packages/web-svelte": {
       "name": "@nifrajs/web-svelte",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "dependencies": {
         "@nifrajs/i18n": "workspace:*",
         "@nifrajs/image": "workspace:*",
@@ -467,14 +461,14 @@
     },
     "packages/web-vanilla": {
       "name": "@nifrajs/web-vanilla",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "peerDependencies": {
         "@nifrajs/web": "workspace:*",
       },
     },
     "packages/web-vue": {
       "name": "@nifrajs/web-vue",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "dependencies": {
         "@nifrajs/i18n": "workspace:*",
         "@nifrajs/image": "workspace:*",
@@ -494,14 +488,14 @@
     },
     "packages/workers": {
       "name": "@nifrajs/workers",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "dependencies": {
         "@nifrajs/core": "workspace:*",
       },
     },
     "site": {
       "name": "@nifrajs/site",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "devDependencies": {
         "@mdx-js/mdx": "^3",
         "@nifrajs/cli": "workspace:*",
@@ -778,8 +772,6 @@
     "@nifrajs/bench": ["@nifrajs/bench@workspace:bench"],
 
     "@nifrajs/better-auth": ["@nifrajs/better-auth@workspace:packages/better-auth"],
-
-    "@nifrajs/budget": ["@nifrajs/budget@workspace:packages/budget"],
 
     "@nifrajs/cache": ["@nifrajs/cache@workspace:packages/cache"],
 
@@ -1924,6 +1916,8 @@
     "unpipe": ["unpipe@1.0.0", "", {}, "sha512-pjy2bYhSsufwWlKwPc+l3cN7+wuJlK6uz0YdJEOlQDbl6jo/YlPi4mb8agUkVC8BF7V8NuzeyPNqRksA3hztKQ=="],
 
     "update-browserslist-db": ["update-browserslist-db@1.2.3", "", { "dependencies": { "escalade": "^3.2.0", "picocolors": "^1.1.1" }, "peerDependencies": { "browserslist": ">= 4.21.0" }, "bin": { "update-browserslist-db": "cli.js" } }, "sha512-Js0m9cx+qOgDxo0eMiFGEueWztz+d4+M3rGlmKPT+T4IS/jP4ylw3Nwpu6cpTTP8R1MAC1kF4VbdLt3ARf209w=="],
+
+    "valibot": ["valibot@1.4.2", "", { "peerDependencies": { "typescript": ">=5" }, "optionalPeers": ["typescript"] }, "sha512-gjdCvJ6d3RyHAneqxMYMW9QMCwYMb3jpOO0IyHZV1bnRHFBHrX3VkIILt5XYR0WhwHiH7Mty8ovuPZ/O3gamrg=="],
 
     "validate-npm-package-name": ["validate-npm-package-name@5.0.1", "", {}, "sha512-OljLrQ9SQdOUqTaQxqL5dEfZWrXExyyWsozYlAWFawPVNuD83igl7uJD2RTkNMbniIYgt8l81eCJGIdQF7avLQ=="],
 

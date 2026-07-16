@@ -44,16 +44,10 @@ export function installHistory(
       return raw
     }
   }
-  // Resolve a fragment id to its element — by `id`, then a legacy `<a name>` — or null if absent.
+  // Resolve a fragment id to its element by `id`, or null if absent.
   const findAnchor = (id: string): Element | null => {
     if (id === "") return null
-    const byId = document.getElementById(id)
-    if (byId !== null) return byId
-    try {
-      return document.querySelector(`a[name="${CSS.escape(id)}"]`)
-    } catch {
-      return null // CSS/CSS.escape unavailable or an exotic id → no named-anchor match
-    }
+    return document.getElementById(id)
   }
 
   // Wrap a navigation's render in a View Transition when the browser supports it — a graceful

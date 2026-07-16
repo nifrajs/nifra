@@ -695,7 +695,7 @@ test("renderPage falls back to the streaming path when a value defers (needs pro
   expect(html).toContain("window.__nifraResolve") // deferred runtime present
 })
 
-test("renderPage still streams for an adapter without renderToString (back-compat)", async () => {
+test("renderPage streams for an adapter without renderToString", async () => {
   // `stub` (defined above) has no renderToString — the streaming path must remain the default.
   const html = await (
     await renderPage({ adapter: stub, chain: [null], data: { a: 1 }, clientEntry: "/c.js" })

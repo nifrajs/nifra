@@ -257,29 +257,4 @@ describe("testClient", () => {
     const missing = await untyped.nope.get()
     expect(missing.ok).toBe(false)
   })
-
-  test("retains the legacy .fetch(url, init) bridge for custom auto-mount integrations", async () => {
-    // The platform-aware path uses the symbol-keyed BackendMount interface. Keep the released
-    // `.fetch` bridge working rather than exposing the typed proxy's ordinary `/fetch` route.
-    const backend = server()
-      .get("/api/x", () => ({ x: 1 }))
-      .post("/api/echo", async (c) => ({ echoed: await c.req.json() }))
-    const api = testClient<typeof backend>(backend) as unknown as {
-      fetch: (url: string, init?: RequestInit) => Promise<Response>
-    }
-    expect(typeof api.fetch).toBe("function")
-    const got = await api.fetch("http://nifra.internal/api/x", { method: "GET" })
-    expect(got instanceof Response).toBe(true)
-    expect(got.status).toBe(200)
-    expect(await got.json()).toEqual({ x: 1 })
-    const echoed = await api.fetch("http://nifra.internal/api/echo", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ hi: 1 }),
-    })
-    expect(await echoed.json()).toEqual({ echoed: { hi: 1 } })
-    // The typed route surface is unchanged — `.fetch` shadows only the mount seam, not real routes.
-    const typed = await testClient<typeof backend>(backend).api.x.get()
-    expect(typed.ok && typed.data).toEqual({ x: 1 })
-  })
 })

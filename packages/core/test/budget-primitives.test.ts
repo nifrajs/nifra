@@ -10,7 +10,7 @@ import {
   NIFRA_DEADLINE_HEADER,
   parseDeadlineHeader,
   withDeadlineHeader,
-} from "../src/index.ts"
+} from "../src/budget.ts"
 
 const clock = (
   wall = 1_700_000_000_000,
@@ -29,7 +29,7 @@ const clock = (
   },
 })
 
-describe("@nifrajs/budget", () => {
+describe("core request-budget primitives", () => {
   test("measures admitted remaining time with the monotonic clock", () => {
     const c = clock()
     const budget = createRequestBudget({
@@ -39,9 +39,9 @@ describe("@nifrajs/budget", () => {
     })
     expect(budget.remaining()).toBe(1_000)
     c.monotonicMs += 125
-    c.wallMs -= 60_000 // NTP jump backwards cannot add time.
+    c.wallMs -= 60_000
     expect(budget.remaining()).toBe(875)
-    c.wallMs += 120_000 // Nor can a forward wall jump consume it.
+    c.wallMs += 120_000
     expect(budget.remaining()).toBe(875)
   })
 

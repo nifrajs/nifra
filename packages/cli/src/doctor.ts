@@ -191,11 +191,13 @@ function workspacePatterns(pkg: Record<string, unknown>): string[] {
     .sort()
 }
 
-/** Discover package roots declared by npm/Bun's two workspace manifest shapes. Bounded so a hostile
- * `**` pattern cannot turn a diagnostic into an unbounded filesystem crawl. */
+/** Discover package roots declared by npm/Bun's workspace manifest shapes plus nested package
+ * boundaries (scaffold templates and benchmark fixtures are commonly real standalone packages even
+ * when they are not workspace members). Bounded so a hostile tree cannot make doctor unbounded. */
 async function workspaceImporters(
   cwd: string,
   rootPackage: Record<string, unknown>,
+  includeNestedPackages = false,
 ): Promise<Array<{ root: string; package: Record<string, unknown> }>> {
   const manifests = new Set<string>([join(cwd, "package.json")])
   for (const pattern of workspacePatterns(rootPackage)) {
@@ -208,6 +210,22 @@ async function workspaceImporters(
       if (manifests.size > MAX_WORKSPACE_IMPORTERS) return []
     }
   }
+  if (includeNestedPackages) {
+    for await (const rel of new Bun.Glob("**/package.json").scan({ cwd, dot: false })) {
+      const segments = rel.split(/[\\/]/)
+      if (
+        segments.some((segment) =>
+          ["node_modules", "dist", "build", ".git", ".nifra", ".next", "coverage"].includes(
+            segment,
+          ),
+        )
+      ) {
+        continue
+      }
+      manifests.add(join(cwd, rel))
+      if (manifests.size > MAX_WORKSPACE_IMPORTERS) return []
+    }
+  }
 
   const out: Array<{ root: string; package: Record<string, unknown> }> = []
   for (const manifest of [...manifests].sort()) {
@@ -216,6 +234,62 @@ async function workspaceImporters(
   }
   return out
 }
+
+interface DoctorPackageScope {
+  readonly root: string
+  readonly relativeRoot: string
+  readonly declared: ReadonlySet<string>
+  readonly isAlias: (specifier: string) => boolean
+}
+
+const declaredPackages = (pkg: Record<string, unknown>): ReadonlySet<string> => {
+  const declared = new Set<string>()
+  if (typeof pkg.name === "string") declared.add(pkg.name)
+  for (const field of DEPENDENCY_FIELDS) {
+    for (const name of depNames(pkg, field)) declared.add(name)
+  }
+  return declared
+}
+
+const tsconfigPaths = async (
+  root: string,
+): Promise<Readonly<Record<string, unknown>> | undefined> => {
+  const tsconfig = await readJson(join(root, "tsconfig.json"))
+  const compilerOptions = tsconfig?.compilerOptions as
+    | { paths?: Record<string, unknown> }
+    | undefined
+  return compilerOptions?.paths
+}
+
+/** Build per-package declaration scopes for a workspace. Longest roots are first so nested packages
+ * own their source; files outside a workspace package remain owned by the root manifest. */
+async function doctorPackageScopes(
+  cwd: string,
+  rootPackage: Record<string, unknown>,
+): Promise<readonly DoctorPackageScope[]> {
+  const importers = await workspaceImporters(cwd, rootPackage, true)
+  const packages = importers.length > 0 ? importers : [{ root: cwd, package: rootPackage }]
+  const rootPaths = await tsconfigPaths(cwd)
+  const scopes = await Promise.all(
+    packages.map(async (entry): Promise<DoctorPackageScope> => {
+      const paths = (await tsconfigPaths(entry.root)) ?? rootPaths
+      return {
+        root: entry.root,
+        relativeRoot: relative(cwd, entry.root).split("\\").join("/"),
+        declared: declaredPackages(entry.package),
+        isAlias: aliasMatcher(paths),
+      }
+    }),
+  )
+  return scopes.sort((a, b) => b.relativeRoot.length - a.relativeRoot.length)
+}
+
+const scopeForFile = (scopes: readonly DoctorPackageScope[], file: string): DoctorPackageScope =>
+  scopes.find(
+    (scope) =>
+      scope.relativeRoot !== "" &&
+      (file === scope.relativeRoot || file.startsWith(`${scope.relativeRoot}/`)),
+  ) ?? (scopes.find((scope) => scope.relativeRoot === "") as DoctorPackageScope)
 
 function duplicateTargets(pkg: Record<string, unknown>): string[] {
   const targets = new Set<string>()
@@ -377,21 +451,12 @@ export async function collectDoctorResult(cwd: string): Promise<DoctorResult> {
   const pkg = await readJson(join(cwd, "package.json"))
   if (pkg === undefined) return { ok: true, ran: false, findings: [], duplicateInstalls: [] }
 
-  const declared = new Set<string>()
-  if (typeof pkg.name === "string") declared.add(pkg.name) // a package may import its own name (exports map)
-  for (const field of DEPENDENCY_FIELDS) {
-    for (const name of depNames(pkg, field)) declared.add(name)
-  }
-
-  const tsconfig = await readJson(join(cwd, "tsconfig.json"))
-  const compilerOptions = tsconfig?.compilerOptions as
-    | { paths?: Record<string, unknown> }
-    | undefined
-  const isAlias = aliasMatcher(compilerOptions?.paths)
+  const scopes = await doctorPackageScopes(cwd, pkg)
 
   const findings: DoctorFinding[] = []
   await walkSource(cwd, (rel, content) => {
-    for (const f of scanUndeclaredImports(rel, content, declared, isAlias)) {
+    const scope = scopeForFile(scopes, rel)
+    for (const f of scanUndeclaredImports(rel, content, scope.declared, scope.isAlias)) {
       findings.push({ file: f.file, line: f.line, package: f.snippet })
     }
   })
@@ -410,49 +475,64 @@ export async function applyDoctorAutoFix(cwd: string): Promise<DoctorResult> {
   const before = await collectDoctorResult(cwd)
   if (!before.ran || before.findings.length === 0) return before
 
-  const pkgPath = join(cwd, "package.json")
-  const pkg = await readJson(pkgPath)
-  if (pkg === undefined) return before
-  const dependencies = pkg.dependencies
-  if (dependencies !== undefined && !isRecord(dependencies)) {
-    const skippedFixes = [...new Set(before.findings.map((f) => f.package))].sort().map(
-      (name): DoctorSkippedFix => ({
-        package: name,
-        reason: "`dependencies` exists but is not an object; refusing to rewrite it automatically",
-        command: ["bun", "add", name],
-      }),
-    )
-    return { ...before, skippedFixes }
+  const rootPackage = await readJson(join(cwd, "package.json"))
+  if (rootPackage === undefined) return before
+  const scopes = await doctorPackageScopes(cwd, rootPackage)
+  const byRoot = new Map<string, Set<string>>()
+  for (const finding of before.findings) {
+    const root = scopeForFile(scopes, finding.file).root
+    const names = byRoot.get(root) ?? new Set<string>()
+    names.add(finding.package)
+    byRoot.set(root, names)
   }
-
-  const deps = (dependencies ?? {}) as Record<string, unknown>
-  if (dependencies === undefined) pkg.dependencies = deps
 
   const fixed: DoctorAppliedFix[] = []
   const skippedFixes: DoctorSkippedFix[] = []
-  for (const name of [...new Set(before.findings.map((f) => f.package))].sort()) {
-    if (!isNpmPackageName(name)) {
-      skippedFixes.push({
-        package: name,
-        reason: "package name did not match npm package-name syntax",
-        command: ["bun", "add", name],
-      })
+  for (const [root, names] of [...byRoot.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    const pkgPath = join(root, "package.json")
+    const pkg = await readJson(pkgPath)
+    if (pkg === undefined) continue
+    const dependencies = pkg.dependencies
+    if (dependencies !== undefined && !isRecord(dependencies)) {
+      for (const name of [...names].sort()) {
+        skippedFixes.push({
+          package: name,
+          reason:
+            "`dependencies` exists but is not an object; refusing to rewrite it automatically",
+          command: ["bun", "add", name],
+        })
+      }
       continue
     }
-    const inferred = await inferDependencyFix(cwd, name)
-    if (inferred === undefined) {
-      skippedFixes.push({
-        package: name,
-        reason: "no declared ancestor version or installed package metadata was found locally",
-        command: ["bun", "add", name],
-      })
-      continue
+
+    const deps = (dependencies ?? {}) as Record<string, unknown>
+    if (dependencies === undefined) pkg.dependencies = deps
+    let changed = false
+    for (const name of [...names].sort()) {
+      if (!isNpmPackageName(name)) {
+        skippedFixes.push({
+          package: name,
+          reason: "package name did not match npm package-name syntax",
+          command: ["bun", "add", name],
+        })
+        continue
+      }
+      const inferred = await inferDependencyFix(root, name)
+      if (inferred === undefined) {
+        skippedFixes.push({
+          package: name,
+          reason: "no declared ancestor version or installed package metadata was found locally",
+          command: ["bun", "add", name],
+        })
+        continue
+      }
+      deps[name] = inferred.version
+      changed = true
+      fixed.push({ package: name, field: "dependencies", ...inferred })
     }
-    deps[name] = inferred.version
-    fixed.push({ package: name, field: "dependencies", ...inferred })
+    if (changed) await Bun.write(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`)
   }
 
-  if (fixed.length > 0) await Bun.write(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`)
   const after = fixed.length > 0 ? await collectDoctorResult(cwd) : before
   return {
     ...after,

@@ -108,7 +108,7 @@ export interface MetaArgs<Data = unknown> {
    * `og:url`/`canonical`/`og:image` built from it never drifts between the server-rendered `<head>` and
    * a soft-nav. Use it for absolute URLs (`origin + "/posts/" + slug`) instead of threading `siteUrl`
    * through loader data. Empty string (`""`) when the origin is unknown (e.g. a hand-built test render
-   * with no request URL) — back-compat-safe: a `meta()` that ignores `origin` is unchanged.
+   * with no request URL). A `meta()` that ignores `origin` is unchanged.
    */
   readonly origin: string
 }
@@ -381,7 +381,7 @@ const encodeRouteParam = (value: string): string => {
  * Substitute a route pattern's `:param` segments with concrete values: `/users/:id` + `{id:"7"}` →
  * `/users/7`. Returns the filled path plus any params that had no value (a `getStaticPaths` bug) so
  * the caller can skip rather than emit a path with a literal `:name`. Shared by the SSG driver and
- * {@link enumeratePrerenderedPaths}.
+ * {@link enumerateStaticRoutes}.
  */
 export function fillRoutePattern(
   pattern: string,
@@ -437,10 +437,4 @@ export async function enumerateStaticRoutes(routes: readonly RouteEntry[]): Prom
     }
   }
   return { paths, fallbacks }
-}
-
-/** The prerendered-path subset of {@link enumerateStaticRoutes} — kept for callers that only need the
- * paths (e.g. injecting `window.__NIFRA_PRERENDERED__`). */
-export async function enumeratePrerenderedPaths(routes: readonly RouteEntry[]): Promise<string[]> {
-  return (await enumerateStaticRoutes(routes)).paths
 }

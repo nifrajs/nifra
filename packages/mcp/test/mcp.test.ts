@@ -42,11 +42,8 @@ describe("defineMcpWidget", () => {
     expect(text).toContain('<div id="root">')
   })
 
-  test("meta carries the nested + deprecated-flat ui link", () => {
-    expect(widget.meta).toEqual({
-      ui: { resourceUri: "ui://orders/table" },
-      "ui/resourceUri": "ui://orders/table",
-    })
+  test("meta carries the nested ui link", () => {
+    expect(widget.meta).toEqual({ ui: { resourceUri: "ui://orders/table" } })
   })
 
   test("the bridge handles host theme pushes (shadcn token convention)", async () => {
@@ -78,7 +75,6 @@ describe("defineMcpTool — render intent", () => {
     })
     expect(tool._meta).toEqual({
       ui: { resourceUri: "ui://orders/table", intent: "table" },
-      "ui/resourceUri": "ui://orders/table",
     })
   })
 
@@ -138,7 +134,7 @@ describe("handleRpc — MCP Apps extensions", () => {
     expect(contents[0]?.text).toContain("window.mcpApp")
   })
 
-  test("a plain string handler is unchanged (back-compat — no structuredContent/_meta)", async () => {
+  test("a plain string handler returns text content without structuredContent/_meta", async () => {
     const textTool: McpTool = {
       name: "ping",
       description: "ping",

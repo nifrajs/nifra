@@ -10,7 +10,7 @@ export const clientModule = "@nifrajs/web-vue/client"
 
 // `nifra dev` HMR: Vite + the official Vue plugin compile/HMR the .vue client modules.
 export const vitePlugins = [vue()]
-// `nifra build` (client bundle) + `nifra start`/`nifra dev` (Bun-side SSR) compile .vue via these.
+// `nifra build` (client + server bundles) and `nifra dev` compile .vue via these.
 export const clientPlugins = [vueBunPlugin("dom")]
 export const serverPlugins = [vueBunPlugin("ssr")]
 // Vue feature flags (the plugin doesn't inject these) — mirrors a production build's `define`.

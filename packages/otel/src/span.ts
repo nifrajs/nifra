@@ -51,9 +51,6 @@ export interface ObservationAdapter {
   onEnd(span: NifraSpan): void
 }
 
-/** Backwards-compatible name for an observation sink. */
-export type SpanExporter = ObservationAdapter
-
 /**
  * Fan out lifecycle notifications to several adapters. Each adapter is isolated: an exception in
  * one sink cannot prevent the remaining sinks from observing the span.
@@ -89,7 +86,7 @@ export function consoleSpanExporter(
   log: (line: string) => void = (l) => {
     console.log(l)
   },
-): SpanExporter {
+): ObservationAdapter {
   return {
     onEnd(span) {
       log(

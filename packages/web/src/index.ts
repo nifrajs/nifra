@@ -87,7 +87,6 @@ export {
 export {
   type Action,
   buildManifest,
-  enumeratePrerenderedPaths,
   enumerateStaticRoutes,
   filePathToPattern,
   filePathToPatterns,
@@ -688,21 +687,17 @@ function isSameOriginPath(location: string): boolean {
 /**
  * Build a redirect `Response` — return it from a route `action` for the Post/Redirect/Get
  * pattern (POST mutates, 303 sends the browser to a fresh GET, so a reload doesn't re-submit).
- * Defaults to 303 (See Other); pass `307`/`308` (or `{ status }`) to preserve the method.
+ * Defaults to 303 (See Other); pass `{ status: 307 }` or `{ status: 308 }` to preserve the method.
  *
  * **Secure by default:** `location` must be a same-origin path (begins with `/`, not `//`). An
  * off-origin/absolute destination throws unless you pass `{ external: true }` — this closes the
  * open-redirect footgun of `return redirect(formData.get("next"))` on the no-JS (native-form) path,
  * which returns the action's `Response` verbatim.
  *
- * @param statusOrOptions a status number (back-compat) or `{ status?, external? }`.
+ * @param options redirect status and whether an off-origin destination is intentional.
  */
-export function redirect(
-  location: string,
-  statusOrOptions: number | RedirectOptions = 303,
-): Response {
-  const opts = typeof statusOrOptions === "number" ? { status: statusOrOptions } : statusOrOptions
-  if (opts.external !== true && !isSameOriginPath(location)) {
+export function redirect(location: string, options: RedirectOptions = {}): Response {
+  if (options.external !== true && !isSameOriginPath(location)) {
     throw new Error(
       `[nifra/web] redirect(${JSON.stringify(location)}) is not a same-origin path. Use a path beginning with "/" (not "//"), or redirect(location, { external: true }) for a deliberate off-origin redirect. This guards against open redirects from unvalidated input.`,
     )
@@ -716,7 +711,7 @@ export function redirect(
       `[nifra/web] redirect location contains a CR/LF character — refusing to emit a header-injecting redirect.`,
     )
   }
-  return new Response(null, { status: opts.status ?? 303, headers: { location } })
+  return new Response(null, { status: options.status ?? 303, headers: { location } })
 }
 
 /** The wrapper `revalidate()` returns: the action's `data` plus the paths it changed. A plain tagged
@@ -968,15 +963,14 @@ export interface CreateWebAppOptions {
    * mount interface from `@nifrajs/core/mount`; `createWebApp` also serves that backend over HTTP at
    * {@link apiPrefix} (default `/api`): a request whose pathname starts with the prefix is dispatched
    * before page routing with the same `env`/`waitUntil` platform context, and the backend's `Response`
-   * is returned untouched. Legacy custom `.fetch(url, init)` bridges remain mountable but cannot
-   * receive platform context. The mount runs in `nifra dev` too. Pass `apiPrefix: ""` to disable it. */
+   * is returned untouched. The mount runs in `nifra dev` too. Pass `apiPrefix: ""` to disable it. */
   readonly api?: unknown
   /** HTTP path prefix the {@link api} backend is auto-mounted at (default `"/api"`). A request whose
    * pathname is exactly the prefix or starts with `prefix + "/"` is dispatched to the backend before
    * page routing; the backend therefore defines its routes at the **full** path (`server().post("/api/
    * sync", …)`), matching the in-process `inProcessClient` call sites. Set to `""` to disable the
    * auto-mount entirely (the app serves pages only and `api` stays a loader-only `ctx.api`). Mounting
-   * is also a no-op when `api` has neither the symbol mount nor a legacy callable `.fetch`. */
+   * is also a no-op when `api` does not expose the symbol mount. */
   readonly apiPrefix?: string
   /** Secret for **draft / preview mode** (see `enableDraft`). When set, a request carrying a valid
    * signed `__nifra_draft` cookie gets `ctx.draft === true` in loaders/actions (else always `false`).
@@ -995,7 +989,7 @@ export interface CreateWebAppOptions {
    * of the aggregate `styles`, so a page ships only the CSS it uses. An empty array ⇒ no `<link>` (the
    * page imports no CSS). Routes absent here fall back to `styles`. Omit ⇒ always use `styles`. */
   readonly routeStyles?: Readonly<Record<string, readonly string[]>>
-  /** SSG: the prerendered-path set (e.g. from `enumeratePrerenderedPaths` or the build's
+  /** SSG: the prerendered-path set (e.g. `enumerateStaticRoutes(routes).paths` or the build's
    * `prerendered.json`). Injected as `window.__NIFRA_PRERENDERED__` on every page so a client soft-nav
    * into a prerendered route fetches its static `_data.json` instead of hitting the worker. */
   readonly prerenderedPaths?: readonly string[]
@@ -1028,24 +1022,15 @@ interface RouteContext {
   readonly env: unknown
 }
 
-/** Legacy pre-symbol mount bridge. Kept for custom integrations; it cannot receive platform context. */
-interface LegacyMountableApi {
-  readonly fetch: (url: string, init?: RequestInit) => Response | Promise<Response>
-}
-
 /**
- * Resolve the explicit backend mount interface, then fall back to the released `.fetch(url, init)`
- * convention. The symbol seam forwards platform context without making web depend on client.
+ * Resolve the explicit symbol-keyed backend mount interface. The symbol seam forwards platform
+ * context without making web depend on client.
  */
 function backendMountOf(api: unknown): BackendMountHandler | undefined {
   if ((typeof api !== "object" && typeof api !== "function") || api === null) return undefined
   const explicit = (api as Partial<BackendMount>)[NIFRA_BACKEND_MOUNT]
-  if (typeof explicit === "function") {
-    return (request, platform) => explicit.call(api, request, platform)
-  }
-  const legacy = (api as Partial<LegacyMountableApi>).fetch
-  if (typeof legacy !== "function") return undefined
-  return (request) => legacy.call(api, request.url, request)
+  if (typeof explicit !== "function") return undefined
+  return (request, platform) => explicit.call(api, request, platform)
 }
 
 /**
@@ -1096,13 +1081,8 @@ export function createWebApp<Env = unknown>(
   // surfaces as the backend's own response, never the page 404. We dispatch the SAME `Request` object
   // (its body unread) so streamed/large bodies pass through untouched; the backend defines its routes
   // at the full prefixed path (`server().post("/api/sync", …)`), matching the `inProcessClient` call
-  // sites. `apiPrefix: ""` opts out; a non-mountable `api` (no `.fetch`) is left pages-only. The hook
+  // sites. `apiPrefix: ""` opts out; a non-mountable `api` (no symbol mount) is left pages-only. The hook
   // is registered ONLY when both hold, so a pages-only app keeps core's synchronous no-hook fast path.
-  //
-  // Backward-compat: an app that still hand-dispatches `/api/*` in its server entry (the old
-  // `if (pathname.startsWith("/api/")) return backend.fetch(req)`) intercepts BEFORE `app.fetch` is
-  // ever called, so that branch returns first and this hook never sees the request — no double
-  // handling. Apps that drop the hand-dispatch now rely on this mount instead (dev + prod alike).
   const apiPrefix = options.apiPrefix ?? "/api"
   const mountedApi = backendMountOf(api)
   if (apiPrefix !== "" && mountedApi !== undefined) {

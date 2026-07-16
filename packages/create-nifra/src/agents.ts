@@ -248,8 +248,8 @@ const COMMANDS: Readonly<Record<TemplateName, string>> = {
 - \`nifra check\` — typecheck + typed-client lint (run before you call work done)`,
   site: `- \`bun install\` — install dependencies
 - \`nifra dev\` — true-HMR dev server
-- \`nifra build\` — content-hashed client bundle + manifest (local build)
-- \`nifra start\` — serve the built app (SSR) — pairs with \`nifra build\`
+- \`nifra build\` — complete Bun deploy (server + content-hashed client assets)
+- \`nifra start\` — run the generated Bun server — pairs with \`nifra build\`
 - \`nifra check\` — typecheck + typed-client lint (run before you call work done)
 
   For a local production run use \`nifra build && nifra start\` (or \`bun run build:bun && bun run start\`). NOTE:
@@ -257,8 +257,8 @@ const COMMANDS: Readonly<Record<TemplateName, string>> = {
   — it does NOT pair with \`nifra start\`/\`bun run start\` (which serve \`dist-bun/\`). Don't mix the two.`,
   isr: `- \`bun install\` — install dependencies
 - \`nifra dev\` — true-HMR dev server
-- \`nifra build\` — content-hashed client bundle + manifest (local build)
-- \`nifra start\` — serve the built app (SSR + ISR cache) — pairs with \`nifra build\`
+- \`nifra build\` — complete Bun deploy (server + content-hashed client assets)
+- \`nifra start\` — run the generated Bun server (SSR + ISR cache) — pairs with \`nifra build\`
 - \`nifra check\` — typecheck + typed-client lint (run before you call work done)
 
   For a local production run use \`nifra build && nifra start\`. NOTE: the bare \`bun run build\` script targets

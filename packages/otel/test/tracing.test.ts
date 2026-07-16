@@ -1,20 +1,20 @@
 import { describe, expect, test } from "bun:test"
+import { server } from "@nifrajs/core"
 import {
   type CausalityContext,
   type CausalityRecord,
   causalityHeaders,
-  server,
   startCausality,
-} from "@nifrajs/core"
+} from "@nifrajs/core/causality"
 import {
   type NifraSpan,
-  type SpanExporter,
+  type ObservationAdapter,
   type TraceContext,
   traceHeaders,
   tracing,
 } from "../src/index.ts"
 
-function collector(): { spans: NifraSpan[]; started: NifraSpan[]; exporter: SpanExporter } {
+function collector(): { spans: NifraSpan[]; started: NifraSpan[]; exporter: ObservationAdapter } {
   const spans: NifraSpan[] = []
   const started: NifraSpan[] = []
   return {

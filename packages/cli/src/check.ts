@@ -25,9 +25,6 @@ export interface SourceFinding {
   readonly line: number
   readonly snippet: string
 }
-/** @deprecated kept for back-compat with existing tests; prefer {@link SourceFinding}. */
-export type FetchFinding = SourceFinding
-
 /** A server-only-import finding, carrying the offending module specifier on top of the base location so
  * the diagnostic can show the import chain `routeFile → specifier` (the direct edge the regex scan sees). */
 export interface ServerImportFinding extends SourceFinding {
@@ -39,7 +36,7 @@ export interface ServerImportFinding extends SourceFinding {
 // i.e. same-origin = this app's own API. `(?<![.\w])` skips `.fetch(` (a method) and `prefetch(`; the
 // `(?!\/)` skips protocol-relative `//host` (an external origin). A variable arg (`fetch(url)`) is left
 // alone on purpose — undecidable from source, and flagging it would punish legitimate external calls.
-const OWN_API_FETCH = /(?<![.\w])fetch\s*\(\s*['"`]\/(?!\/)/g
+const GLOBAL_FETCH_CALL = /(?<![.\w])fetch\s*\(/g
 const FETCH_CALL = /(?<![.\w])fetch\s*\(/g
 const HTTP_VERBS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
 const SIMPLE_REWRITE_METHODS = new Set(["GET", "DELETE", "HEAD", "OPTIONS"])
@@ -279,12 +276,65 @@ export function stripComments(src: string): string {
   return out.join("")
 }
 
+/** Blank comments and every quoted/template literal while preserving offsets. Unlike
+ * {@link stripComments}, this is a code-position mask: scanners use it to find a call expression in
+ * executable code, then inspect the original source for the call's literal argument. That prevents
+ * documentation strings such as `const example = 'client("/")'` from becoming diagnostics. */
+function codePositionMask(src: string): string {
+  const out = src.split("")
+  const n = src.length
+  let i = 0
+  const blank = (a: number, b: number): void => {
+    for (let k = a; k < b; k++) if (out[k] !== "\n") out[k] = " "
+  }
+  while (i < n) {
+    const c = src[i]
+    const d = src[i + 1]
+    if (c === "/" && d === "/") {
+      let j = i + 2
+      while (j < n && src[j] !== "\n") j++
+      blank(i, j)
+      i = j
+    } else if (c === "/" && d === "*") {
+      let j = i + 2
+      while (j < n && !(src[j] === "*" && src[j + 1] === "/")) j++
+      j = Math.min(j + 2, n)
+      blank(i, j)
+      i = j
+    } else if (c === "'" || c === '"' || c === "`") {
+      const quote = c
+      let j = i + 1
+      while (j < n && src[j] !== quote) {
+        if (src[j] === "\\") j++
+        j++
+      }
+      j = Math.min(j + 1, n)
+      blank(i, j)
+      i = j
+    } else {
+      i++
+    }
+  }
+  return out.join("")
+}
+
+const firstArgumentIndex = (content: string, callEnd: number): number => {
+  let index = callEnd
+  while (/\s/.test(content[index] ?? "")) index++
+  return index
+}
+
 /** Scan one file's text for hand-rolled own-API `fetch()` calls. Pure + line-accurate. */
 export function scanFetchText(file: string, content: string): SourceFinding[] {
   const out: SourceFinding[] = []
   const lines = content.split("\n")
-  OWN_API_FETCH.lastIndex = 0
-  for (let m = OWN_API_FETCH.exec(content); m !== null; m = OWN_API_FETCH.exec(content)) {
+  const code = codePositionMask(content)
+  GLOBAL_FETCH_CALL.lastIndex = 0
+  for (let m = GLOBAL_FETCH_CALL.exec(code); m !== null; m = GLOBAL_FETCH_CALL.exec(code)) {
+    const argument = firstArgumentIndex(content, m.index + m[0].length)
+    const quote = content[argument]
+    if (quote !== "'" && quote !== '"' && quote !== "`") continue
+    if (content[argument + 1] !== "/" || content[argument + 2] === "/") continue
     const line = lineAt(content, m.index)
     out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
   }
@@ -305,14 +355,18 @@ export function scanStaticRouteText(file: string, content: string): StaticRouteF
 // the compiler has nothing to derive types from, so the anti-drift guarantee silently vanishes.
 // `client<typeof app>("…")` has `<…>` between the name and `(` so it never matches; the published-
 // contract form `client(contract, url)` starts with an identifier, not a quote — also unmatched.
-const UNTYPED_CLIENT = /(?<![.\w])client\s*\(\s*['"`]/g
+const CLIENT_CALL = /(?<![.\w])client\s*\(/g
 
 /** Scan one file's text for untyped `client("…")` calls. Pure + line-accurate. */
 export function scanUntypedClient(file: string, content: string): SourceFinding[] {
   const out: SourceFinding[] = []
   const lines = content.split("\n")
-  UNTYPED_CLIENT.lastIndex = 0
-  for (let m = UNTYPED_CLIENT.exec(content); m !== null; m = UNTYPED_CLIENT.exec(content)) {
+  const code = codePositionMask(content)
+  CLIENT_CALL.lastIndex = 0
+  for (let m = CLIENT_CALL.exec(code); m !== null; m = CLIENT_CALL.exec(code)) {
+    const argument = firstArgumentIndex(content, m.index + m[0].length)
+    const quote = content[argument]
+    if (quote !== "'" && quote !== '"' && quote !== "`") continue
     const line = lineAt(content, m.index)
     out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
   }
@@ -326,8 +380,11 @@ export function scanServerOnlyImports(file: string, content: string): ServerImpo
   if (!ROUTE_FILE.test(file)) return []
   const out: ServerImportFinding[] = []
   const lines = content.split("\n")
+  const code = stripComments(content)
+  const positions = codePositionMask(content)
   STATIC_IMPORT.lastIndex = 0
-  for (let m = STATIC_IMPORT.exec(content); m !== null; m = STATIC_IMPORT.exec(content)) {
+  for (let m = STATIC_IMPORT.exec(code); m !== null; m = STATIC_IMPORT.exec(code)) {
+    if (positions[m.index] === " ") continue
     const specifier = m[1] ?? ""
     if (!SERVER_ONLY.test(specifier)) continue
     const line = lineAt(content, m.index)
@@ -379,7 +436,10 @@ const staticImportRegex = (): RegExp => new RegExp(STATIC_IMPORT.source, STATIC_
 function staticImportEdges(content: string): Array<{ specifier: string; index: number }> {
   const edges: Array<{ specifier: string; index: number }> = []
   const re = staticImportRegex()
-  for (let m = re.exec(content); m !== null; m = re.exec(content)) {
+  const code = stripComments(content)
+  const positions = codePositionMask(content)
+  for (let m = re.exec(code); m !== null; m = re.exec(code)) {
+    if (positions[m.index] === " ") continue
     if (m[1] !== undefined) edges.push({ specifier: m[1], index: m.index })
   }
   return edges
@@ -634,7 +694,7 @@ export async function walkSource(
 const bySite = (a: SourceFinding, b: SourceFinding): number =>
   a.file.localeCompare(b.file) || a.line - b.line
 
-/** Collect own-API `fetch()` findings across the project (kept for back-compat + reuse). */
+/** Collect own-API `fetch()` findings across the project. */
 export async function scanProject(cwd: string): Promise<SourceFinding[]> {
   const out: SourceFinding[] = []
   await walkSource(cwd, (rel, content) => out.push(...scanFetchText(rel, content)))

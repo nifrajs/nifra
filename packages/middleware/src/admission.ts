@@ -1,7 +1,7 @@
 import type { AdmissionController, AdmissionDecision } from "@nifrajs/core/server"
 
 /**
- * Adaptive capacity admission. Rate limiting bounds request *frequency* and `@nifrajs/budget` bounds
+ * Adaptive capacity admission. Rate limiting bounds request *frequency* and `@nifrajs/core/budget` bounds
  * request *duration*; neither stops a healthy instance from accepting more *concurrent* work than it
  * can finish. This gate admits on live capacity evidence — in-flight count + event-loop lag — briefly
  * queues at the edge, and sheds the rest with `429` + `Retry-After`, so p99 stays bounded under load

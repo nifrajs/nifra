@@ -16,8 +16,6 @@ export interface MethodOverrideOptions {
   readonly methods?: readonly string[]
   /** Target methods accepted from the override source. Default `["PUT", "PATCH", "DELETE"]`. */
   readonly allowed?: readonly Method[]
-  /** Invalid override values reject with `400` by default. Use `"ignore"` for legacy clients. */
-  readonly onInvalid?: "reject" | "ignore"
 }
 
 const SUPPORTED = new Set<string>(METHODS)
@@ -52,7 +50,6 @@ export function methodOverride(options: MethodOverrideOptions = {}) {
   const query = options.query ?? false
   const sourceMethods = new Set((options.methods ?? ["POST"]).map((m) => m.toUpperCase()))
   const allowed = new Set<Method>(options.allowed ?? DEFAULT_ALLOWED)
-  const rejectInvalid = options.onInvalid !== "ignore"
 
   if (header !== false && header.trim() === "") throw new Error("methodOverride: header is empty")
   if (query !== false && query.trim() === "") throw new Error("methodOverride: query is empty")
@@ -68,18 +65,17 @@ export function methodOverride(options: MethodOverrideOptions = {}) {
       }
       if (query !== false) {
         const value = singleQueryValue(req, query)
-        if (value === false)
-          return rejectInvalid ? jsonError(400, "invalid_method_override") : undefined
+        if (value === false) return jsonError(400, "invalid_method_override")
         if (value !== null) values.push(value)
       }
       if (values.length === 0) return undefined
       if (values.length > 1 && new Set(values.map((v) => v.trim().toUpperCase())).size > 1) {
-        return rejectInvalid ? jsonError(400, "invalid_method_override") : undefined
+        return jsonError(400, "invalid_method_override")
       }
 
       const method = normalizeMethod(values[0] ?? "")
       if (method === null || !allowed.has(method)) {
-        return rejectInvalid ? jsonError(400, "invalid_method_override") : undefined
+        return jsonError(400, "invalid_method_override")
       }
       return method === req.method ? undefined : replacement(req, method)
     }),

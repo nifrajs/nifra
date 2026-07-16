@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import {
   buildManifest,
-  enumeratePrerenderedPaths,
+  enumerateStaticRoutes,
   filePathToPattern,
   filePathToPatterns,
   fillRoutePattern,
@@ -154,7 +154,7 @@ test("a route's load() resolves its module", async () => {
   expect((await first.load()).default).toBe("index.tsx")
 })
 
-// --- SSG enumeration (fillRoutePattern + enumeratePrerenderedPaths) ---------------------------------
+// --- SSG enumeration (fillRoutePattern + enumerateStaticRoutes) -------------------------------------
 function rt(pattern: string, mod: Partial<RouteModule>): RouteEntry {
   return {
     id: pattern,
@@ -182,8 +182,8 @@ test("fillRoutePattern substitutes params; reports missing ones", () => {
   expect(fillRoutePattern("/users/:id", {})).toEqual({ path: "/users/:id", missing: ["id"] })
 })
 
-test("enumeratePrerenderedPaths: static opt-ins + dynamic getStaticPaths, skips the rest", async () => {
-  const paths = await enumeratePrerenderedPaths([
+test("enumerateStaticRoutes: static opt-ins + dynamic getStaticPaths, skips the rest", async () => {
+  const { paths } = await enumerateStaticRoutes([
     rt("/", { prerender: true }),
     rt("/about", {}), // not opted in
     rt("/users/:id", {
@@ -195,8 +195,8 @@ test("enumeratePrerenderedPaths: static opt-ins + dynamic getStaticPaths, skips 
   expect(paths.sort()).toEqual(["/", "/users/1", "/users/2"])
 })
 
-test("enumeratePrerenderedPaths: a getStaticPaths entry missing a param is dropped", async () => {
-  const paths = await enumeratePrerenderedPaths([
+test("enumerateStaticRoutes: a getStaticPaths entry missing a param is dropped", async () => {
+  const { paths } = await enumerateStaticRoutes([
     rt("/users/:id", { getStaticPaths: async () => ({ paths: [{ params: {} }] }) }),
   ])
   expect(paths).toEqual([])

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "@nifrajs/core"
-import { defineContract, server } from "@nifrajs/core"
+import { server } from "@nifrajs/core"
+import { defineContract } from "@nifrajs/core/contract"
 import {
   type ActionArgs,
   type ActionData,

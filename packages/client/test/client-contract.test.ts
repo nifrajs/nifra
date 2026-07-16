@@ -1,14 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { TreatyFromRegistry } from "@nifrajs/client"
 import { client } from "@nifrajs/client"
-import type {
-  Context,
-  RegistryFor,
-  StandardResult,
-  StandardSchemaV1,
-  StandardTypes,
-} from "@nifrajs/core"
-import { defineContract, implement } from "@nifrajs/core"
+import type { Context, StandardResult, StandardSchemaV1, StandardTypes } from "@nifrajs/core"
+import { defineContract, implement, type RegistryFor } from "@nifrajs/core/contract"
 
 function schema<O>(
   validate: (value: unknown) => StandardResult<O> | Promise<StandardResult<O>>,

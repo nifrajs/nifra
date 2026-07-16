@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { server, sse } from "@nifrajs/core"
+import { server } from "@nifrajs/core"
+import { sse, streaming } from "@nifrajs/core/sse"
 import { t } from "@nifrajs/schema"
 import { testClient } from "../src/index.ts"
 
@@ -27,11 +28,13 @@ function collect<T>(count: number): {
 
 describe("api.route.subscribe()", () => {
   test("receives typed events from an app.sse route (finite stream, reconnect: false)", async () => {
-    const app = server().sse("/feed", { sse: post }, (_c, stream) => {
-      stream.send({ id: 1, title: "hello" })
-      stream.send({ id: 2, title: "world" })
-      stream.close()
-    })
+    const app = server()
+      .use(streaming())
+      .sse("/feed", { sse: post }, (_c, stream) => {
+        stream.send({ id: 1, title: "hello" })
+        stream.send({ id: 2, title: "world" })
+        stream.close()
+      })
     const api = testClient<typeof app>(app)
 
     const { events, push, done } = collect<{ id: number; title: string }>(2)
@@ -49,10 +52,12 @@ describe("api.route.subscribe()", () => {
   })
 
   test("clean end with reconnect: false calls onClose exactly once", async () => {
-    const app = server().sse("/one", { sse: post }, (_c, stream) => {
-      stream.send({ id: 1, title: "only" })
-      stream.close()
-    })
+    const app = server()
+      .use(streaming())
+      .sse("/one", { sse: post }, (_c, stream) => {
+        stream.send({ id: 1, title: "only" })
+        stream.close()
+      })
     const api = testClient<typeof app>(app)
     let closes = 0
     const { push, done } = collect<unknown>(1)
@@ -100,11 +105,13 @@ describe("api.route.subscribe()", () => {
 
   test("close() stops reconnection; no events after close", async () => {
     let connections = 0
-    const app = server().sse("/tap", { sse: post }, (_c, stream) => {
-      connections++
-      stream.send({ id: connections, title: "tick" })
-      stream.close()
-    })
+    const app = server()
+      .use(streaming())
+      .sse("/tap", { sse: post }, (_c, stream) => {
+        connections++
+        stream.send({ id: connections, title: "tick" })
+        stream.close()
+      })
     const api = testClient<typeof app>(app)
     const { events, push, done } = collect<{ id: number }>(1)
     const subscription = api.tap.subscribe((e) => push(e), {
@@ -172,10 +179,12 @@ describe("api.route.subscribe()", () => {
   })
 
   test("an aborted options.signal closes the subscription", async () => {
-    const app = server().sse("/sig", { sse: post }, (_c, stream) => {
-      stream.send({ id: 1, title: "x" })
-      stream.close()
-    })
+    const app = server()
+      .use(streaming())
+      .sse("/sig", { sse: post }, (_c, stream) => {
+        stream.send({ id: 1, title: "x" })
+        stream.close()
+      })
     const api = testClient<typeof app>(app)
     const controller = new AbortController()
     let closed = false

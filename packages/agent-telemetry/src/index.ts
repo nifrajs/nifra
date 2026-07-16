@@ -12,14 +12,8 @@
 import {
   type ActiveObservation,
   createObservationLifecycle,
-  type NifraSpan,
-  type SpanExporter,
+  type ObservationAdapter,
 } from "@nifrajs/otel"
-
-/** A tool-call span. Kept as an alias for package-specific naming without duplicating OTel types. */
-export type AgentSpan = NifraSpan
-/** Exporter seam shared with `@nifrajs/otel`. */
-export type AgentSpanExporter = SpanExporter
 
 // ---------------------------------------------------------------------------
 // Types
@@ -27,7 +21,7 @@ export type AgentSpanExporter = SpanExporter
 
 export interface AgentTelemetryOptions {
   /** Exporter that receives completed tool-call spans. */
-  readonly exporter: AgentSpanExporter
+  readonly exporter: ObservationAdapter
   /** Path prefix for nifra tool routes (default `"/_nifra/tool/"`). */
   readonly toolPathPrefix?: string | undefined
   /** Path for the MCP endpoint (default `"/mcp"`). */
@@ -177,7 +171,7 @@ export function consoleAgentExporter(
   log: (line: string) => void = (line) => {
     console.log(line)
   },
-): AgentSpanExporter {
+): ObservationAdapter {
   return {
     onEnd(span) {
       const input = span.attributes["tool.input_bytes"] ?? 0

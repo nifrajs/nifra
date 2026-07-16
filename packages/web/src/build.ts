@@ -5,7 +5,7 @@
  * are Bun-specific and never on the request path (own subpath, like `@nifrajs/web/fs`); the *output*
  * runs on any runtime.
  */
-import { mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, relative, resolve as resolvePath } from "node:path"
 import type { BunPlugin } from "bun"
 import { sanitizeOutputNames } from "./chunk-names.ts"
@@ -632,7 +632,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   mkdirSync(outDir, { recursive: true })
 
   const routeManifest = discoverRoutes(routesDir)
-  // The bootstrap's filename is `_velo`-namespaced (not `entry.ts`) so its `[name]` can't collide with
+  // The bootstrap's filename is `_nifra`-namespaced (not `entry.ts`) so its `[name]` can't collide with
   // a user route named `entry.tsx` when the CSS mapping below excludes the bootstrap's aggregate CSS.
   const mode = options.minify === false ? "development" : "production"
   // PUBLIC_*-prefixed env → client define (Vite/Next convention). Sourced from the build env (`Bun.env`,
@@ -641,7 +641,11 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   // layered after these in the `define` object). `Bun` may be absent under non-Bun typecheck — guard it.
   const buildEnv = (typeof Bun !== "undefined" ? Bun.env : undefined) ?? process.env
   const publicDefines = publicEnvDefines(options.publicEnvPrefix ?? "PUBLIC_", buildEnv)
-  const entryFile = `${outDir}/_nifra-entry.ts`
+  // Keep the generated source beside the project, not inside `outDir`: module resolution starts at the
+  // importing file, so an absolute `--out /tmp/deploy` must still resolve the app's dependencies.
+  // A unique directory also avoids clobbering a user file or colliding with parallel builds.
+  const entryDir = mkdtempSync(resolvePath(dirname(routesDir), ".nifra-client-"))
+  const entryFile = `${entryDir}/_nifra-entry.ts`
   // A client bundle has no Node `process`; provide a minimal one so a stray bare `process` reference in
   // an app module doesn't crash hydration (`process.env.*` reads are handled at compile time by `define`).
   writeFileSync(
@@ -667,48 +671,49 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   // same-basename collisions (`index.tsx` + `blog/index.tsx`) that a filename match can't. Not yet in
   // `@types/bun`'s `BuildConfig`, so spread it in (spread props skip the excess-property check).
   const buildExtras = { metafile: true }
-  const result = await Bun.build({
-    entrypoints: [entryFile, ...routeFiles.map(resolve)],
-    outdir: outDir,
-    target: "browser",
-    naming: "[name]-[hash].[ext]",
-    publicPath,
-    splitting: true, // one chunk per lazily-imported route; shared deps deduped into shared chunks
-    // `import "./x.css"` in a route/component → bundled, minified, content-hashed `.css` asset (Bun
-    // strips the import from the JS; CSS bundling is on by default since Bun 1.2). Mapped to routes
-    // below — both the aggregate and per-route — via the metafile, for `<link>` injection.
-    ...buildExtras,
-    minify: options.minify ?? true,
-    plugins: [
-      reactDedupePlugin(routesDir),
-      preactDedupePlugin(routesDir),
-      svelteDedupePlugin(routesDir),
-      serverOnlyEmptyPlugin(),
-      ...(options.plugins ?? []),
-    ],
-    ...(options.conditions ? { conditions: [...options.conditions] } : {}),
-    // Replace `process.env.*` at compile time so an app module reading config off `process.env` doesn't
-    // hit a `process is not defined` crash in the browser. Bun does longest-match: NODE_ENV resolves to
-    // the build mode (React's prod/dev branch); each PUBLIC_* var resolves to its baked VALUE; every
-    // other `process.env.X` becomes undefined (the bare `process.env` → `({})` fallback — so secrets
-    // never leak). Callers can override any of these via `options.define` (layered last).
-    define: {
-      "process.env": "({})",
-      "process.env.NODE_ENV": JSON.stringify(mode),
-      ...publicDefines,
-      ...options.define,
-    },
-  })
+  const result = await (async () => {
+    try {
+      return await Bun.build({
+        entrypoints: [entryFile, ...routeFiles.map(resolve)],
+        outdir: outDir,
+        target: "browser",
+        naming: "[name]-[hash].[ext]",
+        publicPath,
+        splitting: true, // one chunk per lazily-imported route; shared deps deduped into shared chunks
+        // `import "./x.css"` in a route/component → bundled, minified, content-hashed `.css` asset (Bun
+        // strips the import from the JS; CSS bundling is on by default since Bun 1.2). Mapped to routes
+        // below — both the aggregate and per-route — via the metafile, for `<link>` injection.
+        ...buildExtras,
+        minify: options.minify ?? true,
+        plugins: [
+          reactDedupePlugin(routesDir),
+          preactDedupePlugin(routesDir),
+          svelteDedupePlugin(routesDir),
+          serverOnlyEmptyPlugin(),
+          ...(options.plugins ?? []),
+        ],
+        ...(options.conditions ? { conditions: [...options.conditions] } : {}),
+        // Replace `process.env.*` at compile time so an app module reading config off `process.env` doesn't
+        // hit a `process is not defined` crash in the browser. Bun does longest-match: NODE_ENV resolves to
+        // the build mode (React's prod/dev branch); each PUBLIC_* var resolves to its baked VALUE; every
+        // other `process.env.X` becomes undefined (the bare `process.env` → `({})` fallback — so secrets
+        // never leak). Callers can override any of these via `options.define` (layered last).
+        define: {
+          "process.env": "({})",
+          "process.env.NODE_ENV": JSON.stringify(mode),
+          ...publicDefines,
+          ...options.define,
+        },
+      })
+    } finally {
+      rmSync(entryDir, { recursive: true, force: true })
+    }
+  })()
   if (!result.success) {
     throw new Error(
       `[nifra/web] client build failed:\n${result.logs.map((l) => String(l)).join("\n")}`,
     )
   }
-
-  // The generated client-entry SOURCE (`_nifra-entry.ts`) was written into outDir only to serve as a
-  // Bun.build entrypoint; the shipped artifact is the content-hashed `_nifra-entry-<hash>.js` the HTML
-  // references. Remove the leftover source so it never ships in a static deploy dir (nothing links it).
-  rmSync(entryFile, { force: true })
 
   // #4: a `node:` builtin (e.g. `node:crypto`) pulled into a CLIENT chunk builds fine (Bun substitutes
   // a browser polyfill) but breaks/leaks at runtime. Fail the build with a named, actionable error

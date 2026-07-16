@@ -83,25 +83,23 @@ export function client(
  *
  * The returned proxy also implements the explicit symbol-keyed {@link BackendMount} interface, so
  * `createWebApp({ api: inProcessClient(backend) })` can auto-mount the backend while forwarding the
- * outer runtime's `env` and `waitUntil`. The released `.fetch(url, init)` bridge remains available as
- * a compatibility surface for custom integrations, but the platform-aware mount never relies on it.
+ * outer runtime's `env` and `waitUntil`.
  */
 export function inProcessClient<
   App extends { fetch(request: Request): Response | Promise<Response> },
 >(app: App, options?: Omit<ClientOptions, "fetch">): InProcessClient<App> {
   // The in-process bridge: the client speaks `fetch(url, init)` (the `FetchFn` shape) while the app's
-  // own `fetch` takes a `Request`. Kept as the proxy's per-call transport and the released legacy
-  // `.fetch` mount bridge; the symbol-keyed mount below is the platform-aware path.
+  // own `fetch` takes a `Request`. It is the proxy's per-call transport; the symbol-keyed mount below
+  // is the platform-aware auto-mount path.
   const bridge: FetchFn = (url, init) => Promise.resolve(app.fetch(new Request(url, init)))
   const mount: BackendMountHandler = (request, platform) =>
     Promise.resolve((app.fetch as BackendMountHandler)(request, platform))
   const proxy = client<App>("http://nifra.internal", { ...options, fetch: bridge })
-  // An outer Proxy intercepts only the explicit mount symbol and legacy `fetch` key, delegating every
-  // typed route segment unchanged (`api.users({ id }).get()`).
+  // An outer Proxy intercepts only the explicit mount symbol, delegating every typed route segment
+  // unchanged (`api.users({ id }).get()`).
   return new Proxy(proxy as object, {
     get(targetProxy, key, receiver) {
       if (key === NIFRA_BACKEND_MOUNT) return mount
-      if (key === "fetch") return bridge
       return Reflect.get(targetProxy, key, receiver)
     },
   }) as InProcessClient<App>

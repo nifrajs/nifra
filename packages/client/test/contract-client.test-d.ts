@@ -5,7 +5,7 @@
  */
 import { client } from "@nifrajs/client"
 import type { StandardSchemaV1 } from "@nifrajs/core"
-import { defineContract } from "@nifrajs/core"
+import { defineContract } from "@nifrajs/core/contract"
 import type { Equal, Expect } from "@nifrajs/test-utils"
 
 declare const userOut: StandardSchemaV1<unknown, { id: string; name: string }>

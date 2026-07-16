@@ -26,7 +26,7 @@ a **server-render counter**: it holds across cache `hit`s (the loader doesn't ru
 Drop a path's cached entry so the next request re-renders it:
 
 ```sh
-curl -X POST 'http://localhost:3000/__velo/revalidate?path=/' \
+curl -X POST 'http://localhost:3000/__nifra/revalidate?path=/' \
   -H 'x-nifra-revalidate-token: dev-secret'
 # → { "revalidated": "/" }   (wrong/missing token → 401; checked in constant time)
 ```

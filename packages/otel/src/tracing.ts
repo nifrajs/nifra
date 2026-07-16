@@ -2,7 +2,7 @@
  * The `tracing()` plugin — establishes a span per request, propagates W3C trace context, and exposes
  * `c.trace` for forwarding the trace to downstream services. OpenTelemetry-compatible by wire format
  * (traceparent) and attribute names (HTTP semantic conventions); the span itself is exported through
- * your {@link SpanExporter} (bridge to the OTel SDK, or log via `consoleSpanExporter`).
+ * your {@link ObservationAdapter} (bridge to the OTel SDK, or log via `consoleSpanExporter`).
  */
 
 import {
@@ -19,14 +19,14 @@ import {
   createObservationLifecycle,
   type ObservationContext,
 } from "./lifecycle.ts"
-import { consoleSpanExporter, type ObservationAdapter, type SpanExporter } from "./span.ts"
+import { consoleSpanExporter, type ObservationAdapter } from "./span.ts"
 
 /** The trace context exposed on the handler `c.trace` (typed, threaded via `derive`). */
 export type TraceContext = ObservationContext
 
 export interface TracingOptions {
   /** Where spans are sent. Default: {@link consoleSpanExporter}. */
-  readonly exporter?: SpanExporter
+  readonly exporter?: ObservationAdapter
   /** Additional observation adapters (DevTools, a private redacting backend, metrics, …). */
   readonly adapters?: readonly ObservationAdapter[]
   /** Sets the `service.name` attribute on every span. */

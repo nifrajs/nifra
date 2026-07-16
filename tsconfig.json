@@ -5,7 +5,6 @@
     // this tsconfig, and these entries are already `./packages/...`. Resolve workspace
     // packages to their TS source so typecheck/dev needs no build step.
     "paths": {
-      "@nifrajs/budget": ["./packages/budget/src/index.ts"],
       "@nifrajs/core": ["./packages/core/src/index.ts"],
       "@nifrajs/core/server": ["./packages/core/src/server.ts"],
       "@nifrajs/core/classification": ["./packages/core/src/classification.ts"],

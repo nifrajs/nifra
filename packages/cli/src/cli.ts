@@ -4,8 +4,8 @@
  * the project root (see {@link loadApp}) and wires the right `@nifrajs/web` entrypoint:
  *
  *   nifra dev      true-HMR dev server (Vite middleware + nifra SSR)        — @nifrajs/web/vite
- *   nifra build    bundle the client (content-hashed) + write manifest.json — @nifrajs/web/build
- *   nifra start    serve the built client + SSR on Bun.serve              — @nifrajs/web
+ *   nifra build    emit a complete target-specific deploy directory        — @nifrajs/web/build
+ *   nifra start    run the default Bun build                               — dist/server.js
  *
  * Bun-only (it runs the framework's TS + Bun plugins directly). The *output* runs anywhere.
  */
@@ -22,9 +22,8 @@ export interface Flags {
   readonly port: number
   readonly out: string
   readonly poll: boolean
-  /** `nifra build --target <t>`: emit a full deploy dir for a target (bun/node/deno/cf-pages/vercel/
-   * static) instead of just the client bundle. Undefined ⇒ the legacy client-only build. */
-  readonly target?: string
+  /** `nifra build --target <t>`: emit a full deploy dir for this target. Defaults to `bun`. */
+  readonly target: string
   /** `nifra build --report`: print a per-chunk size + gzip table after the build. */
   readonly report: boolean
 }
@@ -33,15 +32,15 @@ const HELP = `nifra — zero-config dev/build/start for a nifra app
 
 Usage:
   nifra dev     [--port <n>] [--poll]    Start the true-HMR dev server (Vite). Default port ${DEFAULT_DEV_PORT}.
-  nifra build   [--out <dir>]            Bundle the client + write manifest.json.
-                [--target <t>] [--report]  With --target, emit a FULL deploy dir for <t>:
+  nifra build   [--out <dir>] [--report]  Emit a complete Bun deploy directory by default.
+                [--target <t>]             Target a FULL deploy dir for <t>:
                                          bun | node | deno | cf-pages | vercel | static. Packages
                                          buildClient + buildServer (+ prerender for static) so an app
                                          no longer hand-writes build-<target>.ts + _worker.ts +
                                          _routes.json. The server entry is generated from your
                                          framework.ts (adapter) + backend.ts + routes/. --report prints
                                          a per-chunk size + gzip table (biggest first).
-  nifra start   [--port <n>] [--out <dir>]  Serve the built app (client + SSR) on Bun. Default port ${DEFAULT_DEV_PORT}.
+  nifra start   [--port <n>] [--out <dir>]  Run the Bun build at <out>/server.js. Default port ${DEFAULT_DEV_PORT}.
   nifra context                          Print this project's route INDEX (API + page routes) + conventions
                                          for an AI agent's prompt. Per-route schemas: nifra mcp's
                                          nifra_context (path/kind slice) or nifra routes --json.
@@ -151,20 +150,6 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
   console.log(`nifra dev → http://localhost:${server.port}`)
 }
 
-async function build(app: LoadedApp): Promise<void> {
-  const { buildClient } = await import("@nifrajs/web/build")
-  const { framework: fw, routesDir, outDir } = app
-  const manifest = await buildClient({
-    routesDir,
-    outDir,
-    clientModule: fw.clientModule,
-    plugins: asBunPlugins(await resolvePlugins(fw.clientPlugins)),
-    define: { "process.env.NODE_ENV": '"production"', ...(fw.define ?? {}) },
-    ...(fw.conditions ? { conditions: fw.conditions } : {}),
-  })
-  console.log(`nifra build → ${outDir} (entry ${manifest.entry}${manifest.css ? ", + css" : ""})`)
-}
-
 /**
  * `nifra build --target <t>` — package the engine (buildClient + buildServer + prerender) into one
  * command that emits a full deploy dir, so an app no longer hand-writes build-bun.ts + _worker.ts +
@@ -207,12 +192,12 @@ async function buildForTarget(app: LoadedApp, target: string, report: boolean): 
   if (report) console.log(`\n${renderSizeReport(result.size)}`)
 }
 
-/** Build the app FACTORY for the `static` target's prerender pass. Mirrors `nifra start`: register the
+/** Build the app FACTORY for the `static` target's prerender pass. Registers the
  * framework's SSR Bun plugins (so `.vue`/`.svelte`/Solid routes import) once, then return a factory that
  * `createWebApp`s the app for the client build's manifest. The client entry MUST be the real content-hashed
  * bundle (`client.entry`) — it's the hydration `<script src>` the prerendered HTML emits, so a placeholder
  * would 404 and the pages would render but never hydrate (inert controls). Styles/route-preload are wired
- * from the same manifest so the static HTML matches what `nifra start` serves. */
+ * from the same manifest so the static HTML matches the deployed app. */
 async function buildPrerenderApp(
   app: LoadedApp,
 ): Promise<(client: BuiltManifest) => { fetch(req: Request): Response | Promise<Response> }> {
@@ -239,43 +224,14 @@ interface BuiltManifest {
 }
 
 async function start(app: LoadedApp, flags: Flags): Promise<void> {
-  const { plugin } = await import("bun")
-  const { framework: fw, routesDir, outDir, backend } = app
-  // Register the framework's SSR Bun plugins so `.vue`/`.svelte`/Solid route files compile on the
-  // server's runtime import (React/Preact JSX is Bun-native → none).
-  for (const p of asBunPlugins(await resolvePlugins(fw.serverPlugins))) plugin(p)
-
-  const manifestFile = Bun.file(`${outDir}/manifest.json`)
-  if (!(await manifestFile.exists())) {
-    throw new Error(`[nifra] no ${outDir}/manifest.json — run \`nifra build\` first.`)
+  const serverFile = resolve(app.outDir, "server.js")
+  if (!existsSync(serverFile)) {
+    throw new Error(
+      `[nifra] no ${serverFile} — run \`nifra build\` or \`nifra build --target bun\` first.`,
+    )
   }
-  const manifest = JSON.parse(await manifestFile.text()) as BuiltManifest
-
-  const server = createWebApp({
-    adapter: asAdapter(fw.adapter),
-    manifest: discoverRoutes(routesDir),
-    clientEntry: manifest.entry,
-    ...(manifest.routes ? { routePreload: manifest.routes } : {}),
-    ...(manifest.css ? { styles: manifest.css } : {}),
-    ...(manifest.routeStyles ? { routeStyles: manifest.routeStyles } : {}),
-    ...apiOf(backend),
-  })
-  // Serve the content-hashed bundle (immutable). `.css` → text/css, else JS. Name is path-validated.
-  server.get("/assets/*", async (c) => {
-    const name = new URL(c.req.url).pathname.slice("/assets/".length)
-    if (!/^[A-Za-z0-9._-]+$/.test(name)) return new Response("bad request", { status: 400 })
-    const file = Bun.file(`${outDir}/${name}`)
-    if (!(await file.exists())) return new Response("Not Found", { status: 404 })
-    const type = name.endsWith(".css") ? "text/css" : "text/javascript"
-    return new Response(file, {
-      headers: {
-        "content-type": `${type}; charset=utf-8`,
-        "cache-control": "public, max-age=31536000, immutable",
-      },
-    })
-  })
-  const running = server.listen(flags.port)
-  console.log(`nifra start → http://localhost:${running.port}`)
+  Bun.env.PORT = String(flags.port)
+  await import(serverFile)
 }
 
 export function parseFlags(args: readonly string[]): Flags {
@@ -285,20 +241,20 @@ export function parseFlags(args: readonly string[]): Flags {
   let port = Number(Bun.env.PORT ?? DEFAULT_DEV_PORT)
   let out = "dist"
   let poll = Bun.env.CHOKIDAR_USEPOLLING === "1"
-  let target: string | undefined
+  let target = "bun"
   let report = false
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
     if ((a === "--port" || a === "-p") && args[i + 1]) port = Number(args[++i])
     else if (a === "--out" && args[i + 1]) out = args[++i] as string
     else if (a === "--poll") poll = true
-    else if (a === "--target" && args[i + 1]) target = args[++i]
+    else if (a === "--target" && args[i + 1]) target = args[++i] as string
     else if (a === "--report") report = true
   }
   if (!Number.isFinite(port) || port < 0 || port > 65535) {
     throw new Error(`[nifra] invalid --port: ${port}`)
   }
-  return { port, out, poll, report, ...(target !== undefined ? { target } : {}) }
+  return { port, out, poll, target, report }
 }
 
 async function main(): Promise<void> {
@@ -601,12 +557,8 @@ async function main(): Promise<void> {
   const flags = parseFlags(argv.slice(1))
   const app = await loadApp(process.cwd(), flags.out)
   if (command === "dev") await dev(app, flags)
-  else if (command === "build") {
-    // `--target` (or `--report`) → the full per-target deploy build; otherwise the legacy client build.
-    if (flags.target !== undefined || flags.report) {
-      await buildForTarget(app, flags.target ?? "cf-pages", flags.report)
-    } else await build(app)
-  } else if (command === "context") console.log(describeProject(app))
+  else if (command === "build") await buildForTarget(app, flags.target, flags.report)
+  else if (command === "context") console.log(describeProject(app))
   else if (command === "routes") {
     console.log(await describeRoutes(app, { json: argv.includes("--json") }))
   } else await start(app, flags)

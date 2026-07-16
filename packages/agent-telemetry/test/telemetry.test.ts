@@ -1,16 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
-import { tracing } from "@nifrajs/otel"
-import {
-  type AgentSpan,
-  type AgentSpanExporter,
-  agentTelemetry,
-  consoleAgentExporter,
-} from "../src/index.ts"
+import { type NifraSpan, type ObservationAdapter, tracing } from "@nifrajs/otel"
+import { agentTelemetry, consoleAgentExporter } from "../src/index.ts"
 
 /** Captures spans into an array for assertion. */
-function collectingExporter(): { exporter: AgentSpanExporter; spans: AgentSpan[] } {
-  const spans: AgentSpan[] = []
+function collectingExporter(): { exporter: ObservationAdapter; spans: NifraSpan[] } {
+  const spans: NifraSpan[] = []
   return {
     spans,
     exporter: {

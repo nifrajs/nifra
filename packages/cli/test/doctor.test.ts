@@ -141,6 +141,64 @@ describe("collectDoctorResult — project-level import vs declared-deps diff", (
     await rm(dir, { recursive: true, force: true })
   })
 
+  test("uses each workspace package's own dependency declarations", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-workspaces-"))
+    try {
+      const app = join(dir, "packages", "app")
+      const lib = join(dir, "packages", "lib")
+      await mkdir(join(app, "src"), { recursive: true })
+      await mkdir(join(lib, "src"), { recursive: true })
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "workspace", private: true, workspaces: ["packages/*"] }),
+      )
+      await writeFile(
+        join(app, "package.json"),
+        JSON.stringify({ name: "app", dependencies: { react: "^19" } }),
+      )
+      await writeFile(
+        join(lib, "package.json"),
+        JSON.stringify({ name: "lib", dependencies: { valibot: "^1" } }),
+      )
+      await writeFile(join(app, "src", "x.ts"), 'import "react"\nimport "valibot"')
+      await writeFile(join(lib, "src", "x.ts"), 'import "valibot"')
+
+      const result = await collectDoctorResult(dir)
+      expect(result.findings).toEqual([
+        { file: "packages/app/src/x.ts", line: 2, package: "valibot" },
+      ])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("auto-fix writes the owning workspace manifest", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-workspace-fix-"))
+    try {
+      const app = join(dir, "packages", "app")
+      await mkdir(join(app, "src"), { recursive: true })
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({ private: true, workspaces: ["packages/*"], dependencies: { zod: "^4" } }),
+      )
+      await writeFile(join(app, "package.json"), JSON.stringify({ name: "app" }))
+      await writeFile(join(app, "src", "x.ts"), 'import "zod"')
+
+      const result = await applyDoctorAutoFix(dir)
+      const root = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as {
+        dependencies?: Record<string, string>
+      }
+      const child = JSON.parse(await readFile(join(app, "package.json"), "utf8")) as {
+        dependencies?: Record<string, string>
+      }
+      expect(result.ok).toBe(true)
+      expect(root.dependencies?.zod).toBe("^4")
+      expect(child.dependencies?.zod).toBe("^4")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   test("finds the hoisted root copy even when the root manifest does not declare it", async () => {
     // The real split: every declaring package nests onto one copy while the root holds another. Only
     // consulting declarers sees one path and reports nothing.

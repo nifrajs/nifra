@@ -11,7 +11,7 @@
 <script>
   let { resolve, children, pending, error } = $props()
   const isDeferred = (v) =>
-    v != null && typeof v === "object" && v.__velo_deferred === true
+    v != null && typeof v === "object" && v.__nifra_deferred === true
 </script>
 
 {#if isDeferred(resolve)}
