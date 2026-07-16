@@ -80,6 +80,14 @@ export default function Edge() {
         , you can also bring Zod, Valibot, or ArkType (all eval-free) — only <code>t</code> also
         emits OpenAPI from the same definition.
       </p>
+      <p>
+        Size is the other edge axis. <code>t</code> is TypeBox-backed - it carries the whole JSON
+        Schema type system - so a validated app on <code>t</code> is heavier than one on a lean
+        validator. Validation is per route, so reach for <code>t</code> where you want the contract
+        (OpenAPI/MCP for free) and Valibot where the Workers cold-start bundle is what matters: a
+        Valibot-validated Nifra app measures <b>~16 KB gzipped</b>. Both are first-class, and you can
+        mix them in one app.
+      </p>
 
       <h2>Scheduled (cron)</h2>
       <p>

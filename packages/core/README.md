@@ -19,9 +19,8 @@ const app = server()
 export type App = typeof app // hand this to @nifrajs/client for end-to-end types
 ```
 
-`@nifrajs/core/server` is the lean common-runtime entry and is the recommended import for new apps.
-The package root remains a backwards-compatible full barrel, but it eagerly loads opt-in systems that
-an ordinary HTTP server does not need. Import those features from their explicit seams instead:
+`@nifrajs/core` and `@nifrajs/core/server` expose the same lean common runtime. Optional systems are
+available only from their explicit subpaths, so an ordinary HTTP server never evaluates them:
 
 ```ts
 import { defineContract, implement } from "@nifrajs/core/contract"

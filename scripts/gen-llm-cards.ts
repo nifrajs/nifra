@@ -10,9 +10,9 @@
  *     re-derived by hand, so a card can't drift from the code, and
  *   - a curated **Footguns** stanza (the 2–3 non-obvious rules an author actually trips on).
  *
- * The exports are extracted from each `src/index.ts`, so adding/removing/renaming an export changes the
- * card on the next `gen:cards` run; `check:cards` (the `--check` flag) fails CI if a committed card is
- * stale, mirroring `check:api`. Run: `bun run gen:cards` (also folded into `gen:llms` and `site:build`).
+ * The exports are extracted from each package's public `exports` map, so adding/removing/renaming a
+ * root or subpath export changes the card on the next `gen:cards` run; `check:cards` (the `--check`
+ * flag) fails CI if a committed card is stale, mirroring `check:api`. Run: `bun run gen:cards`.
  *
  * The footgun text is the one piece a generator can't derive from signatures — it's curated here, keyed
  * by package name, and reviewed like any other source. High-traffic packages get specific footguns; the
@@ -32,11 +32,27 @@ const MAX_EXPORTS = 14
 interface Pkg {
   readonly name: string
   readonly dir: string
-  /** The library entry (`src/index.ts`) the export list is extracted from, or `undefined` for a
-   * bin-only package (`@nifrajs/cli`, `create-nifra`) — those still get a card (purpose + footguns),
-   * just with no exports section. */
-  readonly entry: string | undefined
+  readonly entries: readonly PkgEntry[]
   readonly description: string
+}
+
+interface PkgEntry {
+  readonly importPath: string
+  readonly entry: string
+}
+
+function sourceEntry(dir: string, target: unknown): string | undefined {
+  if (typeof target === "string") {
+    const entry = `${dir}/${target.replace(/^\.\//, "")}`
+    return target.includes("/src/") && existsSync(entry) ? entry : undefined
+  }
+  if (target === null || typeof target !== "object") return undefined
+  const conditions = target as Record<string, unknown>
+  for (const key of ["bun", "deno", "worker", "browser", "import", "default", "types"]) {
+    const entry = sourceEntry(dir, conditions[key])
+    if (entry !== undefined) return entry
+  }
+  return undefined
 }
 
 /** Every PUBLISHED (non-private) package, sorted by name. A superset of `gen-api-reference.ts`'s
@@ -49,14 +65,37 @@ function publicPackages(): Pkg[] {
       name?: string
       private?: boolean
       description?: string
+      exports?: unknown
     }
     if (json.private === true || json.name === undefined) continue
     const dir = `${ROOT}/${file.replace(/\/package\.json$/, "")}`
-    const indexEntry = `${dir}/src/index.ts`
+    const entries: PkgEntry[] = []
+    if (json.exports !== null && typeof json.exports === "object") {
+      for (const [subpath, target] of Object.entries(json.exports as Record<string, unknown>)) {
+        if (subpath !== "." && !subpath.startsWith("./")) continue
+        const entry = sourceEntry(dir, target)
+        if (entry === undefined) continue
+        entries.push({
+          importPath: subpath === "." ? json.name : `${json.name}/${subpath.slice(2)}`,
+          entry,
+        })
+      }
+    }
+    const fallback = `${dir}/src/index.ts`
+    if (entries.length === 0 && existsSync(fallback)) {
+      entries.push({ importPath: json.name, entry: fallback })
+    }
+    entries.sort((a, b) =>
+      a.importPath === json.name
+        ? -1
+        : b.importPath === json.name
+          ? 1
+          : a.importPath.localeCompare(b.importPath),
+    )
     pkgs.push({
       name: json.name,
       dir,
-      entry: existsSync(indexEntry) ? indexEntry : undefined,
+      entries,
       description: json.description ?? "",
     })
   }
@@ -116,6 +155,7 @@ interface ExportRow {
   readonly name: string
   readonly kind: string
   readonly sig: string
+  readonly importPath: string
 }
 
 /** Order exports for the card: functions/classes (the things you call) before interfaces/types
@@ -129,12 +169,30 @@ const KIND_RANK: Record<string, number> = {
   type: 5,
 }
 
+const KEY_EXPORT_RANK = new Map(
+  [
+    "server",
+    "defineContract",
+    "implement",
+    "definePlugin",
+    "client",
+    "inProcessClient",
+    "testClient",
+    "createWebApp",
+    "t",
+    "sse",
+    "idempotency",
+    "effectLedger",
+  ].map((name, index) => [name, index]),
+)
+
 /** Curated, reviewed footguns per package — the one part a generator can't derive from signatures.
  * Keyed by package name. High-traffic packages carry specific rules; everything else falls back to the
  * generic pointer (so a low-traffic package still gets an honest, non-empty stanza without invented detail).
  * Keep each bullet to the non-obvious rule + the fix, not a tutorial. */
 const FOOTGUNS: Record<string, readonly string[]> = {
   "@nifrajs/core": [
+    "The package root is the lean HTTP server API. Enable optional systems with `.use()` plugins from their subpaths - `.use(mcp())` from `@nifrajs/core/mcp`, `.use(streaming())` from `@nifrajs/core/sse`, `.use(idempotency())`, `.use(effectLedger())`; the root activates none of them.",
     "`t.object({...})` (and any object schema) rejects **unknown fields** by default (`additionalProperties: false`) → a structured `422 { path: [...] }` **before** the handler runs. Use `t.looseObject` to allow extras.",
     '**Throw rule:** `throw new Response("", { status: 404 })` is control flow — returned as-is, bypasses `_error`. `throw new Error(…)` hits the nearest `_error` boundary / a 500. Do not throw a `Response` to signal a bug, and do not `throw new Error` to send a 4xx.',
     "Type the env ONCE on `server<Env>()` → `c.env` is typed on every route below (no per-binding cast). Without `<Env>`, `c.env` is `unknown`. Still validate untrusted env at the boundary.",
@@ -241,7 +299,8 @@ const FOOTGUNS: Record<string, readonly string[]> = {
   ],
   "@nifrajs/cli": [
     "`nifra check` (`--json` for agents) is the **done-gate**: typecheck + typed-client drift + server-only-import-in-a-route (with the transitive import chain) + raw-`Response`-from-a-route + undeclared dependency.",
-    "`nifra dev` uses Vite for HMR; **production builds use Bun**. `nifra mcp` exposes live project tools (`nifra_docs`, `nifra_example`, `nifra_check`) to an agent.",
+    "`nifra dev` uses Vite for HMR; `nifra build` emits a complete deploy and defaults to Bun (`--target` selects node/deno/cf-pages/vercel/static). Keep the deploy-safe adapter in `framework.ts` and Vite/compiler tooling in CLI-only `nifra.config.ts`.",
+    "`nifra mcp` exposes live project tools (`nifra_docs`, `nifra_example`, `nifra_check`) to an agent.",
   ],
   nifra: [
     'This is the unscoped **meta-entry** — it re-exports `@nifrajs/core` only, so `import { server } from "nifra"` works. Everything else (web, client, schema, …) lives under `@nifrajs/*`; import those directly.',
@@ -272,14 +331,23 @@ function cardFor(pkg: Pkg, exports: readonly ExportRow[]): string {
     "> reference see [`api-reference.md`](../../api-reference.md) (every export + signature) and",
     "> [`llms-full.txt`](../../llms-full.txt) (the prose guides). One cheap read instead of the whole corpus.",
     "",
-    "## Key exports",
-    "",
   ]
+  if (pkg.entries.length > 1) {
+    lines.push(
+      "## Public entrypoints",
+      "",
+      pkg.entries.map((entry) => `\`${entry.importPath}\``).join(" · "),
+      "",
+    )
+  }
+  lines.push("## Key exports", "")
   if (shown.length === 0) {
     lines.push("_No public value/type exports (CLI or side-effect package)._")
   } else {
     for (const e of shown) {
-      lines.push(`- **${e.name}** _(${e.kind})_ — \`${e.sig}\``)
+      lines.push(
+        `- **${e.name}** _(${e.kind})_ — \`${e.sig}\`${pkg.entries.length > 1 ? ` · from \`${e.importPath}\`` : ""}`,
+      )
     }
     if (more > 0) {
       lines.push(
@@ -294,30 +362,37 @@ function cardFor(pkg: Pkg, exports: readonly ExportRow[]): string {
   return lines.join("\n")
 }
 
-/** Extract the ranked export rows for every package from its `src/index.ts` (one shared TS program). */
+/** Extract ranked, name-deduplicated exports from every public package entrypoint. */
 function extractExports(pkgs: readonly Pkg[]): Map<string, ExportRow[]> {
-  const entries = pkgs.map((p) => p.entry).filter((e): e is string => e !== undefined)
+  const entries = pkgs.flatMap((pkg) => pkg.entries.map((entry) => entry.entry))
   const program = ts.createProgram(entries, repoOptions())
   const checker = program.getTypeChecker()
   const byPkg = new Map<string, ExportRow[]>()
   for (const pkg of pkgs) {
-    const sf = pkg.entry ? program.getSourceFile(pkg.entry) : undefined
-    const moduleSym = sf ? checker.getSymbolAtLocation(sf) : undefined
-    const rows: ExportRow[] = []
-    if (moduleSym) {
+    const rowsByName = new Map<string, ExportRow>()
+    for (const entry of pkg.entries) {
+      const sf = program.getSourceFile(entry.entry)
+      const moduleSym = sf ? checker.getSymbolAtLocation(sf) : undefined
+      if (!moduleSym) continue
       for (const raw of checker.getExportsOfModule(moduleSym)) {
         const sym = raw.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(raw) : raw
         const decl = sym.getDeclarations()?.[0]
         if (!decl) continue
-        rows.push({
+        if (rowsByName.has(raw.getName())) continue
+        rowsByName.set(raw.getName(), {
           name: raw.getName(),
           kind: kindOf(decl),
           sig: signatureOf(raw.getName(), sym, decl, checker),
+          importPath: entry.importPath,
         })
       }
     }
+    const rows = [...rowsByName.values()]
     rows.sort(
-      (a, b) => (KIND_RANK[a.kind] ?? 9) - (KIND_RANK[b.kind] ?? 9) || a.name.localeCompare(b.name),
+      (a, b) =>
+        (KEY_EXPORT_RANK.get(a.name) ?? 99) - (KEY_EXPORT_RANK.get(b.name) ?? 99) ||
+        (KIND_RANK[a.kind] ?? 9) - (KIND_RANK[b.kind] ?? 9) ||
+        a.name.localeCompare(b.name),
     )
     byPkg.set(pkg.name, rows)
   }

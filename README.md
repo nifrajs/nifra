@@ -105,7 +105,7 @@ nifra doctor           # undeclared imports + duplicate identity-sensitive insta
 ## Install
 
 ```sh
-bun add @nifrajs/core            # the server + router + contracts
+bun add @nifrajs/core            # the lean server + router
 bun add @nifrajs/client          # the typed client (browser-safe)
 bun add @nifrajs/schema          # the `t` schema builder + OpenAPI (optional)
 bun add @nifrajs/middleware      # CORS, security headers, rate limiting (optional)
@@ -113,9 +113,9 @@ bun add @nifrajs/middleware      # CORS, security headers, rate limiting (option
 
 nifra is **ESM-only** and **Bun-native** (it uses `Bun.serve`). It runs on Bun; the client is environment-agnostic.
 
-Use `@nifrajs/core/server` for the ordinary HTTP runtime. The `@nifrajs/core` package root remains a
-compatibility barrel containing every feature; specialized systems such as contracts, causality,
-assurance, invariants, and manifests have dedicated subpaths so processes only parse what they use.
+Use `@nifrajs/core` (or `@nifrajs/core/server`) for the ordinary HTTP runtime. Nifra 2.0 keeps the
+package root deliberately lean; contracts, causality, assurance, manifests, reflection, MCP, SSE,
+idempotency, and the effect ledger are available only from their documented subpaths.
 
 ## Validate input with `t` (and get OpenAPI for free)
 
@@ -204,7 +204,7 @@ Bun is the first-class runtime (`app.listen()`), but the whole lifecycle is `app
 
 - **Reject invalid input at three boundaries** — compile-time (types), boot-time (config throws loudly), request-time (Standard Schema → structured `422`). "Genuine fallback" is a documented whitelist; everything else rejects.
 - **Tests everywhere, six kinds** — unit, type-level (`*.test-d.ts`), property/fuzz, mode-conformance, benchmark-regression, security-guardrail.
-- **Speed is a measured goal** — tracked with the `oha` HTTP matrix (`bun run bench:loadtest`) across Bun, Node, and Deno against raw runtime handlers plus representative API framework baselines.
+- **Speed is a measured goal** — tracked with the `oha` HTTP matrix (`bun run bench:http`) across Bun, Node, and Deno against raw runtime handlers plus representative API framework baselines.
 - **Production-grade by default** — graceful shutdown, redacting logs, idempotent guards, integer-money discipline; nothing is "we'll fix it later".
 
 ## Packages
@@ -212,7 +212,6 @@ Bun is the first-class runtime (`app.listen()`), but the whole lifecycle is `app
 | Package | What it is |
 |---|---|
 | [`@nifrajs/core`](packages/core) | Router, fully-inferred server, contracts, lifecycle middleware, hardening |
-| [`@nifrajs/budget`](packages/budget) | Absolute request deadlines, monotonic remaining time, child reserves, wire propagation |
 | [`@nifrajs/client`](packages/client) | End-to-end-typed, never-throwing client (Eden-style proxy) |
 | [`@nifrajs/schema`](packages/schema) | TypeBox-backed `t` builder + `toOpenAPI` |
 | [`@nifrajs/middleware`](packages/middleware) | CORS, security headers, rate limiting |
@@ -239,7 +238,7 @@ bun install
 bun run check          # lint + typecheck (incl. type-level tests) + tests w/ coverage
 bun run build          # emit dist/ (js + d.ts) for all packages
 bun run check:publish  # build + publint + arethetypeswrong
-bun run bench:loadtest # oha HTTP matrix across Bun/Node/Deno
+bun run bench:http     # oha HTTP matrix across Bun/Node/Deno
 ```
 
 MIT licensed.

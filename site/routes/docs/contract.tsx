@@ -222,7 +222,7 @@ export const meta = ({ data, params, origin }: MetaArgs) => {
   }
 }`
 
-const BUILD_OUTPUT = `// \`nifra build\` → buildClient (Bun.build) writes dist/ + manifest.json. The contract:
+const BUILD_OUTPUT = `// buildClient() writes a browser bundle + manifest.json for custom build pipelines:
 {
   "entry": "/assets/_nifra-entry-HASH.js",        // the bootstrap module script
   "assets": ["/assets/…"],                          // every emitted chunk URL
@@ -358,8 +358,8 @@ export default function Contract() {
 
       <h2>The build-output contract</h2>
       <p>
-        <code>nifra build</code> emits a content-hashed <code>dist/</code> plus a{" "}
-        <code>manifest.json</code> you hand to <code>createWebApp</code> (<code>entry</code>,{" "}
+        The programmatic <code>buildClient()</code> API emits a content-hashed directory plus a{" "}
+        <code>manifest.json</code> you can hand to <code>createWebApp</code> (<code>entry</code>,{" "}
         <code>routes</code> for per-route preload, <code>css</code> + <code>routeStyles</code> for{" "}
         <code>&lt;link&gt;</code> injection).
       </p>

@@ -6,8 +6,8 @@ The `nifra` CLI — zero-config dev/build/start for a nifra app, plus the agent 
 
 ```
 nifra dev     [--port <n>] [--poll]       True-HMR dev server (Vite + nifra SSR).
-nifra build   [--out <dir>]               Content-hashed client bundle + manifest.json.
-nifra start   [--port <n>] [--out <dir>]  Serve the built app (client + SSR) on Bun.
+nifra build   [--out <dir>] [--target <t>]  Complete deploy directory; target defaults to Bun.
+nifra start   [--port <n>] [--out <dir>]   Run the generated Bun server at <out>/server.js.
 nifra context                             Print this project's API + page routes + conventions.
 nifra mcp                                 MCP server (stdio) exposing this project to a coding agent.
 nifra check   [--json]                    Gate: typecheck + lints; --json includes fixes/suggestions.

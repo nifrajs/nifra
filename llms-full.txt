@@ -945,7 +945,8 @@ resolves, you call `stream.close()`, or the client disconnects (
 Node, Deno, and the edge — no `new Function`, no per-runtime API.
 
 ```ts
-import { server, sse } from "@nifrajs/core/server"
+import { server } from "@nifrajs/core/server"
+import { sse } from "@nifrajs/core/sse"
 
 const app = server()
 // Your pub-sub of choice — subscribe returns an unsubscribe function.
@@ -2342,6 +2343,13 @@ Standard Schema
 , you can also bring Zod, Valibot, or ArkType (all eval-free) — only `t` also
 emits OpenAPI from the same definition.
 
+Size is the other edge axis. `t` is TypeBox-backed - it carries the whole JSON
+Schema type system - so a validated app on `t` is heavier than one on a lean
+validator. Validation is per route, so reach for `t` where you want the contract
+(OpenAPI/MCP for free) and Valibot where the Workers cold-start bundle is what matters: a
+Valibot-validated Nifra app measures **~16 KB gzipped**. Both are first-class, and you can
+mix them in one app.
+
 ### Scheduled (cron)
 
 Pass `scheduled` to `toFetchHandler` to also export a Workers cron
@@ -2682,7 +2690,7 @@ Deploy: `wrangler pages deploy dist` (Pages) or `wrangler deploy`
 
 ## Nifra — CLI
 
-> The zero-config Nifra CLI (`nifra dev`, `nifra build`, `nifra start`): true HMR, hashed client builds, and SSR serve.
+> The zero-config Nifra CLI (`nifra dev`, `nifra build`, `nifra start`): true HMR and complete target-specific deploy builds.
 
 `Nifra` is zero-config: it reads `routes/`, `framework.ts`, and
 (optionally) `backend.ts` from your project and wires the right
@@ -2691,57 +2699,62 @@ Deploy: `wrangler pages deploy dist` (Pages) or `wrangler deploy`
 
 ```ts
 nifra dev      # true-HMR dev server (Vite middleware + nifra SSR) — http://localhost:4321
-nifra build    # bundle the client (content-hashed, code-split) + write dist/manifest.json (incl. CSS)
-nifra start    # serve the built client + SSR on Bun (assets, <link> stylesheets, matched-route preload)
+nifra build    # full Bun deploy → dist/server.js + content-hashed dist/assets/ (default target: bun)
+nifra start    # run dist/server.js on Bun
+nifra build --target cf-pages  # also: node | deno | vercel | static; add --report for chunk sizes
 
 # dev + start share the default port 4321. Override per run: --port <n> (alias -p) or the PORT env var.
-# flags: --port <n> (dev/start) · --out <dir> (build/start) · --poll (dev; containers/sandboxes)
+# flags: --port <n> (dev/start) · --out <dir> (build/start) · --target <t> (build) · --poll (dev)
 ```
 
 ### The conventions
 
-Three files at the project root. `nifra dev` runs the Vite-backed
+Four conventions at the project root. `nifra dev` runs the Vite-backed
 [HMR dev server](/docs/dev); `nifra build` runs the Bun-native production
-build (content-hashed, code-split, CSS bundled); `nifra start` serves the built
-client and SSRs on Bun — assets with immutable caching + correct MIME, the matched route's
-chunks preloaded, and the CSS bundle linked in every `<head>`.
+build (content-hashed client assets plus a target-specific server); `nifra start`
+runs the default Bun output. The generated server serves assets and SSR with matched-route
+chunks preloaded and route CSS linked in each `<head>`.
 
 ```ts
 my-app/
   routes/            # file-based routes (index.tsx, _layout.tsx, [id].tsx, …)
-  framework.ts       # adapter + clientModule + plugins (above)
+  framework.ts       # deploy-safe render adapter
+  nifra.config.ts    # CLI-only client module + dev/build plugins
   backend.ts         # export const backend = server()...   (optional — the typed contract)
 ```
 
 ### framework.ts — naming the framework once
 
-The single framework-specific file. Only `adapter` + `clientModule` are
-required; the plugin/condition fields are extras the compiler frameworks need (React/Preact's
-JSX is Bun-native, so they need none beyond the Vite plugin for dev HMR).
+Keep the render `adapter` in deploy-safe `framework.ts`. Put
+`clientModule`, Vite plugins, compiler plugins, conditions, and defines in CLI-only
+`nifra.config.ts`. This prevents build tooling and native dependencies from entering
+generated server bundles.
 
 ```ts
-// doc-check: skip — needs the third-party @vitejs/plugin-react; install it to run this.
-// framework.ts — the one place an app names its framework. The CLI reads these:
-import react from "@vitejs/plugin-react"
+// framework.ts — deploy-safe; generated server entries import this file.
 import { reactAdapter } from "@nifrajs/web-react"
 
 export const adapter = reactAdapter
+
+// nifra.config.ts — CLI-only build/dev tooling; never imported by a deployed server.
+// doc-check: skip — needs the third-party @vitejs/plugin-react; install it to run this.
+import react from "@vitejs/plugin-react"
+export { adapter } from "./framework"
 export const clientModule = "@nifrajs/web-react/client"
 export const vitePlugins = [react()]          // dev HMR (Fast Refresh)
 // Vue/Svelte/Solid also export:
 //   clientPlugins = [vueBunPlugin("dom")]     // compile routes for the client build
-//   serverPlugins = [vueBunPlugin("ssr")]     // compile routes for SSR (nifra start registers them)
+//   serverPlugins = [vueBunPlugin("ssr")]     // compile routes into the target's server bundle
 //   conditions    = ["solid"]                 // Solid: resolve solid-js to its source
 //   define        = { __VUE_OPTIONS_API__: "true", ... }   // Vue feature flags
 ```
 
 ### Scope
 
-`nifra build` + `nifra start` target a Bun (or Node) long-running server —
-the common self-hosted case. For the edge (Cloudflare Workers / Vercel Edge / Deno Deploy),
-use the per-target build entries from `create-nifra`'s `site` template (see
-[Deployment](/docs/deployment)) — `buildServer` bundles a disk-less
-worker those targets need. A `nifra build --target` for edge is a future addition.
+`nifra build` defaults to a self-hosted Bun server. Use `--target node`,
+`deno`, `cf-pages`, `vercel`, or `static` for another
+complete deploy shape (see [Deployment](/docs/deployment)). Run non-Bun outputs with
+the command printed by the build.
 
 ## Nifra — Dev & HMR
 
@@ -3807,13 +3820,13 @@ or `env`. Keep server-only imports out of a route file's top level.
 
 ### The build-output contract
 
-`nifra build` emits a content-hashed `dist/` plus a
-`manifest.json` you hand to `createWebApp` (`entry`,
+The programmatic `buildClient()` API emits a content-hashed directory plus a
+`manifest.json` you can hand to `createWebApp` (`entry`,
 `routes` for per-route preload, `css` + `routeStyles` for
 `<link>` injection).
 
 ```ts
-// `nifra build` → buildClient (Bun.build) writes dist/ + manifest.json. The contract:
+// buildClient() writes a browser bundle + manifest.json for custom build pipelines:
 {
   "entry": "/assets/_nifra-entry-HASH.js",        // the bootstrap module script
   "assets": ["/assets/…"],                          // every emitted chunk URL
@@ -5014,38 +5027,6 @@ one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
 done-gate, or `nifra mcp` to give the agent live project tools.
 
-## @nifrajs/budget
-
-Compatibility import for the request-deadline mechanics owned by `@nifrajs/core/budget`. Existing
-Nifra, Hono, and Fetch consumers can keep this import unchanged; new core consumers may use the
-subpath directly. Both paths resolve to the same implementation and classes.
-
-```ts
-import {
-  assertBudgetRemaining,
-  createRequestBudget,
-  withDeadlineHeader,
-} from "@nifrajs/budget"
-
-const budget = createRequestBudget({
-  deadline: Date.now() + 2_000,
-  signal: request.signal,
-})
-
-assertBudgetRemaining(budget, 100)
-await fetch(url, {
-  signal: budget.signal,
-  headers: withDeadlineHeader(undefined, budget.child(50)),
-})
-```
-
-The wire value is an absolute Unix epoch deadline. `remaining()` samples wall time once, then uses a
-monotonic clock so NTP changes cannot extend or shorten admitted work. A budget does not choose retry,
-provider, tenant, or money policy; it only answers how much time remains.
-
-Nifra route handlers receive the same primitive as `c.budget`. `c.signal` remains the cancellation
-signal and aborts at the effective server deadline.
-
 ## @nifrajs/cache
 
 Typed KV cache for nifra — **TTL**, **stale-while-revalidate**, **tag invalidation**, and **single-flight
@@ -5109,8 +5090,8 @@ The `nifra` CLI — zero-config dev/build/start for a nifra app, plus the agent 
 
 ```
 nifra dev     [--port <n>] [--poll]       True-HMR dev server (Vite + nifra SSR).
-nifra build   [--out <dir>]               Content-hashed client bundle + manifest.json.
-nifra start   [--port <n>] [--out <dir>]  Serve the built app (client + SSR) on Bun.
+nifra build   [--out <dir>] [--target <t>]  Complete deploy directory; target defaults to Bun.
+nifra start   [--port <n>] [--out <dir>]   Run the generated Bun server at <out>/server.js.
 nifra context                             Print this project's API + page routes + conventions.
 nifra mcp                                 MCP server (stdio) exposing this project to a coding agent.
 nifra check   [--json]                    Gate: typecheck + lints; --json includes fixes/suggestions.
@@ -5332,9 +5313,8 @@ const app = server()
 export type App = typeof app // hand this to @nifrajs/client for end-to-end types
 ```
 
-`@nifrajs/core/server` is the lean common-runtime entry and is the recommended import for new apps.
-The package root remains a backwards-compatible full barrel, but it eagerly loads opt-in systems that
-an ordinary HTTP server does not need. Import those features from their explicit seams instead:
+`@nifrajs/core` and `@nifrajs/core/server` expose the same lean common runtime. Optional systems are
+available only from their explicit subpaths, so an ordinary HTTP server never evaluates them:
 
 ```ts
 import { defineContract, implement } from "@nifrajs/core/contract"
@@ -6017,8 +5997,7 @@ inventing trace identity.
 
 ## Adapters
 
-Implement `ObservationAdapter` to send spans wherever you collect them. `SpanExporter` remains as a
-backwards-compatible type alias:
+Implement `ObservationAdapter` to send spans wherever you collect them:
 
 ```ts
 interface ObservationAdapter {
@@ -6119,6 +6098,22 @@ const openapi = toOpenAPI(app) // OpenAPI 3.1
 - **`toOpenAPI`** — richest from a contract (it carries `response` schemas + op names →
   `operationId`s); also works on a live app. Routes using a BYO Standard Schema are
   emitted without a detailed schema (Standard Schema exposes no JSON Schema).
+
+### `t` vs bring-your-own (bundle size)
+
+`t` is the batteries-included default because a TypeBox schema *is* a JSON Schema: it gives you
+OpenAPI + MCP `tools/list` for free and compiles to a fast validator. That completeness has a
+cost - TypeBox carries the whole JSON Schema type system, so `t` adds meaningful bytes to a bundle.
+
+nifra validates through **Standard Schema**, so any Standard-Schema validator works on a route with
+no adapter - `{ body: v.object({ ... }) }` with valibot, for instance. A validated app built on a
+lean validator like valibot is a fraction of the size (measured ~16 KB gzipped), which matters for
+edge/Workers cold-starts. The trade is the one noted above: a bring-your-own validator exposes no
+JSON Schema, so those routes carry no OpenAPI/MCP detail.
+
+Rule of thumb: reach for `t` when you want the contract (OpenAPI/MCP) for free; bring valibot (or any
+Standard-Schema validator) when bundle size on the edge is the priority. Both are first-class - the
+choice is per route, and you can mix them in one app.
 
 ### `toOpenAPI` coverage
 
@@ -6703,7 +6698,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/agent-telemetry
 
-`AgentSpan`, `AgentSpanExporter`, `agentTelemetry`, `AgentTelemetryOptions`, `consoleAgentExporter`
+`agentTelemetry`, `AgentTelemetryOptions`, `consoleAgentExporter`
 
 ## @nifrajs/auth
 
@@ -6727,7 +6722,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/core
 
-`AdmissionController`, `AdmissionDecision`, `AnyServer`, `attachWebSocket`, `commonSecretPatterns`, `Context`, `ContextForOp`, `ContractShape`, `CookieOptions`, `defineContract`, `defineIdentityPlugin`, `definePlugin`, `defineRouterPlugin`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FRAMEWORK_NAME`, `FrameworkError`, `FrameworkName`, `Handler`, `HandlersFor`, `IdentityPlugin`, `implement`, `InferInput`, `InferOutput`, `jsonLogger`, `LogFields`, `Logger`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `METHODS`, `Middleware`, `NifraPlugin`, `NifraWebSocket`, `NodeServeOutcome`, `OnRequestResult`, `OperationDef`, `Params`, `parseCookies`, `Platform`, `Prettify`, `PromptArgument`, `PromptMessage`, `redactLogFields`, `RedactOptions`, `Registry`, `RegistryFor`, `RegistryFromImpl`, `ResponseControls`, `ResponseDef`, `ResponseFinalization`, `robots`, `RobotsOptions`, `RobotsRule`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `Router`, `RouterMatch`, `RouteSchema`, `RunningServer`, `ScheduledController`, `ScheduledHandler`, `serializeCookie`, `server`, `Server`, `ServerOptions`, `SignatureEncoding`, `signValue`, `silentLogger`, `sitemap`, `SitemapChangeFreq`, `SitemapEntry`, `SitemapOptions`, `sse`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `toFetchHandler`, `ToolAnnotations`, `TopicRegistry`, `typedSSEStream`, `TypedSSEStream`, `unsignValue`, `validateStandard`, `ValidationOutcome`, `verifyWebhook`, `VerifyWebhookOptions`, `Version`, `VERSION`, `WebhookFailureReason`, `WebhookProvider`, `WebhookResult`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`
+`Version`, `VERSION`
 
 ## @nifrajs/cron
 
@@ -6787,7 +6782,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/otel
 
-`ActiveObservation`, `AttributeValue`, `causalitySpanLink`, `combineObservationAdapters`, `consoleSpanExporter`, `createObservationLifecycle`, `EndObservation`, `formatTraceparent`, `generateSpanId`, `generateTraceId`, `NifraSpan`, `ObservationAdapter`, `ObservationClock`, `ObservationContext`, `ObservationLifecycle`, `ObservationLifecycleOptions`, `ObservationLink`, `ObservationParent`, `ParsedTraceparent`, `parseTraceparent`, `SpanExporter`, `SpanStatus`, `StartObservation`, `TraceContext`, `traceHeaders`, `tracing`, `TracingOptions`
+`ActiveObservation`, `AttributeValue`, `causalitySpanLink`, `combineObservationAdapters`, `consoleSpanExporter`, `createObservationLifecycle`, `EndObservation`, `formatTraceparent`, `generateSpanId`, `generateTraceId`, `NifraSpan`, `ObservationAdapter`, `ObservationClock`, `ObservationContext`, `ObservationLifecycle`, `ObservationLifecycleOptions`, `ObservationLink`, `ObservationParent`, `ParsedTraceparent`, `parseTraceparent`, `SpanStatus`, `StartObservation`, `TraceContext`, `traceHeaders`, `tracing`, `TracingOptions`
 
 ## @nifrajs/prompt
 
@@ -6815,7 +6810,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`Action`, `ACTION_GLOBAL`, `apiKey`, `assertRenderAdapterConformance`, `BrowserNavigate`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createMutation`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `DehydratedState`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumeratePrerenderedPaths`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `getBrowserNavigate`, `GetStaticPaths`, `hashQueryKey`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NavigateOptions`, `openGraph`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderedPage`, `renderPage`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `routeStyles`, `ScriptDescriptor`, `serializeData`, `ServerOnly`, `setBrowserNavigate`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `styles`, `Submission`, `SubmitOptions`, `withISR`
+`Action`, `ACTION_GLOBAL`, `apiKey`, `assertRenderAdapterConformance`, `BrowserNavigate`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createMutation`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `DehydratedState`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `getBrowserNavigate`, `GetStaticPaths`, `hashQueryKey`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NavigateOptions`, `openGraph`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderedPage`, `renderPage`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `routeStyles`, `ScriptDescriptor`, `serializeData`, `ServerOnly`, `setBrowserNavigate`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `styles`, `Submission`, `SubmitOptions`, `withISR`
 
 ## @nifrajs/web-preact
 

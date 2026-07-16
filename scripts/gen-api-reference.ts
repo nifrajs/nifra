@@ -19,6 +19,11 @@ const SIG_CAP = 220
 
 interface Pkg {
   readonly name: string
+  readonly entries: readonly PkgEntry[]
+}
+
+interface PkgEntry {
+  readonly importPath: string
   readonly entry: string
 }
 
@@ -28,17 +33,57 @@ function repoOptions(): ts.CompilerOptions {
   return { ...(parsed?.options ?? {}), noEmit: true, skipLibCheck: true }
 }
 
-/** Published packages (skip `private`) that expose a `src/index.ts`, sorted by name. */
+function sourceEntry(dir: string, target: unknown): string | undefined {
+  if (typeof target === "string") {
+    const entry = `${dir}/${target.replace(/^\.\//, "")}`
+    return target.includes("/src/") && existsSync(entry) ? entry : undefined
+  }
+  if (target === null || typeof target !== "object") return undefined
+  const conditions = target as Record<string, unknown>
+  for (const key of ["bun", "deno", "worker", "browser", "import", "default", "types"]) {
+    const entry = sourceEntry(dir, conditions[key])
+    if (entry !== undefined) return entry
+  }
+  return undefined
+}
+
+/** Published packages (skip `private`) and every source-backed public export subpath. */
 function publicPackages(): Pkg[] {
   const pkgs: Pkg[] = []
   for (const file of new Glob("packages/*/package.json").scanSync(ROOT)) {
     const json = JSON.parse(readFileSync(`${ROOT}/${file}`, "utf8")) as {
       name?: string
       private?: boolean
+      exports?: unknown
     }
     if (json.private === true || json.name === undefined) continue
-    const entry = `${ROOT}/${file.replace(/\/package\.json$/, "")}/src/index.ts`
-    if (existsSync(entry)) pkgs.push({ name: json.name, entry })
+    const dir = `${ROOT}/${file.replace(/\/package\.json$/, "")}`
+    const entries: PkgEntry[] = []
+    if (json.exports !== null && typeof json.exports === "object") {
+      for (const [subpath, target] of Object.entries(json.exports as Record<string, unknown>)) {
+        if (subpath !== "." && !subpath.startsWith("./")) continue
+        const entry = sourceEntry(dir, target)
+        if (entry === undefined) continue
+        entries.push({
+          importPath: subpath === "." ? json.name : `${json.name}/${subpath.slice(2)}`,
+          entry,
+        })
+      }
+    }
+    const fallback = `${dir}/src/index.ts`
+    if (entries.length === 0 && existsSync(fallback)) {
+      entries.push({ importPath: json.name, entry: fallback })
+    }
+    if (entries.length > 0) {
+      entries.sort((a, b) =>
+        a.importPath === json.name
+          ? -1
+          : b.importPath === json.name
+            ? 1
+            : a.importPath.localeCompare(b.importPath),
+      )
+      pkgs.push({ name: json.name, entries })
+    }
   }
   return pkgs.sort((a, b) => a.name.localeCompare(b.name))
 }
@@ -105,34 +150,41 @@ function summaryOf(sym: ts.Symbol, checker: ts.TypeChecker): string {
 export function generateApiReference(): string {
   const pkgs = publicPackages()
   const program = ts.createProgram(
-    pkgs.map((p) => p.entry),
+    pkgs.flatMap((p) => p.entries.map((entry) => entry.entry)),
     repoOptions(),
   )
   const checker = program.getTypeChecker()
 
   const sections: string[] = [
     "# nifra API reference (generated)",
-    "Every public export of every package — name, kind, signature, and doc summary — extracted from each `src/index.ts` with the TypeScript compiler API, so it cannot drift from the code. For HTTP route shapes (request/response bodies), see the OpenAPI + Scalar reference your app serves at `/reference`. For prose guides, see `llms-full.txt`.",
+    "Every public export of every package and documented subpath — name, kind, signature, and doc summary — extracted from each package's `exports` map with the TypeScript compiler API, so it cannot drift from the code. For HTTP route shapes (request/response bodies), see the OpenAPI + Scalar reference your app serves at `/reference`. For prose guides, see `llms-full.txt`.",
   ]
 
   for (const pkg of pkgs) {
-    const sf = program.getSourceFile(pkg.entry)
-    const moduleSym = sf ? checker.getSymbolAtLocation(sf) : undefined
-    if (!moduleSym) continue
-    const lines: string[] = []
-    for (const raw of checker.getExportsOfModule(moduleSym)) {
-      // Resolve `export { x } from "..."` re-exports to the real declaration.
-      const sym = raw.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(raw) : raw
-      const decl = sym.getDeclarations()?.[0]
-      if (!decl) continue
-      const sig = signatureOf(raw.getName(), sym, decl, checker)
-      const summary = summaryOf(sym, checker)
-      lines.push(
-        `- **${raw.getName()}** _(${kindOf(decl)})_ — \`${sig}\`${summary ? `\n  ${summary}` : ""}`,
+    const entrySections: string[] = []
+    for (const entry of pkg.entries) {
+      const sf = program.getSourceFile(entry.entry)
+      const moduleSym = sf ? checker.getSymbolAtLocation(sf) : undefined
+      if (!moduleSym) continue
+      const lines: string[] = []
+      for (const raw of checker.getExportsOfModule(moduleSym)) {
+        // Resolve `export { x } from "..."` re-exports to the real declaration.
+        const sym = raw.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(raw) : raw
+        const decl = sym.getDeclarations()?.[0]
+        if (!decl) continue
+        const sig = signatureOf(raw.getName(), sym, decl, checker)
+        const summary = summaryOf(sym, checker)
+        lines.push(
+          `- **${raw.getName()}** _(${kindOf(decl)})_ — \`${sig}\`${summary ? `\n  ${summary}` : ""}`,
+        )
+      }
+      const heading = pkg.entries.length > 1 ? `### \`${entry.importPath}\`\n\n` : ""
+      entrySections.push(
+        `${heading}${lines.length > 0 ? lines.sort().join("\n") : "_No named exports (side-effect entrypoint)._"}`,
       )
     }
-    if (lines.length > 0) {
-      sections.push(`## ${pkg.name}\n\n${lines.sort().join("\n")}`)
+    if (entrySections.length > 0) {
+      sections.push(`## ${pkg.name}\n\n${entrySections.join("\n\n")}`)
     }
   }
   return `${sections.join("\n\n")}\n`
@@ -140,8 +192,13 @@ export function generateApiReference(): string {
 
 /** Sanity-check the output so a broken generator (e.g. a resolution change) fails loudly, not silently. */
 function assertSane(out: string): void {
-  if (!out.includes("## @nifrajs/core") || !/\*\*server\*\*/.test(out)) {
-    throw new Error("api-reference.md generation looks broken (missing @nifrajs/core or `server`)")
+  if (
+    !out.includes("## @nifrajs/core") ||
+    !out.includes("### `@nifrajs/core/contract`") ||
+    !/\*\*defineContract\*\*/.test(out) ||
+    !/\*\*server\*\*/.test(out)
+  ) {
+    throw new Error("api-reference.md generation looks broken (missing core root/subpath exports)")
   }
 }
 

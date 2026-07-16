@@ -34,7 +34,7 @@ holds across `hit`s and bumps on a `miss`/regeneration.
 - `revalidateEndpoint({ store, secret })` is the on-demand purge handler:
 
   ```sh
-  curl -X POST 'http://localhost:3000/__velo/revalidate?path=/' -H 'x-nifra-revalidate-token: dev-secret'
+  curl -X POST 'http://localhost:3000/__nifra/revalidate?path=/' -H 'x-nifra-revalidate-token: dev-secret'
   ```
 
 ## Deploy

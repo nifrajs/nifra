@@ -61,8 +61,7 @@ inventing trace identity.
 
 ## Adapters
 
-Implement `ObservationAdapter` to send spans wherever you collect them. `SpanExporter` remains as a
-backwards-compatible type alias:
+Implement `ObservationAdapter` to send spans wherever you collect them:
 
 ```ts
 interface ObservationAdapter {

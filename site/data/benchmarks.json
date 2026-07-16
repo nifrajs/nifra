@@ -145,7 +145,7 @@
     },
     {
       "name": "Nifra",
-      "kb": 8.2,
+      "kb": 14.4,
       "you": true
     },
     {
@@ -160,15 +160,15 @@
     },
     {
       "value": "120k",
-      "label": "req/s on Bun — 103% of raw, ahead of Hono & 95% of Elysia"
+      "label": "req/s on Bun - 103% of raw, ahead of Hono & 95% of Elysia"
     },
     {
       "value": "5 + 4",
       "label": "UI frameworks · runtimes, from one app"
     },
     {
-      "value": "8.2 KB",
-      "label": "gzipped server — cookies, logger & graceful shutdown included"
+      "value": "15 KB",
+      "label": "a typed full-stack base - MCP, WS, SSE, typed client - not just a router"
     }
   ]
 }

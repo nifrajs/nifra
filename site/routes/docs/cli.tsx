@@ -7,33 +7,38 @@ export const hydrate = false
 
 export const meta = pageMeta(
   "Nifra — CLI",
-  "The zero-config Nifra CLI (`nifra dev`, `nifra build`, `nifra start`): true HMR, hashed client builds, and SSR serve.",
+  "The zero-config Nifra CLI (`nifra dev`, `nifra build`, `nifra start`): true HMR and complete target-specific deploy builds.",
 )
 
 const COMMANDS = `nifra dev      # true-HMR dev server (Vite middleware + nifra SSR) — http://localhost:4321
-nifra build    # bundle the client (content-hashed, code-split) + write dist/manifest.json (incl. CSS)
-nifra start    # serve the built client + SSR on Bun (assets, <link> stylesheets, matched-route preload)
+nifra build    # full Bun deploy → dist/server.js + content-hashed dist/assets/ (default target: bun)
+nifra start    # run dist/server.js on Bun
+nifra build --target cf-pages  # also: node | deno | vercel | static; add --report for chunk sizes
 
 # dev + start share the default port 4321. Override per run: --port <n> (alias -p) or the PORT env var.
-# flags: --port <n> (dev/start) · --out <dir> (build/start) · --poll (dev; containers/sandboxes)`
+# flags: --port <n> (dev/start) · --out <dir> (build/start) · --target <t> (build) · --poll (dev)`
 
-const FRAMEWORK = `// doc-check: skip — needs the third-party @vitejs/plugin-react; install it to run this.
-// framework.ts — the one place an app names its framework. The CLI reads these:
-import react from "@vitejs/plugin-react"
+const FRAMEWORK = `// framework.ts — deploy-safe; generated server entries import this file.
 import { reactAdapter } from "@nifrajs/web-react"
 
 export const adapter = reactAdapter
+
+// nifra.config.ts — CLI-only build/dev tooling; never imported by a deployed server.
+// doc-check: skip — needs the third-party @vitejs/plugin-react; install it to run this.
+import react from "@vitejs/plugin-react"
+export { adapter } from "./framework"
 export const clientModule = "@nifrajs/web-react/client"
 export const vitePlugins = [react()]          // dev HMR (Fast Refresh)
 // Vue/Svelte/Solid also export:
 //   clientPlugins = [vueBunPlugin("dom")]     // compile routes for the client build
-//   serverPlugins = [vueBunPlugin("ssr")]     // compile routes for SSR (nifra start registers them)
+//   serverPlugins = [vueBunPlugin("ssr")]     // compile routes into the target's server bundle
 //   conditions    = ["solid"]                 // Solid: resolve solid-js to its source
 //   define        = { __VUE_OPTIONS_API__: "true", ... }   // Vue feature flags`
 
 const STRUCTURE = `my-app/
   routes/            # file-based routes (index.tsx, _layout.tsx, [id].tsx, …)
-  framework.ts       # adapter + clientModule + plugins (above)
+  framework.ts       # deploy-safe render adapter
+  nifra.config.ts    # CLI-only client module + dev/build plugins
   backend.ts         # export const backend = server()...   (optional — the typed contract)`
 
 export default function Cli() {
@@ -50,29 +55,29 @@ export default function Cli() {
 
       <h2>The conventions</h2>
       <p>
-        Three files at the project root. <code>nifra dev</code> runs the Vite-backed{" "}
+        Four conventions at the project root. <code>nifra dev</code> runs the Vite-backed{" "}
         <a href="/docs/dev">HMR dev server</a>; <code>nifra build</code> runs the Bun-native production
-        build (content-hashed, code-split, CSS bundled); <code>nifra start</code> serves the built
-        client and SSRs on Bun — assets with immutable caching + correct MIME, the matched route's
-        chunks preloaded, and the CSS bundle linked in every <code>&lt;head&gt;</code>.
+        build (content-hashed client assets plus a target-specific server); <code>nifra start</code>
+        runs the default Bun output. The generated server serves assets and SSR with matched-route
+        chunks preloaded and route CSS linked in each <code>&lt;head&gt;</code>.
       </p>
       <CodeBlock code={STRUCTURE} />
 
       <h2>framework.ts — naming the framework once</h2>
       <p>
-        The single framework-specific file. Only <code>adapter</code> + <code>clientModule</code> are
-        required; the plugin/condition fields are extras the compiler frameworks need (React/Preact's
-        JSX is Bun-native, so they need none beyond the Vite plugin for dev HMR).
+        Keep the render <code>adapter</code> in deploy-safe <code>framework.ts</code>. Put{" "}
+        <code>clientModule</code>, Vite plugins, compiler plugins, conditions, and defines in CLI-only{" "}
+        <code>nifra.config.ts</code>. This prevents build tooling and native dependencies from entering
+        generated server bundles.
       </p>
       <CodeBlock code={FRAMEWORK} />
 
       <h2>Scope</h2>
       <p>
-        <code>nifra build</code> + <code>nifra start</code> target a Bun (or Node) long-running server —
-        the common self-hosted case. For the edge (Cloudflare Workers / Vercel Edge / Deno Deploy),
-        use the per-target build entries from <code>create-nifra</code>'s <code>site</code> template (see{" "}
-        <a href="/docs/deployment">Deployment</a>) — <code>buildServer</code> bundles a disk-less
-        worker those targets need. A <code>nifra build --target</code> for edge is a future addition.
+        <code>nifra build</code> defaults to a self-hosted Bun server. Use <code>--target node</code>,{" "}
+        <code>deno</code>, <code>cf-pages</code>, <code>vercel</code>, or <code>static</code> for another
+        complete deploy shape (see <a href="/docs/deployment">Deployment</a>). Run non-Bun outputs with
+        the command printed by the build.
       </p>
     </div>
   )

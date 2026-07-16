@@ -29,6 +29,22 @@ const openapi = toOpenAPI(app) // OpenAPI 3.1
   `operationId`s); also works on a live app. Routes using a BYO Standard Schema are
   emitted without a detailed schema (Standard Schema exposes no JSON Schema).
 
+### `t` vs bring-your-own (bundle size)
+
+`t` is the batteries-included default because a TypeBox schema *is* a JSON Schema: it gives you
+OpenAPI + MCP `tools/list` for free and compiles to a fast validator. That completeness has a
+cost - TypeBox carries the whole JSON Schema type system, so `t` adds meaningful bytes to a bundle.
+
+nifra validates through **Standard Schema**, so any Standard-Schema validator works on a route with
+no adapter - `{ body: v.object({ ... }) }` with valibot, for instance. A validated app built on a
+lean validator like valibot is a fraction of the size (measured ~16 KB gzipped), which matters for
+edge/Workers cold-starts. The trade is the one noted above: a bring-your-own validator exposes no
+JSON Schema, so those routes carry no OpenAPI/MCP detail.
+
+Rule of thumb: reach for `t` when you want the contract (OpenAPI/MCP) for free; bring valibot (or any
+Standard-Schema validator) when bundle size on the edge is the priority. Both are first-class - the
+choice is per route, and you can mix them in one app.
+
 ### `toOpenAPI` coverage
 
 It emits `paths`, `parameters` (path + object query), `requestBody`, and `responses`, plus:
