@@ -24,6 +24,11 @@
       "bun": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./metrics": {
+      "bun": "./src/metrics.ts",
+      "types": "./dist/metrics.d.ts",
+      "default": "./dist/metrics.js"
     }
   },
   "files": [

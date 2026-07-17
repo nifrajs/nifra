@@ -21,6 +21,7 @@ export {
   type ObservationParent,
   type StartObservation,
 } from "./lifecycle.ts"
+export { type OtlpExporter, type OtlpExporterOptions, otlpExporter } from "./otlp.ts"
 export {
   type AttributeValue,
   combineObservationAdapters,
