@@ -59,6 +59,39 @@ describe("scanFetchText — own-API fetch detection", () => {
     expect(scanFetchText("a.ts", src)).toEqual([])
   })
 
+  test("does NOT flag Nifra page-data fetches with a literal x-nifra-data header", () => {
+    const src = [
+      'const first = fetch("/", { headers: { "x-nifra-data": "1" } })',
+      "const second = fetch('/todos', {",
+      '  "headers": {',
+      "    'x-nifra-data': '1',",
+      "  },",
+      "})",
+      'const ownApi = fetch("/api/users", {',
+      '  headers: { "authorization": token },',
+      "})",
+    ].join("\n")
+
+    expect(scanFetchText("routes/todos.tsx", src)).toEqual([
+      {
+        file: "routes/todos.tsx",
+        line: 7,
+        snippet: 'const ownApi = fetch("/api/users", {',
+      },
+    ])
+  })
+
+  test("keeps flagging same-origin fetches without a literal x-nifra-data header property", () => {
+    const calls = [
+      'fetch("/api/users", { headers: dataHeaders })',
+      'fetch("/api/users", { headers: { "x-other": "1" } })',
+      'fetch("/api/users", { body: JSON.stringify({ "x-nifra-data": "1" }) })',
+      'fetch("/api/users", { marker: "x-nifra-data", headers: { accept: "application/json" } })',
+    ]
+
+    expect(calls.map((call) => scanFetchText("a.ts", call).length)).toEqual([1, 1, 1, 1])
+  })
+
   test("skips a declared external-mount prefix (string + template), segment-anchored", () => {
     const mounts = ["/auth"]
     // Blessed: /auth exact, a sub-path, and a dynamic template head - all deliberate, not drift.

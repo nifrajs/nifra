@@ -344,9 +344,72 @@ function matchesExternalMount(content: string, start: number, mounts: readonly s
   return mounts.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))
 }
 
+function findTopLevelPropertyColon(src: string): number | undefined {
+  let depth = 0
+  let quote: '"' | "'" | "`" | undefined
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i]
+    if (quote !== undefined) {
+      if (c === "\\") {
+        i++
+        continue
+      }
+      if (c === quote) quote = undefined
+      continue
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      quote = c
+      continue
+    }
+    if (c === "(" || c === "{" || c === "[") depth++
+    else if (c === ")" || c === "}" || c === "]") depth--
+    else if (c === ":" && depth === 0) return i
+  }
+  return undefined
+}
+
+function parseStaticPropertyName(raw: string): string | undefined {
+  const name = raw.trim()
+  if (IDENT.test(name)) return name
+  const quoted = parseQuotedLiteral(name)
+  if (quoted !== undefined) return quoted
+  if (name.startsWith("[") && name.endsWith("]")) {
+    return parseQuotedLiteral(name.slice(1, -1).trim())
+  }
+  return undefined
+}
+
+/** Return a statically named property from a plain object literal. Deliberately does not follow
+ * spreads, identifiers, or helper calls: only an inline literal proves this fetch is Nifra's page-data
+ * transport rather than an arbitrary same-origin API request. */
+function staticObjectProperty(raw: string | undefined, name: string): string | undefined {
+  if (raw === undefined) return undefined
+  const object = raw.trim()
+  if (!object.startsWith("{") || !object.endsWith("}")) return undefined
+  const properties = splitTopLevelArgs(object.slice(1, -1))
+  if (properties === undefined) return undefined
+  for (const property of properties) {
+    const colon = findTopLevelPropertyColon(property)
+    if (colon === undefined || parseStaticPropertyName(property.slice(0, colon)) !== name) continue
+    return property.slice(colon + 1).trim()
+  }
+  return undefined
+}
+
+function hasLiteralNifraDataHeader(content: string, openParen: number): boolean {
+  const closeParen = findMatchingParen(content, openParen)
+  if (closeParen === undefined) return false
+  const args = splitTopLevelArgs(content.slice(openParen + 1, closeParen))
+  if (args === undefined || args.length !== 2) return false
+  const headers = staticObjectProperty(args[1], "headers")
+  return staticObjectProperty(headers, "x-nifra-data") !== undefined
+}
+
 /** Scan one file's text for hand-rolled own-API `fetch()` calls. Pure + line-accurate. `externalMounts`
  * are intentional non-typed mount prefixes (from `nifra.check.json`, e.g. a mounted better-auth owning
- * `/auth/**`) - a relative fetch into one is deliberate, not drift, so it's skipped. */
+ * `/auth/**`) - a relative fetch into one is deliberate, not drift, so it's skipped. A fetch with an
+ * inline literal `x-nifra-data` header is Nifra's page-loader transport, not a backend API call, and is
+ * skipped too. */
 export function scanFetchText(
   file: string,
   content: string,
@@ -361,6 +424,8 @@ export function scanFetchText(
     const quote = content[argument]
     if (quote !== "'" && quote !== '"' && quote !== "`") continue
     if (content[argument + 1] !== "/" || content[argument + 2] === "/") continue
+    const openParen = m.index + m[0].lastIndexOf("(")
+    if (hasLiteralNifraDataHeader(content, openParen)) continue
     if (externalMounts.length > 0 && matchesExternalMount(content, argument + 1, externalMounts))
       continue
     const line = lineAt(content, m.index)
