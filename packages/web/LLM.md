@@ -29,7 +29,7 @@ Framework-agnostic SSR core for nifra — the render seam + HTML document orches
 - **createDevServer** _(function)_ — `createDevServer: (options: DevServerOptions) => Promise<DevServer>` · from `@nifrajs/web/dev`
 - **createMatcher** _(function)_ — `createMatcher: (patterns: readonly RoutePattern[]) => (path: string) => RouteMatch | null` · from `@nifrajs/web`
 
-_…and 205 more — see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 207 more — see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 

@@ -64,6 +64,9 @@ export interface RouterState {
   readonly actionData?: unknown
   /** True while a navigation or submit is in flight (drives loading UI). */
   readonly pending: boolean
+  /** The path a navigation is transitioning TO while `pending` (cleared when it settles). Lets a
+   * `NavLink` know whether its own `to` is the one loading; `undefined` when idle. */
+  readonly pendingPath?: string | undefined
   /** The in-flight submit (set during a `submit`, cleared when it settles) — for optimistic UI. */
   readonly submission?: Submission
 }
@@ -480,7 +483,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       navAbort?.abort() // abandon any in-flight navigation's stream
       const ac = new AbortController()
       navAbort = ac
-      state = { ...state, pending: true }
+      state = { ...state, pending: true, pendingPath: path }
       emit()
       try {
         // Use prefetched data when present (one-shot — drop it); else fetch. The chunk is loaded
@@ -503,10 +506,10 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         }
         emit()
       } catch (err) {
-        // Clear our pending flag (only if still current) and rethrow — the caller decides how to
-        // recover (the history layer falls back to a full-page navigation).
+        // Clear our pending flag + target (only if still current) and rethrow — the caller decides how
+        // to recover (the history layer falls back to a full-page navigation).
         if (mine === token) {
-          state = { ...state, pending: false }
+          state = { ...state, pending: false, pendingPath: undefined }
           emit()
         }
         throw err

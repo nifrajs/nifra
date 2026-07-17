@@ -34,6 +34,7 @@ export function mountRouter(options: MountRouterOptions): void {
       data: state.data,
       actionData: state.actionData,
       pending: state.pending,
+      ...(state.pendingPath !== undefined ? { pendingPath: state.pendingPath } : {}),
       // `params`/`path` feed the routing hooks (useParams/useLocation) via compose's RouterContext —
       // sourced from router state here, matching the SSR render's request-derived values on hydration.
       params: state.params,

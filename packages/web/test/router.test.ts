@@ -105,6 +105,14 @@ describe("createClientRouter", () => {
     expect(seen).toEqual([true, false])
   })
 
+  test("navigate publishes the target as pendingPath while in flight, cleared when settled", async () => {
+    const seen: Array<string | undefined> = []
+    const r = createClientRouter({ patterns, initial, fetchData: async () => ({}) })
+    r.subscribe(() => seen.push(r.snapshot().pendingPath))
+    await r.navigate("/users/9")
+    expect(seen).toEqual(["/users/9", undefined]) // set on start, cleared on the settle publish
+  })
+
   test("an unmatched navigate is a no-op (no notify, state unchanged)", async () => {
     let notified = 0
     const r = createClientRouter({ patterns, initial, fetchData: async () => ({}) })

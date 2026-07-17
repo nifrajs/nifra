@@ -284,3 +284,53 @@ test("usePending is the boolean convenience form", () => {
     "true",
   )
 })
+
+// Render a node inside a router context with an in-flight navigation to `pendingPath`.
+const withPendingNav = (path: string, pendingPath: string, node: ReactNode): string =>
+  renderToStaticMarkup(
+    createElement(
+      RouterContext.Provider,
+      { value: { params: {}, path, pending: true, pendingPath } },
+      node,
+    ),
+  )
+
+test("NavLink.isPending is true when a navigation targets this link (prefix match)", () => {
+  const html = withPendingNav(
+    "/",
+    "/users/7",
+    createElement(
+      NavLink,
+      {
+        to: "/users",
+        className: ({ isPending }: { isPending: boolean }) => (isPending ? "loading" : ""),
+      },
+      "Users",
+    ),
+  )
+  expect(html).toContain('class="loading"')
+})
+
+test("NavLink.isPending is false when the pending navigation targets a different link", () => {
+  const html = withPendingNav(
+    "/",
+    "/posts",
+    createElement(
+      NavLink,
+      {
+        to: "/users",
+        className: ({ isPending }: { isPending: boolean }) => (isPending ? "loading" : "idle"),
+      },
+      "Users",
+    ),
+  )
+  expect(html).toContain('class="idle"')
+})
+
+test("useNavigation().location is the pending target while loading", () => {
+  const Probe = () => {
+    const nav = useNavigation()
+    return createElement("span", null, `${nav.state}:${nav.location ?? "none"}`)
+  }
+  expect(withPendingNav("/", "/next?q=1", createElement(Probe))).toContain("loading:/next?q=1")
+})

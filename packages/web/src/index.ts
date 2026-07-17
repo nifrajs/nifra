@@ -201,6 +201,9 @@ export interface RenderProps {
   readonly actionData?: unknown
   /** True while a client navigation or submit is in flight (client-only; absent/false on SSR). */
   readonly pending?: boolean
+  /** The path a client navigation is transitioning TO while `pending` (client-only; absent on SSR and
+   * when idle). Lets an adapter tell a `NavLink` whether its own target is the one loading. */
+  readonly pendingPath?: string
   /** The in-flight client submit, for optimistic UI (client-only; absent on SSR + when idle). */
   readonly submission?: Submission
   /** The matched route's decoded path params (`/users/:id` → `{ id: "7" }`). Threaded identically on

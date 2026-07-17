@@ -35,6 +35,9 @@ export interface RouterContextValue {
    * until the new one is ready. Always `false` on SSR (loaders block before render). Drives loading UI
    * via {@link useNavigation}. */
   readonly pending: boolean
+  /** The `pathname + search` a navigation is transitioning TO while `pending` (`undefined` when idle or
+   * during a same-route revalidation). Powers {@link NavLink}'s per-link `isPending`. */
+  readonly pendingPath?: string | undefined
 }
 
 // Frozen empty params so the default context value has a stable reference (no needless re-renders).
@@ -93,6 +96,9 @@ export interface Navigation {
   readonly pending: boolean
   /** `"loading"` while a navigation is in flight, else `"idle"`. */
   readonly state: "idle" | "loading"
+  /** The `pathname + search` being navigated TO while `pending`; `undefined` when idle or during a
+   * same-route revalidation. Mirrors Remix's `useNavigation().location`. */
+  readonly location: string | undefined
 }
 
 /**
@@ -108,8 +114,15 @@ export interface Navigation {
  * ```
  */
 export function useNavigation(): Navigation {
-  const { pending } = useContext(RouterContext)
-  return useMemo(() => ({ pending, state: pending ? "loading" : ("idle" as const) }), [pending])
+  const { pending, pendingPath } = useContext(RouterContext)
+  return useMemo(
+    () => ({
+      pending,
+      state: pending ? ("loading" as const) : ("idle" as const),
+      location: pending ? pendingPath : undefined,
+    }),
+    [pending, pendingPath],
+  )
 }
 
 /** Convenience boolean form of {@link useNavigation}: `true` while a client navigation is in flight. */
@@ -214,7 +227,8 @@ export const Link = forwardRef<HTMLAnchorElement, LinkProps>(function Link(
 export interface NavLinkRenderProps {
   /** True when the current location matches this link's `to` (prefix match, or exact when `end`). */
   readonly isActive: boolean
-  /** Reserved for a future pending-navigation signal; currently always `false`. */
+  /** True while a client navigation to THIS link's target is in flight (matched like `isActive`).
+   * `false` on SSR and when idle. Use it to show a per-link spinner during the transition. */
   readonly isPending: boolean
 }
 
@@ -248,11 +262,21 @@ export const NavLink = forwardRef<HTMLAnchorElement, NavLinkProps>(function NavL
   ref,
 ) {
   const { pathname } = useLocation()
+  const { pending, pendingPath } = useContext(RouterContext)
   const cs = caseSensitive === true
   const current = normalizePath(pathname, cs)
   const target = normalizePath(splitPath(to).pathname, cs)
   const isActive = end === true ? current === target : matchesPrefix(current, target)
-  const renderProps: NavLinkRenderProps = { isActive, isPending: false }
+  // isPending: a navigation is in flight AND it's heading to THIS link's target (same match rule as
+  // isActive). `false` on SSR and idle (no pendingPath).
+  const pendingTarget =
+    pending && pendingPath !== undefined
+      ? normalizePath(splitPath(pendingPath).pathname, cs)
+      : undefined
+  const isPending =
+    pendingTarget !== undefined &&
+    (end === true ? pendingTarget === target : matchesPrefix(pendingTarget, target))
+  const renderProps: NavLinkRenderProps = { isActive, isPending }
   const resolvedClassName = typeof className === "function" ? className(renderProps) : className
   const resolvedStyle = typeof style === "function" ? style(renderProps) : style
   const resolvedChildren = typeof children === "function" ? children(renderProps) : children

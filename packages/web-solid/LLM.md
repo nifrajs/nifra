@@ -10,7 +10,7 @@ Solid render adapter for @nifrajs/web — SSR + hydration + the Solid Babel buil
 
 ## Public entrypoints
 
-`@nifrajs/web-solid` · `@nifrajs/web-solid/await` · `@nifrajs/web-solid/client` · `@nifrajs/web-solid/content` · `@nifrajs/web-solid/fetcher` · `@nifrajs/web-solid/i18n` · `@nifrajs/web-solid/image` · `@nifrajs/web-solid/mdx` · `@nifrajs/web-solid/mdx-runtime` · `@nifrajs/web-solid/query`
+`@nifrajs/web-solid` · `@nifrajs/web-solid/await` · `@nifrajs/web-solid/client` · `@nifrajs/web-solid/content` · `@nifrajs/web-solid/fetcher` · `@nifrajs/web-solid/i18n` · `@nifrajs/web-solid/image` · `@nifrajs/web-solid/mdx` · `@nifrajs/web-solid/mdx-runtime` · `@nifrajs/web-solid/query` · `@nifrajs/web-solid/svg`
 
 ## Key exports
 
@@ -26,10 +26,10 @@ Solid render adapter for @nifrajs/web — SSR + hydration + the Solid Babel buil
 - **setMountedRouter** _(function)_ — `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-solid/fetcher`
 - **solidBunPlugin** _(function)_ — `solidBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-solid`
 - **solidMdxBunPlugin** _(function)_ — `solidMdxBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-solid/mdx`
+- **solidSvgComponentBunPlugin** _(function)_ — `solidSvgComponentBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-solid/svg`
 - **useFetchers** _(function)_ — `useFetchers: () => Accessor<readonly Fetcher[]>` · from `@nifrajs/web-solid/fetcher`
-- **useMDXComponents** _(function)_ — `useMDXComponents: () => Record<string, (props: Record<string, unknown>) => unknown>` · from `@nifrajs/web-solid/mdx-runtime`
 
-_…and 9 more — see [`api-reference.md`](../../api-reference.md#nifrajswebsolid) for the complete list._
+_…and 10 more — see [`api-reference.md`](../../api-reference.md#nifrajswebsolid) for the complete list._
 
 ## Footguns
 

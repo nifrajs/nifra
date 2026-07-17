@@ -2301,14 +2301,17 @@ Every public export of every package and documented subpath — name, kind, sign
 
 ### `@nifrajs/web/plugins/svg`
 
+- **SVG_COMPONENT_FILTER** _(const)_ — `SVG_COMPONENT_FILTER: RegExp`
+  The Bun `onLoad` filter every adapter's SVG-component plugin matches: `*.svg?component`.
 - **SvgOptimizer** _(interface)_ — `interface SvgOptimizer`
   The subset of the `svgo` API this plugin uses (structural, so no hard dependency on its types).
 - **SvgPluginOptions** _(interface)_ — `interface SvgPluginOptions`
+- **SvgToJsxOptions** _(interface)_ — `interface SvgToJsxOptions`
 - **svgComponentBunPlugin** _(function)_ — `svgComponentBunPlugin: (_generate: "dom" | "ssr", options?: SvgPluginOptions) => BunPlugin`
   The SVG-as-component Bun plugin (React/Preact). `generate` is accepted for parity with the other plugin pairs; the emitted component is the same on `"dom"` and `"ssr"`.
-- **svgComponentSource** _(function)_ — `svgComponentSource: (xml: string) => string`
+- **svgComponentSource** _(function)_ — `svgComponentSource: (xml: string, options?: SvgToJsxOptions) => string`
   Emit the component module source for a `?component` SVG import. Identical on dom + ssr (isomorphic).
-- **svgToJsx** _(function)_ — `svgToJsx: (xml: string) => string`
+- **svgToJsx** _(function)_ — `svgToJsx: (xml: string, options?: SvgToJsxOptions) => string`
   Convert an SVG XML string into a JSX-safe `<svg>…</svg>` element with `{...props}` spread on the root.
 
 ### `@nifrajs/web/server-only`
@@ -2593,6 +2596,11 @@ _No named exports (side-effect entrypoint)._
 - **useQueryClient** _(function)_ — `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
   Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation).
 
+### `@nifrajs/web-solid/svg`
+
+- **solidSvgComponentBunPlugin** _(function)_ — `solidSvgComponentBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
+  The Solid SVG-component plugin. `generate` selects the Solid `"dom"`/`"ssr"` output, matching `solidBunPlugin`. A plain `import "./icon.svg"` (asset URL) is untouched - only `?component` matches.
+
 ## @nifrajs/web-svelte
 
 ### `@nifrajs/web-svelte`
@@ -2646,6 +2654,13 @@ _No named exports (side-effect entrypoint)._
   Subscribe to the keyed query for `key`, fetched via `fn`. Returns a store of `{ status, data, error, isFetching, updatedAt }` augmented with `refetch`. Fetches on mount (first `$`-subscription); SSR-idle.
 - **useQueryClient** _(function)_ — `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
   Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation).
+
+### `@nifrajs/web-svelte/svg`
+
+- **svelteSvgComponentBunPlugin** _(function)_ — `svelteSvgComponentBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
+  The Svelte SVG-component plugin. `generate` selects Svelte's `"client"`/`"server"` output, matching `svelteBunPlugin`.
+- **svgToSvelte** _(function)_ — `svgToSvelte: (xml: string) => string`
+  Wrap raw SVG XML in a Svelte 5 component: strip XML noise, spread props onto the root `<svg>`.
 
 ## @nifrajs/web-vanilla
 
@@ -2731,6 +2746,13 @@ _No named exports (side-effect entrypoint)._
   Subscribe to the keyed query for `key`, fetched via `fn`. Returns a reactive `state` ref (`status`, `data`, `error`, `isFetching`, `updatedAt`) + `refetch`. Concurrent `useQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Fetches on mount; SSR-idle.
 - **useQueryClient** _(function)_ — `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
   Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation).
+
+### `@nifrajs/web-vue/svg`
+
+- **svgToVueSfc** _(function)_ — `svgToVueSfc: (xml: string) => string`
+  Wrap raw SVG XML in a template-only Vue SFC (single root → Vue inherits attrs onto the `<svg>`).
+- **vueSvgComponentBunPlugin** _(function)_ — `vueSvgComponentBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
+  The Vue SVG-component plugin. `generate` selects Vue's client/SSR render, matching `vueBunPlugin`.
 
 ## @nifrajs/workers
 

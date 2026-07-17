@@ -30,6 +30,7 @@ export function compose(chain: readonly unknown[], props: RenderProps): ReactNod
         params: props.params ?? EMPTY_PARAMS,
         path: props.path ?? "",
         pending: props.pending ?? false,
+        pendingPath: props.pendingPath,
       },
     },
     node,

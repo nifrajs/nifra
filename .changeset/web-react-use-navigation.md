@@ -1,13 +1,12 @@
 ---
 "@nifrajs/web-react": minor
+"@nifrajs/web": minor
 ---
 
-Add `useNavigation()` and `usePending()` to `@nifrajs/web-react/router` for navigation loading UI.
+Navigation loading UI for `@nifrajs/web-react/router`, plus a per-link pending signal.
 
-nifra navigates imperatively - it fetches the next route's chunk and loader data while the current route stays on screen, then swaps - so a route transition is signalled by the router's `pending` flag, not a Suspense boundary. These hooks surface that flag (previously carried on the router state but not exposed to components) so a layout can render a top-bar spinner, dim content, or show a skeleton during a transition:
+nifra navigates imperatively - it fetches the next route's chunk and loader data while the current route stays on screen, then swaps - so a route transition is signalled by the router's `pending` flag, not a Suspense boundary.
 
-```tsx
-const { pending } = useNavigation() // { pending, state: "idle" | "loading" }, Remix-shaped
-```
-
-`compose` now threads the `pending` flag into the router context alongside `params`/`path`. It is `false` on the server (loaders block before render) and on the initial client render, so it is hydration-safe. `usePending()` is the boolean convenience form.
+- `useNavigation()` returns `{ pending, state: "idle" | "loading", location }` (Remix-shaped); `location` is the `pathname + search` being navigated to while pending. `usePending()` is the boolean form.
+- `NavLink`'s render-prop `isPending` is now real: it is `true` while a navigation to that link's own target is in flight (matched like `isActive`), so a link can show its own spinner. Previously always `false`.
+- The agnostic router now publishes `pendingPath` (the navigation target) on its state while `pending`, and `compose` threads `pending`/`pendingPath` into the router context. Both are `false`/absent on the server and the initial client render, so they are hydration-safe.
