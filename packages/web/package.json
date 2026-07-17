@@ -94,6 +94,16 @@
       "types": "./dist/plugins/scss.d.ts",
       "default": "./dist/plugins/scss.js"
     },
+    "./plugins/postcss": {
+      "bun": "./src/plugins/postcss.ts",
+      "types": "./dist/plugins/postcss.d.ts",
+      "default": "./dist/plugins/postcss.js"
+    },
+    "./plugins/svg": {
+      "bun": "./src/plugins/svg.ts",
+      "types": "./dist/plugins/svg.d.ts",
+      "default": "./dist/plugins/svg.js"
+    },
     "./css-modules": {
       "types": "./css-modules.d.ts"
     }
