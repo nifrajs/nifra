@@ -6,6 +6,7 @@
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "paths": {
       "@nifrajs/web": ["../web/src/index.ts"],
+      "@nifrajs/web/plugins/svg": ["../web/src/plugins/svg.ts"],
       "@nifrajs/core": ["../core/src/index.ts"],
       "@nifrajs/core/server": ["../core/src/server.ts"],
       "@nifrajs/core/pattern": ["../core/src/router/pattern.ts"],

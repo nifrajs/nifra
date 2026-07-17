@@ -1,7 +1,7 @@
 {
   "name": "@nifrajs/web-svelte",
   "version": "1.13.0",
-  "description": "Svelte 5 render adapter for @nifrajs/web — SSR + hydration + the .svelte compiler Bun-plugin.",
+  "description": "Svelte 5 render adapter for @nifrajs/web \u2014 SSR + hydration + the .svelte compiler Bun-plugin.",
   "keywords": [
     "bun",
     "typescript",
@@ -68,6 +68,11 @@
       "bun": "./src/mdx.ts",
       "types": "./dist/mdx.d.ts",
       "default": "./dist/mdx.js"
+    },
+    "./svg": {
+      "bun": "./src/svg.ts",
+      "types": "./dist/svg.d.ts",
+      "default": "./dist/svg.js"
     }
   },
   "files": [

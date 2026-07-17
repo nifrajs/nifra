@@ -72,8 +72,14 @@ function styleToObject(style: string): string {
   return `{{${entries.join(",")}}}`
 }
 
+export interface SvgToJsxOptions {
+  /** The JSX prop name for `class`. `"className"` for React/Preact; `"class"` for Solid. */
+  readonly classProp?: string
+}
+
 /** Convert an SVG XML string into a JSX-safe `<svg>…</svg>` element with `{...props}` spread on the root. */
-export function svgToJsx(xml: string): string {
+export function svgToJsx(xml: string, options: SvgToJsxOptions = {}): string {
+  const classProp = options.classProp ?? "className"
   let out = xml
     .replace(/<\?xml[\s\S]*?\?>/g, "") // XML declaration
     .replace(/<!--[\s\S]*?-->/g, "") // comments
@@ -88,8 +94,8 @@ export function svgToJsx(xml: string): string {
   for (const [kebab, camel] of CAMEL_ATTRS) {
     out = out.replace(new RegExp(`\\b${kebab}=`, "g"), `${camel}=`)
   }
-  // class → className.
-  out = out.replace(/\bclass=/g, "className=")
+  // class → the framework's prop (className for React/Preact, class for Solid).
+  if (classProp !== "class") out = out.replace(/\bclass=/g, `${classProp}=`)
   // Inline style string → JSX object.
   out = out.replace(/\bstyle="([^"]*)"/g, (_m, css: string) => `style=${styleToObject(css)}`)
   // Spread props onto the root <svg> tag (after the tag name, before its attributes).
@@ -98,11 +104,13 @@ export function svgToJsx(xml: string): string {
 }
 
 /** Emit the component module source for a `?component` SVG import. Identical on dom + ssr (isomorphic). */
-export function svgComponentSource(xml: string): string {
-  return `export default function SvgComponent(props){return (${svgToJsx(xml)})}\n`
+export function svgComponentSource(xml: string, options: SvgToJsxOptions = {}): string {
+  return `export default function SvgComponent(props){return (${svgToJsx(xml, options)})}\n`
 }
 
-const SVG_FILTER = /\.svg\?component(&|$)/
+/** The Bun `onLoad` filter every adapter's SVG-component plugin matches: `*.svg?component`. */
+export const SVG_COMPONENT_FILTER = /\.svg\?component(&|$)/
+const SVG_FILTER = SVG_COMPONENT_FILTER
 
 /**
  * The SVG-as-component Bun plugin (React/Preact). `generate` is accepted for parity with the other

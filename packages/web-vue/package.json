@@ -1,7 +1,7 @@
 {
   "name": "@nifrajs/web-vue",
   "version": "1.13.0",
-  "description": "Vue render adapter for @nifrajs/web — streaming SSR + hydration, with a .vue SFC compiler Bun plugin (@nifrajs/web-vue/plugin).",
+  "description": "Vue render adapter for @nifrajs/web \u2014 streaming SSR + hydration, with a .vue SFC compiler Bun plugin (@nifrajs/web-vue/plugin).",
   "keywords": [
     "bun",
     "typescript",
@@ -60,6 +60,11 @@
       "bun": "./src/content.ts",
       "types": "./dist/content.d.ts",
       "default": "./dist/content.js"
+    },
+    "./svg": {
+      "bun": "./src/svg.ts",
+      "types": "./dist/svg.d.ts",
+      "default": "./dist/svg.js"
     }
   },
   "files": [
