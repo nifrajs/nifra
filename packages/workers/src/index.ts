@@ -27,8 +27,8 @@
  *   # tag = "v1"
  *   # new_sqlite_classes = ["NifraWebSocketHub"]
  */
-// The `/ws` subpath registers core's WebSocket runtime as a side effect — so importing the hub is
-// enough to enable `app.ws()`; worker entries don't need a separate `import "@nifrajs/core/ws"`.
+// This adapter imports `attachWebSocket` to wire the Workers `WebSocketPair`. The user's backend
+// enables `app.ws()` on its own server with `.use(websocket())` from `@nifrajs/core/ws`.
 
 import type { StandardWebSocket, WebSocketUpgradeOutcome } from "@nifrajs/core/server"
 import { attachWebSocket } from "@nifrajs/core/ws"

@@ -58,7 +58,7 @@ type WsUpgradeOutcome =
 
 /** Anything exposing a Web `fetch` handler — a nifra `app`, for instance. */
 export interface FetchHandler {
-  fetch(request: Request): Response | Promise<Response>
+  fetch(request: Request, platform?: { readonly clientIp?: string }): Response | Promise<Response>
   /** A nifra app also exposes this WS-upgrade seam; present → this adapter serves `app.ws()` routes
    * via `Deno.upgradeWebSocket`. Absent (a plain `{ fetch }` handler) → HTTP only. */
   resolveWebSocketUpgrade?(request: Request): WsUpgradeOutcome | Promise<WsUpgradeOutcome>
@@ -103,7 +103,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
       signal: controller.signal,
       onListen() {}, // suppress Deno's default "Listening on …" banner
     },
-    (request) => {
+    (request, info: { readonly remoteAddr?: { readonly hostname?: string } }) => {
       // WebSocket upgrade for a registered `app.ws()` route → Deno.upgradeWebSocket. The shared
       // resolveWebSocketUpgrade seam runs the route's upgrade() guard; pass falls through to HTTP.
       //
@@ -129,19 +129,26 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
             attachDenoWebSocket(socket, o.handler, o.data, o.pubsub)
             return response
           }
-          return runFetch(request)
+          return runFetch(request, info)
         }
         return outcome instanceof Promise
           ? outcome.then(handleWs).catch(() => internalError())
           : handleWs(outcome)
       }
-      return runFetch(request)
+      return runFetch(request, info)
     },
   )
 
-  function runFetch(request: Request): Response | Promise<Response> {
+  function runFetch(
+    request: Request,
+    info: { readonly remoteAddr?: { readonly hostname?: string } },
+  ): Response | Promise<Response> {
     try {
-      const response = app.fetch(request)
+      // Deno's socket peer (the one address a client can't forge) → `c.clientIp`, unless the app's
+      // `clientIp` trust declaration derives it from the forwarding chain instead.
+      const clientIp = info.remoteAddr?.hostname
+      const response =
+        clientIp === undefined ? app.fetch(request) : app.fetch(request, { clientIp })
       return response instanceof Promise ? response.catch(() => internalError()) : response
     } catch {
       // nifra's app.fetch returns its own 500; this guards non-nifra handlers and never

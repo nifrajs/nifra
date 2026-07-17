@@ -146,6 +146,12 @@ export class RequestContext implements RawContext {
     return this.platformValue?.env
   }
 
+  get clientIp(): string | undefined {
+    // The server resolves the trust declaration into `platform.clientIp` before the context is built,
+    // so this getter just surfaces the already-derived value (raw socket peer by default).
+    return this.platformValue?.clientIp
+  }
+
   get waitUntil(): (promise: Promise<unknown>) => void {
     return this.platformValue?.waitUntil ?? fallbackWaitUntil
   }

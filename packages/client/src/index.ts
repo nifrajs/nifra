@@ -6,9 +6,11 @@
  */
 export {
   type ClientOptions,
+  type ClientRetryOptions,
   client,
   type FetchFn,
   type InProcessClient,
+  type InProcessClientOptions,
   inProcessClient,
   testClient,
 } from "./client.ts"
@@ -21,4 +23,7 @@ export type {
   Subscription,
   Treaty,
   TreatyFromRegistry,
+  WsCallOptions,
+  WsHandle,
 } from "./treaty.ts"
+export { ResponseContractViolation } from "./validate-responses.ts"

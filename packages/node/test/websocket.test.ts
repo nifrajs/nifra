@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
-import "@nifrajs/core/ws" // registers the WebSocket runtime app.ws() needs
+import { websocket } from "@nifrajs/core/ws"
 import { type NodeServer, serve } from "../src/index.ts"
 
 // @nifrajs/node serves WebSockets via the optional `ws` package (a devDependency here). These run on the
@@ -14,6 +14,7 @@ afterEach(async () => {
 
 function makeApp() {
   return server()
+    .use(websocket())
     .ws("/echo", {
       open: (ws) => ws.send("welcome"),
       message: (ws, data) => ws.send(data),
@@ -120,12 +121,14 @@ describe("@nifrajs/node WebSockets", () => {
 
   test("ws.readyState + ws.close() proxy to the socket", async () => {
     running = await serve(
-      server().ws("/c", {
-        open: (ws) => {
-          ws.send(`state:${ws.readyState}`)
-          ws.close(1000, "done")
-        },
-      }),
+      server()
+        .use(websocket())
+        .ws("/c", {
+          open: (ws) => {
+            ws.send(`state:${ws.readyState}`)
+            ws.close(1000, "done")
+          },
+        }),
       { port: 0 },
     )
     const result = await new Promise<{ msg: string; code: number }>((resolve, reject) => {
@@ -150,24 +153,28 @@ describe("@nifrajs/node WebSockets", () => {
 
   test("a throwing open handler is routed to error()", async () => {
     running = await serve(
-      server().ws("/e", {
-        open: () => {
-          throw new Error("boom")
-        },
-        error: (ws) => ws.send("errored"),
-      }),
+      server()
+        .use(websocket())
+        .ws("/e", {
+          open: () => {
+            throw new Error("boom")
+          },
+          error: (ws) => ws.send("errored"),
+        }),
       { port: 0 },
     )
     expect(await rt(`ws://127.0.0.1:${running.port}/e`, [], 1)).toEqual(["errored"])
   })
 
   test("pub/sub: subscribe receives broadcasts; ws.unsubscribe stops them", async () => {
-    const app = server().ws("/room", {
-      open: (ws) => ws.subscribe("lobby"),
-      message: (ws, m) => {
-        if (m === "leave") ws.unsubscribe("lobby")
-      },
-    })
+    const app = server()
+      .use(websocket())
+      .ws("/room", {
+        open: (ws) => ws.subscribe("lobby"),
+        message: (ws, m) => {
+          if (m === "leave") ws.unsubscribe("lobby")
+        },
+      })
     running = await serve(app, { port: 0 })
     const url = `ws://127.0.0.1:${running.port}/room`
     const a = new WebSocket(url)

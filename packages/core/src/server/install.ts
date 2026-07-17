@@ -23,3 +23,6 @@ export const INSTALL_SSE: unique symbol = Symbol.for("@nifrajs/core/install-sse"
 
 /** @internal Install the Node-direct renderer on a server (called by the `nodeDirect()` plugin). */
 export const INSTALL_NODE_DIRECT: unique symbol = Symbol.for("@nifrajs/core/install-node-direct")
+
+/** @internal Install the WebSocket runtime on a server (called by the `websocket()` plugin). */
+export const INSTALL_WS: unique symbol = Symbol.for("@nifrajs/core/install-ws")

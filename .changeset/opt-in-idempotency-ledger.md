@@ -8,6 +8,7 @@ Optional server systems are now opt-in `.use()` plugins installed from dedicated
 - Enable the per-request effect ledger with `.use(effectLedger({ sink }))` from `@nifrajs/core/effect-ledger`. The `effectLedger` server option is removed.
 - Enable MCP declarations (`.tool()`, `.resource()`, `.prompt()`) with `.use(mcp())` from `@nifrajs/core/mcp`. The package root does not activate them implicitly.
 - Enable typed SSE routes (`.sse()`) with `.use(streaming())` from `@nifrajs/core/sse`.
+- Enable WebSocket routes (`.ws()`) with `.use(websocket())` from `@nifrajs/core/ws`. The old `import "@nifrajs/core/ws"` side-effect no longer installs the runtime.
 - A route that declares one of these without its plugin installed fails loudly at registration, so a gate can never be silently dropped by a forgotten plugin.
 
 Each plugin installs its runtime on that server instance only - two servers in one process never share opt-in state. Merging a configured sub-app with `.use(subApp)` carries its installed runtimes across.
@@ -31,6 +32,10 @@ server()
   .use(effectLedger({ sink }))
   .use(mcp()) // if the app declares tools/resources/prompts
   .use(streaming()) // if the app declares .sse() routes
+
+// WebSocket apps:
+// before: import "@nifrajs/core/ws"; server().ws(...)
+// after:  import { websocket } from "@nifrajs/core/ws"; server().use(websocket()).ws(...)
 ```
 
 Standalone callers of `app.resolveNode()` opt in with `.use(nodeDirect())` from `@nifrajs/core/node-direct`. The `@nifrajs/node` adapter installs it on `serve(app)` automatically, so normal Node deployments need no change and keep the direct JSON fast path.

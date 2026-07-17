@@ -6,16 +6,19 @@
  * the `app.ws()` route is identical to the Bun/Deno/Node version.
  */
 import { type DurableObjectNamespaceLike, server, toFetchHandler } from "@nifrajs/core/server"
+import { websocket } from "@nifrajs/core/ws"
 import { createWebSocketHub } from "@nifrajs/workers"
 
 interface Env {
   readonly NIFRA_WS_HUB: DurableObjectNamespaceLike
 }
 
-const app = server().get(
-  "/",
-  () => new Response(CLIENT_HTML, { headers: { "content-type": "text/html; charset=utf-8" } }),
-)
+const app = server()
+  .use(websocket())
+  .get(
+    "/",
+    () => new Response(CLIENT_HTML, { headers: { "content-type": "text/html; charset=utf-8" } }),
+  )
 
 // `.ws()` is a separate statement (not chained into `const app = …`) so the handlers can reference
 // `app.publish` without making `app`'s own initializer self-referential.

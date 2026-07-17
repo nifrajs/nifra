@@ -6,6 +6,8 @@ import {
 } from "@nifrajs/core/mount"
 import type { ApiError, Result } from "./result.ts"
 import type { Subscription, Treaty, TreatyFromRegistry } from "./treaty.ts"
+import { ResponseContractViolation, withResponseValidation } from "./validate-responses.ts"
+import { NO_SOCKET, openWebSocket } from "./ws.ts"
 
 const HTTP_VERBS: ReadonlySet<string> = new Set([
   "get",
@@ -24,15 +26,92 @@ const BODY_VERBS: ReadonlySet<string> = new Set(["post", "put", "patch"])
  */
 export type FetchFn = (input: string, init?: RequestInit) => Promise<Response>
 
+type MaybePromise<T> = T | Promise<T>
+
+/** Safe retry policy. Off unless `retry` is set; retries ONLY idempotent methods and transient 5xx —
+ * never a 4xx/429 and never a non-idempotent method, so a retry can't double a side effect. */
+export interface ClientRetryOptions {
+  /** Max RETRIES after the first attempt. Default 2. */
+  readonly attempts?: number
+  /** Response statuses to retry. Default `[502, 503, 504]`. 4xx/429 are never added by default. */
+  readonly on?: readonly number[]
+  /** Methods eligible for retry. Default the idempotent set `GET/HEAD/OPTIONS/PUT/DELETE`. */
+  readonly methods?: readonly string[]
+  /** Delay (ms) before retry `n` (1-based). Default exponential backoff with jitter, capped at 3s. */
+  readonly backoff?: (attempt: number) => number
+}
+
 export interface ClientOptions {
   /** Headers sent on every request (a per-call `headers` option is merged on top). */
   readonly headers?: Record<string, string>
   /** Override the `fetch` implementation (tests, an in-process bridge, a custom agent, etc.). */
   readonly fetch?: FetchFn
+  /**
+   * Runs before each request (including each retry). Return a header map to MERGE onto the outgoing
+   * request — the place to inject a fresh auth token. `await`ed, so async token refresh works.
+   */
+  readonly onRequest?: (request: {
+    readonly url: string
+    readonly method: string
+    readonly headers: Record<string, string>
+    readonly body: unknown
+  }) => MaybePromise<Record<string, string> | undefined>
+  /** Runs after a response arrives (once per call, on the final response). Observe-only. */
+  readonly onResponse?: (response: {
+    readonly url: string
+    readonly method: string
+    readonly response: Response
+  }) => MaybePromise<void>
+  /** Abort a call that takes longer than this many ms. Surfaces as `{ ok: false, status: 0 }` with a
+   * `timeout` error, never a throw. Combined with a per-call `signal`. */
+  readonly timeoutMs?: number
+  /** Enable safe automatic retries. See {@link ClientRetryOptions}. */
+  readonly retry?: ClientRetryOptions
+}
+
+const DEFAULT_RETRY_STATUSES: readonly number[] = [502, 503, 504]
+const IDEMPOTENT_METHODS: readonly string[] = ["GET", "HEAD", "OPTIONS", "PUT", "DELETE"]
+
+function defaultBackoff(attempt: number): number {
+  return Math.min(300 * 2 ** (attempt - 1), 3000) + Math.random() * 100
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+/** Combine a per-call signal with a timeout into one signal; also returns the timeout signal so the
+ * caller can tell a timeout abort from a caller abort. */
+function buildSignal(
+  userSignal: AbortSignal | undefined,
+  timeoutMs: number | undefined,
+): { signal?: AbortSignal | undefined; timeout?: AbortSignal | undefined } {
+  const timeout =
+    timeoutMs !== undefined && typeof AbortSignal.timeout === "function"
+      ? AbortSignal.timeout(timeoutMs)
+      : undefined
+  const parts = [userSignal, timeout].filter((s): s is AbortSignal => s !== undefined)
+  if (parts.length === 0) return {}
+  if (parts.length === 1) return { signal: parts[0], timeout }
+  const signal = typeof AbortSignal.any === "function" ? AbortSignal.any(parts) : parts[0]
+  return { signal, timeout }
 }
 
 /** Typed route client plus the explicit platform-aware backend mount capability. */
 export type InProcessClient<App> = Treaty<App> & BackendMount
+
+export interface InProcessClientOptions extends Omit<ClientOptions, "fetch"> {
+  /**
+   * Assert every JSON response against the route's declared contract — `schema.response` for 2xx,
+   * `schema.errors[status]` for declared failures — and THROW on mismatch, so a handler whose real
+   * output drifts from its schema fails the test instead of passing silently. Statuses with no
+   * declared schema, non-JSON bodies, and 204/205/HEAD pass through unchecked. Test-focused: the
+   * check parses a clone of each JSON body, a cost that belongs in tests, not production hot paths.
+   */
+  readonly validateResponses?: boolean
+}
 
 interface CallOptions {
   readonly query?: Record<string, unknown>
@@ -87,14 +166,21 @@ export function client(
  */
 export function inProcessClient<
   App extends { fetch(request: Request): Response | Promise<Response> },
->(app: App, options?: Omit<ClientOptions, "fetch">): InProcessClient<App> {
+>(app: App, options?: InProcessClientOptions): InProcessClient<App> {
   // The in-process bridge: the client speaks `fetch(url, init)` (the `FetchFn` shape) while the app's
   // own `fetch` takes a `Request`. It is the proxy's per-call transport; the symbol-keyed mount below
   // is the platform-aware auto-mount path.
-  const bridge: FetchFn = (url, init) => Promise.resolve(app.fetch(new Request(url, init)))
+  const direct: FetchFn = (url, init) => Promise.resolve(app.fetch(new Request(url, init)))
+  const bridge = options?.validateResponses === true ? withResponseValidation(app, direct) : direct
   const mount: BackendMountHandler = (request, platform) =>
     Promise.resolve((app.fetch as BackendMountHandler)(request, platform))
-  const proxy = client<App>("http://nifra.internal", { ...options, fetch: bridge })
+  // NO_SOCKET marks the options so a typed `.ws()` call fails with a real explanation — an
+  // in-process app has no socket to upgrade — instead of dialing ws://nifra.internal into the void.
+  const proxy = client<App>("http://nifra.internal", {
+    ...options,
+    fetch: bridge,
+    [NO_SOCKET]: true,
+  } as ClientOptions)
   // An outer Proxy intercepts only the explicit mount symbol, delegating every typed route segment
   // unchanged (`api.users({ id }).get()`).
   return new Proxy(proxy as object, {
@@ -139,6 +225,16 @@ function createProxy(base: string, path: string, options: ClientOptions): unknow
         return (onEvent: (event: unknown) => void, subscribeOptions?: SubscribeCallOptions) =>
           subscribeSse(base, path, onEvent, subscribeOptions, options)
       }
+      // Typed WebSocket handle for `app.ws()` routes — `ws` is a reserved proxy key like `subscribe`.
+      if (key === "ws") {
+        return (wsOptions?: Parameters<typeof openWebSocket>[2]) =>
+          openWebSocket(
+            base,
+            path,
+            { headers: options.headers, ...wsOptions },
+            NO_SOCKET in options,
+          )
+      }
       // `index` addresses the root path "/" and adds no segment.
       return createProxy(base, key === "index" ? path : `${path}/${key}`, options)
     },
@@ -175,21 +271,56 @@ async function execute(
   const query = callOptions?.query ? buildQuery(callOptions.query) : ""
   if (query !== "") url += `?${query}`
 
+  const method = verb.toUpperCase()
   const headers: Record<string, string> = { ...options.headers, ...callOptions?.headers }
-  const init: RequestInit = { method: verb.toUpperCase(), headers }
+  if (options.onRequest !== undefined) {
+    const extra = await options.onRequest({ url, method, headers, body })
+    if (extra !== undefined) Object.assign(headers, extra)
+  }
+  const init: RequestInit = { method, headers }
   if (body !== undefined) {
     init.body = JSON.stringify(body)
     headers["content-type"] = "application/json"
   }
-  if (callOptions?.signal) init.signal = callOptions.signal
+  const { signal, timeout } = buildSignal(callOptions?.signal, options.timeoutMs)
+  if (signal !== undefined) init.signal = signal
 
+  // Safe retry: only when configured, only for idempotent methods + transient statuses, so a retry
+  // can never duplicate a side effect (a POST is never retried unless the app opts its method in).
+  const retry = options.retry
+  const maxRetries = retry === undefined ? 0 : (retry.attempts ?? 2)
+  const retryStatuses = new Set(retry?.on ?? DEFAULT_RETRY_STATUSES)
+  const retryMethods = new Set((retry?.methods ?? IDEMPOTENT_METHODS).map((m) => m.toUpperCase()))
+  const methodRetryable = retryMethods.has(method)
+  const backoff = retry?.backoff ?? defaultBackoff
   const doFetch = options.fetch ?? fetch
+
   let response: Response
-  try {
-    response = await doFetch(url, init)
-  } catch {
-    return { ok: false, status: 0, data: null, error: { error: "network_error" } }
+  let attempt = 0
+  for (;;) {
+    try {
+      response = await doFetch(url, init)
+    } catch (error) {
+      // A contract violation is a test assertion (validateResponses), not a call outcome — let it
+      // fail the test instead of degrading into a `Result` the test would happily branch on.
+      if (error instanceof ResponseContractViolation) throw error
+      if (methodRetryable && attempt < maxRetries) {
+        attempt += 1
+        await delay(backoff(attempt))
+        continue
+      }
+      const code = timeout?.aborted === true ? "timeout" : "network_error"
+      return { ok: false, status: 0, data: null, error: { error: code } }
+    }
+    if (methodRetryable && attempt < maxRetries && retryStatuses.has(response.status)) {
+      attempt += 1
+      await delay(backoff(attempt))
+      continue
+    }
+    break
   }
+
+  if (options.onResponse !== undefined) await options.onResponse({ url, method, response })
 
   const data = await parseBody(response)
   if (response.ok) {

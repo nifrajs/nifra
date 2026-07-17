@@ -1,10 +1,11 @@
 /**
- * Lazy WebSocket runtime seam. `server.ts` never imports the WS implementation statically — the
- * `@nifrajs/core/ws` subpath entry registers it here on import. That keeps the WS dispatcher, pub/sub
- * registry, Bun socket plumbing, and message-schema validation out of the base server bundle for
- * apps that never call `app.ws()` (~1.5 KB gzipped on the minimal-app benchmark).
+ * WebSocket runtime contract. `server.ts` type-imports only this; the `.use(websocket())` plugin
+ * (from `@nifrajs/core/ws`) installs the implementation on a server instance via the `INSTALL_WS`
+ * symbol seam. That keeps the WS dispatcher, pub/sub registry, Bun socket plumbing, and
+ * message-schema validation out of the base server bundle for apps that never call `app.ws()`
+ * (~1.5 KB gzipped on the minimal-app benchmark).
  *
- * Only type imports below — this module must stay weightless, it is always in the base bundle.
+ * Only type declarations below - this module must stay weightless, it is always in the base bundle.
  */
 
 import type {
@@ -25,29 +26,17 @@ export interface BunWsHandlers {
 
 /** What `@nifrajs/core/ws` registers: everything `server.ts` and `toFetchHandler` need at runtime. */
 export interface WsRuntime {
-  /** `wrapWebSocketMessageValidation` — applied once at `app.ws()` registration. */
+  /** `wrapWebSocketMessageValidation` - applied once at `app.ws()` registration. */
   wrapHandler(handler: WebSocketHandler): WebSocketHandler
   /** One in-process pub/sub registry per app (backs `ws.subscribe` + `app.publish`). */
   createTopics(): TopicRegistry
   /** The Bun `websocket` config for `listen()` when the app has WS routes. */
   bunHandlers(topics: TopicRegistry): BunWsHandlers
-  /** `attachWebSocket` — wires a standard server socket (Workers `WebSocketPair`) to a handler. */
+  /** `attachWebSocket` - wires a standard server socket (Workers `WebSocketPair`) to a handler. */
   attach(
     socket: StandardWebSocket,
     handler: WebSocketHandler,
     data: unknown,
     options: { openNow: boolean; pubsub: TopicRegistry },
   ): NifraWebSocket
-}
-
-let runtime: WsRuntime | undefined
-
-/** Called by `@nifrajs/core/ws` on import. Last registration wins (idempotent in practice — there is
- * one implementation; double-import is a no-op re-set of the same functions). */
-export function setWsRuntime(impl: WsRuntime): void {
-  runtime = impl
-}
-
-export function getWsRuntime(): WsRuntime | undefined {
-  return runtime
 }

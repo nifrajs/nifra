@@ -21,9 +21,14 @@ import { extname, resolve, sep } from "node:path"
 import { type Duplex, Readable } from "node:stream"
 import { fileURLToPath } from "node:url"
 
+/** The runtime platform a nifra app accepts as `fetch`'s 2nd arg — here, the observed socket peer. */
+interface NodePlatform {
+  readonly clientIp?: string
+}
+
 /** Anything exposing a Web `fetch` handler — a nifra `app`, for instance. */
 export interface FetchHandler {
-  fetch(request: Request): Response | Promise<Response>
+  fetch(request: Request, platform?: NodePlatform): Response | Promise<Response>
   /** Nifra apps also expose this WS-upgrade seam; present → this adapter serves `app.ws()` routes via
    * the optional `ws` package (lazy-imported on the first upgrade). Absent (a plain `{ fetch }`
    * handler) → HTTP only, and an upgrade request gets a 404. */
@@ -150,10 +155,13 @@ interface NodeOutcomeRuntime {
 /** A `FetchHandler` that *also* exposes the node-direct fast path (every nifra app does). May resolve
  * **synchronously** (a bare route + sync handler allocates no promise) — we `await` it regardless. */
 interface NodeFastHandler extends FetchHandler {
-  resolveNode(request: Request): NodeServeOutcome | Promise<NodeServeOutcome>
+  resolveNode(
+    request: Request,
+    platform?: NodePlatform,
+  ): NodeServeOutcome | Promise<NodeServeOutcome>
   resolveNodeSource(
     source: NodeRequestSource,
-    platform: undefined,
+    platform: NodePlatform | undefined,
     runtime: NodeOutcomeRuntime,
   ): NodeServeOutcome | Promise<NodeServeOutcome>
 }
@@ -551,6 +559,13 @@ function handle(
     return
   }
 
+  // The TCP socket peer (the one address a client can't forge) → `c.clientIp`, unless the app's
+  // `clientIp` trust declaration derives it from the forwarding chain instead. `undefined` for an
+  // already-closed socket.
+  const peerAddress = nodeReq.socket?.remoteAddress
+  const platform: NodePlatform | undefined =
+    peerAddress === undefined ? undefined : { clientIp: peerAddress }
+
   // Static files first (GET/HEAD). The match is synchronous, so a non-asset request never leaves the
   // app's sync fast path below; only a prefix hit reads from disk (and async-writes the file).
   if (staticState !== undefined && (nodeReq.method === "GET" || nodeReq.method === "HEAD")) {
@@ -575,7 +590,7 @@ function handle(
       const outcome = resolveNodeSource.call(
         app,
         toNodeRequestSource(nodeReq, protocol),
-        undefined,
+        platform,
         NODE_OUTCOME_RUNTIME,
       )
       return outcome instanceof Promise
@@ -594,7 +609,7 @@ function handle(
   const resolveNode = (app as Partial<NodeFastHandler>).resolveNode
   if (typeof resolveNode === "function") {
     try {
-      const outcome = resolveNode.call(app, request)
+      const outcome = resolveNode.call(app, request, platform)
       return outcome instanceof Promise
         ? outcome.then(
             (settled) => writeNodeOutcome(settled, nodeRes),
@@ -608,7 +623,7 @@ function handle(
   }
 
   try {
-    const response = app.fetch(request)
+    const response = app.fetch(request, platform)
     return response instanceof Promise
       ? response.then(
           (settled) => writeNodeResponse(settled, nodeRes),

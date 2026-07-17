@@ -159,6 +159,10 @@ export interface Platform<Env = unknown> {
   readonly env?: Env
   /** Extend the response's lifetime for background work (Workers `ctx.waitUntil`). */
   readonly waitUntil?: (promise: Promise<unknown>) => void
+  /** The raw socket peer address the serving adapter observed, if any (`listen()`, `@nifrajs/node`,
+   * `@nifrajs/deno` set it). The server applies the app's `clientIp` trust declaration to this before
+   * exposing {@link Context.clientIp}; read `c.clientIp`, not this. */
+  readonly clientIp?: string | undefined
 }
 
 /**
@@ -198,6 +202,15 @@ export interface Context<Path extends string = string, S extends RouteSchema = R
    * (`c.env: Env`); otherwise `unknown`. Validate at the trust boundary before use either way.
    */
   readonly env: unknown
+  /**
+   * The caller's IP. By default the raw socket peer the serving adapter observed (`listen()`,
+   * `@nifrajs/node`, `@nifrajs/deno`) — the one address a client cannot forge — or `undefined` when the
+   * runtime exposes no socket (Workers) and no trust is declared. Behind a proxy/CDN, set the
+   * `clientIp` server option (`{ trustedHops }` or `{ header }`) to derive the real caller from the
+   * forwarding chain as far as you trust it; unset, no forwarded header is ever believed. Safe to key
+   * rate limits and audit logs on.
+   */
+  readonly clientIp: string | undefined
   /**
    * Schedule background work. On edge runtimes it extends the response lifetime (Workers
    * `ctx.waitUntil`); off-edge it runs the promise fire-and-forget (a rejection is swallowed,

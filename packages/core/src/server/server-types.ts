@@ -6,6 +6,7 @@
 import type { CapabilityUseEvent } from "../internal/capability-runtime.ts"
 import type { AssuranceEvidence } from "../internal/route-assurance.ts"
 import type { Method } from "../router/router.ts"
+import type { ClientIpTrust } from "./client-ip.ts"
 import type { Context, Platform, RouteSchema } from "./context.ts"
 import type { Logger } from "./logger.ts"
 import type { MaybePromise, OnRequestResult } from "./server.ts"
@@ -48,6 +49,14 @@ export interface ServerOptions {
   readonly wsMaxPayloadBytes?: number
   /** Per-request timeout (ms): a slower request gets a 503 and `ctx.signal` aborts. 0 disables (default). */
   readonly requestTimeoutMs?: number
+  /**
+   * How to derive `c.clientIp` behind a reverse proxy or CDN. Omit (default) to trust only the raw
+   * socket peer and never believe a forwarded header. Set `{ trustedHops: n }` when the app sits
+   * behind `n` proxies you operate (the caller is read from `X-Forwarded-For` past those hops), or
+   * `{ header: name }` to trust one edge-set header's first value. Declaring trust the app can't
+   * actually enforce lets clients forge their IP, so leave it unset unless a proxy really fronts you.
+   */
+  readonly clientIp?: ClientIpTrust
   /**
    * Admit the public `x-nifra-deadline` header and let it shorten local work. Disabled by default:
    * services that participate in trusted cross-service deadline propagation opt in explicitly,

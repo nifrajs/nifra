@@ -115,3 +115,75 @@ api.search.get({ query: { page: "two" } })
 api.health.get({ query: { page: 1 } })
 // @ts-expect-error a bodyless POST takes no body argument
 api.ping.post({ data: 1 })
+
+// --- status-discriminated error contracts ---
+
+declare const notFoundBody: StandardSchemaV1<unknown, { code: "not_found"; id: string }>
+declare const conflictBody: StandardSchemaV1<unknown, { code: "conflict"; retryAfter: number }>
+
+const errApp = server()
+  .get("/items/:id", { errors: { 404: notFoundBody, 409: conflictBody } }, (c) => ({
+    id: c.params.id,
+  }))
+  .get("/loose", () => ({ ok: true }))
+
+const errApi = {} as Treaty<typeof errApp>
+
+type ErrResult = Awaited<ReturnType<ReturnType<typeof errApi.items>["get"]>>
+
+// each declared status is its own arm, `data` narrowed to exactly that body
+type Arm404 = Extract<ErrResult, { status: 404 }>
+export type _E404 = Expect<Equal<Arm404["data"], { code: "not_found"; id: string }>>
+type Arm409 = Extract<ErrResult, { status: 409 }>
+export type _E409 = Expect<Equal<Arm409["data"], { code: "conflict"; retryAfter: number }>>
+
+// the fallback arm carries every UNDECLARED failure status with `data: unknown` —
+// and its status union excludes the declared literals, which is what makes
+// `res.status === 404` narrow `data` to the declared body instead of smearing to unknown.
+type FallbackArm = Exclude<Extract<ErrResult, { ok: false }>, { status: 404 } | { status: 409 }>
+export type _FallbackData = Expect<Equal<FallbackArm["data"], unknown>>
+export type _FallbackHas500 = Expect<Equal<Extract<FallbackArm["status"], 500>, 500>>
+export type _FallbackExcludesDeclared = Expect<
+  Equal<Extract<FallbackArm["status"], 404 | 409>, never>
+>
+
+// a route with no `errors` contract keeps the single unknown-data failure arm
+type LooseFailure = Extract<Awaited<ReturnType<typeof errApi.loose.get>>, { ok: false }>
+export type _LooseData = Expect<Equal<LooseFailure["data"], unknown>>
+export type _LooseStatus = Expect<Equal<LooseFailure["status"], number>>
+
+// --- typed WebSocket handles ---
+
+// Input and output declared distinctly: the client SENDS the wire (input) side.
+declare const chatIn: StandardSchemaV1<{ say: string }, { say: string; normalized: boolean }>
+declare const chatOut: StandardSchemaV1<unknown, { echoed: string; at: number }>
+
+const wsApp = server()
+  .get("/health", () => ({ ok: true }))
+  .ws("/chat", {
+    messageSchema: chatIn,
+    sendSchema: chatOut,
+    message: () => {},
+  })
+  .ws("/rooms/:room", { message: () => {} })
+
+const wsApi = {} as Treaty<typeof wsApp>
+
+// the WS route grows a .ws() handle; send takes the messageSchema INPUT (the wire value, before
+// any validation transform), frames are the sendSchema output
+const chat = wsApi.chat.ws()
+export type _WsSend = Expect<Equal<Parameters<typeof chat.send>[0], { say: string }>>
+export type _WsFrame = Expect<
+  Equal<Parameters<Parameters<typeof chat.onMessage>[0]>[0], { echoed: string; at: number }>
+>
+
+// params flow into the path proxy exactly like HTTP routes; no schemas → both sides unknown
+const room = wsApi.rooms({ room: "a" }).ws()
+export type _WsLooseSend = Expect<Equal<Parameters<typeof room.send>[0], unknown>>
+
+// @ts-expect-error sending a frame that violates the messageSchema input
+chat.send({ say: 1 })
+// @ts-expect-error an HTTP-only route has no .ws()
+wsApi.health.ws()
+// @ts-expect-error a WS route has no HTTP verbs
+wsApi.chat.get()

@@ -84,12 +84,60 @@ type SseMethods<MethodMap> = MethodMap extends { GET: infer G }
     : { subscribe: SubscribeCall<G & RouteInfo> }
   : unknown
 
+// --- typed WebSocket handles ---
+
+/** The WS frame contract of a route (from `app.ws()`'s schemas); `never` for ordinary routes. */
+type WsOf<I> = I extends { ws: infer W extends { in: unknown; out: unknown } } ? W : never
+
+export interface WsCallOptions {
+  query?: Record<string, string | number | boolean>
+  /** WebSocket subprotocols. A browser handshake cannot carry custom headers - authenticate via
+   * `upgrade()` reading cookies/query/subprotocol, not an Authorization header. */
+  protocols?: string | string[]
+  /** Abort to close the socket (same effect as calling `close()`). */
+  signal?: AbortSignal
+  /** Socket-level failures (connection refused, abnormal close). */
+  onError?: (error: unknown) => void
+}
+
+/**
+ * A live typed WebSocket connection to an `app.ws()` route. `send` accepts the route's
+ * `messageSchema` input type (validated server-side at the trust boundary); received frames are
+ * typed from its `sendSchema` and JSON-parsed. Binary frames are not part of the typed contract
+ * and are ignored by `messages()`/`onMessage` - use `raw` for them.
+ */
+export interface WsHandle<In, Out> {
+  /** Send one typed frame (JSON-encoded). Queued until the socket opens, so it never throws. */
+  send(message: In): void
+  /** Async-iterate incoming typed frames. Ends when the socket closes (or `signal` aborts). */
+  messages(options?: { signal?: AbortSignal }): AsyncIterableIterator<Out>
+  /** Callback form of {@link messages}; returns an unsubscribe. */
+  onMessage(callback: (message: Out) => void): () => void
+  /** Resolves when the socket is open (rejects on a connect failure). */
+  readonly opened: Promise<void>
+  close(code?: number, reason?: string): void
+  /** The underlying socket, for anything off the typed contract (binary frames, bufferedAmount…). */
+  readonly raw: WebSocket
+}
+
+type WsCall<I extends RouteInfo> = (
+  options?: WsCallOptions,
+) => WsHandle<WsOf<I>["in"], Jsonify<WsOf<I>["out"]>>
+
+/** Routes declared via `app.ws()` (pseudo-method `"WS"`) grow a `.ws()` handle. */
+type WsMethods<MethodMap> = MethodMap extends { WS: infer G }
+  ? [WsOf<G>] extends [never]
+    ? unknown
+    : { ws: WsCall<G & RouteInfo> }
+  : unknown
+
 type Methods<MethodMap> = {
-  [M in keyof MethodMap as Lowercase<M & string>]: MethodCall<
+  [M in Exclude<keyof MethodMap, "WS"> as Lowercase<M & string>]: MethodCall<
     MethodMap[M] & RouteInfo,
     IsBodyVerb<M & string>
   >
-} & SseMethods<MethodMap>
+} & SseMethods<MethodMap> &
+  WsMethods<MethodMap>
 
 // --- path-tree construction over the registry ---
 

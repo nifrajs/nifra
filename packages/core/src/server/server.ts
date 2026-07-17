@@ -33,6 +33,7 @@ import type {
   StandardSchemaV1,
 } from "../schema/standard.ts"
 import { parseContentLength } from "./body.ts"
+import { type ClientIpTrust, resolveClientIp } from "./client-ip.ts"
 import type { Context, Platform, ResponseControls, RouteSchema } from "./context.ts"
 import { jsonError, pathnameOf, urlPartsOf } from "./http.ts"
 import type { NodeServeOutcome } from "./node-outcome.ts"
@@ -68,12 +69,20 @@ import {
   INSTALL_MCP,
   INSTALL_NODE_DIRECT,
   INSTALL_SSE,
+  INSTALL_WS,
 } from "./install.ts"
 import type { EffectLedgerRuntime, ResolvedEffectLedger } from "./ledger-lane.ts"
 import { jsonLogger, type Logger } from "./logger.ts"
 import type { McpRuntime } from "./mcp-hook.ts"
 import type { IdentityPlugin } from "./plugin.ts"
-import type { AddRoute, EmptyRegistry, OutputOf, Registry, RouteInfoFor } from "./registry.ts"
+import type {
+  AddRoute,
+  EmptyRegistry,
+  OutputOf,
+  Registry,
+  RouteInfoFor,
+  WsRouteInfoFor,
+} from "./registry.ts"
 import type {
   AdmissionController,
   AdmissionDecision,
@@ -98,7 +107,7 @@ import type {
   WebSocketUpgradeOutcome,
 } from "./websocket.ts"
 import type { BunWsData } from "./ws-bun.ts"
-import { getWsRuntime, type WsRuntime } from "./ws-hook.ts"
+import type { WsRuntime } from "./ws-hook.ts"
 
 export type MaybePromise<T> = T | Promise<T>
 
@@ -153,6 +162,7 @@ export interface RawContext {
   readonly signal: AbortSignal
   readonly budget: RequestBudget
   readonly env: unknown
+  readonly clientIp: string | undefined
   readonly waitUntil: (promise: Promise<unknown>) => void
   readonly boundedBody: (maxBytes?: number) => Promise<Uint8Array>
   readonly boundedJson: <T = unknown>(maxBytes?: number) => Promise<T>
@@ -310,9 +320,20 @@ interface WsEntry {
   readonly handler: WebSocketHandler
 }
 
-/** Structural view of the Bun `Server` `upgrade` the `fetch` 2nd arg exposes. */
+/** Structural view of the Bun `Server` the `fetch` 2nd arg exposes (`upgrade` + the socket peer). */
 interface BunUpgradeServer {
   upgrade(request: Request, options?: { data?: BunWsData }): boolean
+  requestIP(request: Request): { readonly address: string } | null
+}
+
+/** The socket peer Bun observed, as a `Platform` for the request lifecycle (`undefined` if unknown).
+ * Typed structurally on `requestIP` alone so any Bun `Server` (WS or not) satisfies it. */
+function bunPeerPlatform(
+  server: { requestIP(request: Request): { readonly address: string } | null },
+  req: Request,
+): Platform | undefined {
+  const address = server.requestIP(req)?.address
+  return address === undefined ? undefined : { clientIp: address }
 }
 
 type BunNativeHandler = (request: Request) => MaybePromise<Response>
@@ -323,12 +344,11 @@ type BunRequestWithParams = Request & { readonly params?: Record<string, string>
 const WS_PASS: WebSocketUpgradeOutcome = { kind: "pass" }
 
 /** `app.ws()` (and everything downstream of it) needs the runtime `@nifrajs/core/ws` registers. */
-function requireWsRuntime(): WsRuntime {
-  const runtime = getWsRuntime()
+function requireWsRuntime(runtime: WsRuntime | undefined): WsRuntime {
   if (runtime === undefined) {
     throw new FrameworkError(
       "WS_RUNTIME_MISSING",
-      'app.ws() needs the WebSocket runtime, which ships as a subpath so no-WebSocket apps stay lean. Add `import "@nifrajs/core/ws"` at your server entry.',
+      "app.ws() needs the WebSocket runtime, which ships as an opt-in plugin so no-WebSocket apps stay lean. Add `.use(websocket())` from `@nifrajs/core/ws` before declaring WS routes.",
     )
   }
   return runtime
@@ -485,6 +505,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private readonly maxBodyBytes: number
   private readonly wsMaxPayloadBytes: number
   private readonly requestTimeoutMs: number
+  /** Opt-in caller-IP trust declaration; `undefined` = socket peer only, no forwarded header believed. */
+  private readonly clientIpTrust: ClientIpTrust | undefined
   private readonly acceptInboundDeadlines: boolean
   private readonly maxInboundDeadlineMs: number
   private readonly deadlineAdmissionOptions: DeadlineAdmissionOptions
@@ -504,6 +526,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private nodeOutcomeRuntime: NodeOutcomeRuntime | undefined
   /** Installed streaming runtime for `.sse()` routes; `undefined` until `.use(streaming())`. */
   private sseRuntime: SseRuntime | undefined
+  /** Installed WebSocket runtime for `.ws()` routes; `undefined` until `.use(websocket())`. */
+  private wsRuntime: WsRuntime | undefined
   private readonly logger: Logger
   /** App-wide validation-error fallback; a route's own `schema.onValidationError` takes precedence. */
   private readonly defaultOnValidationError?: RouteSchema["onValidationError"]
@@ -536,6 +560,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
     this.wsMaxPayloadBytes = options.wsMaxPayloadBytes ?? this.maxBodyBytes
     this.requestTimeoutMs = options.requestTimeoutMs ?? 0
+    this.clientIpTrust = options.clientIp
     this.acceptInboundDeadlines = options.acceptInboundDeadlines ?? false
     this.maxInboundDeadlineMs = options.maxInboundDeadlineMs ?? 30_000
     this.deadlineAdmissionOptions = Object.freeze({
@@ -966,16 +991,29 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * adapter (`listen()`, `@nifrajs/node`, `@nifrajs/deno`, `toFetchHandler`) — not by bare `app.fetch`, which
    * has no socket (a WS path through `app.fetch` is a normal HTTP response).
    *
+   * The route also enters the type-level registry (under the pseudo-method `"WS"`), so the typed
+   * client grows a `.ws()` handle for it: `messageSchema` types what the client may `send`,
+   * `sendSchema` types the frames it receives. Passing explicit type arguments (`ws<MyData>(…)`)
+   * defeats path-literal inference and skips the registry entry - the route still serves, it is just
+   * invisible to `client<App>`; prefer typing `data` via `upgrade()`'s return.
+   *
    *   app.ws("/chat", { open: (ws) => ws.send("hi"), message: (ws, data) => ws.send(data) })
    */
-  ws<Data = unknown, Schema extends StandardSchemaV1 | undefined = undefined>(
-    path: string,
-    handler: WebSocketHandler<Data, EnvOf<Ctx>, Schema>,
-  ): this {
+  ws<
+    Data = unknown,
+    Schema extends StandardSchemaV1 | undefined = undefined,
+    Send extends StandardSchemaV1 | undefined = undefined,
+    Path extends string = string,
+  >(
+    path: Path,
+    handler: WebSocketHandler<Data, EnvOf<Ctx>, Schema, Send>,
+  ): string extends Path
+    ? Server<R, Ctx>
+    : Server<AddRoute<R, "WS", Path, WsRouteInfoFor<Path, Schema, Send>>, Ctx> {
     this.assertConfigurable("ws()")
     // Boot-time guard: the WS runtime is a subpath (`@nifrajs/core/ws`) so no-WebSocket apps don't
     // bundle it. Registration is the loud, early failure point — never the first connection.
-    const runtime = requireWsRuntime()
+    const runtime = requireWsRuntime(this.wsRuntime)
     this.topics ??= runtime.createTopics()
     // A `messageSchema` wraps `message` with validation once, here — every adapter then dispatches
     // already-validated, typed messages (Bun/Deno/Node/Workers) with no per-adapter code.
@@ -983,7 +1021,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       handler: runtime.wrapHandler(handler as WebSocketHandler),
     })
     this.wsRouteCount += 1
-    return this
+    return this as never
   }
 
   /**
@@ -1353,6 +1391,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.sseRuntime = runtime
   }
 
+  /** @internal Symbol-keyed install seam for the `websocket()` plugin. Off the public typed surface. */
+  [INSTALL_WS](runtime: WsRuntime): void {
+    this.assertConfigurable("websocket()")
+    this.wsRuntime = runtime
+  }
+
   /**
    * Merge another server's routes into this one — the composition escape hatch for large apps.
    *
@@ -1392,6 +1436,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.mcpRuntime ??= source.mcpRuntime
     this.nodeOutcomeRuntime ??= source.nodeOutcomeRuntime
     this.sseRuntime ??= source.sseRuntime
+    this.wsRuntime ??= source.wsRuntime
     this.onRequestHooks.push(...source.onRequestHooks)
     this.onResponseHooks.push(...source.onResponseHooks)
     this.onResponseFinalizedHooks.push(...source.onResponseFinalizedHooks)
@@ -1631,8 +1676,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     const params = match.params === EMPTY_PARAMS ? match.params : decodeRouteParams(match.params)
     if (params === null) return { kind: "reject", response: jsonError(400, "malformed_path") }
     const handler = match.payload.handler
-    // Non-null: wsRouteCount > 0 ⇒ ws() ran ⇒ the runtime created the registry.
+    // Non-null: wsRouteCount > 0 ⇒ ws() ran ⇒ `.use(websocket())` installed the runtime + registry.
     const pubsub = this.topics as TopicRegistry
+    const attach = (this.wsRuntime as WsRuntime).attach
     // CSWSH guard, before any per-connection work or the user's upgrade(): reject a disallowed
     // Origin with 403. Browsers don't CORS-protect WS handshakes but do send cookies, so this
     // blocks cross-site authenticated sockets when the route opts in via `allowedOrigins`.
@@ -1651,7 +1697,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       return { kind: "reject", response: jsonError(403, "forbidden_origin") }
     }
     if (handler.upgrade === undefined) {
-      return { kind: "upgrade", handler, data: undefined, pubsub }
+      return { kind: "upgrade", handler, data: undefined, pubsub, attach }
     }
     const upgradeSignal = getNeverAbortSignal()
     const ctx = new RequestContext(
@@ -1666,7 +1712,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     const settle = (value: unknown): WebSocketUpgradeOutcome =>
       value instanceof Response
         ? { kind: "reject", response: value }
-        : { kind: "upgrade", handler, data: value, pubsub }
+        : { kind: "upgrade", handler, data: value, pubsub, attach }
     try {
       const result = handler.upgrade(ctx as unknown as WebSocketContext<EnvOf<Ctx>>)
       return result instanceof Promise
@@ -1688,7 +1734,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     server: BunUpgradeServer,
   ): MaybePromise<Response | undefined> {
     const handle = (o: WebSocketUpgradeOutcome): MaybePromise<Response | undefined> => {
-      if (o.kind === "pass") return this.fetch(req)
+      if (o.kind === "pass")
+        return this.fetch(req, bunPeerPlatform(server, req) as Platform<EnvOf<Ctx>>)
       if (o.kind === "reject") return o.response
       return server.upgrade(req, { data: { handler: o.handler, data: o.data } })
         ? undefined
@@ -1705,6 +1752,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * produces the 503. The Web `fetch` and `resolveNode` are thin callers over this one routing +
    * context + lifecycle implementation — no duplication across the trust boundary.
    */
+  /** Apply the `clientIp` trust declaration to the adapter's raw socket peer, returning a platform
+   * whose `clientIp` is the derived caller. Only called when a trust declaration is configured. */
+  private deriveClientIp(
+    source: RequestSource,
+    platform: Platform | undefined,
+  ): Platform | undefined {
+    const derived = resolveClientIp(platform?.clientIp, requestOf(source), this.clientIpTrust)
+    return { ...platform, clientIp: derived }
+  }
+
   private dispatch<T>(
     source: RequestSource,
     platform: Platform | undefined,
@@ -1715,12 +1772,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // `Response` (`T = Response` there by construction; the node path always passes false).
     webFast: boolean,
   ): MaybePromise<T> {
+    // Resolve the trust declaration into the platform's `clientIp` ONCE, here at the shared funnel, so
+    // `c.clientIp` (and every hook/derive downstream) sees the derived caller. No config ⇒ the raw
+    // socket peer the adapter supplied passes through untouched (a one-property no-op on the hot path).
+    const resolved =
+      this.clientIpTrust === undefined ? platform : this.deriveClientIp(source, platform)
     // onRequest hooks may be async, so a hooked app takes the async path; with no hooks (the common
     // case) routing stays synchronous, letting a bare route resolve with no lifecycle promise at all.
     if (this.onRequestHooks.length === 0) {
-      return this.routeAndRun(source, platform, finalize, wrapResponse, onTimeout, webFast)
+      return this.routeAndRun(source, resolved, finalize, wrapResponse, onTimeout, webFast)
     }
-    return this.runWithOnRequest(source, platform, finalize, wrapResponse, onTimeout, webFast)
+    return this.runWithOnRequest(source, resolved, finalize, wrapResponse, onTimeout, webFast)
   }
 
   /**
@@ -2848,7 +2910,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * route selection/upgrade. Named wildcards also stay on the fallback until Bun exposes their raw
    * capture semantics; static and `:param` routes take the native lane. */
   private buildBunNativeRoutes(): BunNativeRoutes | undefined {
-    if (this.onRequestHooks.length > 0 || this.wsRouteCount > 0) return undefined
+    // A `clientIp` trust declaration must run the resolver in `dispatch`, which the fused native lane
+    // bypasses — so an app that declares trust routes through the fetch lane (where `c.clientIp`
+    // resolves) instead of Bun's native table. The allocation-free default keeps native fusion.
+    if (
+      this.onRequestHooks.length > 0 ||
+      this.wsRouteCount > 0 ||
+      this.clientIpTrust !== undefined
+    ) {
+      return undefined
+    }
 
     const routes: BunNativeRoutes = Object.create(null) as BunNativeRoutes
     const mayUseFusedNative =
@@ -2919,12 +2990,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // `server` 2nd arg is how Bun exposes `upgrade`); otherwise the lean request-only fetch. The
     // `websocket` handlers are one shared dispatcher — each connection's `ws.data.handler` is the
     // matched route's handler, set by `server.upgrade`.
-    // With WS routes, the dispatcher comes from the `@nifrajs/core/ws` runtime — non-null because
-    // wsRouteCount > 0 means ws() ran, and ws() requires the runtime at registration.
+    // With WS routes, the dispatcher comes from the installed `.use(websocket())` runtime — non-null
+    // because wsRouteCount > 0 means ws() ran, and ws() requires the runtime at registration.
     const wsHandlers =
       this.wsRouteCount === 0
         ? undefined
-        : (getWsRuntime() as WsRuntime).bunHandlers(this.topics as TopicRegistry)
+        : (this.wsRuntime as WsRuntime).bunHandlers(this.topics as TopicRegistry)
     const reusePort = options?.reusePort === true
     // Spread rather than pass `hostname: undefined` - Bun treats an explicit undefined as a value
     // on some option paths, and omitting is what selects its 0.0.0.0 default.
@@ -2936,7 +3007,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           reusePort,
           ...bind,
           ...(nativeRoutes === undefined ? {} : { routes: nativeRoutes }),
-          fetch: (req: Request) => this.fetch(req),
+          fetch: (req: Request, server) =>
+            this.fetch(req, bunPeerPlatform(server, req) as Platform<EnvOf<Ctx>>),
         })
       : Bun.serve<BunWsData>({
           port,
@@ -3116,9 +3188,9 @@ export function toFetchHandler<Env = unknown>(
           const pair = new Pair()
           const server = pair[1]
           server.accept()
-          // Non-null: an `upgrade` outcome only exists for an app with ws() routes, and ws()
-          // requires the `@nifrajs/core/ws` runtime at registration.
-          ;(getWsRuntime() as WsRuntime).attach(server, outcome.handler, outcome.data, {
+          // The outcome carries the installed runtime's `attach`, so `toFetchHandler` (a standalone
+          // function, no access to the app's private runtime) wires the socket without a static WS import.
+          outcome.attach(server, outcome.handler, outcome.data, {
             openNow: true,
             pubsub: outcome.pubsub,
           })

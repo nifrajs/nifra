@@ -96,15 +96,18 @@ describe("decoupled client — client(contract, url)", () => {
     expect(res.status).toBe(422)
   })
 
-  test("a contract op's non-2xx `responses` type the failure `data`", async () => {
+  test("a contract op's non-2xx `responses` discriminate the failure `data` by status", async () => {
     const res = await api.orders({ id: "missing" }).get()
     expect(res.status).toBe(404)
-    if (!res.ok) {
-      // compile-time: `data` is the declared 404 error body from the contract's `responses`
+    if (!res.ok && res.status === 404) {
+      // compile-time: `status === 404` narrows `data` to THE declared 404 body from the
+      // contract's `responses` — not a union of every error body.
       const code: "not_found" = res.data.code
       const id: string = res.data.id
       expect(code).toBe("not_found")
       expect(id).toBe("missing")
+    } else {
+      throw new Error("expected the declared 404 arm")
     }
   })
 })

@@ -4,9 +4,9 @@ import { useCapability } from "../src/capabilities.ts"
 import { effectLedger } from "../src/effect-ledger.ts"
 import { idempotency } from "../src/idempotency-plugin.ts"
 import { type Logger, RouteConfigError, server } from "../src/index.ts"
-import "../src/ws.ts" // ws runtime, for the "merge refuses WebSocket groups" case
 import { mcp } from "../src/mcp.ts"
 import { nodeDirect } from "../src/node-direct.ts"
+import { websocket } from "../src/ws.ts" // ws runtime, for the "merge refuses WebSocket groups" case
 
 describe("merge — domain-group composition", () => {
   test("merged routes serve with the chains captured where they were DEFINED", async () => {
@@ -140,7 +140,9 @@ describe("merge — domain-group composition", () => {
         .merge(group),
     ).toThrow(RouteConfigError)
 
-    const wsGroup = server().ws("/live", { message: () => {} })
+    const wsGroup = server()
+      .use(websocket())
+      .ws("/live", { message: () => {} })
     expect(() => server().merge(wsGroup)).toThrow(/WebSocket/)
   })
 

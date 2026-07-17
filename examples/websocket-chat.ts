@@ -11,7 +11,7 @@
  *                       across clients needs a Durable Object — see the WebSockets guide)
  */
 import { server } from "@nifrajs/core/server"
-import "@nifrajs/core/ws" // registers the WebSocket runtime app.ws() needs (kept out of no-WS bundles)
+import { websocket } from "@nifrajs/core/ws" // .use(websocket()) enables app.ws() (kept out of no-WS bundles)
 
 const PAGE = /* html */ `<!doctype html><meta charset=utf-8><title>nifra chat</title>
 <style>body{font:14px system-ui;max-width:40rem;margin:2rem auto}#log{height:60vh;overflow:auto;border:1px solid #ccc;padding:.5rem}i{color:#888}</style>
@@ -27,6 +27,7 @@ document.getElementById("f").onsubmit = (e) => { e.preventDefault(); const i = d
 </script>`
 
 const app = server()
+  .use(websocket())
   .get("/", () => new Response(PAGE, { headers: { "content-type": "text/html; charset=utf-8" } }))
   .ws<{ name: string }>("/chat", {
     upgrade(c) {

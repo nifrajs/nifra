@@ -10,9 +10,10 @@ export const meta = pageMeta(
 )
 
 const BASIC = `import { server } from "@nifrajs/core/server"
-import "@nifrajs/core/ws" // registers the WebSocket runtime app.ws() needs
+import { websocket } from "@nifrajs/core/ws" // .use(websocket()) enables app.ws()
 
 const app = server()
+  .use(websocket())
   .get("/", () => ({ ok: true }))
   .ws("/echo", {
     open: (ws) => ws.send("welcome"),
@@ -76,9 +77,11 @@ export default function WebSockets() {
         Workers.
       </p>
       <p>
-        The WebSocket runtime ships as a subpath, so apps that never use it don’t bundle it. Import
-        it once at your server entry; <code>app.ws()</code> without it fails loud at boot with{" "}
-        <code>WS_RUNTIME_MISSING</code>. (<code>@nifrajs/workers</code> imports it for you.)
+        The WebSocket runtime ships as an opt-in plugin, so apps that never use it don’t bundle it.
+        Enable it with <code>.use(websocket())</code> from <code>@nifrajs/core/ws</code>;{" "}
+        <code>app.ws()</code> without it fails loud at registration with{" "}
+        <code>WS_RUNTIME_MISSING</code>. It installs on that server instance only — the same{" "}
+        <code>.use()</code> opt-in as <code>mcp()</code> and <code>streaming()</code>.
       </p>
       <CodeBlock code={BASIC} />
 

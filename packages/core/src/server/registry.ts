@@ -1,4 +1,4 @@
-import type { InferOutput, StandardSchemaV1 } from "../schema/standard.ts"
+import type { InferInput, InferOutput, StandardSchemaV1 } from "../schema/standard.ts"
 import type { Params, RouteSchema } from "./context.ts"
 
 /**
@@ -16,12 +16,17 @@ export interface RouteInfo {
   readonly query: unknown
   readonly body: unknown
   readonly output: unknown
-  /** Union of the route's declared error-response body types (from `schema.errors`); `unknown` when the
-   * route declares none. Surfaced by the typed client as the failure `errorData`. */
+  /** The route's declared error bodies as a status-keyed record (from `schema.errors`, e.g.
+   * `{ 404: NotFound }`); `unknown` when the route declares none. The typed client turns this into
+   * a status-discriminated failure union. */
   readonly errors?: unknown
   /** The SSE event payload type (from `schema.sse`, declared via `app.sse()`); `never` for ordinary
    * routes. The typed client keys `.subscribe()` availability and its event type off this. */
   readonly sse?: unknown
+  /** The WebSocket message contract (from `app.ws()`'s `messageSchema`/`sendSchema`): `in` is what the
+   * client may send, `out` what the server pushes. Present only on WS entries (method key `"WS"`);
+   * the typed client keys `.ws()` availability and its frame types off this. */
+  readonly ws?: unknown
 }
 
 /** The accumulated, type-level map of every route on a Server: path → method → RouteInfo. */
@@ -46,12 +51,13 @@ type RegistryOutput<S extends RouteSchema, Output> = S extends {
   ? InferOutput<R>
   : Output
 
-/** The union of a route's declared error-response body types (`schema.errors` → `{status: schema}`), so the
- * typed client can surface the failure body. `unknown` when the route declares no `errors`. */
+/** A route's declared error-response body types as a STATUS-KEYED record (`schema.errors` →
+ * `{ 404: NotFound, 409: Conflict }`), so the typed client can discriminate the failure body by
+ * `status`, not just surface a union. `unknown` when the route declares no `errors`. */
 type RegistryErrors<S extends RouteSchema> = S extends {
   errors: infer E extends Record<number, StandardSchemaV1>
 }
-  ? { [K in keyof E]: E[K] extends StandardSchemaV1 ? InferOutput<E[K]> : never }[keyof E]
+  ? { [K in keyof E]: E[K] extends StandardSchemaV1 ? InferOutput<E[K]> : never }
   : unknown
 
 /** The SSE event payload type from a route's `sse` schema; `never` for ordinary routes. */
@@ -74,6 +80,30 @@ export type OutputOf<H extends (...args: never[]) => unknown> = Exclude<
   Awaited<ReturnType<H>>,
   Response
 >
+
+/**
+ * The registry entry for a WebSocket route (stored under the pseudo-method key `"WS"`, so WS routes
+ * ride the same path → method map as HTTP routes - no extra Server generic). `in` is the client →
+ * server frame type: the `messageSchema`'s INPUT side, since that is what goes on the wire before
+ * validation transforms it. `out` is the server → client frame type from `sendSchema` (a type-level
+ * contract; the server's own sends are not runtime-validated). Either is `unknown` when undeclared.
+ */
+export type WsRouteInfoFor<
+  Path extends string,
+  In extends StandardSchemaV1 | undefined,
+  Out extends StandardSchemaV1 | undefined,
+> = {
+  readonly params: Params<Path>
+  readonly query: never
+  readonly body: never
+  readonly output: never
+  readonly errors: unknown
+  readonly sse: never
+  readonly ws: {
+    readonly in: In extends StandardSchemaV1 ? InferInput<In> : unknown
+    readonly out: Out extends StandardSchemaV1 ? InferOutput<Out> : unknown
+  }
+}
 
 /**
  * Merge a new route into the registry, combining methods that share a path.

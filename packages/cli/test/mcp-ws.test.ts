@@ -4,9 +4,10 @@ import { join } from "node:path"
 import { runWebSocket } from "../src/mcp-ws.ts"
 
 const BACKEND = [
-  'import "@nifrajs/core/ws"',
+  'import { websocket } from "@nifrajs/core/ws"',
   'import { server } from "@nifrajs/core"',
   "export const backend = server()",
+  "  .use(websocket())",
   '  .ws("/echo", {',
   '    open: (ws) => ws.send("welcome"),',
   '    message: (ws, data) => ws.send("echo:" + String(data)),',

@@ -218,18 +218,21 @@ describe("client — error paths (never throws)", () => {
     expect(res).toEqual({ ok: false, status: 0, data: null, error: { error: "network_error" } })
   })
 
-  test("a route's `errors` contract types the failure `data` (distinct from success)", async () => {
+  test("a route's `errors` contract discriminates the failure `data` by status", async () => {
     const res = await api.orders.post({ name: "missing" })
     expect(res.status).toBe(404)
-    if (!res.ok) {
-      // Type-level: `res.data` is the declared 404 error body — accessing `.code`/`.item` only
-      // compiles because it's typed from `errors`, not the success `{ orderId }` (nor the old `null`).
+    if (!res.ok && res.status === 404) {
+      // Type-level: `status === 404` narrows `res.data` to the declared 404 error body — accessing
+      // `.code`/`.item` only compiles because the failure union is status-discriminated, not the
+      // success `{ orderId }` (nor a smeared union of every error body).
       const code: "no_such_item" = res.data.code
       const item: string = res.data.item
       expect(code).toBe("no_such_item")
       expect(item).toBe("missing")
       // `error` remains the normalized summary.
       expect(res.error).toEqual({ error: "request_failed" })
+    } else {
+      throw new Error("expected the declared 404 arm")
     }
   })
 

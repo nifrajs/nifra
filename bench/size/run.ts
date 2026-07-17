@@ -102,13 +102,13 @@ import { effectLedger } from "@nifrajs/core/effect-ledger"
 import { useCapability } from "@nifrajs/core/capabilities"
 export default server().use(effectLedger({ sink: () => {} })).post("/write", { capabilities: ["db.write"] }, (c) => { useCapability(c, "db.write"); return { ok: true } })`,
   "nifra-sse": `import { server } from "@nifrajs/core/server"
-import "@nifrajs/core/sse"
+import { streaming } from "@nifrajs/core/sse"
 const event = { "~standard": { version: 1, vendor: "bench", validate: (value: unknown) => ({ value }) } } as const
-export default server().sse("/events", { sse: event }, (_c, stream) => stream.close())`,
+export default server().use(streaming()).sse("/events", { sse: event }, (_c, stream) => stream.close())`,
   "nifra-mcp": `import { server } from "@nifrajs/core/server"
-import "@nifrajs/core/mcp-runtime"
+import { mcp } from "@nifrajs/core/mcp"
 const input = { "~standard": { version: 1, vendor: "bench", validate: (value: unknown) => ({ value }) } } as const
-export default server().tool("ping", { description: "Ping", input }, () => ({ ok: true }))`,
+export default server().use(mcp()).tool("ping", { description: "Ping", input }, () => ({ ok: true }))`,
   "nifra-valibot": `import { server } from "@nifrajs/core/server"
 import * as v from "valibot"
 const body = v.object({ name: v.string(), age: v.number() })

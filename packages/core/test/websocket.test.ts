@@ -8,8 +8,8 @@ import {
   toFetchHandler,
   type WebSocketHandler,
 } from "../src/index.ts"
-// Value imports come from the subpath — importing it also registers the WS runtime `app.ws()` needs.
-import { attachWebSocket, TopicRegistry } from "../src/ws.ts"
+// The `websocket()` plugin and the socket-wiring value exports both come from the subpath.
+import { attachWebSocket, TopicRegistry, websocket } from "../src/ws.ts"
 
 let running: RunningServer | undefined
 afterEach(() => {
@@ -19,6 +19,7 @@ afterEach(() => {
 
 function makeApp() {
   return server()
+    .use(websocket())
     .ws("/echo", {
       open: (ws) => ws.send("welcome"),
       message: (ws, data) => ws.send(data), // echo text or binary
@@ -75,11 +76,13 @@ describe("resolveWebSocketUpgrade", () => {
   })
 
   test("a throwing guard rejects with a flat 500", async () => {
-    const app = server().ws("/boom", {
-      upgrade: () => {
-        throw new Error("nope")
-      },
-    })
+    const app = server()
+      .use(websocket())
+      .ws("/boom", {
+        upgrade: () => {
+          throw new Error("nope")
+        },
+      })
     const out = await app.resolveWebSocketUpgrade(
       new Request("http://t/boom", { headers: { upgrade: "websocket" } }),
     )
@@ -184,6 +187,7 @@ describe("app.listen() WebSockets", () => {
 
   test("a throwing open handler is routed to error() (never crashes the socket loop)", async () => {
     running = server()
+      .use(websocket())
       .ws("/boom", {
         open: () => {
           throw new Error("open failed")
@@ -195,12 +199,14 @@ describe("app.listen() WebSockets", () => {
   })
 
   test("pub/sub: subscribe receives broadcasts; ws.unsubscribe stops them", async () => {
-    const app = server().ws("/room", {
-      open: (ws) => ws.subscribe("lobby"),
-      message: (ws, m) => {
-        if (m === "leave") ws.unsubscribe("lobby")
-      },
-    })
+    const app = server()
+      .use(websocket())
+      .ws("/room", {
+        open: (ws) => ws.subscribe("lobby"),
+        message: (ws, m) => {
+          if (m === "leave") ws.unsubscribe("lobby")
+        },
+      })
     running = app.listen(0)
     const url = `ws://127.0.0.1:${running.port}/room`
     const a = new WebSocket(url)
@@ -443,6 +449,7 @@ describe("toFetchHandler WebSockets (Workers WebSocketPair)", () => {
   test("non-WS request passes through to app.fetch (WS branch feature-gated)", async () => {
     const handler = toFetchHandler(
       server()
+        .use(websocket())
         .ws("/ws", { open: () => {} })
         .get("/h", () => ({ ok: true })),
     )
@@ -454,7 +461,9 @@ describe("toFetchHandler WebSockets (Workers WebSocketPair)", () => {
 
   test("a rejected upgrade returns the guard's Response (no 101)", async () => {
     const handler = toFetchHandler(
-      server().ws("/ws", { upgrade: () => new Response("denied", { status: 403 }) }),
+      server()
+        .use(websocket())
+        .ws("/ws", { upgrade: () => new Response("denied", { status: 403 }) }),
     )
     const res = await withMockedPair(fakeServerSocket(), () =>
       Promise.resolve(
@@ -468,11 +477,13 @@ describe("toFetchHandler WebSockets (Workers WebSocketPair)", () => {
     const sock = fakeServerSocket()
     let opened = false
     const handler = toFetchHandler(
-      server().ws("/ws", {
-        open: () => {
-          opened = true
-        },
-      }),
+      server()
+        .use(websocket())
+        .ws("/ws", {
+          open: () => {
+            opened = true
+          },
+        }),
     )
     withMockedPair(sock, () => {
       try {
@@ -562,16 +573,18 @@ describe("WS messageSchema (contract-validated messages)", () => {
   test("valid JSON → typed message; invalid JSON + schema failure → onInvalidMessage", async () => {
     const seen: Array<{ text: string }> = []
     const invalid: Array<{ issue: string; raw: unknown }> = []
-    const app = server().ws("/m", {
-      messageSchema: textSchema,
-      message: (_ws, msg) => {
-        // msg is typed { text: string } at compile time; assert at runtime too.
-        seen.push(msg)
-      },
-      onInvalidMessage: (_ws, issues, raw) => {
-        invalid.push({ issue: issues[0]?.message ?? "", raw })
-      },
-    })
+    const app = server()
+      .use(websocket())
+      .ws("/m", {
+        messageSchema: textSchema,
+        message: (_ws, msg) => {
+          // msg is typed { text: string } at compile time; assert at runtime too.
+          seen.push(msg)
+        },
+        onInvalidMessage: (_ws, issues, raw) => {
+          invalid.push({ issue: issues[0]?.message ?? "", raw })
+        },
+      })
     const out = await app.resolveWebSocketUpgrade(
       new Request("http://t/m", { headers: { upgrade: "websocket" } }),
     )
@@ -598,10 +611,12 @@ describe("WS messageSchema (contract-validated messages)", () => {
       },
     }
     const seen: number[] = []
-    const app = server().ws("/n", {
-      messageSchema: asyncSchema,
-      message: (_ws, n) => void seen.push(n),
-    })
+    const app = server()
+      .use(websocket())
+      .ws("/n", {
+        messageSchema: asyncSchema,
+        message: (_ws, n) => void seen.push(n),
+      })
     const out = await app.resolveWebSocketUpgrade(
       new Request("http://t/n", { headers: { upgrade: "websocket" } }),
     )
@@ -612,10 +627,12 @@ describe("WS messageSchema (contract-validated messages)", () => {
 
   test("a binary frame is decoded as UTF-8 then JSON-validated", async () => {
     const seen: Array<{ text: string }> = []
-    const app = server().ws("/b", {
-      messageSchema: textSchema,
-      message: (_ws, m) => void seen.push(m),
-    })
+    const app = server()
+      .use(websocket())
+      .ws("/b", {
+        messageSchema: textSchema,
+        message: (_ws, m) => void seen.push(m),
+      })
     const out = await app.resolveWebSocketUpgrade(
       new Request("http://t/b", { headers: { upgrade: "websocket" } }),
     )
@@ -626,6 +643,7 @@ describe("WS messageSchema (contract-validated messages)", () => {
 
   test("live: app.ws with messageSchema validates over a real Bun socket", async () => {
     running = server()
+      .use(websocket())
       .ws("/echo", {
         messageSchema: textSchema,
         message: (ws, msg) => ws.send(`got:${msg.text}`),
@@ -653,10 +671,9 @@ describe("WS messageSchema (contract-validated messages)", () => {
   })
 })
 
-describe("ws runtime gate (@nifrajs/core/ws)", () => {
-  // The registration is process-global, so the unregistered state can only be observed in a fresh
-  // process: spawn one that calls app.ws() WITHOUT importing the subpath and assert the boot error.
-  test("app.ws() without `import '@nifrajs/core/ws'` fails loud at registration", async () => {
+describe("ws runtime gate (.use(websocket()))", () => {
+  // A fresh process that calls app.ws() WITHOUT `.use(websocket())` must fail loud at registration.
+  test("app.ws() without `.use(websocket())` fails loud at registration", async () => {
     const script = `
       import { server } from "${new URL("../src/index.ts", import.meta.url).pathname}"
       try {
@@ -675,6 +692,7 @@ describe("ws runtime gate (@nifrajs/core/ws)", () => {
 describe("server-side socket controls", () => {
   test("ws.data is mutable server-side and ws.close(code, reason) closes the client", async () => {
     running = server()
+      .use(websocket())
       .ws<{ n: number }>("/ctl", {
         upgrade: () => ({ n: 0 }),
         open: (ws) => {
@@ -713,10 +731,12 @@ describe("allowedOrigins CSWSH guard (audit 2026-06, L3)", () => {
     })
 
   test("allow-list: matching Origin upgrades, others + absent → 403", async () => {
-    const app = server().ws("/chat", {
-      allowedOrigins: ["https://app.example.com"],
-      message: (ws, d) => ws.send(d),
-    })
+    const app = server()
+      .use(websocket())
+      .ws("/chat", {
+        allowedOrigins: ["https://app.example.com"],
+        message: (ws, d) => ws.send(d),
+      })
     expect((await app.resolveWebSocketUpgrade(wsReq("https://app.example.com"))).kind).toBe(
       "upgrade",
     )
@@ -728,30 +748,36 @@ describe("allowedOrigins CSWSH guard (audit 2026-06, L3)", () => {
   })
 
   test("predicate form is honored", async () => {
-    const app = server().ws("/chat", {
-      allowedOrigins: (o) => o?.endsWith(".trusted.com") ?? false,
-      message: (ws, d) => ws.send(d),
-    })
+    const app = server()
+      .use(websocket())
+      .ws("/chat", {
+        allowedOrigins: (o) => o?.endsWith(".trusted.com") ?? false,
+        message: (ws, d) => ws.send(d),
+      })
     expect((await app.resolveWebSocketUpgrade(wsReq("https://x.trusted.com"))).kind).toBe("upgrade")
     expect((await app.resolveWebSocketUpgrade(wsReq("https://x.evil.com"))).kind).toBe("reject")
   })
 
   test("origin check runs BEFORE upgrade() (a disallowed origin never reaches the guard)", async () => {
     let upgradeRan = false
-    const app = server().ws("/chat", {
-      allowedOrigins: ["https://ok.com"],
-      upgrade: () => {
-        upgradeRan = true
-        return {}
-      },
-      message: (ws, d) => ws.send(d),
-    })
+    const app = server()
+      .use(websocket())
+      .ws("/chat", {
+        allowedOrigins: ["https://ok.com"],
+        upgrade: () => {
+          upgradeRan = true
+          return {}
+        },
+        message: (ws, d) => ws.send(d),
+      })
     await app.resolveWebSocketUpgrade(wsReq("https://evil.com"))
     expect(upgradeRan).toBe(false)
   })
 
   test("no allowedOrigins → secure default: cross-origin browser rejected; same-origin + non-browser pass", async () => {
-    const app = server().ws("/chat", { message: (ws, d) => ws.send(d) })
+    const app = server()
+      .use(websocket())
+      .ws("/chat", { message: (ws, d) => ws.send(d) })
     // Cross-origin browser handshake (Origin present, different host) → rejected (CSWSH default).
     expect((await app.resolveWebSocketUpgrade(wsReq("https://anywhere.com"))).kind).toBe("reject")
     // Same-origin browser handshake (Origin host === request host "t") → allowed.

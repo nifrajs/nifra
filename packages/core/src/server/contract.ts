@@ -68,21 +68,27 @@ type OpResponse<O extends OperationDef> = O extends { response: infer R extends 
 
 /** The body types of a contract op's declared **non-2xx** `responses` (schema-bearing ones), keyed by status. */
 type OpErrorBodies<Rs extends Record<string, ResponseDef>> = {
-  [K in keyof Rs as K extends `2${string}` ? never : K]: Rs[K] extends {
+  // Non-2xx statuses, re-keyed from the contract's string keys ("404") to number literals (404) so
+  // the client's failure union discriminates on the numeric `status` it actually receives.
+  [K in keyof Rs as K extends `2${string}`
+    ? never
+    : K extends `${infer N extends number}`
+      ? N
+      : never]: Rs[K] extends {
     schema: infer S extends StandardSchemaV1
   }
     ? InferOutput<S>
     : never
 }
 
-/** The client-visible error union for a contract op — the union of its non-2xx `responses` body schemas,
- * or `unknown` when it declares none (mirrors an inline route with no `errors`). */
+/** The client-visible error bodies for a contract op as a status-keyed record (`{ 404: Body }`), or
+ * `unknown` when it declares none (mirrors an inline route with no `errors`). */
 type OpErrors<O extends OperationDef> = O extends {
   responses: infer Rs extends Record<string, ResponseDef>
 }
-  ? [OpErrorBodies<Rs>[keyof OpErrorBodies<Rs>]] extends [never]
+  ? [keyof OpErrorBodies<Rs>] extends [never]
     ? unknown
-    : OpErrorBodies<Rs>[keyof OpErrorBodies<Rs>]
+    : OpErrorBodies<Rs>
   : unknown
 
 /**

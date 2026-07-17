@@ -130,6 +130,7 @@ export interface WebSocketHandler<
   Data = unknown,
   Env = unknown,
   Schema extends StandardSchemaV1 | undefined = undefined,
+  Send extends StandardSchemaV1 | undefined = undefined,
 > {
   /**
    * Cross-site WebSocket hijacking (CSWSH) guard — checked BEFORE `upgrade()`. A browser does not
@@ -159,6 +160,13 @@ export interface WebSocketHandler<
    * non-JSON or schema-invalid frame is routed to `onInvalidMessage` (or dropped if that's omitted).
    */
   messageSchema?: Schema
+  /**
+   * The **outbound** frame contract (server → client), a Standard Schema. Purely type-level: it types
+   * the frames the typed client's `.ws()` handle receives, and documents what this route pushes. The
+   * server does NOT runtime-validate its own sends - the inbound `messageSchema` guards the trust
+   * boundary; outbound honesty is the handler author's code, checked by tests.
+   */
+  sendSchema?: Send
   open?(ws: NifraWebSocket<Data>): MaybePromise<void>
   message?(ws: NifraWebSocket<Data>, data: WsMessageInput<Schema>): MaybePromise<void>
   /** Inbound frame that failed JSON parse or `messageSchema` validation (only fires when a schema is
@@ -189,7 +197,19 @@ export type WebSocketUpgradeOutcome =
       readonly data: unknown
       /** The app's pub/sub registry — the adapter wires `ws.subscribe` + close-cleanup to it. */
       readonly pubsub: TopicRegistry
+      /** The installed runtime's {@link attachWebSocket}, carried on the outcome so an adapter can wire
+       * a standard socket without a static import of the WS implementation (which would defeat the
+       * `.use(websocket())` tree-shaking). `@nifrajs/workers` may import `attachWebSocket` directly instead. */
+      readonly attach: WsAttach
     }
+
+/** The socket-wiring signature the upgrade outcome carries (the installed runtime's `attach`). */
+export type WsAttach = (
+  socket: StandardWebSocket,
+  handler: WebSocketHandler,
+  data: unknown,
+  options: { openNow: boolean; pubsub: TopicRegistry },
+) => NifraWebSocket
 
 /**
  * A standard server-side `WebSocket` — the half returned by Deno's `Deno.upgradeWebSocket` and the

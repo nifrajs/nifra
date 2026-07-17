@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
+import { websocket } from "@nifrajs/core/ws"
 import { createWebSocketHub } from "../src/index.ts"
 
 // The hub Durable Object holds the connections + the app's pub/sub registry, so app.publish broadcasts
@@ -53,7 +54,9 @@ const upgrade = (path: string) =>
 
 describe("createWebSocketHub", () => {
   test("accepts upgrades, runs open(), and app.publish broadcasts to every hub connection", async () => {
-    const app = server().ws("/room", { open: (ws) => ws.subscribe("lobby") })
+    const app = server()
+      .use(websocket())
+      .ws("/room", { open: (ws) => ws.subscribe("lobby") })
     const Hub = createWebSocketHub(app)
     const hub = new Hub({}, {})
     const servers: Array<ReturnType<typeof fakeServer>> = []
@@ -73,26 +76,32 @@ describe("createWebSocketHub", () => {
   })
 
   test("a rejected upgrade returns the guard's Response (no socket created)", async () => {
-    const app = server().ws("/g", { upgrade: () => new Response("denied", { status: 403 }) })
+    const app = server()
+      .use(websocket())
+      .ws("/g", { upgrade: () => new Response("denied", { status: 403 }) })
     const hub = new (createWebSocketHub(app))({}, {})
     const res = await hub.fetch(upgrade("/g"))
     expect(res.status).toBe(403)
   })
 
   test("an upgrade to a non-WS path returns 426", async () => {
-    const app = server().ws("/room", { open: () => {} })
+    const app = server()
+      .use(websocket())
+      .ws("/room", { open: () => {} })
     const hub = new (createWebSocketHub(app))({}, {})
     expect((await hub.fetch(upgrade("/no-such-route"))).status).toBe(426)
   })
 
   test("the upgrade guard's c.waitUntil is forwarded to the DO state", async () => {
     const waited: Array<Promise<unknown>> = []
-    const app = server().ws("/w", {
-      upgrade: (c) => {
-        c.waitUntil(Promise.resolve("bg"))
-        return {}
-      },
-    })
+    const app = server()
+      .use(websocket())
+      .ws("/w", {
+        upgrade: (c) => {
+          c.waitUntil(Promise.resolve("bg"))
+          return {}
+        },
+      })
     const hub = new (createWebSocketHub(app))(
       { waitUntil: (p: Promise<unknown>) => void waited.push(p) },
       {},
@@ -109,7 +118,9 @@ describe("createWebSocketHub", () => {
   })
 
   test("returns 500 when WebSocketPair is unavailable (not a Workers runtime)", async () => {
-    const app = server().ws("/x", { open: () => {} })
+    const app = server()
+      .use(websocket())
+      .ws("/x", { open: () => {} })
     const hub = new (createWebSocketHub(app))({}, {})
     // No WebSocketPair mock here — it's undefined under Bun, exercising the not-a-Workers guard.
     expect((await hub.fetch(upgrade("/x"))).status).toBe(500)
