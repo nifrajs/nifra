@@ -18,6 +18,7 @@ import {
   assuranceDeclarationsOf,
   assuranceEvidenceFor,
   NIFRA_ASSURANCE_IDS,
+  validEvidenceId,
 } from "../internal/route-assurance.ts"
 import type { RequestLedger } from "../ledger.ts"
 import {
@@ -1208,8 +1209,20 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       path,
       schema,
       ...(capabilities.length > 0 ? { capabilities } : {}),
+      ...(schema?.family === true ? { family: true } : {}),
     }
     const routeAssurance: AssuranceDeclaration[] = [...this.activeAssurance, ...handlerAssurance]
+    // Inline `schema.assurance`: the route DECLARES its enforcement evidence adjacent to the handler, so an
+    // in-handler-guarded route satisfies a policy `require:` clause without a `withRouteAssurance` middleware
+    // rewrite. Each id becomes route-scoped `declared` evidence (invalid ids fail closed at registration).
+    for (const id of schema?.assurance ?? []) {
+      if (!validEvidenceId(id)) {
+        throw new Error(
+          `route assurance: invalid evidence id ${JSON.stringify(id)} on ${method} ${path} (use lowercase dot/dash segments)`,
+        )
+      }
+      routeAssurance.push(Object.freeze({ id, source: "declared", scope: "plugin" }))
+    }
     if (schema?.body !== undefined) {
       routeAssurance.push(
         Object.freeze({

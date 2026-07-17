@@ -43,17 +43,31 @@ Every public export of every package and documented subpath — name, kind, sign
 
 ## @nifrajs/better-auth
 
+- **AuthedOptions** _(interface)_ — `interface AuthedOptions<User>`
+  Options for {@link requirePrincipal} / {@link authed}.
 - **BetterAuthLike** _(interface)_ — `interface BetterAuthLike`
   The structural slice of a [better-auth](https://better-auth.com) instance this package needs. Declared structurally rather than imported, so `@nifrajs/better-auth` has **no runtime dependency** on better-auth: you pass your own `auth` object and its concrete types flow through {@link getSession} / …
 - **BetterAuthOptions** _(interface)_ — `interface BetterAuthOptions`
+- **Principal** _(interface)_ — `interface Principal<User>`
+  The authenticated caller of a request, mapped from a better-auth session. Built by {@link requirePrincipal} / {@link authed} and threaded onto the handler context as `c.principal`.
+- **PrincipalFor** _(type)_ — `type PrincipalFor<User, RequireTenant extends boolean> = RequireTenant extends true ? Principal<User> & { readonly tenantId: string } : Principal<User>`
+  The principal type for a given `requireTenant` flag: `tenantId` narrows to a required `string` when `requireTenant` is `true`, otherwise stays optional (`string | undefined`). The flag is captured as a literal `const` type parameter at the call sites so `{ requireTenant: true }` selects the narrowe…
 - **RequireSessionOptions** _(interface)_ — `interface RequireSessionOptions`
   What {@link requireSession} does on a missing session: `302` to `redirectTo` (a same-origin path), or — when omitted — a `401` JSON (`{ ok: false, error: "unauthorized" }`). Mirrors `@nifrajs/auth` guards.
 - **SessionOf** _(type)_ — `type SessionOf<A extends BetterAuthLike> = NonNullable< Awaited<ReturnType<A["api"]["getSession"]>> >`
   The non-null session payload of a concrete better-auth instance `A`, inferred from its `api.getSession` return type (typically `{ user: User; session: Session }`).
+- **SessionUserOf** _(type)_ — `type SessionUserOf<A extends BetterAuthLike> = SessionOf<A> extends { user: infer U } ? U : unknown`
+  The non-null user type of a concrete better-auth instance `A` (`SessionOf<A>["user"]`). Collapses to `unknown` only for the erased structural `BetterAuthLike`; a real instance recovers the concrete user.
+- **WithPrincipal** _(type)_ — `type WithPrincipal<S extends AnyServer, P> = S extends Server<infer R, infer C> ? Server<R, C & { principal: P }> : never`
+  Add `{ principal: P }` to a server's context while preserving its route registry `R` (no collapse to `any`). This is the type that makes `.use(authed(auth))` thread a NON-NULL `c.principal`.
+- **authed** _(function)_ — `authed: <A extends BetterAuthLike, const RequireTenant extends boolean = false>(auth: A, options?: AuthedOptions<SessionUserOf<A>> & { readonly requireTenant?: RequireTenant; }) => <S extends AnyServer>(app: S) => WithP…`
+  A nifra plugin that derives a fail-closed {@link Principal} onto every downstream handler as `c.principal`. After `server().use(authed(auth))`, `c.principal.user` / `c.principal.userId` are typed and **non-null** — a handler CANNOT run without an authenticated caller, so the guard can't be forgotte…
 - **betterAuth** _(function)_ — `betterAuth: (auth: BetterAuthLike, options?: BetterAuthOptions) => import("@nifrajs/core").IdentityPlugin`
   Mount a better-auth instance into a nifra app: registers its handler at `${basePath}/*` (default `/api/auth/*`) for `GET` + `POST`, so every better-auth endpoint — sign-in/up/out, OAuth callbacks, session, 2FA, magic links, … — is served by your nifra server.
 - **getSession** _(function)_ — `getSession: <A extends BetterAuthLike>(auth: A, request: Request) => Promise<SessionOf<A> | null>`
   Resolve the better-auth session for a request — a thin, typed wrapper over `auth.api.getSession`. Returns `null` when unauthenticated. Takes the raw `Request` so it works in both server handlers (`c.req`) and web loaders/actions (`request`).
+- **requirePrincipal** _(function)_ — `requirePrincipal: <A extends BetterAuthLike, const RequireTenant extends boolean = false>(auth: A, request: Request, options?: AuthedOptions<SessionUserOf<A>> & { readonly requireTenant?: RequireTenant; }) => Promise<Pr…`
+  Resolve the better-auth session and map it to a {@link Principal}, or **throw a `Response`** so the handler never runs unauthenticated:
 - **requireSession** _(function)_ — `requireSession: <A extends BetterAuthLike>(auth: A, request: Request, options?: RequireSessionOptions) => Promise<SessionOf<A>>`
   Require an authenticated better-auth session at the top of a protected handler/loader/action. Returns the (non-null) session when present; otherwise **throws a `Response`** (302/401) — nifra returns a thrown `Response` as-is, short-circuiting the rest of the handler.
 
@@ -323,7 +337,7 @@ Every public export of every package and documented subpath — name, kind, sign
 - **AssuranceEvidence** _(interface)_ — `interface AssuranceEvidence`
   Reflection-safe proof that a named enforcement module covered a route.
 - **AssuranceFinding** _(interface)_ — `interface AssuranceFinding`
-- **AssuranceFindingCode** _(type)_ — `type AssuranceFindingCode = | "no-routes" | "unclassified-route" | "missing-evidence" | "forbidden-evidence"`
+- **AssuranceFindingCode** _(type)_ — `type AssuranceFindingCode = | "no-routes" | "unclassified-route" | "missing-evidence" | "forbidden-evidence" | "classified-no-evidence"`
 - **AssurancePolicy** _(interface)_ — `interface AssurancePolicy`
 - **AssuranceReport** _(interface)_ — `interface AssuranceReport`
 - **AssuranceRouteSelector** _(interface)_ — `interface AssuranceRouteSelector`

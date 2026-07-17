@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   defineAssurancePolicy,
   evaluateRouteAssurance,
+  NIFRA_ASSURANCE,
   withRouteAssurance,
 } from "../src/assurance.ts"
 import { defineIdentityPlugin, definePlugin, type Middleware, server } from "../src/index.ts"
@@ -289,5 +290,80 @@ describe("route assurance policy", () => {
         },
       ),
     ).toThrow("whole path segment")
+  })
+})
+
+describe("inline route assurance (schema.assurance) - in-handler-guarded routes emit evidence", () => {
+  test("a declared evidence id reflects as route-scoped `declared` evidence, satisfying a require rule", () => {
+    // The route guards auth INSIDE the handler (invisible to reflection) but declares the evidence inline -
+    // no `withRouteAssurance` middleware rewrite needed.
+    const app = server().get("/admin", { assurance: [NIFRA_ASSURANCE.AUTHENTICATED] }, () => ({
+      ok: true,
+    }))
+    expect(evidence(app, "/admin")).toEqual([NIFRA_ASSURANCE.AUTHENTICATED])
+    const declared = (
+      app.routes().find((r) => (r as { path?: string }).path === "/admin") as {
+        assurance?: readonly { id: string; source: string }[]
+      }
+    ).assurance
+    expect(declared?.[0]).toEqual({ id: NIFRA_ASSURANCE.AUTHENTICATED, source: "declared" })
+
+    const policy = defineAssurancePolicy({
+      rules: [
+        { name: "admin", match: { paths: ["/admin"] }, require: [NIFRA_ASSURANCE.AUTHENTICATED] },
+      ],
+    })
+    expect(evaluateRouteAssurance(app, policy)).toMatchObject({ ok: true, findings: [] })
+  })
+
+  test("an invalid inline evidence id fails closed at registration", () => {
+    expect(() => server().get("/x", { assurance: ["NOT VALID"] }, () => null)).toThrow(
+      "invalid evidence id",
+    )
+  })
+})
+
+describe("classified-no-evidence (opt-in visibility of the 'label without proof' gap)", () => {
+  // A pure-classification rule (no require/forbid) - the shape a classification-only policy degrades to.
+  const classifyOnly = { name: "reads", match: { paths: ["/data/**"] } }
+
+  test("opt-in flag surfaces a classified route that carries no evidence", () => {
+    const app = server().get("/data/x", () => ({ ok: true }))
+    const report = evaluateRouteAssurance(app, {
+      rules: [classifyOnly],
+      flagClassifiedWithoutEvidence: true,
+    })
+    expect(report.ok).toBe(false)
+    expect(report.findings).toEqual([
+      expect.objectContaining({ code: "classified-no-evidence", path: "/data/x", rule: "reads" }),
+    ])
+  })
+
+  test("without the flag (default), the same route passes silently - back-compatible", () => {
+    const app = server().get("/data/x", () => ({ ok: true }))
+    expect(evaluateRouteAssurance(app, { rules: [classifyOnly] })).toMatchObject({
+      ok: true,
+      findings: [],
+    })
+  })
+
+  test("a route that DECLARES evidence is not flagged", () => {
+    const app = server().get("/data/x", { assurance: [NIFRA_ASSURANCE.AUTHENTICATED] }, () => ({
+      ok: true,
+    }))
+    expect(
+      evaluateRouteAssurance(app, { rules: [classifyOnly], flagClassifiedWithoutEvidence: true }),
+    ).toMatchObject({ ok: true, findings: [] })
+  })
+
+  test("a forbid-bearing rule (public route, no evidence expected) is not flagged", () => {
+    const app = server().get("/data/x", () => ({ ok: true }))
+    const report = evaluateRouteAssurance(app, {
+      rules: [
+        { name: "public", match: { paths: ["/data/**"] }, forbid: [NIFRA_ASSURANCE.AUTHENTICATED] },
+      ],
+      flagClassifiedWithoutEvidence: true,
+    })
+    expect(report).toMatchObject({ ok: true, findings: [] })
   })
 })

@@ -37,6 +37,10 @@ export interface OperationDef {
   readonly idempotency?: IdempotencyConfig
   /** Highest data-sensitivity the response carries (see {@link RouteSchema.classification}). */
   readonly classification?: DataClassification
+  /** Inline route-assurance evidence this operation carries (see {@link RouteSchema.assurance}). */
+  readonly assurance?: readonly string[]
+  /** Mark this operation a dynamic route family (see {@link RouteSchema.family}). */
+  readonly family?: boolean
   /** Short summary (OpenAPI `summary`). */
   readonly summary?: string
   /** Longer description (OpenAPI `description`, CommonMark). */
@@ -266,7 +270,9 @@ export function implement<
       op.response !== undefined ||
       op.capabilities !== undefined ||
       op.idempotency !== undefined ||
-      op.classification !== undefined
+      op.classification !== undefined ||
+      op.assurance !== undefined ||
+      op.family !== undefined
         ? {
             ...(op.params !== undefined ? { params: op.params } : {}),
             ...(op.body !== undefined ? { body: op.body } : {}),
@@ -275,6 +281,8 @@ export function implement<
             ...(op.capabilities !== undefined ? { capabilities: op.capabilities } : {}),
             ...(op.idempotency !== undefined ? { idempotency: op.idempotency } : {}),
             ...(op.classification !== undefined ? { classification: op.classification } : {}),
+            ...(op.assurance !== undefined ? { assurance: op.assurance } : {}),
+            ...(op.family !== undefined ? { family: op.family } : {}),
           }
         : undefined
     return {

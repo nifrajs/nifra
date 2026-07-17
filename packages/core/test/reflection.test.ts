@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { StandardSchemaV1 } from "../src/index.ts"
+import { type StandardSchemaV1, server } from "../src/index.ts"
 import { reflectRoutes, reflectSchema } from "../src/reflection.ts"
 
 const standard: StandardSchemaV1 = {
@@ -87,5 +87,24 @@ describe("reflectRoutes", () => {
       }),
     ).toEqual([])
     expect(reflectRoutes(null)).toEqual([])
+  })
+})
+
+describe("reflectRoutes - dynamic route family (schema.family)", () => {
+  test("a family route surfaces family:true, so the gate reads one templated route as a family", () => {
+    const app = server().get(
+      "/api/:slug/:resource",
+      { family: true, assurance: ["nifra.authenticated"] },
+      () => ({ ok: true }),
+    )
+    const route = reflectRoutes(app).find((r) => r.path === "/api/:slug/:resource")
+    expect(route?.family).toBe(true)
+    // Evidence still attaches to the single templated family route.
+    expect(route?.assurance?.map((e) => e.id)).toEqual(["nifra.authenticated"])
+  })
+
+  test("an ordinary route has no family flag", () => {
+    const app = server().get("/api/health", () => ({ ok: true }))
+    expect(reflectRoutes(app).find((r) => r.path === "/api/health")?.family).toBeUndefined()
   })
 })

@@ -52,6 +52,9 @@ export interface ReflectedRoute {
   readonly schema?: ReflectedRouteSchema
   readonly assurance?: readonly AssuranceEvidence[]
   readonly capabilities?: readonly string[]
+  /** Set when the route is a declared dynamic route family (a runtime-resolved template like
+   * `/api/:slug/:resource`) - so the assurance gate treats it as one classified family, not a single route. */
+  readonly family?: boolean
   /** Field-level response classification plus the highest sensitivity present. */
   readonly classification?: ResponseClassification
   readonly tool?: {
@@ -218,6 +221,7 @@ export function reflectRoutes(source: unknown): readonly ReflectedRoute[] {
       ...(schema !== undefined ? { schema } : {}),
       ...(assurance !== undefined ? { assurance } : {}),
       ...(capabilities.length > 0 ? { capabilities } : {}),
+      ...(route.family === true ? { family: true } : {}),
       ...(classification !== undefined ? { classification } : {}),
       ...(tool !== undefined ? { tool } : {}),
     })

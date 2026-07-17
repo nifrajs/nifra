@@ -78,6 +78,22 @@ export interface RouteSchema {
    * and read by downstream policy (e.g. a partner-API surface refusing to expose `pii`/`secret`).
    */
   readonly classification?: DataClassification
+  /**
+   * Inline **route-assurance evidence**: the enforcement posture this route carries, declared adjacent to
+   * the handler (e.g. `[NIFRA_ASSURANCE.AUTHENTICATED]`). Each id becomes route-scoped `declared` evidence
+   * in reflection, so a `nifra.assurance.ts` policy `require:` clause is satisfiable WITHOUT rewriting an
+   * in-handler guard into a `withRouteAssurance`-marked middleware. Ids are lowercase dot/dash segments
+   * (invalid ids throw at registration). Reflected for the assurance gate; never read on the hot path.
+   */
+  readonly assurance?: readonly string[]
+  /**
+   * Mark this route a **dynamic route family**: a template (`/api/:slug/:resource`) whose concrete
+   * resources are resolved at runtime (auto-CRUD over tenant-defined tables, a catch-all dispatcher).
+   * Purely declarative - it does not change dispatch. It surfaces in reflection so the assurance gate and
+   * tooling treat the one templated route as a deliberate family whose evidence covers every runtime-
+   * resolved resource, instead of reading it as a single forgotten route.
+   */
+  readonly family?: boolean
   /** Optional **path-params schema**. Path params arrive as strings (`/users/:id` -> `c.params.id`);
    * declaring a schema validates them at the boundary (a malformed `:id` is a `422` before the handler,
    * like `body`/`query`) and can coerce them (use `t.query({ id: t.integer() })` for a numeric param).

@@ -59,6 +59,14 @@ export interface AssurancePolicy {
   readonly unmatched?: "error" | "ignore"
   /** Default false: reject an empty reflected source so a wrong import cannot pass CI silently. */
   readonly allowEmpty?: boolean
+  /**
+   * Default false. When true, a route matched by a **pure-classification** rule (no `require`, no `forbid`)
+   * that carries NO enforcement evidence is reported (`classified-no-evidence`). This surfaces the gap the
+   * feedback flagged: a classification-only policy silently degrades "proof" to a "label". Opt-in, because
+   * a genuinely public route legitimately carries no evidence; enable it once your guards emit evidence
+   * (inline `schema.assurance` or a `withRouteAssurance` middleware) to keep classification honest.
+   */
+  readonly flagClassifiedWithoutEvidence?: boolean
 }
 
 export type AssuranceFindingCode =
@@ -66,6 +74,7 @@ export type AssuranceFindingCode =
   | "unclassified-route"
   | "missing-evidence"
   | "forbidden-evidence"
+  | "classified-no-evidence"
 
 export interface AssuranceFinding {
   readonly code: AssuranceFindingCode
@@ -142,6 +151,12 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
   if (policy.allowEmpty !== undefined && typeof policy.allowEmpty !== "boolean") {
     throw new Error(`route assurance: allowEmpty must be boolean`)
   }
+  if (
+    policy.flagClassifiedWithoutEvidence !== undefined &&
+    typeof policy.flagClassifiedWithoutEvidence !== "boolean"
+  ) {
+    throw new Error(`route assurance: flagClassifiedWithoutEvidence must be boolean`)
+  }
   const names = new Set<string>()
   const rules = policy.rules.map((rule): AssuranceRule => {
     if (typeof rule.name !== "string" || !nonEmpty(rule.name)) {
@@ -189,6 +204,7 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
     rules: Object.freeze(rules),
     unmatched: policy.unmatched ?? "error",
     allowEmpty: policy.allowEmpty ?? false,
+    flagClassifiedWithoutEvidence: policy.flagClassifiedWithoutEvidence ?? false,
   })
 }
 
@@ -292,6 +308,23 @@ export function evaluateRouteAssurance(
         rule: rule.name,
         evidence: id,
         message: `${route.method} ${route.path} (${rule.name}) carries forbidden ${id}`,
+      })
+    }
+    // Opt-in visibility: a pure-classification rule (no require + no forbid) matching a route with zero
+    // evidence is a "label without proof". Surface it so the gap isn't silently green. A rule that expects
+    // or forbids evidence already speaks for itself via the loops above, so it's excluded here.
+    if (
+      policy.flagClassifiedWithoutEvidence === true &&
+      evidence.length === 0 &&
+      (rule.require ?? []).length === 0 &&
+      (rule.forbid ?? []).length === 0
+    ) {
+      findings.push({
+        code: "classified-no-evidence",
+        method: route.method,
+        path: route.path,
+        rule: rule.name,
+        message: `${route.method} ${route.path} (${rule.name}) is classified but carries no enforcement evidence`,
       })
     }
     routes.push({

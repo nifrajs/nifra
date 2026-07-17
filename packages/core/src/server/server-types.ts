@@ -126,6 +126,8 @@ export interface RouteDescriptor {
   readonly assurance?: readonly AssuranceEvidence[]
   /** Normalized declared effect tokens, populated only when the route declares any. */
   readonly capabilities?: readonly string[]
+  /** Set when the route is a declared dynamic route family (`schema.family`). */
+  readonly family?: boolean
   readonly tool?: {
     readonly name: string
     readonly description: string
