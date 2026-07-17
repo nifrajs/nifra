@@ -173,13 +173,23 @@ function toTemplatedPath(path: string): string {
     .join("/")
 }
 
-function pathParameters(path: string): OpenAPIParameter[] {
+function pathParameters(path: string, paramsSchema?: SchemaReflection): OpenAPIParameter[] {
   const params: OpenAPIParameter[] = []
+  // Build a lookup of per-field schemas from the declared params schema (if any).
+  const fieldSchemas = new Map<string, JsonSchema>()
+  if (paramsSchema?.fields !== undefined) {
+    for (const field of paramsSchema.fields) {
+      fieldSchemas.set(field.name, field.schema)
+    }
+  }
   for (const segment of path.split("/")) {
     const name = segmentParam(segment)
-    // Path params are always strings (decoded from the URL).
-    if (name !== undefined)
-      params.push({ name, in: "path", required: true, schema: { type: "string" } })
+    if (name !== undefined) {
+      // Merge the declared constraint (uuid format, integer type, etc.) when present;
+      // fall back to the bare { type: "string" } derived from the URL pattern.
+      const schema = fieldSchemas.get(name) ?? { type: "string" as const }
+      params.push({ name, in: "path", required: true, schema })
+    }
   }
   return params
 }
@@ -201,6 +211,8 @@ interface OperationInput {
   readonly path: string
   readonly body: SchemaReflection | undefined
   readonly query: SchemaReflection | undefined
+  /** Reflected params schema — per-field constraints merge into path parameters. */
+  readonly params: SchemaReflection | undefined
   readonly response: SchemaReflection | undefined
   readonly operationId: string | undefined
   // `| undefined` (not just `?`) so a contract op's optional fields — `string | undefined` etc. — are
@@ -287,7 +299,7 @@ function buildOperation(input: OperationInput, store: SchemaStore): OpenAPIOpera
   if (input.deprecated === true) operation.deprecated = true
   if (input.security !== undefined) operation.security = input.security // `[]` ⇒ explicitly public
 
-  const parameters = [...pathParameters(input.path), ...queryParameters(input.query)]
+  const parameters = [...pathParameters(input.path, input.params), ...queryParameters(input.query)]
   if (parameters.length > 0) operation.parameters = parameters
 
   if (input.body !== undefined) {
@@ -343,6 +355,7 @@ export function toOpenAPI(
           path: route.path,
           body: route.schema?.body,
           query: route.schema?.query,
+          params: route.schema?.params,
           // A route may now declare a `response` contract — emit it as the 200 body schema.
           response: route.schema?.response,
           // …and an `errors` contract — emit each as a non-2xx response.
@@ -362,6 +375,7 @@ export function toOpenAPI(
           path: op.path,
           body: op.body === undefined ? undefined : reflectSchema(op.body),
           query: op.query === undefined ? undefined : reflectSchema(op.query),
+          params: op.params === undefined ? undefined : reflectSchema(op.params),
           response: op.response === undefined ? undefined : reflectSchema(op.response),
           operationId: name,
           summary: op.summary,

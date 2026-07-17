@@ -355,3 +355,53 @@ describe("path templating edge cases", () => {
     expect(doc.paths["/search"]?.get?.parameters).toBeUndefined()
   })
 })
+
+describe("params schema → enriched path parameters", () => {
+  test("app route: declared params schema merges into OpenAPI path parameters", () => {
+    const app = server().get(
+      "/users/:id",
+      {
+        params: t.object({ id: t.string({ format: "uuid" }) }),
+        response: t.object({ id: t.string() }),
+      },
+      (c) => ({ id: c.params.id }),
+    )
+    const doc = toOpenAPI(app)
+    expect(doc.paths["/users/{id}"]?.get?.parameters).toContainEqual({
+      name: "id",
+      in: "path",
+      required: true,
+      schema: { type: "string", format: "uuid" },
+    })
+  })
+
+  test("contract: declared params schema merges into OpenAPI path parameters", () => {
+    const contract = defineContract({
+      getItem: {
+        method: "GET",
+        path: "/items/:id",
+        params: t.object({ id: t.integer({ minimum: 1 }) }),
+        response: t.object({ id: t.integer() }),
+      },
+    })
+    const doc = toOpenAPI(contract)
+    expect(doc.paths["/items/{id}"]?.get?.parameters).toContainEqual({
+      name: "id",
+      in: "path",
+      required: true,
+      schema: { type: "integer", minimum: 1 },
+    })
+  })
+
+  test("without params schema, path parameters fall back to bare { type: 'string' }", () => {
+    const app = server().get("/things/:slug", (c) => ({ slug: c.params.slug }))
+    const doc = toOpenAPI(app)
+    expect(doc.paths["/things/{slug}"]?.get?.parameters).toContainEqual({
+      name: "slug",
+      in: "path",
+      required: true,
+      schema: { type: "string" },
+    })
+  })
+})
+

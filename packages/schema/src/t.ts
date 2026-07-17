@@ -100,11 +100,14 @@ export const t = {
   /** A request-query schema with string->scalar COERCION on. Query values always arrive as strings
    * (`?limit=20` -> `"20"`), so a plain `t.object({ limit: t.integer() })` in a `query` slot fails to
    * validate; use `t.query` and `t.integer()`/`t.number()`/`t.boolean()` fields become real numbers/
-   * booleans in `c.query`. Same strict default as `t.object` (unknown fields rejected -> 422); pass
-   * `{ additionalProperties: true }` to accept tracking params. This is the query-slot constructor;
+   * booleans in `c.query`. **Open by default** (unknown query fields pass through — `additionalProperties:
+   * true`): query params are read by name, not spread into a DB write, so unknown params (UTM tracking,
+   * `fbclid`, etc.) passing through is safe, and rejecting them is a production-only footgun (ad/social
+   * traffic appends params your schema never declares, causing 422s that never appear in dev/CI). Pass
+   * `{ additionalProperties: false }` to enforce a strict allowlist. This is the query-slot constructor;
    * `t.object` stays the constructor for body slots (no coercion, a JSON body is already typed). */
   query: <P extends Props>(props: P, options?: ObjectOptions) =>
-    fromTypeBox(Type.Object(unwrap(props), { additionalProperties: false, ...options }), {
+    fromTypeBox(Type.Object(unwrap(props), { additionalProperties: true, ...options }), {
       coerce: true,
     }),
 } as const

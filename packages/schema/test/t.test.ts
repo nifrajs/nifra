@@ -137,10 +137,10 @@ describe("t.query (coercing query-slot schema)", () => {
     )
   })
 
-  test("strict by default (unknown query field rejected), opt out with additionalProperties", async () => {
-    const strict = t.query({ page: t.integer() })
+  test("open by default (unknown query field accepted), opt into strict with additionalProperties", async () => {
+    const open = t.query({ page: t.integer() })
+    expect((await validateStandard(open, { page: "2", utm: "x" })).ok).toBe(true)
+    const strict = t.query({ page: t.integer() }, { additionalProperties: false })
     expect((await validateStandard(strict, { page: "2", utm: "x" })).ok).toBe(false)
-    const loose = t.query({ page: t.integer() }, { additionalProperties: true })
-    expect((await validateStandard(loose, { page: "2", utm: "x" })).ok).toBe(true)
   })
 })

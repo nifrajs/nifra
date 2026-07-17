@@ -40,6 +40,8 @@ export interface SchemaReflection {
 export interface ReflectedRouteSchema {
   readonly body?: SchemaReflection
   readonly query?: SchemaReflection
+  /** Path-params schema — constraints (uuid format, integer min/max) declared via `params: t.object(…)`. */
+  readonly params?: SchemaReflection
   readonly response?: SchemaReflection
   readonly errors?: Readonly<Record<string, SchemaReflection>>
   /** The SSE event-payload schema of a typed streaming route (`app.sse()`). */
@@ -170,6 +172,7 @@ const reflectedRouteSchema = (value: unknown): ReflectedRouteSchema | undefined 
   return {
     ...(schema.body !== undefined ? { body: reflectSchema(schema.body) } : {}),
     ...(schema.query !== undefined ? { query: reflectSchema(schema.query) } : {}),
+    ...(schema.params !== undefined ? { params: reflectSchema(schema.params) } : {}),
     ...(schema.response !== undefined ? { response: reflectSchema(schema.response) } : {}),
     ...(Object.keys(reflectedErrors).length > 0 ? { errors: reflectedErrors } : {}),
     ...(schema.sse !== undefined ? { sse: reflectSchema(schema.sse) } : {}),
