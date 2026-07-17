@@ -2377,15 +2377,18 @@ export default toFetchHandler(app, {
 through a generic — and runs on every runtime nifra serves: Bun, Deno, Node, and Cloudflare
 Workers.
 
-The WebSocket runtime ships as a subpath, so apps that never use it don’t bundle it. Import
-it once at your server entry; `app.ws()` without it fails loud at boot with
-`WS_RUNTIME_MISSING`. (`@nifrajs/workers` imports it for you.)
+The WebSocket runtime ships as an opt-in plugin, so apps that never use it don’t bundle it.
+Enable it with `.use(websocket())` from `@nifrajs/core/ws`;
+`app.ws()` without it fails loud at registration with
+`WS_RUNTIME_MISSING`. It installs on that server instance only — the same
+`.use()` opt-in as `mcp()` and `streaming()`.
 
 ```ts
 import { server } from "@nifrajs/core/server"
-import "@nifrajs/core/ws" // registers the WebSocket runtime app.ws() needs
+import { websocket } from "@nifrajs/core/ws" // .use(websocket()) enables app.ws()
 
 const app = server()
+  .use(websocket())
   .get("/", () => ({ ok: true }))
   .ws("/echo", {
     open: (ws) => ws.send("welcome"),
@@ -6714,7 +6717,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/client
 
-`ActionArgs`, `ActionData`, `ApiError`, `ApiProxy`, `client`, `ClientOptions`, `FetchFn`, `inProcessClient`, `InProcessClient`, `Jsonify`, `LoaderArgs`, `LoaderData`, `RegistryOf`, `Result`, `SubscribeOptions`, `Subscription`, `testClient`, `Treaty`, `TreatyFromRegistry`
+`ActionArgs`, `ActionData`, `ApiError`, `ApiProxy`, `client`, `ClientOptions`, `ClientRetryOptions`, `FetchFn`, `inProcessClient`, `InProcessClient`, `InProcessClientOptions`, `Jsonify`, `LoaderArgs`, `LoaderData`, `RegistryOf`, `ResponseContractViolation`, `Result`, `SubscribeOptions`, `Subscription`, `testClient`, `Treaty`, `TreatyFromRegistry`, `WsCallOptions`, `WsHandle`
 
 ## @nifrajs/content
 
@@ -6762,7 +6765,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/mcp
 
-`bridgeScript`, `createMcpServer`, `CreateMcpServerOptions`, `defineMcpTool`, `DefineMcpToolOptions`, `defineMcpWidget`, `DefineMcpWidgetOptions`, `McpAppBridge`, `McpHttpOptions`, `McpServer`, `McpToolHandlerResult`, `McpUiIntent`, `McpWidget`, `respondMcpHttp`, `uiResourceMeta`, `widgetDocument`
+`bridgeScript`, `createMcpServer`, `CreateMcpServerOptions`, `defineMcpTool`, `DefineMcpToolOptions`, `defineMcpWidget`, `DefineMcpWidgetOptions`, `InferOutput`, `McpAppBridge`, `McpHttpOptions`, `McpServer`, `McpToolHandlerResult`, `McpUiIntent`, `McpWidget`, `respondMcpHttp`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `uiResourceMeta`, `widgetDocument`
 
 ## @nifrajs/mcp-db
 
@@ -6782,7 +6785,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/otel
 
-`ActiveObservation`, `AttributeValue`, `causalitySpanLink`, `combineObservationAdapters`, `consoleSpanExporter`, `createObservationLifecycle`, `EndObservation`, `formatTraceparent`, `generateSpanId`, `generateTraceId`, `NifraSpan`, `ObservationAdapter`, `ObservationClock`, `ObservationContext`, `ObservationLifecycle`, `ObservationLifecycleOptions`, `ObservationLink`, `ObservationParent`, `ParsedTraceparent`, `parseTraceparent`, `SpanStatus`, `StartObservation`, `TraceContext`, `traceHeaders`, `tracing`, `TracingOptions`
+`ActiveObservation`, `AttributeValue`, `causalitySpanLink`, `combineObservationAdapters`, `consoleSpanExporter`, `createObservationLifecycle`, `EndObservation`, `formatTraceparent`, `generateSpanId`, `generateTraceId`, `NifraSpan`, `ObservationAdapter`, `ObservationClock`, `ObservationContext`, `ObservationLifecycle`, `ObservationLifecycleOptions`, `ObservationLink`, `ObservationParent`, `otlpExporter`, `OtlpExporter`, `OtlpExporterOptions`, `ParsedTraceparent`, `parseTraceparent`, `SpanStatus`, `StartObservation`, `TraceContext`, `traceHeaders`, `tracing`, `TracingOptions`
 
 ## @nifrajs/prompt
 
