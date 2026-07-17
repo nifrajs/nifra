@@ -31,6 +31,10 @@ export interface RouterContextValue {
   readonly params: Readonly<Record<string, string>>
   /** The current URL's `pathname + search` (no hash — the router never carries one). */
   readonly path: string
+  /** True while a client navigation (or revalidation) is in flight — the current route stays mounted
+   * until the new one is ready. Always `false` on SSR (loaders block before render). Drives loading UI
+   * via {@link useNavigation}. */
+  readonly pending: boolean
 }
 
 // Frozen empty params so the default context value has a stable reference (no needless re-renders).
@@ -38,7 +42,11 @@ const EMPTY_PARAMS: Readonly<Record<string, string>> = Object.freeze({})
 
 /** Router context. The default ({} params, "" path) is what a component sees when rendered outside a
  * nifra route tree — the hooks stay defined (no throw) so a stray `useParams` degrades gracefully. */
-export const RouterContext = createContext<RouterContextValue>({ params: EMPTY_PARAMS, path: "" })
+export const RouterContext = createContext<RouterContextValue>({
+  params: EMPTY_PARAMS,
+  path: "",
+  pending: false,
+})
 
 /** Split a `pathname + search` into its parts. `search` keeps its leading `?` (like `location.search`);
  * an empty query yields `""`. */
@@ -76,6 +84,37 @@ export function useLocation(): Location {
     const { pathname, search } = splitPath(path)
     return { pathname, search, hash: "" }
   }, [path])
+}
+
+/** The current navigation state, mirroring the Remix `useNavigation()` shape for familiarity. */
+export interface Navigation {
+  /** True while a client navigation (or revalidation) is in flight. The current route stays mounted
+   * until the new one is ready, so this drives a loading indicator, not a route swap. */
+  readonly pending: boolean
+  /** `"loading"` while a navigation is in flight, else `"idle"`. */
+  readonly state: "idle" | "loading"
+}
+
+/**
+ * Observe client navigation to drive loading UI (a top-bar spinner, dimmed content, a skeleton). nifra
+ * navigates imperatively - it fetches the next route's chunk + loader data while the current route stays
+ * on screen, then swaps - so `pending` is the signal for "a transition is in flight," not a Suspense
+ * boundary. Always `{ pending: false, state: "idle" }` on the server (loaders block before render), so
+ * it is hydration-safe.
+ *
+ * ```tsx
+ * const { pending } = useNavigation()
+ * return <div className={pending ? "opacity-60" : ""}>{pending && <TopBarSpinner />}<Outlet /></div>
+ * ```
+ */
+export function useNavigation(): Navigation {
+  const { pending } = useContext(RouterContext)
+  return useMemo(() => ({ pending, state: pending ? "loading" : ("idle" as const) }), [pending])
+}
+
+/** Convenience boolean form of {@link useNavigation}: `true` while a client navigation is in flight. */
+export function usePending(): boolean {
+  return useContext(RouterContext).pending
 }
 
 /** A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta

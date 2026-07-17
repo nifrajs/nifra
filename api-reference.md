@@ -2496,6 +2496,8 @@ _No named exports (side-effect entrypoint)._
   A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta (`-1`/`1`). A no-op on the server / before hydration (a render-time navigate isn't valid — use {@link Navigate}, which navigates in an effect).
 - **NavigateProps** _(interface)_ — `interface NavigateProps`
   {@link Navigate} props: the destination `to` and whether to `replace` the history entry.
+- **Navigation** _(interface)_ — `interface Navigation`
+  The current navigation state, mirroring the Remix `useNavigation()` shape for familiarity.
 - **RouterContext** _(const)_ — `RouterContext: import("react").Context<RouterContextValue>`
   Router context. The default ({} params, "" path) is what a component sees when rendered outside a nifra route tree — the hooks stay defined (no throw) so a stray `useParams` degrades gracefully.
 - **RouterContextValue** _(interface)_ — `interface RouterContextValue`
@@ -2508,8 +2510,12 @@ _No named exports (side-effect entrypoint)._
   The current {@link Location} (`pathname`/`search`/`hash`), derived from the router context.
 - **useNavigate** _(function)_ — `useNavigate: () => NavigateFunction`
   Get the {@link NavigateFunction}. Stable across renders; resolves the browser navigate at call time (so it works as soon as `installHistory` has run, and no-ops before then / on the server).
+- **useNavigation** _(function)_ — `useNavigation: () => Navigation`
+  Observe client navigation to drive loading UI (a top-bar spinner, dimmed content, a skeleton). nifra navigates imperatively - it fetches the next route's chunk + loader data while the current route stays on screen, then swaps - so `pending` is the signal for "a transition is in flight," not a Suspe…
 - **useParams** _(function)_ — `useParams: <T extends Record<string, string | undefined> = Record<string, string>>() => Readonly<T>`
   The matched route's decoded path params — `/users/:id` on `/users/7` → `{ id: "7" }`. SSR-correct: `compose` provides the same value server-side (from the request match) and client-side (from router state), so a param rendered into markup doesn't flash on hydration.
+- **usePending** _(function)_ — `usePending: () => boolean`
+  Convenience boolean form of {@link useNavigation}: `true` while a client navigation is in flight.
 - **useSearchParams** _(function)_ — `useSearchParams: () => readonly [URLSearchParams, SetSearchParams]`
   The current query as a `URLSearchParams` (SSR-correct via the router context) plus a setter that navigates to the new query. Mirrors react-router's `useSearchParams` tuple.
 

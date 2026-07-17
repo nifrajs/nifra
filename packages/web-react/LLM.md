@@ -29,7 +29,7 @@ React render adapter for @nifrajs/web — SSR + hydration (Bun-native JSX, no Ba
 - **useFetcher** _(function)_ — `useFetcher: (key: string) => FetcherHandle` · from `@nifrajs/web-react/fetcher`
 - **useFetchers** _(function)_ — `useFetchers: () => readonly Fetcher[]` · from `@nifrajs/web-react/fetcher`
 
-_…and 34 more — see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
+_…and 37 more — see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
 
 ## Footguns
 

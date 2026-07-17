@@ -10,10 +10,11 @@ const EMPTY_PARAMS: Readonly<Record<string, string>> = Object.freeze({})
  * (innermost) receives `props` (the loader data); each layout wraps the child via its
  * `children`. Shared by the server adapter (renderToString) and the client (hydrateRoot).
  *
- * The whole tree is wrapped in a {@link RouterContext} provider carrying the matched `params` + the
- * current `path` (both threaded through `RenderProps` identically on SSR and client), so the routing
- * hooks (`useParams`/`useLocation`/`useSearchParams`) read the same value on both sides — no hydration
- * mismatch. A render with no routing fields (a non-router adapter usage) provides the empty default.
+ * The whole tree is wrapped in a {@link RouterContext} provider carrying the matched `params`, the
+ * current `path`, and the client `pending` flag (all threaded through `RenderProps` identically on SSR
+ * and client), so the routing hooks (`useParams`/`useLocation`/`useNavigation`) read the same value on
+ * both sides - no hydration mismatch (`pending` is `false` on SSR and on the initial client render).
+ * A render with no routing fields (a non-router adapter usage) provides the empty default.
  */
 export function compose(chain: readonly unknown[], props: RenderProps): ReactNode {
   const last = chain.length - 1
@@ -24,7 +25,13 @@ export function compose(chain: readonly unknown[], props: RenderProps): ReactNod
   }
   return createElement(
     RouterContext.Provider,
-    { value: { params: props.params ?? EMPTY_PARAMS, path: props.path ?? "" } },
+    {
+      value: {
+        params: props.params ?? EMPTY_PARAMS,
+        path: props.path ?? "",
+        pending: props.pending ?? false,
+      },
+    },
     node,
   )
 }

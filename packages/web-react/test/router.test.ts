@@ -11,7 +11,9 @@ import {
   type SetSearchParams,
   useLocation,
   useNavigate,
+  useNavigation,
   useParams,
+  usePending,
   useSearchParams,
 } from "../src/router.ts"
 
@@ -21,7 +23,9 @@ import {
 
 // Provide a router context (params + path) around a node, the way `compose` does on both sides.
 const withRoute = (path: string, node: ReactNode, params: Record<string, string> = {}): string =>
-  renderToStaticMarkup(createElement(RouterContext.Provider, { value: { params, path } }, node))
+  renderToStaticMarkup(
+    createElement(RouterContext.Provider, { value: { params, path, pending: false } }, node),
+  )
 
 afterEach(() => setBrowserNavigate(undefined))
 
@@ -151,7 +155,11 @@ function captureSetSearchParams(path: string): SetSearchParams {
     return null
   }
   renderToStaticMarkup(
-    createElement(RouterContext.Provider, { value: { params: {}, path } }, createElement(Probe)),
+    createElement(
+      RouterContext.Provider,
+      { value: { params: {}, path, pending: false } },
+      createElement(Probe),
+    ),
   )
   if (setter === undefined) throw new Error("setter not captured")
   return setter
@@ -245,4 +253,34 @@ test("Link click before hydration (no bridge) is a no-op — the native <a href>
   const e = mockClick()
   linkOnClick({ to: "/x" })(e)
   expect(e.defaultPrevented).toBe(false) // no preventDefault → browser does the full-page navigation
+})
+
+test("useNavigation reads pending from compose (client) - loading state", () => {
+  const Probe = () => {
+    const nav = useNavigation()
+    return createElement("span", null, `${nav.state}:${nav.pending}`)
+  }
+  // compose threads props.pending into the router context (client mountRouter passes state.pending).
+  const loading = renderToStaticMarkup(compose([Probe], { data: {}, path: "/x", pending: true }))
+  expect(loading).toContain("loading:true")
+  const idle = renderToStaticMarkup(compose([Probe], { data: {}, path: "/x", pending: false }))
+  expect(idle).toContain("idle:false")
+})
+
+test("useNavigation is idle on SSR (no pending prop) - hydration-safe default", () => {
+  const Probe = () => {
+    const nav = useNavigation()
+    return createElement("span", null, nav.state)
+  }
+  // SSR renderPageResult passes no `pending` (client-only field) → defaults to idle, matching the
+  // initial client render so hydration never mismatches.
+  const ssr = renderToStaticMarkup(compose([Probe], { data: {}, path: "/x" }))
+  expect(ssr).toContain("idle")
+})
+
+test("usePending is the boolean convenience form", () => {
+  const Probe = () => createElement("span", null, String(usePending()))
+  expect(renderToStaticMarkup(compose([Probe], { data: {}, path: "/x", pending: true }))).toContain(
+    "true",
+  )
 })
