@@ -10,7 +10,7 @@ Framework-agnostic SSR core for nifra — the render seam + HTML document orches
 
 ## Public entrypoints
 
-`@nifrajs/web` · `@nifrajs/web/build` · `@nifrajs/web/client` · `@nifrajs/web/conformance` · `@nifrajs/web/dev` · `@nifrajs/web/fonts` · `@nifrajs/web/forms` · `@nifrajs/web/fs` · `@nifrajs/web/islands` · `@nifrajs/web/plugins/css-modules` · `@nifrajs/web/plugins/kit` · `@nifrajs/web/plugins/scss` · `@nifrajs/web/server-only` · `@nifrajs/web/vite`
+`@nifrajs/web` · `@nifrajs/web/build` · `@nifrajs/web/client` · `@nifrajs/web/conformance` · `@nifrajs/web/dev` · `@nifrajs/web/fonts` · `@nifrajs/web/forms` · `@nifrajs/web/fs` · `@nifrajs/web/islands` · `@nifrajs/web/plugins/css-modules` · `@nifrajs/web/plugins/kit` · `@nifrajs/web/plugins/postcss` · `@nifrajs/web/plugins/scss` · `@nifrajs/web/plugins/svg` · `@nifrajs/web/server-only` · `@nifrajs/web/vite`
 
 ## Key exports
 
@@ -29,7 +29,7 @@ Framework-agnostic SSR core for nifra — the render seam + HTML document orches
 - **createDevServer** _(function)_ — `createDevServer: (options: DevServerOptions) => Promise<DevServer>` · from `@nifrajs/web/dev`
 - **createMatcher** _(function)_ — `createMatcher: (patterns: readonly RoutePattern[]) => (path: string) => RouteMatch | null` · from `@nifrajs/web`
 
-_…and 196 more — see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 205 more — see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 

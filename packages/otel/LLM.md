@@ -8,24 +8,28 @@ Distributed tracing for nifra — W3C traceparent/tracestate propagation + OpenT
 > reference see [`api-reference.md`](../../api-reference.md) (every export + signature) and
 > [`llms-full.txt`](../../llms-full.txt) (the prose guides). One cheap read instead of the whole corpus.
 
+## Public entrypoints
+
+`@nifrajs/otel` · `@nifrajs/otel/metrics`
+
 ## Key exports
 
-- **causalitySpanLink** _(function)_ — `causalitySpanLink: (context: CausalityContext) => ObservationLink | undefined`
-- **combineObservationAdapters** _(function)_ — `combineObservationAdapters: (adapters: readonly ObservationAdapter[]) => ObservationAdapter`
-- **consoleSpanExporter** _(function)_ — `consoleSpanExporter: (log?: (line: string) => void) => ObservationAdapter`
-- **createObservationLifecycle** _(function)_ — `createObservationLifecycle: (options?: ObservationLifecycleOptions) => ObservationLifecycle`
-- **formatTraceparent** _(function)_ — `formatTraceparent: (traceId: string, spanId: string, sampled: boolean) => string`
-- **generateSpanId** _(function)_ — `generateSpanId: () => string`
-- **generateTraceId** _(function)_ — `generateTraceId: () => string`
-- **parseTraceparent** _(function)_ — `parseTraceparent: (header: string | null | undefined) => ParsedTraceparent | null`
-- **traceHeaders** _(function)_ — `traceHeaders: (trace: TraceContext, causality?: CausalityContext) => { readonly traceparent: string; } & Readonly<Record<string, string>>`
-- **tracing** _(function)_ — `tracing: (options?: TracingOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").Serve…`
-- **ActiveObservation** _(interface)_ — `interface ActiveObservation`
-- **EndObservation** _(interface)_ — `interface EndObservation`
-- **NifraSpan** _(interface)_ — `interface NifraSpan`
-- **ObservationAdapter** _(interface)_ — `interface ObservationAdapter`
+- **causalitySpanLink** _(function)_ — `causalitySpanLink: (context: CausalityContext) => ObservationLink | undefined` · from `@nifrajs/otel`
+- **combineObservationAdapters** _(function)_ — `combineObservationAdapters: (adapters: readonly ObservationAdapter[]) => ObservationAdapter` · from `@nifrajs/otel`
+- **consoleSpanExporter** _(function)_ — `consoleSpanExporter: (log?: (line: string) => void) => ObservationAdapter` · from `@nifrajs/otel`
+- **createMetricsRegistry** _(function)_ — `createMetricsRegistry: () => MetricsRegistry` · from `@nifrajs/otel/metrics`
+- **createObservationLifecycle** _(function)_ — `createObservationLifecycle: (options?: ObservationLifecycleOptions) => ObservationLifecycle` · from `@nifrajs/otel`
+- **formatTraceparent** _(function)_ — `formatTraceparent: (traceId: string, spanId: string, sampled: boolean) => string` · from `@nifrajs/otel`
+- **generateSpanId** _(function)_ — `generateSpanId: () => string` · from `@nifrajs/otel`
+- **generateTraceId** _(function)_ — `generateTraceId: () => string` · from `@nifrajs/otel`
+- **metrics** _(function)_ — `metrics: (options?: MetricsOptions) => NifraPlugin` · from `@nifrajs/otel/metrics`
+- **otlpExporter** _(function)_ — `otlpExporter: (options: OtlpExporterOptions) => OtlpExporter` · from `@nifrajs/otel`
+- **parseTraceparent** _(function)_ — `parseTraceparent: (header: string | null | undefined) => ParsedTraceparent | null` · from `@nifrajs/otel`
+- **traceHeaders** _(function)_ — `traceHeaders: (trace: TraceContext, causality?: CausalityContext) => { readonly traceparent: string; } & Readonly<Record<string, string>>` · from `@nifrajs/otel`
+- **tracing** _(function)_ — `tracing: (options?: TracingOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").Serve…` · from `@nifrajs/otel`
+- **Counter** _(class)_ — `class Counter` · from `@nifrajs/otel/metrics`
 
-_…and 12 more — see [`api-reference.md`](../../api-reference.md#nifrajsotel) for the complete list._
+_…and 22 more — see [`api-reference.md`](../../api-reference.md#nifrajsotel) for the complete list._
 
 ## Footguns
 

@@ -29,7 +29,7 @@ Bun-native, contract-first HTTP framework — the router, server, and route desc
 - **canAttempt** _(function)_ — `canAttempt: (budget: RequestBudget, estimatedAttemptMs: number, reserveMs?: number) => boolean` · from `@nifrajs/core/budget`
 - **canonicalizeIdempotencyBody** _(function)_ — `canonicalizeIdempotencyBody: (body: Uint8Array, contentType: string | null) => Uint8Array` · from `@nifrajs/core/idempotency`
 
-_…and 295 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
+_…and 296 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 
 ## Footguns
 

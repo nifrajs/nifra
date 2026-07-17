@@ -5,6 +5,7 @@ import {
   defineMcpWidget,
   handleRpc,
   type McpTool,
+  type StandardSchemaV1,
   UI_EXTENSION_KEY,
   UI_MIME,
 } from "../src/index.ts"
@@ -81,6 +82,98 @@ describe("defineMcpTool — render intent", () => {
   test("no widget, no intent → no _meta", () => {
     const tool = defineMcpTool({ name: "plain", description: "x", handler: () => "ok" })
     expect(tool._meta).toBeUndefined()
+  })
+})
+
+describe("defineMcpTool — standard-schema input", () => {
+  interface EchoArgs {
+    message: string
+  }
+  // A hand-rolled Standard Schema that also carries a JSON Schema, like nifra's `t` does.
+  const echoInput: StandardSchemaV1<unknown, EchoArgs> & {
+    jsonSchema: Record<string, unknown>
+  } = {
+    "~standard": {
+      version: 1 as const,
+      vendor: "test",
+      validate: (value: unknown) => {
+        if (
+          typeof value === "object" &&
+          value !== null &&
+          "message" in value &&
+          typeof (value as { message: unknown }).message === "string"
+        ) {
+          return { value: { message: (value as { message: string }).message } }
+        }
+        return { issues: [{ message: "must be a string", path: ["message"] }] }
+      },
+    },
+    jsonSchema: {
+      type: "object",
+      properties: { message: { type: "string" } },
+      required: ["message"],
+    },
+  }
+
+  const echo = defineMcpTool({
+    name: "echo",
+    description: "echo the message",
+    input: echoInput,
+    handler: (args: EchoArgs) => `echoed: ${args.message}`,
+  })
+
+  const ctx = { signal: new AbortController().signal, requestId: 1, reportProgress: () => {} }
+
+  test("advertises the schema's own JSON Schema as inputSchema", () => {
+    expect(echo.inputSchema).toEqual({
+      type: "object",
+      properties: { message: { type: "string" } },
+      required: ["message"],
+    })
+  })
+
+  test("an explicit inputSchema overrides the derived one", () => {
+    const t = defineMcpTool({
+      name: "x",
+      description: "x",
+      input: echoInput,
+      inputSchema: { type: "object" },
+      handler: () => "ok",
+    })
+    expect(t.inputSchema).toEqual({ type: "object" })
+  })
+
+  test("valid arguments reach the handler validated and typed", async () => {
+    const result = await echo.handler({ message: "hi" }, ctx)
+    expect(result).toBe("echoed: hi")
+  })
+
+  test("invalid arguments return an in-band isError result naming the issue", async () => {
+    const result = await echo.handler({ message: 7 }, ctx)
+    expect(typeof result).not.toBe("string")
+    const rich = result as { isError?: boolean; content: Array<{ type: string; text: string }> }
+    expect(rich.isError).toBe(true)
+    expect(rich.content[0]?.text).toContain("message: must be a string")
+  })
+
+  test("a schema without a JSON Schema still validates, with the empty-object descriptor", () => {
+    const bare = defineMcpTool({
+      name: "bare",
+      description: "x",
+      input: {
+        "~standard": {
+          version: 1 as const,
+          vendor: "test",
+          validate: (v: unknown) => ({ value: v as Record<string, unknown> }),
+        },
+      },
+      handler: () => "ok",
+    })
+    expect(bare.inputSchema).toEqual({
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    })
   })
 })
 

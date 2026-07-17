@@ -17,7 +17,7 @@ Build MCP servers — and MCP Apps (interactive `ui://` widgets, SEP-1865) — f
 - **bridgeScript** _(function)_ — `bridgeScript: () => string` · from `@nifrajs/mcp`
 - **createMcpProtocolState** _(function)_ — `createMcpProtocolState: () => McpProtocolState` · from `@nifrajs/mcp`
 - **createMcpServer** _(function)_ — `createMcpServer: (opts: CreateMcpServerOptions) => McpServer` · from `@nifrajs/mcp`
-- **defineMcpTool** _(function)_ — `defineMcpTool: (opts: DefineMcpToolOptions) => McpTool` · from `@nifrajs/mcp`
+- **defineMcpTool** _(function)_ — `defineMcpTool: <S extends StandardSchemaV1 = UntypedArgs>(opts: DefineMcpToolOptions<S>) => McpTool` · from `@nifrajs/mcp`
 - **defineMcpWidget** _(function)_ — `defineMcpWidget: (opts: DefineMcpWidgetOptions) => McpWidget` · from `@nifrajs/mcp`
 - **handleRpc** _(function)_ — `handleRpc: (message: JsonRpcRequest, tools: readonly McpTool[], serverInfo: { name: string; version: string; }, features?: McpServerFeature…` · from `@nifrajs/mcp`
 - **reactWidget** _(function)_ — `reactWidget: (opts: ReactWidgetOptions) => Promise<McpWidget>` · from `@nifrajs/mcp/react`
@@ -29,7 +29,7 @@ Build MCP servers — and MCP Apps (interactive `ui://` widgets, SEP-1865) — f
 - **rpcResult** _(const)_ — `rpcResult: (id: JsonRpcId, value: unknown) => JsonRpcResponse` · from `@nifrajs/mcp`
 - **UI_EXTENSION_KEY** _(const)_ — `UI_EXTENSION_KEY: "io.modelcontextprotocol/ui"` · from `@nifrajs/mcp`
 
-_…and 25 more — see [`api-reference.md`](../../api-reference.md#nifrajsmcp) for the complete list._
+_…and 29 more — see [`api-reference.md`](../../api-reference.md#nifrajsmcp) for the complete list._
 
 ## Footguns
 

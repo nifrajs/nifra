@@ -8,6 +8,8 @@
  */
 
 import type { McpContentBlock, McpTool, McpToolContext, McpToolResult } from "./protocol.ts"
+import type { InferOutput, StandardSchemaV1 } from "./standard.ts"
+import { formatIssues, jsonSchemaOf } from "./standard.ts"
 import type { McpWidget } from "./widget.ts"
 
 /** The ergonomic result an MCP-tool handler may return (coerced to the protocol's {@link McpToolResult}). */
@@ -40,10 +42,24 @@ export type McpUiIntent =
   | "chart"
   | (string & {})
 
-export interface DefineMcpToolOptions {
+/** The default when no `input` schema is given: arguments arrive untyped and unvalidated. */
+type UntypedArgs = StandardSchemaV1<unknown, Record<string, unknown>>
+
+export interface DefineMcpToolOptions<S extends StandardSchemaV1 = UntypedArgs> {
   readonly name: string
   readonly description: string
-  /** JSON Schema for the arguments. Defaults to an empty object schema. */
+  /**
+   * A Standard Schema for the arguments (nifra's `t`, zod, valibot, arktype, …). It validates every
+   * call before the handler runs - invalid arguments return an in-band `isError` result naming each
+   * issue, so the calling agent can correct and retry - and it types the handler's `args`. Schemas
+   * that carry a JSON Schema (nifra's `t` does) also become the advertised `inputSchema` for free.
+   */
+  readonly input?: S
+  /**
+   * JSON Schema for the wire descriptor (`tools/list`). Defaults to `input`'s own JSON Schema when
+   * it exposes one, else an empty object schema. Pass explicitly when `input` comes from a vendor
+   * whose schemas carry no JSON Schema, so the agent still sees real parameter docs.
+   */
   readonly inputSchema?: Record<string, unknown>
   /** Link a widget so the tool's result renders as interactive UI in MCP Apps hosts (iframe). */
   readonly widget?: McpWidget
@@ -52,7 +68,7 @@ export interface DefineMcpToolOptions {
    * intent for generative builders). */
   readonly intent?: McpUiIntent
   readonly handler: (
-    args: Record<string, unknown>,
+    args: InferOutput<S>,
     context: McpToolContext,
   ) => McpToolHandlerResult | Promise<McpToolHandlerResult>
 }
@@ -87,13 +103,33 @@ function coerce(result: McpToolHandlerResult): string | McpToolResult {
   }
 }
 
-export function defineMcpTool(opts: DefineMcpToolOptions): McpTool {
+export function defineMcpTool<S extends StandardSchemaV1 = UntypedArgs>(
+  opts: DefineMcpToolOptions<S>,
+): McpTool {
   const meta = toolMeta(opts.widget, opts.intent)
+  const input = opts.input
   return {
     name: opts.name,
     description: opts.description,
-    inputSchema: opts.inputSchema ?? EMPTY_OBJECT_SCHEMA,
+    inputSchema:
+      opts.inputSchema ??
+      (input !== undefined ? jsonSchemaOf(input) : undefined) ??
+      EMPTY_OBJECT_SCHEMA,
     ...(meta !== undefined ? { _meta: meta } : {}),
-    handler: async (args, context) => coerce(await opts.handler(args, context)),
+    handler: async (args, context) => {
+      let validated = args as InferOutput<S>
+      if (input !== undefined) {
+        const result = await input["~standard"].validate(args)
+        if (result.issues !== undefined) {
+          // In-band failure (not a protocol error): the agent reads the issues and retries corrected.
+          return {
+            content: [{ type: "text", text: `Invalid arguments: ${formatIssues(result.issues)}` }],
+            isError: true,
+          }
+        }
+        validated = result.value as InferOutput<S>
+      }
+      return coerce(await opts.handler(validated, context))
+    },
   }
 }

@@ -99,10 +99,13 @@ Every public export of every package and documented subpath — name, kind, sign
 - **ApiProxy** _(type)_ — `type ApiProxy<Api> = Api extends ContractShape ? TreatyFromRegistry<RegistryFor<Api>> : Treaty<Api>`
   The typed client proxy for an API type — either a server type (`typeof app`, coupled) or a contract value type (decoupled). Graduating a loader from `typeof app` to a versioned contract is just changing this one type argument; the loader body is identical.
 - **ClientOptions** _(interface)_ — `interface ClientOptions`
+- **ClientRetryOptions** _(interface)_ — `interface ClientRetryOptions`
+  Safe retry policy. Off unless `retry` is set; retries ONLY idempotent methods and transient 5xx — never a 4xx/429 and never a non-idempotent method, so a retry can't double a side effect.
 - **FetchFn** _(type)_ — `type FetchFn = (input: string, init?: RequestInit) => Promise<Response>`
   The fetch shape the client needs — looser than `typeof fetch` so an in-process bridge or a test mock satisfies it without the extra members (`.preconnect`, overloads) of the global.
 - **InProcessClient** _(type)_ — `type InProcessClient<App> = Treaty<App> & BackendMount`
   Typed route client plus the explicit platform-aware backend mount capability.
+- **InProcessClientOptions** _(interface)_ — `interface InProcessClientOptions`
 - **Jsonify** _(type)_ — `type Jsonify<T>`
   Maps a value to the shape it takes after a JSON round-trip, so the client's `data` type reflects the wire — not the handler's in-memory return.
 - **LoaderArgs** _(interface)_ — `interface LoaderArgs<Api, Env = unknown>`
@@ -111,19 +114,24 @@ Every public export of every package and documented subpath — name, kind, sign
   The (awaited) return of a `loader`, for typing a page component's `data` prop.
 - **RegistryOf** _(type)_ — `type RegistryOf<App> = App extends Server<infer R, infer _Ctx> ? R : never`
   Extract the accumulated route registry from a server's type (`typeof app`), ignoring its middleware context.
-- **Result** _(type)_ — `type Result<Data, ErrData = unknown> = | { readonly ok: true; readonly status: number; readonly data: Data; readonly error: null } | { readonly ok: false readonly status: number readonly data: ErrData readonly error: Ap…`
-  The outcome of a client call. The client never throws — inspect `ok` to branch. `data` is the parsed response body, **typed by `ok`**: on success it's the route's response type; on failure it's the parsed error body, typed from the route's `errors` contract (`unknown` when the route declares none, …
+- **ResponseContractViolation** _(class)_ — `class ResponseContractViolation`
+  A response body that broke its route's declared contract. Thrown THROUGH the "never throws" client on purpose: this is a test assertion about the server's honesty, not a call outcome the caller should branch on - swallowing it into a `Result` would let the drift pass the test.
+- **Result** _(type)_ — `type Result<Data, Errors = unknown>`
+  The outcome of a client call. The client never throws - inspect `ok` to branch.
 - **SubscribeOptions** _(interface)_ — `interface SubscribeOptions<I extends RouteInfo>`
 - **Subscription** _(interface)_ — `interface Subscription`
 - **Treaty** _(type)_ — `type Treaty<App> = TreatyFromRegistry<RegistryOf<App>>`
   The Eden-style proxy type for a server. Use a named alias for readable errors:
 - **TreatyFromRegistry** _(type)_ — `type TreatyFromRegistry<R> = TreatyNode<R, ""> & RootIndex<R>`
   The Eden-style proxy type for a route registry — the shared core used by both `Treaty<App>` (coupled, from `typeof app`) and `client(contract, url)` (decoupled, from a contract's `RegistryFor`).
+- **WsCallOptions** _(interface)_ — `interface WsCallOptions`
+- **WsHandle** _(interface)_ — `interface WsHandle<In, Out>`
+  A live typed WebSocket connection to an `app.ws()` route. `send` accepts the route's `messageSchema` input type (validated server-side at the trust boundary); received frames are typed from its `sendSchema` and JSON-parsed. Binary frames are not part of the typed contract and are ignored by `messag…
 - **client** _(function)_ — `client: { <App>(baseUrl: string, options?: ClientOptions): Treaty<App>; <const C extends ContractShape>(contract: C, baseUrl: string, options?: ClientOptions): TreatyFromRegistry<RegistryFor<C>>; }`
   Create an end-to-end-typed client for a nifra server. Two modes:
-- **inProcessClient** _(function)_ — `inProcessClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: Omit<ClientOptions, "fetch">) => InProcessClient<App>`
+- **inProcessClient** _(function)_ — `inProcessClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: InProcessClientOptions) => InProcessClient<App>`
   A {@link client} whose `fetch` calls a nifra app's own `fetch` in-process — no network, full lifecycle (validation, middleware, contracts). For SSR loaders. Typed from `App` exactly like the network client. The `(url, init) → Request` bridge is required because the client calls `fetch(url, init)` w…
-- **testClient** _(const)_ — `testClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: Omit<ClientOptions, "fetch">) => InProcessClient<App>`
+- **testClient** _(const)_ — `testClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: InProcessClientOptions) => InProcessClient<App>`
   The in-process test client — the Fastify-`inject` / supertest equivalent for nifra. Drives the app's own `fetch` directly: no server, no port, no network, the full real lifecycle (validation, middleware, contracts, auth), and end-to-end types from `App`. Calls never throw — branch on `res.ok`. An a…
 
 ## @nifrajs/content
@@ -277,7 +285,7 @@ Every public export of every package and documented subpath — name, kind, sign
   The request-context subset the `upgrade()` guard sees — the same lazy accessors a route handler's `c` has (cookies/headers/env are read straight off the upgrade request). Structurally a slice of the core `RawContext`, so the real context object satisfies it.
 - **WebSocketData** _(type)_ — `type WebSocketData = string | Uint8Array`
   A received frame, normalized across runtimes: text → `string`, binary → `Uint8Array`.
-- **WebSocketHandler** _(interface)_ — `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined>`
+- **WebSocketHandler** _(interface)_ — `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined>`
   A WebSocket route's lifecycle. All callbacks optional; only `message` is needed for an echo.
 - **WebSocketUpgradeOutcome** _(type)_ — `type WebSocketUpgradeOutcome`
   The outcome of `app.resolveWebSocketUpgrade(req)` — for serving adapters: - `pass` — not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` — a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` — perform the runtim…
@@ -875,7 +883,7 @@ Every public export of every package and documented subpath — name, kind, sign
   The request-context subset the `upgrade()` guard sees — the same lazy accessors a route handler's `c` has (cookies/headers/env are read straight off the upgrade request). Structurally a slice of the core `RawContext`, so the real context object satisfies it.
 - **WebSocketData** _(type)_ — `type WebSocketData = string | Uint8Array`
   A received frame, normalized across runtimes: text → `string`, binary → `Uint8Array`.
-- **WebSocketHandler** _(interface)_ — `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined>`
+- **WebSocketHandler** _(interface)_ — `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined>`
   A WebSocket route's lifecycle. All callbacks optional; only `message` is needed for an echo.
 - **WebSocketUpgradeOutcome** _(type)_ — `type WebSocketUpgradeOutcome`
   The outcome of `app.resolveWebSocketUpgrade(req)` — for serving adapters: - `pass` — not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` — a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` — perform the runtim…
@@ -945,12 +953,14 @@ Every public export of every package and documented subpath — name, kind, sign
   The request-context subset the `upgrade()` guard sees — the same lazy accessors a route handler's `c` has (cookies/headers/env are read straight off the upgrade request). Structurally a slice of the core `RawContext`, so the real context object satisfies it.
 - **WebSocketData** _(type)_ — `type WebSocketData = string | Uint8Array`
   A received frame, normalized across runtimes: text → `string`, binary → `Uint8Array`.
-- **WebSocketHandler** _(interface)_ — `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined>`
+- **WebSocketHandler** _(interface)_ — `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined>`
   A WebSocket route's lifecycle. All callbacks optional; only `message` is needed for an echo.
 - **WebSocketUpgradeOutcome** _(type)_ — `type WebSocketUpgradeOutcome`
   The outcome of `app.resolveWebSocketUpgrade(req)` — for serving adapters: - `pass` — not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` — a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` — perform the runtim…
 - **attachWebSocket** _(function)_ — `attachWebSocket: (socket: StandardWebSocket, handler: WebSocketHandler, data: unknown, options: { openNow: boolean; pubsub: TopicRegistry; }) => NifraWebSocket`
   Wire a standard server-side `WebSocket` to a nifra {@link WebSocketHandler}, returning the portable {@link NifraWebSocket}. Shared by the Deno and Workers bridges. `openNow` fires `open` immediately (Workers, where the socket is already open after `accept()`); otherwise `open` waits for the socket'…
+- **websocket** _(function)_ — `websocket: () => IdentityPlugin`
+  Enable WebSocket routes on a server: `.use(websocket())` turns on `app.ws()`. Applying it twice is a no-op (named plugin dedupe).
 - **wrapWebSocketMessageValidation** _(function)_ — `wrapWebSocketMessageValidation: (handler: WebSocketHandler) => WebSocketHandler`
   If the handler declares a `messageSchema`, return a copy whose `message` validates each frame — parse as JSON, run the Standard Schema, then call the user's `message` with the typed value, or `onInvalidMessage` on failure. Returns the handler unchanged when no schema is set. Called once at `app.ws(…
 
@@ -1220,8 +1230,10 @@ Every public export of every package and documented subpath — name, kind, sign
 ### `@nifrajs/mcp`
 
 - **CreateMcpServerOptions** _(interface)_ — `interface CreateMcpServerOptions`
-- **DefineMcpToolOptions** _(interface)_ — `interface DefineMcpToolOptions`
+- **DefineMcpToolOptions** _(interface)_ — `interface DefineMcpToolOptions<S extends StandardSchemaV1 = UntypedArgs>`
 - **DefineMcpWidgetOptions** _(interface)_ — `interface DefineMcpWidgetOptions`
+- **InferOutput** _(type)_ — `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
+  The validated (post-transform) type of a Standard Schema.
 - **JsonRpcNotification** _(interface)_ — `interface JsonRpcNotification`
 - **JsonRpcRequest** _(interface)_ — `interface JsonRpcRequest`
 - **JsonRpcResponse** _(type)_ — `type JsonRpcResponse = | { jsonrpc: "2.0"; id: JsonRpcId; result: unknown } | { jsonrpc: "2.0"; id: JsonRpcId; error: { code: number; message: string } }`
@@ -1251,6 +1263,10 @@ Every public export of every package and documented subpath — name, kind, sign
   A widget: the resource to register on the server, its `ui://` URI, and the `_meta` link for its tool.
 - **PROTOCOL_VERSION** _(const)_ — `PROTOCOL_VERSION: "2024-11-05"`
   The pure MCP (Model Context Protocol) JSON-RPC dispatch — no I/O, no `Bun.*`, no side effects, so it unit-tests cleanly. A transport (stdio in `@nifrajs/cli`'s `mcp.ts`, Streamable-HTTP in {@link ./http.ts}) wires this to a byte stream; the tools/resources are injected, so the protocol logic is exe…
+- **StandardIssue** _(interface)_ — `interface StandardIssue`
+- **StandardResult** _(type)_ — `type StandardResult<Output> = | { readonly value: Output; readonly issues?: undefined } | { readonly issues: ReadonlyArray<StandardIssue> }`
+- **StandardSchemaV1** _(interface)_ — `interface StandardSchemaV1<Input = unknown, Output = Input>`
+  The Standard Schema v1 interface (https://standardschema.dev), vendored as types + a tiny runtime so any compliant validator - nifra's `t`, zod, valibot, arktype, … - can type and validate tool arguments without coupling this package to a validator. The spec is MIT-licensed and explicitly designed …
 - **UI_EXTENSION_KEY** _(const)_ — `UI_EXTENSION_KEY: "io.modelcontextprotocol/ui"`
   The `capabilities.extensions` key advertising UI support in the `initialize` result (SEP-1865).
 - **UI_MIME** _(const)_ — `UI_MIME: "text/html;profile=mcp-app"`
@@ -1259,7 +1275,7 @@ Every public export of every package and documented subpath — name, kind, sign
   The bridge source, as a string for inlining in a `<script>`. Self-contained, no imports.
 - **createMcpProtocolState** _(function)_ — `createMcpProtocolState: () => McpProtocolState`
 - **createMcpServer** _(function)_ — `createMcpServer: (opts: CreateMcpServerOptions) => McpServer`
-- **defineMcpTool** _(function)_ — `defineMcpTool: (opts: DefineMcpToolOptions) => McpTool`
+- **defineMcpTool** _(function)_ — `defineMcpTool: <S extends StandardSchemaV1 = UntypedArgs>(opts: DefineMcpToolOptions<S>) => McpTool`
 - **defineMcpWidget** _(function)_ — `defineMcpWidget: (opts: DefineMcpWidgetOptions) => McpWidget`
 - **handleRpc** _(function)_ — `handleRpc: (message: JsonRpcRequest, tools: readonly McpTool[], serverInfo: { name: string; version: string; }, features?: McpServerFeatures, options?: McpProtocolOptions) => Promise<JsonRpcResponse | null>`
   Dispatch one JSON-RPC message against the given tools. Returns the response, or `null` for a notification (no reply). Tool errors are reported in-band (`isError`) so the agent can react to them.
@@ -1526,6 +1542,8 @@ Every public export of every package and documented subpath — name, kind, sign
 
 ## @nifrajs/otel
 
+### `@nifrajs/otel`
+
 - **ActiveObservation** _(interface)_ — `interface ActiveObservation`
 - **AttributeValue** _(type)_ — `type AttributeValue = string | number | boolean`
 - **EndObservation** _(interface)_ — `interface EndObservation`
@@ -1540,6 +1558,8 @@ Every public export of every package and documented subpath — name, kind, sign
 - **ObservationLink** _(interface)_ — `interface ObservationLink`
   A non-parent causal relationship to a span in another trace (the OTel `Link` model).
 - **ObservationParent** _(interface)_ — `interface ObservationParent`
+- **OtlpExporter** _(interface)_ — `interface OtlpExporter`
+- **OtlpExporterOptions** _(interface)_ — `interface OtlpExporterOptions`
 - **ParsedTraceparent** _(interface)_ — `interface ParsedTraceparent`
   A parsed inbound `traceparent`.
 - **SpanStatus** _(type)_ — `type SpanStatus = "unset" | "ok" | "error"`
@@ -1562,12 +1582,29 @@ Every public export of every package and documented subpath — name, kind, sign
   A fresh 8-byte (16-hex) span id.
 - **generateTraceId** _(function)_ — `generateTraceId: () => string`
   A fresh 16-byte (32-hex) trace id.
+- **otlpExporter** _(function)_ — `otlpExporter: (options: OtlpExporterOptions) => OtlpExporter`
 - **parseTraceparent** _(function)_ — `parseTraceparent: (header: string | null | undefined) => ParsedTraceparent | null`
   Parse a `traceparent` header, or `null` if it's absent/malformed/version-unknown — per the spec, a bad header means "start a fresh trace", never an error. Only version `00` is accepted.
 - **traceHeaders** _(function)_ — `traceHeaders: (trace: TraceContext, causality?: CausalityContext) => { readonly traceparent: string; } & Readonly<Record<string, string>>`
   Spread into an outgoing `fetch`/`ctx.api` call's headers to continue the trace downstream: `fetch(url, { headers: traceHeaders(c.trace) })`.
 - **tracing** _(function)_ — `tracing: (options?: TracingOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").Server<any, any>>`
   Distributed-tracing plugin. Each request continues the inbound trace (or starts one), opens a server span, and ends it on response with the status + HTTP attributes. Idempotent.
+
+### `@nifrajs/otel/metrics`
+
+- **Counter** _(class)_ — `class Counter`
+  A monotonically increasing counter (requests, errors).
+- **Gauge** _(class)_ — `class Gauge`
+  A value that can go up and down (in-flight requests, queue depth).
+- **Histogram** _(class)_ — `class Histogram`
+  Latency-style distribution over fixed buckets (seconds). Renders Prometheus cumulative buckets.
+- **MetricsOptions** _(interface)_ — `interface MetricsOptions`
+- **MetricsRegistry** _(class)_ — `class MetricsRegistry`
+  A collection of metrics that renders one Prometheus exposition document.
+- **createMetricsRegistry** _(function)_ — `createMetricsRegistry: () => MetricsRegistry`
+  Create a standalone registry to register custom app metrics on, shared into `metrics({ registry })`.
+- **metrics** _(function)_ — `metrics: (options?: MetricsOptions) => NifraPlugin`
+  Enable RED metrics + a `/metrics` Prometheus endpoint. Records `nifra_http_requests_total`, `nifra_http_request_duration_seconds`, and `nifra_http_requests_in_flight`, labeled by method, matched route template, and status. Apply once (named-plugin dedupe).
 
 ## @nifrajs/prompt
 
@@ -2244,6 +2281,16 @@ Every public export of every package and documented subpath — name, kind, sign
 - **requirePeer** _(function)_ — `requirePeer: <T>(specifier: string, hint: { readonly feature: string; readonly install: string; }) => Promise<T>`
   Load an optional peer compiler at build time, throwing a consistent, actionable install-hint error if it's absent — the `@vue/compiler-sfc` peer pattern, centralized. Build-time only, so the dynamic `import` (which keeps the peer out of the package's hard dependencies) is correct here.
 
+### `@nifrajs/web/plugins/postcss`
+
+- **PostcssConfigLoader** _(type)_ — `type PostcssConfigLoader = ( ctx?: Record<string, unknown>, path?: string, ) => Promise<{ readonly plugins?: readonly unknown[]; readonly options?: Record<string, unknown> }>`
+  The subset of `postcss-load-config` this plugin uses when no explicit `plugins` are given.
+- **PostcssPluginOptions** _(interface)_ — `interface PostcssPluginOptions`
+- **PostcssProcessor** _(type)_ — `type PostcssProcessor = (plugins?: readonly unknown[]) => { process( css: string, options: { readonly from?: string; readonly to?: string }, ): PromiseLike<{ readonly css: string }> }`
+  The subset of the `postcss` API this plugin uses (structural, so no hard dependency on its types).
+- **postcssBunPlugin** _(function)_ — `postcssBunPlugin: (generate: "dom" | "ssr", options?: PostcssPluginOptions) => BunPlugin`
+  The PostCSS Bun plugin. `"dom"` → bundles the processed CSS (and, for `*.module.*`, exports the scoped class map); `"ssr"` → the class map only for `*.module.*`, an empty module for plain CSS. Tolerates a trailing `?query` (dev servers append one to bust Bun's import cache).
+
 ### `@nifrajs/web/plugins/scss`
 
 - **SassCompiler** _(interface)_ — `interface SassCompiler`
@@ -2251,6 +2298,18 @@ Every public export of every package and documented subpath — name, kind, sign
 - **ScssPluginOptions** _(interface)_ — `interface ScssPluginOptions`
 - **scssBunPlugin** _(function)_ — `scssBunPlugin: (generate: "dom" | "ssr", options?: ScssPluginOptions) => BunPlugin`
   The SASS/SCSS Bun plugin. `"dom"` → bundles the compiled CSS (and, for `*.module.scss`, exports the scoped class map); `"ssr"` → the class map only for `*.module.scss`, an empty module for plain Sass. Tolerates a trailing `?query` (dev servers append one to bust Bun's import cache).
+
+### `@nifrajs/web/plugins/svg`
+
+- **SvgOptimizer** _(interface)_ — `interface SvgOptimizer`
+  The subset of the `svgo` API this plugin uses (structural, so no hard dependency on its types).
+- **SvgPluginOptions** _(interface)_ — `interface SvgPluginOptions`
+- **svgComponentBunPlugin** _(function)_ — `svgComponentBunPlugin: (_generate: "dom" | "ssr", options?: SvgPluginOptions) => BunPlugin`
+  The SVG-as-component Bun plugin (React/Preact). `generate` is accepted for parity with the other plugin pairs; the emitted component is the same on `"dom"` and `"ssr"`.
+- **svgComponentSource** _(function)_ — `svgComponentSource: (xml: string) => string`
+  Emit the component module source for a `?component` SVG import. Identical on dom + ssr (isomorphic).
+- **svgToJsx** _(function)_ — `svgToJsx: (xml: string) => string`
+  Convert an SVG XML string into a JSX-safe `<svg>…</svg>` element with `{...props}` spread on the root.
 
 ### `@nifrajs/web/server-only`
 
@@ -2814,7 +2873,7 @@ _No named exports (side-effect entrypoint)._
   The request-context subset the `upgrade()` guard sees — the same lazy accessors a route handler's `c` has (cookies/headers/env are read straight off the upgrade request). Structurally a slice of the core `RawContext`, so the real context object satisfies it.
 - **WebSocketData** _(type)_ — `type WebSocketData = string | Uint8Array`
   A received frame, normalized across runtimes: text → `string`, binary → `Uint8Array`.
-- **WebSocketHandler** _(interface)_ — `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined>`
+- **WebSocketHandler** _(interface)_ — `interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined>`
   A WebSocket route's lifecycle. All callbacks optional; only `message` is needed for an echo.
 - **WebSocketUpgradeOutcome** _(type)_ — `type WebSocketUpgradeOutcome`
   The outcome of `app.resolveWebSocketUpgrade(req)` — for serving adapters: - `pass` — not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` — a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` — perform the runtim…
