@@ -17,6 +17,23 @@ describe("defer + prepareDeferred", () => {
     expect(d.promise).toBe(p)
   })
 
+  test("claims an eager rejection before a deferred consumer attaches", async () => {
+    const code = `
+      import { defer } from ${JSON.stringify(new URL("../src/deferred.ts", import.meta.url).href)}
+      const promise = Promise.reject(new Error("eager deferred rejection"))
+      const marker = defer(promise)
+      if (marker.promise !== promise) process.exit(2)
+      await Bun.sleep(10)
+    `
+    const proc = Bun.spawn([process.execPath, "--eval", code], {
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const [exitCode, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()])
+    expect(stderr).toBe("")
+    expect(exitCode).toBe(0)
+  })
+
   test("splits resolved keys from deferred: client placeholders + component markers with ids", () => {
     const p1 = Promise.resolve("a")
     const p2 = Promise.resolve("b")

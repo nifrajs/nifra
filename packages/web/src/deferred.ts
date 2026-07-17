@@ -28,6 +28,9 @@ export interface Deferred<T> {
  * component knows to `<Await>` it. The `id` is a placeholder until the server assigns the real one.
  */
 export function defer<T>(promise: Promise<T>): Deferred<T> {
+  // Claim the promise immediately: an eager rejection may otherwise be reported as unhandled before
+  // the SSR/NDJSON consumer attaches. Keep the original promise so consumers observe its rejection.
+  void promise.catch(() => {})
   return { __nifra_deferred: true, id: -1, promise }
 }
 
