@@ -1,4 +1,4 @@
-import { type AnyServer, defineIdentityPlugin } from "@nifrajs/core/server"
+import { type AnyServer, defineIdentityPlugin, type Server } from "@nifrajs/core/server"
 
 /**
  * The structural slice of a [better-auth](https://better-auth.com) instance this package needs.
@@ -131,4 +131,150 @@ export async function requireSession<A extends BetterAuthLike>(
   const session = await getSession(auth, request)
   if (session !== null) return session
   throw rejection(options)
+}
+
+/**
+ * The authenticated caller of a request, mapped from a better-auth session. Built by
+ * {@link requirePrincipal} / {@link authed} and threaded onto the handler context as `c.principal`.
+ *
+ * `tenantId` is optional here (`string | undefined`); with `{ requireTenant: true }` it is narrowed to a
+ * non-optional `string` (see {@link authed}), so a tenant-scoped handler never has to null-check it.
+ * nifra owns the session -> principal wiring ONLY; binding the principal to a DB/RLS scope stays in
+ * userland (nifra is storage-agnostic and adds no DB code).
+ */
+export interface Principal<User> {
+  /** The full better-auth user record, typed from the concrete auth instance. */
+  readonly user: User
+  /** The user's id (`user.id`). */
+  readonly userId: string
+  /** The session's id (`session.id`). */
+  readonly sessionId: string
+  /** The resolved tenant/org id, if any. Non-optional `string` under `{ requireTenant: true }`. */
+  readonly tenantId?: string
+}
+
+/**
+ * The non-null user type of a concrete better-auth instance `A` (`SessionOf<A>["user"]`). Collapses to
+ * `unknown` only for the erased structural `BetterAuthLike`; a real instance recovers the concrete user.
+ */
+export type SessionUserOf<A extends BetterAuthLike> =
+  SessionOf<A> extends { user: infer U } ? U : unknown
+
+/**
+ * Options for {@link requirePrincipal} / {@link authed}.
+ */
+export interface AuthedOptions<User> {
+  /** Require a resolvable tenant. When set and no tenant resolves, fail closed with `403`. */
+  readonly requireTenant?: boolean
+  /** Browser redirect target (`302`) for a missing session, instead of the default `401` JSON. Same-origin. */
+  readonly redirectTo?: string
+  /** Resolve the tenant id from the user. Default: `user.tenantId ?? user.orgId` (string-valued only). */
+  readonly tenantOf?: (user: User) => string | undefined
+}
+
+/**
+ * The principal type for a given `requireTenant` flag: `tenantId` narrows to a required `string` when
+ * `requireTenant` is `true`, otherwise stays optional (`string | undefined`). The flag is captured as a
+ * literal `const` type parameter at the call sites so `{ requireTenant: true }` selects the narrowed branch.
+ */
+export type PrincipalFor<User, RequireTenant extends boolean> = RequireTenant extends true
+  ? Principal<User> & { readonly tenantId: string }
+  : Principal<User>
+
+/** Add `{ principal: P }` to a server's context while preserving its route registry `R` (no collapse to
+ * `any`). This is the type that makes `.use(authed(auth))` thread a NON-NULL `c.principal`. */
+export type WithPrincipal<S extends AnyServer, P> =
+  S extends Server<infer R, infer C> ? Server<R, C & { principal: P }> : never
+
+const forbidden = (): Response => Response.json({ ok: false, error: "forbidden" }, { status: 403 })
+
+/**
+ * Resolve the better-auth session and map it to a {@link Principal}, or **throw a `Response`** so the
+ * handler never runs unauthenticated:
+ *
+ * - No/invalid session -> `302` to `options.redirectTo` when set, else `401` JSON (`requireSession`).
+ * - `requireTenant: true` and no tenant resolves -> `403` JSON (`{ ok: false, error: "forbidden" }`).
+ *
+ * nifra returns a thrown `Response` as-is (short-circuit), so this is the fail-closed guard used inline
+ * or by {@link authed}. `tenantId` is a non-optional `string` in the return type when `requireTenant`.
+ *
+ * ```ts
+ * const principal = await requirePrincipal(auth, c.req, { requireTenant: true })
+ * // principal.userId / principal.tenantId are typed `string`, no null-check
+ * ```
+ */
+export async function requirePrincipal<
+  A extends BetterAuthLike,
+  const RequireTenant extends boolean = false,
+>(
+  auth: A,
+  request: Request,
+  options?: AuthedOptions<SessionUserOf<A>> & { readonly requireTenant?: RequireTenant },
+): Promise<PrincipalFor<SessionUserOf<A>, RequireTenant>> {
+  // Reuse requireSession's throw path (302/redirect or 401) verbatim - one owner for the no-session gate.
+  const session = await requireSession(
+    auth,
+    request,
+    options?.redirectTo !== undefined ? { redirectTo: options.redirectTo } : {},
+  )
+  // better-auth sessions are `{ user: { id: string, ... }, session: { id: string, ... } }`; view the
+  // fields we map. The concrete user type flows through `SessionUserOf<A>` for `principal.user`.
+  const view = session as unknown as {
+    readonly user: SessionUserOf<A>
+    readonly session: { readonly id: string }
+  }
+  const user = view.user
+  const userId = (user as { readonly id: string }).id
+  const sessionId = view.session.id
+
+  const resolveTenant =
+    options?.tenantOf ??
+    ((u: SessionUserOf<A>): string | undefined => {
+      const record = u as { readonly tenantId?: unknown; readonly orgId?: unknown }
+      const value = record.tenantId ?? record.orgId
+      return typeof value === "string" ? value : undefined
+    })
+  const tenantId = resolveTenant(user)
+
+  if (options?.requireTenant === true && tenantId === undefined) throw forbidden()
+
+  // Build the principal without ever assigning `tenantId: undefined` (exactOptionalPropertyTypes). The
+  // single cast maps our own constructed object onto the conditional `PrincipalFor` return - the runtime
+  // shape is exactly the mapped session, no untrusted data crosses here.
+  const principal: Principal<SessionUserOf<A>> =
+    tenantId === undefined ? { user, userId, sessionId } : { user, userId, sessionId, tenantId }
+  return principal as PrincipalFor<SessionUserOf<A>, RequireTenant>
+}
+
+/**
+ * A nifra plugin that derives a fail-closed {@link Principal} onto every downstream handler as
+ * `c.principal`. After `server().use(authed(auth))`, `c.principal.user` / `c.principal.userId` are typed
+ * and **non-null** - a handler CANNOT run without an authenticated caller, so the guard can't be
+ * forgotten. Works in both modes:
+ *
+ * ```ts
+ * // inline
+ * const app = server().use(authed(auth)).get("/me", (c) => ({ id: c.principal.userId }))
+ * // contract-first (the pre-applied derive threads `principal` into the contract's handlers)
+ * const api = implement(contract, handlers, server().use(authed(auth, { requireTenant: true })))
+ * ```
+ *
+ * With `{ requireTenant: true }`, `c.principal.tenantId` is typed `string` (a missing tenant is a `403`).
+ *
+ * DESIGN NOTE: this is an **unnamed** plugin by necessity. A named plugin (for idempotent dedupe) carries
+ * a `& { pluginName }` intersection that defeats the generic inference of `use`'s context-threading
+ * overload and collapses the server - and its typed client - to `any` (see `@nifrajs/core` plugin docs).
+ * Threading a NON-NULL principal is the whole point, so `authed` stays unnamed and generic. Applying it
+ * twice simply derives twice (the second resolve overwrites with the same value); scope it once per app.
+ */
+export function authed<A extends BetterAuthLike, const RequireTenant extends boolean = false>(
+  auth: A,
+  options?: AuthedOptions<SessionUserOf<A>> & { readonly requireTenant?: RequireTenant },
+): <S extends AnyServer>(
+  app: S,
+) => WithPrincipal<S, PrincipalFor<SessionUserOf<A>, RequireTenant>> {
+  return <S extends AnyServer>(app: S) =>
+    app.derive(async (c: { readonly req: Request }) => ({
+      principal: await requirePrincipal(auth, c.req, options),
+    })) as unknown as WithPrincipal<S, PrincipalFor<SessionUserOf<A>, RequireTenant>>
 }
