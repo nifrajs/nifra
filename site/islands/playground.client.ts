@@ -9,10 +9,14 @@
  * the devtools console), and it never leaves the browser.
  */
 
+import { client } from "@nifrajs/client"
 import { server } from "@nifrajs/core/server"
 import { type RunResult, runApp } from "@nifrajs/runner"
 import { t } from "@nifrajs/schema"
+import type { backend } from "../backend"
 import { decodeState, encodeState, readShareHash, shareHash } from "./share-codec"
+
+const api = client<typeof backend>("/api")
 
 interface Preset {
   readonly label: string
@@ -238,15 +242,11 @@ async function init(): Promise<void> {
     aiMessages.scrollTop = aiMessages.scrollHeight
 
     try {
-      const res = await fetch("/api/playground/chat", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt: promptText }),
-      })
+      const res = await api.playground.chat.post({ prompt: promptText })
       loading.remove()
 
       if (res.ok) {
-        const data = (await res.json()) as { message: string; code?: string; requests?: string }
+        const data = res.data
         appendMsg("assistant", data.message)
         if (data.code) {
           code.value = data.code
@@ -259,6 +259,11 @@ async function init(): Promise<void> {
           other.classList.remove("active")
         }
         void run(code, reqs, out)
+      } else if (res.error.error === "network_error") {
+        appendMsg(
+          "assistant",
+          "Could not connect to the backend. Please check your network connection.",
+        )
       } else {
         appendMsg("assistant", "Sorry, I encountered an error communicating with the chat service.")
       }
