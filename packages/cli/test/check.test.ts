@@ -58,6 +58,22 @@ describe("scanFetchText — own-API fetch detection", () => {
     ].join("\n")
     expect(scanFetchText("a.ts", src)).toEqual([])
   })
+
+  test("skips a declared external-mount prefix (string + template), segment-anchored", () => {
+    const mounts = ["/auth"]
+    // Blessed: /auth exact, a sub-path, and a dynamic template head - all deliberate, not drift.
+    expect(
+      scanFetchText("a.ts", 'fetch("/auth/sign-in/email", { method: "POST" })', mounts),
+    ).toEqual([])
+    expect(scanFetchText("a.ts", 'fetch("/auth")', mounts)).toEqual([])
+    expect(scanFetchText("a.ts", "fetch(`/auth/callback/" + "$" + "{provider}`)", mounts)).toEqual(
+      [],
+    )
+    // NOT blessed: /authors is a different route that merely shares a prefix; still flagged.
+    expect(scanFetchText("a.ts", 'fetch("/authors")', mounts)).toHaveLength(1)
+    // An own-API fetch outside the allowlist is unaffected.
+    expect(scanFetchText("a.ts", 'fetch("/users")', mounts)).toHaveLength(1)
+  })
 })
 
 describe("scanProject — walks source, skips deps/build/tests", () => {
@@ -286,6 +302,57 @@ describe("scanResponseRoutes (feedback 2026-06: raw Response collapses typed cli
     const found = scanResponseRoutes("backend.ts", src)
     expect(found).toHaveLength(1)
     expect(found[0]?.snippet).toContain('"/real"')
+  })
+
+  test("a `// nifra-expect raw-response` pragma (same line or line above) suppresses the advisory", () => {
+    const src = backend(
+      [
+        '  .get("/file", () => new Response("x")) // nifra-expect raw-response', // trailing pragma
+        "  // nifra-expect raw-response",
+        '  .get("/redirect", () => new Response(null, { status: 302 }))', // pragma on the line above
+        '  .get("/real", () => new Response("y"))', // no pragma → still flagged
+      ].join("\n"),
+    )
+    const found = scanResponseRoutes("backend.ts", src)
+    expect(found).toHaveLength(1)
+    expect(found[0]?.snippet).toContain('"/real"')
+  })
+})
+
+describe("nifra.check.json - external-mount allowlist", () => {
+  test("blesses a mounted-auth fetch so the typed-client gate goes green, and echoes the mounts", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))
+    await mkdir(join(dir, "routes"), { recursive: true })
+    // A relative fetch to a mounted better-auth handler - correct, but own-API, so normally an error.
+    await writeFile(
+      join(dir, "routes", "session.ts"),
+      'export const signIn = () => fetch("/auth/sign-in/email", { method: "POST" })',
+    )
+    // Without the allowlist: the typed-client rule fails the gate.
+    const before = await collectCheckResult(dir)
+    expect(before.diagnostics.some((d) => d.rule === "typed-client")).toBe(true)
+    expect(before.ok).toBe(false)
+    // Declare the mount as intentional external → the finding disappears and the mounts are echoed.
+    await writeFile(join(dir, "nifra.check.json"), JSON.stringify({ externalMounts: ["/auth/**"] }))
+    const after = await collectCheckResult(dir)
+    expect(after.diagnostics.some((d) => d.rule === "typed-client")).toBe(false)
+    expect(after.externalMounts).toEqual(["/auth"])
+    expect(after.ok).toBe(true)
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("malformed nifra.check.json is a non-fatal warning, allowlist ignored", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))
+    await mkdir(join(dir, "routes"), { recursive: true })
+    await writeFile(join(dir, "routes", "session.ts"), 'export const f = () => fetch("/users")')
+    await writeFile(join(dir, "nifra.check.json"), "{ not valid json")
+    const result = await collectCheckResult(dir)
+    const cfg = result.diagnostics.filter((d) => d.rule === "check-config")
+    expect(cfg).toHaveLength(1)
+    expect(cfg[0]?.severity).toBe("warning")
+    // The own-API fetch is still flagged (allowlist ignored), so the config error never hides real drift.
+    expect(result.diagnostics.some((d) => d.rule === "typed-client")).toBe(true)
+    await rm(dir, { recursive: true, force: true })
   })
 })
 

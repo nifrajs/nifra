@@ -324,8 +324,30 @@ const firstArgumentIndex = (content: string, callEnd: number): number => {
   return index
 }
 
-/** Scan one file's text for hand-rolled own-API `fetch()` calls. Pure + line-accurate. */
-export function scanFetchText(file: string, content: string): SourceFinding[] {
+// Read the literal URL path of a `fetch("/…")` call starting at `start` (the index of the leading `/`),
+// stopping at the first quote / query / hash / template-expression boundary, and test it against the
+// allowlist. A template like `/auth/${id}` matches on its literal head (`/auth`), so a dynamic sign-in URL
+// is covered too. Match is segment-anchored - `/auth` blesses `/auth` and `/auth/**`, never `/authors`.
+function matchesExternalMount(content: string, start: number, mounts: readonly string[]): boolean {
+  let end = start
+  while (end < content.length) {
+    const ch = content[end]
+    if (ch === "'" || ch === '"' || ch === "`" || ch === "?" || ch === "#") break
+    if (ch === "$" && content[end + 1] === "{") break
+    end++
+  }
+  const path = content.slice(start, end)
+  return mounts.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))
+}
+
+/** Scan one file's text for hand-rolled own-API `fetch()` calls. Pure + line-accurate. `externalMounts`
+ * are intentional non-typed mount prefixes (from `nifra.check.json`, e.g. a mounted better-auth owning
+ * `/auth/**`) - a relative fetch into one is deliberate, not drift, so it's skipped. */
+export function scanFetchText(
+  file: string,
+  content: string,
+  externalMounts: readonly string[] = [],
+): SourceFinding[] {
   const out: SourceFinding[] = []
   const lines = content.split("\n")
   const code = codePositionMask(content)
@@ -335,6 +357,8 @@ export function scanFetchText(file: string, content: string): SourceFinding[] {
     const quote = content[argument]
     if (quote !== "'" && quote !== '"' && quote !== "`") continue
     if (content[argument + 1] !== "/" || content[argument + 2] === "/") continue
+    if (externalMounts.length > 0 && matchesExternalMount(content, argument + 1, externalMounts))
+      continue
     const line = lineAt(content, m.index)
     out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
   }
@@ -634,10 +658,22 @@ export function scanResponseRoutes(file: string, content: string): SourceFinding
   RESPONSE_RETURN.lastIndex = 0
   for (let m = RESPONSE_RETURN.exec(code); m !== null; m = RESPONSE_RETURN.exec(code)) {
     const line = lineAt(content, m.index)
-    out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
+    // A `// nifra-expect raw-response` pragma on the return line or the line above marks an intentional
+    // raw Response (a file/redirect that can't be a typed route), silencing this advisory. `stripComments`
+    // blanks the pragma in `code` (so it never affects the match), but the raw `lines` still carry it.
+    const thisLine = lines[line - 1] ?? ""
+    if (
+      thisLine.includes(RAW_RESPONSE_PRAGMA) ||
+      (lines[line - 2] ?? "").includes(RAW_RESPONSE_PRAGMA)
+    )
+      continue
+    out.push({ file, line, snippet: thisLine.trim() })
   }
   return out
 }
+
+/** The opt-out pragma that suppresses the {@link scanResponseRoutes} advisory for an intentional raw Response. */
+const RAW_RESPONSE_PRAGMA = "nifra-expect raw-response"
 
 /** Walk the project's `.ts`/`.tsx` source (skipping deps/build/tests), calling `visit` per file.
  * Exported so `nifra doctor` ({@link ./doctor.ts}) scans the same source surface as `nifra check`. */
@@ -835,6 +871,7 @@ export interface CheckDiagnostic {
     | "manifest-drift"
     | "capability-assurance"
     | "capability-config"
+    | "check-config"
   /** `error` fails the gate (a real contract break); `warning` is advisory — surfaced to the agent but
    * does NOT fail `nifra check`, for patterns that are sometimes intentional (a route returning a raw
    * `Response`, which silently drops the typed client to `data: never` but is valid for files/redirects). */
@@ -877,10 +914,41 @@ export interface CheckResult {
   readonly ok: boolean
   readonly typecheck: "pass" | "fail" | "skipped"
   readonly diagnostics: readonly CheckDiagnostic[]
+  /** Intentional non-typed mount prefixes declared in `nifra.check.json` (e.g. `/auth` for a mounted
+   * better-auth). Echoed here so `--json` / the MCP tool / the report can show what the typed-client scan
+   * deliberately skipped - a suppressed prefix stays auditable instead of silently hiding real drift. */
+  readonly externalMounts?: readonly string[]
   /** Set only when the caller passed `maxDiagnostics` and there were more — `diagnostics` then holds the
    * first `shown` of `total`. It caps the serialized size so the `nifra_check` MCP tool can't emit a
    * message large enough to break the stdio transport; fix the shown diagnostics and re-run for the rest. */
   readonly truncated?: { readonly shown: number; readonly total: number }
+}
+
+/** Optional per-project `nifra.check.json` - pure data (no code execution), so it's safe to read before
+ * the app is built or even importable, preserving check's pre-`loadApp` invariant. */
+interface CheckConfig {
+  readonly externalMounts: readonly string[]
+}
+
+/** Load `nifra.check.json` if present. Fail-open + total: absent → empty; malformed → empty plus a parse
+ * `error` the caller surfaces as a `warning` diagnostic (never throws, never blocks the gate). Mount
+ * entries are normalized to bare path prefixes (`/auth/**` and `/auth/` both become `/auth`). */
+async function loadCheckConfig(cwd: string): Promise<{ config: CheckConfig; error?: string }> {
+  const path = join(cwd, "nifra.check.json")
+  if (!existsSync(path)) return { config: { externalMounts: [] } }
+  try {
+    const parsed = JSON.parse(await Bun.file(path).text()) as { externalMounts?: unknown }
+    const raw = Array.isArray(parsed.externalMounts) ? parsed.externalMounts : []
+    const externalMounts = raw
+      .filter((m): m is string => typeof m === "string" && m.startsWith("/"))
+      .map((m) => m.replace(/\/\*+$/, "").replace(/\/+$/, "") || "/")
+    return { config: { externalMounts } }
+  } catch (error) {
+    return {
+      config: { externalMounts: [] },
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
 }
 
 const UNTYPED_CLIENT_HINT =
@@ -890,7 +958,7 @@ const FETCH_HINT =
 const SERVER_IMPORT_HINT =
   "server-only import in a route module (bundled for the browser) — reach it via c.db / ctx.api inside a loader, never a top-level import"
 const RESPONSE_ROUTE_HINT =
-  "route handler returns a raw Response — the typed client infers `data: never`, so drift detection is lost for this route. Return a plain object (it's serialized for you), or add `{ response: t.… }` to the route if a raw Response is intended (file/redirect/stream)"
+  "route handler returns a raw Response - the typed client infers `data: never`, so drift detection is lost for this route. Return a plain object (it's serialized for you); for a stream use a typed SSE route (`app.sse(...)`), which keeps typed events; or, if a raw Response is intended (file/redirect), add `{ response: t.… }` or a `// nifra-expect raw-response` comment to mark it and silence this"
 const UNDECLARED_DEP_HINT =
   "imported package is not declared in package.json dependencies — run bun add to declare it"
 const MANIFEST_DRIFT_HINT =
@@ -1025,7 +1093,8 @@ function responseRouteSuggestion(): CheckSuggestion {
     title: "Preserve typed-client response inference",
     steps: [
       "Prefer returning a plain object from JSON routes; nifra serializes it for you.",
-      "If this route must return a raw Response (redirect, file, stream), declare an explicit response schema or accept the warning.",
+      "For a stream, use a typed SSE route - `app.sse(...)` (or `sse(c, run)` from `@nifrajs/core/server`) - which keeps typed events instead of collapsing the client to `data: never`.",
+      "If this route must return a raw Response (redirect, file), declare an explicit response schema, or add a `// nifra-expect raw-response` comment above the return to mark it intentional and silence this advisory.",
     ],
   }
 }
@@ -1050,6 +1119,9 @@ export async function collectCheckResult(
   // Route modules (rel + content) collected during the walk, so the TRANSITIVE server-only resolution
   // (#4.4) — which needs fs-backed import resolution, not just per-file text — runs after the walk.
   const routeModules: Array<{ rel: string; content: string }> = []
+  // Load the optional check config first - the typed-client scan needs the external-mount allowlist as it
+  // walks. It's a tiny pure-JSON read; a malformed file surfaces as a warning below, never blocking.
+  const { config: checkConfig, error: checkConfigError } = await loadCheckConfig(cwd)
   // lintsOnly: skip the tsc pass (seconds on a big project) and run just the near-instant source
   // lints — the agent inner-loop mode; the full gate stays the definition of done.
   const [tc, _, dr, manifestDrift] = await Promise.all([
@@ -1057,7 +1129,7 @@ export async function collectCheckResult(
       ? Promise.resolve<TypecheckResult>({ ran: false, ok: true, note: "skipped (lintsOnly)" })
       : typecheck(cwd, opts.signal),
     walkSource(cwd, (rel, content) => {
-      fetches.push(...scanFetchText(rel, content))
+      fetches.push(...scanFetchText(rel, content, checkConfig.externalMounts))
       staticRoutes.push(...scanStaticRouteText(rel, content))
       untypedClients.push(...scanUntypedClient(rel, content))
       if (ROUTE_FILE.test(rel)) routeModules.push({ rel, content })
@@ -1094,6 +1166,15 @@ export async function collectCheckResult(
   }
 
   const diagnostics: CheckDiagnostic[] = []
+  if (checkConfigError !== undefined) {
+    diagnostics.push({
+      rule: "check-config",
+      severity: "warning",
+      file: "nifra.check.json",
+      message: `nifra.check.json could not be parsed (${checkConfigError}) - its external-mount allowlist was ignored`,
+      fix: "Fix the JSON syntax in nifra.check.json",
+    })
+  }
   if (tc.ran && !tc.ok) {
     const lines = (tc.output ?? "").split("\n")
     let matched = false
@@ -1364,6 +1445,9 @@ export async function collectCheckResult(
     ok: !diagnostics.some((diagnostic) => diagnostic.severity === "error"),
     typecheck: tc.ran ? (tc.ok ? "pass" : "fail") : "skipped",
     diagnostics: shown,
+    ...(checkConfig.externalMounts.length > 0
+      ? { externalMounts: checkConfig.externalMounts }
+      : {}),
     ...(shown.length < total ? { truncated: { shown: shown.length, total } } : {}),
   }
 }
@@ -1387,6 +1471,11 @@ export async function runCheck(
         ? "✗ typecheck failed — the frontend/backend contract is broken"
         : "• typecheck skipped (no tsconfig / typescript not installed)",
   )
+  if (result.externalMounts !== undefined && result.externalMounts.length > 0) {
+    console.log(
+      `• intentional external mounts (not typed-client checked): ${result.externalMounts.join(", ")}`,
+    )
+  }
   const counts = (rule: CheckDiagnostic["rule"]): CheckDiagnostic[] =>
     result.diagnostics.filter((d) => d.rule === rule)
   for (const [rule, label] of [
@@ -1401,6 +1490,7 @@ export async function runCheck(
     ["manifest-drift", "versioned trust manifest drift"],
     ["capability-assurance", "effect/capability assurance"],
     ["capability-config", "capability assurance config"],
+    ["check-config", "nifra.check.json"],
   ] as const) {
     const ds = counts(rule)
     if (rule === "response-route") {
