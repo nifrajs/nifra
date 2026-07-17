@@ -90,6 +90,22 @@ describe("scanUndeclaredImports — undeclared bare imports, all import forms", 
     expect(scanUndeclaredImports("a.ts", src, declared, noAlias)).toHaveLength(0)
   })
 
+  test("ignores imports embedded in quoted documentation and generated-code strings", () => {
+    const src = [
+      `const singleDocs = 'Usage: import { server } from "nifra"'`,
+      `const doubleDocs = "Usage: import { server } from 'nifra-double'"`,
+      `lines.push('import { serve } from "@nifrajs/node"')`,
+      `lines.push("const generated = require('generated-cjs')")`,
+      `const realDynamic = await import("real-dynamic")`,
+      `import { realStatic } from "real-static"`,
+    ].join("\n")
+
+    expect(scanUndeclaredImports("a.ts", src, new Set(), noAlias)).toEqual([
+      { file: "a.ts", line: 5, snippet: "real-dynamic" },
+      { file: "a.ts", line: 6, snippet: "real-static" },
+    ])
+  })
+
   test("skips alias specifiers", () => {
     const isAlias = aliasMatcher({ "@/*": [] })
     const src = 'import { Button } from "@/ui/button"'

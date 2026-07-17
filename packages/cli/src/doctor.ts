@@ -13,7 +13,7 @@
 import { realpath } from "node:fs/promises"
 import { builtinModules } from "node:module"
 import { dirname, join, relative } from "node:path"
-import { type SourceFinding, stripComments, walkSource } from "./check.ts"
+import { codePositionMask, type SourceFinding, stripComments, walkSource } from "./check.ts"
 
 // Runtime-provided modules that are never an npm dependency: Node core (bare + `node:` form) and Bun's
 // own `bun` module. `node:`/`bun:`-prefixed specifiers are filtered in packageOf by prefix.
@@ -89,9 +89,13 @@ export function scanUndeclaredImports(
   const out: SourceFinding[] = []
   const seen = new Set<string>()
   const code = stripComments(content) // so doc-comment usage examples aren't read as real imports
+  const positions = codePositionMask(content)
   for (const rx of IMPORT_PATTERNS) {
     rx.lastIndex = 0
     for (let m = rx.exec(code); m !== null; m = rx.exec(code)) {
+      // The specifier regex must run over quoted literals, but its import/require token must begin in
+      // executable code. Otherwise documentation and code-generator strings look like real imports.
+      if (positions[m.index] === " ") continue
       const spec = m[1] ?? ""
       if (isAlias(spec)) continue
       const pkg = packageOf(spec)

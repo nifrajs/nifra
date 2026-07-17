@@ -280,7 +280,7 @@ export function stripComments(src: string): string {
  * {@link stripComments}, this is a code-position mask: scanners use it to find a call expression in
  * executable code, then inspect the original source for the call's literal argument. That prevents
  * documentation strings such as `const example = 'client("/")'` from becoming diagnostics. */
-function codePositionMask(src: string): string {
+export function codePositionMask(src: string): string {
   const out = src.split("")
   const n = src.length
   let i = 0
