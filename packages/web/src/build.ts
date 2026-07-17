@@ -570,6 +570,59 @@ export function parseManifestClientEntry(source: string): string | undefined {
   return MANIFEST_CLIENT_ENTRY.exec(source)?.[1]
 }
 
+// The baked asset lines `generateServerManifest` emits, each a single-line JSON literal:
+// `export const styles = ["…"]` and `export const routeStyles = {…}`.
+const MANIFEST_STYLES = /^export const styles = (.+)$/m
+const MANIFEST_ROUTE_STYLES = /^export const routeStyles = (.+)$/m
+
+/** The baked top-level `styles` array in a committed server-manifest (empty if absent/unparseable). Pure. */
+export function parseManifestStyles(source: string): string[] {
+  const raw = MANIFEST_STYLES.exec(source)?.[1]
+  if (raw === undefined) return []
+  try {
+    const value: unknown = JSON.parse(raw)
+    return Array.isArray(value) ? (value as string[]) : []
+  } catch {
+    return []
+  }
+}
+
+/** The baked per-route `routeStyles` map in a committed server-manifest (empty if absent/unparseable). Pure. */
+export function parseManifestRouteStyles(source: string): Record<string, string[]> {
+  const raw = MANIFEST_ROUTE_STYLES.exec(source)?.[1]
+  if (raw === undefined) return {}
+  try {
+    const value: unknown = JSON.parse(raw)
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, string[]>)
+      : {}
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * Re-emit a committed server-manifest from a freshly-discovered route tree, PRESERVING its baked
+ * client-asset references (`clientEntry` / `styles` / `routeStyles`) and its eager-vs-lazy shape. This is
+ * what makes `nifra sync-manifest` a route-table refresh (renamed / added / removed routes) that does NOT
+ * need a full build. It deliberately does NOT rebuild the client bundle: a brand-new HYDRATING route still
+ * needs a full build so its client chunk exists - this only re-syncs the server manifest's route table.
+ * Pure: `source` + the discovered `manifest` in, new source out.
+ */
+export function resyncServerManifestSource(
+  source: string,
+  manifest: Parameters<typeof generateServerManifest>[0],
+  routesPrefix: string,
+): string {
+  return generateServerManifest(manifest, {
+    resolve: (file) => `${routesPrefix}${file}`,
+    clientEntry: parseManifestClientEntry(source) ?? "",
+    styles: parseManifestStyles(source),
+    routeStyles: parseManifestRouteStyles(source),
+    lazy: source.includes("const loaders ="),
+  })
+}
+
 /**
  * Diff the route files a committed server-manifest imports against the files freshly discovered in
  * `routes/`. Returns the `missing` (in routes/, not in manifest — stale manifest) and `extra` (in

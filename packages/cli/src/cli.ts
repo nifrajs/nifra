@@ -65,6 +65,9 @@ Usage:
   nifra check   [--json] [--lints-only]  Gate: typecheck + lints (hand-rolled fetch(), untyped client("…"),
                                          server-only imports in routes/). Run as "done"; --json for agents;
                                          --lints-only skips tsc for a near-instant inner-loop pass.
+  nifra sync-manifest                    Regenerate a committed web server-manifest.ts from routes/ WITHOUT
+                                         a full build - clears server-manifest drift after a route add/rename
+                                         (a new hydrating component still needs a full build).
   nifra snapshot [--out <file>]          Write the backend's API contract (routes + schemas) as plain
                                          JSON — the baseline for \`nifra diff\`. Default api-snapshot.json.
   nifra diff    [<baseline>] [--json]    Breaking-change gate: re-snapshot the contract and compare
@@ -123,6 +126,17 @@ const apiOf = (backend: unknown): { api?: unknown } =>
   backend === undefined ? {} : { api: inProcessClient(backend as never) }
 
 async function dev(app: LoadedApp, flags: Flags): Promise<void> {
+  // Preflight: `nifra dev` needs `vite` resolvable from the project. Run via `bunx @nifrajs/cli dev` the CLI
+  // sits in an isolated install where the project's peer deps don't resolve, so the vite import below fails
+  // with an opaque ERR_MODULE_NOT_FOUND. Surface the real fix instead.
+  try {
+    Bun.resolveSync("vite", app.cwd)
+  } catch {
+    throw new Error(
+      "[nifra] `nifra dev` needs `vite` installed in this project. Run it via your workspace-local " +
+        "script (`bun run dev`), not `bunx @nifrajs/cli dev` (which can't resolve the project's peers).",
+    )
+  }
   const { plugin } = await import("bun")
   const { createViteDevServer } = await import("@nifrajs/web/vite")
   const { framework: fw, routesDir, cwd, backend } = app
@@ -226,6 +240,15 @@ interface BuiltManifest {
 async function start(app: LoadedApp, flags: Flags): Promise<void> {
   const serverFile = resolve(app.outDir, "server.js")
   if (!existsSync(serverFile)) {
+    // A Cloudflare Pages build emits `_worker.js` (a Workers bundle), not a self-hosting `server.js` - so
+    // `nifra start` on a dir built for cf-pages would otherwise fail with a bare "no server.js". Name the
+    // actual mismatch and the fix.
+    if (existsSync(resolve(app.outDir, "_worker.js"))) {
+      throw new Error(
+        `[nifra] ${app.outDir} holds a Cloudflare Pages worker bundle (_worker.js), not a self-hosting ` +
+          "server. Run `nifra build --target bun` then `nifra start`, or serve this dir with `wrangler pages`.",
+      )
+    }
     throw new Error(
       `[nifra] no ${serverFile} — run \`nifra build\` or \`nifra build --target bun\` first.`,
     )
@@ -310,6 +333,14 @@ async function main(): Promise<void> {
       json: argv.includes("--json"),
       force: argv.includes("--force"),
     })
+    return
+  }
+  // `sync-manifest` rewrites a committed web `server-manifest.ts` from the current `routes/` tree, without
+  // a full build. Pure fs/text (re-scan routes, preserve baked client assets), so - like `check` - dispatch
+  // it before the eager `loadApp`.
+  if (command === "sync-manifest") {
+    const { runSyncManifest } = await import("./sync-manifest.ts")
+    if (!(await runSyncManifest(process.cwd()))) process.exitCode = 1
     return
   }
   // `doctor` is a pure cwd check (imports vs declared deps) — like `check`, dispatch before `loadApp`

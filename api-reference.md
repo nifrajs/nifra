@@ -2167,6 +2167,10 @@ Every public export of every package and documented subpath — name, kind, sign
   The baked `clientEntry` URL in a committed server-manifest, or `undefined` if absent. Pure.
 - **parseManifestRouteFiles** _(function)_ — `parseManifestRouteFiles: (source: string, routesPrefix?: string) => string[]`
   Extract the route-relative file list the committed server-manifest imports, normalized to the same `routes/`-relative keys `discoverRoutes` produces (e.g. `docs/index.tsx`). `routesPrefix` is the specifier prefix the manifest used for the routes dir (default `./routes/`, what `buildServer`'s defaul…
+- **parseManifestRouteStyles** _(function)_ — `parseManifestRouteStyles: (source: string) => Record<string, string[]>`
+  The baked per-route `routeStyles` map in a committed server-manifest (empty if absent/unparseable). Pure.
+- **parseManifestStyles** _(function)_ — `parseManifestStyles: (source: string) => string[]`
+  The baked top-level `styles` array in a committed server-manifest (empty if absent/unparseable). Pure.
 - **preactDedupePlugin** _(const)_ — `preactDedupePlugin: (from: string) => BunPlugin`
 - **prerenderRoutes** _(function)_ — `prerenderRoutes: (options: PrerenderOptions) => Promise<PrerenderResult>`
   Render every opted-in static route to a static `index.html` under `outDir`. Run AFTER `buildClient` (so the app references the hashed client entry). Returns a report of what was emitted vs skipped — the caller can use `prerendered` to wire a hybrid deploy (e.g. exclude those paths from the SSR work…
@@ -2175,6 +2179,8 @@ Every public export of every package and documented subpath — name, kind, sign
 - **reactDedupePlugin** _(const)_ — `reactDedupePlugin: (from: string) => BunPlugin`
 - **renderSizeReport** _(function)_ — `renderSizeReport: (report: SizeReport) => string`
   Render a {@link SizeReport} as a terse aligned table (biggest first) with a totals row — the text `nifra build --report` prints. Pure (string in, string out) so the formatting is unit-testable.
+- **resyncServerManifestSource** _(function)_ — `resyncServerManifestSource: (source: string, manifest: Parameters<typeof generateServerManifest>[0], routesPrefix: string) => string`
+  Re-emit a committed server-manifest from a freshly-discovered route tree, PRESERVING its baked client-asset references (`clientEntry` / `styles` / `routeStyles`) and its eager-vs-lazy shape. This is what makes `nifra sync-manifest` a route-table refresh (renamed / added / removed routes) that does …
 - **serverOnlyEmptyPlugin** _(const)_ — `serverOnlyEmptyPlugin: () => BunPlugin`
 - **svelteDedupePlugin** _(const)_ — `svelteDedupePlugin: (from: string) => BunPlugin`
   Dedupe Svelte to a single copy — the Svelte analogue of `reactDedupePlugin`/`preactDedupePlugin`, closing the same class of bug for Svelte (which had NO build-time dedup before). A workspace- or file-linked `@nifrajs/web-svelte` can resolve its OWN `svelte` (e.g. a sibling repo's install store) whi…
