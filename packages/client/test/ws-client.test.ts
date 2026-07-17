@@ -33,7 +33,10 @@ class FakeWebSocket extends EventTarget {
   }
 
   close(code?: number, reason?: string): void {
-    this.closeCalls.push({ code, reason })
+    const call: { code?: number; reason?: string } = {}
+    if (code !== undefined) call.code = code
+    if (reason !== undefined) call.reason = reason
+    this.closeCalls.push(call)
   }
 
   message(data: unknown): void {
@@ -255,6 +258,7 @@ describe("WebSocket runtime behavior", () => {
     socket.message('{"pending":2}')
     expect(await pending).toEqual({ value: { pending: 2 }, done: false })
 
+    if (iterator.return === undefined) throw new Error("iterator.return is unavailable")
     expect(await iterator.return()).toEqual({ value: undefined, done: true })
     expect(await iterator.next()).toEqual({ value: undefined, done: true })
 
