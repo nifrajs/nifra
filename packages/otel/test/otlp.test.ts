@@ -32,6 +32,28 @@ function recordingFetch() {
 }
 
 describe("otlpExporter", () => {
+  const invalidBatchNumbers = [
+    ["zero", 0],
+    ["negative", -1],
+    ["non-integer", 1.5],
+    ["NaN", Number.NaN],
+    ["Infinity", Number.POSITIVE_INFINITY],
+  ] as const
+  const batchOptions = ["maxBatch", "maxQueue", "flushIntervalMs"] as const
+
+  for (const option of batchOptions) {
+    for (const [category, value] of invalidBatchNumbers) {
+      test(`rejects ${category} batch.${option}`, () => {
+        expect(() =>
+          otlpExporter({
+            url: "http://c",
+            batch: { [option]: value },
+          }),
+        ).toThrow(`otlpExporter: batch.${option} must be a positive safe integer`)
+      })
+    }
+  }
+
   test("maps a span onto the OTLP/JSON resourceSpans shape", async () => {
     const { calls, fetch } = recordingFetch()
     const exp = otlpExporter({

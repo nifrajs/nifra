@@ -19,11 +19,11 @@ export interface OtlpExporterOptions {
   readonly serviceName?: string
   /** Batching knobs. */
   readonly batch?: {
-    /** Flush once this many spans are queued. Default 512. */
+    /** Flush once this many spans are queued. Must be a positive safe integer. Default 512. */
     readonly maxBatch?: number
-    /** Hard cap on the queue; oldest spans are dropped (and reported) past it. Default 2048. */
+    /** Hard cap on the queue; oldest spans are dropped past it. Positive safe integer; default 2048. */
     readonly maxQueue?: number
-    /** Periodic flush interval (ms). Default 5000. */
+    /** Periodic flush interval (ms). Must be a positive safe integer. Default 5000. */
     readonly flushIntervalMs?: number
   }
   /** Called when an export POST fails or spans are dropped. Fail-open: never throws into a request. */
@@ -40,6 +40,14 @@ export interface OtlpExporter extends ObservationAdapter {
 }
 
 const STATUS_CODE: Readonly<Record<SpanStatus, number>> = { unset: 0, ok: 1, error: 2 }
+
+function assertPositiveSafeInteger(value: number, option: string): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new RangeError(
+      `otlpExporter: ${option} must be a positive safe integer; received ${String(value)}`,
+    )
+  }
+}
 
 function anyValue(value: AttributeValue): Record<string, unknown> {
   if (typeof value === "boolean") return { boolValue: value }
@@ -82,6 +90,9 @@ export function otlpExporter(options: OtlpExporterOptions): OtlpExporter {
   const maxBatch = options.batch?.maxBatch ?? 512
   const maxQueue = options.batch?.maxQueue ?? 2048
   const flushIntervalMs = options.batch?.flushIntervalMs ?? 5000
+  assertPositiveSafeInteger(maxBatch, "batch.maxBatch")
+  assertPositiveSafeInteger(maxQueue, "batch.maxQueue")
+  assertPositiveSafeInteger(flushIntervalMs, "batch.flushIntervalMs")
   const doFetch = options.fetch ?? (globalThis.fetch as OtlpExporterOptions["fetch"])
   const resourceAttributes = keyValues({ "service.name": options.serviceName ?? "nifra" })
 
