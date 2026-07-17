@@ -69,7 +69,8 @@
       "!**/.react-router",
       "!**/bench/ssr/**/*/build",
       "!**/next-env.d.ts",
-      "!**/bench/ssr/next/tsconfig.json"
+      "!**/bench/ssr/next/tsconfig.json",
+      "!packages/web/test/fixtures/broken.css"
     ]
   }
 }

@@ -71,7 +71,7 @@ describe("svgComponentSource", () => {
 })
 
 describe("svgComponentBunPlugin", () => {
-  const fixture = new URL("./fixtures/icon.svg?component", import.meta.url).pathname + "?component"
+  const fixture = `${new URL("./fixtures/icon.svg?component", import.meta.url).pathname}?component`
 
   test("intercepts *.svg?component and emits a JSX component module", async () => {
     const load = setupPlugin()

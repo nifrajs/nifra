@@ -126,7 +126,9 @@ describe("t.query (coercing query-slot schema)", () => {
     expect(ok.ok).toBe(true)
     if (ok.ok) expect(ok.value).toEqual({ city_id: 3, active: true, name: "delhi" })
     // A non-coercible value still fails (stays a string, rejected by the integer type).
-    expect((await validateStandard(q, { city_id: "abc", active: "true", name: "x" })).ok).toBe(false)
+    expect((await validateStandard(q, { city_id: "abc", active: "true", name: "x" })).ok).toBe(
+      false,
+    )
   })
 
   test("a plain t.object in a query slot does NOT coerce - the footgun t.query fixes", async () => {

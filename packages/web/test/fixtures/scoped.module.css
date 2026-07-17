@@ -1,2 +1,6 @@
-.title { color: red }
-.card .title { margin: 0 }
+.title {
+  color: red;
+}
+.card .title {
+  margin: 0;
+}
