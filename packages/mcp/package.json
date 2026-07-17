@@ -53,6 +53,9 @@
   "publishConfig": {
     "access": "public"
   },
+  "devDependencies": {
+    "react": "19.2.7"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/nifrajs/nifra.git",

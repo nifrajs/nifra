@@ -10,6 +10,7 @@
     "solid-js": "^1.9.7"
   },
   "devDependencies": {
+    "@nifrajs/web-solid": "workspace:*",
     "typescript": "^6.0.3"
   }
 }

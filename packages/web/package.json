@@ -139,6 +139,7 @@
   "devDependencies": {
     "@nifrajs/client": "workspace:*",
     "@nifrajs/schema": "workspace:*",
+    "@nifrajs/test-utils": "workspace:*",
     "sass": "^1.77.0",
     "vite": "^8.0.0"
   },
