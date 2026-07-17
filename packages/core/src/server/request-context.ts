@@ -66,7 +66,9 @@ function statusInit(init?: ResponseInit | number): ResponseInit | undefined {
 export class RequestContext implements RawContext {
   // `declare` keeps TypeScript's class-field emit from first writing `undefined` to every slot; the
   // constructor initializes only the eager request state, while lazy fields remain absent until used.
-  declare readonly params: Record<string, string>
+  // Not `readonly`: the lifecycle replaces it with the validated/coerced value when a `params` schema is
+  // declared (`c.params` stays `readonly` to handlers via the `Context` interface).
+  declare params: Record<string, string>
   declare body: unknown
   private declare searchValue: string | undefined
   private declare signalValue: AbortSignal | undefined

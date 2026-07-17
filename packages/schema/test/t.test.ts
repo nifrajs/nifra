@@ -117,3 +117,30 @@ describe("jsonSchema (the OpenAPI substrate)", () => {
     expect(json).toEqual({ type: "string", minLength: 3, format: "email" })
   })
 })
+
+describe("t.query (coercing query-slot schema)", () => {
+  test("coerces string query values to their declared scalar types", async () => {
+    const q = t.query({ city_id: t.integer(), active: t.boolean(), name: t.string() })
+    // Every value arrives as a string over HTTP; t.query coerces per the declared type.
+    const ok = await validateStandard(q, { city_id: "3", active: "true", name: "delhi" })
+    expect(ok.ok).toBe(true)
+    if (ok.ok) expect(ok.value).toEqual({ city_id: 3, active: true, name: "delhi" })
+    // A non-coercible value still fails (stays a string, rejected by the integer type).
+    expect((await validateStandard(q, { city_id: "abc", active: "true", name: "x" })).ok).toBe(false)
+  })
+
+  test("a plain t.object in a query slot does NOT coerce — the footgun t.query fixes", async () => {
+    const plain = t.object({ city_id: t.integer() })
+    expect((await validateStandard(plain, { city_id: "3" })).ok).toBe(false) // "3" is not an integer
+    expect((await validateStandard(t.query({ city_id: t.integer() }), { city_id: "3" })).ok).toBe(
+      true,
+    )
+  })
+
+  test("strict by default (unknown query field rejected), opt out with additionalProperties", async () => {
+    const strict = t.query({ page: t.integer() })
+    expect((await validateStandard(strict, { page: "2", utm: "x" })).ok).toBe(false)
+    const loose = t.query({ page: t.integer() }, { additionalProperties: true })
+    expect((await validateStandard(loose, { page: "2", utm: "x" })).ok).toBe(true)
+  })
+})

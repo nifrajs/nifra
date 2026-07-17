@@ -26,6 +26,8 @@ export interface ResponseDef {
 export interface OperationDef {
   readonly method: Method
   readonly path: string
+  /** Optional path-params schema (validated + coercible at the boundary; see {@link RouteSchema.params}). */
+  readonly params?: StandardSchemaV1
   readonly body?: StandardSchemaV1
   readonly query?: StandardSchemaV1
   readonly response?: StandardSchemaV1
@@ -122,7 +124,8 @@ export type RegistryFor<C extends ContractShape> = {
 type SchemaForOp<O extends OperationDef> = (O extends { body: infer B extends StandardSchemaV1 }
   ? { body: B }
   : Record<never, never>) &
-  (O extends { query: infer Q extends StandardSchemaV1 } ? { query: Q } : Record<never, never>)
+  (O extends { query: infer Q extends StandardSchemaV1 } ? { query: Q } : Record<never, never>) &
+  (O extends { params: infer P extends StandardSchemaV1 } ? { params: P } : Record<never, never>)
 
 /**
  * The handler context for an op — identical to the inline `Context<Path, S>`, so a
@@ -257,6 +260,7 @@ export function implement<
     // once here at bind time, not per request — it just carries a reference to the op's existing schema.
     // A response-less op still yields `undefined`, byte-identical to before.
     const schema: RouteSchema | undefined =
+      op.params !== undefined ||
       op.body !== undefined ||
       op.query !== undefined ||
       op.response !== undefined ||
@@ -264,6 +268,7 @@ export function implement<
       op.idempotency !== undefined ||
       op.classification !== undefined
         ? {
+            ...(op.params !== undefined ? { params: op.params } : {}),
             ...(op.body !== undefined ? { body: op.body } : {}),
             ...(op.query !== undefined ? { query: op.query } : {}),
             ...(op.response !== undefined ? { response: op.response } : {}),

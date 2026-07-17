@@ -152,7 +152,9 @@ export interface RawContext {
   readonly request: Request
   readonly json: (body: unknown, init?: ResponseInit | number) => Response
   readonly text: (body: string, init?: ResponseInit | number) => Response
-  readonly params: Record<string, string>
+  // Writable: the lifecycle replaces it with the validated/coerced value when a `params` schema is
+  // declared (handlers still see it `readonly` via the public `Context` interface).
+  params: Record<string, string>
   query: unknown
   readonly cookies: Readonly<Record<string, string>>
   body: unknown
@@ -1141,6 +1143,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       path,
     )
     const bare =
+      schema?.params === undefined &&
       schema?.body === undefined &&
       schema?.query === undefined &&
       idempotent === undefined &&
@@ -1162,6 +1165,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       ? "bare"
       : schema?.body !== undefined &&
           schema.query === undefined &&
+          schema.params === undefined &&
           this.derives.length === 0 &&
           this.beforeHandleHooks.length === 0 &&
           this.afterHandleHooks.length === 0 &&
@@ -1169,6 +1173,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         ? "body"
         : schema?.body === undefined &&
             schema?.query !== undefined &&
+            schema.params === undefined &&
             this.derives.length === 0 &&
             this.beforeHandleHooks.length === 0 &&
             this.afterHandleHooks.length === 0 &&
@@ -2693,6 +2698,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     wrapResponse: (response: Response) => T,
   ): Promise<T> {
     try {
+      if (entry.schema?.params !== undefined) {
+        // Path params arrive as strings from routing; validate (and coerce) them at the boundary, before
+        // the body/query, so a malformed `:id` is a 422 before any work runs. Raw `.validate` (no wrapper
+        // alloc), same recovery-hook path as body/query.
+        const validation = entry.schema.params["~standard"].validate(ctx.params)
+        const result = validation instanceof Promise ? await validation : validation
+        const paramsError = await this.applyLifecycleValidation(entry, result, ctx, "params")
+        if (paramsError !== undefined) return wrapResponse(paramsError)
+      }
       if (entry.schema?.body !== undefined) {
         const bodyError = await this.readAndValidateBody(source, entry, ctx)
         if (bodyError !== undefined) return wrapResponse(bodyError)
@@ -2816,11 +2830,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     entry: RouteEntry,
     result: StandardResult<unknown>,
     ctx: RawContext,
-    kind: "body" | "query",
+    kind: "body" | "query" | "params",
   ): Promise<Response | undefined> {
+    const assign = (value: unknown): void => {
+      if (kind === "body") ctx.body = value
+      else if (kind === "query") ctx.query = value
+      else ctx.params = value as Record<string, string>
+    }
     if (result.issues === undefined) {
-      if (kind === "body") ctx.body = result.value
-      else ctx.query = result.value
+      assign(result.value)
       return undefined
     }
     const hook = entry.schema?.onValidationError ?? this.defaultOnValidationError
@@ -2829,12 +2847,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     const recovery = attempted instanceof Promise ? await attempted : attempted
     if (recovery === undefined) return validationError(result.issues)
     if (recovery instanceof Response) return recovery
-    const schema = kind === "body" ? entry.schema?.body : entry.schema?.query
+    const schema =
+      kind === "body"
+        ? entry.schema?.body
+        : kind === "query"
+          ? entry.schema?.query
+          : entry.schema?.params
     const retried = schema!["~standard"].validate(recovery)
     const settled = retried instanceof Promise ? await retried : retried
     if (settled.issues !== undefined) return validationError(settled.issues)
-    if (kind === "body") ctx.body = settled.value
-    else ctx.query = settled.value
+    assign(settled.value)
     return undefined
   }
 

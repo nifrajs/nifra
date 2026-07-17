@@ -78,6 +78,12 @@ export interface RouteSchema {
    * and read by downstream policy (e.g. a partner-API surface refusing to expose `pii`/`secret`).
    */
   readonly classification?: DataClassification
+  /** Optional **path-params schema**. Path params arrive as strings (`/users/:id` -> `c.params.id`);
+   * declaring a schema validates them at the boundary (a malformed `:id` is a `422` before the handler,
+   * like `body`/`query`) and can coerce them (use `t.query({ id: t.integer() })` for a numeric param).
+   * The schema must cover every path param; with the strict default an undeclared path param is rejected.
+   * When omitted, `c.params` stays the path-inferred `Record<name, string>`. */
+  readonly params?: StandardSchemaV1
   readonly body?: StandardSchemaV1
   readonly query?: StandardSchemaV1
   /** Optional **response contract**. When declared: the handler's return is type-checked against it
@@ -117,7 +123,7 @@ export interface RouteSchema {
   readonly onValidationError?: (
     issues: ReadonlyArray<StandardIssue>,
     ctx: Context,
-    kind: "body" | "query",
+    kind: "body" | "query" | "params",
   ) => Response | unknown | Promise<Response | unknown>
 }
 
@@ -130,6 +136,13 @@ type BodyOf<S extends RouteSchema> = S extends { body: infer B extends StandardS
 type QueryOf<S extends RouteSchema> = S extends { query: infer Q extends StandardSchemaV1 }
   ? InferOutput<Q>
   : URLSearchParams
+
+/** The validated params type when a params schema is declared, else the path-inferred `Params<Path>`. */
+type ParamsOf<S extends RouteSchema, Path extends string> = S extends {
+  params: infer P extends StandardSchemaV1
+}
+  ? InferOutput<P>
+  : Params<Path>
 
 /** Mutable response controls a handler may write to before returning. */
 export interface ResponseControls {
@@ -178,7 +191,7 @@ export interface Context<Path extends string = string, S extends RouteSchema = R
    * everywhere (no more `c.req` vs `ctx.request` mismatch).
    */
   readonly request: Request
-  readonly params: Params<Path>
+  readonly params: ParamsOf<S, Path>
   readonly query: QueryOf<S>
   readonly body: BodyOf<S>
   /** The request's cookies, parsed from the `Cookie` header (values URL-decoded). Parsed lazily on

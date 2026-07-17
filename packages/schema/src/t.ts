@@ -97,4 +97,14 @@ export const t = {
       ),
       { coerce: true },
     ),
+  /** A request-query schema with string->scalar COERCION on. Query values always arrive as strings
+   * (`?limit=20` -> `"20"`), so a plain `t.object({ limit: t.integer() })` in a `query` slot fails to
+   * validate; use `t.query` and `t.integer()`/`t.number()`/`t.boolean()` fields become real numbers/
+   * booleans in `c.query`. Same strict default as `t.object` (unknown fields rejected -> 422); pass
+   * `{ additionalProperties: true }` to accept tracking params. This is the query-slot constructor;
+   * `t.object` stays the constructor for body slots (no coercion, a JSON body is already typed). */
+  query: <P extends Props>(props: P, options?: ObjectOptions) =>
+    fromTypeBox(Type.Object(unwrap(props), { additionalProperties: false, ...options }), {
+      coerce: true,
+    }),
 } as const
