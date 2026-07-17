@@ -80,3 +80,11 @@ export default {
 - `queue.process()` — run one poll round (for Workers / custom drivers). `queue.drain()` — process until empty.
 - `queue.counts()` → `{ pending, active, dead }`. `queue.store` — the underlying store.
 - Stores: `MemoryJobStore`. Backoff: `exponentialBackoff`, `fixedBackoff`, `noBackoff`.
+
+## For AI agents
+
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.

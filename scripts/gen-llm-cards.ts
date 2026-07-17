@@ -12,7 +12,8 @@
  *
  * The exports are extracted from each package's public `exports` map, so adding/removing/renaming a
  * root or subpath export changes the card on the next `gen:cards` run; `check:cards` (the `--check`
- * flag) fails CI if a committed card is stale, mirroring `check:api`. Run: `bun run gen:cards`.
+ * flag) fails CI if a committed card is stale or a published package README stops linking its card
+ * and the root corpus, mirroring `check:api`. Run: `bun run gen:cards`.
  *
  * The footgun text is the one piece a generator can't derive from signatures — it's curated here, keyed
  * by package name, and reviewed like any other source. High-traffic packages get specific footguns; the
@@ -405,6 +406,28 @@ interface Card {
   readonly content: string
 }
 
+/** Published package READMEs are the npm landing page for both humans and agents. Keep the two
+ * machine-readable entrypoints discoverable there as packages are added after this generator. */
+function readmeIssues(pkgs: readonly Pkg[]): string[] {
+  const issues: string[] = []
+  for (const pkg of pkgs) {
+    const path = `${pkg.dir}/README.md`
+    if (!existsSync(path)) {
+      issues.push(`${pkg.name}: missing README.md`)
+      continue
+    }
+
+    const readme = readFileSync(path, "utf8")
+    const missing: string[] = []
+    if (!readme.includes("](./LLM.md)")) missing.push("./LLM.md")
+    if (!readme.includes("](../../llms-full.txt)")) missing.push("../../llms-full.txt")
+    if (missing.length > 0) {
+      issues.push(`${pkg.name}: README.md does not link ${missing.join(" and ")}`)
+    }
+  }
+  return issues
+}
+
 export function generateCards(): Card[] {
   const pkgs = publicPackages()
   const exportsByPkg = extractExports(pkgs)
@@ -426,6 +449,15 @@ if (import.meta.main) {
   }
 
   if (process.argv.includes("--check")) {
+    const readmeProblems = readmeIssues(cards.map((card) => card.pkg))
+    if (readmeProblems.length > 0) {
+      console.error(
+        `✗ ${readmeProblems.length} published package README issue(s):\n` +
+          readmeProblems.map((issue) => `  - ${issue}`).join("\n"),
+      )
+      process.exit(1)
+    }
+
     const stale = cards.filter(
       (c) => (existsSync(c.path) ? readFileSync(c.path, "utf8") : "") !== c.content,
     )
@@ -436,7 +468,7 @@ if (import.meta.main) {
       )
       process.exit(1)
     }
-    console.log(`✓ all ${cards.length} LLM.md cards are up to date`)
+    console.log(`✓ all ${cards.length} LLM.md cards and package README pointers are up to date`)
   } else {
     for (const c of cards) writeFileSync(c.path, c.content)
     console.log(`Generated ${cards.length} LLM.md contract cards (one per published package).`)
