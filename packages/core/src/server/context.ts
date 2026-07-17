@@ -84,6 +84,12 @@ export interface RouteSchema {
    * in reflection, so a `nifra.assurance.ts` policy `require:` clause is satisfiable WITHOUT rewriting an
    * in-handler guard into a `withRouteAssurance`-marked middleware. Ids are lowercase dot/dash segments
    * (invalid ids throw at registration). Reflected for the assurance gate; never read on the hot path.
+   *
+   * This is an author ASSERTION (recorded as `source: "declared"`), not runtime proof - like every
+   * assurance marker it is trusted by the static gate, which matches on the evidence id, not its source.
+   * Declare an id only on a route whose guard actually enforces it; a false declaration silently satisfies
+   * the policy. (`source` is retained in reflection, so a stricter policy or reviewer can still tell
+   * declared evidence from enforcement-module evidence.)
    */
   readonly assurance?: readonly string[]
   /**

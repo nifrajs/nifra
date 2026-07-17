@@ -234,7 +234,10 @@ export async function requirePrincipal<
       const value = record.tenantId ?? record.orgId
       return typeof value === "string" ? value : undefined
     })
-  const tenantId = resolveTenant(user)
+  // A blank tenant is NOT a resolved tenant: a NOT-NULL column defaulted to "" (or a custom `tenantOf`
+  // returning "") must fail closed under `requireTenant`, never bind the principal to an empty tenant.
+  const resolved = resolveTenant(user)
+  const tenantId = resolved === undefined || resolved === "" ? undefined : resolved
 
   if (options?.requireTenant === true && tenantId === undefined) throw forbidden()
 

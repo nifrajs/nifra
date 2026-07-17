@@ -30,6 +30,9 @@ export interface SyncManifestResult {
   readonly added: readonly string[]
   /** Route files no longer imported (removed/renamed away). */
   readonly removed: readonly string[]
+  /** Set when the sync was REFUSED because discovery found zero routes for a manifest that had some
+   * (`routes/` likely emptied by mistake) - the manifest was left untouched rather than wiped. */
+  readonly refusedEmpty?: boolean
 }
 
 /**
@@ -58,13 +61,19 @@ export async function syncServerManifests(cwd: string): Promise<SyncManifestResu
     } catch {
       continue // routes dir gone/unreadable - not a manifest we can sync
     }
+    const before = parseManifestRouteFiles(source, routesPrefix)
+    const after = parseManifestRouteFiles(next, routesPrefix)
+    // Floor guard: refuse to overwrite a populated manifest with an empty one. Discovery yielding zero
+    // routes for a manifest that had some means `routes/` was likely emptied by mistake - writing the wipe
+    // would silently un-serve every route. Leave the file untouched and surface it instead.
+    if (after.length === 0 && before.length > 0) {
+      results.push({ file: rel, changed: false, added: [], removed: [], refusedEmpty: true })
+      continue
+    }
     const changed = next !== source
     if (changed) await Bun.write(abs, next)
     // `diff(before, after)`: `missing` = files now present (added), `extra` = files gone (removed).
-    const drift = diffManifestRoutes(
-      parseManifestRouteFiles(source, routesPrefix),
-      parseManifestRouteFiles(next, routesPrefix),
-    )
+    const drift = diffManifestRoutes(before, after)
     results.push({ file: rel, changed, added: drift.missing, removed: drift.extra })
   }
   return results.sort((a, b) => a.file.localeCompare(b.file))
@@ -79,7 +88,11 @@ export async function runSyncManifest(cwd: string): Promise<boolean> {
   }
   let anyChanged = false
   for (const r of results) {
-    if (r.changed) {
+    if (r.refusedEmpty) {
+      console.log(
+        `⚠ ${r.file}: refused - routes/ has zero routes but the manifest had some; left untouched (delete the manifest yourself if this is intentional).`,
+      )
+    } else if (r.changed) {
       anyChanged = true
       console.log(`✓ synced ${r.file}`)
       if (r.added.length > 0) console.log(`    added:   ${r.added.join(", ")}`)

@@ -71,6 +71,8 @@ describe("scanFetchText — own-API fetch detection", () => {
     )
     // NOT blessed: /authors is a different route that merely shares a prefix; still flagged.
     expect(scanFetchText("a.ts", 'fetch("/authors")', mounts)).toHaveLength(1)
+    // NOT blessed: a `..` traversal escapes the prefix at runtime (/auth/../api/admin -> /api/admin).
+    expect(scanFetchText("a.ts", 'fetch("/auth/../api/admin")', mounts)).toHaveLength(1)
     // An own-API fetch outside the allowlist is unaffected.
     expect(scanFetchText("a.ts", 'fetch("/users")', mounts)).toHaveLength(1)
   })
@@ -316,6 +318,19 @@ describe("scanResponseRoutes (feedback 2026-06: raw Response collapses typed cli
     const found = scanResponseRoutes("backend.ts", src)
     expect(found).toHaveLength(1)
     expect(found[0]?.snippet).toContain('"/real"')
+  })
+
+  test("a TRAILING pragma on one route does NOT leak down and suppress the next route's advisory", () => {
+    const src = backend(
+      [
+        '  .get("/file", () => new Response("x")) // nifra-expect raw-response', // A: intentional (trailing)
+        '  .get("/leak", () => Response.json({ secret: 1 }))', // B: real drift on A's line-below - MUST warn
+      ].join("\n"),
+    )
+    const found = scanResponseRoutes("backend.ts", src)
+    // A is suppressed (same-line pragma); B is NOT (A's trailing pragma is not a standalone comment line).
+    expect(found).toHaveLength(1)
+    expect(found[0]?.snippet).toContain('"/leak"')
   })
 })
 

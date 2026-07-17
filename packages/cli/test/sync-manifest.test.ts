@@ -74,4 +74,43 @@ describe("nifra sync-manifest", () => {
     expect(results).toEqual([])
     await rm(dir, { recursive: true, force: true })
   })
+
+  test("preserves baked styles/routeStyles even when the manifest was reformatted multi-line", async () => {
+    const { dir, manifestPath, routesDir } = await fixture()
+    // Simulate a formatter (biome/prettier) wrapping the long single-line asset literals across lines -
+    // the case a single-line regex would miss, silently dropping every stylesheet on re-sync.
+    let src = await readFile(manifestPath, "utf8")
+    src = src
+      .replace(
+        'export const styles = ["/_nifra/app.def456.css"]',
+        'export const styles = [\n  "/_nifra/app.def456.css",\n]',
+      )
+      .replace(
+        'export const routeStyles = {"index.tsx":["/_nifra/index.aaa.css"]}',
+        'export const routeStyles = {\n  "index.tsx": ["/_nifra/index.aaa.css"],\n}',
+      )
+    await writeFile(manifestPath, src)
+    await writeFile(join(routesDir, "blog.tsx"), "export default () => null")
+
+    await syncServerManifests(dir)
+    const synced = await readFile(manifestPath, "utf8")
+    // Both baked asset references survived the re-sync (not dropped to [] / {}).
+    expect(synced).toContain('"/_nifra/app.def456.css"')
+    expect(synced).toContain('"index.tsx":["/_nifra/index.aaa.css"]')
+    expect(synced).toContain('"/_nifra/entry.abc123.js"') // clientEntry too
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("refuses to wipe a populated manifest when routes/ is emptied", async () => {
+    const { dir, manifestPath, routesDir } = await fixture()
+    const before = await readFile(manifestPath, "utf8")
+    await rm(join(routesDir, "index.tsx"))
+    await rm(join(routesDir, "about.tsx")) // routesDir now exists but is empty
+
+    const [result] = await syncServerManifests(dir)
+    expect(result?.refusedEmpty).toBe(true)
+    expect(result?.changed).toBe(false)
+    expect(await readFile(manifestPath, "utf8")).toBe(before) // untouched, not wiped
+    await rm(dir, { recursive: true, force: true })
+  })
 })

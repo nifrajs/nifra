@@ -134,6 +134,35 @@ describe("authed() - tenant resolution", () => {
       .get("/me", (c) => ({ tenantId: c.principal.tenantId ?? null }))
     expect(await (await app.fetch(withCookie("/me"))).json()).toEqual({ tenantId: "t-42" })
   })
+
+  test("a BLANK tenant fails closed under requireTenant (not treated as resolved)", async () => {
+    // A user whose tenantId is "" (a NOT-NULL column defaulted to empty) must NOT satisfy requireTenant.
+    const blankTenantAuth = {
+      handler: async (): Promise<Response> => Response.json({ ok: true }),
+      api: {
+        getSession: async ({ headers }: { headers: Headers }) =>
+          headers.get("cookie") === "session=valid"
+            ? { user: { id: "u4", tenantId: "" }, session: { id: "s4", expiresAt: 0 } }
+            : null,
+      },
+      options: { basePath: "/api/auth" },
+    }
+    let ran = false
+    const app = server()
+      .use(authed(blankTenantAuth, { requireTenant: true }))
+      .get("/me", (c) => {
+        ran = true
+        return { t: c.principal.tenantId }
+      })
+    const res = await app.fetch(withCookie("/me"))
+    expect(res.status).toBe(403)
+    expect(ran).toBe(false)
+
+    // Same for a custom tenantOf that returns an empty string.
+    await expect(
+      requirePrincipal(tenantAuth, withCookie("/x"), { requireTenant: true, tenantOf: () => "" }),
+    ).rejects.toMatchObject({ status: 403 })
+  })
 })
 
 describe("authed() - contract-first mode", () => {

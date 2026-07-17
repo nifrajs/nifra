@@ -570,17 +570,27 @@ export function parseManifestClientEntry(source: string): string | undefined {
   return MANIFEST_CLIENT_ENTRY.exec(source)?.[1]
 }
 
-// The baked asset lines `generateServerManifest` emits, each a single-line JSON literal:
-// `export const styles = ["…"]` and `export const routeStyles = {…}`.
-const MANIFEST_STYLES = /^export const styles = (.+)$/m
-const MANIFEST_ROUTE_STYLES = /^export const routeStyles = (.+)$/m
+// The baked asset lines `generateServerManifest` emits: `export const styles = […]` then
+// `export const routeStyles = {…}`, each a JSON literal followed by the next `export const`. The capture
+// is `[\s\S]*?` (multi-line, non-greedy up to the following `export const`) NOT `.+` - a committed
+// manifest carries no format-ignore pragma, so a formatter can wrap a long `routeStyles` map across lines;
+// a single-line regex would then miss it and silently DROP every baked stylesheet on re-sync.
+const MANIFEST_STYLES = /export const styles = ([\s\S]*?)\nexport const /
+const MANIFEST_ROUTE_STYLES = /export const routeStyles = ([\s\S]*?)\nexport const /
+
+/** Parse a baked JSON literal captured from a committed manifest, tolerating a formatter's TRAILING COMMAS
+ * (biome/prettier add one when wrapping a multi-line array/object; strict `JSON.parse` would reject it).
+ * Only a comma immediately before a closing `]`/`}` is stripped, so commas inside string values are safe. */
+function parseManifestLiteral(raw: string): unknown {
+  return JSON.parse(raw.replace(/,(\s*[\]}])/g, "$1"))
+}
 
 /** The baked top-level `styles` array in a committed server-manifest (empty if absent/unparseable). Pure. */
 export function parseManifestStyles(source: string): string[] {
   const raw = MANIFEST_STYLES.exec(source)?.[1]
   if (raw === undefined) return []
   try {
-    const value: unknown = JSON.parse(raw)
+    const value = parseManifestLiteral(raw)
     return Array.isArray(value) ? (value as string[]) : []
   } catch {
     return []
@@ -592,7 +602,7 @@ export function parseManifestRouteStyles(source: string): Record<string, string[
   const raw = MANIFEST_ROUTE_STYLES.exec(source)?.[1]
   if (raw === undefined) return {}
   try {
-    const value: unknown = JSON.parse(raw)
+    const value = parseManifestLiteral(raw)
     return value !== null && typeof value === "object" && !Array.isArray(value)
       ? (value as Record<string, string[]>)
       : {}

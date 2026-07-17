@@ -129,7 +129,7 @@ describe("t.query (coercing query-slot schema)", () => {
     expect((await validateStandard(q, { city_id: "abc", active: "true", name: "x" })).ok).toBe(false)
   })
 
-  test("a plain t.object in a query slot does NOT coerce — the footgun t.query fixes", async () => {
+  test("a plain t.object in a query slot does NOT coerce - the footgun t.query fixes", async () => {
     const plain = t.object({ city_id: t.integer() })
     expect((await validateStandard(plain, { city_id: "3" })).ok).toBe(false) // "3" is not an integer
     expect((await validateStandard(t.query({ city_id: t.integer() }), { city_id: "3" })).ok).toBe(

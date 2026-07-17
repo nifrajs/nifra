@@ -337,6 +337,10 @@ function matchesExternalMount(content: string, start: number, mounts: readonly s
     end++
   }
   const path = content.slice(start, end)
+  // A `..` segment means the runtime path escapes the literal prefix (`/auth/../api/admin` resolves to
+  // `/api/admin`), so it must NOT be blessed by an `/auth` mount - never let traversal hide a real own-API
+  // fetch. Match is otherwise segment-anchored (`/auth` blesses `/auth` and `/auth/**`, never `/authors`).
+  if (path.split("/").includes("..")) return false
   return mounts.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))
 }
 
@@ -658,15 +662,16 @@ export function scanResponseRoutes(file: string, content: string): SourceFinding
   RESPONSE_RETURN.lastIndex = 0
   for (let m = RESPONSE_RETURN.exec(code); m !== null; m = RESPONSE_RETURN.exec(code)) {
     const line = lineAt(content, m.index)
-    // A `// nifra-expect raw-response` pragma on the return line or the line above marks an intentional
-    // raw Response (a file/redirect that can't be a typed route), silencing this advisory. `stripComments`
-    // blanks the pragma in `code` (so it never affects the match), but the raw `lines` still carry it.
+    // A `// nifra-expect raw-response` pragma marks an intentional raw Response (a file/redirect that can't
+    // be a typed route), silencing this advisory. Honor it on the return line itself, OR on the line above
+    // ONLY when that line is a standalone comment - so a TRAILING pragma on one route's return line can't
+    // leak down and suppress the very next route's genuine advisory. `stripComments` blanks the pragma in
+    // `code` (so it never affects the match); the raw `lines` still carry it.
     const thisLine = lines[line - 1] ?? ""
-    if (
-      thisLine.includes(RAW_RESPONSE_PRAGMA) ||
-      (lines[line - 2] ?? "").includes(RAW_RESPONSE_PRAGMA)
-    )
-      continue
+    const aboveLine = lines[line - 2] ?? ""
+    const aboveSuppresses =
+      aboveLine.trimStart().startsWith("//") && aboveLine.includes(RAW_RESPONSE_PRAGMA)
+    if (thisLine.includes(RAW_RESPONSE_PRAGMA) || aboveSuppresses) continue
     out.push({ file, line, snippet: thisLine.trim() })
   }
   return out
