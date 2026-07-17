@@ -97,6 +97,42 @@ describe("otlpExporter", () => {
     expect(otlp.status).toEqual({ code: 2 })
   })
 
+  test("serializes causal span links and their typed attributes", async () => {
+    const { calls, fetch } = recordingFetch()
+    const exp = otlpExporter({ url: "http://c", fetch })
+    exp.onEnd(
+      span({
+        links: [
+          {
+            traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
+            spanId: "00f067aa0ba902b7",
+            attributes: { relationship: "follows_from", attempt: 2, sampled: true },
+          },
+          { traceId: "11111111111111111111111111111111", spanId: "2222222222222222" },
+        ],
+      }),
+    )
+    await exp.flush()
+
+    const links = (
+      calls[0]?.body as {
+        resourceSpans: [{ scopeSpans: [{ spans: [{ links: Array<Record<string, unknown>> }] }] }]
+      }
+    ).resourceSpans[0].scopeSpans[0].spans[0].links
+    expect(links).toEqual([
+      {
+        traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
+        spanId: "00f067aa0ba902b7",
+        attributes: [
+          { key: "relationship", value: { stringValue: "follows_from" } },
+          { key: "attempt", value: { intValue: "2" } },
+          { key: "sampled", value: { boolValue: true } },
+        ],
+      },
+      { traceId: "11111111111111111111111111111111", spanId: "2222222222222222" },
+    ])
+  })
+
   test("flushes automatically once maxBatch spans queue", async () => {
     const { calls, fetch } = recordingFetch()
     const exp = otlpExporter({ url: "http://c", batch: { maxBatch: 3 }, fetch })

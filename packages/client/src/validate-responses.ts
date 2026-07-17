@@ -54,7 +54,12 @@ export interface RouteIntrospectable {
  * client on purpose: this is a test assertion about the server's honesty, not a call outcome the
  * caller should branch on - swallowing it into a `Result` would let the drift pass the test.
  */
-export class ResponseContractViolation extends Error {}
+export class ResponseContractViolation extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "ResponseContractViolation"
+  }
+}
 
 function formatIssues(issues: ReadonlyArray<IssueLike>): string {
   return issues
