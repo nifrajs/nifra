@@ -60,13 +60,19 @@ nifra ships a purpose-built toolchain so coding agents stay correct as the codeb
 - always call this app's own API through `client<typeof app>` — never hand-roll `fetch`
 - never top-level-import server-only code into a route module
 
-**Connect the MCP server** so the agent reads your live routes, verifies endpoints, and gates drift from inside its tool loop. Run once from your project root:
+**Adding nifra to an existing app? Run `nifra init-agents`.** It writes the agent-discovery files for you - `.mcp.json` + `.cursor/mcp.json` (registering this project's nifra MCP), a CLAUDE.md MCP-first preamble, and an AGENTS.md section - no-clobber, so it never overwrites a file you've customized. (`nifra check` also nudges you when a project has no `.mcp.json`.)
+
+```sh
+nifra init-agents          # wire .mcp.json + .cursor/mcp.json + CLAUDE.md into an existing app (no-clobber)
+```
+
+**Or connect the MCP server by hand** so the agent reads your live routes, verifies endpoints, and gates drift from inside its tool loop. Run once from your project root:
 
 ```sh
 # Claude Code
 claude mcp add nifra -- bunx nifra mcp
 
-# Cursor / Claude Desktop — add to .mcp.json (or claude_desktop_config.json):
+# Cursor / Claude Desktop - add to .mcp.json (or claude_desktop_config.json):
 # { "mcpServers": { "nifra": { "command": "bunx", "args": ["nifra", "mcp"] } } }
 ```
 
@@ -100,6 +106,7 @@ nifra capabilities check # effect provenance + capability lockfile gate; --json 
 nifra manifest emit    # deterministic contract + assurance + effects + classification artifact
 nifra manifest diff old.json new.json # deploy-promotion breaking-change gate
 nifra doctor           # undeclared imports + duplicate identity-sensitive installs
+nifra sync-manifest    # regenerate a web server-manifest.ts from routes/ without a full build
 ```
 
 ## Install
@@ -113,9 +120,17 @@ bun add @nifrajs/middleware      # CORS, security headers, rate limiting (option
 
 nifra is **ESM-only** and **Bun-native** (it uses `Bun.serve`). It runs on Bun; the client is environment-agnostic.
 
-Use `@nifrajs/core` (or `@nifrajs/core/server`) for the ordinary HTTP runtime. Nifra 2.0 keeps the
-package root deliberately lean; contracts, causality, assurance, manifests, reflection, MCP, SSE,
-idempotency, and the effect ledger are available only from their documented subpaths.
+Use `@nifrajs/core` (or `@nifrajs/core/server`) for the ordinary HTTP runtime. Nifra keeps the package
+root deliberately lean and splits everything else across documented subpaths - most apps only ever touch
+a handful, so start with those and reach for the rest when a concept actually comes up:
+
+- **Everyday** - `@nifrajs/core/server` (the runtime), `.../contract` (`defineContract` + `implement`),
+  `.../router`, `.../cookies`, plus `@nifrajs/schema` (the `t` builder) and `@nifrajs/client` (the typed
+  client). This is the 80% API.
+- **Advanced, opt in when you need it** - `.../assurance`, `.../capabilities`, `.../idempotency`,
+  `.../effect-ledger`, `.../causality`, `.../classification`, `.../manifest`, `.../reflection`, `.../diff`,
+  `.../mcp`, `.../sse`, `.../webhook`, `.../budget`, `.../seo`, `.../mount`. Each is a separate documented
+  subpath, so you never pay (in bundle size or in concepts to learn) for one you don't import.
 
 ## Validate input with `t` (and get OpenAPI for free)
 

@@ -243,6 +243,43 @@ const BUILD_OUTPUT = `// buildClient() writes a browser bundle + manifest.json f
 //    loader/action — server-only). It builds via a browser polyfill otherwise, then breaks at runtime.
 //  • Assets are content-hashed + immutable. Serve /assets/* with a long-lived cache header.`
 
+const REUSABLE_ROUTER = `// A PUBLISHABLE router - contract-first, so its types survive \`.d.ts\` emit for consumers.
+import { client } from "@nifrajs/client"
+import { defineContract, implement } from "@nifrajs/core/contract"
+import { server } from "@nifrajs/core/server"
+import { t } from "@nifrajs/schema"
+
+// --- in the package (say @your-org/billing) ---
+// 1. The CONTRACT is ONE plain declared object - methods, paths, schemas, no handlers.
+//    Export it: it is the single type the package publishes, and a consumer's typed client is
+//    built from THIS value (not from \`typeof app\`), so no internal server type crosses the seam.
+export const billingContract = defineContract({
+  getPlan:   { method: "GET",  path: "/billing/plan" },
+  subscribe: { method: "POST", path: "/billing/subscribe", body: t.object({ plan: t.string() }) },
+})
+
+// 2. A FACTORY closes over the host's dependencies and returns a real, mountable router.
+//    \`implement\` binds handlers to the contract; each handler's context is typed from the contract
+//    alone (\`c.body\` is { plan: string } below) - no per-route \`AddRoute\` inference accreting.
+export interface BillingDeps {
+  charge(plan: string): Promise<{ id: string }>
+}
+export function createBillingRouter(deps: BillingDeps) {
+  return implement(billingContract, {
+    getPlan:   () => ({ plan: "pro" }),
+    subscribe: (c) => deps.charge(c.body.plan),
+  })
+}
+
+// --- in the consuming app ---
+// 3. Mount the router with ONE \`.merge()\` - no per-route \`.get()/.post()\` chain to re-infer.
+const app = server().merge(createBillingRouter({ charge: async (plan) => ({ id: plan }) }))
+
+// 4. Build the client from the EXPORTED contract value - decoupled, no \`typeof app\` import needed.
+const api = client(billingContract, "https://api.example.com")
+const { data } = await api.billing.plan.get()          // GET  /billing/plan
+await api.billing.subscribe.post({ plan: "pro" })      // POST /billing/subscribe, body typed`
+
 export default function Contract() {
   return (
     <div className="prose">
@@ -385,6 +422,38 @@ export default function Contract() {
         worker deploy. No need to boot a server and curl it.
       </p>
       <CodeBlock code={STATIC_EMIT} />
+
+      <h2>Publish a reusable router (library code vs app code)</h2>
+      <p>
+        The fluent <code>server().get(...).post(...)</code> builder is <strong>app code</strong>: each
+        call both infers the handler's context from the path <em>and</em> returns a{" "}
+        <code>Server</code> whose type has one more route intersected in (<code>AddRoute</code> /{" "}
+        <code>RouteInfoFor</code>). That accreting registry type lives happily inside your own program,
+        but it does <strong>not</strong> cleanly survive TypeScript's <code>.d.ts</code> declaration
+        emit - for a router you <strong>publish</strong> as a package, the compiler has to serialize
+        the whole inferred chain into your <code>.d.ts</code> and chokes (a <code>TS2883</code>-class
+        error: the inferred type is too large to name), which forces ugly casts on the boundary. So a
+        distributable router is written <strong>contract-first</strong> instead.
+      </p>
+      <p>
+        The recipe: declare the API as a plain <code>defineContract({"{…}"})</code> object and{" "}
+        <strong>export it</strong> (it is the consumer's typed-client source), then ship a factory that
+        returns <code>implement(contract, handlers)</code>. The consumer mounts the router with one{" "}
+        <code>.merge(...)</code> and derives its client straight from the exported contract value -{" "}
+        <code>client(contract, url)</code>, no <code>typeof app</code> import crossing the package
+        boundary. Pass a preamble as the third arg -{" "}
+        <code>implement(contract, handlers, server().use(auth))</code> - to bake a middleware /{" "}
+        <code>derive</code> chain into the router's routes (captured at registration).
+      </p>
+      <CodeBlock code={REUSABLE_ROUTER} />
+      <p>
+        Why this survives <code>.d.ts</code> emit where the fluent chain doesn't: the contract is a{" "}
+        <strong>plain declared object type</strong> (<code>ContractShape</code>), fixed up front - there
+        is no grow-the-registry-per-call inference to serialize, so its declaration is small and
+        stable. The consumer still gets full end-to-end types both ways -{" "}
+        <code>.merge()</code> threads the router's routes into the host app's registry, and{" "}
+        <code>client(contract, url)</code> types every call from the same exported object.
+      </p>
 
       <p>
         See <a href="/docs/rendering">SSG &amp; ISR</a> for prerendering, <a href="/docs/dev">Dev &amp; HMR</a> for the

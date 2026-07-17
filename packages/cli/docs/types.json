@@ -1632,7 +1632,7 @@
     "kind": "function",
     "package": "@nifrajs/web-react",
     "signature": "export declare function compose(chain: readonly unknown[], props: RenderProps): ReactNode;",
-    "doc": "/**\n * Fold a layout chain (outermost layout → page) into a single React tree: the page\n * (innermost) receives `props` (the loader data); each layout wraps the child via its\n * `children`. Shared by the server adapter (renderToString) and the client (hydrateRoot).\n *\n * The whole tree is wrapped in a {@link RouterContext} provider carrying the matched `params` + the\n * current `path` (both threaded through `RenderProps` identically on SSR and client), so the routing\n * hooks (`useParams`/`useLocation`/`useSearchParams`) read the same value on both sides — no hydration\n * mismatch. A render with no routing fields (a non-router adapter usage) provides the empty default.\n */"
+    "doc": "/**\n * Fold a layout chain (outermost layout → page) into a single React tree: the page\n * (innermost) receives `props` (the loader data); each layout wraps the child via its\n * `children`. Shared by the server adapter (renderToString) and the client (hydrateRoot).\n *\n * The whole tree is wrapped in a {@link RouterContext} provider carrying the matched `params`, the\n * current `path`, and the client `pending` flag (all threaded through `RenderProps` identically on SSR\n * and client), so the routing hooks (`useParams`/`useLocation`/`useNavigation`) read the same value on\n * both sides - no hydration mismatch (`pending` is `false` on SSR and on the initial client render).\n * A render with no routing fields (a non-router adapter usage) provides the empty default.\n */"
   },
   {
     "name": "compose",
@@ -5758,6 +5758,13 @@
     "doc": "/** {@link Navigate} props: the destination `to` and whether to `replace` the history entry. */"
   },
   {
+    "name": "Navigation",
+    "kind": "interface",
+    "package": "@nifrajs/web-react",
+    "signature": "export interface Navigation {\n    /** True while a client navigation (or revalidation) is in flight. The current route stays mounted\n     * until the new one is ready, so this drives a loading indicator, not a route swap. */\n    readonly pending: boolean;\n    /** `\"loading\"` while a navigation is in flight, else `\"idle\"`. */\n    readonly state: \"idle\" | \"loading\";\n    /** The `pathname + search` being navigated TO while `pending`; `undefined` when idle or during a\n     * same-route revalidation. Mirrors Remix's `useNavigation().location`. */\n    readonly location: string | undefined;\n}",
+    "doc": "/** The current navigation state, mirroring the Remix `useNavigation()` shape for familiarity. */"
+  },
+  {
     "name": "NavLink",
     "kind": "const",
     "package": "@nifrajs/web-react",
@@ -5775,7 +5782,7 @@
     "name": "NavLinkRenderProps",
     "kind": "interface",
     "package": "@nifrajs/web-react",
-    "signature": "export interface NavLinkRenderProps {\n    /** True when the current location matches this link's `to` (prefix match, or exact when `end`). */\n    readonly isActive: boolean;\n    /** Reserved for a future pending-navigation signal; currently always `false`. */\n    readonly isPending: boolean;\n}",
+    "signature": "export interface NavLinkRenderProps {\n    /** True when the current location matches this link's `to` (prefix match, or exact when `end`). */\n    readonly isActive: boolean;\n    /** True while a client navigation to THIS link's target is in flight (matched like `isActive`).\n     * `false` on SSR and when idle. Use it to show a per-link spinner during the transition. */\n    readonly isPending: boolean;\n}",
     "doc": "/** The state a {@link NavLink}'s function-form `className`/`style`/`children` receive. */"
   },
   {
@@ -6335,6 +6342,20 @@
     "package": "@nifrajs/web",
     "signature": "export declare function parseManifestRouteFiles(source: string, routesPrefix?: string): string[];",
     "doc": "/**\n * Extract the route-relative file list the committed server-manifest imports, normalized to the same\n * `routes/`-relative keys `discoverRoutes` produces (e.g. `docs/index.tsx`). `routesPrefix` is the\n * specifier prefix the manifest used for the routes dir (default `./routes/`, what `buildServer`'s\n * default `resolve` emits). Only import specifiers under that prefix are route files; the\n * `@nifrajs/web` import (and any other bare specifier) is ignored. Pure — operates on source text.\n */"
+  },
+  {
+    "name": "parseManifestRouteStyles",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function parseManifestRouteStyles(source: string): Record<string, string[]>;",
+    "doc": "/** The baked per-route `routeStyles` map in a committed server-manifest (empty if absent/unparseable). Pure. */"
+  },
+  {
+    "name": "parseManifestStyles",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function parseManifestStyles(source: string): string[];",
+    "doc": "/** The baked top-level `styles` array in a committed server-manifest (empty if absent/unparseable). Pure. */"
   },
   {
     "name": "parseNdjsonData",
@@ -7231,7 +7252,7 @@
     "name": "RenderProps",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RenderProps {\n    readonly data: unknown;\n    readonly actionData?: unknown;\n    /** True while a client navigation or submit is in flight (client-only; absent/false on SSR). */\n    readonly pending?: boolean;\n    /** The in-flight client submit, for optimistic UI (client-only; absent on SSR + when idle). */\n    readonly submission?: Submission;\n    /** The matched route's decoded path params (`/users/:id` → `{ id: \"7\" }`). Threaded identically on\n     * SSR (from the request match) and on client navigation (from router state) so an adapter's\n     * `useParams` reads the same value on both, with no hydration mismatch. Absent ⇒ no params (`{}`). */\n    readonly params?: Readonly<Record<string, string>>;\n    /** The current URL's `pathname + search` (no hash — the hash never reaches the server). Threaded on\n     * SSR and client alike so an adapter's `useLocation`/`useSearchParams` hydrate consistently. Absent\n     * on adapters/callers that don't supply it (treated as `\"\"`). */\n    readonly path?: string;\n}",
+    "signature": "export interface RenderProps {\n    readonly data: unknown;\n    readonly actionData?: unknown;\n    /** True while a client navigation or submit is in flight (client-only; absent/false on SSR). */\n    readonly pending?: boolean;\n    /** The path a client navigation is transitioning TO while `pending` (client-only; absent on SSR and\n     * when idle). Lets an adapter tell a `NavLink` whether its own target is the one loading. */\n    readonly pendingPath?: string;\n    /** The in-flight client submit, for optimistic UI (client-only; absent on SSR + when idle). */\n    readonly submission?: Submission;\n    /** The matched route's decoded path params (`/users/:id` → `{ id: \"7\" }`). Threaded identically on\n     * SSR (from the request match) and on client navigation (from router state) so an adapter's\n     * `useParams` reads the same value on both, with no hydration mismatch. Absent ⇒ no params (`{}`). */\n    readonly params?: Readonly<Record<string, string>>;\n    /** The current URL's `pathname + search` (no hash — the hash never reaches the server). Threaded on\n     * SSR and client alike so an adapter's `useLocation`/`useSearchParams` hydrate consistently. Absent\n     * on adapters/callers that don't supply it (treated as `\"\"`). */\n    readonly path?: string;\n}",
     "doc": "/** The data handed to a route component. Opaque to the core. `actionData` is the return of a\n * route `action` after a POST (absent on plain GETs). `pending` + `submission` are client-only\n * (absent on SSR): they drive **optimistic UI** — render from `submission.formData` while `pending`. */"
   },
   {
@@ -7579,6 +7600,13 @@
     "doc": "/**\n * The outcome of a client call. The client never throws - inspect `ok` to branch.\n *\n * On success, `data` is the route's response type. On failure the union is DISCRIMINATED BY\n * `status` when the route declares an `errors` record: `status === 404` narrows `data` to the\n * declared 404 body; every undeclared status (plus `0` for a transport error with no response)\n * falls into a fallback arm whose `data` is `unknown`. A route with no `errors` contract keeps a\n * single failure arm with `data: Errors` (`unknown`). `error` is always the server's normalized\n * `{ error, issues? }` summary on failure, `null` on success.\n */"
   },
   {
+    "name": "resyncServerManifestSource",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function resyncServerManifestSource(source: string, manifest: Parameters<typeof generateServerManifest>[0], routesPrefix: string): string;",
+    "doc": "/**\n * Re-emit a committed server-manifest from a freshly-discovered route tree, PRESERVING its baked\n * client-asset references (`clientEntry` / `styles` / `routeStyles`) and its eager-vs-lazy shape. This is\n * what makes `nifra sync-manifest` a route-table refresh (renamed / added / removed routes) that does NOT\n * need a full build. It deliberately does NOT rebuild the client bundle: a brand-new HYDRATING route still\n * needs a full build so its client chunk exists - this only re-syncs the server manifest's route table.\n * Pure: `source` + the discovered `manifest` in, new source out.\n */"
+  },
+  {
     "name": "RetryPolicy",
     "kind": "interface",
     "package": "@nifrajs/jobs",
@@ -7826,7 +7854,7 @@
     "name": "RouterContextValue",
     "kind": "interface",
     "package": "@nifrajs/web-react",
-    "signature": "export interface RouterContextValue {\n    /** The matched route's decoded path params (`/users/:id` → `{ id: \"7\" }`). */\n    readonly params: Readonly<Record<string, string>>;\n    /** The current URL's `pathname + search` (no hash — the router never carries one). */\n    readonly path: string;\n}",
+    "signature": "export interface RouterContextValue {\n    /** The matched route's decoded path params (`/users/:id` → `{ id: \"7\" }`). */\n    readonly params: Readonly<Record<string, string>>;\n    /** The current URL's `pathname + search` (no hash — the router never carries one). */\n    readonly path: string;\n    /** True while a client navigation (or revalidation) is in flight — the current route stays mounted\n     * until the new one is ready. Always `false` on SSR (loaders block before render). Drives loading UI\n     * via {@link useNavigation}. */\n    readonly pending: boolean;\n    /** The `pathname + search` a navigation is transitioning TO while `pending` (`undefined` when idle or\n     * during a same-route revalidation). Powers {@link NavLink}'s per-link `isPending`. */\n    readonly pendingPath?: string | undefined;\n}",
     "doc": "/** The current route the routing hooks read. Provided by `compose` on SSR + client mount alike. */"
   },
   {
@@ -7840,7 +7868,7 @@
     "name": "RouterState",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RouterState {\n    readonly routeId: string;\n    readonly params: Record<string, string>;\n    /** The current URL path (used to revalidate the active loader after an action). */\n    readonly path: string;\n    readonly data: unknown;\n    /** An action's data return after a client-side submit (cleared on navigation). */\n    readonly actionData?: unknown;\n    /** True while a navigation or submit is in flight (drives loading UI). */\n    readonly pending: boolean;\n    /** The in-flight submit (set during a `submit`, cleared when it settles) — for optimistic UI. */\n    readonly submission?: Submission;\n}",
+    "signature": "export interface RouterState {\n    readonly routeId: string;\n    readonly params: Record<string, string>;\n    /** The current URL path (used to revalidate the active loader after an action). */\n    readonly path: string;\n    readonly data: unknown;\n    /** An action's data return after a client-side submit (cleared on navigation). */\n    readonly actionData?: unknown;\n    /** True while a navigation or submit is in flight (drives loading UI). */\n    readonly pending: boolean;\n    /** The path a navigation is transitioning TO while `pending` (cleared when it settles). Lets a\n     * `NavLink` know whether its own `to` is the one loading; `undefined` when idle. */\n    readonly pendingPath?: string | undefined;\n    /** The in-flight submit (set during a `submit`, cleared when it settles) — for optimistic UI. */\n    readonly submission?: Submission;\n}",
     "doc": "/** The router's observable state. A new object is published on every transition. */"
   },
   {
@@ -8832,6 +8860,13 @@
     "doc": "/** Build a `Bun.build` plugin that loads `.mdx` files as Solid components. `generate`: `\"ssr\"` for the\n * server build, `\"dom\"` for the client (matches `solidBunPlugin`). */"
   },
   {
+    "name": "solidSvgComponentBunPlugin",
+    "kind": "function",
+    "package": "@nifrajs/web-solid",
+    "signature": "export declare function solidSvgComponentBunPlugin(generate: \"dom\" | \"ssr\"): BunPlugin;",
+    "doc": "/** The Solid SVG-component plugin. `generate` selects the Solid `\"dom\"`/`\"ssr\"` output, matching\n * `solidBunPlugin`. A plain `import \"./icon.svg\"` (asset URL) is untouched - only `?component` matches. */"
+  },
+  {
     "name": "SourceFinding",
     "kind": "interface",
     "package": "@nifrajs/cli",
@@ -9251,6 +9286,20 @@
     "doc": "/** Build a `Bun.build` plugin that loads `.mdx` files as Svelte components via mdsvex. `generate`:\n * `\"ssr\"` for the server build, `\"dom\"` for the client (matches `svelteBunPlugin`). */"
   },
   {
+    "name": "svelteSvgComponentBunPlugin",
+    "kind": "function",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export declare function svelteSvgComponentBunPlugin(generate: \"dom\" | \"ssr\"): BunPlugin;",
+    "doc": "/** The Svelte SVG-component plugin. `generate` selects Svelte's `\"client\"`/`\"server\"` output, matching\n * `svelteBunPlugin`. */"
+  },
+  {
+    "name": "SVG_COMPONENT_FILTER",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const SVG_COMPONENT_FILTER: RegExp;",
+    "doc": "/** The Bun `onLoad` filter every adapter's SVG-component plugin matches: `*.svg?component`. */"
+  },
+  {
     "name": "svgComponentBunPlugin",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -9261,7 +9310,7 @@
     "name": "svgComponentSource",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function svgComponentSource(xml: string): string;",
+    "signature": "export declare function svgComponentSource(xml: string, options?: SvgToJsxOptions): string;",
     "doc": "/** Emit the component module source for a `?component` SVG import. Identical on dom + ssr (isomorphic). */"
   },
   {
@@ -9281,8 +9330,28 @@
     "name": "svgToJsx",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function svgToJsx(xml: string): string;",
+    "signature": "export declare function svgToJsx(xml: string, options?: SvgToJsxOptions): string;",
     "doc": "/** Convert an SVG XML string into a JSX-safe `<svg>…</svg>` element with `{...props}` spread on the root. */"
+  },
+  {
+    "name": "SvgToJsxOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface SvgToJsxOptions {\n    /** The JSX prop name for `class`. `\"className\"` for React/Preact; `\"class\"` for Solid. */\n    readonly classProp?: string;\n}"
+  },
+  {
+    "name": "svgToSvelte",
+    "kind": "function",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export declare function svgToSvelte(xml: string): string;",
+    "doc": "/** Wrap raw SVG XML in a Svelte 5 component: strip XML noise, spread props onto the root `<svg>`. */"
+  },
+  {
+    "name": "svgToVueSfc",
+    "kind": "function",
+    "package": "@nifrajs/web-vue",
+    "signature": "export declare function svgToVueSfc(xml: string): string;",
+    "doc": "/** Wrap raw SVG XML in a template-only Vue SFC (single root → Vue inherits attrs onto the `<svg>`). */"
   },
   {
     "name": "t",
@@ -9812,11 +9881,25 @@
     "doc": "/** Get the {@link NavigateFunction}. Stable across renders; resolves the browser navigate at call time\n * (so it works as soon as `installHistory` has run, and no-ops before then / on the server). */"
   },
   {
+    "name": "useNavigation",
+    "kind": "function",
+    "package": "@nifrajs/web-react",
+    "signature": "export declare function useNavigation(): Navigation;",
+    "doc": "/**\n * Observe client navigation to drive loading UI (a top-bar spinner, dimmed content, a skeleton). nifra\n * navigates imperatively - it fetches the next route's chunk + loader data while the current route stays\n * on screen, then swaps - so `pending` is the signal for \"a transition is in flight,\" not a Suspense\n * boundary. Always `{ pending: false, state: \"idle\" }` on the server (loaders block before render), so\n * it is hydration-safe.\n *\n * ```tsx\n * const { pending } = useNavigation()\n * return <div className={pending ? \"opacity-60\" : \"\"}>{pending && <TopBarSpinner />}<Outlet /></div>\n * ```\n */"
+  },
+  {
     "name": "useParams",
     "kind": "function",
     "package": "@nifrajs/web-react",
     "signature": "export declare function useParams<T extends Record<string, string | undefined> = Record<string, string>>(): Readonly<T>;",
     "doc": "/**\n * The matched route's decoded path params — `/users/:id` on `/users/7` → `{ id: \"7\" }`. SSR-correct:\n * `compose` provides the same value server-side (from the request match) and client-side (from router\n * state), so a param rendered into markup doesn't flash on hydration.\n */"
+  },
+  {
+    "name": "usePending",
+    "kind": "function",
+    "package": "@nifrajs/web-react",
+    "signature": "export declare function usePending(): boolean;",
+    "doc": "/** Convenience boolean form of {@link useNavigation}: `true` while a client navigation is in flight. */"
   },
   {
     "name": "useQuery",
@@ -10170,6 +10253,13 @@
     "package": "@nifrajs/web-vue",
     "signature": "export declare function vueBunPlugin(generate: \"dom\" | \"ssr\"): BunPlugin;",
     "doc": "/**\n * The `.vue` compiler Bun plugin. `\"dom\"` → client-hydratable output; `\"ssr\"` → server render. On the\n * `\"dom\"` build, a SFC's `<style>` CSS is emitted as a virtual `?vue-css` module that `Bun.build`'s CSS\n * bundler folds into the app stylesheet (served as a `<link>`). The `\"ssr\"` build emits no CSS — the\n * scope attributes are already in the markup and the stylesheet ships from the client build. With\n * `nifra dev`, `@vitejs/plugin-vue` handles the styles instead.\n */"
+  },
+  {
+    "name": "vueSvgComponentBunPlugin",
+    "kind": "function",
+    "package": "@nifrajs/web-vue",
+    "signature": "export declare function vueSvgComponentBunPlugin(generate: \"dom\" | \"ssr\"): BunPlugin;",
+    "doc": "/** The Vue SVG-component plugin. `generate` selects Vue's client/SSR render, matching `vueBunPlugin`. */"
   },
   {
     "name": "walkServerOnlyChain",

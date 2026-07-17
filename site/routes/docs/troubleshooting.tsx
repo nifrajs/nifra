@@ -42,6 +42,47 @@ export async function loader(_ctx: LoaderContext) {
   return { notes: db.query("select * from notes").all() }
 }`
 
+// Fix 1 for TS2589: split one long chain into domain groups and merge() them. Each group is its own
+// short server() chain (well under the ceiling), and merge() is a single R & R2 intersection with no
+// per-call context work - so the cost stays flat however many groups you compose. Self-contained
+// (imports @nifrajs/core, declares everything it uses), so check:docs typechecks it against the live API.
+const MERGE_SPLIT = `import { server } from "@nifrajs/core"
+
+// Each domain is its OWN short server() chain, kept well under the ~95-route ceiling.
+const users = server()
+  .get("/users/:id", (c) => ({ id: c.params.id }))
+  .post("/users", () => ({ created: true }))
+
+const orders = server()
+  .get("/orders/:id", (c) => ({ id: c.params.id }))
+  .post("/orders", () => ({ placed: true }))
+
+// merge() adds ONE R & R2 intersection per group - no per-call context recompute - so the whole
+// app stays inside tsc's budget no matter how many groups (or routes) you compose.
+export const app = server()
+  .get("/health", () => ({ ok: true }))
+  .merge(users)
+  .merge(orders)`
+
+// Fix 2 for TS2589: contract-first. defineContract declares the whole registry as ONE object type
+// upfront; implement() binds handlers to it. The registry is not grown one alias level per call, so
+// there is no per-expression accumulation and no ceiling at any route count. Also self-contained.
+const CONTRACT_FIRST = `import { defineContract, implement } from "@nifrajs/core/contract"
+
+// One object type, declared upfront - NOT an N-deep stack of \`Server<AddRoute<…>>\` aliases.
+const contract = defineContract({
+  getUser:    { method: "GET",  path: "/users/:id" },
+  listUsers:  { method: "GET",  path: "/users" },
+  createUser: { method: "POST", path: "/users" },
+  // ...hundreds more operations stay flat: the registry is one type, not a growing chain.
+})
+
+export const app = implement(contract, {
+  getUser:    (c) => ({ id: c.params.id }),
+  listUsers:  () => ({ users: [] as string[] }),
+  createUser: () => ({ created: true }),
+})`
+
 export default function Troubleshooting() {
   return (
     <div className="prose">
@@ -252,6 +293,87 @@ export default function Troubleshooting() {
         <code>{`.get("/thing", { query: z.object({ page: z.string() }) }, h)`}</code>. Then{" "}
         <code>c.query</code> is the validated type and the client accepts a typed <code>query</code>.
       </p>
+
+      <h2>
+        <code>TS2589</code> - "Type instantiation is excessively deep and possibly infinite" (one{" "}
+        <code>server()</code> chain grew past ~95 routes)
+      </h2>
+      <p>
+        The fluent builder's whole value - end-to-end inference, so <code>c.params.id</code> is typed
+        straight from <code>:id</code> and the client is derived from <code>typeof app</code> - carries
+        an <strong>O(N) type-instantiation cost</strong>. Each <code>.get(path, handler)</code> /{" "}
+        <code>.post(...)</code> does two things at once: it computes the handler's context type from the
+        path, <em>and</em> it returns a server whose registry is one alias level deeper than the last.
+        Neither strains the compiler alone; the <strong>product</strong> - recomputing the handler
+        context while re-threading an ever-larger registry at every step - exhausts TypeScript's
+        per-expression instantiation budget. A single chain hits <code>TS2589</code> at{" "}
+        <strong>~95-100 routes</strong>.
+      </p>
+      <blockquote>
+        <p>
+          [!NOTE]
+          <br />
+          This is a <strong>healthy, growing app's wall, not abuse</strong>. It is inherent to any
+          builder that infers handler context <em>and</em> accumulates a typed route registry (Elysia,
+          tRPC, and Hono's typed clients cap the same way), so it is not fixable by reshaping the
+          internal <code>AddRoute</code>. The fix is to use a shape that does not form the product.
+        </p>
+      </blockquote>
+      <p>
+        <strong>Fix 1 - split into domain groups and <code>.merge()</code> them.</strong> Each group is
+        its own short <code>server()</code> chain, so no single chain approaches the ceiling; a{" "}
+        <code>.merge()</code> is one <code>R &amp; R2</code> intersection with no per-call context work,
+        so composing groups stays cheap. A 90-route single chain is inside the ceiling; 120 routes as
+        four merged 30-route groups typecheck with full per-route fidelity.
+      </p>
+      <CodeBlock code={MERGE_SPLIT} />
+      <p>
+        <strong>Fix 2 - go contract-first, and stay flat at any route count.</strong>{" "}
+        <code>defineContract(...)</code> declares the entire registry as <strong>one object type
+        upfront</strong>, and <code>implement(contract, handlers)</code> binds handlers to it. Nothing
+        grows a registry per call, so there is <strong>no ceiling at all</strong> - this is the path for
+        an API that will keep adding routes for years. Handlers stay checked against the contract exactly
+        as inline routes are. See <a href="/docs/contract">Contract-first</a>.
+      </p>
+      <CodeBlock code={CONTRACT_FIRST} />
+      <h3>
+        <code>TS2345</code> from an unrelated <code>.merge()</code> - budget exhausted "at a distance"
+      </h3>
+      <p>
+        Because the budget is per-expression and global to a compilation, a type-heavy construct{" "}
+        <em>elsewhere</em> in the program can push an otherwise-fine <code>.merge()</code> chain over the
+        edge. It surfaces not as <code>TS2589</code> but as a <code>TS2345</code> assignability error
+        naming an <strong>uninstantiated</strong> <code>{"Server<Registry, unknown>"}</code> - the shape
+        the server type collapses to when the compiler gives up mid-inference. The usual trigger is a{" "}
+        <strong>generic higher-order function that wraps the builder</strong> (a{" "}
+        <code>{"withX<T>(app)"}</code> that threads the <code>Server</code> type through its own type
+        parameters); merely having that file in the program can be enough. Treat these as real
+        constraints of an inference-first framework:
+      </p>
+      <ul>
+        <li>
+          Keep <strong>service-layer types flat and explicitly annotated</strong> - do not let
+          inference-heavy generics thread the <code>Server</code> / registry type through your own code.
+        </li>
+        <li>
+          <strong>Avoid generic HOF wrappers around the builder.</strong> Wrap with a{" "}
+          <code>defineRouterPlugin</code> (identity plugin) or compose with <code>.merge()</code> instead
+          of a <code>{"withX<T>(app)"}</code> that re-infers the whole server type.
+        </li>
+        <li>
+          Put an explicit <code>{"Promise<T>"}</code> return annotation on async callbacks that thread
+          framework types, so the compiler stops re-deriving the awaited type at each use.
+        </li>
+      </ul>
+      <blockquote>
+        <p>
+          [!TIP]
+          <br />
+          Both fixes preserve full type fidelity - the client derived from <code>typeof app</code> is
+          exactly as precise after a <code>.merge()</code> or an <code>implement()</code> as it is for an
+          inline route. Splitting or going contract-first costs you nothing at the call site.
+        </p>
+      </blockquote>
 
       <h2>Still stuck?</h2>
       <p>

@@ -3186,6 +3186,110 @@ params. The error reads out the fix; add a schema to the route:
 `.get("/thing", { query: z.object({ page: z.string() }) }, h)`. Then
 `c.query` is the validated type and the client accepts a typed `query`.
 
+###
+`TS2589` - "Type instantiation is excessively deep and possibly infinite" (one
+`server()` chain grew past ~95 routes)
+
+The fluent builder's whole value - end-to-end inference, so `c.params.id` is typed
+straight from `:id` and the client is derived from `typeof app` - carries
+an **O(N) type-instantiation cost**. Each `.get(path, handler)` /
+`.post(...)` does two things at once: it computes the handler's context type from the
+path, _and_ it returns a server whose registry is one alias level deeper than the last.
+Neither strains the compiler alone; the **product** - recomputing the handler
+context while re-threading an ever-larger registry at every step - exhausts TypeScript's
+per-expression instantiation budget. A single chain hits `TS2589` at
+**~95-100 routes**.
+
+[!NOTE]
+
+This is a **healthy, growing app's wall, not abuse**. It is inherent to any
+builder that infers handler context _and_ accumulates a typed route registry (Elysia,
+tRPC, and Hono's typed clients cap the same way), so it is not fixable by reshaping the
+internal `AddRoute`. The fix is to use a shape that does not form the product.
+
+**Fix 1 - split into domain groups and `.merge()` them.** Each group is
+its own short `server()` chain, so no single chain approaches the ceiling; a
+`.merge()` is one `R & R2` intersection with no per-call context work,
+so composing groups stays cheap. A 90-route single chain is inside the ceiling; 120 routes as
+four merged 30-route groups typecheck with full per-route fidelity.
+
+```ts
+import { server } from "@nifrajs/core"
+
+// Each domain is its OWN short server() chain, kept well under the ~95-route ceiling.
+const users = server()
+  .get("/users/:id", (c) => ({ id: c.params.id }))
+  .post("/users", () => ({ created: true }))
+
+const orders = server()
+  .get("/orders/:id", (c) => ({ id: c.params.id }))
+  .post("/orders", () => ({ placed: true }))
+
+// merge() adds ONE R & R2 intersection per group - no per-call context recompute - so the whole
+// app stays inside tsc's budget no matter how many groups (or routes) you compose.
+export const app = server()
+  .get("/health", () => ({ ok: true }))
+  .merge(users)
+  .merge(orders)
+```
+
+**Fix 2 - go contract-first, and stay flat at any route count.**
+`defineContract(...)` declares the entire registry as **one object type
+upfront**, and `implement(contract, handlers)` binds handlers to it. Nothing
+grows a registry per call, so there is **no ceiling at all** - this is the path for
+an API that will keep adding routes for years. Handlers stay checked against the contract exactly
+as inline routes are. See [Contract-first](/docs/contract).
+
+```ts
+import { defineContract, implement } from "@nifrajs/core/contract"
+
+// One object type, declared upfront - NOT an N-deep stack of `Server<AddRoute<…>>` aliases.
+const contract = defineContract({
+  getUser:    { method: "GET",  path: "/users/:id" },
+  listUsers:  { method: "GET",  path: "/users" },
+  createUser: { method: "POST", path: "/users" },
+  // ...hundreds more operations stay flat: the registry is one type, not a growing chain.
+})
+
+export const app = implement(contract, {
+  getUser:    (c) => ({ id: c.params.id }),
+  listUsers:  () => ({ users: [] as string[] }),
+  createUser: () => ({ created: true }),
+})
+```
+
+####
+`TS2345` from an unrelated `.merge()` - budget exhausted "at a distance"
+
+Because the budget is per-expression and global to a compilation, a type-heavy construct
+_elsewhere_ in the program can push an otherwise-fine `.merge()` chain over the
+edge. It surfaces not as `TS2589` but as a `TS2345` assignability error
+naming an **uninstantiated** `Server` - the shape
+the server type collapses to when the compiler gives up mid-inference. The usual trigger is a
+**generic higher-order function that wraps the builder** (a
+`withX(app)` that threads the `Server` type through its own type
+parameters); merely having that file in the program can be enough. Treat these as real
+constraints of an inference-first framework:
+
+-
+Keep **service-layer types flat and explicitly annotated** - do not let
+inference-heavy generics thread the `Server` / registry type through your own code.
+
+-
+**Avoid generic HOF wrappers around the builder.** Wrap with a
+`defineRouterPlugin` (identity plugin) or compose with `.merge()` instead
+of a `withX(app)` that re-infers the whole server type.
+
+-
+Put an explicit `Promise` return annotation on async callbacks that thread
+framework types, so the compiler stops re-deriving the awaited type at each use.
+
+[!TIP]
+
+Both fixes preserve full type fidelity - the client derived from `typeof app` is
+exactly as precise after a `.merge()` or an `implement()` as it is for an
+inline route. Splitting or going contract-first costs you nothing at the call site.
+
 ### Still stuck?
 
 Run `nifra check --json` as the done-gate — it surfaces the import-chain leaks,
@@ -3284,6 +3388,65 @@ loader-only client.
 Vite-backed dev server) routes every request through that same app's `fetch`. So
 the `/api/*` routes are served identically in development and production — there is
 nothing extra to wire for the dev loop.
+
+### Mounting, composition & path semantics
+
+A useful thing to know up front, because it is the opposite of some frameworks: in Nifra
+**composition and mounting are prefix-less, and paths stay absolute**. There is no
+per-mount base path, and nothing rewrites the request URL. Two mechanisms are involved and both
+leave the path untouched:
+
+-
+**
+`.merge()` (and contract-first `implement()`)
+**
+- the composition escape hatch for large apps. `merge()` folds another server's
+routes into this one _at the exact paths they were defined_, into a single shared path
+space. It takes no prefix argument; a path+method collision throws a
+`RouteConfigError` at merge time (fail-closed), so groups never silently shadow
+each other. Each domain therefore owns its full absolute paths (`/api/listings`,
+`/api/agents`), exactly as it would standalone.
+
+-
+**the `/api/*` auto-mount** - a path _guard_, not a rewrite.
+`createWebApp` hands the _same_ `Request` (its URL and body
+intact) to the backend when the pathname is exactly `apiPrefix` or under
+`apiPrefix + "/"`. The backend's own router then matches on
+`new URL(c.req.url).pathname` - the full, original path.
+
+The consequence for a handler: **
+`c.req.url` always carries the full, original path
+**
+- the same URL the caller sent. The `/api` prefix is _not_ stripped before a
+merged or mounted route sees it, and there is no `pathOf`-style helper that strips
+it. Whether a route was defined inline, merged in from a group, or reached through the HTTP
+mount, the pathname it observes is the request's own.
+
+```ts
+// backend.ts - compose domains with .merge(). Each group owns its FULL absolute paths.
+import { server } from "@nifrajs/core/server"
+
+const listings = server().get("/api/listings", (c) => {
+  // c.req.url is the ORIGINAL request URL - .merge() and the /api mount never strip the prefix.
+  const path = new URL(c.req.url).pathname // GET /api/listings  ->  "/api/listings"
+  return { path }
+})
+
+const agents = server().get("/api/agents", (c) => ({ ok: new URL(c.req.url).pathname }))
+
+// merge() folds both groups into ONE flat path space at their defined paths; a path+method clash
+// throws a RouteConfigError right here at merge time (fail-closed), never a silent shadow at runtime.
+export const backend = server().merge(listings).merge(agents)
+```
+
+**The one gotcha:** because nothing strips the prefix, a backend that will be
+mounted (or merged) under `/api` must **declare its routes at the full path**
+- `server().post("/api/sync", …)`, _not_ `.post("/sync", …)` in the
+hope that `/api` gets peeled off. Define `/sync` and a browser
+`POST /api/sync` returns the backend's 404: the router looks up
+`/api/sync` and finds only `/sync`. `apiPrefix` chooses
+_which_ requests are handed to the backend; it does not rewrite them, so the route paths
+and the caller's paths are one and the same.
 
 ### Calling /api/* from the browser
 
@@ -3913,6 +4076,73 @@ const { prerendered } = await prerenderRoutes({
 const paths = prerendered.map((p) => p.path)
 await Bun.write("./dist/_routes.json", JSON.stringify(cloudflarePagesRoutes({ prerendered: paths })))
 ```
+
+### Publish a reusable router (library code vs app code)
+
+The fluent `server().get(...).post(...)` builder is **app code**: each
+call both infers the handler's context from the path _and_ returns a
+`Server` whose type has one more route intersected in (`AddRoute` /
+`RouteInfoFor`). That accreting registry type lives happily inside your own program,
+but it does **not** cleanly survive TypeScript's `.d.ts` declaration
+emit - for a router you **publish** as a package, the compiler has to serialize
+the whole inferred chain into your `.d.ts` and chokes (a `TS2883`-class
+error: the inferred type is too large to name), which forces ugly casts on the boundary. So a
+distributable router is written **contract-first** instead.
+
+The recipe: declare the API as a plain `defineContract({…})` object and
+**export it** (it is the consumer's typed-client source), then ship a factory that
+returns `implement(contract, handlers)`. The consumer mounts the router with one
+`.merge(...)` and derives its client straight from the exported contract value -
+`client(contract, url)`, no `typeof app` import crossing the package
+boundary. Pass a preamble as the third arg -
+`implement(contract, handlers, server().use(auth))` - to bake a middleware /
+`derive` chain into the router's routes (captured at registration).
+
+```ts
+// A PUBLISHABLE router - contract-first, so its types survive `.d.ts` emit for consumers.
+import { client } from "@nifrajs/client"
+import { defineContract, implement } from "@nifrajs/core/contract"
+import { server } from "@nifrajs/core/server"
+import { t } from "@nifrajs/schema"
+
+// --- in the package (say @your-org/billing) ---
+// 1. The CONTRACT is ONE plain declared object - methods, paths, schemas, no handlers.
+//    Export it: it is the single type the package publishes, and a consumer's typed client is
+//    built from THIS value (not from `typeof app`), so no internal server type crosses the seam.
+export const billingContract = defineContract({
+  getPlan:   { method: "GET",  path: "/billing/plan" },
+  subscribe: { method: "POST", path: "/billing/subscribe", body: t.object({ plan: t.string() }) },
+})
+
+// 2. A FACTORY closes over the host's dependencies and returns a real, mountable router.
+//    `implement` binds handlers to the contract; each handler's context is typed from the contract
+//    alone (`c.body` is { plan: string } below) - no per-route `AddRoute` inference accreting.
+export interface BillingDeps {
+  charge(plan: string): Promise<{ id: string }>
+}
+export function createBillingRouter(deps: BillingDeps) {
+  return implement(billingContract, {
+    getPlan:   () => ({ plan: "pro" }),
+    subscribe: (c) => deps.charge(c.body.plan),
+  })
+}
+
+// --- in the consuming app ---
+// 3. Mount the router with ONE `.merge()` - no per-route `.get()/.post()` chain to re-infer.
+const app = server().merge(createBillingRouter({ charge: async (plan) => ({ id: plan }) }))
+
+// 4. Build the client from the EXPORTED contract value - decoupled, no `typeof app` import needed.
+const api = client(billingContract, "https://api.example.com")
+const { data } = await api.billing.plan.get()          // GET  /billing/plan
+await api.billing.subscribe.post({ plan: "pro" })      // POST /billing/subscribe, body typed
+```
+
+Why this survives `.d.ts` emit where the fluent chain doesn't: the contract is a
+**plain declared object type** (`ContractShape`), fixed up front - there
+is no grow-the-registry-per-call inference to serialize, so its declaration is small and
+stable. The consumer still gets full end-to-end types both ways -
+`.merge()` threads the router's routes into the host app's registry, and
+`client(contract, url)` types every call from the same exported object.
 
 See [SSG & ISR](/docs/rendering) for prerendering, [Dev & HMR](/docs/dev) for the
 two dev loops and the `--port` flag, and [Loaders & actions](/docs/data) for the
@@ -6709,7 +6939,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/better-auth
 
-`betterAuth`, `BetterAuthLike`, `BetterAuthOptions`, `getSession`, `requireSession`, `RequireSessionOptions`, `SessionOf`
+`authed`, `AuthedOptions`, `betterAuth`, `BetterAuthLike`, `BetterAuthOptions`, `getSession`, `Principal`, `PrincipalFor`, `requirePrincipal`, `requireSession`, `RequireSessionOptions`, `SessionOf`, `SessionUserOf`, `WithPrincipal`
 
 ## @nifrajs/cache
 

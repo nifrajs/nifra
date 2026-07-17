@@ -64,6 +64,25 @@ export async function runSync(cursor: string) {
   return error ? { applied: 0 } : data
 }`
 
+// Composition is prefix-LESS. `.merge()` copies each group's routes at the paths they were DEFINED into
+// one shared path space - no base path is added, nothing is stripped - and `c.req.url` inside a merged
+// (or /api-mounted) route is the ORIGINAL request URL, full path included. So groups own their absolute
+// paths (`/api/listings`), and the mount only SELECTS which requests reach the backend; it never rewrites.
+const COMPOSE = `// backend.ts - compose domains with .merge(). Each group owns its FULL absolute paths.
+import { server } from "@nifrajs/core/server"
+
+const listings = server().get("/api/listings", (c) => {
+  // c.req.url is the ORIGINAL request URL - .merge() and the /api mount never strip the prefix.
+  const path = new URL(c.req.url).pathname // GET /api/listings  ->  "/api/listings"
+  return { path }
+})
+
+const agents = server().get("/api/agents", (c) => ({ ok: new URL(c.req.url).pathname }))
+
+// merge() folds both groups into ONE flat path space at their defined paths; a path+method clash
+// throws a RouteConfigError right here at merge time (fail-closed), never a silent shadow at runtime.
+export const backend = server().merge(listings).merge(agents)`
+
 export default function Backends() {
   return (
     <div className="prose">
@@ -122,6 +141,54 @@ export default function Backends() {
         the <code>/api/*</code> routes are served identically in development and production — there is
         nothing extra to wire for the dev loop.
       </blockquote>
+
+      <h2>Mounting, composition &amp; path semantics</h2>
+      <p>
+        A useful thing to know up front, because it is the opposite of some frameworks: in Nifra{" "}
+        <strong>composition and mounting are prefix-less, and paths stay absolute</strong>. There is no
+        per-mount base path, and nothing rewrites the request URL. Two mechanisms are involved and both
+        leave the path untouched:
+      </p>
+      <ul>
+        <li>
+          <strong>
+            <code>.merge()</code> (and contract-first <code>implement()</code>)
+          </strong>{" "}
+          - the composition escape hatch for large apps. <code>merge()</code> folds another server's
+          routes into this one <em>at the exact paths they were defined</em>, into a single shared path
+          space. It takes no prefix argument; a path+method collision throws a{" "}
+          <code>RouteConfigError</code> at merge time (fail-closed), so groups never silently shadow
+          each other. Each domain therefore owns its full absolute paths (<code>/api/listings</code>,{" "}
+          <code>/api/agents</code>), exactly as it would standalone.
+        </li>
+        <li>
+          <strong>the <code>/api/*</code> auto-mount</strong> - a path <em>guard</em>, not a rewrite.{" "}
+          <code>createWebApp</code> hands the <em>same</em> <code>Request</code> (its URL and body
+          intact) to the backend when the pathname is exactly <code>apiPrefix</code> or under{" "}
+          <code>apiPrefix + "/"</code>. The backend's own router then matches on{" "}
+          <code>new URL(c.req.url).pathname</code> - the full, original path.
+        </li>
+      </ul>
+      <p>
+        The consequence for a handler: <strong>
+          <code>c.req.url</code> always carries the full, original path
+        </strong>{" "}
+        - the same URL the caller sent. The <code>/api</code> prefix is <em>not</em> stripped before a
+        merged or mounted route sees it, and there is no <code>pathOf</code>-style helper that strips
+        it. Whether a route was defined inline, merged in from a group, or reached through the HTTP
+        mount, the pathname it observes is the request's own.
+      </p>
+      <CodeBlock code={COMPOSE} />
+      <p>
+        <strong>The one gotcha:</strong> because nothing strips the prefix, a backend that will be
+        mounted (or merged) under <code>/api</code> must <strong>declare its routes at the full path</strong>{" "}
+        - <code>server().post("/api/sync", …)</code>, <em>not</em> <code>.post("/sync", …)</code> in the
+        hope that <code>/api</code> gets peeled off. Define <code>/sync</code> and a browser{" "}
+        <code>POST /api/sync</code> returns the backend's 404: the router looks up{" "}
+        <code>/api/sync</code> and finds only <code>/sync</code>. <code>apiPrefix</code> chooses{" "}
+        <em>which</em> requests are handed to the backend; it does not rewrite them, so the route paths
+        and the caller's paths are one and the same.
+      </p>
 
       <h2>Calling /api/* from the browser</h2>
       <p>

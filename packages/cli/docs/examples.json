@@ -24,6 +24,12 @@
     "code": "// A browser island / client component hits the mounted HTTP routes with the typed client.\nimport { client } from \"@nifrajs/client\"\nimport type { backend } from \"./backend\"\n\nconst api = client<typeof backend>(\"\") // same-origin: /api/sync is served by createWebApp's mount\nexport async function runSync(cursor: string) {\n  const { data, error } = await api.api.sync.post({ cursor })\n  return error ? { applied: 0 } : data\n}"
   },
   {
+    "name": "COMPOSE",
+    "topic": "Nifra — Backends & API (dev and prod)",
+    "slug": "backends",
+    "code": "// backend.ts - compose domains with .merge(). Each group owns its FULL absolute paths.\nimport { server } from \"@nifrajs/core/server\"\n\nconst listings = server().get(\"/api/listings\", (c) => {\n  // c.req.url is the ORIGINAL request URL - .merge() and the /api mount never strip the prefix.\n  const path = new URL(c.req.url).pathname // GET /api/listings  ->  \"/api/listings\"\n  return { path }\n})\n\nconst agents = server().get(\"/api/agents\", (c) => ({ ok: new URL(c.req.url).pathname }))\n\n// merge() folds both groups into ONE flat path space at their defined paths; a path+method clash\n// throws a RouteConfigError right here at merge time (fail-closed), never a silent shadow at runtime.\nexport const backend = server().merge(listings).merge(agents)"
+  },
+  {
     "name": "LOADER",
     "topic": "Nifra — Backends & API (dev and prod)",
     "slug": "backends",
@@ -76,6 +82,12 @@
     "topic": "Nifra — Framework contract",
     "slug": "contract",
     "code": "// process.env in the CLIENT bundle is compiled at build time:\n//   process.env             → ({})          (a bare read won't crash hydration)\n//   process.env.NODE_ENV    → \"production\"  (the build mode — frameworks' prod/dev branch)\n//   process.env.SECRET_KEY  → undefined     (unprefixed → never exposed; no secret leak)\n//   process.env.PUBLIC_API_URL → \"https://api.example.com\"  (PUBLIC_-prefixed → baked in by value)\n//\n// So to ship a value to the browser, give it a PUBLIC_ prefix in the BUILD environment:\n//   PUBLIC_API_URL=https://api.example.com  bun run build\n// then read process.env.PUBLIC_API_URL in app code — it becomes a string literal after the build.\nimport { buildClient } from \"@nifrajs/web/build\"\n\n// Override the prefix (or disable auto-exposure) via buildClient:\nawait buildClient({\n  routesDir: \"./routes\",\n  outDir: \"./dist\",\n  clientModule: \"@nifrajs/web-react/client\",\n  publicEnvPrefix: \"NIFRA_PUBLIC_\", // default \"PUBLIC_\"; \"\" disables auto-exposure entirely\n})"
+  },
+  {
+    "name": "REUSABLE_ROUTER",
+    "topic": "Nifra — Framework contract",
+    "slug": "contract",
+    "code": "// A PUBLISHABLE router - contract-first, so its types survive `.d.ts` emit for consumers.\nimport { client } from \"@nifrajs/client\"\nimport { defineContract, implement } from \"@nifrajs/core/contract\"\nimport { server } from \"@nifrajs/core/server\"\nimport { t } from \"@nifrajs/schema\"\n\n// --- in the package (say @your-org/billing) ---\n// 1. The CONTRACT is ONE plain declared object - methods, paths, schemas, no handlers.\n//    Export it: it is the single type the package publishes, and a consumer's typed client is\n//    built from THIS value (not from `typeof app`), so no internal server type crosses the seam.\nexport const billingContract = defineContract({\n  getPlan:   { method: \"GET\",  path: \"/billing/plan\" },\n  subscribe: { method: \"POST\", path: \"/billing/subscribe\", body: t.object({ plan: t.string() }) },\n})\n\n// 2. A FACTORY closes over the host's dependencies and returns a real, mountable router.\n//    `implement` binds handlers to the contract; each handler's context is typed from the contract\n//    alone (`c.body` is { plan: string } below) - no per-route `AddRoute` inference accreting.\nexport interface BillingDeps {\n  charge(plan: string): Promise<{ id: string }>\n}\nexport function createBillingRouter(deps: BillingDeps) {\n  return implement(billingContract, {\n    getPlan:   () => ({ plan: \"pro\" }),\n    subscribe: (c) => deps.charge(c.body.plan),\n  })\n}\n\n// --- in the consuming app ---\n// 3. Mount the router with ONE `.merge()` - no per-route `.get()/.post()` chain to re-infer.\nconst app = server().merge(createBillingRouter({ charge: async (plan) => ({ id: plan }) }))\n\n// 4. Build the client from the EXPORTED contract value - decoupled, no `typeof app` import needed.\nconst api = client(billingContract, \"https://api.example.com\")\nconst { data } = await api.billing.plan.get()          // GET  /billing/plan\nawait api.billing.subscribe.post({ plan: \"pro\" })      // POST /billing/subscribe, body typed"
   },
   {
     "name": "SEO_EXAMPLE",
@@ -274,6 +286,18 @@
     "topic": "Nifra — Contract-derived adversarial testing",
     "slug": "testing",
     "code": "import { assertAdversarialContract } from \"@nifrajs/testing\"\nimport { app } from \"../src/app\"\n\nconst { test } = await import(\"bun:test\")\n\ntest(\"the API contract withstands hostile inputs\", async () => {\n  await assertAdversarialContract(app, { seed: 73 })\n})"
+  },
+  {
+    "name": "CONTRACT_FIRST",
+    "topic": "Nifra — Troubleshooting",
+    "slug": "troubleshooting",
+    "code": "import { defineContract, implement } from \"@nifrajs/core/contract\"\n\n// One object type, declared upfront - NOT an N-deep stack of `Server<AddRoute<…>>` aliases.\nconst contract = defineContract({\n  getUser:    { method: \"GET\",  path: \"/users/:id\" },\n  listUsers:  { method: \"GET\",  path: \"/users\" },\n  createUser: { method: \"POST\", path: \"/users\" },\n  // ...hundreds more operations stay flat: the registry is one type, not a growing chain.\n})\n\nexport const app = implement(contract, {\n  getUser:    (c) => ({ id: c.params.id }),\n  listUsers:  () => ({ users: [] as string[] }),\n  createUser: () => ({ created: true }),\n})"
+  },
+  {
+    "name": "MERGE_SPLIT",
+    "topic": "Nifra — Troubleshooting",
+    "slug": "troubleshooting",
+    "code": "import { server } from \"@nifrajs/core\"\n\n// Each domain is its OWN short server() chain, kept well under the ~95-route ceiling.\nconst users = server()\n  .get(\"/users/:id\", (c) => ({ id: c.params.id }))\n  .post(\"/users\", () => ({ created: true }))\n\nconst orders = server()\n  .get(\"/orders/:id\", (c) => ({ id: c.params.id }))\n  .post(\"/orders\", () => ({ placed: true }))\n\n// merge() adds ONE R & R2 intersection per group - no per-call context recompute - so the whole\n// app stays inside tsc's budget no matter how many groups (or routes) you compose.\nexport const app = server()\n  .get(\"/health\", () => ({ ok: true }))\n  .merge(users)\n  .merge(orders)"
   },
   {
     "name": "SERVER_ONLY_MARKER",
