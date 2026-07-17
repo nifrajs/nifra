@@ -54,6 +54,8 @@
     "bench:core-import": "bun run bench/ops/core-import-cost.ts"
   },
   "overrides": {
+    "esbuild": "0.28.1",
+    "js-yaml": "3.15.0",
     "react": "19.2.7",
     "react-dom": "19.2.7"
   },
