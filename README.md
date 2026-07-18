@@ -109,6 +109,9 @@ nifra doctor           # undeclared imports + duplicate identity-sensitive insta
 nifra sync-manifest    # regenerate a web server-manifest.ts from routes/ without a full build
 ```
 
+Upgrading from 1.x? Run `nifra upgrade 2.0.0` as a dry-run, then follow the
+[Nifra 2.0 migration guide](https://nifra.dev/docs/migrate-2).
+
 ## Install
 
 ```sh

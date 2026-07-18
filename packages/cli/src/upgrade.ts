@@ -5,8 +5,10 @@
  *
  *   1. **pin sweep** — set every matching dependency to the target version across the workspace's
  *      package.json files, preserving the caret/tilde/exact style and skipping `workspace:`/`link:` specs.
- *   2. **import moves** — rewrite exact import specifiers to their updated module paths.
- *   3. **verify** — reuse the existing `nifra check` gate; no new verification surface.
+ *   2. **dependency moves** — replace removed packages with their supported successor without
+ *      reserializing package.json or leaving duplicate dependency keys.
+ *   3. **import moves** — rewrite exact import specifiers to their updated module paths.
+ *   4. **verify** — reuse the existing `nifra check` gate; no new verification surface.
  *
  * Dry-run by default (prints the plan, writes nothing); `--write` applies. Fail-closed on an unknown
  * target version or a missing package.json, and deterministic (same repo + target → same edits).
@@ -48,9 +50,20 @@ export interface ImportChange {
   readonly count: number
 }
 
+export interface DependencyMoveChange {
+  readonly file: string
+  readonly field: string
+  readonly from: string
+  readonly to: string
+  readonly fromVersion: string
+  readonly toVersion: string
+  readonly action: "renamed" | "removed"
+}
+
 export interface UpgradePlan {
   readonly version: string
   readonly pins: readonly PinChange[]
+  readonly dependencyMoves: readonly DependencyMoveChange[]
   readonly importMoves: readonly ImportChange[]
   readonly notes: readonly string[]
 }
@@ -103,7 +116,9 @@ export function pinSweepText(
     if (typeof deps !== "object" || deps === null) continue
     for (const [name, rawSpec] of Object.entries(deps as Record<string, unknown>)) {
       if (typeof rawSpec !== "string") continue
-      const rule = rules.find((r) => name.startsWith(r.match))
+      const rule = rules.find(
+        (r) => name === r.match || (r.match.endsWith("/") && name.startsWith(r.match)),
+      )
       if (!rule) continue
       const next = rewriteVersionSpec(rawSpec, rule.to)
       if (next === null) continue
@@ -114,6 +129,120 @@ export function pinSweepText(
         out = replaced
         changes.push({ field, name, from: rawSpec, to: next })
       }
+    }
+  }
+  return { text: out, changes }
+}
+
+function dependencyObjectRange(
+  text: string,
+  field: (typeof DEP_FIELDS)[number],
+): { start: number; end: number } | undefined {
+  const match = new RegExp(`"${field}"\\s*:\\s*\\{`).exec(text)
+  if (match === null) return undefined
+  const open = text.indexOf("{", match.index)
+  let depth = 0
+  let quoted = false
+  let escaped = false
+  for (let index = open; index < text.length; index++) {
+    const char = text[index]
+    if (quoted) {
+      if (escaped) escaped = false
+      else if (char === "\\") escaped = true
+      else if (char === '"') quoted = false
+      continue
+    }
+    if (char === '"') quoted = true
+    else if (char === "{") depth++
+    else if (char === "}" && --depth === 0) return { start: open + 1, end: index }
+  }
+  return undefined
+}
+
+function rewriteDependencyEntry(
+  text: string,
+  field: (typeof DEP_FIELDS)[number],
+  from: string,
+  fromVersion: string,
+  to: string | undefined,
+  toVersion: string | undefined,
+): string {
+  const range = dependencyObjectRange(text, field)
+  if (range === undefined) return text
+  const body = text.slice(range.start, range.end)
+  const key = escapeRegExp(from)
+  const version = escapeRegExp(fromVersion)
+  const entry = new RegExp(`"${key}"(\\s*:\\s*)"${version}"`)
+  const match = entry.exec(body)
+  if (match === null) return text
+
+  let nextBody: string
+  if (to !== undefined && toVersion !== undefined) {
+    nextBody =
+      body.slice(0, match.index) +
+      `"${to}"${match[1]}"${toVersion}"` +
+      body.slice(match.index + match[0].length)
+  } else {
+    let start = match.index
+    let end = match.index + match[0].length
+    let after = end
+    while (/\\s/.test(body[after] ?? "")) after++
+    if (body[after] === ",") {
+      end = after + 1
+    } else {
+      let before = start - 1
+      while (before >= 0 && /\\s/.test(body[before] ?? "")) before--
+      if (body[before] === ",") start = before
+    }
+    nextBody = body.slice(0, start) + body.slice(end)
+  }
+  return text.slice(0, range.start) + nextBody + text.slice(range.end)
+}
+
+/** Move removed package dependencies without reserializing or reordering package.json. */
+export function moveDependenciesText(
+  text: string,
+  moves: readonly { from: string; to: string; toVersion: string }[],
+): { text: string; changes: Array<Omit<DependencyMoveChange, "file">> } {
+  let out = text
+  const changes: Array<Omit<DependencyMoveChange, "file">> = []
+  for (const move of moves) {
+    let parsed: Record<string, unknown>
+    try {
+      parsed = JSON.parse(out) as Record<string, unknown>
+    } catch {
+      return { text, changes: [] }
+    }
+    for (const field of DEP_FIELDS) {
+      const deps = parsed[field]
+      if (typeof deps !== "object" || deps === null) continue
+      const dependencyMap = deps as Record<string, unknown>
+      if (!Object.hasOwn(dependencyMap, move.from)) continue
+      const fromVersion = dependencyMap[move.from]
+      if (typeof fromVersion !== "string") continue
+      const movedVersion = rewriteVersionSpec(fromVersion, move.toVersion) ?? fromVersion
+      // Dependency fields have different install semantics. A devDependency does not satisfy a runtime
+      // dependency, so only deduplicate the successor inside the same field.
+      const targetExists = Object.hasOwn(dependencyMap, move.to)
+      const action = targetExists ? "removed" : "renamed"
+      const next = rewriteDependencyEntry(
+        out,
+        field,
+        move.from,
+        fromVersion,
+        targetExists ? undefined : move.to,
+        targetExists ? undefined : movedVersion,
+      )
+      if (next === out) continue
+      out = next
+      changes.push({
+        field,
+        from: move.from,
+        to: move.to,
+        fromVersion,
+        toVersion: movedVersion,
+        action,
+      })
     }
   }
   return { text: out, changes }
@@ -162,16 +291,18 @@ function scan(cwd: string, pattern: string): string[] {
 /** Compute the plan (and, when `write`, apply it) for a target recipe against `cwd`. */
 export function computeUpgrade(cwd: string, recipe: UpgradeRecipe, write: boolean): UpgradePlan {
   const pins: PinChange[] = []
+  const dependencyMoves: DependencyMoveChange[] = []
   const importMoves: ImportChange[] = []
 
-  if (recipe.pins.length > 0) {
+  if ((recipe.dependencyMoves?.length ?? 0) > 0 || recipe.pins.length > 0) {
     for (const rel of scan(cwd, "**/package.json")) {
       const abs = join(cwd, rel)
-      const text = readFileSync(abs, "utf8")
-      const result = pinSweepText(text, recipe.pins)
-      if (result.changes.length === 0) continue
-      for (const change of result.changes) pins.push({ file: rel, ...change })
-      if (write) writeFileSync(abs, result.text)
+      const original = readFileSync(abs, "utf8")
+      const moved = moveDependenciesText(original, recipe.dependencyMoves ?? [])
+      for (const change of moved.changes) dependencyMoves.push({ file: rel, ...change })
+      const pinned = pinSweepText(moved.text, recipe.pins)
+      for (const change of pinned.changes) pins.push({ file: rel, ...change })
+      if (write && pinned.text !== original) writeFileSync(abs, pinned.text)
     }
   }
 
@@ -186,7 +317,13 @@ export function computeUpgrade(cwd: string, recipe: UpgradeRecipe, write: boolea
     }
   }
 
-  return { version: recipe.version, pins, importMoves, notes: recipe.notes ?? [] }
+  return {
+    version: recipe.version,
+    pins,
+    dependencyMoves,
+    importMoves,
+    notes: recipe.notes ?? [],
+  }
 }
 
 function renderPlan(plan: UpgradePlan, write: boolean): string {
@@ -194,9 +331,24 @@ function renderPlan(plan: UpgradePlan, write: boolean): string {
   const verb = write ? "Applied" : "Planned"
   lines.push(`nifra upgrade → ${plan.version}  (${write ? "write" : "dry-run"})`)
   lines.push("")
-  if (plan.pins.length === 0 && plan.importMoves.length === 0) {
+  if (
+    plan.pins.length === 0 &&
+    plan.dependencyMoves.length === 0 &&
+    plan.importMoves.length === 0
+  ) {
     lines.push("Already up to date — no changes.")
     return lines.join("\n")
+  }
+  if (plan.dependencyMoves.length > 0) {
+    lines.push(`${verb} ${plan.dependencyMoves.length} dependency move(s):`)
+    for (const move of plan.dependencyMoves) {
+      const detail =
+        move.action === "renamed"
+          ? `${move.from}@${move.fromVersion} → ${move.to}@${move.toVersion}`
+          : `removed ${move.from}@${move.fromVersion}; ${move.to} is already declared`
+      lines.push(`  ${move.file}  ${detail}`)
+    }
+    lines.push("")
   }
   if (plan.pins.length > 0) {
     lines.push(`${verb} ${plan.pins.length} dependency pin(s):`)

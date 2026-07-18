@@ -72,6 +72,17 @@ For hand-rolled own-API `fetch()` calls, `nifra check` stays conservative: simpl
 that match a statically visible Nifra route get an exact typed-client rewrite diff; dynamic URLs, custom
 headers, bodies, query strings, or ambiguous routes fall back to manual steps.
 
+When a library such as Better Auth intentionally owns a mounted prefix outside the Nifra contract,
+declare that prefix in `nifra.check.json` so its relative calls do not keep CI red:
+
+```json
+{ "externalMounts": ["/auth"] }
+```
+
+The match is segment-anchored (`/auth` never suppresses `/authors`) and traversal paths are rejected.
+The normalized prefixes are echoed in human, JSON, and MCP results so the lint bypass stays auditable.
+This suppresses only the typed-client diagnostic; it does not mount or authorize the external handler.
+
 ## For AI coding agents
 
 **`nifra context`** prints this project's actual surface — API routes (from `backend.routes()`), page

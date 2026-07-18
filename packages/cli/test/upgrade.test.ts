@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
-import type { UpgradeRecipe } from "../src/recipes/index.ts"
+import { getRecipe, listRecipeVersions, type UpgradeRecipe } from "../src/recipes/index.ts"
 import {
   applyImportMoves,
   computeUpgrade,
+  moveDependenciesText,
   pinSweepText,
   rewriteVersionSpec,
   runUpgrade,
@@ -21,6 +22,55 @@ const RECIPE: UpgradeRecipe = {
   pins: [{ match: "@nifrajs/", to: "1.8.0" }],
   importMoves: [{ from: "old-lib", to: "old-lib/nifra" }],
 }
+
+describe("published upgrade recipes", () => {
+  test("offers the 2.0.0 GA migration target", () => {
+    expect(listRecipeVersions()).toContain("2.0.0")
+  })
+
+  test("2.0 migrates the fixed group and removed budget package without touching lookalikes", async () => {
+    const root = join(FIXTURES, "v2-repo")
+    await mkdir(join(root, "src"), { recursive: true })
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify(
+        {
+          name: "app",
+          dependencies: {
+            "@nifrajs/budget": "^1.13.0",
+            "@nifrajs/core": "^1.13.0",
+            nifra: "~1.13.0",
+            "nifra-plugin": "^1.0.0",
+          },
+          devDependencies: { "create-nifra": "1.13.0" },
+        },
+        null,
+        2,
+      ),
+    )
+    await writeFile(
+      join(root, "src", "app.ts"),
+      'import { budget } from "@nifrajs/budget"\nexport { budget }',
+    )
+
+    const recipe = getRecipe("2.0.0")
+    expect(recipe).toBeDefined()
+    const dryRun = computeUpgrade(root, recipe as UpgradeRecipe, false)
+    expect(dryRun.dependencyMoves).toHaveLength(1)
+    expect(dryRun.pins.some((pin) => pin.name === "@nifrajs/budget")).toBe(false)
+    expect(await readFile(join(root, "package.json"), "utf8")).toContain("@nifrajs/budget")
+    const plan = computeUpgrade(root, recipe as UpgradeRecipe, true)
+    const manifest = JSON.parse(await readFile(join(root, "package.json"), "utf8"))
+
+    expect(manifest.dependencies["@nifrajs/core"]).toBe("^2.0.0")
+    expect(manifest.dependencies["@nifrajs/budget"]).toBeUndefined()
+    expect(manifest.dependencies.nifra).toBe("~2.0.0")
+    expect(manifest.devDependencies["create-nifra"]).toBe("2.0.0")
+    expect(manifest.dependencies["nifra-plugin"]).toBe("^1.0.0")
+    expect(await readFile(join(root, "src", "app.ts"), "utf8")).toContain('"@nifrajs/core/budget"')
+    expect(plan.importMoves).toHaveLength(1)
+  })
+})
 
 // ── rewriteVersionSpec (pure) ─────────────────────────────────────────────────
 
@@ -74,6 +124,38 @@ describe("pinSweepText", () => {
     const { text, changes } = pinSweepText("{ not json", RECIPE.pins)
     expect(changes).toHaveLength(0)
     expect(text).toBe("{ not json")
+  })
+})
+
+describe("moveDependenciesText", () => {
+  test("renames a removed dependency when its replacement is not already declared", () => {
+    const manifest = JSON.stringify({ dependencies: { "@nifrajs/budget": "~1.13.0" } }, null, 2)
+    const result = moveDependenciesText(manifest, [
+      { from: "@nifrajs/budget", to: "@nifrajs/core", toVersion: "2.0.0" },
+    ])
+    expect(result.text).toContain('"@nifrajs/core": "~2.0.0"')
+    expect(result.text).not.toContain("@nifrajs/budget")
+    expect(result.changes[0]?.action).toBe("renamed")
+  })
+
+  test("keeps a runtime replacement when core exists only as a dev dependency", () => {
+    const manifest = JSON.stringify(
+      {
+        dependencies: { "@nifrajs/budget": "^1.13.0" },
+        devDependencies: { "@nifrajs/core": "^1.13.0" },
+      },
+      null,
+      2,
+    )
+    const result = moveDependenciesText(manifest, [
+      { from: "@nifrajs/budget", to: "@nifrajs/core", toVersion: "2.0.0" },
+    ])
+    const moved = JSON.parse(result.text)
+
+    expect(moved.dependencies["@nifrajs/core"]).toBe("^2.0.0")
+    expect(moved.dependencies["@nifrajs/budget"]).toBeUndefined()
+    expect(moved.devDependencies["@nifrajs/core"]).toBe("^1.13.0")
+    expect(result.changes[0]?.action).toBe("renamed")
   })
 })
 

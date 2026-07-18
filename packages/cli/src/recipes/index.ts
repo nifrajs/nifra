@@ -5,6 +5,7 @@
  */
 
 import { recipe as v1_8_0 } from "./1.8.0.ts"
+import { recipe as v2_0_0 } from "./2.0.0.ts"
 
 /** A pin rule: every dependency whose name starts with `match` is set to version `to`. */
 export interface PinRule {
@@ -12,6 +13,13 @@ export interface PinRule {
   readonly match: string
   /** Bare target version, e.g. `1.8.0`. The range operator (`^`/`~`/exact) is preserved per-spec. */
   readonly to: string
+}
+
+/** Move a removed package dependency to its replacement, preserving the consumer's range style. */
+export interface DependencyMove {
+  readonly from: string
+  readonly to: string
+  readonly toVersion: string
 }
 
 /** An exact import-specifier rewrite (string-level, not AST): `from` → `to`. */
@@ -23,6 +31,7 @@ export interface ImportMove {
 export interface UpgradeRecipe {
   readonly version: string
   readonly pins: readonly PinRule[]
+  readonly dependencyMoves?: readonly DependencyMove[]
   readonly importMoves: readonly ImportMove[]
   /** Human notes printed after the plan — e.g. structural changes the runner deliberately can't do. */
   readonly notes?: readonly string[]
@@ -30,6 +39,7 @@ export interface UpgradeRecipe {
 
 const RECIPES: Record<string, UpgradeRecipe> = {
   [v1_8_0.version]: v1_8_0,
+  [v2_0_0.version]: v2_0_0,
 }
 
 export function getRecipe(version: string): UpgradeRecipe | undefined {

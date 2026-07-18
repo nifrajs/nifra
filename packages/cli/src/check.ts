@@ -340,7 +340,12 @@ function matchesExternalMount(content: string, start: number, mounts: readonly s
   // A `..` segment means the runtime path escapes the literal prefix (`/auth/../api/admin` resolves to
   // `/api/admin`), so it must NOT be blessed by an `/auth` mount - never let traversal hide a real own-API
   // fetch. Match is otherwise segment-anchored (`/auth` blesses `/auth` and `/auth/**`, never `/authors`).
-  if (path.split("/").includes("..")) return false
+  try {
+    if (path.split("/").some((segment) => decodeURIComponent(segment) === "..")) return false
+  } catch {
+    // A malformed escape is not a prefix we can prove stays inside the external mount.
+    return false
+  }
   return mounts.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))
 }
 

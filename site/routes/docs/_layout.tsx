@@ -66,6 +66,7 @@ const GROUPS: ReadonlyArray<{ title: string; links: ReadonlyArray<{ href: string
   {
     title: "Migrate",
     links: [
+      { href: "/docs/migrate-2", label: "Upgrade from Nifra 1.x" },
       { href: "/docs/migrate-frontend", label: "From Next, Nuxt, SvelteKit" },
       { href: "/docs/migrate-backend", label: "From Express, Hono, Fastify" },
     ],

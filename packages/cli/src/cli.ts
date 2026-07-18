@@ -98,8 +98,8 @@ Usage:
                                          @nifrajs/core/React identity-sensitive dependencies;
                                          --auto-fix writes safe local-version dependency fixes.
   nifra upgrade <version>                Run the per-release upgrade recipe for <version>: sweep every
-                [--write] [--no-verify]  matching dependency pin (preserving ^/~/exact) + apply exact
-                [--list] [--json]        import moves across the workspace, then verify with nifra check.
+                [--write] [--no-verify]  matching dependency pin (preserving ^/~/exact), move removed
+                [--list] [--json]        packages, apply exact imports, then verify with nifra check.
                                          Dry-run by default; --write applies then verifies (--no-verify
                                          to skip). --list shows available targets. Fail-closed on an
                                          unknown version. Deterministic + idempotent.

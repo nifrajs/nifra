@@ -106,6 +106,8 @@ describe("scanFetchText — own-API fetch detection", () => {
     expect(scanFetchText("a.ts", 'fetch("/authors")', mounts)).toHaveLength(1)
     // NOT blessed: a `..` traversal escapes the prefix at runtime (/auth/../api/admin -> /api/admin).
     expect(scanFetchText("a.ts", 'fetch("/auth/../api/admin")', mounts)).toHaveLength(1)
+    // URL parsing also normalizes percent-encoded dot segments; they must not bypass the same guard.
+    expect(scanFetchText("a.ts", 'fetch("/auth/%2e%2e/api/admin")', mounts)).toHaveLength(1)
     // An own-API fetch outside the allowlist is unaffected.
     expect(scanFetchText("a.ts", 'fetch("/users")', mounts)).toHaveLength(1)
   })
