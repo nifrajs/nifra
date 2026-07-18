@@ -1,5 +1,36 @@
 # @nifrajs/web-react
 
+## 2.0.0
+
+### Minor Changes
+
+- a7d34e5: Navigation loading UI for `@nifrajs/web-react/router`, plus a per-link pending signal.
+
+  nifra navigates imperatively - it fetches the next route's chunk and loader data while the current route stays on screen, then swaps - so a route transition is signalled by the router's `pending` flag, not a Suspense boundary.
+
+  - `useNavigation()` returns `{ pending, state: "idle" | "loading", location }` (Remix-shaped); `location` is the `pathname + search` being navigated to while pending. `usePending()` is the boolean form.
+  - `NavLink`'s render-prop `isPending` is now real: it is `true` while a navigation to that link's own target is in flight (matched like `isActive`), so a link can show its own spinner. Previously always `false`.
+  - The agnostic router now publishes `pendingPath` (the navigation target) on its state while `pending`, and `compose` threads `pending`/`pendingPath` into the router context. Both are `false`/absent on the server and the initial client render, so they are hydration-safe.
+
+### Patch Changes
+
+- Updated dependencies [a7b1d60]
+- Updated dependencies [eaac3d7]
+- Updated dependencies [ade0c7a]
+- Updated dependencies [82676e0]
+- Updated dependencies [1522d06]
+- Updated dependencies [d91a45b]
+- Updated dependencies [d91a45b]
+- Updated dependencies [e97a92f]
+- Updated dependencies [a7b1d60]
+- Updated dependencies [e8e49d1]
+- Updated dependencies [a7d34e5]
+- Updated dependencies [a7b1d60]
+  - @nifrajs/core@2.0.0
+  - @nifrajs/web@2.0.0
+  - @nifrajs/i18n@2.0.0
+  - @nifrajs/image@2.0.0
+
 ## 1.13.0
 
 ### Patch Changes

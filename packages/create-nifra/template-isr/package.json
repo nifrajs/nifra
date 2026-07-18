@@ -9,16 +9,16 @@
     "dev:bun": "bun run server.ts"
   },
   "dependencies": {
-    "@nifrajs/client": "^1.13.0",
-    "@nifrajs/core": "^1.13.0",
-    "@nifrajs/schema": "^1.13.0",
-    "@nifrajs/web": "^1.13.0",
-    "@nifrajs/web-react": "^1.13.0",
+    "@nifrajs/client": "^2.0.0",
+    "@nifrajs/core": "^2.0.0",
+    "@nifrajs/schema": "^2.0.0",
+    "@nifrajs/web": "^2.0.0",
+    "@nifrajs/web-react": "^2.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@nifrajs/cli": "^1.13.0",
+    "@nifrajs/cli": "^2.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "typescript": "^6.0.3"

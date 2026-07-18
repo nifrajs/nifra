@@ -1,5 +1,24 @@
 # @nifrajs/testing
 
+## 2.0.0
+
+### Patch Changes
+
+- b7017b9: Map `@nifrajs/testing/certification` in the workspace TypeScript paths, so the subpath resolves from
+  source like every other first-party entry instead of only through built declarations.
+- Updated dependencies [a7b1d60]
+- Updated dependencies [a7b1d60]
+- Updated dependencies [eaac3d7]
+- Updated dependencies [ade0c7a]
+- Updated dependencies [82676e0]
+- Updated dependencies [1522d06]
+- Updated dependencies [d91a45b]
+- Updated dependencies [a7b1d60]
+- Updated dependencies [a7b1d60]
+  - @nifrajs/core@2.0.0
+  - @nifrajs/client@2.0.0
+  - @nifrajs/mock@2.0.0
+
 ## 1.13.0
 
 ### Patch Changes

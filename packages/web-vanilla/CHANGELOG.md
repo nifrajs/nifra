@@ -1,5 +1,17 @@
 # @nifrajs/web-vanilla
 
+## 2.0.0
+
+### Patch Changes
+
+- Updated dependencies [ade0c7a]
+- Updated dependencies [d91a45b]
+- Updated dependencies [d91a45b]
+- Updated dependencies [e97a92f]
+- Updated dependencies [e8e49d1]
+- Updated dependencies [a7d34e5]
+  - @nifrajs/web@2.0.0
+
 ## 1.13.0
 
 ## 1.12.0

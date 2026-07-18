@@ -1,5 +1,38 @@
 # @nifrajs/mcp
 
+## 2.0.0
+
+### Major Changes
+
+- d91a45b: Remove Nifra's remaining deprecated and compatibility-only public surfaces for the 2.0 cutover.
+
+  - `@nifrajs/core` and `nifra` now expose only the lean HTTP server API at their package roots. Import
+    optional systems from their documented subpaths. The deprecated invariant runner and the
+    `@nifrajs/budget` compatibility package are removed; use `@nifrajs/testing` and
+    `@nifrajs/core/budget` respectively.
+  - Web redirects accept only an options object as their second argument, the prerender enumeration
+    wrapper is removed in favor of `enumerateStaticRoutes()`, and fragment navigation resolves IDs only.
+  - MCP Apps metadata uses only `_meta.ui.resourceUri`; the deprecated flat `ui/resourceUri` key is gone.
+  - Telemetry uses `ObservationAdapter` directly; the `AgentSpan`, `AgentSpanExporter`, and `SpanExporter`
+    aliases are removed.
+  - Invalid HTTP method overrides always fail closed with 400; the legacy ignore mode is removed.
+  - `nifra build` always emits a complete target deploy directory and defaults to Bun. The old
+    client-only build branch is removed; `nifra start` runs the generated Bun `server.js`.
+
+### Minor Changes
+
+- 202e758: Schema-typed MCP tools, and the default template demonstrates the contract.
+
+  - `defineMcpTool` accepts `input`: a Standard Schema (nifra's `t`, zod, valibot, arktype, …) that
+    validates every call's arguments before the handler runs and types the handler's `args`. Invalid
+    arguments return an in-band `isError` result naming each issue, so a calling agent can correct
+    and retry. Schemas that carry a JSON Schema (nifra's `t` does) become the advertised
+    `inputSchema` automatically; an explicit `inputSchema` still overrides. The raw
+    `inputSchema`-only form keeps working unchanged.
+  - The `api` template's app now ships a `t`-validated route (body + response schemas) and its tests
+    drive the app through `testClient` - the contract-first pitch is visible in the first file a new
+    user opens, not just the docs.
+
 ## 1.13.0
 
 ## 1.12.0
