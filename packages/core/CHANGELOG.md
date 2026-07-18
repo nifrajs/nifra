@@ -1,5 +1,109 @@
 # @nifrajs/core
 
+## 2.0.0
+
+### Major Changes
+
+- 82676e0: Optional server systems are now opt-in `.use()` plugins installed from dedicated subpaths - never server options, side-effect imports, or process-global registries.
+
+  - Enable request idempotency with `.use(idempotency())` from `@nifrajs/core/idempotency-plugin` - pass `{ store }` for a durable app-wide default. The `idempotencyStore` server option is removed.
+  - Enable the per-request effect ledger with `.use(effectLedger({ sink }))` from `@nifrajs/core/effect-ledger`. The `effectLedger` server option is removed.
+  - Enable MCP declarations (`.tool()`, `.resource()`, `.prompt()`) with `.use(mcp())` from `@nifrajs/core/mcp`. The package root does not activate them implicitly.
+  - Enable typed SSE routes (`.sse()`) with `.use(streaming())` from `@nifrajs/core/sse`.
+  - Enable WebSocket routes (`.ws()`) with `.use(websocket())` from `@nifrajs/core/ws`. The old `import "@nifrajs/core/ws"` side-effect no longer installs the runtime.
+  - A route that declares one of these without its plugin installed fails loudly at registration, so a gate can never be silently dropped by a forgotten plugin.
+
+  Each plugin installs its runtime on that server instance only - two servers in one process never share opt-in state. Merging a configured sub-app with `.use(subApp)` carries its installed runtimes across.
+
+  A `server()` that uses none of these pulls none of their code into its bundle, so the minimal server footprint is smaller.
+
+  Migration:
+
+  ```ts
+  // before
+  server({ idempotencyStore, effectLedger: { sink } });
+
+  // after
+  import { effectLedger } from "@nifrajs/core/effect-ledger";
+  import { idempotency } from "@nifrajs/core/idempotency-plugin";
+  import { mcp } from "@nifrajs/core/mcp";
+  import { streaming } from "@nifrajs/core/sse";
+
+  server()
+    .use(idempotency({ store: idempotencyStore }))
+    .use(effectLedger({ sink }))
+    .use(mcp()) // if the app declares tools/resources/prompts
+    .use(streaming()); // if the app declares .sse() routes
+
+  // WebSocket apps:
+  // before: import "@nifrajs/core/ws"; server().ws(...)
+  // after:  import { websocket } from "@nifrajs/core/ws"; server().use(websocket()).ws(...)
+  ```
+
+  Standalone callers of `app.resolveNode()` opt in with `.use(nodeDirect())` from `@nifrajs/core/node-direct`. The `@nifrajs/node` adapter installs it on `serve(app)` automatically, so normal Node deployments need no change and keep the direct JSON fast path.
+
+- a7b1d60: WebSocket routes are now enabled with `.use(websocket())` from `@nifrajs/core/ws`, matching every other opt-in system. The old `import "@nifrajs/core/ws"` side-effect no longer installs the runtime.
+
+  The runtime installs on that server instance only (no process-global), so `app.ws()` without the plugin fails loudly at registration. Adapters and `@nifrajs/workers` still import `attachWebSocket` / `TopicRegistry` from the same subpath.
+
+  ```ts
+  // before
+  import "@nifrajs/core/ws";
+  const app = server().ws("/chat", handler);
+
+  // after
+  import { websocket } from "@nifrajs/core/ws";
+  const app = server().use(websocket()).ws("/chat", handler);
+  ```
+
+### Minor Changes
+
+- a7b1d60: Add `c.clientIp` - the caller's IP, derived correctly and vendor-neutrally.
+
+  By default it is the raw socket peer the serving adapter observed (`listen()`, `@nifrajs/node`, `@nifrajs/deno` supply it; any caller can pass it via `app.fetch(req, { clientIp })`), the one address a client cannot forge - and never a forwarded header. Behind a reverse proxy or CDN, set the `clientIp` server option to derive the real caller from the forwarding chain as far as you trust it:
+
+  - `server({ clientIp: { trustedHops: n } })` reads `X-Forwarded-For` past `n` proxies you operate (a short header fails closed to `undefined`);
+  - `server({ clientIp: { header: "x-real-ip" } })` trusts one edge-set header's first value.
+
+  Declaring trust the app can't enforce would let clients forge their IP, so it stays unset by default. `c.clientIp` is safe to key rate limits and audit logs on, and is resolved once before handlers, `derive`, and hooks run.
+
+- eaac3d7: Route assurance reaches two places it couldn't before: in-handler guards and dynamic route families.
+
+  - **Inline `schema.assurance`.** A route (or contract op) can declare the enforcement evidence it carries adjacent to the handler - `{ assurance: [NIFRA_ASSURANCE.AUTHENTICATED] }` - and each id reflects as route-scoped `declared` evidence. A route whose guard runs inside the handler body (invisible to reflection) can now satisfy a policy `require:` clause without being rewritten into a `withRouteAssurance`-marked middleware. Invalid evidence ids fail closed at registration.
+  - **`flagClassifiedWithoutEvidence` policy option.** Opt-in. When set, a route matched by a pure-classification rule (no `require`, no `forbid`) that carries no evidence is reported as `classified-no-evidence` - making the "a classification-only policy silently degrades proof to a label" gap visible instead of green. Off by default (a genuinely public route legitimately carries no evidence).
+  - **`schema.family` dynamic route families.** A runtime-resolved template (`/api/:slug/:resource` over tenant-defined tables, a catch-all dispatcher) can be marked `{ family: true }`. It surfaces as `family` in reflection, so the assurance gate and tooling read the one templated route as a deliberate family whose evidence covers every runtime-resolved resource, rather than a single forgotten route. Purely declarative - it does not change dispatch.
+
+- ade0c7a: Add a curated `@nifrajs/core/server` entry for the common HTTP runtime and dedicated subpaths for
+  contracts, classification, cookies, logging, routing, Standard Schema, SEO, SSE, and webhooks. The
+  package root remains backwards compatible, while new scaffolds and first-party runtime packages avoid
+  eagerly parsing opt-in causality, invariant, manifest, reflection, capability, and assurance tooling.
+- 1522d06: Path params can now be validated + coerced at the boundary, and query scalars have a coercing constructor - closing the two input slots that lagged behind `body`.
+
+  - **`params` schema slot.** A route (or contract op) can declare `params: t.object({ id: t.string({ format: "uuid" }) })`; a malformed `:id` is now a `422` before the handler runs, exactly like `body`/`query`, instead of an in-handler hand-check. The validated value lands on `c.params` with the schema's output type (a `params` schema can also coerce - use `t.query({ id: t.integer() })` for a numeric path param, and `c.params.id` is a real `number`). Routes without a `params` schema are unchanged: `c.params` stays the path-inferred `Record<name, string>`. The `onValidationError` hook's `kind` gains `"params"`, and params validate first (before body/query). The client's param-call signature is unchanged - a URL segment is still passed as a string.
+  - **`t.query(shape)`.** The query-slot analogue of `t.object`, with string->scalar coercion on. Query values always arrive as strings (`?limit=20` -> `"20"`), so a plain `t.object({ limit: t.integer() })` in a `query` slot never validates; `t.query` makes `t.integer()`/`t.number()`/`t.boolean()` fields real numbers/booleans in `c.query`. Open by default (unknown fields such as tracking params are accepted); pass `{ additionalProperties: false }` to enforce a strict allowlist. `t.object` stays the body-slot constructor (a JSON body is already typed - no coercion).
+
+- a7b1d60: WebSocket routes join the end-to-end type chain, and client failures discriminate by status.
+
+  - `app.ws()` now enters the type-level registry (pseudo-method `"WS"`). The typed client grows a
+    `.ws()` handle per WS route: `send()` accepts the route's `messageSchema` input type, received
+    frames are typed from the new `sendSchema` option (an outbound, type-level contract), and both
+    fall back to `unknown` when undeclared. The handle queues sends until open, exposes
+    `messages()` (async iteration), `onMessage()`, `opened`, `close()`, and `raw`. Params, path
+    literals, and `client<App>` inference work exactly like HTTP routes. Calling `.ws()` on the
+    in-process client throws with an explanation (an in-process app has no socket to upgrade).
+  - The client's `Result` failure union is now DISCRIMINATED BY STATUS when a route declares an
+    `errors` record: `res.status === 404` narrows `res.data` to the declared 404 body. Undeclared
+    statuses (and `0` for transport errors) fall into a fallback arm whose `data` is `unknown`;
+    routes with no `errors` contract keep the single `unknown` failure arm. Contract operations'
+    non-2xx `responses` discriminate the same way. Breaking for type-level consumers only: code that
+    read the failure `data` after checking just `ok` must also narrow on `status` (the runtime shape
+    is unchanged).
+  - `testClient(app, { validateResponses: true })` asserts every JSON response against the route's
+    declared contract - `response` for 2xx, `errors[status]` for declared failures - and throws a
+    `ResponseContractViolation` on mismatch, so a handler whose real output drifts from its schema
+    fails the test instead of passing silently. Off by default; statuses with no declared schema,
+    non-JSON bodies, and 204/205/HEAD pass through unchecked.
+
 ## 1.13.0
 
 ### Minor Changes

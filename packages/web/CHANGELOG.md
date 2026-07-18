@@ -1,5 +1,65 @@
 # @nifrajs/web
 
+## 2.0.0
+
+### Major Changes
+
+- d91a45b: Remove Nifra's remaining deprecated and compatibility-only public surfaces for the 2.0 cutover.
+
+  - `@nifrajs/core` and `nifra` now expose only the lean HTTP server API at their package roots. Import
+    optional systems from their documented subpaths. The deprecated invariant runner and the
+    `@nifrajs/budget` compatibility package are removed; use `@nifrajs/testing` and
+    `@nifrajs/core/budget` respectively.
+  - Web redirects accept only an options object as their second argument, the prerender enumeration
+    wrapper is removed in favor of `enumerateStaticRoutes()`, and fragment navigation resolves IDs only.
+  - MCP Apps metadata uses only `_meta.ui.resourceUri`; the deprecated flat `ui/resourceUri` key is gone.
+  - Telemetry uses `ObservationAdapter` directly; the `AgentSpan`, `AgentSpanExporter`, and `SpanExporter`
+    aliases are removed.
+  - Invalid HTTP method overrides always fail closed with 400; the legacy ignore mode is removed.
+  - `nifra build` always emits a complete target deploy directory and defaults to Bun. The old
+    client-only build branch is removed; `nifra start` runs the generated Bun `server.js`.
+
+- d91a45b: The in-process backend mount is now exclusively the symbol-keyed `BackendMount` interface that `inProcessClient()` / `testClient()` implement.
+
+  `createWebApp({ api })` auto-mounts a backend only through that symbol seam - the platform-aware path that forwards `env` / `waitUntil`. The `.fetch(url, init)` mount convention is gone: an `api` that only exposes a callable `.fetch` is no longer auto-mounted. Backends passed as `inProcessClient(app)` / `testClient(app)` are unaffected, since they carry the symbol mount already.
+
+### Minor Changes
+
+- e97a92f: `nifra sync-manifest`, plus two toolchain guards that turn opaque failures into actionable ones.
+
+  - **`nifra sync-manifest`.** After adding/renaming/removing a page route, the committed `server-manifest.ts` drifts and `nifra check` flags it - and clearing that used to mean a full build (server + worker + migrate bundles). `nifra sync-manifest` re-scans `routes/` and rewrites just the manifest's route table in milliseconds, preserving the baked client-asset references. It does not rebuild the client bundle, so it prints a caveat: a brand-new hydrating route component still needs a full build for its client chunk. `@nifrajs/web/build` gains the pure `resyncServerManifestSource` (+ `parseManifestStyles` / `parseManifestRouteStyles`) it is built on.
+  - **`nifra dev` peer preflight.** Run under `bunx @nifrajs/cli dev` (an isolated install where the project's peers do not resolve), the Vite import failed with an opaque `ERR_MODULE_NOT_FOUND`. It now checks `vite` resolves from the project first and, if not, says to run the workspace-local `bun run dev`.
+  - **`nifra start` build-target guard.** Pointed at a Cloudflare Pages output (a `_worker.js` bundle, no `server.js`), `nifra start` now names the mismatch and the fix (`nifra build --target bun`, or serve with `wrangler pages`) instead of a bare "no server.js".
+
+- e8e49d1: Two new build plugins for the `Bun.build` production step, both opt-in and dependency-free until used.
+
+  - **`postcssBunPlugin` (`@nifrajs/web/plugins/postcss`)** - runs `*.css` / `*.pcss` / `*.postcss` through PostCSS, feeding the result into the existing stylesheet pipeline (and the CSS-modules scoped-class transform for `*.module.*`). This is the Tailwind v4 path: a `postcss.config.js` with `@tailwindcss/postcss` compiles `app.css` importing `tailwindcss` at build time with no framework-specific code. `postcss` (and `postcss-load-config`, when you don't pass `plugins` explicitly) are optional peers, loaded lazily and failing loud with an install hint. Mirrors the SCSS plugin: pass `"dom"` for the client bundle, preload `"ssr"` for the server.
+
+  - **`svgComponentBunPlugin` (`@nifrajs/web/plugins/svg`)** - import an SVG as a component, `import Icon from "./icon.svg?component"`, then `<Icon className="w-6 h-6" />` with props spread onto the root `<svg>` (the Vite `svgr` workflow). Emits an automatic-JSX-runtime component, so it works for React and Preact today; Solid/Svelte/Vue are out of this version. Optional `svgo` optimization. A plain `import "./icon.svg"` asset URL is untouched - only the `?component` marker is intercepted.
+
+- a7d34e5: Navigation loading UI for `@nifrajs/web-react/router`, plus a per-link pending signal.
+
+  nifra navigates imperatively - it fetches the next route's chunk and loader data while the current route stays on screen, then swaps - so a route transition is signalled by the router's `pending` flag, not a Suspense boundary.
+
+  - `useNavigation()` returns `{ pending, state: "idle" | "loading", location }` (Remix-shaped); `location` is the `pathname + search` being navigated to while pending. `usePending()` is the boolean form.
+  - `NavLink`'s render-prop `isPending` is now real: it is `true` while a navigation to that link's own target is in flight (matched like `isActive`), so a link can show its own spinner. Previously always `false`.
+  - The agnostic router now publishes `pendingPath` (the navigation target) on its state while `pending`, and `compose` threads `pending`/`pendingPath` into the router context. Both are `false`/absent on the server and the initial client render, so they are hydration-safe.
+
+### Patch Changes
+
+- ade0c7a: Add a curated `@nifrajs/core/server` entry for the common HTTP runtime and dedicated subpaths for
+  contracts, classification, cookies, logging, routing, Standard Schema, SEO, SSE, and webhooks. The
+  package root remains backwards compatible, while new scaffolds and first-party runtime packages avoid
+  eagerly parsing opt-in causality, invariant, manifest, reflection, capability, and assurance tooling.
+- Updated dependencies [a7b1d60]
+- Updated dependencies [eaac3d7]
+- Updated dependencies [ade0c7a]
+- Updated dependencies [82676e0]
+- Updated dependencies [1522d06]
+- Updated dependencies [a7b1d60]
+- Updated dependencies [a7b1d60]
+  - @nifrajs/core@2.0.0
+
 ## 1.13.0
 
 ### Minor Changes

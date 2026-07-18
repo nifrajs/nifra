@@ -1,5 +1,82 @@
 # @nifrajs/cli
 
+## 2.0.0
+
+### Major Changes
+
+- d91a45b: Remove Nifra's remaining deprecated and compatibility-only public surfaces for the 2.0 cutover.
+
+  - `@nifrajs/core` and `nifra` now expose only the lean HTTP server API at their package roots. Import
+    optional systems from their documented subpaths. The deprecated invariant runner and the
+    `@nifrajs/budget` compatibility package are removed; use `@nifrajs/testing` and
+    `@nifrajs/core/budget` respectively.
+  - Web redirects accept only an options object as their second argument, the prerender enumeration
+    wrapper is removed in favor of `enumerateStaticRoutes()`, and fragment navigation resolves IDs only.
+  - MCP Apps metadata uses only `_meta.ui.resourceUri`; the deprecated flat `ui/resourceUri` key is gone.
+  - Telemetry uses `ObservationAdapter` directly; the `AgentSpan`, `AgentSpanExporter`, and `SpanExporter`
+    aliases are removed.
+  - Invalid HTTP method overrides always fail closed with 400; the legacy ignore mode is removed.
+  - `nifra build` always emits a complete target deploy directory and defaults to Bun. The old
+    client-only build branch is removed; `nifra start` runs the generated Bun `server.js`.
+
+### Minor Changes
+
+- 6b0dbc3: Ship the executable 2.0 migration path and consolidated upgrade documentation.
+
+  - `nifra upgrade 2.0.0` updates the fixed Nifra package group while preserving range style, moves
+    the removed `@nifrajs/budget` dependency to `@nifrajs/core`, rewrites its source imports to
+    `@nifrajs/core/budget`, and prints the structural cutover notes it cannot safely infer.
+  - Pin rules now treat bare package names as exact matches, so upgrading `nifra` cannot rewrite an
+    unrelated dependency such as `nifra-plugin`.
+  - The 1.x → 2.0 guide covers opt-in runtime plugins, lean subpath imports, backend mounts, typed
+    client failures, web/protocol changes, release gates, and `nifra.check.json` external mounts for
+    Better Auth-style route owners.
+  - External-mount matching rejects percent-encoded parent traversal as well as literal `..`, so the
+    lint exception cannot hide a fetch that URL normalization moves outside its declared prefix.
+
+- 2324d38: `nifra check` can now reach green on an app that intentionally mounts a non-typed sub-app, and raw-Response routes have an explicit opt-out.
+
+  - **`nifra.check.json` external-mount allowlist.** A relative `fetch()` to a mounted handler that lives outside the typed contract (e.g. an auth plugin that owns `/auth/**`) was flagged as a hand-rolled own-API call - an error you could never clear. Declare those prefixes in `nifra.check.json` (`{ "externalMounts": ["/auth"] }`, segment-anchored: `/auth` blesses `/auth` and `/auth/**` but not `/authors`) and the typed-client scan skips them. The blessed prefixes are echoed on the result and printed in the report, so a suppressed mount stays auditable instead of silently hiding real drift. A malformed `nifra.check.json` is a non-fatal warning; the allowlist is simply ignored.
+  - **`// nifra-expect raw-response` pragma.** A route that deliberately returns a raw `Response` (a file or redirect) raised the `response-route` advisory with no way to mark it intentional. A pragma comment on the return line, or the line above, now silences it for that route.
+  - **Streaming guidance.** The `response-route` advisory now points streaming routes at the typed SSE route (`app.sse(...)`), which keeps typed events instead of collapsing the client to `data: never`.
+
+- 5917e68: Add the `nifra_levels` MCP tool, so an agent can read the verification ladder it was already able to
+  run from the CLI. It returns `{ achieved, levels[] }` across L0 typed contract, L1 route assurance,
+  L2 capability lockfile, L3 route trust manifest, and L4 contract invariants, with the reasons a level
+  does not hold. A project with no assurance config still answers, stopping at L0 rather than failing.
+- e97a92f: `nifra sync-manifest`, plus two toolchain guards that turn opaque failures into actionable ones.
+
+  - **`nifra sync-manifest`.** After adding/renaming/removing a page route, the committed `server-manifest.ts` drifts and `nifra check` flags it - and clearing that used to mean a full build (server + worker + migrate bundles). `nifra sync-manifest` re-scans `routes/` and rewrites just the manifest's route table in milliseconds, preserving the baked client-asset references. It does not rebuild the client bundle, so it prints a caveat: a brand-new hydrating route component still needs a full build for its client chunk. `@nifrajs/web/build` gains the pure `resyncServerManifestSource` (+ `parseManifestStyles` / `parseManifestRouteStyles`) it is built on.
+  - **`nifra dev` peer preflight.** Run under `bunx @nifrajs/cli dev` (an isolated install where the project's peers do not resolve), the Vite import failed with an opaque `ERR_MODULE_NOT_FOUND`. It now checks `vite` resolves from the project first and, if not, says to run the workspace-local `bun run dev`.
+  - **`nifra start` build-target guard.** Pointed at a Cloudflare Pages output (a `_worker.js` bundle, no `server.js`), `nifra start` now names the mismatch and the fix (`nifra build --target bun`, or serve with `wrangler pages`) instead of a bare "no server.js".
+
+### Patch Changes
+
+- 7791470: `nifra check` now prints a one-line tip when the project has no `.mcp.json`, pointing at `nifra init-agents` (which wires `.mcp.json` + `.cursor/mcp.json` + a CLAUDE.md preamble, no-clobber). The tip is non-fatal and only in the human report - the `--json` path is unchanged - so a coding agent discovers the MCP wiring instead of learning the framework from sibling-app source.
+- Updated dependencies [a7b1d60]
+- Updated dependencies [a7b1d60]
+- Updated dependencies [eaac3d7]
+- Updated dependencies [ade0c7a]
+- Updated dependencies [82676e0]
+- Updated dependencies [1522d06]
+- Updated dependencies [b7017b9]
+- Updated dependencies [d91a45b]
+- Updated dependencies [d91a45b]
+- Updated dependencies [e97a92f]
+- Updated dependencies [202e758]
+- Updated dependencies [a7b1d60]
+- Updated dependencies [e8e49d1]
+- Updated dependencies [a7d34e5]
+- Updated dependencies [a7b1d60]
+  - @nifrajs/core@2.0.0
+  - @nifrajs/client@2.0.0
+  - @nifrajs/schema@2.0.0
+  - @nifrajs/web@2.0.0
+  - create-nifra@2.0.0
+  - @nifrajs/testing@2.0.0
+  - @nifrajs/mcp@2.0.0
+  - @nifrajs/runner@2.0.0
+
 ## 1.13.0
 
 ### Patch Changes

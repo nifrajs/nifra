@@ -1,5 +1,35 @@
 # nifra
 
+## 2.0.0
+
+### Major Changes
+
+- d91a45b: Remove Nifra's remaining deprecated and compatibility-only public surfaces for the 2.0 cutover.
+
+  - `@nifrajs/core` and `nifra` now expose only the lean HTTP server API at their package roots. Import
+    optional systems from their documented subpaths. The deprecated invariant runner and the
+    `@nifrajs/budget` compatibility package are removed; use `@nifrajs/testing` and
+    `@nifrajs/core/budget` respectively.
+  - Web redirects accept only an options object as their second argument, the prerender enumeration
+    wrapper is removed in favor of `enumerateStaticRoutes()`, and fragment navigation resolves IDs only.
+  - MCP Apps metadata uses only `_meta.ui.resourceUri`; the deprecated flat `ui/resourceUri` key is gone.
+  - Telemetry uses `ObservationAdapter` directly; the `AgentSpan`, `AgentSpanExporter`, and `SpanExporter`
+    aliases are removed.
+  - Invalid HTTP method overrides always fail closed with 400; the legacy ignore mode is removed.
+  - `nifra build` always emits a complete target deploy directory and defaults to Bun. The old
+    client-only build branch is removed; `nifra start` runs the generated Bun `server.js`.
+
+### Patch Changes
+
+- Updated dependencies [a7b1d60]
+- Updated dependencies [eaac3d7]
+- Updated dependencies [ade0c7a]
+- Updated dependencies [82676e0]
+- Updated dependencies [1522d06]
+- Updated dependencies [a7b1d60]
+- Updated dependencies [a7b1d60]
+  - @nifrajs/core@2.0.0
+
 ## 1.13.0
 
 ### Patch Changes

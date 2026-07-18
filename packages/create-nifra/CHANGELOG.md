@@ -1,5 +1,28 @@
 # create-nifra
 
+## 2.0.0
+
+### Minor Changes
+
+- 202e758: Schema-typed MCP tools, and the default template demonstrates the contract.
+
+  - `defineMcpTool` accepts `input`: a Standard Schema (nifra's `t`, zod, valibot, arktype, …) that
+    validates every call's arguments before the handler runs and types the handler's `args`. Invalid
+    arguments return an in-band `isError` result naming each issue, so a calling agent can correct
+    and retry. Schemas that carry a JSON Schema (nifra's `t` does) become the advertised
+    `inputSchema` automatically; an explicit `inputSchema` still overrides. The raw
+    `inputSchema`-only form keeps working unchanged.
+  - The `api` template's app now ships a `t`-validated route (body + response schemas) and its tests
+    drive the app through `testClient` - the contract-first pitch is visible in the first file a new
+    user opens, not just the docs.
+
+### Patch Changes
+
+- ade0c7a: Add a curated `@nifrajs/core/server` entry for the common HTTP runtime and dedicated subpaths for
+  contracts, classification, cookies, logging, routing, Standard Schema, SEO, SSE, and webhooks. The
+  package root remains backwards compatible, while new scaffolds and first-party runtime packages avoid
+  eagerly parsing opt-in causality, invariant, manifest, reflection, capability, and assurance tooling.
+
 ## 1.13.0
 
 ## 1.12.0

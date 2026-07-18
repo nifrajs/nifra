@@ -1,5 +1,58 @@
 # @nifrajs/client
 
+## 2.0.0
+
+### Major Changes
+
+- d91a45b: The in-process backend mount is now exclusively the symbol-keyed `BackendMount` interface that `inProcessClient()` / `testClient()` implement.
+
+  `createWebApp({ api })` auto-mounts a backend only through that symbol seam - the platform-aware path that forwards `env` / `waitUntil`. The `.fetch(url, init)` mount convention is gone: an `api` that only exposes a callable `.fetch` is no longer auto-mounted. Backends passed as `inProcessClient(app)` / `testClient(app)` are unaffected, since they carry the symbol mount already.
+
+- a7b1d60: WebSocket routes join the end-to-end type chain, and client failures discriminate by status.
+
+  - `app.ws()` now enters the type-level registry (pseudo-method `"WS"`). The typed client grows a
+    `.ws()` handle per WS route: `send()` accepts the route's `messageSchema` input type, received
+    frames are typed from the new `sendSchema` option (an outbound, type-level contract), and both
+    fall back to `unknown` when undeclared. The handle queues sends until open, exposes
+    `messages()` (async iteration), `onMessage()`, `opened`, `close()`, and `raw`. Params, path
+    literals, and `client<App>` inference work exactly like HTTP routes. Calling `.ws()` on the
+    in-process client throws with an explanation (an in-process app has no socket to upgrade).
+  - The client's `Result` failure union is now DISCRIMINATED BY STATUS when a route declares an
+    `errors` record: `res.status === 404` narrows `res.data` to the declared 404 body. Undeclared
+    statuses (and `0` for transport errors) fall into a fallback arm whose `data` is `unknown`;
+    routes with no `errors` contract keep the single `unknown` failure arm. Contract operations'
+    non-2xx `responses` discriminate the same way. Breaking for type-level consumers only: code that
+    read the failure `data` after checking just `ok` must also narrow on `status` (the runtime shape
+    is unchanged).
+  - `testClient(app, { validateResponses: true })` asserts every JSON response against the route's
+    declared contract - `response` for 2xx, `errors[status]` for declared failures - and throws a
+    `ResponseContractViolation` on mismatch, so a handler whose real output drifts from its schema
+    fails the test instead of passing silently. Off by default; statuses with no declared schema,
+    non-JSON bodies, and 204/205/HEAD pass through unchecked.
+
+### Minor Changes
+
+- a7b1d60: The typed client gains request/response interceptors, a timeout, and a safe retry policy in `ClientOptions`.
+
+  - `onRequest` runs before each attempt and can return headers to merge - `await`ed, so async auth-token refresh works. `onResponse` observes the final response.
+  - `timeoutMs` aborts a slow call, surfacing as `{ ok: false, status: 0 }` with a `timeout` error (never a throw), combined with any per-call `signal`.
+  - `retry` enables automatic retries that are safe by construction: only idempotent methods (`GET/HEAD/OPTIONS/PUT/DELETE`) and only transient statuses (`502/503/504` by default) plus network errors are retried, with exponential backoff and jitter. A 4xx/429 and a non-idempotent method are never retried, so a retry can't duplicate a side effect. Off unless configured.
+
+### Patch Changes
+
+- ade0c7a: Add a curated `@nifrajs/core/server` entry for the common HTTP runtime and dedicated subpaths for
+  contracts, classification, cookies, logging, routing, Standard Schema, SEO, SSE, and webhooks. The
+  package root remains backwards compatible, while new scaffolds and first-party runtime packages avoid
+  eagerly parsing opt-in causality, invariant, manifest, reflection, capability, and assurance tooling.
+- Updated dependencies [a7b1d60]
+- Updated dependencies [eaac3d7]
+- Updated dependencies [ade0c7a]
+- Updated dependencies [82676e0]
+- Updated dependencies [1522d06]
+- Updated dependencies [a7b1d60]
+- Updated dependencies [a7b1d60]
+  - @nifrajs/core@2.0.0
+
 ## 1.13.0
 
 ### Minor Changes
