@@ -79,7 +79,7 @@ describe("wire codec: binary", () => {
     test(`${name} round-trips element-for-element`, () => {
       const out = rt(value)
       expect((out as object).constructor.name).toBe(name)
-      expect(Array.from(out as Iterable<unknown>)).toEqual(Array.from(value as Iterable<unknown>))
+      expect(Array.from(out as Iterable<unknown>)).toEqual(Array.from(value as unknown as Iterable<unknown>))
     })
   }
 
