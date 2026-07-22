@@ -37,6 +37,11 @@
       "types": "./dist/ws.d.ts",
       "default": "./dist/ws.js"
     },
+    "./wire": {
+      "bun": "./src/wire.ts",
+      "types": "./dist/wire.d.ts",
+      "default": "./dist/wire.js"
+    },
     "./reflection": {
       "bun": "./src/reflection.ts",
       "types": "./dist/reflection.d.ts",
