@@ -131,8 +131,8 @@ a handful, so start with those and reach for the rest when a concept actually co
   `.../router`, `.../cookies`, plus `@nifrajs/schema` (the `t` builder) and `@nifrajs/client` (the typed
   client). This is the 80% API.
 - **Advanced, opt in when you need it** - `.../assurance`, `.../capabilities`, `.../idempotency`,
-  `.../effect-ledger`, `.../causality`, `.../classification`, `.../manifest`, `.../reflection`, `.../diff`,
-  `.../mcp`, `.../sse`, `.../webhook`, `.../budget`, `.../seo`, `.../mount`. Each is a separate documented
+  `.../effect-ledger`, `.../durable-execution`, `.../causality`, `.../classification`, `.../manifest`,
+  `.../reflection`, `.../diff`, `.../mcp`, `.../sse`, `.../webhook`, `.../budget`, `.../seo`, `.../mount`. Each is a separate documented
   subpath, so you never pay (in bundle size or in concepts to learn) for one you don't import.
 
 ## Validate input with `t` (and get OpenAPI for free)
@@ -206,6 +206,15 @@ effect imports and declaration/evidence drift, while `nifra capabilities check` 
 deterministic `capabilities.lock.json`. `GET`/`HEAD` domain writes fail unconditionally; mutating effects
 must carry the request-idempotency or durable-command evidence required by their definition. Disabled
 apps retain the existing request hot path; enabled routes pay only when they call `useCapability`.
+For owned effects, prefer `executeCapability(c, id, metadata, run)`: it assigns an `effectId`, records
+intent plus exactly one automatic terminal outcome, forwards `c.signal`, and supports token-only async
+`aroundCapability()` admission policies with fail-closed denial, timeout, and abort behavior. The original
+synchronous beacon remains available for adapter hot paths.
+For long-running or crash-sensitive effects, `@nifrajs/core/durable-execution` adds a signed,
+single-use approval coordinator (tenant/principal/operation bound), a durable effect journal,
+reconciliation reports, and a typed saga engine with reverse compensation and persisted retry state.
+These require an explicitly durable store in production; the saga store owns encrypted business input
+and compensation arguments, while the sealed ledger and `@nifrajs/otel/effects` remain token-only.
 An approved provenance import is the explicit trust boundary: its provider internals are not scanned,
 while every unapproved local wrapper remains transitively scanned for raw-effect bypasses.
 

@@ -5,16 +5,46 @@
 
 import type { DataClassification } from "./classification.ts"
 import {
+  type EffectLifecycleObserver,
+  effectTraceParentOf,
+  emitEffectLifecycle,
+} from "./effect-lifecycle.ts"
+import {
+  type AroundCapabilityOptions,
   CAPABILITY_GUARD,
+  type CapabilityApprovalGate,
+  type CapabilityApprovalInput,
+  type CapabilityExecutionIdentity,
+  type CapabilityExecutionJournal,
   type CapabilityGuard,
+  type CapabilityInterceptor,
+  type CapabilityInterceptorEvent,
+  type CapabilityInterceptorNext,
   type CapabilityUseEvent,
+  type RegisteredCapabilityInterceptor,
   validCapabilityId,
 } from "./internal/capability-runtime.ts"
 import { NIFRA_ASSURANCE_IDS } from "./internal/route-assurance.ts"
-import { type EffectCost, type EffectPhase, effectLedgerOf } from "./ledger.ts"
+import {
+  type EffectCost,
+  type EffectPhase,
+  effectLedgerOf,
+  normalizeEffectMetadata,
+} from "./ledger.ts"
 import { reflectRoutes } from "./reflection.ts"
 
-export type { CapabilityUseEvent }
+export type {
+  AroundCapabilityOptions,
+  CapabilityApprovalGate,
+  CapabilityApprovalInput,
+  CapabilityExecutionIdentity,
+  CapabilityExecutionJournal,
+  CapabilityInterceptor,
+  CapabilityInterceptorEvent,
+  CapabilityInterceptorNext,
+  CapabilityUseEvent,
+  EffectLifecycleObserver,
+}
 
 export type CapabilityZone = "domain" | "operational"
 export type CapabilityAccess = "read" | "write"
@@ -409,6 +439,162 @@ export interface CapabilityOutcomeOptions extends UseCapabilityOptions {
   readonly error?: { readonly code: string }
 }
 
+/** Durable controls consumed by `executeCapability`; none of these fields enter the effect ledger. */
+export interface CapabilityExecutionOptions extends UseCapabilityOptions {
+  readonly approval?: CapabilityApprovalInput & { readonly gate: CapabilityApprovalGate }
+  readonly journal?: CapabilityExecutionJournal
+}
+
+/** Context passed to the owned effect callback. Use the signal for cancellation-aware I/O. */
+export interface CapabilityExecutionContext {
+  readonly effectId: string
+  readonly signal: AbortSignal
+}
+
+export type CapabilityExecutor<T> = (execution: CapabilityExecutionContext) => T | PromiseLike<T>
+
+/** A capability admission policy returned without calling `next()`. */
+export class CapabilityDeniedError extends Error {
+  constructor(
+    public readonly capability: string,
+    public readonly effectId: string,
+  ) {
+    super(`capability assurance: ${capability} was denied by an async interceptor`)
+    this.name = "CapabilityDeniedError"
+  }
+}
+
+/** A capability admission policy exceeded its configured bound. */
+export class CapabilityInterceptorTimeoutError extends Error {
+  constructor(
+    public readonly capability: string,
+    public readonly effectId: string,
+    public readonly timeoutMs: number,
+  ) {
+    super(`capability assurance: ${capability} admission timed out after ${timeoutMs}ms`)
+    this.name = "CapabilityInterceptorTimeoutError"
+  }
+}
+
+/** The request was cancelled while capability admission was pending. */
+export class CapabilityAdmissionAbortedError extends Error {
+  constructor(
+    public readonly capability: string,
+    public readonly effectId: string,
+  ) {
+    super(`capability assurance: ${capability} admission was aborted`)
+    this.name = "CapabilityAdmissionAbortedError"
+  }
+}
+
+/** An interceptor called its one-shot `next()` continuation more than once. */
+export class CapabilityInterceptorProtocolError extends Error {
+  constructor(
+    public readonly capability: string,
+    public readonly effectId: string,
+  ) {
+    super(`capability assurance: ${capability} interceptor called next() more than once`)
+    this.name = "CapabilityInterceptorProtocolError"
+  }
+}
+
+/** The effect may have committed, but its durable terminal transition could not be recorded. */
+export class CapabilityJournalTransitionError extends Error {
+  constructor(
+    public readonly capability: string,
+    public readonly effectId: string,
+    public readonly transition: "committed",
+  ) {
+    super(`capability assurance: ${capability} durable ${transition} transition failed`)
+    this.name = "CapabilityJournalTransitionError"
+  }
+}
+
+let unboundedCapabilitySignal: AbortSignal | undefined
+
+function signalFor(context: object): AbortSignal {
+  const signal = (context as { readonly signal?: AbortSignal }).signal
+  if (signal !== undefined) return signal
+  unboundedCapabilitySignal ??= new AbortController().signal
+  return unboundedCapabilitySignal
+}
+
+function admissionErrorCode(error: unknown): string {
+  if (error instanceof CapabilityDeniedError) return "admission_denied"
+  if (error instanceof CapabilityInterceptorTimeoutError) return "admission_timeout"
+  if (error instanceof CapabilityAdmissionAbortedError) return "admission_aborted"
+  if (error instanceof CapabilityInterceptorProtocolError) return "admission_protocol"
+  return "admission_failed"
+}
+
+async function withInterceptorBound(
+  registration: RegisteredCapabilityInterceptor,
+  parentSignal: AbortSignal,
+  capability: string,
+  effectId: string,
+  run: (signal: AbortSignal) => Promise<void>,
+): Promise<void> {
+  if (parentSignal.aborted) throw new CapabilityAdmissionAbortedError(capability, effectId)
+  const controller = new AbortController()
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  let rejectGate: ((error: Error) => void) | undefined
+  const gate = new Promise<never>((_resolve, reject) => {
+    rejectGate = reject
+  })
+  const abort = (): void => {
+    const error = new CapabilityAdmissionAbortedError(capability, effectId)
+    controller.abort(error)
+    rejectGate?.(error)
+  }
+  parentSignal.addEventListener("abort", abort, { once: true })
+  timeout = setTimeout(() => {
+    const error = new CapabilityInterceptorTimeoutError(
+      capability,
+      effectId,
+      registration.timeoutMs,
+    )
+    controller.abort(error)
+    rejectGate?.(error)
+  }, registration.timeoutMs)
+  try {
+    await Promise.race([run(controller.signal), gate])
+  } finally {
+    clearTimeout(timeout)
+    parentSignal.removeEventListener("abort", abort)
+  }
+}
+
+async function runCapabilityInterceptors(
+  registrations: readonly RegisteredCapabilityInterceptor[],
+  baseEvent: Omit<CapabilityInterceptorEvent, "signal">,
+  parentSignal: AbortSignal,
+  index = 0,
+): Promise<void> {
+  const registration = registrations[index]
+  if (registration === undefined) return
+  let nextPromise: Promise<void> | undefined
+  await withInterceptorBound(
+    registration,
+    parentSignal,
+    baseEvent.capability,
+    baseEvent.effectId,
+    async (signal) => {
+      const event = Object.freeze({ ...baseEvent, signal })
+      await registration.interceptor(event, () => {
+        if (nextPromise !== undefined) {
+          throw new CapabilityInterceptorProtocolError(baseEvent.capability, baseEvent.effectId)
+        }
+        nextPromise = runCapabilityInterceptors(registrations, baseEvent, signal, index + 1)
+        return nextPromise
+      })
+    },
+  )
+  if (nextPromise === undefined) {
+    throw new CapabilityDeniedError(baseEvent.capability, baseEvent.effectId)
+  }
+  await nextPromise
+}
+
 function guardFor(context: object, capability: string): CapabilityGuard {
   if (!validCapabilityId(capability)) {
     throw new Error(
@@ -444,6 +630,7 @@ export function useCapability(
   // Validate/append the intent before private admission hooks debit budgets. Overflow or malformed
   // evidence therefore cannot consume quota and then fail the request.
   ledger?.append({ capability, ...options, phase: "intent" })
+  guard.trackEffect?.(context, false)
   guard.onUse?.({ capability, method: guard.method, path: guard.path })
 }
 
@@ -453,10 +640,156 @@ export function recordCapabilityOutcome(
   capability: string,
   options: CapabilityOutcomeOptions,
 ): void {
-  guardFor(context, capability)
+  const guard = guardFor(context, capability)
   const ledger = effectLedgerOf(context)
-  if (ledger === undefined) return
-  ledger.append({ capability, ...options })
+  ledger?.append({ capability, ...options })
+  if (options.phase === "committed" || options.phase === "compensated") {
+    guard.trackEffect?.(context, true)
+  } else {
+    guard.trackEffect?.(context, false)
+  }
+}
+
+/**
+ * Execute one owned effect behind a fail-closed capability boundary. The boundary assigns a stable
+ * effect id, records intent before execution, and records exactly one terminal outcome automatically.
+ * The callback result and errors never enter the token-only ledger.
+ */
+export async function executeCapability<T>(
+  context: object,
+  capability: string,
+  options: CapabilityExecutionOptions,
+  executor: CapabilityExecutor<T>,
+): Promise<T> {
+  if (typeof executor !== "function") {
+    throw new TypeError("capability assurance: executeCapability executor must be a function")
+  }
+  const guard = guardFor(context, capability)
+  const ledger = effectLedgerOf(context)
+  const effectId = crypto.randomUUID()
+  const metadata = normalizeEffectMetadata(options)
+  const trace = effectTraceParentOf(context)
+  const observers = guard.observers
+  const admissionStartedAt = performance.now()
+  const identity = options.approval
+  emitEffectLifecycle(observers, {
+    effectId,
+    capability,
+    stage: "admission",
+    phase: "started",
+    ...metadata,
+    ...(trace === undefined ? {} : { trace }),
+  })
+  ledger?.append({ capability, effectId, ...metadata, phase: "intent" })
+  let admitted = false
+  let began = false
+  let executionStartedAt = 0
+  try {
+    await options.journal?.intent({
+      effectId,
+      capability,
+      ...(metadata.target === undefined ? {} : { target: metadata.target }),
+      ...(metadata.digest === undefined ? {} : { digest: metadata.digest }),
+      ...(identity === undefined
+        ? {}
+        : { identity: { tenantId: identity.tenantId, principalId: identity.principalId } }),
+    })
+    if (identity !== undefined) {
+      await identity.gate.authorize({
+        effectId,
+        capability,
+        ...(metadata.target === undefined ? {} : { target: metadata.target }),
+        ...(metadata.digest === undefined ? {} : { digest: metadata.digest }),
+        identity: { tenantId: identity.tenantId, principalId: identity.principalId },
+        ...(identity.resumeToken === undefined ? {} : { resumeToken: identity.resumeToken }),
+        signal: signalFor(context),
+      })
+    }
+    guard.onUse?.({ capability, method: guard.method, path: guard.path })
+    if (guard.interceptors.length > 0) {
+      await runCapabilityInterceptors(
+        guard.interceptors,
+        Object.freeze({
+          capability,
+          method: guard.method,
+          path: guard.path,
+          effectId,
+          ...metadata,
+        }),
+        signalFor(context),
+      )
+    }
+    admitted = true
+    emitEffectLifecycle(observers, {
+      effectId,
+      capability,
+      stage: "admission",
+      phase: "succeeded",
+      durationMs: Math.max(0, performance.now() - admissionStartedAt),
+      ...metadata,
+      ...(trace === undefined ? {} : { trace }),
+    })
+    executionStartedAt = performance.now()
+    emitEffectLifecycle(observers, {
+      effectId,
+      capability,
+      stage: "execution",
+      phase: "started",
+      ...metadata,
+      ...(trace === undefined ? {} : { trace }),
+    })
+    await options.journal?.executing(effectId)
+    began = true
+    guard.trackEffect?.(context, false)
+    const result = await executor(Object.freeze({ effectId, signal: signalFor(context) }))
+    try {
+      await options.journal?.committed(effectId)
+    } catch {
+      guard.trackEffect?.(context, false)
+      throw new CapabilityJournalTransitionError(capability, effectId, "committed")
+    }
+    guard.trackEffect?.(context, true)
+    ledger?.append({ capability, effectId, ...metadata, phase: "committed" })
+    emitEffectLifecycle(observers, {
+      effectId,
+      capability,
+      stage: "execution",
+      phase: "succeeded",
+      durationMs: Math.max(0, performance.now() - executionStartedAt),
+      ...metadata,
+      ...(trace === undefined ? {} : { trace }),
+    })
+    return result
+  } catch (error) {
+    const code = admitted ? "execution_failed" : admissionErrorCode(error)
+    if (began) guard.trackEffect?.(context, false)
+    try {
+      await options.journal?.failed(effectId, { began, errorCode: code })
+    } catch {
+      // The durable record deliberately remains admission/executing and reconciliation will surface it.
+    }
+    ledger?.append({
+      capability,
+      effectId,
+      ...metadata,
+      phase: "failed",
+      error: { code },
+    })
+    emitEffectLifecycle(observers, {
+      effectId,
+      capability,
+      stage: admitted ? "execution" : "admission",
+      phase: began ? "ambiguous" : "failed",
+      durationMs: Math.max(
+        0,
+        performance.now() - (admitted ? executionStartedAt : admissionStartedAt),
+      ),
+      errorCode: code,
+      ...metadata,
+      ...(trace === undefined ? {} : { trace }),
+    })
+    throw error
+  }
 }
 
 /**

@@ -1731,12 +1731,23 @@ treated as a substitute for static provenance.
 
 ```ts
 // doc-check: skip — combines route and assurance-config excerpts.
-// route: exact effect declaration + runtime beacon at the owned adapter seam
-import { useCapability } from "@nifrajs/core/capabilities"
+// route: exact effect declaration + correlated execution at the owned adapter seam
+import { executeCapability } from "@nifrajs/core/capabilities"
+
+app.aroundCapability(async (effect, next) => {
+  // Ask an entitlement service or short-lived approval gate using token-only metadata.
+  // effect.signal aborts on request cancellation or the interceptor timeout.
+  if (!policyAllows(effect.capability, effect.target)) return // deny fail-closed
+  await next()
+}, { timeoutMs: 5_000 })
 
 app.post("/orders", { capabilities: ["db.write"] }, async (c) => {
-  useCapability(c, "db.write") // undeclared use fails before the effect
-  return orders.write(c.body)
+  return executeCapability(
+    c,
+    "db.write",
+    { target: "repo:orders" },
+    ({ signal }) => orders.write(c.body, { signal }),
+  )
 })
 
 // in nifra.assurance.ts, alongside policy:
@@ -1765,6 +1776,51 @@ capabilities: {
 Domain writes on `GET`/`HEAD` are hard violations. Each write definition may
 require request idempotency or durable command/provider-key evidence. The lockfile contains only
 method, path, and capability tokens—no payloads or tenant data—and CI never rewrites it.
+
+### Durable approval, compensation, and reconciliation
+
+The durable execution subpath turns the capability boundary into a crash-visible workflow.
+Approval resumes are HMAC-signed, expire, bind to the tenant, principal, capability, target, and
+digest, and are consumed atomically once. The effect journal marks execution before the provider
+call, so a crash after an external commit remains `ambiguous` for reconciliation instead
+of being retried blindly. Typed sagas persist compensation arguments separately from the sealed
+token-only ledger and compensate committed steps in reverse order with retry/backoff state.
+
+```ts
+// doc-check: skip — durable store implementations are deployment-specific.
+import {
+  createApprovalCoordinator,
+  createDurableEffectJournal,
+  createSagaEngine,
+} from "@nifrajs/core/durable-execution"
+import { effectTracing } from "@nifrajs/otel/effects"
+
+const effects = effectTracing({ exporter })
+app.use(effects)
+
+const approval = createApprovalCoordinator({
+  store: durableApprovalStore, // must declare durability: "durable"
+  secret: approvalHmacKey,     // 32+ random bytes, stored separately
+})
+const journal = createDurableEffectJournal({ store: durableEffectStore })
+
+await executeCapability(c, "payments.charge", {
+  target: "provider:stripe",
+  digest,
+  journal,
+  approval: {
+    gate: approval,
+    tenantId: c.principal.tenantId,
+    principalId: c.principal.userId,
+    resumeToken,
+  },
+}, ({ effectId, signal }) => payments.charge(input, { idempotencyKey: effectId, signal }))
+
+const sagas = createSagaEngine({
+  store: durableSagaStore,
+  observer: effects.observer,
+})
+```
 
 ### Already built in
 
@@ -4605,6 +4661,140 @@ stylesheet can't redirect the download elsewhere — an SSRF gate), and caps eac
 Filenames are derived only from validated tokens plus a content hash, so there's no path
 traversal.
 
+## Nifra 2.0 migration guide — upgrade from 1.x
+
+> Upgrade a Nifra 1.x application to 2.0: automated package and import moves, opt-in runtime plugins, client and web changes, external auth mounts, and release verification.
+
+Nifra 2.0 removes the compatibility layer retained through 1.x and makes optional runtime
+systems explicit, instance-scoped plugins. The upgrade command handles deterministic package
+and import edits; this guide covers the structural changes it deliberately cannot guess.
+
+### 1. Run the executable upgrade
+
+```ts
+
+```
+
+The command updates existing `@nifrajs/*`, `nifra`, and
+`create-nifra` dependency ranges to `2.0.0` while preserving
+caret/tilde/exact style. It also replaces the removed `@nifrajs/budget` dependency
+with `@nifrajs/core` and moves its imports to
+`@nifrajs/core/budget`. Dry-run is the default; `--write` applies and
+verifies with `nifra check`.
+
+### 2. Install optional server systems explicitly
+
+Idempotency, the effect ledger, MCP declarations, SSE, WebSockets, and Node-direct resolution
+are no longer enabled by server options, side-effect imports, or process-global state. Install
+only the systems an app uses with `.use()`; registration fails loudly if a required
+plugin is missing.
+
+```ts
+
+```
+
+The `@nifrajs/node` adapter installs `nodeDirect()` automatically.
+Only applications calling `app.resolveNode()` directly need to install it.
+
+### 3. Use the lean package entry points
+
+The `@nifrajs/core` and `nifra` roots now expose the lean HTTP server
+surface. Prefer `@nifrajs/core/server` for `server()`, and import
+contracts, assurance, capabilities, budgets, manifests, reflection, SSE, WebSockets, and
+other optional systems from their documented subpaths.
+
+```ts
+
+```
+
+Contract-generated adversarial testing lives in `@nifrajs/testing`; the deprecated
+core invariant runner is removed.
+
+### 4. Update full-stack backend mounts
+
+`createWebApp` now auto-mounts a backend only through the platform-aware,
+symbol-keyed `BackendMount` interface. The old duck-typed
+`api.fetch(url, init)` convention is removed. Normal applications should pass the
+result of `inProcessClient(backend)` or `testClient(backend)`; both
+already implement the interface and forward `env` and `waitUntil`.
+
+```ts
+
+```
+
+### 5. Declare external library mounts
+
+Better Auth and similar libraries can own routes such as `/auth/**` outside the
+Nifra typed contract. A relative fetch to that library is intentional, but otherwise resembles
+a hand-rolled own-API call. Declare only the exact mounted prefix in
+`nifra.check.json` so `nifra check` does not keep CI red:
+
+```ts
+
+```
+
+Prefixes are segment-anchored: `/auth` covers `/auth` and its children,
+never `/authors`. Traversal paths are not suppressed. The normalized allowlist is
+echoed in human, JSON, and MCP check results, so every bypass remains auditable. This option
+affects only the typed-client lint; it does not mount, authorize, or trust the library.
+
+### 6. Narrow typed-client failures by status
+
+Routes with declared error schemas now return a failure union discriminated by HTTP status.
+After checking `!result.ok`, also narrow `result.status` before reading
+typed failure data. Undeclared statuses and transport status `0` remain unknown.
+
+```ts
+
+```
+
+### 7. Apply the remaining web and protocol changes
+
+-
+Redirects accept an options object as their second argument.
+
+```ts
+
+```
+
+-
+Replace the removed prerender wrapper with `enumerateStaticRoutes()`.
+
+- Fragment navigation resolves element IDs only.
+
+-
+MCP Apps metadata uses only `_meta.ui.resourceUri`; remove the deprecated flat
+`ui/resourceUri` key.
+
+-
+Telemetry integrations use `ObservationAdapter`; the
+`AgentSpan`, `AgentSpanExporter`, and `SpanExporter` aliases
+are removed.
+
+- Invalid HTTP method overrides always fail closed with 400.
+
+-
+`nifra build` always emits a complete deploy directory and defaults to Bun;
+`nifra start` runs the generated `server.js`.
+
+### 8. Run the release gates
+
+-
+Run `nifra check --json` and fix every error.
+
+-
+If the project has `nifra.assurance.ts`, run `nifra assure --json`.
+
+-
+If capabilities are configured, review a new snapshot and run
+`nifra capabilities check --json`.
+
+- Run the application test suite and a production build.
+
+-
+Exercise authentication, redirects, backend mounting, SSE/WebSocket routes, and each deploy
+adapter the application uses.
+
 ## Nifra — Migrating from Express, Hono, Fastify & Elysia
 
 > Move a backend to Nifra: routing, middleware, validation, and body parsing map directly from Express, Hono, Fastify, and Elysia — and you gain a typed client, multi-runtime deploy, and optional SSR.
@@ -5132,6 +5322,32 @@ level that regressed comes back with the reason it broke.
 
 # Package reference (READMEs)
 
+## @nifrajs/agent-telemetry
+
+Child-span telemetry for AI tool calls made through Nifra tool and MCP endpoints.
+
+```sh
+bun add @nifrajs/agent-telemetry @nifrajs/otel
+```
+
+```ts
+import { agentTelemetry, consoleAgentExporter } from "@nifrajs/agent-telemetry"
+
+app.use(agentTelemetry({ exporter: consoleAgentExporter() }))
+```
+
+Requests under `/_nifra/tool/*` and requests to `/mcp` receive tool-name, input-size, output-size,
+duration, and status observations. When `@nifrajs/otel` owns the request observation, tool spans are
+attached as children; otherwise the plugin creates a standalone observation. Other routes pass through.
+
+## For AI agents
+
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
+
 ## @nifrajs/auth
 
 Session primitives for nifra — signed-cookie + server-store sessions, CSRF, and route guards. Bring your own identity (Better Auth / Lucia / OAuth); nifra owns the session.
@@ -5315,6 +5531,14 @@ the Cache API) via a `CacheStore` for anything that should survive across reques
 - `cache.wrap(key, loader, { ttlMs?, swrMs?, tags? })` · `get` · `has` · `set` · `delete` · `invalidateTag` · `clear`.
 - `MemoryCache({ maxEntries?, now? })` — the default store; implement `CacheStore` for your own.
 
+## For AI agents
+
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
+
 ## @nifrajs/cli
 
 The `nifra` CLI — zero-config dev/build/start for a nifra app, plus the agent surfaces (`nifra context`,
@@ -5388,6 +5612,17 @@ green check means the frontend and backend can't have silently diverged.
 For hand-rolled own-API `fetch()` calls, `nifra check` stays conservative: simple string-literal calls
 that match a statically visible Nifra route get an exact typed-client rewrite diff; dynamic URLs, custom
 headers, bodies, query strings, or ambiguous routes fall back to manual steps.
+
+When a library such as Better Auth intentionally owns a mounted prefix outside the Nifra contract,
+declare that prefix in `nifra.check.json` so its relative calls do not keep CI red:
+
+```json
+{ "externalMounts": ["/auth"] }
+```
+
+The match is segment-anchored (`/auth` never suppresses `/authors`) and traversal paths are rejected.
+The normalized prefixes are echoed in human, JSON, and MCP results so the lint bypass stays auditable.
+This suppresses only the typed-client diagnostic; it does not mount or authorize the external handler.
 
 ## For AI coding agents
 
@@ -5575,6 +5810,14 @@ import { defineAssurancePolicy } from "@nifrajs/core/assurance"
   IP-restriction, and security-header modules publish reflection-safe enforcement evidence.
   An ordered `AssurancePolicy` classifies every route and fails closed on missing or forbidden
   evidence without adding work to the request path.
+- **Owned effect execution.** `executeCapability()` correlates intent and terminal evidence with an
+  opaque `effectId`, records outcomes automatically, and forwards request cancellation. Add
+  order-scoped `aroundCapability()` policies for async approval/admission; they receive token-only
+  metadata, have bounded timeouts, and must call `next()` exactly once before the effect can run.
+- **Durable workflows (opt in).** `@nifrajs/core/durable-execution` provides tenant/principal-bound,
+  signed single-use approval resumes; a durable effect journal + reconciliation scanner; and a typed
+  saga state machine with reverse compensation, retry/backoff, and ambiguous-crash detection. Production
+  constructors reject stores that do not declare `durability: "durable"`.
 
 ```ts
 import { defineAssurancePolicy, evaluateRouteAssurance, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
@@ -5715,6 +5958,32 @@ one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
 done-gate, or `nifra mcp` to give the agent live project tools.
 
+## @nifrajs/devtools
+
+Interactive request-trace DevTools for `nifra dev`, with a secured SSE stream and browser overlay.
+
+```sh
+bun add -d @nifrajs/devtools
+```
+
+```ts
+import { devtools } from "@nifrajs/devtools"
+
+app.use(devtools())
+```
+
+The plugin is enabled by default only when `NODE_ENV=development`. It records a bounded event buffer
+and serves the overlay stream at `/_nifra/devtools`; remote hosts and cross-origin access stay denied
+unless explicitly allowed. Leave it unregistered in production for zero request-path overhead.
+
+## For AI agents
+
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
+
 ## @nifrajs/env
 
 Typed, validated environment variables. Define a schema once at startup; get a **frozen, typed**
@@ -5800,6 +6069,14 @@ and parsing reject mismatched nodes and unknown fields, so arbitrary payloads ca
 lineage metadata.
 
 See the [nifra docs](https://github.com/nifrajs/nifra#readme).
+
+## For AI agents
+
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/i18n
 
@@ -6008,6 +6285,78 @@ export default {
 - `queue.counts()` → `{ pending, active, dead }`. `queue.store` — the underlying store.
 - Stores: `MemoryJobStore`. Backoff: `exponentialBackoff`, `fixedBackoff`, `noBackoff`.
 
+## For AI agents
+
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
+
+## @nifrajs/mcp
+
+Build transport-agnostic MCP servers and interactive MCP Apps for Nifra applications.
+
+```sh
+bun add @nifrajs/mcp
+```
+
+```ts
+import { createMcpServer, defineMcpTool } from "@nifrajs/mcp"
+
+const tools = [
+  defineMcpTool({
+    name: "health",
+    description: "Report service health",
+    handler: () => ({ text: "ok" }),
+  }),
+]
+
+const mcp = createMcpServer({ name: "orders", version: "1.0.0", tools })
+```
+
+Mount `mcp.fetch` at `POST /mcp`. The package also exposes the JSON-RPC protocol and Streamable HTTP
+layers directly, plus `defineMcpWidget` and the React adapter for tool results that render UI in MCP
+hosts.
+
+## For AI agents
+
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
+
+## @nifrajs/mcp-db
+
+Expose an allowlisted SQLite schema as a fail-closed MCP server, with opt-in read-only queries.
+
+```sh
+bun add @nifrajs/mcp-db
+```
+
+```ts
+import { Database } from "bun:sqlite"
+import { serveDatabaseAsMcp } from "@nifrajs/mcp-db"
+
+const mcp = serveDatabaseAsMcp(new Database("app.db"), {
+  tables: ["habits", "entries"],
+})
+```
+
+Only `list_tables` and `describe_table` are exposed by default, restricted to the explicit table
+allowlist. `run_query` requires an authorization hook and is guarded by SQLite query-only mode,
+single-statement/read-only checks, query-plan verification, and bounded output. D1 is not supported
+because it cannot provide the same engine-level read-only guarantee.
+
+## For AI agents
+
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
+
 ## @nifrajs/middleware
 
 Composable, dependency-light middleware for [nifra](../../README.md) — CORS, security headers, body
@@ -6087,6 +6436,34 @@ const app = server({ requestTimeoutMs: 5_000 })
 ```
 
 `@nifrajs/core` is a peer dependency. ESM-only. MIT.
+
+## For AI agents
+
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
+
+## @nifrajs/mock
+
+Generate deterministic mock responses from a Nifra application's reflected response contracts.
+
+```sh
+bun add -d @nifrajs/mock
+```
+
+```ts
+import { createMockServer } from "@nifrajs/mock"
+import { app } from "./app"
+
+const mock = createMockServer(app, { seed: 42 })
+const response = await mock.fetch(new Request("http://local.test/users/1"))
+```
+
+The mock server matches reflected routes and synthesizes values from supported JSON Schema keywords.
+Unsupported or unsatisfiable schemas fail explicitly instead of returning known-invalid data. Use a
+fixed seed when responses must be replayable across local development and CI.
 
 ## For AI agents
 
@@ -6254,6 +6631,37 @@ SDK only in apps that need that exporter.
 
 For non-HTTP work, `createObservationLifecycle()` exposes the same state machine directly. Prefer
 it over hand-rolling traceparent parsing, clocks, error status, or completion guards.
+
+## For AI agents
+
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
+
+## @nifrajs/prompt
+
+Provider-neutral, type-safe prompts with Standard Schema input and validated structured output.
+
+```sh
+bun add @nifrajs/prompt
+```
+
+```ts
+import { prompt } from "@nifrajs/prompt"
+import { t } from "@nifrajs/schema"
+
+const extract = prompt("Extract the contact from the text.")
+  .input(t.object({ text: t.string() }))
+  .output(t.object({ name: t.string(), email: t.string({ format: "email" }) }))
+
+const contact = await extract.run({ text }, { complete: callYourProvider })
+```
+
+The package imports no vendor SDK. Supply a `complete` adapter for your provider; inputs are validated
+before the call and model output is parsed and validated before it reaches application code. An optional
+`heal` hook can repair and retry invalid structured output.
 
 ## For AI agents
 
@@ -6436,6 +6844,14 @@ import { assertSafeKey, StorageKeyError } from "@nifrajs/storage"
 - `assertStorageAdapterConformance({ createAdapter })` — dependency-free executable adapter contract.
 - Optional interfaces: `PagedStorageAdapter` · `PresignableStorageAdapter` · `MovableStorageAdapter`.
 
+## For AI agents
+
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
+
 ## @nifrajs/testing
 
 Contract-derived adversarial testing and stateful in-process helpers for Nifra apps.
@@ -6604,6 +7020,14 @@ that every call carries and captures cookies via a shared jar.
   Honours removal (`Max-Age=0` / past `Expires`); other cookie attributes are ignored (in-process, same-origin).
 
 For a **stateless** request (no cookies), use `testClient` from `@nifrajs/client` directly.
+
+## For AI agents
+
+Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+one cheap read instead of the whole corpus. For the wider framework: the repo's
+[`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
+[`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
+done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/uploads
 
@@ -7015,7 +7439,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/otel
 
-`ActiveObservation`, `AttributeValue`, `causalitySpanLink`, `combineObservationAdapters`, `consoleSpanExporter`, `createObservationLifecycle`, `EndObservation`, `formatTraceparent`, `generateSpanId`, `generateTraceId`, `NifraSpan`, `ObservationAdapter`, `ObservationClock`, `ObservationContext`, `ObservationLifecycle`, `ObservationLifecycleOptions`, `ObservationLink`, `ObservationParent`, `otlpExporter`, `OtlpExporter`, `OtlpExporterOptions`, `ParsedTraceparent`, `parseTraceparent`, `SpanStatus`, `StartObservation`, `TraceContext`, `traceHeaders`, `tracing`, `TracingOptions`
+`ActiveObservation`, `AttributeValue`, `causalitySpanLink`, `combineObservationAdapters`, `consoleSpanExporter`, `createObservationLifecycle`, `effectTracing`, `EffectTracingOptions`, `EffectTracingPlugin`, `EndObservation`, `formatTraceparent`, `generateSpanId`, `generateTraceId`, `NifraSpan`, `ObservationAdapter`, `ObservationClock`, `ObservationContext`, `ObservationLifecycle`, `ObservationLifecycleOptions`, `ObservationLink`, `ObservationParent`, `otlpExporter`, `OtlpExporter`, `OtlpExporterOptions`, `ParsedTraceparent`, `parseTraceparent`, `SpanStatus`, `StartObservation`, `TraceContext`, `traceHeaders`, `tracing`, `TracingOptions`
 
 ## @nifrajs/prompt
 

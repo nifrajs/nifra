@@ -29,6 +29,11 @@
       "bun": "./src/metrics.ts",
       "types": "./dist/metrics.d.ts",
       "default": "./dist/metrics.js"
+    },
+    "./effects": {
+      "bun": "./src/effects.ts",
+      "types": "./dist/effects.d.ts",
+      "default": "./dist/effects.js"
     }
   },
   "files": [

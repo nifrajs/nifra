@@ -10,7 +10,7 @@ Bun-native, contract-first HTTP framework — the router, server, and route desc
 
 ## Public entrypoints
 
-`@nifrajs/core` · `@nifrajs/core/assurance` · `@nifrajs/core/budget` · `@nifrajs/core/capabilities` · `@nifrajs/core/causality` · `@nifrajs/core/classification` · `@nifrajs/core/contract` · `@nifrajs/core/cookies` · `@nifrajs/core/diff` · `@nifrajs/core/effect-ledger` · `@nifrajs/core/idempotency` · `@nifrajs/core/idempotency-plugin` · `@nifrajs/core/ledger` · `@nifrajs/core/logger` · `@nifrajs/core/manifest` · `@nifrajs/core/mcp` · `@nifrajs/core/mount` · `@nifrajs/core/node-direct` · `@nifrajs/core/pattern` · `@nifrajs/core/reflection` · `@nifrajs/core/router` · `@nifrajs/core/schema` · `@nifrajs/core/seo` · `@nifrajs/core/server` · `@nifrajs/core/sse` · `@nifrajs/core/webhook` · `@nifrajs/core/ws`
+`@nifrajs/core` · `@nifrajs/core/assurance` · `@nifrajs/core/budget` · `@nifrajs/core/capabilities` · `@nifrajs/core/causality` · `@nifrajs/core/classification` · `@nifrajs/core/contract` · `@nifrajs/core/cookies` · `@nifrajs/core/diff` · `@nifrajs/core/durable-execution` · `@nifrajs/core/effect-ledger` · `@nifrajs/core/effect-lifecycle` · `@nifrajs/core/idempotency` · `@nifrajs/core/idempotency-plugin` · `@nifrajs/core/ledger` · `@nifrajs/core/logger` · `@nifrajs/core/manifest` · `@nifrajs/core/mcp` · `@nifrajs/core/mount` · `@nifrajs/core/node-direct` · `@nifrajs/core/pattern` · `@nifrajs/core/reflection` · `@nifrajs/core/router` · `@nifrajs/core/schema` · `@nifrajs/core/seo` · `@nifrajs/core/server` · `@nifrajs/core/sse` · `@nifrajs/core/webhook` · `@nifrajs/core/wire` · `@nifrajs/core/ws`
 
 ## Key exports
 
@@ -29,7 +29,7 @@ Bun-native, contract-first HTTP framework — the router, server, and route desc
 - **canAttempt** _(function)_ — `canAttempt: (budget: RequestBudget, estimatedAttemptMs: number, reserveMs?: number) => boolean` · from `@nifrajs/core/budget`
 - **canonicalizeIdempotencyBody** _(function)_ — `canonicalizeIdempotencyBody: (body: Uint8Array, contentType: string | null) => Uint8Array` · from `@nifrajs/core/idempotency`
 
-_…and 296 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
+_…and 373 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 
 ## Footguns
 

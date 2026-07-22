@@ -394,18 +394,45 @@ Every public export of every package and documented subpath — name, kind, sign
 
 ### `@nifrajs/core/capabilities`
 
+- **AroundCapabilityOptions** _(interface)_ — `interface AroundCapabilityOptions`
 - **AssuredCapabilityRoute** _(interface)_ — `interface AssuredCapabilityRoute`
 - **CapabilityAccess** _(type)_ — `type CapabilityAccess = "read" | "write"`
+- **CapabilityAdmissionAbortedError** _(class)_ — `class CapabilityAdmissionAbortedError`
+  The request was cancelled while capability admission was pending.
+- **CapabilityApprovalGate** _(interface)_ — `interface CapabilityApprovalGate`
+- **CapabilityApprovalInput** _(interface)_ — `interface CapabilityApprovalInput`
 - **CapabilityAssuranceReport** _(interface)_ — `interface CapabilityAssuranceReport`
 - **CapabilityDefinition** _(interface)_ — `interface CapabilityDefinition`
+- **CapabilityDeniedError** _(class)_ — `class CapabilityDeniedError`
+  A capability admission policy returned without calling `next()`.
 - **CapabilityEvidence** _(interface)_ — `interface CapabilityEvidence`
   Token-only effect evidence. `source` is an adapter/module id, never request or business data.
 - **CapabilityEvidenceKind** _(type)_ — `type CapabilityEvidenceKind = "static" | "runtime"`
 - **CapabilityEvidenceSet** _(interface)_ — `interface CapabilityEvidenceSet`
+- **CapabilityExecutionContext** _(interface)_ — `interface CapabilityExecutionContext`
+  Context passed to the owned effect callback. Use the signal for cancellation-aware I/O.
+- **CapabilityExecutionIdentity** _(interface)_ — `interface CapabilityExecutionIdentity`
+  Server-owned identity binding for durable admission. Values are opaque tokens, never payloads.
+- **CapabilityExecutionJournal** _(interface)_ — `interface CapabilityExecutionJournal`
+  Durable, token-only journal seam. Implementations must fail closed on transition failure.
+- **CapabilityExecutionOptions** _(interface)_ — `interface CapabilityExecutionOptions`
+  Durable controls consumed by `executeCapability`; none of these fields enter the effect ledger.
+- **CapabilityExecutor** _(type)_ — `type CapabilityExecutor<T> = (execution: CapabilityExecutionContext) => T | PromiseLike<T>`
 - **CapabilityFinding** _(interface)_ — `interface CapabilityFinding`
 - **CapabilityFindingCode** _(type)_ — `type CapabilityFindingCode = | "unknown-capability" | "provenance-uncovered" | "undeclared-capability-evidence" | "safe-method-domain-write" | "missing-request-idempotency" | "missing-durable-idempotency" | "forbidden-e…`
 - **CapabilityIdempotency** _(type)_ — `type CapabilityIdempotency = "none" | "request" | "durable"`
 - **CapabilityImportRule** _(interface)_ — `interface CapabilityImportRule`
+- **CapabilityInterceptor** _(type)_ — `type CapabilityInterceptor = ( event: CapabilityInterceptorEvent, next: CapabilityInterceptorNext, ) => void | PromiseLike<void>`
+- **CapabilityInterceptorEvent** _(interface)_ — `interface CapabilityInterceptorEvent`
+  Token-only metadata supplied to an asynchronous capability admission interceptor.
+- **CapabilityInterceptorNext** _(type)_ — `type CapabilityInterceptorNext = () => Promise<void>`
+  Continue to the next admission policy. The owned effect runs only after the full chain admits.
+- **CapabilityInterceptorProtocolError** _(class)_ — `class CapabilityInterceptorProtocolError`
+  An interceptor called its one-shot `next()` continuation more than once.
+- **CapabilityInterceptorTimeoutError** _(class)_ — `class CapabilityInterceptorTimeoutError`
+  A capability admission policy exceeded its configured bound.
+- **CapabilityJournalTransitionError** _(class)_ — `class CapabilityJournalTransitionError`
+  The effect may have committed, but its durable terminal transition could not be recorded.
 - **CapabilityOutcomeOptions** _(interface)_ — `interface CapabilityOutcomeOptions`
 - **CapabilityPolicy** _(interface)_ — `interface CapabilityPolicy`
 - **CapabilityProvenancePolicy** _(interface)_ — `interface CapabilityProvenancePolicy`
@@ -415,6 +442,8 @@ Every public export of every package and documented subpath — name, kind, sign
 - **CapabilitySnapshotRoute** _(interface)_ — `interface CapabilitySnapshotRoute`
 - **CapabilityUseEvent** _(interface)_ — `interface CapabilityUseEvent`
 - **CapabilityZone** _(type)_ — `type CapabilityZone = "domain" | "operational"`
+- **EffectLifecycleObserver** _(type)_ — `type EffectLifecycleObserver = (event: EffectLifecycleEvent) => void`
+  Observation is fail-open: a broken sink must never change effect behavior.
 - **ForbiddenCapabilityImport** _(interface)_ — `interface ForbiddenCapabilityImport`
 - **RouteCapabilityEvidence** _(interface)_ — `interface RouteCapabilityEvidence`
 - **UseCapabilityOptions** _(interface)_ — `interface UseCapabilityOptions`
@@ -425,6 +454,8 @@ Every public export of every package and documented subpath — name, kind, sign
   Validate and freeze a capability/provenance policy.
 - **evaluateCapabilityAssurance** _(function)_ — `evaluateCapabilityAssurance: (source: unknown, policyInput: CapabilityPolicy, evidenceSet: CapabilityEvidenceSet) => CapabilityAssuranceReport`
   Compare declared route capabilities against coverage-qualified static/runtime evidence.
+- **executeCapability** _(function)_ — `executeCapability: <T>(context: object, capability: string, options: CapabilityExecutionOptions, executor: CapabilityExecutor<T>) => Promise<T>`
+  Execute one owned effect behind a fail-closed capability boundary. The boundary assigns a stable effect id, records intent before execution, and records exactly one terminal outcome automatically. The callback result and errors never enter the token-only ledger.
 - **recordCapabilityOutcome** _(function)_ — `recordCapabilityOutcome: (context: object, capability: string, options: CapabilityOutcomeOptions) => void`
   Record the terminal outcome of an already-admitted capability without debiting admission twice.
 - **snapshotCapabilities** _(function)_ — `snapshotCapabilities: (report: CapabilityAssuranceReport) => CapabilitySnapshot`
@@ -553,12 +584,79 @@ Every public export of every package and documented subpath — name, kind, sign
 - **snapshotRoutes** _(function)_ — `snapshotRoutes: (source: unknown) => readonly RouteSnapshot[]`
   Snapshot an app's routes (anything `reflectRoutes` accepts) as plain JSON. Validators are dropped; only introspectable JSON Schema metadata is kept, so the result round-trips through `JSON.stringify` unchanged.
 
+### `@nifrajs/core/durable-execution`
+
+- **ApprovalBindingError** _(class)_ — `class ApprovalBindingError`
+- **ApprovalConsumeResult** _(type)_ — `type ApprovalConsumeResult = | { readonly state: "consumed" } | { readonly state: "missing" | "pending" | "denied" | "expired" | "replay" | "binding" | "token" }`
+- **ApprovalCoordinator** _(interface)_ — `interface ApprovalCoordinator`
+- **ApprovalCoordinatorOptions** _(interface)_ — `interface ApprovalCoordinatorOptions`
+- **ApprovalDeniedError** _(class)_ — `class ApprovalDeniedError`
+- **ApprovalPendingError** _(class)_ — `class ApprovalPendingError`
+- **ApprovalRecord** _(interface)_ — `interface ApprovalRecord`
+- **ApprovalRequiredError** _(class)_ — `class ApprovalRequiredError`
+- **ApprovalState** _(type)_ — `type ApprovalState = "pending" | "approved" | "denied" | "consumed" | "expired"`
+- **ApprovalStore** _(interface)_ — `interface ApprovalStore`
+- **ApprovalTokenExpiredError** _(class)_ — `class ApprovalTokenExpiredError`
+- **ApprovalTokenInvalidError** _(class)_ — `class ApprovalTokenInvalidError`
+- **ApprovalTokenReplayError** _(class)_ — `class ApprovalTokenReplayError`
+- **CapabilityApprovalGate** _(interface)_ — `interface CapabilityApprovalGate`
+- **CapabilityExecutionIdentity** _(interface)_ — `interface CapabilityExecutionIdentity`
+  Server-owned identity binding for durable admission. Values are opaque tokens, never payloads.
+- **CapabilityExecutionJournal** _(interface)_ — `interface CapabilityExecutionJournal`
+  Durable, token-only journal seam. Implementations must fail closed on transition failure.
+- **DurableEffectJournalOptions** _(interface)_ — `interface DurableEffectJournalOptions`
+- **DurableEffectRecord** _(interface)_ — `interface DurableEffectRecord`
+- **DurableEffectState** _(type)_ — `type DurableEffectState = "admission" | "executing" | "committed" | "failed" | "unknown"`
+- **DurableEffectStore** _(interface)_ — `interface DurableEffectStore`
+- **DurableEffectTransitionError** _(class)_ — `class DurableEffectTransitionError`
+- **EffectReconciliationFinding** _(interface)_ — `interface EffectReconciliationFinding`
+- **MemoryApprovalStore** _(class)_ — `class MemoryApprovalStore`
+- **MemoryDurableEffectStore** _(class)_ — `class MemoryDurableEffectStore`
+- **MemorySagaStore** _(class)_ — `class MemorySagaStore`
+- **SagaAmbiguousStepError** _(class)_ — `class SagaAmbiguousStepError`
+- **SagaCompensationContext** _(interface)_ — `interface SagaCompensationContext`
+- **SagaConcurrencyError** _(class)_ — `class SagaConcurrencyError`
+- **SagaDefinition** _(interface)_ — `interface SagaDefinition<I, C extends Record<string, unknown>>`
+- **SagaEngine** _(interface)_ — `interface SagaEngine`
+- **SagaEngineOptions** _(interface)_ — `interface SagaEngineOptions`
+- **SagaReconciliationFinding** _(interface)_ — `interface SagaReconciliationFinding`
+- **SagaRecord** _(interface)_ — `interface SagaRecord`
+- **SagaRunContext** _(interface)_ — `interface SagaRunContext<C extends Record<string, unknown>>`
+- **SagaState** _(type)_ — `type SagaState = "running" | "compensating" | "completed" | "compensated" | "manual-review"`
+- **SagaStepExecutionContext** _(interface)_ — `interface SagaStepExecutionContext`
+- **SagaStepNotCommittedError** _(class)_ — `class SagaStepNotCommittedError`
+  Throw this only when a provider conclusively proves that no effect committed.
+- **SagaStepRecord** _(interface)_ — `interface SagaStepRecord`
+- **SagaStepState** _(type)_ — `type SagaStepState = | "executing" | "committed" | "failed" | "ambiguous" | "compensating" | "compensation-failed" | "compensated"`
+- **SagaStore** _(interface)_ — `interface SagaStore`
+- **createApprovalCoordinator** _(function)_ — `createApprovalCoordinator: (options: ApprovalCoordinatorOptions) => ApprovalCoordinator`
+- **createDurableEffectJournal** _(function)_ — `createDurableEffectJournal: (options: DurableEffectJournalOptions) => CapabilityExecutionJournal`
+- **createSagaEngine** _(function)_ — `createSagaEngine: (options: SagaEngineOptions) => SagaEngine`
+- **defineSaga** _(function)_ — `defineSaga: <I, C extends Record<string, unknown>>(definition: SagaDefinition<I, C>) => SagaDefinition<I, C>`
+- **reconcileEffects** _(function)_ — `reconcileEffects: (store: DurableEffectStore, options: { readonly staleBefore: number; readonly observer?: EffectLifecycleObserver; }) => Promise<readonly EffectReconciliationFinding[]>`
+- **reconcileSagas** _(function)_ — `reconcileSagas: (store: SagaStore, options: { readonly staleBefore: number; }) => Promise<readonly SagaReconciliationFinding[]>`
+
 ### `@nifrajs/core/effect-ledger`
 
 - **EffectLedgerOptions** _(interface)_ — `interface EffectLedgerOptions`
   Server-level effect ledger configuration (see `server({ effectLedger })`).
 - **effectLedger** _(function)_ — `effectLedger: (options: EffectLedgerOptions) => IdentityPlugin`
   Enable the per-request effect ledger. Each route that declares `schema.capabilities` gets a bounded, token-only ledger; `useCapability(c, id, …)` appends one entry per effect, and the sink receives the sealed ledger when the response settles (only when it recorded entries). Token-only by constructi…
+
+### `@nifrajs/core/effect-lifecycle`
+
+- **EffectLifecycleEvent** _(interface)_ — `interface EffectLifecycleEvent`
+  Token-only lifecycle evidence. There is deliberately no payload, argument, result, error message, request, or context field, so observation adapters cannot accidentally export business data.
+- **EffectLifecycleObserver** _(type)_ — `type EffectLifecycleObserver = (event: EffectLifecycleEvent) => void`
+  Observation is fail-open: a broken sink must never change effect behavior.
+- **EffectLifecyclePhase** _(type)_ — `type EffectLifecyclePhase = "started" | "succeeded" | "failed" | "ambiguous"`
+- **EffectLifecycleStage** _(type)_ — `type EffectLifecycleStage = "admission" | "execution" | "compensation" | "reconciliation"`
+  A bounded, payload-free stage in an effect's lifecycle.
+- **EffectTraceParent** _(interface)_ — `interface EffectTraceParent`
+  Trace-parent tokens copied structurally from an installed tracing plugin.
+- **EmitEffectLifecycleInput** _(interface)_ — `interface EmitEffectLifecycleInput`
+- **effectTraceParentOf** _(function)_ — `effectTraceParentOf: (context: object) => EffectTraceParent | undefined`
+- **emitEffectLifecycle** _(function)_ — `emitEffectLifecycle: (observers: readonly EffectLifecycleObserver[], input: EmitEffectLifecycleInput) => void`
 
 ### `@nifrajs/core/idempotency`
 
@@ -625,6 +723,8 @@ Every public export of every package and documented subpath — name, kind, sign
   Thrown by `append` when the per-request entry bound is exceeded. Fails the request closed.
 - **EffectLedgerSealedError** _(class)_ — `class EffectLedgerSealedError`
   Thrown by `append` after `seal()` — e.g. an effect attempted while streaming a response body.
+- **EffectMetadata** _(interface)_ — `interface EffectMetadata`
+  Token-only caller metadata shared by an effect intent and outcome.
 - **EffectPhase** _(type)_ — `type EffectPhase = "intent" | "committed" | "failed" | "compensated"`
   Lifecycle phase of one effect. `intent` precedes execution; the rest describe its outcome.
 - **LedgerSink** _(type)_ — `type LedgerSink = (ledger: SealedEffectLedger) => void | Promise<void>`
@@ -649,6 +749,8 @@ Every public export of every package and documented subpath — name, kind, sign
   Create a bounded per-request ledger. The server wires one per capability-declaring route.
 - **effectLedgerOf** _(function)_ — `effectLedgerOf: (context: object) => RequestLedger | undefined`
   The request's effect ledger, when the server enabled one for this route. Read-only access.
+- **normalizeEffectMetadata** _(function)_ — `normalizeEffectMetadata: (input: EffectMetadata) => EffectMetadata`
+  Validate, copy, and freeze token-only effect metadata before it reaches a ledger or policy hook.
 - **randomEffectDigestKey** _(function)_ — `randomEffectDigestKey: () => Uint8Array`
   Fresh random digest key (32 bytes). Per-process by default — persist one externally to correlate across restarts.
 
@@ -954,6 +1056,23 @@ Every public export of every package and documented subpath — name, kind, sign
   Verified ⇒ the raw `payload` text (parse it with your schema). Rejected ⇒ a stable `reason`.
 - **verifyWebhook** _(function)_ — `verifyWebhook: (req: Request, secret: string | readonly string[], options?: VerifyWebhookOptions) => Promise<WebhookResult>`
   Verify a webhook request's signature and return its raw payload. Reads `req.body` (bounded), so the body is consumed — parse the returned `payload`, don't re-read the request.
+
+### `@nifrajs/core/wire`
+
+- **Wire** _(interface)_ — `interface Wire`
+  The JSON-safe encoded form produced by {@link encode} and consumed by {@link decode}.
+- **WireDecodeError** _(class)_ — `class WireDecodeError`
+  Thrown by {@link decode} for a wire value carrying an unknown tag, a bad index, or malformed shape.
+- **WireEncodeError** _(class)_ — `class WireEncodeError`
+  Thrown by {@link encode} for a value it will not encode (a function or a symbol).
+- **decode** _(function)_ — `decode: (wire: Wire) => unknown`
+  Reconstruct the original value from a {@link Wire} form produced by {@link encode}.
+- **encode** _(function)_ — `encode: (value: unknown) => Wire`
+  Encode any supported value into a JSON-safe {@link Wire} form.
+- **parse** _(function)_ — `parse: (text: string) => unknown`
+  `JSON.parse` + `decode` in one call - the rich-type equivalent of `JSON.parse`.
+- **stringify** _(function)_ — `stringify: (value: unknown) => string`
+  `encode` + `JSON.stringify` in one call - the rich-type equivalent of `JSON.stringify`.
 
 ### `@nifrajs/core/ws`
 
@@ -1560,6 +1679,8 @@ Every public export of every package and documented subpath — name, kind, sign
 
 - **ActiveObservation** _(interface)_ — `interface ActiveObservation`
 - **AttributeValue** _(type)_ — `type AttributeValue = string | number | boolean`
+- **EffectTracingOptions** _(interface)_ — `interface EffectTracingOptions`
+- **EffectTracingPlugin** _(interface)_ — `interface EffectTracingPlugin`
 - **EndObservation** _(interface)_ — `interface EndObservation`
 - **NifraSpan** _(interface)_ — `interface NifraSpan`
   A completed (or in-flight) server span for one request.
@@ -1590,6 +1711,8 @@ Every public export of every package and documented subpath — name, kind, sign
   A no-frills exporter that logs each completed span as one structured line. Useful in dev or as a starting point before wiring a real backend.
 - **createObservationLifecycle** _(function)_ — `createObservationLifecycle: (options?: ObservationLifecycleOptions) => ObservationLifecycle`
   Creates an independent lifecycle factory. Adapters are always called fail-open.
+- **effectTracing** _(function)_ — `effectTracing: (options?: EffectTracingOptions) => EffectTracingPlugin`
+  Installs child effect spans on subsequent routes. The observer consumes only the constrained `EffectLifecycleEvent` contract; request/business payloads and error text cannot enter an export.
 - **formatTraceparent** _(function)_ — `formatTraceparent: (traceId: string, spanId: string, sampled: boolean) => string`
   Format a `traceparent` header value (version `00`).
 - **generateSpanId** _(function)_ — `generateSpanId: () => string`
@@ -1603,6 +1726,13 @@ Every public export of every package and documented subpath — name, kind, sign
   Spread into an outgoing `fetch`/`ctx.api` call's headers to continue the trace downstream: `fetch(url, { headers: traceHeaders(c.trace) })`.
 - **tracing** _(function)_ — `tracing: (options?: TracingOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").Server<any, any>>`
   Distributed-tracing plugin. Each request continues the inbound trace (or starts one), opens a server span, and ends it on response with the status + HTTP attributes. Idempotent.
+
+### `@nifrajs/otel/effects`
+
+- **EffectTracingOptions** _(interface)_ — `interface EffectTracingOptions`
+- **EffectTracingPlugin** _(interface)_ — `interface EffectTracingPlugin`
+- **effectTracing** _(function)_ — `effectTracing: (options?: EffectTracingOptions) => EffectTracingPlugin`
+  Installs child effect spans on subsequent routes. The observer consumes only the constrained `EffectLifecycleEvent` contract; request/business payloads and error text cannot enter an export.
 
 ### `@nifrajs/otel/metrics`
 

@@ -21,6 +21,11 @@ import {
   validIdempotencyKey,
   validIdempotencyNamespace,
 } from "../idempotency.ts"
+import {
+  beginRequestEffectTracking,
+  markEffect,
+  requestEffectEvidence,
+} from "../internal/effect-execution.ts"
 import { readBoundedBytes } from "./body.ts"
 import type { Platform, RouteSchema } from "./context.ts"
 import { jsonError, urlPartsOf } from "./http.ts"
@@ -53,6 +58,7 @@ export interface IdempotencyHost {
 
 /** The injected idempotency implementation the kernel calls through when the plugin is installed. */
 export interface IdempotencyRuntime {
+  readonly trackEffect: (context: object, committed: boolean) => void
   /** Resolve a route's declared idempotency into a pinned store + defaults, or `undefined` when off. */
   resolve(
     schema: RouteSchema | undefined,
@@ -97,9 +103,6 @@ export function idempotency(options?: IdempotencyPluginOptions): IdentityPlugin 
   return Object.assign(apply, { pluginName: "nifra:idempotency" }) as IdentityPlugin
 }
 
-const RESPONSE_2XX_LOWER = 200
-const RESPONSE_2XX_UPPER = 300
-
 /**
  * Build an idempotency runtime. `store` is the app-wide default backing routes that declare
  * `schema.idempotency` without their own `store`; when omitted, a shared in-process
@@ -115,6 +118,9 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
   }
 
   return {
+    trackEffect(context, committed) {
+      markEffect(context, committed)
+    },
     resolve(schema, authenticated, maxBodyBytes) {
       const config = schema?.idempotency
       if (config === undefined) return undefined
@@ -234,52 +240,66 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
       if (read.bytes.byteLength > 0)
         bufferedInit.body = read.bytes as NonNullable<RequestInit["body"]>
       const buffered = new Request(req.url, bufferedInit)
+      beginRequestEffectTracking(buffered)
       let response: Response
       try {
         response = await host.runLanes(buffered, platform, entry, params, search)
       } catch (err) {
-        // The lanes never throw (errors resolve to a 500 Response), but stay fail-safe: release the
-        // reservation so a retry isn't wedged, then re-throw.
-        await config.store.abandon({ namespace, key, reservation })
-        throw err
-      }
-      // Cache only successful responses; release the key on any error so the client can retry.
-      if (response.status >= RESPONSE_2XX_LOWER && response.status < RESPONSE_2XX_UPPER) {
-        let storedResponse: Awaited<ReturnType<typeof serializeResponse>>
-        try {
-          storedResponse = await serializeResponse(response, { maxBytes: config.maxResponseBytes })
-        } catch (error) {
-          if (!(error instanceof IdempotencyResponseTooLargeError)) throw error
-          // The effect may already have happened, so never abandon and permit a duplicate execution.
-          // Commit a small terminal response under the winning key and return that same response now.
-          response = jsonError(507, "idempotency_response_too_large")
-          try {
-            storedResponse = await serializeResponse(response, {
-              maxBytes: config.maxResponseBytes,
-            })
-          } catch (terminalError) {
-            if (!(terminalError instanceof IdempotencyResponseTooLargeError)) throw terminalError
-            // Even an intentionally tiny bound must remain truthful. An empty 507 preserves terminal
-            // status + replay safety without silently storing more bytes than the route permits.
-            response = new Response(null, { status: 507 })
-            storedResponse = await serializeResponse(response, {
-              maxBytes: config.maxResponseBytes,
-            })
-          }
+        const evidence = requestEffectEvidence(buffered)
+        if (!evidence.began) {
+          // The request-local boundary proves no owned effect started, so this is the one safe case
+          // where releasing the key cannot duplicate an effect.
+          await config.store.abandon({ namespace, key, reservation })
+          throw err
         }
+        // A committed or ambiguous effect must never be repeated. Persist a payload-free terminal
+        // response even though the normal handler lifecycle escaped without producing one.
+        response = new Response(null, { status: 500 })
         const completed = await config.store.complete({
           namespace,
           key,
           reservation,
-          response: storedResponse,
+          response: await serializeResponse(response, { maxBytes: config.maxResponseBytes }),
         })
         if (!completed) {
           return wrapResponse(
             jsonError(503, "idempotency_reservation_lost", { "Retry-After": "1" }),
           )
         }
-      } else {
-        await config.store.abandon({ namespace, key, reservation })
+        return wrapResponse(response)
+      }
+      // Once the handler ran, every concrete response is terminal for this key. A non-2xx may follow
+      // an already-committed external effect; abandoning it would let a retry duplicate that effect.
+      let storedResponse: Awaited<ReturnType<typeof serializeResponse>>
+      try {
+        storedResponse = await serializeResponse(response, { maxBytes: config.maxResponseBytes })
+      } catch (error) {
+        if (!(error instanceof IdempotencyResponseTooLargeError)) throw error
+        // The effect may already have happened, so never abandon and permit a duplicate execution.
+        // Commit a small terminal response under the winning key and return that same response now.
+        response = jsonError(507, "idempotency_response_too_large")
+        try {
+          storedResponse = await serializeResponse(response, {
+            maxBytes: config.maxResponseBytes,
+          })
+        } catch (terminalError) {
+          if (!(terminalError instanceof IdempotencyResponseTooLargeError)) throw terminalError
+          // Even an intentionally tiny bound must remain truthful. An empty 507 preserves terminal
+          // status + replay safety without silently storing more bytes than the route permits.
+          response = new Response(null, { status: 507 })
+          storedResponse = await serializeResponse(response, {
+            maxBytes: config.maxResponseBytes,
+          })
+        }
+      }
+      const completed = await config.store.complete({
+        namespace,
+        key,
+        reservation,
+        response: storedResponse,
+      })
+      if (!completed) {
+        return wrapResponse(jsonError(503, "idempotency_reservation_lost", { "Retry-After": "1" }))
       }
       return wrapResponse(response)
     },

@@ -4,6 +4,7 @@ import {
   declaredCapabilities,
   defineCapabilityPolicy,
   evaluateCapabilityAssurance,
+  executeCapability,
   snapshotCapabilities,
   useCapability,
 } from "../src/capabilities.ts"
@@ -26,6 +27,95 @@ const policy = defineCapabilityPolicy({
 })
 
 describe("route capabilities", () => {
+  test("aroundCapability asynchronously admits each executeCapability call before the effect", async () => {
+    const order: string[] = []
+    const events: unknown[] = []
+    const app = server()
+      .aroundCapability(async (event, next) => {
+        order.push("policy:before")
+        events.push(event)
+        await Promise.resolve()
+        await next()
+        order.push("policy:after")
+      })
+      .post("/orders", { capabilities: ["db.write"] }, async (c) => {
+        await executeCapability(c, "db.write", { target: "repo:orders" }, async () => {
+          order.push("effect")
+        })
+        return { ok: true }
+      })
+
+    expect(
+      (await app.fetch(new Request("http://nifra.test/orders", { method: "POST" }))).status,
+    ).toBe(200)
+    expect(order).toEqual(["policy:before", "policy:after", "effect"])
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({
+      capability: "db.write",
+      method: "POST",
+      path: "/orders",
+      target: "repo:orders",
+    })
+    expect(events[0]).not.toHaveProperty("context")
+    expect(events[0]).not.toHaveProperty("request")
+  })
+
+  test("request cancellation aborts pending capability admission before the effect runs", async () => {
+    let admissionAborted = false
+    let executed = false
+    const app = server({
+      requestTimeoutMs: 5,
+      logger: { debug() {}, info() {}, warn() {}, error() {} },
+    })
+      .aroundCapability(
+        async ({ signal }) => {
+          await new Promise<void>((resolve) => {
+            signal.addEventListener(
+              "abort",
+              () => {
+                admissionAborted = true
+                resolve()
+              },
+              { once: true },
+            )
+          })
+        },
+        { timeoutMs: 1_000 },
+      )
+      .post("/orders", { capabilities: ["db.write"] }, async (c) => {
+        await executeCapability(c, "db.write", {}, async () => {
+          executed = true
+        })
+      })
+
+    const response = await app.fetch(new Request("http://nifra.test/orders", { method: "POST" }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(response.status).toBe(503)
+    expect(admissionAborted).toBe(true)
+    expect(executed).toBe(false)
+  })
+
+  test("interceptor metadata is validated even when the effect ledger is not installed", async () => {
+    let intercepted = false
+    let executed = false
+    const app = server({ logger: { debug() {}, info() {}, warn() {}, error() {} } })
+      .aroundCapability(async (_event, next) => {
+        intercepted = true
+        await next()
+      })
+      .post("/orders", { capabilities: ["db.write"] }, async (c) => {
+        await executeCapability(c, "db.write", { target: "bad\nmetadata" }, async () => {
+          executed = true
+        })
+      })
+
+    expect(
+      (await app.fetch(new Request("http://nifra.test/orders", { method: "POST" }))).status,
+    ).toBe(500)
+    expect(intercepted).toBe(false)
+    expect(executed).toBe(false)
+  })
+
   test("reflects normalized declarations and denies an undeclared runtime effect", async () => {
     const observed: unknown[] = []
     const app = server({ onCapabilityUse: (event) => observed.push(event) }).post(

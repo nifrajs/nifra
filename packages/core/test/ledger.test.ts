@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { recordCapabilityOutcome, useCapability } from "../src/capabilities.ts"
+import { executeCapability, recordCapabilityOutcome, useCapability } from "../src/capabilities.ts"
 import { effectLedger } from "../src/effect-ledger.ts"
 import { server } from "../src/index.ts"
 import {
@@ -42,12 +42,13 @@ describe("createRequestLedger — mechanics", () => {
     expect(snapshot.length).toBe(1) // snapshot does not grow
   })
 
-  test("rejects an invalid capability, phase, target, digest, and error code", () => {
+  test("rejects an invalid capability, phase, effect id, target, digest, and error code", () => {
     const ledger = createRequestLedger(ledgerOptions)
     expect(() => ledger.append({ capability: "Not Valid" })).toThrow(/invalid capability/)
     expect(() => ledger.append({ capability: "db.write", phase: "boom" as never })).toThrow(
       /invalid phase/,
     )
+    expect(() => ledger.append({ capability: "db.write", effectId: "bad\nid" })).toThrow(/effectId/)
     expect(() => ledger.append({ capability: "db.write", target: "bad\ntarget" })).toThrow(/target/)
     expect(() => ledger.append({ capability: "db.write", target: "x".repeat(129) })).toThrow(
       /target/,
@@ -207,6 +208,195 @@ describe("memory sink + digest", () => {
 
 describe("server({ effectLedger }) — request path", () => {
   const post = (path: string): Request => new Request(`http://test${path}`, { method: "POST" })
+
+  test("executeCapability correlates one intent with its automatic terminal outcome", async () => {
+    const memory = createMemoryLedgerSink()
+    const observed: string[] = []
+    const app = server({ onCapabilityUse: (event) => observed.push(event.capability) })
+      .use(effectLedger({ sink: memory.sink }))
+      .post("/pay", { capabilities: ["payments.charge"] }, async (c) => {
+        const result = await executeCapability(
+          c,
+          "payments.charge",
+          { target: "provider:payments", cost: { calls: 1 } },
+          async ({ signal }) => {
+            expect(signal).toBe(c.signal)
+            return { receipt: "ok" }
+          },
+        )
+        return result
+      })
+
+    const response = await app.fetch(post("/pay"))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ receipt: "ok" })
+    expect(observed).toEqual(["payments.charge"])
+    const entries = memory.ledgers[0]?.entries ?? []
+    expect(entries.map((entry) => entry.phase)).toEqual(["intent", "committed"])
+    expect(entries[0]?.effectId).toMatch(/^[0-9a-f-]{36}$/)
+    expect(entries[1]?.effectId).toBe(entries[0]?.effectId)
+    expect(entries.every((entry) => entry.target === "provider:payments")).toBe(true)
+    expect(entries.every((entry) => !("payload" in entry))).toBe(true)
+  })
+
+  test("executeCapability records a bounded failure outcome without leaking the thrown error", async () => {
+    const memory = createMemoryLedgerSink()
+    const app = server({ logger: { debug() {}, info() {}, warn() {}, error() {} } })
+      .use(effectLedger({ sink: memory.sink }))
+      .post("/pay", { capabilities: ["payments.charge"] }, async (c) => {
+        await executeCapability(c, "payments.charge", {}, async () => {
+          throw new Error("provider failed with private payload")
+        })
+      })
+
+    expect((await app.fetch(post("/pay"))).status).toBe(500)
+    const entries = memory.ledgers[0]?.entries ?? []
+    expect(entries.map((entry) => entry.phase)).toEqual(["intent", "failed"])
+    expect(entries[1]?.effectId).toBe(entries[0]?.effectId)
+    expect(entries[1]?.error).toEqual({ code: "execution_failed" })
+    expect(JSON.stringify(entries)).not.toContain("private payload")
+  })
+
+  test("an interceptor that does not call next denies the effect and records the denial", async () => {
+    const memory = createMemoryLedgerSink()
+    let executed = false
+    const app = server({ logger: { debug() {}, info() {}, warn() {}, error() {} } })
+      .aroundCapability(async () => undefined)
+      .use(effectLedger({ sink: memory.sink }))
+      .post("/pay", { capabilities: ["payments.charge"] }, async (c) => {
+        await executeCapability(c, "payments.charge", {}, async () => {
+          executed = true
+        })
+      })
+
+    expect((await app.fetch(post("/pay"))).status).toBe(500)
+    expect(executed).toBe(false)
+    expect(memory.ledgers[0]?.entries.map((entry) => entry.phase)).toEqual(["intent", "failed"])
+    expect(memory.ledgers[0]?.entries[1]?.error).toEqual({ code: "admission_denied" })
+  })
+
+  test("capability admission times out fail-closed and aborts the interceptor signal", async () => {
+    const memory = createMemoryLedgerSink()
+    let interceptorAborted = false
+    let executed = false
+    const app = server({ logger: { debug() {}, info() {}, warn() {}, error() {} } })
+      .aroundCapability(
+        async ({ signal }) => {
+          await new Promise<void>((resolve) => {
+            signal.addEventListener(
+              "abort",
+              () => {
+                interceptorAborted = signal.aborted
+                resolve()
+              },
+              { once: true },
+            )
+          })
+        },
+        { timeoutMs: 5 },
+      )
+      .use(effectLedger({ sink: memory.sink }))
+      .post("/pay", { capabilities: ["payments.charge"] }, async (c) => {
+        await executeCapability(c, "payments.charge", {}, async () => {
+          executed = true
+        })
+      })
+
+    expect((await app.fetch(post("/pay"))).status).toBe(500)
+    expect(interceptorAborted).toBe(true)
+    expect(executed).toBe(false)
+    expect(memory.ledgers[0]?.entries[1]?.error).toEqual({ code: "admission_timeout" })
+  })
+
+  test("an interceptor error is classified as admission failure before execution", async () => {
+    const memory = createMemoryLedgerSink()
+    let executed = false
+    const app = server({ logger: { debug() {}, info() {}, warn() {}, error() {} } })
+      .aroundCapability(async () => {
+        throw new Error("approval backend unavailable")
+      })
+      .use(effectLedger({ sink: memory.sink }))
+      .post("/pay", { capabilities: ["payments.charge"] }, async (c) => {
+        await executeCapability(c, "payments.charge", {}, async () => {
+          executed = true
+        })
+      })
+
+    expect((await app.fetch(post("/pay"))).status).toBe(500)
+    expect(executed).toBe(false)
+    expect(memory.ledgers[0]?.entries[1]?.error).toEqual({ code: "admission_failed" })
+  })
+
+  test("a synchronous capability hook denial also receives an automatic failure outcome", async () => {
+    const memory = createMemoryLedgerSink()
+    let executed = false
+    const app = server({
+      onCapabilityUse: () => {
+        throw new Error("quota denied")
+      },
+      logger: { debug() {}, info() {}, warn() {}, error() {} },
+    })
+      .use(effectLedger({ sink: memory.sink }))
+      .post("/pay", { capabilities: ["payments.charge"] }, async (c) => {
+        await executeCapability(c, "payments.charge", {}, async () => {
+          executed = true
+        })
+      })
+
+    expect((await app.fetch(post("/pay"))).status).toBe(500)
+    expect(executed).toBe(false)
+    expect(memory.ledgers[0]?.entries.map((entry) => entry.phase)).toEqual(["intent", "failed"])
+    expect(memory.ledgers[0]?.entries[1]?.error).toEqual({ code: "admission_failed" })
+  })
+
+  test("an interceptor cannot call next twice or cause a double execution", async () => {
+    const memory = createMemoryLedgerSink()
+    let executions = 0
+    const app = server({ logger: { debug() {}, info() {}, warn() {}, error() {} } })
+      .aroundCapability(async (_event, next) => {
+        await next()
+        await next()
+      })
+      .use(effectLedger({ sink: memory.sink }))
+      .post("/pay", { capabilities: ["payments.charge"] }, async (c) => {
+        await executeCapability(c, "payments.charge", {}, async () => {
+          executions += 1
+        })
+      })
+
+    expect((await app.fetch(post("/pay"))).status).toBe(500)
+    expect(executions).toBe(0)
+    expect(memory.ledgers[0]?.entries[1]?.error).toEqual({ code: "admission_protocol" })
+  })
+
+  test("request timeout records an aborted admission before sealing the ledger", async () => {
+    const memory = createMemoryLedgerSink()
+    let executed = false
+    const app = server({
+      requestTimeoutMs: 5,
+      logger: { debug() {}, info() {}, warn() {}, error() {} },
+    })
+      .aroundCapability(
+        async ({ signal }) => {
+          await new Promise<void>((resolve) =>
+            signal.addEventListener("abort", () => resolve(), { once: true }),
+          )
+        },
+        { timeoutMs: 1_000 },
+      )
+      .use(effectLedger({ sink: memory.sink }))
+      .post("/pay", { capabilities: ["payments.charge"] }, async (c) => {
+        await executeCapability(c, "payments.charge", {}, async () => {
+          executed = true
+        })
+      })
+
+    expect((await app.fetch(post("/pay"))).status).toBe(503)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(executed).toBe(false)
+    expect(memory.ledgers[0]?.entries.map((entry) => entry.phase)).toEqual(["intent", "failed"])
+    expect(memory.ledgers[0]?.entries[1]?.error).toEqual({ code: "admission_aborted" })
+  })
 
   test("beacon appends entries; the sink receives the sealed ledger with the route pattern", async () => {
     const memory = createMemoryLedgerSink()

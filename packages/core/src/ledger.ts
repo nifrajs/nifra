@@ -27,18 +27,24 @@ const EFFECT_PHASES: ReadonlySet<string> = new Set(["intent", "committed", "fail
  */
 export type EffectCost = Readonly<Record<string, number>>
 
-/** Caller-supplied fields for one entry. Everything else (`seq`, `at`) is assigned by the ledger. */
-export interface EffectEntryInput {
-  /** Capability token (`db.write`, `payments.charge`). Must be a valid capability id. */
-  readonly capability: string
-  /** Default `"intent"`. Record `committed`/`failed`/`compensated` only after the outcome is known. */
-  readonly phase?: EffectPhase
+/** Token-only caller metadata shared by an effect intent and outcome. */
+export interface EffectMetadata {
   /** Adapter/resource token (`repo:orders`, `provider:payments`). A token — never a value or a row. */
   readonly target?: string
   /** Dimensionless counters; see {@link EffectCost}. At most {@link MAX_COST_AXES} axes. */
   readonly cost?: EffectCost
   /** Optional keyed-HMAC digest of the effect payload (see {@link computeEffectDigest}); hex, 64 chars. */
   readonly digest?: string
+}
+
+/** Caller-supplied fields for one entry. Everything else (`seq`, `at`) is assigned by the ledger. */
+export interface EffectEntryInput extends EffectMetadata {
+  /** Opaque execution correlation token shared by one intent and its terminal outcome. */
+  readonly effectId?: string
+  /** Capability token (`db.write`, `payments.charge`). Must be a valid capability id. */
+  readonly capability: string
+  /** Default `"intent"`. Record `committed`/`failed`/`compensated` only after the outcome is known. */
+  readonly phase?: EffectPhase
   /** Outcome error as a bounded token code — never a message, never a stack. */
   readonly error?: { readonly code: string }
 }
@@ -49,6 +55,7 @@ export interface EffectEntry {
   readonly seq: number
   /** Milliseconds from the ledger's (injectable) clock at append time. */
   readonly at: number
+  readonly effectId?: string
   readonly capability: string
   readonly phase: EffectPhase
   readonly target?: string
@@ -147,9 +154,12 @@ function printableToken(value: string, maxLength: number): boolean {
 }
 
 function validateCost(cost: EffectCost): EffectCost {
+  if (Object(cost) !== cost || Array.isArray(cost)) {
+    throw new TypeError("effect ledger: invalid cost")
+  }
   const keys = Object.keys(cost)
   if (keys.length > MAX_COST_AXES) {
-    throw new TypeError(`effect ledger: cost carries more than ${MAX_COST_AXES} axes`)
+    throw new TypeError(`effect ledger: more than ${MAX_COST_AXES} cost axes`)
   }
   for (const key of keys) {
     if (!validCapabilityId(key)) {
@@ -157,10 +167,28 @@ function validateCost(cost: EffectCost): EffectCost {
     }
     const value = cost[key]
     if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-      throw new TypeError(`effect ledger: cost axis ${key} must be a finite non-negative number`)
+      throw new TypeError(`effect ledger: invalid cost axis ${key}`)
     }
   }
   return Object.freeze({ ...cost })
+}
+
+/** Validate, copy, and freeze token-only effect metadata before it reaches a ledger or policy hook. */
+export function normalizeEffectMetadata(input: EffectMetadata): EffectMetadata {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new TypeError("effect ledger: effect metadata must be an object")
+  }
+  if (input.target !== undefined && !printableToken(input.target, TARGET_MAX_LENGTH)) {
+    throw new TypeError("effect ledger: invalid target")
+  }
+  if (input.digest !== undefined && !DIGEST_HEX.test(input.digest)) {
+    throw new TypeError("effect ledger: invalid digest")
+  }
+  return Object.freeze({
+    ...(input.target !== undefined ? { target: input.target } : {}),
+    ...(input.cost !== undefined ? { cost: validateCost(input.cost) } : {}),
+    ...(input.digest !== undefined ? { digest: input.digest } : {}),
+  })
 }
 
 const defaultClock = (): number => performance.now()
@@ -215,11 +243,14 @@ class BoundedRequestLedger implements RequestLedger {
     if (!EFFECT_PHASES.has(phase)) {
       throw new TypeError(`effect ledger: invalid phase ${JSON.stringify(phase)}`)
     }
+    if (input.effectId !== undefined && !printableToken(input.effectId, 64)) {
+      throw new TypeError("effect ledger: invalid effectId")
+    }
     if (input.target !== undefined && !printableToken(input.target, TARGET_MAX_LENGTH)) {
-      throw new TypeError("effect ledger: target must be a bounded printable token")
+      throw new TypeError("effect ledger: invalid target")
     }
     if (input.digest !== undefined && !DIGEST_HEX.test(input.digest)) {
-      throw new TypeError("effect ledger: digest must be 64 lowercase hex characters")
+      throw new TypeError("effect ledger: invalid digest")
     }
     if (input.error !== undefined && !ERROR_CODE.test(input.error.code)) {
       throw new TypeError("effect ledger: error code must be a bounded lowercase token")
@@ -232,6 +263,7 @@ class BoundedRequestLedger implements RequestLedger {
     const entry: EffectEntry = Object.freeze({
       seq: this.items.length,
       at,
+      ...(input.effectId !== undefined ? { effectId: input.effectId } : {}),
       capability: input.capability,
       phase,
       ...(input.target !== undefined ? { target: input.target } : {}),
@@ -293,7 +325,9 @@ function canonicalEntry(entry: EffectEntry): string {
           .map((key) => `${JSON.stringify(key)}:${JSON.stringify((entry.cost as EffectCost)[key])}`)
           .join(",")}}`
   return (
-    `{"seq":${entry.seq},"at":${JSON.stringify(entry.at)},"capability":${JSON.stringify(entry.capability)},"phase":${JSON.stringify(entry.phase)}` +
+    `{"seq":${entry.seq},"at":${JSON.stringify(entry.at)}` +
+    `${entry.effectId !== undefined ? `,"effectId":${JSON.stringify(entry.effectId)}` : ""}` +
+    `,"capability":${JSON.stringify(entry.capability)},"phase":${JSON.stringify(entry.phase)}` +
     `${entry.target !== undefined ? `,"target":${JSON.stringify(entry.target)}` : ""}` +
     cost +
     `${entry.digest !== undefined ? `,"digest":${JSON.stringify(entry.digest)}` : ""}` +

@@ -10,7 +10,7 @@ Distributed tracing for nifra — W3C traceparent/tracestate propagation + OpenT
 
 ## Public entrypoints
 
-`@nifrajs/otel` · `@nifrajs/otel/metrics`
+`@nifrajs/otel` · `@nifrajs/otel/effects` · `@nifrajs/otel/metrics`
 
 ## Key exports
 
@@ -19,6 +19,7 @@ Distributed tracing for nifra — W3C traceparent/tracestate propagation + OpenT
 - **consoleSpanExporter** _(function)_ — `consoleSpanExporter: (log?: (line: string) => void) => ObservationAdapter` · from `@nifrajs/otel`
 - **createMetricsRegistry** _(function)_ — `createMetricsRegistry: () => MetricsRegistry` · from `@nifrajs/otel/metrics`
 - **createObservationLifecycle** _(function)_ — `createObservationLifecycle: (options?: ObservationLifecycleOptions) => ObservationLifecycle` · from `@nifrajs/otel`
+- **effectTracing** _(function)_ — `effectTracing: (options?: EffectTracingOptions) => EffectTracingPlugin` · from `@nifrajs/otel`
 - **formatTraceparent** _(function)_ — `formatTraceparent: (traceId: string, spanId: string, sampled: boolean) => string` · from `@nifrajs/otel`
 - **generateSpanId** _(function)_ — `generateSpanId: () => string` · from `@nifrajs/otel`
 - **generateTraceId** _(function)_ — `generateTraceId: () => string` · from `@nifrajs/otel`
@@ -27,9 +28,8 @@ Distributed tracing for nifra — W3C traceparent/tracestate propagation + OpenT
 - **parseTraceparent** _(function)_ — `parseTraceparent: (header: string | null | undefined) => ParsedTraceparent | null` · from `@nifrajs/otel`
 - **traceHeaders** _(function)_ — `traceHeaders: (trace: TraceContext, causality?: CausalityContext) => { readonly traceparent: string; } & Readonly<Record<string, string>>` · from `@nifrajs/otel`
 - **tracing** _(function)_ — `tracing: (options?: TracingOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").Serve…` · from `@nifrajs/otel`
-- **Counter** _(class)_ — `class Counter` · from `@nifrajs/otel/metrics`
 
-_…and 22 more — see [`api-reference.md`](../../api-reference.md#nifrajsotel) for the complete list._
+_…and 25 more — see [`api-reference.md`](../../api-reference.md#nifrajsotel) for the complete list._
 
 ## Footguns
 

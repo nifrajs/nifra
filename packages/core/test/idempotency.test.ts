@@ -13,6 +13,15 @@ import {
 } from "../src/idempotency.ts"
 import { idempotency } from "../src/idempotency-plugin.ts"
 import { server } from "../src/index.ts"
+import {
+  beginRequestEffectTracking,
+  markBeaconEffectBegan,
+  markEffectAmbiguous,
+  markEffectCommitted,
+  markEffectExecuting,
+  requestEffectEvidence,
+} from "../src/internal/effect-execution.ts"
+import { createIdempotencyRuntime } from "../src/server/idempotency-lane.ts"
 
 const post = (body: unknown, key?: string, extra?: Record<string, string>): Request =>
   new Request("http://test/pay", {
@@ -158,6 +167,99 @@ describe("MemoryIdempotencyStore", () => {
     const store = new MemoryIdempotencyStore({ maxEntries: 1 })
     expect(begin(store, "a", "fp", 1000).state).toBe("new")
     expect(begin(store, "b", "fp", 1000).state).toBe("capacity")
+  })
+})
+
+describe("effect-aware idempotency fallback", () => {
+  const configFor = (store: MemoryIdempotencyStore) => {
+    const runtime = createIdempotencyRuntime({ store })
+    const config = runtime.resolve(
+      { idempotency: { scope: "request", namespace: "test" } },
+      false,
+      1024,
+    )
+    if (config === undefined) throw new Error("expected config")
+    return { runtime, config }
+  }
+
+  test("an escaped pre-effect failure releases its reservation", async () => {
+    const store = new MemoryIdempotencyStore()
+    const { runtime, config } = configFor(store)
+    let runs = 0
+    const run = () =>
+      runtime.run(
+        config,
+        post({ amount: 1 }, "pre-effect"),
+        undefined,
+        {},
+        {},
+        undefined,
+        (r) => r,
+        {
+          maxBodyBytes: 1024,
+          async runLanes() {
+            runs++
+            if (runs === 1) throw new Error("framework failure")
+            return new Response(null, { status: 204 })
+          },
+        },
+      )
+    await expect(run()).rejects.toThrow("framework failure")
+    expect((await run()).status).toBe(204)
+    expect(runs).toBe(2)
+  })
+
+  test("an escaped ambiguous effect is terminal and replayed", async () => {
+    const store = new MemoryIdempotencyStore()
+    const { runtime, config } = configFor(store)
+    let runs = 0
+    const run = () =>
+      runtime.run(
+        config,
+        post({ amount: 1 }, "ambiguous"),
+        undefined,
+        {},
+        {},
+        undefined,
+        (r) => r,
+        {
+          maxBodyBytes: 1024,
+          async runLanes(request) {
+            runs++
+            markBeaconEffectBegan({ req: request })
+            throw new Error("connection dropped after send")
+          },
+        },
+      )
+    expect((await run()).status).toBe(500)
+    const replay = await run()
+    expect(replay.status).toBe(500)
+    expect(replay.headers.get(IDEMPOTENT_REPLAY_HEADER)).toBe("1")
+    expect(runs).toBe(1)
+  })
+
+  test("request-local evidence distinguishes executing, committed, and ambiguous states", () => {
+    const request = new Request("http://test/effect")
+    const context = { req: request }
+    beginRequestEffectTracking(request)
+    markEffectExecuting(context)
+    expect(requestEffectEvidence(request)).toEqual({
+      began: true,
+      committed: false,
+      ambiguous: true,
+    })
+    markEffectCommitted(context)
+    expect(requestEffectEvidence(request)).toEqual({
+      began: true,
+      committed: true,
+      ambiguous: false,
+    })
+    markEffectAmbiguous(context)
+    expect(requestEffectEvidence(request)).toEqual({
+      began: true,
+      committed: true,
+      ambiguous: true,
+    })
   })
 })
 
@@ -336,7 +438,7 @@ describe("server({ idempotency }) — request path", () => {
     expect((await first).status).toBe(200)
   })
 
-  test("an error response is not cached — a retry re-runs the handler", async () => {
+  test("an error response is terminal so a retry cannot duplicate an already-finished effect", async () => {
     let runs = 0
     const app = server()
       .use(idempotency())
@@ -345,8 +447,10 @@ describe("server({ idempotency }) — request path", () => {
         return c.json({ error: "boom" }, 500)
       })
     expect((await app.fetch(post({ amount: 1 }, "e"))).status).toBe(500)
-    expect((await app.fetch(post({ amount: 1 }, "e"))).status).toBe(500)
-    expect(runs).toBe(2) // not replayed; the key was released
+    const replay = await app.fetch(post({ amount: 1 }, "e"))
+    expect(replay.status).toBe(500)
+    expect(replay.headers.get(IDEMPOTENT_REPLAY_HEADER)).toBe("1")
+    expect(runs).toBe(1)
   })
 
   test("honors a custom header name", async () => {

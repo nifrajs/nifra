@@ -48,6 +48,14 @@ import { defineAssurancePolicy } from "@nifrajs/core/assurance"
   IP-restriction, and security-header modules publish reflection-safe enforcement evidence.
   An ordered `AssurancePolicy` classifies every route and fails closed on missing or forbidden
   evidence without adding work to the request path.
+- **Owned effect execution.** `executeCapability()` correlates intent and terminal evidence with an
+  opaque `effectId`, records outcomes automatically, and forwards request cancellation. Add
+  order-scoped `aroundCapability()` policies for async approval/admission; they receive token-only
+  metadata, have bounded timeouts, and must call `next()` exactly once before the effect can run.
+- **Durable workflows (opt in).** `@nifrajs/core/durable-execution` provides tenant/principal-bound,
+  signed single-use approval resumes; a durable effect journal + reconciliation scanner; and a typed
+  saga state machine with reverse compensation, retry/backoff, and ambiguous-crash detection. Production
+  constructors reject stores that do not declare `durability: "durable"`.
 
 ```ts
 import { defineAssurancePolicy, evaluateRouteAssurance, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"

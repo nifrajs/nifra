@@ -145,12 +145,23 @@ export default defineAssuranceConfig({
 // CI: nifra assure --json       # complete machine-readable report`
 
 const CAPABILITIES = `// doc-check: skip — combines route and assurance-config excerpts.
-// route: exact effect declaration + runtime beacon at the owned adapter seam
-import { useCapability } from "@nifrajs/core/capabilities"
+// route: exact effect declaration + correlated execution at the owned adapter seam
+import { executeCapability } from "@nifrajs/core/capabilities"
+
+app.aroundCapability(async (effect, next) => {
+  // Ask an entitlement service or short-lived approval gate using token-only metadata.
+  // effect.signal aborts on request cancellation or the interceptor timeout.
+  if (!policyAllows(effect.capability, effect.target)) return // deny fail-closed
+  await next()
+}, { timeoutMs: 5_000 })
 
 app.post("/orders", { capabilities: ["db.write"] }, async (c) => {
-  useCapability(c, "db.write") // undeclared use fails before the effect
-  return orders.write(c.body)
+  return executeCapability(
+    c,
+    "db.write",
+    { target: "repo:orders" },
+    ({ signal }) => orders.write(c.body, { signal }),
+  )
 })
 
 // in nifra.assurance.ts, alongside policy:
@@ -174,6 +185,40 @@ capabilities: {
 
 // developer: nifra capabilities snapshot
 // CI:        nifra check && nifra assure && nifra capabilities check`
+
+const DURABLE_EFFECTS = `// doc-check: skip — durable store implementations are deployment-specific.
+import {
+  createApprovalCoordinator,
+  createDurableEffectJournal,
+  createSagaEngine,
+} from "@nifrajs/core/durable-execution"
+import { effectTracing } from "@nifrajs/otel/effects"
+
+const effects = effectTracing({ exporter })
+app.use(effects)
+
+const approval = createApprovalCoordinator({
+  store: durableApprovalStore, // must declare durability: "durable"
+  secret: approvalHmacKey,     // 32+ random bytes, stored separately
+})
+const journal = createDurableEffectJournal({ store: durableEffectStore })
+
+await executeCapability(c, "payments.charge", {
+  target: "provider:stripe",
+  digest,
+  journal,
+  approval: {
+    gate: approval,
+    tenantId: c.principal.tenantId,
+    principalId: c.principal.userId,
+    resumeToken,
+  },
+}, ({ effectId, signal }) => payments.charge(input, { idempotencyKey: effectId, signal }))
+
+const sagas = createSagaEngine({
+  store: durableSagaStore,
+  observer: effects.observer,
+})`
 
 const LOGGING = `import { server, jsonLogger, commonSecretPatterns } from "@nifrajs/core/server"
 
@@ -339,6 +384,17 @@ export default function Security() {
         require request idempotency or durable command/provider-key evidence. The lockfile contains only
         method, path, and capability tokens—no payloads or tenant data—and CI never rewrites it.
       </p>
+
+      <h2>Durable approval, compensation, and reconciliation</h2>
+      <p>
+        The durable execution subpath turns the capability boundary into a crash-visible workflow.
+        Approval resumes are HMAC-signed, expire, bind to the tenant, principal, capability, target, and
+        digest, and are consumed atomically once. The effect journal marks execution before the provider
+        call, so a crash after an external commit remains <code>ambiguous</code> for reconciliation instead
+        of being retried blindly. Typed sagas persist compensation arguments separately from the sealed
+        token-only ledger and compensate committed steps in reverse order with retry/backoff state.
+      </p>
+      <CodeBlock code={DURABLE_EFFECTS} />
 
       <h2>Already built in</h2>
       <p>

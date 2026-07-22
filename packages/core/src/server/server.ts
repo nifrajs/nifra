@@ -6,12 +6,17 @@ import {
   NIFRA_DEADLINE_HEADER,
   type RequestBudget,
 } from "../budget.ts"
+import type { EffectLifecycleObserver } from "../effect-lifecycle.ts"
 import { FrameworkError, RouteConfigError } from "../errors.ts"
 import {
+  type AroundCapabilityOptions,
   CAPABILITY_GUARD,
+  type CapabilityInterceptor,
   type CapabilityUseEvent,
   createCapabilityGuard,
+  DEFAULT_CAPABILITY_INTERCEPTOR_TIMEOUT_MS,
   normalizeRouteCapabilities,
+  type RegisteredCapabilityInterceptor,
 } from "../internal/capability-runtime.ts"
 import {
   type AssuranceDeclaration,
@@ -517,6 +522,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   /** Capacity-admission gate; `undefined` = off (the request path pays nothing). */
   private readonly capacityGate: AdmissionController | undefined
   private readonly onCapabilityUse: ((event: CapabilityUseEvent) => void) | undefined
+  private readonly capabilityInterceptors: RegisteredCapabilityInterceptor[]
+  private readonly capabilityObservers: EffectLifecycleObserver[]
   /** The installed effect-ledger runtime (owns the sink + per-route resolution + settle), or
    * `undefined` when the effect-ledger plugin is not installed. */
   private effectLedgerRuntime: EffectLedgerRuntime | undefined
@@ -579,6 +586,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.gracefulSignals = options.gracefulSignals ?? false
     this.capacityGate = options.admission
     this.onCapabilityUse = options.onCapabilityUse
+    this.capabilityInterceptors = []
+    this.capabilityObservers = []
     // The effect-ledger runtime is installed by `.use(effectLedger())`; a bare app never imports it, so
     // the ledger machinery tree-shakes out. Capability-declaring routes simply carry no ledger without it.
     this.effectLedgerRuntime = undefined
@@ -656,6 +665,37 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   around(fn: <T>(context: Context & Ctx, next: () => MaybePromise<T>) => MaybePromise<T>): this {
     this.assertConfigurable("around()")
     this.aroundHooks.push(fn as unknown as RawAround)
+    return this
+  }
+
+  /**
+   * Asynchronously admit each subsequent `executeCapability()` call before its owned effect runs.
+   * Interceptors receive token-only metadata plus an abort signal and must call `next()` exactly once
+   * to admit. Returning without `next()`, timing out, aborting, or throwing fails the effect closed.
+   */
+  aroundCapability(
+    interceptor: CapabilityInterceptor,
+    options: AroundCapabilityOptions = {},
+  ): this {
+    this.assertConfigurable("aroundCapability()")
+    if (typeof interceptor !== "function") {
+      throw new TypeError("aroundCapability interceptor must be a function")
+    }
+    const timeoutMs = options.timeoutMs ?? DEFAULT_CAPABILITY_INTERCEPTOR_TIMEOUT_MS
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+      throw new RangeError("aroundCapability timeoutMs must be a positive safe integer")
+    }
+    this.capabilityInterceptors.push(Object.freeze({ interceptor, timeoutMs }))
+    return this
+  }
+
+  /** Observe token-only admission/execution lifecycle events for subsequent capability routes. */
+  observeCapability(observer: EffectLifecycleObserver): this {
+    this.assertConfigurable("observeCapability()")
+    if (typeof observer !== "function") {
+      throw new TypeError("observeCapability observer must be a function")
+    }
+    this.capabilityObservers.push(observer)
     return this
   }
 
@@ -1120,6 +1160,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         method,
         path,
         this.onCapabilityUse,
+        this.idempotencyRuntime?.trackEffect,
+        Object.freeze([...this.capabilityInterceptors]),
+        Object.freeze([...this.capabilityObservers]),
       )
     }
     const hasDecorations = Reflect.ownKeys(routeDecorations).length > 0

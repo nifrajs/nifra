@@ -11,6 +11,11 @@
 
 export { causalitySpanLink } from "./causality.ts"
 export {
+  type EffectTracingOptions,
+  type EffectTracingPlugin,
+  effectTracing,
+} from "./effects.ts"
+export {
   type ActiveObservation,
   createObservationLifecycle,
   type EndObservation,
