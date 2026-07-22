@@ -613,6 +613,9 @@ Every public export of every package and documented subpath — name, kind, sign
 - **MemoryApprovalStore** _(class)_ — `class MemoryApprovalStore`
 - **MemoryDurableEffectStore** _(class)_ — `class MemoryDurableEffectStore`
 - **MemorySagaStore** _(class)_ — `class MemorySagaStore`
+- **ReconciliationPage** _(interface)_ — `interface ReconciliationPage<Finding>`
+- **ReconciliationScanOptions** _(interface)_ — `interface ReconciliationScanOptions<State extends string>`
+- **ReconciliationScanPage** _(interface)_ — `interface ReconciliationScanPage<Record>`
 - **SagaAmbiguousStepError** _(class)_ — `class SagaAmbiguousStepError`
 - **SagaCompensationContext** _(interface)_ — `interface SagaCompensationContext`
 - **SagaConcurrencyError** _(class)_ — `class SagaConcurrencyError`
@@ -634,7 +637,9 @@ Every public export of every package and documented subpath — name, kind, sign
 - **createSagaEngine** _(function)_ — `createSagaEngine: (options: SagaEngineOptions) => SagaEngine`
 - **defineSaga** _(function)_ — `defineSaga: <I, C extends Record<string, unknown>>(definition: SagaDefinition<I, C>) => SagaDefinition<I, C>`
 - **reconcileEffects** _(function)_ — `reconcileEffects: (store: DurableEffectStore, options: { readonly staleBefore: number; readonly observer?: EffectLifecycleObserver; }) => Promise<readonly EffectReconciliationFinding[]>`
+- **reconcileEffectsPage** _(function)_ — `reconcileEffectsPage: (store: DurableEffectStore, options: { readonly staleBefore: number; readonly observer?: EffectLifecycleObserver; readonly cursor?: string; readonly limit?: number; }) => Promise<ReconciliationPage…`
 - **reconcileSagas** _(function)_ — `reconcileSagas: (store: SagaStore, options: { readonly staleBefore: number; }) => Promise<readonly SagaReconciliationFinding[]>`
+- **reconcileSagasPage** _(function)_ — `reconcileSagasPage: (store: SagaStore, options: { readonly staleBefore: number; readonly cursor?: string; readonly limit?: number; }) => Promise<ReconciliationPage<SagaReconciliationFinding>>`
 
 ### `@nifrajs/core/effect-ledger`
 
@@ -1059,17 +1064,20 @@ Every public export of every package and documented subpath — name, kind, sign
 
 ### `@nifrajs/core/wire`
 
+- **DEFAULT_WIRE_DECODE_LIMITS** _(const)_ — `DEFAULT_WIRE_DECODE_LIMITS: Readonly<Required<WireDecodeLimits>>`
 - **Wire** _(interface)_ — `interface Wire`
   The JSON-safe encoded form produced by {@link encode} and consumed by {@link decode}.
 - **WireDecodeError** _(class)_ — `class WireDecodeError`
   Thrown by {@link decode} for a wire value carrying an unknown tag, a bad index, or malformed shape.
+- **WireDecodeLimits** _(interface)_ — `interface WireDecodeLimits`
+  Resource limits applied while reconstructing transport-controlled wire data.
 - **WireEncodeError** _(class)_ — `class WireEncodeError`
   Thrown by {@link encode} for a value it will not encode (a function or a symbol).
-- **decode** _(function)_ — `decode: (wire: Wire) => unknown`
+- **decode** _(function)_ — `decode: (wire: Wire, limits?: WireDecodeLimits) => unknown`
   Reconstruct the original value from a {@link Wire} form produced by {@link encode}.
 - **encode** _(function)_ — `encode: (value: unknown) => Wire`
   Encode any supported value into a JSON-safe {@link Wire} form.
-- **parse** _(function)_ — `parse: (text: string) => unknown`
+- **parse** _(function)_ — `parse: (text: string, limits?: WireDecodeLimits) => unknown`
   `JSON.parse` + `decode` in one call - the rich-type equivalent of `JSON.parse`.
 - **stringify** _(function)_ — `stringify: (value: unknown) => string`
   `encode` + `JSON.stringify` in one call - the rich-type equivalent of `JSON.stringify`.

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { executeCapability, recordCapabilityOutcome, useCapability } from "../src/capabilities.ts"
+import { createDurableEffectJournal, MemoryDurableEffectStore } from "../src/durable-execution.ts"
 import { effectLedger } from "../src/effect-ledger.ts"
 import { server } from "../src/index.ts"
 import {
@@ -237,6 +238,24 @@ describe("server({ effectLedger }) — request path", () => {
     expect(entries[1]?.effectId).toBe(entries[0]?.effectId)
     expect(entries.every((entry) => entry.target === "provider:payments")).toBe(true)
     expect(entries.every((entry) => !("payload" in entry))).toBe(true)
+  })
+
+  test("a terminal ledger overflow never rewrites a durably committed effect as unknown", async () => {
+    const journalStore = new MemoryDurableEffectStore()
+    const journal = createDurableEffectJournal({ store: journalStore, allowMemoryStore: true })
+    let executions = 0
+    const app = server({ logger: { debug() {}, info() {}, warn() {}, error() {} } })
+      .use(effectLedger({ sink() {}, maxEntries: 1 }))
+      .post("/pay", { capabilities: ["payments.charge"] }, async (c) => {
+        await executeCapability(c, "payments.charge", { journal }, async () => {
+          executions++
+        })
+        return { ok: true }
+      })
+
+    expect((await app.fetch(post("/pay"))).status).toBe(500)
+    expect(executions).toBe(1)
+    expect((await journalStore.list()).map((record) => record.state)).toEqual(["committed"])
   })
 
   test("executeCapability records a bounded failure outcome without leaking the thrown error", async () => {

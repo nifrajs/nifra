@@ -5817,7 +5817,12 @@ import { defineAssurancePolicy } from "@nifrajs/core/assurance"
 - **Durable workflows (opt in).** `@nifrajs/core/durable-execution` provides tenant/principal-bound,
   signed single-use approval resumes; a durable effect journal + reconciliation scanner; and a typed
   saga state machine with reverse compensation, retry/backoff, and ambiguous-crash detection. Production
-  constructors reject stores that do not declare `durability: "durable"`.
+  constructors reject stores that do not declare `durability: "durable"`. Operational scans use bounded
+  cursor pages through `reconcileEffectsPage()` / `reconcileSagasPage()`.
+- **Rich wire values (opt in).** `@nifrajs/core/wire` round-trips dates, bigints, maps, sets, binary,
+  shared references, and cycles through JSON transports. Decoding validates every reachable shape,
+  preserves owned `__proto__` keys without prototype mutation, and enforces configurable node, depth,
+  collection-entry, and decoded-byte limits.
 
 ```ts
 import { defineAssurancePolicy, evaluateRouteAssurance, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"

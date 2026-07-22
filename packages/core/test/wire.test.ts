@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test"
-import { decode, encode, parse, stringify, type Wire, WireDecodeError, WireEncodeError } from "../src/wire.ts"
+import {
+  decode,
+  encode,
+  parse,
+  stringify,
+  type Wire,
+  WireDecodeError,
+  WireEncodeError,
+} from "../src/wire.ts"
 
 /** Round-trip through the full JSON transport (encode -> JSON string -> parse -> decode). */
 const rt = <T>(value: T): unknown => parse(stringify(value))
@@ -79,7 +87,9 @@ describe("wire codec: binary", () => {
     test(`${name} round-trips element-for-element`, () => {
       const out = rt(value)
       expect((out as object).constructor.name).toBe(name)
-      expect(Array.from(out as Iterable<unknown>)).toEqual(Array.from(value as unknown as Iterable<unknown>))
+      expect(Array.from(out as Iterable<unknown>)).toEqual(
+        Array.from(value as unknown as Iterable<unknown>),
+      )
     })
   }
 
@@ -164,6 +174,17 @@ describe("wire codec: fidelity and safety", () => {
     expect(out).not.toBeInstanceOf(Date)
   })
 
+  test("an owned __proto__ key round-trips without changing object prototypes", () => {
+    const value = JSON.parse('{"__proto__":{"admin":true},"safe":1}')
+    const out = rt(value) as Record<string, unknown>
+
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
+    expect(Object.hasOwn(out, "__proto__")).toBe(true)
+    expect(out.__proto__).toEqual({ admin: true })
+    expect(out.safe).toBe(1)
+    expect(({} as { admin?: boolean }).admin).toBeUndefined()
+  })
+
   test("functions and symbols are rejected, never silently dropped", () => {
     expect(() => encode(() => 1)).toThrow(WireEncodeError)
     expect(() => encode(Symbol("x"))).toThrow(WireEncodeError)
@@ -173,7 +194,38 @@ describe("wire codec: fidelity and safety", () => {
   test("malformed wire input throws a typed decode error", () => {
     expect(() => decode({ nope: true } as unknown as Wire)).toThrow(WireDecodeError) // not { r, n }
     expect(() => decode({ r: { $w: "ref", i: 5 }, n: [] })).toThrow(WireDecodeError) // ref out of range
-    expect(() => decode({ r: { $w: "ref", i: 0 }, n: [{ $w: "mystery" }] })).toThrow(WireDecodeError) // unknown tag
-    expect(() => decode({ r: { $w: "ref", i: 0 }, n: [{ $w: "ta", k: "Nope", v: "" }] })).toThrow(WireDecodeError)
+    expect(() => decode({ r: { $w: "ref", i: 0 }, n: [{ $w: "mystery" }] })).toThrow(
+      WireDecodeError,
+    ) // unknown tag
+    expect(() => decode({ r: { $w: "ref", i: 0 }, n: [{ $w: "ta", k: "Nope", v: "" }] })).toThrow(
+      WireDecodeError,
+    )
+    expect(() => decode({ r: { $w: "bigint", v: "not-an-integer" }, n: [] })).toThrow(
+      WireDecodeError,
+    )
+    expect(() => decode({ r: { $w: "ref", i: 0 }, n: [{ $w: "regexp", v: ["x", "z"] }] })).toThrow(
+      WireDecodeError,
+    )
+    expect(() => decode({ r: { $w: "ref", i: 0 }, n: [{ $w: "url", v: "not a URL" }] })).toThrow(
+      WireDecodeError,
+    )
+    expect(() => decode({ r: { $w: "ref", i: 0 }, n: [{ $w: "obj", v: null }] })).toThrow(
+      WireDecodeError,
+    )
+  })
+
+  test("hostile graphs and binary payloads fail within configurable resource limits", () => {
+    const chain = Array.from({ length: 6 }, (_, index) => ({
+      $w: "obj",
+      v: { next: index === 5 ? null : { $w: "ref", i: index + 1 } },
+    }))
+    const root = { r: { $w: "ref", i: 0 }, n: chain }
+
+    expect(() => decode(root, { maxNodes: 5 })).toThrow(WireDecodeError)
+    expect(() => decode(root, { maxDepth: 4 })).toThrow(WireDecodeError)
+    expect(() => decode(root, { maxCollectionEntries: 5 })).toThrow(WireDecodeError)
+    expect(() =>
+      decode({ r: { $w: "ref", i: 0 }, n: [{ $w: "buf", v: "AQIDBA==" }] }, { maxDecodedBytes: 3 }),
+    ).toThrow(WireDecodeError)
   })
 })

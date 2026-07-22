@@ -680,11 +680,12 @@ export async function executeCapability<T>(
     ...metadata,
     ...(trace === undefined ? {} : { trace }),
   })
-  ledger?.append({ capability, effectId, ...metadata, phase: "intent" })
   let admitted = false
   let began = false
+  let committed = false
   let executionStartedAt = 0
   try {
+    ledger?.append({ capability, effectId, ...metadata, phase: "intent" })
     await options.journal?.intent({
       effectId,
       capability,
@@ -748,8 +749,7 @@ export async function executeCapability<T>(
       guard.trackEffect?.(context, false)
       throw new CapabilityJournalTransitionError(capability, effectId, "committed")
     }
-    guard.trackEffect?.(context, true)
-    ledger?.append({ capability, effectId, ...metadata, phase: "committed" })
+    committed = true
     emitEffectLifecycle(observers, {
       effectId,
       capability,
@@ -759,8 +759,13 @@ export async function executeCapability<T>(
       ...metadata,
       ...(trace === undefined ? {} : { trace }),
     })
+    guard.trackEffect?.(context, true)
+    ledger?.append({ capability, effectId, ...metadata, phase: "committed" })
     return result
   } catch (error) {
+    // Once the executor and durable commit transition both succeeded, later evidence failures must
+    // never rewrite that known terminal state. The succeeded lifecycle event was emitted first.
+    if (committed) throw error
     const code = admitted ? "execution_failed" : admissionErrorCode(error)
     if (began) guard.trackEffect?.(context, false)
     try {
@@ -768,13 +773,6 @@ export async function executeCapability<T>(
     } catch {
       // The durable record deliberately remains admission/executing and reconciliation will surface it.
     }
-    ledger?.append({
-      capability,
-      effectId,
-      ...metadata,
-      phase: "failed",
-      error: { code },
-    })
     emitEffectLifecycle(observers, {
       effectId,
       capability,
@@ -788,6 +786,17 @@ export async function executeCapability<T>(
       ...metadata,
       ...(trace === undefined ? {} : { trace }),
     })
+    try {
+      ledger?.append({
+        capability,
+        effectId,
+        ...metadata,
+        phase: "failed",
+        error: { code },
+      })
+    } catch {
+      // The request is already failing. Preserve its cause and the paired terminal lifecycle event.
+    }
     throw error
   }
 }

@@ -33,6 +33,25 @@ export interface Wire {
   readonly n: readonly unknown[]
 }
 
+/** Resource limits applied while reconstructing transport-controlled wire data. */
+export interface WireDecodeLimits {
+  /** Maximum number of interned nodes. Default 10,000. */
+  readonly maxNodes?: number
+  /** Maximum nesting depth across containers and references. Default 256. */
+  readonly maxDepth?: number
+  /** Maximum total object/array/map/set entries visited. Default 100,000. */
+  readonly maxCollectionEntries?: number
+  /** Maximum UTF-8 string plus decoded binary bytes materialized. Default 16 MiB. */
+  readonly maxDecodedBytes?: number
+}
+
+export const DEFAULT_WIRE_DECODE_LIMITS: Readonly<Required<WireDecodeLimits>> = Object.freeze({
+  maxNodes: 10_000,
+  maxDepth: 256,
+  maxCollectionEntries: 100_000,
+  maxDecodedBytes: 16 * 1024 * 1024,
+})
+
 /** Thrown by {@link encode} for a value it will not encode (a function or a symbol). */
 export class WireEncodeError extends TypeError {
   constructor(message: string) {
@@ -47,6 +66,36 @@ export class WireDecodeError extends TypeError {
     super(message)
     this.name = "WireDecodeError"
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+function decodeLimit(value: number | undefined, fallback: number, label: string): number {
+  const limit = value ?? fallback
+  if (!Number.isSafeInteger(limit) || limit < 0) {
+    throw new RangeError(`wire decode ${label} must be a non-negative safe integer`)
+  }
+  return limit
+}
+
+function utf8ByteLength(value: string, stopAfter = Number.MAX_SAFE_INTEGER): number {
+  let bytes = 0
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index)
+    if (code < 0x80) bytes++
+    else if (code < 0x800) bytes += 2
+    else if (code >= 0xd800 && code <= 0xdbff && index + 1 < value.length) {
+      const next = value.charCodeAt(index + 1)
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4
+        index++
+      } else bytes += 3
+    } else bytes += 3
+    if (bytes > stopAfter) return bytes
+  }
+  return bytes
 }
 
 /** The typed-array kinds the codec round-trips, by constructor name. */
@@ -65,6 +114,15 @@ const TYPED_ARRAYS = {
 } as const
 type TypedArrayName = keyof typeof TYPED_ARRAYS
 type TypedArray = InstanceType<(typeof TYPED_ARRAYS)[TypedArrayName]>
+
+function defineEnumerableOwn(target: object, key: string, value: unknown): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  })
+}
 
 // ─── encode ─────────────────────────────────────────────────────────────────
 
@@ -127,7 +185,11 @@ function body(v: unknown, inline: (x: unknown) => unknown): unknown {
     const view = v as TypedArray
     const kind = view.constructor.name
     if (!(kind in TYPED_ARRAYS)) throw new WireEncodeError(`cannot encode typed array ${kind}`)
-    return { [TAG]: "ta", k: kind, v: bytesToBase64(new Uint8Array(view.buffer, view.byteOffset, view.byteLength)) }
+    return {
+      [TAG]: "ta",
+      k: kind,
+      v: bytesToBase64(new Uint8Array(view.buffer, view.byteOffset, view.byteLength)),
+    }
   }
   if (v instanceof Map) {
     return { [TAG]: "map", v: Array.from(v, ([k, val]) => [inline(k), inline(val)]) }
@@ -137,25 +199,71 @@ function body(v: unknown, inline: (x: unknown) => unknown): unknown {
 
   const record = v as Record<string, unknown>
   const out: Record<string, unknown> = {}
-  for (const key of Object.keys(record)) out[key] = inline(record[key])
+  for (const key of Object.keys(record)) defineEnumerableOwn(out, key, inline(record[key]))
   return { [TAG]: "obj", v: out }
 }
 
 // ─── decode ─────────────────────────────────────────────────────────────────
 
 /** Reconstruct the original value from a {@link Wire} form produced by {@link encode}. */
-export function decode(wire: Wire): unknown {
-  if (wire === null || typeof wire !== "object" || !Array.isArray((wire as Wire).n)) {
+export function decode(wire: Wire, limits: WireDecodeLimits = {}): unknown {
+  if (!isRecord(wire) || !Object.hasOwn(wire, "r") || !Array.isArray(wire.n)) {
     throw new WireDecodeError("not a wire value: expected { r, n }")
   }
-  const nodes = (wire as Wire).n
+  const nodes = wire.n
+  const maxNodes = decodeLimit(limits.maxNodes, DEFAULT_WIRE_DECODE_LIMITS.maxNodes, "maxNodes")
+  const maxDepth = decodeLimit(limits.maxDepth, DEFAULT_WIRE_DECODE_LIMITS.maxDepth, "maxDepth")
+  const maxCollectionEntries = decodeLimit(
+    limits.maxCollectionEntries,
+    DEFAULT_WIRE_DECODE_LIMITS.maxCollectionEntries,
+    "maxCollectionEntries",
+  )
+  const maxDecodedBytes = decodeLimit(
+    limits.maxDecodedBytes,
+    DEFAULT_WIRE_DECODE_LIMITS.maxDecodedBytes,
+    "maxDecodedBytes",
+  )
+  if (nodes.length > maxNodes) throw new WireDecodeError("wire node limit exceeded")
   const built = new Map<number, unknown>()
+  let collectionEntries = 0
+  let decodedBytes = 0
 
-  const inline = (w: unknown): unknown => {
-    if (w === null || typeof w !== "object") return w // JSON primitive stands for itself
-    const record = w as Record<string, unknown>
+  const enter = (depth: number): void => {
+    if (depth > maxDepth) throw new WireDecodeError("wire depth limit exceeded")
+  }
+  const chargeEntries = (count: number): void => {
+    collectionEntries += count
+    if (!Number.isSafeInteger(collectionEntries) || collectionEntries > maxCollectionEntries) {
+      throw new WireDecodeError("wire collection entry limit exceeded")
+    }
+  }
+  const chargeBytes = (count: number): void => {
+    decodedBytes += count
+    if (!Number.isSafeInteger(decodedBytes) || decodedBytes > maxDecodedBytes) {
+      throw new WireDecodeError("wire decoded byte limit exceeded")
+    }
+  }
+  const chargeString = (value: string): void =>
+    chargeBytes(utf8ByteLength(value, maxDecodedBytes - decodedBytes))
+
+  const inline = (w: unknown, depth: number): unknown => {
+    enter(depth)
+    if (w === null || typeof w === "boolean") return w
+    if (typeof w === "string") {
+      chargeString(w)
+      return w
+    }
+    if (typeof w === "number") {
+      if (!Number.isFinite(w) || Object.is(w, -0)) {
+        throw new WireDecodeError("malformed wire: non-JSON number inline")
+      }
+      return w
+    }
+    if (!isRecord(w)) throw new WireDecodeError("malformed wire: invalid inline value")
+    const record = w
     const tag = record[TAG]
-    if (typeof tag !== "string") throw new WireDecodeError("malformed wire: object without a tag inline")
+    if (typeof tag !== "string")
+      throw new WireDecodeError("malformed wire: object without a tag inline")
     switch (tag) {
       case "undef":
         return undefined
@@ -167,16 +275,22 @@ export function decode(wire: Wire): unknown {
         if (v === "-Infinity") return -Infinity
         throw new WireDecodeError(`malformed num token: ${String(v)}`)
       }
-      case "bigint":
-        return BigInt(record.v as string)
+      case "bigint": {
+        if (typeof record.v !== "string" || !/^-?(?:0|[1-9][0-9]*)$/u.test(record.v)) {
+          throw new WireDecodeError("malformed bigint token")
+        }
+        chargeString(record.v)
+        return BigInt(record.v)
+      }
       case "ref":
-        return resolve(record.i)
+        return resolve(record.i, depth)
       default:
         throw new WireDecodeError(`unexpected inline tag: ${tag}`)
     }
   }
 
-  const resolve = (raw: unknown): unknown => {
+  const resolve = (raw: unknown, depth: number): unknown => {
+    enter(depth)
     if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0 || raw >= nodes.length) {
       throw new WireDecodeError(`ref out of range: ${String(raw)}`)
     }
@@ -185,72 +299,125 @@ export function decode(wire: Wire): unknown {
     if (cached !== undefined || built.has(index)) return cached
 
     const node = nodes[index]
-    if (node === null || typeof node !== "object") throw new WireDecodeError(`malformed node at ${index}`)
-    const record = node as Record<string, unknown>
+    if (!isRecord(node)) throw new WireDecodeError(`malformed node at ${index}`)
+    const record = node
     const tag = record[TAG]
 
     switch (tag) {
       case "obj": {
+        if (!isRecord(record.v)) throw new WireDecodeError(`malformed obj node at ${index}`)
         const out: Record<string, unknown> = {}
         built.set(index, out) // publish the shell first so cycles resolve to it
-        const src = record.v as Record<string, unknown>
-        for (const key of Object.keys(src)) out[key] = inline(src[key])
+        const src = record.v
+        const keys = Object.keys(src)
+        chargeEntries(keys.length)
+        for (const key of keys) {
+          chargeString(key)
+          defineEnumerableOwn(out, key, inline(src[key], depth + 1))
+        }
         return out
       }
       case "arr": {
+        if (!Array.isArray(record.v)) throw new WireDecodeError(`malformed arr node at ${index}`)
         const out: unknown[] = []
         built.set(index, out)
-        for (const item of record.v as unknown[]) out.push(inline(item))
+        chargeEntries(record.v.length)
+        for (const item of record.v) out.push(inline(item, depth + 1))
         return out
       }
       case "map": {
+        if (!Array.isArray(record.v)) throw new WireDecodeError(`malformed map node at ${index}`)
         const out = new Map<unknown, unknown>()
         built.set(index, out)
-        for (const [k, val] of record.v as Array<[unknown, unknown]>) out.set(inline(k), inline(val))
+        chargeEntries(record.v.length)
+        for (const entry of record.v) {
+          if (!Array.isArray(entry) || entry.length !== 2) {
+            throw new WireDecodeError(`malformed map entry at ${index}`)
+          }
+          out.set(inline(entry[0], depth + 1), inline(entry[1], depth + 1))
+        }
         return out
       }
       case "set": {
+        if (!Array.isArray(record.v)) throw new WireDecodeError(`malformed set node at ${index}`)
         const out = new Set<unknown>()
         built.set(index, out)
-        for (const item of record.v as unknown[]) out.add(inline(item))
+        chargeEntries(record.v.length)
+        for (const item of record.v) out.add(inline(item, depth + 1))
         return out
       }
       case "date": {
-        const out = record.v === null ? new Date(NaN) : new Date(record.v as string)
+        if (record.v !== null && typeof record.v !== "string") {
+          throw new WireDecodeError(`malformed date node at ${index}`)
+        }
+        if (record.v !== null) chargeString(record.v)
+        const out = record.v === null ? new Date(NaN) : new Date(record.v)
+        if (record.v !== null && (Number.isNaN(out.getTime()) || out.toISOString() !== record.v)) {
+          throw new WireDecodeError(`malformed date node at ${index}`)
+        }
         built.set(index, out)
         return out
       }
       case "regexp": {
-        const [source, flags] = record.v as [string, string]
-        const out = new RegExp(source, flags)
+        if (
+          !Array.isArray(record.v) ||
+          record.v.length !== 2 ||
+          typeof record.v[0] !== "string" ||
+          typeof record.v[1] !== "string"
+        ) {
+          throw new WireDecodeError(`malformed regexp node at ${index}`)
+        }
+        chargeString(record.v[0])
+        chargeString(record.v[1])
+        let out: RegExp
+        try {
+          out = new RegExp(record.v[0], record.v[1])
+        } catch {
+          throw new WireDecodeError(`malformed regexp node at ${index}`)
+        }
         built.set(index, out)
         return out
       }
       case "url": {
-        const out = new URL(record.v as string)
+        if (typeof record.v !== "string") {
+          throw new WireDecodeError(`malformed url node at ${index}`)
+        }
+        chargeString(record.v)
+        let out: URL
+        try {
+          out = new URL(record.v)
+        } catch {
+          throw new WireDecodeError(`malformed url node at ${index}`)
+        }
         built.set(index, out)
         return out
       }
       case "buf": {
-        const out = base64ToBytes(record.v as string).buffer
+        const out = base64ToBytes(record.v, index, chargeBytes).buffer
         built.set(index, out)
         return out
       }
       case "dv": {
-        const out = new DataView(base64ToBytes(record.v as string).buffer)
+        const out = new DataView(base64ToBytes(record.v, index, chargeBytes).buffer)
         built.set(index, out)
         return out
       }
       case "ta": {
-        const kind = record.k as string
-        if (!(kind in TYPED_ARRAYS)) throw new WireDecodeError(`unknown typed array: ${kind}`)
+        const kind = record.k
+        if (typeof kind !== "string" || !(kind in TYPED_ARRAYS)) {
+          throw new WireDecodeError(`unknown typed array: ${String(kind)}`)
+        }
         const Ctor = TYPED_ARRAYS[kind as TypedArrayName]
-        const bytes = base64ToBytes(record.v as string)
+        const bytes = base64ToBytes(record.v, index, chargeBytes)
         if (bytes.byteLength % Ctor.BYTES_PER_ELEMENT !== 0) {
           throw new WireDecodeError(`misaligned bytes for ${kind}`)
         }
         // `base64ToBytes` always allocates a fresh, non-shared ArrayBuffer, so this narrowing is sound.
-        const out = new Ctor(bytes.buffer as ArrayBuffer, 0, bytes.byteLength / Ctor.BYTES_PER_ELEMENT)
+        const out = new Ctor(
+          bytes.buffer as ArrayBuffer,
+          0,
+          bytes.byteLength / Ctor.BYTES_PER_ELEMENT,
+        )
         built.set(index, out)
         return out
       }
@@ -259,7 +426,7 @@ export function decode(wire: Wire): unknown {
     }
   }
 
-  return inline((wire as Wire).r)
+  return inline(wire.r, 0)
 }
 
 /** `encode` + `JSON.stringify` in one call - the rich-type equivalent of `JSON.stringify`. */
@@ -268,8 +435,8 @@ export function stringify(value: unknown): string {
 }
 
 /** `JSON.parse` + `decode` in one call - the rich-type equivalent of `JSON.parse`. */
-export function parse(text: string): unknown {
-  return decode(JSON.parse(text) as Wire)
+export function parse(text: string, limits: WireDecodeLimits = {}): unknown {
+  return decode(JSON.parse(text) as Wire, limits)
 }
 
 // ─── base64 (portable across Bun / browser / Workers / Node / Deno) ───────────
@@ -277,12 +444,30 @@ export function parse(text: string): unknown {
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = ""
   const CHUNK = 0x8000 // chunk so String.fromCharCode(...) never overflows the call stack
-  for (let i = 0; i < bytes.length; i += CHUNK) binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
+  for (let i = 0; i < bytes.length; i += CHUNK)
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
   return btoa(binary)
 }
 
-function base64ToBytes(base64: string): Uint8Array {
-  const binary = atob(base64)
+function base64ToBytes(
+  base64: unknown,
+  index: number,
+  reserve: (decodedBytes: number) => void,
+): Uint8Array {
+  if (typeof base64 !== "string" || base64.length % 4 !== 0) {
+    throw new WireDecodeError(`malformed base64 at ${index}`)
+  }
+  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0
+  reserve((base64.length / 4) * 3 - padding)
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(base64)) {
+    throw new WireDecodeError(`malformed base64 at ${index}`)
+  }
+  let binary: string
+  try {
+    binary = atob(base64)
+  } catch {
+    throw new WireDecodeError(`malformed base64 at ${index}`)
+  }
   const bytes = new Uint8Array(binary.length)
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
   return bytes

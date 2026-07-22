@@ -72,6 +72,23 @@ function cloneValue<T>(value: T): T {
 
 export type DurableEffectState = "admission" | "executing" | "committed" | "failed" | "unknown"
 
+export interface ReconciliationScanOptions<State extends string> {
+  readonly states: readonly State[]
+  readonly updatedBefore?: number
+  readonly cursor?: string
+  readonly limit: number
+}
+
+export interface ReconciliationScanPage<Record> {
+  readonly records: readonly Record[]
+  readonly cursor?: string
+}
+
+export interface ReconciliationPage<Finding> {
+  readonly findings: readonly Finding[]
+  readonly cursor?: string
+}
+
 export interface DurableEffectRecord {
   readonly effectId: string
   readonly capability: string
@@ -99,7 +116,14 @@ export interface DurableEffectStore {
     readonly updatedAt: number
     readonly errorCode?: string
   }): boolean | Promise<boolean>
-  list(): readonly DurableEffectRecord[] | Promise<readonly DurableEffectRecord[]>
+  /** Bounded operational scan. Transition-only stores do not need to implement reconciliation. */
+  scan?(
+    input: ReconciliationScanOptions<DurableEffectState>,
+  ):
+    | ReconciliationScanPage<DurableEffectRecord>
+    | Promise<ReconciliationScanPage<DurableEffectRecord>>
+  /** @deprecated Compatibility fallback; production reconciliation should implement `scan`. */
+  list?(): readonly DurableEffectRecord[] | Promise<readonly DurableEffectRecord[]>
 }
 
 export class DurableEffectTransitionError extends Error {
@@ -209,10 +233,14 @@ export function createDurableEffectJournal(
 export class MemoryDurableEffectStore implements DurableEffectStore {
   readonly durability = "memory" as const
   private readonly records = new Map<string, DurableEffectRecord>()
+  // Secondary index: effectIds grouped by state, so reconciliation scans only the requested (few,
+  // non-terminal) states instead of walking every retained record. See {@link indexedScan}.
+  private readonly byState = new Map<DurableEffectState, Set<string>>()
 
   create(record: DurableEffectRecord): boolean {
     if (this.records.has(record.effectId)) return false
     this.records.set(record.effectId, Object.freeze(cloneValue(record)))
+    bucketAdd(this.byState, record.state, record.effectId)
     return true
   }
 
@@ -235,6 +263,7 @@ export class MemoryDurableEffectStore implements DurableEffectStore {
         ...(input.errorCode === undefined ? {} : { errorCode: input.errorCode }),
       }),
     )
+    bucketMove(this.byState, current.state, input.to, input.effectId)
     return true
   }
 
@@ -242,6 +271,12 @@ export class MemoryDurableEffectStore implements DurableEffectStore {
     return Object.freeze(
       [...this.records.values()].map((record) => Object.freeze(cloneValue(record))),
     )
+  }
+
+  scan(
+    input: ReconciliationScanOptions<DurableEffectState>,
+  ): ReconciliationScanPage<DurableEffectRecord> {
+    return indexedScan(this.byState, (id) => this.records.get(id), input)
   }
 }
 
@@ -252,12 +287,146 @@ export interface EffectReconciliationFinding {
   readonly updatedAt: number
 }
 
-export async function reconcileEffects(
+const DEFAULT_RECONCILIATION_LIMIT = 100
+const MAX_RECONCILIATION_LIMIT = 1_000
+
+function reconciliationLimit(value = DEFAULT_RECONCILIATION_LIMIT): number {
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_RECONCILIATION_LIMIT) {
+    throw new RangeError(`reconciliation limit must be between 1 and ${MAX_RECONCILIATION_LIMIT}`)
+  }
+  return value
+}
+
+function cursorOffset(cursor?: string): number {
+  if (cursor === undefined) return 0
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(cursor)) throw new TypeError("invalid reconciliation cursor")
+  const offset = Number(cursor)
+  if (!Number.isSafeInteger(offset)) throw new TypeError("invalid reconciliation cursor")
+  return offset
+}
+
+function memoryScan<
+  Record extends { readonly state: State; readonly updatedAt: number },
+  State extends string,
+>(
+  source: Iterable<Record>,
+  input: ReconciliationScanOptions<State>,
+): ReconciliationScanPage<Record> {
+  const states = new Set(input.states)
+  const offset = cursorOffset(input.cursor)
+  const end = offset + input.limit
+  const records: Record[] = []
+  // Stream the source: skip the first `offset` eligible records, collect up to `limit`, and stop as
+  // soon as one more eligible record proves a next page exists. Bounds allocation to the page and
+  // avoids materializing the whole store when the page fills early. (An unindexed in-memory store still
+  // walks its records to find sparse matches; a production store implements `scan()` as an indexed
+  // query - state + updatedAt predicate, keyset cursor - instead of relying on this reference scan.)
+  let seen = 0
+  let more = false
+  for (const record of source) {
+    if (!states.has(record.state)) continue
+    if (input.updatedBefore !== undefined && record.updatedAt > input.updatedBefore) continue
+    if (seen >= end) {
+      more = true
+      break
+    }
+    if (seen >= offset) records.push(cloneValue(record))
+    seen++
+  }
+  return Object.freeze({
+    records: Object.freeze(records),
+    ...(more ? { cursor: String(offset + records.length) } : {}),
+  })
+}
+
+function bucketAdd<State extends string>(
+  byState: Map<State, Set<string>>,
+  state: State,
+  id: string,
+): void {
+  let bucket = byState.get(state)
+  if (bucket === undefined) {
+    bucket = new Set()
+    byState.set(state, bucket)
+  }
+  bucket.add(id)
+}
+
+function bucketMove<State extends string>(
+  byState: Map<State, Set<string>>,
+  from: State,
+  to: State,
+  id: string,
+): void {
+  if (from === to) return
+  byState.get(from)?.delete(id)
+  bucketAdd(byState, to, id)
+}
+
+/**
+ * Paginate a state-bucketed in-memory index: walk only the requested states' buckets (each a Set of
+ * ids in insertion order), resolve + `updatedBefore`-filter each record, and page by offset cursor.
+ * O(sum of the requested buckets) instead of O(total records) - the store still retains terminal
+ * records, but reconciliation never walks them. Matches {@link memoryScan}'s paging semantics.
+ */
+function indexedScan<Record extends { readonly updatedAt: number }, State extends string>(
+  byState: Map<State, Set<string>>,
+  resolve: (id: string) => Record | undefined,
+  input: ReconciliationScanOptions<State>,
+): ReconciliationScanPage<Record> {
+  const offset = cursorOffset(input.cursor)
+  const end = offset + input.limit
+  const records: Record[] = []
+  let seen = 0
+  let more = false
+  for (const state of new Set(input.states)) {
+    if (more) break
+    const bucket = byState.get(state)
+    if (bucket === undefined) continue
+    for (const id of bucket) {
+      const record = resolve(id)
+      if (record === undefined) continue
+      if (input.updatedBefore !== undefined && record.updatedAt > input.updatedBefore) continue
+      if (seen >= end) {
+        more = true
+        break
+      }
+      if (seen >= offset) records.push(cloneValue(record))
+      seen++
+    }
+  }
+  return Object.freeze({
+    records: Object.freeze(records),
+    ...(more ? { cursor: String(offset + records.length) } : {}),
+  })
+}
+
+async function scanEffectRecords(
   store: DurableEffectStore,
-  options: { readonly staleBefore: number; readonly observer?: EffectLifecycleObserver },
-): Promise<readonly EffectReconciliationFinding[]> {
+  input: ReconciliationScanOptions<DurableEffectState>,
+): Promise<ReconciliationScanPage<DurableEffectRecord>> {
+  if (store.scan !== undefined) return await store.scan(input)
+  if (store.list === undefined) throw new TypeError("effect store does not support reconciliation")
+  return memoryScan(await store.list(), input)
+}
+
+export async function reconcileEffectsPage(
+  store: DurableEffectStore,
+  options: {
+    readonly staleBefore: number
+    readonly observer?: EffectLifecycleObserver
+    readonly cursor?: string
+    readonly limit?: number
+  },
+): Promise<ReconciliationPage<EffectReconciliationFinding>> {
   const findings: EffectReconciliationFinding[] = []
-  for (const record of await store.list()) {
+  const page = await scanEffectRecords(store, {
+    states: ["admission", "executing", "unknown"],
+    updatedBefore: options.staleBefore,
+    ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+    limit: reconciliationLimit(options.limit),
+  })
+  for (const record of page.records) {
     if (!validCapabilityId(record.capability) || !/^[!-~]{1,64}$/u.test(record.effectId)) continue
     if (record.updatedAt > options.staleBefore) continue
     const state =
@@ -285,7 +454,26 @@ export async function reconcileEffects(
       })
     }
   }
-  return Object.freeze(findings)
+  return Object.freeze({
+    findings: Object.freeze(findings),
+    ...(page.cursor === undefined ? {} : { cursor: page.cursor }),
+  })
+}
+
+export async function reconcileEffects(
+  store: DurableEffectStore,
+  options: { readonly staleBefore: number; readonly observer?: EffectLifecycleObserver },
+): Promise<readonly EffectReconciliationFinding[]> {
+  const page = await reconcileEffectsPage(store, {
+    ...options,
+    limit: MAX_RECONCILIATION_LIMIT,
+  })
+  if (page.cursor !== undefined) {
+    throw new RangeError(
+      `effect reconciliation exceeds ${MAX_RECONCILIATION_LIMIT} records; use reconcileEffectsPage()`,
+    )
+  }
+  return page.findings
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -341,17 +529,25 @@ export interface ApprovalStore {
     readonly tokenHash: string
     readonly now: number
   }): ApprovalConsumeResult | Promise<ApprovalConsumeResult>
-  list(): readonly ApprovalRecord[] | Promise<readonly ApprovalRecord[]>
 }
 
 export class ApprovalRequiredError extends Error {
-  constructor(
-    public readonly approvalId: string,
-    public readonly effectId: string,
-    public readonly resumeToken: string,
-    public readonly expiresAt: number,
-  ) {
+  readonly approvalId: string
+  readonly effectId: string
+  readonly resumeToken!: string
+  readonly expiresAt: number
+
+  constructor(approvalId: string, effectId: string, resumeToken: string, expiresAt: number) {
     super("capability approval is required")
+    this.approvalId = approvalId
+    this.effectId = effectId
+    this.expiresAt = expiresAt
+    Object.defineProperty(this, "resumeToken", {
+      value: resumeToken,
+      enumerable: false,
+      configurable: false,
+      writable: false,
+    })
     this.name = "ApprovalRequiredError"
   }
 }
@@ -670,7 +866,12 @@ export interface SagaStore {
     readonly version: number
     readonly record: SagaRecord
   }): boolean | Promise<boolean>
-  list(): readonly SagaRecord[] | Promise<readonly SagaRecord[]>
+  /** Bounded operational scan. Transition-only stores do not need to implement reconciliation. */
+  scan?(
+    input: ReconciliationScanOptions<SagaState>,
+  ): ReconciliationScanPage<SagaRecord> | Promise<ReconciliationScanPage<SagaRecord>>
+  /** @deprecated Compatibility fallback; production reconciliation should implement `scan`. */
+  list?(): readonly SagaRecord[] | Promise<readonly SagaRecord[]>
 }
 
 export interface SagaStepExecutionContext {
@@ -1055,9 +1256,13 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
 export class MemorySagaStore implements SagaStore {
   readonly durability = "memory" as const
   private readonly records = new Map<string, SagaRecord>()
+  // Secondary index: sagaIds grouped by state, so reconciliation scans only the requested (few,
+  // non-terminal) states instead of walking every retained record. See {@link indexedScan}.
+  private readonly byState = new Map<SagaState, Set<string>>()
   create(record: SagaRecord): boolean {
     if (this.records.has(record.sagaId)) return false
     this.records.set(record.sagaId, Object.freeze(cloneValue(record)))
+    bucketAdd(this.byState, record.state, record.sagaId)
     return true
   }
   get(sagaId: string): SagaRecord | undefined {
@@ -1073,12 +1278,17 @@ export class MemorySagaStore implements SagaStore {
     )
       return false
     this.records.set(input.sagaId, Object.freeze(cloneValue(input.record)))
+    bucketMove(this.byState, current.state, input.record.state, input.sagaId)
     return true
   }
   list(): readonly SagaRecord[] {
     return Object.freeze(
       [...this.records.values()].map((record) => Object.freeze(cloneValue(record))),
     )
+  }
+
+  scan(input: ReconciliationScanOptions<SagaState>): ReconciliationScanPage<SagaRecord> {
+    return indexedScan(this.byState, (id) => this.records.get(id), input)
   }
 }
 
@@ -1094,12 +1304,26 @@ export interface SagaReconciliationFinding {
     | "manual-review"
 }
 
-export async function reconcileSagas(
+async function scanSagaRecords(
   store: SagaStore,
-  options: { readonly staleBefore: number },
-): Promise<readonly SagaReconciliationFinding[]> {
+  input: ReconciliationScanOptions<SagaState>,
+): Promise<ReconciliationScanPage<SagaRecord>> {
+  if (store.scan !== undefined) return await store.scan(input)
+  if (store.list === undefined) throw new TypeError("saga store does not support reconciliation")
+  return memoryScan(await store.list(), input)
+}
+
+export async function reconcileSagasPage(
+  store: SagaStore,
+  options: { readonly staleBefore: number; readonly cursor?: string; readonly limit?: number },
+): Promise<ReconciliationPage<SagaReconciliationFinding>> {
   const findings: SagaReconciliationFinding[] = []
-  for (const record of await store.list()) {
+  const page = await scanSagaRecords(store, {
+    states: ["running", "compensating", "manual-review"],
+    ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+    limit: reconciliationLimit(options.limit),
+  })
+  for (const record of page.records) {
     const ambiguous = record.steps.find(
       (step) =>
         step.state === "executing" || step.state === "ambiguous" || step.state === "compensating",
@@ -1131,5 +1355,24 @@ export async function reconcileSagas(
       )
     }
   }
-  return Object.freeze(findings)
+  return Object.freeze({
+    findings: Object.freeze(findings),
+    ...(page.cursor === undefined ? {} : { cursor: page.cursor }),
+  })
+}
+
+export async function reconcileSagas(
+  store: SagaStore,
+  options: { readonly staleBefore: number },
+): Promise<readonly SagaReconciliationFinding[]> {
+  const page = await reconcileSagasPage(store, {
+    ...options,
+    limit: MAX_RECONCILIATION_LIMIT,
+  })
+  if (page.cursor !== undefined) {
+    throw new RangeError(
+      `saga reconciliation exceeds ${MAX_RECONCILIATION_LIMIT} records; use reconcileSagasPage()`,
+    )
+  }
+  return page.findings
 }

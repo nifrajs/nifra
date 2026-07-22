@@ -343,7 +343,7 @@
     "name": "ApprovalRecord",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface ApprovalRecord {\n    readonly approvalId: string;\n    readonly effectId: string;\n    readonly capability: string;\n    readonly tenantId: string;\n    readonly principalId: string;\n    readonly tokenHash: string;\n    readonly state: ApprovalState;\n    readonly createdAt: number;\n    readonly expiresAt: number;\n    readonly updatedAt: number;\n    readonly decidedBy?: string;\n    readonly version: number;\n}"
+    "signature": "export interface ApprovalRecord {\n    readonly approvalId: string;\n    readonly effectId: string;\n    readonly capability: string;\n    readonly target?: string;\n    readonly digest?: string;\n    readonly tenantId: string;\n    readonly principalId: string;\n    readonly tokenHash: string;\n    readonly state: ApprovalState;\n    readonly createdAt: number;\n    readonly expiresAt: number;\n    readonly updatedAt: number;\n    readonly decidedBy?: string;\n    readonly version: number;\n}"
   },
   {
     "name": "ApprovalRequiredError",
@@ -361,7 +361,7 @@
     "name": "ApprovalStore",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface ApprovalStore {\n    readonly durability?: \"memory\" | \"durable\";\n    create(record: ApprovalRecord): boolean | Promise<boolean>;\n    get(approvalId: string): ApprovalRecord | undefined | Promise<ApprovalRecord | undefined>;\n    decide(input: {\n        readonly approvalId: string;\n        readonly tenantId: string;\n        readonly decision: \"approved\" | \"denied\";\n        readonly decidedBy: string;\n        readonly now: number;\n    }): boolean | Promise<boolean>;\n    consume(input: {\n        readonly approvalId: string;\n        readonly tenantId: string;\n        readonly principalId: string;\n        readonly tokenHash: string;\n        readonly now: number;\n    }): ApprovalConsumeResult | Promise<ApprovalConsumeResult>;\n    list(): readonly ApprovalRecord[] | Promise<readonly ApprovalRecord[]>;\n}"
+    "signature": "export interface ApprovalStore {\n    readonly durability?: \"memory\" | \"durable\";\n    create(record: ApprovalRecord): boolean | Promise<boolean>;\n    get(approvalId: string): ApprovalRecord | undefined | Promise<ApprovalRecord | undefined>;\n    decide(input: {\n        readonly approvalId: string;\n        readonly tenantId: string;\n        readonly decision: \"approved\" | \"denied\";\n        readonly decidedBy: string;\n        readonly now: number;\n    }): boolean | Promise<boolean>;\n    /**\n     * Atomically validate binding/token/state and change `approved` to `consumed`. Two concurrent\n     * callers with one token must yield exactly one `consumed` and one `replay` result.\n     */\n    consume(input: {\n        readonly approvalId: string;\n        readonly tenantId: string;\n        readonly principalId: string;\n        readonly capability: string;\n        readonly target?: string;\n        readonly digest?: string;\n        readonly tokenHash: string;\n        readonly now: number;\n    }): ApprovalConsumeResult | Promise<ApprovalConsumeResult>;\n    list(): readonly ApprovalRecord[] | Promise<readonly ApprovalRecord[]>;\n}"
   },
   {
     "name": "ApprovalTokenExpiredError",
@@ -1178,7 +1178,7 @@
     "name": "CapabilityGuard",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface CapabilityGuard {\n    readonly allowed: readonly string[];\n    readonly method: string;\n    readonly path: string;\n    readonly onUse?: (event: CapabilityUseEvent) => void;\n    readonly interceptors: readonly RegisteredCapabilityInterceptor[];\n    readonly observers: readonly EffectLifecycleObserver[];\n}"
+    "signature": "export interface CapabilityGuard {\n    readonly allowed: readonly string[];\n    readonly method: string;\n    readonly path: string;\n    readonly onUse?: (event: CapabilityUseEvent) => void;\n    readonly trackEffect?: (context: object, committed: boolean) => void;\n    readonly interceptors: readonly RegisteredCapabilityInterceptor[];\n    readonly observers: readonly EffectLifecycleObserver[];\n}"
   },
   {
     "name": "CapabilityIdempotency",
@@ -2184,7 +2184,7 @@
     "name": "createCapabilityGuard",
     "kind": "function",
     "package": "@nifrajs/core",
-    "signature": "export declare function createCapabilityGuard(allowed: readonly string[], method: string, path: string, onUse: ((event: CapabilityUseEvent) => void) | undefined, interceptors: readonly RegisteredCapabilityInterceptor[], observers: readonly EffectLifecycleObserver[]): CapabilityGuard;"
+    "signature": "export declare function createCapabilityGuard(allowed: readonly string[], method: string, path: string, onUse: ((event: CapabilityUseEvent) => void) | undefined, trackEffect: ((context: object, committed: boolean) => void) | undefined, interceptors: readonly RegisteredCapabilityInterceptor[], observers: readonly EffectLifecycleObserver[]): CapabilityGuard;"
   },
   {
     "name": "createClientRouter",
@@ -2624,6 +2624,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function declaredCapabilities(context: object): readonly string[];",
     "doc": "/**\n * Read the route's token-only declaration for admission plugins. This intentionally exposes neither\n * the request nor runtime evidence; it is the stable public seam for private entitlement policy.\n */"
+  },
+  {
+    "name": "decode",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function decode(wire: Wire): unknown;",
+    "doc": "/** Reconstruct the original value from a {@link Wire} form produced by {@link encode}. */"
   },
   {
     "name": "decodeBase64",
@@ -3114,7 +3121,7 @@
     "name": "DurableEffectStore",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface DurableEffectStore {\n    readonly durability?: \"memory\" | \"durable\";\n    create(record: DurableEffectRecord): boolean | Promise<boolean>;\n    get(effectId: string): DurableEffectRecord | undefined | Promise<DurableEffectRecord | undefined>;\n    transition(input: {\n        readonly effectId: string;\n        readonly version: number;\n        readonly from: DurableEffectState;\n        readonly to: DurableEffectState;\n        readonly updatedAt: number;\n        readonly errorCode?: string;\n    }): boolean | Promise<boolean>;\n    list(): readonly DurableEffectRecord[] | Promise<readonly DurableEffectRecord[]>;\n}"
+    "signature": "export interface DurableEffectStore {\n    readonly durability?: \"memory\" | \"durable\";\n    create(record: DurableEffectRecord): boolean | Promise<boolean>;\n    get(effectId: string): DurableEffectRecord | undefined | Promise<DurableEffectRecord | undefined>;\n    /** Atomic compare-and-set; exactly one caller may advance the supplied `version` and `from` state. */\n    transition(input: {\n        readonly effectId: string;\n        readonly version: number;\n        readonly from: DurableEffectState;\n        readonly to: DurableEffectState;\n        readonly updatedAt: number;\n        readonly errorCode?: string;\n    }): boolean | Promise<boolean>;\n    list(): readonly DurableEffectRecord[] | Promise<readonly DurableEffectRecord[]>;\n}"
   },
   {
     "name": "DurableEffectTransitionError",
@@ -3267,6 +3274,25 @@
     "signature": "export declare function effectTraceParentOf(context: object): EffectTraceParent | undefined;"
   },
   {
+    "name": "effectTracing",
+    "kind": "function",
+    "package": "@nifrajs/otel",
+    "signature": "export declare function effectTracing(options?: EffectTracingOptions): EffectTracingPlugin;",
+    "doc": "/**\n * Installs child effect spans on subsequent routes. The observer consumes only the constrained\n * `EffectLifecycleEvent` contract; request/business payloads and error text cannot enter an export.\n */"
+  },
+  {
+    "name": "EffectTracingOptions",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface EffectTracingOptions {\n    readonly exporter?: ObservationAdapter;\n    readonly adapters?: readonly ObservationAdapter[];\n}"
+  },
+  {
+    "name": "EffectTracingPlugin",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface EffectTracingPlugin extends IdentityPlugin {\n    /** Pass the same observer to `createSagaEngine({ observer })` and reconciliation helpers. */\n    readonly observer: EffectLifecycleObserver;\n}"
+  },
+  {
     "name": "emitEffectLifecycle",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -3310,6 +3336,13 @@
     "kind": "interface",
     "package": "@nifrajs/web",
     "signature": "export interface EnableDraftOptions {\n    /** Cookie lifetime in **seconds** (default `3600` = 1h). Keep it short — draft is an editor session. */\n    readonly maxAgeSeconds?: number;\n    /** Cookie `Path` (default `\"/\"`). */\n    readonly path?: string;\n    /** Override the `Secure` attribute (defaults to `true` — secure-by-default). Pass `false` only for\n     * local `http://` dev, where a `Secure` cookie isn't stored. */\n    readonly secure?: boolean;\n}"
+  },
+  {
+    "name": "encode",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function encode(value: unknown): Wire;",
+    "doc": "/** Encode any supported value into a JSON-safe {@link Wire} form. */"
   },
   {
     "name": "encodeCursor",
@@ -4399,7 +4432,7 @@
     "name": "IdempotencyRuntime",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface IdempotencyRuntime {\n    /** Resolve a route's declared idempotency into a pinned store + defaults, or `undefined` when off. */\n    resolve(schema: RouteSchema | undefined, authenticated: boolean, maxBodyBytes: number): ResolvedIdempotency | undefined;\n    /** The dedupe lane: read the key, fingerprint the request, consult the store, run/replay/reject. */\n    run<T>(config: ResolvedIdempotency, req: Request, platform: Platform | undefined, entry: unknown, params: Record<string, string>, search: string | undefined, wrapResponse: (response: Response) => T, host: IdempotencyHost): Promise<T>;\n}",
+    "signature": "export interface IdempotencyRuntime {\n    readonly trackEffect: (context: object, committed: boolean) => void;\n    /** Resolve a route's declared idempotency into a pinned store + defaults, or `undefined` when off. */\n    resolve(schema: RouteSchema | undefined, authenticated: boolean, maxBodyBytes: number): ResolvedIdempotency | undefined;\n    /** The dedupe lane: read the key, fingerprint the request, consult the store, run/replay/reject. */\n    run<T>(config: ResolvedIdempotency, req: Request, platform: Platform | undefined, entry: unknown, params: Record<string, string>, search: string | undefined, wrapResponse: (response: Response) => T, host: IdempotencyHost): Promise<T>;\n}",
     "doc": "/** The injected idempotency implementation the kernel calls through when the plugin is installed. */"
   },
   {
@@ -5477,6 +5510,12 @@
     "package": "@nifrajs/core",
     "signature": "export declare function markBeaconEffectBegan(context: object): void;",
     "doc": "/** A legacy beacon cannot prove what happens after the call, so it is immediately ambiguous. */"
+  },
+  {
+    "name": "markEffect",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function markEffect(context: object, committed: boolean): void;"
   },
   {
     "name": "markEffectAmbiguous",
@@ -6656,6 +6695,13 @@
     "kind": "type",
     "package": "@nifrajs/core",
     "signature": "export type Params<Path extends string> = Prettify<RawParams<Path>>;"
+  },
+  {
+    "name": "parse",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function parse(text: string): unknown;",
+    "doc": "/** `JSON.parse` + `decode` in one call - the rich-type equivalent of `JSON.parse`. */"
   },
   {
     "name": "parseArgs",
@@ -8701,7 +8747,7 @@
     "name": "SagaStore",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface SagaStore {\n    readonly durability?: \"memory\" | \"durable\";\n    create(record: SagaRecord): boolean | Promise<boolean>;\n    get(sagaId: string): SagaRecord | undefined | Promise<SagaRecord | undefined>;\n    compareAndSet(input: {\n        readonly sagaId: string;\n        readonly version: number;\n        readonly record: SagaRecord;\n    }): boolean | Promise<boolean>;\n    list(): readonly SagaRecord[] | Promise<readonly SagaRecord[]>;\n}"
+    "signature": "export interface SagaStore {\n    readonly durability?: \"memory\" | \"durable\";\n    create(record: SagaRecord): boolean | Promise<boolean>;\n    get(sagaId: string): SagaRecord | undefined | Promise<SagaRecord | undefined>;\n    /** Atomic version compare-and-set; this is the saga engine's crash/concurrency boundary. */\n    compareAndSet(input: {\n        readonly sagaId: string;\n        readonly version: number;\n        readonly record: SagaRecord;\n    }): boolean | Promise<boolean>;\n    list(): readonly SagaRecord[] | Promise<readonly SagaRecord[]>;\n}"
   },
   {
     "name": "sanitizeOutputNames",
@@ -9776,6 +9822,13 @@
     "package": "@nifrajs/env",
     "signature": "export declare function string(opts?: Base<string> & Optional): StandardSchemaV1<string | undefined>;",
     "doc": "/** A required (or defaulted/optional) non-empty string. */"
+  },
+  {
+    "name": "stringify",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function stringify(value: unknown): string;",
+    "doc": "/** `encode` + `JSON.stringify` in one call - the rich-type equivalent of `JSON.stringify`. */"
   },
   {
     "name": "stripComments",
@@ -10947,6 +11000,27 @@
     "package": "@nifrajs/mcp",
     "signature": "export declare function widgetDocument(opts: DefineMcpWidgetOptions): string;",
     "doc": "/** Assemble the full self-contained widget document (bridge inlined in `<head>` so body scripts can use\n * `mcpApp` immediately). */"
+  },
+  {
+    "name": "Wire",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface Wire {\n    /** The root value: an inline primitive/scalar, or a `{ [TAG]: \"ref\", i }` into {@link Wire.n}. */\n    readonly r: unknown;\n    /** Interned container and rich-type nodes, addressed by index from `ref`s. */\n    readonly n: readonly unknown[];\n}",
+    "doc": "/** The JSON-safe encoded form produced by {@link encode} and consumed by {@link decode}. */"
+  },
+  {
+    "name": "WireDecodeError",
+    "kind": "class",
+    "package": "@nifrajs/core",
+    "signature": "export declare class WireDecodeError extends TypeError {\n    constructor(message: string);\n}",
+    "doc": "/** Thrown by {@link decode} for a wire value carrying an unknown tag, a bad index, or malformed shape. */"
+  },
+  {
+    "name": "WireEncodeError",
+    "kind": "class",
+    "package": "@nifrajs/core",
+    "signature": "export declare class WireEncodeError extends TypeError {\n    constructor(message: string);\n}",
+    "doc": "/** Thrown by {@link encode} for a value it will not encode (a function or a symbol). */"
   },
   {
     "name": "withDeadlineHeader",

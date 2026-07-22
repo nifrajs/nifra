@@ -16,7 +16,9 @@ import {
   MemoryDurableEffectStore,
   MemorySagaStore,
   reconcileEffects,
+  reconcileEffectsPage,
   reconcileSagas,
+  reconcileSagasPage,
   SagaAmbiguousStepError,
 } from "../src/durable-execution.ts"
 import { server } from "../src/server.ts"
@@ -44,6 +46,8 @@ describe("durable approvals", () => {
       required = error as ApprovalRequiredError
     }
     expect(required).toBeDefined()
+    expect(Object.keys(required as ApprovalRequiredError)).not.toContain("resumeToken")
+    expect(JSON.stringify(required)).not.toContain(required?.resumeToken as string)
     await expect(approval.authorize(approvalInput(required?.resumeToken))).rejects.toBeInstanceOf(
       ApprovalPendingError,
     )
@@ -202,6 +206,42 @@ describe("durable journal and saga reconciliation", () => {
     ])
   })
 
+  test("effect reconciliation is cursor-paginated and bounded", async () => {
+    const store = new MemoryDurableEffectStore()
+    const journal = createDurableEffectJournal({ store, now: () => 10, allowMemoryStore: true })
+    await journal.intent({ effectId: "effect_1", capability: "db.write" })
+    await journal.intent({ effectId: "effect_2", capability: "db.write" })
+
+    const first = await reconcileEffectsPage(store, { staleBefore: 10, limit: 1 })
+    expect(first.findings.map((finding) => finding.effectId)).toEqual(["effect_1"])
+    expect(first.cursor).toBeDefined()
+    const second = await reconcileEffectsPage(store, {
+      staleBefore: 10,
+      limit: 1,
+      ...(first.cursor === undefined ? {} : { cursor: first.cursor }),
+    })
+    expect(second.findings.map((finding) => finding.effectId)).toEqual(["effect_2"])
+    expect(second.cursor).toBeUndefined()
+  })
+
+  test("compatibility reconciliation fails loudly instead of silently truncating", async () => {
+    class OverflowStore extends MemoryDurableEffectStore {
+      override scan(
+        input: Parameters<MemoryDurableEffectStore["scan"]>[0],
+      ): ReturnType<MemoryDurableEffectStore["scan"]> {
+        const page = super.scan(input)
+        return { ...page, cursor: "more" }
+      }
+    }
+    const store = new OverflowStore()
+    const journal = createDurableEffectJournal({ store, now: () => 10, allowMemoryStore: true })
+    await journal.intent({ effectId: "effect_1", capability: "db.write" })
+
+    await expect(reconcileEffects(store, { staleBefore: 10 })).rejects.toThrow(
+      "use reconcileEffectsPage()",
+    )
+  })
+
   test("a lost post-commit journal transition becomes unknown instead of retryable", async () => {
     class LostCommitStore extends MemoryDurableEffectStore {
       override transition(input: Parameters<MemoryDurableEffectStore["transition"]>[0]): boolean {
@@ -313,6 +353,10 @@ describe("durable journal and saga reconciliation", () => {
     await expect(engine.compensate(definition, "saga_ambiguous")).rejects.toBeInstanceOf(
       SagaAmbiguousStepError,
     )
+
+    const page = await reconcileSagasPage(store, { staleBefore: Date.now(), limit: 1 })
+    expect(page.findings).toHaveLength(1)
+    expect(page.cursor).toBeUndefined()
   })
 
   test("compensation retry exhaustion stops in manual review", async () => {
