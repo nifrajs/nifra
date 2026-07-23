@@ -10,6 +10,7 @@ function loaded(backend: unknown): LoadedApp {
     routesDir: "/tmp/nifra-openapi-app/routes",
     outDir: "/tmp/nifra-openapi-app/dist",
     framework: { adapter: {}, clientModule: "@nifrajs/web-react/client" },
+    resolvedPlugins: { vitePlugins: [], clientPlugins: [], serverPlugins: [] },
     backend,
   }
 }

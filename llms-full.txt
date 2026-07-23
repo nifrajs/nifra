@@ -2817,11 +2817,13 @@ the command printed by the build.
 
 ## Nifra — Dev & HMR
 
-> Use `nifra dev` for a Vite-backed state-preserving HMR loop, or `@nifrajs/web/dev` for a Bun-native live-reload loop. Production builds use Bun.
+> Use `nifra dev` for a Vite-backed state-preserving HMR loop, or `@nifrajs/web/dev` for a Bun-native HMR loop with no Vite dependency. Production builds use Bun.
 
-Nifra gives you two local development loops. Use `nifra dev` for
-state-preserving UI edits, or use `@nifrajs/web/dev` when you want a Bun-only
-live-reload server. Both serve your real SSR app locally.
+Nifra gives you two local development loops, and the rule between them is that one
+toolchain owns a whole phase. **Both** give you React Fast Refresh with state
+preserved. Use `nifra dev` (Vite) for the plugin ecosystem, or
+`nifra dev --bun` for one bundler across dev and prod with no Vite dependency.
+Both serve your real SSR app locally, and neither mixes the two bundlers in one process.
 
 ### Two loops, same app
 
@@ -2832,9 +2834,9 @@ use when
 
 `@nifrajs/web/dev`
 
-rebuild + full-page live-reload
+Bun HMR + Fast Refresh (native)
 none (Bun only)
-default; zero extra deps
+one bundler dev+prod; no Vite dep (no CSS Modules)
 
 `@nifrajs/web/vite`
 
@@ -2882,33 +2884,31 @@ can edit routes, components, loaders, actions, and styles in one local loop.
 
 ### Framework coverage
 
-All five adapters have a dev setup. Pass the framework's official Vite plugin, and for Vue,
-Svelte, and Solid, preload the matching Nifra compiler plugin for server rendering.
+All five adapters have a dev setup. Pass the framework's official Vite plugin and you are
+done: under `nifra dev` the Vite pipeline compiles both halves, so the same plugin
+that transforms your components for the browser also transforms them for SSR. No separate
+server-side compiler plugin to preload, and no way for the two halves to disagree about a
+specifier.
 
 framework
-client (Vite plugin)
-SSR compile
+Vite plugin (client + SSR)
 local state on edit
 
 React
 
 `@vitejs/plugin-react`
 
-Bun-native
 preserved (Fast Refresh)
 
 Preact
 
 `@preact/preset-vite`
 
-Bun-native
 preserved (prefresh)
 
 Vue
 
 `@vitejs/plugin-vue`
-
-`vueBunPlugin` preload
 
 preserved (rerender)
 
@@ -2916,15 +2916,11 @@ Solid
 
 `vite-plugin-solid` (`{ ssr: true }`)
 
-`solidBunPlugin` preload
-
 resets (solid-refresh)
 
 Svelte
 
 `@sveltejs/vite-plugin-svelte`
-
-`svelteBunPlugin` preload
 
 resets (svelte HMR)
 
@@ -2968,16 +2964,71 @@ instead.
 
 ### The zero-dep alternative
 
-`@nifrajs/web/dev` is a self-contained server: it builds the client on boot,
-serves SSR, watches the routes, and does a full-page reload on change.
+`nifra dev --bun` (library: `@nifrajs/web/dev`) is self-contained —
+no Vite anywhere. `Bun.serve`'s native HMR bundles and hot-reloads the client while
+Bun's runtime resolves SSR, and it applies **React Fast Refresh natively**: editing
+a component-only module swaps its markup with `useState` state intact, no reload. The
+boundary rule is the same as Vite's (see below). The real prize is that dev and production use
+the _same bundler_, so the dev/prod seam disappears.
+
+One gap: **CSS Modules**. Bun's dev-server bundler has no
+`*.module.css` transform (its production `Bun.build` does), so the CLI
+refuses `--bun` for a CSS-Modules app rather than serving a broken client. Plain CSS
+and Tailwind work normally.
 
 ```ts
 // doc-check: skip — fragment: routesDir/outDir/clientModule/createApp are your app's dev config.
-// dev.ts — Bun-native live reload
+// dev.ts — Bun-native HMR, no Vite in the process
 import { createDevServer } from "@nifrajs/web/dev"
-// builds the client on boot, serves SSR, watches routes, full-page live-reload on change.
+// Bun.serve bundles + hot-reloads the client; Bun's runtime resolves SSR. An edit reloads the
+// changed module graph — with React Fast Refresh (state preserved) applied natively by Bun, no plugin.
+// CSS + the entry URL come from Bun. Plain CSS/Tailwind work; *.module.css does not (Bun's dev bundler).
 const server = await createDevServer({ routesDir, outDir, clientModule, createApp })
 ```
+
+### Production is Bun — with a Vite escape hatch
+
+Production builds default to **Bun** (`buildClient` /
+`nifra build`): faster, Bun-native, and the profile Nifra is tuned for. If an app
+genuinely needs a **Vite-only transform** with no Bun equivalent, you can run a
+Vite/Rollup production client build instead — but it must carry the same client-leak guards the
+Bun build enforces, or a second pipeline becomes a way for server-only code to reach the
+browser unnoticed. Add `viteLeakGuard()`: it runs the _same_ detection and
+emits the _same_ error as the Bun build (one implementation, adapted to Rollup's graph),
+so `node:` builtins and `server-only` modules fail the build either way.
+
+```ts
+// vite.config.ts — a Vite/Rollup PRODUCTION client build (the escape hatch, not the default).
+// Only reach for this when an app needs a Vite-only transform with no Bun equivalent; nifra's default
+// production bundler stays Bun (buildClient), which is faster and Bun-native.
+import { viteLeakGuard } from "@nifrajs/web/plugins/vite-leak-guard"
+
+export default {
+  build: {
+    // The SAME two client-leak guards nifra's Bun build runs — server-only code or a node: builtin
+    // reaching the browser fails the build, with the identical error message. A second production
+    // pipeline must not ship without them.
+    rollupOptions: { plugins: [viteLeakGuard()] },
+  },
+}
+```
+
+For the full deploy, `nifra build --vite --target <t>` builds
+_both_ halves — client and SSR worker — with Vite and assembles the identical per-target
+deploy dir the Bun build produces (same `_worker.js` / `server.js`, same
+`_routes.json`, same prerender + size report). Only the bundler differs: both go
+through one orchestrator, so the deploy shape can't drift between pipelines. The leak guards run
+automatically.
+
+You usually don't need the flag. `nifra build` picks the bundler from your config:
+Bun by default, but Vite when your _only_ transforms are `vitePlugins`, and it
+prints the reason. That case is the one where the phase defaults would otherwise bite — dev runs
+Vite, so your plugins run; the Bun build reads `clientPlugins`/
+`serverPlugins` and never `vitePlugins`, so it would drop them and still
+succeed. An app declaring both slots has supplied the Bun equivalent on purpose, so it keeps the
+faster Bun default. `--vite` and `--bun` force the choice; `--bun`
+is refused for a `vitePlugins`-only app rather than silently building without your
+transforms.
 
 ### Styling (CSS)
 
@@ -7486,7 +7537,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`Action`, `ACTION_GLOBAL`, `apiKey`, `assertRenderAdapterConformance`, `BrowserNavigate`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createMutation`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `DehydratedState`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `gate`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `getBrowserNavigate`, `GetStaticPaths`, `gone`, `hashQueryKey`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NavigateOptions`, `notFound`, `openGraph`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `previewEndpoint`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderedPage`, `renderPage`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `resolvePublicPath`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `routeStyles`, `ScriptDescriptor`, `serializeData`, `servePublicDir`, `ServePublicDirOptions`, `ServerOnly`, `setBrowserNavigate`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `statusPage`, `StatusPageOptions`, `styles`, `Submission`, `SubmitOptions`, `withISR`
+`Action`, `ACTION_GLOBAL`, `apiKey`, `assertRenderAdapterConformance`, `BrowserNavigate`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createMutation`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `DehydratedState`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `gate`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `getBrowserNavigate`, `GetStaticPaths`, `gone`, `hashQueryKey`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateOptions`, `notFound`, `openGraph`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `previewEndpoint`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderedPage`, `renderPage`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `resolvePublicPath`, `RETAIN_HEADER`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `routeStyles`, `ScriptDescriptor`, `serializeData`, `servePublicDir`, `ServePublicDirOptions`, `ServerOnly`, `setBrowserNavigate`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `STATUS_HEADER`, `statusPage`, `StatusPageOptions`, `styles`, `Submission`, `SubmitOptions`, `withISR`
 
 ## @nifrajs/web-preact
 

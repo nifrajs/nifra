@@ -50,6 +50,10 @@ export interface NifraFramework {
   readonly conditions?: readonly string[]
   /** Compile-time `define` replacements, e.g. Vue's `__VUE_*` flags. */
   readonly define?: Readonly<Record<string, string>>
+  /** Static files directory. Defaults to `<app>/public`; `false` disables it. */
+  readonly publicDir?: string | false
+  /** Client-visible environment prefix (default `"PUBLIC_"`; empty disables exposure). */
+  readonly publicEnvPrefix?: string
 }
 
 /**
@@ -66,16 +70,8 @@ export interface NifraFramework {
  * is strictly better than a build that succeeds and omits the work. The classifier only fires on a
  * decisive hook shape, so a plugin it cannot place is left alone.
  */
-async function assertPipelineSeparation(
-  fw: Partial<NifraFramework>,
-  configFile: string,
-): Promise<void> {
-  const [vitePlugins, clientPlugins, serverPlugins] = await Promise.all([
-    resolvePlugins(fw.vitePlugins),
-    resolvePlugins(fw.clientPlugins),
-    resolvePlugins(fw.serverPlugins),
-  ])
-  const mismatches = checkPipelineSeparation({ vitePlugins, clientPlugins, serverPlugins })
+function assertPipelineSeparation(plugins: ResolvedPlugins, configFile: string): void {
+  const mismatches = checkPipelineSeparation(plugins)
   if (mismatches.length === 0) return
   throw new Error(
     `[nifra] ${configFile}: plugins are in the wrong pipeline slot. nifra supports Vite and Bun, but a phase is owned by ONE of them - a plugin in the wrong slot is silently never called.\n\n` +
@@ -89,12 +85,20 @@ export async function resolvePlugins(field: PluginsField | undefined): Promise<u
   return value ? [...value] : []
 }
 
+export interface ResolvedPlugins {
+  readonly vitePlugins: readonly unknown[]
+  readonly clientPlugins: readonly unknown[]
+  readonly serverPlugins: readonly unknown[]
+}
+
 export interface LoadedApp {
   readonly cwd: string
   readonly routesDir: string
   /** Build output dir (also where `nifra start` reads `manifest.json` + serves `/assets/*`). */
   readonly outDir: string
   readonly framework: NifraFramework
+  /** Plugin thunks resolved exactly once during app loading and reused by every command phase. */
+  readonly resolvedPlugins: ResolvedPlugins
   /** The `backend` export from `backend.ts`, or `undefined` if there's no `backend.ts`. */
   readonly backend: unknown
 }
@@ -192,7 +196,13 @@ export async function loadApp(
       `[nifra] ${configFile} must export \`adapter\` (a render adapter object) and \`clientModule\` (a string).`,
     )
   }
-  await assertPipelineSeparation(fw, configFile)
+  const [vitePlugins, clientPlugins, serverPlugins] = await Promise.all([
+    resolvePlugins(fw.vitePlugins),
+    resolvePlugins(fw.clientPlugins),
+    resolvePlugins(fw.serverPlugins),
+  ])
+  const resolvedPlugins = { vitePlugins, clientPlugins, serverPlugins }
+  assertPipelineSeparation(resolvedPlugins, configFile)
 
   let backend: unknown
   const backendPath = resolve(cwd, "backend.ts")
@@ -206,6 +216,7 @@ export async function loadApp(
     routesDir: resolve(cwd, "routes"),
     outDir: resolve(cwd, outDirName),
     framework: fw as NifraFramework,
+    resolvedPlugins,
     backend,
   }
 }

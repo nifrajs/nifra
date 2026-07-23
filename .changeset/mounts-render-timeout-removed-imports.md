@@ -5,15 +5,14 @@
 
 Mount sub-apps and standalone-shaped backends without a `Proxy`; bound the render worker; lint removed imports.
 
-**`mounts` and `apiStrip` on `createWebApp`.** Two apps independently wrote the same ~40-line `Proxy`
-around their backend, for two reasons. The auto-mount dispatches the full `/api/v1/forms`, but a
-backend that also runs standalone declares its routes without the prefix and lets its own shell supply
-it - so every request 404'd inside it. And better-auth is not a `backend` route, so `/api/auth/*` hit
-the backend and 404'd silently. `apiStrip: true` removes the prefix before dispatch, and `mounts`
-takes any `{ path, app: { fetch } }` - so an external stack mounts as
-`mounts: stack.routes`, with no dependency from `@nifrajs/web` on it. Mounts are matched
-longest-path-first and before the `api` prefix, so `/api/auth` wins over `/api` regardless of
-declaration order.
+**`mounts` and `apiStrip` on `createWebApp`.** Two shapes previously needed a hand-written ~40-line
+`Proxy` around the backend. The auto-mount dispatches the full `/api/v1/forms`, but a backend that also
+runs standalone declares its routes without the prefix and lets its own shell supply it - so every
+request 404'd inside it. And better-auth is not a `backend` route, so `/api/auth/*` hit the backend and
+404'd silently. `apiStrip: true` removes the prefix before dispatch, and `mounts` takes any
+`{ path, app: { fetch } }` - so any library exposing its routes in that shape mounts directly, with no
+dependency from `@nifrajs/web` on it. Mounts are matched longest-path-first and before the `api`
+prefix, so `/api/auth` wins over `/api` regardless of declaration order.
 
 **A layout that exports a `loader` now fails loudly.** Layouts do not run one - only route files do -
 and rendering while ignoring the export was the worst possible handling: it looks wired, the page

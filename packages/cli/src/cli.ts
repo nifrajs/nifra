@@ -16,7 +16,8 @@ import { createWebApp, DEFAULT_DEV_PORT, type RenderAdapter } from "@nifrajs/web
 import { discoverRoutes } from "@nifrajs/web/fs"
 import type { BunPlugin } from "bun"
 import { describeProject, describeRoutes } from "./introspect.ts"
-import { type LoadedApp, loadApp, resolvePlugins } from "./load.ts"
+import { type LoadedApp, loadApp } from "./load.ts"
+import { chooseBuildPipeline } from "./pipeline-guard.ts"
 
 export interface Flags {
   readonly port: number
@@ -26,12 +27,14 @@ export interface Flags {
   readonly target: string
   /** `nifra build --report`: print a per-chunk size + gzip table after the build. */
   readonly report: boolean
-  /** `nifra build --vite`: build the client + server with Vite/Rollup instead of Bun (the escape hatch
-   * for apps needing a Vite-only transform in production). Default Bun. */
+  /** `nifra build --vite`: force the client + server through Vite/Rollup. Without a flag the pipeline is
+   * chosen per app (`chooseBuildPipeline`) - Bun unless the app's only transforms are `vitePlugins`. */
   readonly vite: boolean
   /** `nifra dev --bun`: run the Bun-pipeline dev server (Bun.serve native HMR — including React Fast
    * Refresh with state preserved — and no Vite in the process). Default stays Vite for its plugin
-   * ecosystem; `--bun` trades that for one bundler across dev and prod. Refuses CSS-Modules apps. */
+   * ecosystem; `--bun` trades that for one bundler across dev and prod. Refuses CSS-Modules apps.
+   *
+   * `nifra build --bun`: force the Bun build. Refuses when that would drop the app's `vitePlugins`. */
   readonly bun: boolean
 }
 
@@ -43,17 +46,19 @@ Usage:
                                          Refresh included, state preserved), no Vite in the process - one
                                          bundler across dev and prod. Plain CSS/Tailwind work; refuses an
                                          app using *.module.css (Bun's dev bundler can't transform it).
-  nifra build   [--out <dir>] [--report]  Emit a complete Bun deploy directory by default.
+  nifra build   [--out <dir>] [--report]  Emit a complete deploy directory.
                 [--target <t>]             Target a FULL deploy dir for <t>:
                                          bun | node | deno | cf-pages | vercel | static. Packages
                                          buildClient + buildServer (+ prerender for static) so an app
                                          no longer hand-writes build-<target>.ts + _worker.ts +
                                          _routes.json. The server entry is generated from your
                                          framework.ts (adapter) + backend.ts + routes/. --report prints
-                                         a per-chunk size + gzip table (biggest first). --vite builds
-                                         both halves with Vite/Rollup instead of Bun (same deploy dir) -
-                                         the escape hatch for an app needing a Vite-only transform in
-                                         prod; default stays Bun (faster, Bun-native).
+                                         a per-chunk size + gzip table (biggest first).
+                [--vite | --bun]         Force the bundler. Without a flag it follows your config: Bun
+                                         (faster, Bun-native) unless your ONLY transforms are
+                                         \`vitePlugins\`, which the Bun build cannot run - then Vite,
+                                         and it says so. --bun is refused in exactly that case rather
+                                         than dropping the transforms silently.
   nifra start   [--port <n>] [--out <dir>]  Run the Bun build at <out>/server.js. Default port ${DEFAULT_DEV_PORT}.
   nifra context                          Print this project's route INDEX (API + page routes) + conventions
                                          for an AI agent's prompt. Per-route schemas: nifra mcp's
@@ -190,7 +195,8 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
       port: flags.port,
       // The Bun pipeline's own plugins (SFC compilers etc.) — never `vitePlugins`, which belong to the
       // other pipeline; `assertPipelineSeparation` already refuses a plugin sitting in the wrong slot.
-      plugins: asBunPlugins(await resolvePlugins(fw.clientPlugins)),
+      plugins: asBunPlugins(app.resolvedPlugins.clientPlugins),
+      ...(fw.publicDir !== undefined ? { publicDir: fw.publicDir } : {}),
       ...(fw.conditions ? { conditions: fw.conditions } : {}),
       ...(fw.define ? { define: fw.define } : {}),
       createApp: (clientEntry, importQuery) =>
@@ -229,7 +235,8 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
     root: cwd,
     routesDir,
     clientModule: fw.clientModule,
-    plugins: await resolvePlugins(fw.vitePlugins),
+    plugins: app.resolvedPlugins.vitePlugins,
+    ...(fw.publicDir !== undefined ? { publicDir: fw.publicDir } : {}),
     poll: flags.poll,
     port: flags.port,
     ...(fw.conditions ? { conditions: fw.conditions } : {}),
@@ -255,19 +262,24 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
  * `nifra.config.ts`, which pulls in Vite plugins), and the backend from `backend.ts` when present;
  * `buildTarget` generates the per-target server entry from those + the app's `routes/`.
  */
-async function buildForTarget(
-  app: LoadedApp,
-  target: string,
-  report: boolean,
-  useVite: boolean,
-): Promise<void> {
+async function buildForTarget(app: LoadedApp, target: string, flags: Flags): Promise<void> {
   const { isBuildTarget, renderSizeReport, BUILD_TARGETS } = await import("@nifrajs/web/build")
   if (!isBuildTarget(target)) {
     throw new Error(`[nifra] unknown --target "${target}". Valid: ${BUILD_TARGETS.join(", ")}.`)
   }
-  // --vite: build both halves with Vite/Rollup instead of Bun (the escape hatch for a Vite-only
-  // transform in production). Same deploy-dir output — buildTargetVite delegates to the same orchestrator
-  // as buildTarget — so only the bundler and the plugin FORMAT (Vite plugins, not Bun) differ.
+  if (flags.vite && flags.bun) {
+    throw new Error("[nifra] `nifra build` takes `--vite` or `--bun`, not both.")
+  }
+  // Which bundler builds this app. Default is Bun; an app whose ONLY transforms are `vitePlugins` gets
+  // Vite instead, because the Bun build cannot run them and would silently omit the work. `--vite`/`--bun`
+  // force it, and the one forced combination that would drop transforms throws.
+  const decision = chooseBuildPipeline(
+    app.resolvedPlugins,
+    flags.vite ? "vite" : flags.bun ? "bun" : undefined,
+  )
+  const useVite = decision.pipeline === "vite"
+  // Same deploy-dir output — buildTargetVite delegates to the same orchestrator as buildTarget — so only
+  // the bundler and the plugin FORMAT (Vite plugins, not Bun) differ.
   const buildTarget = useVite
     ? (await import("@nifrajs/web/build-vite")).buildTargetVite
     : (await import("@nifrajs/web/build")).buildTarget
@@ -286,12 +298,12 @@ async function buildForTarget(
   // whatever it's given straight to the chosen bundler, which casts to its own plugin type.
   const plugins = useVite
     ? {
-        clientPlugins: (await resolvePlugins(fw.vitePlugins)) as unknown as BunPlugin[],
-        serverPlugins: (await resolvePlugins(fw.vitePlugins)) as unknown as BunPlugin[],
+        clientPlugins: app.resolvedPlugins.vitePlugins as unknown as BunPlugin[],
+        serverPlugins: app.resolvedPlugins.vitePlugins as unknown as BunPlugin[],
       }
     : {
-        clientPlugins: asBunPlugins(await resolvePlugins(fw.clientPlugins)),
-        serverPlugins: asBunPlugins(await resolvePlugins(fw.serverPlugins)),
+        clientPlugins: asBunPlugins(app.resolvedPlugins.clientPlugins),
+        serverPlugins: asBunPlugins(app.resolvedPlugins.serverPlugins),
       }
   const result = await buildTarget(target, {
     routesDir,
@@ -303,11 +315,16 @@ async function buildForTarget(
     ...plugins,
     ...(fw.conditions ? { conditions: fw.conditions } : {}),
     ...(fw.define ? { define: fw.define } : {}),
+    ...(fw.publicDir !== undefined ? { publicDir: fw.publicDir } : {}),
+    ...(fw.publicEnvPrefix !== undefined ? { publicEnvPrefix: fw.publicEnvPrefix } : {}),
     // The static target needs a built app to drive prerendering — only build it when targeting static.
     ...(target === "static" ? { prerenderApp: await buildPrerenderApp(app) } : {}),
   })
   console.log(`nifra build (${target}${useVite ? ", vite" : ""}) → ${result.run}`)
-  if (report) console.log(`\n${renderSizeReport(result.size)}`)
+  // An auto-selected pipeline is stated, never silent: the user asked for the default and got something
+  // else, and the reason is the thing that makes that legible instead of surprising.
+  if (decision.reason !== undefined) console.log(`  ${decision.reason}`)
+  if (flags.report) console.log(`\n${renderSizeReport(result.size)}`)
 }
 
 /** Build the app FACTORY for the `static` target's prerender pass. Registers the
@@ -321,7 +338,7 @@ async function buildPrerenderApp(
 ): Promise<(client: BuiltManifest) => { fetch(req: Request): Response | Promise<Response> }> {
   const { plugin } = await import("bun")
   const { framework: fw, routesDir, backend } = app
-  for (const p of asBunPlugins(await resolvePlugins(fw.serverPlugins))) plugin(p)
+  for (const p of asBunPlugins(app.resolvedPlugins.serverPlugins)) plugin(p)
   return (client) =>
     createWebApp({
       adapter: asAdapter(fw.adapter),
@@ -696,7 +713,7 @@ async function main(): Promise<void> {
   const flags = parseFlags(argv.slice(1))
   const app = await loadApp(process.cwd(), flags.out)
   if (command === "dev") await dev(app, flags)
-  else if (command === "build") await buildForTarget(app, flags.target, flags.report, flags.vite)
+  else if (command === "build") await buildForTarget(app, flags.target, flags)
   else if (command === "context") console.log(describeProject(app))
   else if (command === "routes") {
     if (argv.includes("--modes")) {

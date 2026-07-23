@@ -110,3 +110,77 @@ export function checkPipelineSeparation(slots: {
     ...checkPipelineSlot("serverPlugins", slots.serverPlugins ?? []),
   ]
 }
+
+/** Which bundler a build runs on. */
+export type BuildPipeline = "bun" | "vite"
+
+export interface PipelineDecision {
+  readonly pipeline: BuildPipeline
+  /**
+   * Why this pipeline, for the `nifra build` log line - so an auto-selected Vite build never looks
+   * like the user got the default. `undefined` when the choice was the plain default or was forced.
+   */
+  readonly reason?: string
+}
+
+/** The plugin slots a decision reads, already resolved. */
+export interface PipelineSlots {
+  readonly vitePlugins?: readonly unknown[]
+  readonly clientPlugins?: readonly unknown[]
+  readonly serverPlugins?: readonly unknown[]
+}
+
+const pluginNames = (plugins: readonly unknown[]): string =>
+  plugins
+    .map((plugin, i) => {
+      const named = (plugin as { name?: unknown }).name
+      return typeof named === "string" && named !== "" ? named : `vitePlugins[${i}]`
+    })
+    .join(", ")
+
+/**
+ * Pick the bundler for `nifra build`, per app rather than per global default.
+ *
+ * The phase defaults are deliberately asymmetric - `nifra dev` is Vite (for the plugin ecosystem, and
+ * because Bun's DEV-server bundler cannot compile CSS Modules), `nifra build` is Bun (faster and
+ * Bun-native). For an app with no transforms that asymmetry is free: there is nothing to disagree about.
+ * For an app whose ONLY transforms are Vite plugins it is not. Those plugins run in dev and are then
+ * dropped by the Bun build - `buildForTarget` reads `clientPlugins`/`serverPlugins`, never `vitePlugins`
+ * - so the build succeeds, the output looks plausible, and the transform simply did not happen. That is
+ * the same failure {@link checkPipelineSeparation} exists to prevent, reached by crossing PHASES instead
+ * of slots, and the slot check cannot see it because the plugins are correctly placed.
+ *
+ * So the default follows the app: Vite plugins with no Bun counterpart means the app has exactly one
+ * pipeline that can build it, and that is the one used. An app declaring BOTH has supplied the Bun
+ * equivalent on purpose - nothing is dropped - so the fast Bun default stands.
+ *
+ * `forced` is `--vite` / `--bun` and always wins, except for the one combination that silently discards
+ * work, which throws instead. Refusing rather than warning matches the slot guard: a build that succeeds
+ * and omits the transform is worse than one that stops and says so.
+ */
+export function chooseBuildPipeline(
+  slots: PipelineSlots,
+  forced?: BuildPipeline,
+): PipelineDecision {
+  const vitePlugins = slots.vitePlugins ?? []
+  const bunPlugins = [...(slots.clientPlugins ?? []), ...(slots.serverPlugins ?? [])]
+  const viteOnly = vitePlugins.length > 0 && bunPlugins.length === 0
+
+  if (forced === "bun" && viteOnly) {
+    throw new Error(
+      "[nifra] `nifra build --bun` would silently drop this app's only transforms. `vitePlugins` are " +
+        "read by the Vite build; the Bun build reads `clientPlugins`/`serverPlugins`, so these would " +
+        "never run and the output would look plausible without them.\n" +
+        `  Would be dropped: ${pluginNames(vitePlugins)}\n` +
+        "  Drop the flag to build with Vite, or add the Bun equivalents to `clientPlugins`/`serverPlugins`.",
+    )
+  }
+  if (forced !== undefined) return { pipeline: forced }
+  if (viteOnly) {
+    return {
+      pipeline: "vite",
+      reason: `auto: this app's only transforms are \`vitePlugins\` (${pluginNames(vitePlugins)}), which the Bun build cannot run`,
+    }
+  }
+  return { pipeline: "bun" }
+}

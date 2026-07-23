@@ -270,8 +270,18 @@ export default function Dev() {
         deploy dir the Bun build produces (same <code>_worker.js</code> / <code>server.js</code>, same{" "}
         <code>_routes.json</code>, same prerender + size report). Only the bundler differs: both go
         through one orchestrator, so the deploy shape can't drift between pipelines. The leak guards run
-        automatically. Reach for it only when you need a Vite-only transform in production — otherwise
-        the default Bun build is faster.
+        automatically.
+      </p>
+      <p>
+        You usually don't need the flag. <code>nifra build</code> picks the bundler from your config:
+        Bun by default, but Vite when your <em>only</em> transforms are <code>vitePlugins</code>, and it
+        prints the reason. That case is the one where the phase defaults would otherwise bite — dev runs
+        Vite, so your plugins run; the Bun build reads <code>clientPlugins</code>/
+        <code>serverPlugins</code> and never <code>vitePlugins</code>, so it would drop them and still
+        succeed. An app declaring both slots has supplied the Bun equivalent on purpose, so it keeps the
+        faster Bun default. <code>--vite</code> and <code>--bun</code> force the choice; <code>--bun</code>{" "}
+        is refused for a <code>vitePlugins</code>-only app rather than silently building without your
+        transforms.
       </p>
 
       <h2>Styling (CSS)</h2>

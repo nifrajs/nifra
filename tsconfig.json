@@ -86,6 +86,7 @@
     "packages/web/src/islands.ts",
     "packages/web/test/islands.test.ts",
     "packages/web/test/apply-head.test.ts",
+    "packages/web/test/client-browser.test.ts",
     "packages/web-solid",
     "packages/web-react",
     "packages/web-vue",

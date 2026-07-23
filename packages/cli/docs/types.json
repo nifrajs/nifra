@@ -436,6 +436,13 @@
     "doc": "/** Throw {@link StorageKeyError} unless `key` is a safe relative storage key. */"
   },
   {
+    "name": "assertSingleReactCore",
+    "kind": "function",
+    "package": "@nifrajs/web-react",
+    "signature": "export declare function assertSingleReactCore(reactDomServerPath: string, resolve: ResolveSync, realpath?: (path: string) => string): void;",
+    "doc": "/**\n * The dual-React crash, caught on the RESOLVED graph instead of after it detonates.\n *\n * The re-root above makes `react-dom/server` load from the app root, which is right almost always. What it\n * cannot guarantee is that react-dom then pulls in the SAME physical `react` the route components import -\n * a nested `react` under react-dom, or a components tree resolving react elsewhere, still yields two cores.\n * Two cores is two hook dispatchers, and the renderer sees a null (or foreign) one: the SSR throws\n * `resolveDispatcher().useState is null` from deep inside react-dom-server, naming a React internal and\n * nothing about the two directories that actually caused it. That is hours of inference from a message\n * that points nowhere useful.\n *\n * `nifra doctor` checks what is INSTALLED; this checks what SSR actually RESOLVED, which is the only thing\n * that can catch a duplicate the two dev pipelines introduce (Bun for SSR, Vite for the client) rather\n * than the install. It compares the realpath of the `react` react-dom will render with against the\n * `react` the components import, and if they differ throws with BOTH paths - turning a five-hour hunt into\n * a five-second read. Silent when they agree, which is the single-copy common case.\n *\n * Never manufactures a failure: if either side cannot be resolved it returns, because a resolver that\n * cannot answer is not evidence of a duplicate. Exported for direct unit testing.\n */"
+  },
+  {
     "name": "assertStorageAdapterConformance",
     "kind": "function",
     "package": "@nifrajs/storage",
@@ -837,7 +844,21 @@
     "name": "BuildClientOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface BuildClientOptions {\n    /** The `routes/` directory to discover (absolute path). */\n    readonly routesDir: string;\n    /** Output directory for the bundle + `manifest.json` (absolute path). */\n    readonly outDir: string;\n    /** The adapter's client runtime (exports `mountRouter`), e.g. `\"@nifrajs/web-solid/client\"`. */\n    readonly clientModule: string;\n    /** Route/layout file → import specifier (default: `${routesDir}/${file}`). */\n    readonly resolve?: (file: string) => string;\n    /** Adapter build plugins (e.g. `solidBunPlugin(\"dom\")`). */\n    readonly plugins?: readonly BunPlugin[];\n    /** `Bun.build` export conditions (e.g. `[\"bun\", \"solid\", \"browser\"]`). */\n    readonly conditions?: readonly string[];\n    /** Compile-time replacements (e.g. `{ \"process.env.NODE_ENV\": '\"production\"' }`). */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Minify the output (default `true`). */\n    readonly minify?: boolean;\n    /** URL prefix the assets are served under (default `\"/assets/\"`); also Bun's chunk `publicPath`. */\n    readonly publicPath?: string;\n    /**\n     * Directory of user-authored static files copied into the build and served at the root (default\n     * `\"public\"`). Absent directory ⇒ nothing copied, no error.\n     *\n     * NOT the same thing as {@link publicPath}, despite the names: that is the URL prefix for\n     * content-hashed bundle chunks and never covers files an author put on disk. The collision is a\n     * real source of confusion, which is why both are spelled out here.\n     */\n    readonly publicDir?: string;\n    /**\n     * Prefix that opts an environment variable into the **client** bundle (Vite/Next convention; default\n     * `\"PUBLIC_\"`). Every var in the build environment whose name starts with this prefix is baked into\n     * the client `define` as `\"process.env.NAME\": JSON.stringify(value)`, so `process.env.PUBLIC_API_URL`\n     * compiles to its literal value in the browser. Vars WITHOUT the prefix are never exposed — the bare\n     * `process.env` define resolves them to `undefined`, so server secrets can't leak into the client\n     * bundle. Set to `\"\"` to disable auto-exposure entirely (no var is baked in). `options.define` still\n     * wins over an auto-exposed var (it's layered last). Sourced from `Bun.env` (falls back to\n     * `process.env`) at build time. */\n    readonly publicEnvPrefix?: string;\n}"
+    "signature": "export interface BuildClientOptions {\n    /** The `routes/` directory to discover (absolute path). */\n    readonly routesDir: string;\n    /** Output directory for the bundle + `manifest.json` (absolute path). */\n    readonly outDir: string;\n    /** The adapter's client runtime (exports `mountRouter`), e.g. `\"@nifrajs/web-solid/client\"`. */\n    readonly clientModule: string;\n    /** Route/layout file → import specifier (default: `${routesDir}/${file}`). */\n    readonly resolve?: (file: string) => string;\n    /** Adapter build plugins (e.g. `solidBunPlugin(\"dom\")`). */\n    readonly plugins?: readonly BunPlugin[];\n    /** `Bun.build` export conditions (e.g. `[\"bun\", \"solid\", \"browser\"]`). */\n    readonly conditions?: readonly string[];\n    /** Compile-time replacements (e.g. `{ \"process.env.NODE_ENV\": '\"production\"' }`). */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Minify the output (default `true`). */\n    readonly minify?: boolean;\n    /** URL prefix the assets are served under (default `\"/assets/\"`); also Bun's chunk `publicPath`. */\n    readonly publicPath?: string;\n    /**\n     * Directory of user-authored static files copied into the build and served at the root (default\n     * `\"public\"`). Absent directory ⇒ nothing copied, no error.\n     *\n     * NOT the same thing as {@link publicPath}, despite the names: that is the URL prefix for\n     * content-hashed bundle chunks and never covers files an author put on disk. The collision is a\n     * real source of confusion, which is why both are spelled out here.\n     */\n    readonly publicDir?: string | false;\n    /**\n     * Prefix that opts an environment variable into the **client** bundle (Vite/Next convention; default\n     * `\"PUBLIC_\"`). Every var in the build environment whose name starts with this prefix is baked into\n     * the client `define` as `\"process.env.NAME\": JSON.stringify(value)`, so `process.env.PUBLIC_API_URL`\n     * compiles to its literal value in the browser. Vars WITHOUT the prefix are never exposed — the bare\n     * `process.env` define resolves them to `undefined`, so server secrets can't leak into the client\n     * bundle. Set to `\"\"` to disable auto-exposure entirely (no var is baked in). `options.define` still\n     * wins over an auto-exposed var (it's layered last). Sourced from `Bun.env` (falls back to\n     * `process.env`) at build time. */\n    readonly publicEnvPrefix?: string;\n}"
+  },
+  {
+    "name": "buildClientVite",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function buildClientVite(options: BuildClientViteOptions): Promise<BuildManifest>;",
+    "doc": "/**\n * Build the client bundle with Vite, emitting the SAME {@link BuildManifest} `buildClient` (Bun) does:\n * a content-hashed entry, per-route chunk lists, aggregate + per-route CSS, and copied `public/` files.\n *\n * The route→chunk and route→CSS mappings come from Vite's own `.vite/manifest.json` (`build.manifest`),\n * which records each entry's emitted `file` and its transitive `css` - exactly the two facts the Bun path\n * reconstructs from Bun's metafile. `viteLeakGuard()` runs during the build, so a client leak fails here\n * with the same error as the Bun build rather than shipping.\n */"
+  },
+  {
+    "name": "BuildClientViteOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface BuildClientViteOptions extends Omit<BuildClientOptions, \"plugins\"> {\n    /** Vite plugins for the app's client transforms (e.g. `react()`, `vue()`). */\n    readonly vitePlugins?: readonly unknown[];\n    /** Vite project root (default: the parent of `routesDir`). Manifest keys are relative to it. */\n    readonly root?: string;\n}",
+    "doc": "/** Options for {@link buildClientVite} — the Bun {@link BuildClientOptions} minus Bun-plugin specifics,\n * plus the Vite plugin list the app injects for its transforms. */"
   },
   {
     "name": "buildManifest",
@@ -873,6 +894,20 @@
     "doc": "/**\n * Build an OpenAPI 3.1 document from a route list. Delegates to `@nifrajs/schema`'s `toOpenAPI`, so a\n * route validated with `t` (TypeBox) emits full field-level request/query/response schemas plus\n * `$ref`-reused `components.schemas`; a BYO Standard Schema (zod/valibot/arktype) exposes no portable\n * JSON-Schema form, so its body/response is omitted (supply it via `options.operations`). Path params,\n * wildcards, tags, security, and servers always emit. Exported so you can also generate the doc at\n * build time (write it to disk in CI) without booting the server.\n */"
   },
   {
+    "name": "BuildPipeline",
+    "kind": "type",
+    "package": "@nifrajs/cli",
+    "signature": "export type BuildPipeline = \"bun\" | \"vite\";",
+    "doc": "/** Which bundler a build runs on. */"
+  },
+  {
+    "name": "buildRouteManifest",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function buildRouteManifest(manifest: Manifest, options?: {\n    readonly target?: string;\n    readonly prerendered?: Readonly<Record<string, readonly string[]>>;\n    /** Runtime capabilities supplied outside generated entries (for example an explicit `withISR`). */\n    readonly capabilities?: readonly RouteCapability[];\n}): Promise<RouteManifest>;",
+    "doc": "/**\n * Build the route manifest for a discovered app, optionally resolved against a deploy target.\n *\n * `prerendered` maps a route id to the concrete paths the build actually emitted for it - pass what\n * `prerenderRoutes` produced. Without it, dynamic routes are reported by their declaration alone, which\n * is the right answer before a build has run and the wrong one after.\n */"
+  },
+  {
     "name": "buildRouteTable",
     "kind": "function",
     "package": "@nifrajs/cli",
@@ -893,11 +928,25 @@
     "signature": "export interface BuildServerOptions {\n    /** The `routes/` directory to discover (absolute path). */\n    readonly routesDir: string;\n    /** The worker entry module (absolute path) — your `worker.ts`. It imports `{ manifest, clientEntry }`\n     * from the generated `./server-manifest`, builds `createWebApp`, and `export default toFetchHandler(app)`. */\n    readonly serverEntry: string;\n    /** Output directory for the bundled worker (absolute path). */\n    readonly outDir: string;\n    /** The content-hashed client entry URL (from `buildClient`'s manifest) — **baked** into the generated\n     * server manifest, since a disk-less worker can't read `manifest.json` at runtime. */\n    readonly clientEntry: string;\n    /** The app's aggregate stylesheet URLs (`buildClient`'s `BuildManifest.css`) — baked into the generated\n     * manifest so the server entry hands them to `createWebApp` (→ `<link rel=\"stylesheet\">`). Omit ⇒ no CSS\n     * link (the built SSR page would otherwise render unstyled). */\n    readonly styles?: readonly string[] | undefined;\n    /** Per-route stylesheet URLs (`buildClient`'s `BuildManifest.routeStyles`) — baked alongside `styles`. */\n    readonly routeStyles?: Readonly<Record<string, readonly string[]>> | undefined;\n    /** Route/layout file → import specifier in the generated manifest (default: a relative path from the\n     * manifest's location — written next to `serverEntry` — to `routesDir`). */\n    readonly resolve?: (file: string) => string;\n    /** Filename for the generated server-manifest module, written next to `serverEntry` (default\n     * `\"server-manifest.ts\"`); your `serverEntry` imports it as `./server-manifest`. */\n    readonly manifestFile?: string;\n    /** Adapter build plugins (e.g. `solidBunPlugin(\"ssr\")` — Solid routes need their SSR transform at\n     * build time; React's JSX is Bun-native and needs none). */\n    readonly plugins?: readonly BunPlugin[];\n    /** `Bun.build` resolution conditions (default `[\"workerd\", \"edge-light\", \"browser\"]`) — selects each\n     * dependency's edge build. */\n    readonly conditions?: readonly string[];\n    /** Compile-time replacements (default `{ \"process.env.NODE_ENV\": '\"production\"' }` → production\n     * React/Solid on the edge). Pass an explicit object to override (e.g. `{}` to opt out). */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Minify the output (default `true`). */\n    readonly minify?: boolean;\n    /** `Bun.build` target (default `\"browser\"` — the right shape for edge runtimes: Cloudflare Workers,\n     * Vercel Edge, Deno, Deno Deploy). Use `\"node\"` for a `@nifrajs/node` server (so `node:*` built-ins\n     * stay external), or `\"bun\"` for a Bun server. The default `conditions` + the edge resolve shims\n     * only apply to the `\"browser\"` target; `\"node\"`/`\"bun\"` resolve their own renderer builds via the\n     * matching condition. */\n    readonly target?: \"browser\" | \"node\" | \"bun\";\n    /** **Lazy/code-split routes** (default `false`): emit `() => import(route)` loaders + bundle with\n     * `splitting`, so each route is its own chunk loaded on first request (smaller cold-start parse)\n     * instead of all parsed at boot. The output becomes the worker entry **+ chunk files** in `outDir`\n     * — on Cloudflare, ship them with wrangler's `no_bundle` + `find_additional_modules` + an ESModule\n     * `rule` (Node/Deno import the chunks natively). Eager (one self-contained file) stays the default. */\n    readonly lazy?: boolean;\n}"
   },
   {
+    "name": "buildServerVite",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function buildServerVite(options: BuildServerViteOptions): Promise<ServerBuild>;",
+    "doc": "/**\n * Build the SSR worker with Vite, emitting the SAME {@link ServerBuild} `buildServer` (Bun) does: a\n * self-contained worker bundle whose path is returned as `worker`.\n *\n * Like `buildServer`, it codegens the statically-analyzable `server-manifest` next to the entry (so no\n * `node:fs` route scan runs on a disk-less edge), then bundles. `ssr.noExternal` bundles the app + adapter\n * + `@nifrajs/*` into ONE file (the self-contained worker), while `node:` builtins stay external on the\n * `node`/`bun` targets that provide them. `NIFRA_SSR_BUNDLED` is defined so the web-react adapter uses the\n * bundled, deduped react-dom rather than re-rooting to a disk copy at runtime - the same tag `buildServer`\n * sets, and the reason a bundled SSR output does not hit the dual-React crash.\n *\n * The client-leak guards are deliberately NOT run here: a server bundle's `node:` imports are legitimate.\n */"
+  },
+  {
+    "name": "BuildServerViteOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface BuildServerViteOptions {\n    readonly routesDir: string;\n    readonly serverEntry: string;\n    readonly outDir: string;\n    readonly clientEntry: string;\n    readonly styles?: readonly string[] | undefined;\n    readonly routeStyles?: Readonly<Record<string, readonly string[]>> | undefined;\n    readonly resolve?: (file: string) => string;\n    readonly manifestFile?: string;\n    readonly vitePlugins?: readonly unknown[];\n    readonly conditions?: readonly string[];\n    readonly define?: Readonly<Record<string, string>>;\n    readonly minify?: boolean;\n    /** The runtime the worker targets — mirrors `buildServer`. `browser` = the edge (workerd/edge-light). */\n    readonly target?: \"browser\" | \"node\" | \"bun\";\n    /** Vite project root (default: the parent of `routesDir`). */\n    readonly root?: string;\n}",
+    "doc": "/** Options for {@link buildServerVite} — the same surface as `buildServer` minus Bun-plugin specifics. */"
+  },
+  {
     "name": "buildTarget",
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function buildTarget(target: BuildTarget, options: BuildTargetOptions): Promise<BuildTargetResult>;",
-    "doc": "/**\n * Build a full deploy directory for `target` from a file-routed nifra app. Emits the client bundle to\n * `<outDir>/assets/*`, then per target:\n *   - `static`: prerenders opted-in routes (`prerenderRoutes`) to `<outDir>/<path>/index.html` (+\n *     `_data.json`); needs `prerenderApp`. No server.\n *   - `cf-pages`: a `_worker.js` (edge bundle) + a `_routes.json` excluding /assets/* from the worker.\n *   - `vercel`: a `.vercel/output`-shaped function isn't emitted here — `vercel` emits the bundled edge\n *     entry as `<outDir>/index.js` (the CLI's docs point at `vercel`'s Build Output wrapper). [see note]\n *   - `deno`/`node`/`bun`: the self-hosting server bundle (`server.js`) next to the assets.\n * The server entry is GENERATED (`generateServerEntry`) and bundled (`buildServer`); the app supplies\n * only adapter/backend/routes. Returns the manifest + a size report. Throws on any build failure.\n *\n * Note: the heavier platform wrappers (`.vercel/output` v3 layout, wrangler ISR `find_additional_modules`)\n * remain app-owned scripts; this command targets the common single-bundle deploys. See the CLI docs.\n */"
+    "doc": "/** Build a full deploy dir for `target` using the default Bun bundler. See {@link buildTargetWith}. */"
   },
   {
     "name": "BuildTarget",
@@ -909,7 +958,7 @@
     "name": "BuildTargetOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface BuildTargetOptions {\n    /** The `routes/` directory to discover (absolute path). */\n    readonly routesDir: string;\n    /** Output directory for the assembled deploy dir (absolute path). Cleared and recreated. */\n    readonly outDir: string;\n    /** A scratch directory for intermediate codegen (the generated server entry + manifest) and the\n     * server bundle, cleaned up after. Absolute path. */\n    readonly workDir: string;\n    /** The adapter's client runtime module (exports `mountRouter`), e.g. `\"@nifrajs/web-react/client\"`. */\n    readonly clientModule: string;\n    /** Import specifier (resolvable from `workDir`) of the module exporting `adapter`. */\n    readonly adapterImport: string;\n    /** Import specifier (resolvable from `workDir`) of the module exporting `backend`, or `undefined`. */\n    readonly backendImport?: string;\n    /** Factory that builds the app for `static` prerendering, GIVEN the client build's manifest — so the\n     * emitted hydration `<script src>` uses the REAL content-hashed entry (`client.entry`) plus the same\n     * styles/route-preload the server targets use. A pre-built instance can't work here: the hash isn't known\n     * until `buildClient` runs inside `buildTarget`, so a hardcoded entry 404s → pages render but never\n     * hydrate. Required for `target: \"static\"` (SSG drives `app.fetch`); ignored otherwise. */\n    readonly prerenderApp?: (client: BuildManifest) => PrerenderAppLike | Promise<PrerenderAppLike>;\n    /** Client-build plugins (e.g. the MDX/Vue/Solid Bun plugins). */\n    readonly clientPlugins?: readonly BunPlugin[];\n    /** Server-build plugins (e.g. the SSR variants). */\n    readonly serverPlugins?: readonly BunPlugin[];\n    /** Extra Bun.build resolve conditions for the CLIENT build. */\n    readonly conditions?: readonly string[];\n    /** Compile-time `define` replacements layered onto both builds. */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Document `<title>` for the generated server entry. */\n    readonly title?: string;\n}"
+    "signature": "export interface BuildTargetOptions {\n    /** The `routes/` directory to discover (absolute path). */\n    readonly routesDir: string;\n    /** Output directory for the assembled deploy dir (absolute path). Cleared and recreated. */\n    readonly outDir: string;\n    /** A scratch directory for intermediate codegen (the generated server entry + manifest) and the\n     * server bundle, cleaned up after. Absolute path. */\n    readonly workDir: string;\n    /** The adapter's client runtime module (exports `mountRouter`), e.g. `\"@nifrajs/web-react/client\"`. */\n    readonly clientModule: string;\n    /** Import specifier (resolvable from `workDir`) of the module exporting `adapter`. */\n    readonly adapterImport: string;\n    /** Import specifier (resolvable from `workDir`) of the module exporting `backend`, or `undefined`. */\n    readonly backendImport?: string;\n    /** Factory that builds the app for `static` prerendering, GIVEN the client build's manifest — so the\n     * emitted hydration `<script src>` uses the REAL content-hashed entry (`client.entry`) plus the same\n     * styles/route-preload the server targets use. A pre-built instance can't work here: the hash isn't known\n     * until `buildClient` runs inside `buildTarget`, so a hardcoded entry 404s → pages render but never\n     * hydrate. Required for `target: \"static\"` (SSG drives `app.fetch`); ignored otherwise. */\n    readonly prerenderApp?: (client: BuildManifest) => PrerenderAppLike | Promise<PrerenderAppLike>;\n    /** Client-build plugins (e.g. the MDX/Vue/Solid Bun plugins). */\n    readonly clientPlugins?: readonly BunPlugin[];\n    /** Server-build plugins (e.g. the SSR variants). */\n    readonly serverPlugins?: readonly BunPlugin[];\n    /** Extra Bun.build resolve conditions for the CLIENT build. */\n    readonly conditions?: readonly string[];\n    /** Compile-time `define` replacements layered onto both builds. */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Project-root static directory copied to deploy root. `false` disables it. */\n    readonly publicDir?: string | false;\n    /** Prefix of environment variables allowed into the client bundle (default `\"PUBLIC_\"`). */\n    readonly publicEnvPrefix?: string;\n    /** Document `<title>` for the generated server entry. */\n    readonly title?: string;\n}"
   },
   {
     "name": "BuildTargetResult",
@@ -917,6 +966,34 @@
     "package": "@nifrajs/web",
     "signature": "export interface BuildTargetResult {\n    /** The deploy target that was built. */\n    readonly target: BuildTarget;\n    /** The assembled output directory. */\n    readonly outDir: string;\n    /** The client build's manifest (entry URL, assets, per-route chunks/styles). */\n    readonly client: BuildManifest;\n    /** A human-readable note on how to run/deploy the output. */\n    readonly run: string;\n    /** Per-chunk size report over the emitted client (+ server) outputs. Always computed; the CLI prints\n     * it only with `--report`. */\n    readonly size: SizeReport;\n}",
     "doc": "/** The result of a target build — the deploy dir + the client manifest + an optional size report. */"
+  },
+  {
+    "name": "buildTargetVite",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function buildTargetVite(target: BuildTarget, options: BuildTargetOptions): Promise<BuildTargetResult>;",
+    "doc": "/**\n * Build a full deploy dir for `target` using the Vite/Rollup pipeline - the escape hatch for apps that\n * need a Vite-only transform in production. Identical output shape to {@link import(\"./build.js\").buildTarget}\n * (same deploy dir, same server entry, same prerender + size report), because both delegate to the ONE\n * `buildTargetWith` orchestrator; only the two bundling steps differ.\n *\n * Pass the app's Vite plugins via `clientPlugins` / `serverPlugins` (the shared option names) - here they\n * are Vite plugins, not Bun plugins.\n */"
+  },
+  {
+    "name": "buildTargetWith",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function buildTargetWith(target: BuildTarget, options: BuildTargetOptions, bundler: Bundler): Promise<BuildTargetResult>;",
+    "doc": "/**\n * The bundler-agnostic deploy orchestrator: everything `buildTarget` does EXCEPT the two bundling steps,\n * which come from `bundler`. `buildTarget` passes {@link bunBundler}; `buildTargetVite`\n * (`@nifrajs/web/build-vite`) passes the Vite strategy. One orchestrator, so the deploy-dir shape,\n * server-entry codegen, prerender and size report are identical across pipelines.\n */"
+  },
+  {
+    "name": "bunBundler",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const bunBundler: Bundler;",
+    "doc": "/** The default (Bun) strategy — `buildClient`/`buildServer` from this module. */"
+  },
+  {
+    "name": "Bundler",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface Bundler {\n    /** Build the client bundle → the shared {@link BuildManifest}. */\n    buildClient(input: {\n        readonly routesDir: string;\n        readonly outDir: string;\n        readonly clientModule: string;\n        readonly plugins?: readonly unknown[];\n        readonly conditions?: readonly string[];\n        readonly define?: Readonly<Record<string, string>>;\n        readonly publicDir?: string | false;\n        readonly publicEnvPrefix?: string;\n        /** Project root (Vite needs it; the Bun strategy ignores it). */\n        readonly root?: string;\n    }): Promise<BuildManifest>;\n    /** Build the server worker → the shared {@link ServerBuild}. */\n    buildServer(input: {\n        readonly routesDir: string;\n        readonly serverEntry: string;\n        readonly outDir: string;\n        readonly clientEntry: string;\n        readonly target: \"browser\" | \"node\" | \"bun\";\n        readonly plugins?: readonly unknown[];\n        readonly define?: Readonly<Record<string, string>>;\n        readonly root?: string;\n    }): Promise<ServerBuild>;\n}",
+    "doc": "/**\n * A build-tool STRATEGY for {@link buildTargetWith} — the two bundling steps, and nothing else. Everything\n * around them (server-entry codegen, deploy assembly, prerender, size report) is bundler-agnostic and\n * lives in `buildTargetWith`, so a second bundler (Vite) is this interface, not a second orchestrator.\n *\n * Plugin lists are `readonly unknown[]` because a Bun plugin and a Vite plugin are different types; each\n * strategy casts to its own. `buildTargetWith` only forwards them.\n */"
   },
   {
     "name": "bunImageBackend",
@@ -1603,6 +1680,13 @@
     "signature": "export interface CheckSuggestion {\n    readonly kind: \"edit\" | \"command\" | \"manual\";\n    readonly title: string;\n    readonly diff?: string;\n    /** argv array, not a shell string, so MCP clients can run it without quoting hazards. */\n    readonly command?: readonly string[];\n    readonly steps?: readonly string[];\n}"
   },
   {
+    "name": "chooseBuildPipeline",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function chooseBuildPipeline(slots: PipelineSlots, forced?: BuildPipeline): PipelineDecision;",
+    "doc": "/**\n * Pick the bundler for `nifra build`, per app rather than per global default.\n *\n * The phase defaults are deliberately asymmetric - `nifra dev` is Vite (for the plugin ecosystem, and\n * because Bun's DEV-server bundler cannot compile CSS Modules), `nifra build` is Bun (faster and\n * Bun-native). For an app with no transforms that asymmetry is free: there is nothing to disagree about.\n * For an app whose ONLY transforms are Vite plugins it is not. Those plugins run in dev and are then\n * dropped by the Bun build - `buildForTarget` reads `clientPlugins`/`serverPlugins`, never `vitePlugins`\n * - so the build succeeds, the output looks plausible, and the transform simply did not happen. That is\n * the same failure {@link checkPipelineSeparation} exists to prevent, reached by crossing PHASES instead\n * of slots, and the slot check cannot see it because the plugins are correctly placed.\n *\n * So the default follows the app: Vite plugins with no Bun counterpart means the app has exactly one\n * pipeline that can build it, and that is the one used. An app declaring BOTH has supplied the Bun\n * equivalent on purpose - nothing is dropped - so the fast Bun default stands.\n *\n * `forced` is `--vite` / `--bun` and always wins, except for the one combination that silently discards\n * work, which throws instead. Refusing rather than warning matches the slot guard: a build that succeeds\n * and omits the transform is worse than one that stops and says so.\n */"
+  },
+  {
     "name": "ChunkSize",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -1650,6 +1734,13 @@
     "doc": "/**\n * Create an end-to-end-typed client for a nifra server. Two modes:\n *\n *   // coupled — typed from the server's type (`typeof app`)\n *   const api = client<typeof app>(\"http://localhost:3000\")\n *\n *   // decoupled — typed from a contract VALUE, no server import\n *   const api = client(contract, \"https://api.example.com\")\n *\n *   const { data, error } = await api.users({ id: \"1\" }).get()\n *\n * Both return the same Eden-style proxy. Browser-safe: uses only `fetch` /\n * `Proxy` / `URL`, never the server runtime. Never throws — network and non-2xx\n * responses surface as a `Result` `error`.\n */"
   },
   {
+    "name": "CLIENT_ENTRY_PATH",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const CLIENT_ENTRY_PATH = \"/__nifra/client.js\";",
+    "doc": "/**\n * The stable URL every SSR'd page points its client entry at.\n *\n * It has to be stable, and Bun's own URL is not: that one is a content hash over the entire client graph,\n * so it changes whenever anything the entry imports changes. This path redirects to whichever hashed\n * chunk Bun is serving at the moment the browser asks, which is the only formulation that stays correct\n * across a rebuild.\n */"
+  },
+  {
     "name": "clientCall",
     "kind": "function",
     "package": "@nifrajs/cli",
@@ -1694,7 +1785,7 @@
     "name": "ClientRouterOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ClientRouterOptions {\n    readonly patterns: readonly RoutePattern[];\n    readonly initial: RouterState;\n    /** Override the loader-data fetch (tests inject a stub; defaults to a same-origin JSON GET). */\n    readonly fetchData?: FetchRouteData;\n    /** Ensure a route's code chunk is loaded before rendering (code-splitting). Awaited in parallel\n     * with the loader data, so `pending` covers both. Omit when the bundle isn't split. */\n    readonly loadModule?: (routeId: string) => Promise<void>;\n}"
+    "signature": "export interface ClientRouterOptions {\n    readonly patterns: readonly RoutePattern[];\n    readonly initial: RouterState;\n    /** Override the loader-data fetch (tests inject a stub; defaults to a same-origin JSON GET). */\n    readonly fetchData?: FetchRouteData;\n    /** Ensure a route's code chunk is loaded before rendering (code-splitting). Awaited in parallel\n     * with the loader data, so `pending` covers both. Omit when the bundle isn't split. */\n    readonly loadModule?: (routeId: string) => Promise<void>;\n    /** Terminal status → client route id. Generated entries populate this from `_404` and\n     * `_<status>` files so soft navigation renders the same boundary as a hard request. */\n    readonly statusRoutes?: Readonly<Record<number, string>>;\n}"
   },
   {
     "name": "cloudflareLoader",
@@ -1817,6 +1908,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare const commonSecretPatterns: ReadonlyArray<RegExp>;",
     "doc": "/**\n * A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} — opt in by\n * passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a\n * few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives;\n * add your own (e.g. internal id formats) as needed. Every pattern is global so all matches are scrubbed.\n */"
+  },
+  {
+    "name": "compareMixedPartsSpecificity",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function compareMixedPartsSpecificity(left: readonly MixedPart[], right: readonly MixedPart[]): number;",
+    "doc": "/** Total ordering for mixed segment shapes, shared by the trie and regex-based routers. */"
   },
   {
     "name": "compareRoutePatternSpecificity",
@@ -2238,7 +2336,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function createDevServer(options: DevServerOptions): Promise<DevServer>;",
-    "doc": "/** Start the dev server: build → serve → watch → rebuild + reload on change. */"
+    "doc": "/** Start the Bun dev server: generate → bundle → serve → watch → hot-reload on change. */"
   },
   {
     "name": "createDurableEffectJournal",
@@ -2505,7 +2603,7 @@
     "name": "CreateWebAppOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface CreateWebAppOptions {\n    readonly adapter: RenderAdapter;\n    readonly manifest: Manifest;\n    /** URL of the built client entry (module script) injected into every page. */\n    readonly clientEntry: string;\n    /** Default document title for all pages. */\n    readonly title?: string;\n    /** Injected into each loader's `ctx.api` — typically an `inProcessClient(app)` (typed\n     * per-route via `@nifrajs/client`'s `createRoutes`). Opaque to the core.\n     *\n     * **Auto-mount.** Every `inProcessClient(backend)` exposes the symbol-keyed platform-aware backend\n     * mount interface from `@nifrajs/core/mount`; `createWebApp` also serves that backend over HTTP at\n     * {@link apiPrefix} (default `/api`): a request whose pathname starts with the prefix is dispatched\n     * before page routing with the same `env`/`waitUntil` platform context, and the backend's `Response`\n     * is returned untouched. The mount runs in `nifra dev` too. Pass `apiPrefix: \"\"` to disable it. */\n    readonly api?: unknown;\n    /** HTTP path prefix the {@link api} backend is auto-mounted at (default `\"/api\"`). A request whose\n     * pathname is exactly the prefix or starts with `prefix + \"/\"` is dispatched to the backend before\n     * page routing; the backend therefore defines its routes at the **full** path (`server().post(\"/api/\n     * sync\", …)`), matching the in-process `inProcessClient` call sites. Set to `\"\"` to disable the\n     * auto-mount entirely (the app serves pages only and `api` stays a loader-only `ctx.api`). Mounting\n     * is also a no-op when `api` does not expose the symbol mount. */\n    readonly apiPrefix?: string;\n    /**\n     * Strip {@link apiPrefix} from the pathname before dispatching to `api` (default `false`).\n     *\n     * The default suits a backend that declares FULL paths (`server().post(\"/api/sync\", …)`), which is\n     * right when it is only ever mounted here. Set this when the backend declares its routes WITHOUT\n     * the prefix because it also runs standalone behind its own shell - external stacks\n     * are the common case. Without it every request 404s inside the backend, and the workaround\n     * is a `Proxy` that rewrites each URL.\n     */\n    readonly apiStrip?: boolean;\n    /**\n     * Sub-apps mounted ahead of page routing - an auth handler, a webhook receiver, a stack's routes.\n     *\n     * Structural on purpose: anything with `{ path, app: { fetch } }` fits, so an external\n     * stack mounts as `mounts: stack.routes` without `@nifrajs/web` taking a dependency on it. `better-auth`\n     * is the motivating case - it is not a `backend` route, so `/api/auth/*` used to 404 silently.\n     *\n     * Tried longest-path-first and BEFORE the `api` mount, so a mount at `/api/auth` wins over a backend\n     * at `/api` no matter which was declared first. `stripPrefix` matches the same option on\n     * equivalent mount options: leave it off to pass the full path through.\n     */\n    readonly mounts?: ReadonlyArray<{\n        readonly path: string;\n        readonly app: {\n            fetch(request: Request): Response | Promise<Response>;\n        };\n        readonly stripPrefix?: boolean;\n    }>;\n    /** Secret for **draft / preview mode** (see `enableDraft`). When set, a request carrying a valid\n     * signed `__nifra_draft` cookie gets `ctx.draft === true` in loaders/actions (else always `false`).\n     * Pair with `withISR({ draftSecret })` so editors bypass the cache. Omit to disable draft mode. */\n    readonly draftSecret?: string;\n    /** Per-route chunk URLs (`buildClient`'s `BuildManifest.routes`) — `routeId → [layout chunks…, own\n     * chunk]`. When present, each page `modulepreload`s its matched route's chunks alongside the entry,\n     * so the route code downloads in parallel (no entry→route-chunk waterfall). Omit ⇒ entry-only. */\n    readonly routePreload?: Readonly<Record<string, readonly string[]>>;\n    /** The app's bundled stylesheet URLs (`buildClient`'s `BuildManifest.css`) — the aggregate, injected\n     * as `<link rel=\"stylesheet\">` in a page's `<head>`. Used as the fallback for any route absent from\n     * {@link routeStyles}. Omit ⇒ no links (dev, where Vite injects CSS, or a CSS-free app). */\n    readonly styles?: readonly string[];\n    /** Per-route stylesheet URLs (`buildClient`'s `BuildManifest.routeStyles`) — `routeId → [chain CSS]`.\n     * When a matched route has an entry here, only those (its layout chain + own CSS) are linked instead\n     * of the aggregate `styles`, so a page ships only the CSS it uses. An empty array ⇒ no `<link>` (the\n     * page imports no CSS). Routes absent here fall back to `styles`. Omit ⇒ always use `styles`. */\n    readonly routeStyles?: Readonly<Record<string, readonly string[]>>;\n    /** SSG: the prerendered-path set (e.g. `enumerateStaticRoutes(routes).paths` or the build's\n     * `prerendered.json`). Injected as `window.__NIFRA_PRERENDERED__` on every page so a client soft-nav\n     * into a prerendered route fetches its static `_data.json` instead of hitting the worker. */\n    readonly prerenderedPaths?: readonly string[];\n    /** SSG: per dynamic route pattern, its `getStaticPaths` `fallback` (from `enumerateStaticRoutes` or\n     * the build's `prerendered.json`). A route mapped to `\"404\"` rejects any path NOT in\n     * `prerenderedPaths` with the 404 page — the unlisted path simply doesn't exist. `\"ssr\"` (the\n     * default for unmapped routes) renders unlisted paths on-demand. */\n    readonly staticFallbacks?: Readonly<Record<string, \"ssr\" | \"404\">>;\n    /** Observe every loader/action failure — for error-reporting plugins (Sentry-style). Called for\n     * real throws (not control-flow `Response`s like `redirect`), **before** the nearest `_error`\n     * boundary renders / a soft-nav 500 / a rethrow — so it sees errors that the boundary would\n     * otherwise hide. Observation only; its own throws are swallowed so a faulty reporter can't break\n     * rendering. (`beforeLoader` is intentionally omitted — the core HTTP hooks already cover\n     * pre-request work.) */\n    readonly onLoaderError?: (error: unknown, ctx: {\n        readonly request: Request;\n        readonly params: Readonly<Record<string, string>>;\n        readonly route: string;\n    }) => void;\n}"
+    "signature": "export interface CreateWebAppOptions {\n    readonly adapter: RenderAdapter;\n    readonly manifest: Manifest;\n    /** URL of the built client entry (module script) injected into every page. */\n    readonly clientEntry: string;\n    /** Default document title for all pages. */\n    readonly title?: string;\n    /** Injected into each loader's `ctx.api` — typically an `inProcessClient(app)` (typed\n     * per-route via `@nifrajs/client`'s `createRoutes`). Opaque to the core.\n     *\n     * **Auto-mount.** Every `inProcessClient(backend)` exposes the symbol-keyed platform-aware backend\n     * mount interface from `@nifrajs/core/mount`; `createWebApp` also serves that backend over HTTP at\n     * {@link apiPrefix} (default `/api`): a request whose pathname starts with the prefix is dispatched\n     * before page routing with the same `env`/`waitUntil` platform context, and the backend's `Response`\n     * is returned untouched. The mount runs in `nifra dev` too. Pass `apiPrefix: \"\"` to disable it. */\n    readonly api?: unknown;\n    /** HTTP path prefix the {@link api} backend is auto-mounted at (default `\"/api\"`). A request whose\n     * pathname is exactly the prefix or starts with `prefix + \"/\"` is dispatched to the backend before\n     * page routing; the backend therefore defines its routes at the **full** path (`server().post(\"/api/\n     * sync\", …)`), matching the in-process `inProcessClient` call sites. Set to `\"\"` to disable the\n     * auto-mount entirely (the app serves pages only and `api` stays a loader-only `ctx.api`). Mounting\n     * is also a no-op when `api` does not expose the symbol mount. */\n    readonly apiPrefix?: string;\n    /**\n     * Strip {@link apiPrefix} from the pathname before dispatching to `api` (default `false`).\n     *\n     * The default suits a backend that declares FULL paths (`server().post(\"/api/sync\", …)`), which is\n     * right when it is only ever mounted here. Set this when the backend declares its routes WITHOUT the\n     * prefix because it also runs standalone behind its own shell, so its paths cannot carry a prefix that\n     * only exists when it is mounted. Without it every request 404s inside the backend, and the workaround\n     * is a `Proxy` that rewrites each URL.\n     */\n    readonly apiStrip?: boolean;\n    /**\n     * Sub-apps mounted ahead of page routing - an auth handler, a webhook receiver, a stack's routes.\n     *\n     * Structural on purpose: anything with `{ path, app: { fetch } }` fits, so a library that exposes its\n     * routes as such a list mounts as `mounts: theirRoutes` without `@nifrajs/web` taking a dependency on\n     * it. `better-auth` is the motivating case - it is not a `backend` route, so `/api/auth/*` used to 404\n     * silently.\n     *\n     * Tried longest-path-first and BEFORE the `api` mount, so a mount at `/api/auth` wins over a backend\n     * at `/api` no matter which was declared first. `stripPrefix` is the per-mount form of {@link apiStrip}:\n     * leave it off to pass the full path through.\n     */\n    readonly mounts?: ReadonlyArray<{\n        readonly path: string;\n        readonly app: {\n            fetch(request: Request): Response | Promise<Response>;\n        };\n        readonly stripPrefix?: boolean;\n    }>;\n    /** Secret for **draft / preview mode** (see `enableDraft`). When set, a request carrying a valid\n     * signed `__nifra_draft` cookie gets `ctx.draft === true` in loaders/actions (else always `false`).\n     * Pair with `withISR({ draftSecret })` so editors bypass the cache. Omit to disable draft mode. */\n    readonly draftSecret?: string;\n    /** Per-route chunk URLs (`buildClient`'s `BuildManifest.routes`) — `routeId → [layout chunks…, own\n     * chunk]`. When present, each page `modulepreload`s its matched route's chunks alongside the entry,\n     * so the route code downloads in parallel (no entry→route-chunk waterfall). Omit ⇒ entry-only. */\n    readonly routePreload?: Readonly<Record<string, readonly string[]>>;\n    /** The app's bundled stylesheet URLs (`buildClient`'s `BuildManifest.css`) — the aggregate, injected\n     * as `<link rel=\"stylesheet\">` in a page's `<head>`. Used as the fallback for any route absent from\n     * {@link routeStyles}. Omit ⇒ no links (dev, where Vite injects CSS, or a CSS-free app). */\n    readonly styles?: readonly string[];\n    /** Per-route stylesheet URLs (`buildClient`'s `BuildManifest.routeStyles`) — `routeId → [chain CSS]`.\n     * When a matched route has an entry here, only those (its layout chain + own CSS) are linked instead\n     * of the aggregate `styles`, so a page ships only the CSS it uses. An empty array ⇒ no `<link>` (the\n     * page imports no CSS). Routes absent here fall back to `styles`. Omit ⇒ always use `styles`. */\n    readonly routeStyles?: Readonly<Record<string, readonly string[]>>;\n    /** SSG: the prerendered-path set (e.g. `enumerateStaticRoutes(routes).paths` or the build's\n     * `prerendered.json`). Injected as `window.__NIFRA_PRERENDERED__` on every page so a client soft-nav\n     * into a prerendered route fetches its static `_data.json` instead of hitting the worker. */\n    readonly prerenderedPaths?: readonly string[];\n    /** SSG: per dynamic route pattern, its `getStaticPaths` `fallback` (from `enumerateStaticRoutes` or\n     * the build's `prerendered.json`). A route mapped to `\"404\"` rejects any path NOT in\n     * `prerenderedPaths` with the 404 page — the unlisted path simply doesn't exist. `\"ssr\"` (the\n     * default for unmapped routes) renders unlisted paths on-demand. */\n    readonly staticFallbacks?: Readonly<Record<string, \"ssr\" | \"404\">>;\n    /** Observe every loader/action failure — for error-reporting plugins (Sentry-style). Called for\n     * real throws (not control-flow `Response`s like `redirect`), **before** the nearest `_error`\n     * boundary renders / a soft-nav 500 / a rethrow — so it sees errors that the boundary would\n     * otherwise hide. Observation only; its own throws are swallowed so a faulty reporter can't break\n     * rendering. (`beforeLoader` is intentionally omitted — the core HTTP hooks already cover\n     * pre-request work.) */\n    readonly onLoaderError?: (error: unknown, ctx: {\n        readonly request: Request;\n        readonly params: Readonly<Record<string, string>>;\n        readonly route: string;\n    }) => void;\n}"
   },
   {
     "name": "CronError",
@@ -2949,6 +3047,13 @@
     "signature": "export interface DependencyMoveChange {\n    readonly file: string;\n    readonly field: string;\n    readonly from: string;\n    readonly to: string;\n    readonly fromVersion: string;\n    readonly toVersion: string;\n    readonly action: \"renamed\" | \"removed\";\n}"
   },
   {
+    "name": "deriveRouteEntry",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function deriveRouteEntry(id: string, pattern: string, module: Pick<RouteModule, \"prerender\" | \"getStaticPaths\" | \"revalidate\" | \"hydrate\">, prerenderedPaths?: readonly string[]): RouteManifestEntry;",
+    "doc": "/**\n * Derive one route's behaviour from its module exports.\n *\n * `prerender`/`getStaticPaths` win over `revalidate`: a page rendered at build time is not revalidated at\n * runtime, so if a route declares both, the build-time answer is the one that describes what ships. That\n * combination is worth surfacing rather than silently resolving, which is what `conflicts` is for once a\n * target is known.\n */"
+  },
+  {
     "name": "describeProject",
     "kind": "function",
     "package": "@nifrajs/cli",
@@ -3005,16 +3110,44 @@
     "doc": "/**\n * Scan a build's metafile for any module that opts into the `server-only` marker (a side-effect\n * `import \"@nifrajs/web/server-only\"`) yet landed in a CLIENT output chunk, returning a sorted, deduped\n * list of {@link ServerOnlyFinding}s. Mirrors {@link detectNodeBuiltinsInClient}: it reads the SAME\n * graph facts — which inputs import the marker (the \"marked\" modules), which chunk each landed in (the\n * per-output `inputs`), and the shortest import chain from a user entry to it. The marker module ITSELF\n * (which imports nothing) is excluded — only the modules that *opt in* are flagged. Pure + exported for\n * unit testing. Empty ⇒ clean.\n */"
   },
   {
+    "name": "DevEntryMatch",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DevEntryMatch {\n    readonly src: string;\n    /**\n     * Stylesheet URLs Bun extracted from the entry's CSS imports.\n     *\n     * These are not a nicety. Bun's bundler pulls `import \"./app.css\"` out of the JS graph and links it\n     * from the HTML *it* bundled - the throwaway probe page, which nobody ever sees. nifra renders the real\n     * pages, so unless these are carried across, a Bun-pipeline dev session serves every page unstyled\n     * while the production build (which reads CSS from the build manifest) is fine. That is the worst\n     * possible shape for a bug: dev-only, silent, and looks like the app's own CSS is broken.\n     */\n    readonly styles: readonly string[];\n    readonly via: DevEntryVia;\n}",
+    "doc": "/** A located client entry: the URL to hand nifra, its stylesheets, and which signal found it. */"
+  },
+  {
+    "name": "devEntryNotFoundMessage",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function devEntryNotFoundMessage(probeUrl: string, html: string): string;",
+    "doc": "/** The error thrown when Bun's dev server serves a page nothing in it can be recognised as the entry. */"
+  },
+  {
+    "name": "DevEntryVia",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type DevEntryVia = \"marker\" | \"single-bun-script\";",
+    "doc": "/** How the entry URL was found - reported so a fallback hit is visible rather than silent. */"
+  },
+  {
+    "name": "devHtml",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function devHtml(entryHref: string): string;",
+    "doc": "/**\n * The throwaway HTML document. Its only job is to make Bun bundle the entry and assign it a URL - it is\n * never shown to a user, so it carries no app markup. The `<div id=\"root\">` is there purely so the\n * document stands on its own if someone opens the probe path directly while debugging.\n */"
+  },
+  {
     "name": "DevServer",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface DevServer {\n    readonly port: number;\n    stop(): void;\n}"
+    "signature": "export interface DevServer {\n    readonly port: number;\n    /**\n     * The URL pages point their client entry at — always {@link CLIENT_ENTRY_PATH}, never Bun's hashed\n     * chunk. Deliberately not the underlying chunk URL: that one moves on every rebuild, and anything\n     * holding onto it is holding onto a URL that will stop working.\n     */\n    readonly clientEntry: string;\n    stop(): void;\n}"
   },
   {
     "name": "DevServerOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface DevServerOptions extends Omit<BuildClientOptions, \"minify\"> {\n    /**\n     * Build the nifra app for the freshly-built client entry. `importQuery` changes on every\n     * rebuild — pass it to `discoverRoutes(routesDir, { importQuery })` so SSR re-imports edited\n     * route modules instead of Bun's cached copies.\n     */\n    readonly createApp: (clientEntry: string, importQuery: string) => FetchApp | Promise<FetchApp>;\n    /** Directories to watch (default: `[routesDir]`). */\n    readonly watch?: readonly string[];\n    /** Port to listen on (default {@link DEFAULT_DEV_PORT}). */\n    readonly port?: number;\n    /** Directory of user-authored static files served at the root (default `\"public\"`). The SAME\n     * option the production build copies and serves, so dev and prod cannot drift. */\n    readonly publicDir?: string;\n}"
+    "signature": "export interface DevServerOptions extends Omit<BuildClientOptions, \"minify\"> {\n    /**\n     * Build the nifra app for the current client entry. `importQuery` changes on every reload — pass it to\n     * `discoverRoutes(routesDir, { importQuery })` so SSR re-imports edited route modules instead of Bun's\n     * cached copies.\n     */\n    readonly createApp: (clientEntry: string, importQuery: string) => FetchApp | Promise<FetchApp>;\n    /** Directories to watch (default: `[routesDir]`). */\n    readonly watch?: readonly string[];\n    /** Port to listen on (default {@link DEFAULT_DEV_PORT}). */\n    readonly port?: number;\n    /** Directory of user-authored static files served at the root (default `\"public\"`). The SAME\n     * option the production build copies and serves, so dev and prod cannot drift. */\n    readonly publicDir?: string | false;\n    /**\n     * Run the client-leak guards on each change (default `true`).\n     *\n     * `buildClient` is what runs them - server-only code reaching the browser, `node:` builtins in client\n     * code - and Bun's dev server does its own bundling, so nothing would run them otherwise. They are\n     * security guards; a dev loop that stops enforcing them is how a leak reaches a deploy unnoticed. The\n     * pass runs in the background off the hot path, so HMR is never waiting on it, and only reports.\n     */\n    readonly guardLeaks?: boolean;\n}"
   },
   {
     "name": "devtools",
@@ -3721,6 +3854,13 @@
     "doc": "/** A Cloudflare Workers-style execution context (the `fetch` 3rd arg). Structural — only\n * `waitUntil` is used; declared here so `@nifrajs/core` needs no Workers type dependency. */"
   },
   {
+    "name": "explainBindFailure",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const explainBindFailure: (err: unknown, port: number) => Error;",
+    "doc": "/** Map a bind failure to the port-collision explanation, leaving every other failure as itself. */"
+  },
+  {
     "name": "exponentialBackoff",
     "kind": "function",
     "package": "@nifrajs/jobs",
@@ -3903,7 +4043,7 @@
     "name": "FetchRouteData",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type FetchRouteData = (path: string, match: RouteMatch, signal?: AbortSignal) => Promise<unknown>;",
+    "signature": "export type FetchRouteData = (path: string, match: RouteMatch, signal?: AbortSignal, navigation?: {\n    readonly from: string;\n    readonly retain: readonly number[];\n}) => Promise<unknown>;",
     "doc": "/** How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch\n * (and its deferred stream). */"
   },
   {
@@ -3978,7 +4118,7 @@
     "name": "Flags",
     "kind": "interface",
     "package": "@nifrajs/cli",
-    "signature": "export interface Flags {\n    readonly port: number;\n    readonly out: string;\n    readonly poll: boolean;\n    /** `nifra build --target <t>`: emit a full deploy dir for this target. Defaults to `bun`. */\n    readonly target: string;\n    /** `nifra build --report`: print a per-chunk size + gzip table after the build. */\n    readonly report: boolean;\n}"
+    "signature": "export interface Flags {\n    readonly port: number;\n    readonly out: string;\n    readonly poll: boolean;\n    /** `nifra build --target <t>`: emit a full deploy dir for this target. Defaults to `bun`. */\n    readonly target: string;\n    /** `nifra build --report`: print a per-chunk size + gzip table after the build. */\n    readonly report: boolean;\n    /** `nifra build --vite`: force the client + server through Vite/Rollup. Without a flag the pipeline is\n     * chosen per app (`chooseBuildPipeline`) - Bun unless the app's only transforms are `vitePlugins`. */\n    readonly vite: boolean;\n    /** `nifra dev --bun`: run the Bun-pipeline dev server (Bun.serve native HMR — including React Fast\n     * Refresh with state preserved — and no Vite in the process). Default stays Vite for its plugin\n     * ecosystem; `--bun` trades that for one bundler across dev and prod. Refuses CSS-Modules apps.\n     *\n     * `nifra build --bun`: force the Bun build. Refuses when that would drop the app's `vitePlugins`. */\n    readonly bun: boolean;\n}"
   },
   {
     "name": "FontAsset",
@@ -4073,6 +4213,20 @@
     "doc": "/**\n * Format a {@link ManifestDrift} as a named, actionable error message, or `undefined` when in sync.\n * Names the exact missing/extra routes + the one fix (regenerate the manifest by re-running the build).\n * `manifestPath` is shown for the dev to locate the stale file. Pure.\n */"
   },
   {
+    "name": "formatNodeBuiltinLeak",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function formatNodeBuiltinLeak(findings: ReadonlyArray<NodeBuiltinFinding>): string | undefined;",
+    "doc": "/** The build-failing message for `node:` builtins that reached the client bundle. `undefined` ⇒ clean. */"
+  },
+  {
+    "name": "formatServerOnlyLeak",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function formatServerOnlyLeak(findings: ReadonlyArray<ServerOnlyFinding>): string | undefined;",
+    "doc": "/** The build-failing message for `server-only`-marked modules that reached the client. `undefined` ⇒ clean. */"
+  },
+  {
     "name": "Formatter",
     "kind": "interface",
     "package": "@nifrajs/i18n",
@@ -4146,6 +4300,13 @@
     "doc": "/**\n * Adapt a `Bun.build` metafile to the neutral graph.\n *\n * A total function: an absent or partial metafile yields an empty graph rather than throwing, because\n * a guard that crashes on an unexpected build shape fails the build for the wrong reason. An empty\n * graph reports no findings, which matches the existing behaviour when the metafile is missing.\n */"
   },
   {
+    "name": "fromRollupBundle",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function fromRollupBundle(bundle: RollupBundleLike, importsOf: (moduleId: string) => readonly string[]): ClientModuleGraph;",
+    "doc": "/**\n * Adapt a Rollup/Vite output bundle to the neutral graph — the second producer the seam was built for.\n *\n * The bundle records which modules landed in which chunk (`moduleIds`) but NOT each module's import\n * edges, so those come from `importsOf`, which the caller backs with `this.getModuleInfo(id).importedIds`\n * inside a plugin hook (a test backs it with a plain map). Edges carry only the RESOLVED id — Rollup does\n * not keep the as-written specifier per edge — so `path` is set and `original` is left undefined. Both\n * guards read the resolved `path` as their fallback (a `node:` prefix, the `server-only` basename), so\n * detection is unaffected; only the human-readable chain shows resolved paths instead of as-written ones.\n *\n * Total, like {@link fromBunMetafile}: an empty bundle yields an empty graph (no findings), never a throw\n * that would fail a build for the wrong reason.\n */"
+  },
+  {
     "name": "fromTypeBox",
     "kind": "function",
     "package": "@nifrajs/schema",
@@ -4216,7 +4377,7 @@
     "name": "generateServerEntry",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function generateServerEntry(options: {\n    readonly target: BuildTarget;\n    /** Import specifier for the module exporting `adapter` (e.g. `\"../framework.ts\"`). */\n    readonly adapterImport: string;\n    /** Import specifier for the module exporting `backend`, or `undefined` for a frontend-only app. */\n    readonly backendImport?: string;\n    /** Document `<title>` passed to `createWebApp`. */\n    readonly title?: string;\n}): string;",
+    "signature": "export declare function generateServerEntry(options: {\n    readonly target: BuildTarget;\n    /** Import specifier for the module exporting `adapter` (e.g. `\"../framework.ts\"`). */\n    readonly adapterImport: string;\n    /** Import specifier for the module exporting `backend`, or `undefined` for a frontend-only app. */\n    readonly backendImport?: string;\n    /** Document `<title>` passed to `createWebApp`. */\n    readonly title?: string;\n    /** Encoded root-relative public file paths copied into the deploy directory. */\n    readonly publicFiles?: readonly string[];\n}): string;",
     "doc": "/**\n * Codegen the per-target **server entry** module (source text) for `buildServer` to bundle. It imports\n * the app's `adapter` (from `framework.ts`), the optional `backend` (from `backend.ts`), and the\n * generated `{ manifest, clientEntry }` (from `./server-manifest`), builds `createWebApp`, then wires\n * the right host:\n *   - `cf-pages` / `vercel`: `export default` the fetch handler (the platform serves /assets/* itself).\n *   - `deno`: same fetch-handler default, plus `Deno.serve` self-host when run directly.\n *   - `bun` / `node`: a self-hosting server that ALSO serves the client bundle from disk (those\n *     runtimes have a filesystem; the static `/assets/*` sit next to the entry).\n * `adapterImport`/`backendImport` are the specifiers the entry uses (relative to where it's written) —\n * `buildServer` writes the entry next to `serverEntry`, so they're resolved from there. Pure (string in,\n * string out) so the generation is unit-testable without a real build.\n */"
   },
   {
@@ -4224,7 +4385,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function generateServerManifest(manifest: Manifest, options: GenerateServerManifestOptions): string;",
-    "doc": "/**\n * Codegen: emit a **server manifest** module (as source) for disk-less edge runtimes (Cloudflare\n * Workers, …) — and, with a `target`, any portable server bundle. `discoverRoutes` scans `node:fs`\n * and dynamic-imports each route by a *runtime* path — neither exists on workerd. This instead emits\n * **statically-analyzable** imports of every route/layout/`_error`/`_404` (so the bundler includes them) and\n * rebuilds the manifest with `buildManifest` — the SAME pure logic `discoverRoutes` feeds, so patterns\n * + layout chains are identical. Eager (`import * as`) by default; `lazy` emits `() => import(...)` so\n * a code-splitting bundler chunks per route. The emitted module exports `manifest` (consumed by\n * `createWebApp`, unchanged) + `clientEntry` (baked). Write it to a file and bundle it into the worker\n * entry (see `buildServer` in `@nifrajs/web/build`).\n */"
+    "doc": "/**\n * Codegen: emit a **server manifest** module (as source) for disk-less edge runtimes (Cloudflare\n * Workers, …) — and, with a `target`, any portable server bundle. `discoverRoutes` scans `node:fs`\n * and dynamic-imports each route by a *runtime* path — neither exists on workerd. This instead emits\n * **statically-analyzable** imports of every route/layout/`_error`/terminal status page (so the bundler includes them) and\n * rebuilds the manifest with `buildManifest` — the SAME pure logic `discoverRoutes` feeds, so patterns\n * + layout chains are identical. Eager (`import * as`) by default; `lazy` emits `() => import(...)` so\n * a code-splitting bundler chunks per route. The emitted module exports `manifest` (consumed by\n * `createWebApp`, unchanged) + `clientEntry` (baked). Write it to a file and bundle it into the worker\n * entry (see `buildServer` in `@nifrajs/web/build`).\n */"
   },
   {
     "name": "GenerateServerManifestOptions",
@@ -4939,6 +5100,13 @@
     "signature": "export interface InitAgentsResult {\n    readonly cwd: string;\n    readonly files: readonly InitAgentsFileResult[];\n}"
   },
   {
+    "name": "injectStyles",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function injectStyles(html: string, styles: readonly string[]): string;",
+    "doc": "/**\n * Inject Bun's stylesheet links into an SSR'd document.\n *\n * Prefers `</head>`; falls back to prepending when a document has no head (a bare fragment from a custom\n * renderer). Never appends blindly at the end - a stylesheet after `</body>` still applies but arrives\n * after first paint, so the page flashes unstyled and dev stops resembling production.\n */"
+  },
+  {
     "name": "inProcessClient",
     "kind": "function",
     "package": "@nifrajs/client",
@@ -5044,6 +5212,13 @@
     "kind": "interface",
     "package": "@nifrajs/middleware",
     "signature": "export interface IpRestrictionOptions {\n    readonly allow?: readonly IpMatcher[];\n    readonly deny?: readonly IpMatcher[];\n    /** Preferred extraction hook when the adapter/app knows the peer address. */\n    readonly clientIp?: (request: Request) => MaybePromise<string | null | undefined>;\n    /** Trusted proxy count for `X-Forwarded-For` extraction. Default: 0, so XFF is ignored. */\n    readonly trustedProxies?: number;\n    /** Exact trusted single-IP header, e.g. an infra-set `x-real-ip`. Not used unless configured. */\n    readonly header?: string;\n    readonly error?: string;\n}"
+  },
+  {
+    "name": "isAddressInUse",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const isAddressInUse: (err: unknown) => boolean;",
+    "doc": "/** True when an unknown thrown value carries the \"address already in use\" errno. */"
   },
   {
     "name": "isAllowedFontUrl",
@@ -5489,6 +5664,13 @@
     "doc": "/** A layout (or `_404`/`_error`) entry: its source file (for client codegen) + a lazy loader.\n *\n * A `_layout.tsx` may export `meta` (static {@link Meta} or a function of the loader data + params,\n * same shape as a route's) to contribute sitewide `<head>` tags — `hreflang`/`preconnect`/etc. that\n * belong on every page under the layout. The layout chain's heads merge with the page's: arrays\n * (`meta`/`link`) concatenate outermost→innermost→page; scalars (`title`) are nearest-wins (the page\n * overrides an inner layout, which overrides an outer one). See `mergeHeads` in `@nifrajs/web`. */"
   },
   {
+    "name": "LeakGuardPlugin",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface LeakGuardPlugin {\n    readonly name: string;\n    generateBundle(this: RollupPluginContext, options: unknown, bundle: RollupBundleLike): void;\n}",
+    "doc": "/** The minimal Rollup plugin shape this returns — `generateBundle` bound to the plugin context. */"
+  },
+  {
     "name": "LedgerSink",
     "kind": "type",
     "package": "@nifrajs/core",
@@ -5515,6 +5697,20 @@
     "package": "@nifrajs/web-react",
     "signature": "export interface LinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>, \"href\"> {\n    /** Same-origin destination path (e.g. `/users/7?tab=posts`). Rendered as the `<a href>`. */\n    readonly to: string;\n    /** Replace the current history entry instead of pushing. */\n    readonly replace?: boolean;\n}",
     "doc": "/** {@link Link} props: every `<a>` attribute except `href` (set from `to`), plus `to` + `replace`. */"
+  },
+  {
+    "name": "listenOrExplain",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function listenOrExplain(server: ListenTarget, port: number): Promise<void>;",
+    "doc": "/**\n * `listen`, but a bind failure becomes a readable nifra error instead of Node's raw internal throw.\n *\n * Without an `error` listener attached, Node throws from deep inside `node:events`, the new process dies\n * in the background, and nothing connects that death to the stale page in front of you.\n */"
+  },
+  {
+    "name": "ListenTarget",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ListenTarget {\n    listen(port: number, cb: () => void): void;\n    once(event: \"error\", cb: (err: unknown) => void): void;\n    removeListener(event: \"error\", cb: (err: unknown) => void): void;\n}",
+    "doc": "/** The bits of a Node server {@link listenOrExplain} touches — structural, so a test can fake it. */"
   },
   {
     "name": "ListOptions",
@@ -5572,7 +5768,7 @@
     "name": "LoadedApp",
     "kind": "interface",
     "package": "@nifrajs/cli",
-    "signature": "export interface LoadedApp {\n    readonly cwd: string;\n    readonly routesDir: string;\n    /** Build output dir (also where `nifra start` reads `manifest.json` + serves `/assets/*`). */\n    readonly outDir: string;\n    readonly framework: NifraFramework;\n    /** The `backend` export from `backend.ts`, or `undefined` if there's no `backend.ts`. */\n    readonly backend: unknown;\n}"
+    "signature": "export interface LoadedApp {\n    readonly cwd: string;\n    readonly routesDir: string;\n    /** Build output dir (also where `nifra start` reads `manifest.json` + serves `/assets/*`). */\n    readonly outDir: string;\n    readonly framework: NifraFramework;\n    /** Plugin thunks resolved exactly once during app loading and reused by every command phase. */\n    readonly resolvedPlugins: ResolvedPlugins;\n    /** The `backend` export from `backend.ts`, or `undefined` if there's no `backend.ts`. */\n    readonly backend: unknown;\n}"
   },
   {
     "name": "Loader",
@@ -6213,7 +6409,7 @@
     "name": "Meta",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface Meta {\n    readonly title?: string;\n    readonly meta?: ReadonlyArray<Record<string, string>>;\n    readonly link?: readonly LinkDescriptor[];\n    /** Inert head `<script>`s (JSON-LD structured data, etc.). See {@link ScriptDescriptor}. */\n    readonly script?: readonly ScriptDescriptor[];\n}",
+    "signature": "export interface Meta {\n    readonly title?: string;\n    readonly meta?: ReadonlyArray<Record<string, string>>;\n    readonly link?: readonly LinkDescriptor[];\n    /** Inert head `<script>`s (JSON-LD structured data, etc.). See {@link ScriptDescriptor}. */\n    readonly script?: readonly ScriptDescriptor[];\n    /**\n     * The document language — `<html lang=\"...\">`. Nearest-wins like `title`, so a localized route can\n     * override a layout's default. Defaults to `\"en\"` when no head in the chain sets it.\n     *\n     * This is the ONLY way to set it: the shell's `<html>` is framework-owned, so a multilingual app\n     * otherwise serves every URL as `lang=\"en\"` — which tells a screen reader to pronounce every locale\n     * with an English voice, and suppresses the browser's translation offer.\n     */\n    readonly lang?: string;\n    /**\n     * The document writing direction — `<html dir=\"...\">`. Nearest-wins like `title`. Omitted from the\n     * shell when unset, which is HTML's `ltr` default, so an LTR app's output is byte-identical.\n     *\n     * Required for Arabic/Hebrew/Urdu/Persian: without it the browser lays the page out left-to-right\n     * and mis-orders trailing punctuation, so the text renders wrong rather than merely unstyled.\n     */\n    readonly dir?: \"ltr\" | \"rtl\" | \"auto\";\n}",
     "doc": "/**\n * The document head a route contributes — title + `<meta>`/`<link>`/`<script>` tag sets. Returned by a\n * route/layout `meta` (statically, or from a {@link MetaArgs} function). Every value is serialized into\n * managed (`data-nifra`) head tags: attribute *names* are shape-validated and *values* HTML-escaped at\n * render (see `tagAttrs`/`headTags` in `@nifrajs/web`), and `script[].content` is breakout-escaped — so\n * loader-derived strings (LLM-authored `og:*`, user content) are XSS-safe in the head by construction.\n * Layout-chain heads merge with the page's via `mergeHeads` (arrays concat outermost→page; `title` is\n * nearest-wins). Build `og:*`/`twitter:*` with `openGraph(...)`, canonical with `canonical(...)`, and\n * JSON-LD with `jsonLd(...)` (all from `@nifrajs/web`) rather than hand-writing the records.\n */"
   },
   {
@@ -6570,7 +6766,7 @@
     "name": "NifraFramework",
     "kind": "interface",
     "package": "@nifrajs/cli",
-    "signature": "export interface NifraFramework {\n    /** The render adapter, e.g. `reactAdapter` from `@nifrajs/web-react`. */\n    readonly adapter: unknown;\n    /** The client runtime module providing `mountRouter`, e.g. `\"@nifrajs/web-react/client\"`. */\n    readonly clientModule: string;\n    /** Vite plugins for `nifra dev`'s HMR, e.g. `[react()]` / `() => import(\"@vitejs/plugin-vue\")…`. */\n    readonly vitePlugins?: PluginsField;\n    /** Bun build plugins that compile routes for the CLIENT bundle (`nifra build`), e.g.\n     * `[vueBunPlugin(\"dom\")]`. React/Preact JSX is Bun-native → none. */\n    readonly clientPlugins?: PluginsField;\n    /** Bun runtime plugins that compile routes for SSR — `nifra dev` (Bun-native route import) and\n     * `nifra start` register them via `Bun.plugin`, e.g. `[vueBunPlugin(\"ssr\")]`. React/Preact → none. */\n    readonly serverPlugins?: PluginsField;\n    /** Extra Bun.build / Vite resolve conditions, e.g. Solid's `[\"solid\"]`. */\n    readonly conditions?: readonly string[];\n    /** Compile-time `define` replacements, e.g. Vue's `__VUE_*` flags. */\n    readonly define?: Readonly<Record<string, string>>;\n}",
+    "signature": "export interface NifraFramework {\n    /** The render adapter, e.g. `reactAdapter` from `@nifrajs/web-react`. */\n    readonly adapter: unknown;\n    /** The client runtime module providing `mountRouter`, e.g. `\"@nifrajs/web-react/client\"`. */\n    readonly clientModule: string;\n    /** Vite plugins for `nifra dev`'s HMR, e.g. `[react()]` / `() => import(\"@vitejs/plugin-vue\")…`. */\n    readonly vitePlugins?: PluginsField;\n    /** Bun build plugins that compile routes for the CLIENT bundle (`nifra build`), e.g.\n     * `[vueBunPlugin(\"dom\")]`. React/Preact JSX is Bun-native → none. */\n    readonly clientPlugins?: PluginsField;\n    /** Bun runtime plugins that compile routes for SSR — `nifra dev` (Bun-native route import) and\n     * `nifra start` register them via `Bun.plugin`, e.g. `[vueBunPlugin(\"ssr\")]`. React/Preact → none. */\n    readonly serverPlugins?: PluginsField;\n    /** Extra Bun.build / Vite resolve conditions, e.g. Solid's `[\"solid\"]`. */\n    readonly conditions?: readonly string[];\n    /** Compile-time `define` replacements, e.g. Vue's `__VUE_*` flags. */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Static files directory. Defaults to `<app>/public`; `false` disables it. */\n    readonly publicDir?: string | false;\n    /** Client-visible environment prefix (default `\"PUBLIC_\"`; empty disables exposure). */\n    readonly publicEnvPrefix?: string;\n}",
     "doc": "/**\n * The CLI's framework wiring — exported from `nifra.config.ts` (or `framework.ts` as a fallback).\n * `create-nifra` generates it. Only `adapter` + `clientModule` are required; the plugin/condition\n * fields are framework-specific extras (Vue/Svelte/Solid need them; React/Preact don't).\n */"
   },
   {
@@ -7069,6 +7265,20 @@
     "doc": "/** Parse the canonical deadline header without trusting or clamping it. */"
   },
   {
+    "name": "parseDevEntry",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function parseDevEntry(html: string): DevEntryMatch | undefined;",
+    "doc": "/**\n * Find the bundled client-entry URL in a page Bun's dev server rendered. Pure - the whole format\n * dependency lives in this function, which is what makes it testable against captured real output.\n *\n * Returns `undefined` rather than throwing so the caller can attach the context a useful error needs\n * (which URL was probed, what the server returned).\n */"
+  },
+  {
+    "name": "parseDevStyles",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function parseDevStyles(html: string): string[];",
+    "doc": "/** Every stylesheet URL linked from a document, in source order. */"
+  },
+  {
     "name": "ParsedFontFace",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -7199,6 +7409,12 @@
     "doc": "/**\n * Apply pin rules to one package.json's TEXT (format-preserving — targeted string replaces, never a\n * JSON re-serialize that would reorder keys or drop comments-as-formatting). Returns the new text and\n * the changes made.\n */"
   },
   {
+    "name": "PipelineDecision",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface PipelineDecision {\n    readonly pipeline: BuildPipeline;\n    /**\n     * Why this pipeline, for the `nifra build` log line - so an auto-selected Vite build never looks\n     * like the user got the default. `undefined` when the choice was the plain default or was forced.\n     */\n    readonly reason?: string;\n}"
+  },
+  {
     "name": "PipelineMismatch",
     "kind": "interface",
     "package": "@nifrajs/cli",
@@ -7210,6 +7426,13 @@
     "package": "@nifrajs/cli",
     "signature": "export type PipelineSlot = \"vitePlugins\" | \"clientPlugins\" | \"serverPlugins\";",
     "doc": "/** Which pipeline a slot belongs to. */"
+  },
+  {
+    "name": "PipelineSlots",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface PipelineSlots {\n    readonly vitePlugins?: readonly unknown[];\n    readonly clientPlugins?: readonly unknown[];\n    readonly serverPlugins?: readonly unknown[];\n}",
+    "doc": "/** The plugin slots a decision reads, already resolved. */"
   },
   {
     "name": "pipeWebBodyToNode",
@@ -7258,6 +7481,13 @@
     "package": "@nifrajs/cli",
     "signature": "export interface PortBlock {\n    readonly feature: FeatureId;\n    readonly verdict: Extract<Verdict, \"unsupported\" | \"caveat\">;\n    readonly reason: string;\n    readonly evidence: readonly string[];\n}",
     "doc": "/** One blocking finding: a detected feature unsupported on the resolved target, with its fix. */"
+  },
+  {
+    "name": "portInUseMessage",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function portInUseMessage(port: number): string;",
+    "doc": "/** The `EADDRINUSE` explanation. Exported so tests pin the exact text a user will read. */"
   },
   {
     "name": "PortJson",
@@ -8138,6 +8368,13 @@
     "doc": "/** Format the retrofit result for the terminal. */"
   },
   {
+    "name": "RenderMode",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type RenderMode = \"static\" | \"isr\" | \"ssr\";",
+    "doc": "/**\n * How a route produces its HTML.\n *\n * - `static`  - prerendered at build; served as a file, no server render at request time.\n * - `isr`     - server-rendered, then cached and revalidated on a timer (`export const revalidate`).\n * - `ssr`     - server-rendered per request. The default, and the only mode that needs a live server.\n */"
+  },
+  {
     "name": "renderOpenApi",
     "kind": "function",
     "package": "@nifrajs/cli",
@@ -8183,6 +8420,13 @@
     "package": "@nifrajs/cli",
     "signature": "export declare function renderReport(result: PortResult, opts: {\n    readonly strict?: boolean;\n}): string;",
     "doc": "/** Render the feature × target matrix + evidence + summary as a readable report. */"
+  },
+  {
+    "name": "renderRouteManifest",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function renderRouteManifest(manifest: RouteManifest): string;",
+    "doc": "/** Render the manifest as a readable report - the `nifra routes --modes` output. */"
   },
   {
     "name": "renderRouteTable",
@@ -8405,6 +8649,19 @@
     "doc": "/** Registration-resolved effect-ledger wiring for one capability-declaring route. */"
   },
   {
+    "name": "resolveDevEntry",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function resolveDevEntry(server: ServedOn, options: ResolveDevEntryOptions): Promise<DevEntryMatch>;",
+    "doc": "/**\n * Ask Bun's dev server for the current bundled entry URL. One loopback request against a route the app\n * never exposes.\n *\n * **The answer expires.** The URL is a content hash over the whole client graph, so editing any file it\n * reaches - a route, a component, a stylesheet - re-hashes it. Caching the startup value and injecting it\n * forever produces a spectacular failure: Bun answers a superseded chunk URL with a 104-byte\n * `location.reload()` stub under a 405, so the page reloads, gets the same dead URL from SSR, and reloads\n * again, forever. No console output survives the loop to explain it. Callers must re-resolve rather than\n * remember - see how `@nifrajs/web/dev` serves a stable URL that redirects here per request.\n */"
+  },
+  {
+    "name": "ResolveDevEntryOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ResolveDevEntryOptions {\n    /** Path of the throwaway route serving Bun's bundled HTML (e.g. `/__nifra/entry`). */\n    readonly probePath: string;\n    /** Injected for tests; defaults to global `fetch`. */\n    readonly fetchImpl?: typeof fetch;\n}"
+  },
+  {
     "name": "ResolvedIdempotency",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -8416,6 +8673,12 @@
     "kind": "interface",
     "package": "@nifrajs/image",
     "signature": "export interface ResolvedImage {\n    readonly src: string;\n    readonly srcSet?: string;\n    readonly sizes?: string;\n    readonly width: number;\n    readonly height: number;\n    readonly alt: string;\n    readonly loading: \"lazy\" | \"eager\";\n    readonly decoding: \"async\";\n    readonly fetchPriority?: \"high\";\n}"
+  },
+  {
+    "name": "ResolvedPlugins",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface ResolvedPlugins {\n    readonly vitePlugins: readonly unknown[];\n    readonly clientPlugins: readonly unknown[];\n    readonly serverPlugins: readonly unknown[];\n}"
   },
   {
     "name": "ResolvedTarget",
@@ -8652,6 +8915,19 @@
     "signature": "export interface RobotsRule {\n    /** A single user-agent token (`\"*\"`, `\"Googlebot\"`, …) or several sharing the same directives. */\n    readonly userAgent: string | readonly string[];\n    readonly allow?: readonly string[];\n    readonly disallow?: readonly string[];\n    /** Seconds between requests (honored by some crawlers). */\n    readonly crawlDelay?: number;\n}"
   },
   {
+    "name": "RollupBundleLike",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type RollupBundleLike = Readonly<Record<string, RollupChunkLike>>;"
+  },
+  {
+    "name": "RollupChunkLike",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface RollupChunkLike {\n    /** `\"chunk\"` for JS output, `\"asset\"` for CSS/static — assets have no module graph. */\n    readonly type?: string;\n    /** The entry module id this chunk was built for, if it is an entry. Rollup's `facadeModuleId`. */\n    readonly facadeModuleId?: string | null;\n    /** Every module id that landed in this chunk. Rollup's `moduleIds`. */\n    readonly moduleIds?: readonly string[];\n}",
+    "doc": "/**\n * The slice of a Rollup/Vite output bundle this seam consumes. `OutputBundle` is\n * `Record<fileName, OutputChunk | OutputAsset>`; only chunks carry a module graph. Typed structurally\n * (no `rollup`/`vite` type dependency) — the fields are stable Rollup output API.\n */"
+  },
+  {
     "name": "ROUTE_GLOBAL",
     "kind": "const",
     "package": "@nifrajs/web",
@@ -8664,6 +8940,13 @@
     "package": "@nifrajs/web",
     "signature": "export type RouteBody<App, Path extends string, Method extends string> = Path extends keyof RegistryOf<App> ? Uppercase<Method> extends keyof RegistryOf<App>[Path] ? (RegistryOf<App>[Path][Uppercase<Method>] & RouteInfo)[\"body\"] : never : never;",
     "doc": "/** The body object type of `App`'s `Method Path` route (`never` when the route declares no body). */"
+  },
+  {
+    "name": "RouteCapability",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type RouteCapability = \"server\" | \"revalidation\";",
+    "doc": "/** What a route needs from its host in order to behave as declared. */"
   },
   {
     "name": "RouteCapabilityEvidence",
@@ -8702,7 +8985,7 @@
     "name": "RouteDataEnvelope",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RouteDataEnvelope {\n    readonly v: 1;\n    readonly data: unknown;\n    readonly layoutData?: readonly unknown[];\n    /** Indices whose loader was SKIPPED because the layout's own params did not change. The client\n     * keeps its existing value at each of these, so an unchanged layout is neither refetched nor lost. */\n    readonly retained?: readonly number[];\n}",
+    "signature": "export interface RouteDataEnvelope {\n    readonly v: 1;\n    readonly data: unknown;\n    readonly layoutData?: readonly unknown[];\n    /** Indices whose loader was SKIPPED because the layout's own params did not change. The client\n     * keeps its existing value at each of these, so an unchanged layout is neither refetched nor lost. */\n    readonly retained?: readonly number[];\n    /** Terminal status signalled by a loader. Added by the browser transport after reading\n     * `X-Nifra-Status`; old servers and static data files simply omit it. */\n    readonly status?: number;\n}",
     "doc": "/**\n * The data-mode payload once a chain can carry layout data.\n *\n * Versioned because a prerendered `_data.json` is a static file on a CDN and outlives the deploy that\n * wrote it: a browser running new client code can be handed an envelope written by the previous\n * build. The reader therefore accepts BOTH the bare pre-envelope value and this shape, and decides by\n * structure rather than by assuming the deploy was atomic.\n */"
   },
   {
@@ -8774,6 +9057,27 @@
     "package": "@nifrajs/middleware",
     "signature": "export interface RouteLike {\n    readonly method: string;\n    readonly path: string;\n    readonly schema?: {\n        readonly body?: unknown;\n        readonly query?: unknown;\n        readonly response?: unknown;\n    } | undefined;\n}",
     "doc": "/** A registered route as seen by {@link buildOpenApiDocument} — structurally a `@nifrajs/core`\n * `RouteDescriptor` (so `app.routes()` is passed straight through). */"
+  },
+  {
+    "name": "RouteManifest",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface RouteManifest {\n    /** The deploy target this was resolved against, when one was given. */\n    readonly target?: string;\n    readonly routes: readonly RouteManifestEntry[];\n    readonly conflicts: readonly RouteManifestConflict[];\n    /** Route counts by mode - the summary a report leads with. */\n    readonly totals: Readonly<Record<RenderMode, number>>;\n}",
+    "doc": "/** The whole artifact: every route's behaviour, plus anything the target cannot honour. */"
+  },
+  {
+    "name": "RouteManifestConflict",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface RouteManifestConflict {\n    readonly id: string;\n    readonly pattern: string;\n    readonly capability: RouteCapability;\n    /** What goes wrong on this target - the consequence, not the rule that was broken. */\n    readonly consequence: string;\n}",
+    "doc": "/** A route whose declaration the chosen target cannot honour, and what actually happens if it ships. */"
+  },
+  {
+    "name": "RouteManifestEntry",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface RouteManifestEntry {\n    /** The route's id (its key in the build manifest and in `routes`). */\n    readonly id: string;\n    /** The matching pattern, e.g. `/blog/:slug`. */\n    readonly pattern: string;\n    readonly mode: RenderMode;\n    /** Whether the full-document client is shipped. `false` means the page loads no framework JS. */\n    readonly hydrate: boolean;\n    /** Revalidation window in seconds. Present only for `isr`. */\n    readonly revalidate?: number;\n    /**\n     * Concrete paths prerendered at build. Present for `static` routes: a single path for a static route,\n     * one per `getStaticPaths` entry for a dynamic one. Absent means \"no path was enumerated\", which for a\n     * dynamic route is exactly the condition that makes it unprerenderable.\n     */\n    readonly prerenderedPaths?: readonly string[];\n    /** What this route needs from the host to behave as declared. */\n    readonly requires: readonly RouteCapability[];\n}",
+    "doc": "/** One route's resolved behaviour. */"
   },
   {
     "name": "RouteMatch",
@@ -9621,6 +9925,13 @@
     "signature": "export interface ServeDatabaseAsMcpOptions {\n    /**\n     * REQUIRED allowlist of tables the MCP surface may see. `list_tables`/`describe_table` are\n     * restricted to it and `run_query` plans are verified against it. Empty array → construction\n     * throws; expose nothing by accident, ever.\n     */\n    readonly tables: readonly string[];\n    /** Enable the `run_query` tool. Omitted → schema tools only. */\n    readonly runQuery?: RunQueryOptions;\n    /** MCP server identity (defaults: name `nifra-db`, version `1.0.0`). */\n    readonly name?: string;\n    readonly version?: string;\n    /**\n     * Set `PRAGMA query_only = ON` on the connection at construction (default true). Disable ONLY\n     * when the same connection must also serve writes elsewhere in the app — with it disabled,\n     * `run_query` still gates on SELECT/WITH + plan verification, but the engine-level guarantee is\n     * yours to provide (e.g. open a second, read-only connection for the MCP mount — preferred).\n     */\n    readonly enforceQueryOnly?: boolean;\n}"
   },
   {
+    "name": "ServedOn",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ServedOn {\n    readonly port: number;\n}",
+    "doc": "/** Structural slice of a running server this needs: just the port it bound. */"
+  },
+  {
     "name": "ServeOptions",
     "kind": "interface",
     "package": "@nifrajs/node",
@@ -9637,7 +9948,7 @@
     "name": "ServePublicDirOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ServePublicDirOptions {\n    /** Absolute path of the directory to serve. */\n    readonly dir: string;\n    /** URL prefix whose files are content-hashed and may be cached immutably (default `\"/assets/\"`). */\n    readonly hashedPrefix?: string;\n    readonly cache?: PublicDirCache;\n}"
+    "signature": "export interface ServePublicDirOptions {\n    /** Absolute path of the directory to serve. */\n    readonly dir: string;\n    /** URL prefix whose files are content-hashed and may be cached immutably (default `\"/assets/\"`). */\n    readonly hashedPrefix?: string;\n    readonly cache?: PublicDirCache;\n    /** Optional encoded URL-path allowlist. When present, route misses avoid a filesystem probe. */\n    readonly files?: ReadonlySet<string>;\n}"
   },
   {
     "name": "server",
@@ -10444,6 +10755,13 @@
     "package": "@nifrajs/web",
     "signature": "export interface StylesheetEmitter {\n    /** Store `css` for `path`, returning the `import \"<path>?<namespace>\"` line for the JS module. */\n    emit(path: string, css: string): string;\n}",
     "doc": "/**\n * Records compiled CSS and wires it into the client bundle through a virtual `?<namespace>` module —\n * the idiom the Vue plugin established (`?vue-css`). Register one per plugin `setup`; call `emit` per\n * file to stash its CSS and get back the `import` line to append to the JS module.\n */"
+  },
+  {
+    "name": "styleTags",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function styleTags(styles: readonly string[]): string;",
+    "doc": "/** `<link rel=\"stylesheet\">` tags for Bun's extracted CSS, injected into each SSR'd page's `<head>`. */"
   },
   {
     "name": "Submission",
@@ -11512,6 +11830,13 @@
     "doc": "/**\n * Current package version. A hardcoded literal on purpose — core runs on the edge (no fs), so it can't\n * read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and\n * `check:publish` asserts it equals `@nifrajs/core`'s package version.\n */"
   },
   {
+    "name": "viteBundler",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const viteBundler: Bundler;",
+    "doc": "/**\n * The Vite build STRATEGY — plugged into `buildTargetWith`. `plugins` arriving through the shared\n * orchestrator are the app's Vite plugins (the escape hatch's whole reason), cast to Vite's plugin type.\n */"
+  },
+  {
     "name": "ViteDevServer",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -11521,7 +11846,14 @@
     "name": "ViteDevServerOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ViteDevServerOptions {\n    /** Absolute (or cwd-relative) path to the `routes/` dir. */\n    readonly routesDir: string;\n    /** Client runtime module providing `mountRouter` (e.g. `\"@nifrajs/web-react/client\"`). */\n    readonly clientModule: string;\n    /**\n     * Build the nifra app for the given dev client-entry URL.\n     *\n     * `load` resolves a route module through **Vite's** graph (`ssrLoadModule`). Pass it to\n     * `discoverRoutes(routesDir, { load })` so SSR and the client are resolved by the SAME toolchain.\n     * Without it SSR resolves through Bun while the client resolves through Vite - two resolvers, one\n     * process - which is what makes `resolve.dedupe` fail to reach SSR and produces the dual-React\n     * crash. Vite re-evaluates on change, so no `importQuery` cache-buster is needed alongside it.\n     */\n    readonly createApp: (clientEntry: string, load: (absolutePath: string) => Promise<unknown>) => FetchApp | Promise<FetchApp>;\n    /** Vite plugins — inject your framework's official plugin, e.g. `[react()]`. */\n    readonly plugins?: readonly unknown[];\n    /**\n     * Extra `resolve.conditions` prepended ahead of nifra's defaults — some frameworks need their own\n     * (e.g. Solid's `\"solid\"` condition routes `solid-js` to its source/JSX-dev build).\n     */\n    readonly conditions?: readonly string[];\n    /**\n     * Compile-time `define` replacements (e.g. Vue's `__VUE_OPTIONS_API__` flags). Vite already sets\n     * `process.env.NODE_ENV` in dev; this is for framework feature flags the plugin doesn't inject.\n     */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Vite project root (default `process.cwd()`). */\n    readonly root?: string;\n    /** Port (default {@link DEFAULT_DEV_PORT}). */\n    readonly port?: number;\n    /**\n     * Use polling for the file watcher. Native fs events (fsevents/inotify) are unreliable inside\n     * containers, networked filesystems, and some sandboxes — there, HMR silently never fires. Set\n     * `true` (or the env var `CHOKIDAR_USEPOLLING=1`) to poll instead. Default: off (native events).\n     */\n    readonly poll?: boolean;\n}"
+    "signature": "export interface ViteDevServerOptions {\n    /** Absolute (or cwd-relative) path to the `routes/` dir. */\n    readonly routesDir: string;\n    /** Client runtime module providing `mountRouter` (e.g. `\"@nifrajs/web-react/client\"`). */\n    readonly clientModule: string;\n    /**\n     * Build the nifra app for the given dev client-entry URL.\n     *\n     * `load` resolves a route module through **Vite's** graph (`ssrLoadModule`). Pass it to\n     * `discoverRoutes(routesDir, { load })` so SSR and the client are resolved by the SAME toolchain.\n     * Without it SSR resolves through Bun while the client resolves through Vite - two resolvers, one\n     * process - which is what makes `resolve.dedupe` fail to reach SSR and produces the dual-React\n     * crash. Vite re-evaluates on change, so no `importQuery` cache-buster is needed alongside it.\n     */\n    readonly createApp: (clientEntry: string, load: (absolutePath: string) => Promise<unknown>) => FetchApp | Promise<FetchApp>;\n    /** Vite plugins — inject your framework's official plugin, e.g. `[react()]`. */\n    readonly plugins?: readonly unknown[];\n    /**\n     * Extra `resolve.conditions` prepended ahead of nifra's defaults — some frameworks need their own\n     * (e.g. Solid's `\"solid\"` condition routes `solid-js` to its source/JSX-dev build).\n     */\n    readonly conditions?: readonly string[];\n    /**\n     * Compile-time `define` replacements (e.g. Vue's `__VUE_OPTIONS_API__` flags). Vite already sets\n     * `process.env.NODE_ENV` in dev; this is for framework feature flags the plugin doesn't inject.\n     */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Vite project root (default `process.cwd()`). */\n    readonly root?: string;\n    /** Port (default {@link DEFAULT_DEV_PORT}). */\n    readonly port?: number;\n    /**\n     * Use polling for the file watcher. Native fs events (fsevents/inotify) are unreliable inside\n     * containers, networked filesystems, and some sandboxes — there, HMR silently never fires. Set\n     * `true` (or the env var `CHOKIDAR_USEPOLLING=1`) to poll instead. Default: off (native events).\n     */\n    readonly poll?: boolean;\n    /** Vite public directory. Defaults to `<root>/public`; `false` disables it. */\n    readonly publicDir?: string | false;\n}"
+  },
+  {
+    "name": "viteLeakGuard",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function viteLeakGuard(): LeakGuardPlugin;",
+    "doc": "/**\n * A Vite/Rollup plugin that fails the build when server-only code or a `node:` builtin reaches the client\n * bundle - the same two guards, and the same error messages, as nifra's Bun production build.\n */"
   },
   {
     "name": "vueAdapter",
@@ -11753,6 +12085,13 @@
     "package": "create-nifra",
     "signature": "export declare function writeDbFiles(target: string, choice: DbChoice): Promise<void>;",
     "doc": "/** Write a DB preset's files into `target` and ensure local DB artifacts + .env are gitignored. */"
+  },
+  {
+    "name": "writeDevFiles",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function writeDevFiles(options: WriteDevFilesOptions): void;",
+    "doc": "/**\n * Generate the client entry + the HTML route that carries it.\n *\n * Route specifiers are written **relative to the entry file**, not root-relative as the Vite path writes\n * them: Vite resolves `/routes/x.tsx` against its configured root, while Bun's bundler resolves an import\n * the way the runtime does, so a leading slash there would mean the filesystem root.\n */"
   },
   {
     "name": "writeScaffoldRoute",

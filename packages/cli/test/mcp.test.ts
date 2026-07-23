@@ -327,6 +327,7 @@ describe("createCachedAppLoader", () => {
       routesDir: "/tmp/app/routes",
       outDir: `/tmp/app/dist-${id}`,
       framework: { adapter: {}, clientModule: "@nifrajs/web-react/client" },
+      resolvedPlugins: { vitePlugins: [], clientPlugins: [], serverPlugins: [] },
       backend: undefined,
     })
     const loadApp = async (

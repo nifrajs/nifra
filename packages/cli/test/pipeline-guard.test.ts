@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test"
-import { checkPipelineSeparation, checkPipelineSlot } from "../src/pipeline-guard.ts"
+import {
+  checkPipelineSeparation,
+  checkPipelineSlot,
+  chooseBuildPipeline,
+} from "../src/pipeline-guard.ts"
 
 const vitePlugin = (name: string) => ({ name, transform: () => null })
 const rollupResolver = (name: string) => ({ name, resolveId: () => null })
@@ -65,4 +69,65 @@ test("every Rollup hook shape is recognised", () => {
     const found = checkPipelineSlot("clientPlugins", [{ name: hook, [hook]: () => null }])
     expect(found).toHaveLength(1)
   }
+})
+
+// ---------------------------------------------------------------------------------------------------
+// chooseBuildPipeline — the PHASE-crossing half of the same problem.
+//
+// The slot guard above catches a plugin in the wrong slot. It cannot catch a plugin in the right slot
+// whose pipeline never runs: `nifra dev` is Vite, `nifra build` defaults to Bun, and the Bun build reads
+// clientPlugins/serverPlugins only. So an app whose transforms are all `vitePlugins` gets them in dev and
+// silently loses them in production - a build that succeeds with the work omitted, which is exactly the
+// outcome the slot guard refuses to allow.
+// ---------------------------------------------------------------------------------------------------
+
+test("an app with no plugins keeps the fast Bun default", () => {
+  const decision = chooseBuildPipeline({})
+  expect(decision.pipeline).toBe("bun")
+  // Nothing was overridden, so nothing is announced.
+  expect(decision.reason).toBeUndefined()
+})
+
+test("an app whose only transforms are vitePlugins builds with Vite, and says why", () => {
+  const decision = chooseBuildPipeline({ vitePlugins: [vitePlugin("svgr")] })
+  expect(decision.pipeline).toBe("vite")
+  expect(decision.reason).toContain("svgr")
+  expect(decision.reason).toContain("vitePlugins")
+})
+
+test("an app declaring BOTH pipelines keeps the Bun default", () => {
+  // Declaring Bun plugins alongside is the author supplying the production equivalent on purpose:
+  // nothing is dropped, so there is no reason to give up the faster default.
+  const decision = chooseBuildPipeline({
+    vitePlugins: [vitePlugin("svgr")],
+    clientPlugins: [bunPlugin("svgr-bun")],
+  })
+  expect(decision.pipeline).toBe("bun")
+  expect(decision.reason).toBeUndefined()
+})
+
+test("--vite forces Vite even with nothing to transform", () => {
+  expect(chooseBuildPipeline({}, "vite").pipeline).toBe("vite")
+})
+
+test("--bun is refused when it would drop the app's only transforms", () => {
+  expect(() => chooseBuildPipeline({ vitePlugins: [vitePlugin("svgr")] }, "bun")).toThrow(
+    /would silently drop this app's only transforms/,
+  )
+  // The message names the plugins, so the fix does not require guessing which ones.
+  expect(() => chooseBuildPipeline({ vitePlugins: [vitePlugin("svgr")] }, "bun")).toThrow(/svgr/)
+})
+
+test("--bun is allowed when the app supplied Bun equivalents", () => {
+  expect(
+    chooseBuildPipeline(
+      { vitePlugins: [vitePlugin("svgr")], serverPlugins: [bunPlugin("svgr-bun")] },
+      "bun",
+    ).pipeline,
+  ).toBe("bun")
+})
+
+test("an unnamed vite plugin still produces an actionable message", () => {
+  const decision = chooseBuildPipeline({ vitePlugins: [{ transform: () => null }] })
+  expect(decision.reason).toContain("vitePlugins[0]")
 })

@@ -289,6 +289,7 @@ describe("describeRoutes (cwd integration)", () => {
         routesDir,
         outDir: join(dir, "dist"),
         framework: { adapter: {}, clientModule: "x" },
+        resolvedPlugins: { vitePlugins: [], clientPlugins: [], serverPlugins: [] },
         backend: {
           routes: () => [
             { method: "GET", path: "/api/explain" },
@@ -326,6 +327,7 @@ describe("describeRoutes (cwd integration)", () => {
         routesDir: resolve(dir, "routes"), // doesn't exist
         outDir: join(dir, "dist"),
         framework: { adapter: {}, clientModule: "x" },
+        resolvedPlugins: { vitePlugins: [], clientPlugins: [], serverPlugins: [] },
         backend: undefined,
       }
       expect(await describeRoutes(app)).toContain("No routes found")
