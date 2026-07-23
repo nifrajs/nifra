@@ -57,6 +57,29 @@ async function loadVite(): Promise<ViteModule> {
   return (await import("vite")) as unknown as ViteModule
 }
 
+/**
+ * Run a Vite build with `process.env.NODE_ENV` pinned to `mode`, restoring it after.
+ *
+ * The `vite build` CLI sets `NODE_ENV=production` before building; a PROGRAMMATIC `vite.build()` does not.
+ * @vitejs/plugin-react reads the ambient `NODE_ENV` to pick its JSX runtime, so under an ambient
+ * `NODE_ENV=test` (what `bun test` sets) it emits dev `jsxDEV` calls while our `define` makes
+ * `react/jsx-dev-runtime`'s `jsxDEV` undefined - the SSR throws `jsxDEV is not a function`. Setting it here
+ * for the build window is exactly what the CLI does; the restore keeps a library call from leaking a global
+ * mutation into a host process (a test runner, a watch loop) that shares it.
+ */
+async function withNodeEnv<T>(mode: string, run: () => Promise<T>): Promise<T> {
+  const previous = process.env.NODE_ENV
+  process.env.NODE_ENV = mode
+  try {
+    return await run()
+  } finally {
+    // An env value is always a string when set; `undefined` means the key was absent, so remove it rather
+    // than assign `undefined` (which `exactOptionalPropertyTypes` rejects and which would stringify anyway).
+    if (previous === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = previous
+  }
+}
+
 /** Options for {@link buildClientVite} — the Bun {@link BuildClientOptions} minus Bun-plugin specifics,
  * plus the Vite plugin list the app injects for its transforms. */
 export interface BuildClientViteOptions
@@ -118,48 +141,55 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     fileKey.set(file, keyOf(abs))
   }
 
+  // Pin Vite's MODE to match the NODE_ENV we define. @vitejs/plugin-react picks the JSX runtime by mode -
+  // `jsx` (production) vs `jsxDEV` (development) - so if mode and NODE_ENV disagree, the transform emits
+  // `jsxDEV` calls while `react/jsx-dev-runtime` guards `jsxDEV` behind `NODE_ENV !== "production"` and
+  // leaves it undefined → `jsxDEV is not a function` at SSR. Vite's default mode follows the ambient
+  // NODE_ENV (e.g. "test" under `bun test`), so it MUST be set explicitly, not left to default.
+  const mode = options.minify === false ? "development" : "production"
   const vite = await loadVite()
   try {
-    await vite.build({
-      root,
-      base: publicPath,
-      logLevel: "silent",
-      define: {
-        "process.env.NODE_ENV": JSON.stringify(
-          options.minify === false ? "development" : "production",
-        ),
-        ...(options.define ?? {}),
-      },
-      resolve: {
-        // Mirror the Bun build's reactDedupePlugin: one physical react/react-dom, or a hook-using route
-        // gets a second dispatcher. No-op when the app isn't React.
-        dedupe: ["react", "react-dom"],
-        ...(options.conditions ? { conditions: [...options.conditions] } : {}),
-      },
-      plugins: [...(options.vitePlugins ?? [])],
-      build: {
-        outDir,
-        emptyOutDir: false, // buildTargetWith owns outDir lifecycle; never let Vite wipe sibling files
-        manifest: true,
-        minify: options.minify !== false,
-        rollupOptions: {
-          // Keep `node:` builtins as external specifiers so the leak guard sees `node:crypto` and can
-          // name it. Left to itself, rolldown-vite SILENTLY rewrites a `node:` import to a
-          // `__vite-browser-external` stub for "browser compatibility" - the code builds, ships, and the
-          // builtin is a no-op at runtime, which is a worse footgun than Bun's polyfill and invisible
-          // without this. External here means the guard fails the build (below) with the exact builtin.
-          external: [/^node:/],
-          input,
-          // The leak guard is a Rollup plugin — last, so it sees the final graph.
-          plugins: [viteLeakGuard()],
-          output: {
-            entryFileNames: "[name]-[hash].js",
-            chunkFileNames: "[name]-[hash].js",
-            assetFileNames: "[name]-[hash][extname]",
+    await withNodeEnv(mode, () =>
+      vite.build({
+        root,
+        base: publicPath,
+        mode,
+        logLevel: "silent",
+        define: {
+          "process.env.NODE_ENV": JSON.stringify(mode),
+          ...(options.define ?? {}),
+        },
+        resolve: {
+          // Mirror the Bun build's reactDedupePlugin: one physical react/react-dom, or a hook-using route
+          // gets a second dispatcher. No-op when the app isn't React.
+          dedupe: ["react", "react-dom"],
+          ...(options.conditions ? { conditions: [...options.conditions] } : {}),
+        },
+        plugins: [...(options.vitePlugins ?? [])],
+        build: {
+          outDir,
+          emptyOutDir: false, // buildTargetWith owns outDir lifecycle; never let Vite wipe sibling files
+          manifest: true,
+          minify: options.minify !== false,
+          rollupOptions: {
+            // Keep `node:` builtins as external specifiers so the leak guard sees `node:crypto` and can
+            // name it. Left to itself, rolldown-vite SILENTLY rewrites a `node:` import to a
+            // `__vite-browser-external` stub for "browser compatibility" - the code builds, ships, and the
+            // builtin is a no-op at runtime, which is a worse footgun than Bun's polyfill and invisible
+            // without this. External here means the guard fails the build (below) with the exact builtin.
+            external: [/^node:/],
+            input,
+            // The leak guard is a Rollup plugin — last, so it sees the final graph.
+            plugins: [viteLeakGuard()],
+            output: {
+              entryFileNames: "[name]-[hash].js",
+              chunkFileNames: "[name]-[hash].js",
+              assetFileNames: "[name]-[hash][extname]",
+            },
           },
         },
-      },
-    })
+      }),
+    )
   } finally {
     rmSync(entryDir, { recursive: true, force: true })
   }
@@ -297,47 +327,51 @@ export async function buildServerVite(options: BuildServerViteOptions): Promise<
     generateServerManifest(routeManifest, { resolve, clientEntry, styles, routeStyles }),
   )
 
+  // Pin the mode to match NODE_ENV — the react plugin's JSX runtime (jsx vs jsxDEV) follows it, and a
+  // mismatch throws `jsxDEV is not a function` at SSR (see buildClientVite for the full reasoning).
+  const mode = options.minify === false ? "development" : "production"
   const vite = await loadVite()
-  await vite.build({
-    root,
-    logLevel: "silent",
-    define: {
-      "process.env.NODE_ENV": JSON.stringify(
-        options.minify === false ? "development" : "production",
-      ),
-      // Tag the bundle so @nifrajs/web-react uses the bundled+deduped react-dom (no runtime re-root →
-      // no second React core). Layered after any caller define so it cannot be overridden.
-      ...(options.define ?? {}),
-      "process.env.NIFRA_SSR_BUNDLED": '"1"',
-    },
-    resolve: {
-      dedupe: ["react", "react-dom"],
-      conditions: [...conditions],
-    },
-    plugins: [...(options.vitePlugins ?? [])],
-    build: {
-      outDir,
-      emptyOutDir: false,
-      minify: options.minify !== false,
-      ssr: serverEntry,
-      rollupOptions: {
-        // node: builtins stay external on the runtimes that provide them; on the edge (browser) a used
-        // node: builtin would be a real error, which is correct - the edge has no filesystem/crypto.
-        external: [/^node:/],
-        // ONE self-contained `server.js`. `inlineDynamicImports` forces the ENTRY chunk to absorb every
-        // module — the app, the adapter, react/react-dom, @nifrajs/* — so no second chunk is emitted.
-        // Without it Vite splits vendor deps (react) into a separate chunk that the deploy assembly (which
-        // copies only the entry) leaves behind, and the server `ERR_MODULE_NOT_FOUND`s at boot. (Under
-        // rolldown-vite this option logs a cosmetic deprecation, silenced by `logLevel: silent`; it is
-        // still the standard Rollup way to a single-file bundle and works across Vite versions.)
-        output: { entryFileNames: "server.js", inlineDynamicImports: true },
+  await withNodeEnv(mode, () =>
+    vite.build({
+      root,
+      mode,
+      logLevel: "silent",
+      define: {
+        "process.env.NODE_ENV": JSON.stringify(mode),
+        // Tag the bundle so @nifrajs/web-react uses the bundled+deduped react-dom (no runtime re-root →
+        // no second React core). Layered after any caller define so it cannot be overridden.
+        ...(options.define ?? {}),
+        "process.env.NIFRA_SSR_BUNDLED": '"1"',
       },
-      // Bundle the app + adapter + @nifrajs/* into one self-contained worker (like Bun's eager output),
-      // rather than externalizing node_modules the way a default Vite SSR build does.
-      ssrEmitAssets: false,
-    },
-    ssr: { noExternal: true },
-  })
+      resolve: {
+        dedupe: ["react", "react-dom"],
+        conditions: [...conditions],
+      },
+      plugins: [...(options.vitePlugins ?? [])],
+      build: {
+        outDir,
+        emptyOutDir: false,
+        minify: options.minify !== false,
+        ssr: serverEntry,
+        rollupOptions: {
+          // node: builtins stay external on the runtimes that provide them; on the edge (browser) a used
+          // node: builtin would be a real error, which is correct - the edge has no filesystem/crypto.
+          external: [/^node:/],
+          // ONE self-contained `server.js`. `inlineDynamicImports` forces the ENTRY chunk to absorb every
+          // module — the app, the adapter, react/react-dom, @nifrajs/* — so no second chunk is emitted.
+          // Without it Vite splits vendor deps (react) into a separate chunk that the deploy assembly
+          // (which copies only the entry) leaves behind, and the server `ERR_MODULE_NOT_FOUND`s at boot.
+          // (Under rolldown-vite this option logs a cosmetic deprecation, silenced by `logLevel: silent`;
+          // it is still the standard Rollup way to a single-file bundle and works across Vite versions.)
+          output: { entryFileNames: "server.js", inlineDynamicImports: true },
+        },
+        // Bundle the app + adapter + @nifrajs/* into one self-contained worker (like Bun's eager output),
+        // rather than externalizing node_modules the way a default Vite SSR build does.
+        ssrEmitAssets: false,
+      },
+      ssr: { noExternal: true },
+    }),
+  )
 
   const worker = join(outDir, "server.js")
   if (!existsSync(worker)) {

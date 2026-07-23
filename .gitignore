@@ -58,3 +58,6 @@ site/.tmp-doc-check
 # Local scratch + private test files
 /.private/
 /.serena/
+
+# Local Vite-prod build output dirs from manual --vite verification
+dv-*/
