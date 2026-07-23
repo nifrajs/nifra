@@ -12,7 +12,11 @@ export function compose(chain: readonly unknown[], props: RenderProps): () => JS
   for (let i = last - 1; i >= 0; i--) {
     const Layout = chain[i] as Component<{ children: JSX.Element }>
     const child = node
-    node = () => createComponent(Layout, { children: child() })
+    // Each layout receives its own loader data at its own index. Layouts are the chain's leading
+    // prefix, so `layoutData[i]` belongs to `chain[i]`; anything past that end (a client-only `_error`
+    // boundary marker, the page) reads `undefined` and is unaffected.
+    const layoutData = props.layoutData?.[i] ?? null
+    node = () => createComponent(Layout, { data: layoutData, children: child() })
   }
   return node
 }

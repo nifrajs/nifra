@@ -33,14 +33,14 @@ export const svelteAdapter: RenderAdapter = {
   // `renderToStream` wraps the same string in a one-chunk stream for the deferred path. No streaming
   // renderer to skip here — but going straight to a string avoids the per-request stream allocation.
   renderToString(chain, props) {
-    return render(Chain, { props: { chain, props } }).body
+    return render(Chain, { props: { chain, props, layoutData: props.layoutData } }).body
   },
   renderToStream(chain, props) {
     // `Chain` folds the layout chain (page innermost gets `props`; layouts wrap via their `children`
     // snippet). Svelte's `render` returns { head, body }; the body goes into #root. (Svelte's dynamic
     // `head` — from <svelte:head> — isn't surfaced through the seam's static `hydrationHead`; nifra's
     // own meta/head API manages the document head instead.)
-    const { body } = render(Chain, { props: { chain, props } })
+    const { body } = render(Chain, { props: { chain, props, layoutData: props.layoutData } })
     return oneChunk(body)
   },
   // Svelte's client `hydrate` reconciles against the existing DOM; no per-document bootstrap script is

@@ -13,7 +13,14 @@ export function compose(chain: readonly unknown[], props: RenderProps): VNode {
   for (let i = last - 1; i >= 0; i--) {
     const child = node
     // Layouts render their child via the default slot (`<slot />` / `{@render children}`).
-    node = h(chain[i] as Component, null, { default: () => child })
+    // Each layout receives its own loader data at its own index. Layouts are the chain's leading
+    // prefix, so `layoutData[i]` belongs to `chain[i]`; anything past that end (a client-only `_error`
+    // boundary marker, the page) reads `undefined` and is unaffected.
+    node = h(
+      chain[i] as Component,
+      { data: props.layoutData?.[i] ?? null },
+      { default: () => child },
+    )
   }
   return node
 }

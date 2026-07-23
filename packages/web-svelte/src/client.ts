@@ -17,7 +17,10 @@ export { errorBoundary } from "./error.ts"
 
 /** Hydrate a server-rendered Svelte layout `chain` (with the loader `props`) inside `container`. */
 export function hydrate(chain: readonly unknown[], props: RenderProps, container: unknown): void {
-  svelteHydrate(Chain, { target: container as Element, props: { chain, props } })
+  svelteHydrate(Chain, {
+    target: container as Element,
+    props: { chain, props, layoutData: props.layoutData },
+  })
 }
 
 /**

@@ -21,7 +21,14 @@ export function compose(chain: readonly unknown[], props: RenderProps): ReactNod
   let node: ReactNode = createElement(chain[last] as FunctionComponent<RenderProps>, props)
   for (let i = last - 1; i >= 0; i--) {
     // children passed as the 3rd arg (not a `children` prop) — React's canonical form.
-    node = createElement(chain[i] as FunctionComponent, null, node)
+    // Each layout receives its own loader data at its own index. Layouts are the chain's leading
+    // prefix, so `layoutData[i]` belongs to `chain[i]`; anything past that end (a client-only `_error`
+    // boundary marker, the page) reads `undefined` and is unaffected.
+    node = createElement(
+      chain[i] as FunctionComponent<{ data: unknown }>,
+      { data: props.layoutData?.[i] ?? null },
+      node,
+    )
   }
   return createElement(
     RouterContext.Provider,

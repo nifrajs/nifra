@@ -17,7 +17,14 @@ export function compose(chain: readonly unknown[], props: RenderProps): VNode {
   let node: VNode = h(chain[last] as ComponentType<RenderProps>, props) as VNode
   for (let i = last - 1; i >= 0; i--) {
     // children passed as the 3rd arg — Preact's canonical form (mirrors the React adapter).
-    node = h(chain[i] as ComponentType, null, node)
+    // Each layout receives its own loader data at its own index. Layouts are the chain's leading
+    // prefix, so `layoutData[i]` belongs to `chain[i]`; anything past that end (a client-only `_error`
+    // boundary marker, the page) reads `undefined` and is unaffected.
+    node = h(
+      chain[i] as ComponentType<{ data: unknown }>,
+      { data: props.layoutData?.[i] ?? null },
+      node,
+    ) as VNode
   }
   return node
 }
