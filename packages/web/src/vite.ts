@@ -375,8 +375,12 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
     await vite.close().catch(() => {})
     throw err
   }
+  // Report the port actually BOUND, not the one requested. They differ for `port: 0`, which is how you
+  // ask the OS for a free one - the correct thing to do in a test or when running several apps at once.
+  // Echoing the request back would return a literal 0, which connects to nothing.
+  const address = server.address()
   return {
-    port,
+    port: typeof address === "object" && address !== null ? address.port : port,
     stop: async () => {
       server.close()
       await vite.close()

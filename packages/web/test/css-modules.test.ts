@@ -130,8 +130,36 @@ describe("transformCssModule — at-rules, nesting, and non-selector contexts", 
       "@keyframes spin { from { opacity: 0 } to { opacity: 1 } }",
       "/r/x.module.css",
     )
-    expect(Object.keys(exports)).toEqual([]) // keyframes aren't class exports
+    // The keyframe NAME is exported (see below); `from`/`to`/`50%` are not — they are selectors inside
+    // the block, not exportable identifiers.
+    expect(Object.keys(exports)).toEqual(["spin"])
     expect(css).toContain("from { opacity: 0 }") // the from/to block is untouched
+  })
+
+  test("the @keyframes NAME is exported, scoped, matching the stylesheet", () => {
+    // Keyframe names are part of the CSS Modules export namespace: postcss-modules exports them, so Vite
+    // does, so nifra's dev pipeline does. Omitting them made `styles.spin` a real value in dev and
+    // `undefined` in production — a divergence with no error at either end. Pinned by the dev/prod parity
+    // gate (packages/web/test/pipeline-parity.test.ts).
+    const { exports, css } = transformCssModule(
+      "@keyframes spin { from { opacity: 0 } }",
+      "/r/x.module.css",
+    )
+    expect(exports.spin).toMatch(/^spin_[0-9a-f]{8}$/)
+    expect(css).toContain(`@keyframes ${exports.spin}`)
+  })
+
+  test("a class and a keyframe sharing one name: the CLASS wins the export", () => {
+    // Deterministic by construction (keyframes seed the map, classes overwrite), because a name that has
+    // to agree across two pipelines cannot be order-dependent. `styles.x` in markup means a className.
+    const { exports, css } = transformCssModule(
+      ".spin { color: red } @keyframes spin { from { opacity: 0 } }",
+      "/r/x.module.css",
+    )
+    expect(css).toContain(`.${exports.spin} { color: red }`)
+    // The keyframe is still scoped in the stylesheet, just under its own distinct salted name.
+    expect(css).toMatch(/@keyframes spin_[0-9a-f]{8}/)
+    expect(css).not.toContain(`@keyframes ${exports.spin} `)
   })
 
   // The SCOPED keyframe name (anchored on `@keyframes` so it never matches a same-named class).

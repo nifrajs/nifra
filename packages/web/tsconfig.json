@@ -12,5 +12,5 @@
       "@nifrajs/core/transport-codec": ["../core/src/transport-codec.ts"]
     }
   },
-  "include": ["src/client.ts", "src/islands.ts", "test/islands.test.ts"]
+  "include": ["src/client.ts", "src/islands.ts", "test/islands.test.ts", "test/apply-head.test.ts"]
 }
