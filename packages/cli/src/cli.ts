@@ -29,12 +29,18 @@ export interface Flags {
   /** `nifra build --vite`: build the client + server with Vite/Rollup instead of Bun (the escape hatch
    * for apps needing a Vite-only transform in production). Default Bun. */
   readonly vite: boolean
+  /** `nifra dev --bun`: run the Bun-pipeline dev server (Bun.serve native HMR, no Vite in the process)
+   * instead of the Vite one. Default Vite (mature framework plugins + state-preserving Fast Refresh). */
+  readonly bun: boolean
 }
 
 const HELP = `nifra — zero-config dev/build/start for a nifra app
 
 Usage:
   nifra dev     [--port <n>] [--poll]    Start the true-HMR dev server (Vite). Default port ${DEFAULT_DEV_PORT}.
+                [--bun]                  Run the BUN pipeline instead: Bun.serve native HMR, no Vite in
+                                         the process. Trades framework Fast Refresh (state-preserving)
+                                         for one bundler across dev and prod + no Vite dependency.
   nifra build   [--out <dir>] [--report]  Emit a complete Bun deploy directory by default.
                 [--target <t>]             Target a FULL deploy dir for <t>:
                                          bun | node | deno | cf-pages | vercel | static. Packages
@@ -136,7 +142,66 @@ const asBunPlugins = (v: readonly unknown[]): BunPlugin[] => v as BunPlugin[]
 const apiOf = (backend: unknown): { api?: unknown } =>
   backend === undefined ? {} : { api: inProcessClient(backend as never) }
 
+/**
+ * Refuse `nifra dev --bun` for an app Bun's DEV-server bundler cannot compile.
+ *
+ * Bun's dev server and `Bun.build` are not the same bundler. `Bun.build` transforms `*.module.css` into a
+ * scoped class map (the Bun production build of a CSS-Modules app works, verified), but the dev server's
+ * bundler does not: the import compiles to a dangling reference and the browser throws
+ * `ReferenceError: import_X_module is not defined` from inside the component — a message that names
+ * neither CSS Modules nor the dev server, so the cause is invisible.
+ *
+ * A silently-broken client is the one outcome worth failing the command over, so this checks up front and
+ * names the trade plus both ways out. Narrow by design: only the transform proven missing is refused, so
+ * an app without CSS Modules still gets the Bun dev loop.
+ */
+async function assertBunDevSupportsApp(app: LoadedApp): Promise<void> {
+  const { Glob } = await import("bun")
+  const offenders: string[] = []
+  for await (const file of new Glob("**/*.module.css").scan({ cwd: app.cwd, dot: false })) {
+    if (/(^|\/)(node_modules|dist|\.nifra|\.git)\//.test(file)) continue
+    offenders.push(file)
+    if (offenders.length >= 5) break
+  }
+  if (offenders.length === 0) return
+  throw new Error(
+    "[nifra] `nifra dev --bun` can't compile CSS Modules: Bun's DEV-server bundler has no `*.module.css` " +
+      "transform (its production `Bun.build` does, so `nifra build` is unaffected). The client would load " +
+      "with a bare `ReferenceError: import_… is not defined` instead of your component.\n" +
+      `  CSS Modules found: ${offenders.join(", ")}\n` +
+      "  Use `nifra dev` (the Vite pipeline handles them), or drop the CSS Modules to use the Bun dev loop.",
+  )
+}
+
 async function dev(app: LoadedApp, flags: Flags): Promise<void> {
+  // `--bun`: the Bun-pipeline dev server — Bun.serve's native HMR bundles + hot-reloads the client while
+  // Bun's runtime resolves SSR, with no Vite in the process at all. The mirror of `nifra build --vite`:
+  // each pipeline is selectable in BOTH phases, and neither ever runs inside the other.
+  if (flags.bun) {
+    await assertBunDevSupportsApp(app)
+    const { createDevServer } = await import("@nifrajs/web/dev")
+    const { framework: fw, routesDir, outDir, backend } = app
+    const server = await createDevServer({
+      routesDir,
+      outDir,
+      clientModule: fw.clientModule,
+      port: flags.port,
+      // The Bun pipeline's own plugins (SFC compilers etc.) — never `vitePlugins`, which belong to the
+      // other pipeline; `assertPipelineSeparation` already refuses a plugin sitting in the wrong slot.
+      plugins: asBunPlugins(await resolvePlugins(fw.clientPlugins)),
+      ...(fw.conditions ? { conditions: fw.conditions } : {}),
+      ...(fw.define ? { define: fw.define } : {}),
+      createApp: (clientEntry, importQuery) =>
+        createWebApp({
+          adapter: asAdapter(fw.adapter),
+          manifest: discoverRoutes(routesDir, { importQuery }),
+          clientEntry,
+          ...apiOf(backend),
+        }),
+    })
+    console.log(`nifra dev (bun) → http://localhost:${server.port}`)
+    return
+  }
   // Preflight: `nifra dev` needs `vite` resolvable from the project. Run via `bunx @nifrajs/cli dev` the CLI
   // sits in an isolated install where the project's peer deps don't resolve, so the vite import below fails
   // with an opaque ERR_MODULE_NOT_FOUND. Surface the real fix instead.
@@ -304,6 +369,7 @@ export function parseFlags(args: readonly string[]): Flags {
   let target = "bun"
   let report = false
   let vite = false
+  let bun = false
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
     if ((a === "--port" || a === "-p") && args[i + 1]) port = Number(args[++i])
@@ -312,11 +378,12 @@ export function parseFlags(args: readonly string[]): Flags {
     else if (a === "--target" && args[i + 1]) target = args[++i] as string
     else if (a === "--report") report = true
     else if (a === "--vite") vite = true
+    else if (a === "--bun") bun = true
   }
   if (!Number.isFinite(port) || port < 0 || port > 65535) {
     throw new Error(`[nifra] invalid --port: ${port}`)
   }
-  return { port, out, poll, target, report, vite }
+  return { port, out, poll, target, report, vite, bun }
 }
 
 async function main(): Promise<void> {
