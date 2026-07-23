@@ -258,6 +258,52 @@ export function normalizeRolldownPlugins(
   })
 }
 
+/** The bits of a Node server {@link listenOrExplain} touches — structural, so a test can fake it. */
+interface ListenTarget {
+  listen(port: number, cb: () => void): void
+  once(event: "error", cb: (err: unknown) => void): void
+  removeListener(event: "error", cb: (err: unknown) => void): void
+}
+
+/** The `EADDRINUSE` explanation. Exported so the test asserts the exact text a user will read. */
+export function portInUseMessage(port: number): string {
+  return (
+    `[nifra] dev server can't start: port ${port} is already in use.\n` +
+    `  Most likely an earlier \`nifra dev\` is still running. It keeps serving the PREVIOUS build, so ` +
+    `every edit will look like it stops reaching SSR while the browser shows stale output.\n` +
+    `  Free the port:  lsof -ti:${port} | xargs kill\n` +
+    `  Or use another: nifra dev --port ${port + 1}`
+  )
+}
+
+const asError = (err: unknown): Error => (err instanceof Error ? err : new Error(String(err)))
+
+/**
+ * `listen`, but a bind failure becomes a readable nifra error instead of Node's raw internal throw.
+ *
+ * The message matters more than the tidier stack. When the port is taken, the OLD dev server is still
+ * answering on it - so the next request returns the previous build of every route. The symptom is "my
+ * edits stopped reaching SSR", which reads as a broken HMR/invalidation bug and sends you digging
+ * through the module graph instead of at the one line that says the new server never started. Without
+ * an `error` listener Node throws from deep inside `node:events`, the new process dies in the
+ * background, and nothing connects that death to the stale page in front of you.
+ */
+export function listenOrExplain(server: ListenTarget, port: number): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const onError = (err: unknown): void => {
+      const code = (err as { code?: unknown } | null)?.code
+      reject(code === "EADDRINUSE" ? new Error(portInUseMessage(port)) : asError(err))
+    }
+    server.once("error", onError)
+    server.listen(port, () => {
+      // Drop the guard once we're listening: leaving it attached would funnel a LATER server error into
+      // an already-settled promise, silently swallowing it instead of surfacing it.
+      server.removeListener("error", onError)
+      resolve()
+    })
+  })
+}
+
 /**
  * Start the Vite-backed dev server: Vite serves/HMRs the client; nifra SSRs each request and Vite
  * injects its HMR client + the framework refresh preamble via `transformIndexHtml`.
@@ -364,7 +410,16 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
       .catch((err) => console.error("[nifra/web/vite] app re-create failed:", err))
   })
 
-  await new Promise<void>((done) => server.listen(port, done))
+  try {
+    await listenOrExplain(server, port)
+  } catch (err) {
+    // Nothing is listening, but Vite is fully up by now - watchers, the dep optimizer, its own sockets -
+    // and every one of those keeps the event loop alive. Left open, the process prints the diagnosis and
+    // then HANGS on it, which is worse than the raw crash this guard replaced: the user sees a dev server
+    // that appears to be starting. Tear Vite down so the failure is terminal.
+    await vite.close().catch(() => {})
+    throw err
+  }
   return {
     port,
     stop: async () => {

@@ -2586,10 +2586,14 @@ _No named exports (side-effect entrypoint)._
   Copy a Web `Response`'s headers onto a Node response, emitting EACH `Set-Cookie` as its own header. The `Headers` iterator (and `.get`) join multiple set-cookie values with ", ", which corrupts cookies — e.g. better-auth's `session_token` + `session_data` collapse into one unparseable cookie and th…
 - **createViteDevServer** _(function)_ — `createViteDevServer: (options: ViteDevServerOptions) => Promise<ViteDevServer>`
   Start the Vite-backed dev server: Vite serves/HMRs the client; nifra SSRs each request and Vite injects its HMR client + the framework refresh preamble via `transformIndexHtml`.
+- **listenOrExplain** _(function)_ — `listenOrExplain: (server: ListenTarget, port: number) => Promise<void>`
+  `listen`, but a bind failure becomes a readable nifra error instead of Node's raw internal throw.
 - **normalizeRolldownPlugins** _(function)_ — `normalizeRolldownPlugins: (plugins: readonly unknown[], isRolldown: boolean) => readonly unknown[]`
   Strip `optimizeDeps.rollupOptions.jsx` from a plugin's `config` hook output when running under rolldown-vite — the source of the scary, harmless `Warning: Invalid input options … "jsx" Invalid key: Expected never but received "jsx"` on `nifra dev`.
 - **pipeWebBodyToNode** _(function)_ — `pipeWebBodyToNode: (body: ReadableStream<Uint8Array> | null, res: NodeResLike) => Promise<void>`
   Stream a Web `Response` body to a Node response chunk-by-chunk. Buffering the whole body (e.g. `arrayBuffer()`) waits for the stream to END — which an open-ended SSE (`text/event-stream`) body never does, so it hung `nifra dev` (the Bun production server streamed it fine). This flushes each chunk a…
+- **portInUseMessage** _(function)_ — `portInUseMessage: (port: number) => string`
+  The `EADDRINUSE` explanation. Exported so the test asserts the exact text a user will read.
 
 ## @nifrajs/web-preact
 
