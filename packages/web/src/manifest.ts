@@ -251,6 +251,58 @@ const errorIdFor = (dir: string): string => (dir === "" ? "_error" : `${dir}/_er
  * with no optionals yields exactly one pattern. Throws on an invalid param or a catch-all that isn't
  * the last segment.
  */
+/** Every `[…]` marker in a file segment, so a part-literal segment can be spliced into a pattern. */
+const FILE_MARKER = /\[([^\]]*)\]/g
+const FILE_PARAM_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+/**
+ * Translate a part-literal-part-`[param]` file segment into its route pattern, or `undefined` when
+ * the segment is wholly literal or wholly a marker (both already handled by the caller).
+ *
+ * `[inKey].txt` becomes `:inKey.txt`. Needed because IndexNow-style verification files, per-locale
+ * sitemaps, and static-site URL parity (`post-[id].html`) all put a variable INSIDE a filename, and
+ * `stripExt` already reduces `[inKey].txt.tsx` to `[inKey].txt` - `robots.txt.tsx` proves literal
+ * dots survive into a segment, so this was only ever a parser gap.
+ *
+ * `[[optional]]` and `[...catchAll]` are **rejected** inside a mixed segment rather than given a
+ * meaning. There is no sensible absent form for `/[[locale]]-feed.xml` - `/-feed.xml` and dropping
+ * the segment are both surprising - and a catch-all captures the remaining path verbatim, which
+ * conflicts with a trailing literal. A clear rejection beats semantics nobody can predict.
+ */
+function mixedFileSegment(seg: string, file: string): string | undefined {
+  // A segment that is ENTIRELY one of the existing whole-segment forms belongs to the caller, not
+  // here. Checked against the real patterns rather than by comparing the first marker to the
+  // segment: `[[lang]]` does not equal its own first `[…]` match, so a naive comparison sends every
+  // optional segment down the mixed path and rejects it.
+  if (PARAM.test(seg) || OPTIONAL.test(seg) || CATCH_ALL.test(seg)) return undefined
+  const markers = [...seg.matchAll(FILE_MARKER)]
+  if (markers.length === 0) return undefined
+
+  let pattern = ""
+  let cursor = 0
+  for (const marker of markers) {
+    const inner = marker[1] ?? ""
+    if (inner.startsWith("...")) {
+      throw new Error(
+        `[nifra/web] catch-all "[${inner}]" cannot be combined with literal text in "${file}" (segment "${seg}") — a catch-all captures the rest of the path, so a trailing literal can never match. Give it its own segment.`,
+      )
+    }
+    if (inner.startsWith("[")) {
+      throw new Error(
+        `[nifra/web] optional "[${inner}]]" cannot be combined with literal text in "${file}" (segment "${seg}") — there is no sensible form for the segment when it is absent. Use a required [name], or give the optional its own segment.`,
+      )
+    }
+    if (!FILE_PARAM_NAME.test(inner)) {
+      throw new Error(
+        `[nifra/web] invalid route param in "${file}": "[${inner}]" must be [name], [[name]], [...name], or a (group) folder`,
+      )
+    }
+    pattern += `${seg.slice(cursor, marker.index)}:${inner}`
+    cursor = (marker.index ?? 0) + marker[0].length
+  }
+  return pattern + seg.slice(cursor)
+}
+
 export function filePathToPatterns(file: string): string[] {
   // Each combo is a list of URL segments built so far; an optional segment doubles the set.
   let combos: string[][] = [[]]
@@ -259,6 +311,13 @@ export function filePathToPatterns(file: string): string[] {
     const seg = segments[i]!
     if (seg === "index") continue
     if (GROUP.test(seg)) continue // route group — no URL segment (its `_layout` still applies, keyed by dir)
+    // A segment that is part literal, part `[param]` — `[inKey].txt`, `post-[id].html`. Checked
+    // before the whole-segment forms below, which only handle a marker spanning the entire segment.
+    const mixed = mixedFileSegment(seg, file)
+    if (mixed !== undefined) {
+      combos = combos.map((c) => [...c, mixed])
+      continue
+    }
     if (seg.startsWith("[")) {
       const catchAll = CATCH_ALL.exec(seg)
       if (catchAll !== null) {

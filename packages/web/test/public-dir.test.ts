@@ -2,7 +2,10 @@ import { expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, sep } from "node:path"
-import { copyPublicDir, resolvePublicPath, servePublicDir } from "../src/public-dir.ts"
+// copyPublicDir lives in build.ts: it is build-time (Bun.Glob + node:fs) and public-dir.ts is
+// reachable from the client bundle graph, where a Bun builtin import fails the browser build.
+import { copyPublicDir } from "../src/build.ts"
+import { resolvePublicPath, servePublicDir } from "../src/public-dir.ts"
 
 const withDir = async (fn: (dir: string) => Promise<void>): Promise<void> => {
   const dir = await mkdtemp(join(tmpdir(), "nifra-public-"))

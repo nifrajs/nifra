@@ -8,6 +8,13 @@ export type RoutePatternSegment =
   | { readonly kind: "static"; readonly value: string }
   | { readonly kind: "param"; readonly name: string }
   | { readonly kind: "wildcard"; readonly name: string }
+  /** A segment that is part literal, part parameter: `:key.txt`, `feed.:format`, `v:major.:minor`. */
+  | { readonly kind: "mixed"; readonly parts: readonly MixedPart[] }
+
+/** One piece of a {@link RoutePatternSegment} of kind `mixed`, in left-to-right order. */
+export type MixedPart =
+  | { readonly t: "lit"; readonly v: string }
+  | { readonly t: "param"; readonly name: string }
 
 /**
  * Compiled route grammar shared by runtime routers, browser navigation, mocks, and adapters.
@@ -45,7 +52,9 @@ function regexOf(compiled: CompiledRoutePattern): RegExp {
         ? escapeRegex(segment.value)
         : segment.kind === "param"
           ? "([^/]+)"
-          : "(.+)",
+          : segment.kind === "mixed"
+            ? mixedSegmentSource(segment.parts)
+            : "(.+)",
     )
     regex = new RegExp(parts.length === 0 ? "^/$" : `^/${parts.join("/")}$`)
     REGEX_CACHE.set(compiled, regex)
@@ -70,16 +79,67 @@ function validParamName(name: string): boolean {
 function paramNameHint(name: string): string {
   if (RESERVED_PARAM_NAMES.has(name)) return ` — "${name}" is reserved (prototype key)`
   if (name.length === 0) return ` — ":" needs a name after it`
-  // A trailing literal is the common intent (`:file.txt`, `:id-v2`), and the one case where the bare
-  // message misleads: the author sees a typo where the real answer is a grammar rule.
-  if (/^[A-Za-z_][A-Za-z0-9_]*./.test(name)) {
-    return ` — a segment is wholly static or wholly a parameter, so everything after ":" is the name. Split the literal into its own segment, or capture the segment and split it in the handler`
-  }
+  // No "a segment is wholly static or wholly a parameter" case here any more: mixed segments made
+  // that message obsolete. `:id.json` was the shape it explained, and `:id.json` now compiles.
   return ` — a name must match ${PARAM_NAME.source}`
 }
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^()|[\]\\{}$]/g, "\\$&")
+}
+
+/**
+ * Split a segment containing `:` into literal and parameter parts.
+ *
+ * The param name is the LONGEST run matching {@link PARAM_NAME}'s body after each `:`; everything
+ * else in the segment is literal. So `:key.txt` is `[param key][lit ".txt"]`. Choosing a greedy scan
+ * on the existing sigil rather than a new `{key}.txt` syntax is a safety argument, not a taste one:
+ * every segment this newly accepts currently THROWS `INVALID_PARAM_NAME`, so no pattern that compiles
+ * today can change meaning.
+ *
+ * Returns `undefined` when the segment holds no parameter at all, so a literal colon
+ * (`/v1/things:batchGet` - legal in a URL path) stays a plain static segment.
+ */
+function splitMixed(value: string): MixedPart[] | undefined {
+  const parts: MixedPart[] = []
+  let literal = ""
+  let sawParam = false
+  for (let i = 0; i < value.length; i++) {
+    if (value[i] !== ":") {
+      literal += value[i]
+      continue
+    }
+    const rest = value.slice(i + 1)
+    const name = /^[A-Za-z_][A-Za-z0-9_]*/.exec(rest)?.[0]
+    // A `:` not followed by a valid name start is literal text, not a malformed parameter.
+    if (name === undefined) {
+      literal += ":"
+      continue
+    }
+    if (literal !== "") {
+      parts.push({ t: "lit", v: literal })
+      literal = ""
+    }
+    parts.push({ t: "param", name })
+    sawParam = true
+    i += name.length
+  }
+  if (!sawParam) return undefined
+  if (literal !== "") parts.push({ t: "lit", v: literal })
+  return parts
+}
+
+/** The regex source matching one segment's worth of a mixed pattern, with a capture per parameter. */
+export function mixedSegmentSource(parts: readonly MixedPart[]): string {
+  let source = ""
+  for (const part of parts) {
+    // LAZY (`+?`), not greedy. A greedy capture swallows the trailing literal, so `/:key.txt` against
+    // `/abc.txt` would capture `abc.txt` and then fail to match `\.txt`. With `^…$` anchoring, the
+    // lazy form still yields `abc.txt` for `/abc.txt.txt` - the anchor forces the LAST `.txt` to be
+    // the literal. `+?` and not `*?`: an empty capture must not match (see the empty-segment rule).
+    source += part.t === "lit" ? escapeRegex(part.v) : "([^/]+?)"
+  }
+  return source
 }
 
 /** Parse and validate Nifra's strict route grammar once. Trailing slashes remain significant. */
@@ -92,14 +152,20 @@ export function compileRoutePattern(pattern: string): CompiledRoutePattern {
   const paramNames: string[] = []
   for (let i = 0; i < raw.length; i++) {
     const value = raw[i]!
-    if (value.charCodeAt(0) === 58 /* : */) {
-      const name = value.slice(1)
-      if (!validParamName(name)) {
+    // A leading `:` whose name run spans the WHOLE segment is a plain parameter - the untouched fast
+    // path. When it does not (`:key.txt`), the segment is mixed and is handled below; but a leading
+    // `:` that yields no usable name at all (`:9lives`, `:`) was clearly meant as a parameter, so it
+    // still fails here rather than being silently reinterpreted as literal text.
+    if (value.charCodeAt(0) === 58 /* : */ && !validParamName(value.slice(1))) {
+      if (splitMixed(value) === undefined) {
+        const name = value.slice(1)
         throw new RouteConfigError(
           "INVALID_PARAM_NAME",
           `invalid parameter ":${name}" in "${pattern}"${paramNameHint(name)}`,
         )
       }
+    } else if (value.charCodeAt(0) === 58 /* : */) {
+      const name = value.slice(1)
       if (paramNames.includes(name)) {
         throw new RouteConfigError(
           "DUPLICATE_PARAM",
@@ -134,6 +200,32 @@ export function compileRoutePattern(pattern: string): CompiledRoutePattern {
       segments.push(Object.freeze({ kind: "wildcard", name }))
       continue
     }
+    // A segment holding a `:` anywhere other than the front is part literal, part parameter. Checked
+    // last so the wholly-static and wholly-param fast paths above are untouched.
+    const mixed = value.includes(":") ? splitMixed(value) : undefined
+    if (mixed !== undefined) {
+      for (const part of mixed) {
+        if (part.t !== "param") continue
+        if (!validParamName(part.name)) {
+          throw new RouteConfigError(
+            "INVALID_PARAM_NAME",
+            `invalid parameter ":${part.name}" in "${pattern}"${paramNameHint(part.name)}`,
+          )
+        }
+        // Duplicates must be rejected WITHIN a segment (`/:a.:a`) as well as across segments,
+        // or two captures would race for one params key.
+        if (paramNames.includes(part.name)) {
+          throw new RouteConfigError(
+            "DUPLICATE_PARAM",
+            `duplicate parameter ":${part.name}" in "${pattern}"`,
+          )
+        }
+        // Pushed left-to-right so `paramNames` stays aligned with regex capture order.
+        paramNames.push(part.name)
+      }
+      segments.push(Object.freeze({ kind: "mixed", parts: Object.freeze(mixed) }))
+      continue
+    }
     segments.push(Object.freeze({ kind: "static", value }))
   }
   const compiled = Object.freeze({
@@ -145,7 +237,17 @@ export function compileRoutePattern(pattern: string): CompiledRoutePattern {
   return compiled
 }
 
-/** Core precedence: static > param > wildcard at the first differing segment, independent of order. */
+/** Weight for {@link compareRoutePatternSpecificity}. A mixed segment constrains more than a bare
+ * param (it pins literal text) and less than a fully static one, so it sits between them. */
+const SPECIFICITY: Readonly<Record<RoutePatternSegment["kind"], number>> = {
+  static: 4,
+  mixed: 3,
+  param: 2,
+  wildcard: 1,
+}
+
+/** Core precedence: static > mixed > param > wildcard at the first differing segment, independent of
+ * registration order. */
 export function compareRoutePatternSpecificity(
   left: CompiledRoutePattern,
   right: CompiledRoutePattern,
@@ -155,8 +257,8 @@ export function compareRoutePatternSpecificity(
     const a = left.segments[i]
     const b = right.segments[i]
     if (a === undefined || b === undefined) return b === undefined ? -1 : 1
-    const aWeight = a.kind === "static" ? 3 : a.kind === "param" ? 2 : 1
-    const bWeight = b.kind === "static" ? 3 : b.kind === "param" ? 2 : 1
+    const aWeight = SPECIFICITY[a.kind]
+    const bWeight = SPECIFICITY[b.kind]
     if (aWeight !== bWeight) return bWeight - aWeight
   }
   return 0

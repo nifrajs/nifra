@@ -25,7 +25,7 @@ Framework-agnostic SSR core for nifra — the render seam + HTML document orches
 - **buildTarget** _(function)_ — `buildTarget: (target: BuildTarget, options: BuildTargetOptions) => Promise<BuildTargetResult>` · from `@nifrajs/web/build`
 - **canonical** _(function)_ — `canonical: (href: string) => LinkDescriptor` · from `@nifrajs/web`
 - **cloudflarePagesRoutes** _(function)_ — `cloudflarePagesRoutes: (options: CloudflarePagesRoutesOptions) => CloudflarePagesRoutes` · from `@nifrajs/web/build`
-- **copyPublicDir** _(function)_ — `copyPublicDir: (from: string, to: string) => Promise<string[]>` · from `@nifrajs/web`
+- **copyPublicDir** _(function)_ — `copyPublicDir: (from: string, to: string) => Promise<string[]>` · from `@nifrajs/web/build`
 - **createClientRouter** _(function)_ — `createClientRouter: (options: ClientRouterOptions) => ClientRouter` · from `@nifrajs/web`
 - **createDevServer** _(function)_ — `createDevServer: (options: DevServerOptions) => Promise<DevServer>` · from `@nifrajs/web/dev`
 

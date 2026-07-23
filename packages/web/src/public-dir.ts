@@ -12,7 +12,7 @@
  * Distinct from `publicPath` in `build.ts`, which is the URL prefix for content-hashed bundle chunks.
  * The names collide and the concepts do not: `publicPath` never covers user-authored files.
  */
-import { join, normalize, resolve, sep } from "node:path"
+import { normalize, resolve, sep } from "node:path"
 
 /** How long each subtree may be cached. Content-hashed bundle output can be immutable; a
  * user-authored file keeps its name across deploys, so it gets a day and a revalidation. */
@@ -104,21 +104,4 @@ export function servePublicDir(
       ? new Response(null, { headers })
       : new Response(file, { headers })
   }
-}
-
-/** Copy `from` into `to`, returning the URL paths copied (sorted). Used at build time so the server
- * entry can serve `public/` without scanning a directory per request, and so adapters that need a
- * file list (CDN upload, platform static assets) can consume one. */
-export async function copyPublicDir(from: string, to: string): Promise<string[]> {
-  const { cp, mkdir } = await import("node:fs/promises")
-  const { Glob } = await import("bun")
-  const source = resolve(from)
-  const copied: string[] = []
-  for await (const rel of new Glob("**/*").scan({ cwd: source, dot: true, onlyFiles: true })) {
-    const target = join(to, rel)
-    await mkdir(join(target, ".."), { recursive: true })
-    await cp(join(source, rel), target)
-    copied.push(`/${rel.split(sep).join("/")}`)
-  }
-  return copied.sort()
 }

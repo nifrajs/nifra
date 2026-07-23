@@ -872,16 +872,20 @@ Every public export of every package and documented subpath — name, kind, sign
 
 - **CompiledRoutePattern** _(interface)_ — `interface CompiledRoutePattern`
   Compiled route grammar shared by runtime routers, browser navigation, mocks, and adapters.
+- **MixedPart** _(type)_ — `type MixedPart = | { readonly t: "lit"; readonly v: string } | { readonly t: "param"; readonly name: string }`
+  One piece of a {@link RoutePatternSegment} of kind `mixed`, in left-to-right order.
 - **RoutePatternMatch** _(type)_ — `type RoutePatternMatch = | { readonly matched: true; readonly params: Record<string, string> } | { readonly matched: false; readonly reason: "not-found" | "malformed" }`
-- **RoutePatternSegment** _(type)_ — `type RoutePatternSegment = | { readonly kind: "static"; readonly value: string } | { readonly kind: "param"; readonly name: string } | { readonly kind: "wildcard"; readonly name: string }`
+- **RoutePatternSegment** _(type)_ — `type RoutePatternSegment`
 - **compareRoutePatternSpecificity** _(function)_ — `compareRoutePatternSpecificity: (left: CompiledRoutePattern, right: CompiledRoutePattern) => number`
-  Core precedence: static > param > wildcard at the first differing segment, independent of order.
+  Core precedence: static > mixed > param > wildcard at the first differing segment, independent of registration order.
 - **compileRoutePattern** _(function)_ — `compileRoutePattern: (pattern: string) => CompiledRoutePattern`
   Parse and validate Nifra's strict route grammar once. Trailing slashes remain significant.
 - **decodeRouteParams** _(function)_ — `decodeRouteParams: (raw: Record<string, string>) => Record<string, string> | null`
   Decode router captures under one rule. Plain values take the zero-allocation path; malformed escapes return `null`, allowing HTTP to emit 400 while client navigation declines the match.
 - **matchRoutePattern** _(function)_ — `matchRoutePattern: (compiled: CompiledRoutePattern, pathname: string) => RoutePatternMatch`
   Match one compiled pattern and return decoded captures. The caller decides cross-pattern order.
+- **mixedSegmentSource** _(function)_ — `mixedSegmentSource: (parts: readonly MixedPart[]) => string`
+  The regex source matching one segment's worth of a mixed pattern, with a capture per parameter.
 
 ### `@nifrajs/core/reconciliation-worker`
 
@@ -2274,8 +2278,6 @@ Every public export of every package and documented subpath — name, kind, sign
   Build a manifest from route file paths (relative to the routes dir) + an `importer` that turns a path into a lazy module loader. Pure — no fs. Throws at boot (the loud-and-early RouteConfigError ethos) on duplicate patterns. `_layout`/`_404`/`_error` files are special; other `_`-prefixed files are …
 - **canonical** _(function)_ — `canonical: (href: string) => LinkDescriptor`
   A `<link rel="canonical">` descriptor for a route's `meta.link`. The canonical URL tells search engines which URL is authoritative for a page (deduping query-string / tracking variants).
-- **copyPublicDir** _(function)_ — `copyPublicDir: (from: string, to: string) => Promise<string[]>`
-  Copy `from` into `to`, returning the URL paths copied (sorted). Used at build time so the server entry can serve `public/` without scanning a directory per request, and so adapters that need a file list (CDN upload, platform static assets) can consume one.
 - **createClientRouter** _(function)_ — `createClientRouter: (options: ClientRouterOptions) => ClientRouter`
   Create the agnostic router store. `navigate` is guarded by a monotonic token so that when navigations overlap, only the latest result is applied (rapid clicks don't flash stale data). A failed fetch clears `pending` and rethrows so the caller can fall back to a full-page load.
 - **createMatcher** _(function)_ — `createMatcher: (patterns: readonly RoutePattern[]) => (path: string) => RouteMatch | null`
@@ -2296,7 +2298,6 @@ Every public export of every package and documented subpath — name, kind, sign
 - **filePathToPattern** _(function)_ — `filePathToPattern: (file: string) => string`
   The **canonical** single pattern for a route file — all optional segments present. A file with no optionals yields its one pattern. Use {@link filePathToPatterns} to get every pattern (optionals expand the set).
 - **filePathToPatterns** _(function)_ — `filePathToPatterns: (file: string) => string[]`
-  Derive **every** nifra router pattern a route file maps to (relative to the routes dir): `index` → the parent path, `[id]` → `:id`, `[...slug]` → `*slug` (catch-all, captures the rest of the path into one param), `(group)` folders are dropped from the URL (organization only), and an optional `[[lan…
 - **fontFace** _(function)_ — `fontFace: (face: FontFace) => string`
   Build a single `@font-face` CSS rule. Defaults to `font-display: swap`; infers each source's `format()` from its extension. All values are CSS-escaped, so a dynamic family/URL can't inject CSS. Put the result in a stylesheet your app imports (nifra's CSS pipeline bundles + links it).
 - **fontPreload** _(function)_ — `fontPreload: (input: FontPreloadInput) => LinkDescriptor`
@@ -2353,7 +2354,6 @@ Every public export of every package and documented subpath — name, kind, sign
   A deploy target `nifra build --target <t>` can emit. `static` is pure SSG (no server).
 - **BuildClientOptions** _(interface)_ — `interface BuildClientOptions`
 - **BuildManifest** _(interface)_ — `interface BuildManifest`
-  The built asset map — the server reads `entry` for the client script + serves `assets`.
 - **BuildServerOptions** _(interface)_ — `interface BuildServerOptions`
 - **BuildTarget** _(type)_ — `type BuildTarget = (typeof BUILD_TARGETS)[number]`
 - **BuildTargetOptions** _(interface)_ — `interface BuildTargetOptions`
@@ -2393,6 +2393,8 @@ Every public export of every package and documented subpath — name, kind, sign
   Build a full deploy directory for `target` from a file-routed nifra app. Emits the client bundle to `<outDir>/assets/*`, then per target: - `static`: prerenders opted-in routes (`prerenderRoutes`) to `<outDir>/<path>/index.html` (+ `_data.json`); needs `prerenderApp`. No server. - `cf-pages`: a `_w…
 - **cloudflarePagesRoutes** _(function)_ — `cloudflarePagesRoutes: (options: CloudflarePagesRoutesOptions) => CloudflarePagesRoutes`
   Build a Cloudflare Pages `_routes.json` for a HYBRID SSG deploy: the prerendered HTML + their static `_data.json` + the asset bundle are `exclude`d (CDN serves them directly), and everything else falls through to the SSR `_worker.js`. Write the result to `dist/_routes.json`.
+- **copyPublicDir** _(function)_ — `copyPublicDir: (from: string, to: string) => Promise<string[]>`
+  Copy `from` into `to`, returning the URL paths copied (sorted).
 - **dataFileFor** _(function)_ — `dataFileFor: (pattern: string) => string`
   The static loader-data file next to a route's `index.html`: `/` → `_data.json`, `/a/b` → `a/b/_data.json`. The client fetches it on soft-nav into a prerendered route (no worker).
 - **detectNodeBuiltinsInClient** _(function)_ — `detectNodeBuiltinsInClient: (meta: BunMetafile | undefined) => ReadonlyArray<NodeBuiltinFinding>`

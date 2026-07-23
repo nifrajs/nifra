@@ -850,8 +850,7 @@
     "name": "BuildManifest",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface BuildManifest {\n    /** URL of the client entry module (content-hashed). */\n    readonly entry: string;\n    /** URLs of every emitted asset (entry + chunks) — for serving + preloading. */\n    readonly assets: readonly string[];\n    /** `routeId → [layout chunk URLs…, own chunk URL]` — the chunks a route needs, for `createWebApp`'s\n     * `routePreload` (`<link rel=\"modulepreload\">` the matched route alongside the entry). Each route +\n     * layout is also a build entrypoint, so it gets a named chunk the bootstrap's lazy import dedupes to. */\n    readonly routes: Readonly<Record<string, readonly string[]>>;\n    /** URL paths copied from `publicDir`, sorted. Lets the server entry serve them without scanning a\n     * directory per request, and lets an adapter that needs a file list (CDN upload, platform static\n     * assets) consume one. Omitted when there is no `public/`. */\n    readonly publicFiles?: readonly string[];\n    /** The app's bundled, content-hashed stylesheet(s) — the bootstrap's **aggregate** CSS (every\n     * `import './x.css'` reachable from the app). The complete stylesheet regardless of which file\n     * imported the CSS; the always-safe fallback `createWebApp` links when a route has no per-route entry\n     * in {@link routeStyles}. Omitted when the app imports no CSS. */\n    readonly css?: readonly string[];\n    /** `routeId → [chain CSS URLs]` — only the stylesheets the matched route's layout chain + own file\n     * actually use (Bun emits a per-entrypoint CSS bundle per route/layout, with shared-component CSS\n     * inlined into each consumer). `createWebApp` links these instead of the aggregate, so a page ships\n     * only its own CSS. A route is omitted (→ aggregate fallback) when its `[name]` collides with another\n     * route's basename (ambiguous CSS↔route) or the build emitted orphan shared-chunk CSS — correctness\n     * over minimality. Absent entirely when the app imports no CSS. */\n    readonly routeStyles?: Readonly<Record<string, readonly string[]>>;\n}",
-    "doc": "/** The built asset map — the server reads `entry` for the client script + serves `assets`. */"
+    "signature": "export interface BuildManifest {\n    /** URL of the client entry module (content-hashed). */\n    readonly entry: string;\n    /** URLs of every emitted asset (entry + chunks) — for serving + preloading. */\n    readonly assets: readonly string[];\n    /** `routeId → [layout chunk URLs…, own chunk URL]` — the chunks a route needs, for `createWebApp`'s\n     * `routePreload` (`<link rel=\"modulepreload\">` the matched route alongside the entry). Each route +\n     * layout is also a build entrypoint, so it gets a named chunk the bootstrap's lazy import dedupes to. */\n    readonly routes: Readonly<Record<string, readonly string[]>>;\n    /** URL paths copied from `publicDir`, sorted. Lets the server entry serve them without scanning a\n     * directory per request, and lets an adapter that needs a file list (CDN upload, platform static\n     * assets) consume one. Omitted when there is no `public/`. */\n    readonly publicFiles?: readonly string[];\n    /** The app's bundled, content-hashed stylesheet(s) — the bootstrap's **aggregate** CSS (every\n     * `import './x.css'` reachable from the app). The complete stylesheet regardless of which file\n     * imported the CSS; the always-safe fallback `createWebApp` links when a route has no per-route entry\n     * in {@link routeStyles}. Omitted when the app imports no CSS. */\n    readonly css?: readonly string[];\n    /** `routeId → [chain CSS URLs]` — only the stylesheets the matched route's layout chain + own file\n     * actually use (Bun emits a per-entrypoint CSS bundle per route/layout, with shared-component CSS\n     * inlined into each consumer). `createWebApp` links these instead of the aggregate, so a page ships\n     * only its own CSS. A route is omitted (→ aggregate fallback) when its `[name]` collides with another\n     * route's basename (ambiguous CSS↔route) or the build emitted orphan shared-chunk CSS — correctness\n     * over minimality. Absent entirely when the app imports no CSS. */\n    readonly routeStyles?: Readonly<Record<string, readonly string[]>>;\n}"
   },
   {
     "name": "buildNifraManifest",
@@ -1796,7 +1795,7 @@
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function compareRoutePatternSpecificity(left: CompiledRoutePattern, right: CompiledRoutePattern): number;",
-    "doc": "/** Core precedence: static > param > wildcard at the first differing segment, independent of order. */"
+    "doc": "/** Core precedence: static > mixed > param > wildcard at the first differing segment, independent of\n * registration order. */"
   },
   {
     "name": "CompiledRoutePattern",
@@ -2125,7 +2124,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function copyPublicDir(from: string, to: string): Promise<string[]>;",
-    "doc": "/** Copy `from` into `to`, returning the URL paths copied (sorted). Used at build time so the server\n * entry can serve `public/` without scanning a directory per request, and so adapters that need a\n * file list (CDN upload, platform static assets) can consume one. */"
+    "doc": "/**\n * Copy `from` into `to`, returning the URL paths copied (sorted).\n *\n * Lives here, not beside `servePublicDir`, because it is BUILD-time: it reaches for `Bun.Glob` and\n * `node:fs`, and `public-dir.ts` is reachable from the client bundle graph through the package\n * entry - a dynamic `import(\"bun\")` there fails the browser build outright.\n */"
   },
   {
     "name": "cors",
@@ -3904,8 +3903,7 @@
     "name": "filePathToPatterns",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function filePathToPatterns(file: string): string[];",
-    "doc": "/**\n * Derive **every** nifra router pattern a route file maps to (relative to the routes dir):\n * `index` → the parent path, `[id]` → `:id`, `[...slug]` → `*slug` (catch-all, captures the rest of\n * the path into one param), `(group)` folders are dropped from the URL (organization only), and an\n * optional `[[lang]]` expands the set — once with the segment present (`:lang`) and once absent. A file\n * with no optionals yields exactly one pattern. Throws on an invalid param or a catch-all that isn't\n * the last segment.\n */"
+    "signature": "export declare function filePathToPatterns(file: string): string[];"
   },
   {
     "name": "FileStorage",
@@ -6209,6 +6207,20 @@
     "package": "@nifrajs/core",
     "signature": "export declare const MIN_DIGEST_KEY_BYTES = 16;",
     "doc": "/** Minimum digest key material. A short key would make the keyed digest brute-forceable. */"
+  },
+  {
+    "name": "MixedPart",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type MixedPart = {\n    readonly t: \"lit\";\n    readonly v: string;\n} | {\n    readonly t: \"param\";\n    readonly name: string;\n};",
+    "doc": "/** One piece of a {@link RoutePatternSegment} of kind `mixed`, in left-to-right order. */"
+  },
+  {
+    "name": "mixedSegmentSource",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function mixedSegmentSource(parts: readonly MixedPart[]): string;",
+    "doc": "/** The regex source matching one segment's worth of a mixed pattern, with a capture per parameter. */"
   },
   {
     "name": "MockableApp",
@@ -8692,7 +8704,7 @@
     "name": "RoutePatternSegment",
     "kind": "type",
     "package": "@nifrajs/core",
-    "signature": "export type RoutePatternSegment = {\n    readonly kind: \"static\";\n    readonly value: string;\n} | {\n    readonly kind: \"param\";\n    readonly name: string;\n} | {\n    readonly kind: \"wildcard\";\n    readonly name: string;\n};"
+    "signature": "export type RoutePatternSegment = {\n    readonly kind: \"static\";\n    readonly value: string;\n} | {\n    readonly kind: \"param\";\n    readonly name: string;\n} | {\n    readonly kind: \"wildcard\";\n    readonly name: string;\n}\n/** A segment that is part literal, part parameter: `:key.txt`, `feed.:format`, `v:major.:minor`. */\n | {\n    readonly kind: \"mixed\";\n    readonly parts: readonly MixedPart[];\n};"
   },
   {
     "name": "Router",

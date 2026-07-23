@@ -6,14 +6,14 @@
  * runs on any runtime.
  */
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
-import { dirname, relative, resolve as resolvePath } from "node:path"
-import type { BunPlugin } from "bun"
+import { cp, mkdir } from "node:fs/promises"
+import { dirname, join, relative, resolve as resolvePath, sep } from "node:path"
+import { type BunPlugin, Glob } from "bun"
 import { sanitizeOutputNames } from "./chunk-names.ts"
 import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
 // `buildTarget(static)` drives the SSG prerender engine directly (it's also re-exported below).
 import { prerenderRoutes } from "./prerender.ts"
-import { copyPublicDir } from "./public-dir.ts"
 
 // Build-time SSG: prerender opted-in static + dynamic routes to `index.html` (+ static `_data.json`),
 // run after `buildClient`.
@@ -93,6 +93,25 @@ export function publicEnvDefines(
 }
 
 /** The built asset map — the server reads `entry` for the client script + serves `assets`. */
+/**
+ * Copy `from` into `to`, returning the URL paths copied (sorted).
+ *
+ * Lives here, not beside `servePublicDir`, because it is BUILD-time: it reaches for `Bun.Glob` and
+ * `node:fs`, and `public-dir.ts` is reachable from the client bundle graph through the package
+ * entry - a dynamic `import("bun")` there fails the browser build outright.
+ */
+export async function copyPublicDir(from: string, to: string): Promise<string[]> {
+  const source = resolvePath(from)
+  const copied: string[] = []
+  for await (const rel of new Glob("**/*").scan({ cwd: source, dot: true, onlyFiles: true })) {
+    const target = join(to, rel)
+    await mkdir(join(target, ".."), { recursive: true })
+    await cp(join(source, rel), target)
+    copied.push(`/${rel.split(sep).join("/")}`)
+  }
+  return copied.sort()
+}
+
 export interface BuildManifest {
   /** URL of the client entry module (content-hashed). */
   readonly entry: string

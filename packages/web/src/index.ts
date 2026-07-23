@@ -118,7 +118,6 @@ export {
 } from "./navigation.ts"
 // public/ — user-authored static files, served identically in dev and production by one handler.
 export {
-  copyPublicDir,
   type PublicDirCache,
   resolvePublicPath,
   type ServePublicDirOptions,

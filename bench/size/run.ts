@@ -121,20 +121,20 @@ export default server().post("/users", { body }, (c) => ({ name: c.body.name }))
 
 // Gzip ceilings are deliberately just above measured values: enough headroom for minifier noise, tight
 // enough that a newly reachable optional subsystem fails CI. Update only with an explained benchmark diff.
+// +0.4 KB gzip across every row: mixed path segments (`/:key.txt`). The grammar, its per-segment
+// matcher, and the trie's ordered mixed-children list all have to ship, so unlike a diagnostic string
+// this cost is the feature itself. Two things were measured before accepting it: an app registering
+// no mixed segment allocates nothing and pays one `undefined` check on the match path (asserted in
+// mixed-segments.test.ts), and removing the now-obsolete rejected-parameter hint - `:id.json` used to
+// throw and now compiles - gave 0.2 KB back, so the net is +0.4 rather than +0.6.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
-  "nifra-bare": 15.5,
+  "nifra-bare": 15.9,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  // +0.2 KB across these three: the router's rejected-parameter diagnostic. A `:id.json` pattern used
-  // to fail with a bare "invalid parameter", which reads as a typo when the real answer is a grammar
-  // rule, so the message now states the rule and the two ways out. Measured cost of the first draft
-  // was ~0.3 KB gzip in EVERY bundle; trimming it to the rule itself (no interpolated example path)
-  // recovered a third and kept nifra-bare inside its budget. The remainder is accepted deliberately:
-  // it buys a five-second fix instead of a trip to the source, and it is paid once at registration.
-  "nifra-idempotency": 18.45,
-  "nifra-effect-ledger": 17.22,
-  "nifra-mcp": 16,
-  "nifra-sse": 16.2,
-  "nifra-valibot": 16.5,
+  "nifra-idempotency": 18.9,
+  "nifra-effect-ledger": 17.7,
+  "nifra-mcp": 16.2,
+  "nifra-sse": 16.6,
+  "nifra-valibot": 17,
   "nifra-typebox-t": 46,
 }
 

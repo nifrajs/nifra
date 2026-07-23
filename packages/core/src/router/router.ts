@@ -1,5 +1,5 @@
 import { RouteConfigError } from "../errors.ts"
-import { type CompiledRoutePattern, compileRoutePattern } from "./pattern.ts"
+import { type CompiledRoutePattern, compileRoutePattern, mixedSegmentSource } from "./pattern.ts"
 
 /** HTTP methods the router accepts. */
 export const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const
@@ -68,16 +68,43 @@ interface RouteNode<T> {
   readonly staticChildren: Map<string, RouteNode<T>>
   /** Single `:param` child, if any. */
   paramChild: RouteNode<T> | undefined
+  /**
+   * Part-literal-part-param children (`:key.txt`), ordered by specificity.
+   *
+   * Unlike `paramChild` there can legitimately be SEVERAL at one level - `/:id.txt` and `/:id.json`
+   * are different shapes, not a conflict - so this is a list rather than a slot, and it must be tried
+   * in specificity order rather than registration order.
+   *
+   * Left `undefined` unless a mixed route is registered, so an app that never uses one pays nothing:
+   * no allocation, and one `undefined` check on the match path.
+   */
+  mixedChildren: MixedChild<T>[] | undefined
   /** Catch-all `*` child, if any — always terminal. */
   wildcardChild: RouteNode<T> | undefined
   /** Set once this node terminates one or more routes. */
   terminal: Terminal<T> | undefined
 }
 
+interface MixedChild<T> {
+  /** Anchored matcher for ONE segment, with a capture group per parameter. */
+  readonly regex: RegExp
+  /**
+   * How many values this segment pushes. A mixed segment pushes N, not one, so a failed branch must
+   * pop exactly N to keep `paramValues` aligned with `paramNames`.
+   */
+  readonly arity: number
+  /** Literal characters in the segment - more literal text means a more specific match. */
+  readonly weight: number
+  readonly node: RouteNode<T>
+  /** The pattern source, so re-registering the same shape reuses its node. */
+  readonly source: string
+}
+
 function createNode<T>(): RouteNode<T> {
   return {
     staticChildren: new Map(),
     paramChild: undefined,
+    mixedChildren: undefined,
     wildcardChild: undefined,
     terminal: undefined,
   }
@@ -120,6 +147,28 @@ function matchNode<T>(
     } else {
       const found = matchNode(staticChild, path, end + 1, len, paramValues)
       if (found !== undefined) return found
+    }
+  }
+
+  // Mixed sits between static and param: it pins literal text, so it is more specific than a bare
+  // `:param`, and less than an exact segment. Guarded on `undefined` so a mixed-free route table
+  // never enters this branch.
+  const mixedChildren = node.mixedChildren
+  if (mixedChildren !== undefined && seg.length > 0) {
+    for (const child of mixedChildren) {
+      const matched = child.regex.exec(seg)
+      if (matched === null) continue
+      // Push left-to-right, matching the order `paramNames` was built in.
+      for (let i = 1; i <= child.arity; i++) paramValues.push(matched[i] as string)
+      if (isLast) {
+        if (child.node.terminal !== undefined) return child.node.terminal
+      } else {
+        const found = matchNode(child.node, path, end + 1, len, paramValues)
+        if (found !== undefined) return found
+      }
+      // Backtrack: a mixed segment pushed `arity` values, not one, so unwind exactly that many or
+      // every later param reads a value belonging to an abandoned branch.
+      for (let i = 0; i < child.arity; i++) paramValues.pop()
     }
   }
 
@@ -250,6 +299,28 @@ export class Router<T> {
       } else if (segment.kind === "wildcard") {
         node.wildcardChild ??= createNode<T>()
         node = node.wildcardChild
+      } else if (segment.kind === "mixed") {
+        const source = mixedSegmentSource(segment.parts)
+        node.mixedChildren ??= []
+        let child = node.mixedChildren.find((entry) => entry.source === source)
+        if (child === undefined) {
+          child = {
+            regex: new RegExp(`^${source}$`),
+            arity: segment.parts.reduce((n, part) => (part.t === "param" ? n + 1 : n), 0),
+            weight: segment.parts.reduce(
+              (n, part) => (part.t === "lit" ? n + part.v.length : n),
+              0,
+            ),
+            node: createNode<T>(),
+            source,
+          }
+          node.mixedChildren.push(child)
+          // Most literal text first. Registration order must not decide which of `/:id.txt` and
+          // `/:id.json` wins, and re-sorting on insert (a boot-time cost) keeps the match path a
+          // straight scan.
+          node.mixedChildren.sort((a, b) => b.weight - a.weight || a.source.localeCompare(b.source))
+        }
+        node = child.node
       } else {
         let child = node.staticChildren.get(segment.value)
         if (child === undefined) {
