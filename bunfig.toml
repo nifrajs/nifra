@@ -5,6 +5,10 @@
 [test]
 coverage = true
 coverageThreshold = 0.9
+# Loads before any test file. Disables fetch connection pooling for loopback only, so a recycled
+# ephemeral port cannot serve a request from a pooled connection to the server that previously held
+# it. That was the source of a moving, full-suite-only flake — see the file for the measurements.
+preload = ["./scripts/test-preload.ts"]
 # Bun-only build/dev tooling: integration-tested via `site:build` / `nifra dev`, not unit-testable to
 # 90% — excluded from the per-file unit-coverage gate so importing one exported helper for a focused
 # test (e.g. the chunk-name sanitizer, the rolldown-plugin normalizer) doesn't drag the whole module
