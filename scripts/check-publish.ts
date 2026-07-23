@@ -224,8 +224,41 @@ for (const dir of ALL_DIRS) {
     dependencies?: Record<string, string>
     peerDependencies?: Record<string, string>
     optionalDependencies?: Record<string, string>
+    exports?: Record<string, Record<string, string> | string>
   }
+  const packedEntries = new Set(
+    (await $`tar -tzf ${tmp}/${tgz}`.text())
+      .trim()
+      .split("\n")
+      .map((entry) => entry.replace(/^package\//, "")),
+  )
   await $`rm -rf ${tmp}`.nothrow().quiet()
+
+  // ── Export-reachability gate: every `exports` condition must resolve to a file the tarball actually
+  // contains. `files` is an allowlist, so a subpath added later (here: create-nifra's `./agent-files`,
+  // whose `bun` condition pointed at `./src/agent-files.ts` while `files` shipped only `dist` +
+  // templates) resolves fine in the workspace and throws "Cannot find module" for every installed user.
+  // publint does not catch it: it stats the file on disk, where it exists, and never models `files`.
+  // Checked against the packed entries rather than the `files` strings so .npmignore and nested paths
+  // are covered too. Under Bun the `bun` condition wins, so a missing one breaks precisely the runtime
+  // this framework targets.
+  const exportTargets = new Set<string>()
+  for (const entry of Object.values(manifest.exports ?? {})) {
+    if (typeof entry === "string") exportTargets.add(entry)
+    else
+      for (const target of Object.values(entry)) {
+        if (typeof target === "string") exportTargets.add(target)
+      }
+  }
+  const unreachable = [...exportTargets]
+    .map((target) => target.replace(/^\.\//, ""))
+    .filter((target) => !packedEntries.has(target))
+  if (unreachable.length > 0) {
+    failures += 1
+    console.error(
+      `✗ ${manifest.name}: exports point outside the tarball → ${unreachable.join(", ")}`,
+    )
+  }
   const leaks: string[] = []
   for (const block of ["dependencies", "peerDependencies", "optionalDependencies"] as const) {
     for (const [name, spec] of Object.entries(manifest[block] ?? {})) {

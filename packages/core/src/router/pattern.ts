@@ -57,6 +57,38 @@ function validParamName(name: string): boolean {
   return PARAM_NAME.test(name) && !RESERVED_PARAM_NAMES.has(name)
 }
 
+/**
+ * Explain WHY a parameter name was rejected, in the terms the author was thinking in.
+ *
+ * The grammar is per-segment: a segment is wholly static or wholly a parameter, so everything after
+ * the colon is the name. `/v/:id.json` therefore asks for a parameter literally named `id.json`,
+ * which is not what anyone means by it — but the bare "invalid parameter" that produces reads as a
+ * typo rather than as a rule, leaving the author to guess whether the dot, the length, or the casing
+ * was the problem. Naming the actual limitation and showing the two ways out is the difference
+ * between a five-second fix and a trip to the source.
+ */
+function paramNameHint(name: string): string {
+  if (RESERVED_PARAM_NAMES.has(name)) {
+    return ` — "${name}" is reserved, because assigning it would mutate the prototype of the params object`
+  }
+  // A trailing literal is the common intent: `:file.txt`, `:id-v2`, `:slug.html`.
+  const split = /^([A-Za-z_][A-Za-z0-9_]*)(.+)$/.exec(name)
+  if (split !== null) {
+    // Both groups are non-optional in the pattern, so a match guarantees both — same `!` idiom the
+    // segment loop below uses for its own guaranteed indices.
+    const head = split[1]!
+    const tail = split[2]!
+    return (
+      ` — a segment is wholly static or wholly a parameter, so everything after ":" is the name` +
+      ` (here "${name}", not "${head}" plus "${tail}"). Give the literal its own segment` +
+      ` (":${head}/${tail.replace(/^[.\-_]/, "")}"), or capture the whole segment as` +
+      ` ":${head}" and split it in the handler`
+    )
+  }
+  if (name.length === 0) return ` — ":" needs a name after it`
+  return ` — a name must match ${PARAM_NAME.source} (letters, digits and "_", not starting with a digit)`
+}
+
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^()|[\]\\{}$]/g, "\\$&")
 }
@@ -76,7 +108,7 @@ export function compileRoutePattern(pattern: string): CompiledRoutePattern {
       if (!validParamName(name)) {
         throw new RouteConfigError(
           "INVALID_PARAM_NAME",
-          `invalid parameter ":${name}" in "${pattern}"`,
+          `invalid parameter ":${name}" in "${pattern}"${paramNameHint(name)}`,
         )
       }
       if (paramNames.includes(name)) {

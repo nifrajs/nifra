@@ -86,3 +86,36 @@ jobs:
 
       - name: Typecheck + test @nifrajs/deno on Deno
         run: bun run test:deno
+
+  # The Node adapter exercised on Node, not on Bun. `bun run test` covers packages/node/test, which
+  # proves the adapter's logic but runs it on the wrong runtime — and an HTTP adapter is precisely
+  # where Bun and Node diverge (stream semantics, `node:` builtin behaviour, socket teardown). Deno
+  # already had this job; Node and Workers did not, so two published adapters had zero coverage on
+  # the runtimes they exist for. This closes the Node half.
+  node:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      # Node resolves the package `exports` `default` condition → dist, which is what an installed
+      # Node user actually loads. Same reason the Deno job builds first.
+      - name: Build (Node loads built dist)
+        run: bun run build
+
+      # `bun install` writes no node_modules/@nifrajs/* entries — Bun resolves the workspace through
+      # its own map — so without this step Node cannot resolve the packages at all.
+      - name: Test @nifrajs/node on Node
+        run: bun run test:node

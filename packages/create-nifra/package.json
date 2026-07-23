@@ -29,6 +29,7 @@
   },
   "files": [
     "dist",
+    "src/agent-files.ts",
     "template",
     "template-site",
     "template-site-vue",
