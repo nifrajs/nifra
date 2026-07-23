@@ -48,6 +48,11 @@ Usage:
                                          routes (routes/) + the in-process backend's API routes,
                                          marking which API routes are auto-mounted under apiPrefix.
                                          --json for agents (see POST /api/x is/isn't served, not via 405).
+  nifra routes --modes [--target <t>]    Show each page route's RENDER MODE (static | isr | ssr),
+                                         hydration, and cache policy in one table. With --target, gate
+                                         against it: a route the target can't honour (an ssr route on a
+                                         static build, ISR where there's no revalidation) exits nonzero
+                                         with the consequence - run in CI so it fails the build, not prod.
   nifra init-agents [--force] [--json]   Retrofit an EXISTING app with the agent-discovery files a new
                                          app ships: .mcp.json + .cursor/mcp.json (register this project's
                                          nifra MCP), CLAUDE.md (MCP-first preamble + @AGENTS.md import),
@@ -107,7 +112,7 @@ Usage:
                 [--ci] [--strict]        matrix (in-memory stores, in-process cron/WebSocket, Bun/Deno
                                          globals, node: builtins) with file:line evidence. --target auto-
                                          detected from build/deploy scripts, wrangler.toml, or vercel config;
-                                         --ci (or any --target) exits non-zero when a used feature is
+                                         --ci (or any --target) exits nonzero when a used feature is
                                          unsupported on the target; --strict also fails on caveats.
 
 Reads nifra.config.ts (adapter + clientModule + plugins; or framework.ts), backend.ts (optional), and
@@ -597,7 +602,31 @@ async function main(): Promise<void> {
   else if (command === "build") await buildForTarget(app, flags.target, flags.report)
   else if (command === "context") console.log(describeProject(app))
   else if (command === "routes") {
-    console.log(await describeRoutes(app, { json: argv.includes("--json") }))
+    if (argv.includes("--modes")) {
+      // `--modes` answers a different question than the default table: not "what URLs exist" but "how
+      // does each render, and can the target I'm about to deploy to actually honour that". Resolves
+      // against `--target` when given, so a `static` build's server-needing route fails here, in one
+      // place, instead of 404ing in production.
+      const { buildRouteManifest, renderRouteManifest } = await import(
+        "@nifrajs/web/route-manifest"
+      )
+      const manifest = discoverRoutes(app.routesDir)
+      // `flags.target` defaults to "bun" for `build`; here an EXPLICIT `--target` is what opts into
+      // gating, so read it from argv rather than inheriting the build default (which would silently gate
+      // every `nifra routes --modes` against bun).
+      const targetIdx = argv.indexOf("--target")
+      const target = targetIdx !== -1 ? argv[targetIdx + 1] : undefined
+      const routeManifest = await buildRouteManifest(manifest, {
+        ...(target !== undefined ? { target } : {}),
+      })
+      if (argv.includes("--json")) console.log(JSON.stringify(routeManifest, null, 2))
+      else console.log(renderRouteManifest(routeManifest))
+      // A target that cannot honour a route is a build-breaking fact, not a note: exit non-zero so the
+      // same command in CI gates the deploy it is warning about.
+      if (routeManifest.conflicts.length > 0) process.exitCode = 1
+    } else {
+      console.log(await describeRoutes(app, { json: argv.includes("--json") }))
+    }
   } else await start(app, flags)
 }
 

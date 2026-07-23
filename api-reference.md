@@ -2584,6 +2584,25 @@ Every public export of every package and documented subpath — name, kind, sign
 - **svgToJsx** _(function)_ — `svgToJsx: (xml: string, options?: SvgToJsxOptions) => string`
   Convert an SVG XML string into a JSX-safe `<svg>…</svg>` element with `{...props}` spread on the root.
 
+### `@nifrajs/web/route-manifest`
+
+- **RenderMode** _(type)_ — `type RenderMode = "static" | "isr" | "ssr"`
+  How a route produces its HTML.
+- **RouteCapability** _(type)_ — `type RouteCapability = "server" | "revalidation"`
+  What a route needs from its host in order to behave as declared.
+- **RouteManifest** _(interface)_ — `interface RouteManifest`
+  The whole artifact: every route's behaviour, plus anything the target cannot honour.
+- **RouteManifestConflict** _(interface)_ — `interface RouteManifestConflict`
+  A route whose declaration the chosen target cannot honour, and what actually happens if it ships.
+- **RouteManifestEntry** _(interface)_ — `interface RouteManifestEntry`
+  One route's resolved behaviour.
+- **buildRouteManifest** _(function)_ — `buildRouteManifest: (manifest: Manifest, options?: { readonly target?: string; readonly prerendered?: Readonly<Record<string, readonly string[]>>; }) => Promise<RouteManifest>`
+  Build the route manifest for a discovered app, optionally resolved against a deploy target.
+- **deriveRouteEntry** _(function)_ — `deriveRouteEntry: (id: string, pattern: string, module: Pick<RouteModule, "prerender" | "getStaticPaths" | "revalidate" | "hydrate">, prerenderedPaths?: readonly string[]) => RouteManifestEntry`
+  Derive one route's behaviour from its module exports.
+- **renderRouteManifest** _(function)_ — `renderRouteManifest: (manifest: RouteManifest) => string`
+  Render the manifest as a readable report - the `nifra routes --modes` output.
+
 ### `@nifrajs/web/server-only`
 
 _No named exports (side-effect entrypoint)._

@@ -64,6 +64,11 @@
       "types": "./dist/build.d.ts",
       "default": "./dist/build.js"
     },
+    "./route-manifest": {
+      "bun": "./src/route-manifest.ts",
+      "types": "./dist/route-manifest.d.ts",
+      "default": "./dist/route-manifest.js"
+    },
     "./fonts": {
       "bun": "./src/fonts-google.ts",
       "types": "./dist/fonts-google.d.ts",
