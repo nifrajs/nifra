@@ -73,6 +73,20 @@ export const app = createWebApp({
 })
 // → <link rel="stylesheet"> for just the matched route's CSS in <head>. Serve .css as text/css.`
 
+const VITE_PROD = `// vite.config.ts — a Vite/Rollup PRODUCTION client build (the escape hatch, not the default).
+// Only reach for this when an app needs a Vite-only transform with no Bun equivalent; nifra's default
+// production bundler stays Bun (buildClient), which is faster and Bun-native.
+import { viteLeakGuard } from "@nifrajs/web/plugins/vite-leak-guard"
+
+export default {
+  build: {
+    // The SAME two client-leak guards nifra's Bun build runs — server-only code or a node: builtin
+    // reaching the browser fails the build, with the identical error message. A second production
+    // pipeline must not ship without them.
+    rollupOptions: { plugins: [viteLeakGuard()] },
+  },
+}`
+
 const CSS_SCOPED = `// CSS Modules — *.module.css gives a hashed, collision-free class map:
 // Counter.module.css  →  .box { padding: 1rem }
 import styles from "./Counter.module.css"
@@ -225,6 +239,19 @@ export default function Dev() {
         serves SSR, watches the routes, and does a full-page reload on change.
       </p>
       <CodeBlock code={BUN_DEV} />
+
+      <h2>Production is Bun — with a Vite escape hatch</h2>
+      <p>
+        Production builds default to <strong>Bun</strong> (<code>buildClient</code> /{" "}
+        <code>nifra build</code>): faster, Bun-native, and the profile Nifra is tuned for. If an app
+        genuinely needs a <strong>Vite-only transform</strong> with no Bun equivalent, you can run a
+        Vite/Rollup production client build instead — but it must carry the same client-leak guards the
+        Bun build enforces, or a second pipeline becomes a way for server-only code to reach the
+        browser unnoticed. Add <code>viteLeakGuard()</code>: it runs the <em>same</em> detection and
+        emits the <em>same</em> error as the Bun build (one implementation, adapted to Rollup's graph),
+        so <code>node:</code> builtins and <code>server-only</code> modules fail the build either way.
+      </p>
+      <CodeBlock code={VITE_PROD} />
 
       <h2>Styling (CSS)</h2>
       <p>

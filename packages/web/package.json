@@ -109,6 +109,11 @@
       "types": "./dist/plugins/svg.d.ts",
       "default": "./dist/plugins/svg.js"
     },
+    "./plugins/vite-leak-guard": {
+      "bun": "./src/plugins/vite-leak-guard.ts",
+      "types": "./dist/plugins/vite-leak-guard.d.ts",
+      "default": "./dist/plugins/vite-leak-guard.js"
+    },
     "./css-modules": {
       "types": "./css-modules.d.ts"
     }

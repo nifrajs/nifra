@@ -2409,6 +2409,10 @@ Every public export of every package and documented subpath — name, kind, sign
   Human-readable byte count: `B`/`KB`/`MB` with one decimal above 1 KB (e.g. `12.3 KB`). Pure.
 - **formatManifestDrift** _(function)_ — `formatManifestDrift: (drift: ManifestDrift, manifestPath?: string) => string | undefined`
   Format a {@link ManifestDrift} as a named, actionable error message, or `undefined` when in sync. Names the exact missing/extra routes + the one fix (regenerate the manifest by re-running the build). `manifestPath` is shown for the dev to locate the stale file. Pure.
+- **formatNodeBuiltinLeak** _(function)_ — `formatNodeBuiltinLeak: (findings: ReadonlyArray<NodeBuiltinFinding>) => string | undefined`
+  The build-failing message for `node:` builtins that reached the client bundle. `undefined` ⇒ clean.
+- **formatServerOnlyLeak** _(function)_ — `formatServerOnlyLeak: (findings: ReadonlyArray<ServerOnlyFinding>) => string | undefined`
+  The build-failing message for `server-only`-marked modules that reached the client. `undefined` ⇒ clean.
 - **generateServerEntry** _(function)_ — `generateServerEntry: (options: { readonly target: BuildTarget; readonly adapterImport: string; readonly backendImport?: string; readonly title?: string; }) => string`
   Codegen the per-target **server entry** module (source text) for `buildServer` to bundle. It imports the app's `adapter` (from `framework.ts`), the optional `backend` (from `backend.ts`), and the generated `{ manifest, clientEntry }` (from `./server-manifest`), builds `createWebApp`, then wires the…
 - **htmlFileFor** _(function)_ — `htmlFileFor: (pattern: string) => string`
@@ -2583,6 +2587,13 @@ Every public export of every package and documented subpath — name, kind, sign
   Emit the component module source for a `?component` SVG import. Identical on dom + ssr (isomorphic).
 - **svgToJsx** _(function)_ — `svgToJsx: (xml: string, options?: SvgToJsxOptions) => string`
   Convert an SVG XML string into a JSX-safe `<svg>…</svg>` element with `{...props}` spread on the root.
+
+### `@nifrajs/web/plugins/vite-leak-guard`
+
+- **LeakGuardPlugin** _(interface)_ — `interface LeakGuardPlugin`
+  The minimal Rollup plugin shape this returns — `generateBundle` bound to the plugin context.
+- **viteLeakGuard** _(function)_ — `viteLeakGuard: () => LeakGuardPlugin`
+  A Vite/Rollup plugin that fails the build when server-only code or a `node:` builtin reaches the client bundle - the same two guards, and the same error messages, as nifra's Bun production build.
 
 ### `@nifrajs/web/route-manifest`
 

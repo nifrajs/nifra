@@ -471,6 +471,48 @@ export function detectServerOnlyInClient(
 const isServerOnlyMarkerModule = (inputKey: string): boolean =>
   /(^|\/)server-only\.[cm]?[jt]s$/.test(inputKey)
 
+// ---------------------------------------------------------------------------------------------------
+// Guard MESSAGES — one owner for both production pipelines. The Bun build (below) and the Vite/Rollup
+// leak-guard plugin (plugins/vite-leak-guard.ts) both call these, so a leak reads IDENTICALLY whichever
+// bundler produced it. A second bundler must not grow a second, subtly-different wording of a security
+// error; that is exactly the "mostly ported" outcome the neutral graph seam exists to prevent.
+// ---------------------------------------------------------------------------------------------------
+
+/** The build-failing message for `node:` builtins that reached the client bundle. `undefined` ⇒ clean. */
+export function formatNodeBuiltinLeak(
+  findings: ReadonlyArray<NodeBuiltinFinding>,
+): string | undefined {
+  if (findings.length === 0) return undefined
+  const lines = findings.map((f) =>
+    f.chain.length > 1
+      ? `  - ${f.builtin} reached the client bundle via ${f.chain.join(" → ")} (chunk: ${f.chunk})`
+      : `  - ${f.builtin} reached the client bundle via ${f.chunk}`,
+  )
+  return (
+    `[nifra/web] Node built-in(s) in the client bundle — move them behind a server-only path ` +
+    `(a loader/action runs on the server; import the \`node:\` module there, not at a route's ` +
+    `top level):\n${lines.join("\n")}`
+  )
+}
+
+/** The build-failing message for `server-only`-marked modules that reached the client. `undefined` ⇒ clean. */
+export function formatServerOnlyLeak(
+  findings: ReadonlyArray<ServerOnlyFinding>,
+): string | undefined {
+  if (findings.length === 0) return undefined
+  const lines = findings.map((f) =>
+    f.chain.length > 1
+      ? `  - server-only module reached the client bundle via ${f.chain.join(" → ")} (chunk: ${f.chunk})`
+      : `  - server-only module reached the client bundle via ${f.chunk}`,
+  )
+  return (
+    `[nifra/web] server-only module(s) in the client bundle — a module marked ` +
+    `\`import "${SERVER_ONLY_MARKER}"\` reached the browser. Move it behind a server-only path ` +
+    `(reach it via a loader/action, or rename it \`*.server.ts\`), so its server logic never ships ` +
+    `to the client:\n${lines.join("\n")}`
+  )
+}
+
 const basename = (path: string): string => path.slice(path.lastIndexOf("/") + 1)
 /** `[name]` Bun derives for an entrypoint: basename without extension (`users/[id].tsx` → `[id]`). */
 const entryName = (file: string): string => {
@@ -818,42 +860,18 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   // per-output `inputs`), so it can't false-positive on a `"node:..."` string literal and survives
   // minification. Only the client build runs this; the server build's `node:` imports are legitimate.
   const clientMeta = (result as unknown as { metafile?: BunMetafile }).metafile
-  const nodeBuiltins = detectNodeBuiltinsInClient(fromBunMetafile(clientMeta))
-  if (nodeBuiltins.length > 0) {
-    // Name the offending builtin AND the import chain that pulled it in (entry → … → builtin), so the
-    // dev sees the exact path from a route file to the leak instead of just the emitted chunk name.
-    // The chain always starts at a user entry; fall back to the chunk name if it somehow came back empty.
-    const lines = nodeBuiltins.map((f) =>
-      f.chain.length > 1
-        ? `  - ${f.builtin} reached the client bundle via ${f.chain.join(" → ")} (chunk: ${f.chunk})`
-        : `  - ${f.builtin} reached the client bundle via ${f.chunk}`,
-    )
-    throw new Error(
-      `[nifra/web] Node built-in(s) in the client bundle — move them behind a server-only path ` +
-        `(a loader/action runs on the server; import the \`node:\` module there, not at a route's ` +
-        `top level):\n${lines.join("\n")}`,
-    )
-  }
+  const clientGraph = fromBunMetafile(clientMeta)
+  // #4: a `node:` builtin (e.g. `node:crypto`) pulled into a CLIENT chunk builds fine (Bun substitutes a
+  // browser polyfill) but breaks/leaks at runtime. Fail with the chain (entry → … → builtin), through the
+  // SHARED formatter so the Vite pipeline's identical guard reads byte-for-byte the same.
+  const nodeBuiltinLeak = formatNodeBuiltinLeak(detectNodeBuiltinsInClient(clientGraph))
+  if (nodeBuiltinLeak !== undefined) throw new Error(nodeBuiltinLeak)
 
-  // §3.3/§5.1: a module that opted into the `server-only` marker (`import "@nifrajs/web/server-only"`)
-  // yet reached a CLIENT chunk — fail the build with the same chain-bearing, "reached the client bundle
-  // via" message shape as the node-builtin guard above. This catches pure-server logic (a secret, a
-  // server-only API call) that carries no `node:` import and isn't named `*.server`, so neither of the
-  // other two guards fires. Graph-based (the same metafile), so it survives minification.
-  const serverOnly = detectServerOnlyInClient(fromBunMetafile(clientMeta))
-  if (serverOnly.length > 0) {
-    const lines = serverOnly.map((f) =>
-      f.chain.length > 1
-        ? `  - server-only module reached the client bundle via ${f.chain.join(" → ")} (chunk: ${f.chunk})`
-        : `  - server-only module reached the client bundle via ${f.chunk}`,
-    )
-    throw new Error(
-      `[nifra/web] server-only module(s) in the client bundle — a module marked ` +
-        `\`import "${SERVER_ONLY_MARKER}"\` reached the browser. Move it behind a server-only path ` +
-        `(reach it via a loader/action, or rename it \`*.server.ts\`), so its server logic never ships ` +
-        `to the client:\n${lines.join("\n")}`,
-    )
-  }
+  // §3.3/§5.1: a module that opted into the `server-only` marker yet reached a CLIENT chunk — catches
+  // pure-server logic (a secret, a server-only API call) carrying no `node:` import and not named
+  // `*.server`, so neither other guard fires. Same shared formatter as above.
+  const serverOnlyLeak = formatServerOnlyLeak(detectServerOnlyInClient(clientGraph))
+  if (serverOnlyLeak !== undefined) throw new Error(serverOnlyLeak)
 
   // Rename any chunk whose basename isn't URL-safe (dynamic-route files become `[slug]-hash.js`) and
   // rewrite the references — otherwise the lazy import 404s and the route silently never hydrates.
