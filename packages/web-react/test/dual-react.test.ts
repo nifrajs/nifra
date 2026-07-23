@@ -1,7 +1,11 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
-import { bunResolverFn, loadReactDomServer } from "../src/react-dom-server.ts"
+import {
+  assertSingleReactCore,
+  bunResolverFn,
+  loadReactDomServer,
+} from "../src/react-dom-server.ts"
 
 /**
  * Regression test for the dual-React SSR crash: under Bun runtime SSR (`nifra dev` / `nifra start` /
@@ -132,13 +136,18 @@ try {
 test("loadReactDomServer re-roots via the injected resolver (the Bun-runtime branch)", async () => {
   // Inject a resolver that returns the app-root copy A's absolute server entry. loadReactDomServer must
   // import THAT module (re-rooting), proving the fix's mechanism in-process and deterministically.
-  let askedSpec: string | undefined
+  // The resolver is also asked for `react` twice by the post-import single-core assertion; returning one
+  // stable path for `react` makes both sides equal → the assertion is silent, isolating this test to the
+  // re-root behaviour it is about.
+  const askedSpecs: string[] = []
   const resolve = (spec: string): string => {
-    askedSpec = spec
-    return join(STATIC_REACT_DOM, "server.bun.js")
+    askedSpecs.push(spec)
+    return spec === "react"
+      ? join(STATIC_REACT_DOM, "..", "react", "index.js")
+      : join(STATIC_REACT_DOM, "server.bun.js")
   }
   const mod = await loadReactDomServer(resolve)
-  expect(askedSpec).toBe("react-dom/server")
+  expect(askedSpecs).toContain("react-dom/server") // it re-rooted react-dom/server, which is the point
   expect(typeof mod.renderToString).toBe("function")
   expect(typeof mod.renderToReadableStream).toBe("function")
 })
@@ -159,6 +168,59 @@ test("loadReactDomServer uses the bundled copy on a non-Bun host (resolver undef
   // the only (and correct, bundled+deduped) path.
   const mod = await loadReactDomServer(undefined)
   expect(typeof mod.renderToString).toBe("function")
+})
+
+// --- Fix 2: the dev-boot assertion, proven against a REAL nested-duplicate install ------------------
+
+test("assertSingleReactCore is SILENT on the healthy fixture (react-dom re-rooted, one react)", () => {
+  // The re-rooted happy path: react-dom resolved from the app root shares the app's react (siblings under
+  // one node_modules). Real Bun.resolveSync, real realpath — no throw.
+  const serverPath = Bun.resolveSync("react-dom/server", appRoot)
+  const resolve = (spec: string, from: string): string => Bun.resolveSync(spec, from)
+  // componentsReact is resolved from process.cwd() inside the function; the runner's cwd is the repo,
+  // whose react is the fixture's SOURCE copy. Point react-dom's side at that same copy so they agree.
+  const sameReact = (spec: string, from: string): string =>
+    spec === "react" ? Bun.resolveSync("react", process.cwd()) : resolve(spec, from)
+  expect(() => assertSingleReactCore(serverPath, sameReact)).not.toThrow()
+})
+
+test("assertSingleReactCore THROWS with both paths when react-dom nests a different react", () => {
+  // The residual duplicate the re-root cannot fix: react-dom is at the app root but carries its OWN nested
+  // react, distinct from the one the components import. This is a real install shape (a mis-hoist), built
+  // here as actual directories and resolved with the real Bun resolver.
+  const dupApp = mkdtempSync(join(import.meta.dir, ".tmp-nifra-nested-react-"))
+  try {
+    const nm = join(dupApp, "node_modules")
+    mkdirSync(nm, { recursive: true })
+    cpSync(SRC_REACT, join(nm, "react"), { recursive: true, dereference: true }) // components' react
+    cpSync(SRC_REACT_DOM, join(nm, "react-dom"), { recursive: true, dereference: true })
+    // react-dom's OWN nested react — a second physical copy, same version, different path.
+    cpSync(SRC_REACT, join(nm, "react-dom", "node_modules", "react"), {
+      recursive: true,
+      dereference: true,
+    })
+
+    const serverPath = Bun.resolveSync("react-dom/server", dupApp)
+    // Real resolver, but pin the components' side to the app's top-level react (the function reads it from
+    // process.cwd(); the fixture is elsewhere, so this stands in for "resolved from the app root").
+    const resolve = (spec: string, from: string): string =>
+      spec === "react" && !from.includes("react-dom")
+        ? Bun.resolveSync("react", dupApp)
+        : Bun.resolveSync(spec, from)
+
+    let message = ""
+    try {
+      assertSingleReactCore(serverPath, resolve)
+      throw new Error("expected a duplicate-React throw")
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err)
+    }
+    expect(message).toContain("two copies of React")
+    expect(message).toContain(join(nm, "react-dom", "node_modules", "react"))
+    expect(message).toContain(join(nm, "react"))
+  } finally {
+    rmSync(dupApp, { recursive: true, force: true })
+  }
 })
 
 test("NIFRA_SSR_BUNDLED marker disables re-root even when Bun.resolveSync exists (the bun-target bundle fix)", () => {

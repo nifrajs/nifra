@@ -23,6 +23,8 @@
  * can occur, `Bun.resolveSync` exists, and no bundle marker is present.
  */
 
+import { realpathSync } from "node:fs"
+import { dirname } from "node:path"
 import type { ReactNode } from "react"
 
 /** The slice of `react-dom/server` this adapter uses. Typed locally so the dynamic import (which Bun
@@ -73,6 +75,54 @@ export function reactDomServer(): Promise<ReactDomServer> {
 type ResolveSync = (specifier: string, from: string) => string
 
 /**
+ * The dual-React crash, caught on the RESOLVED graph instead of after it detonates.
+ *
+ * The re-root above makes `react-dom/server` load from the app root, which is right almost always. What it
+ * cannot guarantee is that react-dom then pulls in the SAME physical `react` the route components import -
+ * a nested `react` under react-dom, or a components tree resolving react elsewhere, still yields two cores.
+ * Two cores is two hook dispatchers, and the renderer sees a null (or foreign) one: the SSR throws
+ * `resolveDispatcher().useState is null` from deep inside react-dom-server, naming a React internal and
+ * nothing about the two directories that actually caused it. That is hours of inference from a message
+ * that points nowhere useful.
+ *
+ * `nifra doctor` checks what is INSTALLED; this checks what SSR actually RESOLVED, which is the only thing
+ * that can catch a duplicate the two dev pipelines introduce (Bun for SSR, Vite for the client) rather
+ * than the install. It compares the realpath of the `react` react-dom will render with against the
+ * `react` the components import, and if they differ throws with BOTH paths - turning a five-hour hunt into
+ * a five-second read. Silent when they agree, which is the single-copy common case.
+ *
+ * Never manufactures a failure: if either side cannot be resolved it returns, because a resolver that
+ * cannot answer is not evidence of a duplicate. Exported for direct unit testing.
+ */
+export function assertSingleReactCore(
+  reactDomServerPath: string,
+  resolve: ResolveSync,
+  realpath: (path: string) => string = realpathSync,
+): void {
+  let rendererReact: string
+  let componentsReact: string
+  try {
+    // The `react` react-dom/server itself resolves - the core whose dispatcher the renderer sets.
+    rendererReact = realpath(resolve("react", dirname(reactDomServerPath)))
+    // The `react` the app's route components import - the core they call hooks on.
+    componentsReact = realpath(resolve("react", appRoot()))
+  } catch {
+    return
+  }
+  if (rendererReact === componentsReact) return
+  throw new Error(
+    "[nifra/web-react] two copies of React reached SSR, so hooks render against a null dispatcher " +
+      "(the `resolveDispatcher().useState is null` crash). react-dom renders with a DIFFERENT React " +
+      "than your components import:\n" +
+      `  react-dom's react:  ${rendererReact}\n` +
+      `  components' react:  ${componentsReact}\n` +
+      "Module identity is path-based, so two copies fail even at the same version. Dedupe react to one " +
+      "physical copy - usually a single hoisted install at the workspace root (`nifra doctor` locates " +
+      "the duplicate). A Vite `resolve.dedupe`/alias fixes only the client bundle, not this SSR path.",
+  )
+}
+
+/**
  * Load `react-dom/server`, preferring the app-root-resolved copy under the Bun runtime. Exported for unit
  * tests: `resolve` defaults to the ambient `Bun.resolveSync` (undefined on non-Bun hosts), and a test can
  * inject a stub that succeeds (re-root branch) or throws (fallback branch) to cover both deterministically
@@ -88,8 +138,16 @@ export async function loadReactDomServer(
     // rather than crashing — degraded (possible duplicate) but never a hard failure.
     try {
       const resolved = resolve("react-dom/server", appRoot())
+      // Before returning the module, verify the react-dom we just re-rooted shares the components' React.
+      // The re-root fixes the common case; this catches the residual duplicate loudly, with both paths,
+      // instead of leaving it to throw a dispatcher-null error on the first hook render. Runs once (this
+      // whole function is cached), dev/unbundled Bun only (the branch `resolve` gates).
+      assertSingleReactCore(resolved, resolve)
       return (await import(resolved)) as ReactDomServer
-    } catch {
+    } catch (err) {
+      // A genuine duplicate is surfaced (re-thrown with both paths); any other failure (react-dom not at
+      // the app root, an odd nested layout) falls through to the bundled specifier rather than crashing.
+      if (err instanceof Error && err.message.includes("two copies of React")) throw err
       // App-root resolution failed; use the specifier resolved from this module's own location below.
     }
   }
