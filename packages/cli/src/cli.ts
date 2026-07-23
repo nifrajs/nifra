@@ -137,13 +137,16 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
         "script (`bun run dev`), not `bunx @nifrajs/cli dev` (which can't resolve the project's peers).",
     )
   }
-  const { plugin } = await import("bun")
   const { createViteDevServer } = await import("@nifrajs/web/vite")
   const { framework: fw, routesDir, cwd, backend } = app
-  // nifra SSRs each request by importing the route modules through Bun (not Vite's ssrLoadModule), so
-  // `.vue`/`.svelte`/Solid routes need their SSR compile plugin registered on Bun's runtime first —
-  // the dev analog of `nifra start`. React/Preact JSX is Bun-native → no server plugins → no-op.
-  for (const p of asBunPlugins(await resolvePlugins(fw.serverPlugins))) plugin(p)
+  // No Bun SSR plugins here. `nifra dev` runs the VITE pipeline, and Vite now resolves and compiles
+  // route modules for SSR too (via `ssrLoadModule`), so `.vue`/`.svelte`/Solid are handled by the
+  // app's `vitePlugins` on both halves.
+  //
+  // Registering Bun's SFC plugins alongside was the structural intermix: two toolchains compiling the
+  // same file in one process, with only one of them governed by Vite's `resolve.dedupe`. That is what
+  // made an app's hand-written React alias fail to reach SSR, and it is the condition being removed -
+  // not a redundancy worth keeping "just in case".
   const server = await createViteDevServer({
     root: cwd,
     routesDir,
@@ -153,10 +156,13 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
     port: flags.port,
     ...(fw.conditions ? { conditions: fw.conditions } : {}),
     ...(fw.define ? { define: fw.define } : {}),
-    createApp: (clientEntry, importQuery) =>
+    // `load` resolves route modules through VITE, not through Bun. That is what makes the Vite
+    // pipeline own the whole phase: the client and the server now agree on every specifier, so
+    // `resolve.dedupe` finally governs SSR and the dual-React crash cannot occur.
+    createApp: (clientEntry, load) =>
       createWebApp({
         adapter: asAdapter(fw.adapter),
-        manifest: discoverRoutes(routesDir, { importQuery }),
+        manifest: discoverRoutes(routesDir, { load }),
         clientEntry,
         ...apiOf(backend),
       }),

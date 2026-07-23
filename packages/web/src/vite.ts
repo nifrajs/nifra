@@ -28,6 +28,8 @@ interface FetchApp {
 
 // Structural slice of the Vite dev server this module drives (avoids a hard type dep on `vite`).
 interface ViteLike {
+  /** Load a module through VITE's graph - the seam that makes the Vite pipeline own SSR too. */
+  ssrLoadModule(url: string): Promise<Record<string, unknown>>
   readonly middlewares: (req: IncomingMessage, res: ServerResponse, next: () => void) => void
   transformIndexHtml(url: string, html: string): Promise<string>
   ssrFixStacktrace(err: Error): void
@@ -49,11 +51,18 @@ export interface ViteDevServerOptions {
   /** Client runtime module providing `mountRouter` (e.g. `"@nifrajs/web-react/client"`). */
   readonly clientModule: string
   /**
-   * Build the nifra app for the given dev client-entry URL. `importQuery` changes when a route file
-   * changes — thread it into `discoverRoutes(routesDir, { importQuery })` so a hard reload SSRs edited
-   * modules (HMR handles the live client update; this keeps server-render fresh).
+   * Build the nifra app for the given dev client-entry URL.
+   *
+   * `load` resolves a route module through **Vite's** graph (`ssrLoadModule`). Pass it to
+   * `discoverRoutes(routesDir, { load })` so SSR and the client are resolved by the SAME toolchain.
+   * Without it SSR resolves through Bun while the client resolves through Vite - two resolvers, one
+   * process - which is what makes `resolve.dedupe` fail to reach SSR and produces the dual-React
+   * crash. Vite re-evaluates on change, so no `importQuery` cache-buster is needed alongside it.
    */
-  readonly createApp: (clientEntry: string, importQuery: string) => FetchApp | Promise<FetchApp>
+  readonly createApp: (
+    clientEntry: string,
+    load: (absolutePath: string) => Promise<unknown>,
+  ) => FetchApp | Promise<FetchApp>
   /** Vite plugins — inject your framework's official plugin, e.g. `[react()]`. */
   readonly plugins?: readonly unknown[]
   /**
@@ -273,7 +282,6 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   // port means HMR rides the same origin as the app, robust across restarts. The handler closes over
   // `vite`, which is assigned just below before the server starts listening.
   let vite!: ViteLike
-  let version = 0
   let app: FetchApp
 
   const server: NodeHttpServer = createHttpServer((req, res) => {
@@ -341,12 +349,15 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
     ...(options.define ? { define: options.define } : {}),
   })
 
-  app = await options.createApp(entryUrl, `v=${version}`)
+  const ssrLoad = (absolutePath: string): Promise<unknown> => vite.ssrLoadModule(absolutePath)
+  app = await options.createApp(entryUrl, ssrLoad)
 
-  // Keep server-render fresh on edits (Vite already HMRs the client live; this is for a hard reload).
+  // Re-create the app on change so a hard reload picks up a route ADD/REMOVE (the manifest comes
+  // from a directory scan, which `ssrLoadModule` cannot invalidate). Module CONTENT no longer needs a
+  // version counter: Vite owns SSR resolution now and re-evaluates changed modules itself, which is
+  // the cache-busting the old `importQuery` was emulating against Bun's import cache.
   vite.watcher.on("change", () => {
-    version += 1
-    Promise.resolve(options.createApp(entryUrl, `v=${version}`))
+    Promise.resolve(options.createApp(entryUrl, ssrLoad))
       .then((next) => {
         app = next
       })
