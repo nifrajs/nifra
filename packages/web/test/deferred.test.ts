@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { richWireCodec } from "@nifrajs/core/transport-codec-rich"
 import {
   defer,
   MAP_DEFERRED_SOURCE,
@@ -314,5 +315,21 @@ describe("parseNdjsonData (client soft-nav transport)", () => {
     expect(added).toBe(1)
     expect(once).toBe(true) // registered with { once: true }
     expect(removed).toBe(1) // and explicitly removed on completion (reused-signal safety)
+  })
+
+  test("uses the shared rich transport codec for critical and deferred loader values", async () => {
+    const codec = richWireCodec()
+    const prepared = prepareDeferred({
+      at: new Date("2026-01-01T00:00:00.000Z"),
+      later: defer(Promise.resolve(9n)),
+    })
+    const data = (await parseNdjsonData(
+      ndjsonStream(prepared.forClient, prepared.deferred, codec),
+      undefined,
+      codec,
+    )) as { at: Date; later: { promise: Promise<bigint> } }
+
+    expect(data.at).toBeInstanceOf(Date)
+    expect(await data.later.promise).toBe(9n)
   })
 })

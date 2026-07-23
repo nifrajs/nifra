@@ -361,7 +361,7 @@
     "name": "ApprovalStore",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface ApprovalStore {\n    readonly durability?: \"memory\" | \"durable\";\n    create(record: ApprovalRecord): boolean | Promise<boolean>;\n    get(approvalId: string): ApprovalRecord | undefined | Promise<ApprovalRecord | undefined>;\n    decide(input: {\n        readonly approvalId: string;\n        readonly tenantId: string;\n        readonly decision: \"approved\" | \"denied\";\n        readonly decidedBy: string;\n        readonly now: number;\n    }): boolean | Promise<boolean>;\n    /**\n     * Atomically validate binding/token/state and change `approved` to `consumed`. Two concurrent\n     * callers with one token must yield exactly one `consumed` and one `replay` result.\n     */\n    consume(input: {\n        readonly approvalId: string;\n        readonly tenantId: string;\n        readonly principalId: string;\n        readonly capability: string;\n        readonly target?: string;\n        readonly digest?: string;\n        readonly tokenHash: string;\n        readonly now: number;\n    }): ApprovalConsumeResult | Promise<ApprovalConsumeResult>;\n    list(): readonly ApprovalRecord[] | Promise<readonly ApprovalRecord[]>;\n}"
+    "signature": "export interface ApprovalStore {\n    readonly durability?: \"memory\" | \"durable\";\n    create(record: ApprovalRecord): boolean | Promise<boolean>;\n    get(approvalId: string): ApprovalRecord | undefined | Promise<ApprovalRecord | undefined>;\n    decide(input: {\n        readonly approvalId: string;\n        readonly tenantId: string;\n        readonly decision: \"approved\" | \"denied\";\n        readonly decidedBy: string;\n        readonly now: number;\n    }): boolean | Promise<boolean>;\n    /**\n     * Atomically validate binding/token/state and change `approved` to `consumed`. Two concurrent\n     * callers with one token must yield exactly one `consumed` and one `replay` result.\n     */\n    consume(input: {\n        readonly approvalId: string;\n        readonly tenantId: string;\n        readonly principalId: string;\n        readonly capability: string;\n        readonly target?: string;\n        readonly digest?: string;\n        readonly tokenHash: string;\n        readonly now: number;\n    }): ApprovalConsumeResult | Promise<ApprovalConsumeResult>;\n}"
   },
   {
     "name": "ApprovalTokenExpiredError",
@@ -2629,7 +2629,7 @@
     "name": "decode",
     "kind": "function",
     "package": "@nifrajs/core",
-    "signature": "export declare function decode(wire: Wire): unknown;",
+    "signature": "export declare function decode(wire: Wire, limits?: WireDecodeLimits): unknown;",
     "doc": "/** Reconstruct the original value from a {@link Wire} form produced by {@link encode}. */"
   },
   {
@@ -2710,6 +2710,12 @@
     "kind": "const",
     "package": "@nifrajs/cli",
     "signature": "export declare const DEFAULT_SNAPSHOT_FILE = \"api-snapshot.json\";"
+  },
+  {
+    "name": "DEFAULT_WIRE_DECODE_LIMITS",
+    "kind": "const",
+    "package": "@nifrajs/core",
+    "signature": "export declare const DEFAULT_WIRE_DECODE_LIMITS: Readonly<Required<WireDecodeLimits>>;"
   },
   {
     "name": "defer",
@@ -3121,7 +3127,7 @@
     "name": "DurableEffectStore",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface DurableEffectStore {\n    readonly durability?: \"memory\" | \"durable\";\n    create(record: DurableEffectRecord): boolean | Promise<boolean>;\n    get(effectId: string): DurableEffectRecord | undefined | Promise<DurableEffectRecord | undefined>;\n    /** Atomic compare-and-set; exactly one caller may advance the supplied `version` and `from` state. */\n    transition(input: {\n        readonly effectId: string;\n        readonly version: number;\n        readonly from: DurableEffectState;\n        readonly to: DurableEffectState;\n        readonly updatedAt: number;\n        readonly errorCode?: string;\n    }): boolean | Promise<boolean>;\n    list(): readonly DurableEffectRecord[] | Promise<readonly DurableEffectRecord[]>;\n}"
+    "signature": "export interface DurableEffectStore {\n    readonly durability?: \"memory\" | \"durable\";\n    create(record: DurableEffectRecord): boolean | Promise<boolean>;\n    get(effectId: string): DurableEffectRecord | undefined | Promise<DurableEffectRecord | undefined>;\n    /** Atomic compare-and-set; exactly one caller may advance the supplied `version` and `from` state. */\n    transition(input: {\n        readonly effectId: string;\n        readonly version: number;\n        readonly from: DurableEffectState;\n        readonly to: DurableEffectState;\n        readonly updatedAt: number;\n        readonly errorCode?: string;\n    }): boolean | Promise<boolean>;\n    /** Bounded operational scan. Transition-only stores do not need to implement reconciliation. */\n    scan?(input: ReconciliationScanOptions<DurableEffectState>): ReconciliationScanPage<DurableEffectRecord> | Promise<ReconciliationScanPage<DurableEffectRecord>>;\n    /** @deprecated Compatibility fallback; production reconciliation should implement `scan`. */\n    list?(): readonly DurableEffectRecord[] | Promise<readonly DurableEffectRecord[]>;\n}"
   },
   {
     "name": "DurableEffectTransitionError",
@@ -3284,7 +3290,7 @@
     "name": "EffectTracingOptions",
     "kind": "interface",
     "package": "@nifrajs/otel",
-    "signature": "export interface EffectTracingOptions {\n    readonly exporter?: ObservationAdapter;\n    readonly adapters?: readonly ObservationAdapter[];\n}"
+    "signature": "export interface EffectTracingOptions {\n    readonly exporter?: ObservationAdapter;\n    readonly adapters?: readonly ObservationAdapter[];\n    /** Maximum unmatched started events retained at once. Default 10,000. */\n    readonly maxActive?: number;\n    /** Opportunistically expire unmatched events older than this many milliseconds. Default 5 min. */\n    readonly maxActiveAgeMs?: number;\n    /** Injectable wall clock for deterministic retention tests. */\n    readonly now?: () => number;\n}"
   },
   {
     "name": "EffectTracingPlugin",
@@ -5839,7 +5845,7 @@
     "name": "MemoryDurableEffectStore",
     "kind": "class",
     "package": "@nifrajs/core",
-    "signature": "export declare class MemoryDurableEffectStore implements DurableEffectStore {\n    readonly durability: \"memory\";\n    private readonly records;\n    create(record: DurableEffectRecord): boolean;\n    get(effectId: string): DurableEffectRecord | undefined;\n    transition(input: Parameters<DurableEffectStore[\"transition\"]>[0]): boolean;\n    list(): readonly DurableEffectRecord[];\n}"
+    "signature": "export declare class MemoryDurableEffectStore implements DurableEffectStore {\n    readonly durability: \"memory\";\n    private readonly records;\n    private readonly byState;\n    create(record: DurableEffectRecord): boolean;\n    get(effectId: string): DurableEffectRecord | undefined;\n    transition(input: Parameters<DurableEffectStore[\"transition\"]>[0]): boolean;\n    list(): readonly DurableEffectRecord[];\n    scan(input: ReconciliationScanOptions<DurableEffectState>): ReconciliationScanPage<DurableEffectRecord>;\n}"
   },
   {
     "name": "MemoryIdempotencyStore",
@@ -5902,7 +5908,7 @@
     "name": "MemorySagaStore",
     "kind": "class",
     "package": "@nifrajs/core",
-    "signature": "export declare class MemorySagaStore implements SagaStore {\n    readonly durability: \"memory\";\n    private readonly records;\n    create(record: SagaRecord): boolean;\n    get(sagaId: string): SagaRecord | undefined;\n    compareAndSet(input: Parameters<SagaStore[\"compareAndSet\"]>[0]): boolean;\n    list(): readonly SagaRecord[];\n}"
+    "signature": "export declare class MemorySagaStore implements SagaStore {\n    readonly durability: \"memory\";\n    private readonly records;\n    private readonly byState;\n    create(record: SagaRecord): boolean;\n    get(sagaId: string): SagaRecord | undefined;\n    compareAndSet(input: Parameters<SagaStore[\"compareAndSet\"]>[0]): boolean;\n    list(): readonly SagaRecord[];\n    scan(input: ReconciliationScanOptions<SagaState>): ReconciliationScanPage<SagaRecord>;\n}"
   },
   {
     "name": "MemorySessionStore",
@@ -6700,7 +6706,7 @@
     "name": "parse",
     "kind": "function",
     "package": "@nifrajs/core",
-    "signature": "export declare function parse(text: string): unknown;",
+    "signature": "export declare function parse(text: string, limits?: WireDecodeLimits): unknown;",
     "doc": "/** `JSON.parse` + `decode` in one call - the rich-type equivalent of `JSON.parse`. */"
   },
   {
@@ -7512,10 +7518,40 @@
     "signature": "export declare function reconcileEffects(store: DurableEffectStore, options: {\n    readonly staleBefore: number;\n    readonly observer?: EffectLifecycleObserver;\n}): Promise<readonly EffectReconciliationFinding[]>;"
   },
   {
+    "name": "reconcileEffectsPage",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function reconcileEffectsPage(store: DurableEffectStore, options: {\n    readonly staleBefore: number;\n    readonly observer?: EffectLifecycleObserver;\n    readonly cursor?: string;\n    readonly limit?: number;\n}): Promise<ReconciliationPage<EffectReconciliationFinding>>;"
+  },
+  {
     "name": "reconcileSagas",
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function reconcileSagas(store: SagaStore, options: {\n    readonly staleBefore: number;\n}): Promise<readonly SagaReconciliationFinding[]>;"
+  },
+  {
+    "name": "reconcileSagasPage",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function reconcileSagasPage(store: SagaStore, options: {\n    readonly staleBefore: number;\n    readonly cursor?: string;\n    readonly limit?: number;\n}): Promise<ReconciliationPage<SagaReconciliationFinding>>;"
+  },
+  {
+    "name": "ReconciliationPage",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ReconciliationPage<Finding> {\n    readonly findings: readonly Finding[];\n    readonly cursor?: string;\n}"
+  },
+  {
+    "name": "ReconciliationScanOptions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ReconciliationScanOptions<State extends string> {\n    readonly states: readonly State[];\n    readonly updatedBefore?: number;\n    readonly cursor?: string;\n    readonly limit: number;\n}"
+  },
+  {
+    "name": "ReconciliationScanPage",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ReconciliationScanPage<Record> {\n    readonly records: readonly Record[];\n    readonly cursor?: string;\n}"
   },
   {
     "name": "recordCapabilityOutcome",
@@ -8659,6 +8695,12 @@
     "doc": "/** Confine a project-relative path under `cwd` and return the absolute path. Rejects a spec that escapes\n * the root (defense-in-depth — these specs are constants, but the cwd-confinement invariant is enforced\n * at the seam, not assumed). Exported so the invariant is directly testable. */"
   },
   {
+    "name": "SagaAmbiguityResolution",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type SagaAmbiguityResolution = {\n    readonly kind: \"execution\";\n    readonly step: string;\n    readonly effectId: string;\n    readonly outcome: \"committed\";\n    /** Provider-confirmed result required by later saga steps. */\n    readonly result: unknown;\n} | {\n    readonly kind: \"execution\";\n    readonly step: string;\n    readonly effectId: string;\n    readonly outcome: \"not-committed\";\n    readonly errorCode?: string;\n} | {\n    readonly kind: \"compensation\";\n    readonly step: string;\n    readonly effectId: string;\n    readonly outcome: \"compensated\" | \"not-compensated\";\n};"
+  },
+  {
     "name": "SagaAmbiguousStepError",
     "kind": "class",
     "package": "@nifrajs/core",
@@ -8686,7 +8728,7 @@
     "name": "SagaEngine",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface SagaEngine {\n    execute<I, C extends Record<string, unknown>>(definition: SagaDefinition<I, C>, sagaId: string, input: I, options?: {\n        readonly signal?: AbortSignal;\n    }): Promise<SagaRecord>;\n    resume<I, C extends Record<string, unknown>>(definition: SagaDefinition<I, C>, sagaId: string, options?: {\n        readonly signal?: AbortSignal;\n    }): Promise<SagaRecord>;\n    compensate<I, C extends Record<string, unknown>>(definition: SagaDefinition<I, C>, sagaId: string, options?: {\n        readonly signal?: AbortSignal;\n    }): Promise<SagaRecord>;\n}"
+    "signature": "export interface SagaEngine {\n    execute<I, C extends Record<string, unknown>>(definition: SagaDefinition<I, C>, sagaId: string, input: I, options?: {\n        readonly signal?: AbortSignal;\n    }): Promise<SagaRecord>;\n    resume<I, C extends Record<string, unknown>>(definition: SagaDefinition<I, C>, sagaId: string, options?: {\n        readonly signal?: AbortSignal;\n    }): Promise<SagaRecord>;\n    compensate<I, C extends Record<string, unknown>>(definition: SagaDefinition<I, C>, sagaId: string, options?: {\n        readonly signal?: AbortSignal;\n    }): Promise<SagaRecord>;\n    /**\n     * Apply a provider/operator-confirmed outcome to an ambiguous durable transition. The supplied\n     * effect id must match the stored execution/compensation id, preventing a stale review from\n     * resolving a later operation. Call `resume` or `compensate` after the resolution.\n     */\n    resolveAmbiguity<I, C extends Record<string, unknown>>(definition: SagaDefinition<I, C>, sagaId: string, resolution: SagaAmbiguityResolution): Promise<SagaRecord>;\n}"
   },
   {
     "name": "SagaEngineOptions",
@@ -8705,6 +8747,12 @@
     "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface SagaRecord {\n    readonly sagaId: string;\n    readonly definition: string;\n    readonly state: SagaState;\n    readonly input: unknown;\n    readonly steps: readonly SagaStepRecord[];\n    readonly createdAt: number;\n    readonly updatedAt: number;\n    readonly version: number;\n}"
+  },
+  {
+    "name": "SagaResolutionError",
+    "kind": "class",
+    "package": "@nifrajs/core",
+    "signature": "export declare class SagaResolutionError extends Error {\n    readonly sagaId: string;\n    readonly step: string;\n    constructor(sagaId: string, step: string, message: string);\n}"
   },
   {
     "name": "SagaRunContext",
@@ -8747,7 +8795,7 @@
     "name": "SagaStore",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface SagaStore {\n    readonly durability?: \"memory\" | \"durable\";\n    create(record: SagaRecord): boolean | Promise<boolean>;\n    get(sagaId: string): SagaRecord | undefined | Promise<SagaRecord | undefined>;\n    /** Atomic version compare-and-set; this is the saga engine's crash/concurrency boundary. */\n    compareAndSet(input: {\n        readonly sagaId: string;\n        readonly version: number;\n        readonly record: SagaRecord;\n    }): boolean | Promise<boolean>;\n    list(): readonly SagaRecord[] | Promise<readonly SagaRecord[]>;\n}"
+    "signature": "export interface SagaStore {\n    readonly durability?: \"memory\" | \"durable\";\n    create(record: SagaRecord): boolean | Promise<boolean>;\n    get(sagaId: string): SagaRecord | undefined | Promise<SagaRecord | undefined>;\n    /** Atomic version compare-and-set; this is the saga engine's crash/concurrency boundary. */\n    compareAndSet(input: {\n        readonly sagaId: string;\n        readonly version: number;\n        readonly record: SagaRecord;\n    }): boolean | Promise<boolean>;\n    /** Bounded operational scan. Transition-only stores do not need to implement reconciliation. */\n    scan?(input: ReconciliationScanOptions<SagaState>): ReconciliationScanPage<SagaRecord> | Promise<ReconciliationScanPage<SagaRecord>>;\n    /** @deprecated Compatibility fallback; production reconciliation should implement `scan`. */\n    list?(): readonly SagaRecord[] | Promise<readonly SagaRecord[]>;\n}"
   },
   {
     "name": "sanitizeOutputNames",
@@ -11014,6 +11062,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare class WireDecodeError extends TypeError {\n    constructor(message: string);\n}",
     "doc": "/** Thrown by {@link decode} for a wire value carrying an unknown tag, a bad index, or malformed shape. */"
+  },
+  {
+    "name": "WireDecodeLimits",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface WireDecodeLimits {\n    /** Maximum number of interned nodes. Default 10,000. */\n    readonly maxNodes?: number;\n    /** Maximum nesting depth across containers and references. Default 256. */\n    readonly maxDepth?: number;\n    /** Maximum total object/array/map/set entries visited. Default 100,000. */\n    readonly maxCollectionEntries?: number;\n    /** Maximum UTF-8 string plus decoded binary bytes materialized. Default 16 MiB. */\n    readonly maxDecodedBytes?: number;\n}",
+    "doc": "/** Resource limits applied while reconstructing transport-controlled wire data. */"
   },
   {
     "name": "WireEncodeError",

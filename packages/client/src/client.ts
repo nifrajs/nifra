@@ -4,6 +4,13 @@ import {
   type BackendMountHandler,
   NIFRA_BACKEND_MOUNT,
 } from "@nifrajs/core/mount"
+import {
+  createTransportCodecRegistry,
+  decodeTransportResponse,
+  plainJsonCodec,
+  type TransportCodec,
+  type TransportCodecRegistry,
+} from "@nifrajs/core/transport-codec"
 import type { ApiError, Result } from "./result.ts"
 import type { Subscription, Treaty, TreatyFromRegistry } from "./treaty.ts"
 import { ResponseContractViolation, withResponseValidation } from "./validate-responses.ts"
@@ -67,6 +74,15 @@ export interface ClientOptions {
   readonly timeoutMs?: number
   /** Enable safe automatic retries. See {@link ClientRetryOptions}. */
   readonly retry?: ClientRetryOptions
+  /**
+   * Opt into a versioned transport representation. Plain JSON remains the default. Responses are
+   * decoded through the bounded registry, and WebSocket frames use the same codec.
+   */
+  readonly transport?: {
+    readonly codec: TransportCodec
+    readonly registry?: TransportCodecRegistry
+    readonly maxBytes?: number
+  }
 }
 
 const DEFAULT_RETRY_STATUSES: readonly number[] = [502, 503, 504]
@@ -231,7 +247,11 @@ function createProxy(base: string, path: string, options: ClientOptions): unknow
           openWebSocket(
             base,
             path,
-            { headers: options.headers, ...wsOptions },
+            {
+              headers: options.headers,
+              ...wsOptions,
+              ...(options.transport === undefined ? {} : { transport: options.transport }),
+            },
             NO_SOCKET in options,
           )
       }
@@ -279,8 +299,10 @@ async function execute(
   }
   const init: RequestInit = { method, headers }
   if (body !== undefined) {
-    init.body = JSON.stringify(body)
-    headers["content-type"] = "application/json"
+    const codec = options.transport?.codec ?? plainJsonCodec
+    init.body = codec.encode(body)
+    headers["content-type"] = codec.mediaType
+    if (options.transport !== undefined) headers.accept ??= codec.mediaType
   }
   const { signal, timeout } = buildSignal(callOptions?.signal, options.timeoutMs)
   if (signal !== undefined) init.signal = signal
@@ -322,7 +344,7 @@ async function execute(
 
   if (options.onResponse !== undefined) await options.onResponse({ url, method, response })
 
-  const data = await parseBody(response)
+  const data = await parseBody(response, options)
   if (response.ok) {
     return { ok: true, status: response.status, data, error: null }
   }
@@ -533,8 +555,27 @@ function buildQuery(query: Record<string, unknown>): string {
   return params.toString()
 }
 
-async function parseBody(response: Response): Promise<unknown> {
+function transportRegistry(options: ClientOptions): TransportCodecRegistry {
+  if (options.transport?.registry !== undefined) return options.transport.registry
+  const codec = options.transport?.codec
+  return codec === undefined || codec === plainJsonCodec
+    ? createTransportCodecRegistry([plainJsonCodec])
+    : createTransportCodecRegistry([plainJsonCodec, codec])
+}
+
+async function parseBody(response: Response, options: ClientOptions): Promise<unknown> {
   if (response.status === 204) return undefined
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? ""
+  if (
+    contentType.startsWith("application/json") ||
+    contentType.startsWith("application/vnd.nifra.")
+  ) {
+    return await decodeTransportResponse(response, transportRegistry(options), {
+      ...(options.transport?.maxBytes === undefined
+        ? {}
+        : { maxBytes: options.transport.maxBytes }),
+    })
+  }
   const text = await response.text()
   if (text === "") return undefined
   try {

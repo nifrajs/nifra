@@ -123,8 +123,9 @@ export default server().post("/users", { body }, (c) => ({ name: c.body.name }))
 // enough that a newly reachable optional subsystem fails CI. Update only with an explained benchmark diff.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-bare": 15.5,
-  "nifra-idempotency": 18,
-  "nifra-effect-ledger": 17,
+  // Shared server registration now caps capability timers at the JS timer ceiling (+<30 raw bytes).
+  "nifra-idempotency": 18.02,
+  "nifra-effect-ledger": 17.02,
   "nifra-mcp": 16,
   "nifra-sse": 16,
   "nifra-valibot": 16.5,
@@ -152,7 +153,9 @@ const main = async (): Promise<void> => {
   const budgetFailures = features.flatMap((row) => {
     const budgetKb = FEATURE_GZIP_BUDGET_KB[row.label]
     if (budgetKb === undefined || row.gz <= budgetKb * 1024) return []
-    return [`${row.label}: ${kb(row.gz)} exceeds ${budgetKb.toFixed(1)} KB gzip budget`]
+    return [
+      `${row.label}: ${kb(row.gz)} (${row.gz} B) exceeds ${budgetKb.toFixed(1)} KB gzip budget`,
+    ]
   })
   if (budgetFailures.length > 0) {
     throw new Error(`Bundle size budget failed:\n  ${budgetFailures.join("\n  ")}`)

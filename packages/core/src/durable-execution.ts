@@ -6,12 +6,14 @@
  */
 
 import { type EffectLifecycleObserver, emitEffectLifecycle } from "./effect-lifecycle.ts"
+import { createEffectScope } from "./effect-scope.ts"
 import type {
   CapabilityApprovalGate,
   CapabilityExecutionIdentity,
   CapabilityExecutionJournal,
 } from "./internal/capability-runtime.ts"
 import { validCapabilityId } from "./internal/capability-runtime.ts"
+import { safeEqual } from "./internal/safe-equal.ts"
 
 export type { CapabilityApprovalGate, CapabilityExecutionIdentity, CapabilityExecutionJournal }
 
@@ -34,6 +36,23 @@ function assertToken(value: string, label: string, maxLength = 255): void {
 function assertPositiveMs(value: number, label: string): void {
   if (!Number.isSafeInteger(value) || value < 1)
     throw new RangeError(`${label} must be a positive safe integer`)
+}
+
+function assertTimestamp(value: number, label: string): void {
+  if (!Number.isSafeInteger(value) || value < 0)
+    throw new RangeError(`${label} must be a non-negative safe integer timestamp`)
+}
+
+function readClock(clock: () => number, label: string): number {
+  const value = clock()
+  assertTimestamp(value, label)
+  return value
+}
+
+function addDuration(timestamp: number, duration: number, label: string): number {
+  const result = timestamp + duration
+  assertTimestamp(result, label)
+  return result
 }
 
 function bytesToBase64Url(bytes: Uint8Array): string {
@@ -149,11 +168,37 @@ export function createDurableEffectJournal(
   if (options.store.durability !== "durable" && options.allowMemoryStore !== true) {
     throw new TypeError('durable effect journal requires store.durability === "durable"')
   }
-  const now = options.now ?? Date.now
+  const clock = options.now ?? Date.now
+  const now = (): number => readClock(clock, "durable effect clock")
 
   const current = async (effectId: string): Promise<DurableEffectRecord> => {
+    assertToken(effectId, "durable effect id", 64)
     const record = await options.store.get(effectId)
     if (record === undefined) throw new DurableEffectTransitionError(effectId, "missing")
+    if (
+      record.effectId !== effectId ||
+      !validCapabilityId(record.capability) ||
+      !["admission", "executing", "committed", "failed", "unknown"].includes(record.state) ||
+      !Number.isSafeInteger(record.version) ||
+      record.version < 1
+    ) {
+      throw new TypeError(`durable effect ${effectId}: store returned an invalid record`)
+    }
+    assertTimestamp(record.createdAt, "durable effect createdAt")
+    assertTimestamp(record.updatedAt, "durable effect updatedAt")
+    if (record.createdAt > record.updatedAt)
+      throw new TypeError(`durable effect ${effectId}: updatedAt precedes createdAt`)
+    if (record.target !== undefined) assertToken(record.target, "stored durable effect target", 128)
+    if (record.digest !== undefined && !/^[0-9a-f]{64}$/u.test(record.digest))
+      throw new TypeError(`durable effect ${effectId}: store returned an invalid digest`)
+    if (record.tenantId !== undefined)
+      assertToken(record.tenantId, "stored durable effect tenantId")
+    if (record.principalId !== undefined)
+      assertToken(record.principalId, "stored durable effect principalId")
+    if ((record.tenantId === undefined) !== (record.principalId === undefined))
+      throw new TypeError(`durable effect ${effectId}: store returned a partial identity`)
+    if (record.errorCode !== undefined && !ERROR_CODE.test(record.errorCode))
+      throw new TypeError(`durable effect ${effectId}: store returned an invalid error code`)
     return record
   }
   const transition = async (
@@ -628,7 +673,8 @@ export function createApprovalCoordinator(
   const secret = new Uint8Array(options.secret)
   const ttlMs = options.ttlMs ?? 15 * 60_000
   assertPositiveMs(ttlMs, "approval ttlMs")
-  const now = options.now ?? Date.now
+  const clock = options.now ?? Date.now
+  const now = (): number => readClock(clock, "approval clock")
   const key = crypto.subtle.importKey("raw", secret, { name: "HMAC", hash: "SHA-256" }, false, [
     "sign",
     "verify",
@@ -683,9 +729,9 @@ export function createApprovalCoordinator(
       if (input.resumeToken === undefined) {
         const approvalId = crypto.randomUUID()
         const nonce = bytesToBase64Url(crypto.getRandomValues(new Uint8Array(18)))
-        const expiresAt = now() + ttlMs
+        const issuedAt = now()
+        const expiresAt = addDuration(issuedAt, ttlMs, "approval expiry")
         const resumeToken = await sign({ v: 1, id: approvalId, nonce, exp: expiresAt })
-        const at = now()
         const accepted = await options.store.create(
           Object.freeze({
             approvalId,
@@ -697,9 +743,9 @@ export function createApprovalCoordinator(
             principalId: input.identity.principalId,
             tokenHash: await sha256(resumeToken),
             state: "pending" as const,
-            createdAt: at,
+            createdAt: issuedAt,
             expiresAt,
-            updatedAt: at,
+            updatedAt: issuedAt,
             version: 1,
           }),
         )
@@ -733,6 +779,7 @@ export function createApprovalCoordinator(
       if (!accepted) throw new Error("approval decision rejected")
     },
     async get(approvalId: string) {
+      assertToken(approvalId, "approval id", 128)
       return await options.store.get(approvalId)
     },
   }
@@ -781,10 +828,10 @@ export class MemoryApprovalStore implements ApprovalStore {
       record.principalId !== input.principalId ||
       record.capability !== input.capability ||
       record.target !== input.target ||
-      record.digest !== input.digest
+      !safeEqual(record.digest, input.digest)
     )
       return { state: "binding" }
-    if (record.tokenHash !== input.tokenHash) return { state: "token" }
+    if (!safeEqual(record.tokenHash, input.tokenHash)) return { state: "token" }
     if (record.state === "consumed") return { state: "replay" }
     if (record.expiresAt <= input.now || record.state === "expired") {
       if (record.state !== "expired")
@@ -909,13 +956,49 @@ export interface SagaDefinition<I, C extends Record<string, unknown>> {
   }
 }
 
-export function defineSaga<I, C extends Record<string, unknown>>(
+function assertSagaDefinition<I, C extends Record<string, unknown>>(
   definition: SagaDefinition<I, C>,
-): SagaDefinition<I, C> {
+): void {
+  if (typeof definition !== "object" || definition === null)
+    throw new TypeError("saga definition must be an object")
   assertToken(definition.name, "saga definition", 128)
   if (definition.capability !== undefined && !validCapabilityId(definition.capability))
     throw new TypeError("saga capability is invalid")
-  return Object.freeze(definition)
+  if (typeof definition.run !== "function") throw new TypeError("saga run must be a function")
+  if (
+    typeof definition.compensators !== "object" ||
+    definition.compensators === null ||
+    Array.isArray(definition.compensators)
+  ) {
+    throw new TypeError("saga compensators must be an object")
+  }
+  for (const [name, compensator] of Object.entries(definition.compensators)) {
+    assertToken(name, "saga compensator name", 128)
+    if (typeof compensator !== "function")
+      throw new TypeError(`saga compensator ${name} must be a function`)
+  }
+  if (definition.retry !== undefined) {
+    if (typeof definition.retry !== "object" || definition.retry === null)
+      throw new TypeError("saga retry must be an object")
+    if (definition.retry.maxAttempts !== undefined)
+      assertPositiveMs(definition.retry.maxAttempts, "saga maxAttempts")
+    if (
+      definition.retry.backoffMs !== undefined &&
+      typeof definition.retry.backoffMs !== "function"
+    )
+      throw new TypeError("saga backoffMs must be a function")
+  }
+}
+
+export function defineSaga<I, C extends Record<string, unknown>>(
+  definition: SagaDefinition<I, C>,
+): SagaDefinition<I, C> {
+  assertSagaDefinition(definition)
+  return Object.freeze({
+    ...definition,
+    compensators: Object.freeze({ ...definition.compensators }),
+    ...(definition.retry === undefined ? {} : { retry: Object.freeze({ ...definition.retry }) }),
+  })
 }
 
 export class SagaConcurrencyError extends Error {
@@ -932,6 +1015,17 @@ export class SagaAmbiguousStepError extends Error {
   ) {
     super(`saga ${sagaId}: step ${step} has an ambiguous effect`)
     this.name = "SagaAmbiguousStepError"
+  }
+}
+
+export class SagaResolutionError extends Error {
+  constructor(
+    public readonly sagaId: string,
+    public readonly step: string,
+    message: string,
+  ) {
+    super(`saga ${sagaId}: step ${step} ${message}`)
+    this.name = "SagaResolutionError"
   }
 }
 /** Throw this only when a provider conclusively proves that no effect committed. */
@@ -951,6 +1045,29 @@ export interface SagaEngineOptions {
   readonly allowMemoryStore?: boolean
 }
 
+export type SagaAmbiguityResolution =
+  | {
+      readonly kind: "execution"
+      readonly step: string
+      readonly effectId: string
+      readonly outcome: "committed"
+      /** Provider-confirmed result required by later saga steps. */
+      readonly result: unknown
+    }
+  | {
+      readonly kind: "execution"
+      readonly step: string
+      readonly effectId: string
+      readonly outcome: "not-committed"
+      readonly errorCode?: string
+    }
+  | {
+      readonly kind: "compensation"
+      readonly step: string
+      readonly effectId: string
+      readonly outcome: "compensated" | "not-compensated"
+    }
+
 export interface SagaEngine {
   execute<I, C extends Record<string, unknown>>(
     definition: SagaDefinition<I, C>,
@@ -968,6 +1085,17 @@ export interface SagaEngine {
     sagaId: string,
     options?: { readonly signal?: AbortSignal },
   ): Promise<SagaRecord>
+  /**
+   * Apply a provider/operator-confirmed outcome to an ambiguous durable transition. The supplied
+   * effect id must match the stored execution/compensation id, preventing a stale review from
+   * resolving a later operation. The caller remains responsible for authenticating and authorizing
+   * the operator. Call `resume` or `compensate` after the resolution.
+   */
+  resolveAmbiguity<I, C extends Record<string, unknown>>(
+    definition: SagaDefinition<I, C>,
+    sagaId: string,
+    resolution: SagaAmbiguityResolution,
+  ): Promise<SagaRecord>
 }
 
 let neverAbortSignal: AbortSignal | undefined
@@ -976,15 +1104,70 @@ function signalOrNever(signal?: AbortSignal): AbortSignal {
   return signal ?? neverAbortSignal
 }
 
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) {
+    throw signal.reason instanceof Error ? signal.reason : new Error("saga execution aborted")
+  }
+}
+
 export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
   if (options.store.durability !== "durable" && options.allowMemoryStore !== true)
     throw new TypeError('saga engine requires store.durability === "durable"')
-  const now = options.now ?? Date.now
+  const clock = options.now ?? Date.now
+  const now = (): number => readClock(clock, "saga clock")
   const observer = options.observer
 
   const load = async (sagaId: string): Promise<SagaRecord> => {
     const record = await options.store.get(sagaId)
     if (record === undefined) throw new Error(`saga ${sagaId}: not found`)
+    if (
+      record.sagaId !== sagaId ||
+      !["running", "compensating", "completed", "compensated", "manual-review"].includes(
+        record.state,
+      ) ||
+      !Array.isArray(record.steps) ||
+      !Number.isSafeInteger(record.version) ||
+      record.version < 1
+    ) {
+      throw new TypeError(`saga ${sagaId}: store returned an invalid record`)
+    }
+    assertToken(record.definition, "stored saga definition", 128)
+    assertTimestamp(record.createdAt, "stored saga createdAt")
+    assertTimestamp(record.updatedAt, "stored saga updatedAt")
+    if (record.createdAt > record.updatedAt)
+      throw new TypeError(`saga ${sagaId}: updatedAt precedes createdAt`)
+    const names = new Set<string>()
+    const effectIds = new Set<string>()
+    for (const step of record.steps) {
+      assertToken(step.name, "stored saga step", 128)
+      assertToken(step.effectId, "stored saga effect id", 64)
+      assertToken(step.compensationEffectId, "stored saga compensation effect id", 64)
+      if (
+        ![
+          "executing",
+          "committed",
+          "failed",
+          "ambiguous",
+          "compensating",
+          "compensation-failed",
+          "compensated",
+        ].includes(step.state) ||
+        !Number.isSafeInteger(step.attempts) ||
+        step.attempts < 0 ||
+        names.has(step.name) ||
+        effectIds.has(step.effectId) ||
+        effectIds.has(step.compensationEffectId)
+      ) {
+        throw new TypeError(`saga ${sagaId}: store returned an invalid step record`)
+      }
+      names.add(step.name)
+      effectIds.add(step.effectId)
+      effectIds.add(step.compensationEffectId)
+      if (step.nextAttemptAt !== undefined)
+        assertTimestamp(step.nextAttemptAt, "stored saga nextAttemptAt")
+      if (step.errorCode !== undefined && !ERROR_CODE.test(step.errorCode))
+        throw new TypeError(`saga ${sagaId}: store returned an invalid error code`)
+    }
     return record
   }
   const save = async (
@@ -1017,16 +1200,19 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
     ),
     updatedAt: now(),
   })
-  const emit = (input: Parameters<typeof emitEffectLifecycle>[1]): void => {
-    if (observer !== undefined) emitEffectLifecycle([observer], input)
-  }
+  const effectScope = createEffectScope({
+    ...(observer === undefined ? {} : { observers: [observer] }),
+  })
 
   const compensate = async <I, C extends Record<string, unknown>>(
     definition: SagaDefinition<I, C>,
     sagaId: string,
     runOptions: { readonly signal?: AbortSignal } = {},
   ): Promise<SagaRecord> => {
+    assertSagaDefinition(definition)
+    assertToken(sagaId, "saga id", 128)
     const signal = signalOrNever(runOptions.signal)
+    throwIfAborted(signal)
     let record = await load(sagaId)
     if (record.definition !== definition.name) throw new TypeError("saga definition mismatch")
     if (record.state === "completed" || record.state === "compensated") return record
@@ -1042,7 +1228,11 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
         (step) =>
           step.state === "ambiguous" || step.state === "executing" || step.state === "compensating",
       ) as SagaStepRecord
-      throw new SagaAmbiguousStepError(sagaId, ambiguous.name, ambiguous.effectId)
+      throw new SagaAmbiguousStepError(
+        sagaId,
+        ambiguous.name,
+        ambiguous.state === "compensating" ? ambiguous.compensationEffectId : ambiguous.effectId,
+      )
     }
     if (record.state !== "compensating")
       record = await save(record, { ...record, state: "compensating", updatedAt: now() })
@@ -1053,6 +1243,7 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
       ((attempt: number) => Math.min(60_000, 100 * 2 ** (attempt - 1)))
 
     for (let index = record.steps.length - 1; index >= 0; index--) {
+      throwIfAborted(signal)
       let step = record.steps[index] as SagaStepRecord
       if (step.state === "compensated" || step.state === "failed") continue
       if (step.state !== "committed" && step.state !== "compensation-failed") continue
@@ -1062,61 +1253,76 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
         record = await save(record, { ...record, state: "manual-review", updatedAt: now() })
         return record
       }
-      const attempt = step.attempts + 1
-      step = { ...step, state: "compensating", attempts: attempt }
-      delete (step as { nextAttemptAt?: number }).nextAttemptAt
-      record = await save(record, withStep(record, index, step))
-      const started = performance.now()
-      emit({
-        effectId: step.compensationEffectId,
-        capability: definition.capability ?? "saga.compensate",
-        stage: "compensation",
-        phase: "started",
-        attempt,
-      })
-      try {
-        await compensator(cloneValue(step.compensationArgs) as C[keyof C], {
-          effectId: step.compensationEffectId,
-          sagaId,
-          attempt,
-          signal,
-        })
-      } catch {
-        const exhausted = attempt >= maxAttempts
-        const delay = exhausted ? undefined : backoff(attempt)
-        if (delay !== undefined && (!Number.isSafeInteger(delay) || delay < 0))
-          throw new RangeError("saga backoff must return a non-negative safe integer")
-        const failed: SagaStepRecord = {
-          ...step,
-          state: "compensation-failed",
-          errorCode: "compensation_failed",
-          ...(delay === undefined ? {} : { nextAttemptAt: now() + delay }),
-        }
-        record = await save(
-          record,
-          withStep(record, index, failed, exhausted ? "manual-review" : "compensating"),
-        )
-        emit({
-          effectId: step.compensationEffectId,
-          capability: definition.capability ?? "saga.compensate",
-          stage: "compensation",
-          phase: "failed",
-          attempt,
-          durationMs: Math.max(0, performance.now() - started),
-          errorCode: exhausted ? "retry_exhausted" : "compensation_failed",
-        })
+      if (step.attempts >= maxAttempts) {
+        if (record.state !== "manual-review")
+          record = await save(record, { ...record, state: "manual-review", updatedAt: now() })
         return record
       }
-      step = { ...step, state: "compensated" }
-      record = await save(record, withStep(record, index, step))
-      emit({
-        effectId: step.compensationEffectId,
-        capability: definition.capability ?? "saga.compensate",
-        stage: "compensation",
-        phase: "succeeded",
-        attempt,
-        durationMs: Math.max(0, performance.now() - started),
-      })
+      const attempt = step.attempts + 1
+      const { errorCode: _errorCode, nextAttemptAt: _nextAttemptAt, ...stepBase } = step
+      step = { ...stepBase, state: "compensating", attempts: attempt }
+      let transitionError: unknown
+      try {
+        await effectScope.run(
+          {
+            effectId: step.compensationEffectId,
+            capability: definition.capability ?? "saga.compensate",
+            stage: "compensation",
+            signal,
+            attempt,
+            failurePhase: () => "failed",
+            errorCode: () => "compensation_failed",
+            transitions: {
+              async executing() {
+                record = await save(record, withStep(record, index, step))
+              },
+              async committed() {
+                step = { ...step, state: "compensated" }
+                record = await save(record, withStep(record, index, step))
+              },
+              async failed() {
+                const exhausted = attempt >= maxAttempts
+                try {
+                  const delay = exhausted ? undefined : backoff(attempt)
+                  if (delay !== undefined && (!Number.isSafeInteger(delay) || delay < 0))
+                    throw new RangeError("saga backoff must return a non-negative safe integer")
+                  const failed: SagaStepRecord = {
+                    ...step,
+                    state: "compensation-failed",
+                    errorCode: "compensation_failed",
+                    ...(delay === undefined
+                      ? {}
+                      : { nextAttemptAt: addDuration(now(), delay, "saga next retry") }),
+                  }
+                  record = await save(
+                    record,
+                    withStep(record, index, failed, exhausted ? "manual-review" : "compensating"),
+                  )
+                } catch (error) {
+                  transitionError = error
+                  const failed: SagaStepRecord = {
+                    ...step,
+                    state: "compensation-failed",
+                    errorCode: "invalid_retry_policy",
+                  }
+                  record = await save(record, withStep(record, index, failed, "manual-review"))
+                }
+              },
+            },
+          },
+          async (owned) => {
+            await compensator(cloneValue(step.compensationArgs) as C[keyof C], {
+              effectId: owned.effectId,
+              sagaId,
+              attempt,
+              signal: owned.signal,
+            })
+          },
+        )
+      } catch {
+        if (transitionError !== undefined) throw transitionError
+        return record
+      }
     }
     return await save(record, { ...record, state: "compensated", updatedAt: now() })
   }
@@ -1126,12 +1332,21 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
     sagaId: string,
     runOptions: { readonly signal?: AbortSignal } = {},
   ): Promise<SagaRecord> => {
+    assertSagaDefinition(definition)
+    assertToken(sagaId, "saga id", 128)
     const signal = signalOrNever(runOptions.signal)
+    throwIfAborted(signal)
     let record = await load(sagaId)
     if (record.definition !== definition.name) throw new TypeError("saga definition mismatch")
     if (record.state !== "running") return record
     const context: SagaRunContext<C> = {
       async step(name, compensationArgs, execute) {
+        throwIfAborted(signal)
+        assertToken(name, "saga step", 128)
+        if (typeof execute !== "function")
+          throw new TypeError("saga step execute must be a function")
+        if (typeof definition.compensators[name] !== "function")
+          throw new TypeError(`saga step ${name} has no compensator`)
         record = await load(sagaId)
         const existingIndex = record.steps.findIndex((step) => step.name === name)
         if (existingIndex >= 0) {
@@ -1154,62 +1369,65 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
           compensationArgs: cloneValue(compensationArgs),
           attempts: 0,
         })
-        record = await save(record, {
-          ...record,
-          steps: Object.freeze([...record.steps, step]),
-          updatedAt: now(),
-        })
-        const started = performance.now()
-        emit({
-          effectId,
-          capability: definition.capability ?? "saga.execute",
-          stage: "execution",
-          phase: "started",
-        })
-        try {
-          const result = await execute({ effectId, signal })
-          record = await load(sagaId)
-          const index = record.steps.findIndex((candidate) => candidate.effectId === effectId)
-          const committed = {
-            ...(record.steps[index] as SagaStepRecord),
-            state: "committed" as const,
-            result: cloneValue(result),
-          }
-          record = await save(record, withStep(record, index, committed))
-          emit({
+        return await effectScope.run(
+          {
             effectId,
             capability: definition.capability ?? "saga.execute",
             stage: "execution",
-            phase: "succeeded",
-            durationMs: Math.max(0, performance.now() - started),
-          })
-          return result
-        } catch (error) {
-          record = await load(sagaId)
-          const index = record.steps.findIndex((candidate) => candidate.effectId === effectId)
-          const known = error instanceof SagaStepNotCommittedError
-          const failed = {
-            ...(record.steps[index] as SagaStepRecord),
-            state: known ? ("failed" as const) : ("ambiguous" as const),
-            errorCode: known ? error.code : "execution_unknown",
-          }
-          record = await save(
-            record,
-            withStep(record, index, failed, known ? "compensating" : "manual-review"),
-          )
-          emit({
-            effectId,
-            capability: definition.capability ?? "saga.execute",
-            stage: "execution",
-            phase: known ? "failed" : "ambiguous",
-            durationMs: Math.max(0, performance.now() - started),
-            errorCode: known ? error.code : "execution_unknown",
-          })
-          throw error
-        }
+            signal,
+            failurePhase: (error) =>
+              error instanceof SagaStepNotCommittedError ? "failed" : "ambiguous",
+            errorCode: (error, began) =>
+              error instanceof SagaStepNotCommittedError
+                ? error.code
+                : began
+                  ? "execution_unknown"
+                  : "aborted_before_execution",
+            transitions: {
+              async intent() {
+                record = await save(record, {
+                  ...record,
+                  steps: Object.freeze([...record.steps, step]),
+                  updatedAt: now(),
+                })
+              },
+              async committed(_owned, result) {
+                record = await load(sagaId)
+                const index = record.steps.findIndex((candidate) => candidate.effectId === effectId)
+                const committed = {
+                  ...(record.steps[index] as SagaStepRecord),
+                  state: "committed" as const,
+                  result: cloneValue(result),
+                }
+                record = await save(record, withStep(record, index, committed))
+              },
+              async failed(_owned, failure) {
+                record = await load(sagaId)
+                const index = record.steps.findIndex((candidate) => candidate.effectId === effectId)
+                const known = failure.error instanceof SagaStepNotCommittedError || !failure.began
+                const failed = {
+                  ...(record.steps[index] as SagaStepRecord),
+                  state: known ? ("failed" as const) : ("ambiguous" as const),
+                  errorCode:
+                    failure.error instanceof SagaStepNotCommittedError
+                      ? failure.error.code
+                      : failure.began
+                        ? "execution_unknown"
+                        : "aborted_before_execution",
+                }
+                record = await save(
+                  record,
+                  withStep(record, index, failed, known ? "compensating" : "manual-review"),
+                )
+              },
+            },
+          },
+          (owned) => execute({ effectId: owned.effectId, signal: owned.signal }),
+        )
       },
     }
     try {
+      throwIfAborted(signal)
       await definition.run(context, cloneValue(record.input) as I)
       record = await load(sagaId)
       if (record.state === "running")
@@ -1223,6 +1441,83 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
     }
   }
 
+  const resolveAmbiguity = async <I, C extends Record<string, unknown>>(
+    definition: SagaDefinition<I, C>,
+    sagaId: string,
+    resolution: SagaAmbiguityResolution,
+  ): Promise<SagaRecord> => {
+    assertSagaDefinition(definition)
+    assertToken(sagaId, "saga id", 128)
+    if (typeof resolution !== "object" || resolution === null)
+      throw new TypeError("saga resolution must be an object")
+    if (
+      (resolution.kind === "execution" &&
+        resolution.outcome !== "committed" &&
+        resolution.outcome !== "not-committed") ||
+      (resolution.kind === "compensation" &&
+        resolution.outcome !== "compensated" &&
+        resolution.outcome !== "not-compensated") ||
+      (resolution.kind !== "execution" && resolution.kind !== "compensation")
+    ) {
+      throw new TypeError("saga resolution kind or outcome is invalid")
+    }
+    assertToken(resolution.step, "saga resolution step", 128)
+    assertToken(resolution.effectId, "saga resolution effect id", 64)
+    let record = await load(sagaId)
+    if (record.definition !== definition.name) throw new TypeError("saga definition mismatch")
+    const index = record.steps.findIndex((step) => step.name === resolution.step)
+    if (index < 0) throw new SagaResolutionError(sagaId, resolution.step, "does not exist")
+    const current = record.steps[index] as SagaStepRecord
+
+    let step: SagaStepRecord
+    let state: SagaState
+    if (resolution.kind === "execution") {
+      if (current.effectId !== resolution.effectId)
+        throw new SagaResolutionError(sagaId, resolution.step, "execution effect id does not match")
+      if (current.state !== "executing" && current.state !== "ambiguous")
+        throw new SagaResolutionError(
+          sagaId,
+          resolution.step,
+          `is not awaiting an execution resolution (${current.state})`,
+        )
+      const { errorCode: _errorCode, result: _result, ...base } = current
+      if (resolution.outcome === "committed") {
+        step = { ...base, state: "committed", result: cloneValue(resolution.result) }
+        state = "running"
+      } else {
+        const errorCode = resolution.errorCode ?? "not_committed"
+        if (!ERROR_CODE.test(errorCode)) throw new TypeError("saga resolution errorCode is invalid")
+        step = { ...base, state: "failed", errorCode }
+        state = "compensating"
+      }
+    } else {
+      if (current.compensationEffectId !== resolution.effectId)
+        throw new SagaResolutionError(
+          sagaId,
+          resolution.step,
+          "compensation effect id does not match",
+        )
+      if (current.state !== "compensating")
+        throw new SagaResolutionError(
+          sagaId,
+          resolution.step,
+          `is not awaiting a compensation resolution (${current.state})`,
+        )
+      const { errorCode: _errorCode, nextAttemptAt: _nextAttemptAt, ...base } = current
+      step = {
+        ...base,
+        state: resolution.outcome === "compensated" ? "compensated" : "compensation-failed",
+      }
+      state =
+        resolution.outcome === "not-compensated" &&
+        current.attempts >= (definition.retry?.maxAttempts ?? 3)
+          ? "manual-review"
+          : "compensating"
+    }
+    record = await save(record, withStep(record, index, Object.freeze(step), state))
+    return record
+  }
+
   const engine: SagaEngine = {
     async execute<I, C extends Record<string, unknown>>(
       definition: SagaDefinition<I, C>,
@@ -1230,7 +1525,9 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
       input: I,
       runOptions: { readonly signal?: AbortSignal } = {},
     ) {
+      assertSagaDefinition(definition)
       assertToken(sagaId, "saga id", 128)
+      throwIfAborted(signalOrNever(runOptions.signal))
       const at = now()
       const accepted = await options.store.create(
         Object.freeze({
@@ -1249,6 +1546,7 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
     },
     resume,
     compensate,
+    resolveAmbiguity,
   }
   return Object.freeze(engine)
 }

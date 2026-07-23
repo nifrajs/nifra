@@ -25,6 +25,7 @@ import {
   beginRequestEffectTracking,
   markEffect,
   requestEffectEvidence,
+  requestIsSafeToRetry,
 } from "../internal/effect-execution.ts"
 import { readBoundedBytes } from "./body.ts"
 import type { Platform, RouteSchema } from "./context.ts"
@@ -262,6 +263,19 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
           response: await serializeResponse(response, { maxBytes: config.maxResponseBytes }),
         })
         if (!completed) {
+          return wrapResponse(
+            jsonError(503, "idempotency_reservation_lost", { "Retry-After": "1" }),
+          )
+        }
+        return wrapResponse(response)
+      }
+      if (
+        response.status >= 500 &&
+        requestIsSafeToRetry(buffered) &&
+        !requestEffectEvidence(buffered).began
+      ) {
+        const abandoned = await config.store.abandon({ namespace, key, reservation })
+        if (!abandoned) {
           return wrapResponse(
             jsonError(503, "idempotency_reservation_lost", { "Retry-After": "1" }),
           )

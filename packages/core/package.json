@@ -42,6 +42,21 @@
       "types": "./dist/wire.d.ts",
       "default": "./dist/wire.js"
     },
+    "./transport-codec": {
+      "bun": "./src/transport-codec.ts",
+      "types": "./dist/transport-codec.d.ts",
+      "default": "./dist/transport-codec.js"
+    },
+    "./transport-codec-rich": {
+      "bun": "./src/transport-codec-rich.ts",
+      "types": "./dist/transport-codec-rich.d.ts",
+      "default": "./dist/transport-codec-rich.js"
+    },
+    "./transport-plugin": {
+      "bun": "./src/transport-plugin.ts",
+      "types": "./dist/transport-plugin.d.ts",
+      "default": "./dist/transport-plugin.js"
+    },
     "./reflection": {
       "bun": "./src/reflection.ts",
       "types": "./dist/reflection.d.ts",
@@ -92,10 +107,25 @@
       "types": "./dist/effect-lifecycle.d.ts",
       "default": "./dist/effect-lifecycle.js"
     },
+    "./effect-scope": {
+      "bun": "./src/effect-scope.ts",
+      "types": "./dist/effect-scope.d.ts",
+      "default": "./dist/effect-scope.js"
+    },
     "./durable-execution": {
       "bun": "./src/durable-execution.ts",
       "types": "./dist/durable-execution.d.ts",
       "default": "./dist/durable-execution.js"
+    },
+    "./durable-adapters": {
+      "bun": "./src/durable-adapters.ts",
+      "types": "./dist/durable-adapters.d.ts",
+      "default": "./dist/durable-adapters.js"
+    },
+    "./reconciliation-worker": {
+      "bun": "./src/reconciliation-worker.ts",
+      "types": "./dist/reconciliation-worker.d.ts",
+      "default": "./dist/reconciliation-worker.js"
     },
     "./manifest": {
       "bun": "./src/manifest.ts",

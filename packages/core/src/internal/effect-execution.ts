@@ -1,55 +1,70 @@
-/** Request-local evidence used by the idempotency lane. Never exported or persisted. */
-export interface RequestEffectEvidence {
-  readonly began: boolean
-  readonly committed: boolean
-  readonly ambiguous: boolean
+/** Request-local owned-effect scope used by idempotency and every capability boundary. */
+
+import {
+  createEffectEvidenceScope,
+  type EffectEvidenceScope,
+  type EffectScopeEvidence,
+} from "../effect-scope.ts"
+
+export type RequestEffectEvidence = EffectScopeEvidence
+
+const scopeByRequest = new WeakMap<Request, EffectEvidenceScope>()
+
+export function beginRequestEffectTracking(request: Request): EffectEvidenceScope {
+  const scope = createEffectEvidenceScope()
+  scopeByRequest.set(request, scope)
+  return scope
 }
 
-interface MutableEvidence {
-  began: boolean
-  committed: boolean
-  ambiguous: boolean
-}
-
-const evidenceByRequest = new WeakMap<Request, MutableEvidence>()
-
-export function beginRequestEffectTracking(request: Request): void {
-  evidenceByRequest.set(request, { began: false, committed: false, ambiguous: false })
+export function requestEffectScope(request: Request): EffectEvidenceScope | undefined {
+  return scopeByRequest.get(request)
 }
 
 export function requestEffectEvidence(request: Request): RequestEffectEvidence {
-  const evidence = evidenceByRequest.get(request)
-  return evidence === undefined
-    ? Object.freeze({ began: false, committed: false, ambiguous: false })
-    : Object.freeze({ ...evidence })
+  return (
+    scopeByRequest.get(request)?.evidence() ??
+    Object.freeze({ began: false, committed: false, ambiguous: false })
+  )
 }
 
-function evidenceForContext(context: object): MutableEvidence | undefined {
+export function effectScopeForContext(context: object): EffectEvidenceScope | undefined {
   const request = (context as { readonly req?: unknown }).req
-  return request instanceof Request ? evidenceByRequest.get(request) : undefined
+  return request instanceof Request ? scopeByRequest.get(request) : undefined
 }
 
 export function markEffect(context: object, committed: boolean): void {
-  const evidence = evidenceForContext(context)
-  if (evidence === undefined) return
-  evidence.began = true
-  if (committed) evidence.committed = true
-  evidence.ambiguous = !committed
+  const scope = effectScopeForContext(context)
+  if (committed) scope?.markCommitted()
+  else scope?.markBegan()
 }
 
 /** A legacy beacon cannot prove what happens after the call, so it is immediately ambiguous. */
 export function markBeaconEffectBegan(context: object): void {
-  markEffect(context, false)
+  effectScopeForContext(context)?.markBegan()
 }
 
 export function markEffectExecuting(context: object): void {
-  markEffect(context, false)
+  effectScopeForContext(context)?.markBegan()
 }
 
 export function markEffectCommitted(context: object): void {
-  markEffect(context, true)
+  effectScopeForContext(context)?.markCommitted()
 }
 
 export function markEffectAmbiguous(context: object): void {
-  markEffect(context, false)
+  effectScopeForContext(context)?.markAmbiguous()
+}
+
+export function markRequestSafeToRetry(context: object): void {
+  const scope = effectScopeForContext(context)
+  if (scope === undefined) {
+    throw new Error(
+      "markIdempotencySafeToRetry() requires an active route with idempotency enabled",
+    )
+  }
+  scope.markSafeToRetry()
+}
+
+export function requestIsSafeToRetry(request: Request): boolean {
+  return scopeByRequest.get(request)?.safeToRetry() ?? false
 }

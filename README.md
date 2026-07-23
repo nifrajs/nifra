@@ -11,6 +11,8 @@ Coding agents drift. They call an endpoint that moved, expect a response shape t
 | **AGENTS.md** | Every scaffold ships a conventions file. Agents (Claude Code, Cursor, Copilot) read it and follow nifra's rules from the first prompt. |
 | **`nifra context`** | Prints this project's real API surface — routes + schemas — as Markdown. Paste into any agent prompt, or let `nifra mcp` deliver it automatically. |
 | **`nifra mcp`** | An MCP server that feeds Claude Code, Cursor, and Copilot Chat this project's live route and schema data. |
+| **Versioned transports** | One bounded codec registry for plain JSON or rich values across HTTP, loaders, and WebSocket frames. |
+| **Durable effects** | Postgres, SQLite, and Durable Object stores plus leased, cursor-bounded reconciliation for approvals and sagas. |
 
 The rest is a fast, contract-first full-stack TypeScript stack: routing, validated I/O, SSR, loaders/actions, auth, WebSockets, MDX, and multi-runtime deployment.
 
@@ -213,6 +215,9 @@ synchronous beacon remains available for adapter hot paths.
 For long-running or crash-sensitive effects, `@nifrajs/core/durable-execution` adds a signed,
 single-use approval coordinator (tenant/principal/operation bound), a durable effect journal,
 reconciliation reports, and a typed saga engine with reverse compensation and persisted retry state.
+Crash-ambiguous executions and compensations stop in manual review; an operator can apply a
+provider-confirmed outcome with `resolveAmbiguity()` (bound to the exact stored effect ID), then call
+`resume()` or `compensate()` without replaying an unknown effect.
 These require an explicitly durable store in production; the saga store owns encrypted business input
 and compensation arguments, while the sealed ledger and `@nifrajs/otel/effects` remain token-only.
 An approved provenance import is the explicit trust boundary: its provider internals are not scanned,

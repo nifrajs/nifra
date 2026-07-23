@@ -56,11 +56,25 @@ import { defineAssurancePolicy } from "@nifrajs/core/assurance"
   signed single-use approval resumes; a durable effect journal + reconciliation scanner; and a typed
   saga state machine with reverse compensation, retry/backoff, and ambiguous-crash detection. Production
   constructors reject stores that do not declare `durability: "durable"`. Operational scans use bounded
-  cursor pages through `reconcileEffectsPage()` / `reconcileSagasPage()`.
+  cursor pages through `reconcileEffectsPage()` / `reconcileSagasPage()`. Provider-confirmed manual
+  review uses effect-ID-bound `resolveAmbiguity()`, followed by `resume()` or `compensate()`.
+- **Production durable adapters.** `@nifrajs/core/durable-adapters` supplies
+  `PostgresDurableExecutionAdapter`, `SQLiteDurableExecutionAdapter`, and
+  `DurableObjectExecutionAdapter`. Each exposes compatible `effects`, `approvals`, `sagas`, and
+  `leases` stores. Run `runDurableExecutionAdapterConformance()` against the deployment backend.
+- **Bounded reconciliation workers.** `@nifrajs/core/reconciliation-worker` runs effect or saga
+  scans under an atomic lease with durable cursor checkpoints, a finite page budget, bounded handler
+  concurrency, filters, cancellation, and token-only metrics. A worker invocation always terminates.
 - **Rich wire values (opt in).** `@nifrajs/core/wire` round-trips dates, bigints, maps, sets, binary,
   shared references, and cycles through JSON transports. Decoding validates every reachable shape,
   preserves owned `__proto__` keys without prototype mutation, and enforces configurable node, depth,
   collection-entry, and decoded-byte limits.
+- **Versioned transport codecs (opt in).** Add `.use(transportCodecs(registry))` from
+  `@nifrajs/core/transport-plugin` and configure the typed
+  client's `transport` option with the same registry. `@nifrajs/core/transport-codec` negotiates
+  bounded HTTP representations and supplies the same frame/loader adapters for WebSockets and
+  deferred data. Import `richWireCodec()` from `@nifrajs/core/transport-codec-rich`; the separate
+  subpath keeps rich-wire code out of plain JSON bundles.
 
 ```ts
 import { defineAssurancePolicy, evaluateRouteAssurance, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"

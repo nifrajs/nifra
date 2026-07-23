@@ -584,6 +584,31 @@ Every public export of every package and documented subpath — name, kind, sign
 - **snapshotRoutes** _(function)_ — `snapshotRoutes: (source: unknown) => readonly RouteSnapshot[]`
   Snapshot an app's routes (anything `reflectRoutes` accepts) as plain JSON. Validators are dropped; only introspectable JSON Schema metadata is kept, so the result round-trips through `JSON.stringify` unchanged.
 
+### `@nifrajs/core/durable-adapters`
+
+- **DurableExecutionAdapter** _(interface)_ — `interface DurableExecutionAdapter`
+- **DurableExecutionConformanceResult** _(interface)_ — `interface DurableExecutionConformanceResult`
+- **DurableObjectExecutionAdapter** _(class)_ — `class DurableObjectExecutionAdapter`
+- **DurableObjectRecordBackend** _(class)_ — `class DurableObjectRecordBackend`
+- **DurableObjectStorage** _(interface)_ — `interface DurableObjectStorage`
+- **DurableObjectStorageTransaction** _(interface)_ — `interface DurableObjectStorageTransaction`
+- **DurableRecordBackend** _(interface)_ — `interface DurableRecordBackend`
+- **DurableRecordKind** _(type)_ — `type DurableRecordKind = "effect" | "approval" | "saga"`
+- **MemoryDurableRecordBackend** _(class)_ — `class MemoryDurableRecordBackend`
+  Deterministic reference backend for tests and adapter conformance; not for production.
+- **PostgresClient** _(interface)_ — `interface PostgresClient`
+- **PostgresDurableExecutionAdapter** _(class)_ — `class PostgresDurableExecutionAdapter`
+- **PostgresDurableRecordBackend** _(class)_ — `class PostgresDurableRecordBackend`
+- **PostgresQueryResult** _(interface)_ — `interface PostgresQueryResult`
+- **SQLiteClient** _(interface)_ — `interface SQLiteClient`
+- **SQLiteDurableExecutionAdapter** _(class)_ — `class SQLiteDurableExecutionAdapter`
+- **SQLiteDurableRecordBackend** _(class)_ — `class SQLiteDurableRecordBackend`
+- **SQLiteRunResult** _(interface)_ — `interface SQLiteRunResult`
+- **SQLiteStatement** _(interface)_ — `interface SQLiteStatement`
+- **createDurableExecutionAdapter** _(function)_ — `createDurableExecutionAdapter: (backend: DurableRecordBackend) => DurableExecutionAdapter`
+- **runDurableExecutionAdapterConformance** _(function)_ — `runDurableExecutionAdapterConformance: (adapter: DurableExecutionAdapter) => Promise<DurableExecutionConformanceResult>`
+  Runtime-independent conformance suite reusable by adapter authors and CI.
+
 ### `@nifrajs/core/durable-execution`
 
 - **ApprovalBindingError** _(class)_ — `class ApprovalBindingError`
@@ -616,6 +641,7 @@ Every public export of every package and documented subpath — name, kind, sign
 - **ReconciliationPage** _(interface)_ — `interface ReconciliationPage<Finding>`
 - **ReconciliationScanOptions** _(interface)_ — `interface ReconciliationScanOptions<State extends string>`
 - **ReconciliationScanPage** _(interface)_ — `interface ReconciliationScanPage<Record>`
+- **SagaAmbiguityResolution** _(type)_ — `type SagaAmbiguityResolution`
 - **SagaAmbiguousStepError** _(class)_ — `class SagaAmbiguousStepError`
 - **SagaCompensationContext** _(interface)_ — `interface SagaCompensationContext`
 - **SagaConcurrencyError** _(class)_ — `class SagaConcurrencyError`
@@ -624,6 +650,7 @@ Every public export of every package and documented subpath — name, kind, sign
 - **SagaEngineOptions** _(interface)_ — `interface SagaEngineOptions`
 - **SagaReconciliationFinding** _(interface)_ — `interface SagaReconciliationFinding`
 - **SagaRecord** _(interface)_ — `interface SagaRecord`
+- **SagaResolutionError** _(class)_ — `class SagaResolutionError`
 - **SagaRunContext** _(interface)_ — `interface SagaRunContext<C extends Record<string, unknown>>`
 - **SagaState** _(type)_ — `type SagaState = "running" | "compensating" | "completed" | "compensated" | "manual-review"`
 - **SagaStepExecutionContext** _(interface)_ — `interface SagaStepExecutionContext`
@@ -662,6 +689,19 @@ Every public export of every package and documented subpath — name, kind, sign
 - **EmitEffectLifecycleInput** _(interface)_ — `interface EmitEffectLifecycleInput`
 - **effectTraceParentOf** _(function)_ — `effectTraceParentOf: (context: object) => EffectTraceParent | undefined`
 - **emitEffectLifecycle** _(function)_ — `emitEffectLifecycle: (observers: readonly EffectLifecycleObserver[], input: EmitEffectLifecycleInput) => void`
+
+### `@nifrajs/core/effect-scope`
+
+- **EffectEvidenceScope** _(interface)_ — `interface EffectEvidenceScope`
+- **EffectScope** _(interface)_ — `interface EffectScope`
+- **EffectScopeEvidence** _(interface)_ — `interface EffectScopeEvidence`
+- **EffectScopeOptions** _(interface)_ — `interface EffectScopeOptions`
+- **OwnedEffectContext** _(interface)_ — `interface OwnedEffectContext`
+- **OwnedEffectRunOptions** _(interface)_ — `interface OwnedEffectRunOptions<T>`
+- **OwnedEffectTransitions** _(interface)_ — `interface OwnedEffectTransitions<T>`
+- **createEffectEvidenceScope** _(function)_ — `createEffectEvidenceScope: () => EffectEvidenceScope`
+  Lightweight aggregate evidence shared by request idempotency and full owned-effect runners.
+- **createEffectScope** _(function)_ — `createEffectScope: (options?: EffectScopeOptions, evidenceScope?: EffectEvidenceScope) => EffectScope`
 
 ### `@nifrajs/core/idempotency`
 
@@ -708,6 +748,8 @@ Every public export of every package and documented subpath — name, kind, sign
 - **IdempotencyPluginOptions** _(interface)_ — `interface IdempotencyPluginOptions`
   Enable request idempotency. Routes that declare `schema.idempotency` get the dedupe lane: a repeat `Idempotency-Key` replays the stored response instead of re-running the handler. Without this plugin, declaring `schema.idempotency` is a registration error (the safety gate can never be silently drop…
 - **idempotency** _(function)_ — `idempotency: (options?: IdempotencyPluginOptions) => IdentityPlugin`
+- **markIdempotencySafeToRetry** _(function)_ — `markIdempotencySafeToRetry: (context: object) => void`
+  Opt a concrete 5xx response into releasing its idempotency reservation, but only while the request-local effect scope still proves that no owned effect began.
 
 ### `@nifrajs/core/ledger`
 
@@ -840,6 +882,18 @@ Every public export of every package and documented subpath — name, kind, sign
   Decode router captures under one rule. Plain values take the zero-allocation path; malformed escapes return `null`, allowing HTTP to emit 400 while client navigation declines the match.
 - **matchRoutePattern** _(function)_ — `matchRoutePattern: (compiled: CompiledRoutePattern, pathname: string) => RoutePatternMatch`
   Match one compiled pattern and return decoded captures. The caller decides cross-pattern order.
+
+### `@nifrajs/core/reconciliation-worker`
+
+- **MemoryReconciliationLeaseStore** _(class)_ — `class MemoryReconciliationLeaseStore`
+- **ReconciliationLease** _(interface)_ — `interface ReconciliationLease`
+- **ReconciliationLeaseStore** _(interface)_ — `interface ReconciliationLeaseStore`
+- **ReconciliationWorkerEvent** _(type)_ — `type ReconciliationWorkerEvent`
+- **ReconciliationWorkerOptions** _(interface)_ — `interface ReconciliationWorkerOptions<Finding>`
+- **ReconciliationWorkerResult** _(interface)_ — `interface ReconciliationWorkerResult`
+- **runEffectReconciliationWorker** _(function)_ — `runEffectReconciliationWorker: (store: DurableEffectStore, options: SpecializedWorkerOptions<EffectReconciliationFinding>) => Promise<ReconciliationWorkerResult>`
+- **runReconciliationWorker** _(function)_ — `runReconciliationWorker: <Finding>(options: ReconciliationWorkerOptions<Finding>) => Promise<ReconciliationWorkerResult>`
+- **runSagaReconciliationWorker** _(function)_ — `runSagaReconciliationWorker: (store: SagaStore, options: SpecializedWorkerOptions<SagaReconciliationFinding>) => Promise<ReconciliationWorkerResult>`
 
 ### `@nifrajs/core/reflection`
 
@@ -1050,6 +1104,29 @@ Every public export of every package and documented subpath — name, kind, sign
   Enable `.sse()` streaming routes: `.use(streaming())` installs the SSE runtime. Without it, an `.sse()` route is a registration error, so the ReadableStream framing stays out of non-SSE bundles. The `sse()` / `typedSSEStream()` helpers ship from this same subpath for use inside handlers.
 - **typedSSEStream** _(function)_ — `typedSSEStream: <Event>(stream: SSEStream) => TypedSSEStream<Event>`
   Wrap a raw {@link SSEStream} in the typed, JSON-serializing surface `app.sse()` hands out.
+
+### `@nifrajs/core/transport-codec`
+
+- **TransportCodec** _(interface)_ — `interface TransportCodec`
+- **TransportCodecError** _(class)_ — `class TransportCodecError`
+- **TransportCodecRegistry** _(interface)_ — `interface TransportCodecRegistry`
+- **TransportDecodeOptions** _(interface)_ — `interface TransportDecodeOptions`
+- **createTransportCodecRegistry** _(function)_ — `createTransportCodecRegistry: (codecs: readonly TransportCodec[], fallback?: TransportCodec) => TransportCodecRegistry`
+- **decodeTransportFrame** _(function)_ — `decodeTransportFrame: (frame: string, registry?: TransportCodecRegistry, options?: TransportDecodeOptions) => unknown`
+- **decodeTransportResponse** _(function)_ — `decodeTransportResponse: (response: Response, registry?: TransportCodecRegistry, options?: TransportDecodeOptions) => Promise<unknown>`
+- **defaultTransportCodecs** _(const)_ — `defaultTransportCodecs: TransportCodecRegistry`
+- **encodeTransportFrame** _(function)_ — `encodeTransportFrame: (value: unknown, codec?: TransportCodec) => string`
+- **encodeTransportResponse** _(function)_ — `encodeTransportResponse: (value: unknown, codec?: TransportCodec, init?: ResponseInit) => Response`
+- **plainJsonCodec** _(const)_ — `plainJsonCodec: TransportCodec`
+
+### `@nifrajs/core/transport-codec-rich`
+
+- **RichWireCodecOptions** _(interface)_ — `interface RichWireCodecOptions`
+- **richWireCodec** _(function)_ — `richWireCodec: (options?: RichWireCodecOptions) => TransportCodec`
+
+### `@nifrajs/core/transport-plugin`
+
+- **transportCodecs** _(function)_ — `transportCodecs: (registry: TransportCodecRegistry, options?: TransportCodecsOptions) => IdentityPlugin`
 
 ### `@nifrajs/core/webhook`
 

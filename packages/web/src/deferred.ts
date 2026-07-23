@@ -5,6 +5,7 @@
  * protocol — the marker, the resolved/deferred split, and the tiny client registry that streamed
  * resolution scripts settle. The per-adapter `<Await>` lives in `@nifrajs/web-{solid,react}/client`.
  */
+import { plainJsonCodec, type TransportCodec } from "@nifrajs/core/transport-codec"
 
 /**
  * A loader value marked to stream in after the shell. The component consumes it with the adapter's
@@ -161,21 +162,22 @@ const NDJSON_ENCODER = new TextEncoder()
 export function ndjsonStream(
   forClient: unknown,
   deferred: ReadonlyArray<{ readonly id: number; readonly promise: Promise<unknown> }>,
+  codec: TransportCodec = plainJsonCodec,
 ): ReadableStream<Uint8Array> {
   return new ReadableStream({
     async start(controller) {
-      controller.enqueue(NDJSON_ENCODER.encode(`${JSON.stringify(forClient)}\n`))
+      controller.enqueue(NDJSON_ENCODER.encode(`${codec.encode(forClient)}\n`))
       await Promise.all(
         deferred.map(async (d) => {
           try {
             const value = await d.promise
-            controller.enqueue(NDJSON_ENCODER.encode(`${JSON.stringify({ i: d.id, v: value })}\n`))
+            controller.enqueue(NDJSON_ENCODER.encode(`${codec.encode({ i: d.id, v: value })}\n`))
           } catch (err) {
             // Redact: stream a stable opaque code, never the raw error text; log the real reason
             // server-side. The client's <Await> errorFallback receives this code.
             console.error("[nifra/web] deferred value rejected:", err)
             controller.enqueue(
-              NDJSON_ENCODER.encode(`${JSON.stringify({ i: d.id, e: DEFERRED_ERROR_CODE })}\n`),
+              NDJSON_ENCODER.encode(`${codec.encode({ i: d.id, e: DEFERRED_ERROR_CODE })}\n`),
             )
           }
         }),
@@ -259,7 +261,11 @@ function markersFromPlaceholders(data: unknown, pending: Pending): unknown {
       return marker
     }
     if (Array.isArray(value)) return value.map(walk)
-    if (value !== null && typeof value === "object") {
+    if (
+      value !== null &&
+      typeof value === "object" &&
+      (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
+    ) {
       const out: Record<string, unknown> = {}
       for (const [key, v] of Object.entries(value)) out[key] = walk(v)
       return out
@@ -279,6 +285,7 @@ function markersFromPlaceholders(data: unknown, pending: Pending): unknown {
 export async function parseNdjsonData(
   stream: ReadableStream<Uint8Array>,
   signal?: AbortSignal,
+  codec: TransportCodec = plainJsonCodec,
 ): Promise<unknown> {
   const reader = stream.getReader()
   const dec = new TextDecoder()
@@ -308,7 +315,7 @@ export async function parseNdjsonData(
 
   const pending: Pending = new Map()
   const first = await readLine()
-  const data = markersFromPlaceholders(first === null ? null : JSON.parse(first), pending)
+  const data = markersFromPlaceholders(first === null ? null : codec.decode(first), pending)
 
   void (async () => {
     try {
@@ -316,7 +323,7 @@ export async function parseNdjsonData(
         const line = await readLine()
         if (line === null) break
         if (line === "") continue
-        const msg = JSON.parse(line) as { i: number; v?: unknown; e?: string }
+        const msg = codec.decode(line) as { i: number; v?: unknown; e?: string }
         const entry = pending.get(msg.i)
         if (entry === undefined) continue
         pending.delete(msg.i)

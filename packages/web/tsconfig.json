@@ -8,7 +8,8 @@
       "@nifrajs/core": ["../core/src/index.ts"],
       "@nifrajs/core/server": ["../core/src/server.ts"],
       "@nifrajs/core/pattern": ["../core/src/router/pattern.ts"],
-      "@nifrajs/core/reflection": ["../core/src/reflection.ts"]
+      "@nifrajs/core/reflection": ["../core/src/reflection.ts"],
+      "@nifrajs/core/transport-codec": ["../core/src/transport-codec.ts"]
     }
   },
   "include": ["src/client.ts", "src/islands.ts", "test/islands.test.ts"]

@@ -4,11 +4,8 @@
  */
 
 import type { DataClassification } from "./classification.ts"
-import {
-  type EffectLifecycleObserver,
-  effectTraceParentOf,
-  emitEffectLifecycle,
-} from "./effect-lifecycle.ts"
+import { type EffectLifecycleObserver, effectTraceParentOf } from "./effect-lifecycle.ts"
+import { createEffectScope } from "./effect-scope.ts"
 import {
   type AroundCapabilityOptions,
   CAPABILITY_GUARD,
@@ -24,6 +21,7 @@ import {
   type RegisteredCapabilityInterceptor,
   validCapabilityId,
 } from "./internal/capability-runtime.ts"
+import { effectScopeForContext } from "./internal/effect-execution.ts"
 import { NIFRA_ASSURANCE_IDS } from "./internal/route-assurance.ts"
 import {
   type EffectCost,
@@ -669,136 +667,97 @@ export async function executeCapability<T>(
   const effectId = crypto.randomUUID()
   const metadata = normalizeEffectMetadata(options)
   const trace = effectTraceParentOf(context)
-  const observers = guard.observers
-  const admissionStartedAt = performance.now()
   const identity = options.approval
-  emitEffectLifecycle(observers, {
-    effectId,
-    capability,
-    stage: "admission",
-    phase: "started",
-    ...metadata,
-    ...(trace === undefined ? {} : { trace }),
-  })
-  let admitted = false
-  let began = false
-  let committed = false
-  let executionStartedAt = 0
-  try {
-    ledger?.append({ capability, effectId, ...metadata, phase: "intent" })
-    await options.journal?.intent({
+  const requestEvidence = effectScopeForContext(context)
+  const scope = createEffectScope({}, requestEvidence)
+  const result = await scope.run(
+    {
       effectId,
       capability,
-      ...(metadata.target === undefined ? {} : { target: metadata.target }),
-      ...(metadata.digest === undefined ? {} : { digest: metadata.digest }),
-      ...(identity === undefined
-        ? {}
-        : { identity: { tenantId: identity.tenantId, principalId: identity.principalId } }),
-    })
-    if (identity !== undefined) {
-      await identity.gate.authorize({
-        effectId,
-        capability,
-        ...(metadata.target === undefined ? {} : { target: metadata.target }),
-        ...(metadata.digest === undefined ? {} : { digest: metadata.digest }),
-        identity: { tenantId: identity.tenantId, principalId: identity.principalId },
-        ...(identity.resumeToken === undefined ? {} : { resumeToken: identity.resumeToken }),
-        signal: signalFor(context),
-      })
-    }
-    guard.onUse?.({ capability, method: guard.method, path: guard.path })
-    if (guard.interceptors.length > 0) {
-      await runCapabilityInterceptors(
-        guard.interceptors,
-        Object.freeze({
-          capability,
-          method: guard.method,
-          path: guard.path,
-          effectId,
-          ...metadata,
-        }),
-        signalFor(context),
-      )
-    }
-    admitted = true
-    emitEffectLifecycle(observers, {
-      effectId,
-      capability,
-      stage: "admission",
-      phase: "succeeded",
-      durationMs: Math.max(0, performance.now() - admissionStartedAt),
       ...metadata,
+      signal: signalFor(context),
+      observers: guard.observers,
       ...(trace === undefined ? {} : { trace }),
-    })
-    executionStartedAt = performance.now()
-    emitEffectLifecycle(observers, {
-      effectId,
-      capability,
-      stage: "execution",
-      phase: "started",
-      ...metadata,
-      ...(trace === undefined ? {} : { trace }),
-    })
-    await options.journal?.executing(effectId)
-    began = true
-    guard.trackEffect?.(context, false)
-    const result = await executor(Object.freeze({ effectId, signal: signalFor(context) }))
-    try {
-      await options.journal?.committed(effectId)
-    } catch {
-      guard.trackEffect?.(context, false)
-      throw new CapabilityJournalTransitionError(capability, effectId, "committed")
-    }
-    committed = true
-    emitEffectLifecycle(observers, {
-      effectId,
-      capability,
-      stage: "execution",
-      phase: "succeeded",
-      durationMs: Math.max(0, performance.now() - executionStartedAt),
-      ...metadata,
-      ...(trace === undefined ? {} : { trace }),
-    })
-    guard.trackEffect?.(context, true)
-    ledger?.append({ capability, effectId, ...metadata, phase: "committed" })
-    return result
-  } catch (error) {
-    // Once the executor and durable commit transition both succeeded, later evidence failures must
-    // never rewrite that known terminal state. The succeeded lifecycle event was emitted first.
-    if (committed) throw error
-    const code = admitted ? "execution_failed" : admissionErrorCode(error)
-    if (began) guard.trackEffect?.(context, false)
-    try {
-      await options.journal?.failed(effectId, { began, errorCode: code })
-    } catch {
-      // The durable record deliberately remains admission/executing and reconciliation will surface it.
-    }
-    emitEffectLifecycle(observers, {
-      effectId,
-      capability,
-      stage: admitted ? "execution" : "admission",
-      phase: began ? "ambiguous" : "failed",
-      durationMs: Math.max(
-        0,
-        performance.now() - (admitted ? executionStartedAt : admissionStartedAt),
-      ),
-      errorCode: code,
-      ...metadata,
-      ...(trace === undefined ? {} : { trace }),
-    })
-    try {
-      ledger?.append({
-        capability,
-        effectId,
-        ...metadata,
-        phase: "failed",
-        error: { code },
-      })
-    } catch {
-      // The request is already failing. Preserve its cause and the paired terminal lifecycle event.
-    }
-    throw error
-  }
+      errorCode: (error, began) => (began ? "execution_failed" : admissionErrorCode(error)),
+      async admit(execution) {
+        if (identity !== undefined) {
+          await identity.gate.authorize({
+            effectId: execution.effectId,
+            capability,
+            ...(metadata.target === undefined ? {} : { target: metadata.target }),
+            ...(metadata.digest === undefined ? {} : { digest: metadata.digest }),
+            identity: { tenantId: identity.tenantId, principalId: identity.principalId },
+            ...(identity.resumeToken === undefined ? {} : { resumeToken: identity.resumeToken }),
+            signal: execution.signal,
+          })
+        }
+        guard.onUse?.({ capability, method: guard.method, path: guard.path })
+        if (guard.interceptors.length > 0) {
+          await runCapabilityInterceptors(
+            guard.interceptors,
+            Object.freeze({
+              capability,
+              method: guard.method,
+              path: guard.path,
+              effectId: execution.effectId,
+              ...metadata,
+            }),
+            execution.signal,
+          )
+        }
+      },
+      transitions: {
+        async intent(execution) {
+          ledger?.append({ capability, effectId: execution.effectId, ...metadata, phase: "intent" })
+          await options.journal?.intent({
+            effectId: execution.effectId,
+            capability,
+            ...(metadata.target === undefined ? {} : { target: metadata.target }),
+            ...(metadata.digest === undefined ? {} : { digest: metadata.digest }),
+            ...(identity === undefined
+              ? {}
+              : { identity: { tenantId: identity.tenantId, principalId: identity.principalId } }),
+          })
+        },
+        async executing(execution) {
+          await options.journal?.executing(execution.effectId)
+        },
+        async committed(execution) {
+          try {
+            await options.journal?.committed(execution.effectId)
+          } catch {
+            throw new CapabilityJournalTransitionError(capability, execution.effectId, "committed")
+          }
+        },
+        async failed(execution, failure) {
+          try {
+            await options.journal?.failed(execution.effectId, {
+              began: failure.began,
+              errorCode: failure.errorCode,
+            })
+          } finally {
+            try {
+              ledger?.append({
+                capability,
+                effectId: execution.effectId,
+                ...metadata,
+                phase: "failed",
+                error: { code: failure.errorCode },
+              })
+            } catch {
+              // Preserve the original effect failure when terminal evidence overflows.
+            }
+          }
+        },
+      },
+    },
+    (execution) =>
+      executor(Object.freeze({ effectId: execution.effectId, signal: execution.signal })),
+  )
+  // Durable commit and success telemetry are already final. A ledger overflow here must not rewrite
+  // the effect to failed/unknown or erase the request scope's proven committed evidence.
+  ledger?.append({ capability, effectId, ...metadata, phase: "committed" })
+  return result
 }
 
 /**

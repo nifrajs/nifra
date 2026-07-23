@@ -685,7 +685,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
       throw new RangeError("aroundCapability timeoutMs must be a positive safe integer")
     }
-    this.capabilityInterceptors.push(Object.freeze({ interceptor, timeoutMs }))
+    // JS timers wrap larger delays to ~1ms, which would unexpectedly deny every effect.
+    this.capabilityInterceptors.push(
+      Object.freeze({ interceptor, timeoutMs: Math.min(timeoutMs, 2_147_483_647) }),
+    )
     return this
   }
 

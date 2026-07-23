@@ -20,6 +20,7 @@ import {
   reconcileSagas,
   reconcileSagasPage,
   SagaAmbiguousStepError,
+  SagaResolutionError,
 } from "../src/durable-execution.ts"
 import { server } from "../src/server.ts"
 
@@ -126,6 +127,17 @@ describe("durable approvals", () => {
     )
   })
 
+  test("validates lookup tokens and rejects overflowing approval clocks", async () => {
+    const approval = createApprovalCoordinator({
+      store: new MemoryApprovalStore(),
+      secret: secret(),
+      now: () => Number.MAX_SAFE_INTEGER,
+      allowMemoryStore: true,
+    })
+    await expect(approval.get("\n")).rejects.toThrow("bounded printable token")
+    await expect(approval.authorize(approvalInput())).rejects.toThrow("approval expiry")
+  })
+
   test("executeCapability suspends before the effect and resumes only after approval", async () => {
     const approval = createApprovalCoordinator({
       store: new MemoryApprovalStore(),
@@ -222,6 +234,26 @@ describe("durable journal and saga reconciliation", () => {
     })
     expect(second.findings.map((finding) => finding.effectId)).toEqual(["effect_2"])
     expect(second.cursor).toBeUndefined()
+  })
+
+  test("indexed effect scans remain correct after terminal state transitions", async () => {
+    const store = new MemoryDurableEffectStore()
+    const journal = createDurableEffectJournal({ store, now: () => 10, allowMemoryStore: true })
+    await journal.intent({ effectId: "effect_pending", capability: "db.write" })
+    await journal.intent({ effectId: "effect_committed", capability: "db.write" })
+    await journal.executing("effect_committed")
+    await journal.committed("effect_committed")
+    await journal.intent({ effectId: "effect_failed", capability: "db.write" })
+    await journal.failed("effect_failed", { began: false, errorCode: "denied" })
+
+    expect(await reconcileEffects(store, { staleBefore: 10 })).toEqual([
+      {
+        effectId: "effect_pending",
+        capability: "db.write",
+        state: "incomplete",
+        updatedAt: 10,
+      },
+    ])
   })
 
   test("compatibility reconciliation fails loudly instead of silently truncating", async () => {
@@ -357,6 +389,174 @@ describe("durable journal and saga reconciliation", () => {
     const page = await reconcileSagasPage(store, { staleBefore: Date.now(), limit: 1 })
     expect(page.findings).toHaveLength(1)
     expect(page.cursor).toBeUndefined()
+  })
+
+  test("operator-confirmed execution outcomes safely resume an ambiguous saga", async () => {
+    let attempts = 0
+    let observed: string | undefined
+    const definition = defineSaga<Record<never, never>, { charge: { paymentId: string } }>({
+      name: "operator-resolved-execution",
+      async run(saga) {
+        observed = await saga.step("charge", { paymentId: "p_1" }, async () => {
+          attempts++
+          throw new Error("provider response lost")
+        })
+      },
+      compensators: { charge: async () => {} },
+    })
+    const store = new MemorySagaStore()
+    const engine = createSagaEngine({ store, allowMemoryStore: true })
+    await expect(engine.execute(definition, "saga_resolved", {})).rejects.toThrow(
+      "provider response lost",
+    )
+    const ambiguous = (await store.get("saga_resolved"))?.steps[0]
+    expect(ambiguous?.state).toBe("ambiguous")
+
+    await expect(
+      engine.resolveAmbiguity(definition, "saga_resolved", {
+        kind: "execution",
+        step: "charge",
+        effectId: ambiguous?.effectId as string,
+        outcome: "invented",
+      } as never),
+    ).rejects.toThrow("resolution kind or outcome is invalid")
+    await expect(
+      engine.resolveAmbiguity(definition, "saga_resolved", {
+        kind: "execution",
+        step: "charge",
+        effectId: "wrong_effect",
+        outcome: "committed",
+        result: "charged",
+      }),
+    ).rejects.toBeInstanceOf(SagaResolutionError)
+    await engine.resolveAmbiguity(definition, "saga_resolved", {
+      kind: "execution",
+      step: "charge",
+      effectId: ambiguous?.effectId as string,
+      outcome: "committed",
+      result: "charged",
+    })
+    const settled = await engine.resume(definition, "saga_resolved")
+    expect(settled.state).toBe("completed")
+    expect(observed).toBe("charged")
+    expect(attempts).toBe(1)
+  })
+
+  test("operator-confirmed compensation outcomes unblock crash recovery", async () => {
+    const definition = defineSaga<Record<never, never>, { reserve: { id: string } }>({
+      name: "operator-resolved-compensation",
+      async run() {},
+      compensators: { reserve: async () => {} },
+    })
+    const store = new MemorySagaStore()
+    expect(
+      store.create({
+        sagaId: "saga_compensation_resolution",
+        definition: definition.name,
+        state: "manual-review",
+        input: {},
+        steps: [
+          {
+            name: "reserve",
+            effectId: "effect_reserve",
+            compensationEffectId: "effect_release",
+            state: "compensating",
+            compensationArgs: { id: "r_1" },
+            attempts: 1,
+          },
+        ],
+        createdAt: 1,
+        updatedAt: 2,
+        version: 1,
+      }),
+    ).toBe(true)
+    const engine = createSagaEngine({ store, allowMemoryStore: true })
+    const resolved = await engine.resolveAmbiguity(definition, "saga_compensation_resolution", {
+      kind: "compensation",
+      step: "reserve",
+      effectId: "effect_release",
+      outcome: "compensated",
+    })
+    expect(resolved.steps[0]?.state).toBe("compensated")
+    expect((await engine.compensate(definition, "saga_compensation_resolution")).state).toBe(
+      "compensated",
+    )
+  })
+
+  test("an already-aborted saga never invokes a new external effect", async () => {
+    const controller = new AbortController()
+    controller.abort(new Error("cancelled"))
+    let executions = 0
+    const definition = defineSaga<Record<never, never>, { write: Record<never, never> }>({
+      name: "abort-before-effect",
+      async run(saga) {
+        await saga.step("write", {}, async () => {
+          executions++
+        })
+      },
+      compensators: { write: async () => {} },
+    })
+    const store = new MemorySagaStore()
+    const engine = createSagaEngine({ store, allowMemoryStore: true })
+    await expect(
+      engine.execute(definition, "saga_aborted", {}, { signal: controller.signal }),
+    ).rejects.toThrow("cancelled")
+    expect(executions).toBe(0)
+    expect(await store.get("saga_aborted")).toBeUndefined()
+  })
+
+  test("an abort observed after step persistence is recorded as not committed", async () => {
+    const controller = new AbortController()
+    class AbortAfterPersistStore extends MemorySagaStore {
+      override compareAndSet(input: Parameters<MemorySagaStore["compareAndSet"]>[0]): boolean {
+        const accepted = super.compareAndSet(input)
+        if (accepted && input.record.steps.at(-1)?.state === "executing") {
+          controller.abort(new Error("cancelled after persistence"))
+        }
+        return accepted
+      }
+    }
+    let executions = 0
+    const definition = defineSaga<Record<never, never>, { write: Record<never, never> }>({
+      name: "abort-after-persist",
+      async run(saga) {
+        await saga.step("write", {}, async () => {
+          executions++
+        })
+      },
+      compensators: { write: async () => {} },
+    })
+    const store = new AbortAfterPersistStore()
+    const engine = createSagaEngine({ store, allowMemoryStore: true })
+    await expect(
+      engine.execute(definition, "saga_abort_after_persist", {}, { signal: controller.signal }),
+    ).rejects.toThrow("cancelled after persistence")
+    expect(executions).toBe(0)
+    expect(await store.get("saga_abort_after_persist")).toMatchObject({
+      state: "compensating",
+      steps: [{ state: "failed", errorCode: "aborted_before_execution" }],
+    })
+    expect((await engine.compensate(definition, "saga_abort_after_persist")).state).toBe(
+      "compensated",
+    )
+  })
+
+  test("defineSaga validates callbacks and retry policy eagerly", () => {
+    expect(() =>
+      defineSaga({
+        name: "invalid-run",
+        run: undefined as never,
+        compensators: {},
+      }),
+    ).toThrow("saga run must be a function")
+    expect(() =>
+      defineSaga({
+        name: "invalid-retry",
+        async run() {},
+        compensators: {},
+        retry: { maxAttempts: 0 },
+      }),
+    ).toThrow("saga maxAttempts")
   })
 
   test("compensation retry exhaustion stops in manual review", async () => {

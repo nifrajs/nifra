@@ -16,6 +16,7 @@ import type {
   ValidationOutcome,
 } from "../schema/standard.ts"
 import { validateStandard } from "../schema/standard.ts"
+import { decodeTransportFrame, type TransportCodecRegistry } from "../transport-codec.ts"
 
 type MaybePromise<T> = T | Promise<T>
 
@@ -167,6 +168,11 @@ export interface WebSocketHandler<
    * boundary; outbound honesty is the handler author's code, checked by tests.
    */
   sendSchema?: Send
+  /** Decode versioned transport frames before inbound schema validation. Omit for legacy JSON. */
+  transport?: {
+    readonly registry: TransportCodecRegistry
+    readonly maxBytes?: number
+  }
   open?(ws: NifraWebSocket<Data>): MaybePromise<void>
   message?(ws: NifraWebSocket<Data>, data: WsMessageInput<Schema>): MaybePromise<void>
   /** Inbound frame that failed JSON parse or `messageSchema` validation (only fires when a schema is
@@ -317,7 +323,15 @@ export function wrapWebSocketMessageValidation(handler: WebSocketHandler): WebSo
   const validatingMessage = (ws: NifraWebSocket, raw: WebSocketData): MaybePromise<void> => {
     let parsed: unknown
     try {
-      parsed = JSON.parse(typeof raw === "string" ? raw : WS_MESSAGE_DECODER.decode(raw))
+      const text = typeof raw === "string" ? raw : WS_MESSAGE_DECODER.decode(raw)
+      parsed =
+        handler.transport === undefined
+          ? JSON.parse(text)
+          : decodeTransportFrame(text, handler.transport.registry, {
+              ...(handler.transport.maxBytes === undefined
+                ? {}
+                : { maxBytes: handler.transport.maxBytes }),
+            })
     } catch {
       return onInvalid?.(ws, [{ message: "invalid JSON" }], raw)
     }

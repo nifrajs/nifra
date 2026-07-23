@@ -6,6 +6,14 @@
  * read them off `raw`). Sends before the socket opens are queued, so the handle never throws.
  */
 
+import {
+  createTransportCodecRegistry,
+  decodeTransportFrame,
+  encodeTransportFrame,
+  plainJsonCodec,
+  type TransportCodec,
+  type TransportCodecRegistry,
+} from "@nifrajs/core/transport-codec"
 import type { WsCallOptions, WsHandle } from "./treaty.ts"
 
 /** Internal handshake between `inProcessClient` and the proxy: in-process apps have no socket. */
@@ -13,6 +21,11 @@ export const NO_SOCKET = Symbol.for("@nifrajs/client/no-socket")
 
 interface WsRuntimeOptions extends WsCallOptions {
   headers?: Record<string, string> | undefined
+  transport?: {
+    readonly codec: TransportCodec
+    readonly registry?: TransportCodecRegistry
+    readonly maxBytes?: number
+  }
 }
 
 function toWsUrl(base: string, path: string, query: WsCallOptions["query"]): string {
@@ -50,6 +63,12 @@ export function openWebSocket(
 
   const sendQueue: string[] = []
   const listeners = new Set<(message: unknown) => void>()
+  const transport = callOptions?.transport
+  const registry =
+    transport?.registry ??
+    (transport === undefined || transport.codec === plainJsonCodec
+      ? createTransportCodecRegistry([plainJsonCodec])
+      : createTransportCodecRegistry([plainJsonCodec, transport.codec]))
 
   const opened = new Promise<void>((resolve, reject) => {
     socket.addEventListener("open", () => resolve(), { once: true })
@@ -74,7 +93,12 @@ export function openWebSocket(
     if (typeof event.data !== "string") return // binary frames live off the typed contract
     let parsed: unknown
     try {
-      parsed = JSON.parse(event.data)
+      parsed =
+        transport === undefined
+          ? JSON.parse(event.data)
+          : decodeTransportFrame(event.data, registry, {
+              ...(transport.maxBytes === undefined ? {} : { maxBytes: transport.maxBytes }),
+            })
     } catch {
       return // a non-JSON text frame is outside the contract too
     }
@@ -95,7 +119,10 @@ export function openWebSocket(
     raw: socket,
     opened,
     send(message: unknown): void {
-      const frame = JSON.stringify(message)
+      const frame =
+        transport === undefined
+          ? JSON.stringify(message)
+          : encodeTransportFrame(message, transport.codec)
       if (socket.readyState === WebSocketImpl.OPEN) socket.send(frame)
       else sendQueue.push(frame)
     },

@@ -27,6 +27,21 @@ const policy = defineCapabilityPolicy({
 })
 
 describe("route capabilities", () => {
+  test("caps interceptor timeouts that JavaScript timers would wrap", async () => {
+    const app = server()
+      .aroundCapability(
+        async (_event, next) => {
+          await new Promise((resolve) => setTimeout(resolve, 5))
+          await next()
+        },
+        { timeoutMs: 2_147_483_648 },
+      )
+      .get("/", { capabilities: ["db.read"] }, async (c) =>
+        executeCapability(c, "db.read", {}, async () => ({ ok: true })),
+      )
+    expect((await app.fetch(new Request("http://nifra.test/"))).status).toBe(200)
+  })
+
   test("aroundCapability asynchronously admits each executeCapability call before the effect", async () => {
     const order: string[] = []
     const events: unknown[] = []

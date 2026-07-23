@@ -35,6 +35,7 @@ const LIBRARIES = [
   "mock",
   "prompt",
   "mcp-db",
+  "events",
   "web",
   "web-solid",
   "web-react",
@@ -120,6 +121,48 @@ const PUBLINT_ONLY = [
   // package.json/exports (the real risk for a shim).
   { name: "nifra", dir: "packages/nifra" },
 ] as const
+
+// Workspace-privacy gate: publishing is deny-by-default. A new package must be deliberately added to
+// one of the public allowlists above; otherwise its manifest must carry `private: true`. This catches
+// internal helpers accidentally becoming publishable and also prevents a newly public package from
+// silently skipping tarball/type validation (as happened when packages/events was first added).
+const PUBLIC_PACKAGE_DIRS = new Set([
+  ...LIBRARIES.map((name) => `packages/${name}`),
+  ...PUBLINT_ONLY.map(({ dir }) => dir),
+])
+const workspaceManifests = [
+  "package.json",
+  ...(await Array.fromAsync(new Glob("packages/*/package.json").scan("."))),
+  ...(await Array.fromAsync(new Glob("internal/*/package.json").scan("."))),
+  "bench/package.json",
+  "examples/package.json",
+  "site/package.json",
+]
+const seenPublicDirs = new Set<string>()
+for (const file of [...new Set(workspaceManifests)].sort()) {
+  const manifest = JSON.parse(await Bun.file(file).text()) as { name?: string; private?: boolean }
+  const dir = file === "package.json" ? "." : file.slice(0, -"/package.json".length)
+  if (PUBLIC_PACKAGE_DIRS.has(dir)) {
+    seenPublicDirs.add(dir)
+    if (manifest.private === true) {
+      failures += 1
+      console.error(`✗ ${dir}: intended public package is marked private`)
+    }
+  } else if (manifest.private !== true) {
+    failures += 1
+    console.error(
+      `✗ ${dir}: workspace package is publishable but absent from the explicit public allowlist`,
+    )
+  }
+}
+for (const dir of PUBLIC_PACKAGE_DIRS) {
+  if (!seenPublicDirs.has(dir)) {
+    failures += 1
+    console.error(`✗ ${dir}: public allowlist entry has no workspace package manifest`)
+  }
+}
+if (failures === 0) console.log("✓ workspace package privacy matches the explicit public allowlist")
+
 for (const { name, dir } of PUBLINT_ONLY) {
   console.log(`\n=== ${name} (publint only) ===`)
   const publint = await $`bunx publint --level warning ${dir}`.nothrow()
@@ -137,7 +180,7 @@ for (const { name, dir } of PUBLINT_ONLY) {
 // we pack each package exactly as `bun publish` does and assert NO `workspace:` survives in any consumer
 // dependency block — the single invariant that, had it run, would have caught the break at publish time.
 console.log("\n=== packed-manifest workspace: gate ===")
-const ALL_DIRS = [...LIBRARIES.map((p) => `packages/${p}`), ...PUBLINT_ONLY.map((p) => p.dir)]
+const ALL_DIRS = [...PUBLIC_PACKAGE_DIRS]
 for (const dir of ALL_DIRS) {
   const tmp = (await $`mktemp -d`.text()).trim()
   const packed = await $`bun pm pack --destination ${tmp}`.cwd(dir).nothrow().quiet()

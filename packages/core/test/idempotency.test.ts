@@ -11,7 +11,7 @@ import {
   serializeResponse,
   validIdempotencyKey,
 } from "../src/idempotency.ts"
-import { idempotency } from "../src/idempotency-plugin.ts"
+import { idempotency, markIdempotencySafeToRetry } from "../src/idempotency-plugin.ts"
 import { server } from "../src/index.ts"
 import {
   beginRequestEffectTracking,
@@ -449,6 +449,41 @@ describe("server({ idempotency }) — request path", () => {
     expect((await app.fetch(post({ amount: 1 }, "e"))).status).toBe(500)
     const replay = await app.fetch(post({ amount: 1 }, "e"))
     expect(replay.status).toBe(500)
+    expect(replay.headers.get(IDEMPOTENT_REPLAY_HEADER)).toBe("1")
+    expect(runs).toBe(1)
+  })
+
+  test("an explicit no-effect outcome releases a resolved 5xx for a safe retry", async () => {
+    let runs = 0
+    const app = server()
+      .use(idempotency())
+      .post("/pay", { idempotency: { scope: "request", namespace: "public:pay" } }, (c) => {
+        runs += 1
+        if (runs === 1) {
+          markIdempotencySafeToRetry(c)
+          return c.json({ error: "dependency_unavailable" }, 503)
+        }
+        return { charged: true }
+      })
+
+    expect((await app.fetch(post({ amount: 1 }, "retry-safe"))).status).toBe(503)
+    expect((await app.fetch(post({ amount: 1 }, "retry-safe"))).status).toBe(200)
+    expect(runs).toBe(2)
+  })
+
+  test("a later effect invalidates an earlier safe-retry declaration", async () => {
+    let runs = 0
+    const app = server()
+      .use(idempotency())
+      .post("/pay", { idempotency: { scope: "request", namespace: "public:pay" } }, (c) => {
+        runs += 1
+        markIdempotencySafeToRetry(c)
+        markEffectExecuting(c)
+        return c.json({ error: "provider_outcome_unknown" }, 503)
+      })
+
+    expect((await app.fetch(post({ amount: 1 }, "retry-invalidated"))).status).toBe(503)
+    const replay = await app.fetch(post({ amount: 1 }, "retry-invalidated"))
     expect(replay.headers.get(IDEMPOTENT_REPLAY_HEADER)).toBe("1")
     expect(runs).toBe(1)
   })
