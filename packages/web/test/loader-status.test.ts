@@ -237,3 +237,65 @@ test("a prerendered path whose loader signals notFound() is omitted, not baked a
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test("an SSR duplicate-instance error names the cause instead of only a React internal", async () => {
+  // The failure being replaced: a 500 whose message points at a React internal, from which "two
+  // copies at different paths" is hours of inference away.
+  const app = createWebApp({
+    adapter: stub,
+    manifest: {
+      routes: [
+        {
+          id: "hooky",
+          pattern: "/hooky",
+          layoutIds: [],
+          errorIds: ["_error"],
+          file: "hooky.tsx",
+          load: async () => ({
+            default: "x",
+            loader: () => {
+              throw new Error("null is not an object (evaluating 'resolveDispatcher().useId')")
+            },
+          }),
+        },
+      ],
+      layouts: {},
+      errors: { _error: { file: "_error.tsx", load: async () => ({ default: "boundary" }) } },
+    } as Manifest,
+    clientEntry: "/c.js",
+  })
+  const html = await (await app.fetch(new Request("http://x/hooky"))).text()
+  expect(html).toContain("TWO COPIES")
+  expect(html).toContain("nifra check")
+  // Version-matching is the wrong fix and the message says so explicitly.
+  expect(html).toContain("matching versions do NOT fix it")
+})
+
+test("an ordinary render error is left exactly as it was", async () => {
+  const app = createWebApp({
+    adapter: stub,
+    manifest: {
+      routes: [
+        {
+          id: "boom",
+          pattern: "/boom",
+          layoutIds: [],
+          errorIds: ["_error"],
+          file: "boom.tsx",
+          load: async () => ({
+            default: "x",
+            loader: () => {
+              throw new Error("database unreachable")
+            },
+          }),
+        },
+      ],
+      layouts: {},
+      errors: { _error: { file: "_error.tsx", load: async () => ({ default: "boundary" }) } },
+    } as Manifest,
+    clientEntry: "/c.js",
+  })
+  const html = await (await app.fetch(new Request("http://x/boom"))).text()
+  expect(html).toContain("database unreachable")
+  expect(html).not.toContain("TWO COPIES")
+})

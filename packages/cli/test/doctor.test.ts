@@ -6,6 +6,7 @@ import {
   aliasMatcher,
   applyDoctorAutoFix,
   collectDoctorResult,
+  collectDuplicateInstalls,
   packageOf,
   scanUndeclaredImports,
 } from "../src/doctor.ts"
@@ -387,5 +388,110 @@ describe("collectDoctorResult — project-level import vs declared-deps diff", (
     ])
     expect(pkg.dependencies).toBeUndefined()
     await rm(dir, { recursive: true, force: true })
+  })
+})
+
+describe("collectDuplicateInstalls — discovery anchored at the workspace root", () => {
+  test("finds a sibling package's duplicate when run from an app subdirectory", async () => {
+    // The configuration the check was blind in, and the normal one: you run `nifra check` from the
+    // app, whose manifest declares no `workspaces`, so discovery collapsed to the app itself and the
+    // sibling holding the second copy was never probed. It reported "none" while dev 500'd.
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-wsroot-"))
+    try {
+      const app = join(dir, "apps", "web")
+      const kit = join(dir, "packages", "kit")
+      await mkdir(join(app, "src"), { recursive: true })
+      await mkdir(join(kit, "node_modules", "react"), { recursive: true })
+      await mkdir(join(dir, "node_modules", "react"), { recursive: true })
+      // A `.git` at the real root, so the upward walk has a boundary to respect.
+      await mkdir(join(dir, ".git"), { recursive: true })
+
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "root", private: true, workspaces: ["apps/*", "packages/*"] }),
+      )
+      await writeFile(
+        join(app, "package.json"),
+        JSON.stringify({ name: "web", dependencies: { react: "19.2.7" } }),
+      )
+      await writeFile(
+        join(kit, "package.json"),
+        JSON.stringify({ name: "kit", dependencies: { react: "19.2.7" } }),
+      )
+      // Same VERSION, different physical directories - the case the plan calls out, since module
+      // identity is path-based and aligning versions does not fix it.
+      await writeFile(
+        join(dir, "node_modules", "react", "package.json"),
+        JSON.stringify({ name: "react", version: "19.2.7" }),
+      )
+      await writeFile(
+        join(kit, "node_modules", "react", "package.json"),
+        JSON.stringify({ name: "react", version: "19.2.7" }),
+      )
+
+      const appPkg = JSON.parse(await readFile(join(app, "package.json"), "utf8")) as Record<
+        string,
+        unknown
+      >
+      const findings = await collectDuplicateInstalls(app, appPkg)
+
+      expect(findings).toHaveLength(1)
+      expect(findings[0]?.package).toBe("react")
+      expect(findings[0]?.copies).toHaveLength(2)
+      // Identical versions: the finding is about two paths, not two versions.
+      expect(findings[0]?.copies.map((c) => c.version)).toEqual(["19.2.7", "19.2.7"])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("does not adopt an ancestor whose workspace globs do not cover cwd", async () => {
+    // A parent directory that merely contains a manifest is not this project's root. Adopting one
+    // would silently widen the scan into an unrelated tree.
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-unrelated-"))
+    try {
+      const project = join(dir, "elsewhere", "project")
+      await mkdir(join(project, "src"), { recursive: true })
+      await mkdir(join(dir, "node_modules", "react"), { recursive: true })
+      await writeFile(
+        join(dir, "package.json"),
+        // Globs cover `packages/*`, which does NOT contain `elsewhere/project`.
+        JSON.stringify({ name: "unrelated-root", private: true, workspaces: ["packages/*"] }),
+      )
+      await writeFile(
+        join(project, "package.json"),
+        JSON.stringify({ name: "project", dependencies: { react: "19.2.7" } }),
+      )
+      await writeFile(
+        join(dir, "node_modules", "react", "package.json"),
+        JSON.stringify({ name: "react", version: "19.2.7" }),
+      )
+      const pkg = JSON.parse(await readFile(join(project, "package.json"), "utf8")) as Record<
+        string,
+        unknown
+      >
+      // One reachable copy only ⇒ no finding, and no crash from the widened walk.
+      expect(await collectDuplicateInstalls(project, pkg)).toEqual([])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("no workspace root above cwd leaves the previous behaviour intact", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-standalone-"))
+    try {
+      await mkdir(join(dir, "src"), { recursive: true })
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "solo", dependencies: { react: "19.2.7" } }),
+      )
+      const pkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as Record<
+        string,
+        unknown
+      >
+      expect(await collectDuplicateInstalls(dir, pkg)).toEqual([])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 })

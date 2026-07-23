@@ -751,6 +751,44 @@ export function redirect(location: string, options: RedirectOptions = {}): Respo
  * type here would break their build. Same workaround as `SSEInit.headers` in core. */
 type HeadersLike = ConstructorParameters<typeof Headers>[0]
 
+/**
+ * The signatures a **duplicate module instance** produces during SSR, across engines.
+ *
+ * Two copies of React (or of `@nifrajs/core`) at the SAME version still fail, because module identity
+ * is path-based: hooks read a dispatcher off the copy that rendered, and the component imported the
+ * other one. The error that surfaces names a React internal, so it reads as a React bug and the actual
+ * cause - two directories - is a long inference away. Naming the cause at the point of failure is the
+ * difference between that and a five-second read.
+ */
+const DUPLICATE_INSTANCE_SIGNATURES: readonly RegExp[] = [
+  /resolveDispatcher\(\)/,
+  /Invalid hook call/,
+  /Cannot read propert(?:y|ies) of null \(reading '(?:use[A-Z]\w*)'\)/,
+  /null is not an object \(evaluating '.*\.use[A-Z]\w*'\)/,
+]
+
+/**
+ * Append the likely cause to an SSR error that carries a duplicate-instance signature.
+ *
+ * Deliberately does NOT claim the resolved paths: `@nifrajs/web` is framework-agnostic and does not
+ * depend on React, so it cannot resolve the copies without guessing. It names the condition and the
+ * command that reports the paths, which is the actionable part. Returns the error untouched when the
+ * signature does not match, so an ordinary render error reads exactly as before.
+ */
+function withDuplicateInstanceHint(err: unknown): unknown {
+  if (!(err instanceof Error)) return err
+  if (!DUPLICATE_INSTANCE_SIGNATURES.some((rx) => rx.test(err.message))) return err
+  const augmented = new Error(
+    `${err.message}\n\n[nifra/web] This signature usually means TWO COPIES of an identity-sensitive package (react, react-dom, or @nifrajs/core) are installed at different paths. Module identity is path-based, so matching versions do NOT fix it - the copies must resolve to the same directory. Run \`nifra check\` to list the paths.`,
+    { cause: err },
+  )
+  augmented.name = err.name
+  // `stack` is optional under exactOptionalPropertyTypes; assigning `undefined` would replace a real
+  // stack with nothing on engines that always populate it.
+  if (err.stack !== undefined) augmented.stack = err.stack
+  return augmented
+}
+
 const STATUS_SIGNAL = Symbol.for("nifra.web.status-signal")
 
 /** Reason phrases for the plain-text fallback, used only when the app authored no `_<status>` and no
@@ -1446,7 +1484,7 @@ export function createWebApp<Env = unknown>(
             headers: { "content-type": "text/plain; charset=utf-8" },
           })
         }
-        return renderError(route, errorId, err)
+        return renderError(route, errorId, withDuplicateInstanceHint(err))
       }
       // Client-side navigation asks (via the X-Nifra-Data header) for just the loader data — no full
       // document, no layout chain. A route with deferred data streams NDJSON (critical data first,
@@ -1500,7 +1538,7 @@ export function createWebApp<Env = unknown>(
         }
         const errorId = route.errorIds?.at(-1)
         if (errorId === undefined) throw err
-        return renderError(route, errorId, err)
+        return renderError(route, errorId, withDuplicateInstanceHint(err))
       }
     })
 

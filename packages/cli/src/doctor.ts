@@ -10,7 +10,7 @@
  * when a monorepo would hoist it. Relative paths, runtime builtins (node core, `node:`/`bun:`, `bun`),
  * the package's own name, and tsconfig `paths` aliases are excluded — none of them are npm deps.
  */
-import { realpath } from "node:fs/promises"
+import { realpath, stat } from "node:fs/promises"
 import { builtinModules } from "node:module"
 import { dirname, join, relative } from "node:path"
 import { codePositionMask, type SourceFinding, stripComments, walkSource } from "./check.ts"
@@ -336,13 +336,75 @@ const displayPath = (cwd: string, path: string): string => {
   return rel === "" ? "." : rel
 }
 
+/**
+ * Resolve the workspace root that actually governs `cwd`, or `undefined` when there is none.
+ *
+ * Everything below is anchored to a package that declares `workspaces`. In a monorepo you run
+ * `nifra check` from the app - `apps/web` - and THAT manifest declares nothing, so the scan collapses
+ * to the app itself and the sibling package holding the second copy is never probed. Running from an
+ * app subdirectory is the normal case, which made this the configuration the check was blind in.
+ *
+ * An ancestor is adopted only when its `workspaces` patterns genuinely match `cwd`. A parent
+ * directory that happens to contain a manifest is not automatically this project's root, and adopting
+ * one would silently widen the scan to an unrelated tree. The walk also stops at a `.git` boundary
+ * (checked after the manifest, so a repo root that IS the workspace root still counts) and at the
+ * filesystem root.
+ */
+/** Whether `path` exists at all. `stat`, not a file read: a `.git` is a directory in a normal
+ * checkout and a FILE in a worktree or submodule, and both mark the same boundary. */
+const pathExists = (path: string): Promise<boolean> =>
+  stat(path).then(
+    () => true,
+    () => false,
+  )
+
+async function findWorkspaceRoot(
+  cwd: string,
+): Promise<{ root: string; package: Record<string, unknown> } | undefined> {
+  let dir = dirname(cwd)
+  for (;;) {
+    const manifestPath = join(dir, "package.json")
+    const manifest = await readJson(manifestPath)
+    if (manifest !== undefined) {
+      const patterns = workspacePatterns(manifest)
+      if (patterns.length > 0 && (await patternsCover(dir, patterns, cwd))) {
+        return { root: dir, package: manifest }
+      }
+    }
+    // A `.git` here means we have reached this project's boundary; anything above belongs to a
+    // different repo (or a parent checkout) and must not be adopted.
+    if (await pathExists(join(dir, ".git"))) return undefined
+    const parent = dirname(dir)
+    if (parent === dir) return undefined
+    dir = parent
+  }
+}
+
+/** Whether any of `root`'s workspace patterns resolves to a manifest inside `target`'s package. */
+async function patternsCover(root: string, patterns: string[], target: string): Promise<boolean> {
+  for (const pattern of patterns) {
+    const packagePattern = `${pattern.replace(/\/$/, "")}/package.json`
+    for await (const rel of new Bun.Glob(packagePattern).scan({ cwd: root, dot: false })) {
+      if (rel.split(/[\\/]/).includes("node_modules")) continue
+      if (dirname(join(root, rel)) === target) return true
+    }
+  }
+  return false
+}
+
 /** Find identity-sensitive dependencies that resolve to multiple physical directories. Two copies at
- * the same version still fail: module identity (React hooks, Nifra symbols/registries) is path-based. */
+ * the same version still fail: module identity (React hooks, Nifra symbols/registries) is path-based.
+ *
+ * `cwd` is where the user ran the check; the scan is anchored at the workspace root above it (see
+ * {@link findWorkspaceRoot}) so sibling packages are probed, while paths are still REPORTED relative
+ * to `cwd` so the findings read the way the user's terminal does. */
 export async function collectDuplicateInstalls(
   cwd: string,
   rootPackage: Record<string, unknown>,
 ): Promise<DuplicateInstallFinding[]> {
-  const importers = await workspaceImporters(cwd, rootPackage)
+  const workspace = await findWorkspaceRoot(cwd)
+  const scanRoot = workspace?.root ?? cwd
+  const importers = await workspaceImporters(scanRoot, workspace?.package ?? rootPackage)
   const byPackage = new Map<string, Map<string, { version: string; importers: Set<string> }>>()
   const record = (
     name: string,
@@ -364,7 +426,10 @@ export async function collectDuplicateInstalls(
     for (const name of duplicateTargets(importer.package)) {
       if (importer.package.name === name) continue
       targets.add(name)
-      const copy = await resolvedInstalledCopy(importer.root, cwd, name)
+      // Boundary is the SCAN root, not `cwd`: an importer can now sit beside or above the directory
+      // the user ran from, and stopping the upward walk at `cwd` would abandon it before reaching the
+      // hoisted copy it actually resolves.
+      const copy = await resolvedInstalledCopy(importer.root, scanRoot, name)
       if (copy !== undefined) record(name, copy, displayPath(cwd, importer.root))
     }
   }
@@ -374,8 +439,8 @@ export async function collectDuplicateInstalls(
   // out hides the very split it should catch: every declaring package nested onto one copy while the
   // root resolved a different one, which reads as a single copy when only declarers are consulted.
   for (const name of targets) {
-    const copy = await resolvedInstalledCopy(cwd, cwd, name)
-    if (copy !== undefined) record(name, copy, ".")
+    const copy = await resolvedInstalledCopy(scanRoot, scanRoot, name)
+    if (copy !== undefined) record(name, copy, displayPath(cwd, scanRoot))
   }
 
   const findings: DuplicateInstallFinding[] = []
