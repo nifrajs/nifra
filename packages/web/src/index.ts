@@ -85,7 +85,6 @@ export {
   revalidateEndpoint,
   withISR,
 } from "./isr.ts"
-
 // File-based routing manifest — pure + fs-free. `discoverRoutes` (fs) lives in `@nifrajs/web/fs`.
 export {
   type Action,
@@ -117,6 +116,14 @@ export {
   type NavigateOptions,
   setBrowserNavigate,
 } from "./navigation.ts"
+// public/ — user-authored static files, served identically in dev and production by one handler.
+export {
+  copyPublicDir,
+  type PublicDirCache,
+  resolvePublicPath,
+  type ServePublicDirOptions,
+  servePublicDir,
+} from "./public-dir.ts"
 // Keyed query-cache (agnostic) — a `query(key, fn)` primitive (dedup + staleness + invalidation + GC)
 // consumed by the per-adapter `useQuery`/`createQuery` bindings.
 export {

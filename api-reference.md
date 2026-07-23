@@ -2207,6 +2207,8 @@ Every public export of every package and documented subpath — name, kind, sign
   Pre-hydration form guard — a tiny inline script flushed in `<head>` (it runs in the window between first paint and the island bundle taking over). It neutralizes the one real hydration footgun: a JS-only form (a hand-wired `onSubmit` with no native fallback) submitting *natively* before its handler…
 - **PreviewEndpointOptions** _(interface)_ — `interface PreviewEndpointOptions`
   Config for {@link previewEndpoint}.
+- **PublicDirCache** _(interface)_ — `interface PublicDirCache`
+  How long each subtree may be cached. Content-hashed bundle output can be immutable; a user-authored file keeps its name across deploys, so it gets a day and a revalidation.
 - **QueryClient** _(interface)_ — `interface QueryClient`
   The keyed query cache. One per app (a binding registers it like the router).
 - **QueryClientOptions** _(interface)_ — `interface QueryClientOptions`
@@ -2251,6 +2253,7 @@ Every public export of every package and documented subpath — name, kind, sign
   The router's observable state. A new object is published on every transition.
 - **ScriptDescriptor** _(interface)_ — `interface ScriptDescriptor`
   One `<script>` element a route contributes to `<head>` — for structured data (JSON-LD) and other inert, non-executable head scripts. The `content` is the script body; `type` defaults to `"application/ld+json"` (the common case). The renderer escapes `content` against an HTML breakout (`</`, `<!--`,…
+- **ServePublicDirOptions** _(interface)_ — `interface ServePublicDirOptions`
 - **ServerOnly** _(type)_ — `type ServerOnly<T> = T & { readonly [SERVER_ONLY_BRAND]?: never }`
   Type-level intent marker for a value that must only exist on the server — a secret, a DB handle, a server-only client. `ServerOnly<T>` is structurally `T` (the brand is an optional phantom field, so existing code keeps type-checking), but it advertises to readers + the compiler that the value is no…
 - **StaticPath** _(interface)_ — `interface StaticPath`
@@ -2271,6 +2274,8 @@ Every public export of every package and documented subpath — name, kind, sign
   Build a manifest from route file paths (relative to the routes dir) + an `importer` that turns a path into a lazy module loader. Pure — no fs. Throws at boot (the loud-and-early RouteConfigError ethos) on duplicate patterns. `_layout`/`_404`/`_error` files are special; other `_`-prefixed files are …
 - **canonical** _(function)_ — `canonical: (href: string) => LinkDescriptor`
   A `<link rel="canonical">` descriptor for a route's `meta.link`. The canonical URL tells search engines which URL is authoritative for a page (deduping query-string / tracking variants).
+- **copyPublicDir** _(function)_ — `copyPublicDir: (from: string, to: string) => Promise<string[]>`
+  Copy `from` into `to`, returning the URL paths copied (sorted). Used at build time so the server entry can serve `public/` without scanning a directory per request, and so adapters that need a file list (CDN upload, platform static assets) can consume one.
 - **createClientRouter** _(function)_ — `createClientRouter: (options: ClientRouterOptions) => ClientRouter`
   Create the agnostic router store. `navigate` is guarded by a monotonic token so that when navigations overlap, only the latest result is applied (rapid clicks don't flash stale data). A failed fetch clears `pending` and rethrows so the caller can fall back to a full-page load.
 - **createMatcher** _(function)_ — `createMatcher: (patterns: readonly RoutePattern[]) => (path: string) => RouteMatch | null`
@@ -2325,12 +2330,16 @@ Every public export of every package and documented subpath — name, kind, sign
 - **renderPageResult** _(function)_ — `renderPageResult: (options: RenderPageOptions) => MaybePromise<RenderedPage>`
 - **resolveMeta** _(function)_ — `resolveMeta: (meta: MetaInput | undefined, args: MetaArgs) => Meta`
   Resolve a route's `meta` (static or a function of the loader data + params) to a {@link Meta}.
+- **resolvePublicPath** _(function)_ — `resolvePublicPath: (root: string, pathname: string) => string | undefined`
+  Resolve a URL pathname to an absolute path **confined** to `root`, or `undefined` if it escapes.
 - **revalidate** _(function)_ — `revalidate: <T>(paths: readonly string[], data: T) => RevalidateResult<T>`
   Return this from an action to declare which routes the mutation changed (alongside the action's `data`). `createWebApp` sets the `X-Nifra-Revalidate` response header; after the submit the client marks those cached routes stale — refetching the active one and any mounted fetcher showing them — so a …
 - **revalidateEndpoint** _(function)_ — `revalidateEndpoint: (options: RevalidateEndpointOptions) => (req: Request) => Promise<Response>`
   An **on-demand revalidation** (purge) endpoint — a `fetch` handler that drops a path's cached entry so the next request re-renders. `POST` with the secret in the token header and the path as `?path=` or a JSON `{ "path": "/blog/x" }` body. The token is checked in **constant time** (wrong/missing → …
 - **serializeData** _(function)_ — `serializeData: (data: unknown) => string`
   Serialize loader data for embedding inside an inline `<script>`. `JSON.stringify` alone is NOT safe there: a string containing `</script>` or `<!--` would break out of the script element (an XSS vector). Escape `<`/`>` to `\uXXXX`, plus the U+2028/U+2029 separators.
+- **servePublicDir** _(function)_ — `servePublicDir: (options: ServePublicDirOptions) => (request: Request) => Promise<Response | undefined>`
+  Build a static-file handler for `dir`.
 - **setBrowserNavigate** _(function)_ — `setBrowserNavigate: (navigate: BrowserNavigate | undefined) => void`
   Register (or clear, with `undefined`) the browser navigate — called by `installHistory`. Not for app use.
 - **statusPage** _(function)_ — `statusPage: (status: number, options?: StatusPageOptions) => never`

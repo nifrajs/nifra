@@ -5,7 +5,7 @@
  * are Bun-specific and never on the request path (own subpath, like `@nifrajs/web/fs`); the *output*
  * runs on any runtime.
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, relative, resolve as resolvePath } from "node:path"
 import type { BunPlugin } from "bun"
 import { sanitizeOutputNames } from "./chunk-names.ts"
@@ -13,6 +13,7 @@ import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
 // `buildTarget(static)` drives the SSG prerender engine directly (it's also re-exported below).
 import { prerenderRoutes } from "./prerender.ts"
+import { copyPublicDir } from "./public-dir.ts"
 
 // Build-time SSG: prerender opted-in static + dynamic routes to `index.html` (+ static `_data.json`),
 // run after `buildClient`.
@@ -48,6 +49,15 @@ export interface BuildClientOptions {
   readonly minify?: boolean
   /** URL prefix the assets are served under (default `"/assets/"`); also Bun's chunk `publicPath`. */
   readonly publicPath?: string
+  /**
+   * Directory of user-authored static files copied into the build and served at the root (default
+   * `"public"`). Absent directory ⇒ nothing copied, no error.
+   *
+   * NOT the same thing as {@link publicPath}, despite the names: that is the URL prefix for
+   * content-hashed bundle chunks and never covers files an author put on disk. The collision is a
+   * real source of confusion, which is why both are spelled out here.
+   */
+  readonly publicDir?: string
   /**
    * Prefix that opts an environment variable into the **client** bundle (Vite/Next convention; default
    * `"PUBLIC_"`). Every var in the build environment whose name starts with this prefix is baked into
@@ -92,6 +102,10 @@ export interface BuildManifest {
    * `routePreload` (`<link rel="modulepreload">` the matched route alongside the entry). Each route +
    * layout is also a build entrypoint, so it gets a named chunk the bootstrap's lazy import dedupes to. */
   readonly routes: Readonly<Record<string, readonly string[]>>
+  /** URL paths copied from `publicDir`, sorted. Lets the server entry serve them without scanning a
+   * directory per request, and lets an adapter that needs a file list (CDN upload, platform static
+   * assets) consume one. Omitted when there is no `public/`. */
+  readonly publicFiles?: readonly string[]
   /** The app's bundled, content-hashed stylesheet(s) — the bootstrap's **aggregate** CSS (every
    * `import './x.css'` reachable from the app). The complete stylesheet regardless of which file
    * imported the CSS; the always-safe fallback `createWebApp` links when a route has no per-route entry
@@ -899,10 +913,16 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     if (routeManifest.notFound) routeStyles._404 = stylesFor([routeManifest.notFound.file])
   }
 
+  // Copy `public/` into the output next to the hashed assets. A missing directory is normal (most
+  // apps have none) and must not fail the build.
+  const publicDir = options.publicDir ?? "public"
+  const publicFiles = existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
+
   const manifest: BuildManifest = {
     entry: toUrl(bootstrap.path),
     assets: result.outputs.map((o) => toUrl(o.path)),
     routes,
+    ...(publicFiles.length > 0 ? { publicFiles } : {}),
     ...(css.length > 0 ? { css } : {}),
     ...(Object.keys(routeStyles).length > 0 ? { routeStyles } : {}),
   }

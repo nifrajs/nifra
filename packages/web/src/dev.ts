@@ -6,8 +6,10 @@
  * Bun-only + build-time; never imported by the edge runtime.
  */
 import { readdirSync, unwatchFile, watchFile } from "node:fs"
+import { resolve } from "node:path"
 import { type BuildClientOptions, buildClient } from "./build.ts"
 import { DEFAULT_DEV_PORT } from "./index.ts"
+import { servePublicDir } from "./public-dir.ts"
 
 /** Minimal app surface the dev server needs — `createWebApp(...)` satisfies it. */
 interface FetchApp {
@@ -25,6 +27,9 @@ export interface DevServerOptions extends Omit<BuildClientOptions, "minify"> {
   readonly watch?: readonly string[]
   /** Port to listen on (default {@link DEFAULT_DEV_PORT}). */
   readonly port?: number
+  /** Directory of user-authored static files served at the root (default `"public"`). The SAME
+   * option the production build copies and serves, so dev and prod cannot drift. */
+  readonly publicDir?: string
 }
 
 export interface DevServer {
@@ -41,6 +46,11 @@ const reloadClient = `<script>(()=>{const x=()=>{const w=new WebSocket((location
 export async function createDevServer(options: DevServerOptions): Promise<DevServer> {
   const { createApp, port = DEFAULT_DEV_PORT, outDir, routesDir } = options
   const publicPath = options.publicPath ?? "/assets/"
+  // Route dev's `public/` through the SAME handler production uses. Dev previously inherited this
+  // from Vite implicitly while production had no equivalent, which is the entire bug: two code paths
+  // with different defaults, so a file worked in dev and 404'd only once deployed.
+  const publicDir = options.publicDir ?? "public"
+  const servePublic = servePublicDir({ dir: resolve(publicDir) })
   let version = 0
   const rebuild = async (): Promise<FetchApp> => {
     const manifest = await buildClient({ ...options, minify: false })
@@ -61,6 +71,10 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
           ? new Response(file, { headers: { "content-type": "text/javascript; charset=utf-8" } })
           : new Response("Not Found", { status: 404 })
       }
+      // Static probe before routing; a miss returns undefined and falls through, so no route is
+      // shadowed and a page render never pays a filesystem stat (extension-less paths skip it).
+      const staticFile = await servePublic(req)
+      if (staticFile !== undefined) return staticFile
       const res = await app.fetch(req)
       if (!(res.headers.get("content-type") ?? "").includes("text/html")) return res
       const headers = new Headers(res.headers)

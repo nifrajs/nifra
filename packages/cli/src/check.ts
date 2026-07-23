@@ -1602,5 +1602,15 @@ export async function runCheck(
       "\ntip: no .mcp.json here - run `nifra init-agents` to wire this project's MCP + agent files (no-clobber).",
     )
   }
+  // `public/` used to be served in dev (inherited from Vite) and not in production, so every app
+  // hand-rolled static serving in its own server entry - or shipped a file that 404'd only once
+  // deployed. `@nifrajs/web` owns it now, so an app carrying the workaround can delete it. A tip
+  // rather than a finding: a hand-rolled handler still works (it simply runs first), so this is
+  // not a failure, and telling an app it can delete code is the entire point.
+  if (existsSync(join(cwd, "public"))) {
+    console.log(
+      '\ntip: `public/` is now served by @nifrajs/web in dev AND production (publicDir, default "public"). If your server entry hand-rolls static serving, you can delete it.',
+    )
+  }
   return result.ok
 }

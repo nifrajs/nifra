@@ -837,7 +837,7 @@
     "name": "BuildClientOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface BuildClientOptions {\n    /** The `routes/` directory to discover (absolute path). */\n    readonly routesDir: string;\n    /** Output directory for the bundle + `manifest.json` (absolute path). */\n    readonly outDir: string;\n    /** The adapter's client runtime (exports `mountRouter`), e.g. `\"@nifrajs/web-solid/client\"`. */\n    readonly clientModule: string;\n    /** Route/layout file → import specifier (default: `${routesDir}/${file}`). */\n    readonly resolve?: (file: string) => string;\n    /** Adapter build plugins (e.g. `solidBunPlugin(\"dom\")`). */\n    readonly plugins?: readonly BunPlugin[];\n    /** `Bun.build` export conditions (e.g. `[\"bun\", \"solid\", \"browser\"]`). */\n    readonly conditions?: readonly string[];\n    /** Compile-time replacements (e.g. `{ \"process.env.NODE_ENV\": '\"production\"' }`). */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Minify the output (default `true`). */\n    readonly minify?: boolean;\n    /** URL prefix the assets are served under (default `\"/assets/\"`); also Bun's chunk `publicPath`. */\n    readonly publicPath?: string;\n    /**\n     * Prefix that opts an environment variable into the **client** bundle (Vite/Next convention; default\n     * `\"PUBLIC_\"`). Every var in the build environment whose name starts with this prefix is baked into\n     * the client `define` as `\"process.env.NAME\": JSON.stringify(value)`, so `process.env.PUBLIC_API_URL`\n     * compiles to its literal value in the browser. Vars WITHOUT the prefix are never exposed — the bare\n     * `process.env` define resolves them to `undefined`, so server secrets can't leak into the client\n     * bundle. Set to `\"\"` to disable auto-exposure entirely (no var is baked in). `options.define` still\n     * wins over an auto-exposed var (it's layered last). Sourced from `Bun.env` (falls back to\n     * `process.env`) at build time. */\n    readonly publicEnvPrefix?: string;\n}"
+    "signature": "export interface BuildClientOptions {\n    /** The `routes/` directory to discover (absolute path). */\n    readonly routesDir: string;\n    /** Output directory for the bundle + `manifest.json` (absolute path). */\n    readonly outDir: string;\n    /** The adapter's client runtime (exports `mountRouter`), e.g. `\"@nifrajs/web-solid/client\"`. */\n    readonly clientModule: string;\n    /** Route/layout file → import specifier (default: `${routesDir}/${file}`). */\n    readonly resolve?: (file: string) => string;\n    /** Adapter build plugins (e.g. `solidBunPlugin(\"dom\")`). */\n    readonly plugins?: readonly BunPlugin[];\n    /** `Bun.build` export conditions (e.g. `[\"bun\", \"solid\", \"browser\"]`). */\n    readonly conditions?: readonly string[];\n    /** Compile-time replacements (e.g. `{ \"process.env.NODE_ENV\": '\"production\"' }`). */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Minify the output (default `true`). */\n    readonly minify?: boolean;\n    /** URL prefix the assets are served under (default `\"/assets/\"`); also Bun's chunk `publicPath`. */\n    readonly publicPath?: string;\n    /**\n     * Directory of user-authored static files copied into the build and served at the root (default\n     * `\"public\"`). Absent directory ⇒ nothing copied, no error.\n     *\n     * NOT the same thing as {@link publicPath}, despite the names: that is the URL prefix for\n     * content-hashed bundle chunks and never covers files an author put on disk. The collision is a\n     * real source of confusion, which is why both are spelled out here.\n     */\n    readonly publicDir?: string;\n    /**\n     * Prefix that opts an environment variable into the **client** bundle (Vite/Next convention; default\n     * `\"PUBLIC_\"`). Every var in the build environment whose name starts with this prefix is baked into\n     * the client `define` as `\"process.env.NAME\": JSON.stringify(value)`, so `process.env.PUBLIC_API_URL`\n     * compiles to its literal value in the browser. Vars WITHOUT the prefix are never exposed — the bare\n     * `process.env` define resolves them to `undefined`, so server secrets can't leak into the client\n     * bundle. Set to `\"\"` to disable auto-exposure entirely (no var is baked in). `options.define` still\n     * wins over an auto-exposed var (it's layered last). Sourced from `Bun.env` (falls back to\n     * `process.env`) at build time. */\n    readonly publicEnvPrefix?: string;\n}"
   },
   {
     "name": "buildManifest",
@@ -850,7 +850,7 @@
     "name": "BuildManifest",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface BuildManifest {\n    /** URL of the client entry module (content-hashed). */\n    readonly entry: string;\n    /** URLs of every emitted asset (entry + chunks) — for serving + preloading. */\n    readonly assets: readonly string[];\n    /** `routeId → [layout chunk URLs…, own chunk URL]` — the chunks a route needs, for `createWebApp`'s\n     * `routePreload` (`<link rel=\"modulepreload\">` the matched route alongside the entry). Each route +\n     * layout is also a build entrypoint, so it gets a named chunk the bootstrap's lazy import dedupes to. */\n    readonly routes: Readonly<Record<string, readonly string[]>>;\n    /** The app's bundled, content-hashed stylesheet(s) — the bootstrap's **aggregate** CSS (every\n     * `import './x.css'` reachable from the app). The complete stylesheet regardless of which file\n     * imported the CSS; the always-safe fallback `createWebApp` links when a route has no per-route entry\n     * in {@link routeStyles}. Omitted when the app imports no CSS. */\n    readonly css?: readonly string[];\n    /** `routeId → [chain CSS URLs]` — only the stylesheets the matched route's layout chain + own file\n     * actually use (Bun emits a per-entrypoint CSS bundle per route/layout, with shared-component CSS\n     * inlined into each consumer). `createWebApp` links these instead of the aggregate, so a page ships\n     * only its own CSS. A route is omitted (→ aggregate fallback) when its `[name]` collides with another\n     * route's basename (ambiguous CSS↔route) or the build emitted orphan shared-chunk CSS — correctness\n     * over minimality. Absent entirely when the app imports no CSS. */\n    readonly routeStyles?: Readonly<Record<string, readonly string[]>>;\n}",
+    "signature": "export interface BuildManifest {\n    /** URL of the client entry module (content-hashed). */\n    readonly entry: string;\n    /** URLs of every emitted asset (entry + chunks) — for serving + preloading. */\n    readonly assets: readonly string[];\n    /** `routeId → [layout chunk URLs…, own chunk URL]` — the chunks a route needs, for `createWebApp`'s\n     * `routePreload` (`<link rel=\"modulepreload\">` the matched route alongside the entry). Each route +\n     * layout is also a build entrypoint, so it gets a named chunk the bootstrap's lazy import dedupes to. */\n    readonly routes: Readonly<Record<string, readonly string[]>>;\n    /** URL paths copied from `publicDir`, sorted. Lets the server entry serve them without scanning a\n     * directory per request, and lets an adapter that needs a file list (CDN upload, platform static\n     * assets) consume one. Omitted when there is no `public/`. */\n    readonly publicFiles?: readonly string[];\n    /** The app's bundled, content-hashed stylesheet(s) — the bootstrap's **aggregate** CSS (every\n     * `import './x.css'` reachable from the app). The complete stylesheet regardless of which file\n     * imported the CSS; the always-safe fallback `createWebApp` links when a route has no per-route entry\n     * in {@link routeStyles}. Omitted when the app imports no CSS. */\n    readonly css?: readonly string[];\n    /** `routeId → [chain CSS URLs]` — only the stylesheets the matched route's layout chain + own file\n     * actually use (Bun emits a per-entrypoint CSS bundle per route/layout, with shared-component CSS\n     * inlined into each consumer). `createWebApp` links these instead of the aggregate, so a page ships\n     * only its own CSS. A route is omitted (→ aggregate fallback) when its `[name]` collides with another\n     * route's basename (ambiguous CSS↔route) or the build emitted orphan shared-chunk CSS — correctness\n     * over minimality. Absent entirely when the app imports no CSS. */\n    readonly routeStyles?: Readonly<Record<string, readonly string[]>>;\n}",
     "doc": "/** The built asset map — the server reads `entry` for the client script + serves `assets`. */"
   },
   {
@@ -1741,7 +1741,7 @@
     "kind": "function",
     "package": "@nifrajs/cli",
     "signature": "export declare function collectDuplicateInstalls(cwd: string, rootPackage: Record<string, unknown>): Promise<DuplicateInstallFinding[]>;",
-    "doc": "/** Find identity-sensitive dependencies that resolve to multiple physical directories. Two copies at\n * the same version still fail: module identity (React hooks, Nifra symbols/registries) is path-based. */"
+    "doc": "/** Find identity-sensitive dependencies that resolve to multiple physical directories. Two copies at\n * the same version still fail: module identity (React hooks, Nifra symbols/registries) is path-based.\n *\n * `cwd` is where the user ran the check; the scan is anchored at the workspace root above it (see\n * {@link findWorkspaceRoot}) so sibling packages are probed, while paths are still REPORTED relative\n * to `cwd` so the findings read the way the user's terminal does. */"
   },
   {
     "name": "CollectLevelsOptions",
@@ -2119,6 +2119,13 @@
     "package": "@nifrajs/core",
     "signature": "export interface CookieOptions {\n    /** Lifetime in seconds. `0` (with a past `expires`) deletes the cookie. */\n    readonly maxAge?: number;\n    readonly expires?: Date;\n    readonly path?: string;\n    readonly domain?: string;\n    readonly secure?: boolean;\n    readonly httpOnly?: boolean;\n    readonly sameSite?: \"strict\" | \"lax\" | \"none\";\n    readonly partitioned?: boolean;\n}",
     "doc": "/** Attributes for a `Set-Cookie`. `expires` is a `Date`; `maxAge` is in **seconds**. */"
+  },
+  {
+    "name": "copyPublicDir",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function copyPublicDir(from: string, to: string): Promise<string[]>;",
+    "doc": "/** Copy `from` into `to`, returning the URL paths copied (sorted). Used at build time so the server\n * entry can serve `public/` without scanning a directory per request, and so adapters that need a\n * file list (CDN upload, platform static assets) can consume one. */"
   },
   {
     "name": "cors",
@@ -2980,7 +2987,7 @@
     "name": "DevServerOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface DevServerOptions extends Omit<BuildClientOptions, \"minify\"> {\n    /**\n     * Build the nifra app for the freshly-built client entry. `importQuery` changes on every\n     * rebuild — pass it to `discoverRoutes(routesDir, { importQuery })` so SSR re-imports edited\n     * route modules instead of Bun's cached copies.\n     */\n    readonly createApp: (clientEntry: string, importQuery: string) => FetchApp | Promise<FetchApp>;\n    /** Directories to watch (default: `[routesDir]`). */\n    readonly watch?: readonly string[];\n    /** Port to listen on (default {@link DEFAULT_DEV_PORT}). */\n    readonly port?: number;\n}"
+    "signature": "export interface DevServerOptions extends Omit<BuildClientOptions, \"minify\"> {\n    /**\n     * Build the nifra app for the freshly-built client entry. `importQuery` changes on every\n     * rebuild — pass it to `discoverRoutes(routesDir, { importQuery })` so SSR re-imports edited\n     * route modules instead of Bun's cached copies.\n     */\n    readonly createApp: (clientEntry: string, importQuery: string) => FetchApp | Promise<FetchApp>;\n    /** Directories to watch (default: `[routesDir]`). */\n    readonly watch?: readonly string[];\n    /** Port to listen on (default {@link DEFAULT_DEV_PORT}). */\n    readonly port?: number;\n    /** Directory of user-authored static files served at the root (default `\"public\"`). The SAME\n     * option the production build copies and serves, so dev and prod cannot drift. */\n    readonly publicDir?: string;\n}"
   },
   {
     "name": "devtools",
@@ -7473,6 +7480,13 @@
     "doc": "/**\n * The pure MCP (Model Context Protocol) JSON-RPC dispatch — no I/O, no `Bun.*`, no side effects, so it\n * unit-tests cleanly. A transport (stdio in `@nifrajs/cli`'s `mcp.ts`, Streamable-HTTP in {@link ./http.ts})\n * wires this to a byte stream; the tools/resources are injected, so the protocol logic is exercised\n * without spawning or reading streams.\n *\n * Beyond base MCP this also implements the server half of **MCP Apps (SEP-1865)** — interactive `ui://`\n * widgets: a tool links a UI resource via `_meta.ui.resourceUri`, `tools/call` returns `structuredContent`\n * for the widget to render, and `initialize` advertises the `io.modelcontextprotocol/ui` extension. All of\n * it is additive — a tool whose handler returns a plain `string` behaves exactly as before.\n */"
   },
   {
+    "name": "PublicDirCache",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface PublicDirCache {\n    /** `cache-control` for content-hashed assets (default immutable, one year). */\n    readonly hashed?: string;\n    /** `cache-control` for everything else under `public/` (default one day). */\n    readonly assets?: string;\n}",
+    "doc": "/** How long each subtree may be cached. Content-hashed bundle output can be immutable; a\n * user-authored file keeps its name across deploys, so it gets a day and a revalidation. */"
+  },
+  {
     "name": "publicDocsTools",
     "kind": "function",
     "package": "@nifrajs/cli",
@@ -8322,6 +8336,13 @@
     "package": "@nifrajs/cli",
     "signature": "export declare function resolveProjectDir(root: string, dir: string | undefined): string | null;",
     "doc": "/**\n * Resolve an optional `dir` tool argument — a subdirectory of the project root the caller wants to scope a\n * check/test to (e.g. `nifra check` on `app/` when the MCP server's root is a monorepo). Returns the\n * absolute target, or `null` if `dir` escapes the root (a path-traversal guard: no `..` out, no absolute\n * path elsewhere). `undefined`/empty → the root itself.\n */"
+  },
+  {
+    "name": "resolvePublicPath",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function resolvePublicPath(root: string, pathname: string): string | undefined;",
+    "doc": "/**\n * Resolve a URL pathname to an absolute path **confined** to `root`, or `undefined` if it escapes.\n *\n * This is a user-path-to-filesystem sink, which makes it the one part of this feature with a security\n * consequence. Decode first (`%2e%2e%2f` is `../`), then normalize, then verify the result is still\n * under `root` by prefix - checking the *resolved* path rather than scanning the input for `..`,\n * because a blocklist over encodings is exactly the kind of check that gets bypassed.\n */"
   },
   {
     "name": "resolveServerOnlyChains",
@@ -9469,6 +9490,19 @@
     "kind": "interface",
     "package": "@nifrajs/node",
     "signature": "export interface ServeOptions {\n    readonly port: number;\n    readonly hostname?: string;\n    /**\n     * Protocol used when the adapter constructs `Request.url`.\n     *\n     * `@nifrajs/node` creates a plain Node `http` server, so the safe default is `\"http\"`. Deployments behind\n     * TLS termination can set `\"https\"` (or a trusted infra-aware function) so app code that reads\n     * `request.url` sees the public scheme. Forwarded headers are not trusted implicitly.\n     */\n    readonly protocol?: RequestProtocolOption;\n    /**\n     * Install SIGTERM/SIGINT handlers that call `stop()` for a graceful drain on\n     * `docker stop` / Ctrl-C. Off by default — taking over process signals is opt-in,\n     * mirroring nifra's Bun `listen({ gracefulSignals })`.\n     *\n     * The app-level request timeout (`server({ requestTimeoutMs })` → 503) and body cap\n     * are *not* set here — they live inside `app.fetch`, so they already apply through\n     * this adapter. Slow-client protection is Node's built-in `requestTimeout` (300s) /\n     * `headersTimeout` (60s) defaults.\n     */\n    readonly signals?: boolean;\n    /**\n     * Serve static files from disk for matching GET/HEAD requests *before* the app runs — non-matching\n     * requests fall through to `app.fetch` with the node-direct fast path intact (no perf regression on\n     * SSR/API routes). Replaces the hand-rolled `/assets/*` reader in self-hosted entries.\n     */\n    readonly static?: ServeStaticOptions;\n}"
+  },
+  {
+    "name": "servePublicDir",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function servePublicDir(options: ServePublicDirOptions): (request: Request) => Promise<Response | undefined>;",
+    "doc": "/**\n * Build a static-file handler for `dir`.\n *\n * Returns `undefined` on any miss so the caller **falls through to routing** - a static probe must\n * never shadow a route. That ordering is also why a `routes/robots.txt.tsx` beats a\n * `public/robots.txt` only if the caller checks routes first; the documented precedence is that the\n * static probe runs first, so `public/` wins, and an app wanting the route should not ship both.\n */"
+  },
+  {
+    "name": "ServePublicDirOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ServePublicDirOptions {\n    /** Absolute path of the directory to serve. */\n    readonly dir: string;\n    /** URL prefix whose files are content-hashed and may be cached immutably (default `\"/assets/\"`). */\n    readonly hashedPrefix?: string;\n    readonly cache?: PublicDirCache;\n}"
   },
   {
     "name": "server",
