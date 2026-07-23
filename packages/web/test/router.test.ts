@@ -204,6 +204,72 @@ describe("createClientRouter", () => {
     }
   })
 
+  test("navigation sends retain context and merges server-retained layout slots", async () => {
+    const calls: Array<Record<string, string | null>> = []
+    const realFetch = globalThis.fetch
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      const headers = new Headers(init?.headers)
+      calls.push({
+        data: headers.get("x-nifra-data"),
+        from: headers.get("x-nifra-from"),
+        retain: headers.get("x-nifra-retain"),
+      })
+      return Response.json({
+        v: 1,
+        data: { id: "9" },
+        layoutData: [null, { project: "fresh" }],
+        retained: [0],
+      })
+    }) as typeof fetch
+    try {
+      const r = createClientRouter({
+        patterns,
+        initial: {
+          ...initial,
+          layoutData: [{ shell: "kept" }, { project: "old" }],
+        },
+      })
+      await r.navigate("/users/9")
+      expect(calls).toEqual([{ data: "1", from: "/", retain: "0,1" }])
+      expect(r.snapshot().layoutData).toEqual([{ shell: "kept" }, { project: "fresh" }])
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
+  test("terminal status headers render the configured client boundary without rejecting navigation", async () => {
+    const loaded: string[] = []
+    const realFetch = globalThis.fetch
+    globalThis.fetch = (async () =>
+      new Response(null, {
+        status: 404,
+        headers: { "x-nifra-status": "404" },
+      })) as unknown as typeof fetch
+    try {
+      const r = createClientRouter({
+        patterns,
+        initial,
+        statusRoutes: { 404: "_404" },
+        loadModule: async (id) => {
+          loaded.push(id)
+        },
+      })
+      await r.navigate("/users/missing")
+      expect(loaded).toEqual(["user", "_404"])
+      expect(r.snapshot()).toEqual({
+        routeId: "_404",
+        params: {},
+        path: "/users/missing",
+        data: null,
+        layoutData: undefined,
+        actionData: undefined,
+        pending: false,
+      })
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
   test("the default fetchData throws on a non-OK response", async () => {
     const realFetch = globalThis.fetch
     // cast + matching params so the stub overlaps `typeof fetch` (Bun's, with `preconnect`).

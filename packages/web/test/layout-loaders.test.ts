@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
-import { createWebApp, type Manifest, notFound, type RenderAdapter } from "../src/index.ts"
-import { DATA_HEADER } from "../src/router.ts"
+import { createWebApp, defer, type Manifest, notFound, type RenderAdapter } from "../src/index.ts"
+import { DATA_HEADER, NAV_FROM_HEADER, RETAIN_HEADER } from "../src/router.ts"
 
 const streamOf = (s: string): ReadableStream<Uint8Array> =>
   new ReadableStream({
@@ -219,6 +219,48 @@ test("a gate also runs on the data-only request", async () => {
   expect(pageRan).toBe(false)
 })
 
+test("a rejecting gate prevents a POST action from mutating", async () => {
+  let mutations = 0
+  const app = createWebApp({
+    adapter: stub,
+    manifest: {
+      routes: [
+        {
+          id: "page",
+          pattern: "/orgs/:org/projects/:id",
+          layoutIds: ["_layout"],
+          layoutParams: [[]],
+          file: "page.tsx",
+          load: async () => ({
+            default: "page",
+            action: () => {
+              mutations += 1
+              return { ok: true }
+            },
+          }),
+        },
+      ],
+      layouts: {
+        _layout: {
+          file: "_layout.tsx",
+          load: async () => ({ default: "root", gate: true, loader: () => notFound() }),
+        },
+      },
+      notFound: { file: "_404.tsx", load: async () => ({ default: "nf" }) },
+    } as unknown as Manifest,
+    clientEntry: "/c.js",
+  })
+
+  const res = await app.fetch(
+    new Request("http://x/orgs/acme/projects/7", {
+      method: "POST",
+      headers: { [DATA_HEADER]: "1" },
+    }),
+  )
+  expect(res.status).toBe(404)
+  expect(mutations).toBe(0)
+})
+
 test("a non-gate layout loader that rejects surfaces rather than going unhandled", async () => {
   const app = appWith(
     { _layout: { default: "root", loader: () => Promise.reject(new Error("layout blew up")) } },
@@ -270,7 +312,11 @@ test("a retain hint skips an unchanged layout's loader, but never a gate", async
   // a guard that runs only when the client permits it is not a guard.
   const res = await app.fetch(
     new Request("http://x/orgs/acme/projects/7", {
-      headers: { [DATA_HEADER]: "1", "x-nifra-retain": "0,1" },
+      headers: {
+        [DATA_HEADER]: "1",
+        [RETAIN_HEADER]: "0,1",
+        [NAV_FROM_HEADER]: "/orgs/acme/projects/7",
+      },
     }),
   )
   expect([rootRuns, gateRuns]).toEqual([1, 2])
@@ -279,6 +325,26 @@ test("a retain hint skips an unchanged layout's loader, but never a gate", async
   expect(envelope.v).toBe(1)
   // Only the index actually honoured is reported back, so the client keeps exactly what it should.
   expect(envelope.retained).toEqual([0])
+})
+
+test("retain hints are ignored on hard document GETs", async () => {
+  let runs = 0
+  const app = appWith(
+    { _layout: { default: "root", loader: () => ({ n: ++runs }) } },
+    ["_layout"],
+    [[]],
+  )
+  const res = await app.fetch(
+    new Request("http://x/orgs/acme/projects/7", {
+      headers: {
+        [RETAIN_HEADER]: "0",
+        [NAV_FROM_HEADER]: "/orgs/acme/projects/7",
+      },
+    }),
+  )
+  expect(res.status).toBe(200)
+  expect(runs).toBe(1)
+  expect(await res.text()).toContain('L=[{"n":1}]')
 })
 
 test("a malformed retain hint is ignored rather than rejected", async () => {
@@ -296,6 +362,40 @@ test("a malformed retain hint is ignored rather than rejected", async () => {
   expect(res.status).toBe(200)
   // Worst case of a bad hint is a loader that runs when it need not.
   expect(runs).toBe(1)
+})
+
+test("data-only GET streams page and layout deferred values in one envelope and id space", async () => {
+  const app = appWith(
+    {
+      _layout: {
+        default: "root",
+        loader: () => ({ nav: defer(Promise.resolve("layout-ready")) }),
+      },
+    },
+    ["_layout"],
+    [[]],
+    () => ({ feed: defer(Promise.resolve("page-ready")) }),
+  )
+  const res = await app.fetch(
+    new Request("http://x/orgs/acme/projects/7", { headers: { [DATA_HEADER]: "1" } }),
+  )
+  expect(res.headers.get("content-type")).toContain("application/x-ndjson")
+  const lines = (await res.text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line))
+  expect(lines[0]).toEqual({
+    v: 1,
+    data: { feed: { __nifra_deferred: 0 } },
+    layoutData: [{ nav: { __nifra_deferred: 1 } }],
+    retained: [],
+  })
+  expect(lines.slice(1)).toEqual(
+    expect.arrayContaining([
+      { i: 0, v: "page-ready" },
+      { i: 1, v: "layout-ready" },
+    ]),
+  )
 })
 
 /** An app with layouts at "", "a/", "a/b/" where the one at `failingDir` throws. The stub reports

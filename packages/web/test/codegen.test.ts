@@ -25,7 +25,10 @@ const stub: RenderAdapter = {
 }
 
 test("generateClientEntry emits lazy code-split loaders + router wiring + patterns", () => {
-  const m = buildManifest(["_layout.tsx", "index.tsx", "users/[id].tsx", "_404.tsx"], importer)
+  const m = buildManifest(
+    ["_layout.tsx", "index.tsx", "users/[id].tsx", "_404.tsx", "_410.tsx"],
+    importer,
+  )
   const code = generateClientEntry(m, {
     clientModule: "@nifrajs/web-solid/client",
     resolve: (file) => `/routes/${file}`,
@@ -47,6 +50,7 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   expect(code).toContain('"index": () => Promise.all([')
   expect(code).toContain('"users/[id]": () => Promise.all([')
   expect(code).toContain('"_404": () => Promise.all([')
+  expect(code).toContain('"_410": () => Promise.all([')
   // loadModule caches the component chain + the chain's meta list (layouts→page) per route, so a
   // soft-nav merges the layout chain's head with the page's (matching the SSR <head>) — #3.
   expect(code).toContain("const loadModule = async (id) =>")
@@ -56,7 +60,10 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   expect(code).toContain('{ routeId: "index", pattern: "/" }')
   expect(code).toContain('{ routeId: "users/[id]", pattern: "/users/:id" }')
   expect(code).toContain("createMatcher(patterns)(location.pathname)")
-  expect(code).toContain("const router = createClientRouter({ patterns, initial, loadModule })")
+  expect(code).toContain('const statusRoutes = {"404":"_404","410":"_410"}')
+  expect(code).toContain(
+    "const router = createClientRouter({ patterns, initial, loadModule, statusRoutes })",
+  )
   expect(code).toContain("installHistory(router)")
   expect(code).toContain("installForms(router)")
   expect(code).toContain("mountRouter({ router, routes: chains, container: root })")
@@ -112,20 +119,25 @@ test("generateClientEntry folds a route's layout chain into its lazy loader", ()
 })
 
 test("generateServerManifest emits STATIC imports + a buildManifest-backed manifest + baked clientEntry", () => {
-  const m = buildManifest(["_layout.tsx", "index.tsx", "users/[id].tsx", "_404.tsx"], importer)
+  const m = buildManifest(
+    ["_layout.tsx", "index.tsx", "users/[id].tsx", "_404.tsx", "_410.tsx"],
+    importer,
+  )
   const code = generateServerManifest(m, {
     resolve: (file) => `./routes/${file}`,
     clientEntry: "/assets/entry-abc123.js",
   })
   expect(code).toContain('import { buildManifest } from "@nifrajs/web"')
-  // STATIC `import * as` per unique file (4) — so the bundler includes every route in the worker.
-  expect(code.match(/^import \* as m\d+ from /gm)?.length).toBe(4)
-  // Files are sorted: _404 (m0), _layout (m1), index (m2), users/[id] (m3).
-  expect(code).toContain('import * as m1 from "./routes/_layout.tsx"')
-  expect(code).toContain('import * as m3 from "./routes/users/[id].tsx"')
+  // STATIC `import * as` per unique file (5) — including dedicated terminal status pages.
+  expect(code.match(/^import \* as m\d+ from /gm)?.length).toBe(5)
+  // Files are sorted: _404 (m0), _410 (m1), _layout (m2), index (m3), users/[id] (m4).
+  expect(code).toContain('import * as m1 from "./routes/_410.tsx"')
+  expect(code).toContain('import * as m2 from "./routes/_layout.tsx"')
+  expect(code).toContain('import * as m4 from "./routes/users/[id].tsx"')
   // modules map keyed by the route-relative path buildManifest expects (derives patterns from them).
-  expect(code).toContain('"index.tsx": m2,')
-  expect(code).toContain('"users/[id].tsx": m3,')
+  expect(code).toContain('"_410.tsx": m1,')
+  expect(code).toContain('"index.tsx": m3,')
+  expect(code).toContain('"users/[id].tsx": m4,')
   // clientEntry baked — a disk-less worker can't read manifest.json at runtime.
   expect(code).toContain('export const clientEntry = "/assets/entry-abc123.js"')
   // Rebuilt via the SAME pure logic discoverRoutes feeds (patterns + layout chains match exactly).

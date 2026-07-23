@@ -2139,7 +2139,7 @@ Every public export of every package and documented subpath — name, kind, sign
 - **DraftCookieControls** _(interface)_ — `interface DraftCookieControls`
   The response-cookie surface `enableDraft`/`disableDraft` need — nifra's `c.set`. Structural, so any nifra handler context satisfies it without importing the full `Context`.
 - **EnableDraftOptions** _(interface)_ — `interface EnableDraftOptions`
-- **FetchRouteData** _(type)_ — `type FetchRouteData = ( path: string, match: RouteMatch, signal?: AbortSignal, ) => Promise<unknown>`
+- **FetchRouteData** _(type)_ — `type FetchRouteData = ( path: string, match: RouteMatch, signal?: AbortSignal, navigation?: { readonly from: string readonly retain: readonly number[] }, ) => Promise<unknown>`
   How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch (and its deferred stream).
 - **Fetcher** _(interface)_ — `interface Fetcher`
   An independent load/submit state machine, retrieved by `router.fetcher(key)`. Runs **concurrently** with the main router and with other fetchers — each is single-flight against *itself* (its own monotonic token), so N row-level mutations / side-channel loads can be in flight at once without disturb…
@@ -2205,6 +2205,8 @@ Every public export of every package and documented subpath — name, kind, sign
   A mutation's observable state. A new (frozen) object per transition (reference-comparable).
 - **MutationStatus** _(type)_ — `type MutationStatus = "idle" | "pending" | "success" | "error"`
   A mutation's lifecycle status.
+- **NAV_FROM_HEADER** _(const)_ — `NAV_FROM_HEADER: "x-nifra-from"`
+  The path a client navigation is coming FROM, sent on the data-mode GET.
 - **NavigateOptions** _(interface)_ — `interface NavigateOptions`
   Options for a programmatic navigation.
 - **OpenGraphInput** _(interface)_ — `interface OpenGraphInput`
@@ -2228,6 +2230,8 @@ Every public export of every package and documented subpath — name, kind, sign
   A query's lifecycle status. `pending` = no data yet; `success`/`error` once it has settled once.
 - **REDIRECT_HEADER** _(const)_ — `REDIRECT_HEADER: "x-nifra-redirect"`
   Response header a data-mode action POST uses to convey a redirect (`redirect(...)`) to the client — fetch would otherwise silently follow a 3xx to its HTML, losing the target. The client reads this and performs a client-side navigation instead.
+- **RETAIN_HEADER** _(const)_ — `RETAIN_HEADER: "x-nifra-retain"`
+  Layout indices a client navigation is asking the server NOT to re-run, comma separated.
 - **REVALIDATE_HEADER** _(const)_ — `REVALIDATE_HEADER: "x-nifra-revalidate"`
   Response header an action sets (via the `revalidate(paths, data)` helper) to tell the client which routes the mutation changed — a comma-separated list of paths. After the submit, the client marks those cached routes stale (refetching any that are mounted) so a mutation can refresh views beyond the…
 - **ROUTE_GLOBAL** _(const)_ — `ROUTE_GLOBAL: "__NIFRA_ROUTE__"`
@@ -2257,6 +2261,8 @@ Every public export of every package and documented subpath — name, kind, sign
   A route id paired with its nifra pattern (e.g. `":id"` segments) — the matcher input.
 - **RouterState** _(interface)_ — `interface RouterState`
   The router's observable state. A new object is published on every transition.
+- **STATUS_HEADER** _(const)_ — `STATUS_HEADER: "x-nifra-status"`
+  Response header carrying a **terminal status** a loader signalled with `notFound()` / `gone()` / `statusPage(n)` during a client-side navigation's data fetch.
 - **ScriptDescriptor** _(interface)_ — `interface ScriptDescriptor`
   One `<script>` element a route contributes to `<head>` — for structured data (JSON-LD) and other inert, non-executable head scripts. The `content` is the script body; `type` defaults to `"application/ld+json"` (the common case). The renderer escapes `content` against an HTML breakout (`</`, `<!--`,…
 - **ServePublicDirOptions** _(interface)_ — `interface ServePublicDirOptions`

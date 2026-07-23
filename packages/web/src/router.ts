@@ -90,6 +90,9 @@ export interface RouteDataEnvelope {
   /** Indices whose loader was SKIPPED because the layout's own params did not change. The client
    * keeps its existing value at each of these, so an unchanged layout is neither refetched nor lost. */
   readonly retained?: readonly number[]
+  /** Terminal status signalled by a loader. Added by the browser transport after reading
+   * `X-Nifra-Status`; old servers and static data files simply omit it. */
+  readonly status?: number
 }
 
 /** Recognise the envelope without mistaking a plain loader object that happens to have a `data` key. */
@@ -176,6 +179,10 @@ export type FetchRouteData = (
   path: string,
   match: RouteMatch,
   signal?: AbortSignal,
+  navigation?: {
+    readonly from: string
+    readonly retain: readonly number[]
+  },
 ) => Promise<unknown>
 
 /** Per-submit options. `revalidate: false` opts out of the post-action loader re-fetch. */
@@ -275,6 +282,9 @@ export interface ClientRouterOptions {
   /** Ensure a route's code chunk is loaded before rendering (code-splitting). Awaited in parallel
    * with the loader data, so `pending` covers both. Omit when the bundle isn't split. */
   readonly loadModule?: (routeId: string) => Promise<void>
+  /** Terminal status → client route id. Generated entries populate this from `_404` and
+   * `_<status>` files so soft navigation renders the same boundary as a hard request. */
+  readonly statusRoutes?: Readonly<Record<number, string>>
 }
 
 /** Options for a per-adapter `mountRouter` (the Router binding that hydrates + re-renders). */
@@ -299,7 +309,7 @@ const readResponseData = (res: Response, signal?: AbortSignal): Promise<unknown>
 const dataUrlFor = (pathname: string): string =>
   pathname === "/" ? "/_data.json" : `${pathname.replace(/\/+$/, "")}/_data.json`
 
-const defaultFetchData: FetchRouteData = async (path, _match, signal) => {
+const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation) => {
   // SSG fast path: if this path was prerendered, its loader data is a static file — fetch that (no
   // worker). Falls through to the dynamic header-GET on any miss (file absent, e.g. a deferred route,
   // or a stale set), so it's always safe. Non-SSG apps have no global → the dynamic path, unchanged.
@@ -311,7 +321,16 @@ const defaultFetchData: FetchRouteData = async (path, _match, signal) => {
       if (staticRes.ok) return readResponseData(staticRes, signal)
     }
   }
-  const res = await fetch(path, { headers: { [DATA_HEADER]: "1" }, signal: signal ?? null })
+  const headers = new Headers({ [DATA_HEADER]: "1" })
+  if (navigation !== undefined && navigation.retain.length > 0) {
+    headers.set(RETAIN_HEADER, navigation.retain.join(","))
+    headers.set(NAV_FROM_HEADER, navigation.from)
+  }
+  const res = await fetch(path, { headers, signal: signal ?? null })
+  const status = Number(res.headers.get(STATUS_HEADER))
+  if (Number.isInteger(status) && status >= 400 && status <= 599) {
+    return { v: 1, data: null, status } satisfies RouteDataEnvelope
+  }
   if (!res.ok) throw new Error(`[nifra/web] navigation data fetch failed (${res.status}): ${path}`)
   return readResponseData(res, signal)
 }
@@ -332,15 +351,46 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
    * structure rather than by version-of-the-deploy is what lets a prerendered `_data.json` written by
    * an older build be read by newer client code.
    */
+  type LoadedRouteData = {
+    readonly data: unknown
+    readonly layoutData?: readonly unknown[] | undefined
+    readonly terminalRouteId?: string | undefined
+  }
   const loadRouteData = async (
     path: string,
     match: { routeId: string; params: Record<string, string> },
     signal?: AbortSignal,
-  ): Promise<{ data: unknown; layoutData?: readonly unknown[] | undefined }> => {
-    const payload = await fetchData(path, match, signal)
-    return isRouteDataEnvelope(payload)
-      ? { data: payload.data, layoutData: payload.layoutData }
-      : { data: payload }
+    retainFrom?: { readonly path: string; readonly layoutData: readonly unknown[] },
+  ): Promise<LoadedRouteData> => {
+    const retain = retainFrom?.layoutData.map((_, index) => index) ?? []
+    const payload = await fetchData(
+      path,
+      match,
+      signal,
+      retainFrom === undefined ? undefined : { from: retainFrom.path, retain },
+    )
+    if (!isRouteDataEnvelope(payload)) return { data: payload }
+    if (payload.status !== undefined) {
+      const terminalRouteId = options.statusRoutes?.[payload.status] ?? options.statusRoutes?.[404]
+      if (terminalRouteId === undefined) {
+        throw new Error(
+          `[nifra/web] no client status boundary is available for terminal status ${payload.status}`,
+        )
+      }
+      return { data: null, terminalRouteId }
+    }
+    if (retainFrom === undefined || payload.retained === undefined) {
+      return { data: payload.data, layoutData: payload.layoutData }
+    }
+    const retained = new Set(
+      payload.retained.filter(
+        (index) => Number.isInteger(index) && index >= 0 && index < retainFrom.layoutData.length,
+      ),
+    )
+    const layoutData = payload.layoutData?.map((value, index) =>
+      retained.has(index) ? retainFrom.layoutData[index] : value,
+    )
+    return { data: payload.data, layoutData }
   }
   const loadModule = options.loadModule
   let state = options.initial
@@ -356,7 +406,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   // Bounded one-shot prefetch cache (path → loader data) + an in-flight guard so hover spam
   // doesn't double-fetch. Consumed (and dropped) by the next navigate to that path.
   const MAX_PREFETCH = 10
-  const prefetched = new Map<string, unknown>()
+  const prefetched = new Map<string, LoadedRouteData>()
   const inflight = new Set<string>()
   // Keyed data cache (path → latest loader data + freshness). Written on every published data
   // (navigate/submit), read by `invalidate` (+ targeted revalidation and fetchers in later F16
@@ -368,10 +418,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     string,
     { data: unknown; layoutData?: readonly unknown[] | undefined; status: "fresh" | "stale" }
   >()
-  const cachePut = (
-    path: string,
-    loaded: { data: unknown; layoutData?: readonly unknown[] | undefined },
-  ): void => {
+  const cachePut = (path: string, loaded: LoadedRouteData): void => {
     if (!cache.has(path) && cache.size >= MAX_CACHE) {
       const oldest = cache.keys().next().value
       if (oldest !== undefined) cache.delete(oldest)
@@ -582,20 +629,23 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         // either way (cached + instant after a prefetch), so pending covers both.
         const hit = prefetched.has(path)
         const dataPromise = hit
-          ? Promise.resolve(
-              prefetched.get(path) as {
-                data: unknown
-                layoutData?: readonly unknown[] | undefined
-              },
+          ? Promise.resolve(prefetched.get(path) as LoadedRouteData)
+          : loadRouteData(
+              path,
+              matched,
+              ac.signal,
+              state.layoutData === undefined
+                ? undefined
+                : { path: state.path, layoutData: state.layoutData },
             )
-          : loadRouteData(path, matched, ac.signal)
         if (hit) prefetched.delete(path)
         const [, loaded] = await Promise.all([loadModule?.(matched.routeId), dataPromise])
+        if (loaded.terminalRouteId !== undefined) await loadModule?.(loaded.terminalRouteId)
         if (mine !== token) return // a newer navigation superseded this one — drop the stale result
         cachePut(path, loaded) // keep the keyed cache coherent with what we publish
         state = {
-          routeId: matched.routeId,
-          params: matched.params,
+          routeId: loaded.terminalRouteId ?? matched.routeId,
+          params: loaded.terminalRouteId === undefined ? matched.params : {},
           path,
           data: loaded.data,
           layoutData: loaded.layoutData,
@@ -640,13 +690,21 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
             throw new Error(`[nifra/web] action redirect off-route: ${redirectTo}`)
           const [, loaded] = await Promise.all([
             loadModule?.(target.routeId),
-            loadRouteData(redirectTo, target, ac.signal),
+            loadRouteData(
+              redirectTo,
+              target,
+              ac.signal,
+              state.layoutData === undefined
+                ? undefined
+                : { path: state.path, layoutData: state.layoutData },
+            ),
           ])
+          if (loaded.terminalRouteId !== undefined) await loadModule?.(loaded.terminalRouteId)
           if (mine !== token) return
           cachePut(redirectTo, loaded)
           state = {
-            routeId: target.routeId,
-            params: target.params,
+            routeId: loaded.terminalRouteId ?? target.routeId,
+            params: loaded.terminalRouteId === undefined ? target.params : {},
             path: redirectTo,
             data: loaded.data,
             layoutData: loaded.layoutData,

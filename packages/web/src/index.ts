@@ -40,7 +40,9 @@ import type {
   ScriptDescriptor,
 } from "./manifest.ts"
 import {
+  createMatcher,
   DATA_HEADER,
+  NAV_FROM_HEADER,
   PRERENDERED_GLOBAL,
   REDIRECT_HEADER,
   RETAIN_HEADER,
@@ -159,11 +161,14 @@ export {
   type FetcherState,
   type FetchRouteData,
   type MountRouterOptions,
+  NAV_FROM_HEADER,
   REDIRECT_HEADER,
+  RETAIN_HEADER,
   REVALIDATE_HEADER,
   type RouteMatch,
   type RoutePattern,
   type RouterState,
+  STATUS_HEADER,
   type Submission,
   type SubmitOptions,
 } from "./router.ts"
@@ -1439,6 +1444,10 @@ export function createWebApp<Env = unknown>(
   // path under a `"404"` route is rejected (it isn't a static file, and the route declared it shouldn't
   // SSR on demand). O(1) membership via a Set.
   const prerenderedSet = new Set(options.prerenderedPaths ?? [])
+  const matchManifestRoute = createMatcher(
+    manifest.routes.map((route) => ({ routeId: route.id, pattern: route.pattern })),
+  )
+  const routeById = new Map(manifest.routes.map((route) => [route.id, route]))
 
   // Load a route's layout modules (outermost layout → innermost), keeping each module whole so the
   // render path can take both its `default` (the component chain) AND its `meta` (the sitewide head it
@@ -1499,6 +1508,50 @@ export function createWebApp<Env = unknown>(
     return out
   }
 
+  /**
+   * Validate a data-navigation's retain request against the manifest and its declared source path.
+   * A client may ask to retain every slot it currently has; the server only honours indices whose
+   * layout identity and owned params are unchanged. Hard document GETs never retain anything.
+   */
+  const validatedRetainedIndices = (
+    req: Request,
+    route: RouteEntry,
+    params: Readonly<Record<string, string>>,
+  ): ReadonlySet<number> => {
+    if (req.headers.get(DATA_HEADER) === null) return EMPTY_RETAIN
+    const requested = retainedIndices(req.headers.get(RETAIN_HEADER))
+    const from = req.headers.get(NAV_FROM_HEADER)
+    if (requested.size === 0 || from === null) return EMPTY_RETAIN
+    let fromPath: string
+    try {
+      const current = new URL(req.url)
+      const source = new URL(from, current)
+      if (source.origin !== current.origin) return EMPTY_RETAIN
+      fromPath = source.pathname + source.search
+    } catch {
+      return EMPTY_RETAIN
+    }
+    const previousMatch = matchManifestRoute(fromPath)
+    if (previousMatch === null) return EMPTY_RETAIN
+    const previous = routeById.get(previousMatch.routeId)
+    if (previous === undefined) return EMPTY_RETAIN
+    const valid = new Set<number>()
+    for (const index of requested) {
+      if (route.layoutIds[index] !== previous.layoutIds[index]) continue
+      const owned = route.layoutParams?.[index] ?? []
+      const previouslyOwned = previous.layoutParams?.[index] ?? []
+      if (
+        owned.length !== previouslyOwned.length ||
+        owned.some((name, i) => name !== previouslyOwned[i]) ||
+        owned.some((name) => params[name] !== previousMatch.params[name])
+      ) {
+        continue
+      }
+      valid.add(index)
+    }
+    return valid
+  }
+
   const runLayoutChain = async (
     route: RouteEntry,
     ctx: LoaderContext,
@@ -1556,6 +1609,28 @@ export function createWebApp<Env = unknown>(
       )
     }
     return { modules, layoutData: results, retained, pending: Promise.all(pending) }
+  }
+
+  /** Run only blocking layout gates before a route action. Non-gate loaders fetch render data and
+   * therefore run after the mutation when a native POST needs a fresh document. */
+  const runLayoutGates = async (
+    route: RouteEntry,
+    ctx: LoaderContext,
+  ): Promise<LoadedLayoutModules> => {
+    const modules = await loadLayoutModules(route)
+    for (let i = 0; i < modules.length; i++) {
+      const mod = modules[i]
+      if (mod?.gate !== true || mod.loader === undefined) continue
+      try {
+        await mod.loader({
+          ...ctx,
+          params: scopeParams(ctx.params, route.layoutParams?.[i]),
+        })
+      } catch (err) {
+        throw tagLayoutError(err, route.layoutIds[i] as string)
+      }
+    }
+    return modules
   }
 
   // Build a route's render chain + its merged `<head>` from the already-loaded layout modules + the
@@ -1772,7 +1847,7 @@ export function createWebApp<Env = unknown>(
         const run = await runLayoutChain(
           route,
           ctx,
-          retainedIndices(c.req.headers.get(RETAIN_HEADER)),
+          validatedRetainedIndices(c.req, route, c.params),
         )
         layoutModules = run.modules
         layoutRetained = run.retained
@@ -1816,17 +1891,30 @@ export function createWebApp<Env = unknown>(
       // then each deferred value as it settles); otherwise one JSON (the fast path). Same loader,
       // same auth — only the transport differs.
       if (c.req.headers.get(DATA_HEADER) !== null) {
-        const { forClient, deferred } = prepareDeferred(data)
+        const pageSplit = prepareDeferred(data)
+        const layoutSplits: Array<ReturnType<typeof prepareDeferred>> = []
+        let offset = pageSplit.deferred.length
+        for (const entry of layoutData ?? []) {
+          const split = prepareDeferred(entry, offset)
+          layoutSplits.push(split)
+          offset += split.deferred.length
+        }
+        const deferred = [...pageSplit.deferred, ...layoutSplits.flatMap((split) => split.deferred)]
+        const payload =
+          layoutData === undefined
+            ? pageSplit.forClient
+            : {
+                v: 1 as const,
+                data: pageSplit.forClient,
+                layoutData: layoutSplits.map((split) => split.forClient),
+                retained: layoutRetained,
+              }
         // Bare value when there is no layout data — the pre-envelope shape, so a client running older
         // code against a newer server keeps working.
         if (deferred.length === 0) {
-          return Response.json(
-            layoutData === undefined
-              ? (data ?? null)
-              : { v: 1, data: data ?? null, layoutData, retained: layoutRetained },
-          )
+          return Response.json(payload ?? null)
         }
-        return new Response(ndjsonStream(forClient, deferred), {
+        return new Response(ndjsonStream(payload, deferred), {
           headers: { "content-type": "application/x-ndjson; charset=utf-8" },
         })
       }
@@ -1892,14 +1980,18 @@ export function createWebApp<Env = unknown>(
           headers: { allow: "GET", "content-type": "text/plain; charset=utf-8" },
         })
       }
-      const result = await mod.action({
+      const actionContext = {
         params: c.params,
         request: c.req,
         req: c.req,
         api,
         env: c.env,
         draft,
-      })
+      }
+      // A gate is an authorization boundary for everything beneath its layout, mutations included.
+      // Run only gates before the action; ordinary layout data loaders run after a native mutation.
+      const layoutModules = await runLayoutGates(route, actionContext)
+      const result = await mod.action(actionContext)
       const isDataRequest = c.req.headers.get(DATA_HEADER) !== null
       // An action may wrap its data in `revalidate(paths, data)` to declare which routes it changed.
       // Unwrap to the inner data; the paths ride the `X-Nifra-Revalidate` header on the data-mode
@@ -1934,7 +2026,7 @@ export function createWebApp<Env = unknown>(
       const data = mod.loader
         ? await mod.loader({ params: c.params, request: c.req, req: c.req, api, env: c.env, draft })
         : null
-      const { chain, head } = resolveChainAndHead(await loadLayoutModules(route), mod, {
+      const { chain, head } = resolveChainAndHead(layoutModules, mod, {
         data,
         params: c.params,
         origin: originOf(c.req),
@@ -2016,6 +2108,7 @@ export function generateClientEntry(
 
   const loaderRows: string[] = []
   const patternRows: string[] = []
+  const statusRoutes: Record<number, string> = {}
   // Routes whose loader appends a nearest `_error` module (LAST) — the client wraps the page in the
   // adapter's `errorBoundary(fallback)` for these, so a client render error shows the `_error` UI.
   const errorRouteIds: string[] = []
@@ -2045,6 +2138,12 @@ export function generateClientEntry(
   }
   if (manifest.notFound !== undefined) {
     loaderRows.push(`  "_404": ${lazyLoader([manifest.notFound.file])},`)
+    statusRoutes[404] = "_404"
+  }
+  for (const [status, entry] of Object.entries(manifest.statusPages ?? {})) {
+    const routeId = `_${status}`
+    loaderRows.push(`  ${JSON.stringify(routeId)}: ${lazyLoader([entry.file])},`)
+    statusRoutes[Number(status)] = routeId
   }
 
   return `${[
@@ -2121,7 +2220,8 @@ export function generateClientEntry(
     `  actionData: mapDeferred(window.${ACTION_GLOBAL}),`,
     "  pending: false,",
     "}",
-    "const router = createClientRouter({ patterns, initial, loadModule })",
+    `const statusRoutes = ${JSON.stringify(statusRoutes)}`,
+    "const router = createClientRouter({ patterns, initial, loadModule, statusRoutes })",
     "installHistory(router)",
     "installForms(router)",
     'const root = document.getElementById("root")',
@@ -2171,7 +2271,7 @@ export interface GenerateServerManifestOptions {
  * Codegen: emit a **server manifest** module (as source) for disk-less edge runtimes (Cloudflare
  * Workers, …) — and, with a `target`, any portable server bundle. `discoverRoutes` scans `node:fs`
  * and dynamic-imports each route by a *runtime* path — neither exists on workerd. This instead emits
- * **statically-analyzable** imports of every route/layout/`_error`/`_404` (so the bundler includes them) and
+ * **statically-analyzable** imports of every route/layout/`_error`/terminal status page (so the bundler includes them) and
  * rebuilds the manifest with `buildManifest` — the SAME pure logic `discoverRoutes` feeds, so patterns
  * + layout chains are identical. Eager (`import * as`) by default; `lazy` emits `() => import(...)` so
  * a code-splitting bundler chunks per route. The emitted module exports `manifest` (consumed by
@@ -2183,13 +2283,14 @@ export function generateServerManifest(
   options: GenerateServerManifestOptions,
 ): string {
   const { resolve, clientEntry, styles, routeStyles, lazy = false } = options
-  // Every unique source file in the manifest (routes + layouts + `_error` + `_404`), sorted for stable output.
+  // Every unique source file in the manifest (routes + layouts + error/status pages), sorted for stable output.
   const files = [
     ...new Set([
       ...manifest.routes.map((r) => r.file),
       ...Object.values(manifest.layouts).map((l) => l.file),
       ...Object.values(manifest.errors ?? {}).map((e) => e.file),
       ...(manifest.notFound ? [manifest.notFound.file] : []),
+      ...Object.values(manifest.statusPages ?? {}).map((page) => page.file),
     ]),
   ].sort()
   const header = [
