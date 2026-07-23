@@ -18,6 +18,7 @@ import {
 } from "node:http"
 import { relative, resolve as resolvePath } from "node:path"
 import { renderDevErrorOverlay } from "./dev-error.ts"
+import { listenOrExplain } from "./dev-port.ts"
 import { discoverRoutes } from "./fs.ts"
 import { DEFAULT_DEV_PORT, generateClientEntry } from "./index.ts"
 
@@ -255,52 +256,6 @@ export function normalizeRolldownPlugins(
       ...p,
       config: typeof hook === "function" ? wrappedHandler : { ...hook, handler: wrappedHandler },
     }
-  })
-}
-
-/** The bits of a Node server {@link listenOrExplain} touches — structural, so a test can fake it. */
-interface ListenTarget {
-  listen(port: number, cb: () => void): void
-  once(event: "error", cb: (err: unknown) => void): void
-  removeListener(event: "error", cb: (err: unknown) => void): void
-}
-
-/** The `EADDRINUSE` explanation. Exported so the test asserts the exact text a user will read. */
-export function portInUseMessage(port: number): string {
-  return (
-    `[nifra] dev server can't start: port ${port} is already in use.\n` +
-    `  Most likely an earlier \`nifra dev\` is still running. It keeps serving the PREVIOUS build, so ` +
-    `every edit will look like it stops reaching SSR while the browser shows stale output.\n` +
-    `  Free the port:  lsof -ti:${port} | xargs kill\n` +
-    `  Or use another: nifra dev --port ${port + 1}`
-  )
-}
-
-const asError = (err: unknown): Error => (err instanceof Error ? err : new Error(String(err)))
-
-/**
- * `listen`, but a bind failure becomes a readable nifra error instead of Node's raw internal throw.
- *
- * The message matters more than the tidier stack. When the port is taken, the OLD dev server is still
- * answering on it - so the next request returns the previous build of every route. The symptom is "my
- * edits stopped reaching SSR", which reads as a broken HMR/invalidation bug and sends you digging
- * through the module graph instead of at the one line that says the new server never started. Without
- * an `error` listener Node throws from deep inside `node:events`, the new process dies in the
- * background, and nothing connects that death to the stale page in front of you.
- */
-export function listenOrExplain(server: ListenTarget, port: number): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    const onError = (err: unknown): void => {
-      const code = (err as { code?: unknown } | null)?.code
-      reject(code === "EADDRINUSE" ? new Error(portInUseMessage(port)) : asError(err))
-    }
-    server.once("error", onError)
-    server.listen(port, () => {
-      // Drop the guard once we're listening: leaving it attached would funnel a LATER server error into
-      // an already-settled promise, silently swallowing it instead of surfacing it.
-      server.removeListener("error", onError)
-      resolve()
-    })
   })
 }
 

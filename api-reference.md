@@ -2461,10 +2461,20 @@ Every public export of every package and documented subpath — name, kind, sign
 
 ### `@nifrajs/web/dev`
 
+- **CLIENT_ENTRY_PATH** _(const)_ — `CLIENT_ENTRY_PATH: "/__nifra/client.js"`
+  The stable URL every SSR'd page points its client entry at.
 - **DevServer** _(interface)_ — `interface DevServer`
 - **DevServerOptions** _(interface)_ — `interface DevServerOptions`
 - **createDevServer** _(function)_ — `createDevServer: (options: DevServerOptions) => Promise<DevServer>`
-  Start the dev server: build → serve → watch → rebuild + reload on change.
+  Start the Bun dev server: generate → bundle → serve → watch → hot-reload on change.
+- **devHtml** _(function)_ — `devHtml: (entryHref: string) => string`
+  The throwaway HTML document. Its only job is to make Bun bundle the entry and assign it a URL - it is never shown to a user, so it carries no app markup. The `<div id="root">` is there purely so the document stands on its own if someone opens the probe path directly while debugging.
+- **injectStyles** _(function)_ — `injectStyles: (html: string, styles: readonly string[]) => string`
+  Inject Bun's stylesheet links into an SSR'd document.
+- **styleTags** _(function)_ — `styleTags: (styles: readonly string[]) => string`
+  `<link rel="stylesheet">` tags for Bun's extracted CSS, injected into each SSR'd page's `<head>`.
+- **writeDevFiles** _(function)_ — `writeDevFiles: (options: WriteDevFilesOptions) => void`
+  Generate the client entry + the HTML route that carries it.
 
 ### `@nifrajs/web/fonts`
 
@@ -2586,14 +2596,10 @@ _No named exports (side-effect entrypoint)._
   Copy a Web `Response`'s headers onto a Node response, emitting EACH `Set-Cookie` as its own header. The `Headers` iterator (and `.get`) join multiple set-cookie values with ", ", which corrupts cookies — e.g. better-auth's `session_token` + `session_data` collapse into one unparseable cookie and th…
 - **createViteDevServer** _(function)_ — `createViteDevServer: (options: ViteDevServerOptions) => Promise<ViteDevServer>`
   Start the Vite-backed dev server: Vite serves/HMRs the client; nifra SSRs each request and Vite injects its HMR client + the framework refresh preamble via `transformIndexHtml`.
-- **listenOrExplain** _(function)_ — `listenOrExplain: (server: ListenTarget, port: number) => Promise<void>`
-  `listen`, but a bind failure becomes a readable nifra error instead of Node's raw internal throw.
 - **normalizeRolldownPlugins** _(function)_ — `normalizeRolldownPlugins: (plugins: readonly unknown[], isRolldown: boolean) => readonly unknown[]`
   Strip `optimizeDeps.rollupOptions.jsx` from a plugin's `config` hook output when running under rolldown-vite — the source of the scary, harmless `Warning: Invalid input options … "jsx" Invalid key: Expected never but received "jsx"` on `nifra dev`.
 - **pipeWebBodyToNode** _(function)_ — `pipeWebBodyToNode: (body: ReadableStream<Uint8Array> | null, res: NodeResLike) => Promise<void>`
   Stream a Web `Response` body to a Node response chunk-by-chunk. Buffering the whole body (e.g. `arrayBuffer()`) waits for the stream to END — which an open-ended SSE (`text/event-stream`) body never does, so it hung `nifra dev` (the Bun production server streamed it fine). This flushes each chunk a…
-- **portInUseMessage** _(function)_ — `portInUseMessage: (port: number) => string`
-  The `EADDRINUSE` explanation. Exported so the test asserts the exact text a user will read.
 
 ## @nifrajs/web-preact
 

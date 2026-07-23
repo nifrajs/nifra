@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { createServer } from "node:http"
-import { listenOrExplain, portInUseMessage } from "../src/vite.ts"
+import { listenOrExplain, portInUseMessage } from "../src/dev-port.ts"
 
 // A dev server that can't bind is the WORST silent failure in the dev loop: the previous `nifra dev` is
 // still listening, so the browser keeps rendering the old build and the symptom presents as "edits no
