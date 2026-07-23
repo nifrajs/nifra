@@ -73,7 +73,7 @@ export function docsTools(
     {
       name: "nifra_types",
       description:
-        'Get the EXACT TypeScript declaration of any exported @nifrajs/* symbol — interface, type, class, function, const. Each signature is generated from the package\'s built .d.ts, so it is the LITERAL declaration: complete, authoritative, never prose and never truncated. THIS IS THE SOURCE OF TRUTH for nifra\'s types — do NOT read node_modules/@nifrajs/**/*.d.ts; call this instead. Pass `name` for an exact symbol (e.g. "RateLimitStore", "RouteSchema", "Context", "rateLimit"); pass `query` to search by keyword; omit both for the per-package index of names.',
+        'Get the EXACT TypeScript declaration of any exported @nifrajs/* symbol — interface, type, class, function, const. Each signature is generated from the package\'s built .d.ts, so it is the LITERAL declaration: complete, authoritative, never prose and never truncated. THIS IS THE SOURCE OF TRUTH for nifra\'s types — do NOT read node_modules/@nifrajs/**/*.d.ts; call this instead. Pass `name` for an exact symbol (e.g. "RateLimitStore", "RouteSchema", "Context", "rateLimit"); pass `query` to search by keyword; omit both for the per-package index of names. A `name` lookup is always the complete declaration; a `query` returns a one-line summary plus the signature, collapsing an oversized body — pass `full: true` to override.',
       inputSchema: {
         type: "object",
         properties: {
@@ -91,6 +91,11 @@ export function docsTools(
             type: "number",
             description: "Max results for a query/search (default 5, max 8).",
           },
+          full: {
+            type: "boolean",
+            description:
+              "Query mode only: return whole declarations instead of collapsed ones. Off by default — a search is for picking a symbol, and one match can be tens of thousands of characters.",
+          },
         },
         additionalProperties: false,
       },
@@ -99,8 +104,13 @@ export function docsTools(
         if (corpus === undefined) {
           return "types corpus missing — run `bun run build && bun run gen:llms` in the nifra repo (published builds ship it)."
         }
-        const { name, query, limit } = args as { name?: string; query?: string; limit?: number }
-        return renderTypesResult(corpus, name, query, clamp(limit, 1, 8, 5))
+        const { name, query, limit, full } = args as {
+          name?: string
+          query?: string
+          limit?: number
+          full?: boolean
+        }
+        return renderTypesResult(corpus, name, query, clamp(limit, 1, 8, 5), full === true)
       },
     },
   ]

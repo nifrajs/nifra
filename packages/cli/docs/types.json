@@ -4149,7 +4149,7 @@
     "name": "GenerateClientEntryOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface GenerateClientEntryOptions {\n    /** Module specifier for the adapter's client runtime (exports `mountRouter`), e.g.\n     * `\"@nifrajs/web-solid/client\"`. */\n    readonly clientModule: string;\n    /** Turn a route/layout source file (relative to the routes dir) into an import specifier. */\n    readonly resolve: (file: string) => string;\n}"
+    "signature": "export interface GenerateClientEntryOptions {\n    /**\n     * Module specifier for the adapter's client runtime, e.g. `\"@nifrajs/web-solid/client\"`.\n     *\n     * **Contract:** the module MUST export `mountRouter({ router, routes, container })`. The generated\n     * bootstrap imports the specifier and calls it — so a self-executing entry that mounts on import\n     * builds cleanly and then does nothing, which is the trap this contract exists to name. The type is\n     * a bare `string` because a specifier is resolved by the bundler, not the type system, so the\n     * requirement is enforced by the bootstrap instead: it throws immediately, naming this module and\n     * the missing export, rather than failing later as `mountRouter is not a function`.\n     */\n    readonly clientModule: string;\n    /** Turn a route/layout source file (relative to the routes dir) into an import specifier. */\n    readonly resolve: (file: string) => string;\n}"
   },
   {
     "name": "generateLlmsTxt",
@@ -8142,7 +8142,7 @@
     "name": "renderTypesResult",
     "kind": "function",
     "package": "@nifrajs/cli",
-    "signature": "export declare function renderTypesResult(types: readonly TypeEntry[], name: string | undefined, query: string | undefined, limit: number): string;",
+    "signature": "export declare function renderTypesResult(types: readonly TypeEntry[], name: string | undefined, query: string | undefined, limit: number, full?: boolean): string;",
     "doc": "/**\n * Render the tool result. `name` → the exact declaration(s); else `query` → the top matches; else a\n * per-package index of type names. The signatures are authoritative (generated from the built `.d.ts`),\n * so this is the complete answer — there is no need to read a `.d.ts` file.\n */"
   },
   {

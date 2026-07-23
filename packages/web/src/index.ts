@@ -1969,8 +1969,16 @@ export function createWebApp<Env = unknown>(
 }
 
 export interface GenerateClientEntryOptions {
-  /** Module specifier for the adapter's client runtime (exports `mountRouter`), e.g.
-   * `"@nifrajs/web-solid/client"`. */
+  /**
+   * Module specifier for the adapter's client runtime, e.g. `"@nifrajs/web-solid/client"`.
+   *
+   * **Contract:** the module MUST export `mountRouter({ router, routes, container })`. The generated
+   * bootstrap imports the specifier and calls it — so a self-executing entry that mounts on import
+   * builds cleanly and then does nothing, which is the trap this contract exists to name. The type is
+   * a bare `string` because a specifier is resolved by the bundler, not the type system, so the
+   * requirement is enforced by the bootstrap instead: it throws immediately, naming this module and
+   * the missing export, rather than failing later as `mountRouter is not a function`.
+   */
   readonly clientModule: string
   /** Turn a route/layout source file (relative to the routes dir) into an import specifier. */
   readonly resolve: (file: string) => string
@@ -2032,6 +2040,16 @@ export function generateClientEntry(
     // access yields `undefined` if absent — unlike a named import, which would be a link error.
     `import * as __adapter from ${JSON.stringify(clientModule)}`,
     "const { mountRouter } = __adapter",
+    // The `clientModule` contract is a string specifier, so nothing type-checks that the module it
+    // names actually exports `mountRouter`. Without this the miss surfaces as
+    // "mountRouter is not a function" from inside a bundled chunk, at first paint, naming neither the
+    // module nor the requirement - a self-executing entry passes every build and fails only here.
+    `if (typeof mountRouter !== "function") throw new Error(${JSON.stringify(
+      `[nifra/web] clientModule ${JSON.stringify(clientModule)} does not export \`mountRouter\`. ` +
+        "A client module must export `mountRouter({ router, routes, container })` — it is called by " +
+        "the generated bootstrap, so a self-executing entry will not work. Use your adapter's " +
+        '`/client` entry (e.g. "@nifrajs/web-react/client"), or re-export mountRouter from it.',
+    )})`,
     "const errorBoundary = __adapter.errorBoundary",
     `const errorRouteIds = new Set(${JSON.stringify(errorRouteIds)})`,
     // Each route is a lazy loader: dynamic imports → Bun.build (splitting) emits one chunk per

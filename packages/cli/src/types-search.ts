@@ -61,6 +61,53 @@ function renderEntry(t: TypeEntry): string {
 }
 
 /**
+ * Longest signature rendered whole in a SEARCH result.
+ *
+ * Search is "which symbol did I mean?", not "show me everything about it" - and the corpus is wildly
+ * uneven: the median declaration is small, while `Server` alone is ~32,000 characters, five times the
+ * next largest. One broad query that happened to match it returned the entire class for near-zero
+ * value. Above this, a search result shows the head plus a member count and says how to get the rest;
+ * an exact `name` lookup is never collapsed, because there the caller asked for that symbol.
+ */
+const SEARCH_SIGNATURE_MAX = 600
+
+/** First sentence of the doc block, flattened to one line - enough to pick between candidates. */
+function summarize(doc: string | undefined): string {
+  if (doc === undefined) return ""
+  const text = doc
+    .replace(/\/\*\*|\*\/|^\s*\*/gm, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+  if (text === "") return ""
+  const end = text.search(/\.\s|\.$/)
+  const sentence = end === -1 ? text : text.slice(0, end + 1)
+  return sentence.length > 200 ? `${sentence.slice(0, 197)}...` : sentence
+}
+
+/** Keep the declaration head; replace a long body with a member count. */
+function collapseSignature(signature: string): string {
+  const open = signature.indexOf("{")
+  if (open === -1) return `${signature.slice(0, SEARCH_SIGNATURE_MAX)}…`
+  const body = signature.slice(open)
+  // Rough but honest: count top-level-looking member lines rather than parsing TypeScript here.
+  const members = body.split("\n").filter((line) => /^\s{2,4}\S/.test(line)).length
+  return `${signature.slice(0, open).trim()} { … ${members} members … }`
+}
+
+/** A search hit: enough to choose, not the whole declaration. */
+function renderSearchHit(t: TypeEntry): string {
+  const head = `## ${t.name} — ${t.kind}, \`${t.package}\``
+  const summary = summarize(t.doc)
+  const signature =
+    t.signature.length <= SEARCH_SIGNATURE_MAX ? t.signature : collapseSignature(t.signature)
+  const note =
+    t.signature.length <= SEARCH_SIGNATURE_MAX
+      ? ""
+      : `\n_Collapsed (${t.signature.length} chars). Call \`nifra_types({ name: "${t.name}" })\` for the full declaration._`
+  return `${head}\n${summary ? `\n${summary}\n` : ""}\n\`\`\`ts\n${signature}\n\`\`\`${note}`
+}
+
+/**
  * Render the tool result. `name` → the exact declaration(s); else `query` → the top matches; else a
  * per-package index of type names. The signatures are authoritative (generated from the built `.d.ts`),
  * so this is the complete answer — there is no need to read a `.d.ts` file.
@@ -70,6 +117,7 @@ export function renderTypesResult(
   name: string | undefined,
   query: string | undefined,
   limit: number,
+  full = false,
 ): string {
   if (name !== undefined && name.trim() !== "") {
     const hits = lookupType(types, name)
@@ -83,7 +131,8 @@ export function renderTypesResult(
     if (matches.length === 0) {
       return `No types matched ${JSON.stringify(query)}. Try a broader term, pass an exact \`name\`, or call with no args for the index.`
     }
-    return matches.map(renderEntry).join("\n\n---\n\n")
+    // Search results are collapsed by default; `full` opts back into whole declarations.
+    return matches.map(full ? renderEntry : renderSearchHit).join("\n\n---\n\n")
   }
   const byPkg = new Map<string, string[]>()
   for (const t of types) {
