@@ -736,7 +736,7 @@
     "name": "beginRequestEffectTracking",
     "kind": "function",
     "package": "@nifrajs/core",
-    "signature": "export declare function beginRequestEffectTracking(request: Request): void;"
+    "signature": "export declare function beginRequestEffectTracking(request: Request): EffectEvidenceScope;"
   },
   {
     "name": "betterAuth",
@@ -1647,7 +1647,7 @@
     "name": "ClientOptions",
     "kind": "interface",
     "package": "@nifrajs/client",
-    "signature": "export interface ClientOptions {\n    /** Headers sent on every request (a per-call `headers` option is merged on top). */\n    readonly headers?: Record<string, string>;\n    /** Override the `fetch` implementation (tests, an in-process bridge, a custom agent, etc.). */\n    readonly fetch?: FetchFn;\n    /**\n     * Runs before each request (including each retry). Return a header map to MERGE onto the outgoing\n     * request — the place to inject a fresh auth token. `await`ed, so async token refresh works.\n     */\n    readonly onRequest?: (request: {\n        readonly url: string;\n        readonly method: string;\n        readonly headers: Record<string, string>;\n        readonly body: unknown;\n    }) => MaybePromise<Record<string, string> | undefined>;\n    /** Runs after a response arrives (once per call, on the final response). Observe-only. */\n    readonly onResponse?: (response: {\n        readonly url: string;\n        readonly method: string;\n        readonly response: Response;\n    }) => MaybePromise<void>;\n    /** Abort a call that takes longer than this many ms. Surfaces as `{ ok: false, status: 0 }` with a\n     * `timeout` error, never a throw. Combined with a per-call `signal`. */\n    readonly timeoutMs?: number;\n    /** Enable safe automatic retries. See {@link ClientRetryOptions}. */\n    readonly retry?: ClientRetryOptions;\n}"
+    "signature": "export interface ClientOptions {\n    /** Headers sent on every request (a per-call `headers` option is merged on top). */\n    readonly headers?: Record<string, string>;\n    /** Override the `fetch` implementation (tests, an in-process bridge, a custom agent, etc.). */\n    readonly fetch?: FetchFn;\n    /**\n     * Runs before each request (including each retry). Return a header map to MERGE onto the outgoing\n     * request — the place to inject a fresh auth token. `await`ed, so async token refresh works.\n     */\n    readonly onRequest?: (request: {\n        readonly url: string;\n        readonly method: string;\n        readonly headers: Record<string, string>;\n        readonly body: unknown;\n    }) => MaybePromise<Record<string, string> | undefined>;\n    /** Runs after a response arrives (once per call, on the final response). Observe-only. */\n    readonly onResponse?: (response: {\n        readonly url: string;\n        readonly method: string;\n        readonly response: Response;\n    }) => MaybePromise<void>;\n    /** Abort a call that takes longer than this many ms. Surfaces as `{ ok: false, status: 0 }` with a\n     * `timeout` error, never a throw. Combined with a per-call `signal`. */\n    readonly timeoutMs?: number;\n    /** Enable safe automatic retries. See {@link ClientRetryOptions}. */\n    readonly retry?: ClientRetryOptions;\n    /**\n     * Opt into a versioned transport representation. Plain JSON remains the default. Responses are\n     * decoded through the bounded registry, and WebSocket frames use the same codec.\n     */\n    readonly transport?: {\n        readonly codec: TransportCodec;\n        readonly registry?: TransportCodecRegistry;\n        readonly maxBytes?: number;\n    };\n}"
   },
   {
     "name": "ClientRetryOptions",
@@ -2213,11 +2213,30 @@
     "signature": "export declare function createDurableEffectJournal(options: DurableEffectJournalOptions): CapabilityExecutionJournal;"
   },
   {
+    "name": "createDurableExecutionAdapter",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function createDurableExecutionAdapter(backend: DurableRecordBackend): DurableExecutionAdapter;"
+  },
+  {
+    "name": "createEffectEvidenceScope",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function createEffectEvidenceScope(): EffectEvidenceScope;",
+    "doc": "/** Lightweight aggregate evidence shared by request idempotency and full owned-effect runners. */"
+  },
+  {
     "name": "createEffectLedgerRuntime",
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function createEffectLedgerRuntime(options: EffectLedgerOptions): EffectLedgerRuntime;",
     "doc": "/**\n * Build an effect-ledger runtime from the app-wide options. `sink` receives the sealed, token-only\n * ledger when a capability-declaring route settles with recorded entries; `maxEntries` bounds a single\n * request's ledger; `chain` opts into the per-entry hash chain.\n */"
+  },
+  {
+    "name": "createEffectScope",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function createEffectScope(options?: EffectScopeOptions, evidenceScope?: EffectEvidenceScope): EffectScope;"
   },
   {
     "name": "createEventLoopLagSampler",
@@ -2420,6 +2439,12 @@
     "package": "@nifrajs/web",
     "signature": "export declare function createStylesheetEmitter(build: PluginBuilder, namespace: string): StylesheetEmitter;",
     "doc": "/**\n * Wire the virtual-CSS-module handlers onto `build` for `namespace`, returning an {@link StylesheetEmitter}.\n * The `namespace` must be a plain identifier (letters/`-`); it's used verbatim as the import suffix and\n * the Bun namespace. Only the `\"dom\"` build should emit CSS — the `\"ssr\"` build ships no stylesheet.\n */"
+  },
+  {
+    "name": "createTransportCodecRegistry",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function createTransportCodecRegistry(codecs: readonly TransportCodec[], fallback?: TransportCodec): TransportCodecRegistry;"
   },
   {
     "name": "createUnboundedRequestBudget",
@@ -2660,6 +2685,18 @@
     "doc": "/** Decode router captures under one rule. Plain values take the zero-allocation path; malformed\n * escapes return `null`, allowing HTTP to emit 400 while client navigation declines the match. */"
   },
   {
+    "name": "decodeTransportFrame",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function decodeTransportFrame(frame: string, registry?: TransportCodecRegistry, options?: TransportDecodeOptions): unknown;"
+  },
+  {
+    "name": "decodeTransportResponse",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function decodeTransportResponse(response: Response, registry?: TransportCodecRegistry, options?: TransportDecodeOptions): Promise<unknown>;"
+  },
+  {
     "name": "DEFAULT_ASSURANCE_CONFIG",
     "kind": "const",
     "package": "@nifrajs/cli",
@@ -2716,6 +2753,12 @@
     "kind": "const",
     "package": "@nifrajs/core",
     "signature": "export declare const DEFAULT_WIRE_DECODE_LIMITS: Readonly<Required<WireDecodeLimits>>;"
+  },
+  {
+    "name": "defaultTransportCodecs",
+    "kind": "const",
+    "package": "@nifrajs/core",
+    "signature": "export declare const defaultTransportCodecs: TransportCodecRegistry;"
   },
   {
     "name": "defer",
@@ -3136,11 +3179,59 @@
     "signature": "export declare class DurableEffectTransitionError extends Error {\n    readonly effectId: string;\n    readonly transition: string;\n    constructor(effectId: string, transition: string);\n}"
   },
   {
+    "name": "DurableExecutionAdapter",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface DurableExecutionAdapter {\n    readonly effects: DurableEffectStore;\n    readonly approvals: ApprovalStore;\n    readonly sagas: SagaStore;\n    readonly leases: ReconciliationLeaseStore;\n}"
+  },
+  {
+    "name": "DurableExecutionConformanceResult",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface DurableExecutionConformanceResult {\n    readonly effects: true;\n    readonly approvals: true;\n    readonly sagas: true;\n    readonly leases: true;\n}"
+  },
+  {
+    "name": "DurableObjectExecutionAdapter",
+    "kind": "class",
+    "package": "@nifrajs/core",
+    "signature": "export declare class DurableObjectExecutionAdapter implements DurableExecutionAdapter {\n    readonly effects: DurableEffectStore;\n    readonly approvals: ApprovalStore;\n    readonly sagas: SagaStore;\n    readonly leases: ReconciliationLeaseStore;\n    readonly backend: DurableObjectRecordBackend;\n    constructor(storage: DurableObjectStorage);\n}"
+  },
+  {
     "name": "DurableObjectNamespaceLike",
     "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface DurableObjectNamespaceLike {\n    idFromName(name: string): unknown;\n    get(id: unknown): {\n        fetch(request: Request): Promise<Response>;\n    };\n}",
     "doc": "/** Structural view of a Cloudflare Durable Object namespace binding — keeps `@cloudflare/workers-types`\n * out of `@nifrajs/core`. The real `DurableObjectNamespace` satisfies it. */"
+  },
+  {
+    "name": "DurableObjectRecordBackend",
+    "kind": "class",
+    "package": "@nifrajs/core",
+    "signature": "export declare class DurableObjectRecordBackend implements DurableRecordBackend {\n    private readonly storage;\n    constructor(storage: DurableObjectStorage);\n    private recordKey;\n    private leaseKey;\n    create(kind: DurableRecordKind, id: string, record: {\n        readonly version: number;\n        readonly state?: string;\n        readonly updatedAt?: number;\n    }): Promise<boolean>;\n    get<T extends {\n        readonly version: number;\n    }>(kind: DurableRecordKind, id: string): Promise<T | undefined>;\n    compareAndSet(kind: DurableRecordKind, id: string, expectedVersion: number, record: {\n        readonly version: number;\n        readonly state?: string;\n        readonly updatedAt?: number;\n    }): Promise<boolean>;\n    scan<T extends {\n        readonly state: string;\n        readonly updatedAt: number;\n    }>(kind: DurableRecordKind, input: ReconciliationScanOptions<string>): Promise<ReconciliationScanPage<T>>;\n    acquireLease(input: Parameters<DurableRecordBackend[\"acquireLease\"]>[0]): Promise<ReconciliationLease | undefined>;\n    renewLease(input: Parameters<DurableRecordBackend[\"renewLease\"]>[0]): Promise<boolean>;\n    checkpointLease(input: Parameters<DurableRecordBackend[\"checkpointLease\"]>[0]): Promise<boolean>;\n    releaseLease(input: Parameters<DurableRecordBackend[\"releaseLease\"]>[0]): Promise<boolean>;\n}"
+  },
+  {
+    "name": "DurableObjectStorage",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface DurableObjectStorage extends DurableObjectStorageTransaction {\n    transaction<T>(closure: (transaction: DurableObjectStorageTransaction) => Promise<T>): Promise<T>;\n}"
+  },
+  {
+    "name": "DurableObjectStorageTransaction",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface DurableObjectStorageTransaction {\n    get<T = unknown>(key: string): Promise<T | undefined>;\n    put<T = unknown>(key: string, value: T): Promise<void>;\n    list<T = unknown>(options?: {\n        readonly prefix?: string;\n        readonly startAfter?: string;\n        readonly limit?: number;\n    }): Promise<Map<string, T>>;\n}"
+  },
+  {
+    "name": "DurableRecordBackend",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface DurableRecordBackend {\n    create(kind: DurableRecordKind, id: string, record: {\n        readonly version: number;\n        readonly state?: string;\n        readonly updatedAt?: number;\n    }): Promise<boolean>;\n    get<T extends {\n        readonly version: number;\n    }>(kind: DurableRecordKind, id: string): Promise<T | undefined>;\n    compareAndSet(kind: DurableRecordKind, id: string, expectedVersion: number, record: {\n        readonly version: number;\n        readonly state?: string;\n        readonly updatedAt?: number;\n    }): Promise<boolean>;\n    scan<T extends {\n        readonly state: string;\n        readonly updatedAt: number;\n    }>(kind: DurableRecordKind, input: ReconciliationScanOptions<string>): Promise<ReconciliationScanPage<T>>;\n    acquireLease(input: {\n        readonly name: string;\n        readonly owner: string;\n        readonly now: number;\n        readonly leaseMs: number;\n    }): Promise<ReconciliationLease | undefined>;\n    renewLease(input: {\n        readonly name: string;\n        readonly owner: string;\n        readonly token: string;\n        readonly now: number;\n        readonly leaseMs: number;\n    }): Promise<boolean>;\n    checkpointLease(input: {\n        readonly name: string;\n        readonly owner: string;\n        readonly token: string;\n        readonly cursor?: string;\n    }): Promise<boolean>;\n    releaseLease(input: {\n        readonly name: string;\n        readonly owner: string;\n        readonly token: string;\n    }): Promise<boolean>;\n}"
+  },
+  {
+    "name": "DurableRecordKind",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type DurableRecordKind = \"effect\" | \"approval\" | \"saga\";"
   },
   {
     "name": "effect",
@@ -3176,6 +3267,12 @@
     "package": "@nifrajs/core",
     "signature": "export interface EffectEntryInput extends EffectMetadata {\n    /** Opaque execution correlation token shared by one intent and its terminal outcome. */\n    readonly effectId?: string;\n    /** Capability token (`db.write`, `payments.charge`). Must be a valid capability id. */\n    readonly capability: string;\n    /** Default `\"intent\"`. Record `committed`/`failed`/`compensated` only after the outcome is known. */\n    readonly phase?: EffectPhase;\n    /** Outcome error as a bounded token code — never a message, never a stack. */\n    readonly error?: {\n        readonly code: string;\n    };\n}",
     "doc": "/** Caller-supplied fields for one entry. Everything else (`seq`, `at`) is assigned by the ledger. */"
+  },
+  {
+    "name": "EffectEvidenceScope",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface EffectEvidenceScope {\n    evidence(): EffectScopeEvidence;\n    /** Legacy/manual effects cannot prove a terminal outcome and therefore become ambiguous. */\n    markBegan(): void;\n    /** Pair a prior manual `markBegan()` with a proven commit. */\n    markCommitted(): void;\n    /** Preserve uncertainty when a caller loses the terminal outcome. */\n    markAmbiguous(): void;\n    /** Settle one begun effect as a proven terminal failure without claiming it committed. */\n    markFailed(): void;\n    /**\n     * Declare that the enclosing request may release its idempotency reservation if it returns a\n     * server error before any owned effect begins.\n     */\n    markSafeToRetry(): void;\n    /** True only while the retry declaration remains backed by evidence that no effect began. */\n    safeToRetry(): boolean;\n}"
   },
   {
     "name": "effectLedger",
@@ -3267,6 +3364,30 @@
     "signature": "export interface EffectReconciliationFinding {\n    readonly effectId: string;\n    readonly capability: string;\n    readonly state: \"incomplete\" | \"ambiguous\";\n    readonly updatedAt: number;\n}"
   },
   {
+    "name": "EffectScope",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface EffectScope extends EffectEvidenceScope {\n    run<T>(options: OwnedEffectRunOptions<T>, execute: (context: OwnedEffectContext) => T | PromiseLike<T>): Promise<T>;\n}"
+  },
+  {
+    "name": "EffectScopeEvidence",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface EffectScopeEvidence {\n    readonly began: boolean;\n    readonly committed: boolean;\n    readonly ambiguous: boolean;\n}"
+  },
+  {
+    "name": "effectScopeForContext",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function effectScopeForContext(context: object): EffectEvidenceScope | undefined;"
+  },
+  {
+    "name": "EffectScopeOptions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface EffectScopeOptions {\n    readonly observers?: readonly EffectLifecycleObserver[];\n    readonly signal?: AbortSignal;\n    readonly effectId?: () => string;\n}"
+  },
+  {
     "name": "EffectTraceParent",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -3356,6 +3477,18 @@
     "package": "@nifrajs/schema",
     "signature": "export declare function encodeCursor(value: unknown): string;",
     "doc": "/** Encode any JSON-serializable value (e.g. the last row's sort key) into an opaque cursor string. */"
+  },
+  {
+    "name": "encodeTransportFrame",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function encodeTransportFrame(value: unknown, codec?: TransportCodec): string;"
+  },
+  {
+    "name": "encodeTransportResponse",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function encodeTransportResponse(value: unknown, codec?: TransportCodec, init?: ResponseInit): Response;"
   },
   {
     "name": "EndObservation",
@@ -5542,6 +5675,19 @@
     "signature": "export declare function markEffectExecuting(context: object): void;"
   },
   {
+    "name": "markIdempotencySafeToRetry",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function markIdempotencySafeToRetry(context: object): void;",
+    "doc": "/**\n * Opt a concrete 5xx response into releasing its idempotency reservation, but only while the\n * request-local effect scope still proves that no owned effect began.\n */"
+  },
+  {
+    "name": "markRequestSafeToRetry",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function markRequestSafeToRetry(context: object): void;"
+  },
+  {
     "name": "matches",
     "kind": "function",
     "package": "@nifrajs/cron",
@@ -5848,6 +5994,13 @@
     "signature": "export declare class MemoryDurableEffectStore implements DurableEffectStore {\n    readonly durability: \"memory\";\n    private readonly records;\n    private readonly byState;\n    create(record: DurableEffectRecord): boolean;\n    get(effectId: string): DurableEffectRecord | undefined;\n    transition(input: Parameters<DurableEffectStore[\"transition\"]>[0]): boolean;\n    list(): readonly DurableEffectRecord[];\n    scan(input: ReconciliationScanOptions<DurableEffectState>): ReconciliationScanPage<DurableEffectRecord>;\n}"
   },
   {
+    "name": "MemoryDurableRecordBackend",
+    "kind": "class",
+    "package": "@nifrajs/core",
+    "signature": "export declare class MemoryDurableRecordBackend implements DurableRecordBackend {\n    private readonly records;\n    private readonly leases;\n    private key;\n    create(kind: DurableRecordKind, id: string, record: {\n        readonly version: number;\n        readonly state?: string;\n        readonly updatedAt?: number;\n    }): Promise<boolean>;\n    get<T extends {\n        readonly version: number;\n    }>(kind: DurableRecordKind, id: string): Promise<T | undefined>;\n    compareAndSet(kind: DurableRecordKind, id: string, expectedVersion: number, record: {\n        readonly version: number;\n        readonly state?: string;\n        readonly updatedAt?: number;\n    }): Promise<boolean>;\n    scan<T extends {\n        readonly state: string;\n        readonly updatedAt: number;\n    }>(kind: DurableRecordKind, input: ReconciliationScanOptions<string>): Promise<ReconciliationScanPage<T>>;\n    acquireLease(input: Parameters<DurableRecordBackend[\"acquireLease\"]>[0]): Promise<ReconciliationLease | undefined>;\n    renewLease(input: Parameters<DurableRecordBackend[\"renewLease\"]>[0]): Promise<boolean>;\n    checkpointLease(input: Parameters<DurableRecordBackend[\"checkpointLease\"]>[0]): Promise<boolean>;\n    releaseLease(input: Parameters<DurableRecordBackend[\"releaseLease\"]>[0]): Promise<boolean>;\n}",
+    "doc": "/** Deterministic reference backend for tests and adapter conformance; not for production. */"
+  },
+  {
     "name": "MemoryIdempotencyStore",
     "kind": "class",
     "package": "@nifrajs/core",
@@ -5891,6 +6044,12 @@
     "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface MemoryLedgerSinkOptions {\n    /** Retain at most this many sealed ledgers (oldest evicted first). Default 1000. */\n    readonly maxLedgers?: number;\n}"
+  },
+  {
+    "name": "MemoryReconciliationLeaseStore",
+    "kind": "class",
+    "package": "@nifrajs/core",
+    "signature": "export declare class MemoryReconciliationLeaseStore implements ReconciliationLeaseStore {\n    readonly durability: \"memory\";\n    private readonly records;\n    acquire(input: Parameters<ReconciliationLeaseStore[\"acquire\"]>[0]): ReconciliationLease | undefined;\n    renew(input: Parameters<ReconciliationLeaseStore[\"renew\"]>[0]): boolean;\n    checkpoint(input: Parameters<ReconciliationLeaseStore[\"checkpoint\"]>[0]): boolean;\n    release(input: Parameters<ReconciliationLeaseStore[\"release\"]>[0]): boolean;\n}"
   },
   {
     "name": "MemoryResponseCache",
@@ -6242,7 +6401,7 @@
     "name": "ndjsonStream",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function ndjsonStream(forClient: unknown, deferred: ReadonlyArray<{\n    readonly id: number;\n    readonly promise: Promise<unknown>;\n}>): ReadableStream<Uint8Array>;",
+    "signature": "export declare function ndjsonStream(forClient: unknown, deferred: ReadonlyArray<{\n    readonly id: number;\n    readonly promise: Promise<unknown>;\n}>, codec?: TransportCodec): ReadableStream<Uint8Array>;",
     "doc": "/**\n * Stream a loader result as NDJSON for a client (soft) navigation: line 1 is the critical data with\n * `{__nifra_deferred: id}` placeholders (`forClient`), then one line per deferred as its promise\n * settles — `{\"i\": id, \"v\": value}` on resolve, `{\"i\": id, \"e\": \"deferred_error\"}` on reject (a\n * rejection is data, not a stream error; the opaque code never leaks the raw reason). Closes when all\n * settle. The client (`defaultFetchData`) returns the\n * data after line 1 and settles `<Await>`'s markers as the resolution lines arrive. `JSON.stringify`\n * escapes newlines in values, so each line is NDJSON-safe; no HTML escaping (this is a fetch body,\n * parsed with `JSON.parse`, never injected into markup).\n */"
   },
   {
@@ -6655,6 +6814,24 @@
     "doc": "/** The client-visible output of a handler: its awaited return, minus raw `Response`. */"
   },
   {
+    "name": "OwnedEffectContext",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface OwnedEffectContext extends EffectMetadata {\n    readonly effectId: string;\n    readonly capability: string;\n    readonly stage: Exclude<EffectLifecycleStage, \"admission\" | \"reconciliation\">;\n    readonly signal: AbortSignal;\n    readonly attempt?: number;\n}"
+  },
+  {
+    "name": "OwnedEffectRunOptions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface OwnedEffectRunOptions<T> extends EffectMetadata {\n    readonly effectId?: string;\n    readonly capability: string;\n    readonly stage?: Exclude<EffectLifecycleStage, \"admission\" | \"reconciliation\">;\n    readonly signal?: AbortSignal;\n    readonly attempt?: number;\n    readonly trace?: EffectTraceParent;\n    /** Per-run observers, combined with the scope's observers. */\n    readonly observers?: readonly EffectLifecycleObserver[];\n    /** Optional admission boundary executed before the effect is marked as begun. */\n    readonly admit?: (context: OwnedEffectContext) => void | PromiseLike<void>;\n    readonly transitions?: OwnedEffectTransitions<T>;\n    readonly errorCode?: string | ((error: unknown, began: boolean) => string);\n    /** Classify a caught execution failure when the caller can prove it is terminal. */\n    readonly failurePhase?: (error: unknown, began: boolean) => \"failed\" | \"ambiguous\";\n}"
+  },
+  {
+    "name": "OwnedEffectTransitions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface OwnedEffectTransitions<T> {\n    intent?(context: OwnedEffectContext): void | PromiseLike<void>;\n    executing?(context: OwnedEffectContext): void | PromiseLike<void>;\n    committed?(context: OwnedEffectContext, result: T): void | PromiseLike<void>;\n    failed?(context: OwnedEffectContext, input: {\n        readonly began: boolean;\n        readonly errorCode: string;\n        readonly error: unknown;\n    }): void | PromiseLike<void>;\n}"
+  },
+  {
     "name": "packageOf",
     "kind": "function",
     "package": "@nifrajs/cli",
@@ -6828,7 +7005,7 @@
     "name": "parseNdjsonData",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function parseNdjsonData(stream: ReadableStream<Uint8Array>, signal?: AbortSignal): Promise<unknown>;",
+    "signature": "export declare function parseNdjsonData(stream: ReadableStream<Uint8Array>, signal?: AbortSignal, codec?: TransportCodec): Promise<unknown>;",
     "doc": "/**\n * Client side of {@link ndjsonStream} (used by the router's `defaultFetchData` on a soft nav): read\n * the NDJSON body into a data object whose deferred markers settle as resolution lines arrive.\n * Returns after **line 1** so the router can apply the critical data + render immediately; the\n * markers' promises settle/reject in the background. If the stream ends (or `signal` aborts) with\n * markers unsettled, they reject — so `<Await>` never hangs.\n */"
   },
   {
@@ -6905,6 +7082,12 @@
     "package": "@nifrajs/web",
     "signature": "export declare function pipeWebBodyToNode(body: ReadableStream<Uint8Array> | null, res: NodeResLike): Promise<void>;",
     "doc": "/**\n * Stream a Web `Response` body to a Node response chunk-by-chunk. Buffering the whole body (e.g.\n * `arrayBuffer()`) waits for the stream to END — which an open-ended SSE (`text/event-stream`) body never\n * does, so it hung `nifra dev` (the Bun production server streamed it fine). This flushes each chunk as it\n * arrives and cancels the reader if the client disconnects; a finite body just streams its chunk(s) + ends.\n */"
+  },
+  {
+    "name": "plainJsonCodec",
+    "kind": "const",
+    "package": "@nifrajs/core",
+    "signature": "export declare const plainJsonCodec: TransportCodec;"
   },
   {
     "name": "Platform",
@@ -6987,6 +7170,30 @@
     "package": "@nifrajs/web",
     "signature": "export type PostcssProcessor = (plugins?: readonly unknown[]) => {\n    process(css: string, options: {\n        readonly from?: string;\n        readonly to?: string;\n    }): PromiseLike<{\n        readonly css: string;\n    }>;\n};",
     "doc": "/** The subset of the `postcss` API this plugin uses (structural, so no hard dependency on its types). */"
+  },
+  {
+    "name": "PostgresClient",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface PostgresClient {\n    query(sql: string, values?: readonly unknown[]): Promise<PostgresQueryResult>;\n}"
+  },
+  {
+    "name": "PostgresDurableExecutionAdapter",
+    "kind": "class",
+    "package": "@nifrajs/core",
+    "signature": "export declare class PostgresDurableExecutionAdapter implements DurableExecutionAdapter {\n    readonly effects: DurableEffectStore;\n    readonly approvals: ApprovalStore;\n    readonly sagas: SagaStore;\n    readonly leases: ReconciliationLeaseStore;\n    readonly backend: PostgresDurableRecordBackend;\n    constructor(client: PostgresClient, options?: {\n        readonly tablePrefix?: string;\n    });\n    migrate(): Promise<void>;\n}"
+  },
+  {
+    "name": "PostgresDurableRecordBackend",
+    "kind": "class",
+    "package": "@nifrajs/core",
+    "signature": "export declare class PostgresDurableRecordBackend implements DurableRecordBackend {\n    private readonly client;\n    readonly recordsTable: string;\n    readonly leasesTable: string;\n    constructor(client: PostgresClient, options?: {\n        readonly tablePrefix?: string;\n    });\n    migrate(): Promise<void>;\n    create(kind: DurableRecordKind, id: string, record: {\n        readonly version: number;\n        readonly state?: string;\n        readonly updatedAt?: number;\n    }): Promise<boolean>;\n    get<T extends {\n        readonly version: number;\n    }>(kind: DurableRecordKind, id: string): Promise<T | undefined>;\n    compareAndSet(kind: DurableRecordKind, id: string, expectedVersion: number, record: {\n        readonly version: number;\n        readonly state?: string;\n        readonly updatedAt?: number;\n    }): Promise<boolean>;\n    scan<T extends {\n        readonly state: string;\n        readonly updatedAt: number;\n    }>(kind: DurableRecordKind, input: ReconciliationScanOptions<string>): Promise<ReconciliationScanPage<T>>;\n    acquireLease(input: Parameters<DurableRecordBackend[\"acquireLease\"]>[0]): Promise<ReconciliationLease | undefined>;\n    renewLease(input: Parameters<DurableRecordBackend[\"renewLease\"]>[0]): Promise<boolean>;\n    checkpointLease(input: Parameters<DurableRecordBackend[\"checkpointLease\"]>[0]): Promise<boolean>;\n    releaseLease(input: Parameters<DurableRecordBackend[\"releaseLease\"]>[0]): Promise<boolean>;\n}"
+  },
+  {
+    "name": "PostgresQueryResult",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface PostgresQueryResult {\n    readonly rows: readonly Record<string, unknown>[];\n    readonly rowCount?: number;\n}"
   },
   {
     "name": "poweredBy",
@@ -7128,6 +7335,20 @@
     "kind": "interface",
     "package": "@nifrajs/middleware",
     "signature": "export interface PrettyJsonOptions {\n    /** JSON indentation spaces. Default `2`. */\n    readonly spaces?: number;\n    /** Maximum response bytes to inspect. Default `1_000_000`; larger responses pass through. */\n    readonly maxBytes?: number;\n    /** Append a final newline. Default `true`. */\n    readonly newline?: boolean;\n    /** Optional query toggle. When set, pretty printing runs only when the parameter is present. */\n    readonly query?: string | false;\n    /** Only pretty-print matching requests. Default `true`. */\n    readonly enabled?: boolean | ((request: Request) => boolean);\n}"
+  },
+  {
+    "name": "previewEndpoint",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function previewEndpoint(options: PreviewEndpointOptions): (request: Request) => Promise<Response>;",
+    "doc": "/**\n * A **preview / draft-mode entry point** — a `fetch` handler that checks a preview token, turns draft\n * mode on, and redirects the editor to the page they wanted. `GET` with `?token=<secret>&to=/some/path`;\n * mount it on a nifra route, e.g. `app.get(\"/api/preview\", (c) => handler(c.req))`.\n *\n * This is the link-borne sibling of `revalidateEndpoint`. It exists because the alternative — telling\n * you to gate the route yourself — means hand-rolling two checks that are easy to get subtly wrong and\n * that fail silently when you do: the token compare must not exit early on the first wrong character,\n * and the `?to=` destination must not be allowed to point off-site. Both are handled here.\n *\n * A CMS \"Preview\" button is a plain link, so the token has to ride the query string. That has a cost\n * no endpoint can remove — the secret lands in server logs, the `Referer` header, and browser history.\n * Use a preview token minted for that purpose, rotate it, and never reuse a token that grants anything\n * beyond draft mode.\n *\n * Wrong or missing token → `401`; an off-site `to` → `400`; success → `302` with the signed cookie and\n * `Cache-Control: no-store`, so no shared cache can ever replay one editor's draft session to a visitor.\n */"
+  },
+  {
+    "name": "PreviewEndpointOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface PreviewEndpointOptions {\n    /** Shared secret the preview link must carry. Compared in **constant time**. */\n    readonly secret: string;\n    /** Secret that **signs** the draft cookie — the same one passed to `createWebApp({ draftSecret })`\n     * and `withISR({ draftSecret })`. Keep it distinct from {@link secret}: that one travels in URLs\n     * (logs, `Referer`, browser history), this one never leaves the server. */\n    readonly draftSecret: string;\n    /** Query parameter carrying the token. Default `\"token\"`. */\n    readonly tokenParam?: string;\n    /** Query parameter carrying the destination. Default `\"to\"`. */\n    readonly redirectParam?: string;\n    /** Where to send the editor when the destination parameter is absent. Default `\"/\"`. Must be\n     * site-relative; a non-relative value throws at construction rather than at request time. */\n    readonly fallbackPath?: string;\n    /** Cookie lifetime/path/secure overrides, exactly as {@link enableDraft} takes them. */\n    readonly cookie?: EnableDraftOptions;\n}",
+    "doc": "/** Config for {@link previewEndpoint}. */"
   },
   {
     "name": "Principal",
@@ -7536,6 +7757,18 @@
     "signature": "export declare function reconcileSagasPage(store: SagaStore, options: {\n    readonly staleBefore: number;\n    readonly cursor?: string;\n    readonly limit?: number;\n}): Promise<ReconciliationPage<SagaReconciliationFinding>>;"
   },
   {
+    "name": "ReconciliationLease",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ReconciliationLease {\n    readonly name: string;\n    readonly owner: string;\n    readonly token: string;\n    readonly expiresAt: number;\n    readonly cursor?: string;\n}"
+  },
+  {
+    "name": "ReconciliationLeaseStore",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ReconciliationLeaseStore {\n    readonly durability?: \"memory\" | \"durable\";\n    acquire(input: {\n        readonly name: string;\n        readonly owner: string;\n        readonly now: number;\n        readonly leaseMs: number;\n    }): ReconciliationLease | undefined | Promise<ReconciliationLease | undefined>;\n    renew(input: {\n        readonly name: string;\n        readonly owner: string;\n        readonly token: string;\n        readonly now: number;\n        readonly leaseMs: number;\n    }): boolean | Promise<boolean>;\n    checkpoint(input: {\n        readonly name: string;\n        readonly owner: string;\n        readonly token: string;\n        readonly cursor?: string;\n    }): boolean | Promise<boolean>;\n    release(input: {\n        readonly name: string;\n        readonly owner: string;\n        readonly token: string;\n    }): boolean | Promise<boolean>;\n}"
+  },
+  {
     "name": "ReconciliationPage",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -7552,6 +7785,24 @@
     "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface ReconciliationScanPage<Record> {\n    readonly records: readonly Record[];\n    readonly cursor?: string;\n}"
+  },
+  {
+    "name": "ReconciliationWorkerEvent",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type ReconciliationWorkerEvent = {\n    readonly type: \"acquired\" | \"released\" | \"lease-lost\";\n    readonly name: string;\n} | {\n    readonly type: \"page\" | \"checkpoint\";\n    readonly name: string;\n    readonly scanned: number;\n    readonly handled: number;\n} | {\n    readonly type: \"failed\";\n    readonly name: string;\n    readonly errorCode: \"scan\" | \"handle\";\n};"
+  },
+  {
+    "name": "ReconciliationWorkerOptions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ReconciliationWorkerOptions<Finding> {\n    readonly name: string;\n    readonly owner: string;\n    readonly leases: ReconciliationLeaseStore;\n    readonly leaseMs?: number;\n    readonly batchSize?: number;\n    readonly maxPages?: number;\n    readonly concurrency?: number;\n    readonly signal?: AbortSignal;\n    readonly now?: () => number;\n    readonly scan: (input: {\n        readonly cursor?: string;\n        readonly limit: number;\n        readonly signal: AbortSignal;\n    }) => {\n        readonly findings: readonly Finding[];\n        readonly cursor?: string;\n    } | Promise<{\n        readonly findings: readonly Finding[];\n        readonly cursor?: string;\n    }>;\n    readonly filter?: (finding: Finding) => boolean;\n    readonly handle: (finding: Finding, signal: AbortSignal) => void | PromiseLike<void>;\n    readonly observe?: (event: ReconciliationWorkerEvent) => void;\n}"
+  },
+  {
+    "name": "ReconciliationWorkerResult",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ReconciliationWorkerResult {\n    readonly acquired: boolean;\n    readonly pages: number;\n    readonly scanned: number;\n    readonly handled: number;\n}"
   },
   {
     "name": "recordCapabilityOutcome",
@@ -7860,10 +8111,15 @@
   },
   {
     "name": "RequestEffectEvidence",
-    "kind": "interface",
+    "kind": "type",
     "package": "@nifrajs/core",
-    "signature": "export interface RequestEffectEvidence {\n    readonly began: boolean;\n    readonly committed: boolean;\n    readonly ambiguous: boolean;\n}",
-    "doc": "/** Request-local evidence used by the idempotency lane. Never exported or persisted. */"
+    "signature": "export type RequestEffectEvidence = EffectScopeEvidence;"
+  },
+  {
+    "name": "requestEffectScope",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function requestEffectScope(request: Request): EffectEvidenceScope | undefined;"
   },
   {
     "name": "requestId",
@@ -7877,6 +8133,12 @@
     "kind": "interface",
     "package": "@nifrajs/middleware",
     "signature": "export interface RequestIdOptions {\n    /** Header read for an inbound id (trace propagation) + echoed on the response. Default `\"x-request-id\"`. */\n    readonly header?: string;\n    /** Generate an id when the inbound header is absent. Default `crypto.randomUUID()`. */\n    readonly generate?: () => string;\n}"
+  },
+  {
+    "name": "requestIsSafeToRetry",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function requestIsSafeToRetry(request: Request): boolean;"
   },
   {
     "name": "RequestLedger",
@@ -8201,6 +8463,18 @@
     "package": "@nifrajs/cli",
     "signature": "export declare function rewriteVersionSpec(spec: string, toVersion: string): string | null;",
     "doc": "/**\n * Rewrite a dependency version spec to `toVersion`, preserving the range operator (`^`, `~`, …).\n * Returns null when the spec is not a plain semver spec (→ skip it) or already equals the target.\n */"
+  },
+  {
+    "name": "richWireCodec",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function richWireCodec(options?: RichWireCodecOptions): TransportCodec;"
+  },
+  {
+    "name": "RichWireCodecOptions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface RichWireCodecOptions {\n    readonly limits?: WireDecodeLimits;\n}"
   },
   {
     "name": "robots",
@@ -8555,6 +8829,19 @@
     "doc": "/** Run doctor; print a report (`--json` for machine output) and return whether it passed. */"
   },
   {
+    "name": "runDurableExecutionAdapterConformance",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function runDurableExecutionAdapterConformance(adapter: DurableExecutionAdapter): Promise<DurableExecutionConformanceResult>;",
+    "doc": "/** Runtime-independent conformance suite reusable by adapter authors and CI. */"
+  },
+  {
+    "name": "runEffectReconciliationWorker",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function runEffectReconciliationWorker(store: DurableEffectStore, options: SpecializedWorkerOptions<EffectReconciliationFinding>): Promise<ReconciliationWorkerResult>;"
+  },
+  {
     "name": "runFailureScenario",
     "kind": "function",
     "package": "@nifrajs/testing",
@@ -8635,6 +8922,12 @@
     "signature": "export interface RunQueryOptions {\n    /**\n     * REQUIRED. Authorize each `run_query` call at the transport boundary (inspect the inbound\n     * Request's auth). Return false to reject with a JSON-RPC error. There is no unauthenticated\n     * mode — schema tools are the anonymous surface. Note: `run_query` is therefore HTTP-only;\n     * direct `handle()` dispatch rejects it (no Request to authorize — fails closed).\n     */\n    readonly authorize: (context: McpDbAuthorizeContext) => boolean | Promise<boolean>;\n    /** Max rows returned per query (default 100). */\n    readonly maxRows?: number;\n    /** Max serialized result size in bytes (default 100 KB). */\n    readonly maxResultBytes?: number;\n}"
   },
   {
+    "name": "runReconciliationWorker",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function runReconciliationWorker<Finding>(options: ReconciliationWorkerOptions<Finding>): Promise<ReconciliationWorkerResult>;"
+  },
+  {
     "name": "runRequest",
     "kind": "function",
     "package": "@nifrajs/runner",
@@ -8647,6 +8940,12 @@
     "package": "@nifrajs/runner",
     "signature": "export interface RunResult {\n    readonly label?: string;\n    readonly method: string;\n    readonly path: string;\n    /** `true` when the app returned a 2xx response. `false` for non-2xx, or when `app.fetch` threw. */\n    readonly ok: boolean;\n    /** HTTP status — present when the app returned a response (absent when it threw). */\n    readonly status?: number;\n    readonly statusText?: string;\n    readonly headers?: Readonly<Record<string, string>>;\n    /** Parsed JSON when the response is JSON; otherwise the (possibly truncated) text. */\n    readonly body?: unknown;\n    /** The response body as text, truncated to `maxBodyChars`. */\n    readonly bodyText?: string;\n    /** `true` when `bodyText` was cut to the cap. */\n    readonly truncated?: boolean;\n    /** Wall-clock time for this request, milliseconds. */\n    readonly durationMs: number;\n    /** Set when `app.fetch` threw (the app crashed) rather than returning a response. */\n    readonly error?: {\n        readonly name: string;\n        readonly message: string;\n        readonly stack?: string;\n    };\n}",
     "doc": "/** The captured outcome of one request. */"
+  },
+  {
+    "name": "runSagaReconciliationWorker",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function runSagaReconciliationWorker(store: SagaStore, options: SpecializedWorkerOptions<SagaReconciliationFinding>): Promise<ReconciliationWorkerResult>;"
   },
   {
     "name": "runSnapshot",
@@ -8686,6 +8985,13 @@
     "kind": "const",
     "package": "@nifrajs/middleware",
     "signature": "export declare const SAFE_METHODS: Set<string>;"
+  },
+  {
+    "name": "safeEqual",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function safeEqual(a: string | undefined, b: string | undefined): boolean;",
+    "doc": "/**\n * Constant-time string comparison for credential-shaped values - lease tokens, token hashes, and\n * binding digests.\n *\n * `a !== b` returns as soon as it finds a differing character, so how long it takes reveals how much\n * of a guess was correct. That is only exploitable when an attacker can submit guesses and measure,\n * which is not the case on every path here - but these values are credentials, the comparison is on\n * the verification path, and doing it correctly costs nothing. Doing it inconsistently is what makes\n * the one place that matters easy to miss.\n *\n * Length is compared first, so a length difference is still observable. Every value compared through\n * this helper is fixed-width by construction (a UUID, a SHA-256 hex/base64url digest), so length\n * carries no secret. Content comparison always visits every character.\n *\n * Synchronous on purpose: the callers are store transitions and lease checks that are themselves\n * synchronous. A hash-then-compare variant (which would also hide length) is available as\n * `timingSafeEqualString` in `@nifrajs/middleware`, but it is async and would force those paths async.\n */"
   },
   {
     "name": "safeJoin",
@@ -8728,7 +9034,7 @@
     "name": "SagaEngine",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface SagaEngine {\n    execute<I, C extends Record<string, unknown>>(definition: SagaDefinition<I, C>, sagaId: string, input: I, options?: {\n        readonly signal?: AbortSignal;\n    }): Promise<SagaRecord>;\n    resume<I, C extends Record<string, unknown>>(definition: SagaDefinition<I, C>, sagaId: string, options?: {\n        readonly signal?: AbortSignal;\n    }): Promise<SagaRecord>;\n    compensate<I, C extends Record<string, unknown>>(definition: SagaDefinition<I, C>, sagaId: string, options?: {\n        readonly signal?: AbortSignal;\n    }): Promise<SagaRecord>;\n    /**\n     * Apply a provider/operator-confirmed outcome to an ambiguous durable transition. The supplied\n     * effect id must match the stored execution/compensation id, preventing a stale review from\n     * resolving a later operation. Call `resume` or `compensate` after the resolution.\n     */\n    resolveAmbiguity<I, C extends Record<string, unknown>>(definition: SagaDefinition<I, C>, sagaId: string, resolution: SagaAmbiguityResolution): Promise<SagaRecord>;\n}"
+    "signature": "export interface SagaEngine {\n    execute<I, C extends Record<string, unknown>>(definition: SagaDefinition<I, C>, sagaId: string, input: I, options?: {\n        readonly signal?: AbortSignal;\n    }): Promise<SagaRecord>;\n    resume<I, C extends Record<string, unknown>>(definition: SagaDefinition<I, C>, sagaId: string, options?: {\n        readonly signal?: AbortSignal;\n    }): Promise<SagaRecord>;\n    compensate<I, C extends Record<string, unknown>>(definition: SagaDefinition<I, C>, sagaId: string, options?: {\n        readonly signal?: AbortSignal;\n    }): Promise<SagaRecord>;\n    /**\n     * Apply a provider/operator-confirmed outcome to an ambiguous durable transition. The supplied\n     * effect id must match the stored execution/compensation id, preventing a stale review from\n     * resolving a later operation. The caller remains responsible for authenticating and authorizing\n     * the operator. Call `resume` or `compensate` after the resolution.\n     */\n    resolveAmbiguity<I, C extends Record<string, unknown>>(definition: SagaDefinition<I, C>, sagaId: string, resolution: SagaAmbiguityResolution): Promise<SagaRecord>;\n}"
   },
   {
     "name": "SagaEngineOptions",
@@ -9554,11 +9860,41 @@
     "doc": "/** Split the generated doc into its `##` sections (the `# title` intro becomes \"Overview\"). */"
   },
   {
+    "name": "SQLiteClient",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface SQLiteClient {\n    exec(sql: string): unknown;\n    query(sql: string): SQLiteStatement;\n}"
+  },
+  {
     "name": "SqliteDatabaseLike",
     "kind": "interface",
     "package": "@nifrajs/mcp-db",
     "signature": "export interface SqliteDatabaseLike {\n    /** Prepare a statement; `all` runs it and returns row objects. */\n    prepare(sql: string): {\n        all(...params: unknown[]): unknown[];\n    };\n    /** Execute a statement for its side effect (used only for `PRAGMA query_only`). */\n    run(sql: string): unknown;\n}",
     "doc": "/** The structural slice of `bun:sqlite`'s `Database` this package needs. */"
+  },
+  {
+    "name": "SQLiteDurableExecutionAdapter",
+    "kind": "class",
+    "package": "@nifrajs/core",
+    "signature": "export declare class SQLiteDurableExecutionAdapter implements DurableExecutionAdapter {\n    readonly effects: DurableEffectStore;\n    readonly approvals: ApprovalStore;\n    readonly sagas: SagaStore;\n    readonly leases: ReconciliationLeaseStore;\n    readonly backend: SQLiteDurableRecordBackend;\n    constructor(client: SQLiteClient, options?: {\n        readonly tablePrefix?: string;\n    });\n    migrate(): void;\n}"
+  },
+  {
+    "name": "SQLiteDurableRecordBackend",
+    "kind": "class",
+    "package": "@nifrajs/core",
+    "signature": "export declare class SQLiteDurableRecordBackend implements DurableRecordBackend {\n    private readonly client;\n    readonly recordsTable: string;\n    readonly leasesTable: string;\n    constructor(client: SQLiteClient, options?: {\n        readonly tablePrefix?: string;\n    });\n    migrate(): void;\n    create(kind: DurableRecordKind, id: string, record: {\n        readonly version: number;\n        readonly state?: string;\n        readonly updatedAt?: number;\n    }): Promise<boolean>;\n    get<T extends {\n        readonly version: number;\n    }>(kind: DurableRecordKind, id: string): Promise<T | undefined>;\n    compareAndSet(kind: DurableRecordKind, id: string, expectedVersion: number, record: {\n        readonly version: number;\n        readonly state?: string;\n        readonly updatedAt?: number;\n    }): Promise<boolean>;\n    scan<T extends {\n        readonly state: string;\n        readonly updatedAt: number;\n    }>(kind: DurableRecordKind, input: ReconciliationScanOptions<string>): Promise<ReconciliationScanPage<T>>;\n    acquireLease(input: Parameters<DurableRecordBackend[\"acquireLease\"]>[0]): Promise<ReconciliationLease | undefined>;\n    renewLease(input: Parameters<DurableRecordBackend[\"renewLease\"]>[0]): Promise<boolean>;\n    checkpointLease(input: Parameters<DurableRecordBackend[\"checkpointLease\"]>[0]): Promise<boolean>;\n    releaseLease(input: Parameters<DurableRecordBackend[\"releaseLease\"]>[0]): Promise<boolean>;\n}"
+  },
+  {
+    "name": "SQLiteRunResult",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface SQLiteRunResult {\n    readonly changes: number;\n}"
+  },
+  {
+    "name": "SQLiteStatement",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface SQLiteStatement {\n    run(...values: readonly unknown[]): SQLiteRunResult;\n    get(...values: readonly unknown[]): Record<string, unknown> | null | undefined;\n    all(...values: readonly unknown[]): readonly (Record<string, unknown> | undefined)[];\n}"
   },
   {
     "name": "sse",
@@ -10156,6 +10492,13 @@
     "signature": "export interface TimingOptions {\n    /** Name for the automatic total request metric. Default `\"total\"`; set `false` to disable. */\n    readonly total?: string | false;\n    /** Decimal places for durations. Default `1`. */\n    readonly precision?: number;\n    /** Only emit timing for matching requests. Default `true`. */\n    readonly enabled?: boolean | ((request: Request) => boolean);\n}"
   },
   {
+    "name": "timingSafeEqual",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function timingSafeEqual(a: string, b: string): boolean;",
+    "doc": "/**\n * Compare two strings without leaking, via timing, where they first differ. A length mismatch returns\n * `false` up front: the length isn't the secret, and different-length buffers can't be compared in\n * constant time anyway. Encodes to bytes first so multi-byte characters compare by content, not by\n * UTF-16 code unit.\n */"
+  },
+  {
     "name": "timingSafeEqualBytes",
     "kind": "function",
     "package": "@nifrajs/middleware",
@@ -10285,6 +10628,55 @@
     "package": "@nifrajs/cli",
     "signature": "export interface TransitiveServerImportFinding extends ServerImportFinding {\n    /** `[routeFile, ...as-written specifiers…, sink]` — the shortest path the walk found. Length 2 means\n     * the route imports the sink directly (same as the regex scan's direct edge). */\n    readonly chain: readonly string[];\n    /** True when a precise transitive resolve wasn't possible for the first hop (a bare pkg / path alias),\n     * so the chain is the honest direct edge rather than a fabricated deeper path. */\n    readonly fallback: boolean;\n}",
     "doc": "/** One transitive server-only finding: the route module, the route's offending top-level import (the\n * first hop / `specifier`), the line + snippet of that import, and the FULL chain to the sink. */"
+  },
+  {
+    "name": "TransportCodec",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface TransportCodec {\n    readonly id: string;\n    readonly version: number;\n    readonly mediaType: string;\n    encode(value: unknown): string;\n    decode(text: string): unknown;\n}"
+  },
+  {
+    "name": "TransportCodecError",
+    "kind": "class",
+    "package": "@nifrajs/core",
+    "signature": "export declare class TransportCodecError extends TypeError {\n    constructor(message: string, options?: ErrorOptions);\n}"
+  },
+  {
+    "name": "TransportCodecRegistry",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface TransportCodecRegistry {\n    readonly fallback: TransportCodec;\n    forContentType(contentType: string | null): TransportCodec;\n    negotiate(accept: string | null): TransportCodec;\n    byIdentity(id: string, version: number): TransportCodec;\n}"
+  },
+  {
+    "name": "transportCodecs",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function transportCodecs(registry: TransportCodecRegistry, options?: TransportCodecsOptions): IdentityPlugin;"
+  },
+  {
+    "name": "TransportCodecsOptions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface TransportCodecsOptions {\n    /** Maximum encoded request bytes. Keep aligned with `server({ maxBodyBytes })`. */\n    readonly maxBytes?: number;\n}"
+  },
+  {
+    "name": "TransportDecodeOptions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface TransportDecodeOptions {\n    readonly maxBytes?: number;\n}",
+    "doc": "/**\n * Versioned, bounded codecs shared by HTTP bodies, loader streams, and WebSocket frames. Plain JSON\n * remains the zero-configuration fast path; rich wire is explicit and preserves non-JSON values.\n */"
+  },
+  {
+    "name": "TransportDecodeResult",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type TransportDecodeResult = {\n    readonly matched: false;\n} | {\n    readonly matched: true;\n    readonly value: unknown;\n} | {\n    readonly matched: true;\n    readonly response: Response;\n};"
+  },
+  {
+    "name": "TransportRuntime",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface TransportRuntime {\n    responseCodec(accept: string | null): TransportCodec;\n    decodeRequest(source: TransportBodySource, contentType: string, maxBytes: number): Promise<TransportDecodeResult>;\n}"
   },
   {
     "name": "Treaty",
@@ -10912,7 +11304,7 @@
     "name": "VERSION",
     "kind": "const",
     "package": "@nifrajs/core",
-    "signature": "export declare const VERSION: \"2.0.0\";",
+    "signature": "export declare const VERSION: \"2.1.0\";",
     "doc": "/**\n * Current package version. A hardcoded literal on purpose — core runs on the edge (no fs), so it can't\n * read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and\n * `check:publish` asserts it equals `@nifrajs/core`'s package version.\n */"
   },
   {
@@ -11026,7 +11418,7 @@
     "name": "WebSocketHandler",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined> {\n    /**\n     * Cross-site WebSocket hijacking (CSWSH) guard — checked BEFORE `upgrade()`. A browser does not\n     * apply CORS to WebSocket handshakes and DOES send the page's cookies, so without an Origin check\n     * any site can open an authenticated socket to your app. Set this to lock the route to known\n     * origins: a string allow-list (exact `Origin` header match) or a predicate. A request whose\n     * `Origin` doesn't match (or is absent, for the allow-list form) is rejected with `403` before any\n     * per-connection work.\n     *\n     * **When omitted, the default is same-origin:** a cross-origin BROWSER handshake (an `Origin` header\n     * whose host differs from the request's) is rejected with `403`. Non-browser clients (no `Origin`) and\n     * same-origin browsers pass. Set this to allow specific cross-origin clients, or `() => true` for a\n     * genuinely public socket. Non-browser clients can spoof `Origin`, so this is a browser-CSWSH defense,\n     * not authentication — pair it with auth in `upgrade()`.\n     */\n    allowedOrigins?: ReadonlyArray<string> | ((origin: string | null) => boolean);\n    /**\n     * Runs in the HTTP request context **before** the upgrade (and after {@link allowedOrigins}) — the\n     * place to authenticate or rate-limit. Return the initial per-connection `data` (→ `ws.data`), or a\n     * `Response` to **reject** the upgrade (the client never connects). Omit to accept with\n     * `data: undefined`. A thrown error rejects with a flat 500.\n     */\n    upgrade?(c: WebSocketContext<Env>): MaybePromise<Data | Response>;\n    /**\n     * Contract-first messages: a Standard Schema (`t`, zod, valibot, …) validating each **inbound** frame.\n     * Text frames are parsed as JSON first. When set, `message` receives the validated, typed value; a\n     * non-JSON or schema-invalid frame is routed to `onInvalidMessage` (or dropped if that's omitted).\n     */\n    messageSchema?: Schema;\n    /**\n     * The **outbound** frame contract (server → client), a Standard Schema. Purely type-level: it types\n     * the frames the typed client's `.ws()` handle receives, and documents what this route pushes. The\n     * server does NOT runtime-validate its own sends - the inbound `messageSchema` guards the trust\n     * boundary; outbound honesty is the handler author's code, checked by tests.\n     */\n    sendSchema?: Send;\n    open?(ws: NifraWebSocket<Data>): MaybePromise<void>;\n    message?(ws: NifraWebSocket<Data>, data: WsMessageInput<Schema>): MaybePromise<void>;\n    /** Inbound frame that failed JSON parse or `messageSchema` validation (only fires when a schema is\n     * set). `raw` is the original frame; `issues` are the Standard Schema issues (one synthetic issue for\n     * a JSON parse failure). Omit to silently drop invalid frames. */\n    onInvalidMessage?(ws: NifraWebSocket<Data>, issues: ReadonlyArray<StandardIssue>, raw: WebSocketData): MaybePromise<void>;\n    close?(ws: NifraWebSocket<Data>, code: number, reason: string): MaybePromise<void>;\n    error?(ws: NifraWebSocket<Data>, error: unknown): MaybePromise<void>;\n}",
+    "signature": "export interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined> {\n    /**\n     * Cross-site WebSocket hijacking (CSWSH) guard — checked BEFORE `upgrade()`. A browser does not\n     * apply CORS to WebSocket handshakes and DOES send the page's cookies, so without an Origin check\n     * any site can open an authenticated socket to your app. Set this to lock the route to known\n     * origins: a string allow-list (exact `Origin` header match) or a predicate. A request whose\n     * `Origin` doesn't match (or is absent, for the allow-list form) is rejected with `403` before any\n     * per-connection work.\n     *\n     * **When omitted, the default is same-origin:** a cross-origin BROWSER handshake (an `Origin` header\n     * whose host differs from the request's) is rejected with `403`. Non-browser clients (no `Origin`) and\n     * same-origin browsers pass. Set this to allow specific cross-origin clients, or `() => true` for a\n     * genuinely public socket. Non-browser clients can spoof `Origin`, so this is a browser-CSWSH defense,\n     * not authentication — pair it with auth in `upgrade()`.\n     */\n    allowedOrigins?: ReadonlyArray<string> | ((origin: string | null) => boolean);\n    /**\n     * Runs in the HTTP request context **before** the upgrade (and after {@link allowedOrigins}) — the\n     * place to authenticate or rate-limit. Return the initial per-connection `data` (→ `ws.data`), or a\n     * `Response` to **reject** the upgrade (the client never connects). Omit to accept with\n     * `data: undefined`. A thrown error rejects with a flat 500.\n     */\n    upgrade?(c: WebSocketContext<Env>): MaybePromise<Data | Response>;\n    /**\n     * Contract-first messages: a Standard Schema (`t`, zod, valibot, …) validating each **inbound** frame.\n     * Text frames are parsed as JSON first. When set, `message` receives the validated, typed value; a\n     * non-JSON or schema-invalid frame is routed to `onInvalidMessage` (or dropped if that's omitted).\n     */\n    messageSchema?: Schema;\n    /**\n     * The **outbound** frame contract (server → client), a Standard Schema. Purely type-level: it types\n     * the frames the typed client's `.ws()` handle receives, and documents what this route pushes. The\n     * server does NOT runtime-validate its own sends - the inbound `messageSchema` guards the trust\n     * boundary; outbound honesty is the handler author's code, checked by tests.\n     */\n    sendSchema?: Send;\n    /** Decode versioned transport frames before inbound schema validation. Omit for legacy JSON. */\n    transport?: {\n        readonly registry: TransportCodecRegistry;\n        readonly maxBytes?: number;\n    };\n    open?(ws: NifraWebSocket<Data>): MaybePromise<void>;\n    message?(ws: NifraWebSocket<Data>, data: WsMessageInput<Schema>): MaybePromise<void>;\n    /** Inbound frame that failed JSON parse or `messageSchema` validation (only fires when a schema is\n     * set). `raw` is the original frame; `issues` are the Standard Schema issues (one synthetic issue for\n     * a JSON parse failure). Omit to silently drop invalid frames. */\n    onInvalidMessage?(ws: NifraWebSocket<Data>, issues: ReadonlyArray<StandardIssue>, raw: WebSocketData): MaybePromise<void>;\n    close?(ws: NifraWebSocket<Data>, code: number, reason: string): MaybePromise<void>;\n    error?(ws: NifraWebSocket<Data>, error: unknown): MaybePromise<void>;\n}",
     "doc": "/** A WebSocket route's lifecycle. All callbacks optional; only `message` is needed for an echo. */"
   },
   {

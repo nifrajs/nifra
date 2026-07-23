@@ -51,6 +51,17 @@ jobs:
       - name: Cold-start gate (templates install + build for a fresh user)
         run: bun run check:cold-start
 
+      # Bundle-size gate: per-feature gzip budgets (FEATURE_GZIP_BUDGET_KB in bench/size/run.ts).
+      # What ships in a user's server artifact is a headline claim, and the marginal cost of a
+      # feature is only visible at the moment it lands — a byte-count regression is invisible in
+      # review and unattributable a release later. Deterministic (same minifier, fixed app shapes,
+      # pinned Bun), so it belongs in CI where wall-clock throughput does not: `bench:http` measures
+      # requests/sec via `oha`, and shared runners have noisy neighbours that swing that severalfold
+      # run to run. A gate that cries wolf gets disabled, so throughput stays a local/manual
+      # comparison (`bench:http:compare`) and CI gates only the reproducible number.
+      - name: Bundle-size gate (per-feature gzip budgets)
+        run: bun run check:size
+
   deno:
     runs-on: ubuntu-latest
     permissions:

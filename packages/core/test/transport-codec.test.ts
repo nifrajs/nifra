@@ -108,4 +108,32 @@ describe("versioned transport codecs", () => {
     )
     expect(oversized.status).toBe(413)
   })
+
+  test("normalizes malformed payloads to TransportCodecError instead of a native throw", async () => {
+    const registry = createTransportCodecRegistry([plainJsonCodec, richWireCodec()])
+
+    // A truncated frame: the envelope itself is not JSON. Before normalizing, `JSON.parse` raised a
+    // bare `SyntaxError`, so the most likely hostile input was the one case that slipped past a
+    // caller catching the documented error type.
+    expect(() => decodeTransportFrame("{not json", registry)).toThrow(TransportCodecError)
+
+    // A well-formed envelope whose inner payload is garbage — the second, separately-parsed layer.
+    const badPayload = JSON.stringify({ codec: "json", version: 1, payload: "{nope" })
+    expect(() => decodeTransportFrame(badPayload, registry)).toThrow(TransportCodecError)
+
+    // Same guarantee on the HTTP path.
+    const response = new Response("{not json", {
+      headers: { "content-type": plainJsonCodec.mediaType },
+    })
+    await expect(decodeTransportResponse(response, registry)).rejects.toThrow(TransportCodecError)
+
+    // The underlying parse failure stays diagnosable rather than being swallowed by the normalizer.
+    try {
+      decodeTransportFrame("{not json", registry)
+      throw new Error("expected decodeTransportFrame to throw")
+    } catch (error) {
+      expect(error).toBeInstanceOf(TransportCodecError)
+      expect((error as TransportCodecError).cause).toBeInstanceOf(SyntaxError)
+    }
+  })
 })

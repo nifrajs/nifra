@@ -8,6 +8,7 @@ import {
   isDraftEnabled,
   type Manifest,
   MemoryCacheStore,
+  previewEndpoint,
   type RenderAdapter,
   withISR,
 } from "../src/index.ts"
@@ -145,4 +146,118 @@ test("withISR bypasses the cache for a valid draft request (fresh render, never 
   expect(fetches).toBe(1)
   // And the draft render was NOT written to the public cache.
   expect((await store.get("http://x/"))?.body).toContain("cached")
+})
+
+const PREVIEW_TOKEN = "preview-token-padded-to-at-least-32b"
+
+const preview = () => previewEndpoint({ secret: PREVIEW_TOKEN, draftSecret: SECRET })
+
+test("previewEndpoint authorizes, sets the signed cookie, and redirects", async () => {
+  const res = await preview()(
+    new Request(`http://x/api/preview?token=${PREVIEW_TOKEN}&to=/posts/hello`),
+  )
+
+  expect(res.status).toBe(302)
+  expect(res.headers.get("location")).toBe("/posts/hello")
+  // A per-editor response carrying a Set-Cookie must never be replayed to a visitor by a shared cache.
+  expect(res.headers.get("cache-control")).toBe("no-store")
+
+  const cookie = res.headers.get("set-cookie") ?? ""
+  expect(cookie).toContain("HttpOnly")
+  expect(cookie).toContain("SameSite=Lax")
+  // `serializeCookie` is pure and applies no security defaults, so `Secure` only appears if the
+  // endpoint passes it explicitly — the exact attribute a direct-serialize path silently drops.
+  expect(cookie).toContain("Secure")
+
+  // The cookie it issues is one `isDraftEnabled` actually accepts (not merely present-and-signed).
+  const value = decodeURIComponent(cookie.slice(`${DRAFT_COOKIE}=`.length).split(";")[0] as string)
+  expect(
+    await isDraftEnabled(
+      new Request("http://x/", { headers: { cookie: `${DRAFT_COOKIE}=${value}` } }),
+      SECRET,
+    ),
+  ).toBe(true)
+})
+
+test("previewEndpoint rejects a wrong or missing token without setting a cookie", async () => {
+  for (const url of [
+    "http://x/api/preview",
+    "http://x/api/preview?token=",
+    "http://x/api/preview?token=wrong",
+    // Same length as the real token, differing only in the last byte: the case an early-exit
+    // compare would answer faster than a wrong first byte.
+    `http://x/api/preview?token=${PREVIEW_TOKEN.slice(0, -1)}X`,
+  ]) {
+    const res = await preview()(new Request(url))
+    expect(res.status).toBe(401)
+    expect(res.headers.get("set-cookie")).toBeNull()
+  }
+})
+
+test("previewEndpoint refuses an off-site redirect target", async () => {
+  // Each of these starts with "/" — the check people actually write — yet navigates off-site.
+  for (const to of [
+    "//evil.com",
+    "/\\evil.com",
+    "https://evil.com",
+    "http://evil.com",
+    "evil.com",
+  ]) {
+    const res = await preview()(
+      new Request(`http://x/api/preview?token=${PREVIEW_TOKEN}&to=${encodeURIComponent(to)}`),
+    )
+    expect(res.status).toBe(400)
+    expect(res.headers.get("set-cookie")).toBeNull()
+  }
+
+  // A newline would split the Location header; refused rather than left to the runtime.
+  const split = await preview()(
+    new Request(
+      `http://x/api/preview?token=${PREVIEW_TOKEN}&to=${encodeURIComponent("/ok\r\nX: 1")}`,
+    ),
+  )
+  expect(split.status).toBe(400)
+})
+
+test("previewEndpoint falls back when no destination is given, and validates the fallback at construction", async () => {
+  const res = await preview()(new Request(`http://x/api/preview?token=${PREVIEW_TOKEN}`))
+  expect(res.status).toBe(302)
+  expect(res.headers.get("location")).toBe("/")
+
+  const custom = previewEndpoint({
+    secret: PREVIEW_TOKEN,
+    draftSecret: SECRET,
+    fallbackPath: "/admin",
+  })
+  expect(
+    (await custom(new Request(`http://x/p?token=${PREVIEW_TOKEN}`))).headers.get("location"),
+  ).toBe("/admin")
+
+  // A misconfigured fallback is a deploy-time mistake: it throws at construction rather than
+  // surfacing as a rare 400 on the one request that omits `?to=`.
+  expect(() =>
+    previewEndpoint({ secret: PREVIEW_TOKEN, draftSecret: SECRET, fallbackPath: "//evil.com" }),
+  ).toThrow(/site-relative/)
+})
+
+test("previewEndpoint honours custom param names and cookie options", async () => {
+  const handler = previewEndpoint({
+    secret: PREVIEW_TOKEN,
+    draftSecret: SECRET,
+    tokenParam: "k",
+    redirectParam: "next",
+    cookie: { maxAgeSeconds: 60, path: "/admin", secure: false },
+  })
+  const res = await handler(new Request(`http://x/p?k=${PREVIEW_TOKEN}&next=/admin/posts`))
+
+  expect(res.status).toBe(302)
+  expect(res.headers.get("location")).toBe("/admin/posts")
+  const cookie = res.headers.get("set-cookie") ?? ""
+  expect(cookie).toContain("Max-Age=60")
+  expect(cookie).toContain("Path=/admin")
+  // Opt-out for local http:// dev is respected rather than forced.
+  expect(cookie).not.toContain("Secure")
+
+  // The default param names no longer authorize once overridden.
+  expect((await handler(new Request(`http://x/p?token=${PREVIEW_TOKEN}`))).status).toBe(401)
 })

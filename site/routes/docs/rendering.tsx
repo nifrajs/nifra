@@ -80,15 +80,15 @@ curl -X POST 'https://example.com/__nifra/revalidate?path=/posts/hello' \\
 # → { "revalidated": "/posts/hello" }   (the token is checked in constant time)`
 
 const DRAFT = `// doc-check: skip — fragment spanning three files: your \`app\`, \`env\`, \`redirect\`, and route \`slug\`.
-// 1. A route you gate yourself flips draft mode on for the editor.
-import { enableDraft, disableDraft } from "@nifrajs/web"
+// 1. Mount the preview entry point your CMS links to. It checks the token in CONSTANT TIME,
+//    sets the signed HttpOnly cookie, and refuses an off-site ?to= (an open redirect otherwise).
+import { previewEndpoint, disableDraft } from "@nifrajs/web"
 
-app.get("/api/preview", async (c) => {
-  if (c.query.token !== env.PREVIEW_TOKEN) return new Response("nope", { status: 401 })
-  await enableDraft(c, env.DRAFT_SECRET) // signed, HttpOnly cookie
-  return redirect(String(c.query.to ?? "/"))
-})
+const preview = previewEndpoint({ secret: env.PREVIEW_TOKEN, draftSecret: env.DRAFT_SECRET })
+app.get("/api/preview", (c) => preview(c.req)) // ?token=…&to=/posts/hello
 app.get("/api/preview/exit", (c) => (disableDraft(c), redirect("/")))
+// Gating it yourself instead? Use enableDraft(c, env.DRAFT_SECRET) AFTER your own check — and
+// compare the token in constant time, since === leaks it one character at a time.
 
 // 2. Loaders branch on ctx.draft to load unpublished content.
 export async function loader({ api, draft }: LoaderArgs<typeof app>) {

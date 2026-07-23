@@ -7,6 +7,7 @@
  * This module is the store primitive; the SWR wrapper (`withISR`) builds on it next.
  */
 import { isDraftEnabled } from "./draft.ts"
+import { timingSafeEqual } from "./internal/timing-safe-equal.ts"
 
 /** A cached SSR response — the bytes + metadata a {@link CacheStore} persists. */
 export interface CachedResponse {
@@ -405,19 +406,6 @@ export function withISR(
 
 const jsonError = (status: number, error: string): Response =>
   Response.json({ ok: false, error }, { status })
-
-/** Constant-time string equality (XOR-accumulate, no early exit). A length mismatch returns `false`
- * up front — the length isn't the secret, and different-length buffers can't be compared in constant
- * time anyway. Used to check the on-demand revalidation token without leaking it via timing. */
-function timingSafeEqual(a: string, b: string): boolean {
-  const enc = new TextEncoder()
-  const ba = enc.encode(a)
-  const bb = enc.encode(b)
-  if (ba.length !== bb.length) return false
-  let diff = 0
-  for (let i = 0; i < ba.length; i++) diff |= (ba[i] as number) ^ (bb[i] as number)
-  return diff === 0
-}
 
 export interface RevalidateEndpointOptions {
   readonly store: CacheStore

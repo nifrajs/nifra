@@ -2205,6 +2205,8 @@ Every public export of every package and documented subpath — name, kind, sign
   Inputs for {@link openGraph} — the common Open Graph properties. All optional; only the provided ones become tags. `type` defaults to `"website"`.
 - **PRE_HYDRATION_GUARD** _(const)_ — `PRE_HYDRATION_GUARD: string`
   Pre-hydration form guard — a tiny inline script flushed in `<head>` (it runs in the window between first paint and the island bundle taking over). It neutralizes the one real hydration footgun: a JS-only form (a hand-wired `onSubmit` with no native fallback) submitting *natively* before its handler…
+- **PreviewEndpointOptions** _(interface)_ — `interface PreviewEndpointOptions`
+  Config for {@link previewEndpoint}.
 - **QueryClient** _(interface)_ — `interface QueryClient`
   The keyed query cache. One per app (a binding registers it like the router).
 - **QueryClientOptions** _(interface)_ — `interface QueryClientOptions`
@@ -2308,6 +2310,8 @@ Every public export of every package and documented subpath — name, kind, sign
   Merge a route's `<head>` contributions from its layout chain + the page into one {@link Meta}.
 - **openGraph** _(function)_ — `openGraph: (input: OpenGraphInput) => Array<Record<string, string>>`
   Build the Open Graph `<meta property="og:*">` entries for a route's `meta.meta`. Returns only the properties you supplied (plus `og:type`, defaulting to `"website"`), so it composes with other meta.
+- **previewEndpoint** _(function)_ — `previewEndpoint: (options: PreviewEndpointOptions) => (request: Request) => Promise<Response>`
+  A **preview / draft-mode entry point** — a `fetch` handler that checks a preview token, turns draft mode on, and redirects the editor to the page they wanted. `GET` with `?token=<secret>&to=/some/path`; mount it on a nifra route, e.g. `app.get("/api/preview", (c) => handler(c.req))`.
 - **redirect** _(function)_ — `redirect: (location: string, options?: RedirectOptions) => Response`
   Build a redirect `Response` — return it from a route `action` for the Post/Redirect/Get pattern (POST mutates, 303 sends the browser to a fresh GET, so a reload doesn't re-submit). Defaults to 303 (See Other); pass `{ status: 307 }` or `{ status: 308 }` to preserve the method.
 - **renderPage** _(function)_ — `renderPage: (options: RenderPageOptions) => MaybePromise<Response>`

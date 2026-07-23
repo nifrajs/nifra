@@ -139,14 +139,36 @@ const workspaceManifests = [
   "site/package.json",
 ]
 const seenPublicDirs = new Set<string>()
+let provenanceGaps = 0
 for (const file of [...new Set(workspaceManifests)].sort()) {
-  const manifest = JSON.parse(await Bun.file(file).text()) as { name?: string; private?: boolean }
+  const manifest = JSON.parse(await Bun.file(file).text()) as {
+    name?: string
+    private?: boolean
+    repository?: { url?: string; directory?: string }
+  }
   const dir = file === "package.json" ? "." : file.slice(0, -"/package.json".length)
   if (PUBLIC_PACKAGE_DIRS.has(dir)) {
     seenPublicDirs.add(dir)
     if (manifest.private === true) {
       failures += 1
       console.error(`✗ ${dir}: intended public package is marked private`)
+    }
+    // Provenance precondition. `NPM_CONFIG_PROVENANCE` (release.yml) refuses to attest a package
+    // whose manifest carries no `repository`, and it fails the WHOLE publish rather than skipping
+    // that one package — so a single new package missing this field breaks the release for every
+    // other one. Gate it here so the gap surfaces on the PR instead of mid-release. `directory` is
+    // checked against the real path too: it is the field that makes the attestation point at the
+    // right monorepo subpath, and cloning a sibling manifest is exactly how it goes stale.
+    if (manifest.repository?.url === undefined) {
+      failures += 1
+      provenanceGaps += 1
+      console.error(`✗ ${dir}: published package has no repository.url (npm provenance needs it)`)
+    } else if (manifest.repository.directory !== dir) {
+      failures += 1
+      provenanceGaps += 1
+      console.error(
+        `✗ ${dir}: repository.directory is ${JSON.stringify(manifest.repository.directory)}, expected ${JSON.stringify(dir)}`,
+      )
     }
   } else if (manifest.private !== true) {
     failures += 1
@@ -162,6 +184,9 @@ for (const dir of PUBLIC_PACKAGE_DIRS) {
   }
 }
 if (failures === 0) console.log("✓ workspace package privacy matches the explicit public allowlist")
+if (provenanceGaps === 0) {
+  console.log("✓ every published package carries the repository field npm provenance requires")
+}
 
 for (const { name, dir } of PUBLINT_ONLY) {
   console.log(`\n=== ${name} (publint only) ===`)

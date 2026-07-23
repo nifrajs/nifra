@@ -53,6 +53,8 @@ export {
   type EnableDraftOptions,
   enableDraft,
   isDraftEnabled,
+  type PreviewEndpointOptions,
+  previewEndpoint,
 } from "./draft.ts"
 // Font optimization — a CLS-safe `@font-face` generator + a preload `<link>` for self-hosted fonts.
 export {

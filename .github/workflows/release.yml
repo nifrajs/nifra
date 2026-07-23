@@ -28,7 +28,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  id-token: write # reserved for npm provenance (see NPM_CONFIG_PROVENANCE below)
+  id-token: write # required for npm provenance (see NPM_CONFIG_PROVENANCE below)
 
 # Never run two releases concurrently — a second push mid-publish must wait, not race.
 concurrency: release-${{ github.ref }}
@@ -56,7 +56,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          # Supply-chain provenance attestation. Enable once every published package.json
-          # carries a `repository` field (with `directory` for the monorepo subpath); if a
-          # publish ever errors on provenance, removing this line is the safe fallback.
-          # NPM_CONFIG_PROVENANCE: "true"
+          # Supply-chain provenance attestation: npm records a signed, publicly verifiable link
+          # from each tarball back to this workflow run and commit, so a consumer can prove the
+          # published bytes were built here and not injected by a leaked NPM_TOKEN. Requires the
+          # `id-token: write` permission above plus a `repository` field on every published
+          # package.json — `check:publish` enforces that precondition in CI, so a new package
+          # cannot silently break the publish. If a publish ever errors on provenance,
+          # commenting this line out is the safe fallback.
+          NPM_CONFIG_PROVENANCE: "true"

@@ -19,9 +19,28 @@ export interface TransportCodec {
 }
 
 export class TransportCodecError extends TypeError {
-  constructor(message: string) {
-    super(message)
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
     this.name = "TransportCodecError"
+  }
+}
+
+/**
+ * Run a decode step and normalize whatever it throws into {@link TransportCodecError}.
+ *
+ * Decoding is the one place this module touches attacker-controlled bytes, and the primitives it
+ * delegates to raise their own native types — `JSON.parse` throws `SyntaxError`, a BYO codec throws
+ * whatever it likes. Every other failure here is a `TransportCodecError`, so letting those escape
+ * would mean a malformed payload — the single most likely hostile input — is the one case that slips
+ * past a caller catching the documented error type. The original is kept as `cause`, so the parse
+ * failure stays diagnosable; a codec already speaking the contract is re-thrown untouched.
+ */
+function decodeOrThrow(decode: () => unknown, message: string): unknown {
+  try {
+    return decode()
+  } catch (cause) {
+    if (cause instanceof TransportCodecError) throw cause
+    throw new TransportCodecError(message, { cause })
   }
 }
 
@@ -213,7 +232,11 @@ export async function decodeTransportResponse(
 ): Promise<unknown> {
   const codec = registry.forContentType(response.headers.get("content-type"))
   const text = await readBoundedText(response, options)
-  return text === "" ? undefined : codec.decode(text)
+  if (text === "") return undefined
+  return decodeOrThrow(
+    () => codec.decode(text),
+    `malformed transport body for codec ${codec.id}@${codec.version}`,
+  )
 }
 
 interface TransportFrame {
@@ -235,7 +258,10 @@ export function decodeTransportFrame(
   options: TransportDecodeOptions = {},
 ): unknown {
   assertBounded(frame, options)
-  const envelope = JSON.parse(frame) as Partial<TransportFrame>
+  const envelope = decodeOrThrow(
+    () => JSON.parse(frame),
+    "malformed transport frame",
+  ) as Partial<TransportFrame>
   if (
     envelope === null ||
     typeof envelope !== "object" ||
@@ -245,6 +271,11 @@ export function decodeTransportFrame(
   ) {
     throw new TransportCodecError("malformed transport frame")
   }
-  assertBounded(envelope.payload, options)
-  return registry.byIdentity(envelope.codec, envelope.version as number).decode(envelope.payload)
+  const payload = envelope.payload
+  assertBounded(payload, options)
+  const codec = registry.byIdentity(envelope.codec, envelope.version as number)
+  return decodeOrThrow(
+    () => codec.decode(payload),
+    `malformed transport frame payload for codec ${codec.id}@${codec.version}`,
+  )
 }
