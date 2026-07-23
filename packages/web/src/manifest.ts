@@ -195,6 +195,16 @@ export interface RouteEntry {
   readonly id: string
   readonly pattern: string
   readonly layoutIds: readonly string[]
+  /**
+   * Param names each layout in {@link layoutIds} owns, aligned by index.
+   *
+   * A layout wraps a URL prefix, so these are the params it may read and the ones whose change should
+   * re-run its loader - everything deeper belongs to routes beneath it. Derived per (route, layout)
+   * pair rather than per layout, because one layout can own different params on different expanded
+   * patterns: `[[lang]]/docs/_layout` owns nothing on `/docs/:slug` and `{lang}` on `/:lang/docs/:slug`.
+   * Optional only so hand-built test manifests may omit it.
+   */
+  readonly layoutParams?: ReadonlyArray<readonly string[]>
   /** `_error` boundary ids in this route's ancestor chain (outermost → innermost). The last is the
    * **nearest** boundary, rendered when the route's loader throws. Always set by `buildManifest`
    * (optional only so hand-built test manifests may omit it); absent/empty ⇒ no boundary (error 500s). */
@@ -304,18 +314,57 @@ function mixedFileSegment(seg: string, file: string): string | undefined {
 }
 
 export function filePathToPatterns(file: string): string[] {
-  // Each combo is a list of URL segments built so far; an optional segment doubles the set.
-  let combos: string[][] = [[]]
+  return filePathToRoutes(file).map((route) => route.pattern)
+}
+
+/** One URL pattern a route file expands to, plus the scope information layouts need. */
+export interface FileRoutePattern {
+  readonly pattern: string
+  /**
+   * URL segments contributed by the first *k* path parts of the file, indexed by *k*.
+   *
+   * This is what makes a layout's scope derivable without turning layouts into router nodes. A layout
+   * lives at a directory; the segments that directory contributes are exactly the prefix of the URL it
+   * wraps, so `depths[partsIn(layoutDir)]` is how many leading pattern segments it owns - and the
+   * params inside that prefix are the ones it may read.
+   *
+   * Per EXPANDED pattern, not per file, because the two diverge: `[[lang]]/docs/_layout` owns nothing
+   * on `/docs/:slug` and `{lang}` on `/:lang/docs/:slug`. A route group contributes no segment, so
+   * `(marketing)/_layout` owns nothing at all.
+   */
+  readonly depths: readonly number[]
+}
+
+/** Expand a route file into its URL patterns, each carrying per-directory segment counts. */
+export function filePathToRoutes(file: string): FileRoutePattern[] {
+  // Each combo is the URL segments built so far, plus the running per-path-part segment count.
+  let combos: Array<{ segs: string[]; depths: number[] }> = [{ segs: [], depths: [0] }]
   const segments = stripExt(file).split("/")
+  // Record the running segment count after each path part, on every combo. Called once per part so
+  // `depths` stays index-aligned with the file's path parts even for parts that emit nothing.
+  const mark = (): void => {
+    for (const combo of combos) combo.depths.push(combo.segs.length)
+  }
+  const push = (segment: string): void => {
+    for (const combo of combos) combo.segs.push(segment)
+  }
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i]!
-    if (seg === "index") continue
-    if (GROUP.test(seg)) continue // route group — no URL segment (its `_layout` still applies, keyed by dir)
+    if (seg === "index") {
+      mark()
+      continue
+    }
+    if (GROUP.test(seg)) {
+      // Route group — no URL segment (its `_layout` still applies, keyed by dir).
+      mark()
+      continue
+    }
     // A segment that is part literal, part `[param]` — `[inKey].txt`, `post-[id].html`. Checked
     // before the whole-segment forms below, which only handle a marker spanning the entire segment.
     const mixed = mixedFileSegment(seg, file)
     if (mixed !== undefined) {
-      combos = combos.map((c) => [...c, mixed])
+      push(mixed)
+      mark()
       continue
     }
     if (seg.startsWith("[")) {
@@ -329,13 +378,18 @@ export function filePathToPatterns(file: string): string[] {
             `[nifra/web] catch-all "${seg}" must be the last segment in "${file}" (found "${after.join("/")}" after it)`,
           )
         }
-        combos = combos.map((c) => [...c, `*${catchAll[1]}`])
+        push(`*${catchAll[1]}`)
+        mark()
         continue
       }
       const optional = OPTIONAL.exec(seg)
       if (optional !== null) {
         // Optional segment: keep each existing combo (absent) AND a copy with `:name` appended (present).
-        combos = combos.flatMap((c) => [c, [...c, `:${optional[1]}`]])
+        combos = combos.flatMap((c) => [
+          { segs: c.segs, depths: c.depths },
+          { segs: [...c.segs, `:${optional[1]}`], depths: [...c.depths] },
+        ])
+        mark()
         continue
       }
       const match = PARAM.exec(seg)
@@ -344,12 +398,13 @@ export function filePathToPatterns(file: string): string[] {
           `[nifra/web] invalid route param in "${file}": "${seg}" must be [name], [[name]], [...name], or a (group) folder`,
         )
       }
-      combos = combos.map((c) => [...c, `:${match[1]}`])
+      push(`:${match[1]}`)
     } else {
-      combos = combos.map((c) => [...c, seg])
+      push(seg)
     }
+    mark()
   }
-  return combos.map((c) => `/${c.join("/")}`)
+  return combos.map((c) => ({ pattern: `/${c.segs.join("/")}`, depths: c.depths }))
 }
 
 /**
@@ -363,6 +418,26 @@ export function filePathToPattern(file: string): string {
 }
 
 /** The dir chain from root → the file's own dir, e.g. "a/b/p.tsx" → ["", "a", "a/b"]. */
+/**
+ * Param names in the first `count` segments of a pattern - the params a layout at that depth owns.
+ *
+ * This is the whole scoping mechanism: a layout wraps a URL prefix, so the params inside that prefix
+ * are the ones it may read, and the ones whose change should re-run its loader. Everything deeper
+ * belongs to routes below it and must not invalidate it.
+ */
+function paramsInPrefix(pattern: string, count: number): string[] {
+  if (count === 0) return []
+  const names: string[] = []
+  const segments = pattern === "/" ? [] : pattern.slice(1).split("/")
+  for (const segment of segments.slice(0, count)) {
+    // Mirrors the router's own grammar: `:name`, `*name`, and a mixed segment's embedded `:name`s.
+    for (const match of segment.matchAll(/[:*]([A-Za-z_][A-Za-z0-9_]*)/g)) {
+      names.push(match[1] as string)
+    }
+  }
+  return names
+}
+
 const ancestorDirs = (file: string): string[] => {
   const dirs = [""]
   const dir = dirOf(file)
@@ -419,13 +494,14 @@ export function buildManifest(
   const routes: RouteEntry[] = []
   for (const file of routeFiles) {
     const dirs = ancestorDirs(file)
-    const layoutIds = dirs.filter((dir) => layoutDirs.has(dir)).map(layoutIdFor)
+    const layoutDirsForFile = dirs.filter((dir) => layoutDirs.has(dir))
+    const layoutIds = layoutDirsForFile.map(layoutIdFor)
     const errorIds = dirs.filter((dir) => errorDirs.has(dir)).map(errorIdFor)
     const id = stripExt(file)
     const load = importer(file) // one lazy loader per file, shared by its (possibly expanded) patterns
     // An optional `[[x]]` segment expands a file into multiple patterns, all pointing at the same
     // module (same id/load/layout chain). Distinct patterns ⇒ no match ambiguity (different lengths).
-    for (const pattern of filePathToPatterns(file)) {
+    for (const { pattern, depths } of filePathToRoutes(file)) {
       const existing = byPattern.get(pattern)
       if (existing !== undefined) {
         throw new Error(
@@ -433,7 +509,10 @@ export function buildManifest(
         )
       }
       byPattern.set(pattern, file)
-      routes.push({ id, pattern, layoutIds, errorIds, file, load })
+      const layoutParams = layoutDirsForFile.map((dir) =>
+        paramsInPrefix(pattern, depths[dir === "" ? 0 : dir.split("/").length] ?? 0),
+      )
+      routes.push({ id, pattern, layoutIds, layoutParams, errorIds, file, load })
     }
   }
 

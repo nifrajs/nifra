@@ -3906,6 +3906,20 @@
     "signature": "export declare function filePathToPatterns(file: string): string[];"
   },
   {
+    "name": "filePathToRoutes",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function filePathToRoutes(file: string): FileRoutePattern[];",
+    "doc": "/** Expand a route file into its URL patterns, each carrying per-directory segment counts. */"
+  },
+  {
+    "name": "FileRoutePattern",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface FileRoutePattern {\n    readonly pattern: string;\n    /**\n     * URL segments contributed by the first *k* path parts of the file, indexed by *k*.\n     *\n     * This is what makes a layout's scope derivable without turning layouts into router nodes. A layout\n     * lives at a directory; the segments that directory contributes are exactly the prefix of the URL it\n     * wraps, so `depths[partsIn(layoutDir)]` is how many leading pattern segments it owns - and the\n     * params inside that prefix are the ones it may read.\n     *\n     * Per EXPANDED pattern, not per file, because the two diverge: `[[lang]]/docs/_layout` owns nothing\n     * on `/docs/:slug` and `{lang}` on `/:lang/docs/:slug`. A route group contributes no segment, so\n     * `(marketing)/_layout` owns nothing at all.\n     */\n    readonly depths: readonly number[];\n}",
+    "doc": "/** One URL pattern a route file expands to, plus the scope information layouts need. */"
+  },
+  {
     "name": "FileStorage",
     "kind": "class",
     "package": "@nifrajs/storage",
@@ -8600,7 +8614,7 @@
     "name": "RouteEntry",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RouteEntry {\n    readonly id: string;\n    readonly pattern: string;\n    readonly layoutIds: readonly string[];\n    /** `_error` boundary ids in this route's ancestor chain (outermost → innermost). The last is the\n     * **nearest** boundary, rendered when the route's loader throws. Always set by `buildManifest`\n     * (optional only so hand-built test manifests may omit it); absent/empty ⇒ no boundary (error 500s). */\n    readonly errorIds?: readonly string[];\n    readonly file: string;\n    readonly load: () => Promise<RouteModule>;\n}",
+    "signature": "export interface RouteEntry {\n    readonly id: string;\n    readonly pattern: string;\n    readonly layoutIds: readonly string[];\n    /**\n     * Param names each layout in {@link layoutIds} owns, aligned by index.\n     *\n     * A layout wraps a URL prefix, so these are the params it may read and the ones whose change should\n     * re-run its loader - everything deeper belongs to routes beneath it. Derived per (route, layout)\n     * pair rather than per layout, because one layout can own different params on different expanded\n     * patterns: `[[lang]]/docs/_layout` owns nothing on `/docs/:slug` and `{lang}` on `/:lang/docs/:slug`.\n     * Optional only so hand-built test manifests may omit it.\n     */\n    readonly layoutParams?: ReadonlyArray<readonly string[]>;\n    /** `_error` boundary ids in this route's ancestor chain (outermost → innermost). The last is the\n     * **nearest** boundary, rendered when the route's loader throws. Always set by `buildManifest`\n     * (optional only so hand-built test manifests may omit it); absent/empty ⇒ no boundary (error 500s). */\n    readonly errorIds?: readonly string[];\n    readonly file: string;\n    readonly load: () => Promise<RouteModule>;\n}",
     "doc": "/** One matched route: pattern, nested layout ids (outermost → innermost), source file, loader. */"
   },
   {
