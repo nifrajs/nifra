@@ -5831,10 +5831,12 @@ import { defineAssurancePolicy } from "@nifrajs/core/assurance"
   shared references, and cycles through JSON transports. Decoding validates every reachable shape,
   preserves owned `__proto__` keys without prototype mutation, and enforces configurable node, depth,
   collection-entry, and decoded-byte limits.
-- **Versioned transport codecs (opt in).** Configure `server({ transportCodecs })` and the typed
+- **Versioned transport codecs (opt in).** Add `.use(transportCodecs(registry))` from
+  `@nifrajs/core/transport-plugin` and configure the typed
   client's `transport` option with the same registry. `@nifrajs/core/transport-codec` negotiates
   bounded HTTP representations and supplies the same frame/loader adapters for WebSockets and
-  deferred data. Plain JSON remains the default fast path.
+  deferred data. Import `richWireCodec()` from `@nifrajs/core/transport-codec-rich`; the separate
+  subpath keeps rich-wire code out of plain JSON bundles.
 
 ```ts
 import { defineAssurancePolicy, evaluateRouteAssurance, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"

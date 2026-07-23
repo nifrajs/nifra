@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test"
+import type { DurableEffectStore, SagaStore } from "../src/durable-execution.ts"
 import {
   MemoryReconciliationLeaseStore,
+  runEffectReconciliationWorker,
   runReconciliationWorker,
+  runSagaReconciliationWorker,
 } from "../src/reconciliation-worker.ts"
 
 describe("bounded reconciliation worker", () => {
@@ -71,5 +74,68 @@ describe("bounded reconciliation worker", () => {
       handle: async () => {},
     })
     expect(result).toEqual({ acquired: false, pages: 0, scanned: 0, handled: 0 })
+  })
+
+  test("effect and saga wrappers bind bounded reconciliation scans", async () => {
+    const leases = new MemoryReconciliationLeaseStore()
+    const effects = {
+      durability: "durable",
+      scan: async (input: { readonly cursor?: string }) => ({
+        records: [
+          {
+            effectId: "effect-1",
+            capability: "db.write",
+            state: "executing",
+            updatedAt: 1,
+            version: 1,
+          },
+        ],
+        cursor: input.cursor,
+      }),
+    } as unknown as DurableEffectStore
+    const effectFindings: string[] = []
+    const effectResult = await runEffectReconciliationWorker(effects, {
+      name: "effect-worker",
+      owner: "worker-a",
+      leases,
+      staleBefore: 2,
+      maxPages: 1,
+      handle: (finding) => {
+        effectFindings.push(finding.effectId)
+      },
+    })
+    expect(effectResult.handled).toBe(1)
+    expect(effectFindings).toEqual(["effect-1"])
+
+    const sagas = {
+      durability: "durable",
+      scan: async () => ({
+        records: [
+          {
+            sagaId: "saga-1",
+            definition: "checkout",
+            state: "manual-review",
+            input: {},
+            steps: [],
+            createdAt: 1,
+            updatedAt: 1,
+            version: 1,
+          },
+        ],
+      }),
+    } as unknown as SagaStore
+    const sagaFindings: string[] = []
+    const sagaResult = await runSagaReconciliationWorker(sagas, {
+      name: "saga-worker",
+      owner: "worker-a",
+      leases,
+      staleBefore: 2,
+      maxPages: 1,
+      handle: (finding) => {
+        sagaFindings.push(finding.sagaId)
+      },
+    })
+    expect(sagaResult.handled).toBe(1)
+    expect(sagaFindings).toEqual(["saga-1"])
   })
 })

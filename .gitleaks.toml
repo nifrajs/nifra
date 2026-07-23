@@ -1,0 +1,17 @@
+[extend]
+useDefault = true
+
+# Exact, non-secret fixtures used to exercise signing and server-only leak prevention. Restrict the
+# allowlist to test sources so the same token-shaped values still fail closed in product code.
+[[allowlists]]
+description = "Documented cryptographic test fixtures"
+regexTarget = "secret"
+paths = ['''(?:^|/)packages/(?:auth|cli|core|image|middleware|uploads|web)/test/''', '''^(?:auth|cli|core|image|middleware|uploads|web)/test/''']
+regexes = [
+  '''^0123456789abcdef0123456789abcdef$''',
+  '''^integration-secret-at-least-32by$''',
+  '''^whsec_test_padded_to_at_least_32b$''',
+  '''^ghsecret_padded_to_at_least_32byt$''',
+  '''^(?:s3cret-key_padded_to_at_least_32|s3cret_padded_to_at_least_32_byte)$''',
+  '''^sk-live-1234567890$''',
+]

@@ -20,6 +20,7 @@ import {
   markEffectCommitted,
   markEffectExecuting,
   requestEffectEvidence,
+  requestEffectScope,
 } from "../src/internal/effect-execution.ts"
 import { createIdempotencyRuntime } from "../src/server/idempotency-lane.ts"
 
@@ -242,6 +243,7 @@ describe("effect-aware idempotency fallback", () => {
     const request = new Request("http://test/effect")
     const context = { req: request }
     beginRequestEffectTracking(request)
+    expect(requestEffectScope(request)).toBeDefined()
     markEffectExecuting(context)
     expect(requestEffectEvidence(request)).toEqual({
       began: true,
@@ -260,6 +262,9 @@ describe("effect-aware idempotency fallback", () => {
       committed: true,
       ambiguous: true,
     })
+    expect(() =>
+      markIdempotencySafeToRetry({ req: new Request("http://test/not-idempotent") }),
+    ).toThrow("requires an active route")
   })
 })
 

@@ -68,4 +68,44 @@ describe("versioned transport codecs", () => {
     expect(response.status).toBe(200)
     expect(await decodeTransportResponse(response, registry)).toEqual(value)
   })
+
+  test("transport hooks preserve response controls and enforce their own request cap", async () => {
+    const rich = richWireCodec()
+    const registry = createTransportCodecRegistry([plainJsonCodec, rich])
+    const bodySchema = {
+      "~standard": {
+        version: 1 as const,
+        vendor: "test",
+        validate: (value: unknown) => ({ value }),
+      },
+    }
+    const app = server()
+      .use(transportCodecs(registry, { maxBytes: 128 }))
+      .post("/echo", { body: bodySchema }, (c) => {
+        c.set.status = 201
+        c.set.headers["x-transport"] = "rich"
+        return c.body
+      })
+
+    const value = { count: 4n }
+    const response = await app.fetch(
+      new Request("http://test/echo", {
+        method: "POST",
+        headers: { "content-type": rich.mediaType, accept: rich.mediaType },
+        body: rich.encode(value),
+      }),
+    )
+    expect(response.status).toBe(201)
+    expect(response.headers.get("x-transport")).toBe("rich")
+    expect(await decodeTransportResponse(response, registry)).toEqual(value)
+
+    const oversized = await app.fetch(
+      new Request("http://test/echo", {
+        method: "POST",
+        headers: { "content-type": rich.mediaType },
+        body: rich.encode({ value: "x".repeat(256) }),
+      }),
+    )
+    expect(oversized.status).toBe(413)
+  })
 })

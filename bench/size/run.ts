@@ -123,8 +123,8 @@ export default server().post("/users", { body }, (c) => ({ name: c.body.name }))
 // enough that a newly reachable optional subsystem fails CI. Update only with an explained benchmark diff.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-bare": 15.5,
-  // Shared server registration now caps capability timers at the JS timer ceiling (+<30 raw bytes).
-  "nifra-idempotency": 18.02,
+  // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
+  "nifra-idempotency": 18.25,
   "nifra-effect-ledger": 17.02,
   "nifra-mcp": 16,
   "nifra-sse": 16,

@@ -37,4 +37,22 @@ describe("owned effect scope", () => {
     expect(phases).toEqual(["execution:started", "execution:succeeded"])
     expect(scope.evidence()).toEqual({ began: true, committed: true, ambiguous: false })
   })
+
+  test("manual evidence preserves retry safety and terminal certainty", () => {
+    const scope = createEffectScope()
+    scope.markSafeToRetry()
+    expect(scope.safeToRetry()).toBe(true)
+
+    scope.markBegan()
+    expect(scope.safeToRetry()).toBe(false)
+    expect(scope.evidence()).toEqual({ began: true, committed: false, ambiguous: true })
+    expect(() => scope.markSafeToRetry()).toThrow("after an effect began")
+
+    scope.markFailed()
+    expect(scope.evidence()).toEqual({ began: true, committed: false, ambiguous: false })
+    scope.markAmbiguous()
+    expect(scope.evidence().ambiguous).toBe(true)
+    scope.markCommitted()
+    expect(scope.evidence()).toEqual({ began: true, committed: true, ambiguous: false })
+  })
 })
