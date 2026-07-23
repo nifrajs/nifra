@@ -62,6 +62,30 @@ test("several parameters in one segment capture left to right", () => {
   })
 })
 
+test("an RPC-style terminal colon action remains a literal route", () => {
+  const compiled = compileRoutePattern("/v1/things:batchGet")
+  expect(compiled.segments[1]).toEqual({ kind: "static", value: "things:batchGet" })
+
+  const router = routerOf("/v1/things:batchGet")
+  expect(hit(router, "/v1/things:batchGet")).toEqual({
+    payload: "/v1/things:batchGet",
+    params: {},
+  })
+  expect(hit(router, "/v1/thingsDeleteAll")).toBeUndefined()
+})
+
+test("mixed siblings have deterministic shared specificity independent of registration order", () => {
+  for (const patterns of [
+    ["/bar.:value", "/:value.foo"],
+    ["/:value.foo", "/bar.:value"],
+  ]) {
+    expect(hit(routerOf(...patterns), "/bar.foo")).toEqual({
+      payload: "/bar.:value",
+      params: { value: "foo" },
+    })
+  }
+})
+
 test("a failed mixed branch unwinds every value it pushed", () => {
   // A mixed segment pushes N values, not one. If the failed-branch unwind popped a single value,
   // the next branch's parameters would read values from the abandoned one - so this asserts the

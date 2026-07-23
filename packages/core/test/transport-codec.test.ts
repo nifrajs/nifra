@@ -127,6 +127,18 @@ describe("versioned transport codecs", () => {
     })
     await expect(decodeTransportResponse(response, registry)).rejects.toThrow(TransportCodecError)
 
+    const invalidUtf8 = new Response(new Uint8Array([0xc3, 0x28]), {
+      headers: { "content-type": plainJsonCodec.mediaType },
+    })
+    try {
+      await decodeTransportResponse(invalidUtf8, registry)
+      throw new Error("expected invalid UTF-8 to throw")
+    } catch (error) {
+      expect(error).toBeInstanceOf(TransportCodecError)
+      expect((error as TransportCodecError).message).toContain("valid UTF-8")
+      expect((error as TransportCodecError).cause).toBeInstanceOf(TypeError)
+    }
+
     // The underlying parse failure stays diagnosable rather than being swallowed by the normalizer.
     try {
       decodeTransportFrame("{not json", registry)

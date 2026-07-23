@@ -876,6 +876,8 @@ Every public export of every package and documented subpath — name, kind, sign
   One piece of a {@link RoutePatternSegment} of kind `mixed`, in left-to-right order.
 - **RoutePatternMatch** _(type)_ — `type RoutePatternMatch = | { readonly matched: true; readonly params: Record<string, string> } | { readonly matched: false; readonly reason: "not-found" | "malformed" }`
 - **RoutePatternSegment** _(type)_ — `type RoutePatternSegment`
+- **compareMixedPartsSpecificity** _(function)_ — `compareMixedPartsSpecificity: (left: readonly MixedPart[], right: readonly MixedPart[]) => number`
+  Total ordering for mixed segment shapes, shared by the trie and regex-based routers.
 - **compareRoutePatternSpecificity** _(function)_ — `compareRoutePatternSpecificity: (left: CompiledRoutePattern, right: CompiledRoutePattern) => number`
   Core precedence: static > mixed > param > wildcard at the first differing segment, independent of registration order.
 - **compileRoutePattern** _(function)_ — `compileRoutePattern: (pattern: string) => CompiledRoutePattern`
@@ -2425,7 +2427,7 @@ Every public export of every package and documented subpath — name, kind, sign
   The build-failing message for `node:` builtins that reached the client bundle. `undefined` ⇒ clean.
 - **formatServerOnlyLeak** _(function)_ — `formatServerOnlyLeak: (findings: ReadonlyArray<ServerOnlyFinding>) => string | undefined`
   The build-failing message for `server-only`-marked modules that reached the client. `undefined` ⇒ clean.
-- **generateServerEntry** _(function)_ — `generateServerEntry: (options: { readonly target: BuildTarget; readonly adapterImport: string; readonly backendImport?: string; readonly title?: string; }) => string`
+- **generateServerEntry** _(function)_ — `generateServerEntry: (options: { readonly target: BuildTarget; readonly adapterImport: string; readonly backendImport?: string; readonly title?: string; readonly publicFiles?: readonly string[]; }) => string`
   Codegen the per-target **server entry** module (source text) for `buildServer` to bundle. It imports the app's `adapter` (from `framework.ts`), the optional `backend` (from `backend.ts`), and the generated `{ manifest, clientEntry }` (from `./server-manifest`), builds `createWebApp`, then wires the…
 - **htmlFileFor** _(function)_ — `htmlFileFor: (pattern: string) => string`
   Map a route path to its output file: `/` → `index.html`, `/a/b` → `a/b/index.html`.
@@ -2634,7 +2636,7 @@ Every public export of every package and documented subpath — name, kind, sign
   A route whose declaration the chosen target cannot honour, and what actually happens if it ships.
 - **RouteManifestEntry** _(interface)_ — `interface RouteManifestEntry`
   One route's resolved behaviour.
-- **buildRouteManifest** _(function)_ — `buildRouteManifest: (manifest: Manifest, options?: { readonly target?: string; readonly prerendered?: Readonly<Record<string, readonly string[]>>; }) => Promise<RouteManifest>`
+- **buildRouteManifest** _(function)_ — `buildRouteManifest: (manifest: Manifest, options?: { readonly target?: string; readonly prerendered?: Readonly<Record<string, readonly string[]>>; readonly capabilities?: readonly RouteCapability[]; }) => Promise<RouteM…`
   Build the route manifest for a discovered app, optionally resolved against a deploy target.
 - **deriveRouteEntry** _(function)_ — `deriveRouteEntry: (id: string, pattern: string, module: Pick<RouteModule, "prerender" | "getStaticPaths" | "revalidate" | "hydrate">, prerenderedPaths?: readonly string[]) => RouteManifestEntry`
   Derive one route's behaviour from its module exports.

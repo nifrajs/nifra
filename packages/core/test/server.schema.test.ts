@@ -114,7 +114,7 @@ describe("body validation", () => {
     expect(await res.json()).toEqual({ ok: false, error: "invalid_json" })
   })
 
-  test("a malformed Content-Length is rejected with 400, not silently streamed [AUDIT L1]", async () => {
+  test("a malformed Content-Length is rejected with 400, not silently streamed", async () => {
     const app = server().post("/users", { body: userBody }, (c) => c.body)
     // A non-`1*DIGIT` length (negative/fractional/non-numeric/exponential/hex) is malformed. Real HTTP
     // servers never deliver these, but a hand-built Request can — reject up front rather than falling

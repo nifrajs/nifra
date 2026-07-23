@@ -116,6 +116,17 @@ function splitMixed(value: string): MixedPart[] | undefined {
       literal += ":"
       continue
     }
+    const paramEnd = i + 1 + name.length
+    const previous = i > 0 ? value[i - 1] : undefined
+    const precededByBoundary = previous === undefined || !/[A-Za-z0-9_]/.test(previous)
+    // Preserve established RPC-style literals such as `things:batchGet`. A colon embedded after an
+    // identifier and running to the end is literal; mixed params remain unambiguous at segment start,
+    // after punctuation (`post-:id`), or when followed by a literal suffix (`v:major.json`).
+    if (!precededByBoundary && paramEnd === value.length) {
+      literal += `:${name}`
+      i += name.length
+      continue
+    }
     if (literal !== "") {
       parts.push({ t: "lit", v: literal })
       literal = ""
@@ -246,6 +257,32 @@ const SPECIFICITY: Readonly<Record<RoutePatternSegment["kind"], number>> = {
   wildcard: 1,
 }
 
+/** Total ordering for mixed segment shapes, shared by the trie and regex-based routers. */
+export function compareMixedPartsSpecificity(
+  left: readonly MixedPart[],
+  right: readonly MixedPart[],
+): number {
+  const literalWeight = (parts: readonly MixedPart[]): number =>
+    parts.reduce((sum, part) => (part.t === "lit" ? sum + part.v.length : sum), 0)
+  const weightDifference = literalWeight(right) - literalWeight(left)
+  if (weightDifference !== 0) return weightDifference
+
+  const length = Math.max(left.length, right.length)
+  for (let i = 0; i < length; i++) {
+    const a = left[i]
+    const b = right[i]
+    if (a === undefined || b === undefined) return b === undefined ? -1 : 1
+    if (a.t !== b.t) return a.t === "lit" ? -1 : 1
+    if (a.t === "lit" && b.t === "lit") {
+      if (a.v.length !== b.v.length) return b.v.length - a.v.length
+      const lexical = a.v.localeCompare(b.v)
+      if (lexical !== 0) return lexical
+    }
+  }
+
+  return mixedSegmentSource(left).localeCompare(mixedSegmentSource(right))
+}
+
 /** Core precedence: static > mixed > param > wildcard at the first differing segment, independent of
  * registration order. */
 export function compareRoutePatternSpecificity(
@@ -260,6 +297,10 @@ export function compareRoutePatternSpecificity(
     const aWeight = SPECIFICITY[a.kind]
     const bWeight = SPECIFICITY[b.kind]
     if (aWeight !== bWeight) return bWeight - aWeight
+    if (a.kind === "mixed" && b.kind === "mixed") {
+      const mixed = compareMixedPartsSpecificity(a.parts, b.parts)
+      if (mixed !== 0) return mixed
+    }
   }
   return 0
 }

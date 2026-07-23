@@ -35,7 +35,7 @@ export class TransportCodecError extends TypeError {
  * past a caller catching the documented error type. The original is kept as `cause`, so the parse
  * failure stays diagnosable; a codec already speaking the contract is re-thrown untouched.
  */
-function decodeOrThrow(decode: () => unknown, message: string): unknown {
+function decodeOrThrow<T>(decode: () => T, message: string): T {
   try {
     return decode()
   } catch (cause) {
@@ -222,7 +222,10 @@ async function readBoundedText(
     bytes.set(chunk, offset)
     offset += chunk.byteLength
   }
-  return new TextDecoder("utf-8", { fatal: true }).decode(bytes)
+  return decodeOrThrow(
+    () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+    "transport payload is not valid UTF-8",
+  )
 }
 
 export async function decodeTransportResponse(

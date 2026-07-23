@@ -1,5 +1,11 @@
 import { RouteConfigError } from "../errors.ts"
-import { type CompiledRoutePattern, compileRoutePattern, mixedSegmentSource } from "./pattern.ts"
+import {
+  type CompiledRoutePattern,
+  compareMixedPartsSpecificity,
+  compileRoutePattern,
+  type MixedPart,
+  mixedSegmentSource,
+} from "./pattern.ts"
 
 /** HTTP methods the router accepts. */
 export const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const
@@ -93,8 +99,8 @@ interface MixedChild<T> {
    * pop exactly N to keep `paramValues` aligned with `paramNames`.
    */
   readonly arity: number
-  /** Literal characters in the segment - more literal text means a more specific match. */
-  readonly weight: number
+  /** Parsed shape used by the same total specificity comparator as the browser router. */
+  readonly parts: readonly MixedPart[]
   readonly node: RouteNode<T>
   /** The pattern source, so re-registering the same shape reuses its node. */
   readonly source: string
@@ -307,10 +313,7 @@ export class Router<T> {
           child = {
             regex: new RegExp(`^${source}$`),
             arity: segment.parts.reduce((n, part) => (part.t === "param" ? n + 1 : n), 0),
-            weight: segment.parts.reduce(
-              (n, part) => (part.t === "lit" ? n + part.v.length : n),
-              0,
-            ),
+            parts: segment.parts,
             node: createNode<T>(),
             source,
           }
@@ -318,7 +321,7 @@ export class Router<T> {
           // Most literal text first. Registration order must not decide which of `/:id.txt` and
           // `/:id.json` wins, and re-sorting on insert (a boot-time cost) keeps the match path a
           // straight scan.
-          node.mixedChildren.sort((a, b) => b.weight - a.weight || a.source.localeCompare(b.source))
+          node.mixedChildren.sort((a, b) => compareMixedPartsSpecificity(a.parts, b.parts))
         }
         node = child.node
       } else {
