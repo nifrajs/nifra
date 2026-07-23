@@ -69,6 +69,11 @@
       "types": "./dist/route-manifest.d.ts",
       "default": "./dist/route-manifest.js"
     },
+    "./build-vite": {
+      "bun": "./src/build-vite.ts",
+      "types": "./dist/build-vite.d.ts",
+      "default": "./dist/build-vite.js"
+    },
     "./fonts": {
       "bun": "./src/fonts-google.ts",
       "types": "./dist/fonts-google.d.ts",

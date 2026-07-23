@@ -2361,6 +2361,8 @@ Every public export of every package and documented subpath — name, kind, sign
 - **BuildTargetOptions** _(interface)_ — `interface BuildTargetOptions`
 - **BuildTargetResult** _(interface)_ — `interface BuildTargetResult`
   The result of a target build — the deploy dir + the client manifest + an optional size report.
+- **Bundler** _(interface)_ — `interface Bundler`
+  A build-tool STRATEGY for {@link buildTargetWith} — the two bundling steps, and nothing else. Everything around them (server-entry codegen, deploy assembly, prerender, size report) is bundler-agnostic and lives in `buildTargetWith`, so a second bundler (Vite) is this interface, not a second orchest…
 - **ChunkSize** _(interface)_ — `interface ChunkSize`
   One emitted chunk's measured size, in raw bytes + gzipped bytes (over-the-wire weight).
 - **CloudflarePagesRoutes** _(interface)_ — `interface CloudflarePagesRoutes`
@@ -2392,7 +2394,11 @@ Every public export of every package and documented subpath — name, kind, sign
 - **buildServer** _(function)_ — `buildServer: (options: BuildServerOptions) => Promise<ServerBuild>`
   Build a self-contained **worker bundle** for a file-routed app on a disk-less edge (Cloudflare Workers / workerd). Discovers routes (build-time fs), codegens the static-import server manifest (`generateServerManifest`, written next to `serverEntry`), then bundles `serverEntry` with `Bun.build` usin…
 - **buildTarget** _(function)_ — `buildTarget: (target: BuildTarget, options: BuildTargetOptions) => Promise<BuildTargetResult>`
-  Build a full deploy directory for `target` from a file-routed nifra app. Emits the client bundle to `<outDir>/assets/*`, then per target: - `static`: prerenders opted-in routes (`prerenderRoutes`) to `<outDir>/<path>/index.html` (+ `_data.json`); needs `prerenderApp`. No server. - `cf-pages`: a `_w…
+  Build a full deploy dir for `target` using the default Bun bundler. See {@link buildTargetWith}.
+- **buildTargetWith** _(function)_ — `buildTargetWith: (target: BuildTarget, options: BuildTargetOptions, bundler: Bundler) => Promise<BuildTargetResult>`
+  The bundler-agnostic deploy orchestrator: everything `buildTarget` does EXCEPT the two bundling steps, which come from `bundler`. `buildTarget` passes {@link bunBundler}; `buildTargetVite` (`@nifrajs/web/build-vite`) passes the Vite strategy. One orchestrator, so the deploy-dir shape, server-entry …
+- **bunBundler** _(const)_ — `bunBundler: Bundler`
+  The default (Bun) strategy — `buildClient`/`buildServer` from this module.
 - **cloudflarePagesRoutes** _(function)_ — `cloudflarePagesRoutes: (options: CloudflarePagesRoutesOptions) => CloudflarePagesRoutes`
   Build a Cloudflare Pages `_routes.json` for a HYBRID SSG deploy: the prerendered HTML + their static `_data.json` + the asset bundle are `exclude`d (CDN serves them directly), and everything else falls through to the SSR `_worker.js`. Write the result to `dist/_routes.json`.
 - **copyPublicDir** _(function)_ — `copyPublicDir: (from: string, to: string) => Promise<string[]>`
@@ -2442,6 +2448,21 @@ Every public export of every package and documented subpath — name, kind, sign
 - **serverOnlyEmptyPlugin** _(const)_ — `serverOnlyEmptyPlugin: () => BunPlugin`
 - **svelteDedupePlugin** _(const)_ — `svelteDedupePlugin: (from: string) => BunPlugin`
   Dedupe Svelte to a single copy — the Svelte analogue of `reactDedupePlugin`/`preactDedupePlugin`, closing the same class of bug for Svelte (which had NO build-time dedup before). A workspace- or file-linked `@nifrajs/web-svelte` can resolve its OWN `svelte` (e.g. a sibling repo's install store) whi…
+
+### `@nifrajs/web/build-vite`
+
+- **BuildClientViteOptions** _(interface)_ — `interface BuildClientViteOptions`
+  Options for {@link buildClientVite} — the Bun {@link BuildClientOptions} minus Bun-plugin specifics, plus the Vite plugin list the app injects for its transforms.
+- **BuildServerViteOptions** _(interface)_ — `interface BuildServerViteOptions`
+  Options for {@link buildServerVite} — the same surface as `buildServer` minus Bun-plugin specifics.
+- **buildClientVite** _(function)_ — `buildClientVite: (options: BuildClientViteOptions) => Promise<BuildManifest>`
+  Build the client bundle with Vite, emitting the SAME {@link BuildManifest} `buildClient` (Bun) does: a content-hashed entry, per-route chunk lists, aggregate + per-route CSS, and copied `public/` files.
+- **buildServerVite** _(function)_ — `buildServerVite: (options: BuildServerViteOptions) => Promise<ServerBuild>`
+  Build the SSR worker with Vite, emitting the SAME {@link ServerBuild} `buildServer` (Bun) does: a self-contained worker bundle whose path is returned as `worker`.
+- **buildTargetVite** _(function)_ — `buildTargetVite: (target: BuildTarget, options: BuildTargetOptions) => Promise<BuildTargetResult>`
+  Build a full deploy dir for `target` using the Vite/Rollup pipeline - the escape hatch for apps that need a Vite-only transform in production. Identical output shape to {@link import ("./build.ts").buildTarget} (same deploy dir, same server entry, same prerender + size report), because both delegat…
+- **viteBundler** _(const)_ — `viteBundler: Bundler`
+  The Vite build STRATEGY — plugged into `buildTargetWith`. `plugins` arriving through the shared orchestrator are the app's Vite plugins (the escape hatch's whole reason), cast to Vite's plugin type.
 
 ### `@nifrajs/web/client`
 

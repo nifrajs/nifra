@@ -26,6 +26,9 @@ export interface Flags {
   readonly target: string
   /** `nifra build --report`: print a per-chunk size + gzip table after the build. */
   readonly report: boolean
+  /** `nifra build --vite`: build the client + server with Vite/Rollup instead of Bun (the escape hatch
+   * for apps needing a Vite-only transform in production). Default Bun. */
+  readonly vite: boolean
 }
 
 const HELP = `nifra — zero-config dev/build/start for a nifra app
@@ -39,7 +42,10 @@ Usage:
                                          no longer hand-writes build-<target>.ts + _worker.ts +
                                          _routes.json. The server entry is generated from your
                                          framework.ts (adapter) + backend.ts + routes/. --report prints
-                                         a per-chunk size + gzip table (biggest first).
+                                         a per-chunk size + gzip table (biggest first). --vite builds
+                                         both halves with Vite/Rollup instead of Bun (same deploy dir) -
+                                         the escape hatch for an app needing a Vite-only transform in
+                                         prod; default stays Bun (faster, Bun-native).
   nifra start   [--port <n>] [--out <dir>]  Run the Bun build at <out>/server.js. Default port ${DEFAULT_DEV_PORT}.
   nifra context                          Print this project's route INDEX (API + page routes) + conventions
                                          for an AI agent's prompt. Per-route schemas: nifra mcp's
@@ -182,13 +188,22 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
  * `nifra.config.ts`, which pulls in Vite plugins), and the backend from `backend.ts` when present;
  * `buildTarget` generates the per-target server entry from those + the app's `routes/`.
  */
-async function buildForTarget(app: LoadedApp, target: string, report: boolean): Promise<void> {
-  const { buildTarget, isBuildTarget, renderSizeReport, BUILD_TARGETS } = await import(
-    "@nifrajs/web/build"
-  )
+async function buildForTarget(
+  app: LoadedApp,
+  target: string,
+  report: boolean,
+  useVite: boolean,
+): Promise<void> {
+  const { isBuildTarget, renderSizeReport, BUILD_TARGETS } = await import("@nifrajs/web/build")
   if (!isBuildTarget(target)) {
     throw new Error(`[nifra] unknown --target "${target}". Valid: ${BUILD_TARGETS.join(", ")}.`)
   }
+  // --vite: build both halves with Vite/Rollup instead of Bun (the escape hatch for a Vite-only
+  // transform in production). Same deploy-dir output — buildTargetVite delegates to the same orchestrator
+  // as buildTarget — so only the bundler and the plugin FORMAT (Vite plugins, not Bun) differ.
+  const buildTarget = useVite
+    ? (await import("@nifrajs/web/build-vite")).buildTargetVite
+    : (await import("@nifrajs/web/build")).buildTarget
   const { framework: fw, routesDir, outDir, cwd, backend } = app
   // The server entry must import the adapter from `framework.ts` (edge-safe), not the loaded config.
   // `loadApp` guarantees one of them exists; prefer framework.ts so a multi-target app's Vite-plugin
@@ -199,6 +214,18 @@ async function buildForTarget(app: LoadedApp, target: string, report: boolean): 
       ? resolve(cwd, "nifra.config.ts")
       : resolve(cwd, "framework.ts")
   const backendFile = resolve(cwd, "backend.ts")
+  // Plugin FORMAT differs by pipeline: the Bun build takes Bun plugins (clientPlugins/serverPlugins); the
+  // Vite build takes the app's Vite plugins (fw.vitePlugins) for BOTH halves. buildTargetWith forwards
+  // whatever it's given straight to the chosen bundler, which casts to its own plugin type.
+  const plugins = useVite
+    ? {
+        clientPlugins: (await resolvePlugins(fw.vitePlugins)) as unknown as BunPlugin[],
+        serverPlugins: (await resolvePlugins(fw.vitePlugins)) as unknown as BunPlugin[],
+      }
+    : {
+        clientPlugins: asBunPlugins(await resolvePlugins(fw.clientPlugins)),
+        serverPlugins: asBunPlugins(await resolvePlugins(fw.serverPlugins)),
+      }
   const result = await buildTarget(target, {
     routesDir,
     outDir,
@@ -206,14 +233,13 @@ async function buildForTarget(app: LoadedApp, target: string, report: boolean): 
     clientModule: fw.clientModule,
     adapterImport: frameworkFile,
     ...(backend !== undefined && existsSync(backendFile) ? { backendImport: backendFile } : {}),
-    clientPlugins: asBunPlugins(await resolvePlugins(fw.clientPlugins)),
-    serverPlugins: asBunPlugins(await resolvePlugins(fw.serverPlugins)),
+    ...plugins,
     ...(fw.conditions ? { conditions: fw.conditions } : {}),
     ...(fw.define ? { define: fw.define } : {}),
     // The static target needs a built app to drive prerendering — only build it when targeting static.
     ...(target === "static" ? { prerenderApp: await buildPrerenderApp(app) } : {}),
   })
-  console.log(`nifra build (${target}) → ${result.run}`)
+  console.log(`nifra build (${target}${useVite ? ", vite" : ""}) → ${result.run}`)
   if (report) console.log(`\n${renderSizeReport(result.size)}`)
 }
 
@@ -277,6 +303,7 @@ export function parseFlags(args: readonly string[]): Flags {
   let poll = Bun.env.CHOKIDAR_USEPOLLING === "1"
   let target = "bun"
   let report = false
+  let vite = false
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
     if ((a === "--port" || a === "-p") && args[i + 1]) port = Number(args[++i])
@@ -284,11 +311,12 @@ export function parseFlags(args: readonly string[]): Flags {
     else if (a === "--poll") poll = true
     else if (a === "--target" && args[i + 1]) target = args[++i] as string
     else if (a === "--report") report = true
+    else if (a === "--vite") vite = true
   }
   if (!Number.isFinite(port) || port < 0 || port > 65535) {
     throw new Error(`[nifra] invalid --port: ${port}`)
   }
-  return { port, out, poll, target, report }
+  return { port, out, poll, target, report, vite }
 }
 
 async function main(): Promise<void> {
@@ -599,7 +627,7 @@ async function main(): Promise<void> {
   const flags = parseFlags(argv.slice(1))
   const app = await loadApp(process.cwd(), flags.out)
   if (command === "dev") await dev(app, flags)
-  else if (command === "build") await buildForTarget(app, flags.target, flags.report)
+  else if (command === "build") await buildForTarget(app, flags.target, flags.report, flags.vite)
   else if (command === "context") console.log(describeProject(app))
   else if (command === "routes") {
     if (argv.includes("--modes")) {

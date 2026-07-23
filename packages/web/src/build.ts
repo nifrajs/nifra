@@ -1494,9 +1494,80 @@ export interface BuildTargetResult {
  * Note: the heavier platform wrappers (`.vercel/output` v3 layout, wrangler ISR `find_additional_modules`)
  * remain app-owned scripts; this command targets the common single-bundle deploys. See the CLI docs.
  */
+/**
+ * A build-tool STRATEGY for {@link buildTargetWith} — the two bundling steps, and nothing else. Everything
+ * around them (server-entry codegen, deploy assembly, prerender, size report) is bundler-agnostic and
+ * lives in `buildTargetWith`, so a second bundler (Vite) is this interface, not a second orchestrator.
+ *
+ * Plugin lists are `readonly unknown[]` because a Bun plugin and a Vite plugin are different types; each
+ * strategy casts to its own. `buildTargetWith` only forwards them.
+ */
+export interface Bundler {
+  /** Build the client bundle → the shared {@link BuildManifest}. */
+  buildClient(input: {
+    readonly routesDir: string
+    readonly outDir: string
+    readonly clientModule: string
+    readonly plugins?: readonly unknown[]
+    readonly conditions?: readonly string[]
+    readonly define?: Readonly<Record<string, string>>
+    /** Project root (Vite needs it; the Bun strategy ignores it). */
+    readonly root?: string
+  }): Promise<BuildManifest>
+  /** Build the server worker → the shared {@link ServerBuild}. */
+  buildServer(input: {
+    readonly routesDir: string
+    readonly serverEntry: string
+    readonly outDir: string
+    readonly clientEntry: string
+    readonly target: "browser" | "node" | "bun"
+    readonly plugins?: readonly unknown[]
+    readonly define?: Readonly<Record<string, string>>
+    readonly root?: string
+  }): Promise<ServerBuild>
+}
+
+/** The default (Bun) strategy — `buildClient`/`buildServer` from this module. */
+export const bunBundler: Bundler = {
+  buildClient: (input) =>
+    buildClient({
+      routesDir: input.routesDir,
+      outDir: input.outDir,
+      clientModule: input.clientModule,
+      ...(input.plugins ? { plugins: input.plugins as BunPlugin[] } : {}),
+      ...(input.conditions ? { conditions: input.conditions } : {}),
+      ...(input.define ? { define: input.define } : {}),
+    }),
+  buildServer: (input) =>
+    buildServer({
+      routesDir: input.routesDir,
+      serverEntry: input.serverEntry,
+      outDir: input.outDir,
+      clientEntry: input.clientEntry,
+      target: input.target,
+      ...(input.plugins ? { plugins: input.plugins as BunPlugin[] } : {}),
+      ...(input.define ? { define: input.define } : {}),
+    }),
+}
+
+/** Build a full deploy dir for `target` using the default Bun bundler. See {@link buildTargetWith}. */
 export async function buildTarget(
   target: BuildTarget,
   options: BuildTargetOptions,
+): Promise<BuildTargetResult> {
+  return buildTargetWith(target, options, bunBundler)
+}
+
+/**
+ * The bundler-agnostic deploy orchestrator: everything `buildTarget` does EXCEPT the two bundling steps,
+ * which come from `bundler`. `buildTarget` passes {@link bunBundler}; `buildTargetVite`
+ * (`@nifrajs/web/build-vite`) passes the Vite strategy. One orchestrator, so the deploy-dir shape,
+ * server-entry codegen, prerender and size report are identical across pipelines.
+ */
+export async function buildTargetWith(
+  target: BuildTarget,
+  options: BuildTargetOptions,
+  bundler: Bundler,
 ): Promise<BuildTargetResult> {
   const { routesDir, outDir, workDir } = options
   const { rmSync } = await import("node:fs")
@@ -1507,13 +1578,14 @@ export async function buildTarget(
   mkdirSync(workDir, { recursive: true })
 
   // (1) Client bundle → <outDir>/assets/* (every target ships the same hashed client bundle).
-  const client = await buildClient({
+  const client = await bundler.buildClient({
     routesDir,
     outDir: assetsDir,
     clientModule: options.clientModule,
     ...(options.clientPlugins ? { plugins: options.clientPlugins } : {}),
     ...(options.conditions ? { conditions: options.conditions } : {}),
     define: { "process.env.NODE_ENV": '"production"', ...(options.define ?? {}) },
+    root: resolvePath(dirname(routesDir)),
   })
 
   if (target === "static") {
@@ -1567,7 +1639,7 @@ export async function buildTarget(
     }),
   )
   const serverTarget = SERVER_BUILD_TARGET[target]
-  const { worker } = await buildServer({
+  const { worker } = await bundler.buildServer({
     routesDir,
     serverEntry: serverEntryPath,
     outDir: `${workDir}/server`,
@@ -1575,6 +1647,7 @@ export async function buildTarget(
     target: serverTarget,
     ...(options.serverPlugins ? { plugins: options.serverPlugins } : {}),
     define: { "process.env.NODE_ENV": '"production"', ...(options.define ?? {}) },
+    root: resolvePath(dirname(routesDir)),
   })
 
   // (3) Assemble the deploy dir for the target.

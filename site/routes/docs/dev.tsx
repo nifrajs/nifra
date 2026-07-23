@@ -252,6 +252,15 @@ export default function Dev() {
         so <code>node:</code> builtins and <code>server-only</code> modules fail the build either way.
       </p>
       <CodeBlock code={VITE_PROD} />
+      <p>
+        For the full deploy, <code>nifra build --vite --target &lt;t&gt;</code> builds{" "}
+        <em>both</em> halves — client and SSR worker — with Vite and assembles the identical per-target
+        deploy dir the Bun build produces (same <code>_worker.js</code> / <code>server.js</code>, same{" "}
+        <code>_routes.json</code>, same prerender + size report). Only the bundler differs: both go
+        through one orchestrator, so the deploy shape can't drift between pipelines. The leak guards run
+        automatically. Reach for it only when you need a Vite-only transform in production — otherwise
+        the default Bun build is faster.
+      </p>
 
       <h2>Styling (CSS)</h2>
       <p>
