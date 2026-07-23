@@ -89,6 +89,23 @@ export interface Meta {
   readonly link?: readonly LinkDescriptor[]
   /** Inert head `<script>`s (JSON-LD structured data, etc.). See {@link ScriptDescriptor}. */
   readonly script?: readonly ScriptDescriptor[]
+  /**
+   * The document language — `<html lang="...">`. Nearest-wins like `title`, so a localized route can
+   * override a layout's default. Defaults to `"en"` when no head in the chain sets it.
+   *
+   * This is the ONLY way to set it: the shell's `<html>` is framework-owned, so a multilingual app
+   * otherwise serves every URL as `lang="en"` — which tells a screen reader to pronounce every locale
+   * with an English voice, and suppresses the browser's translation offer.
+   */
+  readonly lang?: string
+  /**
+   * The document writing direction — `<html dir="...">`. Nearest-wins like `title`. Omitted from the
+   * shell when unset, which is HTML's `ltr` default, so an LTR app's output is byte-identical.
+   *
+   * Required for Arabic/Hebrew/Urdu/Persian: without it the browser lays the page out left-to-right
+   * and mis-orders trailing punctuation, so the text renders wrong rather than merely unstyled.
+   */
+  readonly dir?: "ltr" | "rtl" | "auto"
 }
 
 /**

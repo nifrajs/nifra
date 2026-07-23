@@ -615,6 +615,52 @@ test("mergeHeads: an undefined-title page keeps the layout's title; single head 
   expect(mergeHeads([only])).toBe(only) // single-head fast path returns by reference (memo-friendly)
 })
 
+test("mergeHeads: lang/dir are nearest-wins, like title", () => {
+  const merged = mergeHeads([{ lang: "en" }, { lang: "ur", dir: "rtl" }])
+  expect(merged.lang).toBe("ur") // page overrides the layout default
+  expect(merged.dir).toBe("rtl")
+  // A page that says nothing keeps the layout's — so a site-wide `lang` in `_layout` reaches every page.
+  expect(mergeHeads([{ lang: "hi" }, {}]).lang).toBe("hi")
+  // Neither contributed ⇒ the keys are absent, so the shell applies its own defaults.
+  expect(mergeHeads([{ title: "a" }, { title: "b" }]).lang).toBeUndefined()
+  expect(mergeHeads([{ title: "a" }, { title: "b" }]).dir).toBeUndefined()
+})
+
+test("renderPage: <html> defaults to lang=en with no dir (unchanged for a monolingual app)", async () => {
+  const html = await (
+    await renderPage({ adapter: stub, chain: [() => {}], data: null, clientEntry: "/c.js" })
+  ).text()
+  expect(html).toContain('<html lang="en">')
+  expect(html).not.toContain("dir=") // absent IS html's ltr default; emitting it would change every app
+})
+
+test("renderPage: head.lang/head.dir drive <html> — the only way to localize the document", async () => {
+  const html = await (
+    await renderPage({
+      adapter: stub,
+      chain: [() => {}],
+      data: null,
+      clientEntry: "/c.js",
+      head: { title: "اردو", lang: "ur", dir: "rtl" },
+    })
+  ).text()
+  expect(html).toContain('<html lang="ur" dir="rtl">')
+})
+
+test("renderPage: html lang is attribute-escaped (no breakout from loader-derived copy)", async () => {
+  const html = await (
+    await renderPage({
+      adapter: stub,
+      chain: [() => {}],
+      data: null,
+      clientEntry: "/c.js",
+      head: { lang: '"><script>alert(1)</script>' },
+    })
+  ).text()
+  expect(html).not.toContain("<script>alert(1)</script>")
+  expect(html).toContain("&quot;")
+})
+
 test("serializeData neutralizes </script>, comments, and line separators (XSS-safe)", () => {
   const out = serializeData({ x: "</script><!--", y: LINE_SEP + PARA_SEP })
   expect(out).not.toContain("</script>")

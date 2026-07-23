@@ -200,6 +200,14 @@ export function installHistory(
  */
 export function applyHead(head: Meta): void {
   if (head.title !== undefined) document.title = head.title
+  // `<html lang>`/`<html dir>` — applied AUTHORITATIVELY (unlike `title`, which is left alone when the
+  // route omits it), mirroring the SSR shell's defaulting exactly: `lang` falls back to `"en"`, `dir` is
+  // removed when unset. Anything laxer drifts on a multilingual site — navigating /ur → /en would leave
+  // `dir="rtl"` behind and lay the English page out right-to-left, a bug a hard reload would not show.
+  const root = document.documentElement
+  root.setAttribute("lang", head.lang ?? "en")
+  if (head.dir === undefined) root.removeAttribute("dir")
+  else root.setAttribute("dir", head.dir)
   for (const el of document.head.querySelectorAll("[data-nifra]")) el.remove()
   // Values follow the same HTML attribute conventions as the SSR `tagAttrs`: a string sets the value,
   // `true` sets the bare boolean attribute, `false`/`undefined` skip it — so a soft-nav head matches

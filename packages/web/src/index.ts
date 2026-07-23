@@ -527,7 +527,13 @@ export function renderPageResult(options: RenderPageOptions): MaybePromise<Rende
   // Runs in the first-paint→hydration window to swallow a JS-only form's broken native submit. Only on a
   // hydrating page (a static/_error page has no client handlers, so no footgun).
   const hydrationGuard = hydrate ? `<script>${PRE_HYDRATION_GUARD}</script>` : ""
-  const shellHtml = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${hydrationGuard}<title>${escapeHtml(head?.title ?? title)}</title>${headTags(head)}${styleLinks}${hydrationLinks}${islandPreloads}${adapter.hydrationHead()}</head><body><div id="${escapeAttr(rootId)}">`
+  // `<html>` attributes. `lang` defaults to `"en"` (so an app that never sets it is byte-identical to
+  // before); `dir` is omitted entirely when unset, which IS HTML's `ltr` default — emitting it
+  // unconditionally would change every existing app's output for no gain. Both attribute-escaped.
+  // `client.ts`'s `applyHead` mirrors this exact defaulting on soft-nav, so a hard load and a client
+  // navigation to the same URL produce the same `<html>` (no drift on a multilingual site).
+  const htmlAttrs = ` lang="${escapeAttr(head?.lang ?? "en")}"${head?.dir === undefined ? "" : ` dir="${escapeAttr(head.dir)}"`}`
+  const shellHtml = `<!doctype html><html${htmlAttrs}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${hydrationGuard}<title>${escapeHtml(head?.title ?? title)}</title>${headTags(head)}${styleLinks}${hydrationLinks}${islandPreloads}${adapter.hydrationHead()}</head><body><div id="${escapeAttr(rootId)}">`
   // Closes the hydration container; deferred resolve scripts go AFTER it (outside `#root`) so they
   // aren't part of the adapter's hydrated tree (an inline script inside it breaks hydration).
   const closeRootHtml = "</div>"
@@ -1188,11 +1194,15 @@ export function mergeHeads(heads: readonly Meta[]): Meta {
   // resolved object by reference so headTags' identity-keyed memo hits across requests for static meta.
   if (heads.length === 1) return heads[0] as Meta
   let title: string | undefined
+  let lang: string | undefined
+  let dir: Meta["dir"]
   const meta: Array<Record<string, string>> = []
   const link: LinkDescriptor[] = []
   const script: ScriptDescriptor[] = []
   for (const h of heads) {
     if (h.title !== undefined) title = h.title // nearest-wins: later (more specific) overrides
+    if (h.lang !== undefined) lang = h.lang // nearest-wins, like title
+    if (h.dir !== undefined) dir = h.dir
     if (h.meta !== undefined) meta.push(...h.meta)
     if (h.link !== undefined) link.push(...h.link)
     if (h.script !== undefined) script.push(...h.script) // concatenated like meta/link (outermost first)
@@ -1206,11 +1216,15 @@ export function mergeHeads(heads: readonly Meta[]): Meta {
     meta?: Meta["meta"]
     link?: Meta["link"]
     script?: Meta["script"]
+    lang?: string
+    dir?: Meta["dir"]
   } = {}
   if (title !== undefined) merged.title = title
   if (meta.length > 0) merged.meta = meta
   if (link.length > 0) merged.link = link
   if (script.length > 0) merged.script = script
+  if (lang !== undefined) merged.lang = lang
+  if (dir !== undefined) merged.dir = dir
   return merged as Meta
 }
 
