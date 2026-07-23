@@ -16,7 +16,7 @@ const cfgOf = (plugin: unknown): unknown => {
   return p.config()
 }
 
-test("normalizeRolldownPlugins strips optimizeDeps.rollupOptions.jsx under rolldown [#6]", () => {
+test("normalizeRolldownPlugins strips optimizeDeps.rollupOptions.jsx under rolldown", () => {
   const [wrapped] = normalizeRolldownPlugins([reactBabelPlugin()], true)
   const cfg = cfgOf(wrapped) as { optimizeDeps: { rollupOptions: Record<string, unknown> } }
   // The dead `jsx` key is gone — no more "Invalid key" warning.
@@ -27,7 +27,7 @@ test("normalizeRolldownPlugins strips optimizeDeps.rollupOptions.jsx under rolld
   expect(typeof (wrapped as { transform: unknown }).transform).toBe("function")
 })
 
-test("normalizeRolldownPlugins flattens a nested plugin array — react() returns [babel, refresh] [#6]", () => {
+test("normalizeRolldownPlugins flattens a nested plugin array — react() returns [babel, refresh]", () => {
   // The real shape: `@vitejs/plugin-react`'s `react()` returns an ARRAY of plugins, and `nifra.config.ts`
   // writes `vitePlugins = [react()]`, so the list arrives NESTED (`[[babel, refresh]]`). The earlier tests
   // only passed a flat `[plugin]`, which is why the "Invalid key jsx" warning shipped: without flattening,
@@ -47,7 +47,7 @@ test("normalizeRolldownPlugins flattens a nested plugin array — react() return
   expect("jsx" in babelCfg.optimizeDeps.rollupOptions).toBe(false)
 })
 
-test("normalizeRolldownPlugins preserves a real optimizeDeps include alongside the dropped jsx [#6]", () => {
+test("normalizeRolldownPlugins preserves a real optimizeDeps include alongside the dropped jsx", () => {
   const plugin = {
     name: "p",
     config: () => ({
@@ -64,7 +64,7 @@ test("normalizeRolldownPlugins preserves a real optimizeDeps include alongside t
   expect(cfg.optimizeDeps.rollupOptions).toEqual({ treeshake: true }) // only jsx dropped
 })
 
-test("normalizeRolldownPlugins is a no-op on non-rolldown Vite [#6]", () => {
+test("normalizeRolldownPlugins is a no-op on non-rolldown Vite", () => {
   const plugin = reactBabelPlugin()
   const result = normalizeRolldownPlugins([plugin], false)
   expect(result[0]).toBe(plugin) // same reference: untouched
@@ -72,7 +72,7 @@ test("normalizeRolldownPlugins is a no-op on non-rolldown Vite [#6]", () => {
   expect("jsx" in cfg.optimizeDeps.rollupOptions).toBe(true) // esbuild/rollup path still wants it
 })
 
-test("normalizeRolldownPlugins passes through plugins without a config hook, and async config [#6]", () => {
+test("normalizeRolldownPlugins passes through plugins without a config hook, and async config", () => {
   // No config hook → returned as-is.
   const bare = { name: "bare", transform: () => "" }
   expect(normalizeRolldownPlugins([bare], true)[0]).toBe(bare)
@@ -80,7 +80,7 @@ test("normalizeRolldownPlugins passes through plugins without a config hook, and
   expect(normalizeRolldownPlugins([false, null], true)).toEqual([false, null])
 })
 
-test("normalizeRolldownPlugins wraps an object-form config hook and preserves its order [#6]", () => {
+test("normalizeRolldownPlugins wraps an object-form config hook and preserves its order", () => {
   // Vite allows `config: { handler, order }` for hook ordering. The wrapper must keep the object shape —
   // collapsing it to a bare function would silently drop the `order`.
   const plugin = {
@@ -101,7 +101,7 @@ test("normalizeRolldownPlugins wraps an object-form config hook and preserves it
   expect("jsx" in cfg.optimizeDeps.rollupOptions).toBe(false) // jsx still stripped
 })
 
-test("normalizeRolldownPlugins handles a promise-returning config hook [#6]", async () => {
+test("normalizeRolldownPlugins handles a promise-returning config hook", async () => {
   const plugin = {
     name: "async",
     config: async () => ({ optimizeDeps: { rollupOptions: { jsx: { mode: "automatic" } } } }),

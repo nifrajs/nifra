@@ -258,7 +258,7 @@ describe("invalidation epoch (M3) + emit (Perf-6)", () => {
   // The core M3 bug: a fetch in flight when a mutation invalidates the query must NOT satisfy the
   // post-mutation refetch (its data is pre-mutation). Old behavior: refetch JOINED the in-flight
   // fetch, published its stale data as fresh, and cleared `invalidated` — the refetch never happened.
-  test("invalidateQueries during an in-flight fetch supersedes it; stale result isn't published [AUDIT M3]", async () => {
+  test("invalidateQueries during an in-flight fetch supersedes it; stale result isn't published", async () => {
     const g = gated()
     const c = createQueryClient({ now: () => 0, staleTime: 1_000_000 })
     const h = c.query(["k"], g.fn)
@@ -277,7 +277,7 @@ describe("invalidation epoch (M3) + emit (Perf-6)", () => {
     expect(h.snapshot()).toMatchObject({ status: "success", data: "FRESH" })
   })
 
-  test("no-subscriber invalidate: a late in-flight result doesn't clear the invalidation [AUDIT M3]", async () => {
+  test("no-subscriber invalidate: a late in-flight result doesn't clear the invalidation", async () => {
     const g = gated()
     const c = createQueryClient({ now: () => 0, staleTime: 1_000_000 })
     const h = c.query(["k"], g.fn) // NOT subscribed → invalidate marks stale but kicks no refetch
@@ -293,7 +293,7 @@ describe("invalidation epoch (M3) + emit (Perf-6)", () => {
     expect(await p1).toBe("FRESH")
   })
 
-  test("a superseded in-flight fetch that REJECTS doesn't publish an error [AUDIT M3]", async () => {
+  test("a superseded in-flight fetch that REJECTS doesn't publish an error", async () => {
     const g = gated()
     const c = createQueryClient({ now: () => 0, staleTime: 1_000_000 })
     const h = c.query(["k"], g.fn)
@@ -310,7 +310,7 @@ describe("invalidation epoch (M3) + emit (Perf-6)", () => {
     expect(h.snapshot()).toMatchObject({ status: "success", data: "FRESH" })
   })
 
-  test("a listener unsubscribing during notification doesn't break the emit [AUDIT Perf-6]", async () => {
+  test("a listener unsubscribing during notification doesn't break the emit", async () => {
     const g = gated()
     const c = createQueryClient({ now: () => 0 })
     const h = c.query(["k"], g.fn)

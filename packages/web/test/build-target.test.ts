@@ -62,8 +62,11 @@ afterEach(() => {
   rmSync(projectRoot, { recursive: true, force: true })
 })
 
-test("--target cf-pages → _worker.js + _routes.json + /assets bundle [#5]", async () => {
+test("--target cf-pages → _worker.js + _routes.json + /assets bundle", async () => {
   const outDir = join(projectRoot, "dist")
+  mkdirSync(join(projectRoot, "public", ".well-known", "acme-challenge"), { recursive: true })
+  writeFileSync(join(projectRoot, "public", "robots.txt"), "User-agent: *")
+  writeFileSync(join(projectRoot, "public", ".well-known", "acme-challenge", "token"), "challenge")
   const result = await buildTarget("cf-pages", {
     routesDir,
     outDir,
@@ -77,6 +80,11 @@ test("--target cf-pages → _worker.js + _routes.json + /assets bundle [#5]", as
   expect(existsSync(join(outDir, "_worker.js"))).toBe(true)
   expect(existsSync(join(outDir, "_routes.json"))).toBe(true)
   expect(existsSync(join(outDir, "assets"))).toBe(true)
+  expect(readFileSync(join(outDir, "robots.txt"), "utf8")).toBe("User-agent: *")
+  expect(readFileSync(join(outDir, ".well-known", "acme-challenge", "token"), "utf8")).toBe(
+    "challenge",
+  )
+  expect(existsSync(join(outDir, "assets", "robots.txt"))).toBe(false)
   // The client entry from the manifest lands under /assets/*.
   expect(result.client.entry).toMatch(/^\/assets\/.*\.js$/)
   const entryFile = join(outDir, "assets", result.client.entry.slice("/assets/".length))
@@ -87,6 +95,8 @@ test("--target cf-pages → _worker.js + _routes.json + /assets bundle [#5]", as
     exclude: string[]
   }
   expect(routes.exclude).toContain("/assets/*")
+  expect(routes.exclude).toContain("/robots.txt")
+  expect(routes.exclude).toContain("/.well-known/acme-challenge/token")
 
   // The scratch work dir is cleaned up.
   expect(existsSync(join(projectRoot, ".work"))).toBe(false)
@@ -96,7 +106,7 @@ test("--target cf-pages → _worker.js + _routes.json + /assets bundle [#5]", as
   expect(result.size.totalGzip).toBeGreaterThan(0)
 }, 60_000)
 
-test("--target static → prerenders opted-in routes to index.html [#5]", async () => {
+test("--target static → prerenders opted-in routes to index.html", async () => {
   const outDir = join(projectRoot, "dist-static")
   const manifest = discoverRoutes(routesDir)
   // prerenderApp is a FACTORY given the client build's manifest, so the hydration <script> uses the REAL
@@ -128,7 +138,7 @@ test("--target static → prerenders opted-in routes to index.html [#5]", async 
   expect(existsSync(join(outDir, "assets", "_nifra-entry.ts"))).toBe(false)
 }, 60_000)
 
-test("--target static with no prerenderable route throws a clear error [#5]", async () => {
+test("--target static with no prerenderable route throws a clear error", async () => {
   // Replace the opted-in route with one that doesn't opt in.
   writeFileSync(join(routesDir, "index.tsx"), "export default function Home() { return null }\n")
   const manifest = discoverRoutes(routesDir)

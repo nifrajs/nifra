@@ -29,7 +29,7 @@ const META_WITH_NODE = {
   },
 } as const
 
-test("flags only the user-imported builtin (not Bun's transitive polyfill chain) + its chunk [#4]", () => {
+test("flags only the user-imported builtin (not Bun's transitive polyfill chain) + its chunk", () => {
   const found = detectNodeBuiltins(META_WITH_NODE)
   // node:crypto is what the route imported; node:buffer is only pulled in by the crypto polyfill, so
   // it must NOT be reported (it would bury the real cause). The chain is the route → builtin path.
@@ -42,7 +42,7 @@ test("flags only the user-imported builtin (not Bun's transitive polyfill chain)
   ])
 })
 
-test("clean metafile (no node: builtins) → no findings [#4]", () => {
+test("clean metafile (no node: builtins) → no findings", () => {
   const found = detectNodeBuiltins({
     inputs: { "routes/index.tsx": { imports: [{ path: "./util.ts", original: "./util.ts" }] } },
     outputs: { "dist/index-x.js": { inputs: { "routes/index.tsx": {} } } },
@@ -50,12 +50,12 @@ test("clean metafile (no node: builtins) → no findings [#4]", () => {
   expect(found).toHaveLength(0)
 })
 
-test("undefined/empty metafile → no findings (never throws on a missing graph) [#4]", () => {
+test("undefined/empty metafile → no findings (never throws on a missing graph)", () => {
   expect(detectNodeBuiltins(undefined)).toHaveLength(0)
   expect(detectNodeBuiltins({ outputs: {} })).toHaveLength(0)
 })
 
-test("an `external` node: import (resolved path only, no `original`) is still flagged [#4]", () => {
+test("an `external` node: import (resolved path only, no `original`) is still flagged", () => {
   const found = detectNodeBuiltins({
     inputs: { "routes/page.tsx": { imports: [{ path: "node:fs" }] } },
     outputs: {
@@ -101,7 +101,7 @@ const META_DEEP_CHAIN = {
   },
 }
 
-test("includes the shortest import chain entry → … → builtin (as-written specifiers) [#5]", () => {
+test("includes the shortest import chain entry → … → builtin (as-written specifiers)", () => {
   const found = detectNodeBuiltins(META_DEEP_CHAIN)
   expect(found).toEqual([
     {
@@ -113,7 +113,7 @@ test("includes the shortest import chain entry → … → builtin (as-written s
   ])
 })
 
-test("chain BFS picks the SHORTEST path when a builtin is reachable two ways [#5]", () => {
+test("chain BFS picks the SHORTEST path when a builtin is reachable two ways", () => {
   // The route reaches node:crypto both directly AND via a longer util chain; the chain must be the
   // shortest (direct) one, not an arbitrary longer route through the graph.
   const found = detectNodeBuiltins({
@@ -144,7 +144,7 @@ test("chain BFS picks the SHORTEST path when a builtin is reachable two ways [#5
   expect(found[0]?.chain).toEqual(["routes/index.tsx", "node:crypto"])
 })
 
-test("chain BFS does NOT walk through Bun's polyfill subtree (precise, user modules only) [#5]", () => {
+test("chain BFS does NOT walk through Bun's polyfill subtree (precise, user modules only)", () => {
   // node:crypto's polyfill imports node:buffer; the chain to node:crypto must stop at node:crypto and
   // never traverse INTO the polyfill (which would lengthen/derail the path with non-user modules).
   const found = detectNodeBuiltins(META_WITH_NODE)
@@ -171,7 +171,7 @@ afterEach(() => {
   rmSync(projectRoot, { recursive: true, force: true })
 })
 
-test("buildClient throws a named error when a route imports node:crypto [#4]", async () => {
+test("buildClient throws a named error when a route imports node:crypto", async () => {
   writeFileSync(
     join(routesDir, "index.tsx"),
     'import { randomUUID } from "node:crypto"\n' +
@@ -188,7 +188,7 @@ test("buildClient throws a named error when a route imports node:crypto [#4]", a
   await expect(promise).rejects.toThrow(/server-only path/)
 })
 
-test("buildClient does NOT throw on a benign `node:` string literal (no false positive) [#4]", async () => {
+test("buildClient does NOT throw on a benign `node:` string literal (no false positive)", async () => {
   // The string mentions `node:crypto` but never imports it — minified, so any text-based check would
   // be defeated; the graph-based check sees no import edge.
   writeFileSync(

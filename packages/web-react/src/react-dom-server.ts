@@ -23,8 +23,6 @@
  * can occur, `Bun.resolveSync` exists, and no bundle marker is present.
  */
 
-import { realpathSync } from "node:fs"
-import { dirname } from "node:path"
 import type { ReactNode } from "react"
 
 /** The slice of `react-dom/server` this adapter uses. Typed locally so the dynamic import (which Bun
@@ -32,6 +30,23 @@ import type { ReactNode } from "react"
 export interface ReactDomServer {
   renderToString(node: ReactNode): string
   renderToReadableStream(node: ReactNode): Promise<ReadableStream<Uint8Array>>
+}
+
+interface RuntimeProcess {
+  getBuiltinModule?(specifier: string): unknown
+}
+
+function dirnamePortable(path: string): string {
+  const slash = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"))
+  return slash <= 0 ? "." : path.slice(0, slash)
+}
+
+function runtimeRealpath(path: string): string {
+  const runtimeProcess = (globalThis as { process?: RuntimeProcess }).process
+  const fs = runtimeProcess?.getBuiltinModule?.("node:fs") as
+    | { realpathSync?: (value: string) => string }
+    | undefined
+  return fs?.realpathSync?.(path) ?? path
 }
 
 // `globalThis.Bun` isn't in the ambient lib types; narrow exactly the one method we need so we never
@@ -97,13 +112,13 @@ type ResolveSync = (specifier: string, from: string) => string
 export function assertSingleReactCore(
   reactDomServerPath: string,
   resolve: ResolveSync,
-  realpath: (path: string) => string = realpathSync,
+  realpath: (path: string) => string = runtimeRealpath,
 ): void {
   let rendererReact: string
   let componentsReact: string
   try {
     // The `react` react-dom/server itself resolves - the core whose dispatcher the renderer sets.
-    rendererReact = realpath(resolve("react", dirname(reactDomServerPath)))
+    rendererReact = realpath(resolve("react", dirnamePortable(reactDomServerPath)))
     // The `react` the app's route components import - the core they call hooks on.
     componentsReact = realpath(resolve("react", appRoot()))
   } catch {

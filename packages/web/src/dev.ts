@@ -78,7 +78,7 @@ export interface DevServerOptions extends Omit<BuildClientOptions, "minify"> {
   readonly port?: number
   /** Directory of user-authored static files served at the root (default `"public"`). The SAME
    * option the production build copies and serves, so dev and prod cannot drift. */
-  readonly publicDir?: string
+  readonly publicDir?: string | false
   /**
    * Run the client-leak guards on each change (default `true`).
    *
@@ -246,11 +246,14 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
   const devDir = resolve(root, DEV_DIR)
   const entryPath = resolve(devDir, "entry.tsx")
   const htmlPath = resolve(devDir, "entry.html")
-  const publicDir = options.publicDir ?? "public"
+  const publicDir = options.publicDir === false ? undefined : (options.publicDir ?? "public")
   // Route dev's `public/` through the SAME handler production uses. Dev previously inherited this
   // from Vite implicitly while production had no equivalent, which is the entire bug: two code paths
   // with different defaults, so a file worked in dev and 404'd only once deployed.
-  const servePublic = servePublicDir({ dir: resolve(publicDir) })
+  const servePublic =
+    publicDir === undefined
+      ? async (): Promise<undefined> => undefined
+      : servePublicDir({ dir: resolve(publicDir) })
 
   writeDevFiles({ routesDir, clientModule, entryPath, htmlPath })
   // Importing the generated HTML is what hands it to Bun's bundler. A runtime-computed path is fine:
@@ -319,7 +322,10 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
     building = { entry: entrySrc, promise }
     void promise
       .then((next) => {
-        built = { entry: entrySrc, app: next }
+        if (building?.entry === entrySrc) {
+          built = { entry: entrySrc, app: next }
+          building = undefined
+        }
       })
       .catch(() => {
         // Clear the in-flight marker so the next request retries instead of re-awaiting a failed build.
@@ -412,20 +418,52 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
       guard?.()
     }, 60)
   }
-  // Poll the source files for changes. Bun's fs.watch is unreliable here, so watchFile (mtime
-  // polling) is used. New files need a restart to be tracked — fine for dev.
-  const watched = (options.watch ?? [routesDir]).flatMap((dir) =>
-    (readdirSync(dir, { recursive: true }) as string[])
-      .filter((file) => /\.(tsx|jsx|ts|js|mdx|svelte|vue)$/.test(file))
-      .map((file) => `${dir}/${file}`),
-  )
-  for (const file of watched) watchFile(file, { interval: 150 }, onChange)
+  // Poll file mtimes for content and rescan directory membership for add/remove. `watchFile` cannot
+  // discover a path that did not exist at startup, so the bounded topology scan owns that gap.
+  const watchRoots = options.watch ?? [routesDir]
+  const watched = new Set<string>()
+  const scan = (): Set<string> => {
+    const next = new Set<string>()
+    for (const dir of watchRoots) {
+      let files: string[]
+      try {
+        files = readdirSync(dir, { recursive: true }) as string[]
+      } catch {
+        continue
+      }
+      for (const file of files) {
+        if (/\.(tsx|jsx|ts|js|mdx|svelte|vue)$/.test(file)) next.add(`${dir}/${file}`)
+      }
+    }
+    return next
+  }
+  const syncWatchedFiles = (notify: boolean): void => {
+    const next = scan()
+    let topologyChanged = false
+    for (const file of watched) {
+      if (next.has(file)) continue
+      unwatchFile(file)
+      watched.delete(file)
+      topologyChanged = true
+    }
+    for (const file of next) {
+      if (watched.has(file)) continue
+      watched.add(file)
+      watchFile(file, { interval: 150 }, onChange)
+      topologyChanged = true
+    }
+    if (notify && topologyChanged) onChange()
+  }
+  syncWatchedFiles(false)
+  const topologyTimer = setInterval(() => syncWatchedFiles(true), 150)
+  topologyTimer.unref?.()
 
   return {
     port: server.port ?? port,
     clientEntry: CLIENT_ENTRY_PATH,
     stop: () => {
       if (timer) clearTimeout(timer)
+      clearInterval(topologyTimer)
       for (const file of watched) unwatchFile(file)
       server.stop(true)
       rmSync(devDir, { recursive: true, force: true })

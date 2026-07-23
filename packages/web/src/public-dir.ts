@@ -12,6 +12,7 @@
  * Distinct from `publicPath` in `build.ts`, which is the URL prefix for content-hashed bundle chunks.
  * The names collide and the concepts do not: `publicPath` never covers user-authored files.
  */
+import { realpath } from "node:fs/promises"
 import { normalize, resolve, sep } from "node:path"
 
 /** How long each subtree may be cached. Content-hashed bundle output can be immutable; a
@@ -29,24 +30,12 @@ export interface ServePublicDirOptions {
   /** URL prefix whose files are content-hashed and may be cached immutably (default `"/assets/"`). */
   readonly hashedPrefix?: string
   readonly cache?: PublicDirCache
+  /** Optional encoded URL-path allowlist. When present, route misses avoid a filesystem probe. */
+  readonly files?: ReadonlySet<string>
 }
 
 const IMMUTABLE = "public, max-age=31536000, immutable"
 const ONE_DAY = "public, max-age=86400"
-
-/**
- * A file's extension, or `undefined` when the last path segment has none.
- *
- * Used to skip the filesystem entirely for page routes. `/jobs/senior-engineer` has no extension and
- * cannot be a static file, so it must not cost a `stat` on every request - the static probe sits in
- * front of routing, and making every page render pay for it would be a real regression. A dotfile
- * (`.well-known/acme-challenge/x`) has no extension either and is handled by the leading-dot check.
- */
-function extensionOf(pathname: string): string | undefined {
-  const last = pathname.slice(pathname.lastIndexOf("/") + 1)
-  const dot = last.lastIndexOf(".")
-  return dot > 0 ? last.slice(dot + 1) : undefined
-}
 
 /**
  * Resolve a URL pathname to an absolute path **confined** to `root`, or `undefined` if it escapes.
@@ -83,6 +72,7 @@ export function servePublicDir(
   options: ServePublicDirOptions,
 ): (request: Request) => Promise<Response | undefined> {
   const root = resolve(options.dir)
+  const rootReal = realpath(root).catch(() => undefined)
   const hashedPrefix = options.hashedPrefix ?? "/assets/"
   const hashed = options.cache?.hashed ?? IMMUTABLE
   const assets = options.cache?.assets ?? ONE_DAY
@@ -90,11 +80,22 @@ export function servePublicDir(
   return async (request: Request): Promise<Response | undefined> => {
     if (request.method !== "GET" && request.method !== "HEAD") return undefined
     const { pathname } = new URL(request.url)
-    // No extension ⇒ cannot be a file here ⇒ no filesystem access at all.
-    if (extensionOf(pathname) === undefined) return undefined
+    // A production manifest can reject page routes without touching the filesystem.
+    if (options.files !== undefined && !options.files.has(pathname)) return undefined
     const abs = resolvePublicPath(root, pathname)
     if (abs === undefined) return undefined
-    const file = Bun.file(abs)
+    const [resolvedRoot, resolvedFile] = await Promise.all([
+      rootReal,
+      realpath(abs).catch(() => undefined),
+    ])
+    if (
+      resolvedRoot === undefined ||
+      resolvedFile === undefined ||
+      (resolvedFile !== resolvedRoot && !resolvedFile.startsWith(resolvedRoot + sep))
+    ) {
+      return undefined
+    }
+    const file = Bun.file(resolvedFile)
     if (!(await file.exists())) return undefined
     const headers = new Headers({
       "cache-control": pathname.startsWith(hashedPrefix) ? hashed : assets,

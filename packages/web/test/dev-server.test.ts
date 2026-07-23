@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { CLIENT_ENTRY_PATH, createDevServer, type DevServer } from "../src/dev.ts"
 
@@ -128,6 +128,24 @@ test("stop() removes the generated dev directory", async () => {
   dev.stop()
   server = undefined
   expect(await Bun.file(join(projectRoot, ".nifra-bun", "entry.tsx")).exists()).toBe(false)
+})
+
+test("route additions and removals regenerate the Bun client entry without restart", async () => {
+  await boot()
+  const entry = join(projectRoot, ".nifra-bun", "entry.tsx")
+  const about = join(routesDir, "about.tsx")
+  writeFileSync(about, "export default function About() { return null }\n")
+
+  for (let i = 0; i < 40 && !readFileSync(entry, "utf8").includes("routes/about.tsx"); i++) {
+    await Bun.sleep(100)
+  }
+  expect(readFileSync(entry, "utf8")).toContain("routes/about.tsx")
+
+  rmSync(about)
+  for (let i = 0; i < 40 && readFileSync(entry, "utf8").includes("routes/about.tsx"); i++) {
+    await Bun.sleep(100)
+  }
+  expect(readFileSync(entry, "utf8")).not.toContain("routes/about.tsx")
 })
 
 test("a failing app render returns the dev error overlay, not a bare 500", async () => {

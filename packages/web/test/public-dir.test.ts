@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, sep } from "node:path"
 // copyPublicDir lives in build.ts: it is build-time (Bun.Glob + node:fs) and public-dir.ts is
@@ -33,13 +33,39 @@ test("serves a public file and falls through on a miss", async () => {
   })
 })
 
-test("a path with no extension never touches the filesystem", async () => {
+test("serves nested extensionless files such as ACME challenges", async () => {
+  await withDir(async (dir) => {
+    const challengeDir = join(dir, ".well-known", "acme-challenge")
+    await mkdir(challengeDir, { recursive: true })
+    await writeFile(join(challengeDir, "token"), "challenge-body")
+    const serve = servePublicDir({ dir })
+
+    const response = await serve(get("/.well-known/acme-challenge/token"))
+    expect(response?.status).toBe(200)
+    expect(await response?.text()).toBe("challenge-body")
+  })
+})
+
+test("never follows a publicDir symlink outside the configured root", async () => {
+  await withDir(async (dir) => {
+    const root = join(dir, "public")
+    await mkdir(root)
+    await writeFile(join(dir, "secret.txt"), "TOPSECRET")
+    await symlink(join(dir, "secret.txt"), join(root, "leak.txt"))
+
+    const serve = servePublicDir({ dir: root })
+    expect(await serve(get("/leak.txt"))).toBeUndefined()
+    await expect(copyPublicDir(root, join(dir, "out"))).rejects.toThrow(/symlink/)
+  })
+})
+
+test("a precomputed public-file set rejects page routes before filesystem lookup", async () => {
   await withDir(async (dir) => {
     // A directory named like a page route. If the probe stat'd extension-less paths it could serve
     // this; more importantly, every page render would pay a stat.
     await mkdir(join(dir, "jobs"), { recursive: true })
     await writeFile(join(dir, "jobs", "index.html"), "should not be served")
-    const serve = servePublicDir({ dir })
+    const serve = servePublicDir({ dir, files: new Set(["/.well-known/acme-challenge/token"]) })
     expect(await serve(get("/jobs"))).toBeUndefined()
     expect(await serve(get("/jobs/senior-engineer"))).toBeUndefined()
   })
@@ -134,16 +160,48 @@ test("copyPublicDir mirrors the tree and reports URL paths", async () => {
     await mkdir(join(from, "fonts"), { recursive: true })
     await writeFile(join(from, "robots.txt"), "User-agent: *")
     await writeFile(join(from, "fonts", "inter.woff2"), "font")
-    await writeFile(join(from, ".well-known"), "acme")
+    await mkdir(join(from, ".well-known", "acme-challenge"), { recursive: true })
+    await writeFile(join(from, ".well-known", "acme-challenge", "token"), "acme")
 
     const copied = await copyPublicDir(from, to)
     // Dotfiles are included: `.well-known` is exactly the kind of file this exists to serve.
-    expect(copied).toEqual(["/.well-known", "/fonts/inter.woff2", "/robots.txt"])
+    expect(copied).toEqual([
+      "/.well-known/acme-challenge/token",
+      "/fonts/inter.woff2",
+      "/robots.txt",
+    ])
     expect(await Bun.file(join(to, "fonts", "inter.woff2")).text()).toBe("font")
 
     // The copied output serves through the same handler.
     const serve = servePublicDir({ dir: to })
     expect(await (await serve(get("/robots.txt")))?.text()).toBe("User-agent: *")
+    expect(await (await serve(get("/.well-known/acme-challenge/token")))?.text()).toBe("acme")
+  })
+})
+
+// The reported paths are an ALLOWLIST: the generated server entry and cf-pages `_routes.json` match a
+// request's `URL.pathname` against them by exact string. So the encoding has to be the one a browser
+// actually sends, not merely "an" encoding. `encodeURIComponent` escapes the sub-delimiters (`, @ + = &
+// ; $`) that browsers send raw, which would make every such file a production-only 404.
+test("copyPublicDir encodes URL paths the way a request URL does", async () => {
+  await withDir(async (dir) => {
+    const from = join(dir, "public")
+    const to = join(dir, "out")
+    await mkdir(from, { recursive: true })
+    const names = ["report,2026.csv", "a@b.txt", "a+b.txt", "spaced name.txt", "café.txt"]
+    for (const name of names) await writeFile(join(from, name), name)
+
+    const copied = await copyPublicDir(from, to)
+    for (const name of names) {
+      const requested = new URL(`http://x/${name}`).pathname
+      expect(copied, `${name} must be recorded as the browser requests it`).toContain(requested)
+    }
+    // And the recorded path still resolves back to the file on disk.
+    const serve = servePublicDir({ dir: to, files: new Set(copied) })
+    for (const name of names) {
+      const requested = new URL(`http://x/${name}`).pathname
+      expect(await (await serve(get(requested)))?.text()).toBe(name)
+    }
   })
 })
 

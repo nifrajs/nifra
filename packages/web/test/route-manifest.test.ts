@@ -104,7 +104,7 @@ test("an isr route on a static target reports BOTH unmet capabilities", async ()
   expect(manifest.conflicts.map((c) => c.capability).sort()).toEqual(["revalidation", "server"])
 })
 
-test("a server target has no conflicts for the same app", async () => {
+test("generated server targets do not claim revalidation without an ISR wrapper", async () => {
   const manifest = await buildRouteManifest(
     manifestOf([
       { id: "index", pattern: "/", module: mod({ prerender: true }) },
@@ -112,8 +112,16 @@ test("a server target has no conflicts for the same app", async () => {
     ]),
     { target: "bun" },
   )
-  expect(manifest.conflicts).toEqual([])
+  expect(manifest.conflicts.map((conflict) => conflict.capability)).toEqual(["revalidation"])
   expect(manifest.totals).toEqual({ static: 1, isr: 1, ssr: 0 })
+})
+
+test("an explicitly supplied ISR runtime can attest revalidation capability", async () => {
+  const manifest = await buildRouteManifest(
+    manifestOf([{ id: "feed", pattern: "/feed", module: mod({ revalidate: 30 }) }]),
+    { target: "bun", capabilities: ["server", "revalidation"] },
+  )
+  expect(manifest.conflicts).toEqual([])
 })
 
 test("with no target, behaviour is still derived but nothing is gated", async () => {

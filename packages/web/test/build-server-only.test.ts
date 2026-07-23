@@ -23,7 +23,7 @@ const clientStub = (dir: string): string => {
   return m
 }
 
-test("buildClient empties a .server module so its node: subtree stays out of the client [#2]", async () => {
+test("buildClient empties a .server module so its node: subtree stays out of the client", async () => {
   const routes = join(root, "routes")
   mkdirSync(routes, { recursive: true })
   // server-only module pulling in node:crypto

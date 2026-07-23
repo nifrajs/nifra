@@ -118,7 +118,7 @@ export function parseDevEntry(html: string): DevEntryMatch | undefined {
   // 2. Fallback: exactly one script pointing into Bun's client-asset prefix. Requiring uniqueness is what
   //    keeps this a fallback and not a guess - with two candidates there is no basis for picking one, so
   //    it declines and lets the caller raise a real error.
-  const bunScripts = tags.filter((t) => t.src !== undefined && t.src.startsWith(BUN_CLIENT_PREFIX))
+  const bunScripts = tags.filter((t) => t.src?.startsWith(BUN_CLIENT_PREFIX))
   const only = bunScripts.length === 1 ? bunScripts[0] : undefined
   if (only?.src !== undefined) return { src: only.src, styles, via: "single-bun-script" }
   return undefined

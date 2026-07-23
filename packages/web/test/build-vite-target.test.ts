@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { buildTargetVite } from "../src/build-vite.ts"
 
@@ -50,6 +50,8 @@ function scaffoldApp(): { root: string; routesDir: string; outDir: string; workD
 
 test("buildTargetVite('node') emits a runnable deploy dir that SSRs", async () => {
   const { root, routesDir, outDir, workDir } = scaffoldApp()
+  mkdirSync(join(root, "public", ".well-known", "acme-challenge"), { recursive: true })
+  writeFileSync(join(root, "public", ".well-known", "acme-challenge", "token"), "challenge")
   const result = await buildTargetVite("node", {
     routesDir,
     outDir,
@@ -71,8 +73,14 @@ test("buildTargetVite('node') emits a runnable deploy dir that SSRs", async () =
   expect(existsSync(workDir)).toBe(false)
 
   // RUN it: the generated node server serves the client asset AND SSRs the page.
-  const port = 3477
-  const proc = Bun.spawn(["bun", join(outDir, "server.js")], {
+  const reservation = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: { data() {} },
+  })
+  const port = reservation.port
+  reservation.stop(true)
+  const proc = Bun.spawn([Bun.which("node") ?? "node", join(outDir, "server.js")], {
     env: { ...process.env, PORT: String(port) },
     stdout: "pipe",
     stderr: "pipe",
@@ -97,12 +105,20 @@ test("buildTargetVite('node') emits a runnable deploy dir that SSRs", async () =
         // not up yet
       }
     }
-    expect(up, "the built node server never came up").toBe(true)
+    if (!up) {
+      proc.kill()
+      await proc.exited
+      const stderr = await new Response(proc.stderr).text()
+      throw new Error(`the built node server never came up:\n${stderr}`)
+    }
 
     // The referenced client asset is actually served from disk.
     const assetRes = await fetch(`http://127.0.0.1:${port}${result.client.entry}`)
     expect(assetRes.status).toBe(200)
     expect(assetRes.headers.get("content-type")).toContain("javascript")
+    const publicResponse = await fetch(`http://127.0.0.1:${port}/.well-known/acme-challenge/token`)
+    expect(publicResponse.status).toBe(200)
+    expect(await publicResponse.text()).toBe("challenge")
   } finally {
     proc.kill()
     await proc.exited
@@ -111,6 +127,8 @@ test("buildTargetVite('node') emits a runnable deploy dir that SSRs", async () =
 
 test("buildTargetVite('cf-pages') emits _worker.js + _routes.json (edge deploy shape)", async () => {
   const { root, routesDir, outDir, workDir } = scaffoldApp()
+  mkdirSync(join(root, "public", ".well-known", "acme-challenge"), { recursive: true })
+  writeFileSync(join(root, "public", ".well-known", "acme-challenge", "token"), "challenge")
   const result = await buildTargetVite("cf-pages", {
     routesDir,
     outDir,
@@ -122,9 +140,41 @@ test("buildTargetVite('cf-pages') emits _worker.js + _routes.json (edge deploy s
   expect(existsSync(join(outDir, "_worker.js"))).toBe(true)
   expect(existsSync(join(outDir, "_routes.json"))).toBe(true)
   expect(existsSync(join(outDir, "assets"))).toBe(true)
+  expect(readFileSync(join(outDir, ".well-known", "acme-challenge", "token"), "utf8")).toBe(
+    "challenge",
+  )
+  expect(existsSync(join(outDir, "assets", ".well-known", "acme-challenge", "token"))).toBe(false)
+  expect(readFileSync(join(outDir, "_worker.js"), "utf8")).not.toMatch(
+    /(?:from\s*|import\s*\()\s*["']node:/,
+  )
   const routes = JSON.parse(require("node:fs").readFileSync(join(outDir, "_routes.json"), "utf8"))
   // The CDN serves /assets/* directly; everything else falls through to the worker (SSR).
   expect(routes.exclude).toContain("/assets/*")
+  expect(routes.exclude).toContain("/.well-known/acme-challenge/token")
+}, 120_000)
+
+test("buildTargetVite('cf-pages') rejects a reachable node: builtin in server-only code", async () => {
+  const { root, routesDir, outDir, workDir } = scaffoldApp()
+  writeFileSync(
+    join(root, "framework.ts"),
+    `import { readFileSync } from "node:fs"
+     export const adapter = {
+       hydrationHead: () => readFileSync("/definitely-not-used-at-build-time", "utf8"),
+       renderToStream() {
+         return new ReadableStream({ start(c) { c.close() } })
+       },
+     }\n`,
+  )
+
+  await expect(
+    buildTargetVite("cf-pages", {
+      routesDir,
+      outDir,
+      workDir,
+      clientModule: join(root, "client-stub.ts"),
+      adapterImport: join(root, "framework.ts"),
+    }),
+  ).rejects.toThrow(/Node built-in\(s\) reached an edge server bundle: .*node:fs/)
 }, 120_000)
 
 test("buildTargetVite('static') prerenders opted-in routes with no server", async () => {

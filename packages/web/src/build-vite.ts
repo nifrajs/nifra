@@ -28,6 +28,7 @@ import {
   type Bundler,
   buildTargetWith,
   copyPublicDir,
+  publicEnvDefines,
   type ServerBuild,
 } from "./build.ts"
 import { discoverRoutes } from "./fs.ts"
@@ -57,17 +58,20 @@ async function loadVite(): Promise<ViteModule> {
   return (await import("vite")) as unknown as ViteModule
 }
 
-/**
- * Run a Vite build with `process.env.NODE_ENV` pinned to `mode`, restoring it after.
- *
- * The `vite build` CLI sets `NODE_ENV=production` before building; a PROGRAMMATIC `vite.build()` does not.
- * @vitejs/plugin-react reads the ambient `NODE_ENV` to pick its JSX runtime, so under an ambient
- * `NODE_ENV=test` (what `bun test` sets) it emits dev `jsxDEV` calls while our `define` makes
- * `react/jsx-dev-runtime`'s `jsxDEV` undefined - the SSR throws `jsxDEV is not a function`. Setting it here
- * for the build window is exactly what the CLI does; the restore keeps a library call from leaking a global
- * mutation into a host process (a test runner, a watch loop) that shares it.
- */
-async function withNodeEnv<T>(mode: string, run: () => Promise<T>): Promise<T> {
+// Vite derives `isProduction` from the process-global NODE_ENV even when an explicit `mode` is supplied.
+// Programmatic builds therefore have to pin it, but two overlapping calls must never observe each other's
+// mode. Serialize only this unavoidable Vite window; the previous value is captured after acquiring the
+// lock and restored before the next build starts. Rejections release the lock too.
+let nodeEnvBuildTail: Promise<void> = Promise.resolve()
+
+async function withSerializedNodeEnv<T>(mode: string, run: () => Promise<T>): Promise<T> {
+  const previousBuild = nodeEnvBuildTail
+  let release!: () => void
+  nodeEnvBuildTail = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await previousBuild
+
   const previous = process.env.NODE_ENV
   process.env.NODE_ENV = mode
   try {
@@ -77,13 +81,13 @@ async function withNodeEnv<T>(mode: string, run: () => Promise<T>): Promise<T> {
     // than assign `undefined` (which `exactOptionalPropertyTypes` rejects and which would stringify anyway).
     if (previous === undefined) delete process.env.NODE_ENV
     else process.env.NODE_ENV = previous
+    release()
   }
 }
 
 /** Options for {@link buildClientVite} — the Bun {@link BuildClientOptions} minus Bun-plugin specifics,
  * plus the Vite plugin list the app injects for its transforms. */
-export interface BuildClientViteOptions
-  extends Omit<BuildClientOptions, "plugins" | "publicEnvPrefix"> {
+export interface BuildClientViteOptions extends Omit<BuildClientOptions, "plugins"> {
   /** Vite plugins for the app's client transforms (e.g. `react()`, `vue()`). */
   readonly vitePlugins?: readonly unknown[]
   /** Vite project root (default: the parent of `routesDir`). Manifest keys are relative to it. */
@@ -147,15 +151,21 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
   // leaves it undefined → `jsxDEV is not a function` at SSR. Vite's default mode follows the ambient
   // NODE_ENV (e.g. "test" under `bun test`), so it MUST be set explicitly, not left to default.
   const mode = options.minify === false ? "development" : "production"
+  const buildEnv = (typeof Bun !== "undefined" ? Bun.env : undefined) ?? process.env
+  const publicDefines = publicEnvDefines(options.publicEnvPrefix ?? "PUBLIC_", buildEnv)
   const vite = await loadVite()
   try {
-    await withNodeEnv(mode, () =>
+    await withSerializedNodeEnv(mode, () =>
       vite.build({
         root,
         base: publicPath,
         mode,
         logLevel: "silent",
+        // Nifra owns publicDir copying so direct and target builds share symlink confinement and
+        // deploy-root placement. Vite's automatic copy would put root files inside /assets.
+        publicDir: false,
         define: {
+          ...publicDefines,
           "process.env.NODE_ENV": JSON.stringify(mode),
           ...(options.define ?? {}),
         },
@@ -194,9 +204,12 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     rmSync(entryDir, { recursive: true, force: true })
   }
 
+  const viteManifestDir = join(outDir, ".vite")
   const viteManifest = JSON.parse(
-    readFileSync(join(outDir, ".vite", "manifest.json"), "utf8"),
+    readFileSync(join(viteManifestDir, "manifest.json"), "utf8"),
   ) as ViteBuildManifest
+  // Vite's source-keyed build manifest is an internal mapping input, not a deploy artifact.
+  rmSync(viteManifestDir, { recursive: true, force: true })
   const url = (file: string): string => `${publicPath}${file}`
 
   const bootstrap = viteManifest[entryKey]
@@ -258,8 +271,9 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     for (const asset of entry.assets ?? []) assets.add(url(asset))
   }
 
-  const publicDir = options.publicDir ?? "public"
-  const publicFiles = existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
+  const publicDir = options.publicDir === false ? undefined : (options.publicDir ?? "public")
+  const publicFiles =
+    publicDir !== undefined && existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
 
   const manifest: BuildManifest = {
     entry: url(bootstrap.file),
@@ -291,6 +305,57 @@ export interface BuildServerViteOptions {
   readonly target?: "browser" | "node" | "bun"
   /** Vite project root (default: the parent of `routesDir`). */
   readonly root?: string
+}
+
+interface EdgeBundleChunk {
+  readonly type?: string
+  readonly imports?: readonly string[]
+  readonly dynamicImports?: readonly string[]
+  readonly moduleIds?: readonly string[]
+}
+
+interface EdgeBuiltinGuardContext {
+  getModuleInfo(id: string): {
+    readonly importedIds?: readonly string[]
+    readonly dynamicallyImportedIds?: readonly string[]
+  } | null
+  error(message: string): never
+}
+
+/** Fail closed if Rollup would leave a Node builtin import in a workerd/edge worker. */
+function edgeBuiltinGuard(): {
+  readonly name: string
+  generateBundle(
+    this: EdgeBuiltinGuardContext,
+    options: unknown,
+    bundle: Readonly<Record<string, EdgeBundleChunk>>,
+  ): void
+} {
+  return {
+    name: "nifra:edge-node-builtin-guard",
+    generateBundle(_options, bundle) {
+      const builtins = new Set<string>()
+      const importers = new Set<string>()
+      for (const output of Object.values(bundle)) {
+        if (output.type !== "chunk") continue
+        for (const specifier of [...(output.imports ?? []), ...(output.dynamicImports ?? [])]) {
+          if (specifier.startsWith("node:")) builtins.add(specifier)
+        }
+        for (const id of output.moduleIds ?? []) {
+          const info = this.getModuleInfo(id)
+          const imports = [...(info?.importedIds ?? []), ...(info?.dynamicallyImportedIds ?? [])]
+          if (imports.some((specifier) => specifier.startsWith("node:"))) importers.add(id)
+        }
+      }
+      if (builtins.size > 0) {
+        this.error(
+          `[nifra/web] Node built-in(s) reached an edge server bundle: ${[...builtins].sort().join(", ")}. ` +
+            `Imported by: ${[...importers].sort().join(", ") || "unknown module"}. ` +
+            "Move the import behind a Node/Bun target or replace it with an edge-compatible API.",
+        )
+      }
+    },
+  }
 }
 
 /**
@@ -331,7 +396,7 @@ export async function buildServerVite(options: BuildServerViteOptions): Promise<
   // mismatch throws `jsxDEV is not a function` at SSR (see buildClientVite for the full reasoning).
   const mode = options.minify === false ? "development" : "production"
   const vite = await loadVite()
-  await withNodeEnv(mode, () =>
+  await withSerializedNodeEnv(mode, () =>
     vite.build({
       root,
       mode,
@@ -342,6 +407,7 @@ export async function buildServerVite(options: BuildServerViteOptions): Promise<
         // no second React core). Layered after any caller define so it cannot be overridden.
         ...(options.define ?? {}),
         "process.env.NIFRA_SSR_BUNDLED": '"1"',
+        "globalThis.__NIFRA_EDGE_RUNTIME__": edge ? "true" : "false",
       },
       resolve: {
         dedupe: ["react", "react-dom"],
@@ -354,22 +420,29 @@ export async function buildServerVite(options: BuildServerViteOptions): Promise<
         minify: options.minify !== false,
         ssr: serverEntry,
         rollupOptions: {
-          // node: builtins stay external on the runtimes that provide them; on the edge (browser) a used
-          // node: builtin would be a real error, which is correct - the edge has no filesystem/crypto.
+          // Keep builtins external so Node/Bun use their native implementations. Edge builds add a
+          // generateBundle guard below, so an external specifier can never silently ship to workerd.
           external: [/^node:/],
-          // ONE self-contained `server.js`. `inlineDynamicImports` forces the ENTRY chunk to absorb every
-          // module — the app, the adapter, react/react-dom, @nifrajs/* — so no second chunk is emitted.
-          // Without it Vite splits vendor deps (react) into a separate chunk that the deploy assembly
-          // (which copies only the entry) leaves behind, and the server `ERR_MODULE_NOT_FOUND`s at boot.
-          // (Under rolldown-vite this option logs a cosmetic deprecation, silenced by `logLevel: silent`;
-          // it is still the standard Rollup way to a single-file bundle and works across Vite versions.)
+          ...(edge ? { plugins: [edgeBuiltinGuard()] } : {}),
+          // ONE self-contained `server.js`. `inlineDynamicImports` forces the ENTRY chunk to absorb
+          // every module - the app, the adapter, react/react-dom, @nifrajs/* - so no second chunk is
+          // emitted. It is NOT redundant with `ssr.noExternal`: `noExternal` decides what gets bundled,
+          // this decides how many files it lands in. Without it the `node` SSR target splits vendor deps
+          // (verified: a React app emits `assets/react-<hash>.js`), and the deploy assembly copies only
+          // the entry, so the server dies at boot with ERR_MODULE_NOT_FOUND on a path that was never
+          // written. bun/deno/edge happen not to split today, which is exactly why the node regression
+          // went unnoticed - relying on a bundler's default chunking is not a contract.
+          // (Under rolldown-vite this option logs a cosmetic deprecation, silenced by `logLevel: silent`.)
           output: { entryFileNames: "server.js", inlineDynamicImports: true },
         },
         // Bundle the app + adapter + @nifrajs/* into one self-contained worker (like Bun's eager output),
         // rather than externalizing node_modules the way a default Vite SSR build does.
         ssrEmitAssets: false,
       },
-      ssr: { noExternal: true },
+      ssr: {
+        noExternal: true,
+        ...(edge ? { target: "webworker" } : {}),
+      },
     }),
   )
 
@@ -393,6 +466,8 @@ export const viteBundler: Bundler = {
       ...(input.plugins ? { vitePlugins: input.plugins } : {}),
       ...(input.conditions ? { conditions: input.conditions } : {}),
       ...(input.define ? { define: input.define } : {}),
+      ...(input.publicDir !== undefined ? { publicDir: input.publicDir } : {}),
+      ...(input.publicEnvPrefix !== undefined ? { publicEnvPrefix: input.publicEnvPrefix } : {}),
       ...(input.root ? { root: input.root } : {}),
     }),
   buildServer: (input) =>

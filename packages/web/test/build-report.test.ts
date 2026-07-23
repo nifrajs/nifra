@@ -204,10 +204,14 @@ describe("generateServerEntry", () => {
       target: "node",
       adapterImport: "../framework.ts",
       backendImport: "../backend.ts",
+      publicFiles: ["/robots.txt", "/.well-known/acme-challenge/token"],
     })
     expect(src).toContain('import { serve } from "@nifrajs/node"')
     expect(src).toContain('import { readFile } from "node:fs/promises"')
     expect(src).toContain("await serve(")
+    expect(src).toContain('new Set(["/robots.txt","/.well-known/acme-challenge/token"])')
+    expect(src).toContain("PUBLIC_FILES.has(pathname)")
+    expect(src).toContain("new URL(filePath, STATIC_ROOT)")
   })
 
   test("deno → Deno.serve + fetch handler", () => {

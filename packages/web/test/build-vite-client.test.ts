@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { buildClientVite } from "../src/build-vite.ts"
 
@@ -75,6 +75,7 @@ test("writes manifest.json to outDir and the real chunk files exist on disk", as
     minify: false,
   })
   expect(existsSync(join(outDir, "manifest.json"))).toBe(true)
+  expect(existsSync(join(outDir, ".vite"))).toBe(false)
   // The entry URL maps back to a real emitted file (strip the /assets/ prefix → outDir-relative path).
   const entry = JSON.parse(require("node:fs").readFileSync(join(outDir, "manifest.json"), "utf8"))
     .entry as string
@@ -102,3 +103,75 @@ test("same-basename routes get distinct chunks (index.tsx + blog/index.tsx)", as
   const chunks = ids.map((id) => manifest.routes[id]?.[0])
   expect(new Set(chunks).size).toBe(2)
 }, 60_000)
+
+test("bakes in PUBLIC_* values without exposing unprefixed secrets", async () => {
+  const publicName = "PUBLIC_NIFRA_VITE_VISIBLE"
+  const secretName = "NIFRA_VITE_PRIVATE_SECRET"
+  const previousPublic = process.env[publicName]
+  const previousSecret = process.env[secretName]
+  process.env[publicName] = "vite-public-value"
+  process.env[secretName] = "vite-private-value"
+  try {
+    const { root, routesDir } = scaffold({
+      "routes/index.tsx": `export const visible = process.env.${publicName}
+        export const hidden = process.env.${secretName}
+        export default function Index() { return null }\n`,
+    })
+    const outDir = join(root, "dist", "assets")
+    await buildClientVite({
+      root,
+      routesDir,
+      outDir,
+      clientModule: join(root, "client-stub.ts"),
+      minify: false,
+    })
+    const js = [...new Bun.Glob("*.js").scanSync({ cwd: outDir })]
+      .map((file) => readFileSync(join(outDir, file), "utf8"))
+      .join("\n")
+    expect(js).toContain("vite-public-value")
+    expect(js).not.toContain("vite-private-value")
+  } finally {
+    if (previousPublic === undefined) delete process.env[publicName]
+    else process.env[publicName] = previousPublic
+    if (previousSecret === undefined) delete process.env[secretName]
+    else process.env[secretName] = previousSecret
+  }
+}, 60_000)
+
+test("concurrent production and development builds observe their own NODE_ENV", async () => {
+  const ambient = process.env.NODE_ENV
+  const production = scaffold({
+    "routes/index.tsx": "export default function Index() { return null }\n",
+  })
+  const development = scaffold({
+    "routes/index.tsx": "export default function Index() { return null }\n",
+  })
+  const seen: string[] = []
+  const observer = (label: string) => ({
+    name: `nifra:test-node-env-${label}`,
+    configResolved() {
+      seen.push(`${label}:${process.env.NODE_ENV}`)
+    },
+  })
+
+  await Promise.all([
+    buildClientVite({
+      root: production.root,
+      routesDir: production.routesDir,
+      outDir: join(production.root, "dist", "assets"),
+      clientModule: join(production.root, "client-stub.ts"),
+      vitePlugins: [observer("production")],
+    }),
+    buildClientVite({
+      root: development.root,
+      routesDir: development.routesDir,
+      outDir: join(development.root, "dist", "assets"),
+      clientModule: join(development.root, "client-stub.ts"),
+      vitePlugins: [observer("development")],
+      minify: false,
+    }),
+  ])
+
+  expect(seen.sort()).toEqual(["development:development", "production:production"])
+  expect(process.env.NODE_ENV).toBe(ambient)
+}, 120_000)

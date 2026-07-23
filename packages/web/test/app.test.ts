@@ -79,7 +79,7 @@ test("createWebApp resolves params, runs the loader, and wraps in the layout cha
   expect(html).toContain('chain=2:{"id":"42"}') // [layout, page] + loader data
 })
 
-test("createWebApp merges a _layout's meta/head into a child route's SSR <head> [#3]", async () => {
+test("createWebApp merges a _layout's meta/head into a child route's SSR <head>", async () => {
   // A _layout that exports `meta` — its tags (a sitewide preconnect/hreflang + a section title) must
   // land in the SSR <head> of every page below it, merged with the page's own meta.
   const manifest: Manifest = {
@@ -136,7 +136,7 @@ test("createWebApp merges a _layout's meta/head into a child route's SSR <head> 
   expect(head).not.toContain("Section default")
 })
 
-test("createWebApp keeps a layout's title when the page sets no title [#3]", async () => {
+test("createWebApp keeps a layout's title when the page sets no title", async () => {
   // An undefined page `title` keeps the layout's section default (nearest-wins, but the page is silent).
   const manifest: Manifest = {
     routes: [
@@ -161,7 +161,7 @@ test("createWebApp keeps a layout's title when the page sets no title [#3]", asy
   expect(html.split("<body>")[0]).toContain("<title>Marketing</title>")
 })
 
-test("createWebApp resolves MetaArgs.origin from the request host (absolute canonical) [#1]", async () => {
+test("createWebApp resolves MetaArgs.origin from the request host (absolute canonical)", async () => {
   // Item 1: a `meta(({ origin }) => …)` builds an absolute canonical from the SERVER-resolved origin
   // (scheme + host + port of the request URL), so apps no longer thread siteUrl through loader data.
   const manifest: Manifest = {

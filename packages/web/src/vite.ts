@@ -34,7 +34,9 @@ interface ViteLike {
   readonly middlewares: (req: IncomingMessage, res: ServerResponse, next: () => void) => void
   transformIndexHtml(url: string, html: string): Promise<string>
   ssrFixStacktrace(err: Error): void
-  readonly watcher: { on(event: "change", cb: (path: string) => void): void }
+  readonly watcher: {
+    on(event: "change" | "add" | "unlink", cb: (path: string) => void): void
+  }
   close(): Promise<void>
 }
 interface ViteModule {
@@ -86,6 +88,8 @@ export interface ViteDevServerOptions {
    * `true` (or the env var `CHOKIDAR_USEPOLLING=1`) to poll instead. Default: off (native events).
    */
   readonly poll?: boolean
+  /** Vite public directory. Defaults to `<root>/public`; `false` disables it. */
+  readonly publicDir?: string | false
 }
 
 export interface ViteDevServer {
@@ -269,12 +273,15 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   const port = options.port ?? DEFAULT_DEV_PORT
 
   // Codegen the client entry with Vite-servable, root-relative specifiers (e.g. `/routes/index.tsx`).
-  const manifest = discoverRoutes(routesDir)
   const toUrl = (file: string): string => `/${relative(root, `${routesDir}/${file}`)}`
-  writeFileSync(
-    resolvePath(root, DEV_ENTRY),
-    generateClientEntry(manifest, { clientModule: options.clientModule, resolve: toUrl }),
-  )
+  const writeClientEntry = (): void => {
+    const manifest = discoverRoutes(routesDir)
+    writeFileSync(
+      resolvePath(root, DEV_ENTRY),
+      generateClientEntry(manifest, { clientModule: options.clientModule, resolve: toUrl }),
+    )
+  }
+  writeClientEntry()
   const entryUrl = `/${DEV_ENTRY}`
 
   // Create our HTTP server FIRST, then hand it to Vite as the HMR WebSocket host (`hmr.server`). In
@@ -330,6 +337,7 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   )
   vite = await createServer({
     root,
+    ...(options.publicDir !== undefined ? { publicDir: options.publicDir } : {}),
     appType: "custom",
     server: {
       middlewareMode: true,
@@ -357,13 +365,22 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   // from a directory scan, which `ssrLoadModule` cannot invalidate). Module CONTENT no longer needs a
   // version counter: Vite owns SSR resolution now and re-evaluates changed modules itself, which is
   // the cache-busting the old `importQuery` was emulating against Bun's import cache.
-  vite.watcher.on("change", () => {
+  let refreshVersion = 0
+  const refreshApp = (): void => {
+    const version = ++refreshVersion
     Promise.resolve(options.createApp(entryUrl, ssrLoad))
       .then((next) => {
-        app = next
+        if (version === refreshVersion) app = next
       })
       .catch((err) => console.error("[nifra/web/vite] app re-create failed:", err))
-  })
+  }
+  vite.watcher.on("change", refreshApp)
+  for (const event of ["add", "unlink"] as const) {
+    vite.watcher.on(event, (path) => {
+      if (path.startsWith(`${routesDir}/`) || path.startsWith(`${routesDir}\\`)) writeClientEntry()
+      refreshApp()
+    })
+  }
 
   try {
     await listenOrExplain(server, port)

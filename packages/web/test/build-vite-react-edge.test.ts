@@ -113,3 +113,67 @@ test.skipIf(reactPluginPath === undefined)(
   },
   180_000,
 )
+
+// The self-contained-bundle claim, proven where it actually breaks. `buildTargetWith` copies ONE file out
+// of the work dir as the deploy entry, so a server build that code-splits leaves its vendor chunk behind
+// and the server dies at boot - never at build time. A vanilla fixture cannot show this (nothing to
+// split); a REAL vendor dep can, and did: with `inlineDynamicImports` dropped, the `node` SSR target
+// emitted `assets/react-<hash>.js` and booting `server.js` threw ERR_MODULE_NOT_FOUND on a path that was
+// never written. bun/deno/edge did not split for the same input, which is precisely why only running the
+// thing catches it.
+test.skipIf(reactPluginPath === undefined)(
+  "node: the Vite server bundle is self-contained and boots with React SSR",
+  async () => {
+    const app = scaffoldReactApp()
+    const react = ((await import(reactPluginPath as string)) as { default: () => unknown }).default
+    await buildTargetVite("node", {
+      routesDir: app.routesDir,
+      outDir: app.outDir,
+      workDir: app.workDir,
+      clientModule: "@nifrajs/web-react/client",
+      adapterImport: app.frameworkFile,
+      // biome-ignore lint/suspicious/noExplicitAny: Vite plugins ride the shared (Bun-typed) plugin slot
+      clientPlugins: [react()] as any,
+      // biome-ignore lint/suspicious/noExplicitAny: same
+      serverPlugins: [react()] as any,
+    })
+
+    const reservation = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } })
+    const port = reservation.port
+    reservation.stop(true)
+    const proc = Bun.spawn([Bun.which("node") ?? "node", join(app.outDir, "server.js")], {
+      env: { ...process.env, PORT: String(port) },
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    try {
+      let html: string | undefined
+      for (let i = 0; i < 60; i++) {
+        await Bun.sleep(250)
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/`)
+          if (res.ok) {
+            html = await res.text()
+            break
+          }
+        } catch {
+          // not up yet
+        }
+      }
+      if (html === undefined) {
+        proc.kill()
+        await proc.exited
+        throw new Error(
+          `the built node server never came up:\n${await new Response(proc.stderr).text()}`,
+        )
+      }
+      // The hook ran server-side through the single emitted file.
+      expect(html).toMatch(/edge-react-(<!-- -->)?41/)
+      expect(html).toContain('id="root"')
+    } finally {
+      proc.kill()
+      await proc.exited
+    }
+  },
+  180_000,
+)

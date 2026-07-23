@@ -1260,22 +1260,23 @@ export interface CreateWebAppOptions {
    * Strip {@link apiPrefix} from the pathname before dispatching to `api` (default `false`).
    *
    * The default suits a backend that declares FULL paths (`server().post("/api/sync", …)`), which is
-   * right when it is only ever mounted here. Set this when the backend declares its routes WITHOUT
-   * the prefix because it also runs standalone behind its own shell - external stacks
-   * are the common case. Without it every request 404s inside the backend, and the workaround
+   * right when it is only ever mounted here. Set this when the backend declares its routes WITHOUT the
+   * prefix because it also runs standalone behind its own shell, so its paths cannot carry a prefix that
+   * only exists when it is mounted. Without it every request 404s inside the backend, and the workaround
    * is a `Proxy` that rewrites each URL.
    */
   readonly apiStrip?: boolean
   /**
    * Sub-apps mounted ahead of page routing - an auth handler, a webhook receiver, a stack's routes.
    *
-   * Structural on purpose: anything with `{ path, app: { fetch } }` fits, so an external
-   * stack mounts as `mounts: stack.routes` without `@nifrajs/web` taking a dependency on it. `better-auth`
-   * is the motivating case - it is not a `backend` route, so `/api/auth/*` used to 404 silently.
+   * Structural on purpose: anything with `{ path, app: { fetch } }` fits, so a library that exposes its
+   * routes as such a list mounts as `mounts: theirRoutes` without `@nifrajs/web` taking a dependency on
+   * it. `better-auth` is the motivating case - it is not a `backend` route, so `/api/auth/*` used to 404
+   * silently.
    *
    * Tried longest-path-first and BEFORE the `api` mount, so a mount at `/api/auth` wins over a backend
-   * at `/api` no matter which was declared first. `stripPrefix` matches the same option on
-   * equivalent mount options: leave it off to pass the full path through.
+   * at `/api` no matter which was declared first. `stripPrefix` is the per-mount form of {@link apiStrip}:
+   * leave it off to pass the full path through.
    */
   readonly mounts?: ReadonlyArray<{
     readonly path: string

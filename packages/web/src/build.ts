@@ -6,7 +6,7 @@
  * runs on any runtime.
  */
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
-import { cp, mkdir } from "node:fs/promises"
+import { cp, lstat, mkdir, realpath } from "node:fs/promises"
 import { dirname, join, relative, resolve as resolvePath, sep } from "node:path"
 import { type BunPlugin, Glob } from "bun"
 import { sanitizeOutputNames } from "./chunk-names.ts"
@@ -58,7 +58,7 @@ export interface BuildClientOptions {
    * content-hashed bundle chunks and never covers files an author put on disk. The collision is a
    * real source of confusion, which is why both are spelled out here.
    */
-  readonly publicDir?: string
+  readonly publicDir?: string | false
   /**
    * Prefix that opts an environment variable into the **client** bundle (Vite/Next convention; default
    * `"PUBLIC_"`). Every var in the build environment whose name starts with this prefix is baked into
@@ -93,6 +93,22 @@ export function publicEnvDefines(
   return defines
 }
 
+/**
+ * Percent-encode one path segment exactly the way a browser encodes it into a request URL.
+ *
+ * NOT `encodeURIComponent`. That escapes the sub-delimiters `, @ + = & ; $`, which a browser sends raw -
+ * so a file named `report,2026.csv` would be recorded as `/report%2C2026.csv` while the request arrives
+ * as `/report,2026.csv`, the allowlist lookup misses, and the file 404s in production only. `encodeURI`
+ * agrees with `URL.pathname` on every character except `?` and `#`, which terminate a path and so must
+ * be escaped explicitly here.
+ */
+function encodePathSegment(segment: string): string {
+  return encodeURI(segment).replace(
+    /[?#]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  )
+}
+
 /** The built asset map — the server reads `entry` for the client script + serves `assets`. */
 /**
  * Copy `from` into `to`, returning the URL paths copied (sorted).
@@ -103,12 +119,23 @@ export function publicEnvDefines(
  */
 export async function copyPublicDir(from: string, to: string): Promise<string[]> {
   const source = resolvePath(from)
+  const sourceReal = await realpath(source)
   const copied: string[] = []
-  for await (const rel of new Glob("**/*").scan({ cwd: source, dot: true, onlyFiles: true })) {
+  for await (const rel of new Glob("**/*").scan({ cwd: source, dot: true, onlyFiles: false })) {
+    const candidate = join(source, rel)
+    const candidateStat = await lstat(candidate)
+    if (candidateStat.isSymbolicLink()) {
+      throw new Error(`[nifra/web] publicDir entry escapes its root through a symlink: ${rel}`)
+    }
+    if (!candidateStat.isFile()) continue
+    const candidateReal = await realpath(candidate)
+    if (candidateReal !== sourceReal && !candidateReal.startsWith(sourceReal + sep)) {
+      throw new Error(`[nifra/web] publicDir entry escapes its root through a symlink: ${rel}`)
+    }
     const target = join(to, rel)
     await mkdir(join(target, ".."), { recursive: true })
-    await cp(join(source, rel), target)
-    copied.push(`/${rel.split(sep).join("/")}`)
+    await cp(candidateReal, target)
+    copied.push(`/${rel.split(sep).map(encodePathSegment).join("/")}`)
   }
   return copied.sort()
 }
@@ -953,8 +980,9 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
 
   // Copy `public/` into the output next to the hashed assets. A missing directory is normal (most
   // apps have none) and must not fail the build.
-  const publicDir = options.publicDir ?? "public"
-  const publicFiles = existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
+  const publicDir = options.publicDir === false ? undefined : (options.publicDir ?? "public")
+  const publicFiles =
+    publicDir !== undefined && existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
 
   const manifest: BuildManifest = {
     entry: toUrl(bootstrap.path),
@@ -1216,6 +1244,7 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
       // of bundling, layered after any caller `define` so it can't be overridden). Unbundled Bun runtimes
       // (nifra dev/start, nifra_render) never define it, so they still re-root — the dev dual-install fix.
       "process.env.NIFRA_SSR_BUNDLED": '"1"',
+      "globalThis.__NIFRA_EDGE_RUNTIME__": edge ? "true" : "false",
     },
     minify: options.minify ?? true,
     // Lazy → one chunk per route (loaded on first request); eager → a single self-contained file.
@@ -1278,8 +1307,10 @@ export function generateServerEntry(options: {
   readonly backendImport?: string
   /** Document `<title>` passed to `createWebApp`. */
   readonly title?: string
+  /** Encoded root-relative public file paths copied into the deploy directory. */
+  readonly publicFiles?: readonly string[]
 }): string {
-  const { target, adapterImport, backendImport, title = "nifra" } = options
+  const { target, adapterImport, backendImport, title = "nifra", publicFiles = [] } = options
   if (target === "static") {
     throw new Error("[nifra/web] generateServerEntry: `static` has no server entry (SSG only)")
   }
@@ -1325,8 +1356,20 @@ export function generateServerEntry(options: {
 
   // bun / node / deno self-host AND serve the client bundle from disk (it sits next to this entry).
   lines.push(
-    "// The client bundle lives next to this entry; serve /assets/* from disk, SSR everything else.",
-    'const ASSETS = new URL("./assets/", import.meta.url)',
+    "// The client bundle and public files live next to this entry; serve only manifest-approved paths.",
+    'const STATIC_ROOT = new URL("./", import.meta.url)',
+    `const PUBLIC_FILES = new Set(${JSON.stringify(publicFiles)})`,
+    "const staticPath = (pathname: string): string | undefined => {",
+    "  if (PUBLIC_FILES.has(pathname)) return '.' + pathname",
+    '  if (!pathname.startsWith("/assets/")) return undefined',
+    '  const segments = pathname.slice(1).split("/")',
+    "  // `.` and `..` match the character class, and the path is joined onto a base URL that resolves",
+    "  // dot segments - so they are rejected explicitly rather than relying on the request URL having",
+    "  // been normalized upstream.",
+    "  const safe = (segment: string): boolean =>",
+    '    segment !== "." && segment !== ".." && /^[A-Za-z0-9._-]+$/.test(segment)',
+    "  return segments.every(safe) ? '.' + pathname : undefined",
+    "}",
     'const TYPES = { js: "text/javascript", css: "text/css", map: "application/json" }',
   )
   if (target === "bun") {
@@ -1335,12 +1378,11 @@ export function generateServerEntry(options: {
       "  port: Number(Bun.env.PORT ?? 3000),",
       "  async fetch(req) {",
       "    const { pathname } = new URL(req.url)",
-      '    if (pathname.startsWith("/assets/")) {',
-      '      const name = pathname.slice("/assets/".length)',
-      '      if (!/^[A-Za-z0-9._-]+$/.test(name)) return new Response("bad request", { status: 400 })',
-      "      const file = Bun.file(new URL(name, ASSETS))",
+      "    const filePath = staticPath(pathname)",
+      "    if (filePath !== undefined) {",
+      "      const file = Bun.file(new URL(filePath, STATIC_ROOT))",
       '      if (!(await file.exists())) return new Response("not found", { status: 404 })',
-      '      const ext = name.slice(name.lastIndexOf(".") + 1)',
+      '      const ext = pathname.slice(pathname.lastIndexOf(".") + 1)',
       '      return new Response(file, { headers: { "content-type": TYPES[ext] ?? "application/octet-stream" } })',
       "    }",
       "    return app.fetch(req)",
@@ -1359,12 +1401,11 @@ export function generateServerEntry(options: {
       "  {",
       "    async fetch(req) {",
       "      const { pathname } = new URL(req.url)",
-      '      if (pathname.startsWith("/assets/")) {',
-      '        const name = pathname.slice("/assets/".length)',
-      '        if (!/^[A-Za-z0-9._-]+$/.test(name)) return new Response("bad request", { status: 400 })',
+      "      const filePath = staticPath(pathname)",
+      "      if (filePath !== undefined) {",
       "        try {",
-      "          const body = await readFile(new URL(name, ASSETS))",
-      '          const ext = name.slice(name.lastIndexOf(".") + 1)',
+      "          const body = await readFile(new URL(filePath, STATIC_ROOT))",
+      '          const ext = pathname.slice(pathname.lastIndexOf(".") + 1)',
       '          return new Response(body, { headers: { "content-type": TYPES[ext] ?? "application/octet-stream" } })',
       "        } catch {",
       '          return new Response("not found", { status: 404 })',
@@ -1384,13 +1425,12 @@ export function generateServerEntry(options: {
     "// @ts-ignore — Deno global is present on the Deno runtime this output targets.",
     'Deno.serve({ port: Number(Deno.env.get("PORT") ?? "3000") }, async (req) => {',
     "  const { pathname } = new URL(req.url)",
-    '  if (pathname.startsWith("/assets/")) {',
-    '    const name = pathname.slice("/assets/".length)',
-    '    if (!/^[A-Za-z0-9._-]+$/.test(name)) return new Response("bad request", { status: 400 })',
+    "  const filePath = staticPath(pathname)",
+    "  if (filePath !== undefined) {",
     "    try {",
     "      // @ts-ignore — Deno.readFile is present on the Deno runtime.",
-    "      const body = await Deno.readFile(new URL(name, ASSETS))",
-    '      const ext = name.slice(name.lastIndexOf(".") + 1)',
+    "      const body = await Deno.readFile(new URL(filePath, STATIC_ROOT))",
+    '      const ext = pathname.slice(pathname.lastIndexOf(".") + 1)',
     '      return new Response(body, { headers: { "content-type": TYPES[ext] ?? "application/octet-stream" } })',
     "    } catch {",
     '      return new Response("not found", { status: 404 })',
@@ -1455,6 +1495,10 @@ export interface BuildTargetOptions {
   readonly conditions?: readonly string[]
   /** Compile-time `define` replacements layered onto both builds. */
   readonly define?: Readonly<Record<string, string>>
+  /** Project-root static directory copied to deploy root. `false` disables it. */
+  readonly publicDir?: string | false
+  /** Prefix of environment variables allowed into the client bundle (default `"PUBLIC_"`). */
+  readonly publicEnvPrefix?: string
   /** Document `<title>` for the generated server entry. */
   readonly title?: string
 }
@@ -1511,6 +1555,8 @@ export interface Bundler {
     readonly plugins?: readonly unknown[]
     readonly conditions?: readonly string[]
     readonly define?: Readonly<Record<string, string>>
+    readonly publicDir?: string | false
+    readonly publicEnvPrefix?: string
     /** Project root (Vite needs it; the Bun strategy ignores it). */
     readonly root?: string
   }): Promise<BuildManifest>
@@ -1537,6 +1583,8 @@ export const bunBundler: Bundler = {
       ...(input.plugins ? { plugins: input.plugins as BunPlugin[] } : {}),
       ...(input.conditions ? { conditions: input.conditions } : {}),
       ...(input.define ? { define: input.define } : {}),
+      ...(input.publicDir !== undefined ? { publicDir: input.publicDir } : {}),
+      ...(input.publicEnvPrefix !== undefined ? { publicEnvPrefix: input.publicEnvPrefix } : {}),
     }),
   buildServer: (input) =>
     buildServer({
@@ -1578,15 +1626,27 @@ export async function buildTargetWith(
   mkdirSync(workDir, { recursive: true })
 
   // (1) Client bundle → <outDir>/assets/* (every target ships the same hashed client bundle).
-  const client = await bundler.buildClient({
+  let client = await bundler.buildClient({
     routesDir,
     outDir: assetsDir,
     clientModule: options.clientModule,
     ...(options.clientPlugins ? { plugins: options.clientPlugins } : {}),
     ...(options.conditions ? { conditions: options.conditions } : {}),
     define: { "process.env.NODE_ENV": '"production"', ...(options.define ?? {}) },
+    publicDir: false,
+    ...(options.publicEnvPrefix !== undefined ? { publicEnvPrefix: options.publicEnvPrefix } : {}),
     root: resolvePath(dirname(routesDir)),
   })
+  const publicDir =
+    options.publicDir === false
+      ? undefined
+      : resolvePath(options.publicDir ?? join(dirname(routesDir), "public"))
+  const publicFiles =
+    publicDir !== undefined && existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
+  if (publicFiles.length > 0) {
+    client = { ...client, publicFiles }
+    writeFileSync(`${assetsDir}/manifest.json`, JSON.stringify(client, null, 2))
+  }
 
   if (target === "static") {
     if (options.prerenderApp === undefined) {
@@ -1636,6 +1696,7 @@ export async function buildTargetWith(
       adapterImport: options.adapterImport,
       ...(options.backendImport !== undefined ? { backendImport: options.backendImport } : {}),
       ...(options.title !== undefined ? { title: options.title } : {}),
+      ...(publicFiles.length > 0 ? { publicFiles } : {}),
     }),
   )
   const serverTarget = SERVER_BUILD_TARGET[target]
@@ -1657,7 +1718,11 @@ export async function buildTargetWith(
     cpSync(worker, `${outDir}/_worker.js`)
     writeFileSync(
       `${outDir}/_routes.json`,
-      `${JSON.stringify({ version: 1, include: ["/*"], exclude: ["/assets/*"] }, null, 2)}\n`,
+      `${JSON.stringify(
+        { version: 1, include: ["/*"], exclude: ["/assets/*", ...publicFiles] },
+        null,
+        2,
+      )}\n`,
     )
     run = `Cloudflare Pages → ${outDir} (deploy: wrangler pages deploy ${basename(outDir)})`
   } else if (target === "vercel") {

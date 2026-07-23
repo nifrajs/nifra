@@ -173,7 +173,7 @@ test("renderPage injects head: title override + managed (data-nifra) meta/link, 
   expect(html).not.toContain("bad key") // invalid attribute names are dropped
 })
 
-test("renderPage keeps the full standard <link> attr set (hreflang, crossorigin, …) in <head> [#4]", async () => {
+test("renderPage keeps the full standard <link> attr set (hreflang, crossorigin, …) in <head>", async () => {
   // Regression: the attribute filter is a name-shape guard, NOT a hardcoded allowlist — so every
   // standard <link> attribute (hreflang/crossorigin/media/sizes/as/integrity/fetchpriority/…) must
   // survive. A hardcoded list previously dropped hreflang/crossorigin.
@@ -474,7 +474,7 @@ test("renderPage streams __nifraReject for a deferred that rejects (no broken bo
       // mis-reports it "unhandled" at PROCESS EXIT, exiting `bun test` nonzero with 0 failures. Diagnosed
       // to a Bun runtime bug, not a code defect: it fires whenever the handled rejection is consumed
       // concurrently, and the only Bun-clean shape (sequential for-await) would regress out-of-order
-      // deferred streaming (AUDIT H1). Production is unaffected (a server never exits). See the full
+      // deferred streaming. Production is unaffected (a server never exits). See the full
       // write-up on `rejection()` in deferred.test.ts. Left as-is deliberately.
       data: {
         slow: defer(
@@ -487,12 +487,12 @@ test("renderPage streams __nifraReject for a deferred that rejects (no broken bo
     })
   ).text()
   // A rejected deferred streams __nifraReject (no broken body) — REDACTED to a stable opaque code,
-  // never the raw error text ("boom secret detail" is logged server-side, not leaked). [AUDIT H3]
+  // never the raw error text ("boom secret detail" is logged server-side, not leaked).
   expect(html).toContain('window.__nifraReject(0,"deferred_error")')
   expect(html).not.toContain("boom secret detail")
 })
 
-test("renderPage streams deferred resolutions out-of-order — a slow defer() doesn't block a fast one [AUDIT H1]", async () => {
+test("renderPage streams deferred resolutions out-of-order — a slow defer() doesn't block a fast one", async () => {
   // #0 resolves slowly, #1 quickly. The fast one's resolve script must stream FIRST (not FIFO).
   const res = await renderPage({
     adapter: stub,
@@ -529,7 +529,7 @@ test("resolveMeta: undefined → {}, static passthrough, function of data + para
   expect(meta).toEqual({ title: "id=7" })
 })
 
-test("resolveMeta: function meta builds an absolute canonical from the origin arg [#1]", () => {
+test("resolveMeta: function meta builds an absolute canonical from the origin arg", () => {
   // The Item-1 contract: a `meta(({ origin }) => …)` reads the server-resolved origin to build an
   // absolute URL without threading siteUrl through loader data.
   const meta = resolveMeta(
@@ -543,7 +543,7 @@ test("resolveMeta: function meta builds an absolute canonical from the origin ar
   expect(meta.link).toEqual([{ rel: "canonical", href: "https://news.example.com/x/9" }])
 })
 
-test("MetaArgs.origin: SSR (URL.origin) and client (location.origin) resolve an IDENTICAL head — no drift [#1]", () => {
+test("MetaArgs.origin: SSR (URL.origin) and client (location.origin) resolve an IDENTICAL head — no drift", () => {
   // The drift proof: SSR derives the origin via `new URL(req.url).origin`; the client passes
   // `location.origin`. Both are the standard `URL.origin` for the SAME page URL, so a function meta
   // re-resolves byte-identical absolute tags on a soft-nav. Model both sides off one URL.
@@ -566,7 +566,7 @@ test("MetaArgs.origin: SSR (URL.origin) and client (location.origin) resolve an 
   ])
 })
 
-test("MetaArgs.origin: a STATIC meta is origin-independent and serializes once (memo stays sound) [#1]", async () => {
+test("MetaArgs.origin: a STATIC meta is origin-independent and serializes once (memo stays sound)", async () => {
   // The memo (headTagsCache, keyed by resolved-Meta identity) must stay correct now that meta is "a
   // function of origin". A STATIC meta is an object returned by reference every request — it can't
   // depend on origin, so the same identity recurs → one cache hit, serialized once. A FUNCTION meta
@@ -596,7 +596,7 @@ test("MetaArgs.origin: a STATIC meta is origin-independent and serializes once (
   )
 })
 
-test("mergeHeads: title nearest-wins, meta/link concatenated outermost→page [#3]", () => {
+test("mergeHeads: title nearest-wins, meta/link concatenated outermost→page", () => {
   // heads order = outermost layout → … → page. title is nearest-wins (later overrides);
   // meta/link arrays concatenate in that order.
   const merged = mergeHeads([
@@ -612,7 +612,7 @@ test("mergeHeads: title nearest-wins, meta/link concatenated outermost→page [#
   ])
 })
 
-test("mergeHeads: an undefined-title page keeps the layout's title; single head is identity [#3]", () => {
+test("mergeHeads: an undefined-title page keeps the layout's title; single head is identity", () => {
   expect(mergeHeads([{ title: "Layout" }, {}]).title).toBe("Layout") // page silent → keep layout's
   const only = { title: "Solo", link: [{ rel: "canonical", href: "/" }] }
   expect(mergeHeads([only])).toBe(only) // single-head fast path returns by reference (memo-friendly)

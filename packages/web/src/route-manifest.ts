@@ -122,11 +122,11 @@ export function deriveRouteEntry(
  * distinctions it cannot verify.
  */
 const TARGET_CAPABILITIES: Readonly<Record<string, readonly RouteCapability[]>> = {
-  bun: ["server", "revalidation"],
-  node: ["server", "revalidation"],
-  deno: ["server", "revalidation"],
-  "cf-pages": ["server", "revalidation"],
-  vercel: ["server", "revalidation"],
+  bun: ["server"],
+  node: ["server"],
+  deno: ["server"],
+  "cf-pages": ["server"],
+  vercel: ["server"],
   static: [],
 }
 
@@ -149,6 +149,8 @@ export async function buildRouteManifest(
   options: {
     readonly target?: string
     readonly prerendered?: Readonly<Record<string, readonly string[]>>
+    /** Runtime capabilities supplied outside generated entries (for example an explicit `withISR`). */
+    readonly capabilities?: readonly RouteCapability[]
   } = {},
 ): Promise<RouteManifest> {
   const entries: RouteManifestEntry[] = []
@@ -162,7 +164,8 @@ export async function buildRouteManifest(
 
   const conflicts: RouteManifestConflict[] = []
   const capabilities =
-    options.target === undefined ? undefined : TARGET_CAPABILITIES[options.target]
+    options.capabilities ??
+    (options.target === undefined ? undefined : TARGET_CAPABILITIES[options.target])
   if (capabilities !== undefined) {
     for (const entry of entries) {
       for (const capability of entry.requires) {

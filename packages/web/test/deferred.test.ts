@@ -55,7 +55,7 @@ describe("defer + prepareDeferred", () => {
     expect(deferred[1]?.promise).toBe(p2)
   })
 
-  test("a plain object (no defer) is returned BY REFERENCE — no clone (structural sharing) [AUDIT Perf-8]", () => {
+  test("a plain object (no defer) is returned BY REFERENCE — no clone (structural sharing)", () => {
     // hits isDeferred's three negative branches: primitive, null-free object without the flag.
     const input = { a: 1, b: { nested: true } }
     const { forComponent, forClient, deferred } = prepareDeferred(input)
@@ -168,7 +168,7 @@ describe("defer + prepareDeferred", () => {
 // via `.then`/`await` inside the stream — but Bun mis-flags it whenever the handled promise is consumed
 // CONCURRENTLY (`Promise.all(...map(async …))`, or a floated `.then`). A strictly SEQUENTIAL `for-await`
 // is the only shape Bun doesn't flag, and switching to it would regress the deliberate out-of-order
-// deferred streaming (AUDIT H1) — a real feature traded for a cosmetic exit code, so it is NOT done. The
+// deferred streaming — a real feature traded for a cosmetic exit code, so it is NOT done. The
 // reject timing (`setTimeout` vs eager vs microtask) makes no difference; neither does a pre-attached
 // `.catch`, a process `unhandledRejection` handler, or `--unhandled-rejections=warn`. Production is
 // unaffected: a server never exits, so the exit-time report never fires. Left as-is deliberately; do not
@@ -198,7 +198,7 @@ describe("ndjsonStream (server soft-nav transport)", () => {
     const byId = new Map(lines.slice(1).map((m) => [m.i, m]))
     expect(byId.get(0)).toEqual({ i: 0, v: ["a", "b"] })
     // Rejection is data, not a stream error — and REDACTED: the opaque code, never the raw reason
-    // ("upstream failed" is logged server-side, not leaked to the client). [AUDIT H3]
+    // ("upstream failed" is logged server-side, not leaked to the client).
     expect(byId.get(1)).toEqual({ i: 1, e: "deferred_error" })
     expect(JSON.stringify(lines)).not.toContain("upstream failed")
   })
@@ -280,7 +280,7 @@ describe("parseNdjsonData (client soft-nav transport)", () => {
     expect(outcome).toBe("pending") // neither settled nor rejected (detached + GC'd, no flash)
   })
 
-  test("duplicate placeholder ids in line 1 alias one promise — neither marker leaks [AUDIT L2]", async () => {
+  test("duplicate placeholder ids in line 1 alias one promise — neither marker leaks", async () => {
     const data = (await parseNdjsonData(
       streamOf([
         { text: '{"a":{"__nifra_deferred":0},"b":{"__nifra_deferred":0}}\n' }, // same id twice
@@ -294,7 +294,7 @@ describe("parseNdjsonData (client soft-nav transport)", () => {
     expect(await data.b.promise).toBe("shared")
   })
 
-  test("removes its abort listener once the stream completes — no listener accumulation [AUDIT L3]", async () => {
+  test("removes its abort listener once the stream completes — no listener accumulation", async () => {
     const ac = new AbortController()
     let added = 0
     let removed = 0

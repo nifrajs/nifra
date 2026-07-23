@@ -91,11 +91,19 @@ export async function generateLlmsTxt(
   // 1. Project Guidelines
   let agentsMd = ""
   try {
-    if (typeof Bun !== "undefined") {
-      agentsMd = await Bun.file("AGENTS.md").text()
-    } else {
-      const fs = await import("node:fs/promises")
-      agentsMd = await fs.readFile("AGENTS.md", "utf-8")
+    // Edge bundles define this flag and dead-code-eliminate the filesystem branch. Keeping the import
+    // behind a runtime-only `typeof Bun` check is insufficient: Rollup must still emit an unresolved
+    // `node:` dependency, which workerd cannot load.
+    const edgeRuntime = (
+      globalThis as typeof globalThis & { readonly __NIFRA_EDGE_RUNTIME__?: boolean }
+    ).__NIFRA_EDGE_RUNTIME__
+    if (edgeRuntime !== true) {
+      if (typeof Bun !== "undefined") {
+        agentsMd = await Bun.file("AGENTS.md").text()
+      } else {
+        const fs = await import("node:fs/promises")
+        agentsMd = await fs.readFile("AGENTS.md", "utf-8")
+      }
     }
   } catch {
     // ignore

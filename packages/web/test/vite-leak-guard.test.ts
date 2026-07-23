@@ -151,7 +151,7 @@ test("real vite build FAILS when a server-only module reaches the client", async
 
 test("real vite build PASSES for a clean client (no false positive)", async () => {
   const result = await buildWithGuard({
-    "util.ts": "export const greet = (n) => `hi ${n}`\n",
+    "util.ts": 'export const greet = (n) => "hi " + n\n',
     "entry.ts": 'import { greet } from "./util.ts"\ndocument.title = greet("world")\n',
   })
   expect(result.error).toBeUndefined()

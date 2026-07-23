@@ -61,6 +61,22 @@ describe("createMatcher", () => {
   })
 })
 
+test("mixed-route precedence matches the core router regardless of manifest order", () => {
+  for (const routes of [
+    [
+      { routeId: "prefix", pattern: "/bar.:value" },
+      { routeId: "suffix", pattern: "/:value.foo" },
+    ],
+    [
+      { routeId: "suffix", pattern: "/:value.foo" },
+      { routeId: "prefix", pattern: "/bar.:value" },
+    ],
+  ]) {
+    const ordered = createMatcher(routes)
+    expect(ordered("/bar.foo")).toEqual({ routeId: "prefix", params: { value: "foo" } })
+  }
+})
+
 describe("createClientRouter", () => {
   const patterns = [
     { routeId: "index", pattern: "/" },
@@ -443,7 +459,7 @@ describe("createClientRouter", () => {
     }
   })
 
-  test("a submit's revalidation fetch is aborted when a navigation supersedes it [AUDIT M1]", async () => {
+  test("a submit's revalidation fetch is aborted when a navigation supersedes it", async () => {
     const realFetch = globalThis.fetch
     globalThis.fetch = (async (_url: string, _init?: RequestInit) =>
       new Response(JSON.stringify({ ok: true }), {
@@ -482,7 +498,7 @@ describe("createClientRouter", () => {
     }
   })
 
-  test("fetcher.submit aborts the fetcher's prior in-flight load [AUDIT M2]", async () => {
+  test("fetcher.submit aborts the fetcher's prior in-flight load", async () => {
     const realFetch = globalThis.fetch
     globalThis.fetch = (async (_url: string, _init?: RequestInit) =>
       new Response(JSON.stringify({ ok: true }), {
@@ -515,7 +531,7 @@ describe("createClientRouter", () => {
     }
   })
 
-  test("a fetcher load that FAILS doesn't set loadedPath — no spurious revalidation refetch [AUDIT M4]", async () => {
+  test("a fetcher load that FAILS doesn't set loadedPath — no spurious revalidation refetch", async () => {
     const realFetch = globalThis.fetch
     // A mutation POST that declares it changed /users/7 (the path whose load failed).
     globalThis.fetch = (async (_url: string, _init?: RequestInit) =>
