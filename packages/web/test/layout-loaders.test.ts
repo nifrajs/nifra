@@ -237,3 +237,155 @@ test("a layout exporting an action still fails loudly", async () => {
   )
   expect((await app.fetch(new Request("http://x/orgs/acme/projects/7"))).status).toBe(500)
 })
+
+test("a retain hint skips an unchanged layout's loader, but never a gate", async () => {
+  let rootRuns = 0
+  let gateRuns = 0
+  const app = appWith(
+    {
+      _layout: {
+        default: "root",
+        loader: () => {
+          rootRuns += 1
+          return { n: rootRuns }
+        },
+      },
+      "orgs/[org]/_layout": {
+        default: "org",
+        gate: true,
+        loader: () => {
+          gateRuns += 1
+          return { ok: true }
+        },
+      },
+    },
+    ["_layout", "orgs/[org]/_layout"],
+    [[], ["org"]],
+  )
+
+  await body(app)
+  expect([rootRuns, gateRuns]).toEqual([1, 1])
+
+  // Ask to retain BOTH. Index 0 is plain data and is skipped; index 1 is a gate and runs anyway —
+  // a guard that runs only when the client permits it is not a guard.
+  const res = await app.fetch(
+    new Request("http://x/orgs/acme/projects/7", {
+      headers: { [DATA_HEADER]: "1", "x-nifra-retain": "0,1" },
+    }),
+  )
+  expect([rootRuns, gateRuns]).toEqual([1, 2])
+
+  const envelope = (await res.json()) as { v: number; retained: number[] }
+  expect(envelope.v).toBe(1)
+  // Only the index actually honoured is reported back, so the client keeps exactly what it should.
+  expect(envelope.retained).toEqual([0])
+})
+
+test("a malformed retain hint is ignored rather than rejected", async () => {
+  let runs = 0
+  const app = appWith(
+    { _layout: { default: "root", loader: () => ({ n: ++runs }) } },
+    ["_layout"],
+    [[]],
+  )
+  const res = await app.fetch(
+    new Request("http://x/orgs/acme/projects/7", {
+      headers: { [DATA_HEADER]: "1", "x-nifra-retain": "not-a-number,-3,,99" },
+    }),
+  )
+  expect(res.status).toBe(200)
+  // Worst case of a bad hint is a loader that runs when it need not.
+  expect(runs).toBe(1)
+})
+
+/** An app with layouts at "", "a/", "a/b/" where the one at `failingDir` throws. The stub reports
+ * `chain=N`, and N tells us WHICH boundary rendered: renderError keeps only the layouts at or above
+ * the boundary's own segment, so the root boundary yields a shorter chain than a deep one. */
+const withBoundaries = (failingDir: string, errorIds: string[]) => {
+  const layoutOf = (dir: string, id: string) => ({
+    file: `${id}.tsx`,
+    load: async () =>
+      dir === failingDir
+        ? {
+            default: id,
+            loader: () => {
+              throw new Error(`layout ${dir || "root"} blew up`)
+            },
+          }
+        : { default: id },
+  })
+  return createWebApp({
+    adapter: {
+      renderToStream: (chain) => streamOf(`<p>chain=${chain.length}</p>`),
+      hydrationHead: () => "",
+    } as RenderAdapter,
+    manifest: {
+      routes: [
+        {
+          id: "page",
+          pattern: "/a/b/c",
+          layoutIds: ["_layout", "a/_layout", "a/b/_layout"],
+          layoutParams: [[], [], []],
+          errorIds,
+          file: "a/b/c.tsx",
+          load: async () => ({ default: "page" }),
+        },
+      ],
+      layouts: {
+        _layout: layoutOf("", "_layout"),
+        "a/_layout": layoutOf("a", "a/_layout"),
+        "a/b/_layout": layoutOf("a/b", "a/b/_layout"),
+      },
+      errors: Object.fromEntries(
+        errorIds.map((id) => [id, { file: `${id}.tsx`, load: async () => ({ default: id }) }]),
+      ),
+      notFound: { file: "_404.tsx", load: async () => ({ default: "nf" }) },
+    } as unknown as Manifest,
+    clientEntry: "/c.js",
+  })
+}
+
+const chainLen = async (app: {
+  fetch(r: Request): Response | Promise<Response>
+}): Promise<number> => {
+  const html = await (await app.fetch(new Request("http://x/a/b/c"))).text()
+  return Number(/chain=(\d+)/.exec(html)?.[1] ?? -1)
+}
+
+test("a layout loader's throw uses a boundary at or ABOVE its own segment", async () => {
+  // Boundaries at the root and at `a/b`. The layout at `a/` fails. The NEAREST boundary is
+  // `a/b/_error` — but rendering there would wrap the boundary in `a/b/_layout`, which sits BELOW the
+  // layout that just failed, so the root must win. chain=2 is [root layout, _error].
+  expect(await chainLen(withBoundaries("a", ["_error", "a/b/_error"]))).toBe(2)
+})
+
+test("a route error still uses the nearest boundary, unchanged", async () => {
+  // Nothing throws in a layout here, so the deepest boundary applies as it always has:
+  // chain=4 is [root, a, a/b layouts, a/b/_error].
+  const app = withBoundaries("none", ["_error", "a/b/_error"])
+  const html = await (await app.fetch(new Request("http://x/a/b/c"))).text()
+  expect(html).toContain("chain=4") // the page rendered inside all three layouts
+})
+
+test("a failing layout with a boundary at its OWN segment uses that one", async () => {
+  // `a/_error` is at the same segment as the failing `a/_layout`, so it is eligible: renderError
+  // keeps layouts at or above `a/` — chain=3 is [root, a layouts, a/_error].
+  expect(await chainLen(withBoundaries("a", ["_error", "a/_error"]))).toBe(3)
+})
+
+test("a layout can end the request with notFound()", async () => {
+  const app = appWith({ _layout: { default: "root", loader: () => notFound() } }, ["_layout"], [[]])
+  const res = await app.fetch(new Request("http://x/orgs/acme/projects/7"))
+  expect(res.status).toBe(404)
+  // The _404 page rendered — not a soft 200, the exact failure that feature exists to prevent.
+  expect(await res.text()).toContain('__NIFRA_ROUTE__="_404"')
+})
+
+test("a layout's notFound() on a soft-nav answers with the status, not a document", async () => {
+  const app = appWith({ _layout: { default: "root", loader: () => notFound() } }, ["_layout"], [[]])
+  const res = await app.fetch(
+    new Request("http://x/orgs/acme/projects/7", { headers: { [DATA_HEADER]: "1" } }),
+  )
+  expect(res.status).toBe(404)
+  expect(res.headers.get("x-nifra-status")).toBe("404")
+})

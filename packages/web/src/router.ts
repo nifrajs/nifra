@@ -53,6 +53,55 @@ export const REVALIDATE_HEADER = "x-nifra-revalidate"
  */
 export const STATUS_HEADER = "x-nifra-status"
 
+/**
+ * Layout indices a client navigation is asking the server NOT to re-run, comma separated.
+ *
+ * The client owns the decision because it holds both the old and new match plus each layout's scoped
+ * params. The server treats it as a hint and refuses to skip a `gate` regardless - a guard that runs
+ * only when the client says so is not a guard.
+ */
+export const RETAIN_HEADER = "x-nifra-retain"
+
+/**
+ * The path a client navigation is coming FROM, sent on the data-mode GET.
+ *
+ * Lets the SERVER decide which layout loaders to skip: it already knows each layout's scoped params
+ * (derived at build time), so given both paths it can tell whether a layout's own prefix changed.
+ * Doing it server-side means the client never needs the scope table, and the decision lives next to
+ * the data it is about.
+ *
+ * Sent only when the client actually holds layout data to retain, so a request without it is simply
+ * the full-chain case.
+ */
+export const NAV_FROM_HEADER = "x-nifra-from"
+
+/**
+ * The data-mode payload once a chain can carry layout data.
+ *
+ * Versioned because a prerendered `_data.json` is a static file on a CDN and outlives the deploy that
+ * wrote it: a browser running new client code can be handed an envelope written by the previous
+ * build. The reader therefore accepts BOTH the bare pre-envelope value and this shape, and decides by
+ * structure rather than by assuming the deploy was atomic.
+ */
+export interface RouteDataEnvelope {
+  readonly v: 1
+  readonly data: unknown
+  readonly layoutData?: readonly unknown[]
+  /** Indices whose loader was SKIPPED because the layout's own params did not change. The client
+   * keeps its existing value at each of these, so an unchanged layout is neither refetched nor lost. */
+  readonly retained?: readonly number[]
+}
+
+/** Recognise the envelope without mistaking a plain loader object that happens to have a `data` key. */
+export function isRouteDataEnvelope(value: unknown): value is RouteDataEnvelope {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { v?: unknown }).v === 1 &&
+    "data" in value
+  )
+}
+
 /** A URL matched against the manifest patterns: which route + its extracted params. */
 export interface RouteMatch {
   readonly routeId: string
@@ -74,6 +123,9 @@ export interface RouterState {
   /** The current URL path (used to revalidate the active loader after an action). */
   readonly path: string
   readonly data: unknown
+  /** Per-layout loader data, aligned with the matched chain's leading layout prefix. Absent when no
+   * layout in that chain has a loader. */
+  readonly layoutData?: readonly unknown[] | undefined
   /** An action's data return after a client-side submit (cleared on navigation). */
   readonly actionData?: unknown
   /** True while a navigation or submit is in flight (drives loading UI). */
@@ -272,6 +324,24 @@ const defaultFetchData: FetchRouteData = async (path, _match, signal) => {
 export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   const match = createMatcher(options.patterns)
   const fetchData = options.fetchData ?? defaultFetchData
+  /**
+   * Fetch a route's data and normalise it.
+   *
+   * The payload is either the versioned envelope (a chain with layout loaders) or the bare loader
+   * value (everything else, and every response written before layout loaders existed). Deciding by
+   * structure rather than by version-of-the-deploy is what lets a prerendered `_data.json` written by
+   * an older build be read by newer client code.
+   */
+  const loadRouteData = async (
+    path: string,
+    match: { routeId: string; params: Record<string, string> },
+    signal?: AbortSignal,
+  ): Promise<{ data: unknown; layoutData?: readonly unknown[] | undefined }> => {
+    const payload = await fetchData(path, match, signal)
+    return isRouteDataEnvelope(payload)
+      ? { data: payload.data, layoutData: payload.layoutData }
+      : { data: payload }
+  }
   const loadModule = options.loadModule
   let state = options.initial
   const listeners = new Set<() => void>()
@@ -294,13 +364,21 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   // caps memory). `status` is the staleness ledger: `invalidate` flips entries to `stale`; readers
   // refetch stale ones. Client-only — never serialized/hydrated.
   const MAX_CACHE = 50
-  const cache = new Map<string, { data: unknown; status: "fresh" | "stale" }>()
-  const cachePut = (path: string, data: unknown): void => {
+  const cache = new Map<
+    string,
+    { data: unknown; layoutData?: readonly unknown[] | undefined; status: "fresh" | "stale" }
+  >()
+  const cachePut = (
+    path: string,
+    loaded: { data: unknown; layoutData?: readonly unknown[] | undefined },
+  ): void => {
     if (!cache.has(path) && cache.size >= MAX_CACHE) {
       const oldest = cache.keys().next().value
       if (oldest !== undefined) cache.delete(oldest)
     }
-    cache.set(path, { data, status: "fresh" })
+    // The PAIR, not just the value: navigating back to a cached route must restore its layouts' data
+    // too, or they would render empty on a hit and populated on a miss.
+    cache.set(path, { data: loaded.data, layoutData: loaded.layoutData, status: "fresh" })
   }
   // Flip cached entries to stale (a no-op for paths not in the cache). Shared by `invalidate` and the
   // `X-Nifra-Revalidate` handling in `submit`.
@@ -334,14 +412,14 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     state = { ...state, pending: true }
     emit()
     try {
-      const data = await fetchData(
+      const loaded = await loadRouteData(
         state.path,
         { routeId: state.routeId, params: state.params },
         ac.signal,
       )
       if (mine !== token) return // superseded — drop the stale result
-      cachePut(state.path, data)
-      state = { ...state, data, pending: false }
+      cachePut(state.path, loaded)
+      state = { ...state, data: loaded.data, layoutData: loaded.layoutData, pending: false }
       emit()
     } catch (err) {
       if (mine === token) {
@@ -401,17 +479,17 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       fState = { ...fState, pending: true }
       fEmit()
       try {
-        const [, data] = await Promise.all([
+        const [, loaded] = await Promise.all([
           loadModule?.(matched.routeId),
-          fetchData(path, matched, ac.signal),
+          loadRouteData(path, matched, ac.signal),
         ])
         if (mine !== fToken) return // a newer load/submit on THIS fetcher superseded us
         // Record the loaded path only on SUCCESS — a thrown or superseded load must not
         // leave `loadedPath` pointing at a path this fetcher never actually showed, or a later
         // `X-Nifra-Revalidate` for it would spuriously refetch onto unexpected data.
         loadedPath = path
-        cachePut(path, data)
-        fState = { ...fState, data, pending: false }
+        cachePut(path, loaded)
+        fState = { ...fState, data: loaded.data, pending: false }
         fEmit()
       } catch (err) {
         if (mine === fToken) {
@@ -504,17 +582,23 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         // either way (cached + instant after a prefetch), so pending covers both.
         const hit = prefetched.has(path)
         const dataPromise = hit
-          ? Promise.resolve(prefetched.get(path))
-          : fetchData(path, matched, ac.signal)
+          ? Promise.resolve(
+              prefetched.get(path) as {
+                data: unknown
+                layoutData?: readonly unknown[] | undefined
+              },
+            )
+          : loadRouteData(path, matched, ac.signal)
         if (hit) prefetched.delete(path)
-        const [, data] = await Promise.all([loadModule?.(matched.routeId), dataPromise])
+        const [, loaded] = await Promise.all([loadModule?.(matched.routeId), dataPromise])
         if (mine !== token) return // a newer navigation superseded this one — drop the stale result
-        cachePut(path, data) // keep the keyed cache coherent with what we publish
+        cachePut(path, loaded) // keep the keyed cache coherent with what we publish
         state = {
           routeId: matched.routeId,
           params: matched.params,
           path,
-          data,
+          data: loaded.data,
+          layoutData: loaded.layoutData,
           actionData: undefined, // a fresh navigation has no action result
           pending: false,
         }
@@ -554,17 +638,18 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           const target = match(redirectTo)
           if (target === null)
             throw new Error(`[nifra/web] action redirect off-route: ${redirectTo}`)
-          const [, data] = await Promise.all([
+          const [, loaded] = await Promise.all([
             loadModule?.(target.routeId),
-            fetchData(redirectTo, target, ac.signal),
+            loadRouteData(redirectTo, target, ac.signal),
           ])
           if (mine !== token) return
-          cachePut(redirectTo, data)
+          cachePut(redirectTo, loaded)
           state = {
             routeId: target.routeId,
             params: target.params,
             path: redirectTo,
-            data,
+            data: loaded.data,
+            layoutData: loaded.layoutData,
             actionData: undefined,
             pending: false,
           }
@@ -582,11 +667,15 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         // out (`revalidate: false`). A server-declared revalidate of the active path overrides the
         // opt-out (the server says it changed, so stale data would be wrong). Default is to revalidate.
         const skipActive = opts?.revalidate === false && !changed.includes(state.path)
-        const data = skipActive
-          ? state.data
-          : await fetchData(state.path, { routeId: state.routeId, params: state.params }, ac.signal)
+        const loaded = skipActive
+          ? { data: state.data, layoutData: state.layoutData }
+          : await loadRouteData(
+              state.path,
+              { routeId: state.routeId, params: state.params },
+              ac.signal,
+            )
         if (mine !== token) return
-        cachePut(state.path, data) // the revalidated (or kept) data is now the cache's truth
+        cachePut(state.path, loaded) // the revalidated (or kept) data is now the cache's truth
         // Mark the OTHER changed routes stale so the next access refetches.
         markStale(changed.filter((p) => p !== state.path))
         // Reconcile: publish the revalidated data + actionData; omit `submission` (the optimistic
@@ -595,7 +684,8 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           routeId: state.routeId,
           params: state.params,
           path: state.path,
-          data,
+          data: loaded.data,
+          layoutData: loaded.layoutData,
           actionData,
           pending: false,
         }
@@ -639,15 +729,17 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       if (matched === null) return
       inflight.add(path)
       try {
-        const [, data] = await Promise.all([
+        // Unwrapped here, so a prefetched entry is the same shape `navigate` builds state from —
+        // otherwise a prefetch hit would publish an envelope where a miss publishes loader data.
+        const [, loaded] = await Promise.all([
           loadModule?.(matched.routeId),
-          fetchData(path, matched),
+          loadRouteData(path, matched),
         ])
         if (prefetched.size >= MAX_PREFETCH) {
           const oldest = prefetched.keys().next().value
           if (oldest !== undefined) prefetched.delete(oldest)
         }
-        prefetched.set(path, data)
+        prefetched.set(path, loaded)
       } catch {
         // Best-effort: a failed prefetch just means the eventual navigate fetches normally.
       } finally {

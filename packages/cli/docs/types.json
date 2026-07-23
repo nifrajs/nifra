@@ -5134,6 +5134,13 @@
     "signature": "export interface ISROptions {\n    readonly store: CacheStore;\n    /** Default freshness window (**seconds**) for a cached page; older ⇒ stale (served, regenerated\n     * behind). A route overrides it per-page via `export const revalidate` (surfaced as the\n     * `x-nifra-isr-revalidate` response header). */\n    readonly revalidate: number;\n    /** Monotonic clock (ms) — injected for testability; production passes `() => Date.now()`. */\n    readonly now: () => number;\n    /** Cache key for a request. Default: `origin + pathname + search` so host-routed apps do not share\n     * entries across tenants. Return `null` to bypass the cache for this request (it goes straight to the\n     * app, uncached). */\n    readonly key?: (req: Request) => string | null;\n    /** Draft/preview secret (the same one given to `createWebApp({ draftSecret })` + `enableDraft`). When\n     * set, a request carrying a valid signed draft cookie **bypasses the cache** — editors always render\n     * fresh, and a draft render is never written to the store (it can't poison the public cache). */\n    readonly draftSecret?: string;\n}"
   },
   {
+    "name": "isRouteDataEnvelope",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function isRouteDataEnvelope(value: unknown): value is RouteDataEnvelope;",
+    "doc": "/** Recognise the envelope without mistaking a plain loader object that happens to have a `data` key. */"
+  },
+  {
     "name": "ISRPlatform",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -5412,6 +5419,13 @@
     "kind": "interface",
     "package": "@nifrajs/middleware",
     "signature": "export interface LanguageOptions<L extends readonly string[]> {\n    readonly supported: L;\n    readonly defaultLanguage: L[number];\n    /** Emit `Content-Language`. Default `true`. */\n    readonly header?: boolean;\n}"
+  },
+  {
+    "name": "LAYOUT_DATA_GLOBAL",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const LAYOUT_DATA_GLOBAL = \"__NIFRA_LAYOUT_DATA__\";",
+    "doc": "/** Per-layout loader data for hydration. Emitted ONLY when some layout in the chain has a loader, so\n * a page-only app's HTML is byte-identical to before layout loaders existed. */"
   },
   {
     "name": "LayoutEntry",
@@ -6380,6 +6394,13 @@
     "package": "@nifrajs/middleware",
     "signature": "export declare function namedCombine(name: string, ...items: readonly Composable[]): NifraPlugin;",
     "doc": "/** Compose middleware/plugins into one idempotent named bundle. */"
+  },
+  {
+    "name": "NAV_FROM_HEADER",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const NAV_FROM_HEADER = \"x-nifra-from\";",
+    "doc": "/**\n * The path a client navigation is coming FROM, sent on the data-mode GET.\n *\n * Lets the SERVER decide which layout loaders to skip: it already knows each layout's scoped params\n * (derived at build time), so given both paths it can tell whether a layout's own prefix changed.\n * Doing it server-side means the client never needs the scope table, and the decision lives next to\n * the data it is about.\n *\n * Sent only when the client actually holds layout data to retain, so a request without it is simply\n * the full-chain case.\n */"
   },
   {
     "name": "Navigate",
@@ -8479,6 +8500,13 @@
     "doc": "/**\n * Re-emit a committed server-manifest from a freshly-discovered route tree, PRESERVING its baked\n * client-asset references (`clientEntry` / `styles` / `routeStyles`) and its eager-vs-lazy shape. This is\n * what makes `nifra sync-manifest` a route-table refresh (renamed / added / removed routes) that does NOT\n * need a full build. It deliberately does NOT rebuild the client bundle: a brand-new HYDRATING route still\n * needs a full build so its client chunk exists - this only re-syncs the server manifest's route table.\n * Pure: `source` + the discovered `manifest` in, new source out.\n */"
   },
   {
+    "name": "RETAIN_HEADER",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const RETAIN_HEADER = \"x-nifra-retain\";",
+    "doc": "/**\n * Layout indices a client navigation is asking the server NOT to re-run, comma separated.\n *\n * The client owns the decision because it holds both the old and new match plus each layout's scoped\n * params. The server treats it as a hint and refuses to skip a `gate` regardless - a guard that runs\n * only when the client says so is not a guard.\n */"
+  },
+  {
     "name": "RetryPolicy",
     "kind": "interface",
     "package": "@nifrajs/jobs",
@@ -8602,6 +8630,13 @@
     "package": "@nifrajs/core",
     "signature": "export type RouteConfigErrorCode = \"DUPLICATE_ROUTE\" | \"DUPLICATE_PARAM\" | \"PARAM_NAME_CONFLICT\" | \"INVALID_PATH\" | \"INVALID_PARAM_NAME\" | \"WILDCARD_NOT_LAST\" | \"INVALID_METHOD\" | \"INVALID_ASSURANCE\" | \"INVALID_IDEMPOTENCY\";",
     "doc": "/** Stable codes for boot-time (L2) route configuration failures. */"
+  },
+  {
+    "name": "RouteDataEnvelope",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface RouteDataEnvelope {\n    readonly v: 1;\n    readonly data: unknown;\n    readonly layoutData?: readonly unknown[];\n    /** Indices whose loader was SKIPPED because the layout's own params did not change. The client\n     * keeps its existing value at each of these, so an unchanged layout is neither refetched nor lost. */\n    readonly retained?: readonly number[];\n}",
+    "doc": "/**\n * The data-mode payload once a chain can carry layout data.\n *\n * Versioned because a prerendered `_data.json` is a static file on a CDN and outlives the deploy that\n * wrote it: a browser running new client code can be handed an envelope written by the previous\n * build. The reader therefore accepts BOTH the bare pre-envelope value and this shape, and decides by\n * structure rather than by assuming the deploy was atomic.\n */"
   },
   {
     "name": "RouteDescriptor",
@@ -8752,7 +8787,7 @@
     "name": "RouterState",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RouterState {\n    readonly routeId: string;\n    readonly params: Record<string, string>;\n    /** The current URL path (used to revalidate the active loader after an action). */\n    readonly path: string;\n    readonly data: unknown;\n    /** An action's data return after a client-side submit (cleared on navigation). */\n    readonly actionData?: unknown;\n    /** True while a navigation or submit is in flight (drives loading UI). */\n    readonly pending: boolean;\n    /** The path a navigation is transitioning TO while `pending` (cleared when it settles). Lets a\n     * `NavLink` know whether its own `to` is the one loading; `undefined` when idle. */\n    readonly pendingPath?: string | undefined;\n    /** The in-flight submit (set during a `submit`, cleared when it settles) — for optimistic UI. */\n    readonly submission?: Submission;\n}",
+    "signature": "export interface RouterState {\n    readonly routeId: string;\n    readonly params: Record<string, string>;\n    /** The current URL path (used to revalidate the active loader after an action). */\n    readonly path: string;\n    readonly data: unknown;\n    /** Per-layout loader data, aligned with the matched chain's leading layout prefix. Absent when no\n     * layout in that chain has a loader. */\n    readonly layoutData?: readonly unknown[] | undefined;\n    /** An action's data return after a client-side submit (cleared on navigation). */\n    readonly actionData?: unknown;\n    /** True while a navigation or submit is in flight (drives loading UI). */\n    readonly pending: boolean;\n    /** The path a navigation is transitioning TO while `pending` (cleared when it settles). Lets a\n     * `NavLink` know whether its own `to` is the one loading; `undefined` when idle. */\n    readonly pendingPath?: string | undefined;\n    /** The in-flight submit (set during a `submit`, cleared when it settles) — for optimistic UI. */\n    readonly submission?: Submission;\n}",
     "doc": "/** The router's observable state. A new object is published on every transition. */"
   },
   {

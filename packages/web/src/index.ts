@@ -43,6 +43,7 @@ import {
   DATA_HEADER,
   PRERENDERED_GLOBAL,
   REDIRECT_HEADER,
+  RETAIN_HEADER,
   REVALIDATE_HEADER,
   STATUS_HEADER,
   type Submission,
@@ -274,6 +275,9 @@ export interface RenderAdapter {
 
 /** Global the server serializes loader data into; the client reads it to hydrate. */
 export const DATA_GLOBAL = "__NIFRA_DATA__"
+/** Per-layout loader data for hydration. Emitted ONLY when some layout in the chain has a loader, so
+ * a page-only app's HTML is byte-identical to before layout loaders existed. */
+export const LAYOUT_DATA_GLOBAL = "__NIFRA_LAYOUT_DATA__"
 
 /** Global the server writes the matched route id into; the client uses it to pick the chain. */
 export const ROUTE_GLOBAL = "__NIFRA_ROUTE__"
@@ -458,9 +462,29 @@ export function renderPageResult(options: RenderPageOptions): MaybePromise<Rende
   // also `defer()` — split it too, continuing the id space so a single registry settles both. The
   // inline registry runtime is emitted only when something defers, so non-deferred output is unchanged.
   const { forComponent, forClient, deferred } = prepareDeferred(data)
+  // Each layout's data is split in turn, each continuing the id space, so a `defer()` in a layout
+  // settles through the SAME registry as the page's rather than colliding on ids.
+  const layoutSplits: Array<ReturnType<typeof prepareDeferred>> = []
+  if (options.layoutData !== undefined) {
+    let offset = deferred.length
+    for (const entry of options.layoutData) {
+      const split = prepareDeferred(entry, offset)
+      offset += split.deferred.length
+      layoutSplits.push(split)
+    }
+  }
+  const layoutDeferred = layoutSplits.flatMap((split) => split.deferred)
   const actionSplit =
-    actionData === undefined ? undefined : prepareDeferred(actionData, deferred.length)
-  const allDeferred = actionSplit ? [...deferred, ...actionSplit.deferred] : deferred
+    actionData === undefined
+      ? undefined
+      : prepareDeferred(actionData, deferred.length + layoutDeferred.length)
+  const allDeferred = [...deferred, ...layoutDeferred, ...(actionSplit ? actionSplit.deferred : [])]
+  // Omitted entirely when no layout has a loader — a page-only app emits exactly what it did before.
+  const layoutTail =
+    options.layoutData === undefined
+      ? ""
+      : `window.${LAYOUT_DATA_GLOBAL}=${serializeData(layoutSplits.map((split) => split.forClient))};`
+
   // Only emit the action global when an action actually ran, so plain GET output is unchanged.
   const action =
     actionSplit === undefined
@@ -516,7 +540,7 @@ export function renderPageResult(options: RenderPageOptions): MaybePromise<Rende
     islandTags += `<script type="module" src="${escapeAttr(src)}"></script>`
   const tailHtml = `${
     hydrate
-      ? `<script>${route}${action}${prerendered}window.${DATA_GLOBAL}=${serializeData(forClient)}</script><script type="module" src="${escapeAttr(clientEntry)}"></script>`
+      ? `<script>${route}${action}${prerendered}${layoutTail}window.${DATA_GLOBAL}=${serializeData(forClient)}</script><script type="module" src="${escapeAttr(clientEntry)}"></script>`
       : ""
   }${islandTags}</body></html>`
   const headers: Record<string, string> = { "content-type": "text/html; charset=utf-8" }
@@ -541,7 +565,9 @@ export function renderPageResult(options: RenderPageOptions): MaybePromise<Rende
     ...(options.params !== undefined ? { params: options.params } : {}),
     ...(options.path !== undefined ? { path: options.path } : {}),
     // Spread only when present, so a page-only render produces exactly the props it did before.
-    ...(options.layoutData !== undefined ? { layoutData: options.layoutData } : {}),
+    ...(options.layoutData !== undefined
+      ? { layoutData: layoutSplits.map((split) => split.forComponent) }
+      : {}),
   }
 
   // Fast path: nothing `defer()`s and the adapter can render synchronously to a string → buffer the
@@ -841,6 +867,30 @@ function scopeParams(
 }
 
 const EMPTY_LAYOUT_PARAMS: Record<string, string> = Object.freeze({})
+
+const EMPTY_RETAIN: ReadonlySet<number> = new Set<number>()
+
+/**
+ * Marks an error as coming from a LAYOUT loader, carrying that layout's id.
+ *
+ * The boundary that catches it must be at or above the failing layout's own segment. The route's
+ * innermost `_error` may live BELOW the layout that failed, and rendering there would wrap the
+ * boundary in a layout whose data never arrived - so the page would render inside a component that
+ * threw. A registry symbol, matching the other cross-module brands here.
+ */
+const LAYOUT_ERROR_ID = Symbol.for("nifra.web.layout-error-id")
+
+const tagLayoutError = (err: unknown, layoutId: string): unknown => {
+  if (typeof err === "object" && err !== null && !(LAYOUT_ERROR_ID in err)) {
+    Object.defineProperty(err, LAYOUT_ERROR_ID, { value: layoutId, enumerable: false })
+  }
+  return err
+}
+
+const layoutErrorId = (err: unknown): string | undefined =>
+  typeof err === "object" && err !== null
+    ? ((err as Record<symbol, unknown>)[LAYOUT_ERROR_ID] as string | undefined)
+    : undefined
 
 const STATUS_SIGNAL = Symbol.for("nifra.web.status-signal")
 
@@ -1411,41 +1461,87 @@ export function createWebApp<Env = unknown>(
    * Each layout receives only the params it OWNS ({@link RouteEntry.layoutParams}), not the route's
    * full set, so a layout at `orgs/[org]/` cannot read a param belonging to a route below it.
    */
+  /**
+   * Layout indices a client navigation asked to keep, from {@link RETAIN_HEADER}.
+   *
+   * The CLIENT decides retainability: it knows each layout's scoped params (shipped in the bootstrap)
+   * and both the old and new match, so it can tell whether a layout's own prefix changed - without the
+   * server re-matching a path the client already matched.
+   *
+   * It is a HINT, not an instruction. The client is asking to keep data it already holds, which is
+   * harmless for data and unacceptable for a guard, so `runLayoutChain` refuses to skip a gate no
+   * matter what arrives here. Anything unparseable is ignored rather than rejected: the worst case of
+   * a bad hint is a loader that runs when it need not.
+   */
+  const retainedIndices = (header: string | null): ReadonlySet<number> => {
+    if (header === null || header === "") return EMPTY_RETAIN
+    const out = new Set<number>()
+    for (const part of header.split(",")) {
+      // Digits only. `Number("")` is 0 and `Number(" ")` is 0, so a stray comma would otherwise read
+      // as "retain index 0" and silently skip the outermost layout.
+      if (!/^\d+$/.test(part)) continue
+      out.add(Number(part))
+    }
+    return out
+  }
+
   const runLayoutChain = async (
     route: RouteEntry,
     ctx: LoaderContext,
+    retain: ReadonlySet<number> = new Set(),
   ): Promise<{
     readonly modules: LoadedLayoutModules
     readonly layoutData: readonly unknown[] | undefined
+    readonly retained: readonly number[]
     readonly pending: Promise<unknown>
   }> => {
     const modules = await loadLayoutModules(route)
     if (!modules.some((m) => m.loader !== undefined)) {
       // Nothing to run: no array is produced, so a page-only app serializes nothing extra and its
       // HTML is byte-identical to before this feature.
-      return { modules, layoutData: undefined, pending: Promise.resolve() }
+      return { modules, layoutData: undefined, retained: [], pending: Promise.resolve() }
     }
     const results: unknown[] = new Array(modules.length).fill(null)
+    const retained: number[] = []
     const pending: Array<Promise<void>> = []
     for (let i = 0; i < modules.length; i++) {
       const loader = modules[i]?.loader
       if (loader === undefined) continue
+      // Unchanged scope: the client keeps what it has. A GATE is never skipped - it is a guard, and a
+      // guard that only runs when the URL prefix changed is not a guard.
+      if (retain.has(i) && modules[i]?.gate !== true) {
+        retained.push(i)
+        continue
+      }
       const scoped: LoaderContext = {
         ...ctx,
         params: scopeParams(ctx.params, route.layoutParams?.[i]),
       }
       if (modules[i]?.gate === true) {
         // Blocking: awaited here, so a throw propagates before anything deeper is started.
-        results[i] = await loader(scoped)
+        try {
+          results[i] = await loader(scoped)
+        } catch (err) {
+          throw tagLayoutError(err, route.layoutIds[i] as string)
+        }
         continue
       }
+      const layoutId = route.layoutIds[i] as string
+      const index = i
+      // The loader is invoked INSIDE the async function, not before it. `Promise.resolve(loader(x))`
+      // would let a synchronously-throwing loader escape past the rejection handler entirely - the
+      // exception happens while evaluating the argument, before any promise exists to reject.
       pending.push(
-        Promise.resolve(loader(scoped)).then((value) => {
-          results[i] = value
-        }),
+        (async () => {
+          try {
+            results[index] = await loader(scoped)
+          } catch (err) {
+            throw tagLayoutError(err, layoutId)
+          }
+        })(),
       )
     }
-    return { modules, layoutData: results, pending: Promise.all(pending) }
+    return { modules, layoutData: results, retained, pending: Promise.all(pending) }
   }
 
   // Build a route's render chain + its merged `<head>` from the already-loaded layout modules + the
@@ -1468,6 +1564,26 @@ export function createWebApp<Env = unknown>(
   // Dir a special-file id lives in: `_error`→"" , `a/b/_error`→"a/b" (and likewise for `_layout`).
   const dirOfId = (id: string, suffix: string): string =>
     id === suffix ? "" : id.slice(0, id.length - suffix.length - 1)
+
+  /**
+   * Choose the `_error` boundary for a failure, respecting where a LAYOUT loader failed.
+   *
+   * A route error uses the nearest boundary, as it always has. A layout error must not: the nearest
+   * boundary can sit BELOW the layout that threw, and rendering there would wrap the boundary in that
+   * very layout - the one whose loader just failed and whose data therefore never arrived.
+   */
+  const boundaryFor = (route: RouteEntry, err: unknown): string | undefined => {
+    const ids = route.errorIds ?? []
+    const failing = layoutErrorId(err)
+    if (failing === undefined) return ids.at(-1)
+    const layoutDir = dirOfId(failing, "_layout")
+    // Deepest boundary at or ABOVE the failing layout's directory.
+    for (let i = ids.length - 1; i >= 0; i--) {
+      const errDir = dirOfId(ids[i] as string, "_error")
+      if (errDir === "" || errDir === layoutDir || layoutDir.startsWith(`${errDir}/`)) return ids[i]
+    }
+    return undefined
+  }
 
   // The request's origin (scheme + host + port, NO trailing slash) — the one server fact `meta()` needs
   // for absolute `canonical`/`og:url`/`og:image` but can't otherwise see (it also runs on the client).
@@ -1622,6 +1738,7 @@ export function createWebApp<Env = unknown>(
       let data: unknown
       let layoutData: readonly unknown[] | undefined
       let layoutModules: LoadedLayoutModules | undefined
+      let layoutRetained: readonly number[] = []
       try {
         const ctx = {
           params: c.params,
@@ -1638,8 +1755,13 @@ export function createWebApp<Env = unknown>(
         // `runLayoutChain` returns once every GATE has resolved, with the non-gate loaders still in
         // flight. So the page loader starts as late as correctness requires and as early as speed
         // allows, and both are awaited together below.
-        const run = await runLayoutChain(route, ctx)
+        const run = await runLayoutChain(
+          route,
+          ctx,
+          retainedIndices(c.req.headers.get(RETAIN_HEADER)),
+        )
         layoutModules = run.modules
+        layoutRetained = run.retained
         const [pageData] = await Promise.all([
           mod.loader ? mod.loader(ctx) : null,
           run.pending, // a non-gate layout loader that rejects must still surface, not go unhandled
@@ -1663,7 +1785,7 @@ export function createWebApp<Env = unknown>(
             // A faulty reporter must never break error rendering.
           }
         }
-        const errorId = route.errorIds?.at(-1)
+        const errorId = boundaryFor(route, err)
         if (errorId === undefined) throw err
         // A soft-nav data fetch can't render a boundary — 500 so the client falls back to a full-page
         // navigation, which lands here as a document and renders the `_error` page.
@@ -1681,7 +1803,15 @@ export function createWebApp<Env = unknown>(
       // same auth — only the transport differs.
       if (c.req.headers.get(DATA_HEADER) !== null) {
         const { forClient, deferred } = prepareDeferred(data)
-        if (deferred.length === 0) return Response.json(data ?? null)
+        // Bare value when there is no layout data — the pre-envelope shape, so a client running older
+        // code against a newer server keeps working.
+        if (deferred.length === 0) {
+          return Response.json(
+            layoutData === undefined
+              ? (data ?? null)
+              : { v: 1, data: data ?? null, layoutData, retained: layoutRetained },
+          )
+        }
         return new Response(ndjsonStream(forClient, deferred), {
           headers: { "content-type": "application/x-ndjson; charset=utf-8" },
         })
@@ -1730,7 +1860,7 @@ export function createWebApp<Env = unknown>(
             // A faulty reporter must never break error rendering.
           }
         }
-        const errorId = route.errorIds?.at(-1)
+        const errorId = boundaryFor(route, err)
         if (errorId === undefined) throw err
         return renderError(route, errorId, withDuplicateInstanceHint(err))
       }
@@ -1951,6 +2081,8 @@ export function generateClientEntry(
     // page reading the search string would hydrate-mismatch. The #hash is client-only (never SSR'd).
     "  path: location.pathname + location.search,",
     `  data: mapDeferred(window.${DATA_GLOBAL}),`,
+    // Undefined on a page-only app, which is exactly what the router treats as "no layout data".
+    `  layoutData: window.${LAYOUT_DATA_GLOBAL} && window.${LAYOUT_DATA_GLOBAL}.map(mapDeferred),`,
     // actionData (only set after a form POST) is in the initial state so the binding hydrates
     // consistently with the server-rendered markup; mapped through `mapDeferred` too so a deferred
     // action's placeholders become registry markers (a no-op when the action didn't defer).

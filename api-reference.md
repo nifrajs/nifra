@@ -2174,6 +2174,8 @@ Every public export of every package and documented subpath — name, kind, sign
 - **KVCacheStoreOptions** _(interface)_ — `interface KVCacheStoreOptions`
 - **KVNamespaceLike** _(interface)_ — `interface KVNamespaceLike`
   Minimal structural shape of a Cloudflare Workers **KV namespace** binding — just the three methods {@link KVCacheStore} uses. Structural (not a dependency on `@cloudflare/workers-types`) so any KV-like binding satisfies it and tests can pass an in-memory double.
+- **LAYOUT_DATA_GLOBAL** _(const)_ — `LAYOUT_DATA_GLOBAL: "__NIFRA_LAYOUT_DATA__"`
+  Per-layout loader data for hydration. Emitted ONLY when some layout in the chain has a loader, so a page-only app's HTML is byte-identical to before layout loaders existed.
 - **LayoutEntry** _(interface)_ — `interface LayoutEntry`
   A layout (or `_404`/`_error`) entry: its source file (for client codegen) + a lazy loader.
 - **LinkDescriptor** _(interface)_ — `interface LinkDescriptor`
