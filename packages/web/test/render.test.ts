@@ -470,9 +470,12 @@ test("renderPage streams __nifraReject for a deferred that rejects (no broken bo
     await renderPage({
       adapter: stub,
       chain: [null],
-      // Reject on a LATER macrotask, after the render pipeline attached its handlers. An eager
-      // rejection raced Bun's unhandled-rejection reporter under full-suite load (a pre-armed no-op
-      // handler covers the original promise, but not the pipeline's derived promises).
+      // The rejection IS handled (streamDocument redacts it to `__nifraReject` — asserted below), but Bun
+      // mis-reports it "unhandled" at PROCESS EXIT, exiting `bun test` nonzero with 0 failures. Diagnosed
+      // to a Bun runtime bug, not a code defect: it fires whenever the handled rejection is consumed
+      // concurrently, and the only Bun-clean shape (sequential for-await) would regress out-of-order
+      // deferred streaming (AUDIT H1). Production is unaffected (a server never exits). See the full
+      // write-up on `rejection()` in deferred.test.ts. Left as-is deliberately.
       data: {
         slow: defer(
           new Promise<never>((_, reject) => {

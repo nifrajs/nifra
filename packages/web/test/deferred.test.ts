@@ -160,11 +160,19 @@ describe("defer + prepareDeferred", () => {
   })
 })
 
-// A rejection that settles on a LATER macrotask, after the deferred pipeline has attached its
-// handlers. An eagerly-rejected promise raced Bun's unhandled-rejection reporter under full-suite
-// load (a pre-armed no-op handler covers the original promise, but not the pipeline's derived
-// promises) — exiting the run nonzero with 0 test failures. Rejecting after attachment removes the
-// unhandled window entirely; the stream still waits for settlement, so assertions are unchanged.
+// A rejecting deferred. `ndjsonStream` handles it correctly (redacts, streams the opaque code — the
+// assertions below prove it), but Bun still reports the rejection "unhandled" at PROCESS EXIT, which
+// makes `bun test` exit nonzero with 0 test failures.
+//
+// This was diagnosed to a Bun runtime bug, NOT a code defect (2026-07-24): the rejection IS handled —
+// via `.then`/`await` inside the stream — but Bun mis-flags it whenever the handled promise is consumed
+// CONCURRENTLY (`Promise.all(...map(async …))`, or a floated `.then`). A strictly SEQUENTIAL `for-await`
+// is the only shape Bun doesn't flag, and switching to it would regress the deliberate out-of-order
+// deferred streaming (AUDIT H1) — a real feature traded for a cosmetic exit code, so it is NOT done. The
+// reject timing (`setTimeout` vs eager vs microtask) makes no difference; neither does a pre-attached
+// `.catch`, a process `unhandledRejection` handler, or `--unhandled-rejections=warn`. Production is
+// unaffected: a server never exits, so the exit-time report never fires. Left as-is deliberately; do not
+// "fix" it by sequentializing the stream.
 function rejection(message: string): Promise<never> {
   return new Promise((_, reject) => {
     setTimeout(() => reject(new Error(message)), 1)
