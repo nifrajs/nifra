@@ -926,6 +926,13 @@
     "doc": "/**\n * {@link ImageBackend} backed by `Bun.Image` (libjpeg-turbo / libspng / libwebp, decoded off the main\n * thread). Requires the Bun runtime. The default backend of `createImageHandler`.\n */"
   },
   {
+    "name": "BunMetafileLike",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface BunMetafileLike {\n    readonly inputs?: Readonly<Record<string, {\n        readonly imports?: ReadonlyArray<{\n            path?: string;\n            original?: string;\n        }>;\n    }>>;\n    readonly outputs?: Readonly<Record<string, {\n        readonly entryPoint?: string;\n        readonly inputs?: Readonly<Record<string, unknown>>;\n    }>>;\n}",
+    "doc": "/** The slice of Bun's metafile this seam consumes. Not yet in `@types/bun`; shape per the docs. */"
+  },
+  {
     "name": "bunResolverFn",
     "kind": "function",
     "package": "@nifrajs/web-react",
@@ -1569,6 +1576,20 @@
     "doc": "/** A single machine-readable check failure — the unit an agent (or CI) acts on. */"
   },
   {
+    "name": "checkPipelineSeparation",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function checkPipelineSeparation(slots: {\n    readonly vitePlugins?: readonly unknown[];\n    readonly clientPlugins?: readonly unknown[];\n    readonly serverPlugins?: readonly unknown[];\n}): PipelineMismatch[];",
+    "doc": "/** Check every slot of a resolved framework config. */"
+  },
+  {
+    "name": "checkPipelineSlot",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function checkPipelineSlot(slot: PipelineSlot, plugins: readonly unknown[]): PipelineMismatch[];",
+    "doc": "/**\n * Check one slot's resolved plugin list. Pure: takes the already-resolved array so a thunk-valued\n * field is awaited by the caller, and so this stays testable without loading a project.\n */"
+  },
+  {
     "name": "CheckResult",
     "kind": "interface",
     "package": "@nifrajs/cli",
@@ -1641,6 +1662,13 @@
     "package": "@nifrajs/core",
     "signature": "export type ClientIpTrust = {\n    readonly trustedHops: number;\n} | {\n    readonly header: string;\n};",
     "doc": "/**\n * How much of the forwarding chain to trust when deriving `c.clientIp`. Omit for the safe default\n * (socket peer only, no header believed).\n *\n * - `{ trustedHops: n }` - trust `n` reverse-proxy hops in front of the app. The caller is taken from\n *   `X-Forwarded-For` counted from the right past the `n` trusted hops (the socket peer is hop 0). Use\n *   this when the app sits behind `n` proxies **you operate**. Fewer entries than trusted hops means\n *   the header is too short to trust, so `c.clientIp` is `undefined` (fail closed).\n * - `{ header: name }` - trust a single named header's first value (e.g. a CDN that overwrites it at\n *   the edge). Only declare this when the app is reachable **exclusively** through that edge; a\n *   directly-reachable app lets any client forge the header.\n */"
+  },
+  {
+    "name": "ClientModuleGraph",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ClientModuleGraph {\n    /** Module id → its imports. Ids are bundler-native (Bun graph keys, Rollup module ids). */\n    readonly modules: Readonly<Record<string, GraphModule>>;\n    /** Output path → what it contains. */\n    readonly chunks: Readonly<Record<string, GraphChunk>>;\n}",
+    "doc": "/** What a client build looks like to the guards, whichever bundler produced it. */"
   },
   {
     "name": "ClientOptions",
@@ -2966,14 +2994,14 @@
     "name": "detectNodeBuiltinsInClient",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function detectNodeBuiltinsInClient(meta: BunMetafile | undefined): ReadonlyArray<NodeBuiltinFinding>;",
+    "signature": "export declare function detectNodeBuiltinsInClient(graph: ClientModuleGraph): ReadonlyArray<NodeBuiltinFinding>;",
     "doc": "/**\n * Scan a build's metafile for any `node:` builtin that a USER module pulled into a CLIENT output\n * chunk, returning a sorted, deduped list of {@link NodeBuiltinFinding}s. Three graph facts combine so\n * the report is precise AND actionable:\n *  1. **What the user wrote** — only builtins imported by a NON-`node:` input count, so Bun's own\n *     polyfill chain (`node:crypto` → `node:buffer`/`node:stream`/…) doesn't bury the real cause.\n *  2. **Where it landed** — the chunk is read from the per-output `inputs`, so the error names the\n *     emitted file to look at.\n *  3. **How it got there** — the shortest import chain from a user entry to the builtin\n *     (`shortestBuiltinChain`), so the error points straight at the offending `import` line instead of\n *     leaving the dev to grep the dependency tree (the DX gap this closes).\n * Graph-based (never the emitted text), so it survives minification and can't be fooled by a string\n * literal that merely contains `\"node:crypto\"`. Pure + exported for unit testing. Empty ⇒ clean.\n */"
   },
   {
     "name": "detectServerOnlyInClient",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function detectServerOnlyInClient(meta: BunMetafile | undefined): ReadonlyArray<ServerOnlyFinding>;",
+    "signature": "export declare function detectServerOnlyInClient(graph: ClientModuleGraph): ReadonlyArray<ServerOnlyFinding>;",
     "doc": "/**\n * Scan a build's metafile for any module that opts into the `server-only` marker (a side-effect\n * `import \"@nifrajs/web/server-only\"`) yet landed in a CLIENT output chunk, returning a sorted, deduped\n * list of {@link ServerOnlyFinding}s. Mirrors {@link detectNodeBuiltinsInClient}: it reads the SAME\n * graph facts — which inputs import the marker (the \"marked\" modules), which chunk each landed in (the\n * per-output `inputs`), and the shortest import chain from a user entry to it. The marker module ITSELF\n * (which imports nothing) is excluded — only the modules that *opt in* are flagged. Pure + exported for\n * unit testing. Empty ⇒ clean.\n */"
   },
   {
@@ -4111,6 +4139,13 @@
     "signature": "export type FrameworkName = typeof FRAMEWORK_NAME;"
   },
   {
+    "name": "fromBunMetafile",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function fromBunMetafile(meta: BunMetafileLike | undefined): ClientModuleGraph;",
+    "doc": "/**\n * Adapt a `Bun.build` metafile to the neutral graph.\n *\n * A total function: an absent or partial metafile yields an empty graph rather than throwing, because\n * a guard that crashes on an unexpected build shape fails the build for the wrong reason. An empty\n * graph reports no findings, which matches the existing behaviour when the metafile is missing.\n */"
+  },
+  {
     "name": "fromTypeBox",
     "kind": "function",
     "package": "@nifrajs/schema",
@@ -4284,6 +4319,25 @@
     "package": "@nifrajs/web",
     "signature": "export declare function googleFontsCssUrl(options: GoogleFontOptions): string;",
     "doc": "/** Build the Google Fonts CSS2 request URL. Pure + fully validated, so it's safe to feed a dynamic\n * family/weights/text. Exported for advanced callers who fetch + parse the stylesheet themselves. */"
+  },
+  {
+    "name": "GraphChunk",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface GraphChunk {\n    /** Source module this chunk is the entry for, if it is one. */\n    readonly entryPoint?: string;\n    /** Module ids that landed in this chunk. */\n    readonly modules: readonly string[];\n}"
+  },
+  {
+    "name": "GraphImport",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface GraphImport {\n    /** The resolved path, when the bundler resolved it. */\n    readonly path?: string;\n    /** The specifier as written in source - the only form that survives an unresolved import. */\n    readonly original?: string;\n}",
+    "doc": "/** One import edge, as the bundler recorded it. */"
+  },
+  {
+    "name": "GraphModule",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface GraphModule {\n    readonly imports: readonly GraphImport[];\n}"
   },
   {
     "name": "GuardOptions",
@@ -7143,6 +7197,19 @@
     "package": "@nifrajs/cli",
     "signature": "export declare function pinSweepText(text: string, rules: readonly {\n    match: string;\n    to: string;\n}[]): {\n    text: string;\n    changes: Array<Omit<PinChange, \"file\">>;\n};",
     "doc": "/**\n * Apply pin rules to one package.json's TEXT (format-preserving — targeted string replaces, never a\n * JSON re-serialize that would reorder keys or drop comments-as-formatting). Returns the new text and\n * the changes made.\n */"
+  },
+  {
+    "name": "PipelineMismatch",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface PipelineMismatch {\n    readonly slot: PipelineSlot;\n    /** The plugin's `name`, or a positional label when it has none. */\n    readonly plugin: string;\n    /** The pipeline the slot feeds. */\n    readonly expected: \"vite\" | \"bun\";\n    /** The pipeline the plugin's hooks say it belongs to. */\n    readonly actual: \"vite\" | \"bun\";\n    readonly fix: string;\n}"
+  },
+  {
+    "name": "PipelineSlot",
+    "kind": "type",
+    "package": "@nifrajs/cli",
+    "signature": "export type PipelineSlot = \"vitePlugins\" | \"clientPlugins\" | \"serverPlugins\";",
+    "doc": "/** Which pipeline a slot belongs to. */"
   },
   {
     "name": "pipeWebBodyToNode",

@@ -2,6 +2,11 @@ import { afterEach, beforeEach, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { buildClient, detectNodeBuiltinsInClient } from "../src/build.ts"
+import { fromBunMetafile } from "../src/module-graph.ts"
+
+/** Fixtures stay metafile-shaped; routing them through the adapter covers that mapping too. */
+const detectNodeBuiltins = (meta: Parameters<typeof fromBunMetafile>[0]) =>
+  detectNodeBuiltinsInClient(fromBunMetafile(meta))
 
 // #4: a `node:` builtin pulled into the CLIENT bundle builds fine (Bun substitutes a browser polyfill)
 // then breaks/leaks at runtime. buildClient now fails the build with a named, actionable error.
@@ -25,7 +30,7 @@ const META_WITH_NODE = {
 } as const
 
 test("flags only the user-imported builtin (not Bun's transitive polyfill chain) + its chunk [#4]", () => {
-  const found = detectNodeBuiltinsInClient(META_WITH_NODE)
+  const found = detectNodeBuiltins(META_WITH_NODE)
   // node:crypto is what the route imported; node:buffer is only pulled in by the crypto polyfill, so
   // it must NOT be reported (it would bury the real cause). The chain is the route → builtin path.
   expect(found).toEqual([
@@ -38,7 +43,7 @@ test("flags only the user-imported builtin (not Bun's transitive polyfill chain)
 })
 
 test("clean metafile (no node: builtins) → no findings [#4]", () => {
-  const found = detectNodeBuiltinsInClient({
+  const found = detectNodeBuiltins({
     inputs: { "routes/index.tsx": { imports: [{ path: "./util.ts", original: "./util.ts" }] } },
     outputs: { "dist/index-x.js": { inputs: { "routes/index.tsx": {} } } },
   })
@@ -46,12 +51,12 @@ test("clean metafile (no node: builtins) → no findings [#4]", () => {
 })
 
 test("undefined/empty metafile → no findings (never throws on a missing graph) [#4]", () => {
-  expect(detectNodeBuiltinsInClient(undefined)).toHaveLength(0)
-  expect(detectNodeBuiltinsInClient({ outputs: {} })).toHaveLength(0)
+  expect(detectNodeBuiltins(undefined)).toHaveLength(0)
+  expect(detectNodeBuiltins({ outputs: {} })).toHaveLength(0)
 })
 
 test("an `external` node: import (resolved path only, no `original`) is still flagged [#4]", () => {
-  const found = detectNodeBuiltinsInClient({
+  const found = detectNodeBuiltins({
     inputs: { "routes/page.tsx": { imports: [{ path: "node:fs" }] } },
     outputs: {
       "dist/page-y.js": {
@@ -97,7 +102,7 @@ const META_DEEP_CHAIN = {
 }
 
 test("includes the shortest import chain entry → … → builtin (as-written specifiers) [#5]", () => {
-  const found = detectNodeBuiltinsInClient(META_DEEP_CHAIN)
+  const found = detectNodeBuiltins(META_DEEP_CHAIN)
   expect(found).toEqual([
     {
       builtin: "node:tls",
@@ -111,7 +116,7 @@ test("includes the shortest import chain entry → … → builtin (as-written s
 test("chain BFS picks the SHORTEST path when a builtin is reachable two ways [#5]", () => {
   // The route reaches node:crypto both directly AND via a longer util chain; the chain must be the
   // shortest (direct) one, not an arbitrary longer route through the graph.
-  const found = detectNodeBuiltinsInClient({
+  const found = detectNodeBuiltins({
     inputs: {
       "routes/index.tsx": {
         imports: [
@@ -142,7 +147,7 @@ test("chain BFS picks the SHORTEST path when a builtin is reachable two ways [#5
 test("chain BFS does NOT walk through Bun's polyfill subtree (precise, user modules only) [#5]", () => {
   // node:crypto's polyfill imports node:buffer; the chain to node:crypto must stop at node:crypto and
   // never traverse INTO the polyfill (which would lengthen/derail the path with non-user modules).
-  const found = detectNodeBuiltinsInClient(META_WITH_NODE)
+  const found = detectNodeBuiltins(META_WITH_NODE)
   expect(found[0]?.chain).toEqual(["routes/index.tsx", "node:crypto"])
   // The polyfill's own builtin (node:buffer) is not even reported (it's not user-imported).
   expect(found.map((f) => f.builtin)).toEqual(["node:crypto"])

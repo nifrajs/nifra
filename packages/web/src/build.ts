@@ -13,6 +13,7 @@ import { sanitizeOutputNames } from "./chunk-names.ts"
 import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
 // `buildTarget(static)` drives the SSG prerender engine directly (it's also re-exported below).
+import { type ClientModuleGraph, fromBunMetafile } from "./module-graph.ts"
 import { prerenderRoutes } from "./prerender.ts"
 
 // Build-time SSG: prerender opted-in static + dynamic routes to `index.html` (+ static `_data.json`),
@@ -249,9 +250,9 @@ function shortestBuiltinChain(
  * literal that merely contains `"node:crypto"`. Pure + exported for unit testing. Empty ⇒ clean.
  */
 export function detectNodeBuiltinsInClient(
-  meta: BunMetafile | undefined,
+  graph: ClientModuleGraph,
 ): ReadonlyArray<NodeBuiltinFinding> {
-  const inputs = meta?.inputs ?? {}
+  const inputs = graph.modules
   // (1) The builtins a user (non-polyfill) module imports directly — the ones the author controls.
   const userImported = new Set<string>()
   for (const [inputKey, input] of Object.entries(inputs)) {
@@ -265,7 +266,7 @@ export function detectNodeBuiltinsInClient(
   // at the file the dev wrote an `import` in. Each output's `entryPoint` is one such input.
   const entryInputs = [
     ...new Set(
-      Object.values(meta?.outputs ?? {})
+      Object.values(graph.chunks)
         .map((o) => o.entryPoint)
         .filter((e): e is string => e !== undefined && !e.startsWith("node:")),
     ),
@@ -281,8 +282,8 @@ export function detectNodeBuiltinsInClient(
   }
   // (2) Locate which emitted chunk each user-imported builtin reached, via the per-output `inputs`.
   const findings = new Map<string, NodeBuiltinFinding>()
-  for (const [outPath, out] of Object.entries(meta?.outputs ?? {})) {
-    for (const inputKey of Object.keys(out.inputs ?? {})) {
+  for (const [outPath, out] of Object.entries(graph.chunks)) {
+    for (const inputKey of out.modules) {
       if (userImported.has(inputKey)) {
         const chunk = basename(outPath)
         findings.set(`${inputKey}\0${chunk}`, {
@@ -419,9 +420,9 @@ function inputKeyResolver(
  * unit testing. Empty ⇒ clean.
  */
 export function detectServerOnlyInClient(
-  meta: BunMetafile | undefined,
+  graph: ClientModuleGraph,
 ): ReadonlyArray<ServerOnlyFinding> {
-  const inputs = meta?.inputs ?? {}
+  const inputs = graph.modules
   // (1) The modules that import the marker — the ones the author opted into the guard. The marker
   // module itself is skipped: it's the import TARGET, not an opt-in (it imports nothing of its own).
   const marked = new Set<string>()
@@ -434,7 +435,7 @@ export function detectServerOnlyInClient(
   // wrote an `import` in. Same derivation as the node-builtin guard.
   const entryInputs = [
     ...new Set(
-      Object.values(meta?.outputs ?? {})
+      Object.values(graph.chunks)
         .map((o) => o.entryPoint)
         .filter((e): e is string => e !== undefined && !e.startsWith("node:")),
     ),
@@ -450,8 +451,8 @@ export function detectServerOnlyInClient(
   }
   // (2) Locate which emitted chunk each marked module reached, via the per-output `inputs`.
   const findings = new Map<string, ServerOnlyFinding>()
-  for (const [outPath, out] of Object.entries(meta?.outputs ?? {})) {
-    for (const inputKey of Object.keys(out.inputs ?? {})) {
+  for (const [outPath, out] of Object.entries(graph.chunks)) {
+    for (const inputKey of out.modules) {
       if (marked.has(inputKey)) {
         const chunk = basename(outPath)
         findings.set(`${inputKey}\0${chunk}`, { chunk, chain: chainFor(inputKey) })
@@ -817,7 +818,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   // per-output `inputs`), so it can't false-positive on a `"node:..."` string literal and survives
   // minification. Only the client build runs this; the server build's `node:` imports are legitimate.
   const clientMeta = (result as unknown as { metafile?: BunMetafile }).metafile
-  const nodeBuiltins = detectNodeBuiltinsInClient(clientMeta)
+  const nodeBuiltins = detectNodeBuiltinsInClient(fromBunMetafile(clientMeta))
   if (nodeBuiltins.length > 0) {
     // Name the offending builtin AND the import chain that pulled it in (entry → … → builtin), so the
     // dev sees the exact path from a route file to the leak instead of just the emitted chunk name.
@@ -839,7 +840,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   // via" message shape as the node-builtin guard above. This catches pure-server logic (a secret, a
   // server-only API call) that carries no `node:` import and isn't named `*.server`, so neither of the
   // other two guards fires. Graph-based (the same metafile), so it survives minification.
-  const serverOnly = detectServerOnlyInClient(clientMeta)
+  const serverOnly = detectServerOnlyInClient(fromBunMetafile(clientMeta))
   if (serverOnly.length > 0) {
     const lines = serverOnly.map((f) =>
       f.chain.length > 1

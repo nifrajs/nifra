@@ -2399,9 +2399,9 @@ Every public export of every package and documented subpath — name, kind, sign
   Copy `from` into `to`, returning the URL paths copied (sorted).
 - **dataFileFor** _(function)_ — `dataFileFor: (pattern: string) => string`
   The static loader-data file next to a route's `index.html`: `/` → `_data.json`, `/a/b` → `a/b/_data.json`. The client fetches it on soft-nav into a prerendered route (no worker).
-- **detectNodeBuiltinsInClient** _(function)_ — `detectNodeBuiltinsInClient: (meta: BunMetafile | undefined) => ReadonlyArray<NodeBuiltinFinding>`
+- **detectNodeBuiltinsInClient** _(function)_ — `detectNodeBuiltinsInClient: (graph: ClientModuleGraph) => ReadonlyArray<NodeBuiltinFinding>`
   Scan a build's metafile for any `node:` builtin that a USER module pulled into a CLIENT output chunk, returning a sorted, deduped list of {@link NodeBuiltinFinding}s. Three graph facts combine so the report is precise AND actionable: 1. **What the user wrote** — only builtins imported by a NON-`nod…
-- **detectServerOnlyInClient** _(function)_ — `detectServerOnlyInClient: (meta: BunMetafile | undefined) => ReadonlyArray<ServerOnlyFinding>`
+- **detectServerOnlyInClient** _(function)_ — `detectServerOnlyInClient: (graph: ClientModuleGraph) => ReadonlyArray<ServerOnlyFinding>`
   Scan a build's metafile for any module that opts into the `server-only` marker (a side-effect `import "@nifrajs/web/server-only"`) yet landed in a CLIENT output chunk, returning a sorted, deduped list of {@link ServerOnlyFinding}s. Mirrors {@link detectNodeBuiltinsInClient}: it reads the SAME graph…
 - **diffManifestRoutes** _(function)_ — `diffManifestRoutes: (manifestFiles: readonly string[], discoveredFiles: readonly string[]) => ManifestDrift`
   Diff the route files a committed server-manifest imports against the files freshly discovered in `routes/`. Returns the `missing` (in routes/, not in manifest — stale manifest) and `extra` (in manifest, gone from routes/ — dangling import) sets. Empty arrays ⇒ in sync. Pure — the caller supplies bo…

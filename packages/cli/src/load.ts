@@ -14,6 +14,7 @@
  */
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
+import { checkPipelineSeparation } from "./pipeline-guard.ts"
 
 /**
  * A plugin list — either an array, or a **thunk** that returns one (optionally async). Both forms are
@@ -49,6 +50,37 @@ export interface NifraFramework {
   readonly conditions?: readonly string[]
   /** Compile-time `define` replacements, e.g. Vue's `__VUE_*` flags. */
   readonly define?: Readonly<Record<string, string>>
+}
+
+/**
+ * Refuse a config that puts one pipeline's plugins into the other's slot.
+ *
+ * Checked here rather than in `nifra check`, which holds a deliberate pre-`loadApp` invariant - reading
+ * plugins means importing the app's config, which is code execution. This runs at the moment the app
+ * IS loaded, so `dev`, `build` and `start` are all covered from one place, immediately before the
+ * plugins are handed to a bundler.
+ *
+ * Throws rather than warns. A misplaced plugin does not fail the build: Bun.build has no `transform`
+ * hook and Vite never calls `setup`, so the wrong-slot plugin is accepted and silently never invoked -
+ * the transform just does not happen, and the output looks plausible. A loud stop with the exact move
+ * is strictly better than a build that succeeds and omits the work. The classifier only fires on a
+ * decisive hook shape, so a plugin it cannot place is left alone.
+ */
+async function assertPipelineSeparation(
+  fw: Partial<NifraFramework>,
+  configFile: string,
+): Promise<void> {
+  const [vitePlugins, clientPlugins, serverPlugins] = await Promise.all([
+    resolvePlugins(fw.vitePlugins),
+    resolvePlugins(fw.clientPlugins),
+    resolvePlugins(fw.serverPlugins),
+  ])
+  const mismatches = checkPipelineSeparation({ vitePlugins, clientPlugins, serverPlugins })
+  if (mismatches.length === 0) return
+  throw new Error(
+    `[nifra] ${configFile}: plugins are in the wrong pipeline slot. nifra supports Vite and Bun, but a phase is owned by ONE of them - a plugin in the wrong slot is silently never called.\n\n` +
+      mismatches.map((m) => `  - ${m.fix}`).join("\n"),
+  )
 }
 
 /** Normalize a {@link PluginsField} (array | thunk | undefined) to a fresh array, awaiting a thunk. */
@@ -160,6 +192,7 @@ export async function loadApp(
       `[nifra] ${configFile} must export \`adapter\` (a render adapter object) and \`clientModule\` (a string).`,
     )
   }
+  await assertPipelineSeparation(fw, configFile)
 
   let backend: unknown
   const backendPath = resolve(cwd, "backend.ts")

@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { fromBunMetafile } from "../src/module-graph.ts"
+
+/** Fixtures stay metafile-shaped; routing them through the adapter covers that mapping too. */
+const detectServerOnly = (meta: Parameters<typeof fromBunMetafile>[0]) =>
+  detectServerOnlyInClient(fromBunMetafile(meta))
+
 import {
   buildClient,
   buildServer,
@@ -39,7 +45,7 @@ const META_MARKED = {
 } as const
 
 test("flags the marked module + its chunk + the import chain (entry → marked) [server-only]", () => {
-  const found = detectServerOnlyInClient(META_MARKED)
+  const found = detectServerOnly(META_MARKED)
   expect(found).toEqual([
     {
       chunk: "index-abc123.js",
@@ -51,7 +57,7 @@ test("flags the marked module + its chunk + the import chain (entry → marked) 
 
 test("the marker module itself (imports nothing) is never reported [server-only]", () => {
   // Only the marker module is in the graph, as a leaf — there is no module that *opts in*, so it's clean.
-  const found = detectServerOnlyInClient({
+  const found = detectServerOnly({
     inputs: { "node_modules/@nifrajs/web/dist/server-only.js": { imports: [] } },
     outputs: {
       "dist/x.js": { inputs: { "node_modules/@nifrajs/web/dist/server-only.js": {} } },
@@ -61,7 +67,7 @@ test("the marker module itself (imports nothing) is never reported [server-only]
 })
 
 test("a normal module (no marker import) is unaffected [server-only]", () => {
-  const found = detectServerOnlyInClient({
+  const found = detectServerOnly({
     inputs: {
       "routes/index.tsx": { imports: [{ path: "src/util.ts", original: "../util.ts" }] },
       "src/util.ts": { imports: [] },
@@ -72,12 +78,12 @@ test("a normal module (no marker import) is unaffected [server-only]", () => {
 })
 
 test("undefined/empty metafile → no findings (never throws on a missing graph) [server-only]", () => {
-  expect(detectServerOnlyInClient(undefined)).toHaveLength(0)
-  expect(detectServerOnlyInClient({ outputs: {} })).toHaveLength(0)
+  expect(detectServerOnly(undefined)).toHaveLength(0)
+  expect(detectServerOnly({ outputs: {} })).toHaveLength(0)
 })
 
 test("a pre-resolved marker edge (no `original`) is still recognised by its resolved path [server-only]", () => {
-  const found = detectServerOnlyInClient({
+  const found = detectServerOnly({
     inputs: {
       "routes/page.tsx": { imports: [{ path: "src/secrets.ts", original: "../secrets.ts" }] },
       // The marker edge lost its `original` but resolved to the marker module file.
@@ -103,7 +109,7 @@ test("a pre-resolved marker edge (no `original`) is still recognised by its reso
 })
 
 test("chain BFS picks the SHORTEST path to a marked module reachable two ways [server-only]", () => {
-  const found = detectServerOnlyInClient({
+  const found = detectServerOnly({
     inputs: {
       "routes/index.tsx": {
         imports: [
