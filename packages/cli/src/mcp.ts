@@ -61,6 +61,26 @@ function childPath(name: "mcp-run" | "mcp-render" | "mcp-ws"): string {
 }
 
 /** Spawn `bun <child> <cwd>`, pipe `input` to its stdin, return its stdout (or a stderr-backed error). */
+/**
+ * How long a child gets before it is killed.
+ *
+ * A child loads the app, which runs its module side effects - a database pool, a Redis client, a
+ * metrics interval. Any of those keeps the child's event loop alive after the work is done, and the
+ * parent is sitting in `await proc.exited`. The children now exit explicitly, so this is the backstop
+ * rather than the fix: without it a single wedged child blocks an agent indefinitely, and the caller
+ * has no way to tell "still working" from "never returning".
+ *
+ * Generous enough for a cold start that compiles route modules, short enough that a hang is reported
+ * within one attention span rather than after minutes of polling.
+ */
+const CHILD_TIMEOUT_MS = 30_000
+
+const timeoutMessage = (label: string, ms: number): string =>
+  `${label} timed out after ${ms / 1000}s and was terminated.\n` +
+  `The app was loaded but the process did not finish. Most often this is a module-level side effect ` +
+  `that keeps the event loop alive (a database pool, a Redis client, an interval) opened during import ` +
+  `rather than lazily. Check for top-level connections in the app entry or anything it imports.`
+
 async function spawnChild(
   child: "mcp-run" | "mcp-render" | "mcp-ws",
   cwd: string,
@@ -76,6 +96,11 @@ async function spawnChild(
   })
   const abort = (): void => proc.kill()
   signal?.addEventListener("abort", abort, { once: true })
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    proc.kill()
+  }, CHILD_TIMEOUT_MS)
   try {
     proc.stdin.write(JSON.stringify(input))
     await proc.stdin.end()
@@ -88,8 +113,13 @@ async function spawnChild(
       const reason = typeof signal.reason === "string" ? `: ${signal.reason}` : ""
       return `${label} cancelled${reason}.`
     }
-    return out.trim() || `${label} failed:\n${err.trim() || "(no output)"}`
+    // A killed child may still have flushed a complete result before the timer fired; prefer real
+    // output over the timeout message so a slow-but-successful render is not reported as a failure.
+    const text = out.trim()
+    if (timedOut && text === "") return timeoutMessage(label, CHILD_TIMEOUT_MS)
+    return text || `${label} failed:\n${err.trim() || "(no output)"}`
   } finally {
+    clearTimeout(timer)
     signal?.removeEventListener("abort", abort)
   }
 }
@@ -189,10 +219,23 @@ export class WarmWorker {
         // process here would reject every OTHER in-flight request via the `exited` handler and force a
         // cold rebuild. Leave it hot — `createWarmHandler` already replaces it on file change.
         this.pending.delete(id)
+        clearTimeout(timer)
         const reason = typeof signal?.reason === "string" ? `: ${signal.reason}` : ""
         resolve(`${this.label} cancelled${reason}.`)
       }
-      const cleanup = (): void => signal?.removeEventListener("abort", abort)
+      // Same backstop as the cold path: a worker wedged mid-request would otherwise leave this
+      // promise unsettled forever. Drop the id and replace the worker - unlike a per-request cancel,
+      // a timeout means the worker itself is suspect, so the next call should start from a fresh one.
+      const timer = setTimeout(() => {
+        if (!this.pending.delete(id)) return
+        signal?.removeEventListener("abort", abort)
+        this.stop()
+        resolve(timeoutMessage(this.label, CHILD_TIMEOUT_MS))
+      }, CHILD_TIMEOUT_MS)
+      const cleanup = (): void => {
+        clearTimeout(timer)
+        signal?.removeEventListener("abort", abort)
+      }
       signal?.addEventListener("abort", abort, { once: true })
       this.pending.set(id, { resolve, reject, cleanup })
       try {

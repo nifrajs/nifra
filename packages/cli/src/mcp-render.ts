@@ -169,5 +169,13 @@ if (import.meta.main) {
   } catch {
     output = { error: "invalid input: expected JSON { requests: [...] }" }
   }
-  process.stdout.write(JSON.stringify(output, null, 2))
+  await Bun.write(Bun.stdout, JSON.stringify(output, null, 2))
+  // Exit explicitly, exactly as the `--worker` branch above already does.
+  //
+  // Loading the app runs its module side effects, and a real app opens things: a database pool, a
+  // Redis client, a metrics interval. Any one of those keeps the event loop alive, so falling off
+  // the end of this module never terminates the process - and the parent is sitting in
+  // `await proc.exited`. The render itself finished; there is nothing left to wait for, and this
+  // process is single-use. `Bun.write` above is awaited so the output is flushed before we exit.
+  process.exit(0)
 }

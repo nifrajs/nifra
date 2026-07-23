@@ -471,6 +471,69 @@ export function scanUntypedClient(file: string, content: string): SourceFinding[
   return out
 }
 
+/**
+ * Specifiers that no longer exist, and what replaced them.
+ *
+ * These are the breaks a typecheck does not catch and a test suite does not either. `@nifrajs/core/ws`
+ * was a side-effect import removed in 2.0 in favour of `.use(websocket())`; a consuming package kept
+ * the import and a 533-test suite stayed green while the app could not boot. `@nifrajs/budget` folded
+ * into core with no npm deprecation, so `bun install` fails workspace-wide with a resolution error
+ * that names neither the cause nor the replacement.
+ *
+ * A lint is the right shape for this: it runs before boot, names the file and line, and states the
+ * replacement - which is what neither the resolver error nor the runtime failure does.
+ */
+const REMOVED_IMPORTS: ReadonlyArray<{
+  readonly specifier: string
+  readonly since: string
+  readonly replacement: string
+  /** Flag ONLY the bare side-effect form (`import "x"`). A module that still exports values is not
+   * removed - only its install-by-import behaviour is - so flagging every import of it would be
+   * wrong and would train people to ignore the rule. */
+  readonly sideEffectOnly?: boolean
+}> = [
+  {
+    specifier: "@nifrajs/budget",
+    since: "2.0",
+    replacement:
+      'import from "@nifrajs/core/budget" — the package folded into core and npm `latest` is still 1.13.0, so a `^2` range resolves to nothing',
+  },
+  {
+    specifier: "@nifrajs/core/ws",
+    since: "2.0",
+    sideEffectOnly: true,
+    replacement:
+      'a bare `import "@nifrajs/core/ws"` no longer installs the runtime — register it explicitly with `.use(websocket())`, importing `websocket` from the same module',
+  },
+]
+
+/** Whether the import statement at `index` is the bare side-effect form (`import "x"`), rather than
+ * one with bindings (`import { y } from "x"`). */
+function isSideEffectImport(content: string, index: number): boolean {
+  // `staticImportEdges` reports the index of the STATEMENT, not of the specifier, so read forward:
+  // a side-effect import is `import` followed directly by the quoted specifier, with no bindings and
+  // no `from` in between.
+  return /^import\s*["'`]/.test(content.slice(index, index + 32))
+}
+
+/** Flag an import of a specifier that no longer exists. Pure; matches the exact specifier or a subpath
+ * of it, so `@nifrajs/budget/x` is caught alongside `@nifrajs/budget`. */
+export function scanRemovedImports(file: string, content: string): SourceFinding[] {
+  const out: SourceFinding[] = []
+  const lines = content.split("\n")
+  for (const edge of staticImportEdges(content)) {
+    const removed = REMOVED_IMPORTS.find(
+      (entry) =>
+        edge.specifier === entry.specifier || edge.specifier.startsWith(`${entry.specifier}/`),
+    )
+    if (removed === undefined) continue
+    if (removed.sideEffectOnly === true && !isSideEffectImport(content, edge.index)) continue
+    const line = lineAt(content, edge.index)
+    out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
+  }
+  return out
+}
+
 /** Scan a route module for top-level server-only imports. Returns `[]` for non-route files (only
  * `routes/` modules are browser-bundled, so a server-only import elsewhere is fine). Each finding carries
  * the offending `specifier` so the diagnostic can render the `routeFile → specifier` chain. Pure. */
@@ -939,6 +1002,7 @@ export interface CheckDiagnostic {
     | "typed-client"
     | "untyped-client"
     | "server-only-import"
+    | "removed-import"
     | "response-route"
     | "undeclared-dependency"
     | "duplicate-install"
@@ -1189,6 +1253,7 @@ export async function collectCheckResult(
   const fetches: SourceFinding[] = []
   const staticRoutes: StaticRouteFinding[] = []
   const untypedClients: SourceFinding[] = []
+  const removedImports: SourceFinding[] = []
   const serverImports: TransitiveServerImportFinding[] = []
   const responseRoutes: SourceFinding[] = []
   // Route modules (rel + content) collected during the walk, so the TRANSITIVE server-only resolution
@@ -1207,6 +1272,7 @@ export async function collectCheckResult(
       fetches.push(...scanFetchText(rel, content, checkConfig.externalMounts))
       staticRoutes.push(...scanStaticRouteText(rel, content))
       untypedClients.push(...scanUntypedClient(rel, content))
+      removedImports.push(...scanRemovedImports(rel, content))
       if (ROUTE_FILE.test(rel)) routeModules.push({ rel, content })
       responseRoutes.push(...scanResponseRoutes(rel, content))
     }),
@@ -1297,6 +1363,21 @@ export async function collectCheckResult(
       message: `${f.snippet} — ${FETCH_HINT}`,
       fix: FETCH_HINT,
       suggestion: ownFetchSuggestion(f, routes),
+    })
+  }
+  for (const f of removedImports.sort(bySite)) {
+    const entry = REMOVED_IMPORTS.find(
+      (candidate) =>
+        f.snippet.includes(`"${candidate.specifier}`) ||
+        f.snippet.includes(`'${candidate.specifier}`),
+    )
+    diagnostics.push({
+      rule: "removed-import",
+      severity: "error",
+      file: f.file,
+      line: f.line,
+      message: `${f.snippet} — removed in nifra ${entry?.since ?? "2.0"}: ${entry?.replacement ?? "see the changelog"}`,
+      fix: entry?.replacement ?? "see the changelog",
     })
   }
   for (const f of untypedClients.sort(bySite)) {

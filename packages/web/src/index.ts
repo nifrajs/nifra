@@ -1140,6 +1140,32 @@ export interface CreateWebAppOptions {
    * auto-mount entirely (the app serves pages only and `api` stays a loader-only `ctx.api`). Mounting
    * is also a no-op when `api` does not expose the symbol mount. */
   readonly apiPrefix?: string
+  /**
+   * Strip {@link apiPrefix} from the pathname before dispatching to `api` (default `false`).
+   *
+   * The default suits a backend that declares FULL paths (`server().post("/api/sync", …)`), which is
+   * right when it is only ever mounted here. Set this when the backend declares its routes WITHOUT
+   * the prefix because it also runs standalone behind its own shell - external stacks
+   * are the common case. Without it every request 404s inside the backend, and the workaround
+   * is a `Proxy` that rewrites each URL.
+   */
+  readonly apiStrip?: boolean
+  /**
+   * Sub-apps mounted ahead of page routing - an auth handler, a webhook receiver, a stack's routes.
+   *
+   * Structural on purpose: anything with `{ path, app: { fetch } }` fits, so an external
+   * stack mounts as `mounts: stack.routes` without `@nifrajs/web` taking a dependency on it. `better-auth`
+   * is the motivating case - it is not a `backend` route, so `/api/auth/*` used to 404 silently.
+   *
+   * Tried longest-path-first and BEFORE the `api` mount, so a mount at `/api/auth` wins over a backend
+   * at `/api` no matter which was declared first. `stripPrefix` matches the same option on
+   * equivalent mount options: leave it off to pass the full path through.
+   */
+  readonly mounts?: ReadonlyArray<{
+    readonly path: string
+    readonly app: { fetch(request: Request): Response | Promise<Response> }
+    readonly stripPrefix?: boolean
+  }>
   /** Secret for **draft / preview mode** (see `enableDraft`). When set, a request carrying a valid
    * signed `__nifra_draft` cookie gets `ctx.draft === true` in loaders/actions (else always `false`).
    * Pair with `withISR({ draftSecret })` so editors bypass the cache. Omit to disable draft mode. */
@@ -1188,6 +1214,27 @@ interface RouteContext {
   readonly req: Request
   /** Platform bindings (Workers env), forwarded to each route's loader/action as `args.env`. */
   readonly env: unknown
+}
+
+/**
+ * Re-issue `request` with `prefix` removed from its pathname.
+ *
+ * Needed because two conventions exist and both are reasonable. `createWebApp`'s auto-mount assumes a
+ * backend that declares FULL paths (`server().post("/api/sync")`), which is right when the backend is
+ * only ever mounted here. A backend that also runs standalone declares paths WITHOUT the prefix and
+ * lets its own shell supply it - and mounting one of those here used to require the caller to wrap it
+ * in a `Proxy` that rewrote every URL. Two apps wrote that same wrapper independently, which is the
+ * signal that it belonged in the framework.
+ *
+ * The `Request` is rebuilt rather than mutated (`url` is read-only), preserving method, headers, body,
+ * and duplex streaming - the body is passed through unread, so a large or streamed upload is untouched.
+ */
+function stripMountPrefix(request: Request, prefix: string): Request {
+  const url = new URL(request.url)
+  const rest = url.pathname.slice(prefix.length)
+  url.pathname = rest === "" ? "/" : rest
+  // `url.href`, not the `URL`: this type set only declares the string and Request overloads.
+  return new Request(url.href, request)
 }
 
 /**
@@ -1252,14 +1299,27 @@ export function createWebApp<Env = unknown>(
   // sites. `apiPrefix: ""` opts out; a non-mountable `api` (no symbol mount) is left pages-only. The hook
   // is registered ONLY when both hold, so a pages-only app keeps core's synchronous no-hook fast path.
   const apiPrefix = options.apiPrefix ?? "/api"
+  const apiStrip = options.apiStrip === true
   const mountedApi = backendMountOf(api)
-  if (apiPrefix !== "" && mountedApi !== undefined) {
+  // Longest path first, so a more specific mount (`/api/auth`) is tried before a broader one (`/api`)
+  // regardless of the order they were declared in.
+  const mounts = [...(options.mounts ?? [])].sort((a, b) => b.path.length - a.path.length)
+  const underPrefix = (pathname: string, prefix: string): boolean =>
+    pathname === prefix || pathname.startsWith(`${prefix}/`)
+
+  if (mounts.length > 0 || (apiPrefix !== "" && mountedApi !== undefined)) {
     app.onRequest((req, platform) => {
       const { pathname } = new URL(req.url)
+      // Sub-app mounts win over the backend prefix: they are the more specific declaration, and an
+      // auth handler mounted at `/api/auth` must not be swallowed by the backend mounted at `/api`.
+      for (const mount of mounts) {
+        if (!underPrefix(pathname, mount.path)) continue
+        return mount.app.fetch(mount.stripPrefix === true ? stripMountPrefix(req, mount.path) : req)
+      }
       // Exactly the prefix (`/api`) or a sub-path (`/api/…`) — NOT a sibling like `/apixyz` that merely
       // shares the prefix as a string head. Dispatch the original `req` (body intact) to the backend.
-      if (pathname === apiPrefix || pathname.startsWith(`${apiPrefix}/`)) {
-        return mountedApi(req, platform)
+      if (mountedApi !== undefined && apiPrefix !== "" && underPrefix(pathname, apiPrefix)) {
+        return mountedApi(apiStrip ? stripMountPrefix(req, apiPrefix) : req, platform)
       }
       return undefined // not an API path → continue to page routing
     })
@@ -1272,13 +1332,30 @@ export function createWebApp<Env = unknown>(
   // Load a route's layout modules (outermost layout → innermost), keeping each module whole so the
   // render path can take both its `default` (the component chain) AND its `meta` (the sitewide head it
   // contributes). Loaded lazily — the data-only and 405 branches return before any layout is needed.
-  const loadLayoutModules = (
+  const loadLayoutModules = async (
     route: RouteEntry,
-  ): Promise<ReadonlyArray<{ default: unknown; meta?: MetaInput }>> =>
-    Promise.all(
+  ): Promise<ReadonlyArray<{ default: unknown; meta?: MetaInput }>> => {
+    const modules = await Promise.all(
       // layoutIds only reference layouts present in the manifest (buildManifest invariant).
       route.layoutIds.map((id) => (manifest.layouts[id] as LayoutEntry).load()),
     )
+    // A layout does not get a loader, and silently rendering while ignoring one is the worst possible
+    // handling of that: the export looks wired, the page renders, and the data is simply never there.
+    // Fail where the mistake is, naming the file, rather than leaving the author to discover it from
+    // an undefined at runtime.
+    for (let i = 0; i < modules.length; i++) {
+      const mod = modules[i] as { loader?: unknown; action?: unknown }
+      const which = mod.loader !== undefined ? "loader" : mod.action !== undefined ? "action" : ""
+      if (which === "") continue
+      const id = route.layoutIds[i] as string
+      throw new Error(
+        `[nifra/web] "${(manifest.layouts[id] as LayoutEntry).file}" exports a \`${which}\`, but layouts do not run one — only route files do. ` +
+          `Move the data fetch into each route's \`loader\`, or into the backend and read it from the page. ` +
+          `Tracking layout loaders as a feature: https://github.com/nifrajs/nifra/issues`,
+      )
+    }
+    return modules
+  }
 
   // Build a route's render chain + its merged `<head>` from the already-loaded layout modules + the
   // page module. The chain is `[…layout components, page]`; the head merges each layout's `meta`

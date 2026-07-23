@@ -299,3 +299,52 @@ test("an ordinary render error is left exactly as it was", async () => {
   expect(html).toContain("database unreachable")
   expect(html).not.toContain("TWO COPIES")
 })
+
+test("a layout exporting a loader fails loudly instead of rendering without the data", async () => {
+  // Silently rendering while ignoring an exported `loader` is the worst of the options: the export
+  // looks wired, the page renders, and the data is simply never there.
+  const app = createWebApp({
+    adapter: stub,
+    manifest: {
+      routes: [
+        {
+          id: "index",
+          pattern: "/",
+          layoutIds: ["_layout"],
+          file: "index.tsx",
+          load: async () => ({ default: "page" }),
+        },
+      ],
+      layouts: {
+        _layout: {
+          file: "routes/_layout.tsx",
+          load: async () => ({ default: "layout", loader: () => ({ host: "x" }) }),
+        },
+      },
+    } as Manifest,
+    clientEntry: "/c.js",
+  })
+  const res = await app.fetch(new Request("http://x/"))
+  expect(res.status).toBe(500)
+
+  // A layout with no loader is unaffected.
+  const fine = createWebApp({
+    adapter: stub,
+    manifest: {
+      routes: [
+        {
+          id: "index",
+          pattern: "/",
+          layoutIds: ["_layout"],
+          file: "index.tsx",
+          load: async () => ({ default: "page" }),
+        },
+      ],
+      layouts: {
+        _layout: { file: "routes/_layout.tsx", load: async () => ({ default: "layout" }) },
+      },
+    } as Manifest,
+    clientEntry: "/c.js",
+  })
+  expect((await fine.fetch(new Request("http://x/"))).status).toBe(200)
+})
