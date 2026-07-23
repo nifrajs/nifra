@@ -7,13 +7,14 @@ export const hydrate = false
 
 export const meta = pageMeta(
   "Nifra — Dev & HMR",
-  "Use `nifra dev` for a Vite-backed state-preserving HMR loop, or `@nifrajs/web/dev` for a Bun-native live-reload loop. Production builds use Bun.",
+  "Use `nifra dev` for a Vite-backed state-preserving HMR loop, or `@nifrajs/web/dev` for a Bun-native HMR loop with no Vite dependency. Production builds use Bun.",
 )
 
 const BUN_DEV = `// doc-check: skip — fragment: routesDir/outDir/clientModule/createApp are your app's dev config.
-// dev.ts — Bun-native live reload
+// dev.ts — Bun-native HMR, no Vite in the process
 import { createDevServer } from "@nifrajs/web/dev"
-// builds the client on boot, serves SSR, watches routes, full-page live-reload on change.
+// Bun.serve bundles + hot-reloads the client; Bun's runtime resolves SSR. An edit reloads the
+// changed module graph (no framework Fast Refresh here), and CSS + the entry URL come from Bun.
 const server = await createDevServer({ routesDir, outDir, clientModule, createApp })`
 
 const VITE_DEV = `// doc-check: skip — needs the third-party @vitejs/plugin-react + your ./backend; install it to run this.
@@ -89,9 +90,10 @@ export default function Dev() {
     <div className="prose">
       <h1 className="page">Dev & HMR</h1>
       <p className="lead">
-        Nifra gives you two local development loops. Use <code>nifra dev</code> for
-        state-preserving UI edits, or use <code>@nifrajs/web/dev</code> when you want a Bun-only
-        live-reload server. Both serve your real SSR app locally.
+        Nifra gives you two local development loops, and the rule between them is that one
+        toolchain owns a whole phase. Use <code>nifra dev</code> for state-preserving UI edits, or
+        use <code>@nifrajs/web/dev</code> when you want Bun end to end with no Vite dependency. Both
+        serve your real SSR app locally, and neither mixes the two bundlers in one process.
       </p>
 
       <h2>Two loops, same app</h2>
@@ -109,9 +111,9 @@ export default function Dev() {
             <td>
               <code>@nifrajs/web/dev</code>
             </td>
-            <td>rebuild + full-page live-reload</td>
+            <td>Bun HMR (module-graph reload)</td>
             <td>none (Bun only)</td>
-            <td>default; zero extra deps</td>
+            <td>one bundler for dev and prod; zero extra deps</td>
           </tr>
           <tr>
             <td>
@@ -140,15 +142,17 @@ export default function Dev() {
 
       <h2>Framework coverage</h2>
       <p>
-        All five adapters have a dev setup. Pass the framework's official Vite plugin, and for Vue,
-        Svelte, and Solid, preload the matching Nifra compiler plugin for server rendering.
+        All five adapters have a dev setup. Pass the framework's official Vite plugin and you are
+        done: under <code>nifra dev</code> the Vite pipeline compiles both halves, so the same plugin
+        that transforms your components for the browser also transforms them for SSR. No separate
+        server-side compiler plugin to preload, and no way for the two halves to disagree about a
+        specifier.
       </p>
       <table>
         <thead>
           <tr>
             <th>framework</th>
-            <th>client (Vite plugin)</th>
-            <th>SSR compile</th>
+            <th>Vite plugin (client + SSR)</th>
             <th>local state on edit</th>
           </tr>
         </thead>
@@ -158,7 +162,6 @@ export default function Dev() {
             <td>
               <code>@vitejs/plugin-react</code>
             </td>
-            <td>Bun-native</td>
             <td>preserved (Fast Refresh)</td>
           </tr>
           <tr>
@@ -166,16 +169,12 @@ export default function Dev() {
             <td>
               <code>@preact/preset-vite</code>
             </td>
-            <td>Bun-native</td>
             <td>preserved (prefresh)</td>
           </tr>
           <tr>
             <td>Vue</td>
             <td>
               <code>@vitejs/plugin-vue</code>
-            </td>
-            <td>
-              <code>vueBunPlugin</code> preload
             </td>
             <td>preserved (rerender)</td>
           </tr>
@@ -184,18 +183,12 @@ export default function Dev() {
             <td>
               <code>vite-plugin-solid</code> (<code>{`{ ssr: true }`}</code>)
             </td>
-            <td>
-              <code>solidBunPlugin</code> preload
-            </td>
             <td>resets (solid-refresh)</td>
           </tr>
           <tr>
             <td>Svelte</td>
             <td>
               <code>@sveltejs/vite-plugin-svelte</code>
-            </td>
-            <td>
-              <code>svelteBunPlugin</code> preload
             </td>
             <td>resets (svelte HMR)</td>
           </tr>

@@ -1,6 +1,7 @@
 /**
- * Dev server — builds the client on boot, serves the app, watches routes, and live-reloads on
- * change (no `--watch` needed; createDevServer owns the watch + SSR cache-busting):
+ * Dev server — the Bun pipeline: `Bun.serve` bundles and hot-reloads the client, Bun's runtime
+ * resolves SSR, and no Vite is involved. `createDevServer` owns the SSR cache-busting, so no
+ * `--watch` is needed:
  *
  *   bun examples/routing-react/dev.ts        # React JSX is Bun-native — no preload
  */
