@@ -28,7 +28,9 @@ import { ISR_REVALIDATE_HEADER } from "./isr.ts"
 import { generateLlmsTxt } from "./llms-txt.ts"
 import type {
   LayoutEntry,
+  Loader as LayoutLoader,
   LinkDescriptor,
+  LoaderContext,
   Manifest,
   Meta,
   MetaArgs,
@@ -207,6 +209,14 @@ export {
  * (absent on SSR): they drive **optimistic UI** — render from `submission.formData` while `pending`. */
 export interface RenderProps {
   readonly data: unknown
+  /**
+   * Per-layout loader data, aligned index-for-index with the layout prefix of `chain`.
+   *
+   * Absent when no layout in the chain exports a `loader`, so a page-only app is byte-identical to
+   * before. An adapter that does not read it renders exactly as it did; one that does passes
+   * `layoutData[i]` to `chain[i]`.
+   */
+  readonly layoutData?: readonly unknown[]
   readonly actionData?: unknown
   /** True while a client navigation or submit is in flight (client-only; absent/false on SSR). */
   readonly pending?: boolean
@@ -367,6 +377,9 @@ export interface RenderPageOptions {
    * `useLocation`/`useSearchParams` render the right URL server-side and hydrate without drift. Omit ⇒
    * `""`. */
   readonly path?: string
+  /** Per-layout loader data, forwarded to the adapter as `RenderProps.layoutData`. Aligned with the
+   * chain's layout prefix; omitted when no layout in the chain has a loader. */
+  readonly layoutData?: readonly unknown[]
   /** HTTP status for the response (default 200; e.g. 404 for a not-found page). */
   readonly status?: number
   /** Extra response headers - e.g. the `cache-control` a terminal status page wants. `content-type`
@@ -527,6 +540,8 @@ export function renderPageResult(options: RenderPageOptions): MaybePromise<Rende
     // router bindings simply never reads them.
     ...(options.params !== undefined ? { params: options.params } : {}),
     ...(options.path !== undefined ? { path: options.path } : {}),
+    // Spread only when present, so a page-only render produces exactly the props it did before.
+    ...(options.layoutData !== undefined ? { layoutData: options.layoutData } : {}),
   }
 
   // Fast path: nothing `defer()`s and the adapter can render synchronously to a string → buffer the
@@ -794,6 +809,38 @@ function withDuplicateInstanceHint(err: unknown): unknown {
   if (err.stack !== undefined) augmented.stack = err.stack
   return augmented
 }
+
+/** A loaded layout module. `loader`/`gate` are the layout-loader surface; `meta` predates it. */
+type LoadedLayoutModules = ReadonlyArray<{
+  default: unknown
+  meta?: MetaInput
+  loader?: LayoutLoader
+  action?: unknown
+  gate?: boolean
+}>
+
+/**
+ * Narrow the route's params to the ones a layout owns.
+ *
+ * A layout wraps a URL prefix, so anything deeper belongs to a route beneath it. Handing it the full
+ * set would let a layout read a param it does not own - which reads fine until the layout is reused
+ * under a route that has no such param and the value silently becomes `undefined`.
+ */
+function scopeParams(
+  params: Record<string, string>,
+  owned: readonly string[] | undefined,
+): Record<string, string> {
+  if (owned === undefined) return params // hand-built manifest with no scope info: unchanged behaviour
+  if (owned.length === 0) return EMPTY_LAYOUT_PARAMS
+  const scoped: Record<string, string> = {}
+  for (const name of owned) {
+    const value = params[name]
+    if (value !== undefined) scoped[name] = value
+  }
+  return scoped
+}
+
+const EMPTY_LAYOUT_PARAMS: Record<string, string> = Object.freeze({})
 
 const STATUS_SIGNAL = Symbol.for("nifra.web.status-signal")
 
@@ -1332,29 +1379,73 @@ export function createWebApp<Env = unknown>(
   // Load a route's layout modules (outermost layout → innermost), keeping each module whole so the
   // render path can take both its `default` (the component chain) AND its `meta` (the sitewide head it
   // contributes). Loaded lazily — the data-only and 405 branches return before any layout is needed.
-  const loadLayoutModules = async (
-    route: RouteEntry,
-  ): Promise<ReadonlyArray<{ default: unknown; meta?: MetaInput }>> => {
+  const loadLayoutModules = async (route: RouteEntry): Promise<LoadedLayoutModules> => {
     const modules = await Promise.all(
       // layoutIds only reference layouts present in the manifest (buildManifest invariant).
       route.layoutIds.map((id) => (manifest.layouts[id] as LayoutEntry).load()),
     )
-    // A layout does not get a loader, and silently rendering while ignoring one is the worst possible
-    // handling of that: the export looks wired, the page renders, and the data is simply never there.
-    // Fail where the mistake is, naming the file, rather than leaving the author to discover it from
-    // an undefined at runtime.
+    // A layout is not a form target, so an `action` there is a mistake with no meaning to give it.
+    // A `loader`, by contrast, now runs (see `runLayoutChain`).
     for (let i = 0; i < modules.length; i++) {
-      const mod = modules[i] as { loader?: unknown; action?: unknown }
-      const which = mod.loader !== undefined ? "loader" : mod.action !== undefined ? "action" : ""
-      if (which === "") continue
+      if ((modules[i] as { action?: unknown }).action === undefined) continue
       const id = route.layoutIds[i] as string
       throw new Error(
-        `[nifra/web] "${(manifest.layouts[id] as LayoutEntry).file}" exports a \`${which}\`, but layouts do not run one — only route files do. ` +
-          `Move the data fetch into each route's \`loader\`, or into the backend and read it from the page. ` +
-          `Tracking layout loaders as a feature: https://github.com/nifrajs/nifra/issues`,
+        `[nifra/web] "${(manifest.layouts[id] as LayoutEntry).file}" exports an \`action\`, but layouts do not run one — only route files do. Move the mutation into the route that submits to it.`,
       )
     }
     return modules
+  }
+
+  /**
+   * Run a route's layout-chain loaders, honouring declared gates.
+   *
+   * Returns once every **gate** has resolved, with the non-gate loaders still in flight, so the caller
+   * can start the page loader at exactly the right moment: after anything that might reject the
+   * request, alongside anything that merely fetches.
+   *
+   * The ordering is the security-relevant part. Parallel loaders are NOT an authorization boundary -
+   * a page loader running concurrently with a guard has already queried by the time the guard says no.
+   * Remix documents that as a footgun; here it is a declaration instead. `export const gate = true`
+   * makes a layout blocking for everything beneath it, and nothing beneath a rejected gate runs.
+   *
+   * Each layout receives only the params it OWNS ({@link RouteEntry.layoutParams}), not the route's
+   * full set, so a layout at `orgs/[org]/` cannot read a param belonging to a route below it.
+   */
+  const runLayoutChain = async (
+    route: RouteEntry,
+    ctx: LoaderContext,
+  ): Promise<{
+    readonly modules: LoadedLayoutModules
+    readonly layoutData: readonly unknown[] | undefined
+    readonly pending: Promise<unknown>
+  }> => {
+    const modules = await loadLayoutModules(route)
+    if (!modules.some((m) => m.loader !== undefined)) {
+      // Nothing to run: no array is produced, so a page-only app serializes nothing extra and its
+      // HTML is byte-identical to before this feature.
+      return { modules, layoutData: undefined, pending: Promise.resolve() }
+    }
+    const results: unknown[] = new Array(modules.length).fill(null)
+    const pending: Array<Promise<void>> = []
+    for (let i = 0; i < modules.length; i++) {
+      const loader = modules[i]?.loader
+      if (loader === undefined) continue
+      const scoped: LoaderContext = {
+        ...ctx,
+        params: scopeParams(ctx.params, route.layoutParams?.[i]),
+      }
+      if (modules[i]?.gate === true) {
+        // Blocking: awaited here, so a throw propagates before anything deeper is started.
+        results[i] = await loader(scoped)
+        continue
+      }
+      pending.push(
+        Promise.resolve(loader(scoped)).then((value) => {
+          results[i] = value
+        }),
+      )
+    }
+    return { modules, layoutData: results, pending: Promise.all(pending) }
   }
 
   // Build a route's render chain + its merged `<head>` from the already-loaded layout modules + the
@@ -1362,7 +1453,7 @@ export function createWebApp<Env = unknown>(
   // export (outermost→innermost) with the page's (last), so a `head`/`meta` on `_layout.tsx`
   // contributes sitewide tags. `metaArgs` (loader data + params) feed function-form `meta`s.
   const resolveChainAndHead = (
-    layoutModules: ReadonlyArray<{ default: unknown; meta?: MetaInput }>,
+    layoutModules: LoadedLayoutModules,
     page: RouteModule,
     metaArgs: MetaArgs,
   ): { chain: unknown[]; head: Meta } => {
@@ -1529,17 +1620,32 @@ export function createWebApp<Env = unknown>(
       const mod = await route.load()
       const draft = await draftFlag(c.req)
       let data: unknown
+      let layoutData: readonly unknown[] | undefined
+      let layoutModules: LoadedLayoutModules | undefined
       try {
-        data = mod.loader
-          ? await mod.loader({
-              params: c.params,
-              request: c.req,
-              req: c.req,
-              api,
-              env: c.env,
-              draft,
-            })
-          : null
+        const ctx = {
+          params: c.params,
+          request: c.req,
+          req: c.req,
+          api,
+          env: c.env,
+          draft,
+        }
+        // Layout loaders run for BOTH the document and the data-only request. A gate that only ran on
+        // the document path would be bypassed by adding the data header, which is exactly the request
+        // a client navigation makes - a guard has to hold on the path an attacker can pick.
+        //
+        // `runLayoutChain` returns once every GATE has resolved, with the non-gate loaders still in
+        // flight. So the page loader starts as late as correctness requires and as early as speed
+        // allows, and both are awaited together below.
+        const run = await runLayoutChain(route, ctx)
+        layoutModules = run.modules
+        const [pageData] = await Promise.all([
+          mod.loader ? mod.loader(ctx) : null,
+          run.pending, // a non-gate layout loader that rejects must still surface, not go unhandled
+        ])
+        data = pageData
+        layoutData = run.layoutData
       } catch (err) {
         // A terminal-status signal (`notFound()` / `gone()` / `statusPage(n)`) renders a boundary at
         // that status. Checked BEFORE the pass-through below: a signal IS a `Response`, so the order
@@ -1580,11 +1686,15 @@ export function createWebApp<Env = unknown>(
           headers: { "content-type": "application/x-ndjson; charset=utf-8" },
         })
       }
-      const { chain, head } = resolveChainAndHead(await loadLayoutModules(route), mod, {
-        data,
-        params: c.params,
-        origin: originOf(c.req),
-      })
+      const { chain, head } = resolveChainAndHead(
+        layoutModules ?? (await loadLayoutModules(route)),
+        mod,
+        {
+          data,
+          params: c.params,
+          origin: originOf(c.req),
+        },
+      )
       const hydrateRoute = mod.hydrate !== false
       try {
         // `await` so a shell-render throw (renderToStream rejects before any byte) is caught here and
@@ -1600,6 +1710,7 @@ export function createWebApp<Env = unknown>(
           params: c.params,
           path: pathOf(c.req),
           hydrate: hydrateRoute,
+          ...(layoutData !== undefined ? { layoutData } : {}),
           ...preloadOf(route.id),
           ...stylesOf(route.id),
           prerenderedPaths: options.prerenderedPaths ?? [],
