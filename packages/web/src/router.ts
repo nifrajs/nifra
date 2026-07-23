@@ -39,6 +39,20 @@ export const REDIRECT_HEADER = "x-nifra-redirect"
  */
 export const REVALIDATE_HEADER = "x-nifra-revalidate"
 
+/**
+ * Response header carrying a **terminal status** a loader signalled with `notFound()` / `gone()` /
+ * `statusPage(n)` during a client-side navigation's data fetch.
+ *
+ * A soft-nav fetches data, not a document, so the server cannot answer by rendering the `_404` page -
+ * it has only JSON to return. Without this channel the two halves disagree: a crawler doing a hard
+ * navigation gets a correct 404 page while a user who clicked a link gets an error or a blank screen.
+ * The client reads it and renders the same boundary the server would have.
+ *
+ * Carried in a header rather than the body so it survives the NDJSON deferred-data path unchanged,
+ * exactly like {@link REDIRECT_HEADER}.
+ */
+export const STATUS_HEADER = "x-nifra-status"
+
 /** A URL matched against the manifest patterns: which route + its extracted params. */
 export interface RouteMatch {
   readonly routeId: string

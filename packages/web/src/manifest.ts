@@ -211,6 +211,11 @@ export interface Manifest {
    * `buildManifest` (optional only so hand-built test manifests may omit it). */
   readonly errors?: Readonly<Record<string, LayoutEntry>>
   readonly notFound?: LayoutEntry
+  /** Per-status terminal pages from `_<status>.tsx` at the routes root (`_410`, `_451`, …), keyed by
+   * the status as a string. Rendered by a loader's `gone()` / `statusPage(n)`; a status with no page
+   * falls back to `_404`, and then to plain text. `_404` itself stays on {@link notFound} - it is
+   * reached by unmatched paths too, which these are not. */
+  readonly statusPages?: Readonly<Record<string, LayoutEntry>>
 }
 
 // `.svelte` and `.vue` routes are supported too: their `default` export is the component and
@@ -226,6 +231,10 @@ const OPTIONAL = /^\[\[([A-Za-z_][A-Za-z0-9_]*)\]\]$/
 // A route group: a `(name)` folder organizes routes (and can hold its own `_layout`) without
 // contributing a URL segment — mirrors Next/Remix. Requires content between the parens.
 const GROUP = /^\(.+\)$/
+// A terminal status page: `_410.tsx`, `_451.tsx`. `_404` is matched before this and stays its own
+// thing. Restricted to 3 digits so `_401k` or `_4` is treated as an ordinary underscore-prefixed
+// file (ignored) rather than silently becoming a status page.
+const STATUS_PAGE = /^_[1-5][0-9][0-9]$/
 
 const stripExt = (file: string): string => file.replace(ROUTE_EXT, "")
 const baseName = (file: string): string => file.slice(file.lastIndexOf("/") + 1)
@@ -322,6 +331,7 @@ export function buildManifest(
   const errorDirs = new Set<string>()
   const errors: Record<string, LayoutEntry> = {}
   let notFound: LayoutEntry | undefined
+  const statusPages: Record<string, LayoutEntry> = {}
   const routeFiles: string[] = []
 
   for (const file of files) {
@@ -336,6 +346,11 @@ export function buildManifest(
       errors[errorIdFor(dir)] = { file, load: importer(file) }
     } else if (stem === "_404") {
       notFound = { file, load: importer(file) }
+    } else if (STATUS_PAGE.test(stem) && dirOf(file) === "") {
+      // `_410.tsx`, `_451.tsx`, … at the routes root. Root-only: unlike `_error`, these are not
+      // resolved per segment - a terminal status is a property of the outcome, not of where in the
+      // tree the route lives, and a per-segment variant would need a precedence rule nobody asked for.
+      statusPages[stem.slice(1)] = { file, load: importer(file) }
     } else if (!stem.startsWith("_")) {
       routeFiles.push(file)
     }
@@ -363,7 +378,12 @@ export function buildManifest(
     }
   }
 
-  const base: Manifest = { routes, layouts, errors }
+  const base: Manifest = {
+    routes,
+    layouts,
+    errors,
+    ...(Object.keys(statusPages).length > 0 ? { statusPages } : {}),
+  }
   return notFound === undefined ? base : { ...base, notFound }
 }
 

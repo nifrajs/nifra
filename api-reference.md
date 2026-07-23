@@ -2259,6 +2259,8 @@ Every public export of every package and documented subpath — name, kind, sign
   What a route's `getStaticPaths` returns: the param sets to prerender + the unlisted-path policy.
 - **StaticRoutes** _(interface)_ — `interface StaticRoutes`
   The static-routing facts a server needs from the route modules: which concrete paths are prerendered, plus each dynamic route's `getStaticPaths` fallback policy.
+- **StatusPageOptions** _(interface)_ — `interface StatusPageOptions`
+  Options shared by {@link notFound}, {@link gone}, and {@link statusPage}.
 - **Submission** _(interface)_ — `interface Submission`
   An in-flight client submit — the action it targets + the `FormData` being sent. Set while the submit is pending, cleared when it settles. A component reads `submission.formData` to render an **optimistic** view (the expected result) before the server responds.
 - **SubmitOptions** _(interface)_ — `interface SubmitOptions`
@@ -2300,6 +2302,8 @@ Every public export of every package and documented subpath — name, kind, sign
   Codegen: emit a **server manifest** module (as source) for disk-less edge runtimes (Cloudflare Workers, …) — and, with a `target`, any portable server bundle. `discoverRoutes` scans `node:fs` and dynamic-imports each route by a *runtime* path — neither exists on workerd. This instead emits **static…
 - **getBrowserNavigate** _(function)_ — `getBrowserNavigate: () => BrowserNavigate | undefined`
   The active browser navigate, or `undefined` on the server / before `installHistory` has run. A binding calls it when present and falls back to native navigation otherwise.
+- **gone** _(function)_ — `gone: (options?: StatusPageOptions) => never`
+  Render a terminal page at status **410 Gone**. `throw` it from a loader for a record that existed and was deliberately removed - a withdrawn listing, a deleted post.
 - **hashQueryKey** _(function)_ — `hashQueryKey: (key: unknown) => string`
   Hash a query key to a stable cache string. Object keys are sorted (so `{a,b}` ≡ `{b,a}`); arrays keep order. Keys must be serializable — a function/symbol in the key throws (it can't be a stable identity). Mirrors TanStack Query's structural hashing.
 - **isDraftEnabled** _(function)_ — `isDraftEnabled: (request: Request, secret: string) => Promise<boolean>`
@@ -2308,6 +2312,8 @@ Every public export of every package and documented subpath — name, kind, sign
   Build a JSON-LD `<script type="application/ld+json">` entry for a route's `meta.script` from a plain object. `JSON.stringify` produces the body; the head renderer breakout-escapes it (see `escapeScriptContent`), so a string field containing `</script>` is embedded safely.
 - **mergeHeads** _(function)_ — `mergeHeads: (heads: readonly Meta[]) => Meta`
   Merge a route's `<head>` contributions from its layout chain + the page into one {@link Meta}.
+- **notFound** _(function)_ — `notFound: (options?: StatusPageOptions) => never`
+  Render the nearest `_404` page at status **404**. `throw` it from a loader when the record does not exist.
 - **openGraph** _(function)_ — `openGraph: (input: OpenGraphInput) => Array<Record<string, string>>`
   Build the Open Graph `<meta property="og:*">` entries for a route's `meta.meta`. Returns only the properties you supplied (plus `og:type`, defaulting to `"website"`), so it composes with other meta.
 - **previewEndpoint** _(function)_ — `previewEndpoint: (options: PreviewEndpointOptions) => (request: Request) => Promise<Response>`
@@ -2327,6 +2333,8 @@ Every public export of every package and documented subpath — name, kind, sign
   Serialize loader data for embedding inside an inline `<script>`. `JSON.stringify` alone is NOT safe there: a string containing `</script>` or `<!--` would break out of the script element (an XSS vector). Escape `<`/`>` to `\uXXXX`, plus the U+2028/U+2029 separators.
 - **setBrowserNavigate** _(function)_ — `setBrowserNavigate: (navigate: BrowserNavigate | undefined) => void`
   Register (or clear, with `undefined`) the browser navigate — called by `installHistory`. Not for app use.
+- **statusPage** _(function)_ — `statusPage: (status: number, options?: StatusPageOptions) => never`
+  Render a terminal page at any 4xx/5xx status - the escape hatch behind {@link notFound} and {@link gone} (402, 451, …). Uses `_<status>.tsx` if present, otherwise `_404`.
 - **withISR** _(function)_ — `withISR: (app: ISRApp, options: ISROptions) => (req: Request, platform?: ISRPlatform) => Promise<Response>`
   Wrap a nifra app with **Incremental Static Regeneration**: a cacheable page is served from {@link CacheStore} when fresh, served **stale while a fresh copy regenerates in the background** (`platform.waitUntil` on edge), or rendered + stored on a miss. Framework-agnostic (it caches the rendered byte…
 

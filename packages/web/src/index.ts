@@ -42,6 +42,7 @@ import {
   PRERENDERED_GLOBAL,
   REDIRECT_HEADER,
   REVALIDATE_HEADER,
+  STATUS_HEADER,
   type Submission,
 } from "./router.ts"
 
@@ -362,6 +363,10 @@ export interface RenderPageOptions {
   readonly path?: string
   /** HTTP status for the response (default 200; e.g. 404 for a not-found page). */
   readonly status?: number
+  /** Extra response headers - e.g. the `cache-control` a terminal status page wants. `content-type`
+   * is ignored (the document is always HTML) and the ISR freshness header is applied after these,
+   * so neither can be overridden from here. */
+  readonly headers?: HeadersLike
   /** Document title (fallback when `head.title` is unset). */
   readonly title?: string
   /** Resolved route head — `title` overrides `title` above; `meta`/`link` render as managed
@@ -420,6 +425,7 @@ export function renderPageResult(options: RenderPageOptions): MaybePromise<Rende
     rootId = "root",
     hydrate = true,
     islandScripts = [],
+    headers: extraHeaders,
   } = options
   const route = routeId === undefined ? "" : `window.${ROUTE_GLOBAL}=${serializeData(routeId)};`
   // The SSG prerendered-path set (when an app declares it) — the client reads it to fetch a static
@@ -495,6 +501,14 @@ export function renderPageResult(options: RenderPageOptions): MaybePromise<Rende
       : ""
   }${islandTags}</body></html>`
   const headers: Record<string, string> = { "content-type": "text/html; charset=utf-8" }
+  // Caller-supplied headers (a terminal status page's `cache-control`, say). Applied before the
+  // framework's own below, so `content-type` and the ISR channel stay authoritative - a caller must
+  // not be able to mislabel the document or forge the freshness header by passing them here.
+  if (extraHeaders !== undefined) {
+    for (const [name, value] of new Headers(extraHeaders)) {
+      if (name !== "content-type") headers[name] = value
+    }
+  }
   // ISR: advertise the route's freshness so a `withISR` wrapper can set this page's cache TTL. A
   // dedicated header (not the action-revalidation `x-nifra-revalidate`) so the TTL channel never aliases
   // the client's path-list channel.
@@ -717,6 +731,111 @@ export function redirect(location: string, options: RedirectOptions = {}): Respo
     )
   }
   return new Response(null, { status: options.status ?? 303, headers: { location } })
+}
+
+/**
+ * Brand marking a `Response` as a **terminal-status signal** rather than a response to serve verbatim.
+ *
+ * A loader that throws a bare `Response` has always been passed straight through - that is how
+ * `throw redirect(...)` works, and apps rely on it. So "render the `_404` boundary at 404" cannot be
+ * expressed by throwing a plain `Response`: the framework would have no way to tell it apart from a
+ * hand-rolled body the app wants served exactly as written. The brand is that distinction, and
+ * checking it *before* the pass-through is what keeps every existing throw working unchanged.
+ *
+ * `Symbol.for` matches `RESPONSE_RESULT` above: a registry symbol survives two copies of this module,
+ * which a `unique symbol` would not - and a duplicate-install turning a 404 into a raw 404 body would
+ * be a maddening bug to trace.
+ */
+/** Derived from the `Headers` constructor rather than the DOM lib's `HeadersInit`: `@nifrajs/web`
+ * is consumed from DOM-free programs (the root tsconfig runs `types: ["bun"]`), and naming the DOM
+ * type here would break their build. Same workaround as `SSEInit.headers` in core. */
+type HeadersLike = ConstructorParameters<typeof Headers>[0]
+
+const STATUS_SIGNAL = Symbol.for("nifra.web.status-signal")
+
+/** Reason phrases for the plain-text fallback, used only when the app authored no `_<status>` and no
+ * `_404` page. Deliberately not exhaustive - anything unlisted falls back to "Error", which is more
+ * useful than shipping a table of every RFC status for a body almost nobody will see. */
+const STATUS_TEXT: Readonly<Record<number, string>> = {
+  400: "Bad Request",
+  401: "Unauthorized",
+  402: "Payment Required",
+  403: "Forbidden",
+  404: "Not Found",
+  410: "Gone",
+  451: "Unavailable For Legal Reasons",
+  500: "Internal Server Error",
+}
+
+interface StatusSignal extends Response {
+  readonly [STATUS_SIGNAL]: { readonly status: number; readonly headers?: HeadersLike }
+}
+
+function isStatusSignal(value: unknown): value is StatusSignal {
+  return value instanceof Response && STATUS_SIGNAL in value
+}
+
+function statusSignal(status: number, options: StatusPageOptions): never {
+  if (!Number.isInteger(status) || status < 400 || status > 599) {
+    throw new Error(
+      `[nifra/web] statusPage(${JSON.stringify(status)}) must be an integer 4xx or 5xx status. Use redirect() for 3xx, and return data for a successful render.`,
+    )
+  }
+  const response = new Response(null, { status })
+  // Non-enumerable so the brand never lands in a structured clone or a JSON log of the response.
+  Object.defineProperty(response, STATUS_SIGNAL, {
+    value: { status, ...(options.headers !== undefined ? { headers: options.headers } : {}) },
+    enumerable: false,
+  })
+  throw response
+}
+
+/** Options shared by {@link notFound}, {@link gone}, and {@link statusPage}. */
+export interface StatusPageOptions {
+  /**
+   * Extra headers for the rendered response - `cache-control` above all.
+   *
+   * The defaults differ by status for a reason: a 404 may be a race with publication, so it wants a
+   * short TTL, while a 410 is a promise that the URL is permanently gone and can be cached hard.
+   * Getting this wrong is the difference between a crawler dropping a dead URL and re-fetching it
+   * for weeks.
+   */
+  readonly headers?: HeadersLike
+}
+
+/**
+ * Render the nearest `_404` page at status **404**. `throw` it from a loader when the record does not
+ * exist.
+ *
+ * This is the fix for the soft 404: a matched route whose loader finds nothing has otherwise no way to
+ * answer 404, so the path of least resistance is to return empty data and render "not found" inside a
+ * **200**. That looks correct in a browser and is invisible in review, which is why it ships and stays
+ * shipped - while search engines penalise it and keep the dead URL indexed.
+ *
+ * Returns `never`: these throw, so a loader narrows without a redundant `return`, and the type states
+ * the thing the "loaders `throw` redirect, actions `return` it" rule already trips people on.
+ */
+export function notFound(options: StatusPageOptions = {}): never {
+  return statusSignal(404, options)
+}
+
+/**
+ * Render a terminal page at status **410 Gone**. `throw` it from a loader for a record that existed and
+ * was deliberately removed - a withdrawn listing, a deleted post.
+ *
+ * 410 is not a pedantic 404: it tells a crawler to **drop** the URL rather than re-fetch it for weeks
+ * on the assumption the 404 was transient. Uses `_410.tsx` if the app has one, otherwise `_404`.
+ */
+export function gone(options: StatusPageOptions = {}): never {
+  return statusSignal(410, options)
+}
+
+/**
+ * Render a terminal page at any 4xx/5xx status - the escape hatch behind {@link notFound} and
+ * {@link gone} (402, 451, …). Uses `_<status>.tsx` if present, otherwise `_404`.
+ */
+export function statusPage(status: number, options: StatusPageOptions = {}): never {
+  return statusSignal(status, options)
 }
 
 /** The wrapper `revalidate()` returns: the action's `data` plus the paths it changed. A plain tagged
@@ -1205,29 +1324,74 @@ export function createWebApp<Env = unknown>(
   // The 404 response — the `_404` page (status 404) or a plain-text fallback. Shared by the wildcard
   // catch-all (unmatched paths) and the `fallback: "404"` enforcement (unlisted paths under a route
   // that opted out of on-demand SSR).
-  const renderNotFound = async (path?: string): Promise<Response | RenderedPage> => {
-    if (manifest.notFound === undefined) {
-      return new Response("Not Found", {
-        status: 404,
-        headers: { "content-type": "text/plain; charset=utf-8" },
-      })
+  const renderNotFound = (path?: string): Promise<Response | RenderedPage> =>
+    renderTerminalStatus(404, path)
+
+  /**
+   * Render a terminal-status page: the `_<status>` page if the app authored one, else `_404`, else
+   * plain text. Shared by the wildcard catch-all, `fallback: "404"` enforcement, and a loader's
+   * `notFound()` / `gone()` / `statusPage()`, so all of them resolve the page and set the status
+   * through one path rather than forking.
+   *
+   * Hydrates, following the `_404` precedent rather than `_error`'s non-hydrated 500: these are
+   * ordinary pages the client router can own, and a 404 arrived at by clicking a link should behave
+   * like any other route.
+   */
+  const renderTerminalStatus = async (
+    status: number,
+    path?: string,
+    extraHeaders?: HeadersLike,
+  ): Promise<Response | RenderedPage> => {
+    const page = manifest.statusPages?.[String(status)] ?? manifest.notFound
+    if (page === undefined) {
+      const headers = new Headers(extraHeaders)
+      headers.set("content-type", "text/plain; charset=utf-8")
+      return new Response(STATUS_TEXT[status] ?? "Error", { status, headers })
     }
-    const { default: notFound } = await manifest.notFound.load()
+    // The routeId decides which preload/style bundle and which client component this maps to, so it
+    // must name the page actually rendered - `_410` when `_410.tsx` exists, `_404` when it fell back.
+    const routeId = manifest.statusPages?.[String(status)] !== undefined ? `_${status}` : "_404"
+    const { default: component } = await page.load()
     return renderPageResult({
       adapter,
-      chain: [notFound],
+      chain: [component],
       data: null,
       clientEntry,
-      routeId: "_404",
-      // `_404` hydrates, so its SSR `path` must equal the client's initial `location.pathname+search`
-      // (an unmatched path yields no params → `{}`), or a `useLocation` on the 404 page would drift.
+      routeId,
+      // The page hydrates, so its SSR `path` must equal the client's initial
+      // `location.pathname+search` (an unmatched path yields no params → `{}`), or a `useLocation`
+      // on it would drift.
       ...(path !== undefined ? { path } : {}),
-      status: 404,
-      ...preloadOf("_404"),
-      ...stylesOf("_404"),
+      status,
+      ...(extraHeaders !== undefined ? { headers: extraHeaders } : {}),
+      ...preloadOf(routeId),
+      ...stylesOf(routeId),
       prerenderedPaths: options.prerenderedPaths ?? [],
       ...titleOption,
     })
+  }
+
+  /**
+   * Answer a loader's terminal-status signal, in whichever form the caller asked for.
+   *
+   * A hard navigation wants the document, so it gets the rendered boundary. A client-side navigation
+   * fetched DATA, not a document, so it gets an empty body plus the status on `X-Nifra-Status`, and
+   * the client router renders the same boundary from its own manifest. Sending the HTML back to a
+   * soft-nav would be answering a different question than the one asked - and skipping the header
+   * entirely is what leaves a crawler seeing a correct 404 while a user who clicked a link sees a
+   * blank page.
+   */
+  const renderStatusSignal = (
+    req: Request,
+    signal: StatusSignal,
+  ): Promise<Response | RenderedPage> | Response => {
+    const { status, headers } = signal[STATUS_SIGNAL]
+    if (req.headers.get(DATA_HEADER) !== null) {
+      const responseHeaders = new Headers(headers)
+      responseHeaders.set(STATUS_HEADER, String(status))
+      return new Response(null, { status, headers: responseHeaders })
+    }
+    return renderTerminalStatus(status, pathOf(req), headers)
   }
 
   for (const route of manifest.routes) {
@@ -1256,6 +1420,10 @@ export function createWebApp<Env = unknown>(
             })
           : null
       } catch (err) {
+        // A terminal-status signal (`notFound()` / `gone()` / `statusPage(n)`) renders a boundary at
+        // that status. Checked BEFORE the pass-through below: a signal IS a `Response`, so the order
+        // is what keeps a hand-rolled `throw new Response(...)` served verbatim, as it always was.
+        if (isStatusSignal(err)) return renderStatusSignal(c.req, err)
         // A thrown `Response` is a control-flow signal (a guard's `redirect(...)`, an explicit error
         // response) — let it propagate to core, which returns it as-is. Real errors render the nearest
         // `_error` boundary, if any; with none, rethrow (unchanged 500 behavior).
@@ -1319,6 +1487,8 @@ export function createWebApp<Env = unknown>(
           ...titleOption,
         })
       } catch (err) {
+        // Same precedence as the loader catch above — a `meta()` may signal too.
+        if (isStatusSignal(err)) return renderStatusSignal(c.req, err)
         if (err instanceof Response) throw err
         // Let reporting plugins observe the data-layer failure before it's rendered/rethrown/500'd.
         if (options.onLoaderError !== undefined) {

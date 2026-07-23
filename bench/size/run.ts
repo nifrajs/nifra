@@ -124,10 +124,16 @@ export default server().post("/users", { body }, (c) => ({ name: c.body.name }))
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-bare": 15.5,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  "nifra-idempotency": 18.25,
-  "nifra-effect-ledger": 17.02,
+  // +0.2 KB across these three: the router's rejected-parameter diagnostic. A `:id.json` pattern used
+  // to fail with a bare "invalid parameter", which reads as a typo when the real answer is a grammar
+  // rule, so the message now states the rule and the two ways out. Measured cost of the first draft
+  // was ~0.3 KB gzip in EVERY bundle; trimming it to the rule itself (no interpolated example path)
+  // recovered a third and kept nifra-bare inside its budget. The remainder is accepted deliberately:
+  // it buys a five-second fix instead of a trip to the source, and it is paid once at registration.
+  "nifra-idempotency": 18.45,
+  "nifra-effect-ledger": 17.22,
   "nifra-mcp": 16,
-  "nifra-sse": 16,
+  "nifra-sse": 16.2,
   "nifra-valibot": 16.5,
   "nifra-typebox-t": 46,
 }

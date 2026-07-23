@@ -68,25 +68,14 @@ function validParamName(name: string): boolean {
  * between a five-second fix and a trip to the source.
  */
 function paramNameHint(name: string): string {
-  if (RESERVED_PARAM_NAMES.has(name)) {
-    return ` — "${name}" is reserved, because assigning it would mutate the prototype of the params object`
-  }
-  // A trailing literal is the common intent: `:file.txt`, `:id-v2`, `:slug.html`.
-  const split = /^([A-Za-z_][A-Za-z0-9_]*)(.+)$/.exec(name)
-  if (split !== null) {
-    // Both groups are non-optional in the pattern, so a match guarantees both — same `!` idiom the
-    // segment loop below uses for its own guaranteed indices.
-    const head = split[1]!
-    const tail = split[2]!
-    return (
-      ` — a segment is wholly static or wholly a parameter, so everything after ":" is the name` +
-      ` (here "${name}", not "${head}" plus "${tail}"). Give the literal its own segment` +
-      ` (":${head}/${tail.replace(/^[.\-_]/, "")}"), or capture the whole segment as` +
-      ` ":${head}" and split it in the handler`
-    )
-  }
+  if (RESERVED_PARAM_NAMES.has(name)) return ` — "${name}" is reserved (prototype key)`
   if (name.length === 0) return ` — ":" needs a name after it`
-  return ` — a name must match ${PARAM_NAME.source} (letters, digits and "_", not starting with a digit)`
+  // A trailing literal is the common intent (`:file.txt`, `:id-v2`), and the one case where the bare
+  // message misleads: the author sees a typo where the real answer is a grammar rule.
+  if (/^[A-Za-z_][A-Za-z0-9_]*./.test(name)) {
+    return ` — a segment is wholly static or wholly a parameter, so everything after ":" is the name. Split the literal into its own segment, or capture the segment and split it in the handler`
+  }
+  return ` — a name must match ${PARAM_NAME.source}`
 }
 
 function escapeRegex(value: string): string {

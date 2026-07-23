@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test"
 import { compileRoutePattern, matchRoutePattern } from "../src/router/pattern.ts"
 
+// The grammar the error message quotes back, asserted from one place so a change to the rule shows
+// up as a single test edit rather than a scattering of string literals.
+const PARAM_NAME_SOURCE = "^[A-Za-z_][A-Za-z0-9_]*$"
+
 test("compiled route segments cannot diverge from their cached matcher", () => {
   const pattern = compileRoutePattern("/users/:id/*rest")
   expect(pattern.segments.every(Object.isFrozen)).toBe(true)
@@ -39,10 +43,13 @@ test("a rejected parameter name explains the per-segment grammar, not just that 
 
   const suffix = hint("/v/:id.json")
   expect(suffix).toContain("wholly static or wholly a parameter")
-  // It names what was actually parsed vs what the author meant, and shows the escape hatches.
-  expect(suffix).toContain('"id.json"')
-  expect(suffix).toContain(":id/json")
+  // States the rule and both escape hatches. Deliberately does NOT interpolate the split name or
+  // build an example path: that phrasing measured ~0.3 KB gzip in every nifra bundle, which is the
+  // wrong price for prose that only renders on a boot-time misconfiguration.
+  expect(suffix).toContain("own segment")
   expect(suffix).toContain("split it in the handler")
+  // The offending pattern is still named, by the message this hint is appended to.
+  expect(suffix).toContain('":id.json"')
   expect(hint("/:id-suffix")).toContain("wholly static or wholly a parameter")
 
   // A reserved name is a different failure and says so, rather than reusing the suffix explanation.
@@ -53,7 +60,7 @@ test("a rejected parameter name explains the per-segment grammar, not just that 
 
   expect(hint("/:")).toContain("needs a name after it")
   // A name that is invalid for a reason other than a trailing literal falls back to the grammar.
-  expect(hint("/:9lives")).toContain("not starting with a digit")
+  expect(hint("/:9lives")).toContain(PARAM_NAME_SOURCE)
 })
 
 test("a segment not starting with ':' stays static even when it contains one", () => {
