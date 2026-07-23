@@ -7,9 +7,16 @@
  * and hot-reloads the client while Bun's runtime resolves SSR. Only one toolchain is present, so the two
  * cannot disagree.
  *
- * What you trade: HMR is Bun's, so an edit is a fast reload of the changed module graph rather than the
- * state-preserving Fast Refresh a framework's Vite plugin gives you. What you gain: no Vite dependency
- * and one bundler across dev and production.
+ * What you get: React Fast Refresh WITH state preserved — Bun's dev server applies it natively, no plugin
+ * (verified: editing a component-only module swaps its markup while a `useState` counter keeps its value,
+ * no reload). The usual boundary rule still applies, and it is the same rule Vite has: a module whose
+ * exports are all components is a refresh boundary, so a ROUTE file that also exports `loader`/`meta` is
+ * not, and saving it does a clean full reload. Plus no Vite dependency and ONE bundler across dev and
+ * production, which is the real prize — the dev/prod seam disappears.
+ *
+ * What you give up: `*.module.css`. Bun's DEV-server bundler has no CSS-Modules transform (its production
+ * `Bun.build` does), so the import compiles to a dangling reference. Plain CSS and Tailwind are fine. The
+ * CLI refuses `nifra dev --bun` for a CSS-Modules app rather than serving a broken client.
  *
  * ## How the two halves meet
  *
@@ -189,13 +196,15 @@ export function writeDevFiles(options: WriteDevFilesOptions): void {
     // A bare relative path reads as a PACKAGE specifier to a bundler; `./` is what makes it a file.
     return rel.startsWith(".") ? rel : `./${rel}`
   }
-  // No `import.meta.hot.accept` here, deliberately. Bun logs "hot update was not accepted" on every edit
-  // and points at this generated file, which is genuinely annoying - but accepting is worse. Bun
-  // re-evaluates the module BEFORE the accept callback runs, so the entry re-executes against a container
-  // React has already mounted ("createRoot() on a container that has already been passed to createRoot()")
-  // and only then does the callback get to reload. Trading an accurate warning for a real error is a bad
-  // deal: the warning is describing this pipeline's actual behaviour, which is a full reload, because
-  // there is no framework Fast Refresh here to patch a component into a live tree.
+  // No `import.meta.hot.accept` here, deliberately. When an edit lands OUTSIDE a Fast Refresh boundary —
+  // a route file, which also exports `loader`/`meta` — Bun walks up to this generated entry, finds no
+  // `accept`, logs "hot update was not accepted" and does a full reload. That reload is correct: the route
+  // module's non-component exports changed, so patching it into the live tree would be wrong. Accepting
+  // here is worse than the warning: Bun re-evaluates the module BEFORE the accept callback runs, so the
+  // entry re-executes against a container React already mounted ("createRoot() on a container that has
+  // already been passed to createRoot()") and only then does the callback get to reload — trading an
+  // accurate warning for a real error. Editing a component-only module never reaches this path: Bun
+  // applies React Fast Refresh there and state is preserved.
   writeIfChanged(entryPath, generateClientEntry(manifest, { clientModule, resolve: toSpecifier }))
   const entryHref = `./${relative(dirname(htmlPath), entryPath).replaceAll("\\", "/")}`
   writeIfChanged(htmlPath, devHtml(entryHref))

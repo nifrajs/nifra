@@ -14,7 +14,8 @@ const BUN_DEV = `// doc-check: skip — fragment: routesDir/outDir/clientModule/
 // dev.ts — Bun-native HMR, no Vite in the process
 import { createDevServer } from "@nifrajs/web/dev"
 // Bun.serve bundles + hot-reloads the client; Bun's runtime resolves SSR. An edit reloads the
-// changed module graph (no framework Fast Refresh here), and CSS + the entry URL come from Bun.
+// changed module graph — with React Fast Refresh (state preserved) applied natively by Bun, no plugin.
+// CSS + the entry URL come from Bun. Plain CSS/Tailwind work; *.module.css does not (Bun's dev bundler).
 const server = await createDevServer({ routesDir, outDir, clientModule, createApp })`
 
 const VITE_DEV = `// doc-check: skip — needs the third-party @vitejs/plugin-react + your ./backend; install it to run this.
@@ -105,9 +106,10 @@ export default function Dev() {
       <h1 className="page">Dev & HMR</h1>
       <p className="lead">
         Nifra gives you two local development loops, and the rule between them is that one
-        toolchain owns a whole phase. Use <code>nifra dev</code> for state-preserving UI edits, or
-        use <code>@nifrajs/web/dev</code> when you want Bun end to end with no Vite dependency. Both
-        serve your real SSR app locally, and neither mixes the two bundlers in one process.
+        toolchain owns a whole phase. <strong>Both</strong> give you React Fast Refresh with state
+        preserved. Use <code>nifra dev</code> (Vite) for the plugin ecosystem, or{" "}
+        <code>nifra dev --bun</code> for one bundler across dev and prod with no Vite dependency.
+        Both serve your real SSR app locally, and neither mixes the two bundlers in one process.
       </p>
 
       <h2>Two loops, same app</h2>
@@ -125,9 +127,9 @@ export default function Dev() {
             <td>
               <code>@nifrajs/web/dev</code>
             </td>
-            <td>Bun HMR (module-graph reload)</td>
+            <td>Bun HMR + Fast Refresh (native)</td>
             <td>none (Bun only)</td>
-            <td>one bundler for dev and prod; zero extra deps</td>
+            <td>one bundler dev+prod; no Vite dep (no CSS Modules)</td>
           </tr>
           <tr>
             <td>
@@ -235,8 +237,18 @@ export default function Dev() {
 
       <h2>The zero-dep alternative</h2>
       <p>
-        <code>@nifrajs/web/dev</code> is a self-contained server: it builds the client on boot,
-        serves SSR, watches the routes, and does a full-page reload on change.
+        <code>nifra dev --bun</code> (library: <code>@nifrajs/web/dev</code>) is self-contained —
+        no Vite anywhere. <code>Bun.serve</code>'s native HMR bundles and hot-reloads the client while
+        Bun's runtime resolves SSR, and it applies <strong>React Fast Refresh natively</strong>: editing
+        a component-only module swaps its markup with <code>useState</code> state intact, no reload. The
+        boundary rule is the same as Vite's (see below). The real prize is that dev and production use
+        the <em>same bundler</em>, so the dev/prod seam disappears.
+      </p>
+      <p>
+        One gap: <strong>CSS Modules</strong>. Bun's dev-server bundler has no{" "}
+        <code>*.module.css</code> transform (its production <code>Bun.build</code> does), so the CLI
+        refuses <code>--bun</code> for a CSS-Modules app rather than serving a broken client. Plain CSS
+        and Tailwind work normally.
       </p>
       <CodeBlock code={BUN_DEV} />
 

@@ -29,8 +29,9 @@ export interface Flags {
   /** `nifra build --vite`: build the client + server with Vite/Rollup instead of Bun (the escape hatch
    * for apps needing a Vite-only transform in production). Default Bun. */
   readonly vite: boolean
-  /** `nifra dev --bun`: run the Bun-pipeline dev server (Bun.serve native HMR, no Vite in the process)
-   * instead of the Vite one. Default Vite (mature framework plugins + state-preserving Fast Refresh). */
+  /** `nifra dev --bun`: run the Bun-pipeline dev server (Bun.serve native HMR — including React Fast
+   * Refresh with state preserved — and no Vite in the process). Default stays Vite for its plugin
+   * ecosystem; `--bun` trades that for one bundler across dev and prod. Refuses CSS-Modules apps. */
   readonly bun: boolean
 }
 
@@ -38,9 +39,10 @@ const HELP = `nifra — zero-config dev/build/start for a nifra app
 
 Usage:
   nifra dev     [--port <n>] [--poll]    Start the true-HMR dev server (Vite). Default port ${DEFAULT_DEV_PORT}.
-                [--bun]                  Run the BUN pipeline instead: Bun.serve native HMR, no Vite in
-                                         the process. Trades framework Fast Refresh (state-preserving)
-                                         for one bundler across dev and prod + no Vite dependency.
+                [--bun]                  Run the BUN pipeline instead: Bun.serve native HMR (React Fast
+                                         Refresh included, state preserved), no Vite in the process - one
+                                         bundler across dev and prod. Plain CSS/Tailwind work; refuses an
+                                         app using *.module.css (Bun's dev bundler can't transform it).
   nifra build   [--out <dir>] [--report]  Emit a complete Bun deploy directory by default.
                 [--target <t>]             Target a FULL deploy dir for <t>:
                                          bun | node | deno | cf-pages | vercel | static. Packages

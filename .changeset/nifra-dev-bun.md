@@ -18,4 +18,9 @@ component, naming neither CSS Modules nor the dev server. So `--bun` checks for 
 refuses with the offending files named and both ways forward. The check is deliberately narrow: only the
 transform proven missing is refused, so an app without CSS Modules gets the Bun dev loop.
 
-Default is unchanged - `nifra dev` stays Vite, for its framework plugins and state-preserving Fast Refresh.
+Bun applies React Fast Refresh natively on this path — verified: editing a component-only module swaps its
+markup while a `useState` counter keeps its value, with no reload. The boundary rule is the same one Vite
+has (a route file that also exports `loader`/`meta` is not a refresh boundary, so saving it reloads). Plain
+CSS and Tailwind work; only `*.module.css` is refused.
+
+Default is unchanged - `nifra dev` stays Vite, for its plugin ecosystem.
