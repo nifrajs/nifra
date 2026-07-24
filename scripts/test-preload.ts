@@ -25,11 +25,21 @@
  *
  * It is cheap, it is scoped to loopback, and the rate with it has never been observed higher than
  * without. It is a MITIGATION with an unproven mechanism, not a fix - do not read the flake as solved.
- * The tradeoff: connection reuse is no longer exercised by the suite.
+ *
+ * ## The cost, and where it is paid back
+ *
+ * Every `fetch` in the suite now uses a fresh connection, so from the moment this landed nothing
+ * exercised connection REUSE - the single most common thing a real client does, since browsers and HTTP
+ * agents pool by default. A server that mishandled the second request on a socket would have looked
+ * healthy here indefinitely. That gap is covered by `packages/core/test/server.keep-alive.test.ts`,
+ * which speaks HTTP/1.1 over `Bun.connect` precisely so it lands OUTSIDE this wrapper. Route it through
+ * `fetch` and it tests this file instead of the server.
  *
  * The next step is a reliable reproduction, not a third guess. Chasing it needs the failing assertion
  * to report what it saw - most of these tests discard the error (`new Error("open failed")`), which is
- * why several rounds of investigation produced a rate and never a cause.
+ * why several rounds of investigation produced a rate and never a cause. Note that re-running the suite
+ * to hunt it is a known dead end: at 8-12 runs the measurements cannot distinguish configurations, so
+ * another round of counting adds no information.
  */
 
 const realFetch = globalThis.fetch
