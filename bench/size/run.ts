@@ -127,13 +127,16 @@ export default server().post("/users", { body }, (c) => ({ name: c.body.name }))
 // no mixed segment allocates nothing and pays one `undefined` check on the match path (asserted in
 // mixed-segments.test.ts), and removing the now-obsolete rejected-parameter hint - `:id.json` used to
 // throw and now compiles - gave 0.2 KB back, so the net is +0.4 rather than +0.6.
+// Every row below carries the router, so a router change moves all of them together. The last such
+// move was the total specificity comparator that makes the trie router and the browser matcher order
+// equally-weighted mixed patterns identically: ~0.2 KB gzip, paid once in `nifra-bare` and inherited.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
-  "nifra-bare": 15.9,
+  "nifra-bare": 16.1,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  "nifra-idempotency": 18.9,
-  "nifra-effect-ledger": 17.7,
-  "nifra-mcp": 16.2,
-  "nifra-sse": 16.6,
+  "nifra-idempotency": 19.1,
+  "nifra-effect-ledger": 17.9,
+  "nifra-mcp": 16.4,
+  "nifra-sse": 16.8,
   "nifra-valibot": 17,
   "nifra-typebox-t": 46,
 }

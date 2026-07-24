@@ -257,13 +257,22 @@ const SPECIFICITY: Readonly<Record<RoutePatternSegment["kind"], number>> = {
   wildcard: 1,
 }
 
-/** Total ordering for mixed segment shapes, shared by the trie and regex-based routers. */
+/**
+ * Total ordering for mixed segment shapes, shared by the trie and regex-based routers.
+ *
+ * Code-unit comparison, never `localeCompare`: this exists so the server and the browser agree on which
+ * of two equally-weighted patterns wins, and `localeCompare` answers by the RUNTIME's locale - a server
+ * and a visitor in different locales would order the same pair differently, which is the divergence
+ * being prevented.
+ */
 export function compareMixedPartsSpecificity(
   left: readonly MixedPart[],
   right: readonly MixedPart[],
 ): number {
   const literalWeight = (parts: readonly MixedPart[]): number =>
     parts.reduce((sum, part) => (part.t === "lit" ? sum + part.v.length : sum), 0)
+  const order = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
+
   const weightDifference = literalWeight(right) - literalWeight(left)
   if (weightDifference !== 0) return weightDifference
 
@@ -273,14 +282,12 @@ export function compareMixedPartsSpecificity(
     const b = right[i]
     if (a === undefined || b === undefined) return b === undefined ? -1 : 1
     if (a.t !== b.t) return a.t === "lit" ? -1 : 1
-    if (a.t === "lit" && b.t === "lit") {
-      if (a.v.length !== b.v.length) return b.v.length - a.v.length
-      const lexical = a.v.localeCompare(b.v)
-      if (lexical !== 0) return lexical
+    if (a.t === "lit" && b.t === "lit" && a.v !== b.v) {
+      return a.v.length === b.v.length ? order(a.v, b.v) : b.v.length - a.v.length
     }
   }
 
-  return mixedSegmentSource(left).localeCompare(mixedSegmentSource(right))
+  return order(mixedSegmentSource(left), mixedSegmentSource(right))
 }
 
 /** Core precedence: static > mixed > param > wildcard at the first differing segment, independent of
