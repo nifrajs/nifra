@@ -17,6 +17,17 @@ jobs:
         with:
           bun-version: 1.3.14
 
+      # The version ALONE does not identify a build: two Bun binaries reporting 1.3.14 can behave
+      # differently, and that difference is invisible from a developer machine where everything passes.
+      # Printing the revision and arch turns "works locally, fails on CI" into a comparison rather than a
+      # guess - the Vite build was debugged as a nifra bug for several rounds because this line did not
+      # exist and the runtime was assumed identical.
+      - name: Runtime identity (version alone does not identify a build)
+        run: |
+          bun --version
+          bun --revision
+          uname -srm
+
       - name: Install
         run: bun install --frozen-lockfile
 
