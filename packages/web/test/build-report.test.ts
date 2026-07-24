@@ -10,7 +10,10 @@ import {
   isManifestInSync,
   parseManifestClientEntry,
   parseManifestRouteFiles,
+  parseManifestRouteStyles,
+  parseManifestStyles,
   renderSizeReport,
+  resyncServerManifestSource,
 } from "../src/build.ts"
 import { generateServerManifest } from "../src/index.ts"
 
@@ -385,5 +388,94 @@ describe("generateServerEntry — cf-pages static fallback", () => {
     expect(src).toContain("env.ASSETS.fetch(request)")
     // Confined to the build's own outputs - never an arbitrary path.
     expect(src).toContain('pathname.startsWith("/assets/") || PUBLIC_FILES.has(pathname)')
+  })
+})
+
+// `nifra sync-manifest` regenerates a COMMITTED server-manifest after a route add or rename. It must
+// carry the baked asset URLs across: they come from a real build, and the resync has no build to ask.
+// Dropping them silently would ship a page with no stylesheet links and no client entry - a blank-looking
+// deploy from a command whose whole purpose is to avoid a rebuild.
+describe("server-manifest resync preserves what it cannot recompute", () => {
+  const BUILT = [
+    'import { buildManifest } from "@nifrajs/web"',
+    'import * as m0 from "./routes/index.tsx"',
+    "const modules = { }",
+    'export const clientEntry = "/assets/_nifra-deadbeef.js"',
+    'export const styles = ["/assets/app-1.css", "/assets/app-2.css"]',
+    'export const routeStyles = { "index": ["/assets/index-9.css"], "about": [] }',
+    "export const manifest = buildManifest(Object.keys(modules), (f) => () => Promise.resolve(modules[f]))",
+  ].join("\n")
+
+  test("reads the baked styles and per-route styles", () => {
+    expect(parseManifestStyles(BUILT)).toEqual(["/assets/app-1.css", "/assets/app-2.css"])
+    expect(parseManifestRouteStyles(BUILT)).toEqual({
+      index: ["/assets/index-9.css"],
+      about: [],
+    })
+  })
+
+  test("a formatter's trailing comma does not lose the styles", () => {
+    // biome/prettier add one when wrapping a multi-line literal, and strict JSON.parse rejects it.
+    // Failing to parse here is silent: the resync would emit an empty list and the CSS links vanish.
+    const wrapped = BUILT.replace(
+      'export const styles = ["/assets/app-1.css", "/assets/app-2.css"]',
+      'export const styles = [\n  "/assets/app-1.css",\n  "/assets/app-2.css",\n]',
+    )
+    expect(parseManifestStyles(wrapped)).toEqual(["/assets/app-1.css", "/assets/app-2.css"])
+  })
+
+  test("absent or unparseable declarations degrade to empty, never throw", () => {
+    // A hand-edited or older manifest must not crash the command.
+    expect(parseManifestStyles("const x = 1")).toEqual([])
+    expect(parseManifestRouteStyles("const x = 1")).toEqual({})
+    expect(parseManifestStyles("export const styles = [oops")).toEqual([])
+    expect(parseManifestRouteStyles("export const routeStyles = {oops")).toEqual({})
+    // A declaration of the wrong SHAPE is ignored rather than passed through as-is.
+    expect(parseManifestStyles('export const styles = {"not": "an array"}')).toEqual([])
+    expect(parseManifestRouteStyles('export const routeStyles = ["not an object"]')).toEqual({})
+  })
+
+  test("resync rewrites the route list while carrying the built assets forward", () => {
+    const next = resyncServerManifestSource(
+      BUILT,
+      {
+        routes: [
+          {
+            id: "index",
+            pattern: "/",
+            layoutIds: [],
+            file: "index.tsx",
+            load: async () => ({ default: () => null }),
+          },
+        ],
+        layouts: {},
+      },
+      "./routes/",
+    )
+    // The asset URLs survive - they cannot be recomputed without a build.
+    expect(next).toContain("/assets/_nifra-deadbeef.js")
+    expect(next).toContain("/assets/app-1.css")
+    expect(next).toContain("/assets/index-9.css")
+    expect(next).toContain("./routes/index.tsx")
+  })
+
+  test("resync keeps the manifest's existing eager/lazy shape", () => {
+    // Switching a committed manifest from lazy to eager (or back) changes the app's chunking, which a
+    // command that only re-lists routes has no business doing.
+    const lazySource = BUILT.replace("const modules = { }", "const loaders = { }")
+    const manifest = {
+      routes: [
+        {
+          id: "index",
+          pattern: "/",
+          layoutIds: [],
+          file: "index.tsx",
+          load: async () => ({ default: () => null }),
+        },
+      ],
+      layouts: {},
+    }
+    expect(resyncServerManifestSource(lazySource, manifest, "./routes/")).toContain("const loaders")
+    expect(resyncServerManifestSource(BUILT, manifest, "./routes/")).not.toContain("const loaders")
   })
 })

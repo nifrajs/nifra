@@ -211,3 +211,21 @@ test("a missing public/ directory is not an error", async () => {
     expect(await serve(get("/whatever.txt"))).toBeUndefined()
   })
 })
+
+test("a symlinked DIRECTORY inside publicDir cannot leak its contents either", async () => {
+  // The per-entry symlink check catches a symlinked FILE. A symlinked directory is the same escape
+  // wearing a different hat: every regular file inside it lstats as a plain file, so only resolving
+  // the real path shows it landing outside the root. Copying it would publish whatever it points at.
+  await withDir(async (dir) => {
+    const root = join(dir, "public")
+    await mkdir(root)
+    await mkdir(join(dir, "outside"))
+    await writeFile(join(dir, "outside", "secret.txt"), "TOPSECRET")
+    await symlink(join(dir, "outside"), join(root, "linked"))
+
+    await expect(copyPublicDir(root, join(dir, "out"))).rejects.toThrow(/symlink/)
+    // And nothing under it is servable.
+    const serve = servePublicDir({ dir: root })
+    expect(await serve(get("/linked/secret.txt"))).toBeUndefined()
+  })
+})
