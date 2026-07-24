@@ -1,5 +1,15 @@
 # nifra
 
+## 2.2.0
+
+### Patch Changes
+
+- Updated dependencies [5f460db]
+- Updated dependencies [e713cab]
+- Updated dependencies [a4645e2]
+- Updated dependencies [6aa0aac]
+  - @nifrajs/core@2.2.0
+
 ## 2.1.0
 
 ### Patch Changes

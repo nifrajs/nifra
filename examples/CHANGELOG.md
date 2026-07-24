@@ -1,5 +1,51 @@
 # @nifrajs/examples
 
+## 2.2.0
+
+### Patch Changes
+
+- Updated dependencies [2441577]
+- Updated dependencies [39b1670]
+- Updated dependencies [d428f52]
+- Updated dependencies [135d0c6]
+- Updated dependencies [5f460db]
+- Updated dependencies [1394641]
+- Updated dependencies [e713cab]
+- Updated dependencies [a4645e2]
+- Updated dependencies [a7d740a]
+- Updated dependencies [78e0b02]
+- Updated dependencies [6e996a1]
+- Updated dependencies [15ad6ca]
+- Updated dependencies [b5f89f8]
+- Updated dependencies [6aa0aac]
+- Updated dependencies [1857d39]
+- Updated dependencies [6ba3173]
+- Updated dependencies [1f52a12]
+- Updated dependencies [ca71a2e]
+- Updated dependencies [0fc215b]
+- Updated dependencies [2ff661f]
+- Updated dependencies [a1327a4]
+- Updated dependencies [2500705]
+  - @nifrajs/cli@2.2.0
+  - @nifrajs/web@2.2.0
+  - @nifrajs/core@2.2.0
+  - @nifrajs/web-react@2.2.0
+  - @nifrajs/web-preact@2.2.0
+  - @nifrajs/web-solid@2.2.0
+  - @nifrajs/web-vue@2.2.0
+  - @nifrajs/web-svelte@2.2.0
+  - @nifrajs/middleware@2.2.0
+  - @nifrajs/auth@2.2.0
+  - @nifrajs/client@2.2.0
+  - @nifrajs/deno@2.2.0
+  - @nifrajs/schema@2.2.0
+  - @nifrajs/workers@2.2.0
+  - @nifrajs/content@2.2.0
+  - @nifrajs/i18n@2.2.0
+  - @nifrajs/image@2.2.0
+  - @nifrajs/mcp@2.2.0
+  - @nifrajs/node@2.2.0
+
 ## 2.1.0
 
 ### Patch Changes

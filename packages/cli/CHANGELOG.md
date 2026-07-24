@@ -1,5 +1,311 @@
 # @nifrajs/cli
 
+## 2.2.0
+
+### Minor Changes
+
+- 2441577: `nifra build` picks its bundler from your config instead of a fixed default, and `--bun` joins `--vite`.
+
+  The two phases default differently on purpose: `nifra dev` is Vite (for the plugin ecosystem, and because
+  Bun's dev-server bundler cannot compile CSS Modules), `nifra build` is Bun (faster, Bun-native). For an app
+  with no transforms that costs nothing - there is nothing for the two to disagree about. For an app whose
+  only transforms are `vitePlugins` it cost a class of production-only bug: those plugins ran in dev, and the
+  Bun build reads `clientPlugins`/`serverPlugins` and never `vitePlugins`, so it dropped them. The build
+  succeeded, the output looked plausible, and the transform had simply not happened.
+
+  That is the failure the pipeline-separation guard already refuses to allow - a plugin whose pipeline never
+  runs - reached by crossing phases instead of slots, where the slot check cannot see it because the plugins
+  are correctly placed.
+
+  So the default now follows the app. Vite plugins with no Bun counterpart means exactly one pipeline can
+  build it, and that is the one used; `nifra build` prints the reason so an auto-selected Vite build never
+  looks like you got the default. An app declaring both slots has supplied the Bun equivalent deliberately -
+  nothing is dropped - so the faster Bun default stands, unchanged. An app with no plugins is unaffected.
+
+  `--vite` and the new `--bun` force the choice, with one exception: `--bun` on an app whose only transforms
+  are `vitePlugins` is refused, naming the plugins it would discard, rather than producing the silently
+  incomplete build the flag would otherwise ask for. Passing both flags is an error.
+
+- a7d740a: Mount sub-apps and standalone-shaped backends without a `Proxy`; bound the render worker; lint removed imports.
+
+  **`mounts` and `apiStrip` on `createWebApp`.** Two shapes previously needed a hand-written ~40-line
+  `Proxy` around the backend. The auto-mount dispatches the full `/api/v1/forms`, but a backend that also
+  runs standalone declares its routes without the prefix and lets its own shell supply it - so every
+  request 404'd inside it. And better-auth is not a `backend` route, so `/api/auth/*` hit the backend and
+  404'd silently. `apiStrip: true` removes the prefix before dispatch, and `mounts` takes any
+  `{ path, app: { fetch } }` - so any library exposing its routes in that shape mounts directly, with no
+  dependency from `@nifrajs/web` on it. Mounts are matched longest-path-first and before the `api`
+  prefix, so `/api/auth` wins over `/api` regardless of declaration order.
+
+  **A layout that exports a `loader` now fails loudly.** Layouts do not run one - only route files do -
+  and rendering while ignoring the export was the worst possible handling: it looks wired, the page
+  renders, and the data is simply never there. The error names the file and says where the fetch should
+  go instead. Running loaders in layouts is a real feature and is not this change.
+
+  **`nifra_render` and `nifra_run` can no longer hang.** The cold-path child wrote its result and then
+  fell off the end of the module without exiting, unlike the warm-worker branch beside it. Loading an
+  app runs its module side effects, so a database pool, a Redis client, or an interval kept the child's
+  event loop alive forever while the parent waited on `proc.exited`. The child now exits explicitly, and
+  both the cold and warm paths carry a 30s timeout as a backstop, reporting the likely cause rather than
+  hanging.
+
+  **A `removed-import` lint in `nifra check`.** `@nifrajs/budget` folded into core in 2.x with no npm
+  deprecation - `latest` is still 1.13.0, so a `^2` range resolves to nothing and `bun install` fails
+  workspace-wide with an error naming neither cause nor replacement. The 2.0 WebSocket change has the
+  same shape: `import "@nifrajs/core/ws"` no longer installs the runtime, and a consuming package kept
+  it while its whole test suite stayed green and the app could not boot. Both are now caught before
+  boot, with the replacement named. The WS rule flags only the bare side-effect form, since the module
+  still exports `websocket` and a rule that fires on correct code gets ignored.
+
+- 78e0b02: `nifra dev --bun` — the Bun pipeline is now selectable in dev, completing the pipeline matrix.
+
+  `nifra build --vite` already let an app choose its production bundler, but dev was Vite-only from the
+  CLI: the Bun dev server existed solely as a library entry (`@nifrajs/web/dev`), so using it meant
+  hand-writing a `dev.ts`. `nifra dev --bun` runs it directly - `Bun.serve`'s native HMR bundles and
+  hot-reloads the client while Bun's runtime resolves SSR, with no Vite in the process. Both pipelines are
+  now selectable in both phases, and neither ever runs inside the other.
+
+  It refuses one case rather than breaking quietly. Bun's DEV-server bundler and `Bun.build` are not the
+  same bundler: `Bun.build` compiles `*.module.css` into a scoped class map (so the Bun production build of
+  a CSS-Modules app is fine), but the dev server's bundler has no such transform - the import becomes a
+  dangling reference and the browser throws `ReferenceError: import_X_module is not defined` from inside the
+  component, naming neither CSS Modules nor the dev server. So `--bun` checks for CSS Modules up front and
+  refuses with the offending files named and both ways forward. The check is deliberately narrow: only the
+  transform proven missing is refused, so an app without CSS Modules gets the Bun dev loop.
+
+  Bun applies React Fast Refresh natively on this path — verified: editing a component-only module swaps its
+  markup while a `useState` counter keeps its value, with no reload. The boundary rule is the same one Vite
+  has (a route file that also exports `loader`/`meta` is not a refresh boundary, so saving it reloads). Plain
+  CSS and Tailwind work; only `*.module.css` is refused.
+
+  Default is unchanged - `nifra dev` stays Vite, for its plugin ecosystem.
+
+- 15ad6ca: Enforce pipeline separation, and make the client-leak guards bundler-neutral.
+
+  nifra supports both Vite and Bun, and the config already keeps them in separate slots - `vitePlugins`
+  for the Vite pipeline, `clientPlugins` / `serverPlugins` for the Bun one. Nothing enforced the split,
+  and the failure mode is silent: `Bun.build` has no `transform` hook and Vite never calls `setup`, so a
+  plugin in the wrong slot is accepted, never invoked, and the build succeeds with the transform simply
+  missing.
+
+  Loading an app now refuses that config, naming the plugin, the slot it is in, the pipeline that slot
+  feeds, and where to move it. Checked at load rather than in `nifra check`, which holds a deliberate
+  pre-`loadApp` invariant - reading plugins means importing the app's config. So `dev`, `build` and
+  `start` are covered from one place, immediately before the plugins reach a bundler. Detection is by
+  hook shape and deliberately conservative: a plugin matching neither shape is left alone, because a
+  guard that fires on correct config is a guard people turn off.
+
+  The two client-leak guards - server-only code reaching the browser, `node:` builtins in client code -
+  now take a bundler-neutral module graph instead of Bun's metafile, with a `fromBunMetafile` adapter
+  behind it. Nothing changes today: Bun remains the only producer and the existing 19 tests pass
+  unchanged, now routed through the adapter so it is covered too.
+
+  The point is what it makes possible. These are security guards - one stops secrets and database access
+  shipping to a browser - so a second production pipeline must not arrive without them, and porting them
+  under pressure beside a new bundler is how a guard ends up "mostly" ported. Introducing the seam while
+  Bun is the only producer means the adapter can be verified against known-good behaviour, and adding
+  Rollup later is one more adapter rather than a second copy of the detection logic.
+
+- 6ba3173: `nifra routes --modes` — every route's render mode, hydration, and cache policy, gated against the target.
+
+  The facts were always in the route modules: `prerender`, `getStaticPaths`, `revalidate`, `hydrate`.
+  Nowhere read them together. Answering "which pages are static?", "which revalidate, how often?", "which
+  ship no JS?" meant opening every route file and holding the answer in your head - and the answer changes
+  with the deploy target, which is nowhere near the route file.
+
+  The new `@nifrajs/web/route-manifest` derives one record per route - static | isr | ssr, hydration, cache
+  policy - and resolves it against a target. `nifra routes --modes` prints the table; `--modes --target <t>`
+  gates: a route the target cannot honour exits non-zero, so CI fails the build instead of production
+  failing the request. The two cases that were previously silent are exactly the ones it catches: an ssr or
+  isr route in a `static` build (no server, so the URL 404s in production while working in dev), and ISR
+  where the target has no revalidation. Each conflict names the consequence, not the rule.
+
+  Two derivations are deliberate. `prerender` wins over `revalidate`, because a page rendered at build time
+  is not revalidated at runtime - the build-time answer is the one that ships. And a dynamic route counts as
+  static only once the build has actually emitted paths for it: `getStaticPaths` is the intent, the emitted
+  paths are the evidence, and treating intent as sufficient is how a "static" build ships a page that 404s.
+  Pass the paths `prerenderRoutes` produced via `buildRouteManifest`'s `prerendered` option to resolve those
+  routes against what was really built.
+
+- ca71a2e: `nifra_types` collapses oversized declarations in search results, and a bad `clientModule` says so.
+
+  **`nifra_types` query mode.** A search returned the complete declaration of every match, and the corpus
+  is wildly uneven: the median symbol is small while `Server` alone is ~32,000 characters, five times the
+  next largest. One broad query that happened to match it returned the entire class for near-zero value.
+
+  A `query` now returns a one-line summary plus the signature, collapsing an oversized body to its head
+  and a member count, and saying which `name` call returns the rest. Measured on the real corpus:
+  `"server"` drops from 36,355 to 1,739 characters (95%), `"route schema"` by 87%, `"rate limit"` by 69%.
+
+  An exact `name` lookup is **never** collapsed - there the caller asked for that symbol. Pass
+  `full: true` to opt a query back into whole declarations.
+
+  **`clientModule`.** The option is a module specifier resolved by the bundler, so nothing type-checks
+  that the module actually exports `mountRouter`. A self-executing client entry therefore built cleanly
+  and failed at first paint with `mountRouter is not a function`, from inside a bundled chunk, naming
+  neither the module nor the requirement - diagnosable only by reading `build.ts`.
+
+  The generated bootstrap now throws immediately, naming the offending specifier, the missing export, its
+  call signature, and the specific trap that a self-executing entry will not work. The contract is also
+  spelled out on the option's own type rather than in a parenthetical.
+
+- 0fc215b: The Vite dev pipeline now resolves SSR too, which removes the dual-React class of bug.
+
+  `nifra dev` served the client through Vite while resolving route modules for SSR through Bun - two
+  resolvers disagreeing about one specifier, inside one process. That is what made `resolve.dedupe`
+  govern only half the app: an app added a hand-written React alias in `nifra.config.ts`, and it still
+  crashed, because the alias reached Vite and SSR never asked Vite. The symptom named a React internal
+  (`resolveDispatcher().useState` is null), so the actual cause - two copies at different paths - was
+  hours of inference away.
+
+  `discoverRoutes` accepts a `load` option, and the Vite dev server passes `ssrLoadModule`. Both halves
+  now resolve through the same toolchain, so an alias, a `dedupe`, or a condition configured for the
+  client governs the server as well.
+
+  Two things follow from that and are removed rather than kept "just in case":
+
+  - **Bun's SFC plugins are no longer registered in `nifra dev`.** Vite compiles `.vue` / `.svelte` /
+    Solid for SSR through the app's `vitePlugins`. Registering Bun's alongside was the intermix itself -
+    two toolchains compiling one file, only one of them governed by Vite's resolution. `nifra start` and
+    the build path keep theirs, which is correct: those are the Bun pipeline.
+  - **The `importQuery` cache-buster is gone from the Vite path.** It existed to defeat Bun's import
+    cache; Vite re-evaluates changed modules itself. `discoverRoutes` ignores `importQuery` when `load`
+    is supplied, because appending one would mint a new module id per request and defeat that.
+
+  The dev server still re-creates the app on change, now only so a hard reload picks up a route add or
+  remove - the manifest comes from a directory scan, which `ssrLoadModule` cannot invalidate.
+
+- 2ff661f: The full Vite/Rollup production build: `buildClientVite`, `buildServerVite`, `buildTargetVite`, and `nifra build --vite`.
+
+  Production stays Bun by default - faster and Bun-native, the profile nifra is tuned for. This completes
+  the escape hatch for the one case that default cannot serve: an app whose client needs a Vite-only
+  transform with no Bun equivalent. It now has a real, full production path, not just the leak-guard plugin.
+
+  The design point is that this is NOT a second orchestrator. `buildTarget`'s deploy assembly - per-target
+  server-entry codegen, `_worker.js` / `server.js` placement, `_routes.json`, prerender, size report - is
+  bundler-agnostic and now lives behind `buildTargetWith(target, options, bundler)`, which takes a `Bundler`
+  strategy (its two bundling steps). `buildTarget` passes the Bun strategy; `buildTargetVite` passes the
+  Vite one. So the deploy-dir shape is produced in exactly one place and cannot drift between pipelines -
+  `buildTargetVite` emits the identical directory for every target.
+
+  `buildClientVite` reconstructs the same `BuildManifest` the Bun `buildClient` does - content-hashed entry,
+  per-route chunk lists, aggregate + per-route CSS, copied `public/` - from Vite's own `.vite/manifest.json`.
+  It wires `viteLeakGuard()`, and it keeps `node:` builtins external so the guard names the offending builtin:
+  left alone, rolldown-vite silently rewrites a `node:` import to a browser stub, which builds and ships and
+  is a no-op at runtime - a worse footgun than Bun's polyfill, now a build failure. `buildServerVite`
+  produces the same self-contained `ServerBuild`, tagging the bundle `NIFRA_SSR_BUNDLED` so the web-react
+  adapter uses the bundled, deduped react-dom rather than re-rooting to a disk copy.
+
+  `nifra build --vite` selects the pipeline; the app's Vite plugins drive both halves. Verified end to end by
+  building the React example for the `node` target, running the server, and confirming SSR plus live
+  hydration in a real browser, alongside `cf-pages` (`_worker.js` + `_routes.json`) and `static` (prerender,
+  no server) deploy shapes.
+
+  No change to the default Bun build: `buildTarget` now delegates to `buildTargetWith` with the Bun strategy,
+  and its behaviour and output are identical.
+
+### Patch Changes
+
+- 135d0c6: Find duplicate installs when `nifra check` runs from an app subdirectory.
+
+  The duplicate-install check anchored its discovery at the directory it was run from. In a monorepo you
+  run it from the app - `apps/web` - and that manifest declares no `workspaces`, so the scan collapsed to
+  the app itself and the sibling package holding the second copy was never probed. It printed
+  `✓ duplicate identity-sensitive dependency install: none` while the dev server returned 500 on every
+  page using a shared-kit hook, from exactly the condition the check exists to detect. Running from an
+  app subdirectory is the normal case, so that was the configuration it was blind in.
+
+  Discovery now walks up to the workspace root that actually governs the directory, and probes from
+  there. An ancestor is adopted only when its `workspaces` patterns genuinely match - a parent that
+  merely contains a manifest is not this project's root - and the walk stops at a `.git` boundary.
+  Findings are still reported relative to where you ran the command.
+
+  **Expect this to start reporting real findings in monorepos that were previously green.** That is the
+  point rather than a regression: the duplicate was always there, and the check simply never looked in
+  the right place.
+
+  An SSR error carrying a duplicate-instance signature (`resolveDispatcher()`, `Invalid hook call`, a
+  null hook read) now names the likely cause. Two copies at the same version still fail, because module
+  identity is path-based, and the raw error points at a React internal - so the message now says two
+  copies are installed at different paths, that matching versions do not fix it, and to run
+  `nifra check` for the paths.
+
+- 1857d39: Serve `public/` in production, not just in dev.
+
+  `nifra dev` served a project's `public/` directory; production did not. There was no `publicDir`
+  concept anywhere - dev got the behaviour for free because the HMR path runs on Vite, and Vite serves
+  `public/` by default. So a file worked all the way through development and 404'd the moment it was
+  deployed, and every app had to notice this and hand-roll static serving in its own server entry.
+
+  The failure is inverted, which is what makes it expensive: it appears only in production, and only for
+  the assets nobody smoke-tests. It has already shipped once as a self-hosted webfont that 404'd in prod
+  and silently fell back to a system font. Nothing errored and nothing alerted.
+
+  `publicDir` (default `"public"`) is now a first-class option. The build copies the directory into the
+  output and records the file list on the build manifest, and `servePublicDir` is exported for a server
+  entry to mount. Dev routes through the **same** handler rather than inheriting Vite's - two code paths
+  with different defaults was the whole bug, so there is now one owner.
+
+  Behaviour, matching what apps arrived at independently: only paths with a file extension are probed,
+  so a page route never pays a filesystem stat; a miss falls through to routing, so no route is shadowed;
+  and cache headers differ by subtree - content-hashed `/assets/*` immutable, `public/` a day, both
+  overridable. Path traversal is confined by resolving and then verifying containment, rather than
+  scanning the input for `..` - a blocklist over encodings is the version that gets bypassed - and
+  percent-encoded and NUL-bearing paths have tests.
+
+  Note that `publicPath` is a different thing: the URL prefix for content-hashed bundle chunks. It never
+  covered user-authored files, and the name similarity actively misleads.
+
+  `nifra check` now points out that an app with a `public/` directory can delete its hand-rolled static
+  serving. A tip rather than a finding - an existing handler still works, since it runs first.
+
+  On Cloudflare Pages the copied files are named individually in `_routes.json` so the CDN serves them
+  without invoking the worker, within Cloudflare's cap of 100 include+exclude rules of at most 100
+  characters each. An ordinary `public/` of icons, fonts and share images clears that cap, and the
+  rejection lands at `wrangler pages deploy` - after a build that reported success.
+
+  Past the cap a directory is compacted to one `/dir/*` rule, but only after checking it against the
+  app's real route patterns. The glob does not merely describe today's files; it hands Pages every future
+  path under that prefix, so a `public/blog/hero.png` beside a `/blog/:slug` route would send
+  `/blog/my-post` to a CDN that has no such file and 404 the page in production only. A directory
+  therefore collapses only when no route can be served beneath it, and a single route with a dynamic
+  first segment (`/:locale/…`) disables collapsing everywhere, since it can match under any name. A
+  collapsed directory does give up the app's 404 page for a missing file beneath it - the right trade for
+  a directory of static files, where a missing image should fail as a fast CDN 404 rather than an HTML
+  error page.
+
+  Whatever still does not fit is dropped rather than widened, which is safe because the list is only an
+  optimization: the emitted worker serves any path it recognises through the `ASSETS` binding, so an
+  omitted file costs one worker invocation rather than a 404, and nothing else reaches that binding. The
+  build prints how many it left out, since a cap you cannot see reads as coverage you do not have.
+
+- Updated dependencies [39b1670]
+- Updated dependencies [d428f52]
+- Updated dependencies [135d0c6]
+- Updated dependencies [5f460db]
+- Updated dependencies [1394641]
+- Updated dependencies [e713cab]
+- Updated dependencies [a4645e2]
+- Updated dependencies [a7d740a]
+- Updated dependencies [6e996a1]
+- Updated dependencies [15ad6ca]
+- Updated dependencies [6aa0aac]
+- Updated dependencies [1857d39]
+- Updated dependencies [6ba3173]
+- Updated dependencies [ca71a2e]
+- Updated dependencies [0fc215b]
+- Updated dependencies [2ff661f]
+- Updated dependencies [a1327a4]
+- Updated dependencies [2500705]
+  - @nifrajs/web@2.2.0
+  - create-nifra@2.2.0
+  - @nifrajs/core@2.2.0
+  - @nifrajs/client@2.2.0
+  - @nifrajs/schema@2.2.0
+  - @nifrajs/testing@2.2.0
+  - @nifrajs/mcp@2.2.0
+  - @nifrajs/runner@2.2.0
+
 ## 2.1.0
 
 ### Patch Changes

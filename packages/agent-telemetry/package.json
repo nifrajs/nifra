@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/agent-telemetry",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Agent telemetry plugin — child spans for AI tool calls on /_nifra/tool/* and MCP endpoints.",
   "type": "module",
   "main": "./dist/index.js",

@@ -1,5 +1,96 @@
 # @nifrajs/web-react
 
+## 2.2.0
+
+### Minor Changes
+
+- 1394641: Layout loaders: request data in the component that wraps every page.
+
+  `routes/_layout.tsx` rendered, but a `loader` it exported never ran, so nothing request-derived could
+  reach a layout - host, session, locale, feature flags, tenant. An app hit this and moved its host guard
+  out of the component tree into the server entry, where it could not be typechecked with the rest of the
+  app. That is the real cost: the gap pushed security-relevant code to the one place nifra's typed-boundary
+  promise does not reach. Remix, React Router and SvelteKit all support this; nifra was alone in not.
+
+  ```tsx
+  // routes/orgs/[org]/_layout.tsx
+  export const gate = true                       // optional; see below
+  export async function loader({ params, req }) {
+    return { org: await findOrg(params.org) }    // params is { org } — nothing deeper
+  }
+  export default function Layout({ data, children }) { … }
+  ```
+
+  **Scoped, not global.** A layout owns the URL prefix it wraps, so it receives only the params inside
+  that prefix and its loader is skipped on a navigation that did not change them. Navigating
+  `/orgs/acme/a` → `/orgs/acme/b` does not re-run the org layout's loader. Scope is derived at build time
+  per `(route, layout)` pair, because one layout can own different params on different expanded patterns:
+  `[[lang]]/docs/_layout` owns nothing on `/docs/:slug` and `{lang}` on `/:lang/docs/:slug`. Layouts are
+  not router nodes and did not become any - the router is untouched.
+
+  **Execution order is declared, and this matters for security.** By default a layout loader runs in
+  parallel with the page's, which is right for data and wrong for a guard: a page loader running
+  concurrently with a guard has already queried by the time the guard says no. `export const gate = true`
+  makes a layout blocking - nothing beneath it runs until it resolves, and nothing beneath a rejected gate
+  runs at all. **A layout loader without `gate: true` is not an authorization boundary.** Gates also run on
+  the data-only request, so a client navigation cannot bypass one by sending the data header, and a gate is
+  never skipped by the retention hint.
+
+  A layout may throw `notFound()` / `gone()` / `redirect()`. Its errors resolve to the `_error` boundary at
+  or above its OWN segment, never one below it - rendering there would wrap the boundary in the very layout
+  whose loader just failed.
+
+  Every adapter passes each layout its own data. A layout with no loader receives `null`, and an app where
+  no layout has a loader emits byte-identical HTML and unchanged props.
+
+  The data-mode response becomes a versioned envelope when a chain carries layout data. It is recognised
+  by structure, and the bare pre-envelope shape is still accepted - a prerendered `_data.json` is a static
+  file that outlives the deploy that wrote it.
+
+### Patch Changes
+
+- 1f52a12: Catch a duplicate React reaching SSR with both paths, instead of a null-dispatcher crash.
+
+  The adapter already re-roots `react-dom/server` to the app so it shares the route components' React. That
+  fixes the common case but cannot guarantee the last mile: a `react` nested under react-dom, or a
+  components tree resolving `react` elsewhere, still puts two React cores in the render. Two cores is two
+  hook dispatchers, and SSR throws `resolveDispatcher().useState is null` from deep inside react-dom-server
+
+  - a message that names a React internal and nothing about the two directories that caused it, from which
+    the real fix is hours of inference.
+
+  After re-rooting, the adapter now compares the realpath of the `react` react-dom will render with against
+  the `react` the components import, and if they differ throws naming both paths and the fix. `nifra doctor`
+  checks what is installed; this checks what SSR actually resolved, which is the only thing that can catch a
+  duplicate the two dev pipelines introduce (Bun resolves SSR, Vite the client) rather than the install - a
+  Vite `resolve.dedupe` or alias fixes only the client bundle, never this path. Silent on the single-copy
+  common case, and it never manufactures a failure: a `react` it cannot resolve on either side is not
+  evidence of a duplicate. Runs once, under the unbundled Bun runtime only, so bundled and non-Bun outputs
+  are untouched.
+
+- Updated dependencies [39b1670]
+- Updated dependencies [d428f52]
+- Updated dependencies [135d0c6]
+- Updated dependencies [5f460db]
+- Updated dependencies [1394641]
+- Updated dependencies [e713cab]
+- Updated dependencies [a4645e2]
+- Updated dependencies [a7d740a]
+- Updated dependencies [6e996a1]
+- Updated dependencies [15ad6ca]
+- Updated dependencies [6aa0aac]
+- Updated dependencies [1857d39]
+- Updated dependencies [6ba3173]
+- Updated dependencies [ca71a2e]
+- Updated dependencies [0fc215b]
+- Updated dependencies [2ff661f]
+- Updated dependencies [a1327a4]
+- Updated dependencies [2500705]
+  - @nifrajs/web@2.2.0
+  - @nifrajs/core@2.2.0
+  - @nifrajs/i18n@2.2.0
+  - @nifrajs/image@2.2.0
+
 ## 2.1.0
 
 ### Patch Changes
