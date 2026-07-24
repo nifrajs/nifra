@@ -143,6 +143,10 @@
     "functions": 100,
     "lines": 99.1869918699187
   },
+  "packages/core/src/internal/route-catalog.ts": {
+    "functions": 90,
+    "lines": 100
+  },
   "packages/core/src/internal/safe-equal.ts": {
     "functions": 100,
     "lines": 100
@@ -264,8 +268,8 @@
     "lines": 100
   },
   "packages/core/src/server/server.ts": {
-    "functions": 91.28440366972477,
-    "lines": 99.0261404407996
+    "functions": 91.34615384615384,
+    "lines": 99.00052603892688
   },
   "packages/core/src/server/sse.ts": {
     "functions": 94.73684210526315,

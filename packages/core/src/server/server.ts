@@ -25,6 +25,7 @@ import {
   NIFRA_ASSURANCE_IDS,
   validEvidenceId,
 } from "../internal/route-assurance.ts"
+import { type CatalogRoute, RouteCatalog } from "../internal/route-catalog.ts"
 import type {
   ContextRouteRunner,
   FusedWebRunner,
@@ -39,12 +40,8 @@ import type {
   RouteExecutionRunner,
 } from "../internal/route-execution.ts"
 import type { RequestLedger } from "../ledger.ts"
-import {
-  type CompiledRoutePattern,
-  compileRoutePattern,
-  decodeRouteParams,
-} from "../router/pattern.ts"
-import { EMPTY_PARAMS, type Method, Router, type RouterMatch } from "../router/router.ts"
+import { compileRoutePattern, decodeRouteParams } from "../router/pattern.ts"
+import { EMPTY_PARAMS, type Method, Router } from "../router/router.ts"
 import type {
   InferOutput,
   StandardIssue,
@@ -195,73 +192,6 @@ export type OnRequestResult = Response | Request | undefined
 type RawOnRequest = (req: Request, platform?: Platform) => MaybePromise<OnRequestResult>
 type RawOnResponse = (response: Response, req: Request) => MaybePromise<Response>
 type RawOnResponseFinalized = (outcome: ResponseFinalization, req: Request) => MaybePromise<void>
-
-/** One canonical runtime route fact. The catalog owns matching, reflection, assurance, tool metadata,
- * replay, and native compilation input so batch registration has one commit point. */
-interface CatalogRoute {
-  readonly method: Method
-  readonly path: string
-  readonly pattern: CompiledRoutePattern
-  readonly entry: RouteEntry
-  readonly descriptor: RouteDescriptor
-  readonly assurance: readonly AssuranceDeclaration[]
-}
-
-/**
- * Runtime route catalog. Single-route registration mutates directly; multi-route registration replays
- * the existing catalog plus the candidate batch into a staged router, then swaps the complete state only
- * after every route validates. Failed `implement()`/`merge()` batches therefore leave matching and
- * reflection unchanged.
- */
-class RouteCatalog {
-  private matcher = new Router<RouteEntry>()
-  private records: CatalogRoute[] = []
-  /** Allocation-free reflection view for the common no-assurance case. Derived only at commit time. */
-  private descriptors: RouteDescriptor[] = []
-  private assurancePresent = false
-
-  add(route: CatalogRoute): void {
-    this.matcher.add(route.method, route.pattern, route.entry)
-    this.records.push(route)
-    this.descriptors.push(route.descriptor)
-    if (route.assurance.length > 0) this.assurancePresent = true
-  }
-
-  addBatch(routes: readonly CatalogRoute[]): void {
-    if (routes.length === 0) return
-    const nextRecords = this.records.concat(routes)
-    const nextDescriptors = this.descriptors.concat(routes.map(({ descriptor }) => descriptor))
-    const nextAssurancePresent =
-      this.assurancePresent || routes.some((route) => route.assurance.length > 0)
-    const staged = new Router<RouteEntry>()
-    for (const route of this.records) staged.add(route.method, route.pattern, route.entry)
-    for (const route of routes) staged.add(route.method, route.pattern, route.entry)
-    this.matcher = staged
-    this.records = nextRecords
-    this.descriptors = nextDescriptors
-    this.assurancePresent = nextAssurancePresent
-  }
-
-  find(method: string, path: string): RouterMatch<RouteEntry> {
-    return this.matcher.find(method, path)
-  }
-
-  entries(): readonly CatalogRoute[] {
-    return this.records
-  }
-
-  routeDescriptors(): ReadonlyArray<RouteDescriptor> {
-    return this.descriptors
-  }
-
-  lastDescriptor(): RouteDescriptor | undefined {
-    return this.records[this.records.length - 1]?.descriptor
-  }
-
-  hasAssurance(): boolean {
-    return this.assurancePresent
-  }
-}
 
 /** A registered WebSocket route — just its handler; matching reuses {@link Router} under the GET verb. */
 interface WsEntry {
