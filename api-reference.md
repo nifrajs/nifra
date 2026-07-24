@@ -326,6 +326,7 @@ Every public export of every package and documented subpath — name, kind, sign
 - **silentLogger** _(const)_ — `silentLogger: Logger`
   Discards everything — for tests, or when log output is handled elsewhere.
 - **toFetchHandler** _(function)_ — `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
+  Adapt a nifra app to an edge "ExportedHandler" — use it as a Cloudflare Workers (or any `fetch(request, env, ctx)` runtime) default export. It threads `env` + `ctx.waitUntil` into the nifra Context, so handlers read `c.env` and schedule background work via `c.waitUntil`:
 - **unsignValue** _(function)_ — `unsignValue: (signed: string, secret: string) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 
@@ -1091,6 +1092,7 @@ Every public export of every package and documented subpath — name, kind, sign
 - **silentLogger** _(const)_ — `silentLogger: Logger`
   Discards everything — for tests, or when log output is handled elsewhere.
 - **toFetchHandler** _(function)_ — `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
+  Adapt a nifra app to an edge "ExportedHandler" — use it as a Cloudflare Workers (or any `fetch(request, env, ctx)` runtime) default export. It threads `env` + `ctx.waitUntil` into the nifra Context, so handlers read `c.env` and schedule background work via `c.waitUntil`:
 - **unsignValue** _(function)_ — `unsignValue: (signed: string, secret: string) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 
@@ -3260,5 +3262,6 @@ _No named exports (side-effect entrypoint)._
 - **silentLogger** _(const)_ — `silentLogger: Logger`
   Discards everything — for tests, or when log output is handled elsewhere.
 - **toFetchHandler** _(function)_ — `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
+  Adapt a nifra app to an edge "ExportedHandler" — use it as a Cloudflare Workers (or any `fetch(request, env, ctx)` runtime) default export. It threads `env` + `ctx.waitUntil` into the nifra Context, so handlers read `c.env` and schedule background work via `c.waitUntil`:
 - **unsignValue** _(function)_ — `unsignValue: (signed: string, secret: string) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.

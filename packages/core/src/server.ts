@@ -36,6 +36,13 @@ export {
   unsignValue,
 } from "./server/cookies.ts"
 export {
+  type DurableObjectNamespaceLike,
+  type ExecutionContext,
+  type ScheduledController,
+  type ScheduledHandler,
+  toFetchHandler,
+} from "./server/edge.ts"
+export {
   commonSecretPatterns,
   jsonLogger,
   type LogFields,
@@ -49,11 +56,9 @@ export {
   type AdmissionController,
   type AdmissionDecision,
   type AnyServer,
-  type DurableObjectNamespaceLike,
   defineIdentityPlugin,
   definePlugin,
   defineRouterPlugin,
-  type ExecutionContext,
   type Handler,
   type IdentityPlugin,
   type McpPromptDescriptor,
@@ -67,13 +72,10 @@ export {
   type ResponseFinalization,
   type RouteDescriptor,
   type RunningServer,
-  type ScheduledController,
-  type ScheduledHandler,
   Server,
   type ServerOptions,
   server,
   type ToolAnnotations,
-  toFetchHandler,
 } from "./server/server.ts"
 export type {
   SSEContext,
