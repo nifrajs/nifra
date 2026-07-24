@@ -27,8 +27,10 @@
  * going DOWN is a decision someone made, which is the entire point.
  */
 
-const LCOV = process.env.COVERAGE_LCOV ?? "coverage/lcov.info"
-const BASELINE = "coverage-baseline.json"
+import { readFile, writeFile } from "node:fs/promises"
+
+const DEFAULT_LCOV = "coverage/lcov.info"
+const DEFAULT_BASELINE = "coverage-baseline.json"
 
 /**
  * Slack before a drop is called a regression.
@@ -113,59 +115,117 @@ export function findRegressions(
 
 const pct = (n: number): string => `${n.toFixed(2)}%`
 
-async function main(): Promise<void> {
-  const update = process.argv.includes("--update")
-  const lcov = Bun.file(LCOV)
-  if (!(await lcov.exists())) {
-    console.error(
-      `[coverage-ratchet] no lcov report at ${LCOV}. Produce one first:\n` +
-        "  bun run test:coverage",
-    )
-    process.exit(2)
-  }
-  const current = parseLcov(await lcov.text())
-  const fileCount = Object.keys(current).length
-  if (fileCount === 0) {
-    console.error(`[coverage-ratchet] ${LCOV} listed no files - refusing to treat that as a pass.`)
-    process.exit(2)
-  }
-
-  if (update) {
-    await Bun.write(BASELINE, `${JSON.stringify(sortKeys(current), null, 2)}\n`)
-    console.log(`[coverage-ratchet] baseline updated: ${fileCount} files → ${BASELINE}`)
-    return
-  }
-
-  const baselineFile = Bun.file(BASELINE)
-  if (!(await baselineFile.exists())) {
-    console.error(
-      `[coverage-ratchet] no ${BASELINE}. Create it once with:\n  bun run check:coverage --update`,
-    )
-    process.exit(2)
-  }
-  const baseline = JSON.parse(await baselineFile.text()) as Record<string, FileCoverage>
-  const regressions = findRegressions(baseline, current)
-  const added = Object.keys(current).filter((f) => baseline[f] === undefined)
-
-  if (regressions.length > 0) {
-    console.error(`[coverage-ratchet] coverage regressed in ${regressions.length} place(s):\n`)
-    for (const r of regressions) {
-      console.error(`  ${r.file}\n    ${r.metric}: ${pct(r.was)} → ${pct(r.now)}`)
-    }
-    console.error(
-      "\nAdd the tests, or accept the drop deliberately with `bun run check:coverage --update`\n" +
-        "(the baseline is committed, so the reduction shows up in review).",
-    )
-    process.exit(1)
-  }
-  console.log(
-    `[coverage-ratchet] ok — ${fileCount} files, none below baseline` +
-      (added.length > 0 ? ` (${added.length} new, not yet in the baseline)` : ""),
-  )
-}
-
 function sortKeys(record: Record<string, FileCoverage>): Record<string, FileCoverage> {
   return Object.fromEntries(Object.entries(record).sort(([a], [b]) => a.localeCompare(b)))
 }
 
-if (import.meta.main) await main()
+/** What a run decided: the process exit code, and the lines to print. */
+export interface RatchetOutcome {
+  /** 0 ok, 1 coverage regressed, 2 the gate could not run at all. */
+  readonly code: 0 | 1 | 2
+  readonly report: readonly string[]
+}
+
+/** Where a run reads from and writes to. Explicit so a test can point a whole run at a temp directory
+ * instead of the repo - a gate nothing can exercise is not a gate, and this one had grown a hardcoded
+ * baseline path while the lcov path was already overridable. */
+export interface RatchetPaths {
+  readonly lcov?: string
+  readonly baseline?: string
+}
+
+/**
+ * Run the ratchet and return what it decided, rather than printing and calling `process.exit` inside.
+ *
+ * That split is what makes the gate testable end to end: the caller below turns the outcome into
+ * output and an exit status, and a test drives the same function against fixture files and asserts the
+ * code. Reading and writing through `node:fs/promises` rather than `Bun.file`/`Bun.write` is part of
+ * the same goal - under `bun test --coverage` (1.3.14) this file's Bun file-API calls collapsed its
+ * whole LINE coverage to 2%, reporting even module-level constants as unexecuted while the tests that
+ * depend on them passed. Function coverage stayed correct throughout, so the numbers were wrong rather
+ * than the code untested, and the plain Node API reports it accurately.
+ */
+export async function run(
+  argv: readonly string[] = process.argv,
+  paths: RatchetPaths = {},
+): Promise<RatchetOutcome> {
+  const update = argv.includes("--update")
+  const lcovPath = paths.lcov ?? process.env.COVERAGE_LCOV ?? DEFAULT_LCOV
+  const baselinePath = paths.baseline ?? process.env.COVERAGE_BASELINE ?? DEFAULT_BASELINE
+
+  const lcovText = await readFile(lcovPath, "utf8").catch(() => undefined)
+  if (lcovText === undefined) {
+    return {
+      code: 2,
+      report: [
+        `[coverage-ratchet] no lcov report at ${lcovPath}. Produce one first:`,
+        "  bun run test:coverage",
+      ],
+    }
+  }
+  const current = parseLcov(lcovText)
+  const fileCount = Object.keys(current).length
+  if (fileCount === 0) {
+    return {
+      code: 2,
+      report: [
+        `[coverage-ratchet] ${lcovPath} listed no files - refusing to treat that as a pass.`,
+      ],
+    }
+  }
+
+  if (update) {
+    await writeFile(baselinePath, `${JSON.stringify(sortKeys(current), null, 2)}\n`)
+    return {
+      code: 0,
+      report: [`[coverage-ratchet] baseline updated: ${fileCount} files -> ${baselinePath}`],
+    }
+  }
+
+  const baselineText = await readFile(baselinePath, "utf8").catch(() => undefined)
+  if (baselineText === undefined) {
+    return {
+      code: 2,
+      report: [
+        `[coverage-ratchet] no ${baselinePath}. Create it once with:`,
+        "  bun run check:coverage --update",
+      ],
+    }
+  }
+  const baseline = JSON.parse(baselineText) as Record<string, FileCoverage>
+  const regressions = findRegressions(baseline, current)
+
+  if (regressions.length > 0) {
+    return {
+      code: 1,
+      report: [
+        `[coverage-ratchet] coverage regressed in ${regressions.length} place(s):`,
+        "",
+        ...regressions.flatMap((r) => [
+          `  ${r.file}`,
+          `    ${r.metric}: ${pct(r.was)} -> ${pct(r.now)}`,
+        ]),
+        "",
+        "Add the tests, or accept the drop deliberately with `bun run check:coverage --update`",
+        "(the baseline is committed, so the reduction shows up in review).",
+      ],
+    }
+  }
+  const added = Object.keys(current).filter((f) => baseline[f] === undefined).length
+  return {
+    code: 0,
+    report: [
+      `[coverage-ratchet] ok - ${fileCount} files, none below baseline` +
+        (added > 0 ? ` (${added} new, not yet in the baseline)` : ""),
+    ],
+  }
+}
+
+if (import.meta.main) {
+  const outcome = await run()
+  for (const line of outcome.report) {
+    if (outcome.code === 0) console.log(line)
+    else console.error(line)
+  }
+  process.exit(outcome.code)
+}

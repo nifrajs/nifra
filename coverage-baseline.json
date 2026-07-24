@@ -39,10 +39,6 @@
     "functions": 100,
     "lines": 100
   },
-  "packages/cli/test/.tmp-load-qyYI6D/framework.ts": {
-    "functions": 100,
-    "lines": 100
-  },
   "packages/client/src/client.ts": {
     "functions": 94.73684210526315,
     "lines": 97.95918367346938
@@ -219,6 +215,10 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/core/src/server/edge.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/core/src/server/http.ts": {
     "functions": 100,
     "lines": 100
@@ -264,8 +264,8 @@
     "lines": 100
   },
   "packages/core/src/server/server.ts": {
-    "functions": 91.51785714285714,
-    "lines": 99.0466633216257
+    "functions": 91.28440366972477,
+    "lines": 99.0261404407996
   },
   "packages/core/src/server/sse.ts": {
     "functions": 94.73684210526315,

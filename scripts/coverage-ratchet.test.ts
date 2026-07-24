@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { findRegressions, parseLcov } from "./coverage-ratchet.ts"
+import { mkdtemp, readFile, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { findRegressions, parseLcov, run } from "./coverage-ratchet.ts"
 
 /**
  * The ratchet is a gate, so it needs its own gate. Its two failure modes are silent: parsing lcov into
@@ -80,5 +83,114 @@ describe("findRegressions", () => {
   test("both metrics are reported when both drop", () => {
     const found = findRegressions(base, { "a.ts": { functions: 10, lines: 20 } })
     expect(found.map((r) => r.metric)).toEqual(["functions", "lines"])
+  })
+})
+
+/**
+ * The whole run, against fixture files in a temp directory. `findRegressions` being correct proves
+ * nothing about the gate if the gate reports a pass whatever it returns - so what is asserted here is
+ * the exit code, the thing CI actually reads.
+ */
+describe("run", () => {
+  const report = lcov([
+    "SF:packages/a/src/one.ts",
+    "FNF:4",
+    "FNH:3",
+    "DA:1,5",
+    "DA:2,0",
+    "DA:3,1",
+    "DA:4,0",
+    "end_of_record",
+  ])
+
+  const fixture = async (files: Record<string, string>): Promise<Record<string, string>> => {
+    const dir = await mkdtemp(join(tmpdir(), "ratchet-"))
+    const paths: Record<string, string> = {}
+    for (const [name, contents] of Object.entries(files)) {
+      paths[name] = join(dir, name)
+      await writeFile(paths[name], contents)
+    }
+    paths.dir = dir
+    return paths
+  }
+
+  test("passes when nothing regressed", async () => {
+    const f = await fixture({
+      "lcov.info": report,
+      "baseline.json": JSON.stringify({ "packages/a/src/one.ts": { functions: 75, lines: 50 } }),
+    })
+    const outcome = await run([], { lcov: f["lcov.info"], baseline: f["baseline.json"] })
+    expect(outcome.code).toBe(0)
+    expect(outcome.report.join("\n")).toContain("none below baseline")
+  })
+
+  test("fails with the file, the metric and both numbers when coverage dropped", async () => {
+    const f = await fixture({
+      "lcov.info": report,
+      "baseline.json": JSON.stringify({ "packages/a/src/one.ts": { functions: 100, lines: 50 } }),
+    })
+    const outcome = await run([], { lcov: f["lcov.info"], baseline: f["baseline.json"] })
+    expect(outcome.code).toBe(1)
+    const text = outcome.report.join("\n")
+    expect(text).toContain("packages/a/src/one.ts")
+    expect(text).toContain("functions: 100.00% -> 75.00%")
+  })
+
+  test("counts files the baseline has never seen, without failing on them", async () => {
+    const f = await fixture({ "lcov.info": report, "baseline.json": "{}" })
+    const outcome = await run([], { lcov: f["lcov.info"], baseline: f["baseline.json"] })
+    expect(outcome.code).toBe(0)
+    expect(outcome.report.join("\n")).toContain("(1 new, not yet in the baseline)")
+  })
+
+  test("--update writes the current numbers, sorted, as the new baseline", async () => {
+    const f = await fixture({
+      "lcov.info": lcov([
+        "SF:z.ts",
+        "FNF:1",
+        "FNH:1",
+        "DA:1,1",
+        "end_of_record",
+        "SF:a.ts",
+        "FNF:1",
+        "FNH:1",
+        "DA:1,1",
+        "end_of_record",
+      ]),
+    })
+    const baseline = join(f.dir as string, "written.json")
+    const outcome = await run(["--update"], { lcov: f["lcov.info"], baseline })
+    expect(outcome.code).toBe(0)
+    const written = await readFile(baseline, "utf8")
+    expect(Object.keys(JSON.parse(written))).toEqual(["a.ts", "z.ts"])
+  })
+
+  // Code 2 is "the gate could not run", which must never be confused with a pass: a missing report is
+  // exactly what a broken CI step leaves behind, and returning 0 there would green-light everything.
+  test("a missing lcov report is an error, not a pass", async () => {
+    const f = await fixture({ "baseline.json": "{}" })
+    const outcome = await run([], {
+      lcov: join(f.dir as string, "absent.info"),
+      baseline: f["baseline.json"],
+    })
+    expect(outcome.code).toBe(2)
+    expect(outcome.report.join("\n")).toContain("no lcov report")
+  })
+
+  test("an lcov report listing no files is an error, not a pass", async () => {
+    const f = await fixture({ "lcov.info": "", "baseline.json": "{}" })
+    const outcome = await run([], { lcov: f["lcov.info"], baseline: f["baseline.json"] })
+    expect(outcome.code).toBe(2)
+    expect(outcome.report.join("\n")).toContain("listed no files")
+  })
+
+  test("a missing baseline is an error that names the command to create one", async () => {
+    const f = await fixture({ "lcov.info": report })
+    const outcome = await run([], {
+      lcov: f["lcov.info"],
+      baseline: join(f.dir as string, "absent.json"),
+    })
+    expect(outcome.code).toBe(2)
+    expect(outcome.report.join("\n")).toContain("--update")
   })
 })

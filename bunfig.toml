@@ -29,6 +29,10 @@ coveragePathIgnorePatterns = [
   # the component), so they report 0% function coverage. They aren't product code — exclude the temp
   # fixture dirs from the per-file gate (same rationale as build.ts above).
   "**/web/test/.tmp-*/**",
+  # Same class, in the cli tests: `mkdtemp`'d app fixtures whose directory name is random per run
+  # (`.tmp-load-YT8mKB`). Beyond the per-file gate they also churned the committed coverage baseline -
+  # every `--update` swapped one random path for another, so the diff never meant anything.
+  "**/cli/test/.tmp-*/**",
   # The `@nifrajs/cli` package is dev/MCP tooling — command dispatch (`cli.ts`), stdio/JSON-RPC MCP
   # servers (`mcp.ts`, `mcp-render.ts`, `mcp-run.ts`, `mcp-ws.ts`), and `check`/`doctor`/`port`. Its
   # tests NOW run in the gated suite (so regressions are caught), but the spawn/stdio/process surface

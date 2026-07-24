@@ -495,6 +495,58 @@ describe("toFetchHandler WebSockets (Workers WebSocketPair)", () => {
     expect(sock.accepted).toBe(true)
     expect(opened).toBe(true)
   })
+
+  // The `webSocketHub` option is the only way `app.publish` reaches every client on Workers: a
+  // stateless isolate cannot hold connections, so upgrades have to be handed to one Durable Object.
+  // Untested until now, because inside `server.ts` this branch hid inside a 3,200-line file's average.
+  test("webSocketHub hands the upgrade to the single hub Durable Object", async () => {
+    const seen: { name?: unknown; request?: Request } = {}
+    const ns = {
+      idFromName(name: string) {
+        seen.name = name
+        return { name }
+      },
+      get(id: unknown) {
+        return {
+          fetch: (request: Request) => {
+            seen.request = request
+            return Promise.resolve(new Response(null, { status: 101, headers: { id: String(id) } }))
+          },
+        }
+      },
+    }
+    const handler = toFetchHandler(
+      server()
+        .use(websocket())
+        .ws("/ws", { open: () => {} }),
+      { webSocketHub: () => ns },
+    )
+    const req = new Request("http://t/ws", { headers: { upgrade: "WebSocket" } })
+    const res = await handler.fetch(req, {}, ctx)
+    expect(res.status).toBe(101)
+    // One hub per app: the id is derived from a fixed name, so every isolate reaches the same object.
+    expect(seen.name).toBe("nifra-ws-hub")
+    // The hub resolves the route itself, so it needs the original request, not a rebuilt one.
+    expect(seen.request).toBe(req)
+  })
+
+  test("webSocketHub leaves non-upgrade requests on the normal fetch path", async () => {
+    const ns = {
+      idFromName: () => {
+        throw new Error("the hub must not be consulted for a plain request")
+      },
+      get: () => ({ fetch: () => Promise.resolve(new Response(null)) }),
+    }
+    const handler = toFetchHandler(
+      server()
+        .use(websocket())
+        .ws("/ws", { open: () => {} })
+        .get("/h", () => ({ ok: true })),
+      { webSocketHub: () => ns },
+    )
+    const res = await handler.fetch(new Request("http://t/h"), {}, ctx)
+    expect(await res.json()).toEqual({ ok: true })
+  })
 })
 
 // TopicRegistry — the in-process pub/sub backing ws.subscribe + app.publish. Unit-tested with fake
