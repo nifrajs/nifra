@@ -53,8 +53,62 @@ interface ViteModule {
   build(config: Record<string, unknown>): Promise<unknown>
 }
 
+/**
+ * Restore V8's `Error.captureStackTrace` contract on a runtime that is stricter than it.
+ *
+ * `captureStackTrace` is a V8 API, and V8 decorates ANY object handed to it. Some runtimes instead
+ * require a real Error - one with the internal slot, which `Object.create(Error.prototype)` and
+ * `new SubclassWithErrorPrototype()` do NOT have - and throw "First argument must be an Error object".
+ *
+ * That breaks importing vite outright. Vite bundles `follow-redirects`, which builds its error types the
+ * pre-class way:
+ *
+ *   function CustomError(props) { Error.captureStackTrace(this, this.constructor); … }
+ *   CustomError.prototype = new (baseClass || Error)()
+ *
+ * The last line CONSTRUCTS `baseClass` while defining the subclass, so `this` is an object that inherits
+ * from Error but was never built by it - and the throw happens at module evaluation, before vite exports
+ * anything. Every Vite build then fails with a message about stack traces, naming nothing about vite.
+ *
+ * Decorating a stack is best-effort by definition, so swallowing the rejection loses nothing: the shim
+ * delegates, and only suppresses the refusal. Installed once, and deliberately not restored - the strict
+ * behaviour is the deviation, and a library evaluated later would hit the same wall.
+ */
+function relaxCaptureStackTrace(): void {
+  const strict = Error.captureStackTrace
+  if (
+    typeof strict !== "function" ||
+    Object.prototype.toString.call(new Error()) !== "[object Error]"
+  ) {
+    return
+  }
+  // Probe rather than sniff a version: construct exactly what follow-redirects does and see if it is
+  // refused. A runtime that already follows V8 keeps its own implementation untouched.
+  const inherited = Object.create(Error.prototype)
+  try {
+    strict.call(Error, inherited)
+    return // permissive already - nothing to fix
+  } catch {
+    // stricter than V8; fall through and wrap
+  }
+  try {
+    Error.captureStackTrace = ((target: object, constructorOpt?: unknown) => {
+      try {
+        ;(strict as (t: object, c?: unknown) => void).call(Error, target, constructorOpt)
+      } catch {
+        // The runtime refused to decorate this object. A missing `.stack` is not worth failing over.
+      }
+    }) as typeof Error.captureStackTrace
+  } catch {
+    // The property is frozen or non-writable. Nothing can be done about the import that follows, but
+    // failing HERE would replace vite's own error with an assignment error - strictly less informative
+    // than letting the import fail and be reported by `loadVite`.
+  }
+}
+
 /** Load the app's Vite. Resolved from `root` so it's the project's copy, not this package's. */
 async function loadVite(): Promise<ViteModule> {
+  relaxCaptureStackTrace()
   try {
     return (await import("vite")) as unknown as ViteModule
   } catch (cause) {
