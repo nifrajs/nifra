@@ -55,7 +55,20 @@ interface ViteModule {
 
 /** Load the app's Vite. Resolved from `root` so it's the project's copy, not this package's. */
 async function loadVite(): Promise<ViteModule> {
-  return (await import("vite")) as unknown as ViteModule
+  try {
+    return (await import("vite")) as unknown as ViteModule
+  } catch (cause) {
+    // `vite` is an OPTIONAL peer, so a project without it resolves nothing and the raw failure is a
+    // bare ERR_MODULE_NOT_FOUND naming neither this build nor the missing dependency. Every caller
+    // here is mid-build, so the message has to say which half failed and what to install - an opaque
+    // resolution error at this point reads as a broken build rather than a missing optional peer.
+    throw new Error(
+      "[nifra/web] the Vite production build needs `vite` installed in this project (it is an " +
+        "optional peer dependency, so it is not installed for you). Add it, or use the default Bun " +
+        `build. Underlying error: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause },
+    )
+  }
 }
 
 // Vite derives `isProduction` from the process-global NODE_ENV even when an explicit `mode` is supplied.
