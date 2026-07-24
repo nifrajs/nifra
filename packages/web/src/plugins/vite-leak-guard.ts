@@ -63,6 +63,18 @@ interface RollupPluginContext {
 /** The minimal Rollup plugin shape this returns — `generateBundle` bound to the plugin context. */
 export interface LeakGuardPlugin {
   readonly name: string
+  /**
+   * The finding that failed the build, or `undefined` when the bundle was clean.
+   *
+   * Recorded as well as thrown because the throw does not reliably survive. A plugin error is handed to
+   * the bundler, which builds its own error to report it, and on some Bun + rolldown combinations that
+   * construction itself fails (`Error.captureStackTrace` rejecting a non-Error) - so what surfaces is an
+   * internal complaint naming neither the leaked module nor its import chain. A caller that owns the
+   * build can read this afterwards and raise the real message from its own code, where nothing can
+   * rewrite it. A leak is the one failure that must stay legible: the whole point is naming what
+   * reached the browser.
+   */
+  leak?: string
   generateBundle(this: RollupPluginContext, options: unknown, bundle: RollupBundleLike): void
 }
 
@@ -71,7 +83,7 @@ export interface LeakGuardPlugin {
  * bundle - the same two guards, and the same error messages, as nifra's Bun production build.
  */
 export function viteLeakGuard(): LeakGuardPlugin {
-  return {
+  const plugin: LeakGuardPlugin = {
     name: "nifra:leak-guard",
     generateBundle(_options, bundle) {
       // Resolved import edges per module, straight from Rollup's graph. Dynamic imports count too: a
@@ -84,10 +96,15 @@ export function viteLeakGuard(): LeakGuardPlugin {
       const graph = fromRollupBundle(bundle, importsOf)
       // Node-builtin guard first, then server-only - the same order as the Bun build, so the first error a
       // dev sees is the same across pipelines when a module trips both.
-      const nodeBuiltinLeak = formatNodeBuiltinLeak(detectNodeBuiltinsInClient(graph))
-      if (nodeBuiltinLeak !== undefined) this.error(new Error(nodeBuiltinLeak))
-      const serverOnlyLeak = formatServerOnlyLeak(detectServerOnlyInClient(graph))
-      if (serverOnlyLeak !== undefined) this.error(new Error(serverOnlyLeak))
+      const leak =
+        formatNodeBuiltinLeak(detectNodeBuiltinsInClient(graph)) ??
+        formatServerOnlyLeak(detectServerOnlyInClient(graph))
+      if (leak === undefined) return
+      // Record before throwing: the throw is what fails the build for a standalone user of this plugin,
+      // and the record is what lets a caller that owns the build re-raise the real message (see `leak`).
+      plugin.leak = leak
+      this.error(new Error(leak))
     },
   }
+  return plugin
 }

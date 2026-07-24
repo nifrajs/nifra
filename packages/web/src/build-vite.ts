@@ -167,6 +167,7 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
   const buildEnv = (typeof Bun !== "undefined" ? Bun.env : undefined) ?? process.env
   const publicDefines = publicEnvDefines(options.publicEnvPrefix ?? "PUBLIC_", buildEnv)
   const vite = await loadVite()
+  const leakGuard = viteLeakGuard()
   try {
     await withSerializedNodeEnv(mode, () =>
       vite.build({
@@ -203,7 +204,7 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
             external: [/^node:/],
             input,
             // The leak guard is a Rollup plugin — last, so it sees the final graph.
-            plugins: [viteLeakGuard()],
+            plugins: [leakGuard],
             output: {
               entryFileNames: "[name]-[hash].js",
               chunkFileNames: "[name]-[hash].js",
@@ -213,6 +214,14 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
         },
       }),
     )
+  } catch (error) {
+    // Re-raise the guard's own message. The plugin already threw it, but a plugin error is reported
+    // through the bundler, which builds its own error to do so - and on some Bun + rolldown pairings
+    // that construction fails, replacing a precise "node:crypto reached the client bundle" with an
+    // internal complaint naming nothing. Raising it here puts the message beyond anything that can
+    // rewrite it; the bundler's error is kept as `cause` for the rest of the context.
+    if (leakGuard.leak !== undefined) throw new Error(leakGuard.leak, { cause: error })
+    throw error
   } finally {
     rmSync(entryDir, { recursive: true, force: true })
   }
@@ -332,27 +341,31 @@ interface EdgeBuiltinGuardContext {
     readonly importedIds?: readonly string[]
     readonly dynamicallyImportedIds?: readonly string[]
   } | null
-  /**
-   * Takes an `Error`, never a string.
-   *
-   * Handed a string, rolldown synthesizes its own error type and calls `Error.captureStackTrace` on a
-   * plain object - which Bun rejects with "First argument must be an Error object", and THAT becomes the
-   * build failure. The guard still fires, but its message is replaced by an internal one naming nothing,
-   * so a real edge leak reports as a stack-trace complaint. Passing an Error skips that construction.
-   */
+  /** Takes an `Error`, never a string - see {@link EdgeGuardPlugin.leak}. */
   error(error: Error): never
 }
 
-/** Fail closed if Rollup would leave a Node builtin import in a workerd/edge worker. */
-function edgeBuiltinGuard(): {
+interface EdgeGuardPlugin {
   readonly name: string
+  /**
+   * The finding that failed the build, or `undefined` when the bundle was clean.
+   *
+   * Recorded as well as thrown, for the same reason as the client leak guard: a plugin error is reported
+   * through the bundler, which builds its own error to do so, and on some Bun + rolldown pairings that
+   * construction fails and replaces the message with an internal one naming nothing. The caller owns
+   * this build, so it re-raises this from its own code where nothing can rewrite it.
+   */
+  leak?: string
   generateBundle(
     this: EdgeBuiltinGuardContext,
     options: unknown,
     bundle: Readonly<Record<string, EdgeBundleChunk>>,
   ): void
-} {
-  return {
+}
+
+/** Fail closed if Rollup would leave a Node builtin import in a workerd/edge worker. */
+function edgeBuiltinGuard(): EdgeGuardPlugin {
+  const plugin: EdgeGuardPlugin = {
     name: "nifra:edge-node-builtin-guard",
     generateBundle(_options, bundle) {
       const builtins = new Set<string>()
@@ -368,18 +381,17 @@ function edgeBuiltinGuard(): {
           if (imports.some((specifier) => specifier.startsWith("node:"))) importers.add(id)
         }
       }
-      if (builtins.size > 0) {
-        // An Error, never a string - see the note on `EdgeBuiltinGuardContext.error`.
-        this.error(
-          new Error(
-            `[nifra/web] Node built-in(s) reached an edge server bundle: ${[...builtins].sort().join(", ")}. ` +
-              `Imported by: ${[...importers].sort().join(", ") || "unknown module"}. ` +
-              "Move the import behind a Node/Bun target or replace it with an edge-compatible API.",
-          ),
-        )
-      }
+      if (builtins.size === 0) return
+      const leak =
+        `[nifra/web] Node built-in(s) reached an edge server bundle: ${[...builtins].sort().join(", ")}. ` +
+        `Imported by: ${[...importers].sort().join(", ") || "unknown module"}. ` +
+        "Move the import behind a Node/Bun target or replace it with an edge-compatible API."
+      // Record, then throw - see `leak`.
+      plugin.leak = leak
+      this.error(new Error(leak))
     },
   }
+  return plugin
 }
 
 /**
@@ -420,55 +432,63 @@ export async function buildServerVite(options: BuildServerViteOptions): Promise<
   // mismatch throws `jsxDEV is not a function` at SSR (see buildClientVite for the full reasoning).
   const mode = options.minify === false ? "development" : "production"
   const vite = await loadVite()
-  await withSerializedNodeEnv(mode, () =>
-    vite.build({
-      root,
-      mode,
-      logLevel: "silent",
-      define: {
-        "process.env.NODE_ENV": JSON.stringify(mode),
-        // Tag the bundle so @nifrajs/web-react uses the bundled+deduped react-dom (no runtime re-root →
-        // no second React core). Layered after any caller define so it cannot be overridden.
-        ...(options.define ?? {}),
-        "process.env.NIFRA_SSR_BUNDLED": '"1"',
-        "globalThis.__NIFRA_EDGE_RUNTIME__": edge ? "true" : "false",
-      },
-      resolve: {
-        dedupe: ["react", "react-dom"],
-        conditions: [...conditions],
-      },
-      plugins: [...(options.vitePlugins ?? [])],
-      build: {
-        outDir,
-        emptyOutDir: false,
-        minify: options.minify !== false,
-        ssr: serverEntry,
-        rollupOptions: {
-          // Keep builtins external so Node/Bun use their native implementations. Edge builds add a
-          // generateBundle guard below, so an external specifier can never silently ship to workerd.
-          external: [/^node:/],
-          ...(edge ? { plugins: [edgeBuiltinGuard()] } : {}),
-          // ONE self-contained `server.js`. `inlineDynamicImports` forces the ENTRY chunk to absorb
-          // every module - the app, the adapter, react/react-dom, @nifrajs/* - so no second chunk is
-          // emitted. It is NOT redundant with `ssr.noExternal`: `noExternal` decides what gets bundled,
-          // this decides how many files it lands in. Without it the `node` SSR target splits vendor deps
-          // (verified: a React app emits `assets/react-<hash>.js`), and the deploy assembly copies only
-          // the entry, so the server dies at boot with ERR_MODULE_NOT_FOUND on a path that was never
-          // written. bun/deno/edge happen not to split today, which is exactly why the node regression
-          // went unnoticed - relying on a bundler's default chunking is not a contract.
-          // (Under rolldown-vite this option logs a cosmetic deprecation, silenced by `logLevel: silent`.)
-          output: { entryFileNames: "server.js", inlineDynamicImports: true },
+  const edgeGuard = edgeBuiltinGuard()
+  try {
+    await withSerializedNodeEnv(mode, () =>
+      vite.build({
+        root,
+        mode,
+        logLevel: "silent",
+        define: {
+          "process.env.NODE_ENV": JSON.stringify(mode),
+          // Tag the bundle so @nifrajs/web-react uses the bundled+deduped react-dom (no runtime re-root →
+          // no second React core). Layered after any caller define so it cannot be overridden.
+          ...(options.define ?? {}),
+          "process.env.NIFRA_SSR_BUNDLED": '"1"',
+          "globalThis.__NIFRA_EDGE_RUNTIME__": edge ? "true" : "false",
         },
-        // Bundle the app + adapter + @nifrajs/* into one self-contained worker (like Bun's eager output),
-        // rather than externalizing node_modules the way a default Vite SSR build does.
-        ssrEmitAssets: false,
-      },
-      ssr: {
-        noExternal: true,
-        ...(edge ? { target: "webworker" } : {}),
-      },
-    }),
-  )
+        resolve: {
+          dedupe: ["react", "react-dom"],
+          conditions: [...conditions],
+        },
+        plugins: [...(options.vitePlugins ?? [])],
+        build: {
+          outDir,
+          emptyOutDir: false,
+          minify: options.minify !== false,
+          ssr: serverEntry,
+          rollupOptions: {
+            // Keep builtins external so Node/Bun use their native implementations. Edge builds add a
+            // generateBundle guard below, so an external specifier can never silently ship to workerd.
+            external: [/^node:/],
+            ...(edge ? { plugins: [edgeGuard] } : {}),
+            // ONE self-contained `server.js`. `inlineDynamicImports` forces the ENTRY chunk to absorb
+            // every module - the app, the adapter, react/react-dom, @nifrajs/* - so no second chunk is
+            // emitted. It is NOT redundant with `ssr.noExternal`: `noExternal` decides what gets bundled,
+            // this decides how many files it lands in. Without it the `node` SSR target splits vendor deps
+            // (verified: a React app emits `assets/react-<hash>.js`), and the deploy assembly copies only
+            // the entry, so the server dies at boot with ERR_MODULE_NOT_FOUND on a path that was never
+            // written. bun/deno/edge happen not to split today, which is exactly why the node regression
+            // went unnoticed - relying on a bundler's default chunking is not a contract.
+            // (Under rolldown-vite this option logs a cosmetic deprecation, silenced by `logLevel: silent`.)
+            output: { entryFileNames: "server.js", inlineDynamicImports: true },
+          },
+          // Bundle the app + adapter + @nifrajs/* into one self-contained worker (like Bun's eager output),
+          // rather than externalizing node_modules the way a default Vite SSR build does.
+          ssrEmitAssets: false,
+        },
+        ssr: {
+          noExternal: true,
+          ...(edge ? { target: "webworker" } : {}),
+        },
+      }),
+    )
+  } catch (error) {
+    // Re-raise the guard's own message from here, where no bundler error-reporting path can rewrite it
+    // (see the same handling in buildClientVite).
+    if (edgeGuard.leak !== undefined) throw new Error(edgeGuard.leak, { cause: error })
+    throw error
+  }
 
   const worker = join(outDir, "server.js")
   if (!existsSync(worker)) {
