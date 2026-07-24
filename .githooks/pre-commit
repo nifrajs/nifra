@@ -9,6 +9,12 @@
 # only tests/docs/config skips it entirely and stays instant. When it does fire, it regenerates the docs
 # and re-stages the artifacts INTO this commit (they are pure generated output — never hand-edited).
 #
+# The llms corpora (`gen:llms` -> llms.txt, llms-full.txt, examples.json, types.json) are deliberately
+# NOT refreshed here: `types.json` is parsed from each package's built `dist/**/*.d.ts`, so keeping it
+# current needs a full build and this hook would stop being instant. CI gates them with `check:llms`
+# after its build step instead, so run `bun run build && bun run gen:llms` before pushing a change to a
+# package's public exports.
+#
 # Activated via `core.hooksPath=.githooks` (set by the root `prepare` script on install; see package.json).
 set -euo pipefail
 

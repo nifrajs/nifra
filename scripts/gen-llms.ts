@@ -289,66 +289,237 @@ function leadingJsDoc(text: string, start: number): string | undefined {
   return undefined
 }
 
+function declaredName(stmt: ts.Statement): { name: string; kind: TypeEntry["kind"] } | undefined {
+  if (ts.isInterfaceDeclaration(stmt)) return { name: stmt.name.text, kind: "interface" }
+  if (ts.isTypeAliasDeclaration(stmt)) return { name: stmt.name.text, kind: "type" }
+  if (ts.isClassDeclaration(stmt) && stmt.name) return { name: stmt.name.text, kind: "class" }
+  if (ts.isFunctionDeclaration(stmt) && stmt.name) return { name: stmt.name.text, kind: "function" }
+  if (ts.isEnumDeclaration(stmt)) return { name: stmt.name.text, kind: "enum" }
+  if (ts.isVariableStatement(stmt)) {
+    const decl = stmt.declarationList.declarations[0]
+    if (decl && ts.isIdentifier(decl.name)) return { name: decl.name.text, kind: "const" }
+  }
+  return undefined
+}
+
+/** What one `.d.ts` declares, where its other names come from, and which of them it exports. */
+interface ModuleFacts {
+  readonly sf: ts.SourceFile
+  readonly text: string
+  /** Declared in this file, whether or not it is exported from it. */
+  readonly locals: Map<string, ts.Statement>
+  /** Name as used here -> the module it came from and the name it has THERE. */
+  readonly from: Map<string, { spec: string; original: string }>
+  /** `export * from "..."` specifiers. */
+  readonly stars: string[]
+  /** Names this module exports under. */
+  readonly exported: Set<string>
+}
+
+const moduleCache = new Map<string, ModuleFacts | undefined>()
+
+function factsOf(file: string): ModuleFacts | undefined {
+  const cached = moduleCache.get(file)
+  if (cached !== undefined || moduleCache.has(file)) return cached
+  if (!existsSync(file)) {
+    moduleCache.set(file, undefined)
+    return undefined
+  }
+  const text = read(file)
+  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.ESNext, true)
+  const facts: ModuleFacts = {
+    sf,
+    text,
+    locals: new Map(),
+    from: new Map(),
+    stars: [],
+    exported: new Set(),
+  }
+  for (const stmt of sf.statements) {
+    if (ts.isImportDeclaration(stmt)) {
+      const bindings = stmt.importClause?.namedBindings
+      if (bindings && ts.isNamedImports(bindings) && ts.isStringLiteral(stmt.moduleSpecifier)) {
+        for (const el of bindings.elements) {
+          facts.from.set(el.name.text, {
+            spec: stmt.moduleSpecifier.text,
+            original: (el.propertyName ?? el.name).text,
+          })
+        }
+      }
+      continue
+    }
+    if (ts.isExportDeclaration(stmt)) {
+      const spec =
+        stmt.moduleSpecifier && ts.isStringLiteral(stmt.moduleSpecifier)
+          ? stmt.moduleSpecifier.text
+          : undefined
+      if (stmt.exportClause === undefined) {
+        if (spec !== undefined) facts.stars.push(spec)
+        continue
+      }
+      if (!ts.isNamedExports(stmt.exportClause)) continue
+      for (const el of stmt.exportClause.elements) {
+        facts.exported.add(el.name.text)
+        if (spec !== undefined) {
+          facts.from.set(el.name.text, { spec, original: (el.propertyName ?? el.name).text })
+        } else if (el.propertyName !== undefined) {
+          // `export { local as Public }` - the name to chase is the local one.
+          const source = facts.from.get(el.propertyName.text)
+          if (source !== undefined) facts.from.set(el.name.text, source)
+        }
+      }
+      continue
+    }
+    const declared = declaredName(stmt)
+    if (declared === undefined) continue
+    facts.locals.set(declared.name, stmt)
+    const isExported = ts.canHaveModifiers(stmt)
+      ? ts.getModifiers(stmt)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
+      : false
+    if (isExported === true) facts.exported.add(declared.name)
+  }
+  moduleCache.set(file, facts)
+  return facts
+}
+
+/**
+ * Resolve a specifier from a `.d.ts` to the `.d.ts` it names: `./x.js` -> `x.d.ts`, and a sibling
+ * workspace package -> that package's entry for the subpath. The cross-package case is not an extra:
+ * `@nifrajs/env` re-exports `StandardIssue` from `@nifrajs/core`, and a consumer really can import it
+ * from either, so both belong in the index.
+ */
+function resolveDts(fromFile: string, spec: string): string | undefined {
+  if (spec.startsWith(".")) {
+    const base = `${fromFile.slice(0, fromFile.lastIndexOf("/"))}/${spec.replace(/\.js$/, "")}`
+    for (const candidate of [`${base}.d.ts`, `${base}/index.d.ts`]) {
+      if (existsSync(candidate)) return candidate
+    }
+    return undefined
+  }
+  const parts = spec.split("/")
+  const name = spec.startsWith("@") ? parts.slice(0, 2).join("/") : (parts[0] as string)
+  const dir = pkgDirs.get(name)
+  if (dir === undefined) return undefined
+  const subpath = spec === name ? "." : `.${spec.slice(name.length)}`
+  const manifest = JSON.parse(read(`${dir}/package.json`)) as { exports?: Record<string, unknown> }
+  const declared = new Set<string>()
+  declaredEntries(manifest.exports?.[subpath], declared)
+  for (const entry of declared) {
+    const file = `${dir}/${entry.replace(/^\.\//, "")}`
+    if (existsSync(file)) return file
+  }
+  return undefined
+}
+
+/** Every name a module exports, following `export *`. */
+function exportedNamesOf(file: string, visited = new Set<string>()): Set<string> {
+  const names = new Set<string>()
+  if (visited.has(file)) return names
+  visited.add(file)
+  const facts = factsOf(file)
+  if (facts === undefined) return names
+  for (const name of facts.exported) names.add(name)
+  for (const spec of facts.stars) {
+    const target = resolveDts(file, spec)
+    if (target !== undefined) for (const n of exportedNamesOf(target, visited)) names.add(n)
+  }
+  return names
+}
+
+/** Find where a publicly-exported name is actually DECLARED, following re-exports and imports. */
+function declarationOf(
+  file: string,
+  name: string,
+  visited = new Set<string>(),
+): { facts: ModuleFacts; stmt: ts.Statement } | undefined {
+  const key = `${file}#${name}`
+  if (visited.has(key)) return undefined
+  visited.add(key)
+  const facts = factsOf(file)
+  if (facts === undefined) return undefined
+  const local = facts.locals.get(name)
+  if (local !== undefined) return { facts, stmt: local }
+  const source = facts.from.get(name)
+  if (source !== undefined) {
+    const target = resolveDts(file, source.spec)
+    if (target !== undefined) return declarationOf(target, source.original, visited)
+  }
+  for (const spec of facts.stars) {
+    const target = resolveDts(file, spec)
+    if (target === undefined) continue
+    const found = declarationOf(target, name, visited)
+    if (found !== undefined) return found
+  }
+  return undefined
+}
+
 function extractTypesFromDts(
   pkgName: string,
   file: string,
   seen: Set<string>,
   out: TypeEntry[],
 ): void {
-  const text = read(file)
-  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.ESNext, true)
-  for (const stmt of sf.statements) {
-    const exported =
-      ts.canHaveModifiers(stmt) &&
-      ts.getModifiers(stmt)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
-    if (!exported) continue
-    let name: string | undefined
-    let kind: TypeEntry["kind"] | undefined
-    if (ts.isInterfaceDeclaration(stmt)) {
-      name = stmt.name.text
-      kind = "interface"
-    } else if (ts.isTypeAliasDeclaration(stmt)) {
-      name = stmt.name.text
-      kind = "type"
-    } else if (ts.isClassDeclaration(stmt) && stmt.name) {
-      name = stmt.name.text
-      kind = "class"
-    } else if (ts.isFunctionDeclaration(stmt) && stmt.name) {
-      name = stmt.name.text
-      kind = "function"
-    } else if (ts.isEnumDeclaration(stmt)) {
-      name = stmt.name.text
-      kind = "enum"
-    } else if (ts.isVariableStatement(stmt)) {
-      const decl = stmt.declarationList.declarations[0]
-      if (decl && ts.isIdentifier(decl.name)) {
-        name = decl.name.text
-        kind = "const"
-      }
-    }
-    if (name === undefined || kind === undefined || seen.has(`${pkgName}:${name}`)) continue
+  for (const name of [...exportedNamesOf(file)].sort((a, b) => a.localeCompare(b))) {
+    if (seen.has(`${pkgName}:${name}`)) continue
+    const found = declarationOf(file, name)
+    if (found === undefined) continue
+    const kind = declaredName(found.stmt)?.kind
+    if (kind === undefined) continue
     seen.add(`${pkgName}:${name}`)
-    const doc = leadingJsDoc(text, stmt.getFullStart())
+    const doc = leadingJsDoc(found.facts.text, found.stmt.getFullStart())
     out.push({
       name,
       kind,
       package: pkgName,
-      signature: stmt.getText(sf).trim(),
+      signature: found.stmt.getText(found.facts.sf).trim(),
       ...(doc ? { doc } : {}),
     })
   }
+}
+
+/** Workspace package name -> its directory, so a cross-package re-export can be followed. */
+const pkgDirs = new Map(pkgs.map((p) => [p.name, p.dir]))
+
+/** Every `./dist/....d.ts` target named anywhere in a package's `exports` map, at any condition depth. */
+function declaredEntries(exportsMap: unknown, out: Set<string>): void {
+  if (typeof exportsMap === "string") {
+    if (exportsMap.endsWith(".d.ts")) out.add(exportsMap)
+    return
+  }
+  if (exportsMap === null || typeof exportsMap !== "object") return
+  for (const value of Object.values(exportsMap)) declaredEntries(value, out)
+}
+
+/**
+ * The `.d.ts` entry points a package publishes - one per subpath in its `exports` map.
+ *
+ * The scan used to be a `dist/**\/*.d.ts` glob, which made anything the build happened to emit count as
+ * API. A module under `internal/` is absent from the exports map precisely so that it is NOT
+ * importable, yet its declarations were still indexed here under the package's name. That is worse
+ * than an omission: `nifra_types` would hand an agent the exact signature of a type it cannot import,
+ * and the code written against it does not compile.
+ *
+ * So the index starts where a consumer's resolver starts, and reaches a declaration only by the route a
+ * consumer could: entry point, then re-exports and the imports those re-exports name. A type declared
+ * in a module nothing publicly exports from is unreachable for a consumer and unlisted here.
+ */
+function publishedDts(dir: string): string[] {
+  const manifest = JSON.parse(read(`${dir}/package.json`)) as { exports?: unknown }
+  const declared = new Set<string>()
+  declaredEntries(manifest.exports, declared)
+  return [...declared]
+    .map((entry) => `${dir}/${entry.replace(/^\.\//, "")}`)
+    .filter((file) => existsSync(file))
 }
 
 const types: TypeEntry[] = []
 const typeSeen = new Set<string>()
 let typedPkgs = 0
 for (const p of pkgs) {
-  const dts = [...new Glob("dist/**/*.d.ts").scanSync(p.dir)].filter(
-    (f) => !f.endsWith(".d.ts.map"),
-  )
+  const dts = publishedDts(p.dir)
   if (dts.length === 0) continue
   typedPkgs += 1
-  for (const f of dts) extractTypesFromDts(p.name, `${p.dir}/${f}`, typeSeen, types)
+  for (const f of dts) extractTypesFromDts(p.name, f, typeSeen, types)
 }
 types.sort((a, b) => a.name.localeCompare(b.name) || a.package.localeCompare(b.package))
 
@@ -372,7 +543,27 @@ const llms = [
   ...pkgs.map((p) => `- \`${p.name}\` — ${p.description}`),
   "",
 ].join("\n")
-writeFileSync(`${ROOT}/llms.txt`, llms)
+/**
+ * `--check` verifies the committed copies match what this run would write, instead of writing.
+ *
+ * `api-reference.md` and the LLM.md cards have had that gate since they landed; these four did not, so
+ * they were only as fresh as whoever last remembered to run `gen:llms`. They drifted, and the drift was
+ * not cosmetic - `types.json` is what the `nifra_types` MCP tool answers from, so a stale copy hands an
+ * agent a signature the code no longer has.
+ */
+const CHECK = process.argv.includes("--check")
+const stale: string[] = []
+
+function emit(path: string, contents: string): void {
+  if (!CHECK) {
+    writeFileSync(path, contents)
+    return
+  }
+  const current = existsSync(path) ? readFileSync(path, "utf8") : undefined
+  if (current !== contents) stale.push(path.replace(`${ROOT}/`, ""))
+}
+
+emit(`${ROOT}/llms.txt`, llms)
 
 // ---- assemble llms-full.txt --------------------------------------------------------------------
 
@@ -427,23 +618,33 @@ const llmsFull = `${parts
   .join("\n")
   .replace(/\n{3,}/g, "\n\n")
   .trim()}\n`
-writeFileSync(`${ROOT}/llms-full.txt`, llmsFull)
+emit(`${ROOT}/llms-full.txt`, llmsFull)
 // Dual-write into @nifrajs/cli: the `nifra_docs` MCP tool searches this copy, and shipping it inside
 // the package means published installs have the corpus without a network fetch. Same generator,
 // same run — the two copies cannot drift from each other.
-mkdirSync(`${ROOT}/packages/cli/docs`, { recursive: true })
-writeFileSync(`${ROOT}/packages/cli/docs/llms-full.txt`, llmsFull)
+if (!CHECK) mkdirSync(`${ROOT}/packages/cli/docs`, { recursive: true })
+emit(`${ROOT}/packages/cli/docs/llms-full.txt`, llmsFull)
 
 // Verified-example corpus for the `nifra_example` MCP tool: the same checkable snippets `check:docs`
 // typechecks against the live API, shipped inside @nifrajs/cli so an agent gets a guaranteed-compiling
 // example without a network fetch. Same generator run → cannot drift from the docs or the check.
 examples.sort((a, b) => a.slug.localeCompare(b.slug) || a.name.localeCompare(b.name))
-writeFileSync(`${ROOT}/packages/cli/docs/examples.json`, `${JSON.stringify(examples, null, 2)}\n`)
+emit(`${ROOT}/packages/cli/docs/examples.json`, `${JSON.stringify(examples, null, 2)}\n`)
 
 // Type-signature corpus for the `nifra_types` MCP tool — exact TypeScript per exported symbol, shipped
 // inside @nifrajs/cli so an agent gets the literal declaration without a network fetch or reading .d.ts.
-writeFileSync(`${ROOT}/packages/cli/docs/types.json`, `${JSON.stringify(types, null, 2)}\n`)
+emit(`${ROOT}/packages/cli/docs/types.json`, `${JSON.stringify(types, null, 2)}\n`)
 
-console.log(
-  `Generated llms.txt (${docs.length} doc links, ${pkgs.length} packages) + llms-full.txt + examples.json (${examples.length} verified) + types.json (${types.length} types from ${typedPkgs} built packages) from source.`,
-)
+if (CHECK) {
+  if (stale.length > 0) {
+    console.error(
+      `✗ stale — run \`bun run gen:llms\` and commit the result:\n${stale.map((f) => `    ${f}`).join("\n")}`,
+    )
+    process.exit(1)
+  }
+  console.log(`✓ llms.txt, llms-full.txt, examples.json and types.json are up to date`)
+} else {
+  console.log(
+    `Generated llms.txt (${docs.length} doc links, ${pkgs.length} packages) + llms-full.txt + examples.json (${examples.length} verified) + types.json (${types.length} types from ${typedPkgs} built packages) from source.`,
+  )
+}
