@@ -1,0 +1,1018 @@
+{
+  "packages/agent-telemetry/src/index.ts": {
+    "functions": 100,
+    "lines": 93.47826086956522
+  },
+  "packages/auth/src/csrf.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/auth/src/guards.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/auth/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/auth/src/session.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/auth/src/store.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/better-auth/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/cache/src/cache.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/cache/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/cache/src/memory-cache.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/cli/test/.tmp-load-BOmEAX/framework.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/client/src/client.ts": {
+    "functions": 94.73684210526315,
+    "lines": 97.95918367346938
+  },
+  "packages/client/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/client/src/validate-responses.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/client/src/ws.ts": {
+    "functions": 100,
+    "lines": 98.4126984126984
+  },
+  "packages/content/src/fs.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/content/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/content/src/mdx.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/assurance.ts": {
+    "functions": 100,
+    "lines": 94.71153846153845
+  },
+  "packages/core/src/budget.ts": {
+    "functions": 94.44444444444444,
+    "lines": 98.61111111111111
+  },
+  "packages/core/src/capabilities.ts": {
+    "functions": 98.24561403508771,
+    "lines": 100
+  },
+  "packages/core/src/causality.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/classification.ts": {
+    "functions": 100,
+    "lines": 97.52066115702479
+  },
+  "packages/core/src/diff.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/durable-adapters.ts": {
+    "functions": 90.990990990991,
+    "lines": 98.85931558935361
+  },
+  "packages/core/src/durable-execution.ts": {
+    "functions": 94.81481481481482,
+    "lines": 96.4406779661017
+  },
+  "packages/core/src/effect-ledger.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/effect-lifecycle.ts": {
+    "functions": 100,
+    "lines": 91.93548387096774
+  },
+  "packages/core/src/effect-scope.ts": {
+    "functions": 100,
+    "lines": 99.36708860759494
+  },
+  "packages/core/src/errors.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/idempotency-plugin.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/idempotency.ts": {
+    "functions": 96.15384615384616,
+    "lines": 100
+  },
+  "packages/core/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/internal/brand.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/internal/capability-runtime.ts": {
+    "functions": 100,
+    "lines": 92.85714285714286
+  },
+  "packages/core/src/internal/effect-execution.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/internal/route-assurance.ts": {
+    "functions": 100,
+    "lines": 99.1869918699187
+  },
+  "packages/core/src/internal/safe-equal.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/internal/secret.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/ledger.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/manifest.ts": {
+    "functions": 97.77777777777777,
+    "lines": 98.78048780487805
+  },
+  "packages/core/src/mcp.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/mount.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/node-direct.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/reconciliation-worker.ts": {
+    "functions": 95.45454545454545,
+    "lines": 100
+  },
+  "packages/core/src/reflection.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/router/pattern.ts": {
+    "functions": 93.33333333333333,
+    "lines": 97.77777777777777
+  },
+  "packages/core/src/router/router.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/schema/standard.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/seo.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/server.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/server/body.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/server/client-ip.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/server/contract.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/server/cookies.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/server/http.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/server/idempotency-lane.ts": {
+    "functions": 100,
+    "lines": 93.90862944162437
+  },
+  "packages/core/src/server/install.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/server/ledger-lane.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/server/logger.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/server/node-outcome.ts": {
+    "functions": 100,
+    "lines": 96.7741935483871
+  },
+  "packages/core/src/server/plugin.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/server/query.ts": {
+    "functions": 100,
+    "lines": 96.7741935483871
+  },
+  "packages/core/src/server/request-context.ts": {
+    "functions": 96.66666666666667,
+    "lines": 100
+  },
+  "packages/core/src/server/respond.ts": {
+    "functions": 100,
+    "lines": 96.15384615384616
+  },
+  "packages/core/src/server/runtime-core.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/server/server.ts": {
+    "functions": 91.51785714285714,
+    "lines": 99.0466633216257
+  },
+  "packages/core/src/server/sse.ts": {
+    "functions": 94.73684210526315,
+    "lines": 97.89473684210527
+  },
+  "packages/core/src/server/transport-lane.ts": {
+    "functions": 100,
+    "lines": 99
+  },
+  "packages/core/src/server/webhook.ts": {
+    "functions": 100,
+    "lines": 99.12280701754386
+  },
+  "packages/core/src/server/websocket.ts": {
+    "functions": 92.3076923076923,
+    "lines": 100
+  },
+  "packages/core/src/server/ws-bun.ts": {
+    "functions": 95,
+    "lines": 100
+  },
+  "packages/core/src/transport-codec-rich.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/transport-codec.ts": {
+    "functions": 93.10344827586206,
+    "lines": 96.05911330049261
+  },
+  "packages/core/src/transport-plugin.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/wire.ts": {
+    "functions": 100,
+    "lines": 94.35028248587571
+  },
+  "packages/core/src/ws.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/create-nifra/src/agent-files.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/create-nifra/src/agents.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/create-nifra/src/auth.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/create-nifra/src/cli.ts": {
+    "functions": 100,
+    "lines": 96.83908045977012
+  },
+  "packages/create-nifra/src/db.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/cron/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/cron/src/parse.ts": {
+    "functions": 100,
+    "lines": 97.95918367346938
+  },
+  "packages/cron/src/scheduler.ts": {
+    "functions": 93.33333333333333,
+    "lines": 100
+  },
+  "packages/devtools/src/index.ts": {
+    "functions": 100,
+    "lines": 94.92753623188406
+  },
+  "packages/env/src/define.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/env/src/helpers.ts": {
+    "functions": 100,
+    "lines": 93.75
+  },
+  "packages/env/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/env/src/schema.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/i18n/src/format.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/i18n/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/i18n/src/negotiate.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/image/src/backend.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/image/src/dimensions.ts": {
+    "functions": 100,
+    "lines": 95.6043956043956
+  },
+  "packages/image/src/html.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/image/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/image/src/resolve.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/image/src/server.ts": {
+    "functions": 100,
+    "lines": 98.72340425531915
+  },
+  "packages/image/src/sign.ts": {
+    "functions": 100,
+    "lines": 97.61904761904762
+  },
+  "packages/islets/src/bind.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/islets/src/island.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/islets/src/signals.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/islets/test/_fake-dom.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/jobs/src/backoff.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/jobs/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/jobs/src/memory-store.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/jobs/src/queue.ts": {
+    "functions": 93.10344827586206,
+    "lines": 100
+  },
+  "packages/middleware/src/_utils.ts": {
+    "functions": 100,
+    "lines": 97.3913043478261
+  },
+  "packages/middleware/src/admission.ts": {
+    "functions": 100,
+    "lines": 99.45054945054946
+  },
+  "packages/middleware/src/basic-auth.ts": {
+    "functions": 100,
+    "lines": 98.50746268656717
+  },
+  "packages/middleware/src/body-limit.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/middleware/src/cache-control.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/middleware/src/cache.ts": {
+    "functions": 90.9090909090909,
+    "lines": 99.5
+  },
+  "packages/middleware/src/combine.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/middleware/src/compression.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/middleware/src/context-storage.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/middleware/src/cors.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/middleware/src/csrf.ts": {
+    "functions": 100,
+    "lines": 98.52941176470588
+  },
+  "packages/middleware/src/etag.ts": {
+    "functions": 100,
+    "lines": 95.8904109589041
+  },
+  "packages/middleware/src/healthcheck.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/middleware/src/idempotency.ts": {
+    "functions": 96.42857142857143,
+    "lines": 99.47368421052632
+  },
+  "packages/middleware/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/middleware/src/ip-restriction.ts": {
+    "functions": 100,
+    "lines": 93.57142857142857
+  },
+  "packages/middleware/src/jwt.ts": {
+    "functions": 92.6829268292683,
+    "lines": 92.63157894736842
+  },
+  "packages/middleware/src/language.ts": {
+    "functions": 100,
+    "lines": 97.26027397260275
+  },
+  "packages/middleware/src/logger.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/middleware/src/method-override.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/middleware/src/openapi.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/middleware/src/powered-by.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/middleware/src/pretty-json.ts": {
+    "functions": 93.33333333333333,
+    "lines": 100
+  },
+  "packages/middleware/src/rate-limit.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/middleware/src/request-id.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/middleware/src/security-headers.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/middleware/src/timing.ts": {
+    "functions": 100,
+    "lines": 97.5609756097561
+  },
+  "packages/middleware/src/token-auth.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/middleware/src/trailing-slash.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/mock/src/index.ts": {
+    "functions": 93.33333333333333,
+    "lines": 100
+  },
+  "packages/node/src/index.ts": {
+    "functions": 91.66666666666666,
+    "lines": 99.70887918486171
+  },
+  "packages/otel/src/causality.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/otel/src/effects.ts": {
+    "functions": 100,
+    "lines": 91.17647058823529
+  },
+  "packages/otel/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/otel/src/lifecycle.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/otel/src/metrics.ts": {
+    "functions": 93.75,
+    "lines": 99.48717948717949
+  },
+  "packages/otel/src/otlp.ts": {
+    "functions": 93.75,
+    "lines": 98.95833333333334
+  },
+  "packages/otel/src/span.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/otel/src/traceparent.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/otel/src/tracing.ts": {
+    "functions": 90.9090909090909,
+    "lines": 98.13084112149532
+  },
+  "packages/prompt/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/runner/src/index.ts": {
+    "functions": 100,
+    "lines": 98.91304347826086
+  },
+  "packages/schema/src/adapter.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/schema/src/formats.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/schema/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/schema/src/openapi.ts": {
+    "functions": 94.11764705882352,
+    "lines": 100
+  },
+  "packages/schema/src/pagination.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/schema/src/t.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/storage/src/conformance.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/storage/src/file.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/storage/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/storage/src/key.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/storage/src/memory.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/storage/src/r2.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/storage/src/types.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/testing/src/adversarial.ts": {
+    "functions": 96.72131147540983,
+    "lines": 99.52774498229043
+  },
+  "packages/testing/src/certification.ts": {
+    "functions": 97.1830985915493,
+    "lines": 99.07621247113164
+  },
+  "packages/testing/src/cookies.ts": {
+    "functions": 100,
+    "lines": 95.34883720930233
+  },
+  "packages/testing/src/failure-lab.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/testing/src/incident.ts": {
+    "functions": 94.44444444444444,
+    "lines": 100
+  },
+  "packages/testing/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/testing/src/session.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/uploads/src/detect.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/uploads/src/sign.ts": {
+    "functions": 100,
+    "lines": 98.71794871794873
+  },
+  "packages/uploads/src/strip.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/uploads/src/validate.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-preact/src/compose.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-preact/src/content.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-preact/src/error.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-preact/src/i18n.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-preact/src/image.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-preact/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-preact/src/preact-render.ts": {
+    "functions": 100,
+    "lines": 96.875
+  },
+  "packages/web-preact/src/read-deferred.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-react/src/compose.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-react/src/content.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-react/src/error.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-react/src/i18n.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-react/src/image.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-react/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-react/src/island.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-react/src/react-dom-server.ts": {
+    "functions": 100,
+    "lines": 98.0392156862745
+  },
+  "packages/web-react/src/router.ts": {
+    "functions": 95.23809523809523,
+    "lines": 99.2
+  },
+  "packages/web-solid/src/compose.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-solid/src/content.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-solid/src/error.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-solid/src/i18n.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-solid/src/image.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-solid/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-solid/src/mdx-runtime.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-solid/src/mdx.ts": {
+    "functions": 100,
+    "lines": 91.42857142857143
+  },
+  "packages/web-solid/src/svg.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-svelte/src/mdx.ts": {
+    "functions": 100,
+    "lines": 93.47826086956522
+  },
+  "packages/web-svelte/src/plugin.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-svelte/src/svg.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-svelte/test/__content_out.mjs": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-vanilla/src/compose.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-vanilla/src/html.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-vanilla/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-vue/src/compose.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-vue/src/content.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-vue/src/error.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-vue/src/i18n.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-vue/src/image.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-vue/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-vue/src/plugin.ts": {
+    "functions": 100,
+    "lines": 95.91836734693877
+  },
+  "packages/web-vue/src/svg.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-vue/test/fixtures/page.vue": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/build-vite.ts": {
+    "functions": 96.66666666666667,
+    "lines": 92.35668789808918
+  },
+  "packages/web/src/build.ts": {
+    "functions": 91.73553719008265,
+    "lines": 95.30271398747391
+  },
+  "packages/web/src/bun-dev-entry.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/chunk-names.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/client.ts": {
+    "functions": 92.5925925925926,
+    "lines": 96.5034965034965
+  },
+  "packages/web/src/conformance.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/deferred.ts": {
+    "functions": 100,
+    "lines": 98.94736842105263
+  },
+  "packages/web/src/dev-error.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/dev-port.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/dev.ts": {
+    "functions": 92.5925925925926,
+    "lines": 93.45794392523365
+  },
+  "packages/web/src/draft.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/fonts-google.ts": {
+    "functions": 94.73684210526315,
+    "lines": 98.23008849557522
+  },
+  "packages/web/src/fonts.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/forms.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/fs.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/index.ts": {
+    "functions": 96.36363636363636,
+    "lines": 98.78665318503539
+  },
+  "packages/web/src/internal/timing-safe-equal.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/islands.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/isr.ts": {
+    "functions": 97.43589743589743,
+    "lines": 100
+  },
+  "packages/web/src/llms-txt.ts": {
+    "functions": 100,
+    "lines": 96.69421487603306
+  },
+  "packages/web/src/manifest.ts": {
+    "functions": 100,
+    "lines": 97.26027397260275
+  },
+  "packages/web/src/module-graph.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/navigation.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/plugins/css-modules.ts": {
+    "functions": 100,
+    "lines": 98.28178694158075
+  },
+  "packages/web/src/plugins/kit.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/plugins/postcss.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/plugins/scss.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/plugins/svg.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/plugins/vite-leak-guard.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/prerender.ts": {
+    "functions": 100,
+    "lines": 97.91666666666666
+  },
+  "packages/web/src/public-dir.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/query.ts": {
+    "functions": 92.7536231884058,
+    "lines": 96.89265536723164
+  },
+  "packages/web/src/route-manifest.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/router.ts": {
+    "functions": 100,
+    "lines": 98.78345498783455
+  },
+  "packages/web/src/server-only.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/test/fixtures/throws-on-load.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/test/workspace-link.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/workers/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  }
+}

@@ -45,6 +45,12 @@ jobs:
       - name: Test (scoped to the library test dirs; coverage + threshold via bunfig)
         run: bun run test
 
+      # The floor in bunfig says "≥90%". This says "not less than last time". A file at 99% can shed
+      # coverage indefinitely without tripping a floor, and the drop only surfaces years later as
+      # somebody else's failing build - so the erosion is caught where it happens.
+      - name: Coverage ratchet (no file may lose coverage against the committed baseline)
+        run: bun run test:coverage && bun run check:coverage
+
       # Enforce the doc gates in CI (not just `bun run check` locally): documented snippets must
       # typecheck against the live API, and api-reference.md + the per-package LLM.md cards must be
       # regenerated — so docs/example drift can't merge. Needs the build above (snippets resolve
