@@ -57,5 +57,11 @@ coveragePathIgnorePatterns = [
   # LINE coverage but can't reach the 90% FUNCTION floor without a browser. Exclude it from the per-file
   # gate (same rationale as cli/src, mcp/src above); the tests still run and assert behavior.
   "**/web-react/src/query.ts",
+  # The suite's own preload (`scripts/test-preload.ts`) - harness, not product code. Its wrapper only
+  # runs on a LOOPBACK fetch, so a suite that drives no socket (the `mcp`/`mcp-db` run) reports 0%
+  # function coverage on it and fails the per-file floor, while the same file sits well above the floor
+  # in the socket-heavy run. Coverage of the harness measures which suite is executing, not whether the
+  # code under test is exercised, so it is excluded rather than chased.
+  "**/scripts/test-preload.ts",
 ]
 pathIgnorePatterns = ["**/template/**", "**/template-*/**"]
