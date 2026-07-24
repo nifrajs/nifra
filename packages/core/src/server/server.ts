@@ -25,6 +25,19 @@ import {
   NIFRA_ASSURANCE_IDS,
   validEvidenceId,
 } from "../internal/route-assurance.ts"
+import type {
+  ContextRouteRunner,
+  FusedWebRunner,
+  InternalHandler,
+  RawAfterHandle,
+  RawAround,
+  RawBeforeHandle,
+  RawDerive,
+  RawErrorHandler,
+  RouteEntry,
+  RouteExecutionPlan,
+  RouteExecutionRunner,
+} from "../internal/route-execution.ts"
 import type { RequestLedger } from "../ledger.ts"
 import {
   type CompiledRoutePattern,
@@ -68,7 +81,7 @@ import {
 // so existing importers keep resolving it from the server module.
 export type { NodeServeOutcome }
 
-import type { IdempotencyRuntime, ResolvedIdempotency } from "./idempotency-lane.ts"
+import type { IdempotencyRuntime } from "./idempotency-lane.ts"
 import {
   INSTALL_EFFECT_LEDGER,
   INSTALL_IDEMPOTENCY,
@@ -176,74 +189,13 @@ export interface RawContext {
   readonly boundedJson: <T = unknown>(maxBytes?: number) => Promise<T>
 }
 
-type InternalHandler = (ctx: RawContext) => MaybePromise<HandlerResult>
-
 /** Broad shape so the implementation signature is compatible with both typed overloads. */
 type ErasedHandler = (ctx: never) => MaybePromise<HandlerResult>
 
-/** A `derive` computes per-request context extensions; stored path-erased. */
-type RawDerive = (ctx: RawContext) => MaybePromise<object>
-type RawBeforeHandle = (ctx: RawContext) => MaybePromise<unknown>
-type RawAfterHandle = (result: unknown, ctx: RawContext) => MaybePromise<unknown>
-type RawErrorHandler = (error: unknown, ctx: RawContext) => MaybePromise<unknown>
-type RawAround = <T>(ctx: RawContext, next: () => MaybePromise<T>) => MaybePromise<T>
 export type OnRequestResult = Response | Request | undefined
 type RawOnRequest = (req: Request, platform?: Platform) => MaybePromise<OnRequestResult>
 type RawOnResponse = (response: Response, req: Request) => MaybePromise<Response>
 type RawOnResponseFinalized = (outcome: ResponseFinalization, req: Request) => MaybePromise<void>
-
-type RouteExecutionRunner = <T, R extends Registry, Ctx>(
-  runtime: Server<R, Ctx>,
-  entry: RouteEntry,
-  source: RequestSource,
-  params: Record<string, string>,
-  search: string | undefined,
-  signal: AbortSignal,
-  budget: RequestBudget,
-  platform: Platform | undefined,
-  finalize: (result: unknown, set: CtxSet) => T,
-  wrapResponse: (response: Response) => T,
-) => MaybePromise<T>
-
-type ContextRouteRunner = <T, R extends Registry, Ctx>(
-  runtime: Server<R, Ctx>,
-  entry: RouteEntry,
-  source: RequestSource,
-  ctx: RawContext,
-  finalize: (result: unknown, set: CtxSet) => T,
-  wrapResponse: (response: Response) => T,
-) => MaybePromise<T>
-
-/** Registration-compiled route behavior. Every adapter invokes the same runner; the optional fused
- * renderer is only a response-format specialization of that same selected route semantics. */
-interface RouteExecutionPlan {
-  readonly run: RouteExecutionRunner
-  readonly fusedWeb: FusedWebRunner | undefined
-}
-
-interface RouteEntry {
-  readonly handler: InternalHandler
-  readonly schema: RouteSchema | undefined
-  /** Resolved idempotency config; `undefined` = off (the dedupe lane is never entered). */
-  readonly idempotent: ResolvedIdempotency | undefined
-  /** Resolved effect-ledger wiring; `undefined` = off (no per-request ledger, no settle step). */
-  readonly ledgered: ResolvedEffectLedger | undefined
-  /** Per-request context extensions captured at registration (order-scoped). */
-  readonly derives: ReadonlyArray<RawDerive>
-  /** Static context extensions captured at registration. */
-  readonly decorations: Record<PropertyKey, unknown>
-  /** Whether {@link decorations} has any keys — precomputed so the hot path skips a no-op
-   * `Object.assign` on the (common) no-decoration route. */
-  readonly hasDecorations: boolean
-  /** Lifecycle hooks captured at registration (order-scoped). */
-  readonly beforeHandle: ReadonlyArray<RawBeforeHandle>
-  readonly afterHandle: ReadonlyArray<RawAfterHandle>
-  readonly onError: ReadonlyArray<RawErrorHandler>
-  /** Wraps the matched route lifecycle. Empty for the common no-around path. */
-  readonly around: ReadonlyArray<RawAround>
-  /** The single immutable execution decision consumed by portable, Node-direct, and Bun-native paths. */
-  readonly execution: RouteExecutionPlan
-}
 
 /** One canonical runtime route fact. The catalog owns matching, reflection, assurance, tool metadata,
  * replay, and native compilation input so batch registration has one commit point. */
@@ -311,17 +263,6 @@ class RouteCatalog {
     return this.assurancePresent
   }
 }
-
-/** The fused Web lane: same inputs `routeAndRun` would hand the generic path, a `Response` out. */
-type FusedWebRunner = (
-  source: RequestSource,
-  params: Record<string, string>,
-  search: string | undefined,
-  signal: AbortSignal,
-  budget: RequestBudget,
-  platform: Platform | undefined,
-  nativeContext: boolean,
-) => MaybePromise<Response>
 
 /** A registered WebSocket route — just its handler; matching reuses {@link Router} under the GET verb. */
 interface WsEntry {
