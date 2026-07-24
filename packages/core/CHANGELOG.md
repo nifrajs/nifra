@@ -1,5 +1,121 @@
 # @nifrajs/core
 
+## 2.2.0
+
+### Minor Changes
+
+- a4645e2: Support path segments that are part literal, part parameter.
+
+  A route segment had to be wholly static, wholly a parameter, or wholly a wildcard. `/:key.txt`,
+  `/post-[id].html` and `/[locale]-sitemap.xml` did not merely fail to match - they failed to
+  **compile**. The trigger was an IndexNow key-verification file, which the protocol requires at
+  `<origin>/<key>.txt` with the key coming from deploy-time config, and at the root, because a key
+  served from a subdirectory only authorises URLs beneath it. The workaround was an exact-match check in
+  the app's server entry, which moved a routing concern out of the router and never ran in dev.
+
+  Both spellings now work: `:key.txt` in a route pattern, and `[inKey].txt.tsx` as a file route. The
+  parameter name is the longest identifier run after `:`; everything else in the segment is literal.
+  Precedence is static > mixed > param > wildcard, decided by shape rather than registration order, so
+  `/robots.txt` still beats `/:key.txt` and `/jobs/:id.txt` beats `/jobs/:id`.
+
+  Inside a mixed segment, `[[optional]]` and `[...catchAll]` are **rejected** at build time rather than
+  given a meaning: there is no sensible absent form for `/[[locale]]-feed.xml`, and a catch-all captures
+  the rest of the path, which a trailing literal can never follow.
+
+  **Literal colons keep their meaning.** A `:` that follows an identifier character and runs to the end
+  of its segment is literal, so the established RPC-style action shape - `/v1/things:batchGet` - still
+  routes as written rather than capturing `batchGet` into a parameter named after the verb. Mixed
+  parameters remain available everywhere they are unambiguous: at the start of a segment (`/:key.txt`),
+  after punctuation (`/post-:id`), or with a literal suffix (`/v:major.json`). A `:` not followed by a
+  valid identifier start (`/ratio:2`) is literal as before.
+
+  Mixed siblings are ordered by ONE total comparator shared between the server's trie router and the
+  browser's matcher. Ordering by literal weight alone left ties broken differently on each side, so
+  `/bar.:value` and `/:value.foo` could resolve to different routes for the same URL - visible only as a
+  soft navigation rendering the wrong page.
+
+  Adding a mixed pattern can also make a previously unambiguous path ambiguous: with both `/jobs/:id` and
+  `/jobs/:id.txt` registered, `/jobs/a.txt` now matches the mixed route with `id="a"` where before it
+  could only match the bare param with `id="a.txt"`. Deterministic, and only for apps that opt in by
+  registering a mixed pattern.
+
+  An app that registers no mixed segment allocates nothing for this and pays one `undefined` check on
+  the match path. The rejected-parameter hint added in the previous release is removed - `:id.json` was
+  the shape it explained, and `:id.json` now compiles.
+
+### Patch Changes
+
+- 5f460db: Fix `nifra init-agents`, and explain rejected route parameters.
+
+  `nifra init-agents` failed for every installed user with `Cannot find module 'create-nifra/agent-files'`.
+  The `./agent-files` subpath resolves through the `bun` condition to `src/agent-files.ts`, which the
+  published tarball did not contain - the package shipped `dist` and the templates only. It now ships
+  that source file, so the subpath resolves from a real install. Reproduced from a packed 2.1.0 tarball
+  before and after.
+
+  An invalid route parameter now says why. Route grammar is per-segment - a segment is wholly static or
+  wholly a parameter - so everything after the colon is the name, and `/v/:id.json` asks for a parameter
+  literally called `id.json`. The previous `invalid parameter ":id.json"` read as a typo rather than a
+  rule; the message now names the limitation and gives both ways out (`/v/:id/json`, or capture the whole
+  segment and split it in the handler). Reserved names, an empty name, and a name that is invalid for
+  some other reason each get their own explanation instead of sharing one.
+
+  Note for anyone who has hit this: a segment that merely _contains_ a colon without starting with one,
+  such as `/a/pre-:id`, is a literal static segment and captures nothing. That is deliberate - a colon is
+  legal inside a URL path segment (`/v1/things:batchGet`) - and is now covered by a test that documents it.
+
+- e713cab: Let a route loader answer 404 and 410.
+
+  A matched route whose loader finds nothing had no supported way to set its page's status, so the path
+  of least resistance was to return empty data and render "not found" inside a **200**. That is a soft
+  404: search engines penalise it and keep the dead URL indexed, and because the page looks correct in a
+  browser it ships and stays shipped. It is the most common page shape there is - a detail route whose
+  record may not exist.
+
+  `notFound()`, `gone()`, and `statusPage(status)` are thrown from a loader, the way `redirect()` already
+  is. They render the `_404` page - or `_410.tsx` / `_<status>.tsx` if the app authored one - inside the
+  normal layout chain, hydrated, at the right status. A `headers` option carries the cache policy each
+  status wants: a 404 may be racing publication and wants a short TTL, while a 410 is a promise that the
+  URL is permanently gone. Typed `never`, so a loader narrows without a redundant `return`.
+
+  410 is not a pedantic 404: it tells a crawler to drop the URL instead of re-fetching it for weeks.
+
+  Existing behaviour is unchanged by construction. The signal is a branded `Response` and the brand is
+  checked before the verbatim pass-through, so `throw redirect(...)`, `throw new Response(...)`, and a
+  real `Error` reaching `_error` all behave exactly as before. Client-side navigation and prerendering
+  already handle a non-ok render correctly and now have tests pinning that: a soft-nav falls back to a
+  full navigation and lands on the same page, and a prerendered path whose loader signals is omitted
+  from the build rather than baked as a static 200 shell.
+
+  `renderPageResult` gains a `headers` option. `content-type` and the ISR freshness header stay
+  framework-owned and cannot be overridden through it.
+
+  Also trims the router's rejected-parameter message added in the previous release. The explanation cost
+  ~0.3 KB gzip in every bundle; it now states the grammar rule and the two ways out without building an
+  example path, which is a third smaller and keeps the base bundle inside its budget.
+
+- 6aa0aac: Add `previewEndpoint` for draft/preview mode, and make transport codec decode errors uniform.
+
+  `previewEndpoint({ secret, draftSecret })` is a `fetch` handler for the link your CMS's "Preview"
+  button points at: it checks the preview token in constant time, turns draft mode on with the signed
+  `__nifra_draft` cookie, and redirects the editor to the requested page. It is the link-borne sibling
+  of `revalidateEndpoint`, and it exists because gating the route by hand means writing two checks that
+  are easy to get subtly wrong and that fail silently when you do - the token compare must not exit
+  early on the first wrong character, and the `?to=` destination must not be allowed off-site
+  (`//evil.com` and `/\evil.com` both start with a slash yet navigate away). Wrong or missing token
+  gives `401`, an off-site destination `400`, and success a `302` carrying `Cache-Control: no-store`
+  so no shared cache can replay one editor's draft session to a visitor. Param names, the fallback
+  destination, and cookie lifetime/path/`Secure` are all configurable.
+
+  `decodeTransportFrame` and `decodeTransportResponse` now raise `TransportCodecError` for a malformed
+  payload instead of letting the underlying `SyntaxError` through, with the original kept as `cause`.
+  Every other failure in that module was already a `TransportCodecError`, so a malformed payload - the
+  likeliest hostile input - was the one case that slipped past callers catching the documented error
+  type. `TransportCodecError` accepts an `ErrorOptions` second argument to carry that cause. Bytes that
+  are not valid UTF-8 take the same path: the `TypeError` from the strict decoder used to escape ahead
+  of any codec, so the one input that never reached a codec at all was also the one that reported
+  differently from every other decode failure.
+
 ## 2.1.0
 
 ### Minor Changes
