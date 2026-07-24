@@ -20,4 +20,7 @@ destination, and cookie lifetime/path/`Secure` are all configurable.
 payload instead of letting the underlying `SyntaxError` through, with the original kept as `cause`.
 Every other failure in that module was already a `TransportCodecError`, so a malformed payload - the
 likeliest hostile input - was the one case that slipped past callers catching the documented error
-type. `TransportCodecError` accepts an `ErrorOptions` second argument to carry that cause.
+type. `TransportCodecError` accepts an `ErrorOptions` second argument to carry that cause. Bytes that
+are not valid UTF-8 take the same path: the `TypeError` from the strict decoder used to escape ahead
+of any codec, so the one input that never reached a codec at all was also the one that reported
+differently from every other decode failure.

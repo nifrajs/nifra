@@ -418,8 +418,8 @@ describe("collectDuplicateInstalls — discovery anchored at the workspace root"
         join(kit, "package.json"),
         JSON.stringify({ name: "kit", dependencies: { react: "19.2.7" } }),
       )
-      // Same VERSION, different physical directories - the case the plan calls out, since module
-      // identity is path-based and aligning versions does not fix it.
+      // Same VERSION, different physical directories - still two copies, because module identity is
+      // path-based and aligning versions does not merge them.
       await writeFile(
         join(dir, "node_modules", "react", "package.json"),
         JSON.stringify({ name: "react", version: "19.2.7" }),

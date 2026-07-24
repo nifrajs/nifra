@@ -21,12 +21,17 @@ Inside a mixed segment, `[[optional]]` and `[...catchAll]` are **rejected** at b
 given a meaning: there is no sensible absent form for `/[[locale]]-feed.xml`, and a catch-all captures
 the rest of the path, which a trailing literal can never follow.
 
-**One behaviour change.** A segment containing `:` after its first character used to compile to a
-literal static segment; it is now part literal, part parameter. So a route relying on a literal colon
-mid-segment - `/v1/things:batchGet`, the Google-API style - changes meaning. A `:` not followed by a
-valid identifier start (`/ratio:2`) is still literal. The plan this came from described the feature as
-backward compatible by construction, on the grounds that every pattern it enables currently throws;
-that holds for `:key.txt` and not for `things:batchGet`, which compiles today.
+**Literal colons keep their meaning.** A `:` that follows an identifier character and runs to the end
+of its segment is literal, so the established RPC-style action shape - `/v1/things:batchGet` - still
+routes as written rather than capturing `batchGet` into a parameter named after the verb. Mixed
+parameters remain available everywhere they are unambiguous: at the start of a segment (`/:key.txt`),
+after punctuation (`/post-:id`), or with a literal suffix (`/v:major.json`). A `:` not followed by a
+valid identifier start (`/ratio:2`) is literal as before.
+
+Mixed siblings are ordered by ONE total comparator shared between the server's trie router and the
+browser's matcher. Ordering by literal weight alone left ties broken differently on each side, so
+`/bar.:value` and `/:value.foo` could resolve to different routes for the same URL - visible only as a
+soft navigation rendering the wrong page.
 
 Adding a mixed pattern can also make a previously unambiguous path ambiguous: with both `/jobs/:id` and
 `/jobs/:id.txt` registered, `/jobs/a.txt` now matches the mixed route with `id="a"` where before it
