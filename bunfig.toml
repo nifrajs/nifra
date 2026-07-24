@@ -17,12 +17,13 @@ preload = ["./scripts/test-preload.ts"]
 #
 # So exclusions here have to be earned per file and stated with a number, not assumed for a category.
 coveragePathIgnorePatterns = [
-  # `dev.ts` (Bun dev server) and `vite.ts` (Vite middleware) are long-lived server loops whose
-  # remaining gaps are watcher/HMR callbacks that need a running browser. Measured at the time of
-  # writing: dev.ts 87.50% funcs / 84.19% lines, vite.ts 85.71% / 93.06%. Both are dev-loop code, never
-  # on a production request path - unlike build.ts, which is why only these two stayed.
+  # `vite.ts` sits at 100% LINE coverage. The two functions keeping it under the 90% FUNCTION floor are
+  # `() => {}` - the no-op catches on `reader.cancel()` (a client disconnecting mid-stream) and
+  # `vite.close()` (teardown after a bind failure). Both are error swallows on error paths; reaching
+  # them means contriving a rejection from Vite's own teardown, which would measure the mock rather than
+  # the code. This exclusion is the file's line coverage saying it is exercised and its function count
+  # saying two empty bodies are not - so it is kept, with the number, rather than chased.
   "**/web/src/vite.ts",
-  "**/web/src/dev.ts",
   # Throwaway temp APPS that the build-tooling tests (`buildTarget`/`buildClient`) generate + bundle:
   # their stub route components are bundled, never rendered (the stub adapter emits chain length, not
   # the component), so they report 0% function coverage. They aren't product code — exclude the temp

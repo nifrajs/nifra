@@ -166,3 +166,32 @@ test("a failing app render returns the dev error overlay, not a bare 500", async
   expect(res.headers.get("content-type")).toContain("text/html")
   expect(await res.text()).toContain("loader exploded")
 })
+
+test("the dev leak guard reports a client leak instead of serving it silently", async () => {
+  // Production fails the build on a `node:` builtin in the client. Dev must SAY so too - otherwise the
+  // first time you learn a route pulled a builtin into the browser bundle is the deploy. The guard runs
+  // on change, so this writes the leak after boot and waits for the debounce.
+  const errors: string[] = []
+  const original = console.error
+  console.error = (...args: unknown[]) => errors.push(args.map(String).join(" "))
+  try {
+    server = await createDevServer({
+      routesDir,
+      outDir: join(projectRoot, "dist"),
+      clientModule,
+      port: 0,
+      createApp: () => ({ fetch: () => new Response("ok") }),
+    })
+    writeFileSync(
+      join(routesDir, "index.tsx"),
+      'import { randomUUID } from "node:crypto"\nexport const id = randomUUID()\nexport default function Index() { return null }\n',
+    )
+    const deadline = Date.now() + 20_000
+    while (Date.now() < deadline && !errors.some((e) => /node:crypto/.test(e))) {
+      await Bun.sleep(200)
+    }
+    expect(errors.join("\n")).toContain("node:crypto")
+  } finally {
+    console.error = original
+  }
+}, 40_000)
