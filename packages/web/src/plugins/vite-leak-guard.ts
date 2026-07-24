@@ -48,7 +48,16 @@ interface RollupPluginContext {
     readonly importedIds?: readonly string[]
     readonly dynamicallyImportedIds?: readonly string[]
   } | null
-  error(message: string): never
+  /**
+   * Takes an `Error`, never a string.
+   *
+   * Handed a string, rolldown synthesizes its own error type and calls `Error.captureStackTrace` on a
+   * plain object - which Bun rejects with "First argument must be an Error object", and THAT becomes the
+   * build failure. The guard still fires, but its message is replaced by an internal one naming nothing,
+   * so a real client leak reports as a stack-trace complaint. Passing an Error skips that construction
+   * entirely and the message survives.
+   */
+  error(error: Error): never
 }
 
 /** The minimal Rollup plugin shape this returns — `generateBundle` bound to the plugin context. */
@@ -76,9 +85,9 @@ export function viteLeakGuard(): LeakGuardPlugin {
       // Node-builtin guard first, then server-only - the same order as the Bun build, so the first error a
       // dev sees is the same across pipelines when a module trips both.
       const nodeBuiltinLeak = formatNodeBuiltinLeak(detectNodeBuiltinsInClient(graph))
-      if (nodeBuiltinLeak !== undefined) this.error(nodeBuiltinLeak)
+      if (nodeBuiltinLeak !== undefined) this.error(new Error(nodeBuiltinLeak))
       const serverOnlyLeak = formatServerOnlyLeak(detectServerOnlyInClient(graph))
-      if (serverOnlyLeak !== undefined) this.error(serverOnlyLeak)
+      if (serverOnlyLeak !== undefined) this.error(new Error(serverOnlyLeak))
     },
   }
 }

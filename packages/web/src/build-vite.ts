@@ -332,7 +332,15 @@ interface EdgeBuiltinGuardContext {
     readonly importedIds?: readonly string[]
     readonly dynamicallyImportedIds?: readonly string[]
   } | null
-  error(message: string): never
+  /**
+   * Takes an `Error`, never a string.
+   *
+   * Handed a string, rolldown synthesizes its own error type and calls `Error.captureStackTrace` on a
+   * plain object - which Bun rejects with "First argument must be an Error object", and THAT becomes the
+   * build failure. The guard still fires, but its message is replaced by an internal one naming nothing,
+   * so a real edge leak reports as a stack-trace complaint. Passing an Error skips that construction.
+   */
+  error(error: Error): never
 }
 
 /** Fail closed if Rollup would leave a Node builtin import in a workerd/edge worker. */
@@ -361,10 +369,13 @@ function edgeBuiltinGuard(): {
         }
       }
       if (builtins.size > 0) {
+        // An Error, never a string - see the note on `EdgeBuiltinGuardContext.error`.
         this.error(
-          `[nifra/web] Node built-in(s) reached an edge server bundle: ${[...builtins].sort().join(", ")}. ` +
-            `Imported by: ${[...importers].sort().join(", ") || "unknown module"}. ` +
-            "Move the import behind a Node/Bun target or replace it with an edge-compatible API.",
+          new Error(
+            `[nifra/web] Node built-in(s) reached an edge server bundle: ${[...builtins].sort().join(", ")}. ` +
+              `Imported by: ${[...importers].sort().join(", ") || "unknown module"}. ` +
+              "Move the import behind a Node/Bun target or replace it with an edge-compatible API.",
+          ),
         )
       }
     },
