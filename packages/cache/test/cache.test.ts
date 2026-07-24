@@ -100,3 +100,84 @@ describe("createCache — invalidation", () => {
     expect(await cache.get("x")).toBeUndefined()
   })
 })
+
+// Background revalidation is fire-and-forget, so its error handling is the only thing between a failing
+// loader and either a silent disappearance or an unhandled rejection taking down the process.
+describe("createCache — background revalidation errors", () => {
+  test("a failing revalidate is reported and leaves the stale value servable", async () => {
+    const clock = makeClock()
+    const reported: Array<{ key: string; message: string }> = []
+    const cache = createCache({
+      now: clock.now,
+      defaultTtlMs: 100,
+      onError: (error, key) => reported.push({ key, message: (error as Error).message }),
+    })
+
+    expect(await cache.wrap("k", () => "fresh", { ttlMs: 100, swrMs: 1000 })).toBe("fresh")
+    clock.advance(150) // stale, still inside the SWR window
+    const served = await cache.wrap<string>(
+      "k",
+      () => {
+        throw new Error("upstream down")
+      },
+      { ttlMs: 100, swrMs: 1000 },
+    )
+    // The stale value is served immediately; the refresh fails in the background.
+    expect(served).toBe("fresh")
+    await flush()
+    expect(reported).toEqual([{ key: "k", message: "upstream down" }])
+  })
+
+  test("a throwing onError cannot escape the background refresh", async () => {
+    // The reporter is user code on a floating promise. If its own throw propagated it would surface as
+    // an unhandled rejection with no request to attribute it to.
+    const clock = makeClock()
+    const cache = createCache({
+      now: clock.now,
+      defaultTtlMs: 100,
+      onError: () => {
+        throw new Error("the reporter itself is broken")
+      },
+    })
+
+    expect(await cache.wrap("k", () => "fresh", { ttlMs: 100, swrMs: 1000 })).toBe("fresh")
+    clock.advance(150)
+    expect(
+      await cache.wrap<string>(
+        "k",
+        () => {
+          throw new Error("upstream down")
+        },
+        { ttlMs: 100, swrMs: 1000 },
+      ),
+    ).toBe("fresh")
+    await flush()
+    // Still usable afterwards - the failure did not poison the entry or the in-flight map.
+    clock.advance(1_000)
+    expect(await cache.wrap("k", () => "recovered", { ttlMs: 100 })).toBe("recovered")
+  })
+
+  test("with no onError supplied, a failed revalidate is logged rather than swallowed", async () => {
+    const clock = makeClock()
+    const cache = createCache({ now: clock.now, defaultTtlMs: 100 })
+    const original = console.error
+    const logged: unknown[][] = []
+    console.error = (...args: unknown[]) => logged.push(args)
+    try {
+      expect(await cache.wrap("k", () => "fresh", { ttlMs: 100, swrMs: 1000 })).toBe("fresh")
+      clock.advance(150)
+      await cache.wrap<string>(
+        "k",
+        () => {
+          throw new Error("upstream down")
+        },
+        { ttlMs: 100, swrMs: 1000 },
+      )
+      await flush()
+    } finally {
+      console.error = original
+    }
+    expect(logged.length).toBeGreaterThan(0)
+    expect(String(logged[0]?.[0])).toContain("revalidate")
+  })
+})

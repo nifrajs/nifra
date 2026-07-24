@@ -25,26 +25,82 @@ function parseLength(value: string | null): number | undefined {
   return Number(value)
 }
 
-async function readTextCapped(res: Response, maxBytes: number): Promise<string | null> {
-  const body = res.clone().body
-  if (body === null) return null
+/**
+ * The two reader methods this file uses, structurally.
+ *
+ * Named by use rather than imported: `lib.dom`'s `ReadableStreamDefaultReader` and Bun's augmented one
+ * are not mutually assignable (Bun adds `readMany`), and `ReturnType<…getReader>` resolves to the BYOB
+ * overload, whose `read` requires an argument. A structural shape sidesteps all of it without a cast.
+ */
+interface ChunkReader {
+  read(): Promise<{ readonly done: boolean; readonly value?: Uint8Array }>
+  cancel(reason?: unknown): Promise<void>
+}
+
+/** Re-emit the bytes already pulled, then the untouched remainder of the same reader. */
+function replayFrom(res: Response, chunks: readonly Uint8Array[], reader: ChunkReader): Response {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk)
+    },
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read()
+        // No value and not done cannot happen for a byte stream, but it means the same thing here:
+        // there is nothing further to emit.
+        if (done || value === undefined) controller.close()
+        else controller.enqueue(value)
+      } catch (error) {
+        // The upstream body failed; surface that to the client rather than truncating silently.
+        controller.error(error)
+      }
+    },
+    cancel: (reason) => reader.cancel(reason),
+  })
+  return new Response(stream, {
+    status: res.status,
+    statusText: res.statusText,
+    headers: res.headers,
+  })
+}
+
+type Peeked = { readonly text: string } | { readonly response: Response }
+
+/**
+ * Read up to `maxBytes` of a response, without disturbing it when the answer is "pass through".
+ *
+ * `Response.clone()` is the obvious way to peek and is a trap here. Cancelling the clone's reader once
+ * the cap is exceeded also stalls the ORIGINAL body in Bun, so an oversized streamed response hung the
+ * client instead of passing through - a hang, from a middleware whose entire job is cosmetic. (A clone
+ * read to completion is fine; only the cancel breaks it, which is why every buffered case passed and
+ * only a streamed one failed.) Abandoning the clone rather than cancelling it trades the hang for
+ * buffering the whole oversized body, which is the exact cost the cap exists to avoid.
+ *
+ * So the body is read directly and, when it proves too large, replayed: the bytes already pulled are
+ * re-emitted ahead of the rest of the same reader. No tee, nothing buffered past the cap, and the
+ * response the client receives is byte-for-byte the one the handler produced.
+ */
+async function peekText(res: Response, maxBytes: number): Promise<Peeked> {
+  const body = res.body
+  if (body === null) return { response: res }
   const reader = body.getReader()
-  const decoder = new TextDecoder()
+  const chunks: Uint8Array[] = []
   let total = 0
-  let text = ""
   try {
     while (true) {
       const { done, value } = await reader.read()
-      if (done) return text + decoder.decode()
-      total += value.byteLength
-      if (total > maxBytes) {
-        await reader.cancel()
-        return null
+      if (done) {
+        const decoder = new TextDecoder()
+        let text = ""
+        for (const chunk of chunks) text += decoder.decode(chunk, { stream: true })
+        return { text: text + decoder.decode() }
       }
-      text += decoder.decode(value, { stream: true })
+      chunks.push(value)
+      total += value.byteLength
+      if (total > maxBytes) return { response: replayFrom(res, chunks, reader) }
     }
   } catch {
-    return null
+    return { response: replayFrom(res, chunks, reader) }
   }
 }
 
@@ -76,13 +132,19 @@ export function prettyJson(options: PrettyJsonOptions = {}) {
       const declared = parseLength(res.headers.get("content-length"))
       if (declared !== undefined && declared > maxBytes) return res
 
-      const text = await readTextCapped(res, maxBytes)
-      if (text === null) return res
+      const peeked = await peekText(res, maxBytes)
+      if ("response" in peeked) return peeked.response
       let parsed: unknown
       try {
-        parsed = JSON.parse(text)
+        parsed = JSON.parse(peeked.text)
       } catch {
-        return res
+        // The body was read to decide that, so `res` can no longer be returned as-is. Rebuild it from
+        // the text: re-encoding UTF-8 reproduces the original bytes, so `content-length` still holds.
+        return new Response(peeked.text, {
+          status: res.status,
+          statusText: res.statusText,
+          headers: res.headers,
+        })
       }
 
       const headers = new Headers(res.headers)

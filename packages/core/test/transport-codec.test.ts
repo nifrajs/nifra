@@ -149,3 +149,106 @@ describe("versioned transport codecs", () => {
     }
   })
 })
+
+// The lane's pass-through and failure edges. Each one decides whether a request reaches the handler
+// at all, so "uncovered" here means the fail-closed behaviour was never actually observed.
+describe("transport lane edges", () => {
+  const rich = richWireCodec()
+  const registry = () => createTransportCodecRegistry([plainJsonCodec, rich])
+  const echo = () =>
+    server()
+      .use(transportCodecs(registry()))
+      .post("/echo", (c) => c.json({ ok: true }))
+
+  test("rejects a maxBytes that cannot bound anything", () => {
+    // A negative or fractional cap silently disables the bound it exists to enforce, so it is refused
+    // at construction rather than at the first oversized request.
+    for (const maxBytes of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => transportCodecs(registry(), { maxBytes })).toThrow(RangeError)
+    }
+    expect(() => transportCodecs(registry(), { maxBytes: 0 })).not.toThrow()
+  })
+
+  test("an unnegotiable Accept falls back instead of failing a served response", async () => {
+    // Encoding runs AFTER the handler already produced a value, so an Accept the registry cannot
+    // negotiate must not turn a successful request into an error - it degrades to the fallback codec.
+    const unnegotiable = "application/vnd.nifra.wire+json;v=99"
+    expect(() => registry().negotiate(unnegotiable)).toThrow()
+
+    const app = server()
+      .use(transportCodecs(registry()))
+      .post("/echo", () => ({ hello: "world" }))
+    const response = await app.fetch(
+      new Request("http://test/echo", {
+        method: "POST",
+        headers: { "content-type": rich.mediaType, accept: unnegotiable },
+        body: rich.encode({ hello: "world" }),
+      }),
+    )
+    expect(response.status).toBe(200)
+    // Served, and served as the fallback media type rather than the impossible one.
+    expect(response.headers.get("content-type")).toBe(plainJsonCodec.mediaType)
+  })
+
+  test("an unknown content-type passes through untouched, it is not this lane's request", async () => {
+    const response = await echo().fetch(
+      new Request("http://test/echo", {
+        method: "POST",
+        headers: { "content-type": "text/csv" },
+        body: "a,b\n1,2",
+      }),
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ ok: true })
+  })
+
+  test("plain JSON keeps its native fast path", async () => {
+    // The lane deliberately does not intercept v1 application/json - the kernel already handles it,
+    // and re-wrapping it would cost a clone and a re-encode per request for nothing.
+    const response = await echo().fetch(
+      new Request("http://test/echo", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ hello: "world" }),
+      }),
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ ok: true })
+  })
+
+  test("a body the codec cannot decode is a 400, not a handler invocation", async () => {
+    let reached = false
+    const app = server()
+      .use(transportCodecs(registry()))
+      .post("/echo", () => {
+        reached = true
+        return { ok: true }
+      })
+    const response = await app.fetch(
+      new Request("http://test/echo", {
+        method: "POST",
+        headers: { "content-type": rich.mediaType },
+        body: "{not valid",
+      }),
+    )
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({ error: "invalid_transport_payload" })
+    // Fail CLOSED: an undecodable payload never becomes handler input.
+    expect(reached).toBe(false)
+  })
+
+  test("a payload over the cap is a 413, not a truncated decode", async () => {
+    const app = server()
+      .use(transportCodecs(registry(), { maxBytes: 8 }))
+      .post("/echo", () => ({ ok: true }))
+    const response = await app.fetch(
+      new Request("http://test/echo", {
+        method: "POST",
+        headers: { "content-type": rich.mediaType },
+        body: rich.encode({ long: "x".repeat(256) }),
+      }),
+    )
+    expect(response.status).toBe(413)
+    expect(await response.json()).toMatchObject({ error: "payload_too_large" })
+  })
+})
