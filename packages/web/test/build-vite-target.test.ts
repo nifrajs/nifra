@@ -2,6 +2,7 @@ import { afterAll, expect, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { buildTargetVite } from "../src/build-vite.ts"
+import { linkWorkspacePackages } from "./workspace-link.ts"
 
 // End-to-end: buildTargetVite assembles a full deploy dir through the SAME orchestrator as the Bun
 // buildTarget, only the bundler differs. The `node` target is the cleanest proof - it self-hosts and
@@ -40,6 +41,9 @@ function scaffoldApp(): { root: string; routesDir: string; outDir: string; workD
      export default function Index() { return null }\n`,
   )
   w("client-stub.ts", "export function mountRouter() {}\n")
+  // The generated server entry imports `@nifrajs/web`, `@nifrajs/core/server` and (for `node`)
+  // `@nifrajs/node` by bare specifier, which a real app resolves from its own node_modules.
+  linkWorkspacePackages(root, ["web", "core", "node", "client"])
   return {
     root,
     routesDir: join(root, "routes"),

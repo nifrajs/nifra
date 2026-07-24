@@ -2,6 +2,7 @@ import { afterAll, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { buildTargetVite } from "../src/build-vite.ts"
+import { linkWorkspacePackages } from "./workspace-link.ts"
 
 // The Vite production build's highest-risk claim: an EDGE server bundle (cf-pages / vercel) resolves
 // react-dom/server's EDGE build under Vite, so a React app SSRs on workerd. The Bun path needs a shim for
@@ -48,6 +49,9 @@ function scaffoldReactApp(): {
      }\n`,
   )
   w("routes/index.module.css", ".title { color: rebeccapurple }\n")
+  // `@nifrajs/web-react` (adapter + `/client`) and the packages the generated entry imports are bare
+  // specifiers, resolved from the app's own node_modules exactly as a real install provides them.
+  linkWorkspacePackages(root, ["web", "core", "node", "client", "web-react"])
   return {
     root,
     routesDir: join(root, "routes"),
