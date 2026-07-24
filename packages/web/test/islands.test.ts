@@ -265,3 +265,29 @@ describe("mountIslands", () => {
     }
   })
 })
+
+test("idle without requestIdleCallback: the fallback timer is cancellable", async () => {
+  // Old engines have no requestIdleCallback, so the strategy degrades to a timer. If disposing did not
+  // clear it, an island torn down during a soft nav would still enhance a detached element later.
+  const g = globalThis as { requestIdleCallback?: unknown }
+  const original = g.requestIdleCallback
+  delete g.requestIdleCallback
+  try {
+    let ran = false
+    const dispose = mountIslands(
+      {
+        c: (() => {
+          ran = true
+        }) as IslandEnhancer,
+      },
+      { root: rootOf([island("c", { strategy: "idle" })]) },
+    )
+    expect(ran).toBe(false) // deferred to the timer
+    dispose()
+    await Bun.sleep(5) // well past the 1ms fallback
+    expect(ran).toBe(false) // cancelled, so it never enhances
+  } finally {
+    if (original === undefined) delete g.requestIdleCallback
+    else g.requestIdleCallback = original
+  }
+})
