@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   aggregateSizeReport,
   type ChunkSize,
+  cloudflareRouteRules,
   diffManifestRoutes,
   formatBytes,
   formatManifestDrift,
@@ -175,7 +176,7 @@ describe("diffManifestRoutes + formatManifestDrift", () => {
 // --- Generated server entry (per-target) --------------------------------------------------------------
 
 describe("generateServerEntry", () => {
-  test("cf-pages → default-exports the fetch handler, no disk-asset server", () => {
+  test("cf-pages → a fetch handler that delegates static paths to ASSETS, never to disk", () => {
     const src = generateServerEntry({
       target: "cf-pages",
       adapterImport: "../framework.ts",
@@ -183,11 +184,14 @@ describe("generateServerEntry", () => {
       title: "my site",
     })
     expect(src).toContain('import { toFetchHandler } from "@nifrajs/core/server"')
-    expect(src).toContain("export default toFetchHandler(app)")
+    expect(src).toContain("toFetchHandler(app)")
     expect(src).toContain("api: inProcessClient(backend)")
     expect(src).toContain('title: "my site"')
-    // The edge handler doesn't serve /assets from disk (Pages does).
-    expect(src).not.toContain("/assets/")
+    // Static paths go to Pages' asset server, NOT to a filesystem read - the edge has no disk, and
+    // `_routes.json` cannot always keep every static request off the worker.
+    expect(src).toContain("env.ASSETS.fetch(request)")
+    expect(src).not.toContain("readFile")
+    expect(src).not.toContain("Bun.file")
   })
 
   test("bun → self-hosting Bun.serve that serves /assets/* from disk", () => {
@@ -265,5 +269,121 @@ describe("generateServerManifest — bakes styles for createWebApp", () => {
     })
     expect(src).toContain("export const styles = []")
     expect(src).toContain("export const routeStyles = {}")
+  })
+})
+
+// Cloudflare rejects a `_routes.json` carrying more than 100 include+exclude rules, or any rule over
+// 100 characters - and it rejects it at `wrangler pages deploy`, after a build that reported success.
+// One exclude per public file clears that ceiling with an ordinary icon-and-font `public/`, so the
+// budget is enforced where the file is written rather than discovered at the deploy.
+describe("cloudflareRouteRules", () => {
+  test("names every public file when they fit", () => {
+    const rules = cloudflareRouteRules(["/robots.txt", "/fonts/inter.woff2"], ["/", "/about"])
+    expect(rules.include).toEqual(["/*"])
+    expect(rules.exclude).toEqual(["/assets/*", "/robots.txt", "/fonts/inter.woff2"])
+    expect(rules.omitted).toEqual([])
+  })
+
+  test("stays inside the 100-rule budget and reports what it dropped", () => {
+    // Routes claim `/icons`, so the directory cannot be collapsed and the budget has to truncate.
+    const files = Array.from({ length: 260 }, (_, i) => `/icons/icon-${i}.png`)
+    const rules = cloudflareRouteRules(files, ["/icons/:id"])
+    expect(rules.include.length + rules.exclude.length).toBeLessThanOrEqual(100)
+    // Everything unnamed is accounted for, not silently lost.
+    expect(rules.exclude.length - 1 + rules.omitted.length).toBe(files.length)
+    expect(rules.omitted.length).toBeGreaterThan(0)
+  })
+
+  test("drops an over-long path rather than emitting a rule Cloudflare rejects", () => {
+    const long = `/fonts/${"a".repeat(120)}.woff2`
+    const rules = cloudflareRouteRules(["/robots.txt", long], ["/fonts/:id"])
+    expect(rules.exclude).toEqual(["/assets/*", "/robots.txt"])
+    expect(rules.omitted).toEqual([long])
+  })
+
+  test("a filename containing * is dropped rather than becoming a wildcard", () => {
+    const rules = cloudflareRouteRules(["/blog/logo.png", "/weird*name.txt"], ["/blog/:slug"])
+    expect(rules.exclude).toEqual(["/assets/*", "/blog/logo.png"])
+    expect(rules.omitted).toEqual(["/weird*name.txt"])
+  })
+
+  test("the root route reserves nothing - `/` cannot match below a directory", () => {
+    // `/` has no first segment, which must not read as "could match anywhere".
+    const files = Array.from({ length: 200 }, (_, i) => `/icons/icon-${i}.png`)
+    expect(cloudflareRouteRules(files, ["/"]).exclude).toEqual(["/assets/*", "/icons/*"])
+  })
+
+  // Collapsing a directory into `/dir/*` fits far more files and hands Pages every FUTURE path under
+  // that prefix, so it is only correct where the route table proves nothing is served beneath it.
+  describe("directory collapsing", () => {
+    const many = (dir: string, n: number) =>
+      Array.from({ length: n }, (_, i) => `/${dir}/file-${i}.png`)
+
+    test("collapses a directory no route can be served under", () => {
+      const rules = cloudflareRouteRules(many("icons", 200), ["/", "/about", "/blog/:slug"])
+      expect(rules.exclude).toEqual(["/assets/*", "/icons/*"])
+      // Every file is covered by the glob, so nothing is left for the worker.
+      expect(rules.omitted).toEqual([])
+    })
+
+    test("REFUSES to collapse a directory a route is served under", () => {
+      // `public/blog/hero.png` beside a `/blog/:slug` route: `/blog/*` would send `/blog/my-post` to
+      // the CDN, which has no such file, and the page would 404 in production only.
+      const files = many("blog", 200)
+      const rules = cloudflareRouteRules(files, ["/", "/blog/:slug"])
+      expect(rules.exclude).not.toContain("/blog/*")
+      expect(rules.include.length + rules.exclude.length).toBeLessThanOrEqual(100)
+      // Falls back to exact paths, so the overflow is dropped to the worker instead of widened.
+      expect(rules.omitted.length).toBeGreaterThan(0)
+    })
+
+    test("one dynamic first segment disables collapsing everywhere", () => {
+      // `/:locale/…` can match under ANY directory name, so no prefix is provably free.
+      const rules = cloudflareRouteRules(many("icons", 200), ["/:locale/about"])
+      expect(rules.exclude).not.toContain("/icons/*")
+    })
+
+    test("unrecognised pattern syntax blocks collapsing rather than permitting it", () => {
+      const rules = cloudflareRouteRules(many("icons", 200), ["/{weird}/thing"])
+      expect(rules.exclude).not.toContain("/icons/*")
+    })
+
+    test("does not collapse when the exact paths already fit", () => {
+      // A smaller file is worth nothing on its own, and exact paths keep the app's own 404 for a
+      // missing file under that directory.
+      const rules = cloudflareRouteRules(many("icons", 3), ["/about"])
+      expect(rules.exclude).toEqual([
+        "/assets/*",
+        "/icons/file-0.png",
+        "/icons/file-1.png",
+        "/icons/file-2.png",
+      ])
+    })
+
+    test("collapses only the safe directories, leaving the rest exact", () => {
+      const files = [...many("icons", 120), "/blog/hero.png", "/robots.txt"]
+      const rules = cloudflareRouteRules(files, ["/blog/:slug"])
+      expect(rules.exclude).toContain("/icons/*")
+      expect(rules.exclude).toContain("/blog/hero.png")
+      expect(rules.exclude).toContain("/robots.txt")
+      expect(rules.exclude).not.toContain("/blog/*")
+      expect(rules.omitted).toEqual([])
+    })
+  })
+})
+
+describe("generateServerEntry — cf-pages static fallback", () => {
+  test("serves an allowlisted public path through ASSETS instead of 404ing in the router", () => {
+    // `_routes.json` cannot always name every public file, so a static request CAN reach the worker.
+    // Correctness must not depend on how much of that list fit.
+    const src = generateServerEntry({
+      target: "cf-pages",
+      adapterImport: "../framework.ts",
+      publicFiles: ["/robots.txt"],
+    })
+    expect(src).toContain('new Set(["/robots.txt"])')
+    expect(src).toContain("env.ASSETS.fetch(request)")
+    // Confined to the build's own outputs - never an arbitrary path.
+    expect(src).toContain('pathname.startsWith("/assets/") || PUBLIC_FILES.has(pathname)')
   })
 })

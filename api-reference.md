@@ -2376,6 +2376,7 @@ Every public export of every package and documented subpath — name, kind, sign
 - **CloudflarePagesRoutes** _(interface)_ — `interface CloudflarePagesRoutes`
   A Cloudflare Pages `_routes.json` document. `exclude`d paths are served straight from the CDN (the Function/worker is NOT invoked); everything else in `include` hits the worker.
 - **CloudflarePagesRoutesOptions** _(interface)_ — `interface CloudflarePagesRoutesOptions`
+- **CloudflareRouteRules** _(interface)_ — `interface CloudflareRouteRules`
 - **ManifestDrift** _(interface)_ — `interface ManifestDrift`
   A drift finding between a committed server-manifest and the live `routes/` tree.
 - **NodeBuiltinFinding** _(interface)_ — `interface NodeBuiltinFinding`
@@ -2409,6 +2410,8 @@ Every public export of every package and documented subpath — name, kind, sign
   The default (Bun) strategy — `buildClient`/`buildServer` from this module.
 - **cloudflarePagesRoutes** _(function)_ — `cloudflarePagesRoutes: (options: CloudflarePagesRoutesOptions) => CloudflarePagesRoutes`
   Build a Cloudflare Pages `_routes.json` for a HYBRID SSG deploy: the prerendered HTML + their static `_data.json` + the asset bundle are `exclude`d (CDN serves them directly), and everything else falls through to the SSR `_worker.js`. Write the result to `dist/_routes.json`.
+- **cloudflareRouteRules** _(function)_ — `cloudflareRouteRules: (publicFiles: readonly string[], routePatterns: readonly string[]) => CloudflareRouteRules`
+  Build the cf-pages `_routes.json` rules for a set of copied public files, within Cloudflare's budget.
 - **copyPublicDir** _(function)_ — `copyPublicDir: (from: string, to: string) => Promise<string[]>`
   Copy `from` into `to`, returning the URL paths copied (sorted).
 - **dataFileFor** _(function)_ — `dataFileFor: (pattern: string) => string`

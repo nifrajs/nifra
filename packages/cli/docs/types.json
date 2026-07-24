@@ -1821,6 +1821,19 @@
     "signature": "export interface CloudflarePagesRoutesOptions {\n    /** Prerendered request paths (e.g. `prerenderRoutes(...).prerendered.map(p => p.path)`, or the\n     * build's `prerendered.json`). Each is excluded from the worker — plus its static `_data.json`. */\n    readonly prerendered: readonly string[];\n    /** Extra globs to keep OFF the worker (CDN-served). Default `[\"/assets/*\"]` (the hashed bundle). */\n    readonly staticGlobs?: readonly string[];\n}"
   },
   {
+    "name": "cloudflareRouteRules",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function cloudflareRouteRules(publicFiles: readonly string[], \n/**\n * Every route pattern the app serves. Required, not defaulted: an empty list means \"this app serves\n * no routes\", which makes every directory collapsible - a defensible answer to state deliberately and\n * a dangerous one to arrive at by forgetting the argument.\n */\nroutePatterns: readonly string[]): CloudflareRouteRules;",
+    "doc": "/**\n * Build the cf-pages `_routes.json` rules for a set of copied public files, within Cloudflare's budget.\n *\n * `exclude` is what Pages serves straight from the CDN instead of invoking the worker, so naming every\n * public file is ideal - and impossible past ~99 of them. A `public/` of icons, fonts and share images\n * clears 100 easily, and the rejection lands at `wrangler pages deploy`, long after the build reported\n * success.\n *\n * A glob is emitted only where it cannot be wrong. `/assets/*` always is: the build owns that prefix\n * outright, since it is where the hashed bundle is written. A `public/` subdirectory is different - the\n * name is the author's, and a `/blog/*` rule would hand Pages every future path under `/blog/`, so a\n * `/blog/:slug` route would 404 from the CDN in production only. {@link collapsibleDirs} therefore\n * collapses a directory only after checking it against the app's real route patterns, which is what\n * makes the compaction safe rather than merely smaller. Everything else stays an exact path, and a name\n * containing `*` is dropped rather than escaped, since the rule would become a wildcard.\n *\n * What still does not fit is dropped, which is safe because the list is only an optimization: the\n * generated worker serves any allowlisted path it receives through the ASSETS binding, so an omitted\n * file costs one worker invocation, not a 404.\n */"
+  },
+  {
+    "name": "CloudflareRouteRules",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface CloudflareRouteRules {\n    readonly include: readonly string[];\n    readonly exclude: readonly string[];\n    /** Public files the budget could not name, so the build can say so instead of capping silently. */\n    readonly omitted: readonly string[];\n}"
+  },
+  {
     "name": "codePositionMask",
     "kind": "function",
     "package": "@nifrajs/cli",
@@ -1914,7 +1927,7 @@
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function compareMixedPartsSpecificity(left: readonly MixedPart[], right: readonly MixedPart[]): number;",
-    "doc": "/** Total ordering for mixed segment shapes, shared by the trie and regex-based routers. */"
+    "doc": "/**\n * Total ordering for mixed segment shapes, shared by the trie and regex-based routers.\n *\n * Code-unit comparison, never `localeCompare`: this exists so the server and the browser agree on which\n * of two equally-weighted patterns wins, and `localeCompare` answers by the RUNTIME's locale - a server\n * and a visitor in different locales would order the same pair differently, which is the divergence\n * being prevented.\n */"
   },
   {
     "name": "compareRoutePatternSpecificity",

@@ -29,7 +29,7 @@ Framework-agnostic SSR core for nifra — the render seam + HTML document orches
 - **buildTargetVite** _(function)_ — `buildTargetVite: (target: BuildTarget, options: BuildTargetOptions) => Promise<BuildTargetResult>` · from `@nifrajs/web/build-vite`
 - **buildTargetWith** _(function)_ — `buildTargetWith: (target: BuildTarget, options: BuildTargetOptions, bundler: Bundler) => Promise<BuildTargetResult>` · from `@nifrajs/web/build`
 
-_…and 251 more — see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 253 more — see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 

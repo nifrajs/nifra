@@ -109,6 +109,139 @@ function encodePathSegment(segment: string): string {
   )
 }
 
+/**
+ * Cloudflare Pages rejects a `_routes.json` with more than 100 include+exclude rules combined, or any
+ * single rule longer than 100 characters.
+ */
+const CF_MAX_ROUTE_RULES = 100
+const CF_MAX_RULE_LENGTH = 100
+
+export interface CloudflareRouteRules {
+  readonly include: readonly string[]
+  readonly exclude: readonly string[]
+  /** Public files the budget could not name, so the build can say so instead of capping silently. */
+  readonly omitted: readonly string[]
+}
+
+/**
+ * What a route pattern's first URL segment says about the paths it can reach.
+ *
+ * The three cases are genuinely different and collapsing them is a fail-open bug: `/` reaches only the
+ * root and can never match below a directory, while `/:locale/about` can match below ANY directory, and
+ * both would otherwise read as "no literal first segment". `dynamic` is also where unrecognised syntax
+ * lands, deliberately - a pattern form this does not understand must never be taken as proof that
+ * nothing matches.
+ */
+type FirstSegment =
+  | { readonly kind: "root" }
+  | { readonly kind: "literal"; readonly value: string }
+  | { readonly kind: "dynamic" }
+
+function firstSegmentOf(pattern: string): FirstSegment {
+  const first = pattern.split("/").find((segment) => segment !== "")
+  if (first === undefined) return { kind: "root" }
+  return /^[A-Za-z0-9._-]+$/.test(first) ? { kind: "literal", value: first } : { kind: "dynamic" }
+}
+
+/**
+ * Directories under `public/` whose every file can be replaced by one `/<dir>/*` rule.
+ *
+ * Safe only when no route can ever be served beneath that directory, because the glob does not merely
+ * describe today's files - it hands Pages every future path under the prefix, and the worker never sees
+ * them. A `public/blog/hero.png` next to a `/blog/:slug` route is the ordinary case that breaks: the
+ * glob would send `/blog/my-post` to the CDN, which has no such file, and the page 404s in production
+ * only. So a directory collapses only when every route pattern starts with a literal segment that is
+ * something else. One dynamic first segment anywhere (`/:locale/…`) disables collapsing entirely, which
+ * is correct - such a route can match under any directory name.
+ *
+ * A collapsed directory also gives up the app's own 404 page for a missing file beneath it, since the
+ * request never reaches the worker. That is the right trade for a directory that holds only static
+ * files: a missing image should fail as a fast CDN 404, not as an HTML error page.
+ */
+function collapsibleDirs(
+  publicFiles: readonly string[],
+  routePatterns: readonly string[],
+): ReadonlySet<string> {
+  const reserved = new Set<string>()
+  for (const pattern of routePatterns) {
+    const first = firstSegmentOf(pattern)
+    // A dynamic first segment can match anywhere, so nothing is collapsible at all.
+    if (first.kind === "dynamic") return new Set()
+    // `root` reserves nothing: `/` cannot match a path below a directory.
+    if (first.kind === "literal") reserved.add(first.value)
+  }
+  const dirs = new Set<string>()
+  for (const file of publicFiles) {
+    const slash = file.indexOf("/", 1)
+    if (slash === -1) continue // a root-level file has no directory to collapse into
+    const dir = file.slice(1, slash)
+    if (!reserved.has(dir)) dirs.add(dir)
+  }
+  return dirs
+}
+
+/**
+ * Build the cf-pages `_routes.json` rules for a set of copied public files, within Cloudflare's budget.
+ *
+ * `exclude` is what Pages serves straight from the CDN instead of invoking the worker, so naming every
+ * public file is ideal - and impossible past ~99 of them. A `public/` of icons, fonts and share images
+ * clears 100 easily, and the rejection lands at `wrangler pages deploy`, long after the build reported
+ * success.
+ *
+ * A glob is emitted only where it cannot be wrong. `/assets/*` always is: the build owns that prefix
+ * outright, since it is where the hashed bundle is written. A `public/` subdirectory is different - the
+ * name is the author's, and a `/blog/*` rule would hand Pages every future path under `/blog/`, so a
+ * `/blog/:slug` route would 404 from the CDN in production only. {@link collapsibleDirs} therefore
+ * collapses a directory only after checking it against the app's real route patterns, which is what
+ * makes the compaction safe rather than merely smaller. Everything else stays an exact path, and a name
+ * containing `*` is dropped rather than escaped, since the rule would become a wildcard.
+ *
+ * What still does not fit is dropped, which is safe because the list is only an optimization: the
+ * generated worker serves any allowlisted path it receives through the ASSETS binding, so an omitted
+ * file costs one worker invocation, not a 404.
+ */
+export function cloudflareRouteRules(
+  publicFiles: readonly string[],
+  /**
+   * Every route pattern the app serves. Required, not defaulted: an empty list means "this app serves
+   * no routes", which makes every directory collapsible - a defensible answer to state deliberately and
+   * a dangerous one to arrive at by forgetting the argument.
+   */
+  routePatterns: readonly string[],
+): CloudflareRouteRules {
+  const include = ["/*"]
+  const exclude = ["/assets/*"]
+  const omitted: string[] = []
+
+  // Collapse only where the route table proves nothing can be served beneath the directory, and only
+  // when the per-file list would not have fit anyway - a smaller `_routes.json` is worth nothing on its
+  // own, and exact paths keep the app's own 404 for a missing file under that directory.
+  const perFileFits = publicFiles.length + include.length + exclude.length <= CF_MAX_ROUTE_RULES
+  const collapsible = perFileFits ? new Set<string>() : collapsibleDirs(publicFiles, routePatterns)
+  const emitted = new Set<string>()
+
+  for (const file of publicFiles) {
+    const slash = file.indexOf("/", 1)
+    const dir = slash === -1 ? undefined : file.slice(1, slash)
+    const collapsed = dir !== undefined && collapsible.has(dir)
+    const rule = collapsed ? `/${dir}/*` : file
+    if (emitted.has(rule)) continue // already covered by a rule emitted for an earlier file
+    // A `*` in a FILE name would turn that file's own rule into a wildcard. A collapsed rule's `*` is
+    // ours and deliberate, and the file's name never appears in it, so the check applies to one case.
+    if (!collapsed && file.includes("*")) {
+      omitted.push(file)
+      continue
+    }
+    if (include.length + exclude.length >= CF_MAX_ROUTE_RULES || rule.length > CF_MAX_RULE_LENGTH) {
+      omitted.push(file)
+      continue
+    }
+    exclude.push(rule)
+    emitted.add(rule)
+  }
+  return { include, exclude, omitted }
+}
+
 /** The built asset map — the server reads `entry` for the client script + serves `assets`. */
 /**
  * Copy `from` into `to`, returning the URL paths copied (sorted).
@@ -1340,9 +1473,28 @@ export function generateServerEntry(options: {
   )
 
   if (target === "cf-pages") {
-    // Cloudflare Pages advanced mode: `_routes.json` serves /assets/* from the CDN; everything else
-    // falls through to this fetch handler (SSR). The default export is the handler object.
-    lines.push("export default toFetchHandler(app)")
+    // Cloudflare Pages advanced mode: `_routes.json` keeps static paths off the worker entirely, and
+    // everything else falls through to this handler (SSR).
+    //
+    // That exclude list cannot always name every public file - Cloudflare caps `_routes.json` at 100
+    // rules - so a static request CAN arrive here. Serve it from the ASSETS binding instead of letting
+    // the router 404 it, which makes correctness independent of how much of the list fit: the exclude
+    // list decides only how many static requests skip the worker, never which files exist.
+    lines.push(
+      `const PUBLIC_FILES = new Set(${JSON.stringify(publicFiles)})`,
+      "const handler = toFetchHandler(app)",
+      "type Assets = { readonly ASSETS?: { fetch(request: Request): Promise<Response> } }",
+      "export default {",
+      "  fetch(request: Request, env: Assets, ctx: ExecutionContext) {",
+      "    const { pathname } = new URL(request.url)",
+      "    // Only the build's own outputs: the hashed bundle prefix and the files it copied.",
+      '    if (env?.ASSETS !== undefined && (pathname.startsWith("/assets/") || PUBLIC_FILES.has(pathname))) {',
+      "      return env.ASSETS.fetch(request)",
+      "    }",
+      "    return handler.fetch(request, env as never, ctx)",
+      "  },",
+      "}",
+    )
     return `${lines.join("\n")}\n`
   }
   if (target === "vercel") {
@@ -1716,14 +1868,25 @@ export async function buildTargetWith(
   let run: string
   if (target === "cf-pages") {
     cpSync(worker, `${outDir}/_worker.js`)
+    // The app's real patterns, so a directory is only collapsed into a glob once the route table
+    // proves nothing can be served beneath it.
+    const rules = cloudflareRouteRules(
+      publicFiles,
+      discoverRoutes(routesDir).routes.map((route) => route.pattern),
+    )
     writeFileSync(
       `${outDir}/_routes.json`,
-      `${JSON.stringify(
-        { version: 1, include: ["/*"], exclude: ["/assets/*", ...publicFiles] },
-        null,
-        2,
-      )}\n`,
+      `${JSON.stringify({ version: 1, include: rules.include, exclude: rules.exclude }, null, 2)}\n`,
     )
+    // Never cap silently: an omitted file still serves (the worker's ASSETS fallback), but it costs a
+    // worker invocation, and that trade should be visible rather than inferred from a latency graph.
+    if (rules.omitted.length > 0) {
+      console.log(
+        `[nifra/web] _routes.json holds ${rules.exclude.length} of ${publicFiles.length + 1} static rules ` +
+          `(Cloudflare allows ${CF_MAX_ROUTE_RULES}). The other ${rules.omitted.length} file(s) are served by the ` +
+          "worker via ASSETS instead of the CDN directly - correct, just one invocation each.",
+      )
+    }
     run = `Cloudflare Pages → ${outDir} (deploy: wrangler pages deploy ${basename(outDir)})`
   } else if (target === "vercel") {
     cpSync(worker, `${outDir}/index.js`)
