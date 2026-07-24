@@ -58,14 +58,22 @@ async function loadVite(): Promise<ViteModule> {
   try {
     return (await import("vite")) as unknown as ViteModule
   } catch (cause) {
-    // `vite` is an OPTIONAL peer, so a project without it resolves nothing and the raw failure is a
-    // bare ERR_MODULE_NOT_FOUND naming neither this build nor the missing dependency. Every caller
-    // here is mid-build, so the message has to say which half failed and what to install - an opaque
-    // resolution error at this point reads as a broken build rather than a missing optional peer.
+    // Two different failures arrive here and must not be conflated. `vite` is an OPTIONAL peer, so a
+    // project without it fails to RESOLVE - the common case, and the one worth naming. But vite can
+    // also resolve and fail while EVALUATING, which is not a missing dependency at all: vite 8 loads
+    // rolldown's native binding on import, and a binding that will not load surfaces here too. Telling
+    // that user to install what they already installed sends them the wrong way, so only a resolution
+    // failure claims a missing package; anything else is reported as what it is.
+    const message = cause instanceof Error ? cause.message : String(cause)
+    const unresolved = /cannot find (?:package|module)|ERR_MODULE_NOT_FOUND/i.test(message)
     throw new Error(
-      "[nifra/web] the Vite production build needs `vite` installed in this project (it is an " +
-        "optional peer dependency, so it is not installed for you). Add it, or use the default Bun " +
-        `build. Underlying error: ${cause instanceof Error ? cause.message : String(cause)}`,
+      unresolved
+        ? "[nifra/web] the Vite production build needs `vite` installed in this project (it is an " +
+            "optional peer dependency, so it is not installed for you). Add it, or use the default Bun " +
+            `build. Underlying error: ${message}`
+        : `[nifra/web] \`vite\` resolved but failed to load, so the Vite production build cannot run: ${message}. ` +
+            "This is vite (or a native dependency of it) failing on this runtime, not a nifra build error - " +
+            "check that the installed vite works here, or use the default Bun build.",
       { cause },
     )
   }
