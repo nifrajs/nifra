@@ -1,6 +1,6 @@
 name: Release
 
-# Automated, changeset-driven release. On every push to main this does ONE of two things:
+# Automated, changeset-driven release. After CI passes on main this does ONE of two things:
 #
 #   1. Pending changesets exist  → opens/updates a "Version Packages" PR that bumps the
 #      affected packages and writes their CHANGELOGs. Nothing is published yet.
@@ -9,8 +9,11 @@ name: Release
 #
 # Day-to-day flow:
 #   bun run changeset      # describe the bump (which packages, major/minor/patch)
-#   git push               # → bot opens the "Version Packages" PR
-#   merge that PR          # → THIS workflow publishes to npm automatically
+#   git push               # → CI runs; if it passes, the bot opens the "Version Packages" PR
+#   merge that PR          # → CI runs on the merge; if it passes, THIS workflow publishes to npm
+#
+# Because the merge is itself a push to main, the publish inherits that commit's CI result - a red
+# suite means no publish, with no separate approval step to remember.
 #
 # `changeset publish` replaces every internal `workspace:*` range with the concrete
 # resolved version in the published tarball (so no workspace: protocol leaks to npm —
@@ -21,9 +24,17 @@ name: Release
 # Until that secret exists the publish step finds no auth and fails loudly only when
 # there is actually something to publish — there is no silent half-publish.
 
+# Gated on CI, not on the push. `on: push` published whatever landed on main, whether or not the
+# checks passed - and the Version PR merging IS a push, so a red suite was one click from npm. That
+# was not theoretical: this repo sat for hours with six consecutive failing CI runs and a Version PR
+# ready to merge. Running after CI *concludes* and releasing only on success makes the checks a gate
+# instead of a report. A skipped or failed CI run simply never triggers this, which is the right
+# default for something that publishes.
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
     branches: [main]
+    types: [completed]
 
 permissions:
   contents: write
@@ -31,13 +42,20 @@ permissions:
   id-token: write # required for npm provenance (see NPM_CONFIG_PROVENANCE below)
 
 # Never run two releases concurrently — a second push mid-publish must wait, not race.
-concurrency: release-${{ github.ref }}
+concurrency: release-${{ github.event.workflow_run.head_branch }}
 
 jobs:
   release:
+    # Fail closed: anything other than a green CI run stops here.
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
+      # The commit CI actually validated, not whatever main points at now. Without this a push that
+      # lands while CI is still running would be published on the strength of the previous commit's
+      # checks - the exact gap this gate exists to close.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - uses: oven-sh/setup-bun@v2
         with:
