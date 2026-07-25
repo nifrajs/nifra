@@ -59,6 +59,13 @@ afterAll(async () => {
   await Promise.all(roots.map((r) => rm(r, { recursive: true, force: true })))
 })
 
+// EXPECT THIS TO FAIL DURING A RELEASE THAT ADDS API THE TEMPLATES USE. The tier deliberately pairs
+// local templates with the LAST PUBLISHED packages, so a template using something introduced in the
+// release being prepared cannot typecheck until that release is out. It self-resolves on publish -
+// `scripts/version.ts` rewrites every template pin to the new version. Before "fixing" a template by
+// removing what it uses, check whether the missing symbol is simply unpublished: scaffold once with
+// `node_modules/@nifrajs/core` symlinked to `packages/core` and see whether it passes against HEAD.
+//
 // Live tier scaffolds from the LOCAL template sources but installs PUBLISHED @nifrajs/*
 // packages — the exact combination a user gets, and the one that shipped broken (template
 // stale vs published client types). --link is deliberately not used: linked source packages
