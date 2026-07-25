@@ -34,7 +34,8 @@ const post = (
   name: string,
   body: string,
   headers: Record<string, string> = { "content-type": "application/json" },
-): Promise<Response> => app.fetch(new Request(url(name), { method: "POST", headers, body }))
+): Promise<Response> =>
+  Promise.resolve(app.fetch(new Request(url(name), { method: "POST", headers, body })))
 
 describe("mounting", () => {
   test("each server function becomes a POST route under its namespace", async () => {
