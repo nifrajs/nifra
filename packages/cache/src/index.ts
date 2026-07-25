@@ -12,8 +12,10 @@ export { createCache } from "./cache.ts"
 export { MemoryCache, type MemoryCacheOptions } from "./memory-cache.ts"
 export type {
   Cache,
+  CacheCapabilities,
   CacheOptions,
   CacheStore,
+  CapabilityBeacon,
   SetOptions,
   StoredEntry,
   WrapOptions,

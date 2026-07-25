@@ -11,6 +11,13 @@
  */
 
 export {
+  type BeaconingStorageAdapter,
+  type CapabilityBeacon,
+  type StorageBeaconOptions,
+  type StorageCapabilities,
+  withCapabilityBeacon,
+} from "./capabilities.ts"
+export {
   assertStorageAdapterConformance,
   StorageAdapterConformanceError,
   type StorageAdapterConformanceOptions,

@@ -41,9 +41,35 @@ export interface SetOptions {
 
 export type WrapOptions = SetOptions
 
+/**
+ * `useCapability` from `@nifrajs/core/capabilities`, taken as a parameter rather than imported so this
+ * package keeps its zero dependencies - a cache should not drag the server into a bundle that only
+ * wanted a cache. Wiring it is one line where the cache is created.
+ */
+export type CapabilityBeacon = (context: object, capability: string) => void
+
+/** Capability tokens this cache announces. Defaults: `cache.read` and `cache.write`. */
+export interface CacheCapabilities {
+  readonly read?: string
+  readonly write?: string
+}
+
 export interface CacheOptions {
   /** Storage adapter. Default: a fresh {@link MemoryCache}. */
   readonly store?: CacheStore
+  /**
+   * Make cache operations produce capability evidence:
+   *
+   *   import { useCapability } from "@nifrajs/core/capabilities"
+   *   const cache = createCache({ beacon: useCapability })
+   *
+   * Then `cache.for(context)` announces its capability before each operation. Evidence from the CALL is
+   * per-route and exact, where evidence from an import is per-module and therefore as broad as the
+   * module - which is why a beacon can say something a provenance rule cannot.
+   */
+  readonly beacon?: CapabilityBeacon
+  /** Override the announced tokens when the app names its capabilities differently. */
+  readonly capabilities?: CacheCapabilities
   /** Default TTL (ms) for `set`/`wrap` when none is given. Default 60_000. */
   readonly defaultTtlMs?: number
   /** Injectable clock (tests). Default `() => Date.now()`. */
@@ -69,4 +95,16 @@ export interface Cache {
    * returned immediately while a deduped background refresh runs). A throwing `loader` is NOT cached.
    */
   wrap<T>(key: string, loader: () => T, options?: WrapOptions): Promise<Awaited<T>>
+  /**
+   * A view bound to a request context: every operation announces its capability first, and fails closed
+   * when the route did not declare it.
+   *
+   * `wrap` announces BOTH read and write, because a miss writes and which one happens is not known
+   * before the call. A declaration describes what a route may do, so the conservative answer is the
+   * correct one.
+   *
+   * Requires `beacon`. Without one this throws rather than handing back a cache that quietly produces
+   * no evidence - a beacon nobody notices is missing is the exact failure the beacon exists to prevent.
+   */
+  for(context: object): Cache
 }

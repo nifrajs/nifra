@@ -24,6 +24,7 @@ import { exponentialBackoff } from "./backoff.ts"
 import { MemoryJobStore } from "./memory-store.ts"
 import type {
   Backoff,
+  CapabilityBeacon,
   EnqueueOptions,
   JobCounts,
   JobDefinition,
@@ -64,6 +65,16 @@ export interface QueueOptions {
   readonly defaultAttempts?: number
   /** Default backoff for jobs that don't set one. Default {@link exponentialBackoff}. */
   readonly backoff?: Backoff
+  /**
+   * Make `enqueue` produce capability evidence:
+   *
+   *   import { useCapability } from "@nifrajs/core/capabilities"
+   *   const queue = createQueue({ beacon: useCapability })
+   *   await indexNote.for(c).enqueue({ id })
+   */
+  readonly beacon?: CapabilityBeacon
+  /** Override the announced token. Default `jobs.enqueue`. */
+  readonly capabilities?: { readonly enqueue?: string }
 }
 
 export interface WorkerOptions {
@@ -130,6 +141,7 @@ export function createQueue(options: QueueOptions = {}): Queue {
     ((error, name) => console.error(`[nifra/jobs] job ${JSON.stringify(name)} failed:`, error))
   const defaultAttempts = options.defaultAttempts ?? 3
   const defaultBackoff = options.backoff ?? exponentialBackoff()
+  const enqueueToken = options.capabilities?.enqueue ?? "jobs.enqueue"
   const defs = new Map<string, Def>()
 
   let timer: ReturnType<typeof setInterval> | undefined
@@ -169,7 +181,32 @@ export function createQueue(options: QueueOptions = {}): Queue {
       attempts,
       backoff,
     })
-    return { name, enqueue: (payload, opts) => enqueue(name, payload, opts) }
+    const handle: JobHandle<Payload> = {
+      name,
+      enqueue: (payload, opts) => enqueue(name, payload, opts),
+      for(context) {
+        const beacon = options.beacon
+        if (beacon === undefined) {
+          throw new Error(
+            "@nifrajs/jobs: for(context) needs a beacon - pass `beacon: useCapability` (from @nifrajs/core/capabilities) to createQueue",
+          )
+        }
+        return {
+          ...handle,
+          // A refused capability surfaces as a REJECTION, not a synchronous throw: `enqueue` returns a
+          // promise, so a caller using `.catch(…)` rather than `try` would otherwise miss it entirely.
+          enqueue: (payload, opts) => {
+            try {
+              beacon(context, enqueueToken)
+            } catch (error) {
+              return Promise.reject(error)
+            }
+            return enqueue(name, payload, opts)
+          },
+        }
+      },
+    }
+    return handle
   }
 
   async function enqueue(

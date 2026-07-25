@@ -86,7 +86,10 @@ export function createCache(options: CacheOptions = {}): Cache {
     return (await load(key, loader as () => unknown, opts)) as Awaited<T> // miss → load (single-flight)
   }
 
-  return {
+  const readToken = options.capabilities?.read ?? "cache.read"
+  const writeToken = options.capabilities?.write ?? "cache.write"
+
+  const plain: Cache = {
     get,
     has,
     set,
@@ -94,5 +97,46 @@ export function createCache(options: CacheOptions = {}): Cache {
     delete: (key) => Promise.resolve(store.delete(key)),
     invalidateTag: (tag) => Promise.resolve(store.invalidateTag(tag)),
     clear: () => Promise.resolve(store.clear()),
+    for: bind,
   }
+
+  // Built per call rather than cached per context: a cache keyed by context would hold every request's
+  // context object for the process lifetime, which is a leak with a request body attached to it.
+  function bind(context: object): Cache {
+    const beacon = options.beacon
+    if (beacon === undefined) {
+      throw new Error(
+        "@nifrajs/cache: for(context) needs a beacon - pass `beacon: useCapability` (from @nifrajs/core/capabilities) to createCache",
+      )
+    }
+    // A refused capability has to surface as a REJECTION, not a synchronous throw: every method here
+    // returns a promise, and a caller who writes `.catch(…)` instead of `try` would otherwise miss it
+    // entirely - turning a fail-closed gate into an unhandled crash.
+    const guard = <T>(capabilities: readonly string[], run: () => Promise<T>): Promise<T> => {
+      try {
+        for (const capability of capabilities) beacon(context, capability)
+      } catch (error) {
+        return Promise.reject(error)
+      }
+      return run()
+    }
+    const READ = [readToken]
+    const WRITE = [writeToken]
+    return {
+      get: <T = unknown>(key: string): Promise<T | undefined> =>
+        guard(READ, () => plain.get<T>(key)),
+      has: (key) => guard(READ, () => plain.has(key)),
+      set: <T>(key: string, value: T, opts?: SetOptions): Promise<void> =>
+        guard(WRITE, () => plain.set(key, value, opts)),
+      // Both, because a miss writes and which one happens is not knowable before the call.
+      wrap: <T>(key: string, loader: () => T, opts?: WrapOptions): Promise<Awaited<T>> =>
+        guard([readToken, writeToken], () => plain.wrap(key, loader, opts)),
+      delete: (key) => guard(WRITE, () => plain.delete(key)),
+      invalidateTag: (tag) => guard(WRITE, () => plain.invalidateTag(tag)),
+      clear: () => guard(WRITE, () => plain.clear()),
+      for: bind,
+    }
+  }
+
+  return plain
 }

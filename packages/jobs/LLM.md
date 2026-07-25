@@ -25,7 +25,7 @@ Typed background jobs for nifra — enqueue work off the request path with retri
 - **JobHandle** _(interface)_ — `interface JobHandle<Payload>`
 - **JobStore** _(interface)_ — `interface JobStore`
 
-_…and 10 more — see [`api-reference.md`](../../api-reference.md#nifrajsjobs) for the complete list._
+_…and 11 more — see [`api-reference.md`](../../api-reference.md#nifrajsjobs) for the complete list._
 
 ## Footguns
 

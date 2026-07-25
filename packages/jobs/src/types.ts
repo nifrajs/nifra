@@ -52,10 +52,25 @@ export interface JobDefinition<Payload> {
   readonly retries?: number | RetryPolicy
 }
 
+/**
+ * `useCapability` from `@nifrajs/core/capabilities`, taken as a parameter rather than imported so this
+ * package keeps its zero dependencies. Wiring it is one line where the queue is created.
+ */
+export type CapabilityBeacon = (context: object, capability: string) => void
+
 /** A typed handle to enqueue a defined job. */
 export interface JobHandle<Payload> {
   readonly name: string
   enqueue(payload: Payload, options?: EnqueueOptions): Promise<string>
+  /**
+   * A handle bound to a request context: `enqueue` announces its capability first, and fails closed
+   * when the route did not declare it. Evidence from the CALL is per-route and exact, where evidence
+   * from an import is as broad as the module that holds it.
+   *
+   * Requires `beacon` on the queue. Without one this throws rather than handing back a handle that
+   * quietly produces no evidence.
+   */
+  for(context: object): JobHandle<Payload>
 }
 
 export interface EnqueueOptions {

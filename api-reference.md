@@ -74,9 +74,13 @@ Every public export of every package and documented subpath — name, kind, sign
 ## @nifrajs/cache
 
 - **Cache** _(interface)_ — `interface Cache`
+- **CacheCapabilities** _(interface)_ — `interface CacheCapabilities`
+  Capability tokens this cache announces. Defaults: `cache.read` and `cache.write`.
 - **CacheOptions** _(interface)_ — `interface CacheOptions`
 - **CacheStore** _(interface)_ — `interface CacheStore`
   Raw key→entry storage. The default {@link MemoryCache} is in-process; implement this over CF KV / Redis / etc. for a cache shared across instances. All methods may be sync or async — the cache awaits them.
+- **CapabilityBeacon** _(type)_ — `type CapabilityBeacon = (context: object, capability: string) => void`
+  `useCapability` from `@nifrajs/core/capabilities`, taken as a parameter rather than imported so this package keeps its zero dependencies - a cache should not drag the server into a bundle that only wanted a cache. Wiring it is one line where the cache is created.
 - **MemoryCache** _(class)_ — `class MemoryCache`
 - **MemoryCacheOptions** _(interface)_ — `interface MemoryCacheOptions`
 - **SetOptions** _(interface)_ — `interface SetOptions`
@@ -1427,6 +1431,8 @@ Every public export of every package and documented subpath — name, kind, sign
 
 - **Backoff** _(type)_ — `type Backoff = (attempt: number) => number`
   ms to wait before the next attempt, given the number of attempts already made (1-based).
+- **CapabilityBeacon** _(type)_ — `type CapabilityBeacon = (context: object, capability: string) => void`
+  `useCapability` from `@nifrajs/core/capabilities`, taken as a parameter rather than imported so this package keeps its zero dependencies. Wiring it is one line where the queue is created.
 - **EnqueueOptions** _(interface)_ — `interface EnqueueOptions`
 - **ExponentialOptions** _(interface)_ — `interface ExponentialOptions`
 - **JobContext** _(interface)_ — `interface JobContext`
@@ -1930,6 +1936,10 @@ Every public export of every package and documented subpath — name, kind, sign
 
 ## @nifrajs/storage
 
+- **BeaconingStorageAdapter** _(interface)_ — `interface BeaconingStorageAdapter`
+  A storage adapter that can be bound to a request context.
+- **CapabilityBeacon** _(type)_ — `type CapabilityBeacon = (context: object, capability: string) => void`
+  `useCapability` from `@nifrajs/core/capabilities`, taken as a parameter rather than imported so this package keeps its zero dependencies.
 - **FileStorage** _(class)_ — `class FileStorage`
 - **ListOptions** _(interface)_ — `interface ListOptions`
 - **MemoryStorage** _(class)_ — `class MemoryStorage`
@@ -1951,6 +1961,9 @@ Every public export of every package and documented subpath — name, kind, sign
   A failed invariant reported by {@link assertStorageAdapterConformance}.
 - **StorageAdapterConformanceOptions** _(interface)_ — `interface StorageAdapterConformanceOptions`
   Construction and cleanup hooks for {@link assertStorageAdapterConformance}.
+- **StorageBeaconOptions** _(interface)_ — `interface StorageBeaconOptions`
+- **StorageCapabilities** _(interface)_ — `interface StorageCapabilities`
+  Tokens the wrapper announces. Defaults: `storage.read` and `storage.write`.
 - **StorageData** _(type)_ — `type StorageData = Uint8Array | ArrayBuffer | string`
   Accepted `put` payloads — normalized to bytes by each adapter.
 - **StorageKeyError** _(class)_ — `class StorageKeyError`
@@ -1973,6 +1986,8 @@ Every public export of every package and documented subpath — name, kind, sign
   Execute the observable {@link StorageAdapter} contract without depending on a test runner.
 - **toBytes** _(function)_ — `toBytes: (data: StorageData) => Uint8Array`
   Normalize any accepted payload to bytes.
+- **withCapabilityBeacon** _(function)_ — `withCapabilityBeacon: (adapter: StorageAdapter, options: StorageBeaconOptions) => BeaconingStorageAdapter`
+  Wrap an adapter so `for(context)` announces each operation's capability.
 
 ## @nifrajs/testing
 

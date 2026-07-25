@@ -26,6 +26,7 @@ export {
 } from "./queue.ts"
 export type {
   Backoff,
+  CapabilityBeacon,
   EnqueueOptions,
   JobContext,
   JobCounts,
