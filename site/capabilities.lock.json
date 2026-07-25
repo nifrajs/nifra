@@ -1,0 +1,33 @@
+{
+  "nifraCapabilities": 1,
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/count",
+      "declared": [],
+      "evidenced": [],
+      "unproven": []
+    },
+    {
+      "method": "POST",
+      "path": "/count",
+      "declared": [],
+      "evidenced": [],
+      "unproven": []
+    },
+    {
+      "method": "POST",
+      "path": "/playground/chat",
+      "declared": [],
+      "evidenced": [],
+      "unproven": []
+    },
+    {
+      "method": "GET",
+      "path": "/stats",
+      "declared": [],
+      "evidenced": [],
+      "unproven": []
+    }
+  ]
+}
