@@ -42,10 +42,19 @@ describe("storage capability beacon", () => {
   })
 
   test("the unwrapped path is unchanged - wrapping is not a commitment to bind every call", async () => {
+    // Every method, not just two: the wrapper re-implements all five, so an unbound call that
+    // silently stopped reaching the adapter would be invisible if only `put`/`exists` were driven.
     const { seen, beacon } = spy()
-    const storage = withCapabilityBeacon(new MemoryStorage(), { beacon })
+    const inner = new MemoryStorage()
+    const storage = withCapabilityBeacon(inner, { beacon })
+
     await storage.put("a.txt", "x")
     expect(await storage.exists("a.txt")).toBe(true)
+    expect(await storage.get("a.txt").then((o) => o !== null)).toBe(true)
+    expect(await storage.list()).toEqual(["a.txt"])
+    await storage.delete("a.txt")
+    expect(await inner.exists("a.txt")).toBe(false)
+
     expect(seen).toEqual([])
   })
 
