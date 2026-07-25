@@ -4,17 +4,17 @@
  * `body-bounded`, an auth middleware records `authenticated` - so this file states the requirement
  * and the framework reports whether the route actually carries it.
  *
- * The starter rules below are deliberately small and true of THIS app. Grow them as the app grows:
- * once there is auth, add `NIFRA_ASSURANCE.AUTHENTICATED` to `mutation`, and every route that does
- * not carry it fails the check rather than shipping.
+ * Page routes under `routes/` are not classified here; this is the backend contract those pages call.
  *
- * Rules are first-match-wins, so order matters: put narrow exemptions above the general rule.
+ * Rules are first-match-wins, so order matters: narrow exemptions go above the general rule, and each
+ * one is named and justified. An exemption you have to write down is one a reviewer can argue with;
+ * an exemption you get by leaving the rule off is one nobody ever sees.
  */
 import { defineAssuranceConfig, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
-import { app } from "./src/app.ts"
+import { backend } from "./backend"
 
 export default defineAssuranceConfig({
-  source: app,
+  source: backend,
   // What each effect IS, so the policy below can be written about a CLASS of effect rather than a list
   // of token names: `{ access: "write", zone: "domain" }` covers `payments.charge` the day someone adds
   // it, where a rule naming `db.write` would not. Declaring the tokens here is also what lifts this app
@@ -56,8 +56,9 @@ export default defineAssuranceConfig({
         match: { access: "write", zone: "domain" },
         require: [NIFRA_ASSURANCE.AUTHENTICATED],
       },
-      // Anything that changes state must validate its input at the boundary. Adding a POST without a
-      // `body` schema fails this - which is the point: the check is what notices, not review.
+      // Anything that changes state must validate its input at the boundary. This demo is read-only,
+      // so the rule classifies nothing yet - which is the point: the first POST added to `backend.ts`
+      // fails the check unless it bounds its body.
       {
         name: "mutation",
         match: { methods: ["POST", "PUT", "PATCH", "DELETE"] },

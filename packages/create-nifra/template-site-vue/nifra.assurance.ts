@@ -15,18 +15,48 @@ import { backend } from "./backend"
 
 export default defineAssuranceConfig({
   source: backend,
+  // What each effect IS, so the policy below can be written about a CLASS of effect rather than a list
+  // of token names: `{ access: "write", zone: "domain" }` covers `payments.charge` the day someone adds
+  // it, where a rule naming `db.write` would not. Declaring the tokens here is also what lifts this app
+  // to L2 of `nifra levels`.
+  capabilities: {
+    definitions: [
+      { id: "db.read", zone: "domain", access: "read" },
+      { id: "db.write", zone: "domain", access: "write" },
+    ],
+    provenance: {
+      // Map a module specifier to the capabilities reaching it implies, and `nifra check` reports any
+      // route that can reach further than it declared - so wiring a database into a handler and
+      // forgetting to say so becomes a failing check rather than something review has to catch:
+      //
+      //   { specifier: "bun:sqlite", capabilities: ["db.read", "db.write"] },
+      //   { specifier: "drizzle-orm/*", capabilities: ["db.read", "db.write"] },
+      //
+      // Before turning it on, know how reach is computed: from the module that REGISTERS the route,
+      // following its imports. A module that registers routes AND imports your database gives EVERY
+      // route in it database reach - and since a GET route is refused a domain write outright, that is
+      // not something the affected routes can declare their way out of. Keep the root a pure
+      // composition (`server().merge(home).merge(notes)`) and let each module own its own effects, then
+      // the reported reach is per-route and precise.
+      imports: [],
+      // Add a driver here to force every query through a seam you own, and the check will name any
+      // route that reaches around it: `{ specifier: "pg", reason: "query through db/" }`.
+      forbiddenImports: [],
+    },
+  },
   policy: {
     rules: [
       // The counter increments; it accepts no input at all, so there is no body to bound. Exempted by
       // name so the general rule below stays strict for every mutation that DOES take input.
       { name: "bodyless-mutation", match: { methods: ["POST"], paths: ["/count"] }, require: [] },
-      // Anything that writes must prove who asked. Matched on the DECLARED capability rather than a
-      // path, so it still holds when a route moves or a server function is added later - and a server
-      // function is a public POST endpoint like any other, so this is what stops one shipping
-      // unauthenticated. Add `capabilities: ["db.write"]` to a route and this rule starts applying.
+      // Anything that writes business state must prove who asked. Matched on what the capability IS
+      // rather than on its name or its path, so a token introduced later - `payments.charge`,
+      // `orders.write` - is covered the day it is declared instead of the day someone remembers to
+      // widen this rule. A server function is a public POST endpoint like any other, so this is what
+      // stops one shipping unauthenticated.
       {
         name: "authenticated-write",
-        match: { capabilities: ["db.write"] },
+        match: { access: "write", zone: "domain" },
         require: [NIFRA_ASSURANCE.AUTHENTICATED],
       },
       // Anything else that changes state must validate its input at the boundary. Adding a POST
