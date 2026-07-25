@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from "bun:test"
+import { afterAll, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
@@ -154,3 +154,73 @@ test("nifra's Vite build runs on the NARROW runtime - this is the case that ship
   expect(built.output).toContain("BUILD_OK")
   expect(built.code).toBe(0)
 }, 120_000)
+
+/**
+ * The guard is only as good as the number of places that use it, and that is what failed: the
+ * production build relaxed before importing while the dev server did not. ESM caches a module that
+ * throws during evaluation, so the dev server's unguarded import ran first in the test process, vite
+ * was permanently errored, and every later `loadVite` re-threw the cached failure with its shim
+ * correctly installed and powerless. One unguarded import poisons vite for the whole process.
+ *
+ * A runtime test cannot see that - by the time it runs, some other file has already decided the
+ * outcome. So this is enforced statically instead: the import lives in one module, and nothing else
+ * may reach for vite directly.
+ */
+test("nothing imports vite except the shared, guarded importer", async () => {
+  const srcDir = join(import.meta.dir, "..", "src")
+  const offenders: string[] = []
+  for await (const rel of new Bun.Glob("**/*.ts").scan({ cwd: srcDir, dot: false })) {
+    if (rel === join("internal", "vite-import.ts").replaceAll("\\", "/")) continue
+    const text = await Bun.file(join(srcDir, rel)).text()
+    // Strip line comments so the prose warning next to the dev server's call does not self-report.
+    const code = text.replaceAll(/^[\t ]*\/\/.*$/gm, "")
+    if (/\bimport\(\s*["']vite["']\s*\)/.test(code)) offenders.push(rel)
+  }
+  expect(offenders).toEqual([])
+})
+
+test("the shared importer survives the narrow runtime", async () => {
+  const imported = await runUnderStrictRuntime(
+    `const { importVite } = await import(${JSON.stringify(join(import.meta.dir, "..", "src", "internal", "vite-import.ts"))})
+     const vite = await importVite()
+     console.log(typeof vite.build === "function" ? "IMPORT_OK" : "IMPORT_WRONG_SHAPE")`,
+    NARROW_PRELUDE,
+  )
+  expect(imported.output).toContain("IMPORT_OK")
+}, 120_000)
+
+/**
+ * The two helpers, exercised in-process. Everything above runs in a subprocess - which is the only way
+ * to test a strict runtime - so none of it reaches the parent's coverage, and `isViteUnresolved` is
+ * never reached there at all because vite resolves fine here.
+ */
+describe("vite-import helpers", () => {
+  test("isViteUnresolved separates a missing vite from a broken one", async () => {
+    const { isViteUnresolved } = await import("../src/internal/vite-import.ts")
+    // Resolution failures: vite is not installed, which IS worth telling the user to fix.
+    expect(isViteUnresolved(new Error("Cannot find package 'vite' imported from /app"))).toBe(true)
+    expect(isViteUnresolved(new Error("Cannot find module 'vite'"))).toBe(true)
+    expect(isViteUnresolved(new Error("ERR_MODULE_NOT_FOUND"))).toBe(true)
+    // Evaluation failures: vite is installed and broke on this runtime. Telling that user to install
+    // what they already installed is the wrong instruction, so these must not be classed as missing.
+    expect(isViteUnresolved(new Error("First argument must be an Error object"))).toBe(false)
+    expect(isViteUnresolved(new Error("failed to load native binding"))).toBe(false)
+    expect(isViteUnresolved("not an error at all")).toBe(false)
+  })
+
+  test("relaxCaptureStackTrace still decorates a real Error, and is idempotent", async () => {
+    const { relaxCaptureStackTrace } = await import("../src/internal/vite-import.ts")
+    relaxCaptureStackTrace()
+    const first = Error.captureStackTrace
+    relaxCaptureStackTrace() // second call must not wrap the wrapper
+    expect(Error.captureStackTrace).toBe(first)
+
+    // The shim delegates: a genuine Error still gets its stack.
+    const real = new Error("real")
+    Error.captureStackTrace(real)
+    expect(typeof real.stack).toBe("string")
+
+    // And it swallows a refusal rather than propagating it - the entire point.
+    expect(() => Error.captureStackTrace(Object.create(Error.prototype))).not.toThrow()
+  })
+})

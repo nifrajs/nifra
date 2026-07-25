@@ -33,6 +33,7 @@ import {
 } from "./build.ts"
 import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
+import { importVite, isViteUnresolved } from "./internal/vite-import.ts"
 import { viteLeakGuard } from "./plugins/vite-leak-guard.ts"
 
 // ---------------------------------------------------------------------------------------------------
@@ -53,77 +54,14 @@ interface ViteModule {
   build(config: Record<string, unknown>): Promise<unknown>
 }
 
-/**
- * Restore V8's `Error.captureStackTrace` contract on a runtime that is stricter than it.
- *
- * `captureStackTrace` is a V8 API, and V8 decorates ANY object handed to it. Some runtimes instead
- * require a real Error - one with the internal slot, which `Object.create(Error.prototype)` and
- * `new SubclassWithErrorPrototype()` do NOT have - and throw "First argument must be an Error object".
- *
- * That breaks importing vite outright. Vite bundles `follow-redirects`, which builds its error types the
- * pre-class way:
- *
- *   function CustomError(props) { Error.captureStackTrace(this, this.constructor); … }
- *   CustomError.prototype = new (baseClass || Error)()
- *
- * The last line CONSTRUCTS `baseClass` while defining the subclass, so `this` is an object that inherits
- * from Error but was never built by it - and the throw happens at module evaluation, before vite exports
- * anything. Every Vite build then fails with a message about stack traces, naming nothing about vite.
- *
- * Decorating a stack is best-effort by definition, so swallowing the rejection loses nothing: the shim
- * delegates, and only suppresses the refusal. Installed once, and deliberately not restored - the strict
- * behaviour is the deviation, and a library evaluated later would hit the same wall.
- *
- * ## Why it does not probe first
- *
- * It used to: construct an object like follow-redirects' and install the shim only if the runtime
- * refused it. That shipped and CI still failed, because the probe was not the same shape as the real
- * call. It passed `Object.create(Error.prototype)` and no `constructorOpt`; follow-redirects passes an
- * object whose prototype is an Error INSTANCE, plus `this.constructor`. One Bun build accepted the
- * former and rejected the latter, so the probe reported "permissive", installed nothing, and the whole
- * Vite suite failed - on a runtime the local machine and a Linux container both disagreed with.
- *
- * A probe has to predict every caller's construction pattern to be correct, and is silently wrong when
- * it guesses short. Installing unconditionally cannot be wrong in that way: the shim delegates to the
- * runtime and suppresses only a refusal to decorate, which is not an outcome any caller depends on.
- */
-/** Marks the shim as installed, so repeated `loadVite` calls do not wrap a wrapper. */
-const RELAXED: unique symbol = Symbol.for("@nifrajs/web/relaxed-capture-stack-trace")
-
-function relaxCaptureStackTrace(): void {
-  const strict = Error.captureStackTrace
-  if (typeof strict !== "function") return
-  if ((Error as unknown as Record<PropertyKey, unknown>)[RELAXED] === true) return
-  try {
-    Error.captureStackTrace = ((target: object, constructorOpt?: unknown) => {
-      try {
-        ;(strict as (t: object, c?: unknown) => void).call(Error, target, constructorOpt)
-      } catch {
-        // The runtime refused to decorate this object. A missing `.stack` is not worth failing over.
-      }
-    }) as typeof Error.captureStackTrace
-    Object.defineProperty(Error, RELAXED, { value: true, configurable: true })
-  } catch {
-    // The property is frozen or non-writable. Nothing can be done about the import that follows, but
-    // failing HERE would replace vite's own error with an assignment error - strictly less informative
-    // than letting the import fail and be reported by `loadVite`.
-  }
-}
-
 /** Load the app's Vite. Resolved from `root` so it's the project's copy, not this package's. */
 async function loadVite(): Promise<ViteModule> {
-  relaxCaptureStackTrace()
   try {
-    return (await import("vite")) as unknown as ViteModule
+    return await importVite<ViteModule>()
   } catch (cause) {
-    // Two different failures arrive here and must not be conflated. `vite` is an OPTIONAL peer, so a
-    // project without it fails to RESOLVE - the common case, and the one worth naming. But vite can
-    // also resolve and fail while EVALUATING, which is not a missing dependency at all: vite 8 loads
-    // rolldown's native binding on import, and a binding that will not load surfaces here too. Telling
-    // that user to install what they already installed sends them the wrong way, so only a resolution
-    // failure claims a missing package; anything else is reported as what it is.
+    // The two failures must not be conflated - see `isViteUnresolved`.
     const message = cause instanceof Error ? cause.message : String(cause)
-    const unresolved = /cannot find (?:package|module)|ERR_MODULE_NOT_FOUND/i.test(message)
+    const unresolved = isViteUnresolved(cause)
     throw new Error(
       unresolved
         ? "[nifra/web] the Vite production build needs `vite` installed in this project (it is an " +

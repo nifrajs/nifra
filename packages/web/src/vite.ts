@@ -21,6 +21,7 @@ import { renderDevErrorOverlay } from "./dev-error.ts"
 import { listenOrExplain } from "./dev-port.ts"
 import { discoverRoutes } from "./fs.ts"
 import { DEFAULT_DEV_PORT, generateClientEntry } from "./index.ts"
+import { importVite } from "./internal/vite-import.ts"
 
 /** Minimal app surface — `createWebApp(...)` satisfies it. */
 interface FetchApp {
@@ -327,7 +328,9 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   // `conditions: ["bun"]` makes Vite resolve nifra's workspace packages (`@nifrajs/web-react/client`, …) to
   // their TS **source** — so the dev server needs no prior `dist` build of the adapter packages.
   const usePolling = options.poll ?? process.env.CHOKIDAR_USEPOLLING === "1"
-  const viteModule = (await import("vite")) as unknown as ViteModule
+  // Never `import("vite")` directly here: the guard in `importVite` has to run first, and the dev
+  // server importing vite unguarded is precisely what poisoned the module for the whole process.
+  const viteModule = await importVite<ViteModule>()
   const { createServer } = viteModule
   // Under rolldown-vite (Vite 8+), strip the stale `optimizeDeps.rollupOptions.jsx` some framework
   // plugins still emit — it triggers a noisy "Invalid key … jsx" warning but does nothing useful here.

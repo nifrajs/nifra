@@ -6,6 +6,7 @@ import {
   detectServerOnlyInClient,
   formatNodeBuiltinLeak,
 } from "../src/build.ts"
+import { importVite } from "../src/internal/vite-import.ts"
 import { fromRollupBundle, type RollupBundleLike } from "../src/module-graph.ts"
 import { viteLeakGuard } from "../src/plugins/vite-leak-guard.ts"
 
@@ -107,9 +108,10 @@ async function buildWithGuard(
     mkdirSync(join(path, ".."), { recursive: true })
     writeFileSync(path, content)
   }
-  const vite = (await import("vite")) as unknown as {
+  // Via the shared importer, so this test cannot be the unguarded import that poisons vite.
+  const vite = await importVite<{
     build(config: Record<string, unknown>): Promise<unknown>
-  }
+  }>()
   try {
     await vite.build({
       root,
