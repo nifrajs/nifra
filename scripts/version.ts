@@ -55,13 +55,25 @@ for (const dir of readdirSync(CREATE_NIFRA).filter((d) => d.startsWith("template
   console.log(`✓ ${file} → ^${version}`)
 }
 
-// api-reference.md + the per-package LLM.md cards embed exported signatures verbatim — including core's
-// `VERSION` literal just rewritten above — so the version bump makes them stale and `check:api` /
-// `check:cards` fail on the release commit unless we regenerate here. The "chore: version packages"
-// commit is made by CI and never runs the pre-commit hook, so we regenerate explicitly.
+// api-reference.md, the per-package LLM.md cards AND the llms corpora embed exported signatures
+// verbatim — including core's `VERSION` literal just rewritten above, which types.json stores as the
+// literal type `export declare const VERSION: "2.2.0"` — so the version bump makes all three stale and
+// `check:api` / `check:cards` / `check:llms` fail on the release commit unless we regenerate here. The
+// "chore: version packages" commit is made by CI and never runs the pre-commit hook, so we regenerate
+// explicitly.
+//
+// `gen:llms` was missing from this list, and the effect was not a cosmetic diff: every "Version
+// Packages" PR failed CI on a stale types.json, and since Release only publishes after CI concludes
+// successfully, nothing could ship. A generator that reads a rewritten literal has to be regenerated
+// here — adding one to `gen:*` means adding it to this line too.
 //
 // Build FIRST. The generators read each `src/index.ts` via the TS compiler API and resolve package
 // subpaths through their built declarations. The CI `check` job builds before `check:api`, so we must
-// match it — buildless regeneration can silently omit re-exported sections and drift from CI.
-execSync("bun run build && bun run gen:api && bun run gen:cards", { stdio: "inherit" })
-console.log("✓ built + regenerated api-reference.md + LLM.md cards for the new version")
+// match it — buildless regeneration can silently omit re-exported sections and drift from CI (for
+// `gen:llms` specifically it guts types.json, whose tell is "0 types from 1 built packages").
+execSync("bun run build && bun run gen:api && bun run gen:cards && bun run gen:llms", {
+  stdio: "inherit",
+})
+console.log(
+  "✓ built + regenerated api-reference.md, LLM.md cards and llms corpora for the new version",
+)
