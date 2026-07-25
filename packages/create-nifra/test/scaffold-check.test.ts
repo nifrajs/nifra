@@ -18,14 +18,28 @@ const TEMPLATES_DIR = resolve(import.meta.dir, "..")
 const SITE_TEMPLATES = readdirSync(TEMPLATES_DIR).filter((d) => d.startsWith("template-site"))
 const COUNTER_TEMPLATES = [...SITE_TEMPLATES, "template-isr"]
 
+/** The module that REGISTERS the demo routes. `backend.ts` composes; it declares nothing itself. */
+const routeModule = (dir: string): string => (dir === "template-isr" ? "page.ts" : "counter.ts")
+
 describe("templates: demo contract is schema-locked and ok-narrowed (static)", () => {
   for (const dir of COUNTER_TEMPLATES) {
-    test(`${dir}/backend.ts declares a response schema`, async () => {
-      const src = await readFile(join(TEMPLATES_DIR, dir, "backend.ts"), "utf8")
+    test(`${dir} demo routes declare a response schema`, async () => {
+      const src = await readFile(join(TEMPLATES_DIR, dir, routeModule(dir)), "utf8")
       expect(src).toContain('from "@nifrajs/schema"')
       expect(src).toContain("response:")
       // the un-schema'd 2-arg demo route shape must not come back
       expect(src).not.toMatch(/\.(get|post)\("\/(count|page)",\s*\(\)\s*=>/)
+    })
+
+    /**
+     * The root stays a pure composition. Reach is computed from the module that registers a route, so
+     * a root that both composes and registers hands every route in it the reach of everything merged
+     * there - which is what makes the armed `provenance.imports` unusable and a GET route undeclarable.
+     */
+    test(`${dir}/backend.ts composes and registers nothing`, async () => {
+      const src = await readFile(join(TEMPLATES_DIR, dir, "backend.ts"), "utf8")
+      expect(src).toContain(".merge(")
+      expect(src).not.toMatch(/\.(get|post|put|patch|delete)\s*\(/)
     })
 
     test(`${dir} index route narrows on res.ok before res.data`, async () => {
@@ -106,3 +120,19 @@ describe.if(SMOKE)(
     }
   },
 )
+
+/**
+ * The api and fullstack templates keep their app in `src/app.ts`, and it has to stay a composition for
+ * the same reason: `provenance.imports` is armed in every template, so a root that registers routes
+ * would taint them with the reach of everything it merges - including, the moment a database arrives,
+ * a domain write that its GET routes cannot legally declare.
+ */
+describe("templates: the app root composes rather than registers", () => {
+  for (const dir of ["template", "template-fullstack"]) {
+    test(`${dir}/src/app.ts registers no routes of its own`, async () => {
+      const src = await readFile(join(TEMPLATES_DIR, dir, "src/app.ts"), "utf8")
+      expect(src).toContain(".merge(")
+      expect(src).not.toMatch(/\.(get|post|put|patch|delete)\s*\(/)
+    })
+  }
+})

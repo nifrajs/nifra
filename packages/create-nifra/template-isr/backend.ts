@@ -1,17 +1,13 @@
 import { server } from "@nifrajs/core/server"
-import { t } from "@nifrajs/schema"
+import { page } from "./page"
 
-// Your backend contract — page loaders/actions call it in-process during SSR (no network). This demo
-// counts server renders so the ISR cache is observable: a cache HIT serves stored bytes (the loader
-// doesn't run, so the number holds), while a MISS or background REGENERATION runs it (it bumps).
-// Replace it with real data (KV/D1/Postgres/…); on the edge, reach bindings via `c.env`.
-let renders = 0
-
-export const backend = server().get(
-  "/page",
-  { response: t.object({ renders: t.number() }) },
-  () => {
-    renders += 1
-    return { renders }
-  },
-)
+// Your backend contract - page loaders/actions call it in-process during SSR (no network).
+// Composition only: this module merges route modules and registers none of its own.
+//
+// That is not a style preference. `nifra check` works out what a route can reach from the module that
+// REGISTERS it, following that module's imports - so a file that registers routes AND imports a
+// database gives every route in it database reach, and a GET route may not declare a domain write at
+// all. Keeping this file pure means each route's reach is its own module's, which is what lets the
+// capability declarations in `nifra.assurance.ts` stay true as the app grows. Add a feature as a
+// module, merge it here.
+export const backend = server().merge(page)

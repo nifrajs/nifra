@@ -15,33 +15,39 @@ export default defineAssuranceConfig({
   source: app,
   // What each effect IS, so the policy below can be written about a CLASS of effect rather than a list
   // of token names: `{ access: "write", zone: "domain" }` covers `payments.charge` the day someone adds
-  // it, where a rule naming `db.write` would not. Declaring the tokens here is also what lifts this app
-  // to L2 of `nifra levels`.
+  // it, where a rule naming `db.write` would not.
   capabilities: {
     definitions: [
       { id: "db.read", zone: "domain", access: "read" },
       { id: "db.write", zone: "domain", access: "write" },
     ],
     provenance: {
-      // Map a module specifier to the capabilities reaching it implies, and `nifra check` reports any
-      // route that can reach further than it declared - so wiring a database into a handler and
-      // forgetting to say so becomes a failing check rather than something review has to catch. The
-      // seam `--db` scaffolds is already shaped for it, split by access:
+      // Reaching one of these modules means holding the capabilities beside it, and `nifra check` fails
+      // any route that can reach further than it declared - so wiring a database into a handler and
+      // forgetting to say so is a failing check rather than something review has to catch.
       //
-      //   { specifier: "./read.ts", capabilities: ["db.read"] },
-      //   { specifier: "./write.ts", capabilities: ["db.write"] },
-      //   { specifier: "bun:sqlite", capabilities: ["db.read", "db.write"] },
-      //
-      // Turning it on is a structural commitment, so know the rule first: reach is computed from the
-      // module that REGISTERS a route, following its imports. Any module that registers routes and can
-      // reach a database gives EVERY route in it that reach - and a GET route may not declare a domain
-      // write at all, so those routes have no legal declaration and must move. Every module that
-      // registers routes therefore has to be import-disjoint from the effects its routes do not use,
-      // and the app root has to be pure composition (`server().merge(home).merge(notes)`) rather than a
-      // place routes are declared. Worth it for an app that wants the guarantee; a real commitment.
-      imports: [],
-      // Add a driver here to force every query through a seam you own, and the check will name any
-      // route that reaches around it: `{ specifier: "pg", reason: "query through db/" }`.
+      // The first two are the seam `--db` scaffolds, split by access on purpose: reach is computed per
+      // MODULE, and a GET route may not declare a domain write, so a module that can reach both has GET
+      // routes with no legal declaration. Keeping reads and writes import-disjoint - at the seam and at
+      // the route modules - is what keeps every route's declaration equal to its reach. The drivers
+      // below are the backstop for code that goes around the seam; they grant both, because an import
+      // cannot tell a read from a write.
+      imports: [
+        { specifier: "./read.ts", capabilities: ["db.read"] },
+        { specifier: "./write.ts", capabilities: ["db.write"] },
+        { specifier: "bun:sqlite", capabilities: ["db.read", "db.write"] },
+        { specifier: "node:sqlite", capabilities: ["db.read", "db.write"] },
+        { specifier: "pg", capabilities: ["db.read", "db.write"] },
+        { specifier: "postgres", capabilities: ["db.read", "db.write"] },
+        { specifier: "mysql2", capabilities: ["db.read", "db.write"] },
+        { specifier: "kysely", capabilities: ["db.read", "db.write"] },
+        { specifier: "drizzle-orm", capabilities: ["db.read", "db.write"] },
+        { specifier: "drizzle-orm/*", capabilities: ["db.read", "db.write"] },
+        { specifier: "@libsql/*", capabilities: ["db.read", "db.write"] },
+        { specifier: "@prisma/client", capabilities: ["db.read", "db.write"] },
+      ],
+      // Add a driver here to force every query through the seam, and the check will name any route that
+      // reaches around it: `{ specifier: "pg", reason: "query through db/read.ts or db/write.ts" }`.
       forbiddenImports: [],
     },
   },
