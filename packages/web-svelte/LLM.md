@@ -10,7 +10,7 @@ Svelte 5 render adapter for @nifrajs/web — SSR + hydration + the .svelte compi
 
 ## Public entrypoints
 
-`@nifrajs/web-svelte` · `@nifrajs/web-svelte/await` · `@nifrajs/web-svelte/client` · `@nifrajs/web-svelte/content` · `@nifrajs/web-svelte/fetcher` · `@nifrajs/web-svelte/i18n` · `@nifrajs/web-svelte/image` · `@nifrajs/web-svelte/mdx` · `@nifrajs/web-svelte/plugin` · `@nifrajs/web-svelte/query` · `@nifrajs/web-svelte/svg`
+`@nifrajs/web-svelte` · `@nifrajs/web-svelte/await` · `@nifrajs/web-svelte/client` · `@nifrajs/web-svelte/content` · `@nifrajs/web-svelte/fetcher` · `@nifrajs/web-svelte/fn` · `@nifrajs/web-svelte/i18n` · `@nifrajs/web-svelte/image` · `@nifrajs/web-svelte/mdx` · `@nifrajs/web-svelte/plugin` · `@nifrajs/web-svelte/query` · `@nifrajs/web-svelte/svg`
 
 ## Key exports
 
@@ -26,10 +26,10 @@ Svelte 5 render adapter for @nifrajs/web — SSR + hydration + the .svelte compi
 - **useFetchers** _(function)_ — `useFetchers: () => Readable<readonly Fetcher[]>` · from `@nifrajs/web-svelte/fetcher`
 - **useQuery** _(function)_ — `useQuery: <T>(key: unknown, fn: () => Promise<T>) => QueryStore<T>` · from `@nifrajs/web-svelte/query`
 - **useQueryClient** _(function)_ — `useQueryClient: () => Pick<QueryClient, "invalidateQueries">` · from `@nifrajs/web-svelte/query`
+- **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: (input: Input) => Promise<Output> | Output) => ServerFnHandle<Input, Output>` · from `@nifrajs/web-svelte/fn`
 - **useT** _(function)_ — `useT: () => Formatter` · from `@nifrajs/web-svelte/i18n`
-- **I18nProvider** _(const)_ — `I18nProvider: Component<I18nProviderProps, {}, string>` · from `@nifrajs/web-svelte/i18n`
 
-_…and 4 more — see [`api-reference.md`](../../api-reference.md#nifrajswebsvelte) for the complete list._
+_…and 6 more — see [`api-reference.md`](../../api-reference.md#nifrajswebsvelte) for the complete list._
 
 ## Footguns
 

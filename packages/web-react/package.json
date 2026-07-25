@@ -1,7 +1,7 @@
 {
   "name": "@nifrajs/web-react",
   "version": "2.2.0",
-  "description": "React render adapter for @nifrajs/web — SSR + hydration (Bun-native JSX, no Babel).",
+  "description": "React render adapter for @nifrajs/web \u2014 SSR + hydration (Bun-native JSX, no Babel).",
   "keywords": [
     "bun",
     "typescript",
@@ -65,6 +65,11 @@
       "bun": "./src/content.ts",
       "types": "./dist/content.d.ts",
       "default": "./dist/content.js"
+    },
+    "./fn": {
+      "bun": "./src/fn.ts",
+      "types": "./dist/fn.d.ts",
+      "default": "./dist/fn.js"
     }
   },
   "files": [

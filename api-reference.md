@@ -2548,6 +2548,17 @@ Every public export of every package and documented subpath — name, kind, sign
 - **serverFunctions** _(function)_ — `serverFunctions: <S extends ServerFnHost>(namespace: string, module: ServerFnModule) => (app: S) => S`
   Mount a module's server functions under `namespace`, returning a plugin for `app.use(...)`.
 
+### `@nifrajs/web/fn-state`
+
+- **ServerFnState** _(interface)_ — `interface ServerFnState<Output>`
+  What a component renders from.
+- **ServerFnStore** _(interface)_ — `interface ServerFnStore<Input, Output>`
+  A subscribable call site. One per component instance, created by the framework binding.
+- **createServerFnStore** _(function)_ — `createServerFnStore: <Input, Output>(fn: (input: Input) => Promise<Output> | Output) => ServerFnStore<Input, Output>`
+  Wrap a server function (or any async function) in a subscribable pending/error state.
+- **idleServerFnState** _(function)_ — `idleServerFnState: <Output>() => ServerFnState<Output>`
+  The idle state, shared so a server render and the first client render agree by reference.
+
 ### `@nifrajs/web/fonts`
 
 - **FontAsset** _(interface)_ — `interface FontAsset`
@@ -2745,6 +2756,13 @@ _No named exports (side-effect entrypoint)._
 - **useFetchers** _(function)_ — `useFetchers: () => readonly Fetcher[]`
   Subscribe to the whole live fetcher collection — for a global busy view (e.g. "3 saving…"). Read each entry's `.snapshot()` for its state. Re-renders whenever any fetcher transitions or a new one is created.
 
+### `@nifrajs/web-preact/fn`
+
+- **ServerFnHandle** _(interface)_ — `interface ServerFnHandle<Input, Output>`
+  A server function's state plus the call itself.
+- **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: (input: Input) => Promise<Output> | Output) => ServerFnHandle<Input, Output>`
+  Track one server function's call state.
+
 ### `@nifrajs/web-preact/i18n`
 
 - **I18nProvider** _(function)_ — `I18nProvider: (props: I18nProviderProps) => VNode`
@@ -2806,6 +2824,13 @@ _No named exports (side-effect entrypoint)._
   Subscribe to the independent fetcher for `key` (created lazily, stable across renders). Returns its state (`pending`/`data`/`actionData`/`submission`) + `load`/`submit`. Multiple `useFetcher` calls with different keys run concurrently without disturbing the active route or each other.
 - **useFetchers** _(function)_ — `useFetchers: () => readonly Fetcher[]`
   Subscribe to the whole live fetcher collection — for a global busy view (e.g. "3 saving…"). Read each entry's `.snapshot()` for its state. Re-renders whenever any fetcher transitions or a new one is created.
+
+### `@nifrajs/web-react/fn`
+
+- **ServerFnHandle** _(interface)_ — `interface ServerFnHandle<Input, Output>`
+  A server function's state plus the call itself.
+- **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: (input: Input) => Promise<Output> | Output) => ServerFnHandle<Input, Output>`
+  Track one server function's call state.
 
 ### `@nifrajs/web-react/i18n`
 
@@ -2938,6 +2963,13 @@ _No named exports (side-effect entrypoint)._
 - **useFetchers** _(function)_ — `useFetchers: () => Accessor<readonly Fetcher[]>`
   Bind the whole live fetcher collection — for a global busy view. Returns a reactive accessor; read each entry's `.snapshot()` for its state. Updates whenever any fetcher transitions or one is created.
 
+### `@nifrajs/web-solid/fn`
+
+- **ServerFnHandle** _(interface)_ — `interface ServerFnHandle<Input, Output>`
+  A server function's state accessor plus the call itself.
+- **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: (input: Input) => Promise<Output> | Output) => ServerFnHandle<Input, Output>`
+  Track one server function's call state.
+
 ### `@nifrajs/web-solid/i18n`
 
 - **I18nProvider** _(function)_ — `I18nProvider: (props: I18nProviderProps) => JSX.Element`
@@ -3003,6 +3035,13 @@ _No named exports (side-effect entrypoint)._
   Subscribe to the independent fetcher for `key` (created lazily, stable across renders). Returns a store of its state (`pending`/`data`/`actionData`/`submission`) augmented with `load`/`submit`. Multiple `useFetcher` calls with different keys run concurrently without disturbing the active route.
 - **useFetchers** _(function)_ — `useFetchers: () => Readable<readonly Fetcher[]>`
   Subscribe to the whole live fetcher collection — for a global busy view (e.g. "3 saving…"). Read each entry's `.snapshot()` for its state. The store updates whenever any fetcher transitions or a new one is created.
+
+### `@nifrajs/web-svelte/fn`
+
+- **ServerFnHandle** _(interface)_ — `interface ServerFnHandle<Input, Output>`
+  A server function's readable state plus the call itself.
+- **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: (input: Input) => Promise<Output> | Output) => ServerFnHandle<Input, Output>`
+  Track one server function's call state.
 
 ### `@nifrajs/web-svelte/i18n`
 
@@ -3092,6 +3131,13 @@ _No named exports (side-effect entrypoint)._
   Subscribe to the independent fetcher for `key` (created lazily, stable across renders). Returns a reactive `state` ref (`pending`/`data`/`actionData`/`submission`) + `load`/`submit`. Multiple `useFetcher` calls with different keys run concurrently without disturbing the active route.
 - **useFetchers** _(function)_ — `useFetchers: () => Readonly<ShallowRef<readonly Fetcher[]>>`
   Subscribe to the whole live fetcher collection — for a global busy view (e.g. "3 saving…"). Read each entry's `.snapshot()` for its state. The ref updates whenever any fetcher transitions or a new one is created.
+
+### `@nifrajs/web-vue/fn`
+
+- **ServerFnHandle** _(interface)_ — `interface ServerFnHandle<Input, Output>`
+  A server function's state ref plus the call itself.
+- **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: (input: Input) => Promise<Output> | Output) => ServerFnHandle<Input, Output>`
+  Track one server function's call state.
 
 ### `@nifrajs/web-vue/i18n`
 

@@ -10,7 +10,7 @@ Preact render adapter for @nifrajs/web — streaming SSR + hydration (no build p
 
 ## Public entrypoints
 
-`@nifrajs/web-preact` · `@nifrajs/web-preact/await` · `@nifrajs/web-preact/client` · `@nifrajs/web-preact/content` · `@nifrajs/web-preact/fetcher` · `@nifrajs/web-preact/i18n` · `@nifrajs/web-preact/image` · `@nifrajs/web-preact/query`
+`@nifrajs/web-preact` · `@nifrajs/web-preact/await` · `@nifrajs/web-preact/client` · `@nifrajs/web-preact/content` · `@nifrajs/web-preact/fetcher` · `@nifrajs/web-preact/fn` · `@nifrajs/web-preact/i18n` · `@nifrajs/web-preact/image` · `@nifrajs/web-preact/query`
 
 ## Key exports
 
@@ -26,10 +26,10 @@ Preact render adapter for @nifrajs/web — streaming SSR + hydration (no build p
 - **useFetchers** _(function)_ — `useFetchers: () => readonly Fetcher[]` · from `@nifrajs/web-preact/fetcher`
 - **useQuery** _(function)_ — `useQuery: <T>(key: unknown, fn: () => Promise<T>) => UseQueryResult<T>` · from `@nifrajs/web-preact/query`
 - **useQueryClient** _(function)_ — `useQueryClient: () => Pick<QueryClient, "invalidateQueries">` · from `@nifrajs/web-preact/query`
+- **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: (input: Input) => Promise<Output> | Output) => ServerFnHandle<Input, Output>` · from `@nifrajs/web-preact/fn`
 - **useT** _(function)_ — `useT: () => Formatter` · from `@nifrajs/web-preact/i18n`
-- **preactAdapter** _(const)_ — `preactAdapter: RenderAdapter` · from `@nifrajs/web-preact`
 
-_…and 6 more — see [`api-reference.md`](../../api-reference.md#nifrajswebpreact) for the complete list._
+_…and 8 more — see [`api-reference.md`](../../api-reference.md#nifrajswebpreact) for the complete list._
 
 ## Footguns
 

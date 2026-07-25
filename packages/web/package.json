@@ -131,6 +131,11 @@
       "bun": "./src/plugins/vite-server-fn.ts",
       "types": "./dist/plugins/vite-server-fn.d.ts",
       "default": "./dist/plugins/vite-server-fn.js"
+    },
+    "./fn-state": {
+      "bun": "./src/fn-state.ts",
+      "types": "./dist/fn-state.d.ts",
+      "default": "./dist/fn-state.js"
     }
   },
   "files": [

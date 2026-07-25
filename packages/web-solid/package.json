@@ -1,7 +1,7 @@
 {
   "name": "@nifrajs/web-solid",
   "version": "2.2.0",
-  "description": "Solid render adapter for @nifrajs/web — SSR + hydration + the Solid Babel build plugin.",
+  "description": "Solid render adapter for @nifrajs/web \u2014 SSR + hydration + the Solid Babel build plugin.",
   "keywords": [
     "bun",
     "typescript",
@@ -70,6 +70,11 @@
       "bun": "./src/mdx-runtime.ts",
       "types": "./dist/mdx-runtime.d.ts",
       "default": "./dist/mdx-runtime.js"
+    },
+    "./fn": {
+      "bun": "./src/fn.ts",
+      "types": "./dist/fn.d.ts",
+      "default": "./dist/fn.js"
     }
   },
   "files": [

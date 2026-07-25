@@ -10,7 +10,7 @@ React render adapter for @nifrajs/web — SSR + hydration (Bun-native JSX, no Ba
 
 ## Public entrypoints
 
-`@nifrajs/web-react` · `@nifrajs/web-react/await` · `@nifrajs/web-react/client` · `@nifrajs/web-react/content` · `@nifrajs/web-react/fetcher` · `@nifrajs/web-react/i18n` · `@nifrajs/web-react/image` · `@nifrajs/web-react/island` · `@nifrajs/web-react/query` · `@nifrajs/web-react/router`
+`@nifrajs/web-react` · `@nifrajs/web-react/await` · `@nifrajs/web-react/client` · `@nifrajs/web-react/content` · `@nifrajs/web-react/fetcher` · `@nifrajs/web-react/fn` · `@nifrajs/web-react/i18n` · `@nifrajs/web-react/image` · `@nifrajs/web-react/island` · `@nifrajs/web-react/query` · `@nifrajs/web-react/router`
 
 ## Key exports
 
@@ -29,7 +29,7 @@ React render adapter for @nifrajs/web — SSR + hydration (Bun-native JSX, no Ba
 - **useFetcher** _(function)_ — `useFetcher: (key: string) => FetcherHandle` · from `@nifrajs/web-react/fetcher`
 - **useFetchers** _(function)_ — `useFetchers: () => readonly Fetcher[]` · from `@nifrajs/web-react/fetcher`
 
-_…and 37 more — see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
+_…and 39 more — see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
 
 ## Footguns
 

@@ -715,6 +715,10 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/web-preact/src/fn.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/web-preact/src/i18n.ts": {
     "functions": 100,
     "lines": 100
@@ -744,6 +748,10 @@
     "lines": 100
   },
   "packages/web-react/src/error.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-react/src/fn.ts": {
     "functions": 100,
     "lines": 100
   },
@@ -783,6 +791,10 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/web-solid/src/fn.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/web-solid/src/i18n.ts": {
     "functions": 100,
     "lines": 100
@@ -804,6 +816,10 @@
     "lines": 91.42857142857143
   },
   "packages/web-solid/src/svg.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-svelte/src/fn.ts": {
     "functions": 100,
     "lines": 100
   },
@@ -844,6 +860,10 @@
     "lines": 100
   },
   "packages/web-vue/src/error.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web-vue/src/fn.ts": {
     "functions": 100,
     "lines": 100
   },
@@ -912,6 +932,10 @@
     "lines": 93.45794392523365
   },
   "packages/web/src/draft.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/fn-state.ts": {
     "functions": 100,
     "lines": 100
   },

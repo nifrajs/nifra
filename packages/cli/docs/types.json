@@ -2179,6 +2179,13 @@
     "doc": "/** Create an in-process cron scheduler. */"
   },
   {
+    "name": "createServerFnStore",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function createServerFnStore<Input, Output>(fn: (input: Input) => Promise<Output> | Output): ServerFnStore<Input, Output>;",
+    "doc": "/**\n * Wrap a server function (or any async function) in a subscribable pending/error state.\n *\n * Framework-free by design: the adapters call this and subscribe with their own primitive.\n */"
+  },
+  {
     "name": "createSessions",
     "kind": "function",
     "package": "@nifrajs/auth",
@@ -4029,6 +4036,13 @@
     "package": "nifra",
     "signature": "export type IdentityPlugin = (<S extends AnyServer>(app: S) => S) & {\n    readonly pluginName?: string;\n};",
     "doc": "/**\n * A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete\n * server type it receives, preserving the caller's typed registry and context across `.use()` while\n * still allowing the plugin to register runtime hooks or handlers.\n */"
+  },
+  {
+    "name": "idleServerFnState",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function idleServerFnState<Output>(): ServerFnState<Output>;",
+    "doc": "/** The idle state, shared so a server render and the first client render agree by reference. */"
   },
   {
     "name": "Image",
@@ -8067,6 +8081,41 @@
     "doc": "/** What a server function declares about itself. */"
   },
   {
+    "name": "ServerFnHandle",
+    "kind": "interface",
+    "package": "@nifrajs/web-preact",
+    "signature": "export interface ServerFnHandle<Input, Output> extends ServerFnState<Output> {\n    /** Invoke it. Records state, and rejects on failure - attach `.catch` if you only render state. */\n    readonly call: (input: Input) => Promise<Output>;\n    /** Back to idle. */\n    readonly reset: () => void;\n}",
+    "doc": "/** A server function's state plus the call itself. */"
+  },
+  {
+    "name": "ServerFnHandle",
+    "kind": "interface",
+    "package": "@nifrajs/web-react",
+    "signature": "export interface ServerFnHandle<Input, Output> extends ServerFnState<Output> {\n    /** Invoke it. Records state, and rejects on failure - attach `.catch` if you only render state. */\n    readonly call: (input: Input) => Promise<Output>;\n    /** Back to idle. */\n    readonly reset: () => void;\n}",
+    "doc": "/** A server function's state plus the call itself. */"
+  },
+  {
+    "name": "ServerFnHandle",
+    "kind": "interface",
+    "package": "@nifrajs/web-solid",
+    "signature": "export interface ServerFnHandle<Input, Output> {\n    /** Reactive state - read it inside JSX so Solid tracks it. */\n    readonly state: Accessor<ServerFnState<Output>>;\n    /** Invoke it. Records state, and rejects on failure - attach `.catch` if you only render state. */\n    readonly call: (input: Input) => Promise<Output>;\n    /** Back to idle. */\n    readonly reset: () => void;\n}",
+    "doc": "/** A server function's state accessor plus the call itself. */"
+  },
+  {
+    "name": "ServerFnHandle",
+    "kind": "interface",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export interface ServerFnHandle<Input, Output> {\n    /** Reactive state; subscribe with `$state` in a component. */\n    readonly state: Readable<ServerFnState<Output>>;\n    /** Invoke it. Records state, and rejects on failure - attach `.catch` if you only render state. */\n    readonly call: (input: Input) => Promise<Output>;\n    /** Back to idle. */\n    readonly reset: () => void;\n}",
+    "doc": "/** A server function's readable state plus the call itself. */"
+  },
+  {
+    "name": "ServerFnHandle",
+    "kind": "interface",
+    "package": "@nifrajs/web-vue",
+    "signature": "export interface ServerFnHandle<Input, Output> {\n    /** Reactive state; read `.value` in a template or computed. */\n    readonly state: ShallowRef<ServerFnState<Output>>;\n    /** Invoke it. Records state, and rejects on failure - attach `.catch` if you only render state. */\n    readonly call: (input: Input) => Promise<Output>;\n    /** Back to idle. */\n    readonly reset: () => void;\n}",
+    "doc": "/** A server function's state ref plus the call itself. */"
+  },
+  {
     "name": "ServerFnHost",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -8079,6 +8128,20 @@
     "package": "@nifrajs/web",
     "signature": "export type ServerFnModule = Readonly<Record<string, unknown>>;",
     "doc": "/** Every server function a module exports, keyed by export name. */"
+  },
+  {
+    "name": "ServerFnState",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ServerFnState<Output> {\n    /** A call is in flight. */\n    readonly pending: boolean;\n    /** The most recent successful result, kept across a later pending call so the UI need not flicker. */\n    readonly data: Output | undefined;\n    /** The most recent failure, cleared when a call succeeds. */\n    readonly error: Error | undefined;\n}",
+    "doc": "/** What a component renders from. */"
+  },
+  {
+    "name": "ServerFnStore",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ServerFnStore<Input, Output> {\n    /** Register a listener; returns the unsubscribe. */\n    subscribe(listener: () => void): () => void;\n    /**\n     * The current state. The SAME object is returned until something changes, because\n     * `useSyncExternalStore` and its equivalents compare by reference - a fresh object each call is an\n     * infinite render loop.\n     */\n    snapshot(): ServerFnState<Output>;\n    /** Invoke the server function. Records state, and rejects on failure. */\n    call(input: Input): Promise<Output>;\n    /** Back to idle, discarding data and error. */\n    reset(): void;\n}",
+    "doc": "/** A subscribable call site. One per component instance, created by the framework binding. */"
   },
   {
     "name": "serverFnStubPlugin",
@@ -9593,6 +9656,41 @@
     "package": "@nifrajs/web-react",
     "signature": "export declare function useSearchParams(): readonly [URLSearchParams, SetSearchParams];",
     "doc": "/**\n * The current query as a `URLSearchParams` (SSR-correct via the router context) plus a setter that\n * navigates to the new query. Mirrors react-router's `useSearchParams` tuple.\n */"
+  },
+  {
+    "name": "useServerFn",
+    "kind": "function",
+    "package": "@nifrajs/web-preact",
+    "signature": "export declare function useServerFn<Input, Output>(fn: (input: Input) => Promise<Output> | Output): ServerFnHandle<Input, Output>;",
+    "doc": "/**\n * Track one server function's call state.\n *\n * Preact's compat `useSyncExternalStore` takes two arguments (no server snapshot); the store's idle\n * state is shared by reference anyway, so a server render and the first client render agree.\n */"
+  },
+  {
+    "name": "useServerFn",
+    "kind": "function",
+    "package": "@nifrajs/web-react",
+    "signature": "export declare function useServerFn<Input, Output>(fn: (input: Input) => Promise<Output> | Output): ServerFnHandle<Input, Output>;",
+    "doc": "/**\n * Track one server function's call state.\n *\n *     const addTodo = useServerFn(fns.addTodo)\n *     <button disabled={addTodo.pending} onClick={() => addTodo.call({ text }).catch(() => {})}>\n *\n * The store is per component instance and created once; `fn` is read on the first render only, so a\n * freshly-created inline function neither resets the state nor goes stale.\n */"
+  },
+  {
+    "name": "useServerFn",
+    "kind": "function",
+    "package": "@nifrajs/web-solid",
+    "signature": "export declare function useServerFn<Input, Output>(fn: (input: Input) => Promise<Output> | Output): ServerFnHandle<Input, Output>;",
+    "doc": "/**\n * Track one server function's call state.\n *\n *     const addTodo = useServerFn(fns.addTodo)\n *     <button disabled={addTodo.state().pending} onClick={() => addTodo.call({ text }).catch(() => {})}>\n */"
+  },
+  {
+    "name": "useServerFn",
+    "kind": "function",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export declare function useServerFn<Input, Output>(fn: (input: Input) => Promise<Output> | Output): ServerFnHandle<Input, Output>;",
+    "doc": "/**\n * Track one server function's call state.\n *\n * The `readable` subscribes on first use and unsubscribes when the last subscriber leaves, so a\n * component that never reads the state never attaches a listener.\n */"
+  },
+  {
+    "name": "useServerFn",
+    "kind": "function",
+    "package": "@nifrajs/web-vue",
+    "signature": "export declare function useServerFn<Input, Output>(fn: (input: Input) => Promise<Output> | Output): ServerFnHandle<Input, Output>;",
+    "doc": "/**\n * Track one server function's call state.\n *\n * `shallowRef` rather than `ref`: the state object is replaced wholesale on every change, so deep\n * reactivity would walk the payload on each update for nothing.\n */"
   },
   {
     "name": "useT",
