@@ -1259,6 +1259,54 @@ function namespaceForApp(
   }
 }
 
+/**
+ * Merge the backend-derived resources/prompts into `base` - and keep a project that cannot be loaded
+ * from deciding whether the server starts at all.
+ *
+ * Resources and prompts are OPTIONAL capabilities extracted from the app's backend, so this load is a
+ * best-effort enrichment. It was awaited unguarded, which made it a hard boot requirement: `loadApp`
+ * needs a web config (`adapter` + `clientModule`) and a `routes/` directory, and a backend-only
+ * project - the shape `create-nifra`'s DEFAULT template produces - has neither. On those projects the
+ * throw escaped before the JSON-RPC loop began, so the server wrote nothing and exited. `nifra
+ * init-agents` would happily register an `.mcp.json` pointing at a server that could never start, and
+ * every tool went with it, including the twelve that never touch the app (docs, examples, types,
+ * check, doctor, levels, test).
+ *
+ * Degrading costs only the backend resources/prompts. Tools that genuinely need the app still fail,
+ * but per call, with their own message - which is a diagnosis instead of a silence.
+ */
+async function backendFeatures(
+  loader: () => Promise<LoadedApp>,
+  base: McpServerFeatures,
+): Promise<McpServerFeatures> {
+  const resources = [...(base.resources ?? [])]
+  const prompts = [...(base.prompts ?? [])]
+  try {
+    const app = await loader()
+    resources.push(...extractBackendResources(app.backend))
+    prompts.push(...extractBackendPrompts(app.backend))
+  } catch {
+    // Not loadable here (no web config, or the config itself throws). The server still serves.
+  }
+  return { resources, prompts }
+}
+
+/**
+ * The MCP tools the app itself declares via `app.tool(...)`, or none when the app cannot be loaded.
+ *
+ * Same reasoning as {@link backendFeatures}, on the hotter path: this ran on EVERY JSON-RPC message,
+ * so an unloadable project failed `initialize` itself with a `-32603` and the session never opened.
+ * An app's own tools are an extension of the built-in set, so their absence must not withdraw the
+ * built-ins - a backend-only project still gets docs, examples, types, check, doctor, levels and test.
+ */
+async function appDeclaredTools(loader: () => Promise<LoadedApp>): Promise<McpTool[]> {
+  try {
+    return extractBackendTools((await loader()).backend)
+  } catch {
+    return []
+  }
+}
+
 /** Run the stdio MCP server: read newline-delimited JSON-RPC from stdin, write responses to stdout. */
 export async function runMcpServer(cwd: string, version: string): Promise<void> {
   let features: McpServerFeatures
@@ -1270,24 +1318,18 @@ export async function runMcpServer(cwd: string, version: string): Promise<void> 
     const allPrompts: McpPrompt[] = []
     for (const { name, cwd: appCwd } of appEntries) {
       const loader = createCachedAppLoader(appCwd)
-      const app = await loader()
-      const base = projectFeatures(appCwd, loader)
-      const ns = namespaceForApp(name, [], {
-        resources: [...(base.resources ?? []), ...extractBackendResources(app.backend)],
-        prompts: [...(base.prompts ?? []), ...extractBackendPrompts(app.backend)],
-      })
+      const ns = namespaceForApp(
+        name,
+        [],
+        await backendFeatures(loader, projectFeatures(appCwd, loader)),
+      )
       allResources.push(...(ns.features.resources ?? []))
       allPrompts.push(...(ns.features.prompts ?? []))
     }
     features = { resources: allResources, prompts: allPrompts }
   } else {
     const loadAppCached = createCachedAppLoader(cwd)
-    const base = projectFeatures(cwd, loadAppCached)
-    const app = await loadAppCached()
-    features = {
-      resources: [...(base.resources ?? []), ...extractBackendResources(app.backend)],
-      prompts: [...(base.prompts ?? []), ...extractBackendPrompts(app.backend)],
-    }
+    features = await backendFeatures(loadAppCached, projectFeatures(cwd, loadAppCached))
   }
   const loadAppCached = createCachedAppLoader(cwd)
   const serverInfo = { name: "nifra", version }
@@ -1302,21 +1344,16 @@ export async function runMcpServer(cwd: string, version: string): Promise<void> 
       const allTools: McpTool[] = []
       for (const { name, cwd: appCwd } of appEntries) {
         const loader = createCachedAppLoader(appCwd)
-        const app = await loader()
-        const baseTools = projectTools(appCwd, loader)
-        const backendTools = extractBackendTools(app.backend)
-        const ns = namespaceForApp(name, [...baseTools, ...backendTools], {
-          resources: [],
-          prompts: [],
-        })
+        const tools = [...projectTools(appCwd, loader), ...(await appDeclaredTools(loader))]
+        const ns = namespaceForApp(name, tools, { resources: [], prompts: [] })
         allTools.push(...ns.tools)
       }
       activeTools = [...docsTools(loadDocsCorpus, loadExamplesCorpus, loadTypesCorpus), ...allTools]
     } else {
-      const app = await loadAppCached()
-      const baseTools = projectTools(cwd, loadAppCached)
-      const backendTools = extractBackendTools(app.backend)
-      activeTools = [...baseTools, ...backendTools]
+      activeTools = [
+        ...projectTools(cwd, loadAppCached),
+        ...(await appDeclaredTools(loadAppCached)),
+      ]
     }
 
     const response = await handleRpc(message, activeTools, serverInfo, features, {

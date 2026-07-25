@@ -847,3 +847,152 @@ describe("extractBackendResources / extractBackendPrompts (.resource()/.prompt()
     expect(extractBackendPrompts({})).toEqual([])
   })
 })
+
+/**
+ * A backend-only project - no `nifra.config.ts`/`framework.ts`, no `routes/` - is what
+ * `create-nifra`'s DEFAULT template produces, and the MCP server could not start in one.
+ *
+ * `runMcpServer` awaited `loadApp` twice: once at boot to collect backend resources/prompts, and once
+ * per JSON-RPC message to collect the app's own `.tool()` declarations. `loadApp` requires a web
+ * adapter and a routes directory, so both threw, the second one failing `initialize` itself with a
+ * -32603. The server wrote nothing and exited, taking every tool with it - including the ones that
+ * never touch the app. `nifra init-agents` would still write an `.mcp.json` pointing at it.
+ *
+ * These drive the real server over stdio because that is where the bug lived: every unit underneath
+ * it was fine, and the two `await`s were the whole defect.
+ */
+describe("runMcpServer starts on a project it cannot load", () => {
+  /**
+   * Drive the server over stdio and collect responses until every expected id has replied.
+   *
+   * Reading with `new Response(stdout).text()` deadlocks here: it resolves when the stream CLOSES, and
+   * a live server never closes it - so the read must be incremental. Closing stdin early is not a
+   * substitute either, because a tool like `nifra_check` shells out to tsc and its reply would be lost
+   * to the exit-on-EOF.
+   */
+  const rpc = async (
+    dir: string,
+    messages: object[],
+    expect_: number[],
+  ): Promise<Record<number, unknown>> => {
+    const proc = Bun.spawn(["bun", join(import.meta.dir, "../src/cli.ts"), "mcp"], {
+      cwd: dir,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "ignore",
+    })
+    const stdin = proc.stdin as { write(s: string): unknown }
+    for (const m of messages) stdin.write(`${JSON.stringify(m)}\n`)
+
+    const byId: Record<number, unknown> = {}
+    const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
+    const decoder = new TextDecoder()
+    let buffered = ""
+    const deadline = Date.now() + 40_000
+    try {
+      while (expect_.some((id) => byId[id] === undefined) && Date.now() < deadline) {
+        const chunk = await Promise.race([
+          reader.read(),
+          new Promise<{ done: true; value: undefined }>((r) =>
+            setTimeout(() => r({ done: true, value: undefined }), 40_000),
+          ),
+        ])
+        if (chunk.done) break
+        buffered += decoder.decode(chunk.value, { stream: true })
+        const lines = buffered.split("\n")
+        buffered = lines.pop() ?? ""
+        for (const line of lines) {
+          if (!line.startsWith("{")) continue
+          const parsed = JSON.parse(line) as { id?: number }
+          if (typeof parsed.id === "number") byId[parsed.id] = parsed
+        }
+      }
+    } finally {
+      reader.cancel().catch(() => {})
+      proc.kill()
+    }
+    return byId
+  }
+
+  const INIT = {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "t", version: "1" },
+    },
+  }
+  const READY = { jsonrpc: "2.0", method: "notifications/initialized" }
+
+  test("initialize succeeds and the built-in tools are served", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-mcp-backend-only-"))
+    // Deliberately NO nifra.config.ts, framework.ts or routes/ - just an app module, as the
+    // default template ships it.
+    await mkdir(join(dir, "src"), { recursive: true })
+    await writeFile(join(dir, "package.json"), JSON.stringify({ name: "x", type: "module" }))
+    await writeFile(join(dir, "src", "app.ts"), "export const app = null\n")
+
+    const res = await rpc(
+      dir,
+      [INIT, READY, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }],
+      [1, 2],
+    )
+
+    const init = res[1] as { result?: { serverInfo?: { name?: string } }; error?: unknown }
+    expect(init?.error).toBeUndefined() // the -32603 that closed the session before it opened
+    expect(init?.result?.serverInfo?.name).toBe("nifra")
+
+    const list = res[2] as { result?: { tools?: { name: string }[] } }
+    const names = (list?.result?.tools ?? []).map((t) => t.name)
+    // The app-independent tools are exactly the ones that must survive an unloadable project.
+    for (const name of [
+      "nifra_check",
+      "nifra_doctor",
+      "nifra_levels",
+      "nifra_docs",
+      "nifra_types",
+    ]) {
+      expect(names).toContain(name)
+    }
+
+    await rm(dir, { recursive: true, force: true })
+  }, 30_000)
+
+  test("a tool that genuinely needs the app fails per call, without ending the session", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-mcp-backend-only-"))
+    await writeFile(join(dir, "package.json"), JSON.stringify({ name: "x", type: "module" }))
+
+    const res = await rpc(
+      dir,
+      [
+        INIT,
+        READY,
+        {
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/call",
+          params: { name: "nifra_routes", arguments: {} },
+        },
+        // Sent AFTER the failing call: proves the failure was scoped to that tool.
+        {
+          jsonrpc: "2.0",
+          id: 3,
+          method: "tools/call",
+          params: { name: "nifra_check", arguments: { lintsOnly: true } },
+        },
+      ],
+      [2, 3],
+    )
+
+    const routes = res[2] as { result?: { isError?: boolean } }
+    expect(routes?.result?.isError).toBe(true)
+
+    const check = res[3] as { result?: { isError?: boolean }; error?: unknown }
+    expect(check?.error).toBeUndefined()
+    expect(check?.result?.isError).toBeFalsy()
+
+    await rm(dir, { recursive: true, force: true })
+  }, 30_000)
+})
