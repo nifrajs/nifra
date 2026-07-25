@@ -441,7 +441,7 @@
     "name": "AssuranceRouteSelector",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface AssuranceRouteSelector {\n    /** Omit for every method. */\n    readonly methods?: readonly Method[];\n    /** Absolute route globs. `*` matches one segment; final `**` matches zero or more. */\n    readonly paths?: readonly string[];\n    /** Restrict the rule to MCP tool routes (`true`) or non-tool routes (`false`). */\n    readonly tools?: boolean;\n}"
+    "signature": "export interface AssuranceRouteSelector {\n    /** Omit for every method. */\n    readonly methods?: readonly Method[];\n    /** Absolute route globs. `*` matches one segment; final `**` matches zero or more. */\n    readonly paths?: readonly string[];\n    /** Restrict the rule to MCP tool routes (`true`) or non-tool routes (`false`). */\n    readonly tools?: boolean;\n    /**\n     * Match routes declaring ANY of these capability tokens.\n     *\n     * Lets a policy be written about what a route DOES rather than where it lives: \"anything that writes\n     * to the database must be authenticated\" survives a route being moved or renamed, which a path glob\n     * does not. Reflection already carries the declared tokens, so this reads what the route said about\n     * itself.\n     */\n    readonly capabilities?: readonly string[];\n}"
   },
   {
     "name": "AssuranceRule",
@@ -4894,7 +4894,7 @@
     "name": "matchesAssuranceSelector",
     "kind": "function",
     "package": "@nifrajs/core",
-    "signature": "export declare function matchesAssuranceSelector(route: Pick<ReflectedRoute, \"method\" | \"path\" | \"tool\">, selector: AssuranceRouteSelector): boolean;",
+    "signature": "export declare function matchesAssuranceSelector(route: Pick<ReflectedRoute, \"method\" | \"path\" | \"tool\" | \"capabilities\">, selector: AssuranceRouteSelector): boolean;",
     "doc": "/** Shared selector semantics for policy rules and framework adapters. */"
   },
   {

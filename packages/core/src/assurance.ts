@@ -40,6 +40,15 @@ export interface AssuranceRouteSelector {
   readonly paths?: readonly string[]
   /** Restrict the rule to MCP tool routes (`true`) or non-tool routes (`false`). */
   readonly tools?: boolean
+  /**
+   * Match routes declaring ANY of these capability tokens.
+   *
+   * Lets a policy be written about what a route DOES rather than where it lives: "anything that writes
+   * to the database must be authenticated" survives a route being moved or renamed, which a path glob
+   * does not. Reflection already carries the declared tokens, so this reads what the route said about
+   * itself.
+   */
+  readonly capabilities?: readonly string[]
 }
 
 export interface AssuranceRule {
@@ -166,6 +175,19 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
     if (names.has(name))
       throw new Error(`route assurance: duplicate rule name ${JSON.stringify(name)}`)
     names.add(name)
+    // The selector is rebuilt from known keys below, so an unrecognised one would be dropped in
+    // silence - and a selector that loses its only constraint matches EVERY route, making the rule
+    // swallow everything after it. A misspelled key is a policy hole, so it is refused here.
+    const unknown = Object.keys(rule.match).filter(
+      (key) => !["methods", "paths", "tools", "capabilities"].includes(key),
+    )
+    if (unknown.length > 0) {
+      throw new Error(
+        `route assurance: rule ${JSON.stringify(rule.name)} has unknown selector key(s) ${unknown
+          .map((key) => JSON.stringify(key))
+          .join(", ")} - a dropped selector would match every route`,
+      )
+    }
     if (rule.match.tools !== undefined && typeof rule.match.tools !== "boolean") {
       throw new Error(
         `route assurance: rule ${JSON.stringify(name)} tools selector must be boolean`,
@@ -181,6 +203,12 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
       routeGlob(path)
       return path
     })
+    const capabilities = rule.match.capabilities
+    if (capabilities !== undefined && (!Array.isArray(capabilities) || capabilities.length === 0)) {
+      throw new Error(
+        `route assurance: rule ${JSON.stringify(name)} capabilities selector must be a non-empty array`,
+      )
+    }
     const required = normalizeEvidenceIds(rule.require, "required")
     const forbidden = normalizeEvidenceIds(rule.forbid, "forbidden")
     const overlap = required.find((id) => forbidden.includes(id))
@@ -195,6 +223,7 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
         ...(methods !== undefined ? { methods: Object.freeze(methods as Method[]) } : {}),
         ...(paths !== undefined ? { paths: Object.freeze(paths) } : {}),
         ...(rule.match.tools !== undefined ? { tools: rule.match.tools } : {}),
+        ...(capabilities !== undefined ? { capabilities: Object.freeze([...capabilities]) } : {}),
       }),
       require: required,
       forbid: forbidden,
@@ -241,14 +270,18 @@ export function defineAssuranceConfig(config: AssuranceConfig): AssuranceConfig 
 
 /** Shared selector semantics for policy rules and framework adapters. */
 export function matchesAssuranceSelector(
-  route: Pick<ReflectedRoute, "method" | "path" | "tool">,
+  route: Pick<ReflectedRoute, "method" | "path" | "tool" | "capabilities">,
   selector: AssuranceRouteSelector,
 ): boolean {
-  const { methods, paths, tools } = selector
+  const { methods, paths, tools, capabilities } = selector
   if (methods !== undefined && !methods.includes(route.method as Method)) return false
   if (paths !== undefined && !paths.some((pattern) => routeGlob(pattern).test(route.path)))
     return false
   if (tools !== undefined && (route.tool !== undefined) !== tools) return false
+  if (capabilities !== undefined) {
+    const declared = route.capabilities ?? []
+    if (!capabilities.some((token) => declared.includes(token))) return false
+  }
   return true
 }
 

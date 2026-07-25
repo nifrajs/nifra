@@ -356,7 +356,7 @@ Every public export of every package and documented subpath — name, kind, sign
   Validate and freeze an ordered assurance policy.
 - **evaluateRouteAssurance** _(function)_ — `evaluateRouteAssurance: (source: unknown, policyInput: AssurancePolicy) => AssuranceReport`
   Evaluate reflected route evidence against the first matching policy rule.
-- **matchesAssuranceSelector** _(function)_ — `matchesAssuranceSelector: (route: Pick<ReflectedRoute, "method" | "path" | "tool">, selector: AssuranceRouteSelector) => boolean`
+- **matchesAssuranceSelector** _(function)_ — `matchesAssuranceSelector: (route: Pick<ReflectedRoute, "method" | "path" | "tool" | "capabilities">, selector: AssuranceRouteSelector) => boolean`
   Shared selector semantics for policy rules and framework adapters.
 - **withRouteAssurance** _(function)_ — `withRouteAssurance: <T extends object>(target: T, declaration: AssuranceDeclaration | readonly AssuranceDeclaration[]) => T`
   Attach enforcement evidence to the middleware/plugin that installs it.

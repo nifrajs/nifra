@@ -367,3 +367,94 @@ describe("classified-no-evidence (opt-in visibility of the 'label without proof'
     expect(report).toMatchObject({ ok: true, findings: [] })
   })
 })
+
+/**
+ * Matching a rule on what a route DOES, not where it lives.
+ *
+ * A path glob is the wrong tool for "anything that writes to the database must be authenticated": it
+ * breaks the moment a route moves, and it cannot see a route that acquired the capability later. The
+ * declared tokens already reach reflection, so a policy can be written against them directly.
+ */
+describe("capability selector", () => {
+  const app = server()
+    .post("/orders", { capabilities: ["db.write"] }, () => ({ ok: true }))
+    .get("/orders", { capabilities: ["db.read"] }, () => ({ items: [] }))
+    .get("/health", () => ({ ok: true }))
+
+  const report = evaluateRouteAssurance(app, {
+    rules: [
+      {
+        name: "writes",
+        match: { capabilities: ["db.write"] },
+        require: [NIFRA_ASSURANCE.AUTHENTICATED],
+      },
+      { name: "rest", match: {}, require: [] },
+    ],
+  })
+
+  test("classifies only the routes declaring the capability", () => {
+    const ruleOf = (path: string, method: string): string | undefined =>
+      report.routes.find((r) => r.path === path && r.method === method)?.rule
+    expect(ruleOf("/orders", "POST")).toBe("writes")
+    expect(ruleOf("/orders", "GET")).toBe("rest")
+    expect(ruleOf("/health", "GET")).toBe("rest")
+  })
+
+  test("an unauthenticated write is a finding; a read is not", () => {
+    const flagged = report.findings.map((f) => `${f.method} ${f.path}`)
+    expect(flagged).toContain("POST /orders")
+    expect(flagged).not.toContain("GET /orders")
+  })
+
+  test("matches when the route declares ANY of the listed tokens", () => {
+    const many = evaluateRouteAssurance(app, {
+      rules: [
+        { name: "touches-db", match: { capabilities: ["db.read", "db.write"] }, require: [] },
+        { name: "rest", match: {}, require: [] },
+      ],
+    })
+    const rules = many.routes.map((r) => r.rule)
+    expect(rules.filter((r) => r === "touches-db")).toHaveLength(2)
+  })
+
+  test("an empty capabilities selector is refused rather than matching nothing silently", () => {
+    expect(() =>
+      defineAssurancePolicy({ rules: [{ name: "x", match: { capabilities: [] }, require: [] }] }),
+    ).toThrow(/non-empty/)
+  })
+})
+
+/**
+ * The selector is rebuilt from an allowlist of known keys, so anything unrecognised used to be dropped
+ * in silence - and a selector that loses its only constraint matches EVERY route, so the rule swallows
+ * everything after it. In a policy whose first rule is the lenient one, a single typo disables the rest
+ * of the file. That is a fail-open in a security policy, so it is refused.
+ */
+describe("unknown selector keys", () => {
+  test("a misspelled selector key is an error, not a rule that matches everything", () => {
+    expect(() =>
+      defineAssurancePolicy({
+        rules: [{ name: "typo", match: { capabilites: ["db.write"] } as never, require: [] }],
+      }),
+    ).toThrow(/unknown selector key/)
+  })
+
+  test("the known keys are all still accepted", () => {
+    expect(() =>
+      defineAssurancePolicy({
+        rules: [
+          {
+            name: "ok",
+            match: {
+              methods: ["POST"],
+              paths: ["/a/**"],
+              tools: false,
+              capabilities: ["db.write"],
+            },
+            require: [],
+          },
+        ],
+      }),
+    ).not.toThrow()
+  })
+})

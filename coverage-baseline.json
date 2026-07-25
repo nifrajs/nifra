@@ -69,7 +69,7 @@
   },
   "packages/core/src/assurance.ts": {
     "functions": 100,
-    "lines": 94.71153846153845
+    "lines": 95.19650655021834
   },
   "packages/core/src/budget.ts": {
     "functions": 94.44444444444444,

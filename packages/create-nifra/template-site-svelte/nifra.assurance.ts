@@ -20,6 +20,15 @@ export default defineAssuranceConfig({
       // The counter increments; it accepts no input at all, so there is no body to bound. Exempted by
       // name so the general rule below stays strict for every mutation that DOES take input.
       { name: "bodyless-mutation", match: { methods: ["POST"], paths: ["/count"] }, require: [] },
+      // Anything that writes must prove who asked. Matched on the DECLARED capability rather than a
+      // path, so it still holds when a route moves or a server function is added later - and a server
+      // function is a public POST endpoint like any other, so this is what stops one shipping
+      // unauthenticated. Add `capabilities: ["db.write"]` to a route and this rule starts applying.
+      {
+        name: "authenticated-write",
+        match: { capabilities: ["db.write"] },
+        require: [NIFRA_ASSURANCE.AUTHENTICATED],
+      },
       // Anything else that changes state must validate its input at the boundary. Adding a POST
       // without a `body` schema fails this - which is the point: the check notices, not review.
       {
