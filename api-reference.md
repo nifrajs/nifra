@@ -335,6 +335,8 @@ Every public export of every package and documented subpath — name, kind, sign
 - **AssuranceConfig** _(interface)_ — `interface AssuranceConfig`
 - **AssuranceDeclaration** _(interface)_ — `interface AssuranceDeclaration`
   Metadata installed on a middleware/plugin by {@link withRouteAssurance}.
+- **AssuranceEvaluationOptions** _(interface)_ — `interface AssuranceEvaluationOptions`
+  Extra inputs an assurance evaluation needs beyond the routes themselves.
 - **AssuranceEvidence** _(interface)_ — `interface AssuranceEvidence`
   Reflection-safe proof that a named enforcement module covered a route.
 - **AssuranceFinding** _(interface)_ — `interface AssuranceFinding`
@@ -354,9 +356,9 @@ Every public export of every package and documented subpath — name, kind, sign
   Identity helper for a `nifra.assurance.ts` default export.
 - **defineAssurancePolicy** _(function)_ — `defineAssurancePolicy: (policy: AssurancePolicy) => AssurancePolicy`
   Validate and freeze an ordered assurance policy.
-- **evaluateRouteAssurance** _(function)_ — `evaluateRouteAssurance: (source: unknown, policyInput: AssurancePolicy) => AssuranceReport`
+- **evaluateRouteAssurance** _(function)_ — `evaluateRouteAssurance: (source: unknown, policyInput: AssurancePolicy, options?: AssuranceEvaluationOptions) => AssuranceReport`
   Evaluate reflected route evidence against the first matching policy rule.
-- **matchesAssuranceSelector** _(function)_ — `matchesAssuranceSelector: (route: Pick<ReflectedRoute, "method" | "path" | "tool" | "capabilities">, selector: AssuranceRouteSelector) => boolean`
+- **matchesAssuranceSelector** _(function)_ — `matchesAssuranceSelector: (route: Pick<ReflectedRoute, "method" | "path" | "tool" | "capabilities">, selector: AssuranceRouteSelector, definitions?: ReadonlyMap<string, CapabilityDefinition>) => boolean`
   Shared selector semantics for policy rules and framework adapters.
 - **withRouteAssurance** _(function)_ — `withRouteAssurance: <T extends object>(target: T, declaration: AssuranceDeclaration | readonly AssuranceDeclaration[]) => T`
   Attach enforcement evidence to the middleware/plugin that installs it.

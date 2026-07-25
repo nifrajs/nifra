@@ -4,8 +4,11 @@
  */
 
 import {
+  type CapabilityAccess,
   type CapabilityAssuranceReport,
+  type CapabilityDefinition,
   type CapabilityPolicy,
+  type CapabilityZone,
   defineCapabilityPolicy,
 } from "./capabilities.ts"
 import type {
@@ -47,8 +50,55 @@ export interface AssuranceRouteSelector {
    * to the database must be authenticated" survives a route being moved or renamed, which a path glob
    * does not. Reflection already carries the declared tokens, so this reads what the route said about
    * itself.
+   *
+   * Naming exact tokens is precise but closed: a rule listing `db.write` does not cover `storage.write`,
+   * and a capability added next year escapes it in silence. Prefer `access`/`zone` for a rule that is
+   * meant to hold for a CLASS of effect.
    */
   readonly capabilities?: readonly string[]
+  /**
+   * Match routes declaring any capability whose definition has this access.
+   *
+   * This is the selector to reach for when the rule is "anything that writes must prove who asked":
+   * it is keyed on what the capability IS rather than what it is called, so a token introduced later
+   * is covered the day it is declared instead of the day someone remembers to widen the rule.
+   *
+   * Requires capability definitions. A policy using it without them is refused rather than quietly
+   * matching nothing - a selector that matches nothing lets the route fall through to a laxer rule.
+   */
+  readonly access?: CapabilityAccess
+  /**
+   * Match routes declaring any capability in this zone. Combined with `access`, both must hold for the
+   * SAME capability, so `{ access: "write", zone: "domain" }` is "writes business state" and does not
+   * match a route that only writes an audit log.
+   */
+  readonly zone?: CapabilityZone
+}
+
+/** Extra inputs an assurance evaluation needs beyond the routes themselves. */
+export interface AssuranceEvaluationOptions {
+  /**
+   * Capability definitions, required by any rule selecting on `access`/`zone`. Normally
+   * `config.capabilities.definitions`.
+   */
+  readonly definitions?: readonly CapabilityDefinition[]
+}
+
+/** Selector keys that cannot be resolved from reflection alone. */
+const CLASS_SELECTOR_KEYS = ["access", "zone"] as const
+
+const usesClassSelector = (selector: AssuranceRouteSelector): boolean =>
+  selector.access !== undefined || selector.zone !== undefined
+
+/** The rules whose selector needs capability definitions to mean anything. */
+function rulesNeedingDefinitions(policy: AssurancePolicy): readonly string[] {
+  return policy.rules.filter((rule) => usesClassSelector(rule.match)).map((rule) => rule.name)
+}
+
+function definitionMap(
+  definitions: readonly CapabilityDefinition[] | undefined,
+): ReadonlyMap<string, CapabilityDefinition> {
+  return new Map((definitions ?? []).map((definition) => [definition.id, definition]))
 }
 
 export interface AssuranceRule {
@@ -179,7 +229,7 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
     // silence - and a selector that loses its only constraint matches EVERY route, making the rule
     // swallow everything after it. A misspelled key is a policy hole, so it is refused here.
     const unknown = Object.keys(rule.match).filter(
-      (key) => !["methods", "paths", "tools", "capabilities"].includes(key),
+      (key) => !["methods", "paths", "tools", "capabilities", ...CLASS_SELECTOR_KEYS].includes(key),
     )
     if (unknown.length > 0) {
       throw new Error(
@@ -209,6 +259,18 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
         `route assurance: rule ${JSON.stringify(name)} capabilities selector must be a non-empty array`,
       )
     }
+    const access = rule.match.access
+    if (access !== undefined && access !== "read" && access !== "write") {
+      throw new Error(
+        `route assurance: rule ${JSON.stringify(name)} access selector must be "read" or "write"`,
+      )
+    }
+    const zone = rule.match.zone
+    if (zone !== undefined && zone !== "domain" && zone !== "operational") {
+      throw new Error(
+        `route assurance: rule ${JSON.stringify(name)} zone selector must be "domain" or "operational"`,
+      )
+    }
     const required = normalizeEvidenceIds(rule.require, "required")
     const forbidden = normalizeEvidenceIds(rule.forbid, "forbidden")
     const overlap = required.find((id) => forbidden.includes(id))
@@ -224,6 +286,8 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
         ...(paths !== undefined ? { paths: Object.freeze(paths) } : {}),
         ...(rule.match.tools !== undefined ? { tools: rule.match.tools } : {}),
         ...(capabilities !== undefined ? { capabilities: Object.freeze([...capabilities]) } : {}),
+        ...(access !== undefined ? { access } : {}),
+        ...(zone !== undefined ? { zone } : {}),
       }),
       require: required,
       forbid: forbidden,
@@ -248,12 +312,27 @@ export function defineAssuranceConfig(config: AssuranceConfig): AssuranceConfig 
   if (config.invariants !== undefined && typeof config.invariants.executor !== "function") {
     throw new Error("route assurance: invariant executor must be a function")
   }
+  const policy = defineAssurancePolicy(config.policy)
+  const capabilities =
+    config.capabilities !== undefined ? defineCapabilityPolicy(config.capabilities) : undefined
+  // An `access`/`zone` selector is resolved through the capability definitions. Without them it can
+  // only ever match nothing, and a rule that matches nothing does not fail - the route falls past it
+  // to whatever laxer rule comes next. Refuse the config here rather than ship a policy whose
+  // strictest rule is inert.
+  const needDefinitions = rulesNeedingDefinitions(policy)
+  if (needDefinitions.length > 0 && (capabilities?.definitions.length ?? 0) === 0) {
+    throw new Error(
+      `route assurance: rule(s) ${needDefinitions
+        .map((name) => JSON.stringify(name))
+        .join(
+          ", ",
+        )} select on ${CLASS_SELECTOR_KEYS.join("/")}, which needs capability definitions - add a \`capabilities\` policy defining the tokens your routes declare`,
+    )
+  }
   return Object.freeze({
     source: config.source,
-    policy: defineAssurancePolicy(config.policy),
-    ...(config.capabilities !== undefined
-      ? { capabilities: defineCapabilityPolicy(config.capabilities) }
-      : {}),
+    policy,
+    ...(capabilities !== undefined ? { capabilities } : {}),
     ...(config.manifest !== undefined
       ? {
           manifest: Object.freeze({
@@ -268,19 +347,37 @@ export function defineAssuranceConfig(config: AssuranceConfig): AssuranceConfig 
   })
 }
 
-/** Shared selector semantics for policy rules and framework adapters. */
+/**
+ * Shared selector semantics for policy rules and framework adapters.
+ *
+ * `definitions` is only consulted by the `access`/`zone` selectors; every other selector reads
+ * reflection alone. A caller that omits it while the selector needs it gets no match, so callers that
+ * accept user policy must reject that combination up front - `defineAssuranceConfig` does.
+ */
 export function matchesAssuranceSelector(
   route: Pick<ReflectedRoute, "method" | "path" | "tool" | "capabilities">,
   selector: AssuranceRouteSelector,
+  definitions?: ReadonlyMap<string, CapabilityDefinition>,
 ): boolean {
-  const { methods, paths, tools, capabilities } = selector
+  const { methods, paths, tools, capabilities, access, zone } = selector
   if (methods !== undefined && !methods.includes(route.method as Method)) return false
   if (paths !== undefined && !paths.some((pattern) => routeGlob(pattern).test(route.path)))
     return false
   if (tools !== undefined && (route.tool !== undefined) !== tools) return false
-  if (capabilities !== undefined) {
-    const declared = route.capabilities ?? []
-    if (!capabilities.some((token) => declared.includes(token))) return false
+  const declared = route.capabilities ?? []
+  if (capabilities !== undefined && !capabilities.some((token) => declared.includes(token)))
+    return false
+  if (access !== undefined || zone !== undefined) {
+    // Both constraints must hold for the SAME capability: a route that reads the database and writes
+    // an audit log must not satisfy "writes business state" by combining halves of two tokens.
+    const matched = declared.some((token) => {
+      const definition = definitions?.get(token)
+      if (definition === undefined) return false
+      if (access !== undefined && definition.access !== access) return false
+      if (zone !== undefined && definition.zone !== zone) return false
+      return true
+    })
+    if (!matched) return false
   }
   return true
 }
@@ -289,8 +386,22 @@ export function matchesAssuranceSelector(
 export function evaluateRouteAssurance(
   source: unknown,
   policyInput: AssurancePolicy,
+  options?: AssuranceEvaluationOptions,
 ): AssuranceReport {
   const policy = defineAssurancePolicy(policyInput)
+  const definitions = definitionMap(options?.definitions)
+  // Same reasoning as `defineAssuranceConfig`, repeated for callers that evaluate a bare policy: a
+  // class selector with nothing to resolve against is an inert rule, not a lenient one.
+  const needDefinitions = rulesNeedingDefinitions(policy)
+  if (needDefinitions.length > 0 && definitions.size === 0) {
+    throw new Error(
+      `route assurance: rule(s) ${needDefinitions
+        .map((name) => JSON.stringify(name))
+        .join(
+          ", ",
+        )} select on ${CLASS_SELECTOR_KEYS.join("/")} but no capability definitions were supplied`,
+    )
+  }
   const findings: AssuranceFinding[] = []
   const routes: AssuredRoute[] = []
   const reflected = reflectRoutes(source)
@@ -305,7 +416,9 @@ export function evaluateRouteAssurance(
   }
 
   for (const route of reflected) {
-    const rule = policy.rules.find((candidate) => matchesAssuranceSelector(route, candidate.match))
+    const rule = policy.rules.find((candidate) =>
+      matchesAssuranceSelector(route, candidate.match, definitions),
+    )
     const evidence = route.assurance ?? []
     const evidenceIds = new Set(evidence.map((item) => item.id))
     if (rule === undefined) {

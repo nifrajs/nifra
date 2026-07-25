@@ -61,7 +61,9 @@ export async function collectAssuranceReport(
   configPath?: string,
 ): Promise<AssuranceReport> {
   const config = await loadAssuranceConfig(cwd, configPath)
-  const routeReport = evaluateRouteAssurance(config.source, config.policy)
+  const routeReport = evaluateRouteAssurance(config.source, config.policy, {
+    ...(config.capabilities !== undefined ? { definitions: config.capabilities.definitions } : {}),
+  })
   if (config.capabilities === undefined) return routeReport
   const { collectCapabilityProjectReport } = await import("./capabilities-tool.ts")
   const capabilityProject = await collectCapabilityProjectReport(

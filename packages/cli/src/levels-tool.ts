@@ -80,7 +80,9 @@ export async function collectVerificationLevels(
   }
 
   // L1 — route assurance.
-  const assurance = evaluateRouteAssurance(config.source, config.policy)
+  const assurance = evaluateRouteAssurance(config.source, config.policy, {
+    ...(config.capabilities !== undefined ? { definitions: config.capabilities.definitions } : {}),
+  })
   statuses.push({
     level: 1,
     name: "route assurance",

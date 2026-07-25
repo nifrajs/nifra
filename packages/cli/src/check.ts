@@ -1531,7 +1531,11 @@ export async function collectCheckResult(
         const { buildNifraManifest, parseNifraManifest, serializeNifraManifest } = await import(
           "@nifrajs/core/manifest"
         )
-        const assurance = evaluateRouteAssurance(config.source, config.policy)
+        const assurance = evaluateRouteAssurance(config.source, config.policy, {
+          ...(config.capabilities !== undefined
+            ? { definitions: config.capabilities.definitions }
+            : {}),
+        })
         const path = resolve(cwd, config.manifest.path ?? "nifra.manifest.json")
         let message: string | undefined
         if (!assurance.ok || (capabilityReport !== undefined && !capabilityReport.ok)) {

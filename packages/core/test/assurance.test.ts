@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
+  defineAssuranceConfig,
   defineAssurancePolicy,
   evaluateRouteAssurance,
   NIFRA_ASSURANCE,
@@ -421,6 +422,180 @@ describe("capability selector", () => {
     expect(() =>
       defineAssurancePolicy({ rules: [{ name: "x", match: { capabilities: [] }, require: [] }] }),
     ).toThrow(/non-empty/)
+  })
+})
+
+/**
+ * Naming exact tokens is precise but closed: a rule listing `db.write` does not cover `storage.write`,
+ * so every policy has to enumerate every write token and a capability added later escapes the rule in
+ * silence - the same fail-open shape as a misspelled selector key, arrived at by a different road.
+ *
+ * `access`/`zone` are keyed on what the capability IS. The test that matters here is the negative
+ * control: a token the rule has never heard of is still caught.
+ */
+describe("access-class selector", () => {
+  const definitions = [
+    { id: "db.read", zone: "domain", access: "read" },
+    { id: "db.write", zone: "domain", access: "write" },
+    { id: "audit.write", zone: "operational", access: "write" },
+  ] as const
+
+  const evaluate = (
+    source: unknown,
+    rules: Parameters<typeof defineAssurancePolicy>[0]["rules"],
+  ): ReturnType<typeof evaluateRouteAssurance> =>
+    evaluateRouteAssurance(source, { rules }, { definitions })
+
+  const ruleOf = (
+    report: ReturnType<typeof evaluateRouteAssurance>,
+    method: string,
+    path: string,
+  ): string | undefined => report.routes.find((r) => r.method === method && r.path === path)?.rule
+
+  const WRITES = [
+    {
+      name: "authenticated-write",
+      match: { access: "write", zone: "domain" },
+      require: [NIFRA_ASSURANCE.AUTHENTICATED],
+    },
+    { name: "rest", match: {}, require: [] },
+  ] as const
+
+  test("matches a domain write and leaves a read alone", () => {
+    const app = server()
+      .post("/orders", { capabilities: ["db.write"] }, () => ({ ok: true }))
+      .get("/orders", { capabilities: ["db.read"] }, () => ({ items: [] }))
+      .get("/health", () => ({ ok: true }))
+    const report = evaluate(app, [...WRITES])
+    expect(ruleOf(report, "POST", "/orders")).toBe("authenticated-write")
+    expect(ruleOf(report, "GET", "/orders")).toBe("rest")
+    expect(ruleOf(report, "GET", "/health")).toBe("rest")
+    expect(report.findings.map((f) => `${f.method} ${f.path}`)).toEqual(["POST /orders"])
+  })
+
+  test("catches a write token the rule never names", () => {
+    // The whole point. `payments.charge` did not exist when the rule was written, and the rule is not
+    // edited here - only the definitions the app already has to maintain for `nifra check`.
+    const app = server().post("/charge", { capabilities: ["payments.charge"] }, () => ({
+      ok: true,
+    }))
+    const report = evaluateRouteAssurance(
+      app,
+      { rules: [...WRITES] },
+      { definitions: [...definitions, { id: "payments.charge", zone: "domain", access: "write" }] },
+    )
+    expect(ruleOf(report, "POST", "/charge")).toBe("authenticated-write")
+    expect(report.ok).toBe(false)
+
+    // Contrast: the exact-token selector this replaces does not see it at all.
+    const byToken = evaluateRouteAssurance(app, {
+      rules: [
+        {
+          name: "writes",
+          match: { capabilities: ["db.write"] },
+          require: [NIFRA_ASSURANCE.AUTHENTICATED],
+        },
+        { name: "rest", match: {}, require: [] },
+      ],
+    })
+    expect(ruleOf(byToken, "POST", "/charge")).toBe("rest")
+    expect(byToken.ok).toBe(true)
+  })
+
+  test("zone separates a business write from an operational one", () => {
+    const app = server().post("/log", { capabilities: ["audit.write"] }, () => ({ ok: true }))
+    expect(ruleOf(evaluate(app, [...WRITES]), "POST", "/log")).toBe("rest")
+    expect(
+      ruleOf(
+        evaluate(app, [{ name: "any-write", match: { access: "write" }, require: [] }]),
+        "POST",
+        "/log",
+      ),
+    ).toBe("any-write")
+  })
+
+  test("access and zone must hold for the SAME capability", () => {
+    // A route that reads business state and writes an audit log satisfies "domain" and "write"
+    // separately. Combining halves of two different tokens would make the rule claim a business write
+    // that never happens - and, worse, would match routes the policy author did not intend.
+    const app = server().post("/report", { capabilities: ["db.read", "audit.write"] }, () => ({
+      ok: true,
+    }))
+    expect(ruleOf(evaluate(app, [...WRITES]), "POST", "/report")).toBe("rest")
+  })
+
+  test("a declared token with no definition does not silently satisfy the rule", () => {
+    // It cannot match, so the route falls through - which is why `unknown-capability` from capability
+    // assurance is the other half of this gate and both run in `nifra check`.
+    const app = server().post("/typo", { capabilities: ["db.writ"] }, () => ({ ok: true }))
+    expect(ruleOf(evaluate(app, [...WRITES]), "POST", "/typo")).toBe("rest")
+  })
+})
+
+/**
+ * A class selector resolves through the capability definitions. With none supplied it can only match
+ * nothing - and a rule that matches nothing does not fail, it lets the route fall past to whatever
+ * laxer rule comes next. So the config is refused instead of shipping with its strictest rule inert.
+ */
+describe("class selector without definitions", () => {
+  const rules = [
+    {
+      name: "writes",
+      match: { access: "write" as const },
+      require: [NIFRA_ASSURANCE.AUTHENTICATED],
+    },
+  ]
+
+  test("the policy alone still validates - it is the evaluation that needs definitions", () => {
+    expect(() => defineAssurancePolicy({ rules })).not.toThrow()
+  })
+
+  test("evaluating without definitions throws rather than matching nothing", () => {
+    const app = server().post("/orders", { capabilities: ["db.write"] }, () => ({ ok: true }))
+    expect(() => evaluateRouteAssurance(app, { rules })).toThrow(/no capability definitions/)
+  })
+
+  test("a config using the selector without a capabilities policy is refused", () => {
+    const app = server().post("/orders", { capabilities: ["db.write"] }, () => ({ ok: true }))
+    expect(() => defineAssuranceConfig({ source: app, policy: { rules } })).toThrow(
+      /needs capability definitions/,
+    )
+  })
+
+  test("the same config is accepted once the definitions exist", () => {
+    const app = server().post("/orders", { capabilities: ["db.write"] }, () => ({ ok: true }))
+    expect(() =>
+      defineAssuranceConfig({
+        source: app,
+        policy: { rules: [...rules, { name: "rest", match: {}, require: [] }] },
+        capabilities: {
+          definitions: [{ id: "db.write", zone: "domain", access: "write" }],
+          provenance: { imports: [], forbiddenImports: [] },
+        },
+      }),
+    ).not.toThrow()
+  })
+
+  test("a policy with no class selector is unaffected by absent definitions", () => {
+    const app = server().post("/orders", { capabilities: ["db.write"] }, () => ({ ok: true }))
+    expect(
+      evaluateRouteAssurance(app, {
+        rules: [{ name: "writes", match: { capabilities: ["db.write"] }, require: [] }],
+      }).ok,
+    ).toBe(true)
+  })
+
+  test("an invalid access or zone value is refused", () => {
+    expect(() =>
+      defineAssurancePolicy({
+        rules: [{ name: "x", match: { access: "delete" } as never, require: [] }],
+      }),
+    ).toThrow(/access selector/)
+    expect(() =>
+      defineAssurancePolicy({
+        rules: [{ name: "x", match: { zone: "infra" } as never, require: [] }],
+      }),
+    ).toThrow(/zone selector/)
   })
 })
 

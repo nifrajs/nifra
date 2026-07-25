@@ -407,6 +407,13 @@
     "doc": "/** Metadata installed on a middleware/plugin by {@link withRouteAssurance}. */"
   },
   {
+    "name": "AssuranceEvaluationOptions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface AssuranceEvaluationOptions {\n    /**\n     * Capability definitions, required by any rule selecting on `access`/`zone`. Normally\n     * `config.capabilities.definitions`.\n     */\n    readonly definitions?: readonly CapabilityDefinition[];\n}",
+    "doc": "/** Extra inputs an assurance evaluation needs beyond the routes themselves. */"
+  },
+  {
     "name": "AssuranceEvidence",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -441,7 +448,7 @@
     "name": "AssuranceRouteSelector",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface AssuranceRouteSelector {\n    /** Omit for every method. */\n    readonly methods?: readonly Method[];\n    /** Absolute route globs. `*` matches one segment; final `**` matches zero or more. */\n    readonly paths?: readonly string[];\n    /** Restrict the rule to MCP tool routes (`true`) or non-tool routes (`false`). */\n    readonly tools?: boolean;\n    /**\n     * Match routes declaring ANY of these capability tokens.\n     *\n     * Lets a policy be written about what a route DOES rather than where it lives: \"anything that writes\n     * to the database must be authenticated\" survives a route being moved or renamed, which a path glob\n     * does not. Reflection already carries the declared tokens, so this reads what the route said about\n     * itself.\n     */\n    readonly capabilities?: readonly string[];\n}"
+    "signature": "export interface AssuranceRouteSelector {\n    /** Omit for every method. */\n    readonly methods?: readonly Method[];\n    /** Absolute route globs. `*` matches one segment; final `**` matches zero or more. */\n    readonly paths?: readonly string[];\n    /** Restrict the rule to MCP tool routes (`true`) or non-tool routes (`false`). */\n    readonly tools?: boolean;\n    /**\n     * Match routes declaring ANY of these capability tokens.\n     *\n     * Lets a policy be written about what a route DOES rather than where it lives: \"anything that writes\n     * to the database must be authenticated\" survives a route being moved or renamed, which a path glob\n     * does not. Reflection already carries the declared tokens, so this reads what the route said about\n     * itself.\n     *\n     * Naming exact tokens is precise but closed: a rule listing `db.write` does not cover `storage.write`,\n     * and a capability added next year escapes it in silence. Prefer `access`/`zone` for a rule that is\n     * meant to hold for a CLASS of effect.\n     */\n    readonly capabilities?: readonly string[];\n    /**\n     * Match routes declaring any capability whose definition has this access.\n     *\n     * This is the selector to reach for when the rule is \"anything that writes must prove who asked\":\n     * it is keyed on what the capability IS rather than what it is called, so a token introduced later\n     * is covered the day it is declared instead of the day someone remembers to widen the rule.\n     *\n     * Requires capability definitions. A policy using it without them is refused rather than quietly\n     * matching nothing - a selector that matches nothing lets the route fall through to a laxer rule.\n     */\n    readonly access?: CapabilityAccess;\n    /**\n     * Match routes declaring any capability in this zone. Combined with `access`, both must hold for the\n     * SAME capability, so `{ access: \"write\", zone: \"domain\" }` is \"writes business state\" and does not\n     * match a route that only writes an audit log.\n     */\n    readonly zone?: CapabilityZone;\n}"
   },
   {
     "name": "AssuranceRule",
@@ -3183,7 +3190,7 @@
     "name": "evaluateRouteAssurance",
     "kind": "function",
     "package": "@nifrajs/core",
-    "signature": "export declare function evaluateRouteAssurance(source: unknown, policyInput: AssurancePolicy): AssuranceReport;",
+    "signature": "export declare function evaluateRouteAssurance(source: unknown, policyInput: AssurancePolicy, options?: AssuranceEvaluationOptions): AssuranceReport;",
     "doc": "/** Evaluate reflected route evidence against the first matching policy rule. */"
   },
   {
@@ -4908,8 +4915,8 @@
     "name": "matchesAssuranceSelector",
     "kind": "function",
     "package": "@nifrajs/core",
-    "signature": "export declare function matchesAssuranceSelector(route: Pick<ReflectedRoute, \"method\" | \"path\" | \"tool\" | \"capabilities\">, selector: AssuranceRouteSelector): boolean;",
-    "doc": "/** Shared selector semantics for policy rules and framework adapters. */"
+    "signature": "export declare function matchesAssuranceSelector(route: Pick<ReflectedRoute, \"method\" | \"path\" | \"tool\" | \"capabilities\">, selector: AssuranceRouteSelector, definitions?: ReadonlyMap<string, CapabilityDefinition>): boolean;",
+    "doc": "/**\n * Shared selector semantics for policy rules and framework adapters.\n *\n * `definitions` is only consulted by the `access`/`zone` selectors; every other selector reads\n * reflection alone. A caller that omits it while the selector needs it gets no match, so callers that\n * accept user policy must reject that combination up front - `defineAssuranceConfig` does.\n */"
   },
   {
     "name": "matchRoutePattern",

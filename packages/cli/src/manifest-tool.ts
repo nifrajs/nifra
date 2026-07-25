@@ -46,7 +46,9 @@ export async function runManifestEmit(
   options: { readonly config?: string; readonly out?: string; readonly sign?: string } = {},
 ): Promise<boolean> {
   const config = await loadAssuranceConfig(cwd, options.config)
-  const assurance = evaluateRouteAssurance(config.source, config.policy)
+  const assurance = evaluateRouteAssurance(config.source, config.policy, {
+    ...(config.capabilities !== undefined ? { definitions: config.capabilities.definitions } : {}),
+  })
   const capabilityProject =
     config.capabilities === undefined
       ? undefined
