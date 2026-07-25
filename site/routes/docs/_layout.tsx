@@ -23,6 +23,7 @@ const GROUPS: ReadonlyArray<{ title: string; links: ReadonlyArray<{ href: string
       { href: "/docs/routing", label: "Routing" },
       { href: "/docs/data", label: "Loaders & actions" },
       { href: "/docs/backends", label: "Backends & API" },
+      { href: "/docs/server-functions", label: "Server functions" },
       { href: "/docs/mutations", label: "Optimistic UI" },
       { href: "/docs/query", label: "Query cache" },
       { href: "/docs/streaming", label: "Streaming" },
@@ -48,6 +49,7 @@ const GROUPS: ReadonlyArray<{ title: string; links: ReadonlyArray<{ href: string
     title: "Proof",
     links: [
       { href: "/docs/verification", label: "Verification ladder" },
+      { href: "/docs/capabilities", label: "Effect provenance" },
       { href: "/docs/agents", label: "Coding agents" },
       { href: "/docs/causality", label: "Execution causality" },
       { href: "/docs/failure-lab", label: "Failure laboratory" },

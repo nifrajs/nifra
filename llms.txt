@@ -11,6 +11,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - [Nifra — Routing](/docs/routing): File-based routing in Nifra: conventions, params, nested layouts.
 - [Nifra — API & typed client](/docs/api): Build a typed JSON API with server()/defineContract + validate inputs with any Standard Schema, then consume it from a zero-codegen, never-throwing typed client.
 - [Nifra — Loaders & actions](/docs/data): Typed loaders and actions in Nifra: data on the server, mutations, revalidation.
+- [Nifra - Server functions](/docs/server-functions): Write a function on the server and call it from a component. The module never reaches the browser, the arguments are validated, and the mounted function is an ordinary route - so assurance, capabilities and the effect ledger all apply.
 - [Nifra — Optimistic UI & fetchers](/docs/mutations): Optimistic updates and concurrent fetchers in Nifra: instant feedback, row-level mutations.
 - [Nifra — Rendering: SSG & ISR](/docs/rendering): Prerender static routes, enumerate dynamic ones, and cache rendered pages with stale-while-revalidate — on every runtime including the edge.
 - [Nifra — Hydration & pre-hydration forms](/docs/hydration): SSR pages become interactive after hydration. nifra keeps that gap safe: progressive-enhancement forms and links work before it, and a JS-only form's broken native submit is guarded automatically.
@@ -19,6 +20,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - [Nifra — Frameworks](/docs/frameworks): One agnostic core, five UI frameworks: React, Solid, Vue, Preact, and Svelte — same loaders, streaming, islands, and routing, unchanged.
 - [Nifra — Plugins & middleware](/docs/plugins): Extend Nifra with definePlugin (typed context, idempotent) + hook-bundle middleware. Official middleware: requestId, logger, etag, bearer, apiKey, basicAuth, jwt/jwks, csrf, ipRestriction, bodyLimit, cors, securityHeaders, rateLimit, compression, cacheControl, cache, prettyJson, timing, methodOverride, trailingSlash, language, poweredBy, combine, openapi, healthcheck, idempotency.
 - [Nifra — security & hardening](/docs/security): Bounded request bodies, magic-byte file-upload validation, constant-time webhook verification, and idempotency-key replay — the hardening primitives every production app needs, built in.
+- [Nifra - Effect provenance](/docs/capabilities): A route declares the effects it performs, and `nifra check` fails it for being able to reach further than it declared. How reach is computed, why that shapes your modules, and how the declaration turns into an enforced policy.
 - [Nifra — Auth & sessions](/docs/auth): Turnkey auth with @nifrajs/better-auth (OAuth, magic links, 2FA), or signed-cookie + server-store sessions, route guards, and CSRF with @nifrajs/auth.
 - [Nifra — images](/docs/images): A CLS-safe responsive <Image> with pluggable loaders — a CDN, or Nifra's self-hosted resize endpoint (Bun.Image, sharp, or WASM on the edge) with optional signed URLs.
 - [Nifra — i18n](/docs/i18n): Locale negotiation + a tiny ICU message formatter on the platform Intl, framework-agnostic.

@@ -48,6 +48,24 @@
     "code": "import { server } from \"@nifrajs/core/server\"\n\nconst app = server({\n  requestTimeoutMs: 2_000,\n  acceptInboundDeadlines: true,\n  maxInboundDeadlineMs: 5_000,\n}).get(\"/report\", async (c) => {\n  // c.signal aborts at the SAME effective deadline.\n  // remaining() is monotonic even if the wall clock jumps.\n  return { remainingMs: c.budget.remaining() }\n})"
   },
   {
+    "name": "BEACON",
+    "topic": "Nifra - Effect provenance",
+    "slug": "capabilities",
+    "code": "import { useCapability } from \"@nifrajs/core/capabilities\"\nimport { createCache } from \"@nifrajs/cache\"\n\nconst cache = createCache({ beacon: useCapability })\n\n// Announces cache.write against THIS route before the operation, and throws if it was not declared.\nexport const write = async (c: object): Promise<void> => {\n  await cache.for(c).set(\"k\", 1)\n}"
+  },
+  {
+    "name": "POLICY",
+    "topic": "Nifra - Effect provenance",
+    "slug": "capabilities",
+    "code": "import { server } from \"@nifrajs/core/server\"\nimport { defineAssuranceConfig, NIFRA_ASSURANCE } from \"@nifrajs/core/assurance\"\n\nconst app = server()\n\nexport default defineAssuranceConfig({\n  source: app,\n  capabilities: {\n    definitions: [\n      { id: \"db.read\", zone: \"domain\", access: \"read\" },\n      { id: \"db.write\", zone: \"domain\", access: \"write\" },\n    ],\n    provenance: {\n      // Reaching one of these implies holding the capabilities beside it.\n      imports: [\n        { specifier: \"./read.ts\", capabilities: [\"db.read\"] },\n        { specifier: \"./write.ts\", capabilities: [\"db.write\"] },\n        { specifier: \"bun:sqlite\", capabilities: [\"db.read\", \"db.write\"] },\n      ],\n      forbiddenImports: [],\n    },\n  },\n  policy: {\n    rules: [\n      // Not a list of token names: anything whose DEFINITION is a domain write.\n      {\n        name: \"authenticated-write\",\n        match: { access: \"write\", zone: \"domain\" },\n        require: [NIFRA_ASSURANCE.AUTHENTICATED],\n      },\n      { name: \"read\", match: { methods: [\"GET\"] }, require: [] },\n    ],\n  },\n})"
+  },
+  {
+    "name": "ROOT",
+    "topic": "Nifra - Effect provenance",
+    "slug": "capabilities",
+    "code": "// src/app.ts - composition only. It merges route modules and registers none of its own.\nimport { server } from \"@nifrajs/core/server\"\nimport { routes } from \"./routes.ts\"\n\nexport const app = server().merge(routes)"
+  },
+  {
     "name": "CONTINUE",
     "topic": "Nifra - Execution causality",
     "slug": "causality",
@@ -286,6 +304,18 @@
     "topic": "Nifra — security & hardening",
     "slug": "security",
     "code": "import { server } from \"@nifrajs/core/server\"\nimport { responseContract } from \"@nifrajs/core/response-contract\"\nimport { t } from \"@nifrajs/schema\"\n\nconst PublicUser = t.object({ id: t.string(), name: t.string() })\n\n// \"warn\" logs and changes nothing; \"enforce\" makes the contract the upper bound too.\n// Not installing the plugin is \"off\" - and keeps the lane out of your bundle entirely.\nexport const app = server().use(responseContract(\"enforce\")).get(\n  \"/me\",\n  { response: PublicUser },\n  async () => {\n    // Every column, including the ones the contract never declared.\n    const user = { id: \"u1\", name: \"Ada\", email: \"a@b.c\", passwordHash: \"...\" }\n    return user\n  },\n)\n\n// off      -> {\"id\":\"u1\",\"name\":\"Ada\",\"email\":\"a@b.c\",\"passwordHash\":\"...\"}\n// enforce  -> {\"id\":\"u1\",\"name\":\"Ada\"}"
+  },
+  {
+    "name": "DECLARE",
+    "topic": "Nifra - Server functions",
+    "slug": "server-functions",
+    "code": "// todos.fn.ts - the suffix is what tells the build to strip this module from the client.\nimport { serverFn } from \"@nifrajs/web/fn\"\nimport { t } from \"@nifrajs/schema\"\nimport { createTodo } from \"./db/write.ts\"\n\nexport const addTodo = serverFn(\n  { input: t.object({ text: t.string({ minLength: 1 }) }), capabilities: [\"db.write\"] },\n  async ({ text }) => createTodo({ text }),\n)"
+  },
+  {
+    "name": "MOUNT",
+    "topic": "Nifra - Server functions",
+    "slug": "server-functions",
+    "code": "import { server } from \"@nifrajs/core/server\"\nimport { serverFunctions } from \"@nifrajs/web/fn\"\nimport * as todos from \"./todos.fn.ts\"\n\n// \"todos\" is the namespace segment; each export mounts at /_nifra/fn/todos/<exportName>.\nexport const app = server().use(serverFunctions(\"todos\", todos))"
   },
   {
     "name": "SSE",

@@ -573,6 +573,187 @@ export async function loader() {
 For optimistic UI, concurrent fetchers, and a keyed query cache, the same primitives compose
 on both React and Solid.
 
+## Nifra - Server functions
+
+> Write a function on the server and call it from a component. The module never reaches the browser, the arguments are validated, and the mounted function is an ordinary route - so assurance, capabilities and the effect ledger all apply.
+
+Write a function on the server, import it in a component, call it. The build replaces the
+module with a typed stub, so the body and everything it imports stay on the server - and
+because the mounted function is an ordinary route, everything you already have for routes
+applies to it unchanged.
+
+### Every server function is a public endpoint
+
+This is the part to internalise first, because the API deliberately reads like a local call.
+A mounted function is an HTTP route anyone can POST to, with arguments entirely under the
+caller's control, and its id is in the client bundle because the browser needs it. There is no
+obscurity to lean on. Treat one exactly as you would a hand-written `app.post`.
+
+Four things follow from that, and the API enforces all of them:
+
+-
+**Input is validated, always.** `input` is not decoration - without a
+schema the function takes no argument at all, because unvalidated arguments on a public
+endpoint are mass assignment.
+
+-
+**
+`application/json` only.
+**
+A cross-origin HTML form can send urlencoded, multipart or `text/plain` and
+nothing else, so requiring JSON forces a preflight the browser blocks.
+
+-
+**Same-origin only.** A present `Origin` must match the request's own
+host - defence in depth behind the JSON requirement, at the cost of one comparison.
+
+-
+**No closures.** A function is a module-level export taking explicit arguments.
+Serialising closed-over variables to the browser and back is a class of problem worth not
+having rather than encrypting.
+
+Both content-type rules were measured rather than assumed. A body schema alone still accepts a
+cross-origin urlencoded form - 200, attacker-controlled fields - and a bounded JSON read alone
+accepts the `text/plain` trick where a form's `name=value` is crafted to
+parse as valid JSON. Neither is sufficient by itself.
+
+### Declaring one
+
+```ts
+// todos.fn.ts - the suffix is what tells the build to strip this module from the client.
+import { serverFn } from "@nifrajs/web/fn"
+import { t } from "@nifrajs/schema"
+import { createTodo } from "./db/write.ts"
+
+export const addTodo = serverFn(
+  { input: t.object({ text: t.string({ minLength: 1 }) }), capabilities: ["db.write"] },
+  async ({ text }) => createTodo({ text }),
+)
+```
+
+The second argument receives the validated input and the ordinary nifra `Context`:
+`c.env`, `c.clientIp`, `c.budget`, cookies and the capability
+guard are all there, because this is a route.
+
+### Mounting
+
+```ts
+import { server } from "@nifrajs/core/server"
+import { serverFunctions } from "@nifrajs/web/fn"
+import * as todos from "./todos.fn.ts"
+
+// "todos" is the namespace segment; each export mounts at /_nifra/fn/todos/<exportName>.
+export const app = server().use(serverFunctions("todos", todos))
+```
+
+The namespace becomes a URL segment, so it is constrained to lowercase dot/dash parts. Each
+branded export mounts at `/_nifra/fn/<namespace>/<exportName>`; anything
+in the module that is not a server function is ignored rather than mounted.
+
+One thing worth knowing: the namespace you pass here and the `*.fn.ts` filename are
+not statically checked against each other. If they disagree the call 404s, and the generated
+stub names the mismatch - but the compiler will not catch it for you.
+
+### Calling it
+
+```ts
+// doc-check: skip - a component fragment; the import resolves to the build's generated stub.
+import { addTodo } from "./todos.fn.ts"
+
+// On the client this import is a stub: (input) => Promise<Output>. Calling it POSTs.
+await addTodo({ text: "write the docs" })
+```
+
+No binding is needed to call one: the client stub is just
+`(input) => Promise<Output>`, and a click handler can await it. The types
+come from the server declaration, so a changed input schema is a compile error at the call
+site.
+
+### Pending, data and error state
+
+What a component usually wants around the call is state, and state is the part every framework
+spells differently. `useServerFn` adds exactly that.
+
+```ts
+// doc-check: skip - JSX fragment, shown for the shape rather than compiled here.
+import { useServerFn } from "@nifrajs/web-react/fn"
+import { addTodo } from "./todos.fn.ts"
+
+function AddTodo() {
+  const add = useServerFn(addTodo)
+  return (
+    <button disabled={add.pending} onClick={() => add.call({ text }).catch(() => {})}>
+      {add.pending ? "saving…" : "add"}
+    </button>
+  )
+}
+```
+
+The same hook ships for every adapter, each contributing only its subscription primitive:
+
+Import
+Subscribes with
+
+`{specifier}`
+
+{primitive}
+
+The state machine lives once in `@nifrajs/web` and each binding contributes only its
+subscription primitive, so "is it pending" has one answer rather than five that drift. Two
+behaviours are worth knowing:
+
+-
+**The last call wins.** A response that is no longer the newest is discarded
+rather than written, so a slow first call landing after a fast second cannot overwrite fresh
+data with stale.
+
+-
+**
+`call` still rejects.
+**
+The error is recorded for rendering AND the promise rejects, so `await` behaves
+normally. A caller that only renders from state should attach
+`.catch(() => {})`.
+
+`data` is kept while the next call is in flight, so a rendered list does not blank
+on every refetch.
+
+### The client never sees the module
+
+A `*.fn.ts` module is not bundled for the browser. The client build replaces it with
+one stub per export, so the bodies - and every module they import, including your database -
+stay on the server. Both pipelines do this identically, and the Bun and Vite transforms are
+held to byte-identical output by a parity test.
+
+One pipeline cannot: `nifra dev --bun`. Bun's dev-server bundler accepts no plugins,
+so a `*.fn` module there would ship whole, secrets included. That command refuses to
+start on an app containing one rather than shipping it. `nifra build` and
+`nifra dev` (Vite) are unaffected.
+
+### It is a route, so assurance applies
+
+Mounting goes through the ordinary public `register()`, which is what makes a server
+function inherit the body cap, schema validation, capability declarations, the effect ledger
+and `nifra assure` for free. The starter policy's
+`authenticated-write` rule matches any route declaring a domain write, so a function
+that writes and skips auth fails the check rather than shipping:
+
+```ts
+# A server function is a public POST endpoint, so the starter policy already covers it.
+nifra assure
+
+✖ POST /_nifra/fn/todos/addTodo (authenticated-write) is missing nifra.authenticated
+```
+
+See [effect provenance](/docs/capabilities) for what the declaration is checked
+against, and [the verification ladder](/docs/verification) for where this sits.
+
+### Cost
+
+Nothing here touches the kernel or the request path. An app that mounts no server functions
+pays exactly nothing for the feature - which is the reason it is built as a plugin over the
+public registration API rather than as a bespoke dispatcher.
+
 ## Nifra — Optimistic UI & fetchers
 
 > Optimistic updates and concurrent fetchers in Nifra: instant feedback, row-level mutations.
@@ -1901,6 +2082,212 @@ const app = server({
 //   → { ...,"message":"auth failed for [REDACTED] with [REDACTED]" }
 // Add your own: { valuePatterns: [...commonSecretPatterns, /\bord_[a-z0-9]+/g] }
 ```
+
+## Nifra - Effect provenance
+
+> A route declares the effects it performs, and `nifra check` fails it for being able to reach further than it declared. How reach is computed, why that shapes your modules, and how the declaration turns into an enforced policy.
+
+A route declares the effects it performs. Nifra works out what it can actually reach, and fails
+the check when the two disagree. That turns "this endpoint touches the database" from a comment
+into something CI enforces - and it is what lets a policy say "anything that writes must prove
+who asked" and have that be true.
+
+### The declaration
+
+A route says what it does with `capabilities`, the same on a hand-written route or a
+server function:
+
+On its own that is an assertion. What makes it load-bearing is the other half:
+`provenance.imports` maps a module specifier to the capabilities that reaching it
+implies, so nifra can compare what a route _says_ against what it _can do_.
+
+```ts
+import { server } from "@nifrajs/core/server"
+import { defineAssuranceConfig, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
+
+const app = server()
+
+export default defineAssuranceConfig({
+  source: app,
+  capabilities: {
+    definitions: [
+      { id: "db.read", zone: "domain", access: "read" },
+      { id: "db.write", zone: "domain", access: "write" },
+    ],
+    provenance: {
+      // Reaching one of these implies holding the capabilities beside it.
+      imports: [
+        { specifier: "./read.ts", capabilities: ["db.read"] },
+        { specifier: "./write.ts", capabilities: ["db.write"] },
+        { specifier: "bun:sqlite", capabilities: ["db.read", "db.write"] },
+      ],
+      forbiddenImports: [],
+    },
+  },
+  policy: {
+    rules: [
+      // Not a list of token names: anything whose DEFINITION is a domain write.
+      {
+        name: "authenticated-write",
+        match: { access: "write", zone: "domain" },
+        require: [NIFRA_ASSURANCE.AUTHENTICATED],
+      },
+      { name: "read", match: { methods: ["GET"] }, require: [] },
+    ],
+  },
+})
+```
+
+Every `create-nifra` template ships this, armed. You do not have to write it to get
+the guarantee.
+
+### The chain, end to end
+
+Write to the database and declare nothing, and the check says so:
+
+```ts
+$ nifra check
+
+✗ effect/capability assurance: 1
+    POST /notes evidence exceeds its declaration: db.write
+```
+
+Declare it, and the policy takes over:
+
+```ts
+$ nifra check
+✓ effect/capability assurance: none
+
+$ nifra assure
+✖ POST /notes (authenticated-write) is missing nifra.authenticated
+```
+
+Only an authenticated write ships. Nobody had to remember anything - and note that the rule
+matches on `access` and `zone` rather than naming `db.write`,
+so a token introduced next year is covered the day it is declared instead of the day someone
+remembers to widen the rule.
+
+### Reach is per module
+
+This is the rule everything else follows from, so it is worth stating plainly:
+**
+a route's reach is computed from the module that REGISTERS it, following that module's
+imports, transitively.
+**
+
+Not from the handler body - static analysis cannot honestly tell you which closure touched
+which import. From the module. So a file that registers routes _and_ imports a database
+gives every route in it database reach, whether or not it uses it. That is conservative, and it
+is true: the handler really does have the connection in lexical scope.
+
+Which produces a specific dead end, and a specific finding for it:
+
+```ts
+$ nifra check
+
+✗ effect/capability assurance: 1
+    GET / can reach domain write capability db.write without declaring it, and a safe method
+    may not declare one - move the route or the effect so the write is not in its module's reach
+```
+
+A GET route may not declare a domain write - that is an HTTP semantics rule. So a GET in a
+module that can reach a write has no declaration that is both legal and true, and no amount of
+editing the declaration fixes it. The fix is structural, and the message says so rather than
+bouncing you between two impossible demands.
+
+### What that means for your modules
+
+Two habits follow, and the templates are shaped around both.
+
+**The app root composes; it does not register.** If the root both merges route
+modules and declares routes of its own, those routes inherit the reach of everything merged
+there.
+
+```ts
+// src/app.ts - composition only. It merges route modules and registers none of its own.
+import { server } from "@nifrajs/core/server"
+import { routes } from "./routes.ts"
+
+export const app = server().merge(routes)
+```
+
+**A feature is a module,** owning its store, its adapters and the routes over
+them. The second feature with a database of its own gets its own file rather than another
+section of this one.
+
+### Splitting the seam by access
+
+A raw driver cannot tell a read from a write at the import, so it grants both - which means a
+GET route in any module that can reach the driver is stuck. Putting your queries behind a seam
+split by access is what unsticks it, and it is what `create-nifra --db` scaffolds:
+
+```ts
+db/
+  index.ts        the connection - no route module imports this
+  read.ts         reads, mapped to db.read
+  write.ts        writes, mapped to db.write
+  read-routes.ts  GET routes; imports ./read.ts only, so it can declare db.read and nothing more
+  write-routes.ts POST routes; imports ./write.ts only
+```
+
+Because `./read.ts` is mapped in `provenance.imports`, the walk stops
+there and grants exactly `db.read` - it never reaches the driver underneath. Keep
+the two halves import-disjoint, at the seam and at the route modules, and every route's
+declaration equals its reach.
+
+### Runtime beacons
+
+Static provenance answers what a _module_ can reach, so its evidence is as broad as the
+module. A beacon answers which _route_ did what, at the moment it does it.
+`@nifrajs/cache`, `@nifrajs/jobs` and `@nifrajs/storage` can
+emit one:
+
+```ts
+import { useCapability } from "@nifrajs/core/capabilities"
+import { createCache } from "@nifrajs/cache"
+
+const cache = createCache({ beacon: useCapability })
+
+// Announces cache.write against THIS route before the operation, and throws if it was not declared.
+export const write = async (c: object): Promise<void> => {
+  await cache.for(c).set("k", 1)
+}
+```
+
+`useCapability` is passed in rather than imported by those packages, so all three
+keep their zero dependencies - a cache should not pull the server into a bundle that only
+wanted a cache. Nothing changes for existing code: only the `for(context)` path
+announces anything, and asking for it without a configured beacon throws rather than handing
+back something that silently proves nothing.
+
+The two are complements. Static provenance is total and runs in CI; a beacon is exact but only
+speaks for code that actually executed.
+
+### The lockfile
+
+Once assurance passes, snapshot the result. The lockfile is a review artifact: a route that
+starts touching something new shows up as a diff in the pull request rather than as nothing at
+all.
+
+```ts
+$ nifra capabilities snapshot   # writes capabilities.lock.json
+$ nifra levels
+✓ L0 typed contract
+✓ L1 route assurance
+✓ L2 capability lockfile
+```
+
+That is L2 on [the verification ladder](/docs/verification). See also
+[server functions](/docs/server-functions), which are public POST endpoints and are
+covered by exactly the same policy.
+
+### Turning it down
+
+The firewall is `provenance.imports` in `nifra.assurance.ts`, and it is
+yours. Emptying it disarms the reach comparison while leaving the declarations and the policy
+in place; removing a driver entry stops that driver implying anything. Nothing here is
+load-bearing for the framework - it is load-bearing for the guarantee, and the guarantee is
+opt-out.
 
 ## Nifra — Auth & sessions
 
