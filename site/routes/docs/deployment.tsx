@@ -24,6 +24,24 @@ bun run deploy    # runs that target's deploy CLI (you stay logged-in to the ven
 bun create nifra my-app --deploy cf-pages --ci github
 #   → .github/workflows/deploy.yml (builds on every push/PR, deploys on push to main)`
 
+const SW = `// build.ts - after buildClient(), write the worker to the ORIGIN ROOT.
+import { generateServiceWorker, serviceWorkerRegistration } from "@nifrajs/web/service-worker"
+
+export async function emitServiceWorker(manifest: {
+  entry: string
+  assets: readonly string[]
+  css?: readonly string[]
+}): Promise<string> {
+  const sw = generateServiceWorker(manifest, {
+    // Anything that changes exactly when the assets do: a content hash, a commit sha, a release.
+    buildId: Bun.env.GIT_SHA ?? "dev",
+    offlineUrl: "/offline",
+  })
+  await Bun.write("dist/sw.js", sw)
+  // Put this in a <script> in your document shell.
+  return serviceWorkerRegistration("/sw.js")
+}`
+
 const CF = `// _worker.ts — the edge SSR entry
 import { toFetchHandler } from "@nifrajs/core/server"
 import { createWebApp } from "@nifrajs/web"
@@ -124,6 +142,45 @@ export default function Deployment() {
       <p>
         Nifra never runs the deploy or enters your cloud credentials — it scaffolds the config + a{" "}
         <code>deploy</code> script that shells out to the vendor CLI you've already authed.
+      </p>
+
+      <h2>Offline &amp; service workers</h2>
+      <p>
+        <code>@nifrajs/web/service-worker</code> turns a build manifest into a service worker. It is
+        opt-in and generated at build time, so an app that never calls it ships nothing.
+      </p>
+      <CodeBlock code={SW} lang="ts" />
+      <p>
+        Serve the file from the origin root. A worker's default scope is its own directory, so one
+        served from <code>/assets/</code> could never control the pages it exists for.
+      </p>
+      <p>
+        The generated worker is deliberately narrow, because a service worker outlives a deploy and can
+        hand one visitor a response produced for another:
+      </p>
+      <ul>
+        <li>
+          <b>Only content-hashed assets are precached.</b> A hashed URL names its bytes, so serving it
+          from cache forever is correct by construction. Unhashed URLs are left to the network.
+        </li>
+        <li>
+          <b>Documents are never cached.</b> Only navigations that FAIL are answered, and only with the
+          offline page you nominate - which must be static and user-independent, since every visitor
+          gets the same bytes. Caching HTML is how a worker serves one signed-in user the page rendered
+          for another.
+        </li>
+        <li>
+          <b>GET, same-origin, <code>ok</code>, not <code>no-store</code>.</b> Anything else goes
+          straight to the network.
+        </li>
+        <li>
+          <b>The cache name carries the build id</b>, and activation deletes every older cache - so a
+          stale worker cannot pin an old build indefinitely.
+        </li>
+      </ul>
+      <p>
+        Omit <code>offlineUrl</code> and a failed navigation simply fails, which is the honest default:
+        an offline page you have not written is not better than a browser error.
       </p>
 
       <h2>CI: deploy on push</h2>

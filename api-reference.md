@@ -2723,6 +2723,16 @@ Every public export of every package and documented subpath — name, kind, sign
 
 _No named exports (side-effect entrypoint)._
 
+### `@nifrajs/web/service-worker`
+
+- **ServiceWorkerManifest** _(interface)_ — `interface ServiceWorkerManifest`
+  The parts of a `BuildManifest` a worker needs. Structural, so a caller can pass extra fields.
+- **ServiceWorkerOptions** _(interface)_ — `interface ServiceWorkerOptions`
+- **generateServiceWorker** _(function)_ — `generateServiceWorker: (manifest: ServiceWorkerManifest, options: ServiceWorkerOptions) => string`
+  Generate the service worker source for a build.
+- **serviceWorkerRegistration** _(function)_ — `serviceWorkerRegistration: (scriptUrl?: string) => string`
+  The registration snippet, for a `<script>` in your document shell.
+
 ### `@nifrajs/web/vite`
 
 - **ViteDevServer** _(interface)_ — `interface ViteDevServer`

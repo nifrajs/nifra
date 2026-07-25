@@ -54,6 +54,11 @@
       "types": "./dist/islands.d.ts",
       "default": "./dist/islands.js"
     },
+    "./service-worker": {
+      "bun": "./src/service-worker.ts",
+      "types": "./dist/service-worker.d.ts",
+      "default": "./dist/service-worker.js"
+    },
     "./server-only": {
       "bun": "./src/server-only.ts",
       "types": "./dist/server-only.d.ts",
