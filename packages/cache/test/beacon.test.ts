@@ -66,6 +66,31 @@ describe("cache capability beacon", () => {
     expect(seen[0]?.capability).toBe("kv.read")
   })
 
+  test("every write-side method announces, not just the ones with obvious call sites", async () => {
+    // The bound view re-implements all seven methods. `invalidateTag` and `clear` are the two nobody
+    // reaches for first, which is exactly why an unannounced one would sit there unnoticed.
+    const { seen, beacon } = spy()
+    const cache = createCache({ beacon })
+    const ctx = {}
+    await cache.for(ctx).set("k", 1, { tags: ["t"] })
+    await cache.for(ctx).invalidateTag("t")
+    await cache.for(ctx).clear()
+    expect(seen.map((s) => s.capability)).toEqual(["cache.write", "cache.write", "cache.write"])
+    expect(seen.every((s) => s.context === ctx)).toBe(true)
+    expect(await cache.get("k")).toBeUndefined()
+  })
+
+  test("a bound view can be rebound to another context", async () => {
+    // One request's view must not leak into the next: `for` on a bound view returns a view for the NEW
+    // context rather than reusing the one it was called on.
+    const { seen, beacon } = spy()
+    const cache = createCache({ beacon })
+    const first = {}
+    const second = {}
+    await cache.for(first).for(second).get("k")
+    expect(seen).toEqual([{ context: second, capability: "cache.read" }])
+  })
+
   test("the unbound cache is unchanged - no beacon, no cost", async () => {
     const { seen, beacon } = spy()
     const cache = createCache({ beacon })
