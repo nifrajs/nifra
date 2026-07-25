@@ -66,7 +66,7 @@ export default defineAssuranceConfig({
         require: [NIFRA_ASSURANCE.AUTHENTICATED],
       },
       // Anything that changes state must validate its input at the boundary. This demo is read-only,
-      // so the rule classifies nothing yet - which is the point: the first POST added to `backend.ts`
+      // so the rule classifies nothing yet - which is the point: the first POST added to `page.ts`
       // fails the check unless it bounds its body.
       {
         name: "mutation",
