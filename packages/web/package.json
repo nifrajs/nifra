@@ -1,7 +1,7 @@
 {
   "name": "@nifrajs/web",
   "version": "2.2.0",
-  "description": "Framework-agnostic SSR core for nifra — the render seam + HTML document orchestration.",
+  "description": "Framework-agnostic SSR core for nifra \u2014 the render seam + HTML document orchestration.",
   "keywords": [
     "bun",
     "typescript",
@@ -121,6 +121,11 @@
     },
     "./css-modules": {
       "types": "./css-modules.d.ts"
+    },
+    "./fn": {
+      "bun": "./src/fn.ts",
+      "types": "./dist/fn.d.ts",
+      "default": "./dist/fn.js"
     }
   },
   "files": [

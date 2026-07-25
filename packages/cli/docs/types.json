@@ -8018,6 +8018,20 @@
     "doc": "/**\n * The inline server. Routes are chainable and fully type-inferred. `derive`/\n * `decorate` extend the handler context (`Ctx`) for routes defined *after* them,\n * with full types; `Ctx` is server-only and never touches the client registry.\n *\n *   app.decorate(\"db\", db).derive((c) => ({ user: auth(c) }))\n *      .get(\"/me\", (c) => c.user)            // c.user + c.db are typed\n */"
   },
   {
+    "name": "SERVER_FN",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const SERVER_FN: unique symbol;",
+    "doc": "/** Brand identifying a value produced by {@link serverFn}, so mounting cannot pick up stray exports. */"
+  },
+  {
+    "name": "SERVER_FN_PREFIX",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const SERVER_FN_PREFIX = \"/_nifra/fn\";",
+    "doc": "/** The URL prefix every mounted function lives under. Namespaced per mount, then by export name. */"
+  },
+  {
     "name": "SERVER_ONLY_MARKER",
     "kind": "const",
     "package": "@nifrajs/web",
@@ -8030,6 +8044,48 @@
     "package": "@nifrajs/web",
     "signature": "export interface ServerBuild {\n    /** Path to the bundled, self-contained worker entry. */\n    readonly worker: string;\n    /** Paths of every emitted output (entry + any code-split chunks) — what to ship to the platform. */\n    readonly outputs: readonly string[];\n}",
     "doc": "/** The built worker bundle — point your `wrangler.toml`'s `main` at `worker`. */"
+  },
+  {
+    "name": "serverFn",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function serverFn<Input = void, Output = unknown>(config: ServerFnConfig<Input>, fn: (input: Input, context: Context) => MaybePromise<Output>): ServerFn<Input, Output>;",
+    "doc": "/**\n * Declare a server function.\n *\n *     export const addTodo = serverFn(\n *       { input: t.object({ text: t.string({ minLength: 1 }) }), capabilities: [\"db.write\"] },\n *       async ({ text }, c) => db.todos.insert({ text }),\n *     )\n *\n * The second argument receives the validated input and the ordinary nifra `Context` - `c.env`,\n * `c.clientIp`, `c.budget`, cookies, and the capability guard are all present, because this is a route.\n */"
+  },
+  {
+    "name": "ServerFn",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ServerFn<Input, Output> {\n    (input: Input, context: Context): MaybePromise<Output>;\n    readonly [SERVER_FN]: ServerFnConfig<Input>;\n}",
+    "doc": "/**\n * A declared server function. Callable directly on the server (the same value your own server-side\n * code can await); on the client, phase 2's build transform replaces this module with typed stubs\n * that POST to the mounted route.\n */"
+  },
+  {
+    "name": "ServerFnConfig",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ServerFnConfig<Input> {\n    /**\n     * Validates the single argument. Omit it and the function takes no argument - never \"any argument\":\n     * the caller controls this value completely, so an unvalidated one is an open door.\n     */\n    readonly input?: StandardSchemaV1<unknown, Input>;\n    /** Effect tokens, forwarded to the route so `nifra assure` and the effect ledger see them. */\n    readonly capabilities?: readonly string[];\n}",
+    "doc": "/** What a server function declares about itself. */"
+  },
+  {
+    "name": "ServerFnHost",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ServerFnHost {\n    register(method: \"POST\", path: string, schema: RouteSchema | undefined, handler: (context: never) => unknown): void;\n}",
+    "doc": "/** The minimum a server needs to expose for functions to be mounted onto it. */"
+  },
+  {
+    "name": "ServerFnModule",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type ServerFnModule = Readonly<Record<string, unknown>>;",
+    "doc": "/** Every server function a module exports, keyed by export name. */"
+  },
+  {
+    "name": "serverFunctions",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function serverFunctions<S extends ServerFnHost>(namespace: string, module: ServerFnModule): (app: S) => S;",
+    "doc": "/**\n * Mount a module's server functions under `namespace`, returning a plugin for `app.use(...)`.\n *\n *     import * as todos from \"./actions/todos.fn\"\n *     app.use(serverFunctions(\"todos\", todos))   // -> POST /_nifra/fn/todos/addTodo\n *\n * The namespace is explicit rather than derived from the file path: a path-derived one would put the\n * build machine's layout in a public URL, and this keeps the route readable in logs and greppable in\n * the codebase. Phase 2's transform supplies it automatically from the file's location in the project.\n *\n * Exports that are not server functions are ignored, so `export type` and helpers can live alongside.\n */"
   },
   {
     "name": "ServerOnly",

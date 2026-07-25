@@ -915,6 +915,10 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/web/src/fn.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/web/src/fonts-google.ts": {
     "functions": 94.73684210526315,
     "lines": 98.23008849557522

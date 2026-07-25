@@ -2527,6 +2527,25 @@ Every public export of every package and documented subpath — name, kind, sign
 - **writeDevFiles** _(function)_ — `writeDevFiles: (options: WriteDevFilesOptions) => void`
   Generate the client entry + the HTML route that carries it.
 
+### `@nifrajs/web/fn`
+
+- **SERVER_FN** _(const)_ — `SERVER_FN: typeof SERVER_FN`
+  Brand identifying a value produced by {@link serverFn}, so mounting cannot pick up stray exports.
+- **SERVER_FN_PREFIX** _(const)_ — `SERVER_FN_PREFIX: "/_nifra/fn"`
+  The URL prefix every mounted function lives under. Namespaced per mount, then by export name.
+- **ServerFn** _(interface)_ — `interface ServerFn<Input, Output>`
+  A declared server function. Callable directly on the server (the same value your own server-side code can await); on the client, phase 2's build transform replaces this module with typed stubs that POST to the mounted route.
+- **ServerFnConfig** _(interface)_ — `interface ServerFnConfig<Input>`
+  What a server function declares about itself.
+- **ServerFnHost** _(interface)_ — `interface ServerFnHost`
+  The minimum a server needs to expose for functions to be mounted onto it.
+- **ServerFnModule** _(type)_ — `type ServerFnModule = Readonly<Record<string, unknown>>`
+  Every server function a module exports, keyed by export name.
+- **serverFn** _(function)_ — `serverFn: <Input = void, Output = unknown>(config: ServerFnConfig<Input>, fn: (input: Input, context: Context) => MaybePromise<Output>) => ServerFn<Input, Output>`
+  Declare a server function.
+- **serverFunctions** _(function)_ — `serverFunctions: <S extends ServerFnHost>(namespace: string, module: ServerFnModule) => (app: S) => S`
+  Mount a module's server functions under `namespace`, returning a plugin for `app.use(...)`.
+
 ### `@nifrajs/web/fonts`
 
 - **FontAsset** _(interface)_ — `interface FontAsset`
