@@ -9,6 +9,7 @@ import {
   parseStaticImports,
   resolveServerOnlyChains,
   scanFetchText,
+  scanInterpolatedSql,
   scanProject,
   scanResponseRoutes,
   scanServerManifestDrift,
@@ -851,5 +852,65 @@ describe("collectCheckResult — maxDiagnostics bounds the result (MCP transport
     expect(capped.truncated).toEqual({ shown: 2, total })
     expect(capped.ok).toBe(false) // truncation never flips ok
     await rm(dir, { recursive: true, force: true })
+  })
+})
+
+/**
+ * Interpolating a value into SQL makes it STATEMENT rather than parameter, so anything the caller
+ * controls can close the literal and continue as SQL.
+ *
+ * The false negatives here matter less than the false positives: a rule that fires on the safe,
+ * idiomatic form teaches people to ignore it, and then it catches nothing at all. So the tagged
+ * template - which is the parameterised form in postgres.js, drizzle and kysely - has to stay silent,
+ * and so does anything that merely looks like a query call.
+ */
+describe("scanInterpolatedSql", () => {
+  const scan = (src: string): number => scanInterpolatedSql("a.ts", src).length
+
+  test("flags a value interpolated into a statement", () => {
+    expect(scan("db.query(`SELECT * FROM users WHERE id = ${id}`)")).toBe(1)
+    expect(scan("await db.execute(`DELETE FROM notes WHERE id = ${req.params.id}`)")).toBe(1)
+    expect(scan("conn.prepare(`UPDATE t SET body = ${body} WHERE id = ${id}`)")).toBe(1)
+  })
+
+  test("reports the line the call is on", () => {
+    const src = ["const x = 1", "", "db.query(`SELECT * FROM t WHERE id = ${x}`)"].join("\n")
+    expect(scanInterpolatedSql("a.ts", src)[0]).toMatchObject({ file: "a.ts", line: 3 })
+  })
+
+  test("stays silent on a tagged template - that IS the bound form", () => {
+    expect(scan("await sql`SELECT * FROM users WHERE id = ${id}`")).toBe(0)
+    expect(scan("db.execute(sql`SELECT * FROM users WHERE id = ${id}`)")).toBe(0)
+    expect(scan("await db.query(sql`DELETE FROM t WHERE id = ${id}`)")).toBe(0)
+  })
+
+  test("stays silent on a parameterised statement", () => {
+    expect(scan('db.query("SELECT * FROM users WHERE id = ?").get(id)')).toBe(0)
+    expect(scan("db.query(`SELECT * FROM users WHERE id = $1`, [id])")).toBe(0)
+  })
+
+  test("stays silent on a call that is not SQL", () => {
+    // `query`, `get` and `run` are ordinary method names. Requiring a SQL keyword in the literal is
+    // what keeps this rule from firing across an entire codebase.
+    expect(scan("cache.query(`user:${id}`)")).toBe(0)
+    expect(scan("registry.run(`task-${name}`)")).toBe(0)
+  })
+
+  test("flags the named escape hatches even without a keyword", () => {
+    // Their whole purpose is to take a statement as text; a substitution in one is the exact thing the
+    // name is warning about.
+    expect(scan("db.$queryRawUnsafe(`${statement}`)")).toBe(1)
+    expect(scan("sql.unsafe(`${statement}`)")).toBe(1)
+  })
+
+  test("ignores commented-out and quoted occurrences", () => {
+    expect(scan("// db.query(`SELECT * FROM t WHERE id = ${id}`)")).toBe(0)
+    expect(scan('const doc = "db.query(`SELECT * FROM t WHERE id = ${id}`)"')).toBe(0)
+    expect(scan("/* db.query(`SELECT * FROM t WHERE id = ${id}`) */")).toBe(0)
+  })
+
+  test("an unterminated template literal does not throw or match", () => {
+    expect(() => scan("db.query(`SELECT * FROM t WHERE id = ${id}")).not.toThrow()
+    expect(scan("db.query(`SELECT * FROM t WHERE id = ${id}")).toBe(0)
   })
 })

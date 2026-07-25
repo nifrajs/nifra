@@ -449,6 +449,77 @@ export function scanStaticRouteText(file: string, content: string): StaticRouteF
   ].sort(bySite)
 }
 
+/**
+ * SQL built by interpolating a value into the statement text. The value is not a parameter, it is
+ * STATEMENT, so anything the caller controls can end the literal and continue as SQL.
+ *
+ * Two things this deliberately does not flag, because both are safe and flagging them would train
+ * people to ignore the rule:
+ *
+ * - A TAGGED template - ``sql`... ${id} ...` `` in postgres.js, drizzle or kysely. The tag receives the
+ *   substitutions separately and binds them; that is the parameterised form, not a bypass of it.
+ * - A literal with no substitution at all. `db.query("SELECT … WHERE id = ?")` is the shape being
+ *   argued for.
+ *
+ * A SQL keyword is required in the literal, so `cache.query(`user:${id}`)` stays quiet. The named
+ * escape hatches (`$queryRawUnsafe`, `sql.unsafe`) are flagged on the call alone: their whole purpose
+ * is to take a statement as text, and a substitution in one is the exact thing the name warns about.
+ */
+const SQL_SINK =
+  /\.\s*(query|queryRaw|prepare|exec|execute|run|unsafe|\$queryRawUnsafe|\$executeRawUnsafe|raw)\s*\(/g
+const SQL_KEYWORD =
+  /\b(select|insert\s+into|update|delete\s+from|drop\s+table|create\s+table|alter\s+table|truncate|from|where|values|set|join|union)\b/i
+const ALWAYS_UNSAFE = new Set(["unsafe", "$queryRawUnsafe", "$executeRawUnsafe", "raw"])
+
+/** True when the backtick at `index` is preceded by a tag expression rather than standing alone. */
+function isTaggedTemplate(content: string, index: number): boolean {
+  let i = index - 1
+  while (i >= 0 && (content[i] === " " || content[i] === "\t")) i--
+  const previous = content[i]
+  if (previous === undefined) return false
+  // An identifier, a member access or a call result immediately before the backtick is the tag.
+  return /[A-Za-z0-9_$)\]]/.test(previous)
+}
+
+/** Read a template literal starting at `open`, returning its raw text (or undefined if unterminated). */
+function templateLiteralAt(content: string, open: number): string | undefined {
+  for (let i = open + 1; i < content.length; i++) {
+    if (content[i] === "\\") {
+      i++
+      continue
+    }
+    if (content[i] === "`") return content.slice(open + 1, i)
+  }
+  return undefined
+}
+
+/** Scan one file's text for SQL assembled by interpolation. Pure + line-accurate. */
+export function scanInterpolatedSql(file: string, content: string): SourceFinding[] {
+  const out: SourceFinding[] = []
+  const lines = content.split("\n")
+  const code = codePositionMask(content)
+  const re = new RegExp(SQL_SINK.source, SQL_SINK.flags)
+  for (let m = re.exec(code); m !== null; m = re.exec(code)) {
+    const method = m[1] ?? ""
+    const argument = firstArgumentIndex(content, m.index + m[0].length)
+    if (content[argument] !== "`") continue
+    if (isTaggedTemplate(content, argument)) continue
+    const literal = templateLiteralAt(content, argument)
+    if (literal === undefined || !literal.includes("${")) continue
+    if (!ALWAYS_UNSAFE.has(method) && !SQL_KEYWORD.test(literal)) continue
+    const line = lineAt(content, m.index)
+    out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
+  }
+  return out
+}
+
+/** Collect interpolated-SQL findings across the project. */
+export async function scanProjectSql(cwd: string): Promise<SourceFinding[]> {
+  const out: SourceFinding[] = []
+  await walkSource(cwd, (rel, content) => out.push(...scanInterpolatedSql(rel, content)))
+  return out.sort(bySite)
+}
+
 // `client("` / `client('` / `client(\`` — a URL-first call WITHOUT the `<typeof app>` generic:
 // the compiler has nothing to derive types from, so the anti-drift guarantee silently vanishes.
 // `client<typeof app>("…")` has `<…>` between the name and `(` so it never matches; the published-
@@ -1003,6 +1074,7 @@ export interface CheckDiagnostic {
     | "untyped-client"
     | "server-only-import"
     | "removed-import"
+    | "interpolated-sql"
     | "response-route"
     | "undeclared-dependency"
     | "duplicate-install"
@@ -1100,6 +1172,8 @@ const RESPONSE_ROUTE_HINT =
   "route handler returns a raw Response - the typed client infers `data: never`, so drift detection is lost for this route. Return a plain object (it's serialized for you); for a stream use a typed SSE route (`app.sse(...)`), which keeps typed events; or, if a raw Response is intended (file/redirect), add `{ response: t.… }` or a `// nifra-expect raw-response` comment to mark it and silence this"
 const UNDECLARED_DEP_HINT =
   "imported package is not declared in package.json dependencies — run bun add to declare it"
+const INTERPOLATED_SQL_HINT =
+  "SQL built by interpolating a value into the statement text - the value becomes statement, not a parameter, so anything the caller controls can end the literal and continue as SQL. Pass it as a bound parameter (`?` / `$1` and an argument), or use your driver's tagged template (sql`… ${value} …`), which binds the substitutions for you"
 const MANIFEST_DRIFT_HINT =
   "server-manifest.ts is out of sync with routes/ — re-run the build to regenerate it (a disk-less worker bakes this route table, so the drift is a silent edge break), then commit it"
 const TRUST_MANIFEST_DRIFT_HINT =
@@ -1256,6 +1330,7 @@ export async function collectCheckResult(
   const removedImports: SourceFinding[] = []
   const serverImports: TransitiveServerImportFinding[] = []
   const responseRoutes: SourceFinding[] = []
+  const interpolatedSql: SourceFinding[] = []
   // Route modules (rel + content) collected during the walk, so the TRANSITIVE server-only resolution
   // (#4.4) — which needs fs-backed import resolution, not just per-file text — runs after the walk.
   const routeModules: Array<{ rel: string; content: string }> = []
@@ -1275,6 +1350,7 @@ export async function collectCheckResult(
       removedImports.push(...scanRemovedImports(rel, content))
       if (ROUTE_FILE.test(rel)) routeModules.push({ rel, content })
       responseRoutes.push(...scanResponseRoutes(rel, content))
+      interpolatedSql.push(...scanInterpolatedSql(rel, content))
     }),
     import("./doctor.ts").then((m) => m.collectDoctorResult(cwd)),
     scanServerManifestDrift(cwd),
@@ -1407,6 +1483,26 @@ export async function collectCheckResult(
       fix: SERVER_IMPORT_HINT,
       chain,
       suggestion: serverImportSuggestion(f.specifier, chain, f.fallback),
+    })
+  }
+  for (const f of interpolatedSql.sort(bySite)) {
+    diagnostics.push({
+      rule: "interpolated-sql",
+      severity: "error",
+      file: f.file,
+      line: f.line,
+      message: `${f.snippet} — ${INTERPOLATED_SQL_HINT}`,
+      fix: "bind the value as a parameter instead of interpolating it into the statement",
+      suggestion: {
+        kind: "manual",
+        title: "Bind the value instead of interpolating it",
+        steps: [
+          "Replace the interpolation with a placeholder your driver understands (`?` for SQLite/MySQL, `$1` for Postgres).",
+          "Pass the value as an argument alongside the statement, so the driver binds it.",
+          "Or switch to the driver's tagged template (sql`… ${value} …`): the tag receives substitutions separately and binds them.",
+          "An identifier that genuinely cannot be bound (a table or column name) must be checked against an allowlist you control, never taken from the request.",
+        ],
+      },
     })
   }
   // Advisory — surfaced but NOT folded into `ok`, so it never fails the gate (a raw Response is valid).
@@ -1643,6 +1739,7 @@ export async function runCheck(
     ["typed-client", "hand-rolled fetch() to your own API"],
     ["untyped-client", 'client("…") missing its <typeof app> type argument'],
     ["server-only-import", "server-only import in a route module"],
+    ["interpolated-sql", "SQL built by interpolating a value into the statement"],
     ["response-route", "route returns a raw Response (typed client → data: never)"],
     ["undeclared-dependency", "undeclared dependency in package.json"],
     ["duplicate-install", "duplicate identity-sensitive dependency install"],
