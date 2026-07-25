@@ -12,6 +12,25 @@ export const meta = pageMeta(
 
 // The backend: an @nifrajs/core server defining its routes at the FULL /api/... path (the mount does
 // no path stripping). The handler returns a plain object → JSON; `c.req` is the Web Request.
+const EVENTS = `import { defineEventContract } from "@nifrajs/events"
+import { t } from "@nifrajs/schema"
+
+export const noteCreated = defineEventContract({
+  type: "note.created",
+  version: 1,
+  payload: t.object({ id: t.string(), title: t.string() }),
+})
+
+// Producer: validates the payload and stamps a full envelope (id, occurredAt).
+export const emit = (id: string, title: string) => noteCreated.create({ id, title })
+
+// Consumer: parse never throws - an event from outside the process is untrusted input,
+// so the failure is a value you have to handle rather than an exception you might not.
+export function receive(input: unknown): string | undefined {
+  const parsed = noteCreated.parse(input)
+  return parsed.success ? parsed.envelope.payload.title : undefined
+}`
+
 const BACKEND = `// backend.ts — a normal @nifrajs/core server. Routes live at the full /api/... path.
 import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
@@ -141,6 +160,20 @@ export default function Backends() {
         the <code>/api/*</code> routes are served identically in development and production — there is
         nothing extra to wire for the dev loop.
       </blockquote>
+
+      <h2>Events that survive the transport</h2>
+      <p>
+        <code>@nifrajs/events</code> types the <em>shape</em> of an event - a versioned envelope
+        validated by any Standard Schema - and says nothing about how it is delivered. A queue, SSE, a
+        webhook or an outbox relay are all somebody else's concern, which is what lets the same
+        contract describe an event that changes transport later.
+      </p>
+      <CodeBlock code={EVENTS} lang="ts" />
+      <p>
+        The half that earns its keep is <code>parse</code>. An event arriving from outside the process
+        is untrusted input exactly like a request body, and a versioned contract is what stops a
+        producer's schema change from being silently misread by an older consumer.
+      </p>
 
       <h2>Mounting, composition &amp; path semantics</h2>
       <p>

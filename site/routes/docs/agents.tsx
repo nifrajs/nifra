@@ -38,6 +38,23 @@ nifra_test              # bun test, bounded structured results
 nifra_assure            # every route's required evidence, and what is missing
 nifra_levels            # { achieved, levels[] } - the ladder`
 
+const PROMPT = `// doc-check: skip - the completion callback is yours; any provider SDK fits the shape.
+import { prompt } from "@nifrajs/prompt"
+import { t } from "@nifrajs/schema"
+
+const extract = prompt("Extract the contact from the text.")
+  .input(t.object({ text: t.string() }))
+  .output(t.object({ name: t.string(), email: t.string({ format: "email" }) }))
+
+// The result is PARSED against the output schema, so a malformed completion throws here
+// rather than becoming a wrong value three layers away.
+const contact = await extract.run({ text }, { complete })`
+
+const TELEMETRY = `import { server } from "@nifrajs/core/server"
+import { agentTelemetry, consoleAgentExporter } from "@nifrajs/agent-telemetry"
+
+export const app = server().use(agentTelemetry({ exporter: consoleAgentExporter() }))`
+
 const GATE = `# The two an agent should gate on. Both exit non-zero on failure, so they work in CI unchanged.
 nifra check
 nifra levels --min 1`
@@ -104,6 +121,36 @@ export default function Agents() {
         of what to do next. See <a href="/docs/verification">the verification ladder</a>.
       </p>
       <CodeBlock code={GATE} lang="bash" />
+
+      <h2>Building agent features, not just serving them</h2>
+      <p>
+        The tools above let an agent work on your app. Three packages are for the opposite case, where
+        the app you are building is itself an AI feature.
+      </p>
+      <p>
+        <strong>
+          <code>@nifrajs/prompt</code>
+        </strong>{" "}
+        binds an instruction to input and output schemas, so a model's reply is parsed before it
+        becomes a value. Provider-agnostic - you supply the completion call, it owns the contract.
+      </p>
+      <CodeBlock code={PROMPT} lang="ts" />
+      <p>
+        <strong>
+          <code>@nifrajs/agent-telemetry</code>
+        </strong>{" "}
+        adds child spans for tool calls on <code>/_nifra/tool/*</code> and the MCP endpoints, so an
+        agent-facing route is as observable as any other.
+      </p>
+      <CodeBlock code={TELEMETRY} lang="ts" />
+      <p>
+        <strong>
+          <code>@nifrajs/mcp-db</code>
+        </strong>{" "}
+        serves a SQLite database as its own MCP server, fail-closed: allowlisted schema tools by
+        default, and read-only queries only when you opt in, with plan verification. Handing a model a
+        database connection is not the same as handing it a query tool, and this is the second one.
+      </p>
 
       <h2>Projects without a web config</h2>
       <p>

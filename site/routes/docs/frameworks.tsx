@@ -19,12 +19,29 @@ const FRAMEWORKS: ReadonlyArray<{
   plugin: string
   bundle: string
 }> = [
+  {
+    name: "None (vanilla)",
+    pkg: "@nifrajs/web-vanilla",
+    idiom: "tagged-template HTML + islands",
+    plugin: "none",
+    bundle: "0 KB",
+  },
   { name: "Solid", pkg: "@nifrajs/web-solid", idiom: "primitives", plugin: "Babel", bundle: "~15 KB" },
   { name: "Preact", pkg: "@nifrajs/web-preact", idiom: "hooks (React-compat)", plugin: "none", bundle: "~18 KB" },
   { name: "Svelte 5", pkg: "@nifrajs/web-svelte", idiom: "stores + runes", plugin: ".svelte compiler", bundle: "~49 KB" },
   { name: "Vue 3", pkg: "@nifrajs/web-vue", idiom: "composables", plugin: ".vue SFC (or render fns)", bundle: "~66 KB" },
   { name: "React 19", pkg: "@nifrajs/web-react", idiom: "hooks", plugin: "none (Bun JSX)", bundle: "~182 KB" },
 ]
+
+const VANILLA = `import { html, vanillaAdapter } from "@nifrajs/web-vanilla"
+
+// routes/hotels.ts - a route file, no .tsx needed.
+export const hydrate = false
+
+export default function Hotels({ data }: { data: { hotels: Array<{ name: string }> } }) {
+  // Interpolated values are escaped; wrap trusted markup in raw() to opt out deliberately.
+  return html\`<ul>\${data.hotels.map((h) => html\`<li>\${h.name}</li>\`)}</ul>\`
+}`
 
 const SWAP = `// Server — pick an adapter. Everything else is identical across all five frameworks:
 // the same routes, loaders, actions, streaming, <Await>, fetchers, query cache.
@@ -118,6 +135,25 @@ export default function Frameworks() {
         <b>Bundle</b> = the same minimal counter app, minified (not gzipped), for each framework —
         see <code>examples/web-*</code>. Indicative payload, not a benchmark.
       </div>
+
+      <h2>Or no framework at all</h2>
+      <p>
+        <code>@nifrajs/web-vanilla</code> is the first row, and it is not a sixth framework - it is the
+        absence of one. Pages are plain functions returning an auto-escaping <code>html</code> tagged
+        template, and the client ships no framework runtime, so the bundle is genuinely zero rather
+        than small.
+      </p>
+      <CodeBlock code={VANILLA} lang="ts" />
+      <p>
+        Everything that lives in <code>@nifrajs/web</code> rather than the view layer works unchanged:
+        loaders, actions, ISR, SSG, head management, streaming. What you give up is hydration - these
+        are server-rendered documents, so set <code>export const hydrate = false</code> and reach for{" "}
+        <a href="/docs/hydration">islands</a> where a page needs interactivity.
+      </p>
+      <p>
+        Worth it for the surfaces where HTML is the product: landing pages, listings, docs, comparison
+        tables. This documentation site renders that way.
+      </p>
 
       <h2>Authoring routes</h2>
       <p>

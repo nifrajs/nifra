@@ -88,6 +88,12 @@ export default {
   },
 }`
 
+const DEVTOOLS = `import { server } from "@nifrajs/core/server"
+import { devtools } from "@nifrajs/devtools"
+
+// Enabled only when NODE_ENV is "development" unless you say otherwise.
+export const app = server().use(devtools())`
+
 const CSS_SCOPED = `// CSS Modules — *.module.css gives a hashed, collision-free class map:
 // Counter.module.css  →  .box { padding: 1rem }
 import styles from "./Counter.module.css"
@@ -227,6 +233,19 @@ export default function Dev() {
         and edits hot-swap with state intact.
       </p>
       <CodeBlock code={BOUNDARY} />
+
+      <h2>DevTools overlay</h2>
+      <p>
+        <code>@nifrajs/devtools</code> is a plugin that streams what each request actually did - loader
+        traces, ISR status, route metadata - over a secured SSE endpoint, with an overlay to read it
+        in the browser.
+      </p>
+      <CodeBlock code={DEVTOOLS} lang="ts" />
+      <p>
+        It is off outside development by default, refuses remote connections unless you allow them, and
+        caps both the buffered event count and the number of live connections - a dev tool that streams
+        request internals has to be closed by default rather than merely quiet in production.
+      </p>
 
       <h2>Containers & sandboxes</h2>
       <p>

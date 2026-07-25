@@ -58,6 +58,15 @@ const MATRIX = `const report = await assertAdversarialContract(app, {
 // Each target receives the same case IDs and deterministic witnesses.
 console.log(report.seed, report.counts)`
 
+const MOCK = `import { createMockServer } from "@nifrajs/mock"
+import { app } from "./app.ts"
+
+// Reads the routes' \`response\` schemas and generates data matching their shape.
+// The seed is fixed, so a snapshot taken today still matches tomorrow.
+const mock = createMockServer(app, { seed: 42 })
+
+const res = await mock.fetch(new Request("http://local/notes"))`
+
 const REPLAY = `const report = await runAdversarialContract(app, { seed: 73 })
 const failure = report.failures[0]
 
@@ -141,6 +150,21 @@ export default function ContractTesting() {
         adapters. Reflection still comes from the original app, so there is one authoritative contract.
       </p>
       <CodeBlock code={MATRIX} lang="ts" />
+
+      <h2>A mock server from the same contract</h2>
+      <p>
+        <code>@nifrajs/mock</code> builds a fake backend out of the routes you already have. It reads
+        each route's <code>response</code> schema and generates data of that shape, so the mock cannot
+        drift from the contract the way a hand-written fixture file does - a changed schema changes the
+        mock, and a route with no response schema returns <code>{}</code> rather than something
+        invented.
+      </p>
+      <CodeBlock code={MOCK} lang="ts" />
+      <p>
+        Useful for building a frontend against a backend that is not finished, and for demos that must
+        not touch a real database. It generates SHAPE, not meaning: the values are plausible-looking
+        filler, so it answers "does this render" rather than "is this right".
+      </p>
 
       <h2>Shrink and replay failures</h2>
       <p>

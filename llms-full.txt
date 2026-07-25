@@ -1229,6 +1229,33 @@ Hydration bundle
 **Bundle** = the same minimal counter app, minified (not gzipped), for each framework —
 see `examples/web-*`. Indicative payload, not a benchmark.
 
+### Or no framework at all
+
+`@nifrajs/web-vanilla` is the first row, and it is not a sixth framework - it is the
+absence of one. Pages are plain functions returning an auto-escaping `html` tagged
+template, and the client ships no framework runtime, so the bundle is genuinely zero rather
+than small.
+
+```ts
+import { html, vanillaAdapter } from "@nifrajs/web-vanilla"
+
+// routes/hotels.ts - a route file, no .tsx needed.
+export const hydrate = false
+
+export default function Hotels({ data }: { data: { hotels: Array<{ name: string }> } }) {
+  // Interpolated values are escaped; wrap trusted markup in raw() to opt out deliberately.
+  return html`<ul>${data.hotels.map((h) => html`<li>${h.name}</li>`)}</ul>`
+}
+```
+
+Everything that lives in `@nifrajs/web` rather than the view layer works unchanged:
+loaders, actions, ISR, SSG, head management, streaming. What you give up is hydration - these
+are server-rendered documents, so set `export const hydrate = false` and reach for
+[islands](/docs/hydration) where a page needs interactivity.
+
+Worth it for the surfaces where HTML is the product: landing pages, listings, docs, comparison
+tables. This documentation site renders that way.
+
 ### Authoring routes
 
 A route's `default` export is the component; its `loader`/
@@ -3346,6 +3373,51 @@ nifra check
 nifra levels --min 1
 ```
 
+### Building agent features, not just serving them
+
+The tools above let an agent work on your app. Three packages are for the opposite case, where
+the app you are building is itself an AI feature.
+
+**
+`@nifrajs/prompt`
+**
+binds an instruction to input and output schemas, so a model's reply is parsed before it
+becomes a value. Provider-agnostic - you supply the completion call, it owns the contract.
+
+```ts
+// doc-check: skip - the completion callback is yours; any provider SDK fits the shape.
+import { prompt } from "@nifrajs/prompt"
+import { t } from "@nifrajs/schema"
+
+const extract = prompt("Extract the contact from the text.")
+  .input(t.object({ text: t.string() }))
+  .output(t.object({ name: t.string(), email: t.string({ format: "email" }) }))
+
+// The result is PARSED against the output schema, so a malformed completion throws here
+// rather than becoming a wrong value three layers away.
+const contact = await extract.run({ text }, { complete })
+```
+
+**
+`@nifrajs/agent-telemetry`
+**
+adds child spans for tool calls on `/_nifra/tool/*` and the MCP endpoints, so an
+agent-facing route is as observable as any other.
+
+```ts
+import { server } from "@nifrajs/core/server"
+import { agentTelemetry, consoleAgentExporter } from "@nifrajs/agent-telemetry"
+
+export const app = server().use(agentTelemetry({ exporter: consoleAgentExporter() }))
+```
+
+**
+`@nifrajs/mcp-db`
+**
+serves a SQLite database as its own MCP server, fail-closed: allowlisted schema tools by
+default, and read-only queries only when you opt in, with plan verification. Handing a model a
+database connection is not the same as handing it a query tool, and this is the second one.
+
 ### Projects without a web config
 
 A backend-only project - the shape `create-nifra`'s default template produces - has
@@ -3501,6 +3573,24 @@ export function Counter(props: { message: string }) {
   return <button onClick={() => setCount((n) => n + 1)}>{count}</button>
 }
 ```
+
+### DevTools overlay
+
+`@nifrajs/devtools` is a plugin that streams what each request actually did - loader
+traces, ISR status, route metadata - over a secured SSE endpoint, with an overlay to read it
+in the browser.
+
+```ts
+import { server } from "@nifrajs/core/server"
+import { devtools } from "@nifrajs/devtools"
+
+// Enabled only when NODE_ENV is "development" unless you say otherwise.
+export const app = server().use(devtools())
+```
+
+It is off outside development by default, refuses remote connections unless you allow them, and
+caps both the buffered event count and the number of live connections - a dev tool that streams
+request internals has to be closed by default rather than merely quiet in production.
 
 ### Containers & sandboxes
 
@@ -4041,6 +4131,38 @@ loader-only client.
 Vite-backed dev server) routes every request through that same app's `fetch`. So
 the `/api/*` routes are served identically in development and production — there is
 nothing extra to wire for the dev loop.
+
+### Events that survive the transport
+
+`@nifrajs/events` types the _shape_ of an event - a versioned envelope
+validated by any Standard Schema - and says nothing about how it is delivered. A queue, SSE, a
+webhook or an outbox relay are all somebody else's concern, which is what lets the same
+contract describe an event that changes transport later.
+
+```ts
+import { defineEventContract } from "@nifrajs/events"
+import { t } from "@nifrajs/schema"
+
+export const noteCreated = defineEventContract({
+  type: "note.created",
+  version: 1,
+  payload: t.object({ id: t.string(), title: t.string() }),
+})
+
+// Producer: validates the payload and stamps a full envelope (id, occurredAt).
+export const emit = (id: string, title: string) => noteCreated.create({ id, title })
+
+// Consumer: parse never throws - an event from outside the process is untrusted input,
+// so the failure is a value you have to handle rather than an exception you might not.
+export function receive(input: unknown): string | undefined {
+  const parsed = noteCreated.parse(input)
+  return parsed.success ? parsed.envelope.payload.title : undefined
+}
+```
+
+The half that earns its keep is `parse`. An event arriving from outside the process
+is untrusted input exactly like a request body, and a versioned contract is what stops a
+producer's schema change from being silently misread by an older consumer.
 
 ### Mounting, composition & path semantics
 
@@ -5706,6 +5828,29 @@ const report = await assertAdversarialContract(app, {
 // Each target receives the same case IDs and deterministic witnesses.
 console.log(report.seed, report.counts)
 ```
+
+### A mock server from the same contract
+
+`@nifrajs/mock` builds a fake backend out of the routes you already have. It reads
+each route's `response` schema and generates data of that shape, so the mock cannot
+drift from the contract the way a hand-written fixture file does - a changed schema changes the
+mock, and a route with no response schema returns `{}` rather than something
+invented.
+
+```ts
+import { createMockServer } from "@nifrajs/mock"
+import { app } from "./app.ts"
+
+// Reads the routes' `response` schemas and generates data matching their shape.
+// The seed is fixed, so a snapshot taken today still matches tomorrow.
+const mock = createMockServer(app, { seed: 42 })
+
+const res = await mock.fetch(new Request("http://local/notes"))
+```
+
+Useful for building a frontend against a backend that is not finished, and for demos that must
+not touch a real database. It generates SHAPE, not meaning: the values are plausible-looking
+filler, so it answers "does this render" rather than "is this right".
 
 ### Shrink and replay failures
 
@@ -8112,7 +8257,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`Action`, `ACTION_GLOBAL`, `apiKey`, `assertRenderAdapterConformance`, `BrowserNavigate`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createMutation`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `DehydratedState`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `gate`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `getBrowserNavigate`, `GetStaticPaths`, `gone`, `hashQueryKey`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateOptions`, `notFound`, `openGraph`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `previewEndpoint`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderedPage`, `renderPage`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `resolvePublicPath`, `RETAIN_HEADER`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `routeStyles`, `ScriptDescriptor`, `serializeData`, `servePublicDir`, `ServePublicDirOptions`, `ServerOnly`, `setBrowserNavigate`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `STATUS_HEADER`, `statusPage`, `StatusPageOptions`, `styles`, `Submission`, `SubmitOptions`, `withISR`
+`Action`, `ACTION_GLOBAL`, `apiKey`, `assertRenderAdapterConformance`, `BrowserNavigate`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createMutation`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `DehydratedState`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `gate`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `getBrowserNavigate`, `GetStaticPaths`, `gone`, `hashQueryKey`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateOptions`, `notFound`, `openGraph`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `previewEndpoint`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderedPage`, `renderPage`, `RenderPageInput`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `resolvePublicPath`, `RETAIN_HEADER`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `routeStyles`, `ScriptDescriptor`, `serializeData`, `servePublicDir`, `ServePublicDirOptions`, `ServerOnly`, `setBrowserNavigate`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `STATUS_HEADER`, `statusPage`, `StatusPageOptions`, `styles`, `Submission`, `SubmitOptions`, `withISR`
 
 ## @nifrajs/web-preact
 

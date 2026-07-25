@@ -2278,6 +2278,8 @@ Every public export of every package and documented subpath — name, kind, sign
   A failed invariant reported by {@link assertRenderAdapterConformance}.
 - **RenderAdapterConformanceFixture** _(interface)_ — `interface RenderAdapterConformanceFixture`
   Framework-specific values that let the shared conformance module exercise a render adapter.
+- **RenderPageInput** _(type)_ — `type RenderPageInput = RenderPageOptions & ({ readonly hydrate?: true; readonly clientEntry: string } | { readonly hydrate: false })`
+  `renderPage` input. A hydrating page (the default) must supply `clientEntry`, because the document loads it as a module script; a `hydrate: false` page may omit it, because nothing in the emitted document references it. Expressed as a union so the compiler enforces the pairing rather than the rende…
 - **RenderPageOptions** _(interface)_ — `interface RenderPageOptions`
 - **RenderProps** _(interface)_ — `interface RenderProps`
   The data handed to a route component. Opaque to the core. `actionData` is the return of a route `action` after a POST (absent on plain GETs). `pending` + `submission` are client-only (absent on SSR): they drive **optimistic UI** — render from `submission.formData` while `pending`.
@@ -2368,9 +2370,9 @@ Every public export of every package and documented subpath — name, kind, sign
   A **preview / draft-mode entry point** — a `fetch` handler that checks a preview token, turns draft mode on, and redirects the editor to the page they wanted. `GET` with `?token=<secret>&to=/some/path`; mount it on a nifra route, e.g. `app.get("/api/preview", (c) => handler(c.req))`.
 - **redirect** _(function)_ — `redirect: (location: string, options?: RedirectOptions) => Response`
   Build a redirect `Response` — return it from a route `action` for the Post/Redirect/Get pattern (POST mutates, 303 sends the browser to a fresh GET, so a reload doesn't re-submit). Defaults to 303 (See Other); pass `{ status: 307 }` or `{ status: 308 }` to preserve the method.
-- **renderPage** _(function)_ — `renderPage: (options: RenderPageOptions) => MaybePromise<Response>`
+- **renderPage** _(function)_ — `renderPage: (options: RenderPageInput) => MaybePromise<Response>`
   Server: render a full HTML document for a page — the adapter's hydration head + the SSR markup (**streamed**) + the serialized loader data + the client module — as a `Response`. The shell (`<head>` + the open container) flushes first, the adapter's app stream follows, then the tail (data globals + …
-- **renderPageResult** _(function)_ — `renderPageResult: (options: RenderPageOptions) => MaybePromise<RenderedPage>`
+- **renderPageResult** _(function)_ — `renderPageResult: (options: RenderPageInput) => MaybePromise<RenderedPage>`
 - **resolveMeta** _(function)_ — `resolveMeta: (meta: MetaInput | undefined, args: MetaArgs) => Meta`
   Resolve a route's `meta` (static or a function of the loader data + params) to a {@link Meta}.
 - **resolvePublicPath** _(function)_ — `resolvePublicPath: (root: string, pathname: string) => string | undefined`

@@ -360,8 +360,14 @@ export interface RenderPageOptions {
   /** An action's data return (POST only) — surfaced to the page as `actionData` + serialized
    * for the client so post-POST hydration matches. Omit on GETs. */
   readonly actionData?: unknown
-  /** URL of the built client entry (loaded as a module script). */
-  readonly clientEntry: string
+  /**
+   * URL of the built client entry (loaded as a module script).
+   *
+   * Optional ONLY on a `hydrate: false` page, where there is no client takeover to feed and this value
+   * reaches no output at all. The union below is what enforces that: omitting it on a hydrating page
+   * stays a compile error rather than rendering `src=""`.
+   */
+  readonly clientEntry?: string
   /** Chunk URLs for the **matched** route (its layout chain + own chunk) to `modulepreload` in the
    * shell — so the route code downloads in parallel with the entry instead of after it
    * (`buildClient`'s per-route map). Empty/omitted ⇒ only the entry is preloaded (unchanged). */
@@ -424,18 +430,27 @@ export interface RenderPageOptions {
 }
 
 /**
+ * `renderPage` input. A hydrating page (the default) must supply `clientEntry`, because the document
+ * loads it as a module script; a `hydrate: false` page may omit it, because nothing in the emitted
+ * document references it. Expressed as a union so the compiler enforces the pairing rather than the
+ * renderer discovering an empty `src` at runtime.
+ */
+export type RenderPageInput = RenderPageOptions &
+  ({ readonly hydrate?: true; readonly clientEntry: string } | { readonly hydrate: false })
+
+/**
  * Server: render a full HTML document for a page — the adapter's hydration head + the SSR
  * markup (**streamed**) + the serialized loader data + the client module — as a `Response`.
  * The shell (`<head>` + the open container) flushes first, the adapter's app stream follows,
  * then the tail (data globals + client entry). Pure Web Standards, so it returns straight from
  * a nifra route handler and streams on any fetch runtime (Bun/Node/Deno/Workers).
  */
-export function renderPage(options: RenderPageOptions): MaybePromise<Response> {
+export function renderPage(options: RenderPageInput): MaybePromise<Response> {
   const page = renderPageResult(options)
   return page instanceof Promise ? page.then((p) => p.toResponse()) : page.toResponse()
 }
 
-export function renderPageResult(options: RenderPageOptions): MaybePromise<RenderedPage> {
+export function renderPageResult(options: RenderPageInput): MaybePromise<RenderedPage> {
   const {
     adapter,
     chain,
@@ -527,7 +542,7 @@ export function renderPageResult(options: RenderPageOptions): MaybePromise<Rende
   // A non-hydrated page (e.g. an `_error` boundary) omits the client-entry preload, route-chunk
   // preloads, and deferred runtime — there's no client takeover to feed.
   const hydrationLinks = hydrate
-    ? `<link rel="modulepreload" href="${escapeAttr(clientEntry)}">${preloadLinks}${deferredRuntime}`
+    ? `<link rel="modulepreload" href="${escapeAttr(clientEntry ?? "")}">${preloadLinks}${deferredRuntime}`
     : ""
   // Runs in the first-paint→hydration window to swallow a JS-only form's broken native submit. Only on a
   // hydrating page (a static/_error page has no client handlers, so no footgun).
@@ -551,7 +566,7 @@ export function renderPageResult(options: RenderPageOptions): MaybePromise<Rende
     islandTags += `<script type="module" src="${escapeAttr(src)}"></script>`
   const tailHtml = `${
     hydrate
-      ? `<script>${route}${action}${prerendered}${layoutTail}window.${DATA_GLOBAL}=${serializeData(forClient)}</script><script type="module" src="${escapeAttr(clientEntry)}"></script>`
+      ? `<script>${route}${action}${prerendered}${layoutTail}window.${DATA_GLOBAL}=${serializeData(forClient)}</script><script type="module" src="${escapeAttr(clientEntry ?? "")}"></script>`
       : ""
   }${islandTags}</body></html>`
   const headers: Record<string, string> = { "content-type": "text/html; charset=utf-8" }
