@@ -1,5 +1,87 @@
 # @nifrajs/cli
 
+## 2.3.0
+
+### Minor Changes
+
+- 77715ca: `nifra check` fails on SQL built by interpolating a value into the statement text.
+
+  ```ts
+  db.query(`SELECT * FROM notes WHERE id = ${id}`); // fails the check
+  db.query("SELECT * FROM notes WHERE id = ?").get(id); // bound
+  db.execute(sql`SELECT * FROM notes WHERE id = ${id}`); // bound by the tag
+  ```
+
+  The interpolated value becomes statement rather than parameter, so anything the caller controls can end
+  the literal and continue as SQL.
+
+  Two things it deliberately stays quiet about, because flagging a safe idiom is how a rule gets ignored:
+  a TAGGED template (`` sql`… ${id} …` `` in postgres.js, drizzle and kysely binds its substitutions -
+  that IS the parameterised form), and any literal without a substitution. A SQL keyword is required in
+  the literal too, so `cache.query(`user:${id}`)` is left alone; the named escape hatches
+  (`$queryRawUnsafe`, `sql.unsafe`) are flagged on the call alone, since taking a statement as text is
+  their entire purpose.
+
+### Patch Changes
+
+- c42d777: Documents seven packages that shipped without a single reference.
+
+  `web-vanilla` (zero-framework adapter) joins the frameworks page and gains `examples/web-vanilla`;
+  `devtools` joins dev; `mock` joins testing; `events` joins backends; `prompt`, `agent-telemetry` and
+  `mcp-db` join the coding-agents page.
+
+  All were real - 185 to 381 lines each, 9 to 23 tests each - and none were findable. Every added sample
+  is compiled by the docs gate against the live API.
+
+- fc034c6: Documents server functions and effect provenance.
+
+  Two features shipped without a page. Server functions span seven packages and had none at all, and the
+  effect provenance firewall - now armed in every template - emits a finding (`unconfined-write-reach`)
+  whose fix is structural and was explained nowhere outside code comments.
+
+  Both pages join the docs corpus the MCP server and `nifra_docs` search read from, so an agent finds them
+  too.
+
+- 1ed58b8: The documentation site now holds the bar it sells: `nifra.assurance.ts` plus a capability lockfile, at
+  L2.
+
+  It is also the first validation of the capability model on an app nobody designed around it. Two things
+  that only a real app can answer:
+
+  - **No false positives.** 47 route files carry dozens of documentation samples containing
+    `import { Database } from "bun:sqlite"` and friends inside template literals. None became capability
+    evidence, because the scanner blanks template contents before reading imports.
+  - **Real imports are still caught.** Adding one genuine `bun:sqlite` import to the backend immediately
+    flagged all four routes, including the GET dead end with its structural message.
+
+- 4eb4e15: The release's version script regenerates the llms corpora, so the "Version Packages" PR can pass CI.
+
+  `types.json` stores exported signatures verbatim, including core's `VERSION` as the literal type
+  `export declare const VERSION: "2.2.0"`. Bumping the version rewrote that constant and regenerated
+  `api-reference.md` and the LLM cards, but not the corpora - so every Version PR failed `check:llms` on a
+  stale `types.json`, and since Release only publishes after CI concludes successfully, nothing could
+  ship.
+
+- Updated dependencies [6f5b3ad]
+- Updated dependencies [85b354d]
+- Updated dependencies [c8b79d7]
+- Updated dependencies [c42d777]
+- Updated dependencies [82b2053]
+- Updated dependencies [b271164]
+- Updated dependencies [d190b1c]
+- Updated dependencies [de8d992]
+- Updated dependencies [7f55876]
+- Updated dependencies [d2840ac]
+- Updated dependencies [62a8d03]
+  - @nifrajs/core@2.3.0
+  - create-nifra@2.3.0
+  - @nifrajs/web@2.3.0
+  - @nifrajs/client@2.3.0
+  - @nifrajs/schema@2.3.0
+  - @nifrajs/testing@2.3.0
+  - @nifrajs/mcp@2.3.0
+  - @nifrajs/runner@2.3.0
+
 ## 2.2.0
 
 ### Minor Changes

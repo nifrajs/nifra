@@ -1,5 +1,11 @@
 # @nifrajs/mcp-db
 
+## 2.3.0
+
+### Patch Changes
+
+- @nifrajs/mcp@2.3.0
+
 ## 2.2.0
 
 ### Patch Changes

@@ -1,5 +1,65 @@
 # create-nifra
 
+## 2.3.0
+
+### Minor Changes
+
+- c8b79d7: `--db` scaffolds the data layer split by access, with a routes module that owns its own reach.
+
+  `db/read.ts` and `db/write.ts` sit in front of the connection, and `db/read-routes.ts` registers a
+  route importing only the read half. Merging it is one line.
+
+  The shape is not decoration. `nifra check` computes what a route can reach from the module that
+  registers it, following its imports; a route may not reach further than it declares, and a GET route
+  may not declare a domain write at all. A module holding both halves therefore has GET routes with no
+  legal declaration. Splitting reads from writes at the seam, and again at the routes, keeps every
+  route's declaration equal to its reach - which is what the `authenticated-write` rule needs in order to
+  mean anything.
+
+  The generated write example is commented rather than live, and says what happens when you uncomment
+  it: it fails `nifra assure` until authenticated, because the starter policy requires proof of who asked
+  before anything writes business state.
+
+- 82b2053: Every template composes its routes from feature modules, and the effect provenance firewall ships ARMED.
+
+  `provenance.imports` now maps the database drivers and the `--db` seam, so a route that can reach a
+  database without declaring it fails `nifra check`. Combined with the `authenticated-write` rule, the
+  whole chain holds without anyone remembering anything:
+
+  - a route that writes and declares nothing fails the check;
+  - declare it, and the route fails assurance until it is authenticated;
+  - only an authenticated write ships.
+
+  Arming it required the app root to stop registering routes. Reach is computed from the module that
+  REGISTERS a route, following that module's imports, so a root that both composes and registers hands
+  every route in it the reach of everything merged there - and a GET route may not declare a domain write
+  at all, leaving those routes with no legal declaration and no fix but to move. So `src/app.ts` (api,
+  fullstack) and `backend.ts` (site, isr) merge and nothing else; the demo routes moved to `src/routes.ts`,
+  `src/notes.ts`, `counter.ts` and `page.ts` beside them. Exports are unchanged - `app`, `backend`, `queue`
+  and `wasIndexed` are all still imported from where they were.
+
+  That is the shape a feature should take anyway: a module owns its store, its adapters and the routes
+  over them, and a second feature with a database of its own gets its own file rather than a section.
+
+- 7f55876: Every template declares its capabilities, so a scaffolded app can reach L2 of `nifra levels`.
+
+  `nifra.assurance.ts` now carries a `capabilities` block defining `db.read` and `db.write`, and the
+  `authenticated-write` rule matches `{ access: "write", zone: "domain" }` instead of naming `db.write`.
+  Any write token added later - `payments.charge`, `orders.write` - is covered by that rule the day it is
+  declared, without editing the policy.
+
+  L2 was previously unreachable from a scaffold: the level requires a capability policy, no template
+  shipped one, and writing one from scratch was the only way up. It is now one `nifra capabilities
+snapshot` away.
+
+  `provenance.imports` ships empty with a worked example and the one caveat that matters, which is that a
+  route's reach is computed from the module that REGISTERS it, following its imports. A module that
+  registers routes and imports a database gives every route in it database reach, and a GET route is
+  refused a domain write outright - so turning the import firewall on wants a root that is pure
+  composition, with effects owned by the modules underneath.
+
+  The `isr` template gains a `nifra.assurance.ts`; it had none, which capped it at L0.
+
 ## 2.2.0
 
 ### Patch Changes

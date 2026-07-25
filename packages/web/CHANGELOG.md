@@ -1,5 +1,121 @@
 # @nifrajs/web
 
+## 2.3.0
+
+### Minor Changes
+
+- c42d777: `clientEntry` is optional on a `hydrate: false` page.
+
+  A non-hydrated document references it nowhere - all three uses sit behind the `hydrate` guard - yet
+  every static page had to pass one anyway. `RenderPageInput` is now a union, so omitting it is allowed
+  exactly when `hydrate: false` is set and stays a compile error otherwise, rather than rendering
+  `<script src="">` and silently failing to hydrate.
+
+  Found by writing `examples/web-vanilla`, which is the first caller that genuinely has no client entry
+  to give.
+
+- d190b1c: Add `@nifrajs/web/fn` - server functions, mounted as ordinary routes.
+
+  ```ts
+  // app/actions/todos.fn.ts
+  export const addTodo = serverFn(
+    {
+      input: t.object({ text: t.string({ minLength: 1 }) }),
+      capabilities: ["db.write"],
+    },
+    async ({ text }, c) => db.todos.insert({ text })
+  );
+
+  // server
+  import * as todos from "./actions/todos.fn";
+  app.use(serverFunctions("todos", todos)); // -> POST /_nifra/fn/todos/addTodo
+  ```
+
+  A mounted function registers through the ordinary public `register()`, so it is a route like any other
+  and inherits the body cap, schema validation, capability declarations, the effect ledger, and
+  `nifra assure`. Nothing in `@nifrajs/core` changed and no request-path branch was added, so an app that
+  mounts none of them pays nothing.
+
+  Every server function is a public POST endpoint whose arguments the caller controls entirely, so the
+  guards are structural rather than documented:
+
+  - **`application/json` only.** A cross-origin form can send only urlencoded, multipart or text/plain,
+    so requiring JSON forces a preflight the browser blocks. Both alternatives were measured first: a
+    body schema alone still accepts a cross-origin urlencoded form, and `c.boundedJson` alone accepts a
+    `text/plain` body crafted to parse as JSON. A function with no input schema has no body reader at
+    all, which is where this guard is the only defence.
+  - **Same-origin only** when an `Origin` is present - defence in depth behind the JSON requirement.
+  - **Input is always validated**; no schema means no argument, never an unchecked one.
+  - **No closures.** A function is a module-level export taking explicit arguments, which removes the
+    serialised-closure class rather than defending it.
+
+  The client build replaces a `*.fn.ts` module with one stub per export, each POSTing to its mounted
+  route, so the function bodies and everything they import never reach a browser.
+
+  `nifra dev --bun` refuses to start on an app that has server functions. Bun's dev-server bundler takes
+  no plugins - a runtime `Bun.plugin` onLoad does not reach it, measured rather than assumed - so the
+  module would ship whole, secrets included. Refusing matches how that pipeline already handles CSS
+  Modules. `nifra build` and `nifra dev` (Vite) transform it correctly.
+
+- de8d992: `@nifrajs/web/service-worker` generates a service worker from a build manifest.
+
+  ```ts
+  const sw = generateServiceWorker(manifest, {
+    buildId: gitSha,
+    offlineUrl: "/offline",
+  });
+  ```
+
+  Opt-in and generated at build time, so an app that never calls it ships nothing.
+
+  The generated worker is deliberately narrow, because a service worker outlives a deploy and can hand
+  one visitor a response produced for another:
+
+  - **Only content-hashed assets are precached.** A hashed URL names its bytes, so cache-first is correct
+    by construction; unhashed URLs are left to the network.
+  - **Documents are never cached.** Only navigations that FAIL are answered, and only with the static
+    offline page you nominate. Caching HTML is how a worker serves one signed-in user the page rendered
+    for another.
+  - **GET, same-origin, `ok`, not `no-store`.** Everything else goes straight to the network.
+  - **The cache name carries the build id**, and activation deletes every older cache, so a stale worker
+    cannot pin an old build.
+
+  Omit `offlineUrl` and a failed navigation simply fails - an offline page you have not written is not
+  better than a browser error.
+
+- 62a8d03: Add `useServerFn` - a server function's pending, data and error state - to all five adapters.
+
+  ```tsx
+  const addTodo = useServerFn(fns.addTodo)
+  <button disabled={addTodo.pending} onClick={() => addTodo.call({ text }).catch(() => {})}>add</button>
+  ```
+
+  Calling a server function never needed a binding: the client stub is `(input) => Promise<Output>`.
+  This adds only the state a component wants around it.
+
+  The state machine is `@nifrajs/web`'s `createServerFnStore`, shared by every adapter, so "is it
+  pending" has one answer rather than five that drift. Each binding contributes just its subscription
+  primitive: `useSyncExternalStore` (React, Preact), a signal (Solid), a `shallowRef` (Vue), a `readable`
+  (Svelte).
+
+  Two behaviours worth knowing:
+
+  - **The last call wins.** A response that is no longer the newest is discarded rather than written, so
+    a slow first call landing after a fast second cannot overwrite fresh data with stale.
+  - **`call` still rejects.** The error is recorded for rendering AND the promise rejects, so `await`
+    behaves normally. A caller that only renders from state should attach `.catch(() => {})`, as with
+    `useFetcher`'s `submit`.
+
+  `data` is kept while the next call is in flight, so a rendered list does not blank on every refetch.
+
+### Patch Changes
+
+- Updated dependencies [6f5b3ad]
+- Updated dependencies [85b354d]
+- Updated dependencies [b271164]
+- Updated dependencies [d2840ac]
+  - @nifrajs/core@2.3.0
+
 ## 2.2.0
 
 ### Minor Changes

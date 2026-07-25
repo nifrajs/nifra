@@ -1,5 +1,88 @@
 # @nifrajs/core
 
+## 2.3.0
+
+### Minor Changes
+
+- 6f5b3ad: Assurance rules can match a CLASS of capability rather than a list of token names.
+
+  ```ts
+  { name: "authenticated-write", match: { access: "write", zone: "domain" }, require: [AUTHENTICATED] }
+  ```
+
+  Naming exact tokens is precise but closed. A rule listing `db.write` does not cover `storage.write`, so
+  every policy has to enumerate every write in the system, and a capability introduced next year escapes
+  the rule until someone remembers to widen it. `access` and `zone` are read from the capability
+  definitions, so the rule is keyed on what the capability IS - a new token is covered the day it is
+  declared.
+
+  Both constraints must hold for the SAME capability: a route that reads business state and writes an
+  audit log does not satisfy `{ access: "write", zone: "domain" }` by combining halves of two tokens.
+
+  The selectors resolve through the capability definitions, so `evaluateRouteAssurance` takes them via a
+  new third argument (`{ definitions }`) and `defineAssuranceConfig` refuses a policy that uses them
+  without a `capabilities` block. Without definitions such a rule could only ever match nothing - and a
+  rule that matches nothing does not fail, it lets the route fall past to whatever laxer rule comes next.
+
+- 85b354d: Assurance rules can match on a route's declared capabilities, and a misspelled selector key is now an error.
+
+  ```ts
+  { name: "authenticated-write", match: { capabilities: ["db.write"] }, require: [NIFRA_ASSURANCE.AUTHENTICATED] }
+  ```
+
+  A path glob is the wrong tool for "anything that writes must prove who asked": it breaks when a route
+  moves, and it cannot see a route that acquires the capability later. The declared tokens already reach
+  reflection, so a policy can be written against what a route DOES. Matches when the route declares any of
+  the listed tokens.
+
+  Every `create-nifra` template ships this rule, which is what stops a server function - a public POST
+  endpoint whose arguments the caller controls - from shipping unauthenticated.
+
+  The selector is rebuilt from an allowlist of known keys, so an unrecognised one used to be dropped
+  silently. A selector that loses its only constraint matches EVERY route, so the rule swallows
+  everything after it - in a policy whose first rule is the lenient one, a single typo disabled the rest
+  of the file. Unknown selector keys are refused rather than ignored.
+
+- b271164: Add `responseContract()`, an opt-in plugin that makes a route's declared `response` schema hold at runtime.
+
+  A `response` schema is a lower bound: it says "at least these fields", never "only these". A handler
+  that returns a database row satisfying it also ships every other column, and nothing points at it -
+  TypeScript's excess-property check does not reach a handler's return position, and the client's type
+  reports the contract rather than the bytes. The result can appear with no code change at all: add a
+  column, and the next deploy ships it to browsers.
+
+  ```ts
+  import { responseContract } from "@nifrajs/core/response-contract";
+  app.use(responseContract("enforce"));
+  ```
+
+  - not installed (default) - unchanged behaviour, and the lane is absent from the bundle entirely.
+  - `"warn"` - checks each response, logs the undeclared fields by name, serves the payload unchanged.
+  - `"enforce"` - serializes the validated value, so undeclared data cannot reach the wire.
+
+  Enforcement follows the schema's own semantics, since Standard Schema exposes `validate` and no way to
+  enumerate declared keys: a stripping schema (Zod, Valibot) yields a cleaned value, while a strict one
+  (`@nifrajs/schema`'s `t.object`) reports issues and the response becomes a 500 with the detail logged
+  rather than returned. Routes with a `response` schema leave the fused and native fast paths while this
+  is enabled, the same trade an idempotent route makes.
+
+  It is a plugin rather than a server option so that apps which do not use it do not carry it: as an
+  option the check was statically imported by the kernel and cost every app ~0.5 KB gzip, which the
+  bundle-size gate caught. Behind the `@nifrajs/core/response-contract` subpath the lane arrives only
+  when installed, and the kernel keeps just the install seam (~0.2 KB).
+
+- d2840ac: A safe-method route that can reach a domain write is reported once, with the fix it actually has.
+
+  It used to draw two findings giving opposite advice: `undeclared-capability-evidence` (declare what you
+  reach) and `safe-method-domain-write` (a safe method may not declare a domain write). Both are correct
+  and together they are a dead end - the route cannot declare its way out, because the declaration was
+  never the problem.
+
+  Reach is computed from the module that registers a route, so a read endpoint sitting beside a write
+  seam has write powers in scope. The new `unconfined-write-reach` finding says that, and says to move
+  the route or the effect. Still an error, and the report still fails; a GET that explicitly DECLARES a
+  domain write is unchanged, because that one really is an HTTP semantics mistake.
+
 ## 2.2.0
 
 ### Minor Changes
