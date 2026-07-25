@@ -3151,6 +3151,58 @@ Build Output API v3
 Nifra never runs the deploy or enters your cloud credentials — it scaffolds the config + a
 `deploy` script that shells out to the vendor CLI you've already authed.
 
+### Offline & service workers
+
+`@nifrajs/web/service-worker` turns a build manifest into a service worker. It is
+opt-in and generated at build time, so an app that never calls it ships nothing.
+
+```ts
+// build.ts - after buildClient(), write the worker to the ORIGIN ROOT.
+import { generateServiceWorker, serviceWorkerRegistration } from "@nifrajs/web/service-worker"
+
+export async function emitServiceWorker(manifest: {
+  entry: string
+  assets: readonly string[]
+  css?: readonly string[]
+}): Promise<string> {
+  const sw = generateServiceWorker(manifest, {
+    // Anything that changes exactly when the assets do: a content hash, a commit sha, a release.
+    buildId: Bun.env.GIT_SHA ?? "dev",
+    offlineUrl: "/offline",
+  })
+  await Bun.write("dist/sw.js", sw)
+  // Put this in a <script> in your document shell.
+  return serviceWorkerRegistration("/sw.js")
+}
+```
+
+Serve the file from the origin root. A worker's default scope is its own directory, so one
+served from `/assets/` could never control the pages it exists for.
+
+The generated worker is deliberately narrow, because a service worker outlives a deploy and can
+hand one visitor a response produced for another:
+
+-
+**Only content-hashed assets are precached.** A hashed URL names its bytes, so serving it
+from cache forever is correct by construction. Unhashed URLs are left to the network.
+
+-
+**Documents are never cached.** Only navigations that FAIL are answered, and only with the
+offline page you nominate - which must be static and user-independent, since every visitor
+gets the same bytes. Caching HTML is how a worker serves one signed-in user the page rendered
+for another.
+
+-
+**GET, same-origin, `ok`, not `no-store`.** Anything else goes
+straight to the network.
+
+-
+**The cache name carries the build id**, and activation deletes every older cache - so a
+stale worker cannot pin an old build indefinitely.
+
+Omit `offlineUrl` and a failed navigation simply fails, which is the honest default:
+an offline page you have not written is not better than a browser error.
+
 ### CI: deploy on push
 
 Add `--ci github` to emit a `.github/workflows/deploy.yml` tuned to the

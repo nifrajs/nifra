@@ -3693,6 +3693,13 @@
     "signature": "export interface GenerateServerManifestOptions {\n    /** Turn a route/layout source file (relative to the routes dir) into an import specifier —\n     * same contract as `generateClientEntry`'s `resolve`. */\n    readonly resolve: (file: string) => string;\n    /** The content-hashed client entry URL (from `buildClient`'s manifest), **baked** into the emitted\n     * module — a disk-less worker can't read `manifest.json` at runtime. */\n    readonly clientEntry: string;\n    /** The app's aggregate stylesheet URLs (`buildClient`'s `BuildManifest.css`) — baked as\n     * `export const styles` so the server entry can hand them to `createWebApp` (→ `<link rel=\"stylesheet\">`\n     * in `<head>`). Without this the built SSR page ships no CSS link and renders unstyled. */\n    readonly styles?: readonly string[] | undefined;\n    /** Per-route stylesheet URLs (`buildClient`'s `BuildManifest.routeStyles`) — baked as\n     * `export const routeStyles` so a page links only the CSS its route chain uses. */\n    readonly routeStyles?: Readonly<Record<string, readonly string[]>> | undefined;\n    /** Emit **lazy** per-route loaders (`() => import(\"./routes/x\")`, a static specifier) instead of\n     * eager `import * as`, so a bundler with code-splitting emits one chunk per route — loaded on the\n     * first request to it, not all at boot (smaller cold-start parse). Default `false` (eager). Both\n     * modes are fs-free with statically-analyzable specifiers; only the *when* differs. */\n    readonly lazy?: boolean;\n}"
   },
   {
+    "name": "generateServiceWorker",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function generateServiceWorker(manifest: ServiceWorkerManifest, options: ServiceWorkerOptions): string;",
+    "doc": "/**\n * Generate the service worker source for a build.\n *\n * Write the result to a file served from the ORIGIN ROOT (`/sw.js`): a worker's default scope is its\n * own directory, so one served from `/assets/` could never control the pages it exists for.\n */"
+  },
+  {
     "name": "generateSpanId",
     "kind": "function",
     "package": "@nifrajs/otel",
@@ -8251,6 +8258,26 @@
     "package": "@nifrajs/node",
     "signature": "export interface ServeStaticOptions {\n    /** Directory to read files from — an absolute path or a `file://` URL (`new URL(\"./assets/\", import.meta.url)`). */\n    readonly dir: string | URL;\n    /** URL prefix these files are served under. Default `\"/assets\"`. Use `\"/\"` to serve the whole dir. */\n    readonly prefix?: string;\n    /** Emit `cache-control: public, max-age=31536000, immutable` — correct for content-hashed files. Default `true`. */\n    readonly immutable?: boolean;\n    /** Extra headers merged onto every served file. */\n    readonly headers?: Readonly<Record<string, string>>;\n}",
     "doc": "/**\n * Serve static files from a directory (e.g. the client build) under a URL prefix — so a self-hosted\n * Node deploy doesn't need a CDN or a hand-rolled `/assets/*` handler. (On Cloudflare/Vercel the\n * platform serves assets; this is for `node server.js`.)\n */"
+  },
+  {
+    "name": "ServiceWorkerManifest",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ServiceWorkerManifest {\n    readonly entry: string;\n    readonly assets: readonly string[];\n    readonly css?: readonly string[];\n}",
+    "doc": "/** The parts of a `BuildManifest` a worker needs. Structural, so a caller can pass extra fields. */"
+  },
+  {
+    "name": "ServiceWorkerOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ServiceWorkerOptions {\n    /**\n     * Distinguishes this build's cache from the last one. Use something that changes exactly when the\n     * assets do - a content hash, a commit sha, a release version.\n     */\n    readonly buildId: string;\n    /**\n     * URL of a page to serve when a navigation fails and the network is unreachable. It must be a\n     * static, user-independent document (a prerendered `/offline`), because every visitor gets the same\n     * bytes. Omit it and failed navigations simply fail, which is the honest default.\n     */\n    readonly offlineUrl?: string;\n    /** Cache name prefix. Default `nifra`. */\n    readonly cacheName?: string;\n    /** Extra same-origin URLs to precache. Only pass immutable ones. */\n    readonly additionalPrecache?: readonly string[];\n}"
+  },
+  {
+    "name": "serviceWorkerRegistration",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function serviceWorkerRegistration(scriptUrl?: string): string;",
+    "doc": "/**\n * The registration snippet, for a `<script>` in your document shell.\n *\n * Registration is deliberately deferred to `load`: a worker installing during first paint competes\n * with the page it is meant to speed up.\n */"
   },
   {
     "name": "Session",
