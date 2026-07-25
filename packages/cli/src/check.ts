@@ -1491,7 +1491,7 @@ export async function collectCheckResult(
       severity: "error",
       file: f.file,
       line: f.line,
-      message: `${f.snippet} — ${INTERPOLATED_SQL_HINT}`,
+      message: `${f.snippet} - ${INTERPOLATED_SQL_HINT}`,
       fix: "bind the value as a parameter instead of interpolating it into the statement",
       suggestion: {
         kind: "manual",

@@ -622,6 +622,13 @@
     "doc": "/**\n * Batch writes: effects triggered inside `fn` run ONCE after it returns, deduplicated — so\n * `setA(); setB()` updates the DOM once, not twice. Re-entrant; an effect re-queued during the\n * flush runs in the same flush.\n */"
   },
   {
+    "name": "BeaconingStorageAdapter",
+    "kind": "interface",
+    "package": "@nifrajs/storage",
+    "signature": "export interface BeaconingStorageAdapter extends StorageAdapter {\n    /**\n     * A view bound to a request context: every operation announces its capability first, and fails\n     * closed when the route did not declare it.\n     */\n    for(context: object): StorageAdapter;\n}",
+    "doc": "/** A storage adapter that can be bound to a request context. */"
+  },
+  {
     "name": "bearer",
     "kind": "function",
     "package": "@nifrajs/middleware",
@@ -888,7 +895,14 @@
     "name": "Cache",
     "kind": "interface",
     "package": "@nifrajs/cache",
-    "signature": "export interface Cache {\n    /** The cached value for `key`, or `undefined` if missing/expired. Pass `T` for the value type. */\n    get<T = unknown>(key: string): Promise<T | undefined>;\n    /** Whether a live (non-expired) entry exists. */\n    has(key: string): Promise<boolean>;\n    /** Store `value` under `key`. */\n    set<T>(key: string, value: T, options?: SetOptions): Promise<void>;\n    delete(key: string): Promise<void>;\n    /** Drop every entry tagged `tag`. */\n    invalidateTag(tag: string): Promise<void>;\n    clear(): Promise<void>;\n    /**\n     * Cache-aside: return the cached value, or run `loader`, store the result, and return it. Stampede-safe\n     * (concurrent misses for one key share a single `loader` call) and SWR-aware (a stale-but-live value is\n     * returned immediately while a deduped background refresh runs). A throwing `loader` is NOT cached.\n     */\n    wrap<T>(key: string, loader: () => T, options?: WrapOptions): Promise<Awaited<T>>;\n}"
+    "signature": "export interface Cache {\n    /** The cached value for `key`, or `undefined` if missing/expired. Pass `T` for the value type. */\n    get<T = unknown>(key: string): Promise<T | undefined>;\n    /** Whether a live (non-expired) entry exists. */\n    has(key: string): Promise<boolean>;\n    /** Store `value` under `key`. */\n    set<T>(key: string, value: T, options?: SetOptions): Promise<void>;\n    delete(key: string): Promise<void>;\n    /** Drop every entry tagged `tag`. */\n    invalidateTag(tag: string): Promise<void>;\n    clear(): Promise<void>;\n    /**\n     * Cache-aside: return the cached value, or run `loader`, store the result, and return it. Stampede-safe\n     * (concurrent misses for one key share a single `loader` call) and SWR-aware (a stale-but-live value is\n     * returned immediately while a deduped background refresh runs). A throwing `loader` is NOT cached.\n     */\n    wrap<T>(key: string, loader: () => T, options?: WrapOptions): Promise<Awaited<T>>;\n    /**\n     * A view bound to a request context: every operation announces its capability first, and fails closed\n     * when the route did not declare it.\n     *\n     * `wrap` announces BOTH read and write, because a miss writes and which one happens is not known\n     * before the call. A declaration describes what a route may do, so the conservative answer is the\n     * correct one.\n     *\n     * Requires `beacon`. Without one this throws rather than handing back a cache that quietly produces\n     * no evidence - a beacon nobody notices is missing is the exact failure the beacon exists to prevent.\n     */\n    for(context: object): Cache;\n}"
+  },
+  {
+    "name": "CacheCapabilities",
+    "kind": "interface",
+    "package": "@nifrajs/cache",
+    "signature": "export interface CacheCapabilities {\n    readonly read?: string;\n    readonly write?: string;\n}",
+    "doc": "/** Capability tokens this cache announces. Defaults: `cache.read` and `cache.write`. */"
   },
   {
     "name": "cacheControl",
@@ -920,7 +934,7 @@
     "name": "CacheOptions",
     "kind": "interface",
     "package": "@nifrajs/cache",
-    "signature": "export interface CacheOptions {\n    /** Storage adapter. Default: a fresh {@link MemoryCache}. */\n    readonly store?: CacheStore;\n    /** Default TTL (ms) for `set`/`wrap` when none is given. Default 60_000. */\n    readonly defaultTtlMs?: number;\n    /** Injectable clock (tests). Default `() => Date.now()`. */\n    readonly now?: () => number;\n    /** Called when a background SWR revalidation throws. Default: `console.error`. */\n    readonly onError?: (error: unknown, key: string) => void;\n}"
+    "signature": "export interface CacheOptions {\n    /** Storage adapter. Default: a fresh {@link MemoryCache}. */\n    readonly store?: CacheStore;\n    /**\n     * Make cache operations produce capability evidence:\n     *\n     *   import { useCapability } from \"@nifrajs/core/capabilities\"\n     *   const cache = createCache({ beacon: useCapability })\n     *\n     * Then `cache.for(context)` announces its capability before each operation. Evidence from the CALL is\n     * per-route and exact, where evidence from an import is per-module and therefore as broad as the\n     * module - which is why a beacon can say something a provenance rule cannot.\n     */\n    readonly beacon?: CapabilityBeacon;\n    /** Override the announced tokens when the app names its capabilities differently. */\n    readonly capabilities?: CacheCapabilities;\n    /** Default TTL (ms) for `set`/`wrap` when none is given. Default 60_000. */\n    readonly defaultTtlMs?: number;\n    /** Injectable clock (tests). Default `() => Date.now()`. */\n    readonly now?: () => number;\n    /** Called when a background SWR revalidation throws. Default: `console.error`. */\n    readonly onError?: (error: unknown, key: string) => void;\n}"
   },
   {
     "name": "CacheOptions",
@@ -1008,6 +1022,27 @@
     "signature": "export interface CapabilityAssuranceReport {\n    readonly ok: boolean;\n    readonly routes: readonly AssuredCapabilityRoute[];\n    readonly findings: readonly CapabilityFinding[];\n}"
   },
   {
+    "name": "CapabilityBeacon",
+    "kind": "type",
+    "package": "@nifrajs/cache",
+    "signature": "export type CapabilityBeacon = (context: object, capability: string) => void;",
+    "doc": "/**\n * `useCapability` from `@nifrajs/core/capabilities`, taken as a parameter rather than imported so this\n * package keeps its zero dependencies - a cache should not drag the server into a bundle that only\n * wanted a cache. Wiring it is one line where the cache is created.\n */"
+  },
+  {
+    "name": "CapabilityBeacon",
+    "kind": "type",
+    "package": "@nifrajs/jobs",
+    "signature": "export type CapabilityBeacon = (context: object, capability: string) => void;",
+    "doc": "/**\n * `useCapability` from `@nifrajs/core/capabilities`, taken as a parameter rather than imported so this\n * package keeps its zero dependencies. Wiring it is one line where the queue is created.\n */"
+  },
+  {
+    "name": "CapabilityBeacon",
+    "kind": "type",
+    "package": "@nifrajs/storage",
+    "signature": "export type CapabilityBeacon = (context: object, capability: string) => void;",
+    "doc": "/**\n * `useCapability` from `@nifrajs/core/capabilities`, taken as a parameter rather than imported so this\n * package keeps its zero dependencies.\n */"
+  },
+  {
     "name": "CapabilityDefinition",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -1083,7 +1118,7 @@
     "name": "CapabilityFindingCode",
     "kind": "type",
     "package": "@nifrajs/core",
-    "signature": "export type CapabilityFindingCode = \"unknown-capability\" | \"provenance-uncovered\" | \"undeclared-capability-evidence\" | \"safe-method-domain-write\" | \"missing-request-idempotency\" | \"missing-durable-idempotency\" | \"forbidden-effect-import\";"
+    "signature": "export type CapabilityFindingCode = \"unknown-capability\" | \"provenance-uncovered\" | \"undeclared-capability-evidence\" | \"safe-method-domain-write\" | \"unconfined-write-reach\" | \"missing-request-idempotency\" | \"missing-durable-idempotency\" | \"forbidden-effect-import\";"
   },
   {
     "name": "CapabilityIdempotency",
@@ -4499,7 +4534,7 @@
     "name": "JobHandle",
     "kind": "interface",
     "package": "@nifrajs/jobs",
-    "signature": "export interface JobHandle<Payload> {\n    readonly name: string;\n    enqueue(payload: Payload, options?: EnqueueOptions): Promise<string>;\n}",
+    "signature": "export interface JobHandle<Payload> {\n    readonly name: string;\n    enqueue(payload: Payload, options?: EnqueueOptions): Promise<string>;\n    /**\n     * A handle bound to a request context: `enqueue` announces its capability first, and fails closed\n     * when the route did not declare it. Evidence from the CALL is per-route and exact, where evidence\n     * from an import is as broad as the module that holds it.\n     *\n     * Requires `beacon` on the queue. Without one this throws rather than handing back a handle that\n     * quietly produces no evidence.\n     */\n    for(context: object): JobHandle<Payload>;\n}",
     "doc": "/** A typed handle to enqueue a defined job. */"
   },
   {
@@ -6567,7 +6602,7 @@
     "name": "QueueOptions",
     "kind": "interface",
     "package": "@nifrajs/jobs",
-    "signature": "export interface QueueOptions {\n    /** Persistence. Default: a fresh {@link MemoryJobStore} (single-process). */\n    readonly store?: JobStore;\n    /** Called when a handler throws (before retry/dead-letter). Default: `console.error`. A throwing handler here is swallowed. */\n    readonly onError?: (error: unknown, jobName: string) => void;\n    /** Injectable clock (tests). Default `() => Date.now()`. */\n    readonly now?: () => number;\n    /** Default attempts for jobs that don't set `retries`. Default 3. */\n    readonly defaultAttempts?: number;\n    /** Default backoff for jobs that don't set one. Default {@link exponentialBackoff}. */\n    readonly backoff?: Backoff;\n}"
+    "signature": "export interface QueueOptions {\n    /** Persistence. Default: a fresh {@link MemoryJobStore} (single-process). */\n    readonly store?: JobStore;\n    /** Called when a handler throws (before retry/dead-letter). Default: `console.error`. A throwing handler here is swallowed. */\n    readonly onError?: (error: unknown, jobName: string) => void;\n    /** Injectable clock (tests). Default `() => Date.now()`. */\n    readonly now?: () => number;\n    /** Default attempts for jobs that don't set `retries`. Default 3. */\n    readonly defaultAttempts?: number;\n    /** Default backoff for jobs that don't set one. Default {@link exponentialBackoff}. */\n    readonly backoff?: Backoff;\n    /**\n     * Make `enqueue` produce capability evidence:\n     *\n     *   import { useCapability } from \"@nifrajs/core/capabilities\"\n     *   const queue = createQueue({ beacon: useCapability })\n     *   await indexNote.for(c).enqueue({ id })\n     */\n    readonly beacon?: CapabilityBeacon;\n    /** Override the announced token. Default `jobs.enqueue`. */\n    readonly capabilities?: {\n        readonly enqueue?: string;\n    };\n}"
   },
   {
     "name": "R2BucketLike",
@@ -8844,6 +8879,19 @@
     "doc": "/** Construction and cleanup hooks for {@link assertStorageAdapterConformance}. */"
   },
   {
+    "name": "StorageBeaconOptions",
+    "kind": "interface",
+    "package": "@nifrajs/storage",
+    "signature": "export interface StorageBeaconOptions {\n    readonly beacon: CapabilityBeacon;\n    readonly capabilities?: StorageCapabilities;\n}"
+  },
+  {
+    "name": "StorageCapabilities",
+    "kind": "interface",
+    "package": "@nifrajs/storage",
+    "signature": "export interface StorageCapabilities {\n    readonly read?: string;\n    readonly write?: string;\n}",
+    "doc": "/** Tokens the wrapper announces. Defaults: `storage.read` and `storage.write`. */"
+  },
+  {
     "name": "StorageData",
     "kind": "type",
     "package": "@nifrajs/storage",
@@ -10074,6 +10122,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare class WireEncodeError extends TypeError {\n    constructor(message: string);\n}",
     "doc": "/** Thrown by {@link encode} for a value it will not encode (a function or a symbol). */"
+  },
+  {
+    "name": "withCapabilityBeacon",
+    "kind": "function",
+    "package": "@nifrajs/storage",
+    "signature": "export declare function withCapabilityBeacon(adapter: StorageAdapter, options: StorageBeaconOptions): BeaconingStorageAdapter;",
+    "doc": "/** Wrap an adapter so `for(context)` announces each operation's capability. */"
   },
   {
     "name": "withDeadlineHeader",

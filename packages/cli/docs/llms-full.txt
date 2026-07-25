@@ -7625,7 +7625,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/cache
 
-`Cache`, `CacheOptions`, `CacheStore`, `createCache`, `MemoryCache`, `MemoryCacheOptions`, `SetOptions`, `StoredEntry`, `WrapOptions`
+`Cache`, `CacheCapabilities`, `CacheOptions`, `CacheStore`, `CapabilityBeacon`, `createCache`, `MemoryCache`, `MemoryCacheOptions`, `SetOptions`, `StoredEntry`, `WrapOptions`
 
 ## @nifrajs/client
 
@@ -7673,7 +7673,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/jobs
 
-`Backoff`, `createQueue`, `EnqueueOptions`, `exponentialBackoff`, `ExponentialOptions`, `fixedBackoff`, `JobContext`, `JobCounts`, `JobDefinition`, `JobError`, `JobHandle`, `JobHandler`, `JobStore`, `JobValidationError`, `MemoryJobStore`, `noBackoff`, `Queue`, `QueueOptions`, `RetryPolicy`, `StandardResult`, `StandardSchemaV1`, `StoredJob`, `Worker`, `WorkerOptions`
+`Backoff`, `CapabilityBeacon`, `createQueue`, `EnqueueOptions`, `exponentialBackoff`, `ExponentialOptions`, `fixedBackoff`, `JobContext`, `JobCounts`, `JobDefinition`, `JobError`, `JobHandle`, `JobHandler`, `JobStore`, `JobValidationError`, `MemoryJobStore`, `noBackoff`, `Queue`, `QueueOptions`, `RetryPolicy`, `StandardResult`, `StandardSchemaV1`, `StoredJob`, `Worker`, `WorkerOptions`
 
 ## @nifrajs/mcp
 
@@ -7713,7 +7713,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/storage
 
-`assertSafeKey`, `assertStorageAdapterConformance`, `FileStorage`, `ListOptions`, `MemoryStorage`, `MovableStorageAdapter`, `PagedStorageAdapter`, `PresignableStorageAdapter`, `PutOptions`, `R2BucketLike`, `R2ObjectLike`, `R2Storage`, `StorageAdapter`, `StorageAdapterConformanceError`, `StorageAdapterConformanceOptions`, `StorageData`, `StorageKeyError`, `StorageListPage`, `StorageListPageOptions`, `StorageObject`, `StoragePresignedUrl`, `StoragePresignOperation`, `StoragePresignOptions`, `toBytes`
+`assertSafeKey`, `assertStorageAdapterConformance`, `BeaconingStorageAdapter`, `CapabilityBeacon`, `FileStorage`, `ListOptions`, `MemoryStorage`, `MovableStorageAdapter`, `PagedStorageAdapter`, `PresignableStorageAdapter`, `PutOptions`, `R2BucketLike`, `R2ObjectLike`, `R2Storage`, `StorageAdapter`, `StorageAdapterConformanceError`, `StorageAdapterConformanceOptions`, `StorageBeaconOptions`, `StorageCapabilities`, `StorageData`, `StorageKeyError`, `StorageListPage`, `StorageListPageOptions`, `StorageObject`, `StoragePresignedUrl`, `StoragePresignOperation`, `StoragePresignOptions`, `toBytes`, `withCapabilityBeacon`
 
 ## @nifrajs/testing
 
