@@ -59,6 +59,7 @@ const DOC_ORDER = [
   "websockets",
   "deployment",
   "cli",
+  "agents",
   "dev",
   "troubleshooting",
 ]

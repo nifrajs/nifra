@@ -48,6 +48,7 @@ const GROUPS: ReadonlyArray<{ title: string; links: ReadonlyArray<{ href: string
     title: "Proof",
     links: [
       { href: "/docs/verification", label: "Verification ladder" },
+      { href: "/docs/agents", label: "Coding agents" },
       { href: "/docs/causality", label: "Execution causality" },
       { href: "/docs/failure-lab", label: "Failure laboratory" },
       { href: "/docs/certification", label: "Adapter certification" },
