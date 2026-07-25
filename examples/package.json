@@ -44,6 +44,7 @@
     "@nifrajs/web-react": "workspace:*",
     "@nifrajs/web-solid": "workspace:*",
     "@nifrajs/web-svelte": "workspace:*",
+    "@nifrajs/web-vanilla": "workspace:*",
     "@nifrajs/web-vue": "workspace:*",
     "@nifrajs/workers": "workspace:*",
     "@preact/preset-vite": "^2.9.0",
