@@ -2471,6 +2471,8 @@ Every public export of every package and documented subpath — name, kind, sign
   Render a {@link SizeReport} as a terse aligned table (biggest first) with a totals row — the text `nifra build --report` prints. Pure (string in, string out) so the formatting is unit-testable.
 - **resyncServerManifestSource** _(function)_ — `resyncServerManifestSource: (source: string, manifest: Parameters<typeof generateServerManifest>[0], routesPrefix: string) => string`
   Re-emit a committed server-manifest from a freshly-discovered route tree, PRESERVING its baked client-asset references (`clientEntry` / `styles` / `routeStyles`) and its eager-vs-lazy shape. This is what makes `nifra sync-manifest` a route-table refresh (renamed / added / removed routes) that does …
+- **serverFnStubPlugin** _(const)_ — `serverFnStubPlugin: () => BunPlugin`
+  Server functions in the CLIENT build: replace each `*.fn.ts` module with stubs that call the routes the server mounted, so the function bodies - and everything they import - never reach a browser.
 - **serverOnlyEmptyPlugin** _(const)_ — `serverOnlyEmptyPlugin: () => BunPlugin`
 - **svelteDedupePlugin** _(const)_ — `svelteDedupePlugin: (from: string) => BunPlugin`
   Dedupe Svelte to a single copy — the Svelte analogue of `reactDedupePlugin`/`preactDedupePlugin`, closing the same class of bug for Svelte (which had NO build-time dedup before). A workspace- or file-linked `@nifrajs/web-svelte` can resolve its OWN `svelte` (e.g. a sibling repo's install store) whi…

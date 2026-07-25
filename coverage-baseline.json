@@ -584,8 +584,8 @@
     "lines": 99.48717948717949
   },
   "packages/otel/src/otlp.ts": {
-    "functions": 93.75,
-    "lines": 98.95833333333334
+    "functions": 100,
+    "lines": 100
   },
   "packages/otel/src/span.ts": {
     "functions": 100,
@@ -872,12 +872,12 @@
     "lines": 100
   },
   "packages/web/src/build-vite.ts": {
-    "functions": 96.66666666666667,
-    "lines": 92.35668789808918
+    "functions": 100,
+    "lines": 94.91525423728814
   },
   "packages/web/src/build.ts": {
-    "functions": 91.73553719008265,
-    "lines": 95.30271398747391
+    "functions": 92,
+    "lines": 95.36560247167868
   },
   "packages/web/src/bun-dev-entry.ts": {
     "functions": 100,
@@ -939,7 +939,15 @@
     "functions": 96.36363636363636,
     "lines": 98.78665318503539
   },
+  "packages/web/src/internal/server-fn-stub.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/web/src/internal/timing-safe-equal.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/internal/vite-import.ts": {
     "functions": 100,
     "lines": 100
   },

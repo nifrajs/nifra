@@ -170,6 +170,26 @@ async function assertBunDevSupportsApp(app: LoadedApp): Promise<void> {
     offenders.push(file)
     if (offenders.length >= 5) break
   }
+  // Server functions are the same trade with a worse consequence. The client build replaces a `*.fn.ts`
+  // module with stubs so its body never reaches a browser; Bun's dev-server bundler takes no plugins, so
+  // there it would be bundled WHOLE - the function bodies and every secret they import. Measured, not
+  // assumed: a runtime `Bun.plugin` onLoad does not reach `HTMLBundle`, so the module ships raw.
+  const leaking: string[] = []
+  for await (const file of new Glob("**/*.fn.{ts,tsx,js,jsx}").scan({ cwd: app.cwd, dot: false })) {
+    if (/(^|\/)(node_modules|dist|\.nifra|\.git)\//.test(file)) continue
+    leaking.push(file)
+    if (leaking.length >= 5) break
+  }
+  if (leaking.length > 0) {
+    throw new Error(
+      "[nifra] `nifra dev --bun` can't transform server functions: Bun's DEV-server bundler takes no " +
+        "plugins, so a `*.fn` module would be bundled WHOLE into the browser - its function bodies and " +
+        "anything they import, secrets included. `nifra build` and `nifra dev` (Vite) both replace it " +
+        "with client stubs, so only this pipeline is affected.\n" +
+        `  Server-function modules found: ${leaking.join(", ")}\n` +
+        "  Use `nifra dev` (the Vite pipeline), or move these calls behind a route for the Bun dev loop.",
+    )
+  }
   if (offenders.length === 0) return
   throw new Error(
     "[nifra] `nifra dev --bun` can't compile CSS Modules: Bun's DEV-server bundler has no `*.module.css` " +

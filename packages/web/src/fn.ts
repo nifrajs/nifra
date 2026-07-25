@@ -24,6 +24,16 @@
  *     closed-over variables to the browser and back, which it now has to encrypt; refusing the feature
  *     removes the whole class rather than defending it.
  *
+ * ## The client half
+ *
+ * A `*.fn.ts` module is never bundled for the browser. The client build replaces it with one stub per
+ * export, each POSTing to the route below, so the bodies and everything they import stay on the server.
+ *
+ * One pipeline cannot do this: `nifra dev --bun`. Bun's dev-server bundler accepts no plugins - a
+ * runtime `Bun.plugin` onLoad does not reach it, which was measured rather than assumed - so a `*.fn`
+ * module there would ship WHOLE, secrets included. That command refuses to start on an app containing
+ * one, the same way it already refuses CSS Modules. `nifra build` and `nifra dev` (Vite) are unaffected.
+ *
  * ## Why this is not a new lane
  *
  * A mounted function registers through the ordinary public `register()`, so it is a route like any

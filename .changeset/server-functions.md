@@ -34,5 +34,10 @@ guards are structural rather than documented:
 - **No closures.** A function is a module-level export taking explicit arguments, which removes the
   serialised-closure class rather than defending it.
 
-This is the registration half. The client build transform that turns a `*.fn.ts` import into a typed
-RPC stub lands separately; until then, call a mounted function from the server or over the typed client.
+The client build replaces a `*.fn.ts` module with one stub per export, each POSTing to its mounted
+route, so the function bodies and everything they import never reach a browser.
+
+`nifra dev --bun` refuses to start on an app that has server functions. Bun's dev-server bundler takes
+no plugins - a runtime `Bun.plugin` onLoad does not reach it, measured rather than assumed - so the
+module would ship whole, secrets included. Refusing matches how that pipeline already handles CSS
+Modules. `nifra build` and `nifra dev` (Vite) transform it correctly.

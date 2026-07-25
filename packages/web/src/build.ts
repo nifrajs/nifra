@@ -12,6 +12,11 @@ import { type BunPlugin, Glob } from "bun"
 import { sanitizeOutputNames } from "./chunk-names.ts"
 import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
+import {
+  generateServerFnStub,
+  SERVER_FN_MODULE,
+  serverFnNamespace,
+} from "./internal/server-fn-stub.ts"
 // `buildTarget(static)` drives the SSG prerender engine directly (it's also re-exported below).
 import { type ClientModuleGraph, fromBunMetafile } from "./module-graph.ts"
 import { prerenderRoutes } from "./prerender.ts"
@@ -989,6 +994,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
           preactDedupePlugin(routesDir),
           svelteDedupePlugin(routesDir),
           serverOnlyEmptyPlugin(),
+          serverFnStubPlugin(),
           ...(options.plugins ?? []),
         ],
         ...(options.conditions ? { conditions: [...options.conditions] } : {}),
@@ -1306,6 +1312,31 @@ export const serverOnlyEmptyPlugin = (): BunPlugin => ({
   setup(build) {
     build.onLoad({ filter: SERVER_ONLY_MODULE }, () => ({
       contents: "module.exports = new Proxy({}, { get: () => undefined })",
+      loader: "js",
+    }))
+  },
+})
+
+/**
+ * Server functions in the CLIENT build: replace each `*.fn.ts` module with stubs that call the routes
+ * the server mounted, so the function bodies - and everything they import - never reach a browser.
+ *
+ * The sibling of {@link serverOnlyEmptyPlugin}, and a deliberate contrast: a `*.server` module is
+ * EMPTIED because nothing may call it from the client, while a `*.fn` module is REPLACED because the
+ * client is supposed to call it, just over HTTP. The generation itself is in
+ * `internal/server-fn-stub.ts` so the Vite pipeline emits identical stubs from the same code; two
+ * hand-written copies would be a client that works in dev and 404s in production.
+ *
+ * CLIENT-only. The server build keeps the real module, which is what `serverFunctions()` mounts.
+ */
+export const serverFnStubPlugin = (): BunPlugin => ({
+  name: "nifra-server-fn-stub",
+  setup(build) {
+    build.onLoad({ filter: SERVER_FN_MODULE }, async (args) => ({
+      contents: generateServerFnStub(
+        await Bun.file(args.path).text(),
+        serverFnNamespace(args.path),
+      ),
       loader: "js",
     }))
   },
