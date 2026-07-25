@@ -73,24 +73,27 @@ interface ViteModule {
  * Decorating a stack is best-effort by definition, so swallowing the rejection loses nothing: the shim
  * delegates, and only suppresses the refusal. Installed once, and deliberately not restored - the strict
  * behaviour is the deviation, and a library evaluated later would hit the same wall.
+ *
+ * ## Why it does not probe first
+ *
+ * It used to: construct an object like follow-redirects' and install the shim only if the runtime
+ * refused it. That shipped and CI still failed, because the probe was not the same shape as the real
+ * call. It passed `Object.create(Error.prototype)` and no `constructorOpt`; follow-redirects passes an
+ * object whose prototype is an Error INSTANCE, plus `this.constructor`. One Bun build accepted the
+ * former and rejected the latter, so the probe reported "permissive", installed nothing, and the whole
+ * Vite suite failed - on a runtime the local machine and a Linux container both disagreed with.
+ *
+ * A probe has to predict every caller's construction pattern to be correct, and is silently wrong when
+ * it guesses short. Installing unconditionally cannot be wrong in that way: the shim delegates to the
+ * runtime and suppresses only a refusal to decorate, which is not an outcome any caller depends on.
  */
+/** Marks the shim as installed, so repeated `loadVite` calls do not wrap a wrapper. */
+const RELAXED: unique symbol = Symbol.for("@nifrajs/web/relaxed-capture-stack-trace")
+
 function relaxCaptureStackTrace(): void {
   const strict = Error.captureStackTrace
-  if (
-    typeof strict !== "function" ||
-    Object.prototype.toString.call(new Error()) !== "[object Error]"
-  ) {
-    return
-  }
-  // Probe rather than sniff a version: construct exactly what follow-redirects does and see if it is
-  // refused. A runtime that already follows V8 keeps its own implementation untouched.
-  const inherited = Object.create(Error.prototype)
-  try {
-    strict.call(Error, inherited)
-    return // permissive already - nothing to fix
-  } catch {
-    // stricter than V8; fall through and wrap
-  }
+  if (typeof strict !== "function") return
+  if ((Error as unknown as Record<PropertyKey, unknown>)[RELAXED] === true) return
   try {
     Error.captureStackTrace = ((target: object, constructorOpt?: unknown) => {
       try {
@@ -99,6 +102,7 @@ function relaxCaptureStackTrace(): void {
         // The runtime refused to decorate this object. A missing `.stack` is not worth failing over.
       }
     }) as typeof Error.captureStackTrace
+    Object.defineProperty(Error, RELAXED, { value: true, configurable: true })
   } catch {
     // The property is frozen or non-writable. Nothing can be done about the import that follows, but
     // failing HERE would replace vite's own error with an assignment error - strictly less informative
