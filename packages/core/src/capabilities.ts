@@ -121,6 +121,7 @@ export type CapabilityFindingCode =
   | "provenance-uncovered"
   | "undeclared-capability-evidence"
   | "safe-method-domain-write"
+  | "unconfined-write-reach"
   | "missing-request-idempotency"
   | "missing-durable-idempotency"
   | "forbidden-effect-import"
@@ -343,16 +344,38 @@ export function evaluateCapabilityAssurance(
         message: `${route.method} ${route.path} has no static provenance coverage`,
       })
     }
+    // A safe-method route that REACHES a domain write without declaring it used to draw two findings
+    // giving opposite advice: declare it (evidence exceeds its declaration) and do not declare it (a
+    // safe method cannot carry a domain write). Both are right and together they are a dead end - the
+    // route cannot declare its way out, because the problem is not the declaration. Reach is computed
+    // from the module that registers the route, so a read endpoint sitting beside a write seam has
+    // write powers in scope, and the only fix is to confine them. Report that once, and say so.
+    const unconfined = new Set<string>()
     for (const id of evidenceIds) {
-      if (!declared.includes(id)) {
+      if (declared.includes(id)) continue
+      const definition = definitions.get(id)
+      if (
+        SAFE_METHODS.has(route.method) &&
+        definition?.zone === "domain" &&
+        definition.access === "write"
+      ) {
+        unconfined.add(id)
         findings.push({
-          code: "undeclared-capability-evidence",
+          code: "unconfined-write-reach",
           method: route.method,
           path: route.path,
           capability: id,
-          message: `${route.method} ${route.path} evidence exceeds its declaration: ${id}`,
+          message: `${route.method} ${route.path} can reach domain write capability ${id} without declaring it, and a safe method may not declare one - move the route or the effect so the write is not in its module's reach`,
         })
+        continue
       }
+      findings.push({
+        code: "undeclared-capability-evidence",
+        method: route.method,
+        path: route.path,
+        capability: id,
+        message: `${route.method} ${route.path} evidence exceeds its declaration: ${id}`,
+      })
     }
 
     const effective = new Set([...declared, ...evidenceIds])
@@ -363,7 +386,10 @@ export function evaluateCapabilityAssurance(
       if (
         SAFE_METHODS.has(route.method) &&
         definition.zone === "domain" &&
-        definition.access === "write"
+        definition.access === "write" &&
+        // Already reported as unconfined reach, with the fix that case actually has. Repeating "cannot
+        // carry" here is the half of the dead end that sends the reader back the way they came.
+        !unconfined.has(id)
       ) {
         findings.push({
           code: "safe-method-domain-write",

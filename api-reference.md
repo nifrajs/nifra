@@ -422,7 +422,7 @@ Every public export of every package and documented subpath — name, kind, sign
   Durable controls consumed by `executeCapability`; none of these fields enter the effect ledger.
 - **CapabilityExecutor** _(type)_ — `type CapabilityExecutor<T> = (execution: CapabilityExecutionContext) => T | PromiseLike<T>`
 - **CapabilityFinding** _(interface)_ — `interface CapabilityFinding`
-- **CapabilityFindingCode** _(type)_ — `type CapabilityFindingCode = | "unknown-capability" | "provenance-uncovered" | "undeclared-capability-evidence" | "safe-method-domain-write" | "missing-request-idempotency" | "missing-durable-idempotency" | "forbidden-e…`
+- **CapabilityFindingCode** _(type)_ — `type CapabilityFindingCode`
 - **CapabilityIdempotency** _(type)_ — `type CapabilityIdempotency = "none" | "request" | "durable"`
 - **CapabilityImportRule** _(interface)_ — `interface CapabilityImportRule`
 - **CapabilityInterceptor** _(type)_ — `type CapabilityInterceptor = ( event: CapabilityInterceptorEvent, next: CapabilityInterceptorNext, ) => void | PromiseLike<void>`

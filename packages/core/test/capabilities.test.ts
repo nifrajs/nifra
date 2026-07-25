@@ -249,13 +249,85 @@ describe("capability assurance", () => {
     })
 
     expect(report.findings.map((finding) => finding.code)).toEqual([
+      // `/bad` DECLARES a domain write on a GET. That is an HTTP semantics error the developer wrote
+      // on purpose, and "cannot carry" is the right thing to say about it.
       "safe-method-domain-write",
       "missing-request-idempotency",
-      "undeclared-capability-evidence",
-      "safe-method-domain-write",
+      // `/read` only REACHES one. Different cause, different fix, one finding.
+      "unconfined-write-reach",
       "missing-request-idempotency",
     ])
     expect(report.routes.find((route) => route.path === "/read")?.unproven).toEqual(["db.read"])
+  })
+
+  /**
+   * Reach is computed from the module that registers a route, so a read endpoint sitting beside a write
+   * seam has write powers in scope. Reporting that as "evidence exceeds its declaration" AND "a safe
+   * method cannot carry a domain write" is a dead end: both are true, they ask for opposite things, and
+   * neither names the fix, which is to confine the reach rather than to argue about the declaration.
+   */
+  describe("unconfined write reach", () => {
+    const reaching = (method: "GET" | "POST", declared: readonly string[]) => {
+      const app =
+        method === "GET"
+          ? server().get("/x", { capabilities: [...declared] }, () => ({ ok: true }))
+          : server().post("/x", { capabilities: [...declared] }, () => ({ ok: true }))
+      return evaluateCapabilityAssurance(app, policy, {
+        routes: [
+          {
+            method,
+            path: "/x",
+            covered: true,
+            evidence: [{ id: "db.write", kind: "static", source: "app-db" }],
+          },
+        ],
+      })
+    }
+
+    test("replaces the contradictory pair with one finding that names the fix", () => {
+      const codes = reaching("GET", []).findings.map((f) => f.code)
+      expect(codes).toContain("unconfined-write-reach")
+      expect(codes).not.toContain("undeclared-capability-evidence")
+      expect(codes).not.toContain("safe-method-domain-write")
+
+      const finding = reaching("GET", []).findings.find((f) => f.code === "unconfined-write-reach")
+      expect(finding?.capability).toBe("db.write")
+      expect(finding?.message).toMatch(/move the route or the effect/)
+    })
+
+    test("still fails the report - this is a rename, not an exemption", () => {
+      expect(reaching("GET", []).ok).toBe(false)
+    })
+
+    test("an unsafe method reaching an undeclared write is unchanged", () => {
+      // A POST can legitimately declare a domain write, so there is no dead end and nothing to reword:
+      // the route really does just need to declare what it reaches.
+      const codes = reaching("POST", []).findings.map((f) => f.code)
+      expect(codes).toContain("undeclared-capability-evidence")
+      expect(codes).not.toContain("unconfined-write-reach")
+    })
+
+    test("a GET that DECLARES the write is still told it cannot carry one", () => {
+      const codes = reaching("GET", ["db.write"]).findings.map((f) => f.code)
+      expect(codes).toContain("safe-method-domain-write")
+      expect(codes).not.toContain("unconfined-write-reach")
+    })
+
+    test("a GET reaching an undeclared READ is unaffected", () => {
+      const app = server().get("/x", () => ({ ok: true }))
+      const codes = evaluateCapabilityAssurance(app, policy, {
+        routes: [
+          {
+            method: "GET",
+            path: "/x",
+            covered: true,
+            evidence: [{ id: "db.read", kind: "static", source: "app-db" }],
+          },
+        ],
+      }).findings.map((f) => f.code)
+      expect(codes).toContain("undeclared-capability-evidence")
+      expect(codes).not.toContain("unconfined-write-reach")
+    })
   })
 
   test("requires effect-specific request and durable command evidence", () => {
