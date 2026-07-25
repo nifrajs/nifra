@@ -17,10 +17,12 @@
  * The `Server` import is type-only and erased, so there is no runtime cycle back into the kernel.
  */
 import type { RequestBudget } from "../budget.ts"
+import type { StandardSchemaV1 } from "../schema/standard.ts"
 import type { Platform, RouteSchema } from "../server/context.ts"
 import type { ResolvedIdempotency } from "../server/idempotency-lane.ts"
 import type { ResolvedEffectLedger } from "../server/ledger-lane.ts"
 import type { Registry } from "../server/registry.ts"
+import type { ResponseContractRuntime } from "../server/response-contract-lane.ts"
 import type { HandlerResult } from "../server/runtime-core.ts"
 import type { CtxSet, MaybePromise, RawContext, RequestSource, Server } from "../server/server.ts"
 
@@ -69,6 +71,12 @@ export interface RouteEntry {
   readonly idempotent: ResolvedIdempotency | undefined
   /** Resolved effect-ledger wiring; `undefined` = off (no per-request ledger, no settle step). */
   readonly ledgered: ResolvedEffectLedger | undefined
+  /** The installed response-contract runtime paired with this route's declared schema, resolved once
+   * at registration; `undefined` = not checked (the default, and the only state in which the route can
+   * still take the fused/native lanes). */
+  readonly responseContract:
+    | { readonly runtime: ResponseContractRuntime; readonly schema: StandardSchemaV1 }
+    | undefined
   /** Per-request context extensions captured at registration (order-scoped). */
   readonly derives: ReadonlyArray<RawDerive>
   /** Static context extensions captured at registration. */

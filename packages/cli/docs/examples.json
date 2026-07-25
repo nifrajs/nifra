@@ -282,6 +282,12 @@
     "code": "import { server, jsonLogger, commonSecretPatterns } from \"@nifrajs/core/server\"\n\n// Key-name redaction is always on; valuePatterns adds opt-in value + message scanning.\nconst app = server({\n  logger: jsonLogger(undefined, { valuePatterns: commonSecretPatterns }),\n})\n\n// logger.error(\"auth failed for user@example.com with Bearer abc.def\")\n//   → { ...,\"message\":\"auth failed for [REDACTED] with [REDACTED]\" }\n// Add your own: { valuePatterns: [...commonSecretPatterns, /\\bord_[a-z0-9]+/g] }"
   },
   {
+    "name": "RESPONSE_CONTRACT",
+    "topic": "Nifra — security & hardening",
+    "slug": "security",
+    "code": "import { server } from \"@nifrajs/core/server\"\nimport { responseContract } from \"@nifrajs/core/response-contract\"\nimport { t } from \"@nifrajs/schema\"\n\nconst PublicUser = t.object({ id: t.string(), name: t.string() })\n\n// \"warn\" logs and changes nothing; \"enforce\" makes the contract the upper bound too.\n// Not installing the plugin is \"off\" - and keeps the lane out of your bundle entirely.\nexport const app = server().use(responseContract(\"enforce\")).get(\n  \"/me\",\n  { response: PublicUser },\n  async () => {\n    // Every column, including the ones the contract never declared.\n    const user = { id: \"u1\", name: \"Ada\", email: \"a@b.c\", passwordHash: \"...\" }\n    return user\n  },\n)\n\n// off      -> {\"id\":\"u1\",\"name\":\"Ada\",\"email\":\"a@b.c\",\"passwordHash\":\"...\"}\n// enforce  -> {\"id\":\"u1\",\"name\":\"Ada\"}"
+  },
+  {
     "name": "SSE",
     "topic": "Nifra — Streaming",
     "slug": "streaming",
@@ -292,6 +298,12 @@
     "topic": "Nifra — Contract-derived adversarial testing",
     "slug": "testing",
     "code": "import { assertAdversarialContract } from \"@nifrajs/testing\"\nimport { app } from \"../src/app\"\n\nconst { test } = await import(\"bun:test\")\n\ntest(\"the API contract withstands hostile inputs\", async () => {\n  await assertAdversarialContract(app, { seed: 73 })\n})"
+  },
+  {
+    "name": "VALIDATE_RESPONSES",
+    "topic": "Nifra — Contract-derived adversarial testing",
+    "slug": "testing",
+    "code": "import { testClient } from \"@nifrajs/client\"\nimport { app } from \"./app\"\n\n// Every JSON response is checked against the route's declared schema for its status:\n// `response` for 2xx, `errors[status]` for declared failures. A mismatch THROWS.\nconst api = testClient<typeof app>(app, { validateResponses: true })\n\nconst res = await api.me.get()   // ResponseContractViolation if the payload drifted"
   },
   {
     "name": "CONTRACT_FIRST",

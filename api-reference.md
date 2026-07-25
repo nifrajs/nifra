@@ -917,6 +917,19 @@ Every public export of every package and documented subpath — name, kind, sign
 - **reflectSchema** _(function)_ — `reflectSchema: (value: unknown) => SchemaReflection`
   Reflect a Standard Schema, Nifra/TypeBox schema carrier, or raw JSON Schema. Never throws. Validation-only schemas have `standard` but no `jsonSchema`; raw JSON Schema has the reverse.
 
+### `@nifrajs/core/response-contract`
+
+- **ResponseContractMode** _(type)_ — `type ResponseContractMode = "warn" | "enforce"`
+  How hard a declared `response` schema is held.
+- **ResponseContractOutcome** _(type)_ — `type ResponseContractOutcome`
+  The outcome of checking one handler result against its declared response schema.
+- **ResponseContractRuntime** _(interface)_ — `interface ResponseContractRuntime`
+  What the server holds when the plugin is installed. The kernel calls `check` through this object and never imports the implementation, so an app that does not install the plugin does not carry it.
+- **checkResponseContract** _(function)_ — `checkResponseContract: (schema: StandardSchemaV1, result: unknown, mode: "warn" | "enforce") => ResponseContractOutcome | Promise<ResponseContractOutcome>`
+  Check one result against the route's declared response schema.
+- **responseContract** _(function)_ — `responseContract: (mode?: ResponseContractMode) => IdentityPlugin`
+  Hold every route's declared `response` schema to what the handler actually returned.
+
 ### `@nifrajs/core/router`
 
 - **EMPTY_PARAMS** _(const)_ — `EMPTY_PARAMS: Record<string, string>`

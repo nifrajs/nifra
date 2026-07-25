@@ -11,6 +11,7 @@
       "@nifrajs/core/contract": ["./packages/core/src/server/contract.ts"],
       "@nifrajs/core/cookies": ["./packages/core/src/server/cookies.ts"],
       "@nifrajs/core/logger": ["./packages/core/src/server/logger.ts"],
+      "@nifrajs/core/response-contract": ["./packages/core/src/server/response-contract-lane.ts"],
       "@nifrajs/core/router": ["./packages/core/src/router/router.ts"],
       "@nifrajs/core/schema": ["./packages/core/src/schema/standard.ts"],
       "@nifrajs/core/seo": ["./packages/core/src/seo.ts"],

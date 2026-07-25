@@ -263,13 +263,17 @@
     "functions": 100,
     "lines": 96.15384615384616
   },
+  "packages/core/src/server/response-contract-lane.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/core/src/server/runtime-core.ts": {
     "functions": 100,
     "lines": 100
   },
   "packages/core/src/server/server.ts": {
-    "functions": 91.34615384615384,
-    "lines": 99.00052603892688
+    "functions": 91.38755980861244,
+    "lines": 99.01910170366546
   },
   "packages/core/src/server/sse.ts": {
     "functions": 94.73684210526315,

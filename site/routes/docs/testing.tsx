@@ -8,6 +8,15 @@ export const meta = pageMeta(
   "Turn route schemas into hostile input, response-conformance, replay, shrinking, and runtime-matrix tests with @nifrajs/testing.",
 )
 
+const VALIDATE_RESPONSES = `import { testClient } from "@nifrajs/client"
+import { app } from "./app"
+
+// Every JSON response is checked against the route's declared schema for its status:
+// \`response\` for 2xx, \`errors[status]\` for declared failures. A mismatch THROWS.
+const api = testClient<typeof app>(app, { validateResponses: true })
+
+const res = await api.me.get()   // ResponseContractViolation if the payload drifted`
+
 const BASIC = `import { assertAdversarialContract } from "@nifrajs/testing"
 import { app } from "../src/app"
 
@@ -84,6 +93,27 @@ export default function ContractTesting() {
         declared <code>response</code>, and the real JSON body is validated off the request hot path.
         Use <code>expectedValidationStatuses</code> or <code>isRejected</code> when your app deliberately
         has a different validation response.
+      </p>
+
+      <h2>Assert the server keeps its own contract</h2>
+      <p>
+        A route&rsquo;s <code>response</code> schema types the handler and the client, but nothing
+        re-checks the bytes that actually leave the app. <code>validateResponses</code> closes that gap
+        in tests: every JSON response is validated against the schema declared for its status, and a
+        mismatch throws <code>ResponseContractViolation</code> straight through the
+        otherwise-never-throwing client - because a drifted payload passing quietly is the failure
+        this exists to prevent.
+      </p>
+      <CodeBlock code={VALIDATE_RESPONSES} lang="ts" />
+      <p>
+        Whether it catches <em>undeclared extra</em> fields depends on your validator, not on nifra: a
+        strict schema (<code>@nifrajs/schema</code>&rsquo;s <code>t.object</code>) reports them and the
+        test fails, while a stripping one (Zod, Valibot) accepts them silently. To catch extras
+        regardless, or to stop them reaching the wire in production, use{" "}
+        <a href="/docs/security">
+          <code>responseContract</code>
+        </a>
+        .
       </p>
 
       <h2>Opaque schemas stay validator-neutral</h2>

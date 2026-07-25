@@ -10,6 +10,27 @@ export const meta = pageMeta(
   "Bounded request bodies, magic-byte file-upload validation, constant-time webhook verification, and idempotency-key replay — the hardening primitives every production app needs, built in.",
 )
 
+const RESPONSE_CONTRACT = `import { server } from "@nifrajs/core/server"
+import { responseContract } from "@nifrajs/core/response-contract"
+import { t } from "@nifrajs/schema"
+
+const PublicUser = t.object({ id: t.string(), name: t.string() })
+
+// "warn" logs and changes nothing; "enforce" makes the contract the upper bound too.
+// Not installing the plugin is "off" - and keeps the lane out of your bundle entirely.
+export const app = server().use(responseContract("enforce")).get(
+  "/me",
+  { response: PublicUser },
+  async () => {
+    // Every column, including the ones the contract never declared.
+    const user = { id: "u1", name: "Ada", email: "a@b.c", passwordHash: "..." }
+    return user
+  },
+)
+
+// off      -> {"id":"u1","name":"Ada","email":"a@b.c","passwordHash":"..."}
+// enforce  -> {"id":"u1","name":"Ada"}`
+
 const BOUNDED = `import { server } from "@nifrajs/core/server"
 
 const app = server()
@@ -240,6 +261,39 @@ export default function Security() {
         validation, constant-time webhook verification, and idempotent retries — ship as first-party
         primitives. All are <b>edge-safe</b> (WebCrypto, no <code>node:crypto</code>) and run unchanged
         on Bun, Node, Deno, and Workers.
+      </p>
+
+      <h2>Responses that cannot leak more than they declare</h2>
+      <p>
+        A <code>response</code> schema is a <strong>lower</strong> bound: it says &ldquo;at least these
+        fields&rdquo;, never &ldquo;only these&rdquo;. A handler returning a database row that satisfies
+        it also ships every other column, and nothing points at it - TypeScript&rsquo;s
+        excess-property check does not reach a handler&rsquo;s return position, and the client&rsquo;s
+        type reports the contract rather than the bytes. So the leak is invisible from both ends, and it
+        can appear with no code change at all: add a column, and the next deploy ships it to browsers.
+      </p>
+      <CodeBlock code={RESPONSE_CONTRACT} lang="ts" />
+      <p>
+        Not installing the plugin is &ldquo;off&rdquo;, which is exactly today&rsquo;s behaviour and
+        keeps the lane out of your bundle rather than shipping a disabled branch to everyone.{" "}
+        <code>&quot;warn&quot;</code> checks every response, logs the undeclared fields by name, and
+        serves the payload <strong>unchanged</strong> - so turning it on in staging can never be the
+        thing that broke production. <code>&quot;enforce&quot;</code> serializes the validated value
+        instead of the raw result. Install it before the routes it should cover: like{" "}
+        <code>idempotency()</code>, the decision is made per route at registration.
+      </p>
+      <p>
+        Enforcement follows your schema&rsquo;s own semantics, because Standard Schema exposes{" "}
+        <code>validate</code> and no way to enumerate declared keys. A <em>stripping</em> schema (Zod,
+        Valibot) yields a cleaned value, so the extra fields are dropped. A <em>strict</em> one
+        (<code>@nifrajs/schema</code>&rsquo;s <code>t.object</code>) reports them as issues, so the
+        response becomes a 500 and the detail goes to the logger, never to the caller. Both are what you
+        already declared about extra fields.
+      </p>
+      <p>
+        Routes with a <code>response</code> schema leave the fused and native fast paths while this is
+        on, the same trade an idempotent route makes: the check needs the handler&rsquo;s value before it
+        becomes bytes.
       </p>
 
       <h2>Bounded request bodies</h2>

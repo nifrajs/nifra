@@ -130,14 +130,18 @@ export default server().post("/users", { body }, (c) => ({ name: c.body.name }))
 // Every row below carries the router, so a router change moves all of them together. The last such
 // move was the total specificity comparator that makes the trie router and the browser matcher order
 // equally-weighted mixed patterns identically: ~0.2 KB gzip, paid once in `nifra-bare` and inherited.
+// The response-contract seam raised every row by ~0.2 KB gzip: the install method, the runtime field,
+// the registration-time decision, and the request-path branch. The lane's own logic is NOT in here -
+// it lives behind `@nifrajs/core/response-contract` and only arrives when the plugin is installed,
+// which is what the budget caught when it was a plain server option (+0.5 KB for everyone).
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
-  "nifra-bare": 16.1,
+  "nifra-bare": 16.3,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  "nifra-idempotency": 19.1,
-  "nifra-effect-ledger": 17.9,
+  "nifra-idempotency": 19.3,
+  "nifra-effect-ledger": 18.1,
   "nifra-mcp": 16.4,
-  "nifra-sse": 16.8,
-  "nifra-valibot": 17,
+  "nifra-sse": 17,
+  "nifra-valibot": 17.2,
   "nifra-typebox-t": 46,
 }
 

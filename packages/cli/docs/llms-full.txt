@@ -1467,6 +1467,57 @@ validation, constant-time webhook verification, and idempotent retries — ship 
 primitives. All are **edge-safe** (WebCrypto, no `node:crypto`) and run unchanged
 on Bun, Node, Deno, and Workers.
 
+### Responses that cannot leak more than they declare
+
+A `response` schema is a **lower** bound: it says &ldquo;at least these
+fields&rdquo;, never &ldquo;only these&rdquo;. A handler returning a database row that satisfies
+it also ships every other column, and nothing points at it - TypeScript&rsquo;s
+excess-property check does not reach a handler&rsquo;s return position, and the client&rsquo;s
+type reports the contract rather than the bytes. So the leak is invisible from both ends, and it
+can appear with no code change at all: add a column, and the next deploy ships it to browsers.
+
+```ts
+import { server } from "@nifrajs/core/server"
+import { responseContract } from "@nifrajs/core/response-contract"
+import { t } from "@nifrajs/schema"
+
+const PublicUser = t.object({ id: t.string(), name: t.string() })
+
+// "warn" logs and changes nothing; "enforce" makes the contract the upper bound too.
+// Not installing the plugin is "off" - and keeps the lane out of your bundle entirely.
+export const app = server().use(responseContract("enforce")).get(
+  "/me",
+  { response: PublicUser },
+  async () => {
+    // Every column, including the ones the contract never declared.
+    const user = { id: "u1", name: "Ada", email: "a@b.c", passwordHash: "..." }
+    return user
+  },
+)
+
+// off      -> {"id":"u1","name":"Ada","email":"a@b.c","passwordHash":"..."}
+// enforce  -> {"id":"u1","name":"Ada"}
+```
+
+Not installing the plugin is &ldquo;off&rdquo;, which is exactly today&rsquo;s behaviour and
+keeps the lane out of your bundle rather than shipping a disabled branch to everyone.
+`"warn"` checks every response, logs the undeclared fields by name, and
+serves the payload **unchanged** - so turning it on in staging can never be the
+thing that broke production. `"enforce"` serializes the validated value
+instead of the raw result. Install it before the routes it should cover: like
+`idempotency()`, the decision is made per route at registration.
+
+Enforcement follows your schema&rsquo;s own semantics, because Standard Schema exposes
+`validate` and no way to enumerate declared keys. A _stripping_ schema (Zod,
+Valibot) yields a cleaned value, so the extra fields are dropped. A _strict_ one
+(`@nifrajs/schema`&rsquo;s `t.object`) reports them as issues, so the
+response becomes a 500 and the detail goes to the logger, never to the caller. Both are what you
+already declared about extra fields.
+
+Routes with a `response` schema leave the fused and native fast paths while this is
+on, the same trade an idempotent route makes: the check needs the handler&rsquo;s value before it
+becomes bytes.
+
 ### Bounded request bodies
 
 Nifra caps the body of any **schema-validated** route at `maxBodyBytes` — an over-cap
@@ -5182,6 +5233,35 @@ Invalid inputs must produce 422 by default. A valid witness is also executed for
 declared `response`, and the real JSON body is validated off the request hot path.
 Use `expectedValidationStatuses` or `isRejected` when your app deliberately
 has a different validation response.
+
+### Assert the server keeps its own contract
+
+A route&rsquo;s `response` schema types the handler and the client, but nothing
+re-checks the bytes that actually leave the app. `validateResponses` closes that gap
+in tests: every JSON response is validated against the schema declared for its status, and a
+mismatch throws `ResponseContractViolation` straight through the
+otherwise-never-throwing client - because a drifted payload passing quietly is the failure
+this exists to prevent.
+
+```ts
+import { testClient } from "@nifrajs/client"
+import { app } from "./app"
+
+// Every JSON response is checked against the route's declared schema for its status:
+// `response` for 2xx, `errors[status]` for declared failures. A mismatch THROWS.
+const api = testClient<typeof app>(app, { validateResponses: true })
+
+const res = await api.me.get()   // ResponseContractViolation if the payload drifted
+```
+
+Whether it catches _undeclared extra_ fields depends on your validator, not on nifra: a
+strict schema (`@nifrajs/schema`&rsquo;s `t.object`) reports them and the
+test fails, while a stripping one (Zod, Valibot) accepts them silently. To catch extras
+regardless, or to stop them reaching the wire in production, use
+[
+`responseContract`
+](/docs/security)
+.
 
 ### Opaque schemas stay validator-neutral
 

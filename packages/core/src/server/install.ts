@@ -26,3 +26,8 @@ export const INSTALL_NODE_DIRECT: unique symbol = Symbol.for("@nifrajs/core/inst
 
 /** @internal Install the WebSocket runtime on a server (called by the `websocket()` plugin). */
 export const INSTALL_WS: unique symbol = Symbol.for("@nifrajs/core/install-ws")
+
+/** @internal Install the response-contract runtime on a server (called by the `responseContract()` plugin). */
+export const INSTALL_RESPONSE_CONTRACT: unique symbol = Symbol.for(
+  "@nifrajs/core/install-response-contract",
+)

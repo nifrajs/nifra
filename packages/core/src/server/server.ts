@@ -63,6 +63,9 @@ import {
 } from "./query.ts"
 import { RequestContext, readBoundedJsonSource } from "./request-context.ts"
 import { fusedRespond, fusedRespondNoSet, toResponse } from "./respond.ts"
+// Type-only: erased, so the kernel never pulls the lane's implementation into a bundle that does not
+// install the plugin. The value side arrives through the symbol-keyed install seam.
+import type { ResponseContractRuntime } from "./response-contract-lane.ts"
 import {
   CONTEXT_SEARCH,
   CONTEXT_SET,
@@ -84,6 +87,7 @@ import {
   INSTALL_IDEMPOTENCY,
   INSTALL_MCP,
   INSTALL_NODE_DIRECT,
+  INSTALL_RESPONSE_CONTRACT,
   INSTALL_SSE,
   INSTALL_WS,
 } from "./install.ts"
@@ -383,6 +387,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private readonly maxBodyBytes: number
   private readonly wsMaxPayloadBytes: number
   private readonly requestTimeoutMs: number
+  /** Installed by the `responseContract()` plugin; `undefined` = not installed, which is the default
+   * and the state in which a declared `response` schema stays a compile-time contract only. */
+  private responseContractRuntime: ResponseContractRuntime | undefined
   /** Opt-in caller-IP trust declaration; `undefined` = socket peer only, no forwarded header believed. */
   private readonly clientIpTrust: ClientIpTrust | undefined
   private readonly acceptInboundDeadlines: boolean
@@ -463,6 +470,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.effectLedgerRuntime = undefined
     // The idempotency runtime is installed by `.use(idempotency())`; a bare app never imports it, so the
     // dedupe machinery tree-shakes out. A route that declares idempotency without it is a build error.
+    this.responseContractRuntime = undefined
     this.idempotencyRuntime = undefined
     this.logger = options.logger ?? jsonLogger()
     this.defaultOnValidationError = options.onValidationError
@@ -1059,12 +1067,21 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       method,
       path,
     )
+    // A checked response schema needs the handler's VALUE before it becomes bytes, and the fused and
+    // native lanes exist precisely to skip that step. So a contracted route leaves them - the same
+    // trade an idempotent route makes above, and the reason this is opt-in per server.
+    const runtime = this.responseContractRuntime
+    const contracted =
+      runtime !== undefined && schema?.response !== undefined
+        ? { runtime, schema: schema.response }
+        : undefined
     const bare =
       schema?.params === undefined &&
       schema?.body === undefined &&
       schema?.query === undefined &&
       idempotent === undefined &&
       ledgered === undefined &&
+      contracted === undefined &&
       this.derives.length === 0 &&
       this.beforeHandleHooks.length === 0 &&
       this.afterHandleHooks.length === 0 &&
@@ -1078,9 +1095,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           )
         : undefined
     const contextless = bare && this.aroundHooks.length === 0 && isContextlessNoArgArrow(handler)
+    // The body and query lanes finalize the handler's result themselves, so a contracted route takes
+    // the general lifecycle lane instead - one place owns the check rather than three.
     const lane = bare
       ? "bare"
-      : schema?.body !== undefined &&
+      : contracted === undefined &&
+          schema?.body !== undefined &&
           schema.query === undefined &&
           schema.params === undefined &&
           this.derives.length === 0 &&
@@ -1088,7 +1108,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           this.afterHandleHooks.length === 0 &&
           this.onErrorHooks.length === 0
         ? "body"
-        : schema?.body === undefined &&
+        : contracted === undefined &&
+            schema?.body === undefined &&
             schema?.query !== undefined &&
             schema.params === undefined &&
             this.derives.length === 0 &&
@@ -1111,6 +1132,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       schema,
       idempotent,
       ledgered,
+      responseContract: contracted,
       derives: [...this.derives],
       decorations: routeDecorations,
       hasDecorations,
@@ -1301,6 +1323,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     )
   }
 
+  /** @internal Symbol-keyed install seam for the `responseContract()` plugin. Off the public typed surface. */
+  [INSTALL_RESPONSE_CONTRACT](runtime: ResponseContractRuntime): void {
+    this.assertConfigurable("responseContract()")
+    this.responseContractRuntime = runtime
+  }
+
   /** @internal Symbol-keyed install seam for the `idempotency()` plugin. Off the public typed surface. */
   [INSTALL_IDEMPOTENCY](runtime: IdempotencyRuntime): void {
     this.assertConfigurable("idempotency()")
@@ -1365,6 +1393,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // when the parent has none so merging cannot silently disable a safety lane. If the parent already
     // has a runtime, either implementation can execute every resolved entry because route-specific
     // options were pinned during registration.
+    this.responseContractRuntime ??= source.responseContractRuntime
     this.idempotencyRuntime ??= source.idempotencyRuntime
     this.effectLedgerRuntime ??= source.effectLedgerRuntime
     this.mcpRuntime ??= source.mcpRuntime
@@ -2684,6 +2713,36 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           const transformed = hook(result, ctx)
           result = transformed instanceof Promise ? await transformed : transformed
         }
+      }
+
+      // The response contract is checked LAST, after afterHandle, so it holds what actually ships
+      // rather than what the handler happened to return. Only reached by a contracted route: the
+      // registration decision above kept those off the fused/native lanes for exactly this step.
+      const contract = entry.responseContract
+      if (contract !== undefined) {
+        const checked = contract.runtime.check(contract.schema, result)
+        const outcome = checked instanceof Promise ? await checked : checked
+        if (outcome.kind === "violation") {
+          // The handler broke a contract it declared itself, so this is a server fault, not the
+          // caller's. Fail closed: the undeclared payload is never sent, and the detail goes to the
+          // (redacting) logger rather than to the client.
+          this.logger.error("response contract violation", {
+            method: ctx.req.method,
+            path: pathnameOf(ctx.req.url),
+            // `detail`, not `message`: the logger uses `message` for its own first argument, so a
+            // field of that name is silently overwritten and the diagnosis disappears.
+            detail: outcome.message,
+          })
+          return wrapResponse(jsonError(500, "internal_error"))
+        }
+        if (outcome.kind === "warn") {
+          this.logger.warn("response contract", {
+            method: ctx.req.method,
+            path: pathnameOf(ctx.req.url),
+            detail: outcome.message,
+          })
+        }
+        result = outcome.value
       }
 
       return finalize(result, responseSet(ctx))

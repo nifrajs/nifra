@@ -1,7 +1,7 @@
 {
   "name": "@nifrajs/core",
   "version": "2.2.0",
-  "description": "Bun-native, contract-first HTTP framework — the router, server, and route descriptor.",
+  "description": "Bun-native, contract-first HTTP framework \u2014 the router, server, and route descriptor.",
   "keywords": [
     "bun",
     "typescript",
@@ -201,6 +201,11 @@
       "bun": "./src/server/webhook.ts",
       "types": "./dist/server/webhook.d.ts",
       "default": "./dist/server/webhook.js"
+    },
+    "./response-contract": {
+      "bun": "./src/server/response-contract-lane.ts",
+      "types": "./dist/server/response-contract-lane.d.ts",
+      "default": "./dist/server/response-contract-lane.js"
     }
   },
   "files": [
