@@ -22,6 +22,7 @@ import { listenOrExplain } from "./dev-port.ts"
 import { discoverRoutes } from "./fs.ts"
 import { DEFAULT_DEV_PORT, generateClientEntry } from "./index.ts"
 import { importVite } from "./internal/vite-import.ts"
+import { viteServerFnStub } from "./plugins/vite-server-fn.ts"
 
 /** Minimal app surface — `createWebApp(...)` satisfies it. */
 interface FetchApp {
@@ -348,7 +349,9 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
       // Explicit watch config; poll when native fs events aren't delivered (containers/sandboxes).
       watch: usePolling ? { usePolling: true, interval: 80 } : {},
     },
-    plugins: [...plugins],
+    // Ahead of the user's plugins: a `*.fn` module must be replaced before anything else
+    // reads it, and the dev server is a client bundler like any other.
+    plugins: [viteServerFnStub(), ...plugins],
     resolve: {
       conditions: [...(options.conditions ?? []), "bun", "module", "browser", "development"],
       // Dedupe React to ONE copy. In a multi-root workspace a shared package can pull react/react-dom

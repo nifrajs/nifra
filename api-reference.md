@@ -2663,6 +2663,13 @@ Every public export of every package and documented subpath — name, kind, sign
 - **viteLeakGuard** _(function)_ — `viteLeakGuard: () => LeakGuardPlugin`
   A Vite/Rollup plugin that fails the build when server-only code or a `node:` builtin reaches the client bundle - the same two guards, and the same error messages, as nifra's Bun production build.
 
+### `@nifrajs/web/plugins/vite-server-fn`
+
+- **ServerFnStubPlugin** _(interface)_ — `interface ServerFnStubPlugin`
+  The slice of a Vite/Rollup plugin this returns. Structural, so `vite` stays an optional peer.
+- **viteServerFnStub** _(function)_ — `viteServerFnStub: () => ServerFnStubPlugin`
+  Replace every `*.fn` module with its client stubs.
+
 ### `@nifrajs/web/route-manifest`
 
 - **RenderMode** _(type)_ — `type RenderMode = "static" | "isr" | "ssr"`

@@ -10,7 +10,7 @@ Framework-agnostic SSR core for nifra — the render seam + HTML document orches
 
 ## Public entrypoints
 
-`@nifrajs/web` · `@nifrajs/web/build` · `@nifrajs/web/build-vite` · `@nifrajs/web/client` · `@nifrajs/web/conformance` · `@nifrajs/web/dev` · `@nifrajs/web/fn` · `@nifrajs/web/fonts` · `@nifrajs/web/forms` · `@nifrajs/web/fs` · `@nifrajs/web/islands` · `@nifrajs/web/plugins/css-modules` · `@nifrajs/web/plugins/kit` · `@nifrajs/web/plugins/postcss` · `@nifrajs/web/plugins/scss` · `@nifrajs/web/plugins/svg` · `@nifrajs/web/plugins/vite-leak-guard` · `@nifrajs/web/route-manifest` · `@nifrajs/web/server-only` · `@nifrajs/web/vite`
+`@nifrajs/web` · `@nifrajs/web/build` · `@nifrajs/web/build-vite` · `@nifrajs/web/client` · `@nifrajs/web/conformance` · `@nifrajs/web/dev` · `@nifrajs/web/fn` · `@nifrajs/web/fonts` · `@nifrajs/web/forms` · `@nifrajs/web/fs` · `@nifrajs/web/islands` · `@nifrajs/web/plugins/css-modules` · `@nifrajs/web/plugins/kit` · `@nifrajs/web/plugins/postcss` · `@nifrajs/web/plugins/scss` · `@nifrajs/web/plugins/svg` · `@nifrajs/web/plugins/vite-leak-guard` · `@nifrajs/web/plugins/vite-server-fn` · `@nifrajs/web/route-manifest` · `@nifrajs/web/server-only` · `@nifrajs/web/vite`
 
 ## Key exports
 
@@ -29,7 +29,7 @@ Framework-agnostic SSR core for nifra — the render seam + HTML document orches
 - **buildTargetVite** _(function)_ — `buildTargetVite: (target: BuildTarget, options: BuildTargetOptions) => Promise<BuildTargetResult>` · from `@nifrajs/web/build-vite`
 - **buildTargetWith** _(function)_ — `buildTargetWith: (target: BuildTarget, options: BuildTargetOptions, bundler: Bundler) => Promise<BuildTargetResult>` · from `@nifrajs/web/build`
 
-_…and 262 more — see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 264 more — see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 

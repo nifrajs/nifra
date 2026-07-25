@@ -584,8 +584,8 @@
     "lines": 99.48717948717949
   },
   "packages/otel/src/otlp.ts": {
-    "functions": 100,
-    "lines": 100
+    "functions": 93.75,
+    "lines": 98.95833333333334
   },
   "packages/otel/src/span.ts": {
     "functions": 100,
@@ -873,7 +873,7 @@
   },
   "packages/web/src/build-vite.ts": {
     "functions": 100,
-    "lines": 94.91525423728814
+    "lines": 94.93243243243244
   },
   "packages/web/src/build.ts": {
     "functions": 92,
@@ -996,6 +996,10 @@
     "lines": 100
   },
   "packages/web/src/plugins/vite-leak-guard.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/plugins/vite-server-fn.ts": {
     "functions": 100,
     "lines": 100
   },

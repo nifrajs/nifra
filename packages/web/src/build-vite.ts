@@ -35,6 +35,7 @@ import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
 import { importVite, isViteUnresolved } from "./internal/vite-import.ts"
 import { viteLeakGuard } from "./plugins/vite-leak-guard.ts"
+import { viteServerFnStub } from "./plugins/vite-server-fn.ts"
 
 // ---------------------------------------------------------------------------------------------------
 // Structural Vite typings — no hard `vite` dependency (mirrors vite.ts). Only the build API is used.
@@ -208,7 +209,7 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
             external: [/^node:/],
             input,
             // The leak guard is a Rollup plugin — last, so it sees the final graph.
-            plugins: [leakGuard],
+            plugins: [viteServerFnStub(), leakGuard],
             output: {
               entryFileNames: "[name]-[hash].js",
               chunkFileNames: "[name]-[hash].js",
