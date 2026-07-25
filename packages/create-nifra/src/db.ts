@@ -105,12 +105,78 @@ export type NewNote = typeof notes.$inferInsert
 // --- typed clients (export \`db\` + re-export the schema) --------------------------------------------
 // Each prints the same usage header so an agent sees how to wire it (decorate) and query it.
 
-const WIRE_DOC = `// Wire it into your backend ONCE, then read \`c.db\` in handlers:
-//   import { server } from "@nifrajs/core/server"
-//   import { db, notes } from "./db"
-//   export const app = server().decorate("db", db)
-//     .get("/notes", async (c) => c.db.select().from(notes))
-// Never top-level-import this into a routes/ page file (server-only) — reach it via c.db / ctx.api.`
+// The connection is not imported by route modules directly. \`read.ts\` and \`write.ts\` sit in front of
+// it, and routes import whichever one they need - which is what lets a GET route declare \`db.read\`
+// and nothing else. See the header those files carry for why the split is load-bearing.
+const WIRE_DOC = `// The connection. Route modules do NOT import this file: they import \`./read.ts\` or \`./write.ts\`, so
+// what a route can reach matches what it declares. \`db/read-routes.ts\` shows the shape, and merging it
+// is one line:
+//   import { notesRead } from "../db/read-routes.ts"
+//   export const app = server().merge(notesRead)
+// Never top-level-import any of this into a routes/ page file (server-only) - reach it via ctx.api.`
+
+/**
+ * Why the seam is split by access rather than exported as one `db`.
+ *
+ * `nifra check` works out what a route can reach from the module that REGISTERS it, following its
+ * imports. A route may not reach further than it declares, and a GET route may not declare a domain
+ * write at all - so a GET registered in a module that can reach a write has no legal declaration and
+ * has to be moved. Splitting reads from writes at the seam, and again at the routes, is what keeps
+ * every route's reach equal to what it says about itself.
+ *
+ * The same shape is what makes the policy in `nifra.assurance.ts` bite: `db/write.ts` grants
+ * `db.write`, the `authenticated-write` rule demands authentication of anything holding it, and a POST
+ * that skips auth fails the check rather than shipping.
+ */
+const SEAM_DOC = (access: "read" | "write"): string =>
+  `// The ${access} half of the database seam. Routes that ${access === "read" ? "only read" : "write"} import THIS, never \`./index.ts\` -
+// a module that can reach both is a module whose GET routes cannot declare what they reach. Keep the
+// two halves import-disjoint and every route's declaration stays honest.`
+
+const DRIZZLE_READ = `${SEAM_DOC("read")}
+import { isNull } from "drizzle-orm"
+import { db } from "./index.ts"
+import { type Note, notes } from "./schema.ts"
+
+export const listNotes = async (): Promise<Note[]> =>
+  db.select().from(notes).where(isNull(notes.deletedAt))
+`
+
+const DRIZZLE_WRITE = `${SEAM_DOC("write")}
+import { db } from "./index.ts"
+import { type NewNote, type Note, notes } from "./schema.ts"
+
+export const createNote = async (note: NewNote): Promise<Note | undefined> =>
+  (await db.insert(notes).values(note).returning())[0]
+`
+
+const READ_ROUTES = `import { server } from "@nifrajs/core/server"
+import { t } from "@nifrajs/schema"
+import { listNotes } from "./read.ts"
+
+// Registered here rather than in your app module, because reach is per-module: this file can see the
+// read half of the seam and nothing else, so \`db.read\` is the whole truth about it. Merge it with
+// \`app.merge(notesRead)\`.
+export const notesRead = server().get(
+  "/notes",
+  {
+    capabilities: ["db.read"],
+    response: t.array(t.object({ id: t.string(), title: t.string(), body: t.string() })),
+  },
+  async () => (await listNotes()).map(({ id, title, body }) => ({ id, title, body })),
+)
+
+// Writes go in a SIBLING file that imports \`./write.ts\`, never this one:
+//
+//   export const notesWrite = server().post(
+//     "/notes",
+//     { body: NoteInput, capabilities: ["db.write"] },
+//     async (c) => createNote(c.body),
+//   )
+//
+// Expect it to fail \`nifra assure\` until it is authenticated - the starter policy requires proof of
+// who asked before anything writes business state. Scaffold auth with \`--auth\`.
+`
 
 const PG_CLIENT = `import { drizzle } from "drizzle-orm/postgres-js"
 import postgres from "postgres"
@@ -269,14 +335,22 @@ model Note {
 }
 `
 
+const PRISMA_READ = `${SEAM_DOC("read")}
+import { db } from "./index.ts"
+
+export const listNotes = async () => db.note.findMany({ where: { deletedAt: null } })
+`
+
+const PRISMA_WRITE = `${SEAM_DOC("write")}
+import { db } from "./index.ts"
+
+export const createNote = async (note: { title: string; body?: string }) =>
+  db.note.create({ data: note })
+`
+
 const PRISMA_CLIENT = `import { PrismaClient } from "@prisma/client"
 
-// Wire it into your backend ONCE, then read \`c.db\` in handlers:
-//   import { server } from "@nifrajs/core/server"
-//   import { db } from "./db"
-//   export const app = server().decorate("db", db)
-//     .get("/notes", async (c) => c.db.note.findMany({ where: { deletedAt: null } }))
-// Never top-level-import this into a routes/ page file (server-only) — reach it via c.db / ctx.api.
+${WIRE_DOC}
 
 // One PrismaClient per process. The globalThis guard stops dev hot-reload from opening a new connection
 // pool on every reload (which exhausts the DB); production gets a single fresh instance.
@@ -321,17 +395,25 @@ export interface DB {
 }
 `
 
+const KYSELY_READ = `${SEAM_DOC("read")}
+import { db } from "./index.ts"
+
+export const listNotes = async () =>
+  db.selectFrom("notes").selectAll().where("deleted_at", "is", null).execute()
+`
+
+const KYSELY_WRITE = `${SEAM_DOC("write")}
+import { db } from "./index.ts"
+
+export const createNote = async (note: { title: string; body?: string }) =>
+  db.insertInto("notes").values(note).returningAll().executeTakeFirst()
+`
+
 const KYSELY_PG_CLIENT = `import { Kysely, PostgresDialect } from "kysely"
 import { Pool } from "pg"
 import type { DB } from "./schema.ts"
 
-// Wire it into your backend ONCE, then read \`c.db\` in handlers:
-//   import { server } from "@nifrajs/core/server"
-//   import { db } from "./db"
-//   export const app = server().decorate("db", db)
-//     .get("/notes", async (c) =>
-//       c.db.selectFrom("notes").selectAll().where("deleted_at", "is", null).execute())
-// Never top-level-import this into a routes/ page file (server-only) — reach it via c.db / ctx.api.
+${WIRE_DOC}
 
 const url = process.env.DATABASE_URL
 if (url === undefined || url === "") {
@@ -406,6 +488,9 @@ export const DB_PRESETS: Readonly<Record<DbChoice, DbPreset>> = {
     files: {
       "db/schema.ts": SQLITE_SCHEMA,
       "db/index.ts": LIBSQL_CLIENT,
+      "db/read.ts": DRIZZLE_READ,
+      "db/write.ts": DRIZZLE_WRITE,
+      "db/read-routes.ts": READ_ROUTES,
       "drizzle.config.ts": LIBSQL_CONFIG,
       ".env.example": LIBSQL_ENV,
     },
@@ -421,6 +506,9 @@ export const DB_PRESETS: Readonly<Record<DbChoice, DbPreset>> = {
     files: {
       "db/schema.ts": PG_SCHEMA,
       "db/index.ts": PG_CLIENT,
+      "db/read.ts": DRIZZLE_READ,
+      "db/write.ts": DRIZZLE_WRITE,
+      "db/read-routes.ts": READ_ROUTES,
       "drizzle.config.ts": PG_CONFIG,
       ".env.example": PG_ENV,
     },
@@ -436,6 +524,9 @@ export const DB_PRESETS: Readonly<Record<DbChoice, DbPreset>> = {
     files: {
       "db/schema.ts": SQLITE_SCHEMA,
       "db/index.ts": SQLITE_CLIENT,
+      "db/read.ts": DRIZZLE_READ,
+      "db/write.ts": DRIZZLE_WRITE,
+      "db/read-routes.ts": READ_ROUTES,
       "drizzle.config.ts": SQLITE_CONFIG,
       ".env.example": SQLITE_ENV,
     },
@@ -451,6 +542,12 @@ export const DB_PRESETS: Readonly<Record<DbChoice, DbPreset>> = {
     files: {
       "prisma/schema.prisma": PRISMA_PG_SCHEMA,
       "db/index.ts": PRISMA_CLIENT,
+
+      "db/read.ts": PRISMA_READ,
+
+      "db/write.ts": PRISMA_WRITE,
+
+      "db/read-routes.ts": READ_ROUTES,
       ".env.example": PRISMA_PG_ENV,
     },
   },
@@ -465,6 +562,12 @@ export const DB_PRESETS: Readonly<Record<DbChoice, DbPreset>> = {
     files: {
       "prisma/schema.prisma": PRISMA_SQLITE_SCHEMA,
       "db/index.ts": PRISMA_CLIENT,
+
+      "db/read.ts": PRISMA_READ,
+
+      "db/write.ts": PRISMA_WRITE,
+
+      "db/read-routes.ts": READ_ROUTES,
       ".env.example": PRISMA_SQLITE_ENV,
     },
   },
@@ -479,6 +582,12 @@ export const DB_PRESETS: Readonly<Record<DbChoice, DbPreset>> = {
     files: {
       "db/schema.ts": KYSELY_PG_SCHEMA,
       "db/index.ts": KYSELY_PG_CLIENT,
+
+      "db/read.ts": KYSELY_READ,
+
+      "db/write.ts": KYSELY_WRITE,
+
+      "db/read-routes.ts": READ_ROUTES,
       "db/migrate.ts": KYSELY_MIGRATE_RUNNER,
       "db/migrations/0001_create_notes.ts": KYSELY_MIGRATION,
       ".env.example": PG_ENV,

@@ -25,17 +25,20 @@ export default defineAssuranceConfig({
     provenance: {
       // Map a module specifier to the capabilities reaching it implies, and `nifra check` reports any
       // route that can reach further than it declared - so wiring a database into a handler and
-      // forgetting to say so becomes a failing check rather than something review has to catch:
+      // forgetting to say so becomes a failing check rather than something review has to catch. The
+      // seam `--db` scaffolds is already shaped for it, split by access:
       //
+      //   { specifier: "./read.ts", capabilities: ["db.read"] },
+      //   { specifier: "./write.ts", capabilities: ["db.write"] },
       //   { specifier: "bun:sqlite", capabilities: ["db.read", "db.write"] },
-      //   { specifier: "drizzle-orm/*", capabilities: ["db.read", "db.write"] },
       //
-      // Before turning it on, know how reach is computed: from the module that REGISTERS the route,
-      // following its imports. A module that registers routes AND imports your database gives EVERY
-      // route in it database reach - and since a GET route is refused a domain write outright, that is
-      // not something the affected routes can declare their way out of. Keep the root a pure
-      // composition (`server().merge(home).merge(notes)`) and let each module own its own effects, then
-      // the reported reach is per-route and precise.
+      // Turning it on is a structural commitment, so know the rule first: reach is computed from the
+      // module that REGISTERS a route, following its imports. Any module that registers routes and can
+      // reach a database gives EVERY route in it that reach - and a GET route may not declare a domain
+      // write at all, so those routes have no legal declaration and must move. Every module that
+      // registers routes therefore has to be import-disjoint from the effects its routes do not use,
+      // and the app root has to be pure composition (`server().merge(home).merge(notes)`) rather than a
+      // place routes are declared. Worth it for an app that wants the guarantee; a real commitment.
       imports: [],
       // Add a driver here to force every query through a seam you own, and the check will name any
       // route that reaches around it: `{ specifier: "pg", reason: "query through db/" }`.
