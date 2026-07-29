@@ -493,6 +493,47 @@ function templateLiteralAt(content: string, open: number): string | undefined {
   return undefined
 }
 
+/**
+ * Read a quoted string starting at `open`, returning its raw text (or undefined if unterminated).
+ * Handles the escape so `"a\"b"` does not end early.
+ */
+function quotedStringAt(content: string, open: number): string | undefined {
+  const quote = content[open]
+  for (let i = open + 1; i < content.length; i++) {
+    if (content[i] === "\\") {
+      i++
+      continue
+    }
+    if (content[i] === quote) return content.slice(open + 1, i)
+  }
+  return undefined
+}
+
+/**
+ * True when the quoted string ending at `end` is immediately followed by `+` at the same paren depth -
+ * i.e. the statement is being ASSEMBLED, not passed whole.
+ *
+ * Bounded to the sink's own argument list: it stops at the closing paren so a later `+` in unrelated
+ * code cannot make a bound statement look concatenated.
+ */
+function concatenatedAfter(content: string, end: number): boolean {
+  let depth = 0
+  for (let i = end; i < content.length; i++) {
+    const c = content[i]
+    if (c === "(" || c === "[") depth++
+    else if (c === ")" || c === "]") {
+      if (depth === 0) return false // reached the end of the call's arguments
+      depth--
+    } else if (c === "+" && depth === 0) return true
+    else if (c === "," && depth === 0)
+      return false // next argument; this one was passed whole
+    else if (c === ";" || c === "\n") {
+      if (depth === 0 && c === ";") return false
+    }
+  }
+  return false
+}
+
 /** Scan one file's text for SQL assembled by interpolation. Pure + line-accurate. */
 export function scanInterpolatedSql(file: string, content: string): SourceFinding[] {
   const out: SourceFinding[] = []
@@ -502,10 +543,23 @@ export function scanInterpolatedSql(file: string, content: string): SourceFindin
   for (let m = re.exec(code); m !== null; m = re.exec(code)) {
     const method = m[1] ?? ""
     const argument = firstArgumentIndex(content, m.index + m[0].length)
-    if (content[argument] !== "`") continue
-    if (isTaggedTemplate(content, argument)) continue
-    const literal = templateLiteralAt(content, argument)
-    if (literal === undefined || !literal.includes("${")) continue
+    const opener = content[argument]
+    let literal: string | undefined
+    if (opener === "`") {
+      if (isTaggedTemplate(content, argument)) continue
+      const template = templateLiteralAt(content, argument)
+      // A template with no substitution is the bound form being argued for.
+      if (template === undefined || !template.includes("${")) continue
+      literal = template
+    } else if (opener === '"' || opener === "'") {
+      // The other half of the same defect, and the shape a codebase predating template literals (or an
+      // LLM emitting older-style JS) produces: `db.query("SELECT … WHERE id = " + id)`. Just as
+      // injectable, and the rule was silent on it - which reads as a clean bill of health.
+      const quoted = quotedStringAt(content, argument)
+      if (quoted === undefined) continue
+      if (!concatenatedAfter(content, argument + quoted.length + 2)) continue
+      literal = quoted
+    } else continue
     if (!ALWAYS_UNSAFE.has(method) && !SQL_KEYWORD.test(literal)) continue
     const line = lineAt(content, m.index)
     out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })

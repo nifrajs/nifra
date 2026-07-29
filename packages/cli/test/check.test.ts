@@ -903,6 +903,28 @@ describe("scanInterpolatedSql", () => {
     expect(scan("sql.unsafe(`${statement}`)")).toBe(1)
   })
 
+  /**
+   * The rule started by inspecting template literals only, so the oldest and most common injection
+   * shape walked straight past it: `db.query("SELECT … WHERE id = " + id)`. A quoted string was
+   * skipped before the SQL-keyword test ever ran, which meant a codebase predating template literals -
+   * or an LLM emitting older-style JS - got a clean `nifra check` on textbook-injectable SQL.
+   */
+  test("flags SQL assembled by string concatenation", () => {
+    expect(scan('db.query("SELECT * FROM users WHERE id = " + req.params.id)')).toBe(1)
+    expect(scan("db.query('DELETE FROM notes WHERE id = ' + id)")).toBe(1)
+    expect(scan('db.execute("UPDATE t SET body = " + body + " WHERE id = " + id)')).toBe(1)
+  })
+
+  test("stays silent on concatenation that is not SQL, or not concatenated", () => {
+    // The same keyword requirement that keeps the template arm quiet has to apply here, or the rule
+    // fires across every string-building call site in a codebase and gets switched off.
+    expect(scan('cache.query("user:" + id)')).toBe(0)
+    expect(scan('registry.run("task-" + name)')).toBe(0)
+    expect(scan('db.query("SELECT * FROM users WHERE id = ?")')).toBe(0)
+    // Built elsewhere and passed as a variable: the call site says nothing, so neither does the rule.
+    expect(scan('const q = "SELECT * FROM t WHERE id = " + id\ndb.query(q)')).toBe(0)
+  })
+
   test("ignores commented-out and quoted occurrences", () => {
     expect(scan("// db.query(`SELECT * FROM t WHERE id = ${id}`)")).toBe(0)
     expect(scan('const doc = "db.query(`SELECT * FROM t WHERE id = ${id}`)"')).toBe(0)

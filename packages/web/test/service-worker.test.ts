@@ -126,7 +126,10 @@ describe("the generated worker, executed", () => {
     claimed: boolean
   }
 
-  const boot = (sw: string): Scope => {
+  /** Never defaults to the real `fetch`: a test that can reach the network can pass without the code. */
+  const OFFLINE_FETCH = (): Promise<Response> => Promise.reject(new Error("offline"))
+
+  const boot = (sw: string, fetchImpl: typeof fetch = OFFLINE_FETCH as never): Scope => {
     const listeners = new Map<string, (event: never) => void>()
     const store = new Map<string, Response>()
     const deleted: string[] = []
@@ -166,13 +169,18 @@ describe("the generated worker, executed", () => {
       caches,
     }
     // Indirect eval in a controlled scope: the point is to run exactly the emitted text.
+    //
+    // `fetchImpl` is a PARAMETER rather than a later `globalThis.fetch` reassignment, because the
+    // binding happens here at boot: a test that swapped the global afterwards was swapping something
+    // the worker had already captured, so its "offline" case went to the real network and passed off a
+    // DNS failure. A test that reaches the internet is not testing the code.
     new Function("self", "caches", "Response", "Request", "URL", "fetch", sw)(
       self,
       caches,
       Response,
       Request,
       URL,
-      globalThis.fetch,
+      fetchImpl,
     )
     return scope
   }
@@ -221,22 +229,46 @@ describe("the generated worker, executed", () => {
     expect(await res?.text()).toBe("asset:/assets/entry-abc123.js")
   })
 
+  const navigation = (url: string): Request => {
+    const request = new Request(url)
+    Object.defineProperty(request, "mode", { value: "navigate" })
+    return request
+  }
+
   test("a failed navigation gets the offline page, and nothing is written for it", async () => {
-    const scope = boot(SW)
+    const scope = boot(SW) // fetch rejects by default - nothing here touches the network
     await run(scope, "install", {})
     const before = scope.store.size
-    const request = new Request("https://app.test/dashboard")
-    Object.defineProperty(request, "mode", { value: "navigate" })
-    // The generated worker calls the ambient fetch; make it fail the way an offline device does.
-    const original = globalThis.fetch
-    // Cast: the test only needs the callable half, not fetch's `preconnect` companion.
-    globalThis.fetch = (() => Promise.reject(new Error("offline"))) as unknown as typeof fetch
-    try {
-      const res = await run(scope, "fetch", { request })
-      expect(await res?.text()).toBe("asset:/offline")
-    } finally {
-      globalThis.fetch = original
-    }
+
+    const res = await run(scope, "fetch", { request: navigation("https://app.test/dashboard") })
+    expect(await res?.text()).toBe("asset:/offline")
+
+    expect(scope.store.size).toBe(before)
+    expect(scope.store.has("/dashboard")).toBe(false)
+  })
+
+  /**
+   * The case the suite was missing entirely, and the one whose absence hides the worst possible bug: a
+   * worker that answered EVERY navigation with the offline page passed all nineteen tests, because the
+   * only navigation exercised was a failing one. That worker installs itself instantly
+   * (`skipWaiting` + `clients.claim`) and outlives the deploy, so every visitor would get a static
+   * "you are offline" document in place of the app.
+   */
+  test("an ONLINE navigation gets the network response, not the offline page", async () => {
+    let asked: string | undefined
+    const online = ((request: Request) => {
+      asked = request.url
+      return Promise.resolve(new Response("<!doctype html><title>real page</title>"))
+    }) as never
+    const scope = boot(SW, online)
+    await run(scope, "install", {})
+    const before = scope.store.size
+
+    const res = await run(scope, "fetch", { request: navigation("https://app.test/dashboard") })
+    expect(asked).toBe("https://app.test/dashboard")
+    expect(await res?.text()).toBe("<!doctype html><title>real page</title>")
+    // Not the offline document, and not stored: a cached HTML response is how one signed-in user gets
+    // served the page rendered for another.
     expect(scope.store.size).toBe(before)
     expect(scope.store.has("/dashboard")).toBe(false)
   })
