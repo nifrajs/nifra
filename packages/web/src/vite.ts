@@ -23,6 +23,7 @@ import { discoverRoutes } from "./fs.ts"
 import { DEFAULT_DEV_PORT, generateClientEntry } from "./index.ts"
 import { importVite } from "./internal/vite-import.ts"
 import { viteServerFnStub } from "./plugins/vite-server-fn.ts"
+import { viteServerOnlyEmpty } from "./plugins/vite-server-only.ts"
 
 /** Minimal app surface — `createWebApp(...)` satisfies it. */
 interface FetchApp {
@@ -351,7 +352,7 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
     },
     // Ahead of the user's plugins: a `*.fn` module must be replaced before anything else
     // reads it, and the dev server is a client bundler like any other.
-    plugins: [viteServerFnStub(), ...plugins],
+    plugins: [viteServerFnStub(), viteServerOnlyEmpty(), ...plugins],
     resolve: {
       conditions: [...(options.conditions ?? []), "bun", "module", "browser", "development"],
       // Dedupe React to ONE copy. In a multi-root workspace a shared package can pull react/react-dom

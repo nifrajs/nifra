@@ -8109,6 +8109,20 @@
     "doc": "/** The marker specifier an author imports to opt a module into the client-leak guard. Matched on the\n * import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed,\n * before Bun resolves it to `src/server-only.ts` / `dist/server-only.js`). */"
   },
   {
+    "name": "SERVER_ONLY_MODULE",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const SERVER_ONLY_MODULE: RegExp;",
+    "doc": "/** Matches `db.server.ts`, `auth.server.tsx`, `x.server.mjs`, and the extensionless `foo.server`. */"
+  },
+  {
+    "name": "SERVER_ONLY_REPLACEMENT",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const SERVER_ONLY_REPLACEMENT = \"module.exports = new Proxy({}, { get: () => undefined })\";",
+    "doc": "/**\n * The replacement body. A Proxy rather than `export {}` so any named OR default import resolves to\n * `undefined` instead of failing the bundle with a missing-export error - the client should degrade at\n * the call site it wrote, not blow up at link time in a file it never named. Byte-identical to what\n * the Bun plugin emits, so the two pipelines produce the same client.\n */"
+  },
+  {
     "name": "ServerBuild",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -8126,8 +8140,8 @@
     "name": "ServerFn",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ServerFn<Input, Output> {\n    (input: Input, context: Context): MaybePromise<Output>;\n    readonly [SERVER_FN]: ServerFnConfig<Input>;\n}",
-    "doc": "/**\n * A declared server function. Callable directly on the server (the same value your own server-side\n * code can await); on the client, phase 2's build transform replaces this module with typed stubs\n * that POST to the mounted route.\n */"
+    "signature": "export interface ServerFn<Input, Output> {\n    (input: Input, context?: Context): MaybePromise<Output>;\n    readonly [SERVER_FN]: ServerFnConfig<Input>;\n}",
+    "doc": "/**\n * A declared server function. Callable directly on the server (the same value your own server-side\n * code can await); on the client, phase 2's build transform replaces this module with typed stubs\n * that POST to the mounted route.\n *\n * `context` is OPTIONAL in this signature because one type has to describe both halves. The client\n * never has a `Context` - it imports the generated stub, `(input) => Promise<Output>` - so requiring\n * it here made every call the docs teach a compile error, `useServerFn(fn)` included. The server half\n * always supplies it: the mount passes `c` (see `serverFunctions`), and the declaration you write in\n * `serverFn` still receives it as a required, fully typed parameter.\n *\n * The one case to know: calling this value directly in your own server code and omitting `context`\n * hands the declaration `undefined`. Pass `c` through when you do that.\n */"
   },
   {
     "name": "ServerFnConfig",
@@ -8232,6 +8246,13 @@
     "kind": "const",
     "package": "@nifrajs/web",
     "signature": "export declare const serverOnlyEmptyPlugin: () => BunPlugin;"
+  },
+  {
+    "name": "ServerOnlyEmptyPlugin",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ServerOnlyEmptyPlugin {\n    readonly name: string;\n    readonly enforce: \"pre\";\n    /** Applied only to the CLIENT build; the server build keeps the real module. */\n    readonly applyToEnvironment?: (environment: {\n        readonly name: string;\n    }) => boolean;\n    transform(code: string, id: string): {\n        code: string;\n        map: null;\n    } | null;\n}",
+    "doc": "/** The slice of a Vite/Rollup plugin this returns. Structural, so `vite` stays an optional peer. */"
   },
   {
     "name": "ServerOnlyFinding",
@@ -10004,6 +10025,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function viteServerFnStub(): ServerFnStubPlugin;",
     "doc": "/**\n * Replace every `*.fn` module with its client stubs.\n *\n * Client-only by construction: nifra passes this to the client build and the dev server, never to the\n * SSR build, because the server is what actually runs these functions.\n */"
+  },
+  {
+    "name": "viteServerOnlyEmpty",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function viteServerOnlyEmpty(): ServerOnlyEmptyPlugin;",
+    "doc": "/**\n * Empty every `*.server` module in the client build.\n *\n * Client-only by construction: nifra passes this to the client build and the dev server, never to the\n * SSR build, where the real module is what runs.\n */"
   },
   {
     "name": "vueAdapter",

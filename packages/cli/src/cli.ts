@@ -162,7 +162,7 @@ const apiOf = (backend: unknown): { api?: unknown } =>
  * names the trade plus both ways out. Narrow by design: only the transform proven missing is refused, so
  * an app without CSS Modules still gets the Bun dev loop.
  */
-async function assertBunDevSupportsApp(app: LoadedApp): Promise<void> {
+export async function assertBunDevSupportsApp(app: LoadedApp): Promise<void> {
   const { Glob } = await import("bun")
   const offenders: string[] = []
   for await (const file of new Glob("**/*.module.css").scan({ cwd: app.cwd, dot: false })) {
@@ -179,6 +179,29 @@ async function assertBunDevSupportsApp(app: LoadedApp): Promise<void> {
     if (/(^|\/)(node_modules|dist|\.nifra|\.git)\//.test(file)) continue
     leaking.push(file)
     if (leaking.length >= 5) break
+  }
+  // `*.server` modules are the same trade again. The client build EMPTIES them so a secret-bearing or
+  // `node:`-importing module never reaches a browser; with no plugins here it would be bundled whole.
+  // The convention has to hold in every pipeline or the file name reads as protection while providing
+  // none - which is worse than not having it.
+  const serverOnly: string[] = []
+  for await (const file of new Glob("**/*.server.{ts,tsx,js,jsx,mts,cts,mjs,cjs}").scan({
+    cwd: app.cwd,
+    dot: false,
+  })) {
+    if (/(^|\/)(node_modules|dist|\.nifra|\.git)\//.test(file)) continue
+    serverOnly.push(file)
+    if (serverOnly.length >= 5) break
+  }
+  if (serverOnly.length > 0) {
+    throw new Error(
+      "[nifra] `nifra dev --bun` can't empty `*.server` modules: Bun's DEV-server bundler takes no " +
+        "plugins, so a server-only module would be bundled WHOLE into the browser - along with whatever " +
+        "it imports and any secret it holds. `nifra build` and `nifra dev` (Vite) both replace it with " +
+        "an empty module, so only this pipeline is affected.\n" +
+        `  Server-only modules found: ${serverOnly.join(", ")}\n` +
+        "  Use `nifra dev` (the Vite pipeline), or reach these from a route/loader for the Bun dev loop.",
+    )
   }
   if (leaking.length > 0) {
     throw new Error(

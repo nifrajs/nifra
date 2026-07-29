@@ -64,9 +64,18 @@ export interface ServerFnConfig<Input> {
  * A declared server function. Callable directly on the server (the same value your own server-side
  * code can await); on the client, phase 2's build transform replaces this module with typed stubs
  * that POST to the mounted route.
+ *
+ * `context` is OPTIONAL in this signature because one type has to describe both halves. The client
+ * never has a `Context` - it imports the generated stub, `(input) => Promise<Output>` - so requiring
+ * it here made every call the docs teach a compile error, `useServerFn(fn)` included. The server half
+ * always supplies it: the mount passes `c` (see `serverFunctions`), and the declaration you write in
+ * `serverFn` still receives it as a required, fully typed parameter.
+ *
+ * The one case to know: calling this value directly in your own server code and omitting `context`
+ * hands the declaration `undefined`. Pass `c` through when you do that.
  */
 export interface ServerFn<Input, Output> {
-  (input: Input, context: Context): MaybePromise<Output>
+  (input: Input, context?: Context): MaybePromise<Output>
   readonly [SERVER_FN]: ServerFnConfig<Input>
 }
 

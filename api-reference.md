@@ -2700,6 +2700,17 @@ Every public export of every package and documented subpath — name, kind, sign
 - **viteServerFnStub** _(function)_ — `viteServerFnStub: () => ServerFnStubPlugin`
   Replace every `*.fn` module with its client stubs.
 
+### `@nifrajs/web/plugins/vite-server-only`
+
+- **SERVER_ONLY_MODULE** _(const)_ — `SERVER_ONLY_MODULE: RegExp`
+  Matches `db.server.ts`, `auth.server.tsx`, `x.server.mjs`, and the extensionless `foo.server`.
+- **SERVER_ONLY_REPLACEMENT** _(const)_ — `SERVER_ONLY_REPLACEMENT: "module.exports = new Proxy({}, { get: () => undefined })"`
+  The replacement body. A Proxy rather than `export {}` so any named OR default import resolves to `undefined` instead of failing the bundle with a missing-export error - the client should degrade at the call site it wrote, not blow up at link time in a file it never named. Byte-identical to what the…
+- **ServerOnlyEmptyPlugin** _(interface)_ — `interface ServerOnlyEmptyPlugin`
+  The slice of a Vite/Rollup plugin this returns. Structural, so `vite` stays an optional peer.
+- **viteServerOnlyEmpty** _(function)_ — `viteServerOnlyEmpty: () => ServerOnlyEmptyPlugin`
+  Empty every `*.server` module in the client build.
+
 ### `@nifrajs/web/route-manifest`
 
 - **RenderMode** _(type)_ — `type RenderMode = "static" | "isr" | "ssr"`
