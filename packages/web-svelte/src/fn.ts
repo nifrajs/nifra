@@ -30,8 +30,14 @@ export function useServerFn<Input, Output>(
   fn: (input: Input) => Promise<Output> | Output,
 ): ServerFnHandle<Input, Output> {
   const store = createServerFnStore(fn)
-  const state = readable<ServerFnState<Output>>(idleServerFnState<Output>(), (set) =>
-    store.subscribe(() => set(store.snapshot())),
-  )
+  const state = readable<ServerFnState<Output>>(idleServerFnState<Output>(), (set) => {
+    // Prime before subscribing, exactly as `useFetcher` does in this package. `readable` runs this
+    // start function only on the FIRST subscription, so without the snapshot a store attached after a
+    // call has already run reports its initial value - idle - for a call that finished. The four
+    // sibling adapters read a snapshot on mount, so skipping it here made Svelte the one place where
+    // "is it pending" disagreed with the shared state machine it exists to report.
+    set(store.snapshot())
+    return store.subscribe(() => set(store.snapshot()))
+  })
   return { state, call: store.call, reset: store.reset }
 }
