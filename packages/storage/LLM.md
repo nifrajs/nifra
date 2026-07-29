@@ -13,17 +13,17 @@ Blob storage mechanics for nifra — traversal-safe memory, filesystem, and R2 a
 - **assertSafeKey** _(function)_ — `assertSafeKey: (key: string) => void`
 - **assertStorageAdapterConformance** _(function)_ — `assertStorageAdapterConformance: (options: StorageAdapterConformanceOptions) => Promise<void>`
 - **toBytes** _(function)_ — `toBytes: (data: StorageData) => Uint8Array`
-- **withCapabilityBeacon** _(function)_ — `withCapabilityBeacon: (adapter: StorageAdapter, options: StorageBeaconOptions) => BeaconingStorageAdapter`
+- **withCapabilityBeacon** _(function)_ — `withCapabilityBeacon: <A extends StorageAdapter>(adapter: A, options: StorageBeaconOptions) => BeaconingStorageAdapter<A>`
 - **FileStorage** _(class)_ — `class FileStorage`
 - **MemoryStorage** _(class)_ — `class MemoryStorage`
 - **R2Storage** _(class)_ — `class R2Storage`
 - **StorageAdapterConformanceError** _(class)_ — `class StorageAdapterConformanceError`
 - **StorageKeyError** _(class)_ — `class StorageKeyError`
-- **BeaconingStorageAdapter** _(interface)_ — `interface BeaconingStorageAdapter`
 - **ListOptions** _(interface)_ — `interface ListOptions`
 - **MovableStorageAdapter** _(interface)_ — `interface MovableStorageAdapter`
 - **PagedStorageAdapter** _(interface)_ — `interface PagedStorageAdapter`
 - **PresignableStorageAdapter** _(interface)_ — `interface PresignableStorageAdapter`
+- **PutOptions** _(interface)_ — `interface PutOptions`
 
 _…and 15 more — see [`api-reference.md`](../../api-reference.md#nifrajsstorage) for the complete list._
 

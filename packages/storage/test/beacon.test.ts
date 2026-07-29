@@ -71,3 +71,102 @@ describe("storage capability beacon", () => {
     )
   })
 })
+
+/**
+ * An adapter's OPTIONAL capabilities are the ones a hand-written wrapper forgets.
+ *
+ * The first version of `withCapabilityBeacon` assembled its return value from five named methods, so
+ * wrapping a presignable or movable adapter silently deleted `presign`, `listPage`, `copy` and `move` -
+ * a certified S3 adapter came back unable to sign a URL, with no error and no option. Forwarding is now
+ * by Proxy, which cannot miss a method by construction; these tests pin the tokens and the survival.
+ */
+describe("optional capabilities", () => {
+  class RichStorage extends MemoryStorage {
+    async presign(key: string, operation: "get" | "put"): Promise<{ url: string }> {
+      return { url: `https://signed/${operation}/${key}` }
+    }
+    async listPage(): Promise<{ keys: string[] }> {
+      return { keys: ["a.txt"] }
+    }
+    async copy(from: string, to: string): Promise<void> {
+      const object = await this.get(from)
+      if (object !== null) await this.put(to, object.body)
+    }
+    async move(from: string, to: string): Promise<void> {
+      await this.copy(from, to)
+      await this.delete(from)
+    }
+    /** Something this module has never heard of - a provider extension. */
+    async restoreFromGlacier(): Promise<string> {
+      return "restoring"
+    }
+  }
+
+  const spy = () => {
+    const seen: string[] = []
+    return { seen, beacon: (_c: object, capability: string) => seen.push(capability) }
+  }
+
+  test("every optional method survives wrapping AND binding", () => {
+    const storage = withCapabilityBeacon(new RichStorage(), { beacon: () => {} })
+    const bound = storage.for({})
+    for (const method of ["presign", "listPage", "copy", "move", "restoreFromGlacier"] as const) {
+      expect(typeof storage[method]).toBe("function")
+      expect(typeof bound[method]).toBe("function")
+    }
+  })
+
+  test("a PUT presign is a WRITE - it hands out write access to the bucket", async () => {
+    const { seen, beacon } = spy()
+    const bound = withCapabilityBeacon(new RichStorage(), { beacon }).for({})
+    await bound.presign("a.txt", "get")
+    await bound.presign("a.txt", "put")
+    expect(seen).toEqual(["storage.read", "storage.write"])
+  })
+
+  test("listPage reads; copy and move write", async () => {
+    const { seen, beacon } = spy()
+    const inner = new RichStorage()
+    await inner.put("a.txt", "x")
+    const bound = withCapabilityBeacon(inner, { beacon }).for({})
+    await bound.listPage()
+    await bound.copy("a.txt", "b.txt")
+    await bound.move("b.txt", "c.txt")
+    expect(seen).toEqual(["storage.read", "storage.write", "storage.write"])
+    expect(await inner.exists("c.txt")).toBe(true)
+  })
+
+  test("an unmapped method announces WRITE rather than nothing", async () => {
+    // A declaration says what a route MAY do. An extension nobody mapped should fail closed against a
+    // read-only route, not slip through unannounced.
+    const { seen, beacon } = spy()
+    const bound = withCapabilityBeacon(new RichStorage(), { beacon }).for({})
+    await bound.restoreFromGlacier()
+    expect(seen).toEqual(["storage.write"])
+  })
+
+  test("a refused capability rejects before the optional method runs", async () => {
+    const inner = new RichStorage()
+    await inner.put("a.txt", "x")
+    const bound = withCapabilityBeacon(inner, {
+      beacon: () => {
+        throw new Error("capability assurance: storage.write is not declared")
+      },
+    }).for({})
+    await expect(bound.copy("a.txt", "b.txt")).rejects.toThrow("not declared")
+    expect(await inner.exists("b.txt")).toBe(false)
+  })
+
+  test("non-function properties pass through both proxies untouched", () => {
+    class WithField extends MemoryStorage {
+      readonly bucket = "assets"
+    }
+    const storage = withCapabilityBeacon(new WithField(), { beacon: () => {} })
+    expect(storage.bucket).toBe("assets")
+    expect(storage.for({}).bucket).toBe("assets")
+    // `for` is added by the wrapper; the adapter's own members are still reported present.
+    expect("for" in storage).toBe(true)
+    expect("bucket" in storage).toBe(true)
+    expect("nothingLikeThis" in storage).toBe(false)
+  })
+})

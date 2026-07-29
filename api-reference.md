@@ -1936,7 +1936,7 @@ Every public export of every package and documented subpath — name, kind, sign
 
 ## @nifrajs/storage
 
-- **BeaconingStorageAdapter** _(interface)_ — `interface BeaconingStorageAdapter`
+- **BeaconingStorageAdapter** _(type)_ — `type BeaconingStorageAdapter<A extends StorageAdapter = StorageAdapter> = A & { /** * A view bound to a request context: every operation announces its capability first, and fails * closed when the route did not declare …`
   A storage adapter that can be bound to a request context.
 - **CapabilityBeacon** _(type)_ — `type CapabilityBeacon = (context: object, capability: string) => void`
   `useCapability` from `@nifrajs/core/capabilities`, taken as a parameter rather than imported so this package keeps its zero dependencies.
@@ -1986,7 +1986,7 @@ Every public export of every package and documented subpath — name, kind, sign
   Execute the observable {@link StorageAdapter} contract without depending on a test runner.
 - **toBytes** _(function)_ — `toBytes: (data: StorageData) => Uint8Array`
   Normalize any accepted payload to bytes.
-- **withCapabilityBeacon** _(function)_ — `withCapabilityBeacon: (adapter: StorageAdapter, options: StorageBeaconOptions) => BeaconingStorageAdapter`
+- **withCapabilityBeacon** _(function)_ — `withCapabilityBeacon: <A extends StorageAdapter>(adapter: A, options: StorageBeaconOptions) => BeaconingStorageAdapter<A>`
   Wrap an adapter so `for(context)` announces each operation's capability.
 
 ## @nifrajs/testing
