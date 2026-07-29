@@ -12,7 +12,13 @@
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
 import { inProcessClient } from "@nifrajs/client"
-import { createWebApp, DEFAULT_DEV_PORT, type RenderAdapter } from "@nifrajs/web"
+import {
+  createWebApp,
+  DEFAULT_DEV_PORT,
+  type RenderAdapter,
+  SERVER_FN_MODULE,
+  SERVER_ONLY_MODULE,
+} from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import type { BunPlugin } from "bun"
 import { describeProject, describeRoutes } from "./introspect.ts"
@@ -170,28 +176,36 @@ export async function assertBunDevSupportsApp(app: LoadedApp): Promise<void> {
     offenders.push(file)
     if (offenders.length >= 5) break
   }
-  // Server functions are the same trade with a worse consequence. The client build replaces a `*.fn.ts`
+  // Server functions are the same trade with a worse consequence. The client build replaces a `*.fn`
   // module with stubs so its body never reaches a browser; Bun's dev-server bundler takes no plugins, so
   // there it would be bundled WHOLE - the function bodies and every secret they import. Measured, not
   // assumed: a runtime `Bun.plugin` onLoad does not reach `HTMLBundle`, so the module ships raw.
+  //
+  // `*.server` modules are the same trade again: the client build EMPTIES them, and with no plugins
+  // here they ship whole.
+  //
+  // Both are matched with the SAME regexes the transforms use, imported rather than re-encoded. A
+  // hand-written glob here is how these two gates drifted from the pipelines they guard: the old
+  // `**/*.fn.{ts,tsx,js,jsx}` missed `.fn.mts`, `.fn.cts`, `.fn.mjs` and `.fn.cjs`, every one of which
+  // both build pipelines stub - so a module the framework calls a server function was waved straight
+  // into the browser by the check that exists to stop exactly that. A gate written in a second dialect
+  // is a gate that eventually disagrees with the thing it guards.
   const leaking: string[] = []
-  for await (const file of new Glob("**/*.fn.{ts,tsx,js,jsx}").scan({ cwd: app.cwd, dot: false })) {
-    if (/(^|\/)(node_modules|dist|\.nifra|\.git)\//.test(file)) continue
-    leaking.push(file)
-    if (leaking.length >= 5) break
-  }
-  // `*.server` modules are the same trade again. The client build EMPTIES them so a secret-bearing or
-  // `node:`-importing module never reaches a browser; with no plugins here it would be bundled whole.
-  // The convention has to hold in every pipeline or the file name reads as protection while providing
-  // none - which is worse than not having it.
   const serverOnly: string[] = []
-  for await (const file of new Glob("**/*.server.{ts,tsx,js,jsx,mts,cts,mjs,cjs}").scan({
+  for await (const file of new Glob("**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}").scan({
     cwd: app.cwd,
     dot: false,
   })) {
     if (/(^|\/)(node_modules|dist|\.nifra|\.git)\//.test(file)) continue
-    serverOnly.push(file)
-    if (serverOnly.length >= 5) break
+    // Strip the extension once so the conventions' regexes see `src/todos.fn` / `src/db.server`, which
+    // is the shape they match - and which also catches the extensionless `db.server` the glob missed.
+    const stem = file.replace(/\.[cm]?[jt]sx?$/, "")
+    if (SERVER_FN_MODULE.test(stem)) {
+      if (leaking.length < 5) leaking.push(file)
+    } else if (SERVER_ONLY_MODULE.test(stem)) {
+      if (serverOnly.length < 5) serverOnly.push(file)
+    }
+    if (leaking.length >= 5 && serverOnly.length >= 5) break
   }
   if (serverOnly.length > 0) {
     throw new Error(

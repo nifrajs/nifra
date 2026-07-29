@@ -2354,3 +2354,16 @@ export function generateServerManifest(
     "export const manifest = buildManifest(Object.keys(modules), (file) => () => Promise.resolve(modules[file]))",
   ].join("\n")}\n`
 }
+
+/**
+ * The two file-name conventions that decide what never reaches a browser: a `*.server` module is
+ * EMPTIED in the client build, a `*.fn` module is REPLACED with client stubs.
+ *
+ * Exported because more than the bundlers need them. `nifra dev --bun` cannot transform (Bun's dev
+ * bundler takes no plugins) so it must REFUSE instead, and a refusal driven by its own hand-written
+ * glob drifts from the transform - which is how `.fn.mts` came to be stubbed by both build pipelines
+ * and waved through by the guard that exists to stop it leaking. Anything deciding "is this module
+ * server-only" should import the matcher rather than re-encode it.
+ */
+export { SERVER_FN_MODULE } from "./internal/server-fn-stub.ts"
+export { SERVER_ONLY_MODULE } from "./internal/server-only-module.ts"

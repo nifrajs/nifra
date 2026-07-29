@@ -8095,6 +8095,13 @@
     "doc": "/** Brand identifying a value produced by {@link serverFn}, so mounting cannot pick up stray exports. */"
   },
   {
+    "name": "SERVER_FN_MODULE",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const SERVER_FN_MODULE: RegExp;",
+    "doc": "/** Modules whose exports become client stubs. Mirrors the `*.server` convention's shape. */"
+  },
+  {
     "name": "SERVER_FN_PREFIX",
     "kind": "const",
     "package": "@nifrajs/web",
@@ -8120,7 +8127,7 @@
     "kind": "const",
     "package": "@nifrajs/web",
     "signature": "export declare const SERVER_ONLY_REPLACEMENT = \"module.exports = new Proxy({}, { get: () => undefined })\";",
-    "doc": "/**\n * The replacement body. A Proxy rather than `export {}` so any named OR default import resolves to\n * `undefined` instead of failing the bundle with a missing-export error - the client should degrade at\n * the call site it wrote, not blow up at link time in a file it never named. Byte-identical to what\n * the Bun plugin emits, so the two pipelines produce the same client.\n */"
+    "doc": "/**\n * The replacement body for an emptied module. A Proxy rather than `export {}` so any named OR default\n * import resolves to `undefined` instead of failing the bundle with a missing-export error - the client\n * degrades at the call site it wrote, not at link time in a file it never named.\n *\n * Shared so the Bun and Vite pipelines emit the same bytes; a parity test asserts it.\n */"
   },
   {
     "name": "ServerBuild",
@@ -8245,7 +8252,8 @@
     "name": "serverOnlyEmptyPlugin",
     "kind": "const",
     "package": "@nifrajs/web",
-    "signature": "export declare const serverOnlyEmptyPlugin: () => BunPlugin;"
+    "signature": "export declare const serverOnlyEmptyPlugin: () => BunPlugin;",
+    "doc": "/**\n * Remix-style `.server` convention for the CLIENT build. A module named `*.server.ts(x)` (`db.server.ts`,\n * `auth.server.ts`, …) is server-only — empty it in the browser bundle so its (possibly `node:` / native /\n * Capacitor) import subtree never reaches the client. The body is CJS-with-a-Proxy so any named OR default\n * import resolves to `undefined` rather than a \"missing export\" bundle error (verified), and the real\n * import subtree is gone. The complement to the node-builtin guard: when a server-only import is co-located\n * in a route file (so it can't be tree-shaken out and the guard fails loud), moving it into a `*.server`\n * module is the fix. CLIENT-only — buildServer keeps the real module, which runs server-side.\n */"
   },
   {
     "name": "ServerOnlyEmptyPlugin",

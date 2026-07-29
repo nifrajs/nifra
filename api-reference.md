@@ -2297,6 +2297,10 @@ Every public export of every package and documented subpath — name, kind, sign
   A route id paired with its nifra pattern (e.g. `":id"` segments) — the matcher input.
 - **RouterState** _(interface)_ — `interface RouterState`
   The router's observable state. A new object is published on every transition.
+- **SERVER_FN_MODULE** _(const)_ — `SERVER_FN_MODULE: RegExp`
+  Modules whose exports become client stubs. Mirrors the `*.server` convention's shape.
+- **SERVER_ONLY_MODULE** _(const)_ — `SERVER_ONLY_MODULE: RegExp`
+  Matches `db.server.ts`, `auth.server.tsx`, `x.server.mjs`, and the extensionless `foo.server`.
 - **STATUS_HEADER** _(const)_ — `STATUS_HEADER: "x-nifra-status"`
   Response header carrying a **terminal status** a loader signalled with `notFound()` / `gone()` / `statusPage(n)` during a client-side navigation's data fetch.
 - **ScriptDescriptor** _(interface)_ — `interface ScriptDescriptor`
@@ -2493,6 +2497,7 @@ Every public export of every package and documented subpath — name, kind, sign
 - **serverFnStubPlugin** _(const)_ — `serverFnStubPlugin: () => BunPlugin`
   Server functions in the CLIENT build: replace each `*.fn.ts` module with stubs that call the routes the server mounted, so the function bodies - and everything they import - never reach a browser.
 - **serverOnlyEmptyPlugin** _(const)_ — `serverOnlyEmptyPlugin: () => BunPlugin`
+  Remix-style `.server` convention for the CLIENT build. A module named `*.server.ts(x)` (`db.server.ts`, `auth.server.ts`, …) is server-only — empty it in the browser bundle so its (possibly `node:` / native / Capacitor) import subtree never reaches the client. The body is CJS-with-a-Proxy so any na…
 - **svelteDedupePlugin** _(const)_ — `svelteDedupePlugin: (from: string) => BunPlugin`
   Dedupe Svelte to a single copy — the Svelte analogue of `reactDedupePlugin`/`preactDedupePlugin`, closing the same class of bug for Svelte (which had NO build-time dedup before). A workspace- or file-linked `@nifrajs/web-svelte` can resolve its OWN `svelte` (e.g. a sibling repo's install store) whi…
 
@@ -2705,7 +2710,7 @@ Every public export of every package and documented subpath — name, kind, sign
 - **SERVER_ONLY_MODULE** _(const)_ — `SERVER_ONLY_MODULE: RegExp`
   Matches `db.server.ts`, `auth.server.tsx`, `x.server.mjs`, and the extensionless `foo.server`.
 - **SERVER_ONLY_REPLACEMENT** _(const)_ — `SERVER_ONLY_REPLACEMENT: "module.exports = new Proxy({}, { get: () => undefined })"`
-  The replacement body. A Proxy rather than `export {}` so any named OR default import resolves to `undefined` instead of failing the bundle with a missing-export error - the client should degrade at the call site it wrote, not blow up at link time in a file it never named. Byte-identical to what the…
+  The replacement body for an emptied module. A Proxy rather than `export {}` so any named OR default import resolves to `undefined` instead of failing the bundle with a missing-export error - the client degrades at the call site it wrote, not at link time in a file it never named.
 - **ServerOnlyEmptyPlugin** _(interface)_ — `interface ServerOnlyEmptyPlugin`
   The slice of a Vite/Rollup plugin this returns. Structural, so `vite` stays an optional peer.
 - **viteServerOnlyEmpty** _(function)_ — `viteServerOnlyEmpty: () => ServerOnlyEmptyPlugin`

@@ -17,6 +17,7 @@ import {
   SERVER_FN_MODULE,
   serverFnNamespace,
 } from "./internal/server-fn-stub.ts"
+import { SERVER_ONLY_MODULE, SERVER_ONLY_REPLACEMENT } from "./internal/server-only-module.ts"
 // `buildTarget(static)` drives the SSG prerender engine directly (it's also re-exported below).
 import { type ClientModuleGraph, fromBunMetafile } from "./module-graph.ts"
 import { prerenderRoutes } from "./prerender.ts"
@@ -1306,12 +1307,11 @@ export const svelteDedupePlugin = (from: string): BunPlugin => ({
  * in a route file (so it can't be tree-shaken out and the guard fails loud), moving it into a `*.server`
  * module is the fix. CLIENT-only — buildServer keeps the real module, which runs server-side.
  */
-const SERVER_ONLY_MODULE = /\.server(\.[cm]?[jt]sx?)?$/
 export const serverOnlyEmptyPlugin = (): BunPlugin => ({
   name: "nifra-server-only-empty",
   setup(build) {
     build.onLoad({ filter: SERVER_ONLY_MODULE }, () => ({
-      contents: "module.exports = new Proxy({}, { get: () => undefined })",
+      contents: SERVER_ONLY_REPLACEMENT,
       loader: "js",
     }))
   },

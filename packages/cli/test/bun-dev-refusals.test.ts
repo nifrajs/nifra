@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { SERVER_FN_MODULE, SERVER_ONLY_MODULE } from "@nifrajs/web"
 import { assertBunDevSupportsApp } from "../src/cli.ts"
 
 /**
@@ -66,6 +67,44 @@ test("refuses CSS Modules", async () => {
     expect((error as Error).message).toContain("CSS Modules")
     expect((error as Error).message).toContain("src/x.module.css")
   })
+})
+
+/**
+ * The guard and the transforms must agree on WHICH modules are server-only, for every extension the
+ * conventions accept. They did not: the refusal was a hand-written glob `*.fn.{ts,tsx,js,jsx}` while
+ * both build pipelines stub anything matching `/\.fn(\.[cm]?[jt]sx?)?$/` - so `.fn.mts`, `.fn.cts`,
+ * `.fn.mjs` and `.fn.cjs` were stubbed by the builds and waved through by the guard, which is exactly
+ * the leak the guard exists to prevent.
+ *
+ * These cases assert against the SHARED matchers, so widening a convention without widening the guard
+ * fails here rather than in someone's browser.
+ */
+const EXTENSIONS = ["ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs"] as const
+const stem = (path: string): string => path.replace(/\.[cm]?[jt]sx?$/, "")
+
+test("refuses every extension the *.fn transform would stub", async () => {
+  for (const ext of EXTENSIONS) {
+    const rel = `src/todos.fn.${ext}`
+    // Precondition: the transform really does consider this a server function.
+    expect(SERVER_FN_MODULE.test(stem(rel))).toBe(true)
+    await inTemp({ [rel]: "export const addTodo = 1" }, async (cwd) => {
+      const error = await assertBunDevSupportsApp(appAt(cwd)).catch((e: Error) => e)
+      expect(error).toBeInstanceOf(Error)
+      expect((error as Error).message).toContain(rel)
+    })
+  }
+})
+
+test("refuses every extension the *.server transform would empty", async () => {
+  for (const ext of EXTENSIONS) {
+    const rel = `src/db.server.${ext}`
+    expect(SERVER_ONLY_MODULE.test(stem(rel))).toBe(true)
+    await inTemp({ [rel]: 'export const KEY = "sk-live"' }, async (cwd) => {
+      const error = await assertBunDevSupportsApp(appAt(cwd)).catch((e: Error) => e)
+      expect(error).toBeInstanceOf(Error)
+      expect((error as Error).message).toContain(rel)
+    })
+  }
 })
 
 test("ignores build output and dependencies", async () => {

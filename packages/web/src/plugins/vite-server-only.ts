@@ -23,16 +23,11 @@
  * this ahead of framework transforms, which have no business seeing server code either.
  */
 
-/** Matches `db.server.ts`, `auth.server.tsx`, `x.server.mjs`, and the extensionless `foo.server`. */
-export const SERVER_ONLY_MODULE = /\.server(\.[cm]?[jt]sx?)?$/
+import { SERVER_ONLY_MODULE, SERVER_ONLY_REPLACEMENT } from "../internal/server-only-module.ts"
 
-/**
- * The replacement body. A Proxy rather than `export {}` so any named OR default import resolves to
- * `undefined` instead of failing the bundle with a missing-export error - the client should degrade at
- * the call site it wrote, not blow up at link time in a file it never named. Byte-identical to what
- * the Bun plugin emits, so the two pipelines produce the same client.
- */
-export const SERVER_ONLY_REPLACEMENT = "module.exports = new Proxy({}, { get: () => undefined })"
+// Re-exported so a caller wiring its own bundler gets the matcher from the same owner the pipelines
+// use, rather than writing a fifth copy of the regex.
+export { SERVER_ONLY_MODULE, SERVER_ONLY_REPLACEMENT }
 
 /** The slice of a Vite/Rollup plugin this returns. Structural, so `vite` stays an optional peer. */
 export interface ServerOnlyEmptyPlugin {
