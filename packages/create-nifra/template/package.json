@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "bun --watch run src/index.ts",
     "start": "bun run src/index.ts",
+    "check": "nifra check",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
@@ -15,6 +16,7 @@
     "@nifrajs/schema": "^2.2.0"
   },
   "devDependencies": {
+    "@nifrajs/cli": "^2.2.0",
     "@types/bun": "latest",
     "typescript": "^6.0.3"
   }

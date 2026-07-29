@@ -14,7 +14,8 @@
     "start": "bun dist-bun/server-bun.js",
     "start:node": "node dist-node/server-node.js",
     "deploy:cf": "wrangler pages deploy dist",
-    "deploy:vercel": "vercel deploy --prebuilt"
+    "deploy:vercel": "vercel deploy --prebuilt",
+    "check": "nifra check"
   },
   "dependencies": {
     "@nifrajs/client": "^2.2.0",

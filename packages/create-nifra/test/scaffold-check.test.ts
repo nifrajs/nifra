@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { readdirSync } from "node:fs"
+import { existsSync, readdirSync } from "node:fs"
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -140,6 +140,39 @@ describe("templates: the app root composes rather than registers", () => {
       const src = await readFile(join(TEMPLATES_DIR, dir, "src/app.ts"), "utf8")
       expect(src).toContain(".merge(")
       expect(src).not.toMatch(/\.(get|post|put|patch|delete)\s*\(/)
+    })
+  }
+})
+
+/**
+ * A template that ships `nifra.assurance.ts` ships an ARMED gate: the policy refuses an unauthenticated
+ * write, an unbounded mutation, and a route reaching a database it never declared.
+ *
+ * All eight shipped it and none could run it - no `check` script anywhere, and the two backend
+ * templates did not even depend on `@nifrajs/cli`, so `nifra check` was not on PATH. The commit that
+ * armed the firewall claimed the chain held "so nobody has to remember anything"; in the delivered
+ * artifact everything still depended on remembering, including remembering to install the tool.
+ */
+describe("templates: a shipped assurance config comes with a way to run it", () => {
+  const withAssurance = readdirSync(TEMPLATES_DIR).filter(
+    (dir) =>
+      dir.startsWith("template") && existsSync(join(TEMPLATES_DIR, dir, "nifra.assurance.ts")),
+  )
+
+  test("there are templates to check", () => {
+    expect(withAssurance.length).toBeGreaterThan(0)
+  })
+
+  for (const dir of withAssurance) {
+    test(`${dir} has a check script and can resolve the CLI`, async () => {
+      const pkg = JSON.parse(await readFile(join(TEMPLATES_DIR, dir, "package.json"), "utf8")) as {
+        scripts?: Record<string, string>
+        dependencies?: Record<string, string>
+        devDependencies?: Record<string, string>
+      }
+      expect(pkg.scripts?.check).toContain("nifra check")
+      const deps = { ...pkg.dependencies, ...pkg.devDependencies }
+      expect(Object.keys(deps)).toContain("@nifrajs/cli")
     })
   }
 })

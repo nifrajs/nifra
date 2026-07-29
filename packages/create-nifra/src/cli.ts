@@ -192,6 +192,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
+      # The gate, before the build. nifra.assurance.ts states what these routes must prove - an
+      # unauthenticated write, a mutation with no body schema, a handler reaching a database it never
+      # declared. Shipping that config without ever running it makes it decoration.
+      - run: bun run check
       - run: bun run build
 ${ci.step.replaceAll("NAME", appName)}
 `
