@@ -163,6 +163,42 @@ const main = async (): Promise<void> => {
   }
   table("Nifra feature matrix — marginal runtime reachability", features, "nifra-bare")
 
+  // Reconcile what was MEASURED against what was DECLARED, before comparing budgets.
+  //
+  // `measure` returns null on an unresolvable import or a failed build - it logs to stderr and the
+  // caller drops the row - and the budget loop below only walks rows that survived. So the events this
+  // gate exists to catch were the ones that silenced it: rename or remove a `@nifrajs/core/*` subpath
+  // and its row stops building, disappears, and takes its budget with it. Every remaining row passes,
+  // the step exits 0, and CI reports a green bundle-size gate having measured nothing at all.
+  const dropped = [
+    ...Object.keys(SERVER)
+      .filter((label) => !server.some((row) => row.label === label))
+      .map((label) => `server row "${label}" did not build (see the ✗ line above)`),
+    ...Object.keys(NIFRA_FEATURES)
+      .filter((label) => !features.some((row) => row.label === label))
+      .map((label) => `feature row "${label}" did not build (see the ✗ line above)`),
+  ]
+  if (dropped.length > 0) {
+    throw new Error(
+      `Bundle size gate measured fewer rows than it declares:\n  ${dropped.join("\n  ")}\n` +
+        "  A row that cannot build is not a pass - it is the gate losing its subject.",
+    )
+  }
+
+  // The budgets and the feature matrix have to name the same set. A feature with no budget is
+  // unguarded (the loop below skips it); a budget with no feature is a rename nobody finished.
+  const budgeted = new Set(Object.keys(FEATURE_GZIP_BUDGET_KB))
+  const measured = new Set(features.map((row) => row.label))
+  const drift = [
+    ...[...measured]
+      .filter((l) => !budgeted.has(l))
+      .map((l) => `feature "${l}" has no gzip budget`),
+    ...[...budgeted].filter((l) => !measured.has(l)).map((l) => `budget "${l}" has no feature row`),
+  ]
+  if (drift.length > 0) {
+    throw new Error(`Bundle size budgets drifted from the feature matrix:\n  ${drift.join("\n  ")}`)
+  }
+
   const budgetFailures = features.flatMap((row) => {
     const budgetKb = FEATURE_GZIP_BUDGET_KB[row.label]
     if (budgetKb === undefined || row.gz <= budgetKb * 1024) return []

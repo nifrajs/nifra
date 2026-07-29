@@ -129,6 +129,29 @@ describe("@nifrajs/events — registry", () => {
     expect(() => createEventRegistry([OrderPaid, OrderPaid])).toThrow(/duplicate contract/)
   })
 
+  /**
+   * `registry.parse` is a trust boundary: its whole job is to take a value off a queue, a webhook or an
+   * outbox relay - where the sender is not you - and decide whether it is an event at all. The
+   * not-an-object branch is the first thing that runs and was the one path with no test, which is the
+   * wrong one to leave uncovered: everything after it reads `env.type` and `env.version` off the value.
+   */
+  test("refuses input that is not an object, without throwing", () => {
+    for (const input of [null, undefined, "order.paid", 42, true, Symbol("x")]) {
+      const result = registry.parse(input)
+      expect(result.success).toBe(false)
+      if (!result.success) expect(result.reason).toBe("not-an-object")
+    }
+  })
+
+  test("an array reaches the contract lookup rather than the object guard", () => {
+    // `typeof [] === "object"`, so an array is not caught by the first branch - it falls through and
+    // is refused for having no matching contract. Worth pinning: the two rejections mean different
+    // things to a consumer deciding whether to dead-letter or retry.
+    const result = registry.parse([])
+    expect(result.success).toBe(false)
+    if (!result.success) expect(result.reason).not.toBe("not-an-object")
+  })
+
   test("dispatches to the right contract by type+version", () => {
     const v1 = OrderPaid.create({ orderId: "o_1", cents: 5 })
     const r1 = registry.parse(JSON.parse(JSON.stringify(v1)))
