@@ -683,6 +683,20 @@
     "signature": "export interface BetterAuthOptions {\n    /** Mount path for better-auth's routes. Defaults to `auth.options.basePath`, then `\"/api/auth\"`. */\n    readonly basePath?: string;\n}"
   },
   {
+    "name": "BinaryBody",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type BinaryBody = ArrayBuffer | ArrayBufferView | Blob | ReadableStream<Uint8Array>;",
+    "doc": "/** What can be sent as bytes without being re-encoded on the way out. */"
+  },
+  {
+    "name": "BinaryResponse",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type BinaryResponse = Response & {\n    readonly [NIFRA_BYTES]: true;\n};",
+    "doc": "/** A `Response` a route declared as binary. `Jsonify` maps this to `Blob`. */"
+  },
+  {
     "name": "BindableElement",
     "kind": "interface",
     "package": "@nifrajs/islets",
@@ -904,6 +918,18 @@
     "package": "@nifrajs/image",
     "signature": "export declare function bunImageBackend(): ImageBackend;",
     "doc": "/**\n * {@link ImageBackend} backed by `Bun.Image` (libjpeg-turbo / libspng / libwebp, decoded off the main\n * thread). Requires the Bun runtime. The default backend of `createImageHandler`.\n */"
+  },
+  {
+    "name": "bytes",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function bytes(body: BinaryBody, options?: BytesOptions): BinaryResponse;"
+  },
+  {
+    "name": "BytesOptions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface BytesOptions {\n    /** Media type. Defaults to `application/octet-stream`, the honest answer for unlabelled bytes. */\n    readonly type?: string;\n    /**\n     * Offer the body as a download under this name.\n     *\n     * Quoted and stripped of characters that would end the header value early: a filename derived from\n     * user data is the ordinary case (an upload's original name, a document title), and a `\"` or a\n     * newline in one would otherwise let the caller write their own `Content-Disposition` parameters.\n     */\n    readonly filename?: string;\n    readonly status?: number;\n    readonly headers?: Readonly<Record<string, string>>;\n}"
   },
   {
     "name": "cache",
@@ -4712,7 +4738,7 @@
     "name": "Jsonify",
     "kind": "type",
     "package": "@nifrajs/client",
-    "signature": "export type Jsonify<T> = [unknown] extends [T] ? unknown : T extends string | number | boolean | null ? T : T extends Date ? string : T extends bigint ? never : T extends (...args: never[]) => unknown ? never : T extends undefined ? never : T extends ReadonlyArray<infer U> ? Array<Jsonify<U>> : T extends object ? {\n    [K in keyof T as [Jsonify<T[K]>] extends [never] ? never : K]: Jsonify<T[K]>;\n} : never;",
+    "signature": "export type Jsonify<T> = [unknown] extends [T] ? unknown : T extends BinaryResponse ? Blob : T extends string | number | boolean | null ? T : T extends Date ? string : T extends bigint ? never : T extends (...args: never[]) => unknown ? never : T extends undefined ? never : T extends ReadonlyArray<infer U> ? Array<Jsonify<U>> : T extends object ? {\n    [K in keyof T as [Jsonify<T[K]>] extends [never] ? never : K]: Jsonify<T[K]>;\n} : never;",
     "doc": "/**\n * Maps a value to the shape it takes after a JSON round-trip, so the client's\n * `data` type reflects the wire — not the handler's in-memory return.\n *\n * - `Date` → `string`; `undefined` / functions / `bigint` → dropped from objects\n * - arrays and plain objects recurse; optionality (`?`) is preserved\n *\n * Pragmatic by design: `Map`/`Set`/class instances/custom `toJSON` are treated as\n * plain objects (best-effort), not specially handled. Documented, not magic.\n */"
   },
   {

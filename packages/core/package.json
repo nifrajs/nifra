@@ -72,6 +72,11 @@
       "types": "./dist/assurance.d.ts",
       "default": "./dist/assurance.js"
     },
+    "./binary": {
+      "bun": "./src/binary.ts",
+      "types": "./dist/binary.d.ts",
+      "default": "./dist/binary.js"
+    },
     "./capabilities": {
       "bun": "./src/capabilities.ts",
       "types": "./dist/capabilities.d.ts",

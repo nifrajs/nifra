@@ -369,6 +369,15 @@ Every public export of every package and documented subpath — name, kind, sign
 - **withRouteAssurance** _(function)_ — `withRouteAssurance: <T extends object>(target: T, declaration: AssuranceDeclaration | readonly AssuranceDeclaration[]) => T`
   Attach enforcement evidence to the middleware/plugin that installs it.
 
+### `@nifrajs/core/binary`
+
+- **BinaryBody** _(type)_ — `type BinaryBody = ArrayBuffer | ArrayBufferView | Blob | ReadableStream<Uint8Array>`
+  What can be sent as bytes without being re-encoded on the way out.
+- **BinaryResponse** _(type)_ — `type BinaryResponse = Response & { readonly [NIFRA_BYTES]: true }`
+  A `Response` a route declared as binary. `Jsonify` maps this to `Blob`.
+- **BytesOptions** _(interface)_ — `interface BytesOptions`
+- **bytes** _(function)_ — `bytes: (body: BinaryBody, options?: BytesOptions) => BinaryResponse`
+
 ### `@nifrajs/core/budget`
 
 - **BudgetClock** _(interface)_ — `interface BudgetClock`
