@@ -7,7 +7,7 @@
  * The state machine is `@nifrajs/web`'s `createServerFnStore`, shared with every other adapter, so
  * "is it pending" has one answer rather than five that drift. This file contributes only a signal fed by the store.
  */
-import { createServerFnStore, idleServerFnState, type ServerFnState } from "@nifrajs/web/fn-state"
+import { createServerFnStore, type ServerFnState } from "@nifrajs/web/fn-state"
 import { type Accessor, createSignal, onCleanup } from "solid-js"
 
 /** A server function's state accessor plus the call itself. */
@@ -30,7 +30,11 @@ export function useServerFn<Input, Output>(
   fn: (input: Input) => Promise<Output> | Output,
 ): ServerFnHandle<Input, Output> {
   const store = createServerFnStore(fn)
-  const [state, setState] = createSignal<ServerFnState<Output>>(idleServerFnState<Output>())
+  // Seeded from the store, not from the idle constant. They are the same value here - the store is
+  // created one line up and cannot have moved - so this is correctness that does not depend on that
+  // staying true. Svelte had exactly this line reading the constant, and when its subscription turned
+  // out to be lazy the first render showed idle for a call that had already finished.
+  const [state, setState] = createSignal<ServerFnState<Output>>(store.snapshot())
   onCleanup(store.subscribe(() => setState(() => store.snapshot())))
   return { state, call: store.call, reset: store.reset }
 }

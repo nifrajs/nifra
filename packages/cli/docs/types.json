@@ -623,10 +623,10 @@
   },
   {
     "name": "BeaconingStorageAdapter",
-    "kind": "interface",
+    "kind": "type",
     "package": "@nifrajs/storage",
-    "signature": "export interface BeaconingStorageAdapter extends StorageAdapter {\n    /**\n     * A view bound to a request context: every operation announces its capability first, and fails\n     * closed when the route did not declare it.\n     */\n    for(context: object): StorageAdapter;\n}",
-    "doc": "/** A storage adapter that can be bound to a request context. */"
+    "signature": "export type BeaconingStorageAdapter<A extends StorageAdapter = StorageAdapter> = A & {\n    /**\n     * A view bound to a request context: every operation announces its capability first, and fails\n     * closed when the route did not declare it.\n     */\n    for(context: object): A;\n};",
+    "doc": "/**\n * A storage adapter that can be bound to a request context.\n *\n * Generic over the adapter, so wrapping a `PresignableStorageAdapter` gives back something that still\n * presigns. The first version returned a plain `StorageAdapter` assembled from five hand-listed\n * methods, which silently dropped `presign`, `listPage`, `copy` and `move` - so adding beacons to a\n * certified S3 adapter quietly removed every optional capability it was certified for.\n */"
   },
   {
     "name": "bearer",
@@ -10197,8 +10197,8 @@
     "name": "withCapabilityBeacon",
     "kind": "function",
     "package": "@nifrajs/storage",
-    "signature": "export declare function withCapabilityBeacon(adapter: StorageAdapter, options: StorageBeaconOptions): BeaconingStorageAdapter;",
-    "doc": "/** Wrap an adapter so `for(context)` announces each operation's capability. */"
+    "signature": "export declare function withCapabilityBeacon<A extends StorageAdapter>(adapter: A, options: StorageBeaconOptions): BeaconingStorageAdapter<A>;",
+    "doc": "/**\n * Wrap an adapter so `for(context)` announces each operation's capability.\n *\n * Forwarding is by Proxy rather than by enumeration, and that is the whole point: a wrapper that lists\n * the methods it knows about is a wrapper that silently deletes the ones it does not, and an adapter's\n * optional capabilities are precisely the methods a hand-written list forgets.\n */"
   },
   {
     "name": "withDeadlineHeader",
