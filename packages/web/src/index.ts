@@ -120,9 +120,17 @@ export {
 // Navigation bridge — a DOM-free seam the browser layer (`installHistory`) populates so an adapter's
 // `useNavigate` (a route component, importing only this agnostic entry) reaches history-aware nav.
 export {
+  type Blocker,
+  type BlockerController,
+  type BlockerFunction,
+  type BlockerLocation,
+  type BlockerState,
   type BrowserNavigate,
   getBrowserNavigate,
+  IDLE_BLOCKER,
   type NavigateOptions,
+  registerBlocker,
+  setBlockerController,
   setBrowserNavigate,
 } from "./navigation.ts"
 // public/ — user-authored static files, served identically in dev and production by one handler.

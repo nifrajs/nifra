@@ -40,3 +40,78 @@ export function setBrowserNavigate(navigate: BrowserNavigate | undefined): void 
 export function getBrowserNavigate(): BrowserNavigate | undefined {
   return browserNavigate
 }
+
+/** A parsed navigation target the {@link BlockerFunction} decides on. `pathname`/`search`/`hash` match
+ * the DOM `Location` shape (search keeps its `?`, hash its `#`). */
+export interface BlockerLocation {
+  readonly pathname: string
+  readonly search: string
+  readonly hash: string
+}
+
+/**
+ * Decide whether a navigation should be halted. Receives where the app is (`currentLocation`) and where
+ * it's heading (`nextLocation`), so a guard can allow same-section moves and block only real exits. A
+ * boolean form (`useBlocker(isDirty)`) is sugar for `() => isDirty`. Runs synchronously at navigation
+ * time - return the current answer; the async "are you sure?" happens afterward via {@link Blocker}'s
+ * `proceed`/`reset`.
+ */
+export type BlockerFunction = (args: {
+  readonly currentLocation: BlockerLocation
+  readonly nextLocation: BlockerLocation
+}) => boolean
+
+/**
+ * The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted
+ * and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called
+ * `proceed`; the held navigation is being replayed.
+ */
+export type BlockerState = "unblocked" | "blocked" | "proceeding"
+
+/**
+ * A navigation guard, mirroring react-router's shape. When `state` is `blocked`, `proceed()` lets the
+ * held navigation through and `reset()` cancels it (staying put); both are `undefined` otherwise. The
+ * pair is what a boolean `when` can't express - the app shows its OWN async confirmation UI, then calls
+ * one of them, instead of the browser's synchronous `confirm()`.
+ */
+export interface Blocker {
+  readonly state: BlockerState
+  readonly proceed: (() => void) | undefined
+  readonly reset: (() => void) | undefined
+}
+
+/** The idle blocker - a stable reference (no needless adapter re-renders while unblocked). */
+export const IDLE_BLOCKER: Blocker = { state: "unblocked", proceed: undefined, reset: undefined }
+
+/**
+ * The browser layer's blocker registry - installed by `installHistory` (which owns navigation and can
+ * therefore halt, restore, and replay it) and read by an adapter's `useBlocker` through
+ * {@link registerBlocker}. Kept here, DOM-free, for the same reason as {@link BrowserNavigate}: a route
+ * component's blocker hook must import only this agnostic entry.
+ */
+export interface BlockerController {
+  register(shouldBlock: BlockerFunction, onChange: (blocker: Blocker) => void): () => void
+}
+
+// The active controller (set by `installHistory`, cleared on teardown). Module-scoped: one app per page.
+let blockerController: BlockerController | undefined
+
+/** Register (or clear, with `undefined`) the blocker controller - called by `installHistory`. Not for
+ * app use. */
+export function setBlockerController(controller: BlockerController | undefined): void {
+  blockerController = controller
+}
+
+/**
+ * Register a navigation guard, returning an unregister function. `onChange` is called with the current
+ * {@link Blocker} whenever its state changes (so the adapter can re-render its confirmation UI). Before
+ * `installHistory` has run (SSR, pre-hydration), there's no controller: registration is a no-op and the
+ * caller stays on {@link IDLE_BLOCKER}, degrading to native navigation. Called by an adapter's
+ * `useBlocker`, not by app code directly.
+ */
+export function registerBlocker(
+  shouldBlock: BlockerFunction,
+  onChange: (blocker: Blocker) => void,
+): () => void {
+  return blockerController?.register(shouldBlock, onChange) ?? (() => {})
+}

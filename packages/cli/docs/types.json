@@ -717,6 +717,62 @@
     "doc": "/** Walk `root` and attach every `data-bind-*` binding against `scope`. Returns the disposers of\n * the created effects (an island unmount can stop them; page-lifetime islands just drop them). */"
   },
   {
+    "name": "Blocker",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface Blocker {\n    readonly state: BlockerState;\n    readonly proceed: (() => void) | undefined;\n    readonly reset: (() => void) | undefined;\n}",
+    "doc": "/**\n * A navigation guard, mirroring react-router's shape. When `state` is `blocked`, `proceed()` lets the\n * held navigation through and `reset()` cancels it (staying put); both are `undefined` otherwise. The\n * pair is what a boolean `when` can't express - the app shows its OWN async confirmation UI, then calls\n * one of them, instead of the browser's synchronous `confirm()`.\n */"
+  },
+  {
+    "name": "Blocker",
+    "kind": "interface",
+    "package": "@nifrajs/web-react",
+    "signature": "export interface Blocker {\n    readonly state: BlockerState;\n    readonly proceed: (() => void) | undefined;\n    readonly reset: (() => void) | undefined;\n}",
+    "doc": "/**\n * A navigation guard, mirroring react-router's shape. When `state` is `blocked`, `proceed()` lets the\n * held navigation through and `reset()` cancels it (staying put); both are `undefined` otherwise. The\n * pair is what a boolean `when` can't express - the app shows its OWN async confirmation UI, then calls\n * one of them, instead of the browser's synchronous `confirm()`.\n */"
+  },
+  {
+    "name": "BlockerController",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface BlockerController {\n    register(shouldBlock: BlockerFunction, onChange: (blocker: Blocker) => void): () => void;\n}",
+    "doc": "/**\n * The browser layer's blocker registry - installed by `installHistory` (which owns navigation and can\n * therefore halt, restore, and replay it) and read by an adapter's `useBlocker` through\n * {@link registerBlocker}. Kept here, DOM-free, for the same reason as {@link BrowserNavigate}: a route\n * component's blocker hook must import only this agnostic entry.\n */"
+  },
+  {
+    "name": "BlockerFunction",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type BlockerFunction = (args: {\n    readonly currentLocation: BlockerLocation;\n    readonly nextLocation: BlockerLocation;\n}) => boolean;",
+    "doc": "/**\n * Decide whether a navigation should be halted. Receives where the app is (`currentLocation`) and where\n * it's heading (`nextLocation`), so a guard can allow same-section moves and block only real exits. A\n * boolean form (`useBlocker(isDirty)`) is sugar for `() => isDirty`. Runs synchronously at navigation\n * time - return the current answer; the async \"are you sure?\" happens afterward via {@link Blocker}'s\n * `proceed`/`reset`.\n */"
+  },
+  {
+    "name": "BlockerFunction",
+    "kind": "type",
+    "package": "@nifrajs/web-react",
+    "signature": "export type BlockerFunction = (args: {\n    readonly currentLocation: BlockerLocation;\n    readonly nextLocation: BlockerLocation;\n}) => boolean;",
+    "doc": "/**\n * Decide whether a navigation should be halted. Receives where the app is (`currentLocation`) and where\n * it's heading (`nextLocation`), so a guard can allow same-section moves and block only real exits. A\n * boolean form (`useBlocker(isDirty)`) is sugar for `() => isDirty`. Runs synchronously at navigation\n * time - return the current answer; the async \"are you sure?\" happens afterward via {@link Blocker}'s\n * `proceed`/`reset`.\n */"
+  },
+  {
+    "name": "BlockerLocation",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface BlockerLocation {\n    readonly pathname: string;\n    readonly search: string;\n    readonly hash: string;\n}",
+    "doc": "/** A parsed navigation target the {@link BlockerFunction} decides on. `pathname`/`search`/`hash` match\n * the DOM `Location` shape (search keeps its `?`, hash its `#`). */"
+  },
+  {
+    "name": "BlockerState",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type BlockerState = \"unblocked\" | \"blocked\" | \"proceeding\";",
+    "doc": "/**\n * The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted\n * and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called\n * `proceed`; the held navigation is being replayed.\n */"
+  },
+  {
+    "name": "BlockerState",
+    "kind": "type",
+    "package": "@nifrajs/web-react",
+    "signature": "export type BlockerState = \"unblocked\" | \"blocked\" | \"proceeding\";",
+    "doc": "/**\n * The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted\n * and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called\n * `proceed`; the held navigation is being replayed.\n */"
+  },
+  {
     "name": "bodyLimit",
     "kind": "function",
     "package": "@nifrajs/middleware",
@@ -1608,7 +1664,7 @@
     "name": "ClientOptions",
     "kind": "interface",
     "package": "@nifrajs/client",
-    "signature": "export interface ClientOptions {\n    /** Headers sent on every request (a per-call `headers` option is merged on top). */\n    readonly headers?: Record<string, string>;\n    /** Override the `fetch` implementation (tests, an in-process bridge, a custom agent, etc.). */\n    readonly fetch?: FetchFn;\n    /**\n     * Runs before each request (including each retry). Return a header map to MERGE onto the outgoing\n     * request — the place to inject a fresh auth token. `await`ed, so async token refresh works.\n     */\n    readonly onRequest?: (request: {\n        readonly url: string;\n        readonly method: string;\n        readonly headers: Record<string, string>;\n        readonly body: unknown;\n    }) => MaybePromise<Record<string, string> | undefined>;\n    /** Runs after a response arrives (once per call, on the final response). Observe-only. */\n    readonly onResponse?: (response: {\n        readonly url: string;\n        readonly method: string;\n        readonly response: Response;\n    }) => MaybePromise<void>;\n    /** Abort a call that takes longer than this many ms. Surfaces as `{ ok: false, status: 0 }` with a\n     * `timeout` error, never a throw. Combined with a per-call `signal`. */\n    readonly timeoutMs?: number;\n    /** Enable safe automatic retries. See {@link ClientRetryOptions}. */\n    readonly retry?: ClientRetryOptions;\n    /**\n     * Opt into a versioned transport representation. Plain JSON remains the default. Responses are\n     * decoded through the bounded registry, and WebSocket frames use the same codec.\n     */\n    readonly transport?: {\n        readonly codec: TransportCodec;\n        readonly registry?: TransportCodecRegistry;\n        readonly maxBytes?: number;\n    };\n}"
+    "signature": "export interface ClientOptions {\n    /** Headers sent on every request (a per-call `headers` option is merged on top). */\n    readonly headers?: Record<string, string>;\n    /** Override the `fetch` implementation (tests, an in-process bridge, a custom agent, etc.). */\n    readonly fetch?: FetchFn;\n    /**\n     * Runs before each request (including each retry). Return a header map to MERGE onto the outgoing\n     * request — the place to inject a fresh auth token. `await`ed, so async token refresh works.\n     */\n    readonly onRequest?: (request: {\n        readonly url: string;\n        readonly method: string;\n        readonly headers: Record<string, string>;\n        readonly body: unknown;\n    }) => MaybePromise<Record<string, string> | undefined>;\n    /** Runs after a response arrives (once per call, on the final response). Observe-only. */\n    readonly onResponse?: (response: {\n        readonly url: string;\n        readonly method: string;\n        readonly response: Response;\n    }) => MaybePromise<void>;\n    /** Abort a call that takes longer than this many ms. Surfaces as `{ ok: false, status: 0 }` with a\n     * `timeout` error, never a throw. Combined with a per-call `signal`. */\n    readonly timeoutMs?: number;\n    /** Enable safe automatic retries. See {@link ClientRetryOptions}. */\n    readonly retry?: ClientRetryOptions;\n    /**\n     * Largest response body, in bytes, that will be DECODED into a value. Default 16 MB.\n     *\n     * Bounds the two paths that build something in memory - a JSON body becoming an object graph, a text\n     * body becoming a string - and it bounds them while streaming, cancelling the read the moment the\n     * total passes. A 2 GB string costs as much as a 2 GB object, so both answer to one number.\n     *\n     * A BINARY body is deliberately not bounded by this. That is a download, and a size limit on a\n     * download is a bug rather than a defence - the caller asked for the file. Bound one at the call site\n     * with a `signal`, or read `content-length` before deciding.\n     *\n     * This used to live at `transport.maxBytes`, where it could not be reached: `transport` requires a\n     * `codec`, so raising your response limit meant opting into a versioned transport representation you\n     * had not asked for. That spelling still works and still wins for the transport path.\n     */\n    readonly maxDecodedBytes?: number;\n    /**\n     * Opt into a versioned transport representation. Plain JSON remains the default. Responses are\n     * decoded through the bounded registry, and WebSocket frames use the same codec.\n     */\n    readonly transport?: {\n        readonly codec: TransportCodec;\n        readonly registry?: TransportCodecRegistry;\n        readonly maxBytes?: number;\n    };\n}"
   },
   {
     "name": "ClientRetryOptions",
@@ -4213,6 +4269,13 @@
     "package": "nifra",
     "signature": "export type IdentityPlugin = (<S extends AnyServer>(app: S) => S) & {\n    readonly pluginName?: string;\n};",
     "doc": "/**\n * A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete\n * server type it receives, preserving the caller's typed registry and context across `.use()` while\n * still allowing the plugin to register runtime hooks or handlers.\n */"
+  },
+  {
+    "name": "IDLE_BLOCKER",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const IDLE_BLOCKER: Blocker;",
+    "doc": "/** The idle blocker - a stable reference (no needless adapter re-renders while unblocked). */"
   },
   {
     "name": "idleServerFnState",
@@ -6894,6 +6957,13 @@
     "signature": "export interface ReactWidgetOptions {\n    /** The widget's `ui://` resource URI, e.g. `ui://orders/table`. */\n    readonly uri: string;\n    readonly name: string;\n    readonly description?: string;\n    readonly title?: string;\n    /** Absolute path to a `.tsx`/`.jsx` module whose DEFAULT export is a React component. It receives the\n     * tool's `structuredContent` as props. */\n    readonly component: string;\n    /** Extra `<head>` content (styles, fonts). The bridge + component bundle are injected for you. */\n    readonly head?: string;\n    /** Minify the client bundle (default true). */\n    readonly minify?: boolean;\n}"
   },
   {
+    "name": "readBoundedBytes",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function readBoundedBytes(response: Response, options: TransportDecodeOptions): Promise<Uint8Array>;",
+    "doc": "/**\n * Read a response body into memory, refusing to exceed `maxBytes`.\n *\n * Bounded while STREAMING rather than after the fact: the `content-length` shortcut only helps when a\n * sender declares one, so the loop also counts as it goes and cancels the reader the moment the total\n * passes the limit. A cap that buffers first and complains afterwards has already spent the memory it\n * was meant to protect.\n *\n * Exported so the client can bound a plain-text body with the same reader it bounds JSON with, rather\n * than growing a second copy of this loop that could drift from it.\n */"
+  },
+  {
     "name": "readCausalityHeaders",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -7081,6 +7151,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function reflectSchema(value: unknown): SchemaReflection;",
     "doc": "/**\n * Reflect a Standard Schema, Nifra/TypeBox schema carrier, or raw JSON Schema. Never throws.\n * Validation-only schemas have `standard` but no `jsonSchema`; raw JSON Schema has the reverse.\n */"
+  },
+  {
+    "name": "registerBlocker",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function registerBlocker(shouldBlock: BlockerFunction, onChange: (blocker: Blocker) => void): () => void;",
+    "doc": "/**\n * Register a navigation guard, returning an unregister function. `onChange` is called with the current\n * {@link Blocker} whenever its state changes (so the adapter can re-render its confirmation UI). Before\n * `installHistory` has run (SSR, pre-hydration), there's no controller: registration is a no-op and the\n * caller stays on {@link IDLE_BLOCKER}, degrading to native navigation. Called by an adapter's\n * `useBlocker`, not by app code directly.\n */"
   },
   {
     "name": "registerFormat",
@@ -8585,6 +8662,13 @@
     "doc": "/**\n * The non-null user type of a concrete better-auth instance `A` (`SessionOf<A>[\"user\"]`). Collapses to\n * `unknown` only for the erased structural `BetterAuthLike`; a real instance recovers the concrete user.\n */"
   },
   {
+    "name": "setBlockerController",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function setBlockerController(controller: BlockerController | undefined): void;",
+    "doc": "/** Register (or clear, with `undefined`) the blocker controller - called by `installHistory`. Not for\n * app use. */"
+  },
+  {
     "name": "setBrowserNavigate",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -9765,6 +9849,13 @@
     "package": "@nifrajs/env",
     "signature": "export declare function url(opts?: Base<string> & Optional): StandardSchemaV1<string | undefined>;",
     "doc": "/** A valid absolute URL (parses with the WHATWG `URL`). Returns the normalized href string. */"
+  },
+  {
+    "name": "useBlocker",
+    "kind": "function",
+    "package": "@nifrajs/web-react",
+    "signature": "export declare function useBlocker(shouldBlock: boolean | BlockerFunction): Blocker;",
+    "doc": "/**\n * Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors\n * react-router's `useBlocker`: pass a boolean (`useBlocker(isDirty)`) or a predicate\n * `({ currentLocation, nextLocation }) => boolean`, and get back a {@link Blocker}. When a navigation\n * (a `<Link>`/anchor click, `useNavigate`, or a browser back/forward) is intercepted, `blocker.state`\n * becomes `\"blocked\"` and `proceed`/`reset` go live - render a dialog and call `proceed()` to continue\n * or `reset()` to stay put. It also arms the browser's native \"Leave site?\" prompt on tab close / reload.\n * Idle (never blocks, `proceed`/`reset` are `undefined`) on the server and before hydration, so it's\n * SSR-safe and hydration-stable.\n *\n * ```tsx\n * const blocker = useBlocker(form.isDirty)\n * return (\n *   <>\n *     <MyForm />\n *     {blocker.state === \"blocked\" && (\n *       <ConfirmDialog\n *         onCancel={blocker.reset}\n *         onConfirm={blocker.proceed}\n *         message=\"Discard unsaved changes?\"\n *       />\n *     )}\n *   </>\n * )\n * ```\n */"
   },
   {
     "name": "useCapability",

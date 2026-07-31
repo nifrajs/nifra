@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { installForms, installHistory, signalHydrated } from "../src/client.ts"
-import { getBrowserNavigate } from "../src/navigation.ts"
+import { type Blocker, getBrowserNavigate, registerBlocker } from "../src/navigation.ts"
 import type { ClientRouter } from "../src/router.ts"
 
 type Listener = (event: Event) => void
@@ -230,6 +230,53 @@ function fakeEvent(target: FakeElement): Event & {
   }
 }
 
+// A minimal router stub for the blocker tests: records the paths it was asked to navigate.
+function makeRouter(): { readonly router: ClientRouter; readonly navigated: string[] } {
+  const navigated: string[] = []
+  let subscriber: (() => void) | undefined
+  const state = { pending: false }
+  const router = {
+    match: (path: string) => (path === "/outside" ? null : { routeId: path, params: {} }),
+    navigate: async (path: string) => {
+      navigated.push(path)
+      subscriber?.()
+    },
+    prefetch: async () => {},
+    subscribe: (listener: () => void) => {
+      subscriber = listener
+      return () => {
+        subscriber = undefined
+      }
+    },
+    snapshot: () => state,
+  } as unknown as ClientRouter
+  return { router, navigated }
+}
+
+function fakeAnchor(href: string): FakeElement {
+  const anchor = new FakeElement("a")
+  anchor.href = href
+  anchor.closest = () => anchor
+  return anchor
+}
+
+function fakeBeforeUnload(): BeforeUnloadEvent & {
+  returnValue: string
+  defaultPrevented: boolean
+} {
+  let prevented = false
+  return {
+    type: "beforeunload",
+    returnValue: "unset",
+    preventDefault() {
+      prevented = true
+    },
+    get defaultPrevented() {
+      return prevented
+    },
+  } as unknown as BeforeUnloadEvent & { returnValue: string; defaultPrevented: boolean }
+}
+
 test("history integration covers click, prefetch, fragments, popstate, fallback and teardown", async () => {
   resetBrowser()
   const navigated: string[] = []
@@ -363,4 +410,198 @@ test("signalHydrated marks the document and dispatches once", () => {
   signalHydrated()
   expect(document.documentElement.hasAttribute("data-nifra-hydrated")).toBe(true)
   expect(signals).toBe(1)
+})
+
+test("useBlocker holds link clicks and programmatic navigate; proceed/reset resolve them", async () => {
+  resetBrowser()
+  const { router, navigated } = makeRouter()
+  const stop = installHistory(router)
+
+  let dirty = true
+  const seen: Array<{ readonly current: string; readonly next: string }> = []
+  const states: Blocker[] = []
+  const unregister = registerBlocker(
+    ({ currentLocation, nextLocation }) => {
+      seen.push({ current: currentLocation.pathname, next: nextLocation.pathname })
+      return dirty
+    },
+    (b) => states.push(b),
+  )
+
+  // Point 1 - a link click is intercepted: native nav prevented, no soft-nav, and the guard arms with
+  // the right from/to. `current` is where we are (/current); `next` is the link target.
+  const click = fakeEvent(fakeAnchor("http://example.test/next"))
+  document.emit("click", click)
+  expect(click.defaultPrevented).toBe(true)
+  expect(navigated).toEqual([])
+  expect(states.at(-1)?.state).toBe("blocked")
+  expect(seen.at(-1)).toEqual({ current: "/current", next: "/next" })
+
+  // While the prompt is open, a second navigation is swallowed (not passed through, not re-armed).
+  const other = fakeEvent(fakeAnchor("http://example.test/elsewhere"))
+  document.emit("click", other)
+  expect(other.defaultPrevented).toBe(true)
+  expect(navigated).toEqual([])
+  expect(states.map((b) => b.state)).toEqual(["blocked"])
+
+  // proceed() replays exactly the held navigation, then the guard returns to idle for next time.
+  states.at(-1)?.proceed?.()
+  await Bun.sleep(0)
+  expect(navigated).toEqual(["/next"])
+  expect(states.map((b) => b.state)).toEqual(["blocked", "proceeding", "unblocked"])
+
+  // Point 2 - a programmatic navigate goes through the same funnel; reset() cancels it (stay put).
+  states.length = 0
+  const navigate = getBrowserNavigate()
+  navigate?.("/two")
+  expect(navigated).toEqual(["/next"])
+  expect(states.at(-1)?.state).toBe("blocked")
+  states.at(-1)?.reset?.()
+  expect(navigated).toEqual(["/next"])
+  expect(states.map((b) => b.state)).toEqual(["blocked", "unblocked"])
+
+  // A clean guard lets navigation flow straight through.
+  dirty = false
+  navigate?.("/three")
+  await Bun.sleep(0)
+  expect(navigated).toEqual(["/next", "/three"])
+
+  unregister()
+  stop()
+})
+
+test("useBlocker restore-then-prompts on back/forward, and proceed replays the pop", async () => {
+  resetBrowser()
+  const { router, navigated } = makeRouter()
+  const stop = installHistory(router)
+
+  let dirty = false
+  const states: Blocker[] = []
+  registerBlocker(
+    () => dirty,
+    (b) => states.push(b),
+  )
+
+  // Push to /page1 (index 1) while clean, so a back has an entry to return to.
+  const navigate = getBrowserNavigate()
+  navigate?.("/page1")
+  await Bun.sleep(0)
+  expect(navigated).toEqual(["/page1"])
+
+  // Point 4 - a browser back to /current (index 0): the URL has ALREADY changed. The guard can't cancel
+  // it, so it restores by reversing the move (history.go(+1)) and arms the prompt - no soft-nav happened.
+  dirty = true
+  historyState = { nifraIndex: 0 }
+  locationState.pathname = "/current"
+  windowHub.emit("popstate", new Event("popstate"))
+  await Bun.sleep(0)
+  expect(navigated).toEqual(["/page1"])
+  expect(historyCalls).toContainEqual(["go", 1])
+  expect(states.at(-1)?.state).toBe("blocked")
+
+  // The restoring history.go(+1) fires its own popstate (back onto /page1) - it must be swallowed.
+  historyState = { nifraIndex: 1 }
+  locationState.pathname = "/page1"
+  windowHub.emit("popstate", new Event("popstate"))
+  await Bun.sleep(0)
+  expect(navigated).toEqual(["/page1"])
+
+  // proceed() re-issues history.go(-1) to redo the back...
+  states.at(-1)?.proceed?.()
+  expect(historyCalls).toContainEqual(["go", -1])
+  // ...and the popstate it produces now flows (the guard is proceeding), landing on /current.
+  historyState = { nifraIndex: 0 }
+  locationState.pathname = "/current"
+  windowHub.emit("popstate", new Event("popstate"))
+  await Bun.sleep(0)
+  expect(navigated).toEqual(["/page1", "/current"])
+  expect(states.at(-1)?.state).toBe("unblocked")
+
+  stop()
+})
+
+test("useBlocker reset on a back/forward stays put; the restoring popstate is swallowed", async () => {
+  resetBrowser()
+  const { router, navigated } = makeRouter()
+  const stop = installHistory(router)
+
+  let dirty = false
+  const states: Blocker[] = []
+  registerBlocker(
+    () => dirty,
+    (b) => states.push(b),
+  )
+
+  const navigate = getBrowserNavigate()
+  navigate?.("/page1")
+  await Bun.sleep(0)
+
+  // Back to /current gets blocked and the URL is restored (history.go(+1)).
+  dirty = true
+  historyState = { nifraIndex: 0 }
+  locationState.pathname = "/current"
+  windowHub.emit("popstate", new Event("popstate"))
+  await Bun.sleep(0)
+  expect(states.at(-1)?.state).toBe("blocked")
+  expect(historyCalls).toContainEqual(["go", 1])
+
+  // reset() cancels: stay on /page1, guard idle.
+  states.at(-1)?.reset?.()
+  expect(states.at(-1)?.state).toBe("unblocked")
+
+  // The restoring history.go(+1) fires its own popstate back onto /page1. It must be swallowed - no
+  // phantom re-block and no navigation - even though the guard is still dirty. (This is what the
+  // `reversing` flag buys: without it, this popstate re-arms the guard the user just dismissed.)
+  historyState = { nifraIndex: 1 }
+  locationState.pathname = "/page1"
+  windowHub.emit("popstate", new Event("popstate"))
+  await Bun.sleep(0)
+  expect(states.at(-1)?.state).toBe("unblocked")
+  expect(navigated).toEqual(["/page1"])
+
+  stop()
+})
+
+test("useBlocker arms beforeunload only when it would block, and teardown unwires it", async () => {
+  resetBrowser()
+  const { router } = makeRouter()
+  const stop = installHistory(router)
+
+  let dirty = false
+  const unregister = registerBlocker(
+    () => dirty,
+    () => {},
+  )
+
+  // Point 3 - a clean guard does NOT arm the native unload prompt.
+  const clean = fakeBeforeUnload()
+  windowHub.emit("beforeunload", clean)
+  expect(clean.defaultPrevented).toBe(false)
+  expect(clean.returnValue).toBe("unset")
+
+  // A dirty guard calls preventDefault + sets returnValue - the browser then shows "Leave site?".
+  dirty = true
+  const armed = fakeBeforeUnload()
+  windowHub.emit("beforeunload", armed)
+  expect(armed.defaultPrevented).toBe(true)
+  expect(armed.returnValue).toBe("")
+
+  // With the guard unregistered but history still installed, unload finds no registration and stays quiet.
+  unregister()
+  const orphan = fakeBeforeUnload()
+  windowHub.emit("beforeunload", orphan)
+  expect(orphan.defaultPrevented).toBe(false)
+
+  // Teardown unwires the listener and clears the bridge: registerBlocker returns a no-op unregister
+  // (calling it is safe) and the guard never fires again.
+  stop()
+  const noop = registerBlocker(
+    () => true,
+    () => {},
+  )
+  expect(noop).toBeTypeOf("function")
+  noop()
+  const afterStop = fakeBeforeUnload()
+  windowHub.emit("beforeunload", afterStop)
+  expect(afterStop.defaultPrevented).toBe(false)
 })

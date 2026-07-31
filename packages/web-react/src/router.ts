@@ -10,7 +10,14 @@
  * can use these on the server and the client without dragging a DOM build into the wrong bundle. No JSX
  * (the package builds with plain `tsc`), so everything is `createElement`.
  */
-import { getBrowserNavigate, type NavigateOptions } from "@nifrajs/web"
+import {
+  type Blocker,
+  type BlockerFunction,
+  getBrowserNavigate,
+  IDLE_BLOCKER,
+  type NavigateOptions,
+  registerBlocker,
+} from "@nifrajs/web"
 import {
   type AnchorHTMLAttributes,
   type CSSProperties,
@@ -23,7 +30,11 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
+  useState,
 } from "react"
+
+export type { Blocker, BlockerFunction, BlockerState } from "@nifrajs/web"
 
 /** The current route the routing hooks read. Provided by `compose` on SSR + client mount alike. */
 export interface RouterContextValue {
@@ -142,6 +153,51 @@ export function useNavigate(): NavigateFunction {
     const navigate = getBrowserNavigate()
     if (navigate !== undefined) navigate(to, options)
   }, [])
+}
+
+/**
+ * Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors
+ * react-router's `useBlocker`: pass a boolean (`useBlocker(isDirty)`) or a predicate
+ * `({ currentLocation, nextLocation }) => boolean`, and get back a {@link Blocker}. When a navigation
+ * (a `<Link>`/anchor click, `useNavigate`, or a browser back/forward) is intercepted, `blocker.state`
+ * becomes `"blocked"` and `proceed`/`reset` go live - render a dialog and call `proceed()` to continue
+ * or `reset()` to stay put. It also arms the browser's native "Leave site?" prompt on tab close / reload.
+ * Idle (never blocks, `proceed`/`reset` are `undefined`) on the server and before hydration, so it's
+ * SSR-safe and hydration-stable.
+ *
+ * ```tsx
+ * const blocker = useBlocker(form.isDirty)
+ * return (
+ *   <>
+ *     <MyForm />
+ *     {blocker.state === "blocked" && (
+ *       <ConfirmDialog
+ *         onCancel={blocker.reset}
+ *         onConfirm={blocker.proceed}
+ *         message="Discard unsaved changes?"
+ *       />
+ *     )}
+ *   </>
+ * )
+ * ```
+ */
+export function useBlocker(shouldBlock: boolean | BlockerFunction): Blocker {
+  const [blocker, setBlocker] = useState<Blocker>(IDLE_BLOCKER)
+  // Track the latest predicate in a ref (updated every render) so the single registration always sees
+  // current component state (the dirty flag) WITHOUT re-registering - re-registering mid-prompt drops it.
+  const shouldBlockRef = useRef(shouldBlock)
+  shouldBlockRef.current = shouldBlock
+  // Register once on mount; the returned unregister is the effect cleanup. A boolean reads as itself, a
+  // function is called. A no-op before `installHistory` has run (blocker stays idle → native navigation).
+  useEffect(
+    () =>
+      registerBlocker((args) => {
+        const current = shouldBlockRef.current
+        return typeof current === "function" ? current(args) : current
+      }, setBlocker),
+    [],
+  )
+  return blocker
 }
 
 /** The value forms `setSearchParams` accepts. */

@@ -2171,15 +2171,15 @@ Every public export of every package and documented subpath — name, kind, sign
 - **Action** _(type)_ — `type Action = (ctx: LoaderContext) => unknown | Promise<unknown>`
   A route's optional mutation, run on POST. Shares the loader context (params/request/api); read the form/JSON body off `request`. Returns either a `Response` (e.g. a redirect — passed straight through) or data, surfaced to the page component as `actionData`.
 - **Blocker** _(interface)_ — `interface Blocker`
-  A navigation guard, mirroring react-router's shape. When `state` is `blocked`, `proceed()` lets the held navigation through and `reset()` cancels it (staying put); both are `undefined` otherwise. The pair is what a boolean `when` can't express — the app shows its OWN async confirmation UI, then cal…
+  A navigation guard, mirroring react-router's shape. When `state` is `blocked`, `proceed()` lets the held navigation through and `reset()` cancels it (staying put); both are `undefined` otherwise. The pair is what a boolean `when` can't express - the app shows its OWN async confirmation UI, then cal…
 - **BlockerController** _(interface)_ — `interface BlockerController`
-  The browser layer's blocker registry — installed by `installHistory` (which owns navigation and can therefore halt, restore, and replay it) and read by an adapter's `useBlocker` through {@link registerBlocker}. Kept here, DOM-free, for the same reason as {@link BrowserNavigate}: a route component's…
+  The browser layer's blocker registry - installed by `installHistory` (which owns navigation and can therefore halt, restore, and replay it) and read by an adapter's `useBlocker` through {@link registerBlocker}. Kept here, DOM-free, for the same reason as {@link BrowserNavigate}: a route component's…
 - **BlockerFunction** _(type)_ — `type BlockerFunction = (args: { readonly currentLocation: BlockerLocation readonly nextLocation: BlockerLocation }) => boolean`
   Decide whether a navigation should be halted. Receives where the app is (`currentLocation`) and where it's heading (`nextLocation`), so a guard can allow same-section moves and block only real exits. A boolean form (`useBlocker(isDirty)`) is sugar for `() => isDirty`. Runs synchronously at navigati…
 - **BlockerLocation** _(interface)_ — `interface BlockerLocation`
   A parsed navigation target the {@link BlockerFunction} decides on. `pathname`/`search`/`hash` match the DOM `Location` shape (search keeps its `?`, hash its `#`).
 - **BlockerState** _(type)_ — `type BlockerState = "unblocked" | "blocked" | "proceeding"`
-  The blocker's lifecycle. `unblocked` — idle, nothing intercepted. `blocked` — a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` — the app called `proceed`; the held navigation is being replayed.
+  The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
 - **BrowserNavigate** _(type)_ — `type BrowserNavigate = (to: string | number, options?: NavigateOptions) => void`
   A history-aware navigate. A **string** `to` is a same-origin path (`/users/7?tab=a`) navigated to (push, or replace with `{ replace: true }`); a **number** is a history delta (`-1` back, `1` forward), matching the browser's `history.go`. Registered by `installHistory`.
 - **CacheStore** _(interface)_ — `interface CacheStore`
@@ -2221,7 +2221,7 @@ Every public export of every package and documented subpath — name, kind, sign
 - **GetStaticPaths** _(type)_ — `type GetStaticPaths = () => StaticPaths | Promise<StaticPaths>`
   A dynamic route's build-time param enumeration (the SSG equivalent of "which pages exist").
 - **IDLE_BLOCKER** _(const)_ — `IDLE_BLOCKER: Blocker`
-  The idle blocker — a stable reference (no needless adapter re-renders while unblocked).
+  The idle blocker - a stable reference (no needless adapter re-renders while unblocked).
 - **ISRApp** _(interface)_ — `interface ISRApp`
   The app `withISR` wraps — anything with a `fetch(req, platform?)` (a `createWebApp` result).
 - **ISROptions** _(interface)_ — `interface ISROptions`
@@ -2431,7 +2431,7 @@ Every public export of every package and documented subpath — name, kind, sign
 - **servePublicDir** _(function)_ — `servePublicDir: (options: ServePublicDirOptions) => (request: Request) => Promise<Response | undefined>`
   Build a static-file handler for `dir`.
 - **setBlockerController** _(function)_ — `setBlockerController: (controller: BlockerController | undefined) => void`
-  Register (or clear, with `undefined`) the blocker controller — called by `installHistory`. Not for app use.
+  Register (or clear, with `undefined`) the blocker controller - called by `installHistory`. Not for app use.
 - **setBrowserNavigate** _(function)_ — `setBrowserNavigate: (navigate: BrowserNavigate | undefined) => void`
   Register (or clear, with `undefined`) the browser navigate — called by `installHistory`. Not for app use.
 - **statusPage** _(function)_ — `statusPage: (status: number, options?: StatusPageOptions) => never`
@@ -2977,6 +2977,12 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-react/router`
 
+- **Blocker** _(interface)_ — `interface Blocker`
+  A navigation guard, mirroring react-router's shape. When `state` is `blocked`, `proceed()` lets the held navigation through and `reset()` cancels it (staying put); both are `undefined` otherwise. The pair is what a boolean `when` can't express - the app shows its OWN async confirmation UI, then cal…
+- **BlockerFunction** _(type)_ — `type BlockerFunction = (args: { readonly currentLocation: BlockerLocation; readonly nextLocation: BlockerLocation; }) => boolean`
+  Decide whether a navigation should be halted. Receives where the app is (`currentLocation`) and where it's heading (`nextLocation`), so a guard can allow same-section moves and block only real exits. A boolean form (`useBlocker(isDirty)`) is sugar for `() => isDirty`. Runs synchronously at navigati…
+- **BlockerState** _(type)_ — `type BlockerState = "unblocked" | "blocked" | "proceeding"`
+  The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
 - **Link** _(const)_ — `Link: import("react").ForwardRefExoticComponent<LinkProps & import("react").RefAttributes<HTMLAnchorElement>>`
   A client-navigating anchor. Renders a real `<a href={to}>` (so it's a working link before hydration and for right-click / open-in-new-tab), and on a plain left-click navigates through the router instead of a full reload. Calling `navigate` + `preventDefault` here means `installHistory`'s document-l…
 - **LinkProps** _(interface)_ — `interface LinkProps`

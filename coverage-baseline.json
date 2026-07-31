@@ -776,8 +776,8 @@
     "lines": 98.0392156862745
   },
   "packages/web-react/src/router.ts": {
-    "functions": 95.23809523809523,
-    "lines": 99.2
+    "functions": 91.30434782608695,
+    "lines": 96.37681159420289
   },
   "packages/web-solid/src/compose.ts": {
     "functions": 100,

@@ -6,7 +6,17 @@
  */
 import { EXECUTABLE_SCRIPT_TYPES, INERT_SCRIPT_TYPES } from "./internal/script-types.ts"
 import type { Meta } from "./manifest.ts"
-import { type BrowserNavigate, setBrowserNavigate } from "./navigation.ts"
+import {
+  type Blocker,
+  type BlockerController,
+  type BlockerFunction,
+  type BlockerLocation,
+  type BlockerState,
+  type BrowserNavigate,
+  IDLE_BLOCKER,
+  setBlockerController,
+  setBrowserNavigate,
+} from "./navigation.ts"
 import type { ClientRouter } from "./router.ts"
 
 export interface InstallHistoryOptions {
@@ -32,6 +42,22 @@ export function installHistory(
   // fragment target (`#id`) to scroll to once the cross-page navigation's content renders.
   type PendingScroll = { readonly pos: readonly [number, number] } | { readonly hash: string }
   let pendingScroll: PendingScroll | null = null
+
+  // Navigation-guard state (useBlocker). `index` is our position in the history line, stored in
+  // `history.state.nifraIndex`; it exists solely to reverse a blocked back/forward (a popstate can't be
+  // cancelled, so we read the delta from the index and `history.go(-delta)` back). `here` is the location
+  // we're currently on - after a popstate `location` is already the destination, so "where we were" has
+  // to be tracked, not read. `reversing` swallows the popstate our own restoring `history.go` fires.
+  let index = (history.state as { nifraIndex?: number } | null)?.nifraIndex ?? 0
+  let here = location.pathname + location.search + (location.hash ?? "")
+  let reversing = false
+  type Registration = {
+    readonly shouldBlock: BlockerFunction
+    readonly emit: (blocker: Blocker) => void
+    state: BlockerState
+  }
+  // A single active guard (like react-router, one blocker at a time); the latest registration wins.
+  let registration: Registration | undefined
   const scrollOf = (state: unknown): [number, number] => {
     const saved = (state as { nifraScroll?: [number, number] } | null)?.nifraScroll
     return Array.isArray(saved) ? saved : [0, 0]
@@ -76,22 +102,75 @@ export function installHistory(
     for (const p of [vt.ready, vt.finished, vt.updateCallbackDone]) p.catch(() => {})
   }
 
-  const go = (path: string, mode: "push" | "replace"): void => {
+  // Parse a path into the `{ pathname, search, hash }` a `BlockerFunction` decides on.
+  const locationOf = (path: string): BlockerLocation => {
+    const url = new URL(path, location.origin)
+    return { pathname: url.pathname, search: url.search, hash: url.hash }
+  }
+
+  // The single funnel every navigation asks before it commits. Returns true (navigation held) when a
+  // guard is armed and blocks; false when it may proceed. `retry` performs the navigation and is what
+  // `proceed` replays. While a prompt is already open (`blocked`) further navigations are swallowed; the
+  // replay from `proceed` (`proceeding`) is let straight through.
+  const guard = (nextPath: string, retry: () => void): boolean => {
+    const reg = registration
+    if (reg === undefined || reg.state === "proceeding") return false
+    if (reg.state === "blocked") return true
+    if (!reg.shouldBlock({ currentLocation: locationOf(here), nextLocation: locationOf(nextPath) }))
+      return false
+    reg.state = "blocked"
+    reg.emit({
+      state: "blocked",
+      proceed: () => {
+        if (reg.state !== "blocked") return
+        reg.state = "proceeding"
+        reg.emit({ state: "proceeding", proceed: undefined, reset: undefined })
+        retry()
+      },
+      reset: () => {
+        if (reg.state !== "blocked") return
+        reg.state = "unblocked"
+        reg.emit(IDLE_BLOCKER)
+      },
+    })
+    return true
+  }
+
+  // Once a proceeded navigation has committed, return the guard to idle so it can block the next one.
+  const settle = (): void => {
+    const reg = registration
+    if (reg !== undefined && reg.state === "proceeding") {
+      reg.state = "unblocked"
+      reg.emit(IDLE_BLOCKER)
+    }
+  }
+
+  // Commit a same-origin navigation: update history (tracking `nifraIndex`), set the pending scroll, then
+  // drive the router. Split from `go` so `proceed` can replay exactly this, bypassing the guard.
+  const commit = (path: string, mode: "push" | "replace"): void => {
     const url = new URL(path, location.origin)
     if (mode === "replace") {
-      // Replace the current entry with the new URL. The entry we're leaving is discarded, so its scroll
-      // isn't worth saving; the new route scrolls to its fragment target, else the top.
-      history.replaceState({}, "", path)
+      // Replace the current entry (same index) with the new URL. The entry we're leaving is discarded, so
+      // its scroll isn't worth saving; the new route scrolls to its fragment target, else the top.
+      history.replaceState({ nifraIndex: index }, "", path)
       pendingScroll = url.hash !== "" ? { hash: hashId(url.hash) } : { pos: [0, 0] }
     } else {
-      // Save the leaving entry's scroll, push a fresh entry (URL incl. any #hash), then scroll the new
-      // route: to the fragment target if one was given, else to the top.
+      // Save the leaving entry's scroll (spread keeps its nifraIndex), push a fresh higher-indexed entry
+      // (URL incl. any #hash), then scroll the new route: to the fragment target if given, else the top.
       history.replaceState({ ...(history.state ?? {}), nifraScroll: [scrollX, scrollY] }, "")
-      history.pushState({}, "", path)
+      index += 1
+      history.pushState({ nifraIndex: index }, "", path)
       pendingScroll = url.hash !== "" ? { hash: hashId(url.hash) } : { pos: [0, 0] }
     }
+    here = url.pathname + url.search + url.hash
     // The data layer fetches by path+search; the #hash is client-only (never sent to the server).
     transition(() => router.navigate(url.pathname + url.search).catch(() => fallback(path)))
+    settle()
+  }
+
+  const go = (path: string, mode: "push" | "replace"): void => {
+    if (guard(path, () => commit(path, mode))) return
+    commit(path, mode)
   }
 
   // Programmatic navigation for adapter `useNavigate` bindings, published through the DOM-free bridge
@@ -107,6 +186,20 @@ export function installHistory(
     go(to, navOptions?.replace === true ? "replace" : "push")
   }
   setBrowserNavigate(navigate)
+
+  // Publish the guard registry through the DOM-free bridge (`@nifrajs/web`'s `registerBlocker`, which an
+  // adapter's `useBlocker` calls). One slot, latest registration wins; the unregister clears it only if
+  // it's still the current one (so a stale unmount doesn't wipe a newer guard).
+  const controller: BlockerController = {
+    register(shouldBlock, onChange) {
+      const reg: Registration = { shouldBlock, emit: onChange, state: "unblocked" }
+      registration = reg
+      return () => {
+        if (registration === reg) registration = undefined
+      }
+    },
+  }
+  setBlockerController(controller)
 
   // Resolve an event target to an in-app route path, or null (cross-origin, unknown route, or an
   // anchor opting out via target/download/rel=external). Shared by click + hover/focus prefetch.
@@ -147,12 +240,44 @@ export function installHistory(
     void router.prefetch(url.pathname + url.search) // warm by path+search; the #hash isn't data
   }
 
-  // Back/forward: the entry exists (no push); restore its saved scroll after it renders.
+  // Back/forward: the entry already exists (no push). The URL has ALSO already changed - a popstate can't
+  // be cancelled - so a guard here can only restore-then-prompt: read the delta from our index, and if the
+  // guard holds, `history.go(-delta)` back to where we were (ignoring the popstate that reversal fires via
+  // `reversing`) while `proceed` re-issues `history.go(delta)` to redo the move. Unguarded, it's the old
+  // path: restore the entry's saved scroll after it renders.
   const onPopState = (): void => {
+    if (reversing) {
+      reversing = false
+      return
+    }
+    const newIndex = (history.state as { nifraIndex?: number } | null)?.nifraIndex ?? 0
+    const dest = location.pathname + location.search + (location.hash ?? "")
+    const delta = newIndex - index
+    if (guard(dest, () => history.go(delta))) {
+      reversing = true
+      history.go(-delta)
+      return
+    }
+    index = newIndex
+    here = dest
     pendingScroll = { pos: scrollOf(history.state) }
     transition(() =>
       router.navigate(location.pathname + location.search).catch(() => fallback(location.pathname)),
     )
+    settle()
+  }
+
+  // Close / reload / hard navigation away: no in-app destination exists, so consult the guard with the
+  // current location as both sides. A dirtiness guard (a boolean, or one that checks its own state) then
+  // triggers the browser's native "Leave site?" prompt; a purely destination-based guard won't. Browsers
+  // ignore any custom message - the string is set only because legacy engines require `returnValue`.
+  const onBeforeUnload = (event: BeforeUnloadEvent): void => {
+    const reg = registration
+    if (reg === undefined || reg.state !== "unblocked") return
+    if (!reg.shouldBlock({ currentLocation: locationOf(here), nextLocation: locationOf(here) }))
+      return
+    event.preventDefault()
+    event.returnValue = ""
   }
 
   // After a navigation settles (content rendered), apply the pending scroll target on the next frame:
@@ -178,13 +303,16 @@ export function installHistory(
   document.addEventListener("pointerover", onPrefetch)
   document.addEventListener("focusin", onPrefetch)
   window.addEventListener("popstate", onPopState)
+  window.addEventListener("beforeunload", onBeforeUnload)
   return () => {
     unsubscribe()
     setBrowserNavigate(undefined) // stop routing `useNavigate` to a torn-down router
+    setBlockerController(undefined) // stop routing `useBlocker` to a torn-down registry
     document.removeEventListener("click", onClick)
     document.removeEventListener("pointerover", onPrefetch)
     document.removeEventListener("focusin", onPrefetch)
     window.removeEventListener("popstate", onPopState)
+    window.removeEventListener("beforeunload", onBeforeUnload)
   }
 }
 

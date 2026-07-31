@@ -4,11 +4,13 @@ import { createElement, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { compose } from "../src/compose.ts"
 import {
+  type Blocker,
   Link,
   Navigate,
   NavLink,
   RouterContext,
   type SetSearchParams,
+  useBlocker,
   useLocation,
   useNavigate,
   useNavigation,
@@ -144,6 +146,21 @@ test("useNavigate forwards through the registered browser bridge", () => {
   renderToStaticMarkup(compose([Page], { data: null }))
   navigate?.("/next", { replace: true })
   expect(calls).toEqual([["/next", { replace: true }]])
+})
+
+test("useBlocker is idle on SSR (no browser bridge) - hydration-safe and never throws", () => {
+  // Effects don't run on the server, so the guard never registers: it stays IDLE_BLOCKER, matching the
+  // first client render (no hydration mismatch). The interception + proceed/reset behavior is covered
+  // exhaustively at the DOM layer (packages/web `client-browser.test.ts`) and browser-verified here.
+  let seen: Blocker | undefined
+  const Probe = () => {
+    seen = useBlocker(true)
+    return createElement("span", null, seen.state)
+  }
+  const html = renderToStaticMarkup(compose([Probe], { data: null }))
+  expect(html).toContain("<span>unblocked</span>")
+  expect(seen?.proceed).toBeUndefined()
+  expect(seen?.reset).toBeUndefined()
 })
 
 // Capture the setSearchParams setter for a given router path (renders a probe component that stashes it).

@@ -39,6 +39,30 @@ export async function loader({ params }) {
 }
 // A catch-all needs ≥1 segment (/files alone won't match) and must be the last segment.`
 
+const BLOCKER = `// routes/posts/[id]/edit.tsx - don't lose a half-finished edit to a stray click.
+import { useState } from "react"
+import { useBlocker } from "@nifrajs/web-react/router"
+
+export default function EditPost() {
+  const [dirty, setDirty] = useState(false)
+  // A boolean, or a predicate of { currentLocation, nextLocation } for finer control
+  // (e.g. allow moves within the editor, block only real exits).
+  const blocker = useBlocker(dirty)
+
+  return (
+    <form onInput={() => setDirty(true)} onSubmit={() => setDirty(false)}>
+      {/* ...fields... */}
+      {blocker.state === "blocked" && (
+        <div role="dialog" aria-modal="true">
+          <p>You have unsaved changes.</p>
+          <button type="button" onClick={blocker.reset}>Keep editing</button>
+          <button type="button" onClick={blocker.proceed}>Discard</button>
+        </div>
+      )}
+    </form>
+  )
+}`
+
 export default function Routing() {
   return (
     <div className="prose">
@@ -109,6 +133,26 @@ export default function Routing() {
         be the final segment.
       </p>
       <CodeBlock code={CATCHALL} />
+
+      <h2>Guarding navigation</h2>
+      <p>
+        A page with unsaved work shouldn't lose it to a stray click or the back button.{" "}
+        <code>useBlocker</code> (from <code>@nifrajs/web-react/router</code>) intercepts a navigation -
+        a <code>&lt;Link&gt;</code>/anchor click, <code>useNavigate</code>, or a browser back/forward -
+        and hands you <code>{`{ state, proceed, reset }`}</code>. Pass a boolean or a{" "}
+        <code>{`({ currentLocation, nextLocation }) => boolean`}</code> predicate; when a navigation is
+        held, <code>state</code> becomes <code>"blocked"</code>, so you render your OWN confirmation and
+        call <code>proceed()</code> to continue or <code>reset()</code> to stay. It mirrors
+        react-router's shape - a plain boolean can't express an async "are you sure?", these two
+        callbacks can.
+      </p>
+      <CodeBlock code={BLOCKER} lang="tsx" />
+      <p>
+        It also arms the browser's native "Leave site?" prompt on tab close / reload (the browser shows
+        its own text there - a custom message isn't possible). On the server and before hydration the
+        blocker is idle (it never blocks), so navigation degrades to the native <code>&lt;a&gt;</code>{" "}
+        and the page is hydration-safe.
+      </p>
     </div>
   )
 }
