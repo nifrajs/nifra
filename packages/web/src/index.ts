@@ -292,6 +292,19 @@ export const ROUTE_GLOBAL = "__NIFRA_ROUTE__"
 export const ACTION_GLOBAL = "__NIFRA_ACTION__"
 
 /**
+ * Marker attribute on the app container, emitted ONLY when `rootId` is not the default.
+ *
+ * `rootId` is a per-RENDER option; the client entry is a per-BUILD artifact, so it cannot be
+ * generated knowing which id a given render will use. The container therefore announces itself, and
+ * the entry finds it by this attribute before falling back to `#root`. It has to be the DOM rather
+ * than another `window.__NIFRA_*` global: a second copy of the id can drift from the markup, while
+ * this is written by the same expression that writes the id and cannot.
+ *
+ * Absent on a default render, so an app that never sets `rootId` emits the same bytes it always has.
+ */
+export const ROOT_ATTRIBUTE = "data-nifra-root"
+
+/**
  * Pre-hydration form guard — a tiny inline script flushed in `<head>` (it runs in the window between
  * first paint and the island bundle taking over). It neutralizes the one real hydration footgun: a
  * JS-only form (a hand-wired `onSubmit` with no native fallback) submitting *natively* before its
@@ -416,7 +429,9 @@ export interface RenderPageOptions {
    * (any letter/digit/hyphen name — covers `rel`/`href`/`hreflang`/`crossorigin`/`media`/`sizes`/`as`/
    * `integrity`/`fetchpriority`/…) and value-escaped against XSS. */
   readonly head?: Meta
-  /** Id of the container wrapping the app markup (default `"root"`). */
+  /** Id of the container wrapping the app markup (default `"root"`). A non-default id also gets
+   * {@link ROOT_ATTRIBUTE}, which is how the generated client entry finds the container to hydrate -
+   * the entry is built once and cannot know what a given render chose. */
   readonly rootId?: string
   /** When `false`, emit a complete but **non-hydrated** document — no client entry script, data
    * globals, or modulepreloads. Used for server-rendered `_error` pages: a terminal state that needs no
@@ -553,7 +568,11 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // `client.ts`'s `applyHead` mirrors this exact defaulting on soft-nav, so a hard load and a client
   // navigation to the same URL produce the same `<html>` (no drift on a multilingual site).
   const htmlAttrs = ` lang="${escapeAttr(head?.lang ?? "en")}"${head?.dir === undefined ? "" : ` dir="${escapeAttr(head.dir)}"`}`
-  const shellHtml = `<!doctype html><html${htmlAttrs}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${hydrationGuard}<title>${escapeHtml(head?.title ?? title)}</title>${headTags(head)}${styleLinks}${hydrationLinks}${islandPreloads}${adapter.hydrationHead()}</head><body><div id="${escapeAttr(rootId)}">`
+  // Marks the container for the client entry when the id is not the one the entry falls back to. A
+  // static attribute name with no value, so `rootId` never reaches the markup twice and there is
+  // nothing here to escape. Omitted on the default so existing output is unchanged.
+  const rootMarker = rootId === "root" ? "" : ` ${ROOT_ATTRIBUTE}`
+  const shellHtml = `<!doctype html><html${htmlAttrs}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${hydrationGuard}<title>${escapeHtml(head?.title ?? title)}</title>${headTags(head)}${styleLinks}${hydrationLinks}${islandPreloads}${adapter.hydrationHead()}</head><body><div id="${escapeAttr(rootId)}"${rootMarker}>`
   // Closes the hydration container; deferred resolve scripts go AFTER it (outside `#root`) so they
   // aren't part of the adapter's hydrated tree (an inline script inside it breaks hydration).
   const closeRootHtml = "</div>"
@@ -2240,10 +2259,23 @@ export function generateClientEntry(
     "const router = createClientRouter({ patterns, initial, loadModule, statusRoutes })",
     "installHistory(router)",
     "installForms(router)",
-    'const root = document.getElementById("root")',
+    // The container is found in the DOM, not baked in. `rootId` is a per-render option and this entry
+    // is a per-build artifact, so a hardcoded id is a guess: `renderPage({ rootId: "app" })` produced a
+    // perfect document that hydrated NOTHING, with no diagnostic, because the missing `#root` was
+    // swallowed by an `if (root)`. `renderPage` marks a custom container with `ROOT_ATTRIBUTE`; the
+    // default `#root` it leaves unmarked, which is what the fallback is for.
+    `const root = document.querySelector("[${ROOT_ATTRIBUTE}]") ?? document.getElementById("root")`,
+    // Loud, because there is no recoverable case: this entry ships only in a document `renderPage`
+    // opened a container in, so reaching here means the document is not the one it was built for.
+    `if (!root) throw new Error(${JSON.stringify(
+      "[nifra/web] no hydration container found. The generated bootstrap mounts into the element " +
+        `renderPage opened the app in - the one marked \`${ROOT_ATTRIBUTE}\` when a custom \`rootId\` ` +
+        "is set, `#root` otherwise - and this document has neither. If you emit the document yourself, " +
+        'keep `<div id="root">` around the SSR markup.',
+    )})`,
     // Load the initial route's chunk, then hydrate the Router (chain is cached). The initial head
     // is server-rendered; subsequent navigations update it from the matched route's meta + data.
-    "if (root) loadModule(initial.routeId).then(() => {",
+    "loadModule(initial.routeId).then(() => {",
     "  mountRouter({ router, routes: chains, container: root })",
     // Next frame: the adapter has committed its initial hydration, so handlers are attached. Flip the
     // document to interactive (`data-nifra-hydrated` + `nifra:hydrated`) for apps to gate pre-hydration UI.

@@ -2268,6 +2268,8 @@ Every public export of every package and documented subpath — name, kind, sign
   Layout indices a client navigation is asking the server NOT to re-run, comma separated.
 - **REVALIDATE_HEADER** _(const)_ — `REVALIDATE_HEADER: "x-nifra-revalidate"`
   Response header an action sets (via the `revalidate(paths, data)` helper) to tell the client which routes the mutation changed — a comma-separated list of paths. After the submit, the client marks those cached routes stale (refetching any that are mounted) so a mutation can refresh views beyond the…
+- **ROOT_ATTRIBUTE** _(const)_ — `ROOT_ATTRIBUTE: "data-nifra-root"`
+  Marker attribute on the app container, emitted ONLY when `rootId` is not the default.
 - **ROUTE_GLOBAL** _(const)_ — `ROUTE_GLOBAL: "__NIFRA_ROUTE__"`
   Global the server writes the matched route id into; the client uses it to pick the chain.
 - **RedirectOptions** _(interface)_ — `interface RedirectOptions`
