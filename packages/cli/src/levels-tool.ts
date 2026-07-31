@@ -13,17 +13,15 @@
 
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
-import { evaluateRouteAssurance } from "@nifrajs/core/assurance"
-import { type evaluateCapabilityAssurance, snapshotCapabilities } from "@nifrajs/core/capabilities"
+import type { AssuranceReport } from "@nifrajs/core/assurance"
+import { snapshotCapabilities } from "@nifrajs/core/capabilities"
 import { buildNifraManifest, parseNifraManifest } from "@nifrajs/core/manifest"
 import { type ContractTestApp, runAdversarialContract } from "@nifrajs/testing"
-import { loadAssuranceConfig } from "./assure.ts"
 import {
-  collectCapabilityProjectReport,
+  type CapabilityProjectReport,
   diffCapabilitySnapshots,
   parseCapabilityLockfile,
 } from "./capabilities-tool.ts"
-import { collectCheckResult } from "./check.ts"
 import { DEFAULT_MANIFEST_FILE } from "./manifest-tool.ts"
 
 export interface VerificationLevelStatus {
@@ -51,10 +49,18 @@ export async function collectVerificationLevels(
   cwd: string,
   options: CollectLevelsOptions = {},
 ): Promise<VerificationLevelsResult> {
+  // The ladder is the fullest view over the one project verification: L0 is the check view, L1/L2 read
+  // the route-assurance + capability evidence the same collector already computed (no second walk), and
+  // only the ladder-specific L3 (manifest) and L4 (invariants) are evaluated here.
+  const { collectProjectVerification } = await import("./verification.ts")
+  const verification = await collectProjectVerification(cwd, {
+    ...(options.config !== undefined ? { config: options.config } : {}),
+    maxDiagnostics: 5,
+  })
   const statuses: { level: number; name: string; ok: boolean; reasons: string[] }[] = []
 
   // L0 — typed contract (`nifra check`).
-  const check = await collectCheckResult(cwd, { maxDiagnostics: 5 })
+  const check = await verification.check()
   statuses.push({
     level: 0,
     name: "typed contract",
@@ -63,11 +69,11 @@ export async function collectVerificationLevels(
   })
 
   // L1-L4 all hang off the assurance config; without it the ladder stops at L0 by definition.
-  let config: Awaited<ReturnType<typeof loadAssuranceConfig>> | undefined
-  try {
-    config = await loadAssuranceConfig(cwd, options.config)
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err)
+  if (verification.config === undefined) {
+    const reason =
+      verification.configError instanceof Error
+        ? verification.configError.message
+        : String(verification.configError)
     for (const [level, name] of [
       [1, "route assurance"],
       [2, "capability lockfile"],
@@ -78,11 +84,10 @@ export async function collectVerificationLevels(
     }
     return finalize(statuses)
   }
+  const config = verification.config
 
   // L1 — route assurance.
-  const assurance = evaluateRouteAssurance(config.source, config.policy, {
-    ...(config.capabilities !== undefined ? { definitions: config.capabilities.definitions } : {}),
-  })
+  const assurance = verification.routeAssurance as AssuranceReport
   statuses.push({
     level: 1,
     name: "route assurance",
@@ -92,12 +97,11 @@ export async function collectVerificationLevels(
 
   // L2 — capability assurance + lockfile in sync.
   const l2Reasons: string[] = []
-  let capabilityReport: ReturnType<typeof evaluateCapabilityAssurance> | undefined
+  const capabilityReport = verification.capability?.report
   if (config.capabilities === undefined) {
     l2Reasons.push("nifra.assurance.ts declares no capabilities policy")
   } else {
-    const project = await collectCapabilityProjectReport(cwd, config.source, config.capabilities)
-    capabilityReport = project.report
+    const project = verification.capability as CapabilityProjectReport
     if (!project.report.ok) {
       l2Reasons.push(...project.report.findings.map((f) => f.message).slice(0, 5))
     }

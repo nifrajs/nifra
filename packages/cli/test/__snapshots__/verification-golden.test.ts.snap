@@ -1,0 +1,230 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`verification golden output: nifra check full assurance project: human report 1`] = `
+"nifra check
+
+• typecheck skipped (no tsconfig / typescript not installed)
+✓ hand-rolled fetch() to your own API: none
+✓ client("…") missing its <typeof app> type argument: none
+✓ server-only import in a route module: none
+✓ SQL built by interpolating a value into the statement: none
+✓ route returns a raw Response (typed client → data: never): none
+✓ undeclared dependency in package.json: none
+✓ duplicate identity-sensitive dependency install: none
+✓ server-manifest.ts drifted from routes/: none
+✓ versioned trust manifest drift: none
+✓ effect/capability assurance: none
+✓ capability assurance config: none
+✓ nifra.check.json: none
+
+✓ check passed
+
+tip: no .mcp.json here - run \`nifra init-agents\` to wire this project's MCP + agent files (no-clobber)."
+`;
+
+exports[`verification golden output: nifra check full assurance project: --json 1`] = `
+"{
+  "ok": true,
+  "typecheck": "skipped",
+  "diagnostics": []
+}"
+`;
+
+exports[`verification golden output: nifra check plain project (no config): human report with tips 1`] = `
+"nifra check
+
+• typecheck skipped (no tsconfig / typescript not installed)
+✓ hand-rolled fetch() to your own API: none
+✓ client("…") missing its <typeof app> type argument: none
+✓ server-only import in a route module: none
+✓ SQL built by interpolating a value into the statement: none
+✓ route returns a raw Response (typed client → data: never): none
+✓ undeclared dependency in package.json: none
+✓ duplicate identity-sensitive dependency install: none
+✓ server-manifest.ts drifted from routes/: none
+✓ versioned trust manifest drift: none
+✓ effect/capability assurance: none
+✓ capability assurance config: none
+✓ nifra.check.json: none
+
+✓ check passed
+
+tip: no .mcp.json here - run \`nifra init-agents\` to wire this project's MCP + agent files (no-clobber)."
+`;
+
+exports[`verification golden output: nifra check dirty project: human report with failing lints + advisory 1`] = `
+"nifra check
+
+• typecheck skipped (no tsconfig / typescript not installed)
+✗ hand-rolled fetch() to your own API: 1
+    routes/notes.tsx:3  const res = await fetch("/notes") — hand-rolled fetch() to your own API — call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift
+      fix: Replace own-API fetch with the typed nifra client
+      - Call \`nifra_routes\` or read \`nifra://routes\` for the exact typed-client call form.
+      - Create \`const api = client<typeof app>(baseUrl)\` from \`@nifrajs/client\`.
+      - Replace the relative \`fetch()\` call with the generated \`api...get/post/...\` call and branch on \`{ ok, data, error }\`.
+✓ client("…") missing its <typeof app> type argument: none
+✗ server-only import in a route module: 1
+    routes/notes.tsx:1  import { db } from "../db" — server-only "../db" reaches the browser bundle via routes/notes.tsx → ../db (direct edge — couldn't resolve the transitive chain precisely); server-only import in a route module (bundled for the browser) — reach it via c.db / ctx.api inside a loader, never a top-level import
+      fix: Move server-only code behind the route server boundary
+      - Remove the top-level \`import … from "../db"\` from this route module (it's bundled for the browser).
+      - Access backend/data work through the route \`loader\`/\`action\` context (\`api\`, \`env\`, or project server context).
+      - If a direct module import is unavoidable, lazy-load it (\`await import("../db")\`) inside the server-only loader/action path.
+✓ SQL built by interpolating a value into the statement: none
+✓ route returns a raw Response (typed client → data: never): none
+✓ undeclared dependency in package.json: none
+✓ duplicate identity-sensitive dependency install: none
+✓ server-manifest.ts drifted from routes/: none
+✓ versioned trust manifest drift: none
+✓ effect/capability assurance: none
+✓ capability assurance config: none
+✓ nifra.check.json: none
+
+✗ check failed
+
+tip: no .mcp.json here - run \`nifra init-agents\` to wire this project's MCP + agent files (no-clobber)."
+`;
+
+exports[`verification golden output: nifra check dirty project: --json 1`] = `
+"{
+  "ok": false,
+  "typecheck": "skipped",
+  "diagnostics": [
+    {
+      "rule": "typed-client",
+      "severity": "error",
+      "file": "routes/notes.tsx",
+      "line": 3,
+      "message": "const res = await fetch(\\"/notes\\") — hand-rolled fetch() to your own API — call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift",
+      "fix": "hand-rolled fetch() to your own API — call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift",
+      "suggestion": {
+        "kind": "manual",
+        "title": "Replace own-API fetch with the typed nifra client",
+        "steps": [
+          "Call \`nifra_routes\` or read \`nifra://routes\` for the exact typed-client call form.",
+          "Create \`const api = client<typeof app>(baseUrl)\` from \`@nifrajs/client\`.",
+          "Replace the relative \`fetch()\` call with the generated \`api...get/post/...\` call and branch on \`{ ok, data, error }\`."
+        ]
+      }
+    },
+    {
+      "rule": "server-only-import",
+      "severity": "error",
+      "file": "routes/notes.tsx",
+      "line": 1,
+      "message": "import { db } from \\"../db\\" — server-only \\"../db\\" reaches the browser bundle via routes/notes.tsx → ../db (direct edge — couldn't resolve the transitive chain precisely); server-only import in a route module (bundled for the browser) — reach it via c.db / ctx.api inside a loader, never a top-level import",
+      "fix": "server-only import in a route module (bundled for the browser) — reach it via c.db / ctx.api inside a loader, never a top-level import",
+      "chain": [
+        "routes/notes.tsx",
+        "../db"
+      ],
+      "suggestion": {
+        "kind": "manual",
+        "title": "Move server-only code behind the route server boundary",
+        "steps": [
+          "Remove the top-level \`import … from \\"../db\\"\` from this route module (it's bundled for the browser).",
+          "Access backend/data work through the route \`loader\`/\`action\` context (\`api\`, \`env\`, or project server context).",
+          "If a direct module import is unavoidable, lazy-load it (\`await import(\\"../db\\")\`) inside the server-only loader/action path."
+        ]
+      }
+    }
+  ]
+}"
+`;
+
+exports[`verification golden output: nifra assure full assurance project: human report 1`] = `"✓ route assurance: 1 route classified; all required evidence is present. Capability assurance covered 1 route."`;
+
+exports[`verification golden output: nifra assure full assurance project: --json 1`] = `
+"{
+  "ok": true,
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/pay",
+      "rule": "all",
+      "evidence": [
+        {
+          "id": "nifra.body-bounded",
+          "source": "route-schema"
+        }
+      ],
+      "missing": [],
+      "forbidden": []
+    }
+  ],
+  "findings": [],
+  "capabilities": {
+    "ok": true,
+    "routes": [
+      {
+        "method": "POST",
+        "path": "/pay",
+        "declared": [],
+        "evidence": [],
+        "unproven": [],
+        "covered": true
+      }
+    ],
+    "findings": []
+  }
+}"
+`;
+
+exports[`verification golden output: nifra levels full assurance project: human report climbs the ladder 1`] = `
+"✓ L0 typed contract
+✓ L1 route assurance
+✓ L2 capability lockfile
+✓ L3 route manifest
+✓ L4 invariant-tested
+[nifra] verification level: L4"
+`;
+
+exports[`verification golden output: nifra levels full assurance project: --json 1`] = `
+"{
+  "achieved": 4,
+  "levels": [
+    {
+      "level": 0,
+      "name": "typed contract",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "level": 1,
+      "name": "route assurance",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "level": 2,
+      "name": "capability lockfile",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "level": 3,
+      "name": "route manifest",
+      "ok": true,
+      "reasons": []
+    },
+    {
+      "level": 4,
+      "name": "invariant-tested",
+      "ok": true,
+      "reasons": []
+    }
+  ]
+}"
+`;
+
+exports[`verification golden output: nifra levels plain project (no config): ladder stops at L0 1`] = `
+"✓ L0 typed contract
+✗ L1 route assurance
+    - [nifra] route assurance config not found: <cwd>/nifra.assurance.ts — create nifra.assurance.ts with a default defineAssuranceConfig({ source, policy }) export.
+✗ L2 capability lockfile
+    - [nifra] route assurance config not found: <cwd>/nifra.assurance.ts — create nifra.assurance.ts with a default defineAssuranceConfig({ source, policy }) export.
+✗ L3 route manifest
+    - [nifra] route assurance config not found: <cwd>/nifra.assurance.ts — create nifra.assurance.ts with a default defineAssuranceConfig({ source, policy }) export.
+✗ L4 invariant-tested
+    - [nifra] route assurance config not found: <cwd>/nifra.assurance.ts — create nifra.assurance.ts with a default defineAssuranceConfig({ source, policy }) export.
+[nifra] verification level: L0"
+`;

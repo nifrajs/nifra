@@ -18,8 +18,10 @@
 
 import { existsSync, readFileSync } from "node:fs"
 import { dirname, isAbsolute, join, resolve } from "node:path"
+import type { AssuranceConfig, AssuranceReport } from "@nifrajs/core/assurance"
 import { Glob } from "bun"
 import type * as TSApi from "typescript"
+import type { CapabilityProjectReport } from "./capabilities-tool.ts"
 import { importTypeScript, type TypeScriptApi } from "./internal/typescript-import.ts"
 
 export interface SourceFinding {
@@ -1259,6 +1261,25 @@ export interface CheckResult {
   readonly truncated?: { readonly shown: number; readonly total: number }
 }
 
+/**
+ * Pre-resolved route-assurance inputs, so the same reflection that `nifra assure` / `nifra levels`
+ * already ran can feed `check`'s capability + trust-manifest diagnostics instead of a second pass.
+ * Supplied by {@link collectProjectVerification}. When omitted, `collectCheckResult` loads and computes
+ * these itself (the standalone `nifra_check` MCP path); the two routes produce byte-identical results.
+ */
+export interface CheckAssuranceContext {
+  /** Whether `nifra.assurance.ts` exists: the gate for running the assurance-fed diagnostics at all. */
+  readonly present: boolean
+  /** The loaded config, when it loaded. Absent when the file is missing or {@link error} is set. */
+  readonly config?: AssuranceConfig
+  /** The failure from loading/evaluating the config, surfaced as a `capability-config` diagnostic. */
+  readonly error?: unknown
+  /** `evaluateRouteAssurance` over the config's source + policy (drives the trust-manifest check). */
+  readonly routeAssurance?: AssuranceReport
+  /** Static capability provenance, when the config declares a capabilities policy. */
+  readonly capability?: CapabilityProjectReport
+}
+
 /** Optional per-project `nifra.check.json` - pure data (no code execution), so it's safe to read before
  * the app is built or even importable, preserving check's pre-`loadApp` invariant. */
 interface CheckConfig {
@@ -1451,6 +1472,10 @@ export async function collectCheckResult(
     /** How the interpolated-SQL rule gets its compiler. Injectable so the "not installed" path - the
      * one where a security rule reports that it did not run - is testable on a machine that has it. */
     readonly loadTypeScript?: () => Promise<TypeScriptApi | undefined>
+    /** Route-assurance inputs already computed by {@link collectProjectVerification}. When present,
+     * the capability + trust-manifest diagnostics reuse them instead of loading/reflecting a second
+     * time; when absent, they are computed here (unchanged standalone behavior). */
+    readonly assurance?: CheckAssuranceContext
   } = {},
 ): Promise<CheckResult> {
   const fetches: SourceFinding[] = []
@@ -1726,24 +1751,32 @@ export async function collectCheckResult(
   // G+B+D+F: when the project opts into capability assurance, `nifra check` becomes the static
   // provenance firewall as well as the typed-contract gate. Loading is explicit/config-owned; projects
   // without nifra.assurance.ts retain the historical scan and hot path unchanged.
+  const provided = opts.assurance
   const assuranceConfigPath = join(cwd, "nifra.assurance.ts")
-  if (existsSync(assuranceConfigPath)) {
+  if (provided !== undefined ? provided.present : existsSync(assuranceConfigPath)) {
     try {
-      const { loadAssuranceConfig } = await import("./assure.ts")
-      const config = await loadAssuranceConfig(cwd)
-      let capabilityReport:
-        | Awaited<
-            ReturnType<typeof import("./capabilities-tool.ts")["collectCapabilityProjectReport"]>
-          >["report"]
-        | undefined
-      if (config.capabilities !== undefined) {
-        const { collectCapabilityProjectReport } = await import("./capabilities-tool.ts")
-        const project = await collectCapabilityProjectReport(
-          cwd,
-          config.source,
-          config.capabilities,
-        )
-        capabilityReport = project.report
+      // Either the shared reflection from `collectProjectVerification` (no second pass) or, on the
+      // standalone path, loaded + reflected here. Both branches yield the same config + evidence.
+      let config: AssuranceConfig
+      let project: CapabilityProjectReport | undefined
+      let routeAssurance: AssuranceReport | undefined
+      if (provided !== undefined) {
+        // A load/evaluate failure travels as `provided.error`; re-throwing lands it in the same
+        // capability-config diagnostic the standalone catch produces.
+        if (provided.error !== undefined) throw provided.error
+        config = provided.config as AssuranceConfig
+        project = provided.capability
+        routeAssurance = provided.routeAssurance
+      } else {
+        const { loadAssuranceConfig } = await import("./assure.ts")
+        config = await loadAssuranceConfig(cwd)
+        if (config.capabilities !== undefined) {
+          const { collectCapabilityProjectReport } = await import("./capabilities-tool.ts")
+          project = await collectCapabilityProjectReport(cwd, config.source, config.capabilities)
+        }
+      }
+      const capabilityReport = project?.report
+      if (config.capabilities !== undefined && project !== undefined) {
         for (const finding of project.report.findings) {
           const violation =
             finding.code === "forbidden-effect-import"
@@ -1783,15 +1816,20 @@ export async function collectCheckResult(
         }
       }
       if (config.manifest !== undefined) {
-        const { evaluateRouteAssurance } = await import("@nifrajs/core/assurance")
         const { buildNifraManifest, parseNifraManifest, serializeNifraManifest } = await import(
           "@nifrajs/core/manifest"
         )
-        const assurance = evaluateRouteAssurance(config.source, config.policy, {
-          ...(config.capabilities !== undefined
-            ? { definitions: config.capabilities.definitions }
-            : {}),
-        })
+        const assurance =
+          routeAssurance ??
+          (await import("@nifrajs/core/assurance")).evaluateRouteAssurance(
+            config.source,
+            config.policy,
+            {
+              ...(config.capabilities !== undefined
+                ? { definitions: config.capabilities.definitions }
+                : {}),
+            },
+          )
         const path = resolve(cwd, config.manifest.path ?? "nifra.manifest.json")
         let message: string | undefined
         if (!assurance.ok || (capabilityReport !== undefined && !capabilityReport.ok)) {
@@ -1873,7 +1911,10 @@ export async function runCheck(
   cwd: string,
   opts: { readonly json?: boolean; readonly lintsOnly?: boolean } = {},
 ): Promise<boolean> {
-  const result = await collectCheckResult(cwd, { lintsOnly: opts.lintsOnly ?? false })
+  // The check view over the one project verification: the same collector `assure` and `levels` read.
+  const { collectProjectVerification } = await import("./verification.ts")
+  const verification = await collectProjectVerification(cwd, { lintsOnly: opts.lintsOnly ?? false })
+  const result = await verification.check()
   if (opts.json) {
     console.log(JSON.stringify(result, null, 2))
     return result.ok

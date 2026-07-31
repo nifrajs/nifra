@@ -3,11 +3,7 @@
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
 import { pathToFileURL } from "node:url"
-import {
-  type AssuranceConfig,
-  type AssuranceReport,
-  evaluateRouteAssurance,
-} from "@nifrajs/core/assurance"
+import type { AssuranceConfig, AssuranceReport } from "@nifrajs/core/assurance"
 
 export const DEFAULT_ASSURANCE_CONFIG = "nifra.assurance.ts"
 
@@ -60,21 +56,22 @@ export async function collectAssuranceReport(
   cwd: string,
   configPath?: string,
 ): Promise<AssuranceReport> {
-  const config = await loadAssuranceConfig(cwd, configPath)
-  const routeReport = evaluateRouteAssurance(config.source, config.policy, {
-    ...(config.capabilities !== undefined ? { definitions: config.capabilities.definitions } : {}),
+  // The route-assurance view over the one project verification. The config load, route reflection, and
+  // capability walk it needs are exactly what `collectProjectVerification` already ran.
+  const { collectProjectVerification } = await import("./verification.ts")
+  const verification = await collectProjectVerification(cwd, {
+    ...(configPath !== undefined ? { config: configPath } : {}),
   })
-  if (config.capabilities === undefined) return routeReport
-  const { collectCapabilityProjectReport } = await import("./capabilities-tool.ts")
-  const capabilityProject = await collectCapabilityProjectReport(
-    cwd,
-    config.source,
-    config.capabilities,
-  )
+  // A missing/broken config threw here before; re-throw the same error to keep that contract.
+  if (verification.configError !== undefined) throw verification.configError
+  // A present config means routeAssurance is computed; capability is set exactly when the config
+  // declares a capabilities policy.
+  const routeReport = verification.routeAssurance as AssuranceReport
+  if (verification.capability === undefined) return routeReport
   return Object.freeze({
     ...routeReport,
-    ok: routeReport.ok && capabilityProject.report.ok,
-    capabilities: capabilityProject.report,
+    ok: routeReport.ok && verification.capability.report.ok,
+    capabilities: verification.capability.report,
   })
 }
 
