@@ -929,7 +929,7 @@
     "name": "BytesOptions",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface BytesOptions {\n    /** Media type. Defaults to `application/octet-stream`, the honest answer for unlabelled bytes. */\n    readonly type?: string;\n    /**\n     * Offer the body as a download under this name.\n     *\n     * Quoted and stripped of characters that would end the header value early: a filename derived from\n     * user data is the ordinary case (an upload's original name, a document title), and a `\"` or a\n     * newline in one would otherwise let the caller write their own `Content-Disposition` parameters.\n     */\n    readonly filename?: string;\n    readonly status?: number;\n    readonly headers?: Readonly<Record<string, string>>;\n}"
+    "signature": "export interface BytesOptions {\n    /** Media type. Defaults to `application/octet-stream`, the honest answer for unlabelled bytes. */\n    readonly type?: string;\n    /**\n     * Offer the body as a download under this name.\n     *\n     * A filename derived from user data is the ordinary case - an upload's original name, a document\n     * title - so this has to survive anything a person can type. Two things follow, and both are tested:\n     * a `\"` or a newline cannot end the value and write further parameters, and a non-Latin-1 name is\n     * encoded rather than thrown on.\n     */\n    readonly filename?: string;\n    readonly status?: number;\n    readonly headers?: Readonly<Record<string, string>>;\n}"
   },
   {
     "name": "cache",

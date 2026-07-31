@@ -45,6 +45,33 @@ describe("bytes", () => {
     expect(injected.headers.get("set-cookie")).toBeNull()
   })
 
+  test("a name ASCII cannot carry is encoded, not thrown on", () => {
+    // Setting a header containing these THREW before RFC 6266 encoding - a 500 on a download route for
+    // the ordinary act of naming a file in a language ASCII does not cover, and the name is usually the
+    // user's own. Bun rejects even Latin-1 `e-acute` in a header, so the fallback is printable ASCII
+    // and `filename*` carries the rest.
+    const cjk = bytes(PNG, { filename: "\u62a5\u544a.pdf" })
+    expect(cjk.headers.get("content-disposition")).toBe(
+      `attachment; filename=".pdf"; filename*=UTF-8''${encodeURIComponent("\u62a5\u544a.pdf")}`,
+    )
+    // The ASCII fallback keeps what it can rather than substituting a placeholder.
+    const mixed = bytes(PNG, { filename: "report \u62a5\u544a.pdf" })
+    expect(mixed.headers.get("content-disposition")).toContain('filename="report .pdf"')
+    // An accent and an emoji are both beyond the fallback, and neither may throw.
+    for (const name of ["resume\u00e9.pdf", "caf\u00e9 \u2615.png"]) {
+      expect(() => bytes(PNG, { filename: name })).not.toThrow()
+    }
+  })
+
+  test("a sanitized ASCII name gets no second parameter", () => {
+    // `filename*` exists to carry characters ASCII cannot. Emitting it for a name that merely had its
+    // quotes stripped would put the attacker's string back into the header, encoded but present.
+    const disposition =
+      bytes(PNG, { filename: 'q1 "final".pdf' }).headers.get("content-disposition") ?? ""
+    expect(disposition).toBe('attachment; filename="q1 final.pdf"')
+    expect(disposition).not.toContain("filename*")
+  })
+
   test("status and extra headers pass through", () => {
     const response = bytes(PNG, { status: 206, headers: { "cache-control": "public, max-age=60" } })
     expect(response.status).toBe(206)

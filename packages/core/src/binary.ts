@@ -40,9 +40,10 @@ export interface BytesOptions {
   /**
    * Offer the body as a download under this name.
    *
-   * Quoted and stripped of characters that would end the header value early: a filename derived from
-   * user data is the ordinary case (an upload's original name, a document title), and a `"` or a
-   * newline in one would otherwise let the caller write their own `Content-Disposition` parameters.
+   * A filename derived from user data is the ordinary case - an upload's original name, a document
+   * title - so this has to survive anything a person can type. Two things follow, and both are tested:
+   * a `"` or a newline cannot end the value and write further parameters, and a non-Latin-1 name is
+   * encoded rather than thrown on.
    */
   readonly filename?: string
   readonly status?: number
@@ -56,14 +57,45 @@ export interface BytesOptions {
  */
 const UNSAFE_FILENAME = /["\\\r\n]/g
 
+/**
+ * Printable ASCII only.
+ *
+ * A header value is nominally Latin-1, but runtimes do not agree: Bun rejects `é` in a header outright,
+ * so "Latin-1 is fine" would have been a portability bug dressed as a standards reading. Printable
+ * ASCII is what every runtime and client accepts, and `filename*` carries everything else.
+ */
+const NON_ASCII = /[^\x20-\x7e]/g
+
+/**
+ * `Content-Disposition` for a name that may be anything a user typed.
+ *
+ * Setting a header containing `报告.pdf` or an emoji THROWS - which on a download route is a 500 for
+ * the ordinary act of naming a file in a language ASCII does not cover, and the name usually came from
+ * the user in the first place. RFC 6266 exists for exactly this: an ASCII `filename` every client
+ * understands, plus `filename*` carrying the real name UTF-8 percent-encoded, which browsers prefer.
+ *
+ * The ASCII fallback keeps the characters it can rather than substituting a placeholder, so
+ * `report 报告.pdf` still arrives as `report .pdf` on a client that ignores `filename*`.
+ *
+ * `filename*` is built from the SANITIZED name, not the raw one. Percent-encoding would make a hostile
+ * name inert either way, but round-tripping `"; attachment; filename="evil.exe` into the header - even
+ * encoded - puts an attacker's string somewhere a future reader has to reason about, and the second
+ * parameter is only there to carry characters ASCII cannot.
+ */
+function contentDisposition(filename: string): string {
+  const safe = filename.replace(UNSAFE_FILENAME, "")
+  const ascii = safe.replace(NON_ASCII, "")
+  const disposition = `attachment; filename="${ascii}"`
+  // Only when it adds something: a name ASCII already carries needs no second parameter.
+  if (ascii === safe) return disposition
+  return `${disposition}; filename*=UTF-8''${encodeURIComponent(safe)}`
+}
+
 export function bytes(body: BinaryBody, options: BytesOptions = {}): BinaryResponse {
   const headers = new Headers(options.headers as Record<string, string> | undefined)
   headers.set("content-type", options.type ?? "application/octet-stream")
   if (options.filename !== undefined) {
-    headers.set(
-      "content-disposition",
-      `attachment; filename="${options.filename.replace(UNSAFE_FILENAME, "")}"`,
-    )
+    headers.set("content-disposition", contentDisposition(options.filename))
   }
   return new Response(body as ConstructorParameters<typeof Response>[0], {
     status: options.status ?? 200,
