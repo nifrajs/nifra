@@ -170,3 +170,42 @@ describe("optional capabilities", () => {
     expect("nothingLikeThis" in storage).toBe(false)
   })
 })
+
+/**
+ * An adapter with true `#private` fields must survive both proxies.
+ *
+ * A `#` field's brand check is per-instance, so reading through a proxy that passes itself as the
+ * receiver throws `Cannot access invalid private field`. The first Proxy version did exactly that:
+ * getters broke on both views and methods broke on the unbound one - meaning a third-party adapter
+ * using `#` was fine unwrapped and broken the moment you added beacons. `StorageAdapter` exists to be
+ * implemented outside this package, so "works for the adapters we happen to ship" is not the bar.
+ */
+describe("adapters using #private fields", () => {
+  class PrivateStorage extends MemoryStorage {
+    #bucket = "assets"
+    get bucketName(): string {
+      return this.#bucket
+    }
+    override async put(key: string, data: Parameters<MemoryStorage["put"]>[1]): Promise<void> {
+      void this.#bucket // a wrong `this` throws here
+      await super.put(key, data)
+    }
+  }
+
+  test("getters and methods work on the unbound wrapper and the bound view", async () => {
+    const storage = withCapabilityBeacon(new PrivateStorage(), { beacon: () => {} })
+    expect(storage.bucketName).toBe("assets")
+    expect(storage.for({}).bucketName).toBe("assets")
+    await storage.put("a.txt", "x")
+    await storage.for({}).put("b.txt", "x")
+    expect(await storage.exists("a.txt")).toBe(true)
+    expect(await storage.exists("b.txt")).toBe(true)
+  })
+
+  test("a detached method keeps its instance", async () => {
+    const storage = withCapabilityBeacon(new PrivateStorage(), { beacon: () => {} })
+    const { put } = storage
+    await put("c.txt", "x")
+    expect(await storage.exists("c.txt")).toBe(true)
+  })
+})

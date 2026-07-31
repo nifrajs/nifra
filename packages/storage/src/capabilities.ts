@@ -101,8 +101,12 @@ export function withCapabilityBeacon<A extends StorageAdapter>(
   // context for the process lifetime, which is a leak with a request attached to it.
   const bind = (context: object): A =>
     new Proxy(adapter, {
-      get(target, prop, receiver) {
-        const value = Reflect.get(target, prop, receiver)
+      // No `receiver`. Passing the proxy makes a getter run with `this` bound to the proxy, and an
+      // adapter using true `#private` fields then dies on `Cannot access invalid private field` - the
+      // brand check is per-instance and the proxy is a different object. Reading against the target
+      // keeps every adapter shape working, which is the point of a wrapper nobody has to know about.
+      get(target, prop) {
+        const value = Reflect.get(target, prop)
         if (typeof value !== "function" || typeof prop !== "string") return value
         return (...args: unknown[]): unknown => {
           // A refused capability surfaces as a REJECTION, not a synchronous throw: these methods return
@@ -118,10 +122,24 @@ export function withCapabilityBeacon<A extends StorageAdapter>(
       },
     }) as A
 
-  // The unbound adapter keeps working exactly as before - now actually true, including for methods
-  // this module has never heard of. Only the `for(...)` path announces anything.
+  // The unbound adapter keeps working exactly as before, including for methods this module has never
+  // heard of. Only the `for(...)` path announces anything.
+  //
+  // Methods come back bound to the target for the same reason the getter reads against it: invoked as
+  // `wrapper.put(...)` the receiver would be the PROXY, and an adapter holding true `#private` fields
+  // throws `Cannot access invalid private field` because the brand check is per-instance. Binding
+  // costs a fresh function per property read, which is the right trade against silently breaking any
+  // adapter that uses `#` - and `StorageAdapter` exists to be implemented outside this package.
+  //
+  // An adapter with its own `for` method is shadowed by the wrapper's. That is a genuine (if unlikely)
+  // collision, and `for` is the name the sibling beacons already use, so it stays consistent rather
+  // than novel.
   return new Proxy(adapter, {
-    get: (target, prop, receiver) => (prop === "for" ? bind : Reflect.get(target, prop, receiver)),
+    get(target, prop) {
+      if (prop === "for") return bind
+      const value = Reflect.get(target, prop)
+      return typeof value === "function" ? value.bind(target) : value
+    },
     has: (target, prop) => prop === "for" || Reflect.has(target, prop),
   }) as BeaconingStorageAdapter<A>
 }

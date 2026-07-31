@@ -157,8 +157,14 @@ import { listNotes } from "./read.ts"
 // Registered here rather than in your app module, because reach is per-module: this file can see the
 // read half of the seam and nothing else, so \`db.read\` is the whole truth about it. Merge it with
 // \`app.merge(notesRead)\`.
+//
+// The path is \`/db/notes\` rather than \`/notes\` on purpose. This module ships UNMERGED as a sample, and
+// \`nifra check\` associates modules with routes by matching the registered PATH across your source - so
+// a sample sharing a path with a route your template already registers would lend it this file's
+// capability reach and fail the check on a route that never touches the database. Rename it to
+// whatever you like once you merge it; just do not collide with a path already in the app.
 export const notesRead = server().get(
-  "/notes",
+  "/db/notes",
   {
     capabilities: ["db.read"],
     response: t.array(t.object({ id: t.string(), title: t.string(), body: t.string() })),
