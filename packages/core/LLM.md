@@ -23,13 +23,13 @@ Bun-native, contract-first HTTP framework — the router, server, and route desc
 - **effectLedger** _(function)_ — `effectLedger: (options: EffectLedgerOptions) => IdentityPlugin` · from `@nifrajs/core/effect-ledger`
 - **admitDeadline** _(function)_ — `admitDeadline: (headers: Headers, options?: DeadlineAdmissionOptions) => DeadlineAdmission` · from `@nifrajs/core/budget`
 - **assertBudgetRemaining** _(function)_ — `assertBudgetRemaining: (budget: RequestBudget, requiredMs?: number) => void` · from `@nifrajs/core/budget`
+- **attachCapabilityJournal** _(function)_ — `attachCapabilityJournal: (context: object, journal: CapabilityExecutionJournal) => void` · from `@nifrajs/core/capabilities`
 - **attachEffectLedger** _(function)_ — `attachEffectLedger: (context: object, ledger: RequestLedger) => void` · from `@nifrajs/core/ledger`
 - **attachWebSocket** _(function)_ — `attachWebSocket: (socket: StandardWebSocket, handler: WebSocketHandler, data: unknown, options: { openNow: boolean; pubsub: TopicRegistry; …` · from `@nifrajs/core/ws`
 - **buildNifraManifest** _(function)_ — `buildNifraManifest: (input: BuildNifraManifestInput) => Promise<NifraManifest>` · from `@nifrajs/core/manifest`
 - **canAttempt** _(function)_ — `canAttempt: (budget: RequestBudget, estimatedAttemptMs: number, reserveMs?: number) => boolean` · from `@nifrajs/core/budget`
-- **canonicalizeIdempotencyBody** _(function)_ — `canonicalizeIdempotencyBody: (body: Uint8Array, contentType: string | null) => Uint8Array` · from `@nifrajs/core/idempotency`
 
-_…and 444 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
+_…and 446 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 
 ## Footguns
 

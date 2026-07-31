@@ -2290,6 +2290,48 @@ back something that silently proves nothing.
 The two are complements. Static provenance is total and runs in CI; a beacon is exact but only
 speaks for code that actually executed.
 
+### Retry safety
+
+A capability can require that its effect be safe to repeat. The definition says which, and
+`nifra check` fails a route that declares the capability without the matching
+evidence:
+
+```ts
+// A capability can require that an effect be safe to retry.
+{ id: "billing.charge", zone: "domain", access: "write", idempotency: "durable" }
+```
+
+`request` is satisfied by `schema.idempotency`: a retry carrying the same
+`Idempotency-Key` replays the stored response instead of re-running the handler.
+`durable` asks for more, and is satisfied by the `durableCommand`
+adapter:
+
+```ts
+import { server } from "@nifrajs/core"
+import { executeCapability } from "@nifrajs/core/capabilities"
+import { createDurableEffectJournal } from "@nifrajs/core/durable-execution"
+import { durableCommand } from "@nifrajs/middleware"
+
+declare const store: import("@nifrajs/core/durable-execution").DurableEffectStore
+declare const gateway: { charge(): Promise<{ id: string }> }
+
+const commands = durableCommand({ journal: createDurableEffectJournal({ store }) })
+
+// Every executeCapability below this records intent before the effect and one outcome after.
+const app = server()
+  .use(commands)
+  .post("/charge", { capabilities: ["billing.charge"] }, (c: object) =>
+    executeCapability(c, "billing.charge", {}, () => gateway.charge()),
+  )
+```
+
+The two are different guarantees, which is why one does not stand in for the other. Response
+replay needs a stored response to replay; if the process dies between charging the card and
+storing it, there is nothing to replay and the retry charges again. The journal is what
+survives that, so it is what clears the `durable` tier. The adapter is order-scoped
+like the auth plugins - routes registered before `.use(...)` are not covered, and
+`nifra check` says so rather than assuming.
+
 ### The lockfile
 
 Once assurance passes, snapshot the result. The lockfile is a review artifact: a route that
@@ -8269,7 +8311,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/middleware
 
-`AdmissionControllerHandle`, `AdmissionEvidence`, `AdmissionOptions`, `AdmissionPolicy`, `AdmissionSnapshot`, `apiKey`, `ApiKeyStaticOptions`, `ApiKeyVerifyOptions`, `appendTrailingSlash`, `AuthPlugin`, `basicAuth`, `BasicAuthPlugin`, `BasicAuthStaticOptions`, `BasicAuthVerifyOptions`, `bearer`, `BearerOptions`, `bodyLimit`, `BodyLimitOptions`, `buildOpenApiDocument`, `cache`, `cacheControl`, `CacheControlOptions`, `CachedResponse`, `CacheOptions`, `combine`, `Composable`, `compression`, `CompressionOptions`, `cors`, `CorsOptions`, `createAdmissionController`, `createCsrfToken`, `createEventLoopLagSampler`, `csrf`, `CsrfOptions`, `etag`, `ETagOptions`, `healthcheck`, `HealthcheckOptions`, `idempotency`, `IdempotencyClaim`, `IdempotencyOptions`, `IdempotencyRecord`, `IdempotencyStore`, `IpMatcher`, `ipRestriction`, `IpRestrictionOptions`, `jwk`, `JwkKey`, `jwks`, `JwksOptions`, `jwt`, `JwtAlgorithm`, `JwtClaims`, `JwtHeader`, `JwtKeyResolver`, `JwtOptions`, `JwtPlugin`, `JwtVerificationKey`, `language`, `LanguageMatch`, `LanguageOptions`, `logger`, `LoggerOptions`, `LoopDelayHistogram`, `LoopDelayMonitor`, `MemoryIdempotencyStore`, `MemoryIdempotencyStoreOptions`, `MemoryResponseCache`, `MemoryResponseCacheOptions`, `MemoryStore`, `MemoryStoreOptions`, `methodOverride`, `MethodOverrideOptions`, `namedCombine`, `openapi`, `OpenApiInfo`, `OpenApiOptions`, `OpenApiServer`, `OpenApiTag`, `OpenApiUiOptions`, `pickLanguage`, `poweredBy`, `PoweredByOptions`, `prettyJson`, `PrettyJsonOptions`, `rateLimit`, `RateLimitOptions`, `RateLimitResult`, `RateLimitStore`, `requestId`, `RequestIdOptions`, `RequestLogFields`, `responseCache`, `ResponseCacheStore`, `RouteLike`, `securityHeaders`, `SecurityHeadersOptions`, `SecurityRequirement`, `ShedReason`, `timing`, `TimingControls`, `TimingMetric`, `TimingOptions`, `TrailingSlashOptions`, `trimTrailingSlash`, `tryVerifyJwt`, `VerifiedJwt`, `verifyCsrfToken`, `verifyJwt`, `VerifyJwtOptions`, `VerifyJwtResult`
+`AdmissionControllerHandle`, `AdmissionEvidence`, `AdmissionOptions`, `AdmissionPolicy`, `AdmissionSnapshot`, `apiKey`, `ApiKeyStaticOptions`, `ApiKeyVerifyOptions`, `appendTrailingSlash`, `AuthPlugin`, `basicAuth`, `BasicAuthPlugin`, `BasicAuthStaticOptions`, `BasicAuthVerifyOptions`, `bearer`, `BearerOptions`, `bodyLimit`, `BodyLimitOptions`, `buildOpenApiDocument`, `cache`, `cacheControl`, `CacheControlOptions`, `CachedResponse`, `CacheOptions`, `combine`, `Composable`, `compression`, `CompressionOptions`, `cors`, `CorsOptions`, `createAdmissionController`, `createCsrfToken`, `createEventLoopLagSampler`, `csrf`, `CsrfOptions`, `durableCommand`, `DurableCommandOptions`, `etag`, `ETagOptions`, `healthcheck`, `HealthcheckOptions`, `idempotency`, `IdempotencyClaim`, `IdempotencyOptions`, `IdempotencyRecord`, `IdempotencyStore`, `IpMatcher`, `ipRestriction`, `IpRestrictionOptions`, `jwk`, `JwkKey`, `jwks`, `JwksOptions`, `jwt`, `JwtAlgorithm`, `JwtClaims`, `JwtHeader`, `JwtKeyResolver`, `JwtOptions`, `JwtPlugin`, `JwtVerificationKey`, `language`, `LanguageMatch`, `LanguageOptions`, `logger`, `LoggerOptions`, `LoopDelayHistogram`, `LoopDelayMonitor`, `MemoryIdempotencyStore`, `MemoryIdempotencyStoreOptions`, `MemoryResponseCache`, `MemoryResponseCacheOptions`, `MemoryStore`, `MemoryStoreOptions`, `methodOverride`, `MethodOverrideOptions`, `namedCombine`, `openapi`, `OpenApiInfo`, `OpenApiOptions`, `OpenApiServer`, `OpenApiTag`, `OpenApiUiOptions`, `pickLanguage`, `poweredBy`, `PoweredByOptions`, `prettyJson`, `PrettyJsonOptions`, `rateLimit`, `RateLimitOptions`, `RateLimitResult`, `RateLimitStore`, `requestId`, `RequestIdOptions`, `RequestLogFields`, `responseCache`, `ResponseCacheStore`, `RouteLike`, `securityHeaders`, `SecurityHeadersOptions`, `SecurityRequirement`, `ShedReason`, `timing`, `TimingControls`, `TimingMetric`, `TimingOptions`, `TrailingSlashOptions`, `trimTrailingSlash`, `tryVerifyJwt`, `VerifiedJwt`, `verifyCsrfToken`, `verifyJwt`, `VerifyJwtOptions`, `VerifyJwtResult`
 
 ## @nifrajs/mock
 

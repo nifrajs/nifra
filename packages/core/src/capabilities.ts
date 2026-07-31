@@ -44,6 +44,36 @@ export type {
   EffectLifecycleObserver,
 }
 
+const EXECUTION_JOURNAL = Symbol("nifra.capability.journal")
+
+/**
+ * Framework wiring: put a journal on a request context so every `executeCapability` on that request is
+ * journaled without each call site threading it. Not for application code - install the
+ * `durableCommand()` adapter, which calls this and declares the assurance evidence that goes with it.
+ *
+ * Symbol-keyed, mirroring `attachEffectLedger`: it cannot collide with an application field and does
+ * not show up in a context spread or a log of it.
+ *
+ * Deliberately here rather than beside the journal TYPE in `internal/capability-runtime.ts`. That
+ * module is reachable from a bare server - it holds the route-capability guard - so a seam living
+ * there ships to every app, while here it arrives only with `executeCapability`, the one thing that
+ * reads it. Measured rather than assumed: in the internal module this cost every bundle row in the
+ * size matrix 10-18 bytes gzip, enough to put `nifra-mcp` over its ceiling.
+ */
+export function attachCapabilityJournal(
+  context: object,
+  journal: CapabilityExecutionJournal,
+): void {
+  ;(context as Record<PropertyKey, unknown>)[EXECUTION_JOURNAL as unknown as string] = journal
+}
+
+/** The journal installed for this request, if any. */
+export function capabilityJournalOf(context: object): CapabilityExecutionJournal | undefined {
+  return (context as { readonly [EXECUTION_JOURNAL]?: CapabilityExecutionJournal })[
+    EXECUTION_JOURNAL
+  ]
+}
+
 export type CapabilityZone = "domain" | "operational"
 export type CapabilityAccess = "read" | "write"
 export type CapabilityIdempotency = "none" | "request" | "durable"
@@ -690,6 +720,11 @@ export async function executeCapability<T>(
   }
   const guard = guardFor(context, capability)
   const ledger = effectLedgerOf(context)
+  // An explicitly passed journal wins, so every existing call site behaves exactly as it did. The
+  // context journal is what the `durableCommand()` adapter installs, so that declaring the adapter
+  // once journals every effect on the request rather than each call site remembering to thread it -
+  // and so the `nifra.durable-command` evidence it declares is backed by something.
+  const journal = options.journal ?? capabilityJournalOf(context)
   const effectId = crypto.randomUUID()
   const metadata = normalizeEffectMetadata(options)
   const trace = effectTraceParentOf(context)
@@ -735,7 +770,7 @@ export async function executeCapability<T>(
       transitions: {
         async intent(execution) {
           ledger?.append({ capability, effectId: execution.effectId, ...metadata, phase: "intent" })
-          await options.journal?.intent({
+          await journal?.intent({
             effectId: execution.effectId,
             capability,
             ...(metadata.target === undefined ? {} : { target: metadata.target }),
@@ -746,18 +781,18 @@ export async function executeCapability<T>(
           })
         },
         async executing(execution) {
-          await options.journal?.executing(execution.effectId)
+          await journal?.executing(execution.effectId)
         },
         async committed(execution) {
           try {
-            await options.journal?.committed(execution.effectId)
+            await journal?.committed(execution.effectId)
           } catch {
             throw new CapabilityJournalTransitionError(capability, execution.effectId, "committed")
           }
         },
         async failed(execution, failure) {
           try {
-            await options.journal?.failed(execution.effectId, {
+            await journal?.failed(execution.effectId, {
               began: failure.began,
               errorCode: failure.errorCode,
             })

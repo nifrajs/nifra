@@ -29,7 +29,7 @@ Composable middleware for nifra — auth, CSRF, JWT/JWKS, IP restriction, CORS, 
 - **cors** _(function)_ — `cors: (options?: CorsOptions) => Middleware` · from `@nifrajs/middleware`
 - **createAdmissionController** _(function)_ — `createAdmissionController: (options: AdmissionOptions) => AdmissionControllerHandle` · from `@nifrajs/middleware`
 
-_…and 101 more — see [`api-reference.md`](../../api-reference.md#nifrajsmiddleware) for the complete list._
+_…and 103 more — see [`api-reference.md`](../../api-reference.md#nifrajsmiddleware) for the complete list._
 
 ## Footguns
 

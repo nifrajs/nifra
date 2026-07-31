@@ -84,6 +84,26 @@ export const write = async (c: object): Promise<void> => {
   await cache.for(c).set("k", 1)
 }`
 
+const IDEMPOTENCY = `// A capability can require that an effect be safe to retry.
+{ id: "billing.charge", zone: "domain", access: "write", idempotency: "durable" }`
+
+const DURABLE = `import { server } from "@nifrajs/core"
+import { executeCapability } from "@nifrajs/core/capabilities"
+import { createDurableEffectJournal } from "@nifrajs/core/durable-execution"
+import { durableCommand } from "@nifrajs/middleware"
+
+declare const store: import("@nifrajs/core/durable-execution").DurableEffectStore
+declare const gateway: { charge(): Promise<{ id: string }> }
+
+const commands = durableCommand({ journal: createDurableEffectJournal({ store }) })
+
+// Every executeCapability below this records intent before the effect and one outcome after.
+const app = server()
+  .use(commands)
+  .post("/charge", { capabilities: ["billing.charge"] }, (c: object) =>
+    executeCapability(c, "billing.charge", {}, () => gateway.charge()),
+  )`
+
 const LEVELS = `$ nifra capabilities snapshot   # writes capabilities.lock.json
 $ nifra levels
 ✓ L0 typed contract
@@ -202,6 +222,29 @@ export default function Capabilities() {
       <p>
         The two are complements. Static provenance is total and runs in CI; a beacon is exact but only
         speaks for code that actually executed.
+      </p>
+
+      <h2>Retry safety</h2>
+      <p>
+        A capability can require that its effect be safe to repeat. The definition says which, and{" "}
+        <code>nifra check</code> fails a route that declares the capability without the matching
+        evidence:
+      </p>
+      <CodeBlock code={IDEMPOTENCY} lang="ts" />
+      <p>
+        <code>request</code> is satisfied by <code>schema.idempotency</code>: a retry carrying the same{" "}
+        <code>Idempotency-Key</code> replays the stored response instead of re-running the handler.{" "}
+        <code>durable</code> asks for more, and is satisfied by the <code>durableCommand</code>{" "}
+        adapter:
+      </p>
+      <CodeBlock code={DURABLE} lang="ts" />
+      <p>
+        The two are different guarantees, which is why one does not stand in for the other. Response
+        replay needs a stored response to replay; if the process dies between charging the card and
+        storing it, there is nothing to replay and the retry charges again. The journal is what
+        survives that, so it is what clears the <code>durable</code> tier. The adapter is order-scoped
+        like the auth plugins - routes registered before <code>.use(...)</code> are not covered, and{" "}
+        <code>nifra check</code> says so rather than assuming.
       </p>
 
       <h2>The lockfile</h2>

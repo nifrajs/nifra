@@ -1669,7 +1669,7 @@ export async function collectCheckResult(
               steps: [
                 "Route effectful work through an import listed in capabilities.provenance.imports.",
                 "Declare the exact capability token on the route; do not widen unrelated routes in the same file.",
-                "For domain writes, add the request-idempotency or durable-command adapter required by the capability definition.",
+                "For domain writes, add the adapter the capability definition requires: `schema.idempotency` for the `request` tier, `.use(durableCommand({ journal }))` from @nifrajs/middleware for the `durable` tier.",
                 "Run `nifra capabilities snapshot` only after assurance passes, then review the lockfile diff.",
               ],
             },

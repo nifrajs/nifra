@@ -455,6 +455,10 @@ Every public export of every package and documented subpath — name, kind, sign
 - **RouteCapabilityEvidence** _(interface)_ — `interface RouteCapabilityEvidence`
 - **UseCapabilityOptions** _(interface)_ — `interface UseCapabilityOptions`
   Optional effect-ledger fields for one `useCapability` beacon. Token-only by design: an adapter names *what* it touched and *how much resource* it used — never the value it read or wrote.
+- **attachCapabilityJournal** _(function)_ — `attachCapabilityJournal: (context: object, journal: CapabilityExecutionJournal) => void`
+  Framework wiring: put a journal on a request context so every `executeCapability` on that request is journaled without each call site threading it. Not for application code - install the `durableCommand()` adapter, which calls this and declares the assurance evidence that goes with it.
+- **capabilityJournalOf** _(function)_ — `capabilityJournalOf: (context: object) => CapabilityExecutionJournal | undefined`
+  The journal installed for this request, if any.
 - **declaredCapabilities** _(function)_ — `declaredCapabilities: (context: object) => readonly string[]`
   Read the route's token-only declaration for admission plugins. This intentionally exposes neither the request nor runtime evidence; it is the stable public seam for private entitlement policy.
 - **defineCapabilityPolicy** _(function)_ — `defineCapabilityPolicy: (policy: CapabilityPolicy) => CapabilityPolicy`
@@ -1617,6 +1621,7 @@ Every public export of every package and documented subpath — name, kind, sign
 - **CompressionOptions** _(interface)_ — `interface CompressionOptions`
 - **CorsOptions** _(interface)_ — `interface CorsOptions`
 - **CsrfOptions** _(interface)_ — `interface CsrfOptions`
+- **DurableCommandOptions** _(interface)_ — `interface DurableCommandOptions`
 - **ETagOptions** _(interface)_ — `interface ETagOptions`
 - **HealthcheckOptions** _(interface)_ — `interface HealthcheckOptions`
 - **IdempotencyClaim** _(type)_ — `type IdempotencyClaim = | { readonly state: "new" } | { readonly state: "in_flight" } | { readonly state: "replay"; readonly record: IdempotencyRecord }`
@@ -1711,6 +1716,8 @@ Every public export of every package and documented subpath — name, kind, sign
   Event-loop-lag sampler. By default it measures timer drift using only Web/JS runtime primitives, so it works under Node ESM, Bun, Deno, and workers without a hidden CommonJS `require` fallback. An injected histogram remains available for deterministic tests or a runtime-native monitor. Each read re…
 - **csrf** _(function)_ — `csrf: (options: CsrfOptions) => Middleware`
   Signed double-submit CSRF protection. A protected request must carry the same signed token in a cookie and a header, and must come from an allowed Origin/Referer unless `checkOrigin:false` is set.
+- **durableCommand** _(function)_ — `durableCommand: (options: DurableCommandOptions) => NifraPlugin`
+  Journal every capability effect on the routes below it, and declare the evidence that says so.
 - **etag** _(function)_ — `etag: (options?: ETagOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").AnyServer>`
   A {@link definePlugin} plugin that adds a content-hash `ETag` to `GET` `200` responses and returns **`304 Not Modified`** when the client's `If-None-Match` matches — saving bandwidth on unchanged responses. It reads and rebuilds small bodies only; larger responses pass through unchanged. Idempotent.
 - **healthcheck** _(function)_ — `healthcheck: (options?: HealthcheckOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").AnyServer>`

@@ -476,6 +476,13 @@
     "signature": "export interface AssuredRoute {\n    readonly method: string;\n    readonly path: string;\n    readonly rule?: string;\n    readonly evidence: readonly AssuranceEvidence[];\n    readonly missing: readonly string[];\n    readonly forbidden: readonly string[];\n}"
   },
   {
+    "name": "attachCapabilityJournal",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function attachCapabilityJournal(context: object, journal: CapabilityExecutionJournal): void;",
+    "doc": "/**\n * Framework wiring: put a journal on a request context so every `executeCapability` on that request is\n * journaled without each call site threading it. Not for application code - install the\n * `durableCommand()` adapter, which calls this and declares the assurance evidence that goes with it.\n *\n * Symbol-keyed, mirroring `attachEffectLedger`: it cannot collide with an application field and does\n * not show up in a context spread or a log of it.\n *\n * Deliberately here rather than beside the journal TYPE in `internal/capability-runtime.ts`. That\n * module is reachable from a bare server - it holds the route-capability guard - so a seam living\n * there ships to every app, while here it arrives only with `executeCapability`, the one thing that\n * reads it. Measured rather than assumed: in the internal module this cost every bundle row in the\n * size matrix 10-18 bytes gzip, enough to put `nifra-mcp` over its ceiling.\n */"
+  },
+  {
     "name": "attachEffectLedger",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -1179,6 +1186,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare class CapabilityInterceptorTimeoutError extends Error {\n    readonly capability: string;\n    readonly effectId: string;\n    readonly timeoutMs: number;\n    constructor(capability: string, effectId: string, timeoutMs: number);\n}",
     "doc": "/** A capability admission policy exceeded its configured bound. */"
+  },
+  {
+    "name": "capabilityJournalOf",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function capabilityJournalOf(context: object): CapabilityExecutionJournal | undefined;",
+    "doc": "/** The journal installed for this request, if any. */"
   },
   {
     "name": "CapabilityJournalTransitionError",
@@ -2842,6 +2856,19 @@
     "package": "@nifrajs/web",
     "signature": "export interface DraftCookieControls {\n    cookie(name: string, value: string, options?: CookieOptions): void;\n    deleteCookie(name: string, options?: {\n        readonly path?: string;\n        readonly domain?: string;\n    }): void;\n}",
     "doc": "/** The response-cookie surface `enableDraft`/`disableDraft` need — nifra's `c.set`. Structural, so any\n * nifra handler context satisfies it without importing the full `Context`. */"
+  },
+  {
+    "name": "durableCommand",
+    "kind": "function",
+    "package": "@nifrajs/middleware",
+    "signature": "export declare function durableCommand(options: DurableCommandOptions): NifraPlugin;",
+    "doc": "/**\n * Journal every capability effect on the routes below it, and declare the evidence that says so.\n *\n * A capability defined `idempotency: \"durable\"` requires `nifra.durable-command` evidence, and until\n * this adapter existed nothing in the framework produced it. The only way to satisfy the tier was to\n * write `assurance: [\"nifra.durable-command\"]` on the route - an assertion with nothing behind it,\n * wrong in both directions: a route that genuinely journals its effects but omits the string fails\n * `nifra check`, and a route that journals nothing but includes it passes.\n *\n * The evidence is a by-product here rather than a claim. Installing the adapter puts the journal on\n * the request, so `executeCapability` records intent before an effect runs and exactly one terminal\n * outcome after - which is what the tier is asking about. A call that passes its own `journal` still\n * uses that one.\n *\n *     const commands = durableCommand({ journal: createDurableEffectJournal({ store }) })\n *     const app = server().use(commands).post(\"/charge\", { capabilities: [\"billing.charge\"] }, …)\n *\n * `beforeHandle` is order-scoped, like the auth plugins: routes registered before `.use(...)` are not\n * covered, and the `subsequent` scope on the evidence says the same thing to `nifra check`.\n *\n * Note what this does NOT claim. Response replay (`schema.idempotency`) is a different guarantee and\n * deliberately never proves this one: replaying a stored response after a crash mid-effect does not\n * make the effect exactly-once, and the journal is what survives the crash.\n */"
+  },
+  {
+    "name": "DurableCommandOptions",
+    "kind": "interface",
+    "package": "@nifrajs/middleware",
+    "signature": "export interface DurableCommandOptions {\n    /** Where effect transitions are recorded. `createDurableEffectJournal` from\n     * `@nifrajs/core/durable-execution` is the one this is built for; any implementation of the seam\n     * works, and a memory-backed one is a test double, not a durable command. */\n    readonly journal: CapabilityExecutionJournal;\n}"
   },
   {
     "name": "DurableEffectJournalOptions",

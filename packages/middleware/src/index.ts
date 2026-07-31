@@ -44,6 +44,7 @@ export {
   csrf,
   verifyCsrfToken,
 } from "./csrf.ts"
+export { type DurableCommandOptions, durableCommand } from "./durable-command.ts"
 export { type ETagOptions, etag } from "./etag.ts"
 export { type HealthcheckOptions, healthcheck } from "./healthcheck.ts"
 export {

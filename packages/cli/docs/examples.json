@@ -66,6 +66,12 @@
     "code": "import { useCapability } from \"@nifrajs/core/capabilities\"\nimport { createCache } from \"@nifrajs/cache\"\n\nconst cache = createCache({ beacon: useCapability })\n\n// Announces cache.write against THIS route before the operation, and throws if it was not declared.\nexport const write = async (c: object): Promise<void> => {\n  await cache.for(c).set(\"k\", 1)\n}"
   },
   {
+    "name": "DURABLE",
+    "topic": "Nifra - Effect provenance",
+    "slug": "capabilities",
+    "code": "import { server } from \"@nifrajs/core\"\nimport { executeCapability } from \"@nifrajs/core/capabilities\"\nimport { createDurableEffectJournal } from \"@nifrajs/core/durable-execution\"\nimport { durableCommand } from \"@nifrajs/middleware\"\n\ndeclare const store: import(\"@nifrajs/core/durable-execution\").DurableEffectStore\ndeclare const gateway: { charge(): Promise<{ id: string }> }\n\nconst commands = durableCommand({ journal: createDurableEffectJournal({ store }) })\n\n// Every executeCapability below this records intent before the effect and one outcome after.\nconst app = server()\n  .use(commands)\n  .post(\"/charge\", { capabilities: [\"billing.charge\"] }, (c: object) =>\n    executeCapability(c, \"billing.charge\", {}, () => gateway.charge()),\n  )"
+  },
+  {
     "name": "POLICY",
     "topic": "Nifra - Effect provenance",
     "slug": "capabilities",
