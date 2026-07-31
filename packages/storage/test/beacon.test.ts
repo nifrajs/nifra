@@ -168,6 +168,8 @@ describe("optional capabilities", () => {
     expect("for" in storage).toBe(true)
     expect("bucket" in storage).toBe(true)
     expect("nothingLikeThis" in storage).toBe(false)
+    expect(Object.keys(storage)).toContain("bucket")
+    expect(Object.keys(storage.for({}))).toContain("bucket")
   })
 })
 
@@ -207,5 +209,17 @@ describe("adapters using #private fields", () => {
     const { put } = storage
     await put("c.txt", "x")
     expect(await storage.exists("c.txt")).toBe(true)
+  })
+
+  test("a frozen adapter satisfies Proxy invariants on bound and unbound calls", async () => {
+    const inner = Object.freeze(new PrivateStorage())
+    const storage = withCapabilityBeacon(inner, { beacon: () => {} })
+    await storage.put("frozen-a.txt", "x")
+    const bound = storage.for({})
+    await bound.put("frozen-b.txt", "x")
+    expect(await storage.exists("frozen-a.txt")).toBe(true)
+    expect(await storage.exists("frozen-b.txt")).toBe(true)
+    expect(storage.put).toBe(storage.put)
+    expect(bound.put).toBe(bound.put)
   })
 })

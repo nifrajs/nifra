@@ -461,8 +461,24 @@ export interface PostgresClient {
 }
 
 function sqlIdentifier(value: string): string {
-  if (!/^[a-z_][a-z0-9_]{0,62}$/u.test(value)) throw new TypeError("invalid SQL table prefix")
+  // PostgreSQL truncates identifiers to 63 bytes. Reserve `_records_reconcile` (18 bytes), the
+  // longest suffix this adapter appends, so two accepted prefixes can never collapse to one name.
+  if (!/^[a-z_][a-z0-9_]{0,44}$/u.test(value)) throw new TypeError("invalid SQL table prefix")
   return value
+}
+
+/** Explicit static-analysis boundary: every substitution is a validated, internal SQL fragment. */
+function sqlIdentifiers(strings: TemplateStringsArray, ...values: readonly string[]): string {
+  for (const value of values) {
+    if (!/^(?:[a-z_][a-z0-9_]{0,62}|\?(?:,\?)*)$/u.test(value)) {
+      throw new TypeError("invalid SQL identifier fragment")
+    }
+  }
+  return strings.reduce((sql, part, index) => sql + part + (values[index] ?? ""), "")
+}
+
+function sqlPlaceholders(count: number): string {
+  return Array.from({ length: count }, () => "?").join(",")
 }
 
 function recordFromRow<T>(row: Record<string, unknown> | undefined): T | undefined {
@@ -490,21 +506,13 @@ export class PostgresDurableRecordBackend implements DurableRecordBackend {
 
   async migrate(): Promise<void> {
     await this.client.query(
-      "CREATE TABLE IF NOT EXISTS " +
-        this.recordsTable +
-        " (kind TEXT NOT NULL, id TEXT NOT NULL, state TEXT NOT NULL, updated_at BIGINT NOT NULL, version BIGINT NOT NULL, payload JSONB NOT NULL, PRIMARY KEY (kind, id))",
+      sqlIdentifiers`CREATE TABLE IF NOT EXISTS ${this.recordsTable} (kind TEXT NOT NULL, id TEXT NOT NULL, state TEXT NOT NULL, updated_at BIGINT NOT NULL, version BIGINT NOT NULL, payload JSONB NOT NULL, PRIMARY KEY (kind, id))`,
     )
     await this.client.query(
-      "CREATE INDEX IF NOT EXISTS " +
-        this.recordsTable +
-        "_reconcile ON " +
-        this.recordsTable +
-        " (kind, state, updated_at, id)",
+      sqlIdentifiers`CREATE INDEX IF NOT EXISTS ${this.recordsTable}_reconcile ON ${this.recordsTable} (kind, state, updated_at, id)`,
     )
     await this.client.query(
-      "CREATE TABLE IF NOT EXISTS " +
-        this.leasesTable +
-        " (name TEXT PRIMARY KEY, owner TEXT, token TEXT, expires_at BIGINT NOT NULL DEFAULT 0, cursor TEXT)",
+      sqlIdentifiers`CREATE TABLE IF NOT EXISTS ${this.leasesTable} (name TEXT PRIMARY KEY, owner TEXT, token TEXT, expires_at BIGINT NOT NULL DEFAULT 0, cursor TEXT)`,
     )
   }
 
@@ -514,9 +522,7 @@ export class PostgresDurableRecordBackend implements DurableRecordBackend {
     record: { readonly version: number; readonly state?: string; readonly updatedAt?: number },
   ): Promise<boolean> {
     const result = await this.client.query(
-      "INSERT INTO " +
-        this.recordsTable +
-        " (kind,id,state,updated_at,version,payload) VALUES ($1,$2,$3,$4,$5,$6::jsonb) ON CONFLICT DO NOTHING RETURNING id",
+      sqlIdentifiers`INSERT INTO ${this.recordsTable} (kind,id,state,updated_at,version,payload) VALUES ($1,$2,$3,$4,$5,$6::jsonb) ON CONFLICT DO NOTHING RETURNING id`,
       [
         kind,
         id,
@@ -533,7 +539,7 @@ export class PostgresDurableRecordBackend implements DurableRecordBackend {
     id: string,
   ): Promise<T | undefined> {
     const result = await this.client.query(
-      `SELECT payload FROM ${this.recordsTable} WHERE kind=$1 AND id=$2`,
+      sqlIdentifiers`SELECT payload FROM ${this.recordsTable} WHERE kind=$1 AND id=$2`,
       [kind, id],
     )
     return recordFromRow<T>(result.rows[0])
@@ -546,9 +552,7 @@ export class PostgresDurableRecordBackend implements DurableRecordBackend {
   ): Promise<boolean> {
     if (record.version !== expectedVersion + 1) return false
     const result = await this.client.query(
-      "UPDATE " +
-        this.recordsTable +
-        " SET state=$4,updated_at=$5,version=$6,payload=$7::jsonb WHERE kind=$1 AND id=$2 AND version=$3 RETURNING id",
+      sqlIdentifiers`UPDATE ${this.recordsTable} SET state=$4,updated_at=$5,version=$6,payload=$7::jsonb WHERE kind=$1 AND id=$2 AND version=$3 RETURNING id`,
       [
         kind,
         id,
@@ -566,9 +570,7 @@ export class PostgresDurableRecordBackend implements DurableRecordBackend {
     input: ReconciliationScanOptions<string>,
   ): Promise<ReconciliationScanPage<T>> {
     const result = await this.client.query(
-      "SELECT id,payload FROM " +
-        this.recordsTable +
-        " WHERE kind=$1 AND state = ANY($2::text[]) AND ($3::bigint IS NULL OR updated_at <= $3) AND ($4::text IS NULL OR id > $4) ORDER BY id LIMIT $5",
+      sqlIdentifiers`SELECT id,payload FROM ${this.recordsTable} WHERE kind=$1 AND state = ANY($2::text[]) AND ($3::bigint IS NULL OR updated_at <= $3) AND ($4::text IS NULL OR id > $4) ORDER BY id LIMIT $5`,
       [kind, input.states, input.updatedBefore ?? null, input.cursor ?? null, input.limit + 1],
     )
     const hasMore = result.rows.length > input.limit
@@ -584,11 +586,7 @@ export class PostgresDurableRecordBackend implements DurableRecordBackend {
     const token = crypto.randomUUID()
     const expiresAt = input.now + input.leaseMs
     const result = await this.client.query(
-      "INSERT INTO " +
-        this.leasesTable +
-        " (name,owner,token,expires_at) VALUES ($1,$2,$3,$4) ON CONFLICT (name) DO UPDATE SET owner=EXCLUDED.owner,token=EXCLUDED.token,expires_at=EXCLUDED.expires_at WHERE " +
-        this.leasesTable +
-        ".expires_at <= $5 RETURNING name,owner,token,expires_at,cursor",
+      sqlIdentifiers`INSERT INTO ${this.leasesTable} (name,owner,token,expires_at) VALUES ($1,$2,$3,$4) ON CONFLICT (name) DO UPDATE SET owner=EXCLUDED.owner,token=EXCLUDED.token,expires_at=EXCLUDED.expires_at WHERE ${this.leasesTable}.expires_at <= $5 RETURNING name,owner,token,expires_at,cursor`,
       [input.name, input.owner, token, expiresAt, input.now],
     )
     const row = result.rows[0]
@@ -603,9 +601,7 @@ export class PostgresDurableRecordBackend implements DurableRecordBackend {
   }
   async renewLease(input: Parameters<DurableRecordBackend["renewLease"]>[0]): Promise<boolean> {
     const result = await this.client.query(
-      "UPDATE " +
-        this.leasesTable +
-        " SET expires_at=$4 WHERE name=$1 AND owner=$2 AND token=$3 AND expires_at>$5 RETURNING name",
+      sqlIdentifiers`UPDATE ${this.leasesTable} SET expires_at=$4 WHERE name=$1 AND owner=$2 AND token=$3 AND expires_at>$5 RETURNING name`,
       [input.name, input.owner, input.token, input.now + input.leaseMs, input.now],
     )
     return result.rows.length === 1
@@ -614,18 +610,14 @@ export class PostgresDurableRecordBackend implements DurableRecordBackend {
     input: Parameters<DurableRecordBackend["checkpointLease"]>[0],
   ): Promise<boolean> {
     const result = await this.client.query(
-      "UPDATE " +
-        this.leasesTable +
-        " SET cursor=$4 WHERE name=$1 AND owner=$2 AND token=$3 RETURNING name",
+      sqlIdentifiers`UPDATE ${this.leasesTable} SET cursor=$4 WHERE name=$1 AND owner=$2 AND token=$3 RETURNING name`,
       [input.name, input.owner, input.token, input.cursor ?? null],
     )
     return result.rows.length === 1
   }
   async releaseLease(input: Parameters<DurableRecordBackend["releaseLease"]>[0]): Promise<boolean> {
     const result = await this.client.query(
-      "UPDATE " +
-        this.leasesTable +
-        " SET owner=NULL,token=NULL,expires_at=0 WHERE name=$1 AND owner=$2 AND token=$3 RETURNING name",
+      sqlIdentifiers`UPDATE ${this.leasesTable} SET owner=NULL,token=NULL,expires_at=0 WHERE name=$1 AND owner=$2 AND token=$3 RETURNING name`,
       [input.name, input.owner, input.token],
     )
     return result.rows.length === 1
@@ -680,17 +672,7 @@ export class SQLiteDurableRecordBackend implements DurableRecordBackend {
   }
   migrate(): void {
     this.client.exec(
-      "CREATE TABLE IF NOT EXISTS " +
-        this.recordsTable +
-        " (kind TEXT NOT NULL, id TEXT NOT NULL, state TEXT NOT NULL, updated_at INTEGER NOT NULL, version INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY (kind,id));" +
-        "CREATE INDEX IF NOT EXISTS " +
-        this.recordsTable +
-        "_reconcile ON " +
-        this.recordsTable +
-        " (kind,state,updated_at,id);" +
-        "CREATE TABLE IF NOT EXISTS " +
-        this.leasesTable +
-        " (name TEXT PRIMARY KEY, owner TEXT, token TEXT, expires_at INTEGER NOT NULL DEFAULT 0, cursor TEXT);",
+      sqlIdentifiers`CREATE TABLE IF NOT EXISTS ${this.recordsTable} (kind TEXT NOT NULL, id TEXT NOT NULL, state TEXT NOT NULL, updated_at INTEGER NOT NULL, version INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY (kind,id));CREATE INDEX IF NOT EXISTS ${this.recordsTable}_reconcile ON ${this.recordsTable} (kind,state,updated_at,id);CREATE TABLE IF NOT EXISTS ${this.leasesTable} (name TEXT PRIMARY KEY, owner TEXT, token TEXT, expires_at INTEGER NOT NULL DEFAULT 0, cursor TEXT);`,
     )
   }
   async create(
@@ -700,9 +682,7 @@ export class SQLiteDurableRecordBackend implements DurableRecordBackend {
   ): Promise<boolean> {
     const result = this.client
       .query(
-        "INSERT OR IGNORE INTO " +
-          this.recordsTable +
-          " (kind,id,state,updated_at,version,payload) VALUES (?,?,?,?,?,?)",
+        sqlIdentifiers`INSERT OR IGNORE INTO ${this.recordsTable} (kind,id,state,updated_at,version,payload) VALUES (?,?,?,?,?,?)`,
       )
       .run(
         kind,
@@ -719,7 +699,7 @@ export class SQLiteDurableRecordBackend implements DurableRecordBackend {
     id: string,
   ): Promise<T | undefined> {
     const row = this.client
-      .query(`SELECT payload FROM ${this.recordsTable} WHERE kind=? AND id=?`)
+      .query(sqlIdentifiers`SELECT payload FROM ${this.recordsTable} WHERE kind=? AND id=?`)
       .get(kind, id)
     return recordFromRow<T>(row ?? undefined)
   }
@@ -732,9 +712,7 @@ export class SQLiteDurableRecordBackend implements DurableRecordBackend {
     if (record.version !== expectedVersion + 1) return false
     const result = this.client
       .query(
-        "UPDATE " +
-          this.recordsTable +
-          " SET state=?,updated_at=?,version=?,payload=? WHERE kind=? AND id=? AND version=?",
+        sqlIdentifiers`UPDATE ${this.recordsTable} SET state=?,updated_at=?,version=?,payload=? WHERE kind=? AND id=? AND version=?`,
       )
       .run(
         record.state ?? "",
@@ -752,14 +730,10 @@ export class SQLiteDurableRecordBackend implements DurableRecordBackend {
     input: ReconciliationScanOptions<string>,
   ): Promise<ReconciliationScanPage<T>> {
     if (input.states.length === 0) return { records: [] }
-    const placeholders = input.states.map(() => "?").join(",")
+    const placeholders = sqlPlaceholders(input.states.length)
     const rows = this.client
       .query(
-        "SELECT id,payload FROM " +
-          this.recordsTable +
-          " WHERE kind=? AND state IN (" +
-          placeholders +
-          ") AND (? IS NULL OR updated_at <= ?) AND (? IS NULL OR id > ?) ORDER BY id LIMIT ?",
+        sqlIdentifiers`SELECT id,payload FROM ${this.recordsTable} WHERE kind=? AND state IN (${placeholders}) AND (? IS NULL OR updated_at <= ?) AND (? IS NULL OR id > ?) ORDER BY id LIMIT ?`,
       )
       .all(
         kind,
@@ -785,11 +759,7 @@ export class SQLiteDurableRecordBackend implements DurableRecordBackend {
     const expiresAt = input.now + input.leaseMs
     const row = this.client
       .query(
-        "INSERT INTO " +
-          this.leasesTable +
-          " (name,owner,token,expires_at) VALUES (?,?,?,?) ON CONFLICT(name) DO UPDATE SET owner=excluded.owner,token=excluded.token,expires_at=excluded.expires_at WHERE " +
-          this.leasesTable +
-          ".expires_at <= ? RETURNING name,owner,token,expires_at,cursor",
+        sqlIdentifiers`INSERT INTO ${this.leasesTable} (name,owner,token,expires_at) VALUES (?,?,?,?) ON CONFLICT(name) DO UPDATE SET owner=excluded.owner,token=excluded.token,expires_at=excluded.expires_at WHERE ${this.leasesTable}.expires_at <= ? RETURNING name,owner,token,expires_at,cursor`,
       )
       .get(input.name, input.owner, token, expiresAt, input.now)
     if (row === undefined || row === null) return undefined
@@ -805,7 +775,7 @@ export class SQLiteDurableRecordBackend implements DurableRecordBackend {
     return (
       this.client
         .query(
-          `UPDATE ${this.leasesTable} SET expires_at=? WHERE name=? AND owner=? AND token=? AND expires_at>?`,
+          sqlIdentifiers`UPDATE ${this.leasesTable} SET expires_at=? WHERE name=? AND owner=? AND token=? AND expires_at>?`,
         )
         .run(input.now + input.leaseMs, input.name, input.owner, input.token, input.now).changes ===
       1
@@ -816,7 +786,9 @@ export class SQLiteDurableRecordBackend implements DurableRecordBackend {
   ): Promise<boolean> {
     return (
       this.client
-        .query(`UPDATE ${this.leasesTable} SET cursor=? WHERE name=? AND owner=? AND token=?`)
+        .query(
+          sqlIdentifiers`UPDATE ${this.leasesTable} SET cursor=? WHERE name=? AND owner=? AND token=?`,
+        )
         .run(input.cursor ?? null, input.name, input.owner, input.token).changes === 1
     )
   }
@@ -824,9 +796,7 @@ export class SQLiteDurableRecordBackend implements DurableRecordBackend {
     return (
       this.client
         .query(
-          "UPDATE " +
-            this.leasesTable +
-            " SET owner=NULL,token=NULL,expires_at=0 WHERE name=? AND owner=? AND token=?",
+          sqlIdentifiers`UPDATE ${this.leasesTable} SET owner=NULL,token=NULL,expires_at=0 WHERE name=? AND owner=? AND token=?`,
         )
         .run(input.name, input.owner, input.token).changes === 1
     )

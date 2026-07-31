@@ -42,7 +42,12 @@
  * them pays exactly nothing - which is the whole reason to build it this way rather than as a
  * bespoke dispatcher.
  */
-import type { Context, RouteSchema, StandardSchemaV1 } from "@nifrajs/core/server"
+import {
+  type Context,
+  isSameOriginRequest,
+  type RouteSchema,
+  type StandardSchemaV1,
+} from "@nifrajs/core/server"
 
 /** The URL prefix every mounted function lives under. Namespaced per mount, then by export name. */
 export const SERVER_FN_PREFIX = "/_nifra/fn"
@@ -65,19 +70,23 @@ export interface ServerFnConfig<Input> {
  * code can await); on the client, phase 2's build transform replaces this module with typed stubs
  * that POST to the mounted route.
  *
- * `context` is OPTIONAL in this signature because one type has to describe both halves. The client
- * never has a `Context` - it imports the generated stub, `(input) => Promise<Output>` - so requiring
- * it here made every call the docs teach a compile error, `useServerFn(fn)` included. The server half
- * always supplies it: the mount passes `c` (see `serverFunctions`), and the declaration you write in
- * `serverFn` still receives it as a required, fully typed parameter.
- *
- * The one case to know: calling this value directly in your own server code and omitting `context`
- * hands the declaration `undefined`. Pass `c` through when you do that.
+ * This is the SERVER declaration type, so context is required. Client builds replace the module with
+ * a one-argument {@link ClientServerFn}; UI bindings accept either shape and adapt at that boundary.
+ * Keeping the types separate prevents a direct server call from type-checking while handing the
+ * declaration `undefined` for a context its implementation requires.
  */
 export interface ServerFn<Input, Output> {
-  (input: Input, context?: Context): MaybePromise<Output>
+  (input: Input, context: Context): MaybePromise<Output>
   readonly [SERVER_FN]: ServerFnConfig<Input>
 }
+
+/** The one-argument callable emitted into a client bundle for a {@link ServerFn}. */
+export type ClientServerFn<Input, Output> = (input: Input) => MaybePromise<Output>
+
+/** A UI binding boundary: source declarations and generated client stubs are both accepted. */
+export type ServerFnReference<Input, Output> =
+  | ServerFn<Input, Output>
+  | ClientServerFn<Input, Output>
 
 /** Brand identifying a value produced by {@link serverFn}, so mounting cannot pick up stray exports. */
 export const SERVER_FN: unique symbol = Symbol.for("@nifrajs/web/server-fn")
@@ -109,16 +118,11 @@ const NAMESPACE = /^[a-z0-9]+(?:[-.][a-z0-9]+)*$/
 const EXPORT_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
 /**
- * Same-origin check, matching the one the WebSocket handshake uses: compare hosts, since the scheme
- * legitimately differs. An unparseable `Origin` counts as cross-origin and is rejected.
+ * Same-origin, from `@nifrajs/core` so this seam and the WebSocket handshake cannot answer differently
+ * for one request. Host must match; the Origin's scheme may be equal or stronger, never weaker - which
+ * is what keeps a TLS-terminating proxy working without reading a forwarded header.
  */
-function sameOrigin(origin: string, request: Request): boolean {
-  try {
-    return new URL(origin).host === new URL(request.url).host
-  } catch {
-    return false
-  }
-}
+const sameOrigin = isSameOriginRequest
 
 /** The minimum a server needs to expose for functions to be mounted onto it. */
 export interface ServerFnHost {

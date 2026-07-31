@@ -84,6 +84,18 @@ export class McpDbConfigError extends Error {
 /** A safe SQL identifier — quoting is not enough for PRAGMA args, so reject instead. */
 const SAFE_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/
 
+/** Build SQL containing identifiers only after validating every substitution at this boundary. */
+function sqlIdentifiers(strings: TemplateStringsArray, ...identifiers: readonly string[]): string {
+  let sql = strings[0] ?? ""
+  for (const [index, identifier] of identifiers.entries()) {
+    if (!SAFE_IDENTIFIER.test(identifier)) {
+      throw new McpDbConfigError(`unsafe SQL identifier ${JSON.stringify(identifier)}`)
+    }
+    sql += identifier + (strings[index + 1] ?? "")
+  }
+  return sql
+}
+
 const stripSqlNoise = (sql: string): string =>
   sql
     // Strings first so comment markers inside literals don't count.
@@ -144,7 +156,9 @@ export function serveDatabaseAsMcp(
     description: "List the tables this server exposes, with row counts.",
     handler: () => {
       const rows = options.tables.map((table) => {
-        const [count] = db.prepare(`SELECT count(*) AS n FROM "${table}"`).all() as Array<{
+        const [count] = db
+          .prepare(sqlIdentifiers`SELECT count(*) AS n FROM "${table}"`)
+          .all() as Array<{
           n: number
         }>
         return { table, rows: count?.n ?? 0 }
@@ -168,7 +182,7 @@ export function serveDatabaseAsMcp(
       }
       // Identifier is allowlist-verified (and the allowlist is identifier-checked at boot),
       // so interpolation here cannot inject.
-      const columns = db.prepare(`PRAGMA table_info("${table}")`).all()
+      const columns = db.prepare(sqlIdentifiers`PRAGMA table_info("${table}")`).all()
       return { text: JSON.stringify(columns), structuredContent: { table, columns } }
     },
   })

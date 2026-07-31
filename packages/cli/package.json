@@ -58,5 +58,16 @@
   "bugs": {
     "url": "https://github.com/nifrajs/nifra/issues"
   },
-  "homepage": "https://github.com/nifrajs/nifra#readme"
+  "homepage": "https://github.com/nifrajs/nifra#readme",
+  "peerDependencies": {
+    "typescript": "^5.0.0 || ^6.0.0"
+  },
+  "peerDependenciesMeta": {
+    "typescript": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
 }

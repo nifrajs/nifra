@@ -15,7 +15,7 @@
     "start:node": "node dist-node/server-node.js",
     "deploy:cf": "wrangler pages deploy dist",
     "deploy:vercel": "vercel deploy --prebuilt",
-    "check": "nifra check"
+    "check": "nifra check && nifra assure"
   },
   "dependencies": {
     "@nifrajs/client": "^2.2.0",

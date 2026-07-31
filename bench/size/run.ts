@@ -134,14 +134,20 @@ export default server().post("/users", { body }, (c) => ({ name: c.body.name }))
 // the registration-time decision, and the request-path branch. The lane's own logic is NOT in here -
 // it lives behind `@nifrajs/core/response-contract` and only arrives when the plugin is installed,
 // which is what the budget caught when it was a plain server option (+0.5 KB for everyone).
+// The shared same-origin check (`internal/same-origin.ts`, used by both the WebSocket handshake and
+// `@nifrajs/web`'s server-function mount) added ~38 B gzip over the host-only comparison it replaced:
+// it orders the two schemes so a TLS-terminating proxy stays same-origin while a downgrade does not.
+// Measured before and after, and squeezed first - a rank lookup table cost ~50 B because the table is
+// a shipped object, so the comparison is written out instead. Only `nifra-mcp` and `nifra-valibot`
+// moved a ceiling; both were sitting within 40 B of theirs, which is the gate working as designed.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-bare": 16.3,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
   "nifra-idempotency": 19.3,
   "nifra-effect-ledger": 18.1,
-  "nifra-mcp": 16.4,
+  "nifra-mcp": 16.5,
   "nifra-sse": 17,
-  "nifra-valibot": 17.2,
+  "nifra-valibot": 17.3,
   "nifra-typebox-t": 46,
 }
 

@@ -11,7 +11,9 @@ import {
   renderPage,
   renderPageResult,
   resolveMeta,
+  type ScriptDescriptor,
   serializeData,
+  unsafeInlineScript,
 } from "../src/index.ts"
 
 const LINE_SEP = String.fromCharCode(0x2028)
@@ -288,17 +290,90 @@ test("renderPage head <script>: a </script> (and <!-- / ]]>) payload is breakout
   expect(slot.slice(0, realClose)).not.toContain("</script>")
 })
 
-test("renderPage head <script>: a custom type is attribute-escaped", async () => {
+test("renderPage refuses executable or active types in the inert script slot", () => {
+  expect(() =>
+    renderPage({
+      adapter: stub,
+      chain: [null],
+      data: null,
+      clientEntry: "/c.js",
+      head: {
+        script: [{ type: "text/javascript", content: "alert(1)" } as unknown as ScriptDescriptor],
+      },
+    }),
+  ).toThrow(/only accepts inert JSON script types/)
+})
+
+test("unsafeInlineScript makes executable code explicit and nonce-bound", async () => {
+  expect(() => unsafeInlineScript("alert(1)", { nonce: "" })).toThrow(/non-empty CSP nonce/)
   const html = await (
     await renderPage({
       adapter: stub,
       chain: [null],
       data: null,
       clientEntry: "/c.js",
-      head: { script: [{ type: "speculationrules", content: '{"prerender":[]}' }] },
+      head: { unsafeScript: [unsafeInlineScript("globalThis.ready = true", { nonce: "abc123" })] },
     })
   ).text()
-  expect(html).toContain('<script type="speculationrules" data-nifra>{"prerender":[]}</script>')
+  expect(html).toContain(
+    '<script type="module" nonce="abc123" data-nifra>globalThis.ready = true</script>',
+  )
+})
+
+test("the executable slot's type is an allowlist, not an escaped value", async () => {
+  // `nonce` was escaped and `type` was not, in the same template literal. `unsafeScript` is a public
+  // field and the helper is only a convenience, so a hand-built descriptor closed the attribute and
+  // put markup in the document - an injection in the slot whose purpose is trustworthy emission.
+  // Refused while the head is being built, so no partial document is ever emitted.
+  const render = (type: string): Response | Promise<Response> =>
+    renderPage({
+      adapter: stub,
+      chain: [null],
+      data: null,
+      clientEntry: "/c.js",
+      head: { unsafeScript: [{ unsafe: true, type: type as never, nonce: "n0", content: "x" }] },
+    })
+
+  expect(() => render('"><img src=x onerror=alert(1)>')).toThrow(/executable inline scripts accept/)
+  // Rejected at the call site too, so the argument is named rather than a document.
+  expect(() => unsafeInlineScript("x", { nonce: "n0", type: "text/html" as never })).toThrow(
+    /executable inline scripts accept/,
+  )
+  // An inert type is not smuggled through the executable slot either - it belongs in `head.script`.
+  expect(() => render("application/ld+json")).toThrow(/executable inline scripts accept/)
+
+  expect(await (await render("text/javascript")).text()).toContain(
+    '<script type="text/javascript" nonce="n0" data-nifra>x</script>',
+  )
+})
+
+test("renderPage propagates a CSP nonce to every framework-owned executable script", async () => {
+  const adapter: RenderAdapter = {
+    ...stub,
+    hydrationHead: () => "<script>globalThis.adapterBoot = true</script>",
+  }
+  const html = await (
+    await renderPage({
+      adapter,
+      chain: [null],
+      data: { later: defer(Promise.resolve("ready")) },
+      clientEntry: "/client.js",
+      islandScripts: ["/island.js"],
+      nonce: "page-nonce",
+    })
+  ).text()
+  const executable = [...html.matchAll(/<script\b[^>]*>/g)].map((match) => match[0])
+  expect(executable.length).toBeGreaterThan(5)
+  for (const open of executable) expect(open).toContain('nonce="page-nonce"')
+  expect(() =>
+    renderPage({
+      adapter: stub,
+      chain: [null],
+      data: null,
+      clientEntry: "/client.js",
+      nonce: "",
+    }),
+  ).toThrow(/nonce must be non-empty/)
 })
 
 // --- SEO helpers ---

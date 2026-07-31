@@ -96,6 +96,8 @@ test("the SSR environment keeps the real module - only the client gets stubs", (
   // The server is what actually runs these functions; stubbing them there would make every call a
   // request to itself.
   expect(plugin.applyToEnvironment?.({ name: "ssr" })).toBe(false)
+  // Vite 5 ignores applyToEnvironment and signals SSR to the transform hook.
+  expect(plugin.transform(SOURCE, "/app/todos.fn.ts", { ssr: true })).toBeNull()
 })
 
 /**

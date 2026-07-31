@@ -33,6 +33,7 @@ import {
 } from "./build.ts"
 import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
+import { vitePublicEnvPrefix } from "./internal/public-env.ts"
 import { importVite, isViteUnresolved } from "./internal/vite-import.ts"
 import { viteLeakGuard } from "./plugins/vite-leak-guard.ts"
 import { viteServerFnStub } from "./plugins/vite-server-fn.ts"
@@ -180,6 +181,8 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
         root,
         base: publicPath,
         mode,
+        // Override Vite's independent `VITE_*` boundary; Nifra has one public-env policy.
+        envPrefix: vitePublicEnvPrefix(options.publicEnvPrefix),
         logLevel: "silent",
         // Nifra owns publicDir copying so direct and target builds share symlink confinement and
         // deploy-root placement. Vite's automatic copy would put root files inside /assets.

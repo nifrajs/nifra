@@ -1139,7 +1139,7 @@
     "name": "CapabilityFindingCode",
     "kind": "type",
     "package": "@nifrajs/core",
-    "signature": "export type CapabilityFindingCode = \"unknown-capability\" | \"provenance-uncovered\" | \"undeclared-capability-evidence\" | \"safe-method-domain-write\" | \"unconfined-write-reach\" | \"missing-request-idempotency\" | \"missing-durable-idempotency\" | \"forbidden-effect-import\";"
+    "signature": "export type CapabilityFindingCode = \"unknown-capability\" | \"provenance-uncovered\" | \"undeclared-capability-evidence\" | \"safe-method-domain-write\" | \"unconfined-write-reach\" | \"missing-request-idempotency\" | \"missing-durable-idempotency\" | \"forbidden-effect-import\" | \"provenance-truncated\";"
   },
   {
     "name": "CapabilityIdempotency",
@@ -1603,6 +1603,13 @@
     "kind": "interface",
     "package": "@nifrajs/web",
     "signature": "export interface ClientRouterOptions {\n    readonly patterns: readonly RoutePattern[];\n    readonly initial: RouterState;\n    /** Override the loader-data fetch (tests inject a stub; defaults to a same-origin JSON GET). */\n    readonly fetchData?: FetchRouteData;\n    /** Ensure a route's code chunk is loaded before rendering (code-splitting). Awaited in parallel\n     * with the loader data, so `pending` covers both. Omit when the bundle isn't split. */\n    readonly loadModule?: (routeId: string) => Promise<void>;\n    /** Terminal status → client route id. Generated entries populate this from `_404` and\n     * `_<status>` files so soft navigation renders the same boundary as a hard request. */\n    readonly statusRoutes?: Readonly<Record<number, string>>;\n}"
+  },
+  {
+    "name": "ClientServerFn",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type ClientServerFn<Input, Output> = (input: Input) => MaybePromise<Output>;",
+    "doc": "/** The one-argument callable emitted into a client bundle for a {@link ServerFn}. */"
   },
   {
     "name": "cloudflareLoader",
@@ -3551,7 +3558,7 @@
     "name": "FileStorage",
     "kind": "class",
     "package": "@nifrajs/storage",
-    "signature": "export declare class FileStorage implements StorageAdapter {\n    private readonly root;\n    private readonly metadataRoot;\n    constructor(root: string);\n    private metadataPathFor;\n    /** Resolve `key` to an absolute path, asserting it stays inside `root` (defense-in-depth on top of `assertSafeKey`). */\n    private pathFor;\n    private symlinkError;\n    /** Reject existing symbolic links below `base`; missing suffixes are safe for later creation. */\n    private assertNoSymlinkPath;\n    /** Create parents, re-check them, and refuse a final-component symlink at open time. */\n    private writeContained;\n    put(key: string, data: StorageData, options?: PutOptions): Promise<void>;\n    get(key: string): Promise<StorageObject | null>;\n    delete(key: string): Promise<void>;\n    exists(key: string): Promise<boolean>;\n    list(options?: ListOptions): Promise<string[]>;\n    private walk;\n}"
+    "signature": "export declare class FileStorage implements StorageAdapter {\n    private readonly root;\n    private readonly metadataRoot;\n    constructor(root: string);\n    private metadataPathFor;\n    /** Resolve `key` to an absolute path, asserting it stays inside `root` (defense-in-depth on top of `assertSafeKey`). */\n    private pathFor;\n    private symlinkError;\n    /** Reject existing symbolic links below `base`; missing suffixes are safe for later creation. */\n    private assertNoSymlinkPath;\n    /**\n     * Create parents and open without truncating. The opened inode is validated against the current,\n     * fully resolved path before any caller data is written, closing the check/open symlink race.\n     */\n    private writeContained;\n    put(key: string, data: StorageData, options?: PutOptions): Promise<void>;\n    get(key: string): Promise<StorageObject | null>;\n    delete(key: string): Promise<void>;\n    exists(key: string): Promise<boolean>;\n    list(options?: ListOptions): Promise<string[]>;\n    private walk;\n}"
   },
   {
     "name": "FileType",
@@ -4332,6 +4339,13 @@
     "signature": "export interface IncidentReplayResult {\n    readonly reproduced: boolean;\n    readonly status: number;\n    readonly expectedStatus: number;\n    readonly statusMatches: boolean;\n    /** null when shape was not checked. */\n    readonly shapeMatches: boolean | null;\n}"
   },
   {
+    "name": "InertScriptType",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type InertScriptType = \"application/ld+json\" | \"application/json\";",
+    "doc": "/** One `<script>` element a route contributes to `<head>` — for structured data (JSON-LD) and other\n * inert, non-executable head scripts. The `content` is the script body; `type` defaults to\n * `\"application/ld+json\"` (the common case). The renderer escapes `content` against an HTML breakout\n * (`</`, `<!--`, `]]>`) — see `escapeScriptContent` — so a JSON-LD payload can never close the\n * `<script>` element early. `content` is **JSON/text, never raw HTML**: this slot is not an XSS escape\n * hatch for arbitrary markup. */"
+  },
+  {
     "name": "InferInput",
     "kind": "type",
     "package": "@nifrajs/core",
@@ -4611,6 +4625,20 @@
     "package": "@nifrajs/web",
     "signature": "export interface ISRPlatform {\n    readonly waitUntil?: (promise: Promise<unknown>) => void;\n}",
     "doc": "/** Minimal platform shape `withISR` needs — just `waitUntil` (edge runtimes extend the response\n * lifetime so background regeneration finishes). Off-edge it's absent and regen runs fire-and-forget. */"
+  },
+  {
+    "name": "isSameOriginRequest",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function isSameOriginRequest(origin: string, request: Request): boolean;",
+    "doc": "/**\n * True when `origin` is the request's own origin, as observed from inside a possibly-proxied server.\n *\n * The host must match exactly. The scheme must be equal or STRONGER on the Origin side, never weaker:\n *\n *   - `https://app` page → `http://app` request URL: accepted. This is what every TLS-terminating\n *     proxy looks like from the origin server - Cloudflare, a tunnel, an ingress. The socket is plain\n *     HTTP, so `request.url` says `http:` while the browser correctly reports an `https:` page.\n *   - `http://app` page → `https://app` request URL: rejected. Nifra terminated TLS itself here, so a\n *     plaintext page on the same host is the downgrade an attacker would need and buys nothing real.\n *\n * Comparing full origins instead is not the stricter option, it is an outage: measured, it rejects\n * every server-function POST behind a terminating proxy, while the cross-origin attacker it aims at\n * was already rejected by the host comparison. Nifra deliberately does not read `X-Forwarded-Proto` -\n * a forwarded header is attacker-controlled unless something upstream is proven to overwrite it - so\n * the scheme in `request.url` is the socket's, not the browser's, and this asymmetry is how the two\n * are reconciled without trusting a header.\n *\n * An unparseable Origin is not same-origin.\n */"
+  },
+  {
+    "name": "isSameOriginRequest",
+    "kind": "function",
+    "package": "nifra",
+    "signature": "export declare function isSameOriginRequest(origin: string, request: Request): boolean;",
+    "doc": "/**\n * True when `origin` is the request's own origin, as observed from inside a possibly-proxied server.\n *\n * The host must match exactly. The scheme must be equal or STRONGER on the Origin side, never weaker:\n *\n *   - `https://app` page → `http://app` request URL: accepted. This is what every TLS-terminating\n *     proxy looks like from the origin server - Cloudflare, a tunnel, an ingress. The socket is plain\n *     HTTP, so `request.url` says `http:` while the browser correctly reports an `https:` page.\n *   - `http://app` page → `https://app` request URL: rejected. Nifra terminated TLS itself here, so a\n *     plaintext page on the same host is the downgrade an attacker would need and buys nothing real.\n *\n * Comparing full origins instead is not the stricter option, it is an outage: measured, it rejects\n * every server-function POST behind a terminating proxy, while the cross-origin attacker it aims at\n * was already rejected by the host comparison. Nifra deliberately does not read `X-Forwarded-Proto` -\n * a forwarded header is attacker-controlled unless something upstream is proven to overwrite it - so\n * the scheme in `request.url` is the socket's, not the browser's, and this asymmetry is how the two\n * are reconciled without trusting a header.\n *\n * An unparseable Origin is not same-origin.\n */"
   },
   {
     "name": "JobContext",
@@ -5483,7 +5511,7 @@
     "name": "Meta",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface Meta {\n    readonly title?: string;\n    readonly meta?: ReadonlyArray<Record<string, string>>;\n    readonly link?: readonly LinkDescriptor[];\n    /** Inert head `<script>`s (JSON-LD structured data, etc.). See {@link ScriptDescriptor}. */\n    readonly script?: readonly ScriptDescriptor[];\n    /**\n     * The document language — `<html lang=\"...\">`. Nearest-wins like `title`, so a localized route can\n     * override a layout's default. Defaults to `\"en\"` when no head in the chain sets it.\n     *\n     * This is the ONLY way to set it: the shell's `<html>` is framework-owned, so a multilingual app\n     * otherwise serves every URL as `lang=\"en\"` — which tells a screen reader to pronounce every locale\n     * with an English voice, and suppresses the browser's translation offer.\n     */\n    readonly lang?: string;\n    /**\n     * The document writing direction — `<html dir=\"...\">`. Nearest-wins like `title`. Omitted from the\n     * shell when unset, which is HTML's `ltr` default, so an LTR app's output is byte-identical.\n     *\n     * Required for Arabic/Hebrew/Urdu/Persian: without it the browser lays the page out left-to-right\n     * and mis-orders trailing punctuation, so the text renders wrong rather than merely unstyled.\n     */\n    readonly dir?: \"ltr\" | \"rtl\" | \"auto\";\n}",
+    "signature": "export interface Meta {\n    readonly title?: string;\n    readonly meta?: ReadonlyArray<Record<string, string>>;\n    readonly link?: readonly LinkDescriptor[];\n    /** Inert head `<script>`s (JSON-LD structured data, etc.). See {@link ScriptDescriptor}. */\n    readonly script?: readonly ScriptDescriptor[];\n    /** Executable inline scripts. Prefer external modules; construct only with `unsafeInlineScript()`. */\n    readonly unsafeScript?: readonly UnsafeScriptDescriptor[];\n    /**\n     * The document language — `<html lang=\"...\">`. Nearest-wins like `title`, so a localized route can\n     * override a layout's default. Defaults to `\"en\"` when no head in the chain sets it.\n     *\n     * This is the ONLY way to set it: the shell's `<html>` is framework-owned, so a multilingual app\n     * otherwise serves every URL as `lang=\"en\"` — which tells a screen reader to pronounce every locale\n     * with an English voice, and suppresses the browser's translation offer.\n     */\n    readonly lang?: string;\n    /**\n     * The document writing direction — `<html dir=\"...\">`. Nearest-wins like `title`. Omitted from the\n     * shell when unset, which is HTML's `ltr` default, so an LTR app's output is byte-identical.\n     *\n     * Required for Arabic/Hebrew/Urdu/Persian: without it the browser lays the page out left-to-right\n     * and mis-orders trailing punctuation, so the text renders wrong rather than merely unstyled.\n     */\n    readonly dir?: \"ltr\" | \"rtl\" | \"auto\";\n}",
     "doc": "/**\n * The document head a route contributes — title + `<meta>`/`<link>`/`<script>` tag sets. Returned by a\n * route/layout `meta` (statically, or from a {@link MetaArgs} function). Every value is serialized into\n * managed (`data-nifra`) head tags: attribute *names* are shape-validated and *values* HTML-escaped at\n * render (see `tagAttrs`/`headTags` in `@nifrajs/web`), and `script[].content` is breakout-escaped — so\n * loader-derived strings (LLM-authored `og:*`, user content) are XSS-safe in the head by construction.\n * Layout-chain heads merge with the page's via `mergeHeads` (arrays concat outermost→page; `title` is\n * nearest-wins). Build `og:*`/`twitter:*` with `openGraph(...)`, canonical with `canonical(...)`, and\n * JSON-LD with `jsonLd(...)` (all from `@nifrajs/web`) rather than hand-writing the records.\n */"
   },
   {
@@ -7080,7 +7108,7 @@
     "name": "RenderAdapter",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RenderAdapter {\n    /**\n     * Server: render a route's layout `chain` (outermost layout → page) to a **stream** of HTML\n     * bytes, including the framework's hydration markers. The page (innermost) receives `props`\n     * (the loader data); each layout wraps the child via its `children`. Returns (or resolves to)\n     * a Web `ReadableStream<Uint8Array>`: a streaming renderer flushes the shell first and streams\n     * Suspense boundaries as they resolve; a non-streaming renderer may return a one-chunk stream.\n     * May be async — e.g. React resolves once the shell is renderable, so a shell-render throw can\n     * still map to an error status before any byte is sent.\n     */\n    renderToStream(chain: readonly unknown[], props: RenderProps): ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>;\n    /**\n     * Server (optional): render the chain to a complete HTML **string** in one pass, with the same\n     * hydration markers `renderToStream` produces. When provided, `renderPage` uses it for any page\n     * that does **not** `defer()` — buffering the document is faster than the streaming pipeline there,\n     * because the framework's synchronous renderer (React `renderToString`, Solid `renderToString`,\n     * Preact `render`, Vue `renderToString`, Svelte `render`) is markedly cheaper than its streaming\n     * renderer — most visibly on Bun, where React Fizz / Solid `renderToStream` are the heaviest. Pages\n     * that `defer()` keep the streaming path (progressive `<Await>` needs it). Markup MUST be\n     * hydration-equivalent to `renderToStream`; a throw surfaces like the streaming shell-readiness\n     * await (the `_error` boundary maps it to a status). Omit it to always stream.\n     */\n    renderToString?(chain: readonly unknown[], props: RenderProps): string | Promise<string>;\n    /**\n     * Server: per-document bootstrap markup injected into `<head>` that the client\n     * `hydrate` requires (Solid: `generateHydrationScript()`). Empty string if none.\n     */\n    hydrationHead(): string;\n}",
+    "signature": "export interface RenderAdapter {\n    /**\n     * Server: render a route's layout `chain` (outermost layout → page) to a **stream** of HTML\n     * bytes, including the framework's hydration markers. The page (innermost) receives `props`\n     * (the loader data); each layout wraps the child via its `children`. Returns (or resolves to)\n     * a Web `ReadableStream<Uint8Array>`: a streaming renderer flushes the shell first and streams\n     * Suspense boundaries as they resolve; a non-streaming renderer may return a one-chunk stream.\n     * May be async — e.g. React resolves once the shell is renderable, so a shell-render throw can\n     * still map to an error status before any byte is sent.\n     */\n    renderToStream(chain: readonly unknown[], props: RenderProps): ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>;\n    /**\n     * Server (optional): render the chain to a complete HTML **string** in one pass, with the same\n     * hydration markers `renderToStream` produces. When provided, `renderPage` uses it for any page\n     * that does **not** `defer()` — buffering the document is faster than the streaming pipeline there,\n     * because the framework's synchronous renderer (React `renderToString`, Solid `renderToString`,\n     * Preact `render`, Vue `renderToString`, Svelte `render`) is markedly cheaper than its streaming\n     * renderer — most visibly on Bun, where React Fizz / Solid `renderToStream` are the heaviest. Pages\n     * that `defer()` keep the streaming path (progressive `<Await>` needs it). Markup MUST be\n     * hydration-equivalent to `renderToStream`; a throw surfaces like the streaming shell-readiness\n     * await (the `_error` boundary maps it to a status). Omit it to always stream.\n     */\n    renderToString?(chain: readonly unknown[], props: RenderProps): string | Promise<string>;\n    /**\n     * Server: per-document bootstrap markup injected into `<head>` that the client\n     * `hydrate` requires (Solid: `generateHydrationScript()`). Empty string if none.\n     */\n    hydrationHead(nonce?: string): string;\n}",
     "doc": "/**\n * The seam every render adapter implements. New adapters should prove these invariants with\n * {@link assertRenderAdapterConformance}; framework-specific behavior remains locally tested.\n */"
   },
   {
@@ -7128,7 +7156,7 @@
     "name": "RenderPageOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RenderPageOptions {\n    readonly adapter: RenderAdapter;\n    /** The layout chain to render — outermost layout → page (opaque; the adapter renders it). */\n    readonly chain: readonly unknown[];\n    /** The loader output for this request. */\n    readonly data: unknown;\n    /** An action's data return (POST only) — surfaced to the page as `actionData` + serialized\n     * for the client so post-POST hydration matches. Omit on GETs. */\n    readonly actionData?: unknown;\n    /**\n     * URL of the built client entry (loaded as a module script).\n     *\n     * Optional ONLY on a `hydrate: false` page, where there is no client takeover to feed and this value\n     * reaches no output at all. The union below is what enforces that: omitting it on a hydrating page\n     * stays a compile error rather than rendering `src=\"\"`.\n     */\n    readonly clientEntry?: string;\n    /** Chunk URLs for the **matched** route (its layout chain + own chunk) to `modulepreload` in the\n     * shell — so the route code downloads in parallel with the entry instead of after it\n     * (`buildClient`'s per-route map). Empty/omitted ⇒ only the entry is preloaded (unchanged). */\n    readonly preload?: readonly string[];\n    /** Stylesheet URLs for the **matched** route (its layout chain + own CSS, from `buildClient`'s\n     * `BuildManifest.css`) — injected as `<link rel=\"stylesheet\">` in `<head>` so styles arrive with the\n     * first paint (no FOUC). Rendered even on non-hydrated pages. Empty/omitted ⇒ none (unchanged). */\n    readonly styles?: readonly string[];\n    /** SSG: the prerendered-path set, serialized to `window.__NIFRA_PRERENDERED__` so the client fetches\n     * a static `_data.json` on soft-nav into a prerendered route. Empty/omitted ⇒ not injected. */\n    readonly prerenderedPaths?: readonly string[];\n    /** ISR: route freshness in seconds, emitted as the `x-nifra-isr-revalidate` header for a `withISR`\n     * wrapper to read. Omit ⇒ no header (the wrapper's default TTL applies). */\n    readonly revalidate?: number;\n    /** Matched route id; written to `window.__NIFRA_ROUTE__` so the client hydrates this chain. */\n    readonly routeId?: string;\n    /** The matched route's decoded path params — surfaced to the page as `params` (via {@link RenderProps})\n     * so an adapter's `useParams` is SSR-correct. Omit ⇒ `{}` (a route with no dynamic segments, or an\n     * error/404 render). */\n    readonly params?: Readonly<Record<string, string>>;\n    /** The request's `pathname + search` — surfaced as `path` (via {@link RenderProps}) so an adapter's\n     * `useLocation`/`useSearchParams` render the right URL server-side and hydrate without drift. Omit ⇒\n     * `\"\"`. */\n    readonly path?: string;\n    /** Per-layout loader data, forwarded to the adapter as `RenderProps.layoutData`. Aligned with the\n     * chain's layout prefix; omitted when no layout in the chain has a loader. */\n    readonly layoutData?: readonly unknown[];\n    /** HTTP status for the response (default 200; e.g. 404 for a not-found page). */\n    readonly status?: number;\n    /** Extra response headers - e.g. the `cache-control` a terminal status page wants. `content-type`\n     * is ignored (the document is always HTML) and the ISR freshness header is applied after these,\n     * so neither can be overridden from here. */\n    readonly headers?: HeadersLike;\n    /** Document title (fallback when `head.title` is unset). */\n    readonly title?: string;\n    /** Resolved route head — `title` overrides `title` above; `meta`/`link` render as managed\n     * (`data-nifra`) tags the client updates on navigation.\n     *\n     * **Head contract (the layout chain contributes).** `createWebApp` resolves this via\n     * {@link mergeHeads}: a route's head is its **layout chain's** `meta`/`head` exports merged with the\n     * page's. A `_layout.tsx` may `export const meta` (or `export function meta(args)`) — its tags land\n     * on every page below it (the home for `hreflang`, `preconnect`, a section-default `<title>`). The\n     * merge is **nearest-wins for scalars** (the page's `title` overrides an inner layout's, which\n     * overrides an outer one; an undefined page title keeps the layout's) and **concatenated for the\n     * `meta`/`link` arrays** (outermost layout first, page last). `<link>` attributes are name-validated\n     * (any letter/digit/hyphen name — covers `rel`/`href`/`hreflang`/`crossorigin`/`media`/`sizes`/`as`/\n     * `integrity`/`fetchpriority`/…) and value-escaped against XSS. */\n    readonly head?: Meta;\n    /** Id of the container wrapping the app markup (default `\"root\"`). A non-default id also gets\n     * {@link ROOT_ATTRIBUTE}, which is how the generated client entry finds the container to hydrate -\n     * the entry is built once and cannot know what a given render chose. */\n    readonly rootId?: string;\n    /** When `false`, emit a complete but **non-hydrated** document — no client entry script, data\n     * globals, or modulepreloads. Used for server-rendered `_error` pages: a terminal state that needs no\n     * client takeover, and it sidesteps an SSR/hydrate mismatch (the server rendered the boundary, not\n     * the page the client manifest maps this route id to). Default `true`. */\n    readonly hydrate?: boolean;\n    /** Island client bundles (`@nifrajs/web/islands`) to load as `<script type=\"module\">` in the document\n     * tail — emitted **regardless of `hydrate`**, so a static (`hydrate: false`) page can still mount\n     * no-framework islands. URLs are attribute-escaped. Empty/omitted ⇒ none (unchanged output). */\n    readonly islandScripts?: readonly string[];\n}"
+    "signature": "export interface RenderPageOptions {\n    readonly adapter: RenderAdapter;\n    /** The layout chain to render — outermost layout → page (opaque; the adapter renders it). */\n    readonly chain: readonly unknown[];\n    /** The loader output for this request. */\n    readonly data: unknown;\n    /** An action's data return (POST only) — surfaced to the page as `actionData` + serialized\n     * for the client so post-POST hydration matches. Omit on GETs. */\n    readonly actionData?: unknown;\n    /**\n     * URL of the built client entry (loaded as a module script).\n     *\n     * Optional ONLY on a `hydrate: false` page, where there is no client takeover to feed and this value\n     * reaches no output at all. The union below is what enforces that: omitting it on a hydrating page\n     * stays a compile error rather than rendering `src=\"\"`.\n     */\n    readonly clientEntry?: string;\n    /** Chunk URLs for the **matched** route (its layout chain + own chunk) to `modulepreload` in the\n     * shell — so the route code downloads in parallel with the entry instead of after it\n     * (`buildClient`'s per-route map). Empty/omitted ⇒ only the entry is preloaded (unchanged). */\n    readonly preload?: readonly string[];\n    /** Stylesheet URLs for the **matched** route (its layout chain + own CSS, from `buildClient`'s\n     * `BuildManifest.css`) — injected as `<link rel=\"stylesheet\">` in `<head>` so styles arrive with the\n     * first paint (no FOUC). Rendered even on non-hydrated pages. Empty/omitted ⇒ none (unchanged). */\n    readonly styles?: readonly string[];\n    /** SSG: the prerendered-path set, serialized to `window.__NIFRA_PRERENDERED__` so the client fetches\n     * a static `_data.json` on soft-nav into a prerendered route. Empty/omitted ⇒ not injected. */\n    readonly prerenderedPaths?: readonly string[];\n    /** ISR: route freshness in seconds, emitted as the `x-nifra-isr-revalidate` header for a `withISR`\n     * wrapper to read. Omit ⇒ no header (the wrapper's default TTL applies). */\n    readonly revalidate?: number;\n    /** Matched route id; written to `window.__NIFRA_ROUTE__` so the client hydrates this chain. */\n    readonly routeId?: string;\n    /** The matched route's decoded path params — surfaced to the page as `params` (via {@link RenderProps})\n     * so an adapter's `useParams` is SSR-correct. Omit ⇒ `{}` (a route with no dynamic segments, or an\n     * error/404 render). */\n    readonly params?: Readonly<Record<string, string>>;\n    /** The request's `pathname + search` — surfaced as `path` (via {@link RenderProps}) so an adapter's\n     * `useLocation`/`useSearchParams` render the right URL server-side and hydrate without drift. Omit ⇒\n     * `\"\"`. */\n    readonly path?: string;\n    /** Per-layout loader data, forwarded to the adapter as `RenderProps.layoutData`. Aligned with the\n     * chain's layout prefix; omitted when no layout in the chain has a loader. */\n    readonly layoutData?: readonly unknown[];\n    /** HTTP status for the response (default 200; e.g. 404 for a not-found page). */\n    readonly status?: number;\n    /** Extra response headers - e.g. the `cache-control` a terminal status page wants. `content-type`\n     * is ignored (the document is always HTML) and the ISR freshness header is applied after these,\n     * so neither can be overridden from here. */\n    readonly headers?: HeadersLike;\n    /** Document title (fallback when `head.title` is unset). */\n    readonly title?: string;\n    /** Resolved route head — `title` overrides `title` above; `meta`/`link` render as managed\n     * (`data-nifra`) tags the client updates on navigation.\n     *\n     * **Head contract (the layout chain contributes).** `createWebApp` resolves this via\n     * {@link mergeHeads}: a route's head is its **layout chain's** `meta`/`head` exports merged with the\n     * page's. A `_layout.tsx` may `export const meta` (or `export function meta(args)`) — its tags land\n     * on every page below it (the home for `hreflang`, `preconnect`, a section-default `<title>`). The\n     * merge is **nearest-wins for scalars** (the page's `title` overrides an inner layout's, which\n     * overrides an outer one; an undefined page title keeps the layout's) and **concatenated for the\n     * `meta`/`link` arrays** (outermost layout first, page last). `<link>` attributes are name-validated\n     * (any letter/digit/hyphen name — covers `rel`/`href`/`hreflang`/`crossorigin`/`media`/`sizes`/`as`/\n     * `integrity`/`fetchpriority`/…) and value-escaped against XSS. */\n    readonly head?: Meta;\n    /** Id of the container wrapping the app markup (default `\"root\"`). A non-default id also gets\n     * {@link ROOT_ATTRIBUTE}, which is how the generated client entry finds the container to hydrate -\n     * the entry is built once and cannot know what a given render chose. */\n    readonly rootId?: string;\n    /** When `false`, emit a complete but **non-hydrated** document — no client entry script, data\n     * globals, or modulepreloads. Used for server-rendered `_error` pages: a terminal state that needs no\n     * client takeover, and it sidesteps an SSR/hydrate mismatch (the server rendered the boundary, not\n     * the page the client manifest maps this route id to). Default `true`. */\n    readonly hydrate?: boolean;\n    /** Island client bundles (`@nifrajs/web/islands`) to load as `<script type=\"module\">` in the document\n     * tail — emitted **regardless of `hydrate`**, so a static (`hydrate: false`) page can still mount\n     * no-framework islands. URLs are attribute-escaped. Empty/omitted ⇒ none (unchanged output). */\n    readonly islandScripts?: readonly string[];\n    /** CSP nonce applied to every framework-owned executable script in this document. */\n    readonly nonce?: string;\n}"
   },
   {
     "name": "renderPageResult",
@@ -8051,8 +8079,7 @@
     "name": "ScriptDescriptor",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ScriptDescriptor {\n    /** The script's `type` attribute. Default `\"application/ld+json\"`. */\n    readonly type?: string;\n    /** The script body (e.g. a `JSON.stringify`'d JSON-LD object). Escaped for safe `<script>` embedding. */\n    readonly content: string;\n}",
-    "doc": "/** One `<script>` element a route contributes to `<head>` — for structured data (JSON-LD) and other\n * inert, non-executable head scripts. The `content` is the script body; `type` defaults to\n * `\"application/ld+json\"` (the common case). The renderer escapes `content` against an HTML breakout\n * (`</`, `<!--`, `]]>`) — see `escapeScriptContent` — so a JSON-LD payload can never close the\n * `<script>` element early. `content` is **JSON/text, never raw HTML**: this slot is not an XSS escape\n * hatch for arbitrary markup. */"
+    "signature": "export interface ScriptDescriptor {\n    /** The script's `type` attribute. Default `\"application/ld+json\"`. */\n    readonly type?: InertScriptType;\n    /** The script body (e.g. a `JSON.stringify`'d JSON-LD object). Escaped for safe `<script>` embedding. */\n    readonly content: string;\n}"
   },
   {
     "name": "scssBunPlugin",
@@ -8302,8 +8329,8 @@
     "name": "ServerFn",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ServerFn<Input, Output> {\n    (input: Input, context?: Context): MaybePromise<Output>;\n    readonly [SERVER_FN]: ServerFnConfig<Input>;\n}",
-    "doc": "/**\n * A declared server function. Callable directly on the server (the same value your own server-side\n * code can await); on the client, phase 2's build transform replaces this module with typed stubs\n * that POST to the mounted route.\n *\n * `context` is OPTIONAL in this signature because one type has to describe both halves. The client\n * never has a `Context` - it imports the generated stub, `(input) => Promise<Output>` - so requiring\n * it here made every call the docs teach a compile error, `useServerFn(fn)` included. The server half\n * always supplies it: the mount passes `c` (see `serverFunctions`), and the declaration you write in\n * `serverFn` still receives it as a required, fully typed parameter.\n *\n * The one case to know: calling this value directly in your own server code and omitting `context`\n * hands the declaration `undefined`. Pass `c` through when you do that.\n */"
+    "signature": "export interface ServerFn<Input, Output> {\n    (input: Input, context: Context): MaybePromise<Output>;\n    readonly [SERVER_FN]: ServerFnConfig<Input>;\n}",
+    "doc": "/**\n * A declared server function. Callable directly on the server (the same value your own server-side\n * code can await); on the client, phase 2's build transform replaces this module with typed stubs\n * that POST to the mounted route.\n *\n * This is the SERVER declaration type, so context is required. Client builds replace the module with\n * a one-argument {@link ClientServerFn}; UI bindings accept either shape and adapt at that boundary.\n * Keeping the types separate prevents a direct server call from type-checking while handing the\n * declaration `undefined` for a context its implementation requires.\n */"
   },
   {
     "name": "ServerFnConfig",
@@ -8362,6 +8389,13 @@
     "doc": "/** Every server function a module exports, keyed by export name. */"
   },
   {
+    "name": "ServerFnReference",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type ServerFnReference<Input, Output> = ServerFn<Input, Output> | ClientServerFn<Input, Output>;",
+    "doc": "/** A UI binding boundary: source declarations and generated client stubs are both accepted. */"
+  },
+  {
     "name": "ServerFnState",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -8386,7 +8420,7 @@
     "name": "ServerFnStubPlugin",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ServerFnStubPlugin {\n    readonly name: string;\n    readonly enforce: \"pre\";\n    /** Applied only to the CLIENT build; the server build keeps the real module. */\n    readonly applyToEnvironment?: (environment: {\n        readonly name: string;\n    }) => boolean;\n    transform(code: string, id: string): {\n        code: string;\n        map: null;\n    } | null;\n}",
+    "signature": "export interface ServerFnStubPlugin {\n    readonly name: string;\n    readonly enforce: \"pre\";\n    /** Applied only to the CLIENT build; the server build keeps the real module. */\n    readonly applyToEnvironment?: (environment: {\n        readonly name: string;\n    }) => boolean;\n    transform(code: string, id: string, options?: {\n        readonly ssr?: boolean;\n    }): {\n        code: string;\n        map: null;\n    } | null;\n}",
     "doc": "/** The slice of a Vite/Rollup plugin this returns. Structural, so `vite` stays an optional peer. */"
   },
   {
@@ -8414,7 +8448,7 @@
     "name": "ServerOnlyEmptyPlugin",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ServerOnlyEmptyPlugin {\n    readonly name: string;\n    readonly enforce: \"pre\";\n    /** Applied only to the CLIENT build; the server build keeps the real module. */\n    readonly applyToEnvironment?: (environment: {\n        readonly name: string;\n    }) => boolean;\n    transform(code: string, id: string): {\n        code: string;\n        map: null;\n    } | null;\n}",
+    "signature": "export interface ServerOnlyEmptyPlugin {\n    readonly name: string;\n    readonly enforce: \"pre\";\n    /** Applied only to the CLIENT build; the server build keeps the real module. */\n    readonly applyToEnvironment?: (environment: {\n        readonly name: string;\n    }) => boolean;\n    transform(code: string, id: string, options?: {\n        readonly ssr?: boolean;\n    }): {\n        code: string;\n        map: null;\n    } | null;\n}",
     "doc": "/** The slice of a Vite/Rollup plugin this returns. Structural, so `vite` stays an optional peer. */"
   },
   {
@@ -9658,6 +9692,20 @@
     "doc": "/** Sentinel used only for an unbounded local budget. It is never written to the wire. */"
   },
   {
+    "name": "unsafeInlineScript",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function unsafeInlineScript(content: string, options: {\n    readonly nonce: string;\n    readonly type?: \"module\" | \"text/javascript\";\n}): UnsafeScriptDescriptor;",
+    "doc": "/**\n * Deliberately unsafe escape hatch for executable inline code. The required nonce keeps the result\n * compatible with a strict CSP and makes the security-sensitive choice visible at the call site.\n */"
+  },
+  {
+    "name": "UnsafeScriptDescriptor",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface UnsafeScriptDescriptor {\n    readonly unsafe: true;\n    readonly type: \"module\" | \"text/javascript\";\n    readonly nonce: string;\n    readonly content: string;\n}",
+    "doc": "/** Explicit escape hatch for executable inline code. A CSP nonce is mandatory. */"
+  },
+  {
     "name": "unsignValue",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -9948,35 +9996,35 @@
     "name": "useServerFn",
     "kind": "function",
     "package": "@nifrajs/web-preact",
-    "signature": "export declare function useServerFn<Input, Output>(fn: (input: Input) => Promise<Output> | Output): ServerFnHandle<Input, Output>;",
+    "signature": "export declare function useServerFn<Input, Output>(fn: ServerFnReference<Input, Output>): ServerFnHandle<Input, Output>;",
     "doc": "/**\n * Track one server function's call state.\n *\n * Preact's compat `useSyncExternalStore` takes two arguments (no server snapshot); the store's idle\n * state is shared by reference anyway, so a server render and the first client render agree.\n */"
   },
   {
     "name": "useServerFn",
     "kind": "function",
     "package": "@nifrajs/web-react",
-    "signature": "export declare function useServerFn<Input, Output>(fn: (input: Input) => Promise<Output> | Output): ServerFnHandle<Input, Output>;",
+    "signature": "export declare function useServerFn<Input, Output>(fn: ServerFnReference<Input, Output>): ServerFnHandle<Input, Output>;",
     "doc": "/**\n * Track one server function's call state.\n *\n *     const addTodo = useServerFn(fns.addTodo)\n *     <button disabled={addTodo.pending} onClick={() => addTodo.call({ text }).catch(() => {})}>\n *\n * The store is per component instance and created once; `fn` is read on the first render only, so a\n * freshly-created inline function neither resets the state nor goes stale.\n */"
   },
   {
     "name": "useServerFn",
     "kind": "function",
     "package": "@nifrajs/web-solid",
-    "signature": "export declare function useServerFn<Input, Output>(fn: (input: Input) => Promise<Output> | Output): ServerFnHandle<Input, Output>;",
+    "signature": "export declare function useServerFn<Input, Output>(fn: ServerFnReference<Input, Output>): ServerFnHandle<Input, Output>;",
     "doc": "/**\n * Track one server function's call state.\n *\n *     const addTodo = useServerFn(fns.addTodo)\n *     <button disabled={addTodo.state().pending} onClick={() => addTodo.call({ text }).catch(() => {})}>\n */"
   },
   {
     "name": "useServerFn",
     "kind": "function",
     "package": "@nifrajs/web-svelte",
-    "signature": "export declare function useServerFn<Input, Output>(fn: (input: Input) => Promise<Output> | Output): ServerFnHandle<Input, Output>;",
+    "signature": "export declare function useServerFn<Input, Output>(fn: ServerFnReference<Input, Output>): ServerFnHandle<Input, Output>;",
     "doc": "/**\n * Track one server function's call state.\n *\n * The `readable` subscribes on first use and unsubscribes when the last subscriber leaves, so a\n * component that never reads the state never attaches a listener.\n */"
   },
   {
     "name": "useServerFn",
     "kind": "function",
     "package": "@nifrajs/web-vue",
-    "signature": "export declare function useServerFn<Input, Output>(fn: (input: Input) => Promise<Output> | Output): ServerFnHandle<Input, Output>;",
+    "signature": "export declare function useServerFn<Input, Output>(fn: ServerFnReference<Input, Output>): ServerFnHandle<Input, Output>;",
     "doc": "/**\n * Track one server function's call state.\n *\n * `shallowRef` rather than `ref`: the state object is replaced wholesale on every change, so deep\n * reactivity would walk the payload on each update for nothing.\n */"
   },
   {
@@ -10187,7 +10235,7 @@
     "name": "ViteDevServerOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ViteDevServerOptions {\n    /** Absolute (or cwd-relative) path to the `routes/` dir. */\n    readonly routesDir: string;\n    /** Client runtime module providing `mountRouter` (e.g. `\"@nifrajs/web-react/client\"`). */\n    readonly clientModule: string;\n    /**\n     * Build the nifra app for the given dev client-entry URL.\n     *\n     * `load` resolves a route module through **Vite's** graph (`ssrLoadModule`). Pass it to\n     * `discoverRoutes(routesDir, { load })` so SSR and the client are resolved by the SAME toolchain.\n     * Without it SSR resolves through Bun while the client resolves through Vite - two resolvers, one\n     * process - which is what makes `resolve.dedupe` fail to reach SSR and produces the dual-React\n     * crash. Vite re-evaluates on change, so no `importQuery` cache-buster is needed alongside it.\n     */\n    readonly createApp: (clientEntry: string, load: (absolutePath: string) => Promise<unknown>) => FetchApp | Promise<FetchApp>;\n    /** Vite plugins — inject your framework's official plugin, e.g. `[react()]`. */\n    readonly plugins?: readonly unknown[];\n    /**\n     * Extra `resolve.conditions` prepended ahead of nifra's defaults — some frameworks need their own\n     * (e.g. Solid's `\"solid\"` condition routes `solid-js` to its source/JSX-dev build).\n     */\n    readonly conditions?: readonly string[];\n    /**\n     * Compile-time `define` replacements (e.g. Vue's `__VUE_OPTIONS_API__` flags). Vite already sets\n     * `process.env.NODE_ENV` in dev; this is for framework feature flags the plugin doesn't inject.\n     */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Vite project root (default `process.cwd()`). */\n    readonly root?: string;\n    /** Port (default {@link DEFAULT_DEV_PORT}). */\n    readonly port?: number;\n    /**\n     * Use polling for the file watcher. Native fs events (fsevents/inotify) are unreliable inside\n     * containers, networked filesystems, and some sandboxes — there, HMR silently never fires. Set\n     * `true` (or the env var `CHOKIDAR_USEPOLLING=1`) to poll instead. Default: off (native events).\n     */\n    readonly poll?: boolean;\n    /** Vite public directory. Defaults to `<root>/public`; `false` disables it. */\n    readonly publicDir?: string | false;\n}"
+    "signature": "export interface ViteDevServerOptions {\n    /** Absolute (or cwd-relative) path to the `routes/` dir. */\n    readonly routesDir: string;\n    /** Client runtime module providing `mountRouter` (e.g. `\"@nifrajs/web-react/client\"`). */\n    readonly clientModule: string;\n    /**\n     * Build the nifra app for the given dev client-entry URL.\n     *\n     * `load` resolves a route module through **Vite's** graph (`ssrLoadModule`). Pass it to\n     * `discoverRoutes(routesDir, { load })` so SSR and the client are resolved by the SAME toolchain.\n     * Without it SSR resolves through Bun while the client resolves through Vite - two resolvers, one\n     * process - which is what makes `resolve.dedupe` fail to reach SSR and produces the dual-React\n     * crash. Vite re-evaluates on change, so no `importQuery` cache-buster is needed alongside it.\n     */\n    readonly createApp: (clientEntry: string, load: (absolutePath: string) => Promise<unknown>) => FetchApp | Promise<FetchApp>;\n    /** Vite plugins — inject your framework's official plugin, e.g. `[react()]`. */\n    readonly plugins?: readonly unknown[];\n    /**\n     * Extra `resolve.conditions` prepended ahead of nifra's defaults — some frameworks need their own\n     * (e.g. Solid's `\"solid\"` condition routes `solid-js` to its source/JSX-dev build).\n     */\n    readonly conditions?: readonly string[];\n    /**\n     * Compile-time `define` replacements (e.g. Vue's `__VUE_OPTIONS_API__` flags). Vite already sets\n     * `process.env.NODE_ENV` in dev; this is for framework feature flags the plugin doesn't inject.\n     */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Vite project root (default `process.cwd()`). */\n    readonly root?: string;\n    /** Port (default {@link DEFAULT_DEV_PORT}). */\n    readonly port?: number;\n    /**\n     * Use polling for the file watcher. Native fs events (fsevents/inotify) are unreliable inside\n     * containers, networked filesystems, and some sandboxes — there, HMR silently never fires. Set\n     * `true` (or the env var `CHOKIDAR_USEPOLLING=1`) to poll instead. Default: off (native events).\n     */\n    readonly poll?: boolean;\n    /** Vite public directory. Defaults to `<root>/public`; `false` disables it. */\n    readonly publicDir?: string | false;\n    /** Client-visible environment prefix (default `\"PUBLIC_\"`; empty disables exposure). */\n    readonly publicEnvPrefix?: string;\n}"
   },
   {
     "name": "viteLeakGuard",
@@ -10209,6 +10257,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function viteServerOnlyEmpty(): ServerOnlyEmptyPlugin;",
     "doc": "/**\n * Empty every `*.server` module in the client build.\n *\n * Client-only by construction: nifra passes this to the client build and the dev server, never to the\n * SSR build, where the real module is what runs.\n */"
+  },
+  {
+    "name": "viteServerOnlyReplacement",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function viteServerOnlyReplacement(source: string): string;",
+    "doc": "/**\n * Vite dev serves native ESM, so the Bun/CommonJS proxy above is invalid there. Emit inert ESM\n * bindings derived from the source's public names while discarding the implementation and imports.\n * An unsupported exotic export fails closed at ESM link time; server code is never served as fallback.\n */"
   },
   {
     "name": "vueAdapter",

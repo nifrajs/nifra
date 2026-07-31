@@ -66,10 +66,20 @@ export interface LinkDescriptor {
  * (`</`, `<!--`, `]]>`) — see `escapeScriptContent` — so a JSON-LD payload can never close the
  * `<script>` element early. `content` is **JSON/text, never raw HTML**: this slot is not an XSS escape
  * hatch for arbitrary markup. */
+export type InertScriptType = "application/ld+json" | "application/json"
+
 export interface ScriptDescriptor {
   /** The script's `type` attribute. Default `"application/ld+json"`. */
-  readonly type?: string
+  readonly type?: InertScriptType
   /** The script body (e.g. a `JSON.stringify`'d JSON-LD object). Escaped for safe `<script>` embedding. */
+  readonly content: string
+}
+
+/** Explicit escape hatch for executable inline code. A CSP nonce is mandatory. */
+export interface UnsafeScriptDescriptor {
+  readonly unsafe: true
+  readonly type: "module" | "text/javascript"
+  readonly nonce: string
   readonly content: string
 }
 
@@ -89,6 +99,8 @@ export interface Meta {
   readonly link?: readonly LinkDescriptor[]
   /** Inert head `<script>`s (JSON-LD structured data, etc.). See {@link ScriptDescriptor}. */
   readonly script?: readonly ScriptDescriptor[]
+  /** Executable inline scripts. Prefer external modules; construct only with `unsafeInlineScript()`. */
+  readonly unsafeScript?: readonly UnsafeScriptDescriptor[]
   /**
    * The document language — `<html lang="...">`. Nearest-wins like `title`, so a localized route can
    * override a layout's default. Defaults to `"en"` when no head in the chain sets it.

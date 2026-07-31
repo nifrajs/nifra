@@ -24,6 +24,7 @@ import {
   prepareDeferred,
 } from "./deferred.ts"
 import { isDraftEnabled } from "./draft.ts"
+import { EXECUTABLE_SCRIPT_TYPES, INERT_SCRIPT_TYPES } from "./internal/script-types.ts"
 import { ISR_REVALIDATE_HEADER } from "./isr.ts"
 import { generateLlmsTxt } from "./llms-txt.ts"
 import type {
@@ -38,6 +39,7 @@ import type {
   RouteEntry,
   RouteModule,
   ScriptDescriptor,
+  UnsafeScriptDescriptor,
 } from "./manifest.ts"
 import {
   createMatcher,
@@ -98,6 +100,7 @@ export {
   filePathToPattern,
   filePathToPatterns,
   type GetStaticPaths,
+  type InertScriptType,
   type LayoutEntry,
   type LinkDescriptor,
   type Loader,
@@ -112,6 +115,7 @@ export {
   type StaticPath,
   type StaticPaths,
   type StaticRoutes,
+  type UnsafeScriptDescriptor,
 } from "./manifest.ts"
 // Navigation bridge — a DOM-free seam the browser layer (`installHistory`) populates so an adapter's
 // `useNavigate` (a route component, importing only this agnostic entry) reaches history-aware nav.
@@ -275,7 +279,7 @@ export interface RenderAdapter {
    * Server: per-document bootstrap markup injected into `<head>` that the client
    * `hydrate` requires (Solid: `generateHydrationScript()`). Empty string if none.
    */
-  hydrationHead(): string
+  hydrationHead(nonce?: string): string
 }
 
 /** Global the server serializes loader data into; the client reads it to hydrate. */
@@ -442,6 +446,8 @@ export interface RenderPageOptions {
    * tail — emitted **regardless of `hydrate`**, so a static (`hydrate: false`) page can still mount
    * no-framework islands. URLs are attribute-escaped. Empty/omitted ⇒ none (unchanged output). */
   readonly islandScripts?: readonly string[]
+  /** CSP nonce applied to every framework-owned executable script in this document. */
+  readonly nonce?: string
 }
 
 /**
@@ -483,8 +489,13 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     rootId = "root",
     hydrate = true,
     islandScripts = [],
+    nonce,
     headers: extraHeaders,
   } = options
+  if (nonce !== undefined && nonce.trim() === "") {
+    throw new TypeError("[nifra/web] renderPage nonce must be non-empty when provided")
+  }
+  const nonceAttr = nonce === undefined ? "" : ` nonce="${escapeAttr(nonce)}"`
   const route = routeId === undefined ? "" : `window.${ROUTE_GLOBAL}=${serializeData(routeId)};`
   // The SSG prerendered-path set (when an app declares it) — the client reads it to fetch a static
   // `_data.json` on soft-nav into a prerendered route instead of hitting the worker. Empty ⇒ omitted.
@@ -525,7 +536,8 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     actionSplit === undefined
       ? ""
       : `window.${ACTION_GLOBAL}=${serializeData(actionSplit.forClient)};`
-  const deferredRuntime = allDeferred.length > 0 ? `<script>${DEFERRED_RUNTIME}</script>` : ""
+  const deferredRuntime =
+    allDeferred.length > 0 ? `<script${nonceAttr}>${DEFERRED_RUNTIME}</script>` : ""
   // Matched-route chunk preloads, concatenated directly (skip the `filter().map()`
   // intermediate arrays — and the whole loop — on the common no-extra-preload render). De-duped
   // against the entry, which is preloaded separately below.
@@ -561,7 +573,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     : ""
   // Runs in the first-paint→hydration window to swallow a JS-only form's broken native submit. Only on a
   // hydrating page (a static/_error page has no client handlers, so no footgun).
-  const hydrationGuard = hydrate ? `<script>${PRE_HYDRATION_GUARD}</script>` : ""
+  const hydrationGuard = hydrate ? `<script${nonceAttr}>${PRE_HYDRATION_GUARD}</script>` : ""
   // `<html>` attributes. `lang` defaults to `"en"` (so an app that never sets it is byte-identical to
   // before); `dir` is omitted entirely when unset, which IS HTML's `ltr` default — emitting it
   // unconditionally would change every existing app's output for no gain. Both attribute-escaped.
@@ -572,7 +584,10 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // static attribute name with no value, so `rootId` never reaches the markup twice and there is
   // nothing here to escape. Omitted on the default so existing output is unchanged.
   const rootMarker = rootId === "root" ? "" : ` ${ROOT_ATTRIBUTE}`
-  const shellHtml = `<!doctype html><html${htmlAttrs}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${hydrationGuard}<title>${escapeHtml(head?.title ?? title)}</title>${headTags(head)}${styleLinks}${hydrationLinks}${islandPreloads}${adapter.hydrationHead()}</head><body><div id="${escapeAttr(rootId)}"${rootMarker}>`
+  const hydrationHead = adapter
+    .hydrationHead(nonce)
+    .replace(/<script(?![^>]*\bnonce=)(?=[\s>])/g, `<script${nonceAttr}`)
+  const shellHtml = `<!doctype html><html${htmlAttrs}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${hydrationGuard}<title>${escapeHtml(head?.title ?? title)}</title>${headTags(head)}${styleLinks}${hydrationLinks}${islandPreloads}${hydrationHead}</head><body><div id="${escapeAttr(rootId)}"${rootMarker}>`
   // Closes the hydration container; deferred resolve scripts go AFTER it (outside `#root`) so they
   // aren't part of the adapter's hydrated tree (an inline script inside it breaks hydration).
   const closeRootHtml = "</div>"
@@ -582,10 +597,10 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // client but can still mount no-framework islands (`@nifrajs/web/islands`).
   let islandTags = ""
   for (const src of islandScripts)
-    islandTags += `<script type="module" src="${escapeAttr(src)}"></script>`
+    islandTags += `<script type="module" src="${escapeAttr(src)}"${nonceAttr}></script>`
   const tailHtml = `${
     hydrate
-      ? `<script>${route}${action}${prerendered}${layoutTail}window.${DATA_GLOBAL}=${serializeData(forClient)}</script><script type="module" src="${escapeAttr(clientEntry ?? "")}"></script>`
+      ? `<script${nonceAttr}>${route}${action}${prerendered}${layoutTail}window.${DATA_GLOBAL}=${serializeData(forClient)}</script><script type="module" src="${escapeAttr(clientEntry ?? "")}"${nonceAttr}></script>`
       : ""
   }${islandTags}</body></html>`
   const headers: Record<string, string> = { "content-type": "text/html; charset=utf-8" }
@@ -645,6 +660,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     tailHtml,
     status,
     headers,
+    nonceAttr,
   ).then((response) => new ResponseRenderedPage(response))
 }
 
@@ -658,6 +674,7 @@ async function renderStreamedPage(
   tailHtml: string,
   status: number,
   headers: Record<string, string>,
+  nonceAttr: string,
 ): Promise<Response> {
   // Streaming path — required for `defer()` (progressive `<Await>` resolution) and used by any adapter
   // that doesn't implement `renderToString`. Awaiting `renderToStream` resolves on shell-readiness
@@ -668,7 +685,7 @@ async function renderStreamedPage(
   const closeRoot = enc.encode(closeRootHtml)
   const tail = enc.encode(tailHtml)
   const appStream = await adapter.renderToStream(chain, renderProps)
-  const body = streamDocument(shell, appStream, closeRoot, allDeferred, tail, enc)
+  const body = streamDocument(shell, appStream, closeRoot, allDeferred, tail, enc, nonceAttr)
   return new Response(body, { status, headers })
 }
 
@@ -733,6 +750,7 @@ function streamDocument(
   deferred: ReadonlyArray<{ readonly id: number; readonly promise: Promise<unknown> }>,
   tail: Uint8Array,
   enc: TextEncoder,
+  nonceAttr: string,
 ): ReadableStream<Uint8Array> {
   return new ReadableStream({
     async start(controller) {
@@ -752,7 +770,7 @@ function streamDocument(
             try {
               const value = serializeData(await d.promise)
               controller.enqueue(
-                enc.encode(`<script>window.__nifraResolve(${d.id},${value})</script>`),
+                enc.encode(`<script${nonceAttr}>window.__nifraResolve(${d.id},${value})</script>`),
               )
             } catch (err) {
               // A rejected deferred streams __nifraReject (the client `<Await>` surfaces it) — it must
@@ -761,7 +779,7 @@ function streamDocument(
               console.error("[nifra/web] deferred value rejected:", err)
               controller.enqueue(
                 enc.encode(
-                  `<script>window.__nifraReject(${d.id},${serializeData(DEFERRED_ERROR_CODE)})</script>`,
+                  `<script${nonceAttr}>window.__nifraReject(${d.id},${serializeData(DEFERRED_ERROR_CODE)})</script>`,
                 ),
               )
             }
@@ -1117,6 +1135,14 @@ function tagAttrs(attrs: Record<string, string | boolean | undefined>): string {
 // content can vary). WeakMap so a route module that's GC'd takes its entry with it.
 const headTagsCache = new WeakMap<Meta, string>()
 
+function assertExecutableScriptType(type: string): void {
+  if (!EXECUTABLE_SCRIPT_TYPES.has(type)) {
+    throw new TypeError(
+      `[nifra/web] executable inline scripts accept ${[...EXECUTABLE_SCRIPT_TYPES].map((t) => JSON.stringify(t)).join(" or ")}; received ${JSON.stringify(type)}`,
+    )
+  }
+}
+
 /** Render a route's `meta`/`link`/`script` as managed (`data-nifra`) head tags. Title is set
  * separately. XSS-safe by construction: every attribute flows through {@link tagAttrs} (name shape-
  * validated, value HTML-escaped), and each `script[].content` through `escapeScriptContent`
@@ -1135,8 +1161,29 @@ function headTags(head: Meta | undefined): string {
   // breakout-escaped (`escapeScriptContent`) so a `</script>` (or `<!--`/`]]>`) payload can't close the
   // element early. Managed (`data-nifra`) so a soft-nav's `applyHead` cleanly replaces it.
   if (head.script !== undefined)
-    for (const s of head.script)
-      out += `<script type="${escapeAttr(s.type ?? "application/ld+json")}" data-nifra>${escapeScriptContent(s.content)}</script>`
+    for (const s of head.script) {
+      const type = s.type ?? "application/ld+json"
+      if (!INERT_SCRIPT_TYPES.has(type)) {
+        throw new TypeError(
+          `[nifra/web] head.script only accepts inert JSON script types; received ${JSON.stringify(type)}. Use unsafeInlineScript() with a CSP nonce for executable code.`,
+        )
+      }
+      out += `<script type="${type}" data-nifra>${escapeScriptContent(s.content)}</script>`
+    }
+  if (head.unsafeScript !== undefined)
+    for (const s of head.unsafeScript) {
+      if (s.unsafe !== true || s.nonce.trim() === "") {
+        throw new TypeError("[nifra/web] executable inline scripts require a non-empty CSP nonce")
+      }
+      // `type` is validated, not escaped, for the same reason as the inert slot above: an unknown
+      // value here is a bug, and escaping one would emit a nonsense script type rather than say so.
+      // It was interpolated raw while the `nonce` beside it was escaped, so a descriptor built by hand
+      // - `unsafeScript` is a public field, the helper is only a convenience - could close the
+      // attribute and inject markup. Measured: `type: '"><img src=x onerror=alert(1)>'` reached the
+      // document. An injection in the slot whose whole purpose is to make script emission trustworthy.
+      assertExecutableScriptType(s.type)
+      out += `<script type="${s.type}" nonce="${escapeAttr(s.nonce)}" data-nifra>${escapeScriptContent(s.content)}</script>`
+    }
   headTagsCache.set(head, out)
   return out
 }
@@ -1210,6 +1257,30 @@ export function jsonLd(data: Record<string, unknown>): ScriptDescriptor {
 }
 
 /**
+ * Deliberately unsafe escape hatch for executable inline code. The required nonce keeps the result
+ * compatible with a strict CSP and makes the security-sensitive choice visible at the call site.
+ */
+export function unsafeInlineScript(
+  content: string,
+  options: { readonly nonce: string; readonly type?: "module" | "text/javascript" },
+): UnsafeScriptDescriptor {
+  if (options.nonce.trim() === "") {
+    throw new TypeError("[nifra/web] unsafeInlineScript requires a non-empty CSP nonce")
+  }
+  const type = options.type ?? "module"
+  // Checked here as well as at emit: the type union is compile-time only, and this helper is the one
+  // place a caller is told what it may pass. Failing at the call site names the argument; failing at
+  // render names a document.
+  assertExecutableScriptType(type)
+  return {
+    unsafe: true,
+    type,
+    nonce: options.nonce,
+    content,
+  }
+}
+
+/**
  * Merge a route's `<head>` contributions from its layout chain + the page into one {@link Meta}.
  *
  * The head contract (see {@link CreateWebAppOptions} and `LayoutEntry`): a `_layout.tsx` may export
@@ -1238,6 +1309,7 @@ export function mergeHeads(heads: readonly Meta[]): Meta {
   const meta: Array<Record<string, string>> = []
   const link: LinkDescriptor[] = []
   const script: ScriptDescriptor[] = []
+  const unsafeScript: UnsafeScriptDescriptor[] = []
   for (const h of heads) {
     if (h.title !== undefined) title = h.title // nearest-wins: later (more specific) overrides
     if (h.lang !== undefined) lang = h.lang // nearest-wins, like title
@@ -1245,6 +1317,7 @@ export function mergeHeads(heads: readonly Meta[]): Meta {
     if (h.meta !== undefined) meta.push(...h.meta)
     if (h.link !== undefined) link.push(...h.link)
     if (h.script !== undefined) script.push(...h.script) // concatenated like meta/link (outermost first)
+    if (h.unsafeScript !== undefined) unsafeScript.push(...h.unsafeScript)
   }
   // Build the result with only the fields that were actually contributed — an empty `meta`/`link`/
   // `script` array would otherwise be a spurious (if harmless) key. A mutable local; the cast to `Meta`
@@ -1255,6 +1328,7 @@ export function mergeHeads(heads: readonly Meta[]): Meta {
     meta?: Meta["meta"]
     link?: Meta["link"]
     script?: Meta["script"]
+    unsafeScript?: Meta["unsafeScript"]
     lang?: string
     dir?: Meta["dir"]
   } = {}
@@ -1262,6 +1336,7 @@ export function mergeHeads(heads: readonly Meta[]): Meta {
   if (meta.length > 0) merged.meta = meta
   if (link.length > 0) merged.link = link
   if (script.length > 0) merged.script = script
+  if (unsafeScript.length > 0) merged.unsafeScript = unsafeScript
   if (lang !== undefined) merged.lang = lang
   if (dir !== undefined) merged.dir = dir
   return merged as Meta
@@ -2264,7 +2339,7 @@ export function generateClientEntry(
     // perfect document that hydrated NOTHING, with no diagnostic, because the missing `#root` was
     // swallowed by an `if (root)`. `renderPage` marks a custom container with `ROOT_ATTRIBUTE`; the
     // default `#root` it leaves unmarked, which is what the fallback is for.
-    `const root = document.querySelector("[${ROOT_ATTRIBUTE}]") ?? document.getElementById("root")`,
+    `const root = document.querySelector("body > div[${ROOT_ATTRIBUTE}]") ?? document.getElementById("root")`,
     // Loud, because there is no recoverable case: this entry ships only in a document `renderPage`
     // opened a container in, so reaching here means the document is not the one it was built for.
     `if (!root) throw new Error(${JSON.stringify(

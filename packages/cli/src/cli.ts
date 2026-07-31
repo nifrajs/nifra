@@ -192,13 +192,14 @@ export async function assertBunDevSupportsApp(app: LoadedApp): Promise<void> {
   // is a gate that eventually disagrees with the thing it guards.
   const leaking: string[] = []
   const serverOnly: string[] = []
-  for await (const file of new Glob("**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}").scan({
+  for await (const file of new Glob("**/*.{server,fn,ts,tsx,js,jsx,mts,cts,mjs,cjs}").scan({
     cwd: app.cwd,
     dot: false,
   })) {
     if (/(^|\/)(node_modules|dist|\.nifra|\.git)\//.test(file)) continue
-    // Strip the extension once so the conventions' regexes see `src/todos.fn` / `src/db.server`, which
-    // is the shape they match - and which also catches the extensionless `db.server` the glob missed.
+    // Strip the source extension once so the conventions' regexes see `src/todos.fn` / `src/db.server`,
+    // which is the shape they match. The glob also includes the extensionless `.fn` / `.server` forms;
+    // those already have the matcher-ready shape and pass through unchanged.
     const stem = file.replace(/\.[cm]?[jt]sx?$/, "")
     if (SERVER_FN_MODULE.test(stem)) {
       if (leaking.length < 5) leaking.push(file)
@@ -294,6 +295,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
     clientModule: fw.clientModule,
     plugins: app.resolvedPlugins.vitePlugins,
     ...(fw.publicDir !== undefined ? { publicDir: fw.publicDir } : {}),
+    ...(fw.publicEnvPrefix !== undefined ? { publicEnvPrefix: fw.publicEnvPrefix } : {}),
     poll: flags.poll,
     port: flags.port,
     ...(fw.conditions ? { conditions: fw.conditions } : {}),

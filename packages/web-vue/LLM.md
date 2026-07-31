@@ -25,7 +25,7 @@ Vue render adapter for @nifrajs/web — streaming SSR + hydration, with a .vue S
 - **useFetchers** _(function)_ — `useFetchers: () => Readonly<ShallowRef<readonly Fetcher[]>>` · from `@nifrajs/web-vue/fetcher`
 - **useQuery** _(function)_ — `useQuery: <T>(key: unknown, fn: () => Promise<T>) => UseQueryResult<T>` · from `@nifrajs/web-vue/query`
 - **useQueryClient** _(function)_ — `useQueryClient: () => Pick<QueryClient, "invalidateQueries">` · from `@nifrajs/web-vue/query`
-- **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: (input: Input) => Promise<Output> | Output) => ServerFnHandle<Input, Output>` · from `@nifrajs/web-vue/fn`
+- **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: ServerFnReference<Input, Output>) => ServerFnHandle<Input, Output>` · from `@nifrajs/web-vue/fn`
 - **useT** _(function)_ — `useT: () => Formatter` · from `@nifrajs/web-vue/i18n`
 - **vueBunPlugin** _(function)_ — `vueBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-vue/plugin`
 

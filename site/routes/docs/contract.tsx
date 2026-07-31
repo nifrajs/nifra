@@ -175,6 +175,23 @@ const { prerendered } = await prerenderRoutes({
 const paths = prerendered.map((p) => p.path)
 await Bun.write("./dist/_routes.json", JSON.stringify(cloudflarePagesRoutes({ prerendered: paths })))`
 
+const INLINE_SCRIPT = `import { renderPage, unsafeInlineScript } from "@nifrajs/web"
+
+declare const adapter: import("@nifrajs/web").RenderAdapter
+declare const nonce: string // one per response, from your CSP middleware
+
+const page = renderPage({
+  adapter,
+  chain: [null],
+  data: null,
+  clientEntry: "/assets/client.js",
+  nonce, // reaches the hydration bootstrap, the data script and every island tag
+  head: {
+    script: [{ content: JSON.stringify({ "@type": "Article" }) }], // inert: JSON only
+    unsafeScript: [unsafeInlineScript("window.dataLayer = []", { nonce })],
+  },
+})`
+
 const SEO_EXAMPLE = `// routes/articles/[slug].tsx — a complete SEO head: canonical + Open Graph + Twitter + JSON-LD,
 // with ABSOLUTE URLs built from \`origin\`. The three helpers (canonical/openGraph/jsonLd) are public
 // exports of @nifrajs/web; \`origin\` is the third MetaArgs field (after data + params).
@@ -384,6 +401,25 @@ export default function Contract() {
         properties you pass (plus <code>og:type</code>); <code>jsonLd()</code>'s payload is escaped for
         safe <code>&lt;script&gt;</code> embedding by the head renderer.
       </blockquote>
+
+      <h3>Inert scripts, and the escape hatch</h3>
+      <p>
+        <code>head.script</code> takes <strong>data only</strong> - <code>application/ld+json</code> or{" "}
+        <code>application/json</code>. That is not a style rule. The head renderer escapes{" "}
+        <code>content</code> against closing the element early (<code>&lt;/script&gt;</code>,{" "}
+        <code>&lt;!--</code>, <code>]]&gt;</code>), which is exactly what inert JSON needs and is no
+        protection at all for code. A route interpolating loader data into an executable body had
+        escaping that looked like a boundary and was not one, so the slot now only accepts what it can
+        actually make safe. A wrong <code>type</code> is a compile error; it also throws at render, for
+        callers the types do not reach.
+      </p>
+      <p>
+        Executable inline code goes through <code>unsafeInlineScript()</code>, which is named after
+        what it is and requires a CSP nonce. Pass the same nonce to <code>renderPage</code> and it
+        reaches every framework-owned script in the document, so a strict{" "}
+        <code>script-src 'nonce-…'</code> policy is achievable rather than aspirational:
+      </p>
+      <CodeBlock code={INLINE_SCRIPT} lang="ts" />
 
       <h2>The client ↔ server boundary</h2>
       <p>

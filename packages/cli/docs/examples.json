@@ -108,6 +108,12 @@
     "code": "// TWO ways to handle a request — pick by who is calling.\nimport type { LoaderContext } from \"@nifrajs/web\"\n\n// (1) A page's own data + mutations → route exports. A PUBLIC POST is a route ACTION\n//     (routes/contact.tsx) — the browser POSTs the route's own URL, nifra runs `action`:\nexport async function action(ctx: LoaderContext) {\n  const form = await ctx.request.formData()        // the browser POSTed this route\n  return { ok: true, body: String(form.get(\"body\")) } // → props.actionData on re-render\n}\n\n// (2) ctx.api is the IN-PROCESS backend client (the inProcessClient(server) the app was given).\n//     It is LOADERS-ONLY: the SSR backend registers GET handlers, so a .post() to ctx.api 405s.\nexport async function loader(ctx: LoaderContext) {\n  // ✅ a GET in-process — no HTTP hop. (A .post() to ctx.api would 405; write an `action` instead.)\n  return { id: ctx.params.id }\n}\n\n// Rule of thumb: data INTO a page → loader + ctx.api (GET). A mutation FROM the browser\n// (a form/fetch POST) → an `action` export on the route. Don't `inProcessClient(api).post()`."
   },
   {
+    "name": "INLINE_SCRIPT",
+    "topic": "Nifra — Framework contract",
+    "slug": "contract",
+    "code": "import { renderPage, unsafeInlineScript } from \"@nifrajs/web\"\n\ndeclare const adapter: import(\"@nifrajs/web\").RenderAdapter\ndeclare const nonce: string // one per response, from your CSP middleware\n\nconst page = renderPage({\n  adapter,\n  chain: [null],\n  data: null,\n  clientEntry: \"/assets/client.js\",\n  nonce, // reaches the hydration bootstrap, the data script and every island tag\n  head: {\n    script: [{ content: JSON.stringify({ \"@type\": \"Article\" }) }], // inert: JSON only\n    unsafeScript: [unsafeInlineScript(\"window.dataLayer = []\", { nonce })],\n  },\n})"
+  },
+  {
     "name": "PARAM_404",
     "topic": "Nifra — Framework contract",
     "slug": "contract",

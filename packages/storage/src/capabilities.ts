@@ -97,49 +97,76 @@ export function withCapabilityBeacon<A extends StorageAdapter>(
     return ACCESS[method] === "read" ? read : write
   }
 
-  // Built per call rather than cached per context: a map keyed by context would hold every request's
-  // context for the process lifetime, which is a leak with a request attached to it.
-  const bind = (context: object): A =>
-    new Proxy(adapter, {
-      // No `receiver`. Passing the proxy makes a getter run with `this` bound to the proxy, and an
-      // adapter using true `#private` fields then dies on `Cannot access invalid private field` - the
-      // brand check is per-instance and the proxy is a different object. Reading against the target
-      // keeps every adapter shape working, which is the point of a wrapper nobody has to know about.
-      get(target, prop) {
-        const value = Reflect.get(target, prop)
-        if (typeof value !== "function" || typeof prop !== "string") return value
-        return (...args: unknown[]): unknown => {
-          // A refused capability surfaces as a REJECTION, not a synchronous throw: these methods return
-          // promises, so a caller reaching for `.catch(…)` rather than `try` would otherwise miss it and
-          // a fail-closed gate would read as an unhandled crash.
-          try {
-            options.beacon(context, tokenFor(prop, args))
-          } catch (error) {
-            return Promise.reject(error)
-          }
-          return Reflect.apply(value as (...a: unknown[]) => unknown, target, args)
+  /**
+   * Proxy an extensible facade, never the adapter itself. A Proxy may not return a different value for
+   * a frozen non-writable method property; targeting the adapter therefore throws an invariant error
+   * before our wrapper can run. The facade preserves the prototype for `instanceof`, while every read,
+   * write and call still delegates to the real instance (including `#private` brands).
+   */
+  const facade = (read: (prop: PropertyKey) => unknown, hasFor: boolean): A => {
+    const target = Object.create(Object.getPrototypeOf(adapter)) as object
+    return new Proxy(target, {
+      get: (_target, prop) => read(prop),
+      has: (_target, prop) => (hasFor && prop === "for") || Reflect.has(adapter, prop),
+      ownKeys: () => Reflect.ownKeys(adapter),
+      getOwnPropertyDescriptor: (_target, prop) => {
+        const descriptor = Reflect.getOwnPropertyDescriptor(adapter, prop)
+        if (descriptor === undefined) return undefined
+        // The facade is extensible, so expose a configurable data view without copying a frozen
+        // descriptor onto the proxy target (which would recreate the invariant problem).
+        return {
+          configurable: true,
+          enumerable: descriptor.enumerable ?? false,
+          writable: true,
+          value: read(prop),
         }
       },
+      set: (_target, prop, value) => Reflect.set(adapter, prop, value, adapter),
     }) as A
+  }
+
+  // Built per call rather than cached per context: a map keyed by context would hold every request's
+  // context for the process lifetime, which is a leak with a request attached to it.
+  const bind = (context: object): A => {
+    const methods = new Map<PropertyKey, unknown>()
+    return facade((prop) => {
+      const value = Reflect.get(adapter, prop, adapter)
+      if (typeof value !== "function" || typeof prop !== "string") return value
+      const cached = methods.get(prop)
+      if (cached !== undefined) return cached
+      const wrapped = (...args: unknown[]): unknown => {
+        // A refused capability surfaces as a REJECTION, not a synchronous throw: these methods return
+        // promises, so a caller reaching for `.catch(…)` rather than `try` would otherwise miss it.
+        try {
+          options.beacon(context, tokenFor(prop, args))
+        } catch (error) {
+          return Promise.reject(error)
+        }
+        return Reflect.apply(value as (...a: unknown[]) => unknown, adapter, args)
+      }
+      methods.set(prop, wrapped)
+      return wrapped
+    }, false)
+  }
 
   // The unbound adapter keeps working exactly as before, including for methods this module has never
   // heard of. Only the `for(...)` path announces anything.
   //
-  // Methods come back bound to the target for the same reason the getter reads against it: invoked as
-  // `wrapper.put(...)` the receiver would be the PROXY, and an adapter holding true `#private` fields
-  // throws `Cannot access invalid private field` because the brand check is per-instance. Binding
-  // costs a fresh function per property read, which is the right trade against silently breaking any
-  // adapter that uses `#` - and `StorageAdapter` exists to be implemented outside this package.
+  // Methods come back bound to the target for the same reason the getter reads against it. They are
+  // cached per wrapper, so repeated property reads preserve identity and allocate once.
   //
   // An adapter with its own `for` method is shadowed by the wrapper's. That is a genuine (if unlikely)
   // collision, and `for` is the name the sibling beacons already use, so it stays consistent rather
   // than novel.
-  return new Proxy(adapter, {
-    get(target, prop) {
-      if (prop === "for") return bind
-      const value = Reflect.get(target, prop)
-      return typeof value === "function" ? value.bind(target) : value
-    },
-    has: (target, prop) => prop === "for" || Reflect.has(target, prop),
-  }) as BeaconingStorageAdapter<A>
+  const methods = new Map<PropertyKey, unknown>()
+  return facade((prop) => {
+    if (prop === "for") return bind
+    const value = Reflect.get(adapter, prop, adapter)
+    if (typeof value !== "function") return value
+    const cached = methods.get(prop)
+    if (cached !== undefined) return cached
+    const bound = value.bind(adapter)
+    methods.set(prop, bound)
+    return bound
+  }, true) as BeaconingStorageAdapter<A>
 }

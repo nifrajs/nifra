@@ -115,3 +115,59 @@ test("managed head tags are still replaced alongside the <html> attributes", () 
   expect(document.head.children[0]?.getAttribute("content")).toBe("second")
   expect(document.documentElement.getAttribute("lang")).toBe("de")
 })
+
+/**
+ * The script slots, on the soft-navigation side.
+ *
+ * Both halves of the head enforce the same two allowlists, and they have to accept the same documents:
+ * a head that renders on the server and then throws on the next client navigation is worse than one
+ * that never rendered, because it only breaks after the user has started using the page.
+ */
+
+test("the inert slot takes JSON, and refuses anything the browser would execute", () => {
+  applyHead({ script: [{ content: '{"@type":"Thing"}' }] })
+  expect(document.head.children[0]?.getAttribute("type")).toBe("application/ld+json")
+  expect(document.head.children[0]?.textContent).toBe('{"@type":"Thing"}')
+
+  applyHead({ script: [{ type: "application/json", content: "{}" }] })
+  expect(document.head.children[0]?.getAttribute("type")).toBe("application/json")
+
+  expect(() => applyHead({ script: [{ type: "module" as never, content: "boot()" }] })).toThrow(
+    /inert head\.script slot/,
+  )
+})
+
+test("the executable slot requires a nonce and a known type", () => {
+  applyHead({
+    unsafeScript: [{ unsafe: true, type: "module", nonce: "n0", content: "boot()" }],
+  })
+  const el = document.head.children[0]
+  expect(el?.getAttribute("type")).toBe("module")
+  expect(el?.getAttribute("nonce")).toBe("n0")
+  expect(el?.getAttribute("data-nifra")).toBe("")
+
+  // A nonce is what keeps this compatible with a strict CSP; without one the tag is just inline script.
+  expect(() =>
+    applyHead({ unsafeScript: [{ unsafe: true, type: "module", nonce: " ", content: "x" }] }),
+  ).toThrow(/non-empty CSP nonce/)
+  // The descriptor is a plain public field, so `unsafe: true` is a runtime claim, not a compile one.
+  expect(() =>
+    applyHead({
+      unsafeScript: [{ unsafe: false as never, type: "module", nonce: "n0", content: "x" }],
+    }),
+  ).toThrow(/non-empty CSP nonce/)
+  // Same allowlist as the server. Not injection here - `setAttribute` cannot be broken out of - but
+  // the server's template literal could be, and accepting it on one side only is how they drift.
+  expect(() =>
+    applyHead({
+      unsafeScript: [
+        {
+          unsafe: true,
+          type: '"><img src=x onerror=alert(1)>' as never,
+          nonce: "n0",
+          content: "x",
+        },
+      ],
+    }),
+  ).toThrow(/unsupported executable script type/)
+})

@@ -4,6 +4,7 @@
  * navigate, and delegated interception of same-origin `<a>` clicks (client transition instead of
  * a full page load). DOM-only — never imported on the server, so the store stays SSR-safe.
  */
+import { EXECUTABLE_SCRIPT_TYPES, INERT_SCRIPT_TYPES } from "./internal/script-types.ts"
 import type { Meta } from "./manifest.ts"
 import { type BrowserNavigate, setBrowserNavigate } from "./navigation.ts"
 import type { ClientRouter } from "./router.ts"
@@ -228,8 +229,31 @@ export function applyHead(head: Meta): void {
   // a `</script>` (or `<!--`/`]]>`) payload in the JSON-LD can't break out — the DOM-native equivalent of
   // the server's `escapeScriptContent`. `type` defaults to `application/ld+json` (matching the SSR side).
   for (const s of head.script ?? []) {
+    const type = s.type ?? "application/ld+json"
+    if (!INERT_SCRIPT_TYPES.has(type)) {
+      throw new TypeError("[nifra/web] refusing executable content in the inert head.script slot")
+    }
     const el = document.createElement("script")
-    el.setAttribute("type", s.type ?? "application/ld+json")
+    el.setAttribute("type", type)
+    el.textContent = s.content
+    el.setAttribute("data-nifra", "")
+    document.head.appendChild(el)
+  }
+  for (const s of head.unsafeScript ?? []) {
+    if (s.unsafe !== true || s.nonce.trim() === "") {
+      throw new TypeError("[nifra/web] executable inline scripts require a non-empty CSP nonce")
+    }
+    // Same allowlist the server applies. `setAttribute` cannot be broken out of the way the server's
+    // template literal could, so this is not about injection here - it is about the two halves
+    // accepting the same documents, so a head that renders cannot fail on the next soft-nav.
+    if (!EXECUTABLE_SCRIPT_TYPES.has(s.type)) {
+      throw new TypeError(
+        `[nifra/web] unsupported executable script type ${JSON.stringify(s.type)}`,
+      )
+    }
+    const el = document.createElement("script")
+    el.setAttribute("type", s.type)
+    el.setAttribute("nonce", s.nonce)
     el.textContent = s.content
     el.setAttribute("data-nifra", "")
     document.head.appendChild(el)

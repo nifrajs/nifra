@@ -39,6 +39,7 @@ import type {
   RouteExecutionPlan,
   RouteExecutionRunner,
 } from "../internal/route-execution.ts"
+import { isSameOriginRequest } from "../internal/same-origin.ts"
 import type { RequestLedger } from "../ledger.ts"
 import { compileRoutePattern, decodeRouteParams } from "../router/pattern.ts"
 import { EMPTY_PARAMS, type Method, Router } from "../router/router.ts"
@@ -309,16 +310,10 @@ const DEFAULT_MAX_BODY_BYTES = 1_000_000
 const DEFAULT_DRAIN_MS = 10_000
 const DRAIN_POLL_MS = 10
 
-/** Same-origin check for a WebSocket handshake (CSWSH default): the `Origin`'s host[:port] must equal the
- * request's own host (from `req.url`, which the runtime builds from the `Host` header). Scheme differs
- * (ws↔http), so compare host only. An unparseable Origin is treated as NOT same-origin (rejected). */
-function wsSameOrigin(origin: string, req: Request): boolean {
-  try {
-    return new URL(origin).host === new URL(req.url).host
-  } catch {
-    return false
-  }
-}
+/** Same-origin check for a WebSocket handshake (CSWSH default). {@link isSameOriginRequest} is the one
+ * owner, shared with the server-function mount in `@nifrajs/web` - the two used to answer differently
+ * for the same request, so a browser that could open a socket was told its POST was cross-origin. */
+const wsSameOrigin = isSameOriginRequest
 
 function validationError(issues: ReadonlyArray<StandardIssue>): Response {
   const serialized = issues.map((issue) => {

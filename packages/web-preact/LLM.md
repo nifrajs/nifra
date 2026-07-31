@@ -26,7 +26,7 @@ Preact render adapter for @nifrajs/web — streaming SSR + hydration (no build p
 - **useFetchers** _(function)_ — `useFetchers: () => readonly Fetcher[]` · from `@nifrajs/web-preact/fetcher`
 - **useQuery** _(function)_ — `useQuery: <T>(key: unknown, fn: () => Promise<T>) => UseQueryResult<T>` · from `@nifrajs/web-preact/query`
 - **useQueryClient** _(function)_ — `useQueryClient: () => Pick<QueryClient, "invalidateQueries">` · from `@nifrajs/web-preact/query`
-- **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: (input: Input) => Promise<Output> | Output) => ServerFnHandle<Input, Output>` · from `@nifrajs/web-preact/fn`
+- **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: ServerFnReference<Input, Output>) => ServerFnHandle<Input, Output>` · from `@nifrajs/web-preact/fn`
 - **useT** _(function)_ — `useT: () => Formatter` · from `@nifrajs/web-preact/i18n`
 
 _…and 8 more — see [`api-reference.md`](../../api-reference.md#nifrajswebpreact) for the complete list._

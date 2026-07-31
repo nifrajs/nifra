@@ -4828,6 +4828,41 @@ crawlers — build it from `origin`. `openGraph()` emits only the
 properties you pass (plus `og:type`); `jsonLd()`'s payload is escaped for
 safe `<script>` embedding by the head renderer.
 
+#### Inert scripts, and the escape hatch
+
+`head.script` takes **data only** - `application/ld+json` or
+`application/json`. That is not a style rule. The head renderer escapes
+`content` against closing the element early (`</script>`,
+`<!--`, `]]>`), which is exactly what inert JSON needs and is no
+protection at all for code. A route interpolating loader data into an executable body had
+escaping that looked like a boundary and was not one, so the slot now only accepts what it can
+actually make safe. A wrong `type` is a compile error; it also throws at render, for
+callers the types do not reach.
+
+Executable inline code goes through `unsafeInlineScript()`, which is named after
+what it is and requires a CSP nonce. Pass the same nonce to `renderPage` and it
+reaches every framework-owned script in the document, so a strict
+`script-src 'nonce-…'` policy is achievable rather than aspirational:
+
+```ts
+import { renderPage, unsafeInlineScript } from "@nifrajs/web"
+
+declare const adapter: import("@nifrajs/web").RenderAdapter
+declare const nonce: string // one per response, from your CSP middleware
+
+const page = renderPage({
+  adapter,
+  chain: [null],
+  data: null,
+  clientEntry: "/assets/client.js",
+  nonce, // reaches the hydration bootstrap, the data script and every island tag
+  head: {
+    script: [{ content: JSON.stringify({ "@type": "Article" }) }], // inert: JSON only
+    unsafeScript: [unsafeInlineScript("window.dataLayer = []", { nonce })],
+  },
+})
+```
+
 ### The client ↔ server boundary
 
 Loaders, actions, and head resolution run on the server. The client receives the loader's
@@ -8351,7 +8386,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`Action`, `ACTION_GLOBAL`, `apiKey`, `assertRenderAdapterConformance`, `BrowserNavigate`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createMutation`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `DehydratedState`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `gate`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `getBrowserNavigate`, `GetStaticPaths`, `gone`, `hashQueryKey`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateOptions`, `notFound`, `openGraph`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `previewEndpoint`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderedPage`, `renderPage`, `RenderPageInput`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `resolvePublicPath`, `RETAIN_HEADER`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `routeStyles`, `ScriptDescriptor`, `serializeData`, `servePublicDir`, `ServePublicDirOptions`, `SERVER_FN_MODULE`, `SERVER_ONLY_MODULE`, `ServerOnly`, `setBrowserNavigate`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `STATUS_HEADER`, `statusPage`, `StatusPageOptions`, `styles`, `Submission`, `SubmitOptions`, `withISR`
+`Action`, `ACTION_GLOBAL`, `apiKey`, `assertRenderAdapterConformance`, `BrowserNavigate`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createMutation`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `DehydratedState`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `gate`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `getBrowserNavigate`, `GetStaticPaths`, `gone`, `hashQueryKey`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateOptions`, `notFound`, `openGraph`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `previewEndpoint`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderedPage`, `renderPage`, `RenderPageInput`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `resolvePublicPath`, `RETAIN_HEADER`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `routeStyles`, `ScriptDescriptor`, `serializeData`, `servePublicDir`, `ServePublicDirOptions`, `SERVER_FN_MODULE`, `SERVER_ONLY_MODULE`, `ServerOnly`, `setBrowserNavigate`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `STATUS_HEADER`, `statusPage`, `StatusPageOptions`, `styles`, `Submission`, `SubmitOptions`, `unsafeInlineScript`, `UnsafeScriptDescriptor`, `withISR`
 
 ## @nifrajs/web-preact
 

@@ -50,12 +50,20 @@ const containerOf = (html: string): { readonly id: string; readonly attributes: 
  * `querySelector` genuinely tests for the attribute and `getElementById` genuinely compares the id, so
  * renaming the marker on one side alone makes these tests fail rather than pass on a stale agreement.
  */
-const documentWith = (container: { readonly id: string; readonly attributes: string } | null) => {
+const documentWith = (
+  container: { readonly id: string; readonly attributes: string } | null,
+  headHasMarker = false,
+) => {
   const element = { tagName: "DIV" }
+  const headElement = { tagName: "META" }
   return {
     querySelector(selector: string): object | null {
-      const attribute = /^\[([a-z-]+)\]$/.exec(selector)
-      if (attribute === null) throw new Error(`this stub only supports [attr], got ${selector}`)
+      const attribute = /^body > div\[([a-z-]+)\]$/.exec(selector)
+      if (attribute === null) {
+        const unscoped = /^\[([a-z-]+)\]$/.exec(selector)
+        if (unscoped !== null && headHasMarker) return headElement
+        throw new Error(`this stub only supports the hydration selector, got ${selector}`)
+      }
       if (container === null) return null
       return new RegExp(`(^|\\s)${attribute[1] as string}(\\s|=|$)`).test(container.attributes)
         ? element
@@ -140,5 +148,20 @@ test("the entry never bakes in an id other than the documented fallback", () => 
   // `getElementById("root")` is the fallback for an unmarked default document and is meant to be
   // here. A SECOND baked id would be the same bug wearing a different name.
   expect(source.match(/getElementById\("[^"]*"\)/g)).toEqual(['getElementById("root")'])
-  expect(source).toContain(`document.querySelector("[${ROOT_ATTRIBUTE}]")`)
+  expect(source).toContain(`document.querySelector("body > div[${ROOT_ATTRIBUTE}]")`)
+})
+
+test("a legal marked head element cannot steal hydration from the body container", async () => {
+  const html = await (
+    await renderPage({
+      adapter: stub,
+      chain: [null],
+      data: null,
+      clientEntry: "/c.js",
+      rootId: "app",
+      head: { meta: [{ "data-nifra-root": "legal-head-attribute" }] },
+    })
+  ).text()
+  const document = documentWith(containerOf(html), true)
+  expect(findRoot(document)).toMatchObject({ tagName: "DIV" })
 })

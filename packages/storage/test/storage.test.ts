@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdtemp, readFile, rm, symlink } from "node:fs/promises"
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -192,6 +192,19 @@ describe("FileStorage filesystem containment", () => {
     const storage = new FileStorage(root)
     await expect(storage.put("escape/pwn.txt", "owned")).rejects.toBeInstanceOf(StorageKeyError)
     await expect(readFile(join(outside, "pwn.txt"))).rejects.toMatchObject({ code: "ENOENT" })
+  })
+
+  test("rejects a final-component symlink without truncating its target", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nifra-storage-root-"))
+    const outside = await mkdtemp(join(tmpdir(), "nifra-storage-outside-"))
+    tmpDirs.push(root, `${root}.nifra-metadata`, outside)
+    const target = join(outside, "protected.txt")
+    await writeFile(target, "keep me")
+    await symlink(target, join(root, "object.txt"), "file")
+
+    const storage = new FileStorage(root)
+    await expect(storage.put("object.txt", "overwritten")).rejects.toBeInstanceOf(StorageKeyError)
+    expect(await readFile(target, "utf8")).toBe("keep me")
   })
 })
 

@@ -23,11 +23,15 @@
  * this ahead of framework transforms, which have no business seeing server code either.
  */
 
-import { SERVER_ONLY_MODULE, SERVER_ONLY_REPLACEMENT } from "../internal/server-only-module.ts"
+import {
+  SERVER_ONLY_MODULE,
+  SERVER_ONLY_REPLACEMENT,
+  viteServerOnlyReplacement,
+} from "../internal/server-only-module.ts"
 
 // Re-exported so a caller wiring its own bundler gets the matcher from the same owner the pipelines
 // use, rather than writing a fifth copy of the regex.
-export { SERVER_ONLY_MODULE, SERVER_ONLY_REPLACEMENT }
+export { SERVER_ONLY_MODULE, SERVER_ONLY_REPLACEMENT, viteServerOnlyReplacement }
 
 /** The slice of a Vite/Rollup plugin this returns. Structural, so `vite` stays an optional peer. */
 export interface ServerOnlyEmptyPlugin {
@@ -35,7 +39,11 @@ export interface ServerOnlyEmptyPlugin {
   readonly enforce: "pre"
   /** Applied only to the CLIENT build; the server build keeps the real module. */
   readonly applyToEnvironment?: (environment: { readonly name: string }) => boolean
-  transform(code: string, id: string): { code: string; map: null } | null
+  transform(
+    code: string,
+    id: string,
+    options?: { readonly ssr?: boolean },
+  ): { code: string; map: null } | null
 }
 
 /** Strips a Vite id's `?query` and `#hash` so the suffix test sees a plain path. */
@@ -54,12 +62,14 @@ export function viteServerOnlyEmpty(): ServerOnlyEmptyPlugin {
     // Vite 6+ environments: the SSR environment must keep the real module. Older Vite ignores this and
     // relies on nifra only registering the plugin on the client side.
     applyToEnvironment: (environment) => environment.name === "client",
-    transform(_code, id) {
+    transform(code, id, options) {
+      // Vite 5 ignores `applyToEnvironment` but supplies this transform context for SSR.
+      if (options?.ssr === true) return null
       const path = bare(id)
       if (!SERVER_ONLY_MODULE.test(path)) return null
       // `map: null` is honest rather than lazy: the replacement shares no lines with the source, so any
       // mapping would point a debugger at unrelated code.
-      return { code: SERVER_ONLY_REPLACEMENT, map: null }
+      return { code: viteServerOnlyReplacement(code), map: null }
     },
   }
 }

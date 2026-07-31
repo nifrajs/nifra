@@ -233,5 +233,11 @@ describe("durable execution adapter conformance", () => {
     expect(() => new PostgresDurableRecordBackend(client, { tablePrefix: "bad-prefix" })).toThrow(
       "invalid SQL table prefix",
     )
+    expect(
+      () => new PostgresDurableRecordBackend(client, { tablePrefix: `a${"b".repeat(44)}` }),
+    ).not.toThrow()
+    expect(
+      () => new PostgresDurableRecordBackend(client, { tablePrefix: `a${"b".repeat(45)}` }),
+    ).toThrow("invalid SQL table prefix")
   })
 })

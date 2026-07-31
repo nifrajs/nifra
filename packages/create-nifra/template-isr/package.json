@@ -7,7 +7,7 @@
     "build": "bun run build.ts",
     "dev": "bunx wrangler dev",
     "dev:bun": "bun run server.ts",
-    "check": "nifra check"
+    "check": "nifra check && nifra assure"
   },
   "dependencies": {
     "@nifrajs/client": "^2.2.0",

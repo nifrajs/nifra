@@ -315,6 +315,8 @@ Every public export of every package and documented subpath — name, kind, sign
   Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)` applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
 - **defineRouterPlugin** _(const)_ — `defineRouterPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this - not {@link definePlugin} - for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
+- **isSameOriginRequest** _(function)_ — `isSameOriginRequest: (origin: string, request: Request) => boolean`
+  True when `origin` is the request's own origin, as observed from inside a possibly-proxied server.
 - **jsonLogger** _(function)_ — `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
   The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction — pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
 - **parseCookies** _(function)_ — `parseCookies: (header: string | null | undefined) => Record<string, string>`
@@ -1100,6 +1102,8 @@ Every public export of every package and documented subpath — name, kind, sign
   Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)` applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
 - **defineRouterPlugin** _(const)_ — `defineRouterPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this - not {@link definePlugin} - for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
+- **isSameOriginRequest** _(function)_ — `isSameOriginRequest: (origin: string, request: Request) => boolean`
+  True when `origin` is the request's own origin, as observed from inside a possibly-proxied server.
 - **jsonLogger** _(function)_ — `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
   The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction — pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
 - **parseCookies** _(function)_ — `parseCookies: (header: string | null | undefined) => Record<string, string>`
@@ -2204,6 +2208,8 @@ Every public export of every package and documented subpath — name, kind, sign
   Response header a route uses to advertise its ISR freshness (**seconds**) to a {@link withISR} wrapper — `createWebApp` emits it from a route's `export const revalidate`. Deliberately distinct from the action-revalidation `x-nifra-revalidate` header (a CSV path list the *client* parses to refetch):…
 - **ISR_STATUS_HEADER** _(const)_ — `ISR_STATUS_HEADER: "x-nifra-isr"`
   Response header marking how an ISR response was served: a cache `hit` (fresh), `stale` (served + regenerating behind it), or `miss` (rendered now + stored). Useful for debugging + tests.
+- **InertScriptType** _(type)_ — `type InertScriptType = "application/ld+json" | "application/json"`
+  One `<script>` element a route contributes to `<head>` — for structured data (JSON-LD) and other inert, non-executable head scripts. The `content` is the script body; `type` defaults to `"application/ld+json"` (the common case). The renderer escapes `content` against an HTML breakout (`</`, `<!--`,…
 - **InfiniteData** _(interface)_ — `interface InfiniteData<T, P>`
   An infinite (paged) query's accumulated data: the fetched `pages` in order + the `pageParam` each was fetched with (so the next/previous param can be derived).
 - **InfiniteQueryHandle** _(interface)_ — `interface InfiniteQueryHandle<T, P>`
@@ -2313,7 +2319,6 @@ Every public export of every package and documented subpath — name, kind, sign
 - **STATUS_HEADER** _(const)_ — `STATUS_HEADER: "x-nifra-status"`
   Response header carrying a **terminal status** a loader signalled with `notFound()` / `gone()` / `statusPage(n)` during a client-side navigation's data fetch.
 - **ScriptDescriptor** _(interface)_ — `interface ScriptDescriptor`
-  One `<script>` element a route contributes to `<head>` — for structured data (JSON-LD) and other inert, non-executable head scripts. The `content` is the script body; `type` defaults to `"application/ld+json"` (the common case). The renderer escapes `content` against an HTML breakout (`</`, `<!--`,…
 - **ServePublicDirOptions** _(interface)_ — `interface ServePublicDirOptions`
 - **ServerOnly** _(type)_ — `type ServerOnly<T> = T & { readonly [SERVER_ONLY_BRAND]?: never }`
   Type-level intent marker for a value that must only exist on the server — a secret, a DB handle, a server-only client. `ServerOnly<T>` is structurally `T` (the brand is an optional phantom field, so existing code keeps type-checking), but it advertises to readers + the compiler that the value is no…
@@ -2329,6 +2334,8 @@ Every public export of every package and documented subpath — name, kind, sign
   An in-flight client submit — the action it targets + the `FormData` being sent. Set while the submit is pending, cleared when it settles. A component reads `submission.formData` to render an **optimistic** view (the expected result) before the server responds.
 - **SubmitOptions** _(interface)_ — `interface SubmitOptions`
   Per-submit options. `revalidate: false` opts out of the post-action loader re-fetch.
+- **UnsafeScriptDescriptor** _(interface)_ — `interface UnsafeScriptDescriptor`
+  Explicit escape hatch for executable inline code. A CSP nonce is mandatory.
 - **assertRenderAdapterConformance** _(function)_ — `assertRenderAdapterConformance: (adapter: RenderAdapter, fixture: RenderAdapterConformanceFixture) => Promise<void>`
   Execute the observable {@link RenderAdapter} interface against a framework-specific fixture.
 - **buildManifest** _(function)_ — `buildManifest: (files: readonly string[], importer: (file: string) => () => Promise<RouteModule>) => Manifest`
@@ -2402,6 +2409,8 @@ Every public export of every package and documented subpath — name, kind, sign
   Register (or clear, with `undefined`) the browser navigate — called by `installHistory`. Not for app use.
 - **statusPage** _(function)_ — `statusPage: (status: number, options?: StatusPageOptions) => never`
   Render a terminal page at any 4xx/5xx status - the escape hatch behind {@link notFound} and {@link gone} (402, 451, …). Uses `_<status>.tsx` if present, otherwise `_404`.
+- **unsafeInlineScript** _(function)_ — `unsafeInlineScript: (content: string, options: { readonly nonce: string; readonly type?: "module" | "text/javascript"; }) => UnsafeScriptDescriptor`
+  Deliberately unsafe escape hatch for executable inline code. The required nonce keeps the result compatible with a strict CSP and makes the security-sensitive choice visible at the call site.
 - **withISR** _(function)_ — `withISR: (app: ISRApp, options: ISROptions) => (req: Request, platform?: ISRPlatform) => Promise<Response>`
   Wrap a nifra app with **Incremental Static Regeneration**: a cacheable page is served from {@link CacheStore} when fresh, served **stale while a fresh copy regenerates in the background** (`platform.waitUntil` on edge), or rendered + stored on a miss. Framework-agnostic (it caches the rendered byte…
 
@@ -2564,6 +2573,8 @@ Every public export of every package and documented subpath — name, kind, sign
 
 ### `@nifrajs/web/fn`
 
+- **ClientServerFn** _(type)_ — `type ClientServerFn<Input, Output> = (input: Input) => MaybePromise<Output>`
+  The one-argument callable emitted into a client bundle for a {@link ServerFn}.
 - **SERVER_FN** _(const)_ — `SERVER_FN: typeof SERVER_FN`
   Brand identifying a value produced by {@link serverFn}, so mounting cannot pick up stray exports.
 - **SERVER_FN_PREFIX** _(const)_ — `SERVER_FN_PREFIX: "/_nifra/fn"`
@@ -2576,6 +2587,8 @@ Every public export of every package and documented subpath — name, kind, sign
   The minimum a server needs to expose for functions to be mounted onto it.
 - **ServerFnModule** _(type)_ — `type ServerFnModule = Readonly<Record<string, unknown>>`
   Every server function a module exports, keyed by export name.
+- **ServerFnReference** _(type)_ — `type ServerFnReference<Input, Output> = | ServerFn<Input, Output> | ClientServerFn<Input, Output>`
+  A UI binding boundary: source declarations and generated client stubs are both accepted.
 - **serverFn** _(function)_ — `serverFn: <Input = void, Output = unknown>(config: ServerFnConfig<Input>, fn: (input: Input, context: Context) => MaybePromise<Output>) => ServerFn<Input, Output>`
   Declare a server function.
 - **serverFunctions** _(function)_ — `serverFunctions: <S extends ServerFnHost>(namespace: string, module: ServerFnModule) => (app: S) => S`
@@ -2724,6 +2737,8 @@ Every public export of every package and documented subpath — name, kind, sign
   The slice of a Vite/Rollup plugin this returns. Structural, so `vite` stays an optional peer.
 - **viteServerOnlyEmpty** _(function)_ — `viteServerOnlyEmpty: () => ServerOnlyEmptyPlugin`
   Empty every `*.server` module in the client build.
+- **viteServerOnlyReplacement** _(function)_ — `viteServerOnlyReplacement: (source: string) => string`
+  Vite dev serves native ESM, so the Bun/CommonJS proxy above is invalid there. Emit inert ESM bindings derived from the source's public names while discarding the implementation and imports. An unsupported exotic export fails closed at ESM link time; server code is never served as fallback.
 
 ### `@nifrajs/web/route-manifest`
 
@@ -2814,7 +2829,7 @@ _No named exports (side-effect entrypoint)._
 
 - **ServerFnHandle** _(interface)_ — `interface ServerFnHandle<Input, Output>`
   A server function's state plus the call itself.
-- **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: (input: Input) => Promise<Output> | Output) => ServerFnHandle<Input, Output>`
+- **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: ServerFnReference<Input, Output>) => ServerFnHandle<Input, Output>`
   Track one server function's call state.
 
 ### `@nifrajs/web-preact/i18n`
@@ -2883,7 +2898,7 @@ _No named exports (side-effect entrypoint)._
 
 - **ServerFnHandle** _(interface)_ — `interface ServerFnHandle<Input, Output>`
   A server function's state plus the call itself.
-- **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: (input: Input) => Promise<Output> | Output) => ServerFnHandle<Input, Output>`
+- **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: ServerFnReference<Input, Output>) => ServerFnHandle<Input, Output>`
   Track one server function's call state.
 
 ### `@nifrajs/web-react/i18n`
@@ -3021,7 +3036,7 @@ _No named exports (side-effect entrypoint)._
 
 - **ServerFnHandle** _(interface)_ — `interface ServerFnHandle<Input, Output>`
   A server function's state accessor plus the call itself.
-- **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: (input: Input) => Promise<Output> | Output) => ServerFnHandle<Input, Output>`
+- **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: ServerFnReference<Input, Output>) => ServerFnHandle<Input, Output>`
   Track one server function's call state.
 
 ### `@nifrajs/web-solid/i18n`
@@ -3094,7 +3109,7 @@ _No named exports (side-effect entrypoint)._
 
 - **ServerFnHandle** _(interface)_ — `interface ServerFnHandle<Input, Output>`
   A server function's readable state plus the call itself.
-- **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: (input: Input) => Promise<Output> | Output) => ServerFnHandle<Input, Output>`
+- **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: ServerFnReference<Input, Output>) => ServerFnHandle<Input, Output>`
   Track one server function's call state.
 
 ### `@nifrajs/web-svelte/i18n`
@@ -3190,7 +3205,7 @@ _No named exports (side-effect entrypoint)._
 
 - **ServerFnHandle** _(interface)_ — `interface ServerFnHandle<Input, Output>`
   A server function's state ref plus the call itself.
-- **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: (input: Input) => Promise<Output> | Output) => ServerFnHandle<Input, Output>`
+- **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: ServerFnReference<Input, Output>) => ServerFnHandle<Input, Output>`
   Track one server function's call state.
 
 ### `@nifrajs/web-vue/i18n`
@@ -3388,6 +3403,8 @@ _No named exports (side-effect entrypoint)._
   Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)` applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
 - **defineRouterPlugin** _(const)_ — `defineRouterPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this - not {@link definePlugin} - for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
+- **isSameOriginRequest** _(function)_ — `isSameOriginRequest: (origin: string, request: Request) => boolean`
+  True when `origin` is the request's own origin, as observed from inside a possibly-proxied server.
 - **jsonLogger** _(function)_ — `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
   The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction — pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
 - **parseCookies** _(function)_ — `parseCookies: (header: string | null | undefined) => Record<string, string>`

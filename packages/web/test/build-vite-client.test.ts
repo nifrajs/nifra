@@ -138,6 +138,41 @@ test("bakes in PUBLIC_* values without exposing unprefixed secrets", async () =>
   }
 }, 60_000)
 
+test("configured publicEnvPrefix disables Vite's independent VITE_* exposure", async () => {
+  const publicName = "NIFRA_PUBLIC_VITE_VISIBLE"
+  const viteSecretName = "VITE_NIFRA_MUST_STAY_PRIVATE"
+  const previousPublic = process.env[publicName]
+  const previousSecret = process.env[viteSecretName]
+  process.env[publicName] = "nifra-custom-public-value"
+  process.env[viteSecretName] = "vite-prefix-bypass-secret"
+  try {
+    const { root, routesDir } = scaffold({
+      "routes/index.tsx": `export const visible = import.meta.env.${publicName}
+        export const hidden = import.meta.env.${viteSecretName}
+        export default function Index() { return null }\n`,
+    })
+    const outDir = join(root, "dist", "assets")
+    await buildClientVite({
+      root,
+      routesDir,
+      outDir,
+      clientModule: join(root, "client-stub.ts"),
+      publicEnvPrefix: "NIFRA_PUBLIC_",
+      minify: false,
+    })
+    const js = [...new Bun.Glob("*.js").scanSync({ cwd: outDir })]
+      .map((file) => readFileSync(join(outDir, file), "utf8"))
+      .join("\n")
+    expect(js).toContain("nifra-custom-public-value")
+    expect(js).not.toContain("vite-prefix-bypass-secret")
+  } finally {
+    if (previousPublic === undefined) delete process.env[publicName]
+    else process.env[publicName] = previousPublic
+    if (previousSecret === undefined) delete process.env[viteSecretName]
+    else process.env[viteSecretName] = previousSecret
+  }
+}, 60_000)
+
 test("concurrent production and development builds observe their own NODE_ENV", async () => {
   const ambient = process.env.NODE_ENV
   const production = scaffold({

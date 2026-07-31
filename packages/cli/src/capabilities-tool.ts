@@ -61,6 +61,14 @@ export interface CapabilityImportViolation {
 export interface CapabilityProjectReport {
   readonly report: CapabilityAssuranceReport
   readonly violations: readonly CapabilityImportViolation[]
+  readonly truncations: readonly CapabilityProvenanceTruncation[]
+}
+
+export interface CapabilityProvenanceTruncation {
+  readonly method: string
+  readonly path: string
+  readonly reason: "depth-limit" | "module-limit"
+  readonly chain: readonly string[]
 }
 
 function resolveLocalModule(
@@ -113,7 +121,11 @@ interface WalkResult {
   readonly covered: boolean
   readonly evidence: Array<{ id: string; kind: "static"; source: string }>
   readonly violations: CapabilityImportViolation[]
+  readonly truncations: CapabilityProvenanceTruncation[]
 }
+
+const MAX_PROVENANCE_MODULES = 500
+const MAX_PROVENANCE_CHAIN = 16
 
 async function walkRouteModules(
   cwd: string,
@@ -127,11 +139,34 @@ async function walkRouteModules(
   const visited = new Set<string>()
   const evidence: Array<{ id: string; kind: "static"; source: string }> = []
   const violations: CapabilityImportViolation[] = []
+  const truncations: CapabilityProvenanceTruncation[] = []
   let covered = false
 
-  while (queue.length > 0 && visited.size < 500) {
+  while (queue.length > 0) {
+    if (visited.size >= MAX_PROVENANCE_MODULES) {
+      const pending = queue[0]
+      truncations.push({
+        method,
+        path,
+        reason: "module-limit",
+        chain: Object.freeze([
+          ...(pending?.chain ?? []),
+          `<${MAX_PROVENANCE_MODULES}-module limit>`,
+        ]),
+      })
+      break
+    }
     const current = queue.shift()
-    if (current === undefined || visited.has(current.module) || current.chain.length > 16) continue
+    if (current === undefined || visited.has(current.module)) continue
+    if (current.chain.length > MAX_PROVENANCE_CHAIN) {
+      truncations.push({
+        method,
+        path,
+        reason: "depth-limit",
+        chain: Object.freeze([...current.chain, `<${MAX_PROVENANCE_CHAIN}-hop limit>`]),
+      })
+      continue
+    }
     visited.add(current.module)
     let content = sources.get(current.module)
     if (content === undefined) {
@@ -174,7 +209,7 @@ async function walkRouteModules(
       }
     }
   }
-  return { covered, evidence, violations }
+  return { covered, evidence, violations, truncations }
 }
 
 /** Build coverage-qualified static evidence for every reflected route. */
@@ -196,6 +231,7 @@ export async function collectCapabilityProjectReport(
 
   const evidenceRoutes = []
   const violations: CapabilityImportViolation[] = []
+  const truncations: CapabilityProvenanceTruncation[] = []
   for (const route of reflectRoutes(source)) {
     const modules = new Set(automatic.get(routeKey(route.method, route.path)) ?? [])
     for (const association of policy.provenance.routeModules ?? []) {
@@ -225,10 +261,11 @@ export async function collectCapabilityProjectReport(
       evidence: walked.evidence,
     })
     violations.push(...walked.violations)
+    truncations.push(...walked.truncations)
   }
   const evaluated = evaluateCapabilityAssurance(source, policy, { routes: evidenceRoutes })
   const report: CapabilityAssuranceReport =
-    violations.length === 0
+    violations.length === 0 && truncations.length === 0
       ? evaluated
       : Object.freeze({
           ...evaluated,
@@ -241,9 +278,19 @@ export async function collectCapabilityProjectReport(
               path: violation.path,
               message: `${violation.method} ${violation.path} reaches forbidden ${violation.specifier} via ${violation.chain.join(" → ")}: ${violation.reason}`,
             })),
+            ...truncations.map((truncation) => ({
+              code: "provenance-truncated" as const,
+              method: truncation.method,
+              path: truncation.path,
+              message: `${truncation.method} ${truncation.path} capability provenance hit the ${truncation.reason === "depth-limit" ? "import-depth" : "module-count"} safety limit via ${truncation.chain.join(" → ")}; assurance cannot prove the remaining graph`,
+            })),
           ]),
         })
-  return Object.freeze({ report, violations: Object.freeze(violations) })
+  return Object.freeze({
+    report,
+    violations: Object.freeze(violations),
+    truncations: Object.freeze(truncations),
+  })
 }
 
 export function parseCapabilityLockfile(content: string, sourcePath: string): CapabilitySnapshot {
@@ -352,7 +399,7 @@ async function currentProject(
 }
 
 function unsafeProject(project: CapabilityProjectReport): boolean {
-  return !project.report.ok || project.violations.length > 0
+  return !project.report.ok || project.violations.length > 0 || project.truncations.length > 0
 }
 
 /** Write a lockfile only from a clean, fully-covered project report. */
@@ -387,7 +434,13 @@ export async function runCapabilityCheck(
   if (options.json === true) {
     console.log(
       JSON.stringify(
-        { ok, report: project.report, violations: project.violations, changes },
+        {
+          ok,
+          report: project.report,
+          violations: project.violations,
+          truncations: project.truncations,
+          changes,
+        },
         null,
         2,
       ),
@@ -399,6 +452,10 @@ export async function runCapabilityCheck(
     for (const violation of project.violations)
       console.log(
         `✖ ${violation.method} ${violation.path}: ${violation.chain.join(" → ")} — ${violation.reason}`,
+      )
+    for (const truncation of project.truncations)
+      console.log(
+        `✖ ${truncation.method} ${truncation.path}: ${truncation.chain.join(" → ")} — ${truncation.reason}`,
       )
     for (const change of changes) console.log(`✖ capability lock drift: ${change}`)
   }

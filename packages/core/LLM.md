@@ -29,7 +29,7 @@ Bun-native, contract-first HTTP framework — the router, server, and route desc
 - **buildNifraManifest** _(function)_ — `buildNifraManifest: (input: BuildNifraManifestInput) => Promise<NifraManifest>` · from `@nifrajs/core/manifest`
 - **canAttempt** _(function)_ — `canAttempt: (budget: RequestBudget, estimatedAttemptMs: number, reserveMs?: number) => boolean` · from `@nifrajs/core/budget`
 
-_…and 446 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
+_…and 447 more — see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 
 ## Footguns
 

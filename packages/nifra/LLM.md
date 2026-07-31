@@ -13,6 +13,7 @@ The nifra full-stack framework — unscoped meta-entry that re-exports @nifrajs/
 - **server** _(function)_ — `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
 - **definePlugin** _(function)_ — `definePlugin: <In extends AnyServer, Out extends AnyServer>(name: string, apply: (app: In) => Out) => NifraPlugin<In, Out>`
 - **defineIdentityPlugin** _(function)_ — `defineIdentityPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
+- **isSameOriginRequest** _(function)_ — `isSameOriginRequest: (origin: string, request: Request) => boolean`
 - **jsonLogger** _(function)_ — `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
 - **parseCookies** _(function)_ — `parseCookies: (header: string | null | undefined) => Record<string, string>`
 - **redactLogFields** _(function)_ — `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
@@ -23,9 +24,8 @@ The nifra full-stack framework — unscoped meta-entry that re-exports @nifrajs/
 - **FrameworkError** _(class)_ — `class FrameworkError`
 - **RouteConfigError** _(class)_ — `class RouteConfigError`
 - **Router** _(class)_ — `class Router<T>`
-- **Server** _(class)_ — `class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext>`
 
-_…and 63 more — see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
+_…and 64 more — see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
 
 ## Footguns
 

@@ -7,6 +7,8 @@
  * The state machine is `@nifrajs/web`'s `createServerFnStore`, shared with every other adapter, so
  * "is it pending" has one answer rather than five that drift. This file contributes only the `useSyncExternalStore` subscription.
  */
+
+import type { ClientServerFn, ServerFnReference } from "@nifrajs/web/fn"
 import { createServerFnStore, type ServerFnState } from "@nifrajs/web/fn-state"
 import { useMemo, useRef, useSyncExternalStore } from "react"
 
@@ -28,13 +30,13 @@ export interface ServerFnHandle<Input, Output> extends ServerFnState<Output> {
  * freshly-created inline function neither resets the state nor goes stale.
  */
 export function useServerFn<Input, Output>(
-  fn: (input: Input) => Promise<Output> | Output,
+  fn: ServerFnReference<Input, Output>,
 ): ServerFnHandle<Input, Output> {
   // The store is created once, but always calls the CURRENT `fn`. Capturing `fn` directly would
   // either recreate the store on every render (losing the state) or hold the first render's closure
   // (calling a stale one); the ref is what makes "created once" and "never stale" both true.
-  const latest = useRef(fn)
-  latest.current = fn
+  const latest = useRef(fn as ClientServerFn<Input, Output>)
+  latest.current = fn as ClientServerFn<Input, Output>
   const store = useMemo(() => createServerFnStore((input: Input) => latest.current(input)), [])
   const state = useSyncExternalStore(store.subscribe, store.snapshot, store.snapshot)
   return { ...state, call: store.call, reset: store.reset }

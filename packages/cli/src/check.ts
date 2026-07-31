@@ -19,6 +19,8 @@
 import { existsSync, readFileSync } from "node:fs"
 import { dirname, isAbsolute, join, resolve } from "node:path"
 import { Glob } from "bun"
+import type * as TSApi from "typescript"
+import { importTypeScript, type TypeScriptApi } from "./internal/typescript-import.ts"
 
 export interface SourceFinding {
   readonly file: string
@@ -465,112 +467,180 @@ export function scanStaticRouteText(file: string, content: string): StaticRouteF
  * escape hatches (`$queryRawUnsafe`, `sql.unsafe`) are flagged on the call alone: their whole purpose
  * is to take a statement as text, and a substitution in one is the exact thing the name warns about.
  */
-const SQL_SINK =
-  /\.\s*(query|queryRaw|prepare|exec|execute|run|unsafe|\$queryRawUnsafe|\$executeRawUnsafe|raw)\s*\(/g
+const SQL_METHODS = new Set([
+  "query",
+  "queryRaw",
+  "prepare",
+  "exec",
+  "execute",
+  "run",
+  "unsafe",
+  "$queryRawUnsafe",
+  "$executeRawUnsafe",
+  "raw",
+])
 const SQL_KEYWORD =
   /\b(select|insert\s+into|update|delete\s+from|drop\s+table|create\s+table|alter\s+table|truncate|from|where|values|set|join|union)\b/i
 const ALWAYS_UNSAFE = new Set(["unsafe", "$queryRawUnsafe", "$executeRawUnsafe", "raw"])
 
-/** True when the backtick at `index` is preceded by a tag expression rather than standing alone. */
-function isTaggedTemplate(content: string, index: number): boolean {
-  let i = index - 1
-  while (i >= 0 && (content[i] === " " || content[i] === "\t")) i--
-  const previous = content[i]
-  if (previous === undefined) return false
-  // An identifier, a member access or a call result immediately before the backtick is the tag.
-  return /[A-Za-z0-9_$)\]]/.test(previous)
+interface SqlExpressionShape {
+  readonly staticText: string
+  readonly dynamic: boolean
+  readonly concatenated: boolean
+  readonly literal: boolean
+  readonly parameterizedTag: boolean
 }
 
-/** Read a template literal starting at `open`, returning its raw text (or undefined if unterminated). */
-function templateLiteralAt(content: string, open: number): string | undefined {
-  for (let i = open + 1; i < content.length; i++) {
-    if (content[i] === "\\") {
-      i++
-      continue
+/** Describe only the first argument's syntax; comments/strings elsewhere cannot influence the result. */
+function sqlExpressionShape(ts: TypeScriptApi, node: TSApi.Expression): SqlExpressionShape {
+  if (ts.isParenthesizedExpression(node)) return sqlExpressionShape(ts, node.expression)
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+    return {
+      staticText: node.text,
+      dynamic: false,
+      concatenated: false,
+      literal: true,
+      parameterizedTag: false,
     }
-    if (content[i] === "`") return content.slice(open + 1, i)
+  }
+  if (ts.isTaggedTemplateExpression(node)) {
+    const tag = node.tag
+    const parameterizedTag =
+      (ts.isIdentifier(tag) && tag.text === "sql") ||
+      (ts.isPropertyAccessExpression(tag) && tag.getText() === "Prisma.sql")
+    const template = node.template
+    const staticText = ts.isTemplateExpression(template)
+      ? [template.head.text, ...template.templateSpans.map((span) => span.literal.text)].join("")
+      : template.text
+    // Only the ecosystem's binding tags are trusted, by NAME - which is the honest limit of a scanner
+    // that reads syntax and runs no type checker. `sql` is what postgres.js, drizzle, slonik and Bun's
+    // own driver all call theirs, and `Prisma.sql` is Prisma's; taking those at their word is a
+    // deliberate trade, and it is worth stating what it costs: a no-op function named `sql` in the
+    // same file is trusted too, so this rule finds mistakes, not an adversary who reads it first.
+    //
+    // Trusting anything else widens that for no gain. This list briefly also held `sqlIdentifiers`,
+    // a name invented for Nifra's own adapters - a second forgeable name that no user has a
+    // convention for, added so Nifra's source would pass its own rule. Names earn their place here by
+    // being what drivers already call the thing, not by being convenient for the framework.
+    //
+    // Everything else - `String.raw`, an identity tag, a member access that merely ends in `.sql` -
+    // is treated as plain interpolation.
+    return {
+      staticText,
+      dynamic: ts.isTemplateExpression(template) && !parameterizedTag,
+      concatenated: false,
+      literal: !ts.isTemplateExpression(template),
+      parameterizedTag,
+    }
+  }
+  if (ts.isTemplateExpression(node)) {
+    return {
+      staticText: [node.head.text, ...node.templateSpans.map((span) => span.literal.text)].join(""),
+      dynamic: true,
+      concatenated: false,
+      literal: false,
+      parameterizedTag: false,
+    }
+  }
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const left = sqlExpressionShape(ts, node.left)
+    const right = sqlExpressionShape(ts, node.right)
+    return {
+      staticText: left.staticText + right.staticText,
+      dynamic: left.dynamic || right.dynamic || !left.literal || !right.literal,
+      concatenated: true,
+      literal: left.literal && right.literal,
+      parameterizedTag: false,
+    }
+  }
+  return {
+    staticText: "",
+    dynamic: true,
+    concatenated: false,
+    literal: false,
+    parameterizedTag: false,
+  }
+}
+
+function sqlMethod(
+  ts: TypeScriptApi,
+  call: TSApi.CallExpression,
+): { method: string; receiver: string } | undefined {
+  if (ts.isPropertyAccessExpression(call.expression)) {
+    const method = call.expression.name.text
+    return SQL_METHODS.has(method)
+      ? { method, receiver: call.expression.expression.getText() }
+      : undefined
+  }
+  if (
+    ts.isElementAccessExpression(call.expression) &&
+    call.expression.argumentExpression !== undefined &&
+    ts.isStringLiteral(call.expression.argumentExpression)
+  ) {
+    const method = call.expression.argumentExpression.text
+    return SQL_METHODS.has(method)
+      ? { method, receiver: call.expression.expression.getText() }
+      : undefined
   }
   return undefined
 }
 
-/**
- * Read a quoted string starting at `open`, returning its raw text (or undefined if unterminated).
- * Handles the escape so `"a\"b"` does not end early.
- */
-function quotedStringAt(content: string, open: number): string | undefined {
-  const quote = content[open]
-  for (let i = open + 1; i < content.length; i++) {
-    if (content[i] === "\\") {
-      i++
-      continue
-    }
-    if (content[i] === quote) return content.slice(open + 1, i)
-  }
-  return undefined
-}
-
-/**
- * True when the quoted string ending at `end` is immediately followed by `+` at the same paren depth -
- * i.e. the statement is being ASSEMBLED, not passed whole.
- *
- * Bounded to the sink's own argument list: it stops at the closing paren so a later `+` in unrelated
- * code cannot make a bound statement look concatenated.
- */
-function concatenatedAfter(content: string, end: number): boolean {
-  let depth = 0
-  for (let i = end; i < content.length; i++) {
-    const c = content[i]
-    if (c === "(" || c === "[") depth++
-    else if (c === ")" || c === "]") {
-      if (depth === 0) return false // reached the end of the call's arguments
-      depth--
-    } else if (c === "+" && depth === 0) return true
-    else if (c === "," && depth === 0)
-      return false // next argument; this one was passed whole
-    else if (c === ";" || c === "\n") {
-      if (depth === 0 && c === ";") return false
-    }
-  }
-  return false
-}
+const SQL_RECEIVER = /(?:^|\.)(?:db|sql|prisma|drizzle|database|conn|connection|client|tx)$/i
 
 /** Scan one file's text for SQL assembled by interpolation. Pure + line-accurate. */
-export function scanInterpolatedSql(file: string, content: string): SourceFinding[] {
+export function scanInterpolatedSql(
+  file: string,
+  content: string,
+  ts: TypeScriptApi,
+): SourceFinding[] {
   const out: SourceFinding[] = []
   const lines = content.split("\n")
-  const code = codePositionMask(content)
-  const re = new RegExp(SQL_SINK.source, SQL_SINK.flags)
-  for (let m = re.exec(code); m !== null; m = re.exec(code)) {
-    const method = m[1] ?? ""
-    const argument = firstArgumentIndex(content, m.index + m[0].length)
-    const opener = content[argument]
-    let literal: string | undefined
-    if (opener === "`") {
-      if (isTaggedTemplate(content, argument)) continue
-      const template = templateLiteralAt(content, argument)
-      // A template with no substitution is the bound form being argued for.
-      if (template === undefined || !template.includes("${")) continue
-      literal = template
-    } else if (opener === '"' || opener === "'") {
-      // The other half of the same defect, and the shape a codebase predating template literals (or an
-      // LLM emitting older-style JS) produces: `db.query("SELECT … WHERE id = " + id)`. Just as
-      // injectable, and the rule was silent on it - which reads as a clean bill of health.
-      const quoted = quotedStringAt(content, argument)
-      if (quoted === undefined) continue
-      if (!concatenatedAfter(content, argument + quoted.length + 2)) continue
-      literal = quoted
-    } else continue
-    if (!ALWAYS_UNSAFE.has(method) && !SQL_KEYWORD.test(literal)) continue
-    const line = lineAt(content, m.index)
-    out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
+  const kind = /\.[cm]?tsx?$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.JS
+  const source = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true, kind)
+  // Malformed source is already a typecheck failure. Do not turn parser recovery nodes into a second,
+  // misleading SQL diagnostic (notably an unterminated template recovered as an interpolation).
+  const parseDiagnostics = (
+    source as TSApi.SourceFile & { readonly parseDiagnostics?: readonly TSApi.Diagnostic[] }
+  ).parseDiagnostics
+  if (parseDiagnostics !== undefined && parseDiagnostics.length > 0) return out
+  const visit = (node: TSApi.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const sink = sqlMethod(ts, node)
+      const argument = node.arguments[0]
+      if (sink !== undefined && argument !== undefined) {
+        const shape = sqlExpressionShape(ts, argument)
+        const unsafeEscape =
+          ALWAYS_UNSAFE.has(sink.method) && !shape.literal && !shape.parameterizedTag
+        const assembledSql =
+          shape.dynamic &&
+          (SQL_KEYWORD.test(shape.staticText) ||
+            (shape.concatenated && SQL_RECEIVER.test(sink.receiver)))
+        if (unsafeEscape || assembledSql) {
+          const index = node.getStart(source)
+          const line = source.getLineAndCharacterOfPosition(index).line + 1
+          out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
+        }
+      }
+    }
+    ts.forEachChild(node, visit)
   }
+  visit(source)
   return out
 }
 
-/** Collect interpolated-SQL findings across the project. */
-export async function scanProjectSql(cwd: string): Promise<SourceFinding[]> {
+/**
+ * Collect interpolated-SQL findings across the project.
+ *
+ * Returns `undefined` - not an empty array - when TypeScript is not installed. The rule parses source
+ * with the compiler, so without it there is nothing to report and, more to the point, no basis for
+ * reporting nothing. An empty result would read as "no interpolated SQL found", which is the one
+ * answer a security rule must never give when it did not run.
+ */
+export async function scanProjectSql(cwd: string): Promise<SourceFinding[] | undefined> {
+  const ts = await importTypeScript()
+  if (ts === undefined) return undefined
   const out: SourceFinding[] = []
-  await walkSource(cwd, (rel, content) => out.push(...scanInterpolatedSql(rel, content)))
+  await walkSource(cwd, (rel, content) => out.push(...scanInterpolatedSql(rel, content, ts)))
   return out.sort(bySite)
 }
 
@@ -1226,8 +1296,10 @@ const RESPONSE_ROUTE_HINT =
   "route handler returns a raw Response - the typed client infers `data: never`, so drift detection is lost for this route. Return a plain object (it's serialized for you); for a stream use a typed SSE route (`app.sse(...)`), which keeps typed events; or, if a raw Response is intended (file/redirect), add `{ response: t.… }` or a `// nifra-expect raw-response` comment to mark it and silence this"
 const UNDECLARED_DEP_HINT =
   "imported package is not declared in package.json dependencies — run bun add to declare it"
-const INTERPOLATED_SQL_HINT =
-  "SQL built by interpolating a value into the statement text - the value becomes statement, not a parameter, so anything the caller controls can end the literal and continue as SQL. Pass it as a bound parameter (`?` / `$1` and an argument), or use your driver's tagged template (sql`… ${value} …`), which binds the substitutions for you"
+const SQL_COMPILER_MISSING_HINT =
+  "the interpolated-SQL rule did NOT run - it parses source with the TypeScript compiler, which is an optional peer and is not installed here. This report says nothing about SQL injection either way. Install it with `bun add -d typescript`"
+const SQL_INTERPOLATION_EXAMPLE = "$" + "{value}"
+const INTERPOLATED_SQL_HINT = `SQL built by interpolating a value into the statement text - the value becomes statement, not a parameter, so anything the caller controls can end the literal and continue as SQL. Pass it as a bound parameter (\`?\` / \`$1\` and an argument), or use your driver's tagged template (sql\`… ${SQL_INTERPOLATION_EXAMPLE} …\`), which binds the substitutions for you`
 const MANIFEST_DRIFT_HINT =
   "server-manifest.ts is out of sync with routes/ — re-run the build to regenerate it (a disk-less worker bakes this route table, so the drift is a silent edge break), then commit it"
 const TRUST_MANIFEST_DRIFT_HINT =
@@ -1376,6 +1448,9 @@ export async function collectCheckResult(
     /** Cap the returned `diagnostics` to this many (adds {@link CheckResult.truncated}). The MCP tool sets
      * it so a huge project can't produce a transport-breaking result; the CLI leaves it unset (all shown). */
     readonly maxDiagnostics?: number
+    /** How the interpolated-SQL rule gets its compiler. Injectable so the "not installed" path - the
+     * one where a security rule reports that it did not run - is testable on a machine that has it. */
+    readonly loadTypeScript?: () => Promise<TypeScriptApi | undefined>
   } = {},
 ): Promise<CheckResult> {
   const fetches: SourceFinding[] = []
@@ -1391,6 +1466,10 @@ export async function collectCheckResult(
   // Load the optional check config first - the typed-client scan needs the external-mount allowlist as it
   // walks. It's a tiny pure-JSON read; a malformed file surfaces as a warning below, never blocking.
   const { config: checkConfig, error: checkConfigError } = await loadCheckConfig(cwd)
+  // The interpolated-SQL rule parses with the TypeScript compiler, which is an optional peer. Resolved
+  // once, before the walk, so a project without it is told the rule did not run rather than being
+  // handed a clean report the rule never produced.
+  const sqlCompiler = await (opts.loadTypeScript ?? importTypeScript)()
   // lintsOnly: skip the tsc pass (seconds on a big project) and run just the near-instant source
   // lints — the agent inner-loop mode; the full gate stays the definition of done.
   const [tc, _, dr, manifestDrift] = await Promise.all([
@@ -1404,7 +1483,8 @@ export async function collectCheckResult(
       removedImports.push(...scanRemovedImports(rel, content))
       if (ROUTE_FILE.test(rel)) routeModules.push({ rel, content })
       responseRoutes.push(...scanResponseRoutes(rel, content))
-      interpolatedSql.push(...scanInterpolatedSql(rel, content))
+      if (sqlCompiler !== undefined)
+        interpolatedSql.push(...scanInterpolatedSql(rel, content, sqlCompiler))
     }),
     import("./doctor.ts").then((m) => m.collectDoctorResult(cwd)),
     scanServerManifestDrift(cwd),
@@ -1539,6 +1619,21 @@ export async function collectCheckResult(
       suggestion: serverImportSuggestion(f.specifier, chain, f.fallback),
     })
   }
+  if (sqlCompiler === undefined) {
+    // A security rule that could not run must say so. Silence here is indistinguishable from a clean
+    // result, and this is the one rule whose clean result means "no SQL injection was found".
+    diagnostics.push({
+      rule: "interpolated-sql",
+      severity: "warning",
+      message: SQL_COMPILER_MISSING_HINT,
+      fix: SQL_COMPILER_MISSING_HINT,
+      suggestion: {
+        kind: "command",
+        title: "Install TypeScript so the SQL rule can run",
+        command: ["bun add -d typescript"],
+      },
+    })
+  }
   for (const f of interpolatedSql.sort(bySite)) {
     diagnostics.push({
       rule: "interpolated-sql",
@@ -1553,7 +1648,7 @@ export async function collectCheckResult(
         steps: [
           "Replace the interpolation with a placeholder your driver understands (`?` for SQLite/MySQL, `$1` for Postgres).",
           "Pass the value as an argument alongside the statement, so the driver binds it.",
-          "Or switch to the driver's tagged template (sql`… ${value} …`): the tag receives substitutions separately and binds them.",
+          `Or switch to the driver's tagged template (sql\`… ${SQL_INTERPOLATION_EXAMPLE} …\`): the tag receives substitutions separately and binds them.`,
           "An identifier that genuinely cannot be bound (a table or column name) must be checked against an allowlist you control, never taken from the request.",
         ],
       },
@@ -1657,10 +1752,21 @@ export async function collectCheckResult(
                     candidate.method === finding.method && candidate.path === finding.path,
                 )
               : undefined
+          const truncation =
+            finding.code === "provenance-truncated"
+              ? project.truncations.find(
+                  (candidate) =>
+                    candidate.method === finding.method && candidate.path === finding.path,
+                )
+              : undefined
           diagnostics.push({
             rule: "capability-assurance",
             severity: "error",
-            ...(violation !== undefined ? { file: violation.module, chain: violation.chain } : {}),
+            ...(violation !== undefined
+              ? { file: violation.module, chain: violation.chain }
+              : truncation !== undefined
+                ? { chain: truncation.chain }
+                : {}),
             message: `${finding.message} — ${CAPABILITY_HINT}`,
             fix: CAPABILITY_HINT,
             suggestion: {

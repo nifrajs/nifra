@@ -1,7 +1,9 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: SQL scanner fixtures intentionally contain literal interpolation syntax.
 import { describe, expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import ts from "typescript"
 import {
   collectCheckResult,
   type ModuleReader,
@@ -865,7 +867,7 @@ describe("collectCheckResult — maxDiagnostics bounds the result (MCP transport
  * and so does anything that merely looks like a query call.
  */
 describe("scanInterpolatedSql", () => {
-  const scan = (src: string): number => scanInterpolatedSql("a.ts", src).length
+  const scan = (src: string): number => scanInterpolatedSql("a.ts", src, ts).length
 
   test("flags a value interpolated into a statement", () => {
     expect(scan("db.query(`SELECT * FROM users WHERE id = ${id}`)")).toBe(1)
@@ -875,13 +877,32 @@ describe("scanInterpolatedSql", () => {
 
   test("reports the line the call is on", () => {
     const src = ["const x = 1", "", "db.query(`SELECT * FROM t WHERE id = ${x}`)"].join("\n")
-    expect(scanInterpolatedSql("a.ts", src)[0]).toMatchObject({ file: "a.ts", line: 3 })
+    expect(scanInterpolatedSql("a.ts", src, ts)[0]).toMatchObject({ file: "a.ts", line: 3 })
   })
 
   test("stays silent on a tagged template - that IS the bound form", () => {
     expect(scan("await sql`SELECT * FROM users WHERE id = ${id}`")).toBe(0)
     expect(scan("db.execute(sql`SELECT * FROM users WHERE id = ${id}`)")).toBe(0)
     expect(scan("await db.query(sql`DELETE FROM t WHERE id = ${id}`)")).toBe(0)
+  })
+
+  test("does not trust arbitrary tags as parameter binding", () => {
+    expect(scan("db.query(String.raw`SELECT * FROM users WHERE id = ${id}`)")).toBe(1)
+    expect(scan("db.query(identity`SELECT * FROM users WHERE id = ${id}`)")).toBe(1)
+    expect(scan("db.query(untrusted.sql`SELECT * FROM users WHERE id = ${id}`)")).toBe(1)
+    // `sqlIdentifiers` was briefly trusted - a name invented for Nifra's own adapters, which is a
+    // convention no user has. A name earns trust here by being what drivers already call the thing.
+    expect(scan("db.query(sqlIdentifiers`SELECT * FROM t WHERE id = ${id}`)")).toBe(1)
+  })
+
+  test("trust is by NAME, which is the documented limit of a scanner with no type checker", () => {
+    // Worth pinning rather than leaving implied. `sql` is trusted because postgres.js, drizzle,
+    // slonik and Bun's driver all call theirs that, and nothing here can prove a given `sql` binds
+    // anything. So a no-op with the name passes: this rule catches mistakes, not an adversary who
+    // has read it. Deciding otherwise needs a type checker, which is a different tool.
+    expect(
+      scan("const sql = (s) => s.raw.join('')\ndb.query(sql`SELECT * FROM t WHERE id = ${x}`)"),
+    ).toBe(0)
   })
 
   test("stays silent on a parameterised statement", () => {
@@ -901,6 +922,8 @@ describe("scanInterpolatedSql", () => {
     // name is warning about.
     expect(scan("db.$queryRawUnsafe(`${statement}`)")).toBe(1)
     expect(scan("sql.unsafe(`${statement}`)")).toBe(1)
+    expect(scan("db.$queryRawUnsafe(statement)")).toBe(1)
+    expect(scan("sql.unsafe(req.body.sql)")).toBe(1)
   })
 
   /**
@@ -913,6 +936,8 @@ describe("scanInterpolatedSql", () => {
     expect(scan('db.query("SELECT * FROM users WHERE id = " + req.params.id)')).toBe(1)
     expect(scan("db.query('DELETE FROM notes WHERE id = ' + id)")).toBe(1)
     expect(scan('db.execute("UPDATE t SET body = " + body + " WHERE id = " + id)')).toBe(1)
+    expect(scan('db.query(("SELECT * FROM users WHERE id = " + id))')).toBe(1)
+    expect(scan("db.query(prefix + id)")).toBe(1)
   })
 
   test("stays silent on concatenation that is not SQL, or not concatenated", () => {
@@ -929,10 +954,55 @@ describe("scanInterpolatedSql", () => {
     expect(scan("// db.query(`SELECT * FROM t WHERE id = ${id}`)")).toBe(0)
     expect(scan('const doc = "db.query(`SELECT * FROM t WHERE id = ${id}`)"')).toBe(0)
     expect(scan("/* db.query(`SELECT * FROM t WHERE id = ${id}`) */")).toBe(0)
+    expect(scan('db.query("SELECT * FROM users WHERE id = ?" /* + id */)')).toBe(0)
   })
 
   test("an unterminated template literal does not throw or match", () => {
     expect(() => scan("db.query(`SELECT * FROM t WHERE id = ${id}")).not.toThrow()
     expect(scan("db.query(`SELECT * FROM t WHERE id = ${id}")).toBe(0)
+  })
+})
+
+/**
+ * The interpolated-SQL rule parses with the TypeScript compiler, which is an OPTIONAL peer - the CLI
+ * should not force a ~25 MB install on every project, and its own typecheck step already treats `tsc`
+ * as something the project provides.
+ *
+ * Optional makes the reporting the load-bearing part. A rule that cannot run must say so: an empty
+ * result is indistinguishable from a clean one, and for this rule "clean" means "no SQL injection was
+ * found". Silence there is the worst possible answer.
+ */
+describe("interpolated-sql without the compiler", () => {
+  const projectWithInjection = async (): Promise<string> => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-sql-"))
+    await mkdir(join(dir, "routes"), { recursive: true })
+    await writeFile(
+      join(dir, "routes", "notes.ts"),
+      "export const f = (id: string) => db.query(`SELECT * FROM notes WHERE id = ${id}`)",
+    )
+    return dir
+  }
+
+  test("with the compiler, the injection is found", async () => {
+    const result = await collectCheckResult(await projectWithInjection())
+    const sql = result.diagnostics.filter((d) => d.rule === "interpolated-sql")
+    expect(sql).toHaveLength(1)
+    expect(sql[0]?.severity).toBe("error")
+    expect(sql[0]?.file).toBe("routes/notes.ts")
+  })
+
+  test("without it, the report says the rule did not run - it never reports clean", async () => {
+    const result = await collectCheckResult(await projectWithInjection(), {
+      loadTypeScript: async () => undefined,
+    })
+    const sql = result.diagnostics.filter((d) => d.rule === "interpolated-sql")
+    // Exactly one diagnostic, and it is the "did not run" notice rather than a finding or nothing.
+    expect(sql).toHaveLength(1)
+    expect(sql[0]?.severity).toBe("warning")
+    expect(sql[0]?.message).toContain("did NOT run")
+    expect(sql[0]?.message).toContain("says nothing about SQL injection")
+    expect(sql[0]?.suggestion?.command).toEqual(["bun add -d typescript"])
+    // No file/line, because the notice is about the whole run rather than a place in the source.
+    expect(sql[0]?.file).toBeUndefined()
   })
 })

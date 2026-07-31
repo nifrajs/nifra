@@ -31,7 +31,11 @@ export interface ServerFnStubPlugin {
   readonly enforce: "pre"
   /** Applied only to the CLIENT build; the server build keeps the real module. */
   readonly applyToEnvironment?: (environment: { readonly name: string }) => boolean
-  transform(code: string, id: string): { code: string; map: null } | null
+  transform(
+    code: string,
+    id: string,
+    options?: { readonly ssr?: boolean },
+  ): { code: string; map: null } | null
 }
 
 /** Strips a Vite id's `?query` and `#hash` so the suffix test sees a plain path. */
@@ -50,7 +54,9 @@ export function viteServerFnStub(): ServerFnStubPlugin {
     // Vite 6+ environments: the SSR environment must keep the real module. Older Vite ignores this and
     // relies on nifra only registering the plugin on the client side.
     applyToEnvironment: (environment) => environment.name === "client",
-    transform(code, id) {
+    transform(code, id, options) {
+      // Vite 5 ignores `applyToEnvironment` but supplies this transform context for SSR.
+      if (options?.ssr === true) return null
       const path = bare(id)
       if (!SERVER_FN_MODULE.test(path)) return null
       // `map: null` is honest rather than lazy: the stub shares no lines with the source, so any

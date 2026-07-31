@@ -5,7 +5,7 @@
  * objects created before sidecar support still infer content type from their extension.
  */
 import { constants } from "node:fs"
-import { lstat, mkdir, open, readdir, readFile, rm, stat } from "node:fs/promises"
+import { lstat, mkdir, open, readdir, readFile, realpath, rm, stat } from "node:fs/promises"
 import { dirname, join, posix, resolve, sep } from "node:path"
 import { assertSafeKey, StorageKeyError } from "./key.ts"
 import {
@@ -104,7 +104,10 @@ export class FileStorage implements StorageAdapter {
     }
   }
 
-  /** Create parents, re-check them, and refuse a final-component symlink at open time. */
+  /**
+   * Create parents and open without truncating. The opened inode is validated against the current,
+   * fully resolved path before any caller data is written, closing the check/open symlink race.
+   */
   private async writeContained(
     base: string,
     path: string,
@@ -115,12 +118,31 @@ export class FileStorage implements StorageAdapter {
     await mkdir(dirname(path), { recursive: true })
     await this.assertNoSymlinkPath(base, path, key)
     try {
+      const baseBefore = await lstat(base)
       const handle = await open(
         path,
-        constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW,
         0o666,
       )
       try {
+        // Do not truncate until the descriptor is proven to be the same file currently reachable
+        // through a symlink-free path beneath the same storage-root directory.
+        await this.assertNoSymlinkPath(base, path, key)
+        const [opened, current, baseAfter, resolvedBase, resolvedPath] = await Promise.all([
+          handle.stat(),
+          lstat(path),
+          lstat(base),
+          realpath(base),
+          realpath(path),
+        ])
+        const baseChanged = baseBefore.dev !== baseAfter.dev || baseBefore.ino !== baseAfter.ino
+        const targetChanged =
+          current.isSymbolicLink() || opened.dev !== current.dev || opened.ino !== current.ino
+        const escaped =
+          resolvedPath !== resolvedBase && !resolvedPath.startsWith(resolvedBase + sep)
+        if (baseChanged || targetChanged || escaped) throw this.symlinkError(key)
+
+        await handle.truncate(0)
         await handle.writeFile(data)
       } finally {
         await handle.close()

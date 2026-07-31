@@ -10,6 +10,7 @@
 
 export { FrameworkError, RouteConfigError, type RouteConfigErrorCode } from "./errors.ts"
 export { FRAMEWORK_NAME, type FrameworkName } from "./internal/brand.ts"
+export { isSameOriginRequest } from "./internal/same-origin.ts"
 export { METHODS, type Method, Router, type RouterMatch } from "./router/router.ts"
 export type {
   InferInput,

@@ -22,3 +22,8 @@ drift from the markup while an attribute written by the same expression as the i
 A default render emits exactly the bytes it did before - the marker is absent, and `#root` is still
 what the entry finds. When a document has neither, the entry now throws and names what it looked for
 rather than leaving a live page that answers no clicks.
+
+The container is looked up as `body > div[data-nifra-root]` rather than by the attribute alone. A
+`<meta>` in the head may legally carry any `data-*` attribute, and one carrying this marker appears
+earlier in document order - so an unscoped lookup would hand hydration a tag in the head and mount the
+application into it.

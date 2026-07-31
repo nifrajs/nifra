@@ -155,6 +155,7 @@ export type CapabilityFindingCode =
   | "missing-request-idempotency"
   | "missing-durable-idempotency"
   | "forbidden-effect-import"
+  | "provenance-truncated"
 
 export interface CapabilityFinding {
   readonly code: CapabilityFindingCode

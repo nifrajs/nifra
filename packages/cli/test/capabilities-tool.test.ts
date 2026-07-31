@@ -121,6 +121,54 @@ describe("project provenance firewall", () => {
     expect(project.report).toMatchObject({ ok: true, findings: [] })
     expect(project.violations).toEqual([])
   })
+
+  test("fails closed when an import chain exceeds the provenance depth limit", async () => {
+    const cwd = join(FIXTURES, "depth-limit")
+    await mkdir(cwd, { recursive: true })
+    for (let index = 0; index < 18; index++) {
+      await writeFile(
+        join(cwd, `hop-${index}.ts`),
+        index === 17 ? 'import "postgres"\n' : `import "./hop-${index + 1}.ts"\n`,
+      )
+    }
+    const app = server().get("/deep", { capabilities: ["db.read"] }, () => [])
+    const deep = defineCapabilityPolicy({
+      ...policy,
+      provenance: {
+        ...policy.provenance,
+        routeModules: [{ match: { paths: ["/deep"] }, modules: ["hop-0.ts"] }],
+      },
+    })
+    const project = await collectCapabilityProjectReport(cwd, app, deep)
+    expect(project.report.ok).toBe(false)
+    expect(project.report.findings).toContainEqual(
+      expect.objectContaining({ code: "provenance-truncated", method: "GET", path: "/deep" }),
+    )
+    expect(project.truncations[0]?.reason).toBe("depth-limit")
+  })
+
+  test("fails closed when the provenance graph exceeds the module limit", async () => {
+    const cwd = join(FIXTURES, "module-limit")
+    await mkdir(cwd, { recursive: true })
+    const imports: string[] = []
+    for (let index = 0; index < 501; index++) {
+      const name = `leaf-${index}.ts`
+      imports.push(`import "./${name}"`)
+      await writeFile(join(cwd, name), "export const leaf = true\n")
+    }
+    await writeFile(join(cwd, "root.ts"), `${imports.join("\n")}\n`)
+    const app = server().get("/wide", { capabilities: ["db.read"] }, () => [])
+    const wide = defineCapabilityPolicy({
+      ...policy,
+      provenance: {
+        ...policy.provenance,
+        routeModules: [{ match: { paths: ["/wide"] }, modules: ["root.ts"] }],
+      },
+    })
+    const project = await collectCapabilityProjectReport(cwd, app, wide)
+    expect(project.report.ok).toBe(false)
+    expect(project.truncations[0]?.reason).toBe("module-limit")
+  })
 })
 
 describe("capability lockfile", () => {

@@ -171,6 +171,7 @@ describe("templates: a shipped assurance config comes with a way to run it", () 
         devDependencies?: Record<string, string>
       }
       expect(pkg.scripts?.check).toContain("nifra check")
+      expect(pkg.scripts?.check).toContain("nifra assure")
       const deps = { ...pkg.dependencies, ...pkg.devDependencies }
       expect(Object.keys(deps)).toContain("@nifrajs/cli")
     })

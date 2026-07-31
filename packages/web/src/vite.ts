@@ -21,6 +21,7 @@ import { renderDevErrorOverlay } from "./dev-error.ts"
 import { listenOrExplain } from "./dev-port.ts"
 import { discoverRoutes } from "./fs.ts"
 import { DEFAULT_DEV_PORT, generateClientEntry } from "./index.ts"
+import { vitePublicEnvPrefix } from "./internal/public-env.ts"
 import { importVite } from "./internal/vite-import.ts"
 import { viteServerFnStub } from "./plugins/vite-server-fn.ts"
 import { viteServerOnlyEmpty } from "./plugins/vite-server-only.ts"
@@ -93,6 +94,8 @@ export interface ViteDevServerOptions {
   readonly poll?: boolean
   /** Vite public directory. Defaults to `<root>/public`; `false` disables it. */
   readonly publicDir?: string | false
+  /** Client-visible environment prefix (default `"PUBLIC_"`; empty disables exposure). */
+  readonly publicEnvPrefix?: string
 }
 
 export interface ViteDevServer {
@@ -342,6 +345,8 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   )
   vite = await createServer({
     root,
+    // Dev must not inherit Vite's default `VITE_*` exposure beside Nifra's documented boundary.
+    envPrefix: vitePublicEnvPrefix(options.publicEnvPrefix),
     ...(options.publicDir !== undefined ? { publicDir: options.publicDir } : {}),
     appType: "custom",
     server: {

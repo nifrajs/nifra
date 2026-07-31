@@ -107,6 +107,20 @@ test("refuses every extension the *.server transform would empty", async () => {
   }
 })
 
+test("refuses extensionless *.server and *.fn modules", async () => {
+  for (const [rel, message] of [
+    ["src/db.server", "can't empty `*.server` modules"],
+    ["src/todos.fn", "can't transform server functions"],
+  ] as const) {
+    await inTemp({ [rel]: 'export const SECRET = "sk-live"' }, async (cwd) => {
+      const error = await assertBunDevSupportsApp(appAt(cwd)).catch((e: Error) => e)
+      expect(error).toBeInstanceOf(Error)
+      expect((error as Error).message).toContain(message)
+      expect((error as Error).message).toContain(rel)
+    })
+  }
+})
+
 test("ignores build output and dependencies", async () => {
   // A `.server` module inside node_modules or dist is not the app's source and must not block dev.
   await inTemp(
