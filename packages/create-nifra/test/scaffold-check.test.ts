@@ -3,6 +3,7 @@ import { existsSync, readdirSync } from "node:fs"
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { materializeAll } from "./_scaffold-fixtures.ts"
 
 // Regression guard for the "fresh scaffold fails its own `nifra check`" bug:
 // (1) demo backends must lock output shapes with a `response` schema (AGENTS.md doctrine);
@@ -15,16 +16,24 @@ import { join, resolve } from "node:path"
 //     and runs the real `nifra check` — the full done-gate, too slow for every unit run.
 
 const TEMPLATES_DIR = resolve(import.meta.dir, "..")
-const SITE_TEMPLATES = readdirSync(TEMPLATES_DIR).filter((d) => d.startsWith("template-site"))
-const COUNTER_TEMPLATES = [...SITE_TEMPLATES, "template-isr"]
+
+// Composed, not read from `template-site-<framework>/`. A site scaffold is assembled from a shared
+// base, a framework overlay and eight generated files, so its sources are no longer a directory that
+// looks like what a user gets. Grading the composed tree is what keeps this a claim about the artifact.
+const { scaffolds, cleanup: cleanupScaffolds } = await materializeAll()
+afterAll(cleanupScaffolds)
+
+const COUNTER_SCAFFOLDS = scaffolds.filter(
+  (s) => s.label.startsWith("site-") || s.label === "template-isr",
+)
 
 /** The module that REGISTERS the demo routes. `backend.ts` composes; it declares nothing itself. */
-const routeModule = (dir: string): string => (dir === "template-isr" ? "page.ts" : "counter.ts")
+const routeModule = (label: string): string => (label === "template-isr" ? "page.ts" : "counter.ts")
 
 describe("templates: demo contract is schema-locked and ok-narrowed (static)", () => {
-  for (const dir of COUNTER_TEMPLATES) {
-    test(`${dir} demo routes declare a response schema`, async () => {
-      const src = await readFile(join(TEMPLATES_DIR, dir, routeModule(dir)), "utf8")
+  for (const { label, dir } of COUNTER_SCAFFOLDS) {
+    test(`${label} demo routes declare a response schema`, async () => {
+      const src = await readFile(join(dir, routeModule(label)), "utf8")
       expect(src).toContain('from "@nifrajs/schema"')
       expect(src).toContain("response:")
       // the un-schema'd 2-arg demo route shape must not come back
@@ -36,14 +45,14 @@ describe("templates: demo contract is schema-locked and ok-narrowed (static)", (
      * a root that both composes and registers hands every route in it the reach of everything merged
      * there - which is what makes the armed `provenance.imports` unusable and a GET route undeclarable.
      */
-    test(`${dir}/backend.ts composes and registers nothing`, async () => {
-      const src = await readFile(join(TEMPLATES_DIR, dir, "backend.ts"), "utf8")
+    test(`${label}/backend.ts composes and registers nothing`, async () => {
+      const src = await readFile(join(dir, "backend.ts"), "utf8")
       expect(src).toContain(".merge(")
       expect(src).not.toMatch(/\.(get|post|put|patch|delete)\s*\(/)
     })
 
-    test(`${dir} index route narrows on res.ok before res.data`, async () => {
-      const routesDir = join(TEMPLATES_DIR, dir, "routes")
+    test(`${label} index route narrows on res.ok before res.data`, async () => {
+      const routesDir = join(dir, "routes")
       const index = readdirSync(routesDir).find((f) => f.startsWith("index."))
       expect(index).toBeDefined()
       const src = await readFile(join(routesDir, index as string), "utf8")
@@ -154,18 +163,15 @@ describe("templates: the app root composes rather than registers", () => {
  * artifact everything still depended on remembering, including remembering to install the tool.
  */
 describe("templates: a shipped assurance config comes with a way to run it", () => {
-  const withAssurance = readdirSync(TEMPLATES_DIR).filter(
-    (dir) =>
-      dir.startsWith("template") && existsSync(join(TEMPLATES_DIR, dir, "nifra.assurance.ts")),
-  )
+  const withAssurance = scaffolds.filter((s) => existsSync(join(s.dir, "nifra.assurance.ts")))
 
   test("there are templates to check", () => {
     expect(withAssurance.length).toBeGreaterThan(0)
   })
 
-  for (const dir of withAssurance) {
-    test(`${dir} has a check script and can resolve the CLI`, async () => {
-      const pkg = JSON.parse(await readFile(join(TEMPLATES_DIR, dir, "package.json"), "utf8")) as {
+  for (const { label, dir } of withAssurance) {
+    test(`${label} has a check script and can resolve the CLI`, async () => {
+      const pkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as {
         scripts?: Record<string, string>
         dependencies?: Record<string, string>
         devDependencies?: Record<string, string>

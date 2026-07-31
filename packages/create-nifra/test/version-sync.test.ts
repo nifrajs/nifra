@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { readdirSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { MCP_CLI_VERSION } from "../src/agent-files.ts"
 import { AUTH_PRESETS } from "../src/auth.ts"
+import { materializeAll } from "./_scaffold-fixtures.ts"
 
 // Guards the hand-maintained scaffold/template version refs that `changeset version` does NOT update —
 // the class that silently drifted to beta at the 1.0.0 cut. `scripts/version.ts` re-syncs them on bump
@@ -26,12 +26,15 @@ describe("version-sync — scaffold/template refs track the published version", 
     expect(MCP_CLI_VERSION).toBe(await pkgVersion("cli"))
   })
 
-  test("every template pins @nifrajs/* + nifra deps to ^<cli version>", async () => {
+  test("every scaffold pins @nifrajs/* + nifra deps to ^<cli version>", async () => {
     const expected = `^${await pkgVersion("cli")}`
-    const templates = readdirSync(PKG_ROOT).filter((d) => d.startsWith("template"))
-    expect(templates.length).toBeGreaterThan(0) // fail loudly if the glob ever finds nothing
-    for (const tpl of templates) {
-      const pkg = JSON.parse(await readFile(join(PKG_ROOT, tpl, "package.json"), "utf8")) as {
+    // Composed, so this covers the GENERATED manifest a site scaffold ships as well as the manifests
+    // the copied templates still carry - the pin used to be a regex sweep over directories, and a
+    // site's is now one constant that no sweep would reach.
+    const { scaffolds, cleanup } = await materializeAll()
+    expect(scaffolds.length).toBeGreaterThan(0) // fail loudly if the set ever comes back empty
+    for (const { label: tpl, dir } of scaffolds) {
+      const pkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as {
         dependencies?: Record<string, string>
         devDependencies?: Record<string, string>
       }
@@ -43,6 +46,7 @@ describe("version-sync — scaffold/template refs track the published version", 
         }
       }
     }
+    await cleanup()
   })
 
   test("auth.ts injects @nifrajs/better-auth at ^<better-auth version>", async () => {

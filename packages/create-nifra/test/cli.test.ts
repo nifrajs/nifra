@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { githubDeployWorkflow, parseArgs, run, scaffold } from "../src/cli.ts"
+import { SHARED_SITE_FILES } from "../src/scaffold/site.ts"
+import { materializeAll } from "./_scaffold-fixtures.ts"
 
 const roots: string[] = []
 async function freshDir(name: string): Promise<string> {
@@ -383,35 +385,31 @@ describe("scaffold — --framework", () => {
   })
 })
 
-// Guard against drift: the framework-agnostic files must stay byte-identical across template variants
-// (they differ only by framework.ts, build entries, routes, package.json, tsconfig).
-describe("template parity", () => {
-  const AGNOSTIC = [
-    "Dockerfile",
-    ".dockerignore",
-    "deno.json",
-    "wrangler.toml",
-    "backend.ts",
-    "gitignore",
-    "server-bun.ts",
-    "server-node.ts",
-    "server-deno.ts",
-    "server-vercel.ts",
-    "_worker.ts",
-  ]
-  const base = join(import.meta.dir, "../template-site")
-  for (const fw of ["vue", "preact", "solid", "svelte"]) {
-    test(`template-site-${fw} matches template-site for every agnostic file`, async () => {
-      const overlay = join(import.meta.dir, `../template-site-${fw}`)
-      for (const f of AGNOSTIC) {
-        const [a, b] = await Promise.all([
-          readFile(join(base, f), "utf8"),
-          readFile(join(overlay, f), "utf8"),
-        ])
-        expect(b, `${f} drifted from template-site`).toBe(a)
+/**
+ * The framework-agnostic files must be byte-identical in every site a user can scaffold.
+ *
+ * This used to compare the four `template-site-<framework>` directories against `template-site`,
+ * because they were four hand-maintained copies that could drift - and did. Composition makes drift
+ * impossible for these by construction, so the assertion moves to where it still has teeth: the
+ * COMPOSED output. It now fails if `SHARED_SITE_FILES` ever lists a file that is not actually shared,
+ * which is the way this invariant can still break.
+ */
+describe("scaffold parity", () => {
+  test("every framework's site shares the agnostic files byte for byte", async () => {
+    const { scaffolds, cleanup } = await materializeAll()
+    const sites = scaffolds.filter((entry) => entry.label.startsWith("site-"))
+    const [first, ...rest] = sites
+    if (first === undefined) throw new Error("no site scaffolds were composed")
+
+    for (const file of SHARED_SITE_FILES) {
+      const expected = await readFile(join(first.dir, file), "utf8")
+      for (const site of rest) {
+        const actual = await readFile(join(site.dir, file), "utf8")
+        expect(actual, `${file} differs between ${first.label} and ${site.label}`).toBe(expected)
       }
-    })
-  }
+    }
+    await cleanup()
+  })
 })
 
 describe("CI workflows (--ci github)", () => {

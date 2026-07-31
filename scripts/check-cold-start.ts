@@ -24,10 +24,21 @@
  *   bun run scripts/check-cold-start.ts
  */
 
-import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { $ } from "bun"
+import { FRAMEWORK_IDS, FRAMEWORK_SPECS } from "../packages/create-nifra/src/scaffold/frameworks.ts"
+import { materializeSite } from "../packages/create-nifra/src/scaffold/site.ts"
+import { renderPackageJson } from "../packages/create-nifra/src/scaffold/site-files.ts"
 
 const ROOT = resolve(import.meta.dir, "..")
 const PKGS_DIR = join(ROOT, "packages")
@@ -67,12 +78,25 @@ let failures = 0
 
 // ── Layer 1: STATIC pin satisfiability ───────────────────────────────────────────────────────────
 console.log("=== cold-start: template pin satisfiability ===")
-const templateDirs = readdirSync(CREATE_NIFRA, { withFileTypes: true })
-  .filter((e) => e.isDirectory() && e.name.startsWith("template"))
-  .map((e) => e.name)
+// A site scaffold's manifest is GENERATED, so reading directories would silently stop covering the
+// five templates most people scaffold - the pins would go unchecked while this still reported success.
+// Both sources feed the same loop: the copied templates' files, and the model's output.
+const manifests: Array<{ label: string; manifest: Manifest }> = []
+for (const entry of readdirSync(CREATE_NIFRA, { withFileTypes: true })) {
+  if (!entry.isDirectory() || !entry.name.startsWith("template")) continue
+  const file = join(CREATE_NIFRA, entry.name, "package.json")
+  if (existsSync(file)) manifests.push({ label: entry.name, manifest: readJson(file) })
+}
+for (const id of FRAMEWORK_IDS) {
+  const spec = FRAMEWORK_SPECS[id]
+  if (spec === undefined) continue
+  manifests.push({
+    label: `site scaffold (--framework ${id})`,
+    manifest: JSON.parse(renderPackageJson(spec)) as Manifest,
+  })
+}
 
-for (const tpl of templateDirs) {
-  const m = readJson(join(CREATE_NIFRA, tpl, "package.json"))
+for (const { label: tpl, manifest: m } of manifests) {
   const deps = { ...(m.dependencies ?? {}), ...(m.devDependencies ?? {}) }
   const bad: string[] = []
   for (const [dep, range] of Object.entries(deps)) {
@@ -144,9 +168,11 @@ try {
   if (packFailed) {
     failures += 1
   } else {
-    // Scaffold template-site (the create-nifra CLI just copies this dir) into the work area.
+    // Compose a site the way `create-nifra` does. This used to copy `template-site/`, which stopped
+    // being a scaffold the moment a site became shared base + model + overlay - copying the sources
+    // would install and build a directory no user receives, which is the opposite of what this proves.
     const app = join(work, "app")
-    cpSync(join(CREATE_NIFRA, "template-site"), app, { recursive: true })
+    await materializeSite(app, "react")
 
     // Force the WHOLE @nifrajs tree to the packed tarballs via `overrides` — so the template builds
     // against the current source, not whatever is on npm. (Layer 1 already validated the pin ranges.)
@@ -160,16 +186,14 @@ try {
     const install = await $`bun install`.cwd(app).nothrow()
     if (install.exitCode !== 0) {
       failures += 1
-      console.error(`✗ scaffolded template-site: bun install failed (exit ${install.exitCode})`)
+      console.error(`✗ composed site scaffold: bun install failed (exit ${install.exitCode})`)
     } else {
       const build = await $`bun run build`.cwd(app).nothrow()
       if (build.exitCode !== 0) {
         failures += 1
-        console.error(`✗ scaffolded template-site: bun run build failed (exit ${build.exitCode})`)
+        console.error(`✗ composed site scaffold: bun run build failed (exit ${build.exitCode})`)
       } else {
-        console.log(
-          "✓ scaffolded template-site installs + builds against the packed current source",
-        )
+        console.log("✓ composed site scaffold installs + builds against the packed current source")
       }
     }
   }
