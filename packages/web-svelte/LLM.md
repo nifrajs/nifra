@@ -10,7 +10,7 @@ Svelte 5 render adapter for @nifrajs/web — SSR + hydration + the .svelte compi
 
 ## Public entrypoints
 
-`@nifrajs/web-svelte` · `@nifrajs/web-svelte/await` · `@nifrajs/web-svelte/client` · `@nifrajs/web-svelte/content` · `@nifrajs/web-svelte/fetcher` · `@nifrajs/web-svelte/fn` · `@nifrajs/web-svelte/i18n` · `@nifrajs/web-svelte/image` · `@nifrajs/web-svelte/mdx` · `@nifrajs/web-svelte/plugin` · `@nifrajs/web-svelte/query` · `@nifrajs/web-svelte/svg`
+`@nifrajs/web-svelte` · `@nifrajs/web-svelte/await` · `@nifrajs/web-svelte/client` · `@nifrajs/web-svelte/content` · `@nifrajs/web-svelte/fetcher` · `@nifrajs/web-svelte/fn` · `@nifrajs/web-svelte/i18n` · `@nifrajs/web-svelte/image` · `@nifrajs/web-svelte/mdx` · `@nifrajs/web-svelte/plugin` · `@nifrajs/web-svelte/query` · `@nifrajs/web-svelte/router` · `@nifrajs/web-svelte/svg`
 
 ## Key exports
 
@@ -22,14 +22,14 @@ Svelte 5 render adapter for @nifrajs/web — SSR + hydration + the .svelte compi
 - **svelteMdxBunPlugin** _(function)_ — `svelteMdxBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-svelte/mdx`
 - **svelteSvgComponentBunPlugin** _(function)_ — `svelteSvgComponentBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-svelte/svg`
 - **svgToSvelte** _(function)_ — `svgToSvelte: (xml: string) => string` · from `@nifrajs/web-svelte/svg`
+- **useBlocker** _(function)_ — `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readable<Blocker>` · from `@nifrajs/web-svelte/router`
 - **useFetcher** _(function)_ — `useFetcher: (key: string) => FetcherStore` · from `@nifrajs/web-svelte/fetcher`
 - **useFetchers** _(function)_ — `useFetchers: () => Readable<readonly Fetcher[]>` · from `@nifrajs/web-svelte/fetcher`
+- **useNavigate** _(function)_ — `useNavigate: () => NavigateFunction` · from `@nifrajs/web-svelte/router`
 - **useQuery** _(function)_ — `useQuery: <T>(key: unknown, fn: () => Promise<T>) => QueryStore<T>` · from `@nifrajs/web-svelte/query`
 - **useQueryClient** _(function)_ — `useQueryClient: () => Pick<QueryClient, "invalidateQueries">` · from `@nifrajs/web-svelte/query`
-- **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: ServerFnReference<Input, Output>) => ServerFnHandle<Input, Output>` · from `@nifrajs/web-svelte/fn`
-- **useT** _(function)_ — `useT: () => Formatter` · from `@nifrajs/web-svelte/i18n`
 
-_…and 6 more — see [`api-reference.md`](../../api-reference.md#nifrajswebsvelte) for the complete list._
+_…and 12 more — see [`api-reference.md`](../../api-reference.md#nifrajswebsvelte) for the complete list._
 
 ## Footguns
 

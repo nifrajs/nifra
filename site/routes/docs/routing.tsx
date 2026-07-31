@@ -153,6 +153,13 @@ export default function Routing() {
         blocker is idle (it never blocks), so navigation degrades to the native <code>&lt;a&gt;</code>{" "}
         and the page is hydration-safe.
       </p>
+      <p>
+        <code>useNavigate</code> and <code>useBlocker</code> ship on every adapter -{" "}
+        <code>@nifrajs/web-&lt;framework&gt;/router</code> on Preact, Vue, Solid and Svelte too, each
+        returning the blocker in that framework's own shape (a Vue ref, a Solid accessor, a Svelte store,
+        a plain value in Preact/React). In Vue, Solid and Svelte the hook is created once, so pass a
+        function - <code>useBlocker(() =&gt; dirty)</code> - to track a changing flag.
+      </p>
     </div>
   )
 }

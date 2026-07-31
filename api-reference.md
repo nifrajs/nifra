@@ -2882,6 +2882,21 @@ _No named exports (side-effect entrypoint)._
 - **useQueryClient** _(function)_ — `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
   Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation).
 
+### `@nifrajs/web-preact/router`
+
+- **Blocker** _(interface)_ — `interface Blocker`
+  A navigation guard, mirroring react-router's shape. When `state` is `blocked`, `proceed()` lets the held navigation through and `reset()` cancels it (staying put); both are `undefined` otherwise. The pair is what a boolean `when` can't express - the app shows its OWN async confirmation UI, then cal…
+- **BlockerFunction** _(type)_ — `type BlockerFunction = (args: { readonly currentLocation: BlockerLocation; readonly nextLocation: BlockerLocation; }) => boolean`
+  Decide whether a navigation should be halted. Receives where the app is (`currentLocation`) and where it's heading (`nextLocation`), so a guard can allow same-section moves and block only real exits. A boolean form (`useBlocker(isDirty)`) is sugar for `() => isDirty`. Runs synchronously at navigati…
+- **BlockerState** _(type)_ — `type BlockerState = "unblocked" | "blocked" | "proceeding"`
+  The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
+- **NavigateFunction** _(type)_ — `type NavigateFunction = (to: string | number, options?: NavigateOptions) => void`
+  A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta (`-1`/`1`). A no-op on the server / before hydration (use a `<a href>` there).
+- **useBlocker** _(function)_ — `useBlocker: (shouldBlock: boolean | BlockerFunction) => Blocker`
+  Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean (`useBlocker(isDirty)`) or a predicate `({ currentLocation, nextLocation }) => boolean`, and get back a {@link Blocker}. When a navigation (an anchor click, `u…
+- **useNavigate** _(function)_ — `useNavigate: () => NavigateFunction`
+  Get the {@link NavigateFunction}. Stable across renders; resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
+
 ## @nifrajs/web-react
 
 ### `@nifrajs/web-react`
@@ -3107,6 +3122,21 @@ _No named exports (side-effect entrypoint)._
 - **useQueryClient** _(function)_ — `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
   Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation).
 
+### `@nifrajs/web-solid/router`
+
+- **Blocker** _(interface)_ — `interface Blocker`
+  A navigation guard, mirroring react-router's shape. When `state` is `blocked`, `proceed()` lets the held navigation through and `reset()` cancels it (staying put); both are `undefined` otherwise. The pair is what a boolean `when` can't express - the app shows its OWN async confirmation UI, then cal…
+- **BlockerFunction** _(type)_ — `type BlockerFunction = (args: { readonly currentLocation: BlockerLocation; readonly nextLocation: BlockerLocation; }) => boolean`
+  Decide whether a navigation should be halted. Receives where the app is (`currentLocation`) and where it's heading (`nextLocation`), so a guard can allow same-section moves and block only real exits. A boolean form (`useBlocker(isDirty)`) is sugar for `() => isDirty`. Runs synchronously at navigati…
+- **BlockerState** _(type)_ — `type BlockerState = "unblocked" | "blocked" | "proceeding"`
+  The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
+- **NavigateFunction** _(type)_ — `type NavigateFunction = (to: string | number, options?: NavigateOptions) => void`
+  A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta (`-1`/`1`). A no-op on the server / before hydration (use a `<a href>` there).
+- **useBlocker** _(function)_ — `useBlocker: (shouldBlock: boolean | BlockerFunction) => Accessor<Blocker>`
+  Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a reactive {@link Blocker} accessor. When a navigation (an anchor click, `useNavi…
+- **useNavigate** _(function)_ — `useNavigate: () => NavigateFunction`
+  Get the {@link NavigateFunction}. Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
+
 ### `@nifrajs/web-solid/svg`
 
 - **solidSvgComponentBunPlugin** _(function)_ — `solidSvgComponentBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
@@ -3172,6 +3202,21 @@ _No named exports (side-effect entrypoint)._
   Subscribe to the keyed query for `key`, fetched via `fn`. Returns a store of `{ status, data, error, isFetching, updatedAt }` augmented with `refetch`. Fetches on mount (first `$`-subscription); SSR-idle.
 - **useQueryClient** _(function)_ — `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
   Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation).
+
+### `@nifrajs/web-svelte/router`
+
+- **Blocker** _(interface)_ — `interface Blocker`
+  A navigation guard, mirroring react-router's shape. When `state` is `blocked`, `proceed()` lets the held navigation through and `reset()` cancels it (staying put); both are `undefined` otherwise. The pair is what a boolean `when` can't express - the app shows its OWN async confirmation UI, then cal…
+- **BlockerFunction** _(type)_ — `type BlockerFunction = (args: { readonly currentLocation: BlockerLocation; readonly nextLocation: BlockerLocation; }) => boolean`
+  Decide whether a navigation should be halted. Receives where the app is (`currentLocation`) and where it's heading (`nextLocation`), so a guard can allow same-section moves and block only real exits. A boolean form (`useBlocker(isDirty)`) is sugar for `() => isDirty`. Runs synchronously at navigati…
+- **BlockerState** _(type)_ — `type BlockerState = "unblocked" | "blocked" | "proceeding"`
+  The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
+- **NavigateFunction** _(type)_ — `type NavigateFunction = (to: string | number, options?: NavigateOptions) => void`
+  A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta (`-1`/`1`). A no-op on the server / before hydration (use a `<a href>` there).
+- **useBlocker** _(function)_ — `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readable<Blocker>`
+  Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a {@link Blocker} store (read with `$blocker`). When a navigation (an anchor clic…
+- **useNavigate** _(function)_ — `useNavigate: () => NavigateFunction`
+  Get the {@link NavigateFunction}. Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 
 ### `@nifrajs/web-svelte/svg`
 
@@ -3271,6 +3316,21 @@ _No named exports (side-effect entrypoint)._
   Subscribe to the keyed query for `key`, fetched via `fn`. Returns a reactive `state` ref (`status`, `data`, `error`, `isFetching`, `updatedAt`) + `refetch`. Concurrent `useQuery`s with the same key share one cache entry + one in-flight fetch (dedup). Fetches on mount; SSR-idle.
 - **useQueryClient** _(function)_ — `useQueryClient: () => Pick<QueryClient, "invalidateQueries">`
   Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation).
+
+### `@nifrajs/web-vue/router`
+
+- **Blocker** _(interface)_ — `interface Blocker`
+  A navigation guard, mirroring react-router's shape. When `state` is `blocked`, `proceed()` lets the held navigation through and `reset()` cancels it (staying put); both are `undefined` otherwise. The pair is what a boolean `when` can't express - the app shows its OWN async confirmation UI, then cal…
+- **BlockerFunction** _(type)_ — `type BlockerFunction = (args: { readonly currentLocation: BlockerLocation; readonly nextLocation: BlockerLocation; }) => boolean`
+  Decide whether a navigation should be halted. Receives where the app is (`currentLocation`) and where it's heading (`nextLocation`), so a guard can allow same-section moves and block only real exits. A boolean form (`useBlocker(isDirty)`) is sugar for `() => isDirty`. Runs synchronously at navigati…
+- **BlockerState** _(type)_ — `type BlockerState = "unblocked" | "blocked" | "proceeding"`
+  The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
+- **NavigateFunction** _(type)_ — `type NavigateFunction = (to: string | number, options?: NavigateOptions) => void`
+  A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta (`-1`/`1`). A no-op on the server / before hydration (use a `<a href>` there).
+- **useBlocker** _(function)_ — `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readonly<ShallowRef<Blocker>>`
+  Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a reactive {@link Blocker} ref. When a navigation (an anchor click, `useNavigate`…
+- **useNavigate** _(function)_ — `useNavigate: () => NavigateFunction`
+  Get the {@link NavigateFunction}. Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 
 ### `@nifrajs/web-vue/svg`
 

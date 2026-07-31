@@ -67,6 +67,15 @@ coveragePathIgnorePatterns = [
   # LINE coverage but can't reach the 90% FUNCTION floor without a browser. Exclude it from the per-file
   # gate (same rationale as cli/src, mcp/src above); the tests still run and assert behavior.
   "**/web-react/src/query.ts",
+  # `@nifrajs/web-preact/router` (useNavigate + useBlocker) is a thin binding over the agnostic history
+  # bridges. Its only untested lines are `useBlocker`'s registration `useEffect`, which Preact runs on
+  # commit - something bun:test (no DOM) never does, same as query.ts above. The interception + restore-
+  # then-prompt LOGIC lives in `web/src/client.ts` (mutation-proven in `client-browser.test.ts`), and the
+  # binding's non-effect surface (useNavigate both paths, the SSR-idle blocker) is asserted by
+  # `router.test.ts`. The Vue/Solid/Svelte routers reach 100% because they register synchronously in their
+  # reactive scope; Preact/React register in an effect, so this file can't clear the floor without a
+  # browser. Exclude it from the per-file gate (same rationale as web-react/query.ts); the tests still run.
+  "**/web-preact/src/router.ts",
   # The suite's own preload (`scripts/test-preload.ts`) - harness, not product code. Its wrapper only
   # runs on a LOOPBACK fetch, so a suite that drives no socket (the `mcp`/`mcp-db` run) reports 0%
   # function coverage on it and fails the per-file floor, while the same file sits well above the floor

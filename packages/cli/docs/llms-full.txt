@@ -383,6 +383,12 @@ its own text there - a custom message isn't possible). On the server and before 
 blocker is idle (it never blocks), so navigation degrades to the native `<a>`
 and the page is hydration-safe.
 
+`useNavigate` and `useBlocker` ship on every adapter -
+`@nifrajs/web-<framework>/router` on Preact, Vue, Solid and Svelte too, each
+returning the blocker in that framework's own shape (a Vue ref, a Solid accessor, a Svelte store,
+a plain value in Preact/React). In Vue, Solid and Svelte the hook is created once, so pass a
+function - `useBlocker(() => dirty)` - to track a changing flag.
+
 ## Nifra — API & typed client
 
 > Build a typed JSON API with server()/defineContract + validate inputs with any Standard Schema, then consume it from a zero-codegen, never-throwing typed client.

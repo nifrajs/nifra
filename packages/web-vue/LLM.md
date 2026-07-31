@@ -10,7 +10,7 @@ Vue render adapter for @nifrajs/web — streaming SSR + hydration, with a .vue S
 
 ## Public entrypoints
 
-`@nifrajs/web-vue` · `@nifrajs/web-vue/await` · `@nifrajs/web-vue/client` · `@nifrajs/web-vue/content` · `@nifrajs/web-vue/fetcher` · `@nifrajs/web-vue/fn` · `@nifrajs/web-vue/i18n` · `@nifrajs/web-vue/image` · `@nifrajs/web-vue/plugin` · `@nifrajs/web-vue/query` · `@nifrajs/web-vue/svg`
+`@nifrajs/web-vue` · `@nifrajs/web-vue/await` · `@nifrajs/web-vue/client` · `@nifrajs/web-vue/content` · `@nifrajs/web-vue/fetcher` · `@nifrajs/web-vue/fn` · `@nifrajs/web-vue/i18n` · `@nifrajs/web-vue/image` · `@nifrajs/web-vue/plugin` · `@nifrajs/web-vue/query` · `@nifrajs/web-vue/router` · `@nifrajs/web-vue/svg`
 
 ## Key exports
 
@@ -21,15 +21,15 @@ Vue render adapter for @nifrajs/web — streaming SSR + hydration, with a .vue S
 - **mountRouter** _(function)_ — `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-vue/client`
 - **setMountedRouter** _(function)_ — `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-vue/fetcher`
 - **svgToVueSfc** _(function)_ — `svgToVueSfc: (xml: string) => string` · from `@nifrajs/web-vue/svg`
+- **useBlocker** _(function)_ — `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readonly<ShallowRef<Blocker>>` · from `@nifrajs/web-vue/router`
 - **useFetcher** _(function)_ — `useFetcher: (key: string) => FetcherHandle` · from `@nifrajs/web-vue/fetcher`
 - **useFetchers** _(function)_ — `useFetchers: () => Readonly<ShallowRef<readonly Fetcher[]>>` · from `@nifrajs/web-vue/fetcher`
+- **useNavigate** _(function)_ — `useNavigate: () => NavigateFunction` · from `@nifrajs/web-vue/router`
 - **useQuery** _(function)_ — `useQuery: <T>(key: unknown, fn: () => Promise<T>) => UseQueryResult<T>` · from `@nifrajs/web-vue/query`
 - **useQueryClient** _(function)_ — `useQueryClient: () => Pick<QueryClient, "invalidateQueries">` · from `@nifrajs/web-vue/query`
 - **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: ServerFnReference<Input, Output>) => ServerFnHandle<Input, Output>` · from `@nifrajs/web-vue/fn`
-- **useT** _(function)_ — `useT: () => Formatter` · from `@nifrajs/web-vue/i18n`
-- **vueBunPlugin** _(function)_ — `vueBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-vue/plugin`
 
-_…and 9 more — see [`api-reference.md`](../../api-reference.md#nifrajswebvue) for the complete list._
+_…and 15 more — see [`api-reference.md`](../../api-reference.md#nifrajswebvue) for the complete list._
 
 ## Footguns
 

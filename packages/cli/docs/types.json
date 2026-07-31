@@ -726,7 +726,35 @@
   {
     "name": "Blocker",
     "kind": "interface",
+    "package": "@nifrajs/web-preact",
+    "signature": "export interface Blocker {\n    readonly state: BlockerState;\n    readonly proceed: (() => void) | undefined;\n    readonly reset: (() => void) | undefined;\n}",
+    "doc": "/**\n * A navigation guard, mirroring react-router's shape. When `state` is `blocked`, `proceed()` lets the\n * held navigation through and `reset()` cancels it (staying put); both are `undefined` otherwise. The\n * pair is what a boolean `when` can't express - the app shows its OWN async confirmation UI, then calls\n * one of them, instead of the browser's synchronous `confirm()`.\n */"
+  },
+  {
+    "name": "Blocker",
+    "kind": "interface",
     "package": "@nifrajs/web-react",
+    "signature": "export interface Blocker {\n    readonly state: BlockerState;\n    readonly proceed: (() => void) | undefined;\n    readonly reset: (() => void) | undefined;\n}",
+    "doc": "/**\n * A navigation guard, mirroring react-router's shape. When `state` is `blocked`, `proceed()` lets the\n * held navigation through and `reset()` cancels it (staying put); both are `undefined` otherwise. The\n * pair is what a boolean `when` can't express - the app shows its OWN async confirmation UI, then calls\n * one of them, instead of the browser's synchronous `confirm()`.\n */"
+  },
+  {
+    "name": "Blocker",
+    "kind": "interface",
+    "package": "@nifrajs/web-solid",
+    "signature": "export interface Blocker {\n    readonly state: BlockerState;\n    readonly proceed: (() => void) | undefined;\n    readonly reset: (() => void) | undefined;\n}",
+    "doc": "/**\n * A navigation guard, mirroring react-router's shape. When `state` is `blocked`, `proceed()` lets the\n * held navigation through and `reset()` cancels it (staying put); both are `undefined` otherwise. The\n * pair is what a boolean `when` can't express - the app shows its OWN async confirmation UI, then calls\n * one of them, instead of the browser's synchronous `confirm()`.\n */"
+  },
+  {
+    "name": "Blocker",
+    "kind": "interface",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export interface Blocker {\n    readonly state: BlockerState;\n    readonly proceed: (() => void) | undefined;\n    readonly reset: (() => void) | undefined;\n}",
+    "doc": "/**\n * A navigation guard, mirroring react-router's shape. When `state` is `blocked`, `proceed()` lets the\n * held navigation through and `reset()` cancels it (staying put); both are `undefined` otherwise. The\n * pair is what a boolean `when` can't express - the app shows its OWN async confirmation UI, then calls\n * one of them, instead of the browser's synchronous `confirm()`.\n */"
+  },
+  {
+    "name": "Blocker",
+    "kind": "interface",
+    "package": "@nifrajs/web-vue",
     "signature": "export interface Blocker {\n    readonly state: BlockerState;\n    readonly proceed: (() => void) | undefined;\n    readonly reset: (() => void) | undefined;\n}",
     "doc": "/**\n * A navigation guard, mirroring react-router's shape. When `state` is `blocked`, `proceed()` lets the\n * held navigation through and `reset()` cancels it (staying put); both are `undefined` otherwise. The\n * pair is what a boolean `when` can't express - the app shows its OWN async confirmation UI, then calls\n * one of them, instead of the browser's synchronous `confirm()`.\n */"
   },
@@ -747,7 +775,35 @@
   {
     "name": "BlockerFunction",
     "kind": "type",
+    "package": "@nifrajs/web-preact",
+    "signature": "export type BlockerFunction = (args: {\n    readonly currentLocation: BlockerLocation;\n    readonly nextLocation: BlockerLocation;\n}) => boolean;",
+    "doc": "/**\n * Decide whether a navigation should be halted. Receives where the app is (`currentLocation`) and where\n * it's heading (`nextLocation`), so a guard can allow same-section moves and block only real exits. A\n * boolean form (`useBlocker(isDirty)`) is sugar for `() => isDirty`. Runs synchronously at navigation\n * time - return the current answer; the async \"are you sure?\" happens afterward via {@link Blocker}'s\n * `proceed`/`reset`.\n */"
+  },
+  {
+    "name": "BlockerFunction",
+    "kind": "type",
     "package": "@nifrajs/web-react",
+    "signature": "export type BlockerFunction = (args: {\n    readonly currentLocation: BlockerLocation;\n    readonly nextLocation: BlockerLocation;\n}) => boolean;",
+    "doc": "/**\n * Decide whether a navigation should be halted. Receives where the app is (`currentLocation`) and where\n * it's heading (`nextLocation`), so a guard can allow same-section moves and block only real exits. A\n * boolean form (`useBlocker(isDirty)`) is sugar for `() => isDirty`. Runs synchronously at navigation\n * time - return the current answer; the async \"are you sure?\" happens afterward via {@link Blocker}'s\n * `proceed`/`reset`.\n */"
+  },
+  {
+    "name": "BlockerFunction",
+    "kind": "type",
+    "package": "@nifrajs/web-solid",
+    "signature": "export type BlockerFunction = (args: {\n    readonly currentLocation: BlockerLocation;\n    readonly nextLocation: BlockerLocation;\n}) => boolean;",
+    "doc": "/**\n * Decide whether a navigation should be halted. Receives where the app is (`currentLocation`) and where\n * it's heading (`nextLocation`), so a guard can allow same-section moves and block only real exits. A\n * boolean form (`useBlocker(isDirty)`) is sugar for `() => isDirty`. Runs synchronously at navigation\n * time - return the current answer; the async \"are you sure?\" happens afterward via {@link Blocker}'s\n * `proceed`/`reset`.\n */"
+  },
+  {
+    "name": "BlockerFunction",
+    "kind": "type",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export type BlockerFunction = (args: {\n    readonly currentLocation: BlockerLocation;\n    readonly nextLocation: BlockerLocation;\n}) => boolean;",
+    "doc": "/**\n * Decide whether a navigation should be halted. Receives where the app is (`currentLocation`) and where\n * it's heading (`nextLocation`), so a guard can allow same-section moves and block only real exits. A\n * boolean form (`useBlocker(isDirty)`) is sugar for `() => isDirty`. Runs synchronously at navigation\n * time - return the current answer; the async \"are you sure?\" happens afterward via {@link Blocker}'s\n * `proceed`/`reset`.\n */"
+  },
+  {
+    "name": "BlockerFunction",
+    "kind": "type",
+    "package": "@nifrajs/web-vue",
     "signature": "export type BlockerFunction = (args: {\n    readonly currentLocation: BlockerLocation;\n    readonly nextLocation: BlockerLocation;\n}) => boolean;",
     "doc": "/**\n * Decide whether a navigation should be halted. Receives where the app is (`currentLocation`) and where\n * it's heading (`nextLocation`), so a guard can allow same-section moves and block only real exits. A\n * boolean form (`useBlocker(isDirty)`) is sugar for `() => isDirty`. Runs synchronously at navigation\n * time - return the current answer; the async \"are you sure?\" happens afterward via {@link Blocker}'s\n * `proceed`/`reset`.\n */"
   },
@@ -768,7 +824,35 @@
   {
     "name": "BlockerState",
     "kind": "type",
+    "package": "@nifrajs/web-preact",
+    "signature": "export type BlockerState = \"unblocked\" | \"blocked\" | \"proceeding\";",
+    "doc": "/**\n * The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted\n * and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called\n * `proceed`; the held navigation is being replayed.\n */"
+  },
+  {
+    "name": "BlockerState",
+    "kind": "type",
     "package": "@nifrajs/web-react",
+    "signature": "export type BlockerState = \"unblocked\" | \"blocked\" | \"proceeding\";",
+    "doc": "/**\n * The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted\n * and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called\n * `proceed`; the held navigation is being replayed.\n */"
+  },
+  {
+    "name": "BlockerState",
+    "kind": "type",
+    "package": "@nifrajs/web-solid",
+    "signature": "export type BlockerState = \"unblocked\" | \"blocked\" | \"proceeding\";",
+    "doc": "/**\n * The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted\n * and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called\n * `proceed`; the held navigation is being replayed.\n */"
+  },
+  {
+    "name": "BlockerState",
+    "kind": "type",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export type BlockerState = \"unblocked\" | \"blocked\" | \"proceeding\";",
+    "doc": "/**\n * The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted\n * and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called\n * `proceed`; the held navigation is being replayed.\n */"
+  },
+  {
+    "name": "BlockerState",
+    "kind": "type",
+    "package": "@nifrajs/web-vue",
     "signature": "export type BlockerState = \"unblocked\" | \"blocked\" | \"proceeding\";",
     "doc": "/**\n * The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted\n * and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called\n * `proceed`; the held navigation is being replayed.\n */"
   },
@@ -5852,9 +5936,37 @@
   {
     "name": "NavigateFunction",
     "kind": "type",
+    "package": "@nifrajs/web-preact",
+    "signature": "export type NavigateFunction = (to: string | number, options?: NavigateOptions) => void;",
+    "doc": "/** A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta\n * (`-1`/`1`). A no-op on the server / before hydration (use a `<a href>` there). */"
+  },
+  {
+    "name": "NavigateFunction",
+    "kind": "type",
     "package": "@nifrajs/web-react",
     "signature": "export type NavigateFunction = (to: string | number, options?: NavigateOptions) => void;",
     "doc": "/** A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta\n * (`-1`/`1`). A no-op on the server / before hydration (a render-time navigate isn't valid — use\n * {@link Navigate}, which navigates in an effect). */"
+  },
+  {
+    "name": "NavigateFunction",
+    "kind": "type",
+    "package": "@nifrajs/web-solid",
+    "signature": "export type NavigateFunction = (to: string | number, options?: NavigateOptions) => void;",
+    "doc": "/** A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta\n * (`-1`/`1`). A no-op on the server / before hydration (use a `<a href>` there). */"
+  },
+  {
+    "name": "NavigateFunction",
+    "kind": "type",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export type NavigateFunction = (to: string | number, options?: NavigateOptions) => void;",
+    "doc": "/** A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta\n * (`-1`/`1`). A no-op on the server / before hydration (use a `<a href>` there). */"
+  },
+  {
+    "name": "NavigateFunction",
+    "kind": "type",
+    "package": "@nifrajs/web-vue",
+    "signature": "export type NavigateFunction = (to: string | number, options?: NavigateOptions) => void;",
+    "doc": "/** A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta\n * (`-1`/`1`). A no-op on the server / before hydration (use a `<a href>` there). */"
   },
   {
     "name": "NavigateOptions",
@@ -9853,9 +9965,37 @@
   {
     "name": "useBlocker",
     "kind": "function",
+    "package": "@nifrajs/web-preact",
+    "signature": "export declare function useBlocker(shouldBlock: boolean | BlockerFunction): Blocker;",
+    "doc": "/**\n * Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors\n * react-router's `useBlocker`: pass a boolean (`useBlocker(isDirty)`) or a predicate\n * `({ currentLocation, nextLocation }) => boolean`, and get back a {@link Blocker}. When a navigation\n * (an anchor click, `useNavigate`, or a browser back/forward) is intercepted, `blocker.state` becomes\n * `\"blocked\"` and `proceed`/`reset` go live - render a dialog and call `proceed()` to continue or\n * `reset()` to stay put. It also arms the browser's native \"Leave site?\" prompt on tab close / reload.\n * Idle (never blocks) on the server and before hydration.\n */"
+  },
+  {
+    "name": "useBlocker",
+    "kind": "function",
     "package": "@nifrajs/web-react",
     "signature": "export declare function useBlocker(shouldBlock: boolean | BlockerFunction): Blocker;",
     "doc": "/**\n * Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors\n * react-router's `useBlocker`: pass a boolean (`useBlocker(isDirty)`) or a predicate\n * `({ currentLocation, nextLocation }) => boolean`, and get back a {@link Blocker}. When a navigation\n * (a `<Link>`/anchor click, `useNavigate`, or a browser back/forward) is intercepted, `blocker.state`\n * becomes `\"blocked\"` and `proceed`/`reset` go live - render a dialog and call `proceed()` to continue\n * or `reset()` to stay put. It also arms the browser's native \"Leave site?\" prompt on tab close / reload.\n * Idle (never blocks, `proceed`/`reset` are `undefined`) on the server and before hydration, so it's\n * SSR-safe and hydration-stable.\n *\n * ```tsx\n * const blocker = useBlocker(form.isDirty)\n * return (\n *   <>\n *     <MyForm />\n *     {blocker.state === \"blocked\" && (\n *       <ConfirmDialog\n *         onCancel={blocker.reset}\n *         onConfirm={blocker.proceed}\n *         message=\"Discard unsaved changes?\"\n *       />\n *     )}\n *   </>\n * )\n * ```\n */"
+  },
+  {
+    "name": "useBlocker",
+    "kind": "function",
+    "package": "@nifrajs/web-solid",
+    "signature": "export declare function useBlocker(shouldBlock: boolean | BlockerFunction): Accessor<Blocker>;",
+    "doc": "/**\n * Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors\n * react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean`\n * predicate, and get back a reactive {@link Blocker} accessor. When a navigation (an anchor click,\n * `useNavigate`, or a browser back/forward) is intercepted, `blocker().state` becomes `\"blocked\"` and\n * `proceed`/`reset` go live - show a dialog and call `proceed()` to continue or `reset()` to stay put.\n * It also arms the browser's native \"Leave site?\" prompt on tab close / reload. Idle on the server and\n * before hydration.\n *\n * The component body runs once, so to track a CHANGING flag pass a function -\n * `useBlocker(() => isDirty())` - not a bare signal accessor's current value. A constant boolean is fine.\n */"
+  },
+  {
+    "name": "useBlocker",
+    "kind": "function",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export declare function useBlocker(shouldBlock: boolean | BlockerFunction): Readable<Blocker>;",
+    "doc": "/**\n * Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors\n * react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean`\n * predicate, and get back a {@link Blocker} store (read with `$blocker`). When a navigation (an anchor\n * click, `useNavigate`, or a browser back/forward) is intercepted, `$blocker.state` becomes `\"blocked\"`\n * and `proceed`/`reset` go live - show a dialog and call `proceed()` to continue or `reset()` to stay.\n * It also arms the browser's native \"Leave site?\" prompt on tab close / reload. Idle on the server and\n * before hydration.\n *\n * The store is created once, so to track a CHANGING flag pass a function - `useBlocker(() => dirty)` -\n * re-evaluated at navigation time. A constant boolean is fine as-is.\n */"
+  },
+  {
+    "name": "useBlocker",
+    "kind": "function",
+    "package": "@nifrajs/web-vue",
+    "signature": "export declare function useBlocker(shouldBlock: boolean | BlockerFunction): Readonly<ShallowRef<Blocker>>;",
+    "doc": "/**\n * Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors\n * react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean`\n * predicate, and get back a reactive {@link Blocker} ref. When a navigation (an anchor click,\n * `useNavigate`, or a browser back/forward) is intercepted, `blocker.value.state` becomes `\"blocked\"`\n * and `proceed`/`reset` go live - render a dialog and call `proceed()` to continue or `reset()` to stay.\n * It also arms the browser's native \"Leave site?\" prompt on tab close / reload. Idle on the server and\n * before hydration.\n *\n * `setup` runs once, so to track a CHANGING flag pass a function - `useBlocker(() => form.isDirty)` -\n * not a bare `ref` (which would be truthy and always block). A constant boolean is fine as-is.\n */"
   },
   {
     "name": "useCapability",
@@ -9986,9 +10126,37 @@
   {
     "name": "useNavigate",
     "kind": "function",
+    "package": "@nifrajs/web-preact",
+    "signature": "export declare function useNavigate(): NavigateFunction;",
+    "doc": "/** Get the {@link NavigateFunction}. Stable across renders; resolves the browser navigate at call time,\n * so it works as soon as `installHistory` has run and no-ops before then / on the server. */"
+  },
+  {
+    "name": "useNavigate",
+    "kind": "function",
     "package": "@nifrajs/web-react",
     "signature": "export declare function useNavigate(): NavigateFunction;",
     "doc": "/** Get the {@link NavigateFunction}. Stable across renders; resolves the browser navigate at call time\n * (so it works as soon as `installHistory` has run, and no-ops before then / on the server). */"
+  },
+  {
+    "name": "useNavigate",
+    "kind": "function",
+    "package": "@nifrajs/web-solid",
+    "signature": "export declare function useNavigate(): NavigateFunction;",
+    "doc": "/** Get the {@link NavigateFunction}. Resolves the browser navigate at call time, so it works as soon as\n * `installHistory` has run and no-ops before then / on the server. */"
+  },
+  {
+    "name": "useNavigate",
+    "kind": "function",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export declare function useNavigate(): NavigateFunction;",
+    "doc": "/** Get the {@link NavigateFunction}. Resolves the browser navigate at call time, so it works as soon as\n * `installHistory` has run and no-ops before then / on the server. */"
+  },
+  {
+    "name": "useNavigate",
+    "kind": "function",
+    "package": "@nifrajs/web-vue",
+    "signature": "export declare function useNavigate(): NavigateFunction;",
+    "doc": "/** Get the {@link NavigateFunction}. Resolves the browser navigate at call time, so it works as soon as\n * `installHistory` has run and no-ops before then / on the server. */"
   },
   {
     "name": "useNavigation",
