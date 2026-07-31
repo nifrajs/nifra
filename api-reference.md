@@ -1162,6 +1162,8 @@ Every public export of every package and documented subpath — name, kind, sign
 - **encodeTransportFrame** _(function)_ — `encodeTransportFrame: (value: unknown, codec?: TransportCodec) => string`
 - **encodeTransportResponse** _(function)_ — `encodeTransportResponse: (value: unknown, codec?: TransportCodec, init?: ResponseInit) => Response`
 - **plainJsonCodec** _(const)_ — `plainJsonCodec: TransportCodec`
+- **readBoundedBytes** _(function)_ — `readBoundedBytes: (response: Response, options: TransportDecodeOptions) => Promise<Uint8Array>`
+  Read a response body into memory, refusing to exceed `maxBytes`.
 
 ### `@nifrajs/core/transport-codec-rich`
 
@@ -2168,6 +2170,16 @@ Every public export of every package and documented subpath — name, kind, sign
   Global the server serializes an action's data return into (absent on GETs); the client reads it so hydration after a native form POST matches the server-rendered markup.
 - **Action** _(type)_ — `type Action = (ctx: LoaderContext) => unknown | Promise<unknown>`
   A route's optional mutation, run on POST. Shares the loader context (params/request/api); read the form/JSON body off `request`. Returns either a `Response` (e.g. a redirect — passed straight through) or data, surfaced to the page component as `actionData`.
+- **Blocker** _(interface)_ — `interface Blocker`
+  A navigation guard, mirroring react-router's shape. When `state` is `blocked`, `proceed()` lets the held navigation through and `reset()` cancels it (staying put); both are `undefined` otherwise. The pair is what a boolean `when` can't express — the app shows its OWN async confirmation UI, then cal…
+- **BlockerController** _(interface)_ — `interface BlockerController`
+  The browser layer's blocker registry — installed by `installHistory` (which owns navigation and can therefore halt, restore, and replay it) and read by an adapter's `useBlocker` through {@link registerBlocker}. Kept here, DOM-free, for the same reason as {@link BrowserNavigate}: a route component's…
+- **BlockerFunction** _(type)_ — `type BlockerFunction = (args: { readonly currentLocation: BlockerLocation readonly nextLocation: BlockerLocation }) => boolean`
+  Decide whether a navigation should be halted. Receives where the app is (`currentLocation`) and where it's heading (`nextLocation`), so a guard can allow same-section moves and block only real exits. A boolean form (`useBlocker(isDirty)`) is sugar for `() => isDirty`. Runs synchronously at navigati…
+- **BlockerLocation** _(interface)_ — `interface BlockerLocation`
+  A parsed navigation target the {@link BlockerFunction} decides on. `pathname`/`search`/`hash` match the DOM `Location` shape (search keeps its `?`, hash its `#`).
+- **BlockerState** _(type)_ — `type BlockerState = "unblocked" | "blocked" | "proceeding"`
+  The blocker's lifecycle. `unblocked` — idle, nothing intercepted. `blocked` — a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` — the app called `proceed`; the held navigation is being replayed.
 - **BrowserNavigate** _(type)_ — `type BrowserNavigate = (to: string | number, options?: NavigateOptions) => void`
   A history-aware navigate. A **string** `to` is a same-origin path (`/users/7?tab=a`) navigated to (push, or replace with `{ replace: true }`); a **number** is a history delta (`-1` back, `1` forward), matching the browser's `history.go`. Registered by `installHistory`.
 - **CacheStore** _(interface)_ — `interface CacheStore`
@@ -2208,6 +2220,8 @@ Every public export of every package and documented subpath — name, kind, sign
 - **GenerateServerManifestOptions** _(interface)_ — `interface GenerateServerManifestOptions`
 - **GetStaticPaths** _(type)_ — `type GetStaticPaths = () => StaticPaths | Promise<StaticPaths>`
   A dynamic route's build-time param enumeration (the SSG equivalent of "which pages exist").
+- **IDLE_BLOCKER** _(const)_ — `IDLE_BLOCKER: Blocker`
+  The idle blocker — a stable reference (no needless adapter re-renders while unblocked).
 - **ISRApp** _(interface)_ — `interface ISRApp`
   The app `withISR` wraps — anything with a `fetch(req, platform?)` (a `createWebApp` result).
 - **ISROptions** _(interface)_ — `interface ISROptions`
@@ -2399,6 +2413,8 @@ Every public export of every package and documented subpath — name, kind, sign
   A **preview / draft-mode entry point** — a `fetch` handler that checks a preview token, turns draft mode on, and redirects the editor to the page they wanted. `GET` with `?token=<secret>&to=/some/path`; mount it on a nifra route, e.g. `app.get("/api/preview", (c) => handler(c.req))`.
 - **redirect** _(function)_ — `redirect: (location: string, options?: RedirectOptions) => Response`
   Build a redirect `Response` — return it from a route `action` for the Post/Redirect/Get pattern (POST mutates, 303 sends the browser to a fresh GET, so a reload doesn't re-submit). Defaults to 303 (See Other); pass `{ status: 307 }` or `{ status: 308 }` to preserve the method.
+- **registerBlocker** _(function)_ — `registerBlocker: (shouldBlock: BlockerFunction, onChange: (blocker: Blocker) => void) => () => void`
+  Register a navigation guard, returning an unregister function. `onChange` is called with the current {@link Blocker} whenever its state changes (so the adapter can re-render its confirmation UI). Before `installHistory` has run (SSR, pre-hydration), there's no controller: registration is a no-op an…
 - **renderPage** _(function)_ — `renderPage: (options: RenderPageInput) => MaybePromise<Response>`
   Server: render a full HTML document for a page — the adapter's hydration head + the SSR markup (**streamed**) + the serialized loader data + the client module — as a `Response`. The shell (`<head>` + the open container) flushes first, the adapter's app stream follows, then the tail (data globals + …
 - **renderPageResult** _(function)_ — `renderPageResult: (options: RenderPageInput) => MaybePromise<RenderedPage>`
@@ -2414,6 +2430,8 @@ Every public export of every package and documented subpath — name, kind, sign
   Serialize loader data for embedding inside an inline `<script>`. `JSON.stringify` alone is NOT safe there: a string containing `</script>` or `<!--` would break out of the script element (an XSS vector). Escape `<`/`>` to `\uXXXX`, plus the U+2028/U+2029 separators.
 - **servePublicDir** _(function)_ — `servePublicDir: (options: ServePublicDirOptions) => (request: Request) => Promise<Response | undefined>`
   Build a static-file handler for `dir`.
+- **setBlockerController** _(function)_ — `setBlockerController: (controller: BlockerController | undefined) => void`
+  Register (or clear, with `undefined`) the blocker controller — called by `installHistory`. Not for app use.
 - **setBrowserNavigate** _(function)_ — `setBrowserNavigate: (navigate: BrowserNavigate | undefined) => void`
   Register (or clear, with `undefined`) the browser navigate — called by `installHistory`. Not for app use.
 - **statusPage** _(function)_ — `statusPage: (status: number, options?: StatusPageOptions) => never`
@@ -2987,6 +3005,8 @@ _No named exports (side-effect entrypoint)._
   The value forms `setSearchParams` accepts.
 - **SetSearchParams** _(type)_ — `type SetSearchParams = ( next: SearchParamsInit | ((prev: URLSearchParams) => SearchParamsInit), options?: NavigateOptions, ) => void`
   Set the query string. Accepts a `URLSearchParams`, a record, a raw string, or an updater of the current params; navigates to the same pathname with the new query (push, or replace via options).
+- **useBlocker** _(function)_ — `useBlocker: (shouldBlock: boolean | BlockerFunction) => Blocker`
+  Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean (`useBlocker(isDirty)`) or a predicate `({ currentLocation, nextLocation }) => boolean`, and get back a {@link Blocker}. When a navigation (a `<Link>`/anchor c…
 - **useLocation** _(function)_ — `useLocation: () => Location`
   The current {@link Location} (`pathname`/`search`/`hash`), derived from the router context.
 - **useNavigate** _(function)_ — `useNavigate: () => NavigateFunction`

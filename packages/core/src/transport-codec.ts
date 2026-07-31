@@ -190,15 +190,26 @@ function appendVary(current: string | null, name: string): string {
   return values.includes(name.toLowerCase()) ? current : `${current}, ${name}`
 }
 
-async function readBoundedText(
+/**
+ * Read a response body into memory, refusing to exceed `maxBytes`.
+ *
+ * Bounded while STREAMING rather than after the fact: the `content-length` shortcut only helps when a
+ * sender declares one, so the loop also counts as it goes and cancels the reader the moment the total
+ * passes the limit. A cap that buffers first and complains afterwards has already spent the memory it
+ * was meant to protect.
+ *
+ * Exported so the client can bound a plain-text body with the same reader it bounds JSON with, rather
+ * than growing a second copy of this loop that could drift from it.
+ */
+export async function readBoundedBytes(
   response: Response,
   options: TransportDecodeOptions,
-): Promise<string> {
+): Promise<Uint8Array> {
   const maxBytes = maxBytesOf(options)
   const declared = response.headers.get("content-length")
   if (declared !== null && /^\d+$/u.test(declared) && Number(declared) > maxBytes)
     throw new TransportCodecError("transport payload exceeds maxBytes")
-  if (response.body === null) return ""
+  if (response.body === null) return new Uint8Array(0)
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []
   let total = 0
@@ -222,6 +233,14 @@ async function readBoundedText(
     bytes.set(chunk, offset)
     offset += chunk.byteLength
   }
+  return bytes
+}
+
+async function readBoundedText(
+  response: Response,
+  options: TransportDecodeOptions,
+): Promise<string> {
+  const bytes = await readBoundedBytes(response, options)
   return decodeOrThrow(
     () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
     "transport payload is not valid UTF-8",

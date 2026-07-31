@@ -8,6 +8,7 @@ import {
   createTransportCodecRegistry,
   decodeTransportResponse,
   plainJsonCodec,
+  readBoundedBytes,
   type TransportCodec,
   type TransportCodecRegistry,
 } from "@nifrajs/core/transport-codec"
@@ -74,6 +75,22 @@ export interface ClientOptions {
   readonly timeoutMs?: number
   /** Enable safe automatic retries. See {@link ClientRetryOptions}. */
   readonly retry?: ClientRetryOptions
+  /**
+   * Largest response body, in bytes, that will be DECODED into a value. Default 16 MB.
+   *
+   * Bounds the two paths that build something in memory - a JSON body becoming an object graph, a text
+   * body becoming a string - and it bounds them while streaming, cancelling the read the moment the
+   * total passes. A 2 GB string costs as much as a 2 GB object, so both answer to one number.
+   *
+   * A BINARY body is deliberately not bounded by this. That is a download, and a size limit on a
+   * download is a bug rather than a defence - the caller asked for the file. Bound one at the call site
+   * with a `signal`, or read `content-length` before deciding.
+   *
+   * This used to live at `transport.maxBytes`, where it could not be reached: `transport` requires a
+   * `codec`, so raising your response limit meant opting into a versioned transport representation you
+   * had not asked for. That spelling still works and still wins for the transport path.
+   */
+  readonly maxDecodedBytes?: number
   /**
    * Opt into a versioned transport representation. Plain JSON remains the default. Responses are
    * decoded through the bounded registry, and WebSocket frames use the same codec.
@@ -344,7 +361,18 @@ async function execute(
 
   if (options.onResponse !== undefined) await options.onResponse({ url, method, response })
 
-  const data = await parseBody(response, options)
+  // A body that breaches the size limit is a RESULT, not a throw. The client's one promise is that
+  // every call returns `{ ok, status, data, error }` - `timeoutMs` already honours that, and a cap
+  // that threw instead would mean the only way to use it safely was the try/catch the contract exists
+  // to remove. `status: 0` is the same shape a timeout and a network failure take: no HTTP answer was
+  // understood, so there is no status to report.
+  let data: unknown
+  try {
+    data = await parseBody(response, options)
+  } catch (cause) {
+    if (!isPayloadTooLarge(cause)) throw cause
+    return { ok: false, status: 0, data: null, error: { error: "response_too_large" } }
+  }
   if (response.ok) {
     return { ok: true, status: response.status, data, error: null }
   }
@@ -596,18 +624,33 @@ function isTextualBody(contentType: string): boolean {
   )
 }
 
+/**
+ * The size cap's own error, recognised by name rather than by class.
+ *
+ * `instanceof` across a package boundary is only as reliable as the module graph: two copies of
+ * `@nifrajs/core` in a tree - a linked checkout, a duplicated transitive version - give two distinct
+ * classes and the check silently stops matching, turning a handled result back into a thrown error.
+ */
+function isPayloadTooLarge(cause: unknown): boolean {
+  return (
+    cause instanceof Error &&
+    cause.name === "TransportCodecError" &&
+    cause.message.includes("exceeds maxBytes")
+  )
+}
+
 async function parseBody(response: Response, options: ClientOptions): Promise<unknown> {
   if (response.status === 204) return undefined
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? ""
+  // One limit for both decoded paths. `transport.maxBytes` is the older spelling and still wins for
+  // the transport path, so an app that set it there keeps the number it chose.
+  const decodedBytes = options.transport?.maxBytes ?? options.maxDecodedBytes
+  const bound = decodedBytes === undefined ? {} : { maxBytes: decodedBytes }
   if (
     contentType.startsWith("application/json") ||
     contentType.startsWith("application/vnd.nifra.")
   ) {
-    return await decodeTransportResponse(response, transportRegistry(options), {
-      ...(options.transport?.maxBytes === undefined
-        ? {}
-        : { maxBytes: options.transport.maxBytes }),
-    })
+    return await decodeTransportResponse(response, transportRegistry(options), bound)
   }
   // A binary body comes back as a Blob rather than through `.text()`. Decoding bytes as UTF-8 does not
   // fail, it SUBSTITUTES: every invalid sequence becomes U+FFFD, so a PNG arrived as a string of
@@ -615,7 +658,10 @@ async function parseBody(response: Response, options: ClientOptions): Promise<un
   // `89 50 4e 47 ff d8` came back `ef bf bd 50 4e 47 ef bf bd ef bf bd` - which is the kind of
   // corruption that looks like a broken file rather than a broken client.
   if (!isTextualBody(contentType)) return await response.blob()
-  const text = await response.text()
+  // Bounded with the same reader JSON uses, but decoded leniently: `.text()` substitutes U+FFFD for a
+  // malformed sequence and callers have always seen that, so tightening to a fatal decode here would
+  // turn working text responses into failures for a reason nobody asked about.
+  const text = new TextDecoder().decode(await readBoundedBytes(response, bound))
   if (text === "") return undefined
   try {
     return JSON.parse(text)

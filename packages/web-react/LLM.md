@@ -26,10 +26,10 @@ React render adapter for @nifrajs/web — SSR + hydration (Bun-native JSX, no Ba
 - **Navigate** _(function)_ — `Navigate: ({ to, replace }: NavigateProps) => null` · from `@nifrajs/web-react/router`
 - **QueryClientProvider** _(function)_ — `QueryClientProvider: (props: { readonly client: QueryClient; readonly children?: ReactNode; }) => ReactNode` · from `@nifrajs/web-react/query`
 - **setMountedRouter** _(function)_ — `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-react/fetcher`
+- **useBlocker** _(function)_ — `useBlocker: (shouldBlock: boolean | BlockerFunction) => Blocker` · from `@nifrajs/web-react/router`
 - **useFetcher** _(function)_ — `useFetcher: (key: string) => FetcherHandle` · from `@nifrajs/web-react/fetcher`
-- **useFetchers** _(function)_ — `useFetchers: () => readonly Fetcher[]` · from `@nifrajs/web-react/fetcher`
 
-_…and 39 more — see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
+_…and 40 more — see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
 
 ## Footguns
 
