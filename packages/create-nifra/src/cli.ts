@@ -31,6 +31,7 @@ import {
   writeAuthFiles,
 } from "./auth.ts"
 import { DB_CHOICES, DB_PRESETS, type DbChoice, writeDbFiles } from "./db.ts"
+import { applyFeatures, type FeatureContribution } from "./scaffold/features.ts"
 import { materializeSite } from "./scaffold/site.ts"
 
 const TEMPLATES = {
@@ -338,22 +339,32 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
     devDependencies?: Record<string, string>
   }
   pkg.name = name
+  // Every feature states what it contributes and the merge refuses an undeclared collision, so which
+  // flag was handled first stops deciding what a project ends up with. `--deploy` repoints the
+  // canonical `build`/`deploy` aliases, which is the flag's purpose, so it says so.
+  const features: FeatureContribution[] = []
   if (preset !== undefined) {
     // Multi-target stays intact (build:*, deploy:* scripts); just point the canonical aliases at the pick.
-    pkg.scripts = { ...(pkg.scripts ?? {}) }
-    pkg.scripts.build = preset.build
-    pkg.scripts.deploy = preset.deploy.replaceAll("NAME", name)
+    features.push({
+      label: `--deploy ${opts.deploy}`,
+      scripts: { build: preset.build, deploy: preset.deploy.replaceAll("NAME", name) },
+      replaces: ["build", "deploy"],
+    })
   }
   if (db !== undefined) {
     // Merge the Drizzle preset's deps + db:* scripts; `bun install` then resolves them.
     const dbp = DB_PRESETS[db]
-    pkg.dependencies = { ...(pkg.dependencies ?? {}), ...dbp.deps }
-    pkg.devDependencies = { ...(pkg.devDependencies ?? {}), ...dbp.devDeps }
-    pkg.scripts = { ...(pkg.scripts ?? {}), ...dbp.scripts }
+    features.push({
+      label: `--db ${db}`,
+      dependencies: dbp.deps,
+      devDependencies: dbp.devDeps,
+      scripts: dbp.scripts,
+    })
   }
   if (auth !== undefined) {
-    pkg.dependencies = { ...(pkg.dependencies ?? {}), ...AUTH_PRESETS[auth].deps }
+    features.push({ label: `--auth ${auth}`, dependencies: AUTH_PRESETS[auth].deps })
   }
+  applyFeatures(pkg, features)
   // --link: replace @nifrajs/* semver refs with file: paths pointing at the local monorepo's packages/
   // directory — lets an app consume nifra from a sibling repo before the packages are published.
   if (opts.link !== undefined) {
