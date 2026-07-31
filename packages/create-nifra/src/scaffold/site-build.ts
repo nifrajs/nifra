@@ -1,3 +1,5 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: this module EMITS template literals; the
+// `${dir}` in these strings is source it writes, not an unresolved placeholder in this file.
 /**
  * The five build entries a site scaffold ships, emitted from one shape.
  *

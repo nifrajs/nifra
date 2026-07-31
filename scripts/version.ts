@@ -12,7 +12,7 @@
  * so it needs no rewrite here.) This keeps the "Version Packages" PR correct automatically.
  */
 import { execSync } from "node:child_process"
-import { readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 
 execSync("changeset version", { stdio: "inherit" })
 
@@ -35,12 +35,27 @@ for (const { file, re } of constants) {
   console.log(`✓ ${file} → ${version}`)
 }
 
+const CREATE_NIFRA = "packages/create-nifra"
+const CREATE_NIFRA_SRC = `${CREATE_NIFRA}/src`
+
+// The site scaffold's `package.json` is GENERATED from one constant, so its pin is a single rewrite
+// rather than a sweep - and `scaffold-composition.test.ts` fails when that constant drifts from the
+// version being published, which is the check this whole step never had.
+{
+  const file = `${CREATE_NIFRA_SRC}/scaffold/frameworks.ts`
+  const src = readFileSync(file, "utf8")
+  writeFileSync(file, src.replace(/(NIFRA_DEP_RANGE = ")[~^]?[^"]+(")/, `$1^${version}$2`))
+  console.log(`✓ ${file} → ^${version}`)
+}
+
 // create-nifra template pins: rewrite every internal `@nifrajs/*` / `nifra` dep to `^<version>`, leaving
 // third-party pins (react, vite, …) alone. Global flag: each template lists several internal deps.
+// The four `template-site-<framework>` directories no longer carry a `package.json` of their own once
+// the generator owns it; this still covers the templates that are plain copies.
 const NIFRA_DEP = /("(?:@nifrajs\/[a-z0-9-]+|nifra)":\s*")[~^]?[^"]+(")/g
-const CREATE_NIFRA = "packages/create-nifra"
 for (const dir of readdirSync(CREATE_NIFRA).filter((d) => d.startsWith("template"))) {
   const file = `${CREATE_NIFRA}/${dir}/package.json`
+  if (!existsSync(file)) continue // a composed template: its manifest comes from the model above
   const src = readFileSync(file, "utf8")
   writeFileSync(file, src.replace(NIFRA_DEP, `$1^${version}$2`))
   console.log(`✓ ${file} → ^${version}`)

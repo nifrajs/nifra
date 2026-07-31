@@ -3,6 +3,11 @@ import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { FRAMEWORK_SPECS } from "../src/scaffold/frameworks.ts"
 import { BUILD_TARGETS, renderBuildFile } from "../src/scaffold/site-build.ts"
+import {
+  renderFrameworkModule,
+  renderPackageJson,
+  renderTsconfig,
+} from "../src/scaffold/site-files.ts"
 
 /**
  * The generator has to reproduce what was checked in.
@@ -110,5 +115,40 @@ describe("the generator reproduces the checked-in site templates", () => {
         expect(added.filter((line) => !allowed.has(line))).toEqual([])
       })
     }
+  }
+})
+
+/**
+ * The other three mechanical files.
+ *
+ * `framework.ts` is compared as text - it is source, and its whole content is two names. The two JSON
+ * files are compared PARSED: key order in a `package.json` is not behaviour, and pinning it would make
+ * the test fail for a reformat while saying nothing about what a scaffolded app installs.
+ */
+describe("the generator reproduces the remaining mechanical files", () => {
+  for (const [id, spec] of Object.entries(FRAMEWORK_SPECS)) {
+    test(`${id}/framework.ts`, async () => {
+      const committed = await readFile(join(templateDir(id), "framework.ts"), "utf8")
+      expect(renderFrameworkModule(spec)).toBe(committed)
+    })
+
+    test(`${id}/package.json - same dependencies and scripts`, async () => {
+      const committed = JSON.parse(await readFile(join(templateDir(id), "package.json"), "utf8"))
+      expect(JSON.parse(renderPackageJson(spec))).toEqual(committed)
+    })
+
+    test(`${id}/tsconfig.json - same compiler options`, async () => {
+      const committed = JSON.parse(
+        await readFile(join(templateDir(id), "tsconfig.json"), "utf8"),
+      ) as {
+        exclude: string[]
+      }
+      const generated = JSON.parse(renderTsconfig(spec)) as { exclude: string[] }
+      // React's copy alone forgot `.vercel`, though its `build-vercel.ts` writes there like the rest.
+      // Restored for every framework, which is the only difference permitted here.
+      const restored = generated.exclude.filter((entry) => !committed.exclude.includes(entry))
+      expect(restored).toEqual(id === "react" ? [".vercel"] : [])
+      expect({ ...generated, exclude: committed.exclude }).toEqual(committed)
+    })
   }
 })

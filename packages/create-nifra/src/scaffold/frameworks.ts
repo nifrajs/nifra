@@ -37,7 +37,29 @@ export interface FrameworkSpec {
   readonly define?: Readonly<Record<string, string>>
   /** Comment above the hoisted `define`, when the framework's flags need explaining. */
   readonly defineNote?: string
+  /** Runtime dependencies beyond the shared Nifra set, in emission order. */
+  readonly runtimeDependencies: Readonly<Record<string, string>>
+  /** Dev dependencies beyond `@nifrajs/cli`, `typescript` and `vite`, in emission order. */
+  readonly devDependencies: Readonly<Record<string, string>>
+  /** What this framework needs from `tsconfig.json`. */
+  readonly typescript: {
+    readonly jsx?: string
+    readonly jsxImportSource?: string
+    readonly types?: readonly string[]
+    /** False when routes are not `.tsx` - Svelte's are `.svelte`, so the glob would match nothing. */
+    readonly includeTsx?: boolean
+  }
 }
+
+/**
+ * The `@nifrajs/*` range a scaffolded site installs.
+ *
+ * One constant, because it used to be a regex sweep over eight `package.json` files in the release
+ * script with nothing checking the result - and the script's own comment warns that a missed bump
+ * ships templates installing the PREVIOUS release. `scaffold-version.test.ts` now fails when this
+ * drifts from what core is publishing, so the footgun is a red test rather than a silent regression.
+ */
+export const NIFRA_DEP_RANGE = "^2.2.0"
 
 /**
  * React is first because it is the default (`--framework` omitted scaffolds it), and because the
@@ -48,16 +70,29 @@ export const FRAMEWORK_SPECS: Readonly<Record<string, FrameworkSpec>> = {
     id: "react",
     adapter: "reactAdapter",
     package: "@nifrajs/web-react",
+    runtimeDependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+    devDependencies: {
+      "@types/react": "^19.0.0",
+      "@types/react-dom": "^19.0.0",
+      "@vitejs/plugin-react": "^4.3.0",
+    },
+    typescript: { jsx: "react-jsx", types: ["react", "react-dom"] },
   },
   preact: {
     id: "preact",
     adapter: "preactAdapter",
     package: "@nifrajs/web-preact",
+    runtimeDependencies: { preact: "^10.25.0" },
+    devDependencies: { "@preact/preset-vite": "^2.9.0" },
+    typescript: { jsx: "react-jsx", jsxImportSource: "preact" },
   },
   solid: {
     id: "solid",
     adapter: "solidAdapter",
     package: "@nifrajs/web-solid",
+    runtimeDependencies: { "solid-js": "^1.9.0" },
+    devDependencies: { "vite-plugin-solid": "^2.10.0" },
+    typescript: { jsx: "preserve", jsxImportSource: "solid-js" },
     bunPlugin: { specifier: "@nifrajs/web-solid", name: "solidBunPlugin" },
     // Solid publishes a `solid` export condition that routes `solid-js` to its JSX source; without it
     // the bundler takes the pre-compiled build and hydration has nothing to attach to.
@@ -67,12 +102,18 @@ export const FRAMEWORK_SPECS: Readonly<Record<string, FrameworkSpec>> = {
     id: "svelte",
     adapter: "svelteAdapter",
     package: "@nifrajs/web-svelte",
+    runtimeDependencies: { svelte: "^5.3.0" },
+    devDependencies: { "@sveltejs/vite-plugin-svelte": "^5.0.0" },
+    typescript: { types: ["svelte"], includeTsx: false },
     bunPlugin: { specifier: "@nifrajs/web-svelte/plugin", name: "svelteBunPlugin" },
   },
   vue: {
     id: "vue",
     adapter: "vueAdapter",
     package: "@nifrajs/web-vue",
+    runtimeDependencies: { vue: "^3.5.0" },
+    devDependencies: { "@vitejs/plugin-vue": "^5.2.0", "@vue/compiler-sfc": "^3.5.0" },
+    typescript: { jsx: "preserve" },
     bunPlugin: {
       specifier: "@nifrajs/web-vue/plugin",
       name: "vueBunPlugin",

@@ -31,6 +31,7 @@ import {
   writeAuthFiles,
 } from "./auth.ts"
 import { DB_CHOICES, DB_PRESETS, type DbChoice, writeDbFiles } from "./db.ts"
+import { materializeSite } from "./scaffold/site.ts"
 
 const TEMPLATES = {
   api: "../template",
@@ -261,10 +262,6 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
     }
     framework = opts.framework as Framework
   }
-  const templateRel =
-    template === "site" && framework !== undefined && framework !== "react"
-      ? `../template-site-${framework}`
-      : TEMPLATES[template]
 
   let preset: DeployPreset | undefined
   if (opts.deploy !== undefined) {
@@ -310,13 +307,20 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
     auth = opts.auth as AuthChoice
   }
 
-  const templateDir = fileURLToPath(new URL(templateRel, import.meta.url))
-  // Default: errorOnExist + force:false → reject rather than clobber an existing directory.
-  // --force: allow overwriting an existing destination (needed for `bun create nifra .`).
-  await cp(templateDir, opts.target, {
-    recursive: true,
-    ...(opts.force ? { force: true } : { errorOnExist: true, force: false }),
-  })
+  // The site scaffold is COMPOSED rather than copied: thirteen of its files are identical whatever you
+  // render with, eight are emitted from the framework model, and five are the framework's own. The
+  // other templates are still a plain copy - they have no framework axis to collapse.
+  // Either way the default refuses an occupied destination rather than clobbering it; --force is what
+  // `bun create nifra .` needs.
+  if (template === "site") {
+    await materializeSite(opts.target, framework ?? "react", { force: opts.force === true })
+  } else {
+    const templateDir = fileURLToPath(new URL(TEMPLATES[template], import.meta.url))
+    await cp(templateDir, opts.target, {
+      recursive: true,
+      ...(opts.force ? { force: true } : { errorOnExist: true, force: false }),
+    })
+  }
 
   // The template ships its ignore file as `gitignore` (npm strips a literal `.gitignore`); restore the dot.
   try {
