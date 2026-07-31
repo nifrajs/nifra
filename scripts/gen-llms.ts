@@ -265,10 +265,11 @@ for (const file of new Glob("packages/*/package.json").scanSync(ROOT)) {
 pkgs.sort((a, b) => a.name.localeCompare(b.name))
 
 // ---- types index (for the `nifra_types` MCP tool) ----------------------------------------------
-// The EXACT TypeScript of every exported symbol, parsed from each package's BUILT `dist/**/*.d.ts`
-// (signatures only — no impl) with the TS compiler, so it's the authoritative source, never prose and
+// The EXACT TypeScript of every exported symbol, parsed with the TS compiler from the declarations a
+// package publishes (signatures only — no impl), so it's the authoritative source, never prose and
 // never truncated. An agent calls `nifra_types({ name })` for the literal declaration instead of
-// reading `.d.ts` files. Requires the packages to be built (`site:build`/`check:publish` build first).
+// reading `.d.ts` files. Requires the packages to be built (`site:build`/`check:publish` build first) —
+// except the few that publish TypeScript source, whose declarations are emitted here (`materializeDts`).
 
 interface TypeEntry {
   readonly name: string
@@ -321,14 +322,49 @@ interface ModuleFacts {
 
 const moduleCache = new Map<string, ModuleFacts | undefined>()
 
+/**
+ * Declaration text for packages that publish TypeScript SOURCE, keyed by the `.d.ts` path they would
+ * have had if they built one.
+ *
+ * `@nifrajs/deno`, `@nifrajs/content` and `@nifrajs/workers` ship `files: ["src"]` and point `types`
+ * straight at `./src/index.ts`, which is the correct thing for a Deno/workerd/Bun-resolved package.
+ * Indexing only `.d.ts` therefore skipped all three, and `nifra_types` answered NOTHING for three
+ * published packages. That is the same failure the `--check` gate exists to prevent, in its worse
+ * direction: a stale entry hands an agent an outdated signature, a missing package hands it nothing
+ * and it invents one.
+ */
+const virtualDts = new Map<string, string>()
+const dtsExists = (file: string): boolean => virtualDts.has(file) || existsSync(file)
+const dtsText = (file: string): string => virtualDts.get(file) ?? read(file)
+
+/**
+ * Emit declarations for one source file and remember them under its `.d.ts` path.
+ *
+ * Isolated declaration emit (per file, no type checker) rather than a `tsc` program, because that is
+ * how the rest of this index already works: `factsOf` parses one file, `resolveDts` walks to the next.
+ * It is also the only emit that cannot silently widen a type - a declaration it cannot infer is a
+ * diagnostic, not an `any` - and the explicit-return-type discipline in these packages means there
+ * are none. Returns undefined for a file that does not exist, matching `resolveDts`'s other misses.
+ */
+function materializeDts(sourceFile: string): string | undefined {
+  const dts = sourceFile.replace(/\.ts$/, ".d.ts")
+  if (virtualDts.has(dts)) return dts
+  if (!existsSync(sourceFile)) return undefined
+  virtualDts.set(
+    dts,
+    ts.transpileDeclaration(read(sourceFile), { fileName: sourceFile }).outputText,
+  )
+  return dts
+}
+
 function factsOf(file: string): ModuleFacts | undefined {
   const cached = moduleCache.get(file)
   if (cached !== undefined || moduleCache.has(file)) return cached
-  if (!existsSync(file)) {
+  if (!dtsExists(file)) {
     moduleCache.set(file, undefined)
     return undefined
   }
-  const text = read(file)
+  const text = dtsText(file)
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.ESNext, true)
   const facts: ModuleFacts = {
     sf,
@@ -393,9 +429,18 @@ function factsOf(file: string): ModuleFacts | undefined {
  */
 function resolveDts(fromFile: string, spec: string): string | undefined {
   if (spec.startsWith(".")) {
-    const base = `${fromFile.slice(0, fromFile.lastIndexOf("/"))}/${spec.replace(/\.js$/, "")}`
+    // `.ts` as well as `.js`: a built `.d.ts` names its siblings `./x.js`, but declarations emitted
+    // from source keep the source's own `./x.ts` specifiers.
+    const base = `${fromFile.slice(0, fromFile.lastIndexOf("/"))}/${spec.replace(/\.(js|ts)$/, "")}`
     for (const candidate of [`${base}.d.ts`, `${base}/index.d.ts`]) {
-      if (existsSync(candidate)) return candidate
+      if (dtsExists(candidate)) return candidate
+    }
+    // No declaration on disk. In a source-publishing package that is every module, including the
+    // internal ones its entry re-exports from, so emit one rather than dropping the type. Ordered
+    // last, so a package that ships a real `.d.ts` resolves to it exactly as before.
+    for (const source of [`${base}.ts`, `${base}/index.ts`]) {
+      const emitted = materializeDts(source)
+      if (emitted !== undefined) return emitted
     }
     return undefined
   }
@@ -405,13 +450,7 @@ function resolveDts(fromFile: string, spec: string): string | undefined {
   if (dir === undefined) return undefined
   const subpath = spec === name ? "." : `.${spec.slice(name.length)}`
   const manifest = JSON.parse(read(`${dir}/package.json`)) as { exports?: Record<string, unknown> }
-  const declared = new Set<string>()
-  declaredEntries(manifest.exports?.[subpath], declared)
-  for (const entry of declared) {
-    const file = `${dir}/${entry.replace(/^\.\//, "")}`
-    if (existsSync(file)) return file
-  }
-  return undefined
+  return declarationFiles(dir, manifest.exports?.[subpath])[0]
 }
 
 /** Every name a module exports, following `export *`. */
@@ -508,11 +547,50 @@ function declaredEntries(exportsMap: unknown, out: Set<string>): void {
  */
 function publishedDts(dir: string): string[] {
   const manifest = JSON.parse(read(`${dir}/package.json`)) as { exports?: unknown }
+  return declarationFiles(dir, manifest.exports)
+}
+
+/**
+ * The TypeScript entry named by an `exports` subtree - its `types` condition, or the bare string a
+ * condition-less subpath is.
+ *
+ * Only the `types` condition, never the runtime ones beside it: `bun`, `deno` and `workerd` may point
+ * at a different module, and what a consumer's TypeScript resolver reads is the API surface.
+ */
+function declaredSourceEntries(exportsMap: unknown, out: Set<string>): void {
+  if (typeof exportsMap === "string") {
+    if (exportsMap.endsWith(".ts")) out.add(exportsMap)
+    return
+  }
+  if (exportsMap === null || typeof exportsMap !== "object") return
+  const conditions = exportsMap as Record<string, unknown>
+  if ("types" in conditions) {
+    declaredSourceEntries(conditions.types, out)
+    return
+  }
+  for (const value of Object.values(conditions)) declaredSourceEntries(value, out)
+}
+
+/**
+ * The declaration files an `exports` subtree resolves to.
+ *
+ * A built `.d.ts` wins whenever one exists, so every package that ships a `dist` indexes exactly what
+ * it indexed before. Only a package that publishes source reaches the second half, where the
+ * declarations are emitted from that source instead of being skipped.
+ */
+function declarationFiles(dir: string, exportsMap: unknown): string[] {
   const declared = new Set<string>()
-  declaredEntries(manifest.exports, declared)
-  return [...declared]
+  declaredEntries(exportsMap, declared)
+  const built = [...declared]
     .map((entry) => `${dir}/${entry.replace(/^\.\//, "")}`)
     .filter((file) => existsSync(file))
+  if (built.length > 0) return built
+
+  const sources = new Set<string>()
+  declaredSourceEntries(exportsMap, sources)
+  return [...sources]
+    .map((entry) => materializeDts(`${dir}/${entry.replace(/^\.\//, "")}`))
+    .filter((file): file is string => file !== undefined)
 }
 
 const types: TypeEntry[] = []
@@ -525,6 +603,27 @@ for (const p of pkgs) {
   for (const f of dts) extractTypesFromDts(p.name, f, typeSeen, types)
 }
 types.sort((a, b) => a.name.localeCompare(b.name) || a.package.localeCompare(b.package))
+
+/**
+ * A published package that contributes NO signature is a hole in the corpus `nifra_types` answers
+ * from, and `--check` is structurally blind to it: a file consistently missing a package matches its
+ * committed copy forever. Staleness was gated because it hands an agent a signature the code no longer
+ * has; handing an agent nothing for a whole package is the same failure, and it invents one instead.
+ *
+ * This is also the loud version of a quiet one. Run without building first and every `dist/*.d.ts` is
+ * absent, so `types.json` gets rewritten with almost nothing in it - the only tell being a count in a
+ * log line. That now stops here instead of being committed.
+ */
+const untyped = pkgs.filter((p) => !types.some((t) => t.package === p.name))
+if (untyped.length > 0) {
+  console.error(
+    `✗ ${untyped.length} published package(s) contribute no types:\n` +
+      `${untyped.map((p) => `    ${p.name}`).join("\n")}\n` +
+      "  Run `bun run build` first - a package indexes from its built `dist/*.d.ts`.\n" +
+      "  If it publishes TypeScript source instead, its `exports` must name the entry under `types`.",
+  )
+  process.exit(1)
+}
 
 // ---- assemble llms.txt -------------------------------------------------------------------------
 

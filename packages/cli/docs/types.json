@@ -591,6 +591,20 @@
     "doc": "/** ms to wait before the next attempt, given the number of attempts already made (1-based). */"
   },
   {
+    "name": "bakeCollection",
+    "kind": "function",
+    "package": "@nifrajs/content",
+    "signature": "export declare function bakeCollection<Frontmatter>(collection: {\n    all(): Promise<ReadonlyArray<Entry<Frontmatter>>>;\n}): Promise<BakedCollection<Frontmatter>>;",
+    "doc": "/**\n * Bake a collection's entries to serializable data at build/server time. The collection does the\n * filesystem read + validation (via `all()`); this just collects the already-parsed result so it can be\n * JSON-serialized into the edge bundle. Pure — safe to import anywhere.\n */"
+  },
+  {
+    "name": "BakedCollection",
+    "kind": "interface",
+    "package": "@nifrajs/content",
+    "signature": "export interface BakedCollection<Frontmatter> {\n    readonly entries: ReadonlyArray<Entry<Frontmatter>>;\n}",
+    "doc": "/**\n * A content collection baked to plain data — fs-free, so it works at the **edge** (Workers\n * request-time) where `defineCollection`'s `node:fs` reader can't run. Produce one at build/server time\n * with `bakeCollection`, JSON-serialize + ship it in the bundle, then rehydrate with `fromBaked`.\n */"
+  },
+  {
     "name": "basicAuth",
     "kind": "function",
     "package": "@nifrajs/middleware",
@@ -1623,6 +1637,19 @@
     "signature": "export interface CloudflareRouteRules {\n    readonly include: readonly string[];\n    readonly exclude: readonly string[];\n    /** Public files the budget could not name, so the build can say so instead of capping silently. */\n    readonly omitted: readonly string[];\n}"
   },
   {
+    "name": "Collection",
+    "kind": "interface",
+    "package": "@nifrajs/content",
+    "signature": "export interface Collection<Frontmatter> {\n    /** Every entry in the directory (unordered — sort/filter in your loader). Throws if any file's\n     * frontmatter is invalid. */\n    all(): Promise<Array<Entry<Frontmatter>>>;\n    /** One entry by slug (filename without extension), or `null` if not found. */\n    get(slug: string): Promise<Entry<Frontmatter> | null>;\n}",
+    "doc": "/** A typed collection over a content directory. */"
+  },
+  {
+    "name": "CollectionConfig",
+    "kind": "interface",
+    "package": "@nifrajs/content",
+    "signature": "export interface CollectionConfig<S extends StandardSchemaV1> {\n    /** Directory of content files, relative to the process cwd (or absolute). */\n    readonly dir: string;\n    /** Standard Schema validating each file's frontmatter. */\n    readonly schema: S;\n    /** File extensions to include (default `[\".md\", \".markdown\"]`). */\n    readonly extensions?: readonly string[];\n}"
+  },
+  {
     "name": "combine",
     "kind": "function",
     "package": "@nifrajs/middleware",
@@ -2274,6 +2301,13 @@
     "signature": "export interface CreateWebAppOptions {\n    readonly adapter: RenderAdapter;\n    readonly manifest: Manifest;\n    /** URL of the built client entry (module script) injected into every page. */\n    readonly clientEntry: string;\n    /** Default document title for all pages. */\n    readonly title?: string;\n    /** Injected into each loader's `ctx.api` — typically an `inProcessClient(app)` (typed\n     * per-route via `@nifrajs/client`'s `createRoutes`). Opaque to the core.\n     *\n     * **Auto-mount.** Every `inProcessClient(backend)` exposes the symbol-keyed platform-aware backend\n     * mount interface from `@nifrajs/core/mount`; `createWebApp` also serves that backend over HTTP at\n     * {@link apiPrefix} (default `/api`): a request whose pathname starts with the prefix is dispatched\n     * before page routing with the same `env`/`waitUntil` platform context, and the backend's `Response`\n     * is returned untouched. The mount runs in `nifra dev` too. Pass `apiPrefix: \"\"` to disable it. */\n    readonly api?: unknown;\n    /** HTTP path prefix the {@link api} backend is auto-mounted at (default `\"/api\"`). A request whose\n     * pathname is exactly the prefix or starts with `prefix + \"/\"` is dispatched to the backend before\n     * page routing; the backend therefore defines its routes at the **full** path (`server().post(\"/api/\n     * sync\", …)`), matching the in-process `inProcessClient` call sites. Set to `\"\"` to disable the\n     * auto-mount entirely (the app serves pages only and `api` stays a loader-only `ctx.api`). Mounting\n     * is also a no-op when `api` does not expose the symbol mount. */\n    readonly apiPrefix?: string;\n    /**\n     * Strip {@link apiPrefix} from the pathname before dispatching to `api` (default `false`).\n     *\n     * The default suits a backend that declares FULL paths (`server().post(\"/api/sync\", …)`), which is\n     * right when it is only ever mounted here. Set this when the backend declares its routes WITHOUT the\n     * prefix because it also runs standalone behind its own shell, so its paths cannot carry a prefix that\n     * only exists when it is mounted. Without it every request 404s inside the backend, and the workaround\n     * is a `Proxy` that rewrites each URL.\n     */\n    readonly apiStrip?: boolean;\n    /**\n     * Sub-apps mounted ahead of page routing - an auth handler, a webhook receiver, a stack's routes.\n     *\n     * Structural on purpose: anything with `{ path, app: { fetch } }` fits, so a library that exposes its\n     * routes as such a list mounts as `mounts: theirRoutes` without `@nifrajs/web` taking a dependency on\n     * it. `better-auth` is the motivating case - it is not a `backend` route, so `/api/auth/*` used to 404\n     * silently.\n     *\n     * Tried longest-path-first and BEFORE the `api` mount, so a mount at `/api/auth` wins over a backend\n     * at `/api` no matter which was declared first. `stripPrefix` is the per-mount form of {@link apiStrip}:\n     * leave it off to pass the full path through.\n     */\n    readonly mounts?: ReadonlyArray<{\n        readonly path: string;\n        readonly app: {\n            fetch(request: Request): Response | Promise<Response>;\n        };\n        readonly stripPrefix?: boolean;\n    }>;\n    /** Secret for **draft / preview mode** (see `enableDraft`). When set, a request carrying a valid\n     * signed `__nifra_draft` cookie gets `ctx.draft === true` in loaders/actions (else always `false`).\n     * Pair with `withISR({ draftSecret })` so editors bypass the cache. Omit to disable draft mode. */\n    readonly draftSecret?: string;\n    /** Per-route chunk URLs (`buildClient`'s `BuildManifest.routes`) — `routeId → [layout chunks…, own\n     * chunk]`. When present, each page `modulepreload`s its matched route's chunks alongside the entry,\n     * so the route code downloads in parallel (no entry→route-chunk waterfall). Omit ⇒ entry-only. */\n    readonly routePreload?: Readonly<Record<string, readonly string[]>>;\n    /** The app's bundled stylesheet URLs (`buildClient`'s `BuildManifest.css`) — the aggregate, injected\n     * as `<link rel=\"stylesheet\">` in a page's `<head>`. Used as the fallback for any route absent from\n     * {@link routeStyles}. Omit ⇒ no links (dev, where Vite injects CSS, or a CSS-free app). */\n    readonly styles?: readonly string[];\n    /** Per-route stylesheet URLs (`buildClient`'s `BuildManifest.routeStyles`) — `routeId → [chain CSS]`.\n     * When a matched route has an entry here, only those (its layout chain + own CSS) are linked instead\n     * of the aggregate `styles`, so a page ships only the CSS it uses. An empty array ⇒ no `<link>` (the\n     * page imports no CSS). Routes absent here fall back to `styles`. Omit ⇒ always use `styles`. */\n    readonly routeStyles?: Readonly<Record<string, readonly string[]>>;\n    /** SSG: the prerendered-path set (e.g. `enumerateStaticRoutes(routes).paths` or the build's\n     * `prerendered.json`). Injected as `window.__NIFRA_PRERENDERED__` on every page so a client soft-nav\n     * into a prerendered route fetches its static `_data.json` instead of hitting the worker. */\n    readonly prerenderedPaths?: readonly string[];\n    /** SSG: per dynamic route pattern, its `getStaticPaths` `fallback` (from `enumerateStaticRoutes` or\n     * the build's `prerendered.json`). A route mapped to `\"404\"` rejects any path NOT in\n     * `prerenderedPaths` with the 404 page — the unlisted path simply doesn't exist. `\"ssr\"` (the\n     * default for unmapped routes) renders unlisted paths on-demand. */\n    readonly staticFallbacks?: Readonly<Record<string, \"ssr\" | \"404\">>;\n    /** Observe every loader/action failure — for error-reporting plugins (Sentry-style). Called for\n     * real throws (not control-flow `Response`s like `redirect`), **before** the nearest `_error`\n     * boundary renders / a soft-nav 500 / a rethrow — so it sees errors that the boundary would\n     * otherwise hide. Observation only; its own throws are swallowed so a faulty reporter can't break\n     * rendering. (`beforeLoader` is intentionally omitted — the core HTTP hooks already cover\n     * pre-request work.) */\n    readonly onLoaderError?: (error: unknown, ctx: {\n        readonly request: Request;\n        readonly params: Readonly<Record<string, string>>;\n        readonly route: string;\n    }) => void;\n}"
   },
   {
+    "name": "createWebSocketHub",
+    "kind": "function",
+    "package": "@nifrajs/workers",
+    "signature": "export declare function createWebSocketHub<Env = unknown>(app: WebSocketHubApp<Env>): WebSocketHubClass<Env>;",
+    "doc": "/**\n * Build a Durable Object class that serves an app's `app.ws()` routes with **cross-connection\n * broadcast**. Every WebSocket accepted here lives in the DO's isolate, and the app's `TopicRegistry`\n * lives there too — so `ws.subscribe(topic)` and `app.publish(topic, data)` (called from the WS\n * lifecycle) reach every connected client. Route upgrades to it via\n * `toFetchHandler(app, { webSocketHub: (env) => env.YOUR_BINDING })`.\n *\n * Single hub: all connections route to one DO instance, so topics are app-global (matching nifra's\n * in-process semantics). Shard by room later by giving the hub a room-derived id.\n */"
+  },
+  {
     "name": "CronError",
     "kind": "class",
     "package": "@nifrajs/cron",
@@ -2535,6 +2569,13 @@
     "doc": "/** Define and validate a custom domain/provider profile at module initialization. */"
   },
   {
+    "name": "defineCollection",
+    "kind": "function",
+    "package": "@nifrajs/content",
+    "signature": "export declare function defineCollection<S extends StandardSchemaV1>(config: CollectionConfig<S>): Collection<InferSchema<S>>;",
+    "doc": "/**\n * Define a content collection backed by a directory. `all()` discovers + parses every matching file;\n * `get(slug)` loads one. Frontmatter is validated against `schema`, so entries are fully typed and a\n * malformed file fails loudly. Reads the filesystem — use it at build time (SSG/prerender) or on a\n * long-lived server (Bun/Node/Deno).\n */"
+  },
+  {
     "name": "defineContract",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -2646,6 +2687,12 @@
     "package": "@nifrajs/web-react",
     "signature": "export interface DehydratedState {\n    readonly queries: ReadonlyArray<{\n        readonly key: unknown;\n        readonly data: unknown;\n        readonly updatedAt: number;\n    }>;\n}",
     "doc": "/** A serializable snapshot of the cache's successful queries — the SSR→client bridge payload. */"
+  },
+  {
+    "name": "DenoServer",
+    "kind": "interface",
+    "package": "@nifrajs/deno",
+    "signature": "export interface DenoServer {\n    /** The bound port (resolved when `port: 0` is requested). */\n    readonly port: number;\n    /**\n     * Stop accepting connections, let in-flight requests drain (up to `drainMs`), then\n     * force-close stragglers. Mirrors nifra's Bun `stop()`.\n     */\n    stop(options?: {\n        drainMs?: number;\n    }): Promise<void>;\n}"
   },
   {
     "name": "deriveRouteEntry",
@@ -3132,6 +3179,13 @@
     "signature": "export interface EnqueueOptions {\n    /** Delay before the job becomes eligible. Ignored if `runAt` is set. */\n    readonly delayMs?: number;\n    /** Absolute epoch-ms eligibility time. Overrides `delayMs`. */\n    readonly runAt?: number;\n}"
   },
   {
+    "name": "Entry",
+    "kind": "interface",
+    "package": "@nifrajs/content",
+    "signature": "export interface Entry<Frontmatter> {\n    /** Identifier (e.g. the filename without extension). */\n    readonly slug: string;\n    /** Frontmatter, validated + typed by the collection's schema. */\n    readonly frontmatter: Frontmatter;\n    /** The body rendered to HTML (Markdown → HTML). */\n    readonly html: string;\n    /** The raw Markdown body, with the frontmatter block stripped. */\n    readonly body: string;\n}",
+    "doc": "/** A parsed content entry: its slug, validated frontmatter, rendered HTML, and the raw Markdown body. */"
+  },
+  {
     "name": "enumerateStaticRoutes",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -3421,6 +3475,13 @@
   {
     "name": "FetchHandler",
     "kind": "interface",
+    "package": "@nifrajs/deno",
+    "signature": "export interface FetchHandler {\n    fetch(request: Request, platform?: {\n        readonly clientIp?: string;\n    }): Response | Promise<Response>;\n    /** A nifra app also exposes this WS-upgrade seam; present → this adapter serves `app.ws()` routes\n     * via `Deno.upgradeWebSocket`. Absent (a plain `{ fetch }` handler) → HTTP only. */\n    resolveWebSocketUpgrade?(request: Request): WsUpgradeOutcome | Promise<WsUpgradeOutcome>;\n}",
+    "doc": "/** Anything exposing a Web `fetch` handler — a nifra `app`, for instance. */"
+  },
+  {
+    "name": "FetchHandler",
+    "kind": "interface",
     "package": "@nifrajs/node",
     "signature": "export interface FetchHandler {\n    fetch(request: Request, platform?: NodePlatform): Response | Promise<Response>;\n    /** Nifra apps also expose this WS-upgrade seam; present → this adapter serves `app.ws()` routes via\n     * the optional `ws` package (lazy-imported on the first upgrade). Absent (a plain `{ fetch }`\n     * handler) → HTTP only, and an upgrade request gets a 404. */\n    resolveWebSocketUpgrade?(request: Request): WsUpgradeOutcome | Promise<WsUpgradeOutcome>;\n}",
     "doc": "/** Anything exposing a Web `fetch` handler — a nifra `app`, for instance. */"
@@ -3624,6 +3685,13 @@
     "kind": "type",
     "package": "nifra",
     "signature": "export type FrameworkName = typeof FRAMEWORK_NAME;"
+  },
+  {
+    "name": "fromBaked",
+    "kind": "function",
+    "package": "@nifrajs/content",
+    "signature": "export declare function fromBaked<Frontmatter>(baked: BakedCollection<Frontmatter>): StaticCollection<Frontmatter>;",
+    "doc": "/**\n * Rehydrate a baked collection into a read-only `all()`/`get()` collection — fs-free, edge-safe. The\n * entries were validated when baked (build output, trusted), so they're served as-is. `get` is O(1).\n */"
   },
   {
     "name": "fromTypeBox",
@@ -4273,6 +4341,13 @@
     "kind": "type",
     "package": "nifra",
     "signature": "export type InferOutput<Schema extends StandardSchemaV1> = NonNullable<Schema[\"~standard\"][\"types\"]>[\"output\"];"
+  },
+  {
+    "name": "InferSchema",
+    "kind": "type",
+    "package": "@nifrajs/content",
+    "signature": "export type InferSchema<S> = S extends StandardSchemaV1<infer Output> ? Output : never;",
+    "doc": "/** The validated output type of a schema. */"
   },
   {
     "name": "InfiniteData",
@@ -5198,6 +5273,19 @@
     "package": "@nifrajs/mcp",
     "signature": "export interface McpWidget {\n    readonly uri: string;\n    readonly resource: McpResource;\n    readonly meta: Record<string, unknown>;\n}",
     "doc": "/** A widget: the resource to register on the server, its `ui://` URI, and the `_meta` link for its tool. */"
+  },
+  {
+    "name": "mdxBunPlugin",
+    "kind": "function",
+    "package": "@nifrajs/content",
+    "signature": "export declare function mdxBunPlugin(options?: MdxPluginOptions): BunPlugin;",
+    "doc": "/**\n * Build a `Bun.build` plugin that loads `.mdx` files as compiled components. The compiled module's\n * default export is the MDX content component; `.mdx` files may `import` and use components inline and\n * `export const meta = …` like any route module.\n */"
+  },
+  {
+    "name": "MdxPluginOptions",
+    "kind": "interface",
+    "package": "@nifrajs/content",
+    "signature": "export interface MdxPluginOptions {\n    /** JSX runtime source the compiled MDX imports from — `\"react\"` (default), `\"preact\"`, `\"solid-js\"`. */\n    readonly jsxImportSource?: string;\n    /** Emit development JSX (line numbers, `jsxDEV`). Default `false`. */\n    readonly development?: boolean;\n    /** Extra `@mdx-js/mdx` `compile` options — e.g. `remarkPlugins`/`rehypePlugins` (GFM, slugs, …). */\n    readonly compileOptions?: Record<string, unknown>;\n    /** Advanced: override the compiler module specifier (default `\"@mdx-js/mdx\"`) — e.g. to use a fork. */\n    readonly moduleName?: string;\n}"
   },
   {
     "name": "MemoryApprovalStore",
@@ -6144,6 +6232,26 @@
     "package": "@nifrajs/otel",
     "signature": "export interface ParsedTraceparent {\n    readonly traceId: string;\n    readonly spanId: string;\n    readonly sampled: boolean;\n}",
     "doc": "/** A parsed inbound `traceparent`. */"
+  },
+  {
+    "name": "parseEntry",
+    "kind": "function",
+    "package": "@nifrajs/content",
+    "signature": "export declare function parseEntry<S extends StandardSchemaV1>(options: ParseEntryOptions<S>): Promise<Entry<InferSchema<S>>>;",
+    "doc": "/**\n * Parse one content file: split + validate its frontmatter against `schema`, render its Markdown body\n * to HTML. Throws a descriptive error (naming the slug + the issues) when the frontmatter is invalid —\n * surface it at build/load time rather than shipping a malformed entry. Pure + edge-safe.\n */"
+  },
+  {
+    "name": "ParseEntryOptions",
+    "kind": "interface",
+    "package": "@nifrajs/content",
+    "signature": "export interface ParseEntryOptions<S extends StandardSchemaV1> {\n    readonly raw: string;\n    readonly slug: string;\n    /** Standard Schema validating the frontmatter — a typo'd/missing field throws (a build-time failure,\n     * never a broken page). */\n    readonly schema: S;\n}"
+  },
+  {
+    "name": "parseFrontmatter",
+    "kind": "function",
+    "package": "@nifrajs/content",
+    "signature": "export declare function parseFrontmatter(raw: string): {\n    data: unknown;\n    body: string;\n};",
+    "doc": "/** Split a raw content string into its (unvalidated) frontmatter data + the body. No frontmatter block\n * ⇒ `data` is `{}` and `body` is the whole input. */"
   },
   {
     "name": "parseGoogleFontCss",
@@ -8031,6 +8139,13 @@
   {
     "name": "serve",
     "kind": "function",
+    "package": "@nifrajs/deno",
+    "signature": "export declare function serve(app: FetchHandler, options: ServeOptions): Promise<DenoServer>;",
+    "doc": "/**\n * Serve a Web-`fetch` app on Deno. Returns once bound, so `port` is the real one\n * (matters for `port: 0`).\n */"
+  },
+  {
+    "name": "serve",
+    "kind": "function",
     "package": "@nifrajs/node",
     "signature": "export declare function serve(app: FetchHandler, options: ServeOptions): Promise<NodeServer>;"
   },
@@ -8046,6 +8161,12 @@
     "kind": "interface",
     "package": "@nifrajs/mcp-db",
     "signature": "export interface ServeDatabaseAsMcpOptions {\n    /**\n     * REQUIRED allowlist of tables the MCP surface may see. `list_tables`/`describe_table` are\n     * restricted to it and `run_query` plans are verified against it. Empty array → construction\n     * throws; expose nothing by accident, ever.\n     */\n    readonly tables: readonly string[];\n    /** Enable the `run_query` tool. Omitted → schema tools only. */\n    readonly runQuery?: RunQueryOptions;\n    /** MCP server identity (defaults: name `nifra-db`, version `1.0.0`). */\n    readonly name?: string;\n    readonly version?: string;\n    /**\n     * Set `PRAGMA query_only = ON` on the connection at construction (default true). Disable ONLY\n     * when the same connection must also serve writes elsewhere in the app — with it disabled,\n     * `run_query` still gates on SELECT/WITH + plan verification, but the engine-level guarantee is\n     * yours to provide (e.g. open a second, read-only connection for the MCP mount — preferred).\n     */\n    readonly enforceQueryOnly?: boolean;\n}"
+  },
+  {
+    "name": "ServeOptions",
+    "kind": "interface",
+    "package": "@nifrajs/deno",
+    "signature": "export interface ServeOptions {\n    readonly port: number;\n    readonly hostname?: string;\n    /**\n     * Install SIGTERM/SIGINT handlers that call `stop()` for a graceful drain on\n     * `docker stop` / Ctrl-C. Off by default — taking over process signals is opt-in,\n     * mirroring nifra's Bun `listen({ gracefulSignals })`.\n     */\n    readonly signals?: boolean;\n}"
   },
   {
     "name": "ServeOptions",
@@ -8797,6 +8918,13 @@
   {
     "name": "StandardSchemaV1",
     "kind": "interface",
+    "package": "@nifrajs/content",
+    "signature": "export interface StandardSchemaV1<Output = unknown> {\n    readonly \"~standard\": {\n        readonly validate: (value: unknown) => {\n            readonly value: Output;\n            readonly issues?: undefined;\n        } | {\n            readonly issues: ReadonlyArray<StandardIssue>;\n        } | Promise<{\n            readonly value: Output;\n            readonly issues?: undefined;\n        } | {\n            readonly issues: ReadonlyArray<StandardIssue>;\n        }>;\n    };\n}",
+    "doc": "/**\n * Minimal [Standard Schema](https://standardschema.dev) shape — lets frontmatter validate against any\n * compliant validator (`@nifrajs/schema`'s `t`, zod, valibot, …) without coupling `@nifrajs/content` to one.\n */"
+  },
+  {
+    "name": "StandardSchemaV1",
+    "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface StandardSchemaV1<Input = unknown, Output = Input> {\n    readonly \"~standard\": StandardSchemaProps<Input, Output>;\n}",
     "doc": "/**\n * The Standard Schema v1 interface (https://standardschema.dev), vendored as\n * types + a tiny runtime helper so any compliant validator — zod, valibot,\n * arktype, … — validates requests without coupling the framework to one lib.\n * The spec is MIT-licensed and explicitly designed to be copied.\n */"
@@ -8878,6 +9006,13 @@
     "kind": "interface",
     "package": "@nifrajs/otel",
     "signature": "export interface StartObservation {\n    readonly name: string;\n    /** Explicit parent. `null` forces a root span; `undefined` falls back to `traceparent`. */\n    readonly parent?: ObservationParent | null;\n    /** Inbound W3C header used when `parent` is undefined. */\n    readonly traceparent?: string | null;\n    readonly attributes?: Readonly<Record<string, AttributeValue>>;\n    /** Non-parent causal relationships, for example an outbox event that resumed this workflow. */\n    readonly links?: readonly ObservationLink[];\n}"
+  },
+  {
+    "name": "StaticCollection",
+    "kind": "interface",
+    "package": "@nifrajs/content",
+    "signature": "export interface StaticCollection<Frontmatter> {\n    all(): Promise<ReadonlyArray<Entry<Frontmatter>>>;\n    get(slug: string): Promise<Entry<Frontmatter> | null>;\n}",
+    "doc": "/** Read-only collection surface (`all()`/`get()`) — structurally compatible with `defineCollection`'s\n * `Collection`, but with no filesystem access. */"
   },
   {
     "name": "StaticPath",
@@ -10150,6 +10285,20 @@
     "package": "nifra",
     "signature": "export interface WebSocketHandler<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined> {\n    /**\n     * Cross-site WebSocket hijacking (CSWSH) guard — checked BEFORE `upgrade()`. A browser does not\n     * apply CORS to WebSocket handshakes and DOES send the page's cookies, so without an Origin check\n     * any site can open an authenticated socket to your app. Set this to lock the route to known\n     * origins: a string allow-list (exact `Origin` header match) or a predicate. A request whose\n     * `Origin` doesn't match (or is absent, for the allow-list form) is rejected with `403` before any\n     * per-connection work.\n     *\n     * **When omitted, the default is same-origin:** a cross-origin BROWSER handshake (an `Origin` header\n     * whose host differs from the request's) is rejected with `403`. Non-browser clients (no `Origin`) and\n     * same-origin browsers pass. Set this to allow specific cross-origin clients, or `() => true` for a\n     * genuinely public socket. Non-browser clients can spoof `Origin`, so this is a browser-CSWSH defense,\n     * not authentication — pair it with auth in `upgrade()`.\n     */\n    allowedOrigins?: ReadonlyArray<string> | ((origin: string | null) => boolean);\n    /**\n     * Runs in the HTTP request context **before** the upgrade (and after {@link allowedOrigins}) — the\n     * place to authenticate or rate-limit. Return the initial per-connection `data` (→ `ws.data`), or a\n     * `Response` to **reject** the upgrade (the client never connects). Omit to accept with\n     * `data: undefined`. A thrown error rejects with a flat 500.\n     */\n    upgrade?(c: WebSocketContext<Env>): MaybePromise<Data | Response>;\n    /**\n     * Contract-first messages: a Standard Schema (`t`, zod, valibot, …) validating each **inbound** frame.\n     * Text frames are parsed as JSON first. When set, `message` receives the validated, typed value; a\n     * non-JSON or schema-invalid frame is routed to `onInvalidMessage` (or dropped if that's omitted).\n     */\n    messageSchema?: Schema;\n    /**\n     * The **outbound** frame contract (server → client), a Standard Schema. Purely type-level: it types\n     * the frames the typed client's `.ws()` handle receives, and documents what this route pushes. The\n     * server does NOT runtime-validate its own sends - the inbound `messageSchema` guards the trust\n     * boundary; outbound honesty is the handler author's code, checked by tests.\n     */\n    sendSchema?: Send;\n    /** Decode versioned transport frames before inbound schema validation. Omit for legacy JSON. */\n    transport?: {\n        readonly registry: TransportCodecRegistry;\n        readonly maxBytes?: number;\n    };\n    open?(ws: NifraWebSocket<Data>): MaybePromise<void>;\n    message?(ws: NifraWebSocket<Data>, data: WsMessageInput<Schema>): MaybePromise<void>;\n    /** Inbound frame that failed JSON parse or `messageSchema` validation (only fires when a schema is\n     * set). `raw` is the original frame; `issues` are the Standard Schema issues (one synthetic issue for\n     * a JSON parse failure). Omit to silently drop invalid frames. */\n    onInvalidMessage?(ws: NifraWebSocket<Data>, issues: ReadonlyArray<StandardIssue>, raw: WebSocketData): MaybePromise<void>;\n    close?(ws: NifraWebSocket<Data>, code: number, reason: string): MaybePromise<void>;\n    error?(ws: NifraWebSocket<Data>, error: unknown): MaybePromise<void>;\n}",
     "doc": "/** A WebSocket route's lifecycle. All callbacks optional; only `message` is needed for an echo. */"
+  },
+  {
+    "name": "WebSocketHubApp",
+    "kind": "interface",
+    "package": "@nifrajs/workers",
+    "signature": "export interface WebSocketHubApp<Env = unknown> {\n    resolveWebSocketUpgrade(request: Request, platform?: {\n        readonly env: Env;\n        readonly waitUntil: (promise: Promise<unknown>) => void;\n    }): WebSocketUpgradeOutcome | Promise<WebSocketUpgradeOutcome>;\n}",
+    "doc": "/** The nifra-app surface the hub needs — every `server()` app satisfies it. */"
+  },
+  {
+    "name": "WebSocketHubClass",
+    "kind": "type",
+    "package": "@nifrajs/workers",
+    "signature": "export type WebSocketHubClass<Env> = new (state: DurableObjectStateLike, env: Env) => {\n    fetch(request: Request): Promise<Response>;\n};",
+    "doc": "/** The Durable Object class shape `createWebSocketHub` returns. */"
   },
   {
     "name": "WebSocketUpgradeOutcome",
