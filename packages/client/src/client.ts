@@ -563,6 +563,39 @@ function transportRegistry(options: ClientOptions): TransportCodecRegistry {
     : createTransportCodecRegistry([plainJsonCodec, codec])
 }
 
+/**
+ * Media types whose bytes are text, beyond the `text/*` tree.
+ *
+ * Anything ending `+xml` or `+json` is textual by the `+suffix` convention, which covers
+ * `image/svg+xml` and `application/xhtml+xml` - an SVG is a document, and handing one back as a Blob
+ * would break every caller that reads it as a string today.
+ */
+const TEXTUAL_TYPES = new Set([
+  "application/xml",
+  "application/javascript",
+  "application/ecmascript",
+  "application/x-www-form-urlencoded",
+  "application/x-ndjson",
+])
+
+/**
+ * True when a body can survive being decoded as UTF-8 text.
+ *
+ * An ABSENT content-type is treated as textual on purpose: it is what a hand-written `new Response("…")`
+ * produces, the old behaviour parsed it as JSON-or-text, and guessing "binary" for an unlabelled body
+ * would change more than this is meant to.
+ */
+function isTextualBody(contentType: string): boolean {
+  if (contentType === "") return true
+  const media = contentType.split(";", 1)[0]?.trim() ?? ""
+  return (
+    media.startsWith("text/") ||
+    media.endsWith("+xml") ||
+    media.endsWith("+json") ||
+    TEXTUAL_TYPES.has(media)
+  )
+}
+
 async function parseBody(response: Response, options: ClientOptions): Promise<unknown> {
   if (response.status === 204) return undefined
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? ""
@@ -576,6 +609,12 @@ async function parseBody(response: Response, options: ClientOptions): Promise<un
         : { maxBytes: options.transport.maxBytes }),
     })
   }
+  // A binary body comes back as a Blob rather than through `.text()`. Decoding bytes as UTF-8 does not
+  // fail, it SUBSTITUTES: every invalid sequence becomes U+FFFD, so a PNG arrived as a string of
+  // replacement characters that could never be turned back into the image. Measured on the way in -
+  // `89 50 4e 47 ff d8` came back `ef bf bd 50 4e 47 ef bf bd ef bf bd` - which is the kind of
+  // corruption that looks like a broken file rather than a broken client.
+  if (!isTextualBody(contentType)) return await response.blob()
   const text = await response.text()
   if (text === "") return undefined
   try {
