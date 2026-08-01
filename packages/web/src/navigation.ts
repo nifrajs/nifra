@@ -12,10 +12,81 @@
  * native `<a href>` full-page navigation — progressive enhancement, no throw.
  */
 
+import { serializeSearch } from "./search.ts"
+
 /** Options for a programmatic navigation. */
 export interface NavigateOptions {
   /** Replace the current history entry instead of pushing a new one (like `history.replaceState`). */
   readonly replace?: boolean
+}
+
+/**
+ * The augmentable route -> search-type map for typed cross-route navigation. Empty by default (so an
+ * object-form navigate to any path is allowed with a loose `search`). A build step (`nifra sync-routes`)
+ * OR the app declares one entry per route path against its `searchSchema` output:
+ *
+ * ```ts
+ * declare module "@nifrajs/web" {
+ *   interface RouteSearch {
+ *     "/reports": { page: number; q: string }
+ *   }
+ * }
+ * ```
+ *
+ * With that, `navigate({ to: "/reports", search: { page: 2 } })` type-checks `search` against
+ * `/reports`'s schema, and a wrong shape is a compile error. See {@link NavigateTarget}.
+ */
+// biome-ignore lint/suspicious/noEmptyInterface: augmentation target - empty by design, apps/codegen fill it.
+export interface RouteSearch {}
+
+/**
+ * The `search` type for a navigate to `To`: the route's schema output when `To` is a mapped
+ * {@link RouteSearch} key, otherwise the loose `Record<string, unknown>` (so a navigate to any path is
+ * always allowed). Keyed on `To` rather than a union, so a mapped route can't fall back to the loose form
+ * with a wrong shape - `navigate({ to: "/reports", search: { page: "x" } })` is a compile error.
+ */
+export type NavigateSearchOf<To extends string> = To extends keyof RouteSearch
+  ? RouteSearch[To]
+  : Record<string, unknown>
+
+/** The runtime shape of an object-form navigate target (loose - the typed narrowing lives in
+ * {@link NavigateFunction}'s generic call signature). `to` is a bare pathname; `search` is serialized
+ * onto it; `replace` folds into the options. */
+export interface NavigateTargetInput {
+  readonly to: string
+  readonly search?: Record<string, unknown>
+  readonly replace?: boolean
+}
+
+/**
+ * A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or
+ * replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }`
+ * whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wrong shape for a
+ * mapped route is a compile error; an unmapped path takes a loose `search`). The object form's `search` is
+ * serialized onto `to`. A no-op on the server / before hydration.
+ */
+export interface NavigateFunction {
+  (to: string | number, options?: NavigateOptions): void
+  <To extends string>(target: {
+    readonly to: To
+    readonly search?: NavigateSearchOf<To>
+    readonly replace?: boolean
+  }): void
+}
+
+/**
+ * Normalize a navigate argument to the bridge's `(to, options)`: a string path or history-delta passes
+ * through; an object target has its `search` serialized onto `to` and its `replace` folded into the
+ * options. The one place the object form becomes a URL, so every adapter's `navigate` resolves it
+ * identically.
+ */
+export function resolveNavigate(
+  to: string | number | NavigateTargetInput,
+  options?: NavigateOptions,
+): { readonly to: string | number; readonly options: NavigateOptions | undefined } {
+  if (typeof to !== "object") return { to, options }
+  const query = to.search !== undefined ? serializeSearch(to.search) : ""
+  return { to: to.to + query, options: to.replace === true ? { replace: true } : options }
 }
 
 /**

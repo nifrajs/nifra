@@ -4,8 +4,11 @@ import {
   type BlockerFunction,
   getBrowserNavigate,
   IDLE_BLOCKER,
+  type NavigateFunction,
   type NavigateOptions,
+  type NavigateTargetInput,
   registerBlocker,
+  resolveNavigate,
 } from "@nifrajs/web"
 import { getContext } from "svelte"
 /**
@@ -18,7 +21,7 @@ import { getContext } from "svelte"
  */
 import { type Readable, readable } from "svelte/store"
 
-export type { Blocker, BlockerFunction, BlockerState } from "@nifrajs/web"
+export type { Blocker, BlockerFunction, BlockerState, NavigateFunction } from "@nifrajs/web"
 
 // Must match the string key `Chain.svelte` passes to `setContext` (a string avoids a `.svelte` → `.ts`
 // import that wouldn't resolve once the .svelte is copied to dist).
@@ -49,17 +52,16 @@ export function useSearch<
     : Record<string, unknown>
 }
 
-/** A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta
- * (`-1`/`1`). A no-op on the server / before hydration (use a `<a href>` there). */
-export type NavigateFunction = (to: string | number, options?: NavigateOptions) => void
-
-/** Get the {@link NavigateFunction}. Resolves the browser navigate at call time, so it works as soon as
- * `installHistory` has run and no-ops before then / on the server. */
+/** Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object).
+ * Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops
+ * before then / on the server. */
 export function useNavigate(): NavigateFunction {
-  return (to, options) => {
+  return ((to: string | number | NavigateTargetInput, options?: NavigateOptions) => {
     const navigate = getBrowserNavigate()
-    if (navigate !== undefined) navigate(to, options)
-  }
+    if (navigate === undefined) return
+    const resolved = resolveNavigate(to, options)
+    navigate(resolved.to, resolved.options)
+  }) as NavigateFunction
 }
 
 /**

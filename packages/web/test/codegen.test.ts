@@ -3,6 +3,7 @@ import {
   buildManifest,
   createWebApp,
   generateClientEntry,
+  generateRouteSearchTypes,
   generateServerManifest,
   type RenderAdapter,
   type RouteModule,
@@ -234,4 +235,29 @@ test("the lazy runtime pattern round-trips through createWebApp (loaders called 
   // The index + its layout were loaded on demand (lazily) when the route was hit.
   expect(loaded).toContain("home")
   expect(loaded).toContain("layout")
+})
+
+test("generateRouteSearchTypes augments RouteSearch for static routes only", () => {
+  const m = buildManifest(
+    ["index.tsx", "reports.tsx", "users/[id].tsx", "files/[...p].tsx"],
+    importer,
+  )
+  const code = generateRouteSearchTypes(m, {
+    resolve: (f) => `./routes/${f.replace(/\.tsx$/, "")}`,
+  })
+  expect(code).toContain('import type { SearchOf } from "@nifrajs/web"')
+  expect(code).toContain('declare module "@nifrajs/web" {')
+  expect(code).toContain("interface RouteSearch {")
+  // Static routes map their pattern -> the route module's search output type.
+  expect(code).toContain('"/": SearchOf<typeof import("./routes/index")>')
+  expect(code).toContain('"/reports": SearchOf<typeof import("./routes/reports")>')
+  // Dynamic routes (a :param or catch-all) are excluded - their pattern is not a concrete `to`.
+  expect(code).not.toContain("/users/:id")
+  expect(code).not.toContain("/files/")
+})
+
+test("generateRouteSearchTypes targets a custom module when asked", () => {
+  const m = buildManifest(["index.tsx"], importer)
+  const code = generateRouteSearchTypes(m, { resolve: (f) => `./${f}`, module: "@my/router" })
+  expect(code).toContain('declare module "@my/router" {')
 })

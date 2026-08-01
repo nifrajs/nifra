@@ -192,6 +192,29 @@ test("useNavigate forwards through the registered browser bridge", () => {
   expect(calls).toEqual([["/next", { replace: true }]])
 })
 
+test("useNavigate object form serializes search onto `to` (typed cross-route navigate)", () => {
+  const calls: Array<[string | number, unknown]> = []
+  setBrowserNavigate((to, options) => calls.push([to, options]))
+  let navigate: ReturnType<typeof useNavigate> | undefined
+  const Page = () => {
+    navigate = useNavigate()
+    return null
+  }
+  renderToStaticMarkup(compose([Page], { data: null }))
+  // The object target's `search` is serialized onto `to`; `replace` folds into the options.
+  navigate?.({ to: "/reports", search: { page: 2, q: "hi" } })
+  navigate?.({ to: "/x", search: { a: 1 }, replace: true })
+  // The string + delta forms still work unchanged.
+  navigate?.("/plain")
+  navigate?.(-1)
+  expect(calls).toEqual([
+    ["/reports?page=2&q=hi", undefined],
+    ["/x?a=1", { replace: true }],
+    ["/plain", undefined],
+    [-1, undefined],
+  ])
+})
+
 test("useBlocker is idle on SSR (no browser bridge) - hydration-safe and never throws", () => {
   // Effects don't run on the server, so the guard never registers: it stays IDLE_BLOCKER, matching the
   // first client render (no hydration mismatch). The interception + proceed/reset behavior is covered

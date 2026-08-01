@@ -4,8 +4,11 @@ import {
   type BlockerFunction,
   getBrowserNavigate,
   IDLE_BLOCKER,
+  type NavigateFunction,
   type NavigateOptions,
+  type NavigateTargetInput,
   registerBlocker,
+  resolveNavigate,
 } from "@nifrajs/web"
 /**
  * `@nifrajs/web-preact/router` - Preact routing bindings over the agnostic `@nifrajs/web` history layer:
@@ -17,7 +20,7 @@ import {
 import { createContext } from "preact"
 import { useCallback, useContext, useEffect, useRef, useState } from "preact/compat"
 
-export type { Blocker, BlockerFunction, BlockerState } from "@nifrajs/web"
+export type { Blocker, BlockerFunction, BlockerState, NavigateFunction } from "@nifrajs/web"
 
 // Frozen empty search so the default context value has a stable reference.
 const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
@@ -46,17 +49,16 @@ export function useSearch<
     : Record<string, unknown>
 }
 
-/** A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta
- * (`-1`/`1`). A no-op on the server / before hydration (use a `<a href>` there). */
-export type NavigateFunction = (to: string | number, options?: NavigateOptions) => void
-
-/** Get the {@link NavigateFunction}. Stable across renders; resolves the browser navigate at call time,
- * so it works as soon as `installHistory` has run and no-ops before then / on the server. */
+/** Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object).
+ * Stable across renders; resolves the browser navigate at call time, so it works as soon as
+ * `installHistory` has run and no-ops before then / on the server. */
 export function useNavigate(): NavigateFunction {
-  return useCallback((to, options) => {
+  return useCallback((to: string | number | NavigateTargetInput, options?: NavigateOptions) => {
     const navigate = getBrowserNavigate()
-    if (navigate !== undefined) navigate(to, options)
-  }, [])
+    if (navigate === undefined) return
+    const resolved = resolveNavigate(to, options)
+    navigate(resolved.to, resolved.options)
+  }, []) as NavigateFunction
 }
 
 /**

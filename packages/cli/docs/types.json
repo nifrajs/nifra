@@ -3940,6 +3940,19 @@
     "signature": "export interface GenerateRegressionTestOptions {\n    /** Import specifier for the app under test. Default `\"../src/app\"`. */\n    readonly importPath?: string;\n    /** Named export of the app. Default `\"app\"`. */\n    readonly appExport?: string;\n    /** Also assert the response shape. Default false (status-only is the robust regression signal). */\n    readonly assertShape?: boolean;\n    /** Dotted key paths in the request body whose string values are safe to embed verbatim. */\n    readonly allow?: readonly string[];\n}"
   },
   {
+    "name": "generateRouteSearchTypes",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function generateRouteSearchTypes(manifest: Manifest, options: GenerateRouteSearchTypesOptions): string;",
+    "doc": "/**\n * Codegen: emit a `.d.ts` that types cross-route `navigate({ to, search })` against each route's\n * `searchSchema`. It augments the {@link RouteSearch} map with `\"<pattern>\": SearchOf<typeof import(...)>`\n * for every **static** route (one with no `:param`/`*` segment - a concrete `to` a caller can pass; a\n * dynamic route's concrete path can't match its pattern key, so those keep the loose object form). Written\n * by `nifra sync-routes` next to the route tree and included in the app's `tsconfig`; because it is\n * regenerated from the route files, a `navigate` whose `search` no longer matches the route's schema\n * becomes a `tsc` error - the same drift guarantee as nifra's typed client, no hand-maintained map.\n */"
+  },
+  {
+    "name": "GenerateRouteSearchTypesOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface GenerateRouteSearchTypesOptions {\n    /** Turn a route source file into a module specifier for a `typeof import(...)` type - the same contract\n     * as `generateClientEntry`'s `resolve`, but WITHOUT a file extension (a `.d.ts` imports a module, not a\n     * path). Relative to wherever the emitted `.d.ts` is written. */\n    readonly resolve: (file: string) => string;\n    /** The module whose `RouteSearch` interface is augmented (default `\"@nifrajs/web\"`). Every adapter's\n     * `NavigateTarget` reads `@nifrajs/web`'s `RouteSearch`, so the default types `navigate` on all of them. */\n    readonly module?: string;\n}"
+  },
+  {
     "name": "generateServerEntry",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -5934,38 +5947,45 @@
   },
   {
     "name": "NavigateFunction",
-    "kind": "type",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface NavigateFunction {\n    (to: string | number, options?: NavigateOptions): void;\n    <To extends string>(target: {\n        readonly to: To;\n        readonly search?: NavigateSearchOf<To>;\n        readonly replace?: boolean;\n    }): void;\n}",
+    "doc": "/**\n * A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or\n * replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }`\n * whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wrong shape for a\n * mapped route is a compile error; an unmapped path takes a loose `search`). The object form's `search` is\n * serialized onto `to`. A no-op on the server / before hydration.\n */"
+  },
+  {
+    "name": "NavigateFunction",
+    "kind": "interface",
     "package": "@nifrajs/web-preact",
-    "signature": "export type NavigateFunction = (to: string | number, options?: NavigateOptions) => void;",
-    "doc": "/** A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta\n * (`-1`/`1`). A no-op on the server / before hydration (use a `<a href>` there). */"
+    "signature": "export interface NavigateFunction {\n    (to: string | number, options?: NavigateOptions): void;\n    <To extends string>(target: {\n        readonly to: To;\n        readonly search?: NavigateSearchOf<To>;\n        readonly replace?: boolean;\n    }): void;\n}",
+    "doc": "/**\n * A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or\n * replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }`\n * whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wrong shape for a\n * mapped route is a compile error; an unmapped path takes a loose `search`). The object form's `search` is\n * serialized onto `to`. A no-op on the server / before hydration.\n */"
   },
   {
     "name": "NavigateFunction",
-    "kind": "type",
+    "kind": "interface",
     "package": "@nifrajs/web-react",
-    "signature": "export type NavigateFunction = (to: string | number, options?: NavigateOptions) => void;",
-    "doc": "/** A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta\n * (`-1`/`1`). A no-op on the server / before hydration (a render-time navigate isn't valid — use\n * {@link Navigate}, which navigates in an effect). */"
+    "signature": "export interface NavigateFunction {\n    (to: string | number, options?: NavigateOptions): void;\n    <To extends string>(target: {\n        readonly to: To;\n        readonly search?: NavigateSearchOf<To>;\n        readonly replace?: boolean;\n    }): void;\n}",
+    "doc": "/**\n * A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or\n * replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }`\n * whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wrong shape for a\n * mapped route is a compile error; an unmapped path takes a loose `search`). The object form's `search` is\n * serialized onto `to`. A no-op on the server / before hydration.\n */"
   },
   {
     "name": "NavigateFunction",
-    "kind": "type",
+    "kind": "interface",
     "package": "@nifrajs/web-solid",
-    "signature": "export type NavigateFunction = (to: string | number, options?: NavigateOptions) => void;",
-    "doc": "/** A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta\n * (`-1`/`1`). A no-op on the server / before hydration (use a `<a href>` there). */"
+    "signature": "export interface NavigateFunction {\n    (to: string | number, options?: NavigateOptions): void;\n    <To extends string>(target: {\n        readonly to: To;\n        readonly search?: NavigateSearchOf<To>;\n        readonly replace?: boolean;\n    }): void;\n}",
+    "doc": "/**\n * A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or\n * replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }`\n * whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wrong shape for a\n * mapped route is a compile error; an unmapped path takes a loose `search`). The object form's `search` is\n * serialized onto `to`. A no-op on the server / before hydration.\n */"
   },
   {
     "name": "NavigateFunction",
-    "kind": "type",
+    "kind": "interface",
     "package": "@nifrajs/web-svelte",
-    "signature": "export type NavigateFunction = (to: string | number, options?: NavigateOptions) => void;",
-    "doc": "/** A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta\n * (`-1`/`1`). A no-op on the server / before hydration (use a `<a href>` there). */"
+    "signature": "export interface NavigateFunction {\n    (to: string | number, options?: NavigateOptions): void;\n    <To extends string>(target: {\n        readonly to: To;\n        readonly search?: NavigateSearchOf<To>;\n        readonly replace?: boolean;\n    }): void;\n}",
+    "doc": "/**\n * A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or\n * replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }`\n * whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wrong shape for a\n * mapped route is a compile error; an unmapped path takes a loose `search`). The object form's `search` is\n * serialized onto `to`. A no-op on the server / before hydration.\n */"
   },
   {
     "name": "NavigateFunction",
-    "kind": "type",
+    "kind": "interface",
     "package": "@nifrajs/web-vue",
-    "signature": "export type NavigateFunction = (to: string | number, options?: NavigateOptions) => void;",
-    "doc": "/** A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta\n * (`-1`/`1`). A no-op on the server / before hydration (use a `<a href>` there). */"
+    "signature": "export interface NavigateFunction {\n    (to: string | number, options?: NavigateOptions): void;\n    <To extends string>(target: {\n        readonly to: To;\n        readonly search?: NavigateSearchOf<To>;\n        readonly replace?: boolean;\n    }): void;\n}",
+    "doc": "/**\n * A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or\n * replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }`\n * whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wrong shape for a\n * mapped route is a compile error; an unmapped path takes a loose `search`). The object form's `search` is\n * serialized onto `to`. A no-op on the server / before hydration.\n */"
   },
   {
     "name": "NavigateOptions",
@@ -5980,6 +6000,20 @@
     "package": "@nifrajs/web-react",
     "signature": "export interface NavigateProps {\n    readonly to: string;\n    readonly replace?: boolean;\n}",
     "doc": "/** {@link Navigate} props: the destination `to` and whether to `replace` the history entry. */"
+  },
+  {
+    "name": "NavigateSearchOf",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type NavigateSearchOf<To extends string> = To extends keyof RouteSearch ? RouteSearch[To] : Record<string, unknown>;",
+    "doc": "/**\n * The `search` type for a navigate to `To`: the route's schema output when `To` is a mapped\n * {@link RouteSearch} key, otherwise the loose `Record<string, unknown>` (so a navigate to any path is\n * always allowed). Keyed on `To` rather than a union, so a mapped route can't fall back to the loose form\n * with a wrong shape - `navigate({ to: \"/reports\", search: { page: \"x\" } })` is a compile error.\n */"
+  },
+  {
+    "name": "NavigateTargetInput",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface NavigateTargetInput {\n    readonly to: string;\n    readonly search?: Record<string, unknown>;\n    readonly replace?: boolean;\n}",
+    "doc": "/** The runtime shape of an object-form navigate target (loose - the typed narrowing lives in\n * {@link NavigateFunction}'s generic call signature). `to` is a bare pathname; `search` is serialized\n * onto it; `replace` folds into the options. */"
   },
   {
     "name": "Navigation",
@@ -7547,6 +7581,13 @@
     "doc": "/** Resolve a route's `meta` (static or a function of the loader data + params) to a {@link Meta}. */"
   },
   {
+    "name": "resolveNavigate",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function resolveNavigate(to: string | number | NavigateTargetInput, options?: NavigateOptions): {\n    readonly to: string | number;\n    readonly options: NavigateOptions | undefined;\n};",
+    "doc": "/**\n * Normalize a navigate argument to the bridge's `(to, options)`: a string path or history-delta passes\n * through; an object target has its `search` serialized onto `to` and its `replace` folded into the\n * options. The one place the object form becomes a URL, so every adapter's `navigate` resolves it\n * identically.\n */"
+  },
+  {
     "name": "resolvePublicPath",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -8003,6 +8044,13 @@
     "signature": "export interface RoutesDiff {\n    readonly changes: readonly RouteChange[];\n    /** True when any change is `breaking` — the CI-gate signal. */\n    readonly hasBreaking: boolean;\n}"
   },
   {
+    "name": "RouteSearch",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface RouteSearch {\n}",
+    "doc": "/**\n * The augmentable route -> search-type map for typed cross-route navigation. Empty by default (so an\n * object-form navigate to any path is allowed with a loose `search`). A build step (`nifra sync-routes`)\n * OR the app declares one entry per route path against its `searchSchema` output:\n *\n * ```ts\n * declare module \"@nifrajs/web\" {\n *   interface RouteSearch {\n *     \"/reports\": { page: number; q: string }\n *   }\n * }\n * ```\n *\n * With that, `navigate({ to: \"/reports\", search: { page: 2 } })` type-checks `search` against\n * `/reports`'s schema, and a wrong shape is a compile error. See {@link NavigateTarget}.\n */"
+  },
+  {
     "name": "RouteSnapshot",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -8337,6 +8385,13 @@
     "doc": "/**\n * The search a route sees for a raw URL query: parsed, then validated against a single `searchSchema`\n * when the route declares one (failing closed to its defaults), or the raw parsed query otherwise. A\n * one-link {@link searchOfChain}; use that directly for a layout+page chain. Both the server (`renderPage`,\n * loader ctx) and the client (the adapter mount) derive search this way, from the same URL + schema, so\n * they produce the identical value - SSR-correct by construction, no serialization.\n */"
   },
   {
+    "name": "SearchOf",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type SearchOf<Module> = Module extends {\n    searchSchema: infer S;\n} ? S extends StandardSchemaV1 ? InferOutput<S> : Record<string, unknown> : Record<string, unknown>;",
+    "doc": "/**\n * The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed\n * query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route\n * navigation: generated route types (`nifra sync-routes`) map each path to\n * `SearchOf<typeof import(\"./routes/<file>\")>`, populating the augmentable `RouteSearch` interface.\n */"
+  },
+  {
     "name": "searchOfChain",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -8438,6 +8493,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function serializeResponse(response: Response, options?: {\n    readonly maxBytes?: number;\n}): Promise<StoredResponse>;",
     "doc": "/** Buffer a response into a storable form. Clones first so the live response body stays intact. */"
+  },
+  {
+    "name": "serializeSearch",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function serializeSearch(value: Record<string, unknown>, codec?: SearchCodec): string;",
+    "doc": "/** Serialize a structured search object back to a query string (leading `?`, or `\"\"` when empty). */"
   },
   {
     "name": "serve",
@@ -10162,35 +10224,35 @@
     "kind": "function",
     "package": "@nifrajs/web-preact",
     "signature": "export declare function useNavigate(): NavigateFunction;",
-    "doc": "/** Get the {@link NavigateFunction}. Stable across renders; resolves the browser navigate at call time,\n * so it works as soon as `installHistory` has run and no-ops before then / on the server. */"
+    "doc": "/** Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object).\n * Stable across renders; resolves the browser navigate at call time, so it works as soon as\n * `installHistory` has run and no-ops before then / on the server. */"
   },
   {
     "name": "useNavigate",
     "kind": "function",
     "package": "@nifrajs/web-react",
     "signature": "export declare function useNavigate(): NavigateFunction;",
-    "doc": "/** Get the {@link NavigateFunction}. Stable across renders; resolves the browser navigate at call time\n * (so it works as soon as `installHistory` has run, and no-ops before then / on the server). */"
+    "doc": "/** Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object;\n * a render-time navigate isn't valid - use {@link Navigate}, which navigates in an effect). Stable across\n * renders; resolves the browser navigate at call time (so it works as soon as `installHistory` has run,\n * and no-ops before then / on the server). */"
   },
   {
     "name": "useNavigate",
     "kind": "function",
     "package": "@nifrajs/web-solid",
     "signature": "export declare function useNavigate(): NavigateFunction;",
-    "doc": "/** Get the {@link NavigateFunction}. Resolves the browser navigate at call time, so it works as soon as\n * `installHistory` has run and no-ops before then / on the server. */"
+    "doc": "/** Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object).\n * Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops\n * before then / on the server. */"
   },
   {
     "name": "useNavigate",
     "kind": "function",
     "package": "@nifrajs/web-svelte",
     "signature": "export declare function useNavigate(): NavigateFunction;",
-    "doc": "/** Get the {@link NavigateFunction}. Resolves the browser navigate at call time, so it works as soon as\n * `installHistory` has run and no-ops before then / on the server. */"
+    "doc": "/** Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object).\n * Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops\n * before then / on the server. */"
   },
   {
     "name": "useNavigate",
     "kind": "function",
     "package": "@nifrajs/web-vue",
     "signature": "export declare function useNavigate(): NavigateFunction;",
-    "doc": "/** Get the {@link NavigateFunction}. Resolves the browser navigate at call time, so it works as soon as\n * `installHistory` has run and no-ops before then / on the server. */"
+    "doc": "/** Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object).\n * Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops\n * before then / on the server. */"
   },
   {
     "name": "useNavigation",

@@ -177,6 +177,18 @@ export function searchOfChain(
 }
 
 /**
+ * The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed
+ * query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route
+ * navigation: generated route types (`nifra sync-routes`) map each path to
+ * `SearchOf<typeof import("./routes/<file>")>`, populating the augmentable `RouteSearch` interface.
+ */
+export type SearchOf<Module> = Module extends { searchSchema: infer S }
+  ? S extends StandardSchemaV1
+    ? InferOutput<S>
+    : Record<string, unknown>
+  : Record<string, unknown>
+
+/**
  * Validate a parsed search object against a route's Standard Schema, returning the typed output. Fails
  * CLOSED: on validation issues it retries against an empty object so the schema's per-field defaults apply,
  * and degrades to `{}` only if even that fails - it never throws on hostile input. An async validator is a

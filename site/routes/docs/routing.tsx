@@ -175,6 +175,16 @@ export default function Routing() {
         writes of the raw query, <code>useSearchParams()</code> mirrors react-router's{" "}
         <code>[params, setParams]</code> tuple.
       </p>
+      <p>
+        To WRITE search, <code>useNavigate</code> takes an object target:{" "}
+        <code>{`navigate({ to: "/reports", search: { page: 2 } })`}</code> serializes <code>search</code>{" "}
+        onto <code>to</code> (no hand-built query strings). Generate a route-types <code>.d.ts</code> (via{" "}
+        <code>generateRouteSearchTypes</code>, which maps each static route to its schema output) and put it
+        in scope, and <code>search</code> becomes typed against the target route's schema - a wrong shape
+        for a known route is a compile error, while any other path takes a loose <code>search</code>. The
+        plain string-path and history-delta forms (<code>navigate("/about")</code>, <code>navigate(-1)</code>)
+        are unchanged.
+      </p>
 
       <h2>Guarding navigation</h2>
       <p>

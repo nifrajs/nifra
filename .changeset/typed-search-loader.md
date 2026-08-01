@@ -29,4 +29,10 @@ A `_layout` can declare its own `searchSchema` for keys shared across a section 
 
 A route can also list `searchClientKeys` - search keys that are purely client-side UI (`?tab`, a client-side `?sort`, `?modal`). When a client navigation changes only those keys, the URL updates (so `useSearch` re-renders) without re-running the loader; any other key change revalidates as before, so data is never stale.
 
-`useSearch` ships on every adapter - React (a value), Preact (a value), Vue (a `Ref`), Solid (an `Accessor`), and Svelte (an accessor), each in that framework's own shape. A typed `navigate({ search })` follows in a later release.
+`useSearch` ships on every adapter - React (a value), Preact (a value), Vue (a `Ref`), Solid (an `Accessor`), and Svelte (an accessor), each in that framework's own shape.
+
+`navigate` gains an object form on every adapter: `navigate({ to, search, replace })` serializes `search` onto `to` (no hand-built query strings). `search` is typed against the target route's `searchSchema` when the generated route types are in scope (`generateRouteSearchTypes` emits a `.d.ts` mapping each static route to its schema output), so a wrong shape for a known route is a compile error while an unmapped path takes a loose `search`. The string-path and history-delta forms are unchanged.
+
+```ts
+navigate({ to: "/reports", search: { page: 2 } }) // search typed against /reports's schema
+```
