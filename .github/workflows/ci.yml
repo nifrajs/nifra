@@ -65,6 +65,12 @@ jobs:
       - name: Build + publish-readiness (publint + arethetypeswrong)
         run: bun run check:publish
 
+      # attw and the workspace can resolve undeclared internal packages through hoisted siblings. Pack
+      # selected public packages, install each one with npm's nested strategy, and typecheck its public
+      # entry from a three-line external consumer so only declared dependencies are visible.
+      - name: Publish-consumer matrix (isolated declarations, no hoisting)
+        run: bun run check:consumers
+
       # Cold-start gate: the `bun create nifra` → `bun install` → `bun run build` path a fresh external
       # user takes. alpha.4's templates pinned `@nifrajs/*@^0.1.0` (excludes the published prerelease) →
       # every scaffolded app failed to install; the package-level gates never look at the templates.
