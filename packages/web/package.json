@@ -127,6 +127,9 @@
     "./css-modules": {
       "types": "./css-modules.d.ts"
     },
+    "./server-manifest": {
+      "types": "./server-manifest.d.ts"
+    },
     "./fn": {
       "bun": "./src/fn.ts",
       "types": "./dist/fn.d.ts",
@@ -151,7 +154,8 @@
   "files": [
     "dist",
     "src",
-    "css-modules.d.ts"
+    "css-modules.d.ts",
+    "server-manifest.d.ts"
   ],
   "sideEffects": false,
   "scripts": {
