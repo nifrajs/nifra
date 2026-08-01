@@ -181,6 +181,12 @@ export interface RouteModule {
    * validated against it (failing closed to the schema's defaults on invalid input); type it into the
    * loader with `LoaderArgs<Api, Env, typeof searchSchema>`. */
   readonly searchSchema?: StandardSchemaV1
+  /** Search keys that are purely client-side UI (`"tab"`, a client-side `"sort"`, `"modal"`) and do NOT
+   * affect this route's loader. When a client navigation stays on the same route + pathname and changes
+   * ONLY these keys, the router updates the URL (so `useSearch` re-renders) WITHOUT re-running the loader.
+   * Any other key change revalidates as usual - so omitting a data-affecting key here can never serve
+   * stale data, it only forgoes the optimization. Client-only: the server always renders fresh. */
+  readonly searchClientKeys?: readonly string[]
   readonly meta?: MetaInput
   /**
    * Opt this route out of nifra's full-document client hydration. The server still renders the full

@@ -11,6 +11,7 @@ import {
 } from "@nifrajs/core/pattern"
 import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import { parseNdjsonData } from "./deferred.ts"
+import { isClientOnlySearchChange } from "./search.ts"
 
 /**
  * Request header that asks a nifra route's GET to return just the loader data as JSON (instead of
@@ -286,6 +287,12 @@ export interface ClientRouterOptions {
   /** Terminal status → client route id. Generated entries populate this from `_404` and
    * `_<status>` files so soft navigation renders the same boundary as a hard request. */
   readonly statusRoutes?: Readonly<Record<number, string>>
+  /** routeId → the route's client-only search keys (its `searchClientKeys` export). When a soft
+   * navigation stays on the same route + pathname and changes ONLY these keys, `navigate` publishes the
+   * new URL WITHOUT re-running the loader (re-render, not revalidate). Populated lazily by the generated
+   * entry's `loadModule` (so a route's keys are present once it has been visited, which is exactly when a
+   * same-route nav can consult them). Omit ⇒ every search change revalidates (the safe default). */
+  readonly searchClientKeys?: Readonly<Record<string, readonly string[]>>
 }
 
 /** Options for a per-adapter `mountRouter` (the Router binding that hydrates + re-renders). */
@@ -293,11 +300,13 @@ export interface MountRouterOptions {
   readonly router: ClientRouter
   /** routeId → layout chain (outermost layout → page); built by `generateClientEntry`. */
   readonly routes: Record<string, readonly unknown[]>
-  /** routeId → the route page's `searchSchema` (or `undefined` when it declares none); built by
-   * `generateClientEntry`. The mount derives each route's typed `search` from this plus the URL query
-   * via `searchOf`, matching the server's `ctx.search`/`RenderProps.search` for the same route. Omitted
-   * by callers with no typed search (tests, a hand-built mount) ⇒ every route sees the raw parsed query. */
-  readonly searchSchemas?: Readonly<Record<string, StandardSchemaV1 | undefined>>
+  /** routeId → the route's search-schema CHAIN (its layout chain's `searchSchema` exports, outermost
+   * first, then the page's; each entry `undefined` when that module declares none); built by
+   * `generateClientEntry`. The mount derives each route's typed `search` from this chain plus the URL via
+   * `searchOfChain` (layout keys merged with page keys, page-wins), matching the server's
+   * `ctx.search`/`RenderProps.search`. Omitted by callers with no typed search (tests, a hand-built mount)
+   * ⇒ every route sees the raw parsed query. */
+  readonly searchSchemas?: Readonly<Record<string, readonly (StandardSchemaV1 | undefined)[]>>
   /** Hydration container (opaque — the adapter casts it to its DOM element type). */
   readonly container: unknown
 }
@@ -346,9 +355,23 @@ const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation
  * navigations overlap, only the latest result is applied (rapid clicks don't flash stale data).
  * A failed fetch clears `pending` and rethrows so the caller can fall back to a full-page load.
  */
+// Split a `pathname + search` into its two parts. `rawSearchOf` keeps the leading `?` (what
+// `parseSearch` accepts); an empty query yields `""`.
+const pathnameOf = (path: string): string => {
+  const q = path.indexOf("?")
+  return q === -1 ? path : path.slice(0, q)
+}
+const rawSearchOf = (path: string): string => {
+  const q = path.indexOf("?")
+  return q === -1 ? "" : path.slice(q)
+}
+
 export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   const match = createMatcher(options.patterns)
   const fetchData = options.fetchData ?? defaultFetchData
+  // routeId → the route's client-only search keys. Read by reference (the generated entry keeps writing
+  // to it as routes load), so a same-route nav always sees the current route's keys.
+  const searchClientKeys = options.searchClientKeys ?? {}
   /**
    * Fetch a route's data and normalise it.
    *
@@ -624,6 +647,27 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     navigate: async (path) => {
       const matched = match(path)
       if (matched === null) return
+      // Client-only search fast path: same route + same pathname, and every changed search key is
+      // declared client-only. Publish the new URL (so `useSearch`/`useLocation` update) WITHOUT a data
+      // fetch - the loader's inputs did not change. Any loader-affecting key change falls through to the
+      // normal match → fetch → publish below, so data is never stale. Abort an in-flight fetch first: a
+      // rapid `?tab` after a real nav must not let the older fetch overwrite this synchronous update.
+      if (
+        matched.routeId === state.routeId &&
+        pathnameOf(path) === pathnameOf(state.path) &&
+        isClientOnlySearchChange(
+          rawSearchOf(state.path),
+          rawSearchOf(path),
+          searchClientKeys[state.routeId] ?? [],
+        )
+      ) {
+        ++token // supersede any in-flight navigation so its late result is dropped
+        navAbort?.abort()
+        cachePut(path, { data: state.data, layoutData: state.layoutData })
+        state = { ...state, path, pending: false, pendingPath: undefined }
+        emit()
+        return
+      }
       const mine = ++token
       navAbort?.abort() // abandon any in-flight navigation's stream
       const ac = new AbortController()

@@ -140,19 +140,40 @@ export function serializeSearch(
 }
 
 /**
- * The search a route sees for a raw URL query: parsed, then validated against `searchSchema` when the
- * route declares one (failing closed to its defaults), or the raw parsed query otherwise. The one place
- * both the server (`renderPage`, loader ctx) and the client (the adapter mount) derive search, so they
- * produce the identical value from the same URL + schema - SSR-correct by construction, no serialization.
+ * The search a route sees for a raw URL query: parsed, then validated against a single `searchSchema`
+ * when the route declares one (failing closed to its defaults), or the raw parsed query otherwise. A
+ * one-link {@link searchOfChain}; use that directly for a layout+page chain. Both the server (`renderPage`,
+ * loader ctx) and the client (the adapter mount) derive search this way, from the same URL + schema, so
+ * they produce the identical value - SSR-correct by construction, no serialization.
  */
 export function searchOf(
   searchSchema: StandardSchemaV1 | undefined,
   rawSearch: string,
 ): Record<string, unknown> {
+  return searchOfChain([searchSchema], rawSearch)
+}
+
+/**
+ * The search for a route whose effective schema is a CHAIN - a `_layout` may declare `searchSchema` for
+ * shared keys (`?org`, `?theme`) and each page declares its own. The raw query is validated against every
+ * schema in the chain (outermost layout first, page last) and their outputs are merged, page-wins on a key
+ * conflict (nearest-wins, like `mergeHeads`): validate-each-then-combine, since Standard Schema has no
+ * `.merge()`. `undefined` links (a layout with no `searchSchema`) contribute nothing; when the whole chain
+ * is empty, the raw parsed query is returned. Fails closed per schema, same as {@link searchOf} (which is
+ * this with a one-link chain). The server and the client build the identical chain, so the value matches.
+ */
+export function searchOfChain(
+  schemas: readonly (StandardSchemaV1 | undefined)[],
+  rawSearch: string,
+): Record<string, unknown> {
   const parsed = parseSearch(rawSearch)
-  return searchSchema === undefined
-    ? parsed
-    : (validateSearch(searchSchema, parsed) as Record<string, unknown>)
+  const defined = schemas.filter((s): s is StandardSchemaV1 => s !== undefined)
+  if (defined.length === 0) return parsed
+  let out: Record<string, unknown> = {}
+  for (const schema of defined) {
+    out = { ...out, ...(validateSearch(schema, parsed) as Record<string, unknown>) }
+  }
+  return out
 }
 
 /**
@@ -212,4 +233,30 @@ export function shareSearch<T>(prev: T, next: T): T {
     }
   }
   return identical ? prev : (out as T)
+}
+
+/**
+ * True when two raw queries differ ONLY in keys a route declared client-only (`searchClientKeys`) - the
+ * signal a client navigation can update search WITHOUT re-running the loader (re-render, not revalidate:
+ * `?tab`, a client-side `?sort` over already-loaded rows, `?modal`). Returns false when a key OUTSIDE the
+ * allow-list changed (that key drives data, so the nav must revalidate) and when nothing changed at all (a
+ * same-URL nav still revalidates). Fail-safe by construction: an empty allow-list can never return true,
+ * so a route that declares no client keys always revalidates - the correct, never-stale default.
+ */
+export function isClientOnlySearchChange(
+  prevRaw: string,
+  nextRaw: string,
+  clientKeys: readonly string[],
+): boolean {
+  if (clientKeys.length === 0) return false
+  const prev = parseSearch(prevRaw)
+  const next = parseSearch(nextRaw)
+  const allow = new Set(clientKeys)
+  let changed = false
+  for (const key of new Set([...Object.keys(prev), ...Object.keys(next)])) {
+    if (deepEqual(prev[key], next[key])) continue
+    if (!allow.has(key)) return false // a loader-affecting key changed - must revalidate
+    changed = true
+  }
+  return changed // only a real change to a client-only key skips the fetch (else revalidate)
 }

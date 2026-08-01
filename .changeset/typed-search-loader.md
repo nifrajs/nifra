@@ -21,4 +21,8 @@ export default function Reports({ data }) {
 }
 ```
 
+A `_layout` can declare its own `searchSchema` for keys shared across a section (`?org`, `?theme`); the route's effective search merges the layout chain's schemas with the page's, page-wins on a conflict, so both the layout and the page read their validated slice from one object.
+
+A route can also list `searchClientKeys` - search keys that are purely client-side UI (`?tab`, a client-side `?sort`, `?modal`). When a client navigation changes only those keys, the URL updates (so `useSearch` re-renders) without re-running the loader; any other key change revalidates as before, so data is never stale.
+
 `useSearch` ships for React; the other adapters and a typed `navigate({ search })` follow in a later release.

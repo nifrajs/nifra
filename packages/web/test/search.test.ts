@@ -2,8 +2,11 @@ import { expect, test } from "bun:test"
 import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import {
   DEFAULT_SEARCH_LIMITS,
+  isClientOnlySearchChange,
   parseSearch,
   type SearchLimits,
+  searchOf,
+  searchOfChain,
   serializeSearch,
   shareSearch,
   validateSearch,
@@ -140,4 +143,53 @@ test("shareSearch treats a differing key set as changed, and passes non-objects 
   // Non-object inputs return next as-is (also exercises array vs object deep-equal paths).
   expect(shareSearch({ list: [1, 2] }, { list: [1, 3] })).toEqual({ list: [1, 3] })
   expect(shareSearch(null as unknown as object, { a: 1 })).toEqual({ a: 1 })
+})
+
+test("isClientOnlySearchChange: only a client-only key changed → skip the fetch", () => {
+  expect(isClientOnlySearchChange("?tab=a", "?tab=b", ["tab"])).toBe(true)
+  // A client key added or removed (not just changed) still counts as client-only.
+  expect(isClientOnlySearchChange("", "?tab=a", ["tab"])).toBe(true)
+  expect(isClientOnlySearchChange("?tab=a&page=2", "?page=2", ["tab"])).toBe(true)
+})
+
+test("isClientOnlySearchChange: a loader-affecting key changed → must revalidate", () => {
+  // `page` is not in the allow-list, so its change forces a fetch even alongside a client-only key.
+  expect(isClientOnlySearchChange("?page=1&tab=a", "?page=2&tab=b", ["tab"])).toBe(false)
+  expect(isClientOnlySearchChange("?page=1", "?page=2", ["tab"])).toBe(false)
+})
+
+test("isClientOnlySearchChange: no change, or no client keys declared → false (revalidate)", () => {
+  expect(isClientOnlySearchChange("?tab=a", "?tab=a", ["tab"])).toBe(false) // nothing changed
+  expect(isClientOnlySearchChange("?tab=a", "?tab=b", [])).toBe(false) // no opt-out declared
+  // Deep-equal complex values are not a change (JSON-decoded objects compared structurally).
+  expect(isClientOnlySearchChange('?f={"x":1}&tab=a', '?f={"x":1}&tab=b', ["tab"])).toBe(true)
+  expect(isClientOnlySearchChange('?f={"x":1}', '?f={"x":2}', ["f", "tab"])).toBe(true)
+})
+
+test("searchOfChain merges a layout + page schema, page-wins on a conflicting key", () => {
+  // Layout owns `org` (+ a `role` default); page owns `page` (+ also `role`, which must win).
+  const layout = makeSchema((i) => {
+    const r = i as { org?: unknown }
+    return { value: { org: typeof r.org === "string" ? r.org : "", role: "layout" } }
+  })
+  const page = makeSchema((i) => {
+    const r = i as { page?: unknown }
+    return { value: { page: typeof r.page === "number" ? r.page : 1, role: "page" } }
+  })
+  // Both schemas validate the same raw query; outputs merge, the page (last) wins `role`.
+  expect(searchOfChain([layout, page], "?org=acme&page=2")).toEqual({
+    org: "acme",
+    page: 2,
+    role: "page",
+  })
+})
+
+test("searchOfChain: undefined links are skipped; an all-undefined chain is the raw parsed query", () => {
+  const page = makeSchema(() => ({ value: { page: 1 } }))
+  // A layout with no searchSchema (undefined) contributes nothing; the page still applies.
+  expect(searchOfChain([undefined, page], "?page=9&x=1")).toEqual({ page: 1 })
+  // Every link undefined → raw parsed query (same as a route with no schema at all).
+  expect(searchOfChain([undefined, undefined], "?a=1&b=hi")).toEqual({ a: 1, b: "hi" })
+  // A one-link chain equals searchOf (which delegates to searchOfChain).
+  expect(searchOfChain([page], "?page=3")).toEqual(searchOf(page, "?page=3"))
 })

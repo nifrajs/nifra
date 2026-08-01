@@ -2366,7 +2366,6 @@ Every public export of every package and documented subpath — name, kind, sign
 - **canonical** _(function)_ — `canonical: (href: string) => LinkDescriptor`
   A `<link rel="canonical">` descriptor for a route's `meta.link`. The canonical URL tells search engines which URL is authoritative for a page (deduping query-string / tracking variants).
 - **createClientRouter** _(function)_ — `createClientRouter: (options: ClientRouterOptions) => ClientRouter`
-  Create the agnostic router store. `navigate` is guarded by a monotonic token so that when navigations overlap, only the latest result is applied (rapid clicks don't flash stale data). A failed fetch clears `pending` and rethrows so the caller can fall back to a full-page load.
 - **createMatcher** _(function)_ — `createMatcher: (patterns: readonly RoutePattern[]) => (path: string) => RouteMatch | null`
   Build a matcher from route patterns (built from the SAME manifest the server routes from, so client and server agree). Returns the first matching route + decoded params, or null. The query string is ignored for matching (it is not part of the route pattern).
 - **createMutation** _(function)_ — `createMutation: <TData, TVariables>(fn: (variables: TVariables) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => MutationHandle<TData, TVariables>`
@@ -2427,7 +2426,9 @@ Every public export of every package and documented subpath — name, kind, sign
 - **revalidateEndpoint** _(function)_ — `revalidateEndpoint: (options: RevalidateEndpointOptions) => (req: Request) => Promise<Response>`
   An **on-demand revalidation** (purge) endpoint — a `fetch` handler that drops a path's cached entry so the next request re-renders. `POST` with the secret in the token header and the path as `?path=` or a JSON `{ "path": "/blog/x" }` body. The token is checked in **constant time** (wrong/missing → …
 - **searchOf** _(function)_ — `searchOf: (searchSchema: StandardSchemaV1 | undefined, rawSearch: string) => Record<string, unknown>`
-  The search a route sees for a raw URL query: parsed, then validated against `searchSchema` when the route declares one (failing closed to its defaults), or the raw parsed query otherwise. The one place both the server (`renderPage`, loader ctx) and the client (the adapter mount) derive search, so t…
+  The search a route sees for a raw URL query: parsed, then validated against a single `searchSchema` when the route declares one (failing closed to its defaults), or the raw parsed query otherwise. A one-link {@link searchOfChain}; use that directly for a layout+page chain. Both the server (`renderP…
+- **searchOfChain** _(function)_ — `searchOfChain: (schemas: readonly (StandardSchemaV1 | undefined)[], rawSearch: string) => Record<string, unknown>`
+  The search for a route whose effective schema is a CHAIN - a `_layout` may declare `searchSchema` for shared keys (`?org`, `?theme`) and each page declares its own. The raw query is validated against every schema in the chain (outermost layout first, page last) and their outputs are merged, page-wi…
 - **serializeData** _(function)_ — `serializeData: (data: unknown) => string`
   Serialize loader data for embedding inside an inline `<script>`. `JSON.stringify` alone is NOT safe there: a string containing `</script>` or `<!--` would break out of the script element (an XSS vector). Escape `<`/`>` to `\uXXXX`, plus the U+2028/U+2029 separators.
 - **servePublicDir** _(function)_ — `servePublicDir: (options: ServePublicDirOptions) => (request: Request) => Promise<Response | undefined>`

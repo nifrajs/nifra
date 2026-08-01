@@ -52,7 +52,7 @@ import {
   STATUS_HEADER,
   type Submission,
 } from "./router.ts"
-import { searchOf } from "./search.ts"
+import { searchOf, searchOfChain } from "./search.ts"
 
 // Draft / preview mode — a signed cookie that flips `ctx.draft` for loaders + bypasses ISR for editors.
 export {
@@ -227,7 +227,7 @@ export {
 // (fail-closed to defaults), or return the raw parsed query when there is none. Both the server (loader
 // ctx + `renderPage`) and a client adapter mount call this with the same URL + schema, so the two sides
 // produce the identical value by construction. An adapter's `useSearch` binding reads its result.
-export { searchOf } from "./search.ts"
+export { searchOf, searchOfChain } from "./search.ts"
 
 /** The data handed to a route component. Opaque to the core. `actionData` is the return of a
  * route `action` after a POST (absent on plain GETs). `pending` + `submission` are client-only
@@ -933,6 +933,9 @@ type LoadedLayoutModules = ReadonlyArray<{
   loader?: LayoutLoader
   action?: unknown
   gate?: boolean
+  // A layout may declare its own `searchSchema`; the route's effective search merges the layout chain's
+  // schemas with the page's (page-wins). Present on the raw module already - typed here so it is readable.
+  searchSchema?: RouteModule["searchSchema"]
 }>
 
 /**
@@ -1694,6 +1697,19 @@ export function createWebApp<Env = unknown>(
   const loaderSearch = (searchSchema: RouteModule["searchSchema"], request: Request) =>
     searchOf(searchSchema, new URL(request.url).search)
 
+  // The route's EFFECTIVE search once its layout chain is loaded: the layout schemas merged with the
+  // page's (page-wins), the same chain the client mount builds for `useSearch`. Used for the page loader's
+  // `ctx.search` and the render's `RenderProps.search`, so both agree with the client and with each other.
+  const searchChainOf = (
+    layoutMods: LoadedLayoutModules,
+    mod: RouteModule,
+    request: Request,
+  ): Record<string, unknown> =>
+    searchOfChain(
+      [...layoutMods.map((m) => m.searchSchema), mod.searchSchema],
+      new URL(request.url).search,
+    )
+
   const runLayoutChain = async (
     route: RouteEntry,
     ctx: LoaderContext,
@@ -2009,8 +2025,12 @@ export function createWebApp<Env = unknown>(
         )
         layoutModules = run.modules
         layoutRetained = run.retained
+        // The page loader gets the EFFECTIVE search (layout chain + page, page-wins), now that the layout
+        // modules are loaded - so `ctx.search` includes a layout's shared keys (`?org`), matching `useSearch`.
         const [pageData] = await Promise.all([
-          mod.loader ? mod.loader(ctx) : null,
+          mod.loader
+            ? mod.loader({ ...ctx, search: searchChainOf(run.modules, mod, c.req) })
+            : null,
           run.pending, // a non-gate layout loader that rejects must still surface, not go unhandled
         ])
         data = pageData
@@ -2099,9 +2119,10 @@ export function createWebApp<Env = unknown>(
           routeId: route.id,
           params: c.params,
           path: pathOf(c.req),
-          // Recomputed here (like `path`) rather than threaded out of the try-scoped loader ctx: pure and
-          // deterministic, so it equals the loader's `ctx.search` and the client's `searchOf` exactly.
-          search: loaderSearch(mod.searchSchema, c.req),
+          // The effective (layout chain + page) search, matching the page loader's `ctx.search` above and
+          // the client mount - so `useSearch` renders SSR-correct and hydrates with no drift. `layoutModules`
+          // is loaded by now (the loader try succeeded to reach here).
+          search: searchChainOf(layoutModules ?? [], mod, c.req),
           hydrate: hydrateRoute,
           ...(layoutData !== undefined ? { layoutData } : {}),
           ...preloadOf(route.id),
@@ -2186,8 +2207,9 @@ export function createWebApp<Env = unknown>(
         })
       }
       // Derived once and shared: the loader's `ctx.search` and the render's `RenderProps.search` are the
-      // SAME validated value for this route, and the client recomputes it identically via `searchOf`.
-      const search = loaderSearch(mod.searchSchema, c.req)
+      // SAME effective (layout chain + page) value, and the client mount rebuilds it identically. The
+      // layout modules are already loaded (the action ran through their gates above).
+      const search = searchChainOf(layoutModules, mod, c.req)
       const data = mod.loader
         ? await mod.loader({
             params: c.params,
@@ -2350,6 +2372,9 @@ export function generateClientEntry(
     // routeId → the page module's `searchSchema` export (or undefined). Populated lazily with
     // chains/metas so the mount can derive this route's typed `search` from the URL, matching the SSR.
     "const searchSchemas = {}",
+    // routeId → the page's client-only search keys (`searchClientKeys`, or `[]`). The router reads this
+    // by reference to decide when a same-route search change can skip the loader fetch (re-render only).
+    "const searchClientKeys = {}",
     "const loadModule = async (id) => {",
     "  if (chains[id]) return",
     "  const mods = await loaders[id]()",
@@ -2367,13 +2392,16 @@ export function generateClientEntry(
     "    const layouts = mods.slice(0, mods.length - 2).map((m) => m.default)",
     "    chains[id] = [...layouts, errorBoundary(fallback), page]",
     "    metas[id] = mods.slice(0, mods.length - 1).map((m) => m.meta)",
-    // The page (second-to-last, before the appended `_error`) owns the searchSchema.
-    "    searchSchemas[id] = mods[mods.length - 2].searchSchema",
+    // The search-schema CHAIN is the layout modules + page (all but the appended `_error`), so a layout's
+    // `searchSchema` merges with the page's. Client keys come from the page (second-to-last).
+    "    searchSchemas[id] = mods.slice(0, mods.length - 1).map((m) => m.searchSchema)",
+    "    searchClientKeys[id] = mods[mods.length - 2].searchClientKeys ?? []",
     "  } else {",
     "    chains[id] = mods.map((m) => m.default)",
     "    metas[id] = mods.map((m) => m.meta)",
-    // The page is the last module in a plain chain.
-    "    searchSchemas[id] = mods[mods.length - 1].searchSchema",
+    // The chain is every module (layouts + page); client keys come from the page (the last module).
+    "    searchSchemas[id] = mods.map((m) => m.searchSchema)",
+    "    searchClientKeys[id] = mods[mods.length - 1].searchClientKeys ?? []",
     "  }",
     "}",
     "const patterns = [",
@@ -2402,7 +2430,7 @@ export function generateClientEntry(
     "  pending: false,",
     "}",
     `const statusRoutes = ${JSON.stringify(statusRoutes)}`,
-    "const router = createClientRouter({ patterns, initial, loadModule, statusRoutes })",
+    "const router = createClientRouter({ patterns, initial, loadModule, statusRoutes, searchClientKeys })",
     "installHistory(router)",
     "installForms(router)",
     // The container is found in the DOM, not baked in. `rootId` is a per-render option and this entry

@@ -103,3 +103,48 @@ test("RenderProps.search fails closed to the schema defaults on hostile input", 
   const app = appWith(() => null, searchSchema, searchStub)
   expect(await bodyOf(app, "/reports?page=notanumber")).toContain('<<{"page":1,"q":""}>>')
 })
+
+// A layout that owns a shared key (`org`); the route's effective search merges it with the page's keys.
+const layoutSchema = {
+  "~standard": {
+    version: 1,
+    vendor: "test",
+    validate(input: unknown) {
+      const raw = input as { org?: unknown }
+      return { value: { org: typeof raw.org === "string" ? raw.org : "none" } }
+    },
+  },
+}
+
+test("a layout's searchSchema merges with the page's (page-wins) in ctx.search", async () => {
+  const app = createWebApp({
+    adapter: stub,
+    clientEntry: "/c.js",
+    manifest: {
+      routes: [
+        {
+          id: "reports",
+          pattern: "/reports",
+          layoutIds: ["app"],
+          file: "reports.tsx",
+          load: async () => ({
+            default: "reports",
+            loader: (ctx: LoaderContext) => ctx.search,
+            searchSchema,
+          }),
+        },
+      ],
+      layouts: {
+        app: {
+          file: "_layout.tsx",
+          load: async () => ({ default: "L", searchSchema: layoutSchema }),
+        },
+      },
+      notFound: { file: "_404.tsx", load: async () => ({ default: "404" }) },
+    } as Manifest,
+  })
+  // `org` (layout) + `page`/`q` (page), each validated, merged into one object the loader receives.
+  expect(await bodyOf(app, "/reports?org=acme&page=2&q=hi")).toContain(
+    '[[{"org":"acme","page":2,"q":"hi"}]]',
+  )
+})

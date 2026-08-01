@@ -59,14 +59,18 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   // Typed search: the page module's `searchSchema` is registered per route (undefined when absent), so
   // the mount derives this route's `search` from the URL, matching the server's `ctx.search`.
   expect(code).toContain("const searchSchemas = {}")
-  expect(code).toContain("searchSchemas[id] = mods[mods.length - 1].searchSchema")
+  // The schema chain is every module (layouts + page), so a layout searchSchema merges with the page's.
+  expect(code).toContain("searchSchemas[id] = mods.map((m) => m.searchSchema)")
+  // Client-only search keys: registry + per-route population (drives the revalidation opt-out).
+  expect(code).toContain("const searchClientKeys = {}")
+  expect(code).toContain("searchClientKeys[id] = mods[mods.length - 1].searchClientKeys ?? []")
   // patterns drive client-side matching and must mirror the server routes.
   expect(code).toContain('{ routeId: "index", pattern: "/" }')
   expect(code).toContain('{ routeId: "users/[id]", pattern: "/users/:id" }')
   expect(code).toContain("createMatcher(patterns)(location.pathname)")
   expect(code).toContain('const statusRoutes = {"404":"_404","410":"_410"}')
   expect(code).toContain(
-    "const router = createClientRouter({ patterns, initial, loadModule, statusRoutes })",
+    "const router = createClientRouter({ patterns, initial, loadModule, statusRoutes, searchClientKeys })",
   )
   expect(code).toContain("installHistory(router)")
   expect(code).toContain("installForms(router)")
@@ -109,8 +113,11 @@ test("generateClientEntry wires the client error boundary for routes with a near
   // loadModule wraps the page in errorBoundary(fallback) for error routes.
   expect(code).toContain("if (errorBoundary && errorRouteIds.has(id)) {")
   expect(code).toContain("chains[id] = [...layouts, errorBoundary(fallback), page]")
-  // The page (second-to-last, before the appended _error) is where the searchSchema is read.
-  expect(code).toContain("searchSchemas[id] = mods[mods.length - 2].searchSchema")
+  // The schema chain excludes the appended _error module (layouts + page = all but the last).
+  expect(code).toContain(
+    "searchSchemas[id] = mods.slice(0, mods.length - 1).map((m) => m.searchSchema)",
+  )
+  expect(code).toContain("searchClientKeys[id] = mods[mods.length - 2].searchClientKeys ?? []")
 })
 
 test("generateClientEntry folds a route's layout chain into its lazy loader", () => {
