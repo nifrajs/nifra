@@ -12,6 +12,7 @@
  *   bun run check:consumers
  */
 import {
+  cpSync,
   existsSync,
   mkdtempSync,
   readdirSync,
@@ -21,7 +22,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { join, relative, resolve, sep } from "node:path"
 import { $, Glob } from "bun"
 
 const ROOT = resolve(import.meta.dir, "..")
@@ -114,32 +115,47 @@ async function packInstalledInto(
   cache: string,
 ): Promise<string> {
   const before = new Set(readdirSync(destination))
-  // Installed third-party packages sometimes retain a `prepack` script whose source-only build inputs
-  // are intentionally absent. npm's ignore-scripts mode packs the installed payload as-is.
-  //
-  // On CI, `npm pack` in Bun's symlinked store intermittently dies with a spawn-level exit (127/254/2)
-  // that has nothing to do with the package - the identical pack succeeds on a dev machine and on a
-  // retry, and other deps in the same sequential loop pack fine. Retry a few times so a transient does
-  // not fail the whole matrix; on the FINAL attempt let npm's own stderr through, so a package that
-  // genuinely cannot be packed surfaces its real error instead of a bare exit code.
-  let lastExit = 0
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const finalAttempt = attempt === 4
-    const command = $`npm pack --ignore-scripts --pack-destination ${destination} --cache ${cache}`
-      .cwd(packageDir)
+  const packHere = (dir: string) =>
+    $`npm pack --ignore-scripts --pack-destination ${destination} --cache ${cache}`
+      .cwd(dir)
       .nothrow()
-    const result = await (finalAttempt ? command : command.quiet())
-    const packed = readdirSync(destination).find(
-      (file) => !before.has(file) && file.endsWith(".tgz"),
-    )
-    if (result.exitCode === 0 && packed !== undefined) return packed
-    lastExit = result.exitCode
-    if (!finalAttempt) {
-      console.warn(`  … npm pack ${packageDir} exited ${result.exitCode}; retry ${attempt + 1}/4`)
-      await Bun.sleep(200 * (attempt + 1))
+      .quiet()
+  const packedName = () =>
+    readdirSync(destination).find((file) => !before.has(file) && file.endsWith(".tgz"))
+
+  // Fast path: pack the installed payload directly. `--ignore-scripts` normally skips the `prepare`/
+  // `prepack` scripts a published dependency still carries from its source repo.
+  let result = await packHere(packageDir)
+  let packed = packedName()
+
+  // Fallback: some CI npm builds run those scripts (`tshy`, `pnpm run build`, `npm run build:main`, …)
+  // even under --ignore-scripts - the flag is honoured on a dev machine, which is what made this a
+  // Linux-only failure - and the build tools are absent, so the pack dies. The installed payload is
+  // already built, so pack a copy with its `scripts` stripped: with no script there is nothing for any
+  // npm to run. node_modules is excluded (npm never packs it) so the store's symlinks are not copied.
+  if (result.exitCode !== 0 || packed === undefined) {
+    const staging = mkdtempSync(join(tmpdir(), "nifra-extpack-"))
+    try {
+      const copy = join(staging, "package")
+      cpSync(packageDir, copy, {
+        recursive: true,
+        filter: (src) => !relative(packageDir, src).split(sep).includes("node_modules"),
+      })
+      const manifestPath = join(copy, "package.json")
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, unknown>
+      delete manifest.scripts
+      writeFileSync(manifestPath, JSON.stringify(manifest))
+      result = await packHere(copy)
+      packed = packedName()
+    } finally {
+      rmSync(staging, { recursive: true, force: true })
     }
   }
-  throw new Error(`npm pack failed for ${packageDir} (exit ${lastExit})`)
+
+  if (result.exitCode !== 0 || packed === undefined) {
+    throw new Error(`npm pack failed for ${packageDir} (exit ${result.exitCode})`)
+  }
+  return packed
 }
 
 const packageByName = new Map<string, { dir: string; manifest: Manifest }>()
