@@ -52,7 +52,7 @@ import {
   STATUS_HEADER,
   type Submission,
 } from "./router.ts"
-import { parseSearch, validateSearch } from "./search.ts"
+import { searchOf } from "./search.ts"
 
 // Draft / preview mode — a signed cookie that flips `ctx.draft` for loaders + bypasses ISR for editors.
 export {
@@ -1671,17 +1671,10 @@ export function createWebApp<Env = unknown>(
     return valid
   }
 
-  // The validated (or raw-parsed) search a route's loader context receives; `validateSearch` fails closed
-  // to the schema's defaults on hostile input, so this never throws on an attacker-picked query.
-  const loaderSearch = (
-    searchSchema: RouteModule["searchSchema"],
-    request: Request,
-  ): Record<string, unknown> => {
-    const parsed = parseSearch(new URL(request.url).search)
-    return searchSchema === undefined
-      ? parsed
-      : (validateSearch(searchSchema, parsed) as Record<string, unknown>)
-  }
+  // The validated (or raw-parsed) search a route's loader context receives; `searchOf` fails closed to
+  // the schema's defaults on hostile input, so this never throws on an attacker-picked query.
+  const loaderSearch = (searchSchema: RouteModule["searchSchema"], request: Request) =>
+    searchOf(searchSchema, new URL(request.url).search)
 
   const runLayoutChain = async (
     route: RouteEntry,

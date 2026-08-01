@@ -140,6 +140,22 @@ export function serializeSearch(
 }
 
 /**
+ * The search a route sees for a raw URL query: parsed, then validated against `searchSchema` when the
+ * route declares one (failing closed to its defaults), or the raw parsed query otherwise. The one place
+ * both the server (`renderPage`, loader ctx) and the client (the adapter mount) derive search, so they
+ * produce the identical value from the same URL + schema - SSR-correct by construction, no serialization.
+ */
+export function searchOf(
+  searchSchema: StandardSchemaV1 | undefined,
+  rawSearch: string,
+): Record<string, unknown> {
+  const parsed = parseSearch(rawSearch)
+  return searchSchema === undefined
+    ? parsed
+    : (validateSearch(searchSchema, parsed) as Record<string, unknown>)
+}
+
+/**
  * Validate a parsed search object against a route's Standard Schema, returning the typed output. Fails
  * CLOSED: on validation issues it retries against an empty object so the schema's per-field defaults apply,
  * and degrades to `{}` only if even that fails - it never throws on hostile input. An async validator is a
