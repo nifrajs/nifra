@@ -98,6 +98,9 @@ Usage:
   nifra sync-manifest                    Regenerate a committed web server-manifest.ts from routes/ WITHOUT
                                          a full build - clears server-manifest drift after a route add/rename
                                          (a new hydrating component still needs a full build).
+  nifra sync-routes                      Regenerate nifra-routes.d.ts from routes/ so navigate({ to, search })
+                                         is typed against each static route's searchSchema (a stale shape is a
+                                         tsc error). Include the file in your tsconfig. Pure file write.
   nifra snapshot [--out <file>]          Write the backend's API contract (routes + schemas) as plain
                                          JSON — the baseline for \`nifra diff\`. Default api-snapshot.json.
   nifra diff    [<baseline>] [--json]    Breaking-change gate: re-snapshot the contract and compare
@@ -525,6 +528,13 @@ async function main(): Promise<void> {
   if (command === "sync-manifest") {
     const { runSyncManifest } = await import("./sync-manifest.ts")
     if (!(await runSyncManifest(process.cwd()))) process.exitCode = 1
+    return
+  }
+  // `sync-routes` regenerates the route-search types `.d.ts` (typed `navigate({ to, search })`) from
+  // `routes/`. Pure fs/text (needs only the route tree, not `framework.ts`), so dispatch before `loadApp`.
+  if (command === "sync-routes") {
+    const { runSyncRoutes } = await import("./sync-routes.ts")
+    if (!(await runSyncRoutes(process.cwd()))) process.exitCode = 1
     return
   }
   // `doctor` is a pure cwd check (imports vs declared deps) — like `check`, dispatch before `loadApp`

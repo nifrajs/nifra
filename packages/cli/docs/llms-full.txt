@@ -383,12 +383,13 @@ writes of the raw query, `useSearchParams()` mirrors react-router's
 
 To WRITE search, `useNavigate` takes an object target:
 `navigate({ to: "/reports", search: { page: 2 } })` serializes `search`
-onto `to` (no hand-built query strings). Generate a route-types `.d.ts` (via
-`generateRouteSearchTypes`, which maps each static route to its schema output) and put it
-in scope, and `search` becomes typed against the target route's schema - a wrong shape
-for a known route is a compile error, while any other path takes a loose `search`. The
-plain string-path and history-delta forms (`navigate("/about")`, `navigate(-1)`)
-are unchanged.
+onto `to` (no hand-built query strings). Run `nifra sync-routes` to generate
+`nifra-routes.d.ts` (each static route mapped to its schema output) and include it in
+your tsconfig, and `search` becomes typed against the target route's schema - a wrong
+shape for a known route is a compile error, while any other path takes a loose `search`.
+Re-run it after adding a route or changing a `searchSchema`; a stale shape is a
+`tsc` error. The plain string-path and history-delta forms
+(`navigate("/about")`, `navigate(-1)`) are unchanged.
 
 ### Guarding navigation
 

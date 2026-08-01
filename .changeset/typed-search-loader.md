@@ -6,6 +6,7 @@
 "@nifrajs/web-solid": minor
 "@nifrajs/web-svelte": minor
 "@nifrajs/client": minor
+"@nifrajs/cli": minor
 ---
 
 Typed, validated search params: a route declares a `searchSchema` and both its loader and its component read the parsed, validated query.
@@ -31,7 +32,7 @@ A route can also list `searchClientKeys` - search keys that are purely client-si
 
 `useSearch` ships on every adapter - React (a value), Preact (a value), Vue (a `Ref`), Solid (an `Accessor`), and Svelte (an accessor), each in that framework's own shape.
 
-`navigate` gains an object form on every adapter: `navigate({ to, search, replace })` serializes `search` onto `to` (no hand-built query strings). `search` is typed against the target route's `searchSchema` when the generated route types are in scope (`generateRouteSearchTypes` emits a `.d.ts` mapping each static route to its schema output), so a wrong shape for a known route is a compile error while an unmapped path takes a loose `search`. The string-path and history-delta forms are unchanged.
+`navigate` gains an object form on every adapter: `navigate({ to, search, replace })` serializes `search` onto `to` (no hand-built query strings). Run `nifra sync-routes` to generate `nifra-routes.d.ts` (each static route mapped to its schema output) and include it in your tsconfig, and `search` is typed against the target route's `searchSchema` - a wrong shape for a known route is a compile error, while an unmapped path takes a loose `search`. Regenerated from the route files, so a stale shape becomes a `tsc` error. The string-path and history-delta forms are unchanged.
 
 ```ts
 navigate({ to: "/reports", search: { page: 2 } }) // search typed against /reports's schema
