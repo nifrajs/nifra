@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { client } from "@nifrajs/client"
 import { server } from "@nifrajs/core"
+import { bytes } from "@nifrajs/core/binary"
 
 /**
  * A binary body has to survive the client.
@@ -58,6 +59,19 @@ describe("binary responses", () => {
     )
     const res = await call(app, "doc")
     expect((res.data as Blob).type).toBe("application/pdf")
+  })
+
+  test("bytes() stays a Blob even when its declared media type is textual", async () => {
+    const payload = new TextEncoder().encode('{"looks":"json"}')
+    const app = server()
+      .get("/text", () => bytes(payload, { type: "text/plain" }))
+      .get("/json", () => bytes(payload, { type: "application/json" }))
+
+    for (const route of ["text", "json"]) {
+      const res = await call(app, route)
+      expect(res.data).toBeInstanceOf(Blob)
+      expect(new Uint8Array(await (res.data as Blob).arrayBuffer())).toEqual(payload)
+    }
   })
 })
 

@@ -28,6 +28,9 @@
  */
 declare const NIFRA_BYTES: unique symbol
 
+/** Runtime marker paired with the type-only brand so clients do not have to guess from media type. */
+export const NIFRA_BINARY_HEADER = "x-nifra-binary"
+
 /** A `Response` a route declared as binary. `Jsonify` maps this to `Blob`. */
 export type BinaryResponse = Response & { readonly [NIFRA_BYTES]: true }
 
@@ -83,17 +86,38 @@ const NON_ASCII = /[^\x20-\x7e]/g
  * parameter is only there to carry characters ASCII cannot.
  */
 function contentDisposition(filename: string): string {
-  const safe = filename.replace(UNSAFE_FILENAME, "")
+  const safe = filename.toWellFormed().replace(UNSAFE_FILENAME, "")
   const ascii = safe.replace(NON_ASCII, "")
   const disposition = `attachment; filename="${ascii}"`
   // Only when it adds something: a name ASCII already carries needs no second parameter.
   if (ascii === safe) return disposition
-  return `${disposition}; filename*=UTF-8''${encodeURIComponent(safe)}`
+  // encodeURIComponent leaves `'()*` untouched, but RFC 5987's attr-char grammar does not.
+  const encoded = encodeURIComponent(safe).replace(
+    /['()*]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  )
+  return `${disposition}; filename*=UTF-8''${encoded}`
 }
 
 export function bytes(body: BinaryBody, options: BytesOptions = {}): BinaryResponse {
   const headers = new Headers(options.headers as Record<string, string> | undefined)
   headers.set("content-type", options.type ?? "application/octet-stream")
+  headers.set(NIFRA_BINARY_HEADER, "1")
+  // Response headers outside the CORS safelist are hidden from cross-origin clients unless exposed.
+  // Preserve an existing list and add the marker so the typed contract works cross-origin too.
+  const exposed = headers.get("access-control-expose-headers")
+  if (exposed !== "*") {
+    const names = exposed
+      ?.split(",")
+      .map((name) => name.trim())
+      .filter(Boolean)
+    if (!names?.some((name) => name.toLowerCase() === NIFRA_BINARY_HEADER)) {
+      headers.set(
+        "access-control-expose-headers",
+        [...(names ?? []), NIFRA_BINARY_HEADER].join(", "),
+      )
+    }
+  }
   if (options.filename !== undefined) {
     headers.set("content-disposition", contentDisposition(options.filename))
   }

@@ -98,6 +98,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@nifrajs/core": "workspace:*",
     "@nifrajs/i18n": "workspace:*",
     "@nifrajs/image": "workspace:*",
     "@nifrajs/web": "workspace:*"

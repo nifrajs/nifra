@@ -116,6 +116,33 @@ test("managed head tags are still replaced alongside the <html> attributes", () 
   expect(document.documentElement.getAttribute("lang")).toBe("de")
 })
 
+test("soft navigation applies the same trusted attribute policy as SSR", () => {
+  applyHead({
+    meta: [
+      { name: "description", content: "safe", ONCLICK: "alert(1)", style: "display:none" },
+      { "http-equiv": "refresh", content: "0;url=javascript:alert(1)" },
+    ],
+    link: [
+      {
+        rel: "stylesheet",
+        href: "java\nscript:alert(1)",
+        onload: "alert(2)",
+        "data-owner": "route",
+      },
+    ],
+  } as never)
+
+  expect(document.head.children).toHaveLength(2)
+  const meta = document.head.children[0]
+  const link = document.head.children[1]
+  expect(meta?.getAttribute("content")).toBe("safe")
+  expect(meta?.hasAttribute("onclick")).toBe(false)
+  expect(meta?.hasAttribute("style")).toBe(false)
+  expect(link?.getAttribute("data-owner")).toBe("route")
+  expect(link?.hasAttribute("href")).toBe(false)
+  expect(link?.hasAttribute("onload")).toBe(false)
+})
+
 /**
  * The script slots, on the soft-navigation side.
  *

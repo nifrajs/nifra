@@ -49,7 +49,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 // True when `value` nests deeper than `remaining` levels (a scalar never does). Used to reject an
 // over-deep decoded JSON value back to its raw string rather than store the graph.
 function exceedsDepth(value: unknown, remaining: number): boolean {
-  if (Array.isArray(value)) return value.some((item) => exceedsDepth(item, remaining - 1))
+  if (Array.isArray(value)) {
+    if (remaining <= 0) return true
+    return value.some((item) => exceedsDepth(item, remaining - 1))
+  }
   if (isPlainObject(value)) {
     if (remaining <= 0) return true
     return Object.values(value).some((item) => exceedsDepth(item, remaining - 1))
@@ -89,7 +92,16 @@ function decodeValue(raw: string, limits: SearchLimits): unknown {
 }
 
 function encodeValue(value: unknown): string {
-  return typeof value === "string" ? value : JSON.stringify(value)
+  if (typeof value !== "string") return JSON.stringify(value)
+  // The codec is JSON-first on decode, so a raw string such as `"2"`, `"true"`, or `"null"`
+  // would otherwise change type on a serialize → parse round-trip. Quote only ambiguous strings;
+  // ordinary text stays readable (`?q=hello`, not `?q=%22hello%22`).
+  try {
+    JSON.parse(value)
+    return JSON.stringify(value)
+  } catch {
+    return value
+  }
 }
 
 /** The default JSON-first codec. Repeated keys (`?t=a&t=b`) decode to an array; single keys to a value. */
@@ -110,8 +122,13 @@ const jsonCodec: SearchCodec = {
     const usp = new URLSearchParams()
     for (const [key, item] of Object.entries(value)) {
       if (item === undefined) continue
-      if (Array.isArray(item)) for (const element of item) usp.append(key, encodeValue(element))
-      else usp.set(key, encodeValue(item))
+      if (Array.isArray(item) && item.length > 1) {
+        for (const element of item) usp.append(key, encodeValue(element))
+      } else {
+        // Repeated query keys naturally preserve arrays of length >= 2. Empty and singleton arrays
+        // need one JSON value or they collapse to a missing key / scalar during decoding.
+        usp.set(key, encodeValue(item))
+      }
     }
     const query = usp.toString()
     return query === "" ? "" : `?${query}`
@@ -171,7 +188,11 @@ export function searchOfChain(
   if (defined.length === 0) return parsed
   let out: Record<string, unknown> = {}
   for (const schema of defined) {
-    out = { ...out, ...(validateSearch(schema, parsed) as Record<string, unknown>) }
+    const validated = validateSearch(schema, parsed)
+    if (!isPlainObject(validated)) {
+      throw new TypeError("[nifra/web] a search schema must produce an object")
+    }
+    out = { ...out, ...validated }
   }
   return out
 }
@@ -184,7 +205,9 @@ export function searchOfChain(
  */
 export type SearchOf<Module> = Module extends { searchSchema: infer S }
   ? S extends StandardSchemaV1
-    ? InferOutput<S>
+    ? InferOutput<S> extends Record<string, unknown>
+      ? InferOutput<S>
+      : never
     : Record<string, unknown>
   : Record<string, unknown>
 

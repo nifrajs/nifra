@@ -24,6 +24,7 @@ import {
   prepareDeferred,
 } from "./deferred.ts"
 import { isDraftEnabled } from "./draft.ts"
+import { trustedHeadAttributes } from "./internal/head-attributes.ts"
 import { EXECUTABLE_SCRIPT_TYPES, INERT_SCRIPT_TYPES } from "./internal/script-types.ts"
 import { ISR_REVALIDATE_HEADER } from "./isr.ts"
 import { generateLlmsTxt } from "./llms-txt.ts"
@@ -35,6 +36,7 @@ import type {
   Manifest,
   Meta,
   MetaArgs,
+  MetaDescriptor,
   MetaInput,
   RouteEntry,
   RouteModule,
@@ -458,9 +460,8 @@ export interface RenderPageOptions {
    * on every page below it (the home for `hreflang`, `preconnect`, a section-default `<title>`). The
    * merge is **nearest-wins for scalars** (the page's `title` overrides an inner layout's, which
    * overrides an outer one; an undefined page title keeps the layout's) and **concatenated for the
-   * `meta`/`link` arrays** (outermost layout first, page last). `<link>` attributes are name-validated
-   * (any letter/digit/hyphen name — covers `rel`/`href`/`hreflang`/`crossorigin`/`media`/`sizes`/`as`/
-   * `integrity`/`fetchpriority`/…) and value-escaped against XSS. */
+   * `meta`/`link` arrays** (outermost layout first, page last). `<meta>`/`<link>` attributes pass a
+   * shared tag-specific allowlist (including inert `data-*` metadata) and values are escaped. */
   readonly head?: Meta
   /** Id of the container wrapping the app markup (default `"root"`). A non-default id also gets
    * {@link ROOT_ATTRIBUTE}, which is how the generated client entry finds the container to hydrate -
@@ -1136,27 +1137,12 @@ function escapeAttr(value: string): string {
     .replaceAll(">", "&gt;")
 }
 
-// Attribute-NAME guard for emitted `<meta>`/`<link>` tags. Intentionally a *name-shape* allowlist, not
-// a hardcoded per-attribute one: any letter/digit/hyphen name beginning with a letter is permitted, so
-// every standard `<link>` attribute flows through — `rel`, `href`, `hreflang`, `crossorigin`, `media`,
-// `sizes`, `type`, `as`, `title`, `integrity`, `referrerpolicy`, `imagesrcset`, `imagesizes`,
-// `disabled`, `color`, `fetchpriority` — alongside `<meta>`'s `name`/`property`/`content` and custom
-// `data-*`. A hardcoded list would silently drop valid attrs (the bug this guards against: `hreflang`
-// /`crossorigin` getting filtered out). What it rejects is name-shape abuse only — a name with a space,
-// `=`, `>`, quote, or a leading digit can't break out of the tag. Attribute VALUES are escaped
-// separately (they may carry loader data → XSS), so a widened name set never widens the injection
-// surface. Names that fail the shape check are dropped.
-const SAFE_ATTR_NAME = /^[a-zA-Z][a-zA-Z0-9-]*$/
-
-/** Serialize a meta/link tag's attributes: validate the name shape (see {@link SAFE_ATTR_NAME}) +
- * escape the value against XSS. Invalid attribute names are dropped. Values follow the HTML attribute
- * conventions {@link LinkDescriptor} types: a string renders `name="escaped"`; `true` renders the bare
- * boolean attribute (`disabled`); `false` and `undefined` are skipped (a conditionally-absent attr). */
-function tagAttrs(attrs: Record<string, string | boolean | undefined>): string {
+/** Serialize attributes that passed the shared SSR/client head trust policy. */
+function tagAttrs(tag: "meta" | "link", attrs: Readonly<object>): string | null {
+  const trusted = trustedHeadAttributes(tag, attrs)
+  if (trusted === null) return null
   let out = ""
-  for (const [name, value] of Object.entries(attrs)) {
-    if (value === undefined || value === false) continue // omitted / absent boolean attribute
-    if (!SAFE_ATTR_NAME.test(name)) continue // name-shape abuse — dropped (see SAFE_ATTR_NAME)
+  for (const [name, value] of trusted) {
     if (out !== "") out += " "
     out += value === true ? name : `${name}="${escapeAttr(value)}"`
   }
@@ -1179,8 +1165,8 @@ function assertExecutableScriptType(type: string): void {
 }
 
 /** Render a route's `meta`/`link`/`script` as managed (`data-nifra`) head tags. Title is set
- * separately. XSS-safe by construction: every attribute flows through {@link tagAttrs} (name shape-
- * validated, value HTML-escaped), and each `script[].content` through `escapeScriptContent`
+ * separately. XSS-safe by construction: every attribute flows through the shared tag-specific trust
+ * policy then value escaping, and each `script[].content` through `escapeScriptContent`
  * (breakout-escaped) — so loader-derived strings (LLM-authored `og:*`, user content) can't inject markup
  * or close the tag early. String concatenation (no intermediate `.map()` arrays + spread) — parity with
  * the already concat-based preloadLinks/styleLinks/islandPreloads loops; byte-identical output. Result
@@ -1190,8 +1176,16 @@ function headTags(head: Meta | undefined): string {
   const cached = headTagsCache.get(head)
   if (cached !== undefined) return cached
   let out = ""
-  if (head.meta !== undefined) for (const m of head.meta) out += `<meta ${tagAttrs(m)} data-nifra>`
-  if (head.link !== undefined) for (const l of head.link) out += `<link ${tagAttrs(l)} data-nifra>`
+  if (head.meta !== undefined)
+    for (const m of head.meta) {
+      const attrs = tagAttrs("meta", m)
+      if (attrs !== null) out += `<meta${attrs === "" ? "" : ` ${attrs}`} data-nifra>`
+    }
+  if (head.link !== undefined)
+    for (const l of head.link) {
+      const attrs = tagAttrs("link", l)
+      if (attrs !== null) out += `<link${attrs === "" ? "" : ` ${attrs}`} data-nifra>`
+    }
   // `<script>` slot — JSON-LD + other inert head scripts. `type` is attribute-escaped; `content` is
   // breakout-escaped (`escapeScriptContent`) so a `</script>` (or `<!--`/`]]>`) payload can't close the
   // element early. Managed (`data-nifra`) so a soft-nav's `applyHead` cleanly replaces it.
@@ -1262,8 +1256,8 @@ export interface OpenGraphInput {
  * export const meta = { meta: [...openGraph({ title: "Nifra", image: "https://site.com/og.png" })] }
  * ```
  */
-export function openGraph(input: OpenGraphInput): Array<Record<string, string>> {
-  const tags: Array<Record<string, string>> = []
+export function openGraph(input: OpenGraphInput): MetaDescriptor[] {
+  const tags: MetaDescriptor[] = []
   const add = (property: string, content: string | undefined): void => {
     if (content !== undefined) tags.push({ property, content })
   }
@@ -1341,7 +1335,7 @@ export function mergeHeads(heads: readonly Meta[]): Meta {
   let title: string | undefined
   let lang: string | undefined
   let dir: Meta["dir"]
-  const meta: Array<Record<string, string>> = []
+  const meta: MetaDescriptor[] = []
   const link: LinkDescriptor[] = []
   const script: ScriptDescriptor[] = []
   const unsafeScript: UnsafeScriptDescriptor[] = []

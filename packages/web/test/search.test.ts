@@ -75,6 +75,13 @@ test("parseSearch keeps an over-deep value as its raw string instead of building
   expect(parseSearch(`?o=${q('{"a":1}')}`, undefined, shallow)).toEqual({ o: { a: 1 } })
 })
 
+test("parseSearch applies maxDepth to nested arrays as well as objects", () => {
+  const shallow: SearchLimits = { maxLength: 4096, maxKeys: 64, maxDepth: 2 }
+  const raw = "[[[1]]]"
+  expect(parseSearch(`?a=${q(raw)}`, undefined, shallow)).toEqual({ a: raw })
+  expect(parseSearch(`?a=${q("[[1]]")}`, undefined, shallow)).toEqual({ a: [[1]] })
+})
+
 test("parseSearch caps the number of keys", () => {
   const limited: SearchLimits = { maxLength: 4096, maxKeys: 2, maxDepth: 6 }
   expect(parseSearch("?a=1&b=2&c=3&d=4", undefined, limited)).toEqual({ a: 1, b: 2 })
@@ -192,4 +199,9 @@ test("searchOfChain: undefined links are skipped; an all-undefined chain is the 
   expect(searchOfChain([undefined, undefined], "?a=1&b=hi")).toEqual({ a: 1, b: "hi" })
   // A one-link chain equals searchOf (which delegates to searchOfChain).
   expect(searchOfChain([page], "?page=3")).toEqual(searchOf(page, "?page=3"))
+})
+
+test("searchOfChain rejects a schema that transforms search into a non-object", () => {
+  const scalar = makeSchema(() => ({ value: "not-a-search-record" }))
+  expect(() => searchOfChain([scalar], "?page=1")).toThrow(/must produce an object/)
 })

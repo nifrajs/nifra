@@ -162,7 +162,9 @@ test("renderPage injects head: title override + managed (data-nifra) meta/link, 
       title: "default",
       head: {
         title: "User 7",
-        meta: [{ name: "description", content: 'hi <"there"> & you', "bad key": "dropped" }],
+        meta: [
+          { name: "description", content: 'hi <"there"> & you', "bad key": "dropped" } as never,
+        ],
         link: [{ rel: "canonical", href: "/users/7" }],
       },
     })
@@ -173,6 +175,35 @@ test("renderPage injects head: title override + managed (data-nifra) meta/link, 
   )
   expect(html).toContain('<link rel="canonical" href="/users/7" data-nifra>')
   expect(html).not.toContain("bad key") // invalid attribute names are dropped
+})
+
+test("renderPage rejects executable and off-contract head attributes", async () => {
+  const html = await (
+    await renderPage({
+      adapter: stub,
+      chain: [null],
+      data: null,
+      clientEntry: "/c.js",
+      head: {
+        meta: [
+          { name: "description", content: "safe", ONCLICK: "alert(1)", style: "display:none" },
+          { "http-equiv": "refresh", content: "0;url=javascript:alert(1)" },
+        ],
+        link: [
+          {
+            rel: "stylesheet",
+            href: "javascript:alert(1)",
+            onload: "alert(2)",
+            "data-owner": "route",
+          },
+        ],
+      } as never,
+    })
+  ).text()
+
+  expect(html).toContain('<meta name="description" content="safe" data-nifra>')
+  expect(html).toContain('<link rel="stylesheet" data-owner="route" data-nifra>')
+  expect(html).not.toMatch(/onclick|onload|display:none|http-equiv|javascript:/i)
 })
 
 test("renderPage keeps the full standard <link> attr set (hreflang, crossorigin, …) in <head>", async () => {
@@ -541,26 +572,35 @@ test("renderPage omits the deferred runtime when nothing is deferred", async () 
 })
 
 test("renderPage streams __nifraReject for a deferred that rejects (no broken body)", async () => {
-  const html = await (
-    await renderPage({
-      adapter: stub,
+  // Isolate Bun's exit-time false positive for handled concurrent rejections. The subprocess still
+  // drives the public renderPage API and the real streaming implementation; only its runtime rejection
+  // bookkeeping is kept out of the canonical test runner process.
+  const code = `
+    import { defer, renderPage } from ${JSON.stringify(new URL("../src/index.ts", import.meta.url).href)}
+    const streamOf = (text) => new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(text))
+        controller.close()
+      }
+    })
+    const adapter = {
+      renderToStream: (_chain, props) => streamOf(JSON.stringify(props.data)),
+      hydrationHead: () => "",
+    }
+    const slow = new Promise((_, reject) => setTimeout(() => reject(new Error("boom secret detail")), 1))
+    const response = await renderPage({
+      adapter,
       chain: [null],
-      // The rejection IS handled (streamDocument redacts it to `__nifraReject` — asserted below), but Bun
-      // mis-reports it "unhandled" at PROCESS EXIT, exiting `bun test` nonzero with 0 failures. Diagnosed
-      // to a Bun runtime bug, not a code defect: it fires whenever the handled rejection is consumed
-      // concurrently, and the only Bun-clean shape (sequential for-await) would regress out-of-order
-      // deferred streaming. Production is unaffected (a server never exits). See the full
-      // write-up on `rejection()` in deferred.test.ts. Left as-is deliberately.
-      data: {
-        slow: defer(
-          new Promise<never>((_, reject) => {
-            setTimeout(() => reject(new Error("boom secret detail")), 1)
-          }),
-        ),
-      },
+      data: { slow: defer(slow) },
       clientEntry: "/c.js",
     })
-  ).text()
+    process.stdout.write(await response.text())
+  `
+  const proc = Bun.spawnSync([process.execPath, "--eval", code], {
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  const html = proc.stdout.toString()
   // A rejected deferred streams __nifraReject (no broken body) — REDACTED to a stable opaque code,
   // never the raw error text ("boom secret detail" is logged server-side, not leaked).
   expect(html).toContain('window.__nifraReject(0,"deferred_error")')

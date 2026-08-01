@@ -368,6 +368,30 @@ test("history integration covers click, prefetch, fragments, popstate, fallback 
   expect(getBrowserNavigate()).toBeUndefined()
 })
 
+test("programmatic navigation hard-loads unmatched paths before mutating history", async () => {
+  resetBrowser()
+  const { router, navigated } = makeRouter()
+  const fallback: string[] = []
+  const stop = installHistory(router, { fallback: (path) => fallback.push(path) })
+
+  getBrowserNavigate()?.("/outside")
+  await Bun.sleep(0)
+
+  expect(fallback).toEqual(["/outside"])
+  expect(navigated).toEqual([])
+  expect(historyCalls).toEqual([])
+  expect(locationState.pathname).toBe("/current")
+
+  getBrowserNavigate()?.("javascript:alert(1)")
+  expect(fallback).toEqual(["/outside"])
+  expect(historyCalls).toEqual([])
+
+  getBrowserNavigate()?.("https://elsewhere.test/page")
+  expect(fallback).toEqual(["/outside", "https://elsewhere.test/page"])
+  expect(historyCalls).toEqual([])
+  stop()
+})
+
 test("form integration intercepts app POSTs, preserves revalidation choice and falls back natively", async () => {
   resetBrowser()
   const submissions: Array<{ readonly path: string; readonly revalidate: boolean }> = []
@@ -585,6 +609,15 @@ test("useBlocker arms beforeunload only when it would block, and teardown unwire
   windowHub.emit("beforeunload", armed)
   expect(armed.defaultPrevented).toBe(true)
   expect(armed.returnValue).toBe("")
+
+  // A native close/reload while an in-app confirmation is already open must remain protected too.
+  // The browser can dispatch beforeunload at any point; an active blocker is evidence of unsaved state,
+  // not a reason to suppress the native prompt.
+  getBrowserNavigate()?.("/two")
+  const whileBlocked = fakeBeforeUnload()
+  windowHub.emit("beforeunload", whileBlocked)
+  expect(whileBlocked.defaultPrevented).toBe(true)
+  expect(whileBlocked.returnValue).toBe("")
 
   // With the guard unregistered but history still installed, unload finds no registration and stays quiet.
   unregister()

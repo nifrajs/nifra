@@ -4,6 +4,7 @@
  * navigate, and delegated interception of same-origin `<a>` clicks (client transition instead of
  * a full page load). DOM-only — never imported on the server, so the store stays SSR-safe.
  */
+import { trustedHeadAttributes } from "./internal/head-attributes.ts"
 import { EXECUTABLE_SCRIPT_TYPES, INERT_SCRIPT_TYPES } from "./internal/script-types.ts"
 import type { Meta } from "./manifest.ts"
 import {
@@ -145,10 +146,32 @@ export function installHistory(
     }
   }
 
-  // Commit a same-origin navigation: update history (tracking `nifraIndex`), set the pending scroll, then
-  // drive the router. Split from `go` so `proceed` can replay exactly this, bypassing the guard.
+  // Commit a navigation only after its URL and route are known-safe. An unmatched same-origin path or
+  // an ordinary cross-origin HTTP(S) destination becomes a hard load BEFORE history is mutated; otherwise
+  // the address bar could change while the router intentionally kept rendering the old route.
   const commit = (path: string, mode: "push" | "replace"): void => {
-    const url = new URL(path, location.origin)
+    let url: URL
+    try {
+      url = new URL(path, location.origin)
+    } catch {
+      settle()
+      return
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      settle()
+      return
+    }
+    if (url.origin !== location.origin) {
+      settle()
+      fallback(url.href)
+      return
+    }
+    const routePath = url.pathname + url.search
+    if (router.match(routePath) === null) {
+      settle()
+      fallback(path)
+      return
+    }
     if (mode === "replace") {
       // Replace the current entry (same index) with the new URL. The entry we're leaving is discarded, so
       // its scroll isn't worth saving; the new route scrolls to its fragment target, else the top.
@@ -164,7 +187,7 @@ export function installHistory(
     }
     here = url.pathname + url.search + url.hash
     // The data layer fetches by path+search; the #hash is client-only (never sent to the server).
-    transition(() => router.navigate(url.pathname + url.search).catch(() => fallback(path)))
+    transition(() => router.navigate(routePath).catch(() => fallback(path)))
     settle()
   }
 
@@ -175,9 +198,8 @@ export function installHistory(
 
   // Programmatic navigation for adapter `useNavigate` bindings, published through the DOM-free bridge
   // (`@nifrajs/web`'s `getBrowserNavigate`). A string path pushes (or replaces); a number is a history
-  // delta (`-1` back / `1` forward), matching `history.go`. An off-route / cross-origin push still goes
-  // through `go`, whose `router.navigate` no-ops an unmatched path and whose fetch-failure falls back to
-  // a full load — same graceful degradation as a link click.
+  // delta (`-1` back / `1` forward), matching `history.go`. Off-route and cross-origin HTTP(S)
+  // destinations hard-load without first creating a stale in-document history entry.
   const navigate: BrowserNavigate = (to, navOptions) => {
     if (typeof to === "number") {
       history.go(to)
@@ -273,8 +295,13 @@ export function installHistory(
   // ignore any custom message - the string is set only because legacy engines require `returnValue`.
   const onBeforeUnload = (event: BeforeUnloadEvent): void => {
     const reg = registration
-    if (reg === undefined || reg.state !== "unblocked") return
-    if (!reg.shouldBlock({ currentLocation: locationOf(here), nextLocation: locationOf(here) }))
+    if (reg === undefined || reg.state === "proceeding") return
+    // `blocked` already proves the guard found unsaved state. Re-check only while idle; suppressing the
+    // native prompt merely because an in-app confirmation is open creates a close/reload data-loss gap.
+    if (
+      reg.state === "unblocked" &&
+      !reg.shouldBlock({ currentLocation: locationOf(here), nextLocation: locationOf(here) })
+    )
       return
     event.preventDefault()
     event.returnValue = ""
@@ -341,10 +368,11 @@ export function applyHead(head: Meta): void {
   // Values follow the same HTML attribute conventions as the SSR `tagAttrs`: a string sets the value,
   // `true` sets the bare boolean attribute, `false`/`undefined` skip it — so a soft-nav head matches
   // the server-rendered one exactly (no hydration drift on the managed tags).
-  const add = (tag: "meta" | "link", attrs: Record<string, string | boolean | undefined>): void => {
+  const add = (tag: "meta" | "link", attrs: Readonly<object>): void => {
+    const trusted = trustedHeadAttributes(tag, attrs)
+    if (trusted === null) return
     const el = document.createElement(tag)
-    for (const [name, value] of Object.entries(attrs)) {
-      if (value === undefined || value === false) continue
+    for (const [name, value] of trusted) {
       el.setAttribute(name, value === true ? "" : value)
     }
     el.setAttribute("data-nifra", "")

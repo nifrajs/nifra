@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { bytes } from "../src/binary.ts"
+import { bytes, NIFRA_BINARY_HEADER } from "../src/binary.ts"
 
 /**
  * `bytes()` is how a route says its payload IS the body.
@@ -16,6 +16,8 @@ describe("bytes", () => {
   test("sends the body unchanged, with the declared media type", async () => {
     const response = bytes(PNG, { type: "image/png" })
     expect(response.headers.get("content-type")).toBe("image/png")
+    expect(response.headers.get(NIFRA_BINARY_HEADER)).toBe("1")
+    expect(response.headers.get("access-control-expose-headers")).toContain(NIFRA_BINARY_HEADER)
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(PNG)
   })
 
@@ -61,6 +63,13 @@ describe("bytes", () => {
     for (const name of ["resume\u00e9.pdf", "caf\u00e9 \u2615.png"]) {
       expect(() => bytes(PNG, { filename: name })).not.toThrow()
     }
+  })
+
+  test("malformed UTF-16 in a filename is replaced instead of throwing", () => {
+    const response = bytes(PNG, { filename: "bad\ud800.pdf" })
+    expect(response.headers.get("content-disposition")).toContain(
+      "filename*=UTF-8''bad%EF%BF%BD.pdf",
+    )
   })
 
   test("a sanitized ASCII name gets no second parameter", () => {

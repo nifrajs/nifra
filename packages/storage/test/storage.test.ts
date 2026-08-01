@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
+import { chmod, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -205,6 +205,33 @@ describe("FileStorage filesystem containment", () => {
     const storage = new FileStorage(root)
     await expect(storage.put("object.txt", "overwritten")).rejects.toBeInstanceOf(StorageKeyError)
     expect(await readFile(target, "utf8")).toBe("keep me")
+  })
+
+  test("read, existence and delete never follow a final-component symlink", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nifra-storage-root-"))
+    const outside = await mkdtemp(join(tmpdir(), "nifra-storage-outside-"))
+    tmpDirs.push(root, `${root}.nifra-metadata`, outside)
+    const target = join(outside, "protected.txt")
+    await writeFile(target, "keep me")
+    await symlink(target, join(root, "object.txt"), "file")
+
+    const storage = new FileStorage(root)
+    await expect(storage.get("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
+    await expect(storage.exists("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
+    await expect(storage.delete("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
+    expect(await readFile(target, "utf8")).toBe("keep me")
+  })
+
+  test("rejects a storage tree writable by another local principal", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nifra-storage-root-"))
+    tmpDirs.push(root, `${root}.nifra-metadata`)
+    await writeFile(join(root, "object.txt"), "secret")
+    await chmod(root, 0o777)
+
+    const storage = new FileStorage(root)
+    await expect(storage.get("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
+    await expect(storage.exists("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
+    await expect(storage.delete("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
   })
 })
 

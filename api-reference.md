@@ -376,6 +376,8 @@ Every public export of every package and documented subpath — name, kind, sign
 - **BinaryResponse** _(type)_ — `type BinaryResponse = Response & { readonly [NIFRA_BYTES]: true }`
   A `Response` a route declared as binary. `Jsonify` maps this to `Blob`.
 - **BytesOptions** _(interface)_ — `interface BytesOptions`
+- **NIFRA_BINARY_HEADER** _(const)_ — `NIFRA_BINARY_HEADER: "x-nifra-binary"`
+  Runtime marker paired with the type-only brand so clients do not have to guess from media type.
 - **bytes** _(function)_ — `bytes: (body: BinaryBody, options?: BytesOptions) => BinaryResponse`
 
 ### `@nifrajs/core/budget`
@@ -2261,7 +2263,7 @@ Every public export of every package and documented subpath — name, kind, sign
   In-process ISR cache. Refuses to run in production unless explicitly allowed (mirrors the rate-limit `MemoryStore` — a per-instance cache is unsafe across instances). Bounded **LRU**: a read or write bumps the entry, so the least-recently-used evicts past `max` (a hot, frequently-read page survives…
 - **MemoryCacheStoreOptions** _(interface)_ — `interface MemoryCacheStoreOptions`
 - **Meta** _(interface)_ — `interface Meta`
-  The document head a route contributes — title + `<meta>`/`<link>`/`<script>` tag sets. Returned by a route/layout `meta` (statically, or from a {@link MetaArgs} function). Every value is serialized into managed (`data-nifra`) head tags: attribute *names* are shape-validated and *values* HTML-escape…
+  The document head a route contributes — title + `<meta>`/`<link>`/`<script>` tag sets. Returned by a route/layout `meta` (statically, or from a {@link MetaArgs} function). Every value is serialized into managed (`data-nifra`) head tags: tag-specific attribute allowlists reject event handlers and ac…
 - **MetaArgs** _(interface)_ — `interface MetaArgs<Data = unknown>`
   Args for a route's `meta` function: the loader's `data` + the route `params` + the request `origin`. `meta()` runs in BOTH SSR and client navigation, so it has **no `request`/`process.env`/server access** — `origin` is the only server-resolved fact it gets (so you needn't thread `siteUrl` through l…
 - **MetaInput** _(type)_ — `type MetaInput = Meta | ((args: MetaArgs) => Meta)`
@@ -2351,7 +2353,7 @@ Every public export of every package and documented subpath — name, kind, sign
 - **STATUS_HEADER** _(const)_ — `STATUS_HEADER: "x-nifra-status"`
   Response header carrying a **terminal status** a loader signalled with `notFound()` / `gone()` / `statusPage(n)` during a client-side navigation's data fetch.
 - **ScriptDescriptor** _(interface)_ — `interface ScriptDescriptor`
-- **SearchOf** _(type)_ — `type SearchOf<Module> = Module extends { searchSchema: infer S } ? S extends StandardSchemaV1 ? InferOutput<S> : Record<string, unknown> : Record<string, unknown>`
+- **SearchOf** _(type)_ — `type SearchOf<Module> = Module extends { searchSchema: infer S } ? S extends StandardSchemaV1 ? InferOutput<S> extends Record<string, unknown> ? InferOutput<S> : never : Record<string, unknown> : Record<string, unknown>`
   The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route navigation: generated route types (`nifra sync-routes`) map each path to `SearchOf<typeof import("./…
 - **ServePublicDirOptions** _(interface)_ — `interface ServePublicDirOptions`
 - **ServerOnly** _(type)_ — `type ServerOnly<T> = T & { readonly [SERVER_ONLY_BRAND]?: never }`
@@ -2419,7 +2421,7 @@ Every public export of every package and documented subpath — name, kind, sign
   Merge a route's `<head>` contributions from its layout chain + the page into one {@link Meta}.
 - **notFound** _(function)_ — `notFound: (options?: StatusPageOptions) => never`
   Render the nearest `_404` page at status **404**. `throw` it from a loader when the record does not exist.
-- **openGraph** _(function)_ — `openGraph: (input: OpenGraphInput) => Array<Record<string, string>>`
+- **openGraph** _(function)_ — `openGraph: (input: OpenGraphInput) => MetaDescriptor[]`
   Build the Open Graph `<meta property="og:*">` entries for a route's `meta.meta`. Returns only the properties you supplied (plus `og:type`, defaulting to `"website"`), so it composes with other meta.
 - **previewEndpoint** _(function)_ — `previewEndpoint: (options: PreviewEndpointOptions) => (request: Request) => Promise<Response>`
   A **preview / draft-mode entry point** — a `fetch` handler that checks a preview token, turns draft mode on, and redirects the editor to the page they wanted. `GET` with `?token=<secret>&to=/some/path`; mount it on a nifra route, e.g. `app.get("/api/preview", (c) => handler(c.req))`.

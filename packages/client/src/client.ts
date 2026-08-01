@@ -1,3 +1,4 @@
+import { NIFRA_BINARY_HEADER } from "@nifrajs/core/binary"
 import type { ContractShape, RegistryFor } from "@nifrajs/core/contract"
 import {
   type BackendMount,
@@ -642,6 +643,10 @@ function isPayloadTooLarge(cause: unknown): boolean {
 async function parseBody(response: Response, options: ClientOptions): Promise<unknown> {
   if (response.status === 204) return undefined
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? ""
+  // `bytes()` is an explicit wire contract. Honor it before media-type heuristics: a caller may
+  // intentionally download JSON source, CSV, SVG, or plain text as bytes and the typed client promises
+  // a Blob for every one of those routes.
+  if (response.headers.get(NIFRA_BINARY_HEADER) === "1") return await response.blob()
   // One limit for both decoded paths. `transport.maxBytes` is the older spelling and still wins for
   // the transport path, so an app that set it there keeps the number it chose.
   const decodedBytes = options.transport?.maxBytes ?? options.maxDecodedBytes

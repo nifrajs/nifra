@@ -36,7 +36,11 @@ export interface LoaderArgs<Api, Env = unknown, Search = undefined> {
    * to use directly). Declare a route `searchSchema` and pass its type as the third argument -
    * `LoaderArgs<typeof app, Env, typeof searchSchema>` - to read it typed; otherwise a raw
    * `Record<string, unknown>` of the parsed query. */
-  readonly search: Search extends StandardSchemaV1 ? InferOutput<Search> : Record<string, unknown>
+  readonly search: Search extends StandardSchemaV1
+    ? InferOutput<Search> extends Record<string, unknown>
+      ? InferOutput<Search>
+      : never
+    : Record<string, unknown>
 }
 
 /** The (awaited) return of a `loader`, for typing a page component's `data` prop. */

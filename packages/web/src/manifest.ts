@@ -39,11 +39,11 @@ export type Action = (ctx: LoaderContext) => unknown | Promise<unknown>
  * One `<link>` tag's attributes for a route/layout's `meta.link`. The common HTML `<link>` attributes
  * are spelled out and **optional** so a typed partial like `{ rel, href, hreflang }` is assignable —
  * the previous `Record<string, string>` required *every* value to be a present string, which rejected
- * exactly that idiomatic shape (the bug this fixes). The index signature keeps custom/`data-*` attrs
- * (and any future standard attr) passing without a cast; `boolean` covers boolean attributes like
- * `disabled` (rendered as a bare attribute when `true`, omitted when `false`), and `undefined` lets a
- * caller spread in a conditionally-absent attribute. Attribute *names* are still shape-validated and
- * values HTML-escaped at render — a widened type never widens the injection surface.
+ * exactly that idiomatic shape (the bug this fixes). Standard attributes are explicit and the template
+ * index signature admits inert `data-*` metadata without opening executable `on*` attributes. `boolean`
+ * covers `disabled` (rendered bare when `true`, omitted when `false`), and `undefined` lets a caller
+ * spread in a conditionally absent attribute. SSR and soft navigation apply one runtime allowlist too,
+ * so a cast or untyped route cannot widen the injection surface.
  */
 export interface LinkDescriptor {
   readonly rel?: string
@@ -51,6 +51,7 @@ export interface LinkDescriptor {
   readonly hreflang?: string
   readonly crossorigin?: string
   readonly media?: string
+  readonly nonce?: string
   readonly sizes?: string
   readonly type?: string
   readonly as?: string
@@ -62,7 +63,20 @@ export interface LinkDescriptor {
   readonly imagesizes?: string
   readonly color?: string
   readonly disabled?: boolean
-  readonly [attr: string]: string | boolean | undefined
+  readonly [attr: `data-${string}`]: string | undefined
+}
+
+/** One managed `<meta>` tag. Standard attributes and inert `data-*` metadata only. */
+export interface MetaDescriptor {
+  readonly charset?: string
+  readonly content?: string
+  readonly "http-equiv"?: string
+  readonly itemprop?: string
+  readonly media?: string
+  readonly name?: string
+  readonly property?: string
+  readonly scheme?: string
+  readonly [attr: `data-${string}`]: string | undefined
 }
 
 /** One `<script>` element a route contributes to `<head>` — for structured data (JSON-LD) and other
@@ -91,16 +105,16 @@ export interface UnsafeScriptDescriptor {
 /**
  * The document head a route contributes — title + `<meta>`/`<link>`/`<script>` tag sets. Returned by a
  * route/layout `meta` (statically, or from a {@link MetaArgs} function). Every value is serialized into
- * managed (`data-nifra`) head tags: attribute *names* are shape-validated and *values* HTML-escaped at
- * render (see `tagAttrs`/`headTags` in `@nifrajs/web`), and `script[].content` is breakout-escaped — so
- * loader-derived strings (LLM-authored `og:*`, user content) are XSS-safe in the head by construction.
+ * managed (`data-nifra`) head tags: tag-specific attribute allowlists reject event handlers and active
+ * URL/refresh contexts, values are HTML-escaped at render, and `script[].content` is breakout-escaped —
+ * so loader-derived strings (LLM-authored `og:*`, user content) are XSS-safe by construction.
  * Layout-chain heads merge with the page's via `mergeHeads` (arrays concat outermost→page; `title` is
  * nearest-wins). Build `og:*`/`twitter:*` with `openGraph(...)`, canonical with `canonical(...)`, and
  * JSON-LD with `jsonLd(...)` (all from `@nifrajs/web`) rather than hand-writing the records.
  */
 export interface Meta {
   readonly title?: string
-  readonly meta?: ReadonlyArray<Record<string, string>>
+  readonly meta?: readonly MetaDescriptor[]
   readonly link?: readonly LinkDescriptor[]
   /** Inert head `<script>`s (JSON-LD structured data, etc.). See {@link ScriptDescriptor}. */
   readonly script?: readonly ScriptDescriptor[]
@@ -180,7 +194,7 @@ export interface RouteModule {
   /** A Standard Schema validating this route's URL search params. When present, `ctx.search` is parsed +
    * validated against it (failing closed to the schema's defaults on invalid input); type it into the
    * loader with `LoaderArgs<Api, Env, typeof searchSchema>`. */
-  readonly searchSchema?: StandardSchemaV1
+  readonly searchSchema?: StandardSchemaV1<unknown, Record<string, unknown>>
   /** Search keys that are purely client-side UI (`"tab"`, a client-side `"sort"`, `"modal"`) and do NOT
    * affect this route's loader. When a client navigation stays on the same route + pathname and changes
    * ONLY these keys, the router updates the URL (so `useSearch` re-renders) WITHOUT re-running the loader.
