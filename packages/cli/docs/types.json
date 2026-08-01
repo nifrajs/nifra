@@ -8592,7 +8592,7 @@
     "kind": "const",
     "package": "@nifrajs/web",
     "signature": "export declare const SERVER_FN_MODULE: RegExp;",
-    "doc": "/** Modules whose exports become client stubs. Mirrors the `*.server` convention's shape. */"
+    "doc": "/** Modules whose exports become client stubs. Mirrors the `.server` convention's shape. */"
   },
   {
     "name": "SERVER_FN_PREFIX",
@@ -8725,7 +8725,7 @@
     "kind": "const",
     "package": "@nifrajs/web",
     "signature": "export declare const serverFnStubPlugin: () => BunPlugin;",
-    "doc": "/**\n * Server functions in the CLIENT build: replace each `*.fn.ts` module with stubs that call the routes\n * the server mounted, so the function bodies - and everything they import - never reach a browser.\n *\n * The sibling of {@link serverOnlyEmptyPlugin}, and a deliberate contrast: a `*.server` module is\n * EMPTIED because nothing may call it from the client, while a `*.fn` module is REPLACED because the\n * client is supposed to call it, just over HTTP. The generation itself is in\n * `internal/server-fn-stub.ts` so the Vite pipeline emits identical stubs from the same code; two\n * hand-written copies would be a client that works in dev and 404s in production.\n *\n * CLIENT-only. The server build keeps the real module, which is what `serverFunctions()` mounts.\n */"
+    "doc": "/**\n * Server functions in the CLIENT build: replace each `*.fn.ts` module with stubs that call the routes\n * the server mounted, so the function bodies - and everything they import - never reach a browser.\n *\n * The sibling of {@link serverOnlyEmptyPlugin}, and a deliberate contrast: a `*.server` module is\n * EMPTIED because nothing may call it from the client, while a `*.fn` module is REPLACED because the\n * client is supposed to call it, just over HTTP. The generation itself is in\n * `internal/server-boundary.ts` so the Vite pipeline emits identical stubs from the same code; two\n * hand-written copies would be a client that works in dev and 404s in production.\n *\n * CLIENT-only. The server build keeps the real module, which is what `serverFunctions()` mounts.\n */"
   },
   {
     "name": "ServerFnStubPlugin",

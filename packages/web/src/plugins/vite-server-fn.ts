@@ -7,7 +7,7 @@
  *
  * ## Why the generation is not in here
  *
- * The stub text comes from `internal/server-fn-stub.ts`, shared verbatim with the Bun plugin. Two
+ * The stub text comes from `internal/server-boundary.ts`, shared verbatim with the Bun plugin. Two
  * implementations of "what a stub looks like" would drift, and the drift would be invisible until a
  * client that worked in dev 404'd in production - the exact shape of failure this codebase has already
  * paid for once. A parity test asserts both pipelines emit the same bytes.
@@ -23,7 +23,7 @@ import {
   generateServerFnStub,
   SERVER_FN_MODULE,
   serverFnNamespace,
-} from "../internal/server-fn-stub.ts"
+} from "../internal/server-boundary.ts"
 
 /** The slice of a Vite/Rollup plugin this returns. Structural, so `vite` stays an optional peer. */
 export interface ServerFnStubPlugin {

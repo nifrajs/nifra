@@ -7,7 +7,7 @@ import {
   generateServerFnStub,
   scanServerFnExports,
   serverFnNamespace,
-} from "../src/internal/server-fn-stub.ts"
+} from "../src/internal/server-boundary.ts"
 
 /**
  * The client half of server functions. The guarantee that matters is negative: the function bodies,

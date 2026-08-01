@@ -2623,5 +2623,4 @@ export function generateServerManifest(
  * and waved through by the guard that exists to stop it leaking. Anything deciding "is this module
  * server-only" should import the matcher rather than re-encode it.
  */
-export { SERVER_FN_MODULE } from "./internal/server-fn-stub.ts"
-export { SERVER_ONLY_MODULE } from "./internal/server-only-module.ts"
+export { SERVER_FN_MODULE, SERVER_ONLY_MODULE } from "./internal/server-boundary.ts"

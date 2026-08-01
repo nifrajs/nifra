@@ -27,7 +27,7 @@ import {
   SERVER_ONLY_MODULE,
   SERVER_ONLY_REPLACEMENT,
   viteServerOnlyReplacement,
-} from "../internal/server-only-module.ts"
+} from "../internal/server-boundary.ts"
 
 // Re-exported so a caller wiring its own bundler gets the matcher from the same owner the pipelines
 // use, rather than writing a fifth copy of the regex.

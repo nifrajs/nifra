@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { serverOnlyEmptyPlugin } from "../src/build.ts"
-import { viteServerOnlyReplacement } from "../src/internal/server-only-module.ts"
+import { viteServerOnlyReplacement } from "../src/internal/server-boundary.ts"
 import { viteServerOnlyEmpty } from "../src/plugins/vite-server-only.ts"
 
 /**

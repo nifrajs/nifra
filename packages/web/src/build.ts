@@ -15,9 +15,10 @@ import { generateClientEntry, generateServerManifest } from "./index.ts"
 import {
   generateServerFnStub,
   SERVER_FN_MODULE,
+  SERVER_ONLY_MODULE,
+  SERVER_ONLY_REPLACEMENT,
   serverFnNamespace,
-} from "./internal/server-fn-stub.ts"
-import { SERVER_ONLY_MODULE, SERVER_ONLY_REPLACEMENT } from "./internal/server-only-module.ts"
+} from "./internal/server-boundary.ts"
 // `buildTarget(static)` drives the SSG prerender engine directly (it's also re-exported below).
 import { type ClientModuleGraph, fromBunMetafile } from "./module-graph.ts"
 import { prerenderRoutes } from "./prerender.ts"
@@ -1324,7 +1325,7 @@ export const serverOnlyEmptyPlugin = (): BunPlugin => ({
  * The sibling of {@link serverOnlyEmptyPlugin}, and a deliberate contrast: a `*.server` module is
  * EMPTIED because nothing may call it from the client, while a `*.fn` module is REPLACED because the
  * client is supposed to call it, just over HTTP. The generation itself is in
- * `internal/server-fn-stub.ts` so the Vite pipeline emits identical stubs from the same code; two
+ * `internal/server-boundary.ts` so the Vite pipeline emits identical stubs from the same code; two
  * hand-written copies would be a client that works in dev and 404s in production.
  *
  * CLIENT-only. The server build keeps the real module, which is what `serverFunctions()` mounts.

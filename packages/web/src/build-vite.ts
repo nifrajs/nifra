@@ -33,7 +33,7 @@ import {
 } from "./build.ts"
 import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
-import { vitePublicEnvPrefix } from "./internal/public-env.ts"
+import { vitePublicEnvPrefix } from "./internal/server-boundary.ts"
 import { importVite, isViteUnresolved } from "./internal/vite-import.ts"
 import { viteLeakGuard } from "./plugins/vite-leak-guard.ts"
 import { viteServerFnStub } from "./plugins/vite-server-fn.ts"

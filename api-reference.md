@@ -2345,7 +2345,7 @@ Every public export of every package and documented subpath — name, kind, sign
 - **RouterState** _(interface)_ — `interface RouterState`
   The router's observable state. A new object is published on every transition.
 - **SERVER_FN_MODULE** _(const)_ — `SERVER_FN_MODULE: RegExp`
-  Modules whose exports become client stubs. Mirrors the `*.server` convention's shape.
+  Modules whose exports become client stubs. Mirrors the `.server` convention's shape.
 - **SERVER_ONLY_MODULE** _(const)_ — `SERVER_ONLY_MODULE: RegExp`
   Matches `db.server.ts`, `auth.server.tsx`, `x.server.mjs`, and the extensionless `foo.server`.
 - **STATUS_HEADER** _(const)_ — `STATUS_HEADER: "x-nifra-status"`
