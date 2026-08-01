@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
+import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import { setBrowserNavigate } from "@nifrajs/web"
 import { createElement, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
@@ -16,6 +17,7 @@ import {
   useNavigation,
   useParams,
   usePending,
+  useSearch,
   useSearchParams,
 } from "../src/router.ts"
 
@@ -23,10 +25,19 @@ import {
 // context the hooks read is threaded correctly — which is exactly what makes hydration match. Click /
 // navigation behavior is browser-verified against the real packages (examples/web-react).
 
-// Provide a router context (params + path) around a node, the way `compose` does on both sides.
-const withRoute = (path: string, node: ReactNode, params: Record<string, string> = {}): string =>
+// Provide a router context (params + path + search) around a node, the way `compose` does on both sides.
+const withRoute = (
+  path: string,
+  node: ReactNode,
+  params: Record<string, string> = {},
+  search: Record<string, unknown> = {},
+): string =>
   renderToStaticMarkup(
-    createElement(RouterContext.Provider, { value: { params, path, pending: false } }, node),
+    createElement(
+      RouterContext.Provider,
+      { value: { params, path, search, pending: false } },
+      node,
+    ),
   )
 
 afterEach(() => setBrowserNavigate(undefined))
@@ -50,6 +61,39 @@ test("compose provides an empty context when a render has no routing props", () 
   }
   const html = renderToStaticMarkup(compose([Page], { data: null }))
   expect(html).toContain("<span>0|</span>")
+})
+
+test("compose threads RenderProps.search to useSearch (SSR-correct)", () => {
+  // The SSR half of the hydration guarantee: the value the server put in `RenderProps.search` (from
+  // `searchOf`) flows through compose's RouterContext to `useSearch`. The client mount derives the same
+  // value from the URL via the same `searchOf`, so the two renders match.
+  const Page = () => {
+    const search = useSearch()
+    return createElement("span", null, String(search.page))
+  }
+  const html = renderToStaticMarkup(
+    compose([Page], { data: null, search: { page: 2 }, path: "/reports?page=2" }),
+  )
+  expect(html).toContain("<span>2</span>")
+})
+
+test("useSearch<typeof schema>() reads the validated search as the schema output type", () => {
+  // A minimal Standard Schema whose output is `{ page: number }`; the generic threads that type through
+  // `useSearch`, and the runtime reads whatever value the context carries.
+  const schema: StandardSchemaV1<unknown, { page: number }> = {
+    "~standard": { version: 1, vendor: "test", validate: () => ({ value: { page: 1 } }) },
+  }
+  const Page = () => {
+    const { page } = useSearch<typeof schema>() // typed { page: number }
+    return createElement("span", null, String(page * 10))
+  }
+  const html = withRoute("/r?page=5", createElement(Page), {}, { page: 5 })
+  expect(html).toContain("<span>50</span>")
+})
+
+test("useSearch is {} for a render with no search context", () => {
+  const Page = () => createElement("span", null, String(Object.keys(useSearch()).length))
+  expect(renderToStaticMarkup(compose([Page], { data: null }))).toContain("<span>0</span>")
 })
 
 test("useLocation splits pathname/search from the router path (hash is always empty)", () => {
@@ -174,7 +218,7 @@ function captureSetSearchParams(path: string): SetSearchParams {
   renderToStaticMarkup(
     createElement(
       RouterContext.Provider,
-      { value: { params: {}, path, pending: false } },
+      { value: { params: {}, path, search: {}, pending: false } },
       createElement(Probe),
     ),
   )
@@ -307,7 +351,7 @@ const withPendingNav = (path: string, pendingPath: string, node: ReactNode): str
   renderToStaticMarkup(
     createElement(
       RouterContext.Provider,
-      { value: { params: {}, path, pending: true, pendingPath } },
+      { value: { params: {}, path, search: {}, pending: true, pendingPath } },
       node,
     ),
   )

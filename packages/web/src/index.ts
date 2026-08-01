@@ -223,6 +223,12 @@ export {
   type RenderAdapterConformanceFixture,
 } from "./conformance.ts"
 
+// The search-derivation primitive: parse a URL query, validate it against a route's `searchSchema`
+// (fail-closed to defaults), or return the raw parsed query when there is none. Both the server (loader
+// ctx + `renderPage`) and a client adapter mount call this with the same URL + schema, so the two sides
+// produce the identical value by construction. An adapter's `useSearch` binding reads its result.
+export { searchOf } from "./search.ts"
+
 /** The data handed to a route component. Opaque to the core. `actionData` is the return of a
  * route `action` after a POST (absent on plain GETs). `pending` + `submission` are client-only
  * (absent on SSR): they drive **optimistic UI** — render from `submission.formData` while `pending`. */
@@ -252,6 +258,11 @@ export interface RenderProps {
    * SSR and client alike so an adapter's `useLocation`/`useSearchParams` hydrate consistently. Absent
    * on adapters/callers that don't supply it (treated as `""`). */
   readonly path?: string
+  /** The route's typed, validated search params (the value the loader also gets as `ctx.search`),
+   * threaded to the adapter's `useSearch`. Derived identically on SSR (from the request) and on client
+   * navigation (adapter mount) via the shared `searchOf`, so a component reading it hydrates with no
+   * drift. Absent ⇒ no search context (`{}`). */
+  readonly search?: Record<string, unknown>
 }
 
 /**
@@ -418,6 +429,10 @@ export interface RenderPageOptions {
    * `useLocation`/`useSearchParams` render the right URL server-side and hydrate without drift. Omit ⇒
    * `""`. */
   readonly path?: string
+  /** The route's validated search (`searchOf(mod.searchSchema, url.search)`, the same value handed to
+   * the loader as `ctx.search`), surfaced as `search` (via {@link RenderProps}) so an adapter's
+   * `useSearch` is SSR-correct. Omit ⇒ `{}` (a render with no search context). */
+  readonly search?: Record<string, unknown>
   /** Per-layout loader data, forwarded to the adapter as `RenderProps.layoutData`. Aligned with the
    * chain's layout prefix; omitted when no layout in the chain has a loader. */
   readonly layoutData?: readonly unknown[]
@@ -633,6 +648,9 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     // router bindings simply never reads them.
     ...(options.params !== undefined ? { params: options.params } : {}),
     ...(options.path !== undefined ? { path: options.path } : {}),
+    // Same rule for `search`: the validated query the adapter's `useSearch` reads, spread only when the
+    // caller supplied it (a non-router render never has it).
+    ...(options.search !== undefined ? { search: options.search } : {}),
     // Spread only when present, so a page-only render produces exactly the props it did before.
     ...(options.layoutData !== undefined
       ? { layoutData: layoutSplits.map((split) => split.forComponent) }
@@ -1892,13 +1910,28 @@ export function createWebApp<Env = unknown>(
     // The routeId decides which preload/style bundle and which client component this maps to, so it
     // must name the page actually rendered - `_410` when `_410.tsx` exists, `_404` when it fell back.
     const routeId = manifest.statusPages?.[String(status)] !== undefined ? `_${status}` : "_404"
-    const { default: component } = await page.load()
+    const loaded = (await page.load()) as {
+      readonly default: unknown
+      readonly searchSchema?: RouteModule["searchSchema"]
+    }
+    const component = loaded.default
     return renderPageResult({
       adapter,
       chain: [component],
       data: null,
       clientEntry,
       routeId,
+      // The page hydrates, so besides `path` its SSR `search` must equal the client mount's derivation for
+      // this routeId (`searchOf(searchSchema, url.search)`), or a status page reading `useSearch` drifts.
+      // Only when `path` is present (a real URL); a schema-less status page then gets the raw parsed query.
+      ...(path !== undefined
+        ? {
+            search: searchOf(
+              loaded.searchSchema,
+              path.includes("?") ? path.slice(path.indexOf("?")) : "",
+            ),
+          }
+        : {}),
       // The page hydrates, so its SSR `path` must equal the client's initial
       // `location.pathname+search` (an unmatched path yields no params → `{}`), or a `useLocation`
       // on it would drift.
@@ -2066,6 +2099,9 @@ export function createWebApp<Env = unknown>(
           routeId: route.id,
           params: c.params,
           path: pathOf(c.req),
+          // Recomputed here (like `path`) rather than threaded out of the try-scoped loader ctx: pure and
+          // deterministic, so it equals the loader's `ctx.search` and the client's `searchOf` exactly.
+          search: loaderSearch(mod.searchSchema, c.req),
           hydrate: hydrateRoute,
           ...(layoutData !== undefined ? { layoutData } : {}),
           ...preloadOf(route.id),
@@ -2149,6 +2185,9 @@ export function createWebApp<Env = unknown>(
           headers: { "content-type": "application/x-ndjson; charset=utf-8", ...revalidateHeader },
         })
       }
+      // Derived once and shared: the loader's `ctx.search` and the render's `RenderProps.search` are the
+      // SAME validated value for this route, and the client recomputes it identically via `searchOf`.
+      const search = loaderSearch(mod.searchSchema, c.req)
       const data = mod.loader
         ? await mod.loader({
             params: c.params,
@@ -2157,7 +2196,7 @@ export function createWebApp<Env = unknown>(
             api,
             env: c.env,
             draft,
-            search: loaderSearch(mod.searchSchema, c.req),
+            search,
           })
         : null
       const { chain, head } = resolveChainAndHead(layoutModules, mod, {
@@ -2178,6 +2217,7 @@ export function createWebApp<Env = unknown>(
         routeId: route.id,
         params: c.params,
         path: pathOf(c.req),
+        search,
         hydrate: hydrateRoute,
         ...preloadOf(route.id),
         ...stylesOf(route.id),
@@ -2307,6 +2347,9 @@ export function generateClientEntry(
     "}",
     "const chains = {}",
     "const metas = {}",
+    // routeId → the page module's `searchSchema` export (or undefined). Populated lazily with
+    // chains/metas so the mount can derive this route's typed `search` from the URL, matching the SSR.
+    "const searchSchemas = {}",
     "const loadModule = async (id) => {",
     "  if (chains[id]) return",
     "  const mods = await loaders[id]()",
@@ -2324,9 +2367,13 @@ export function generateClientEntry(
     "    const layouts = mods.slice(0, mods.length - 2).map((m) => m.default)",
     "    chains[id] = [...layouts, errorBoundary(fallback), page]",
     "    metas[id] = mods.slice(0, mods.length - 1).map((m) => m.meta)",
+    // The page (second-to-last, before the appended `_error`) owns the searchSchema.
+    "    searchSchemas[id] = mods[mods.length - 2].searchSchema",
     "  } else {",
     "    chains[id] = mods.map((m) => m.default)",
     "    metas[id] = mods.map((m) => m.meta)",
+    // The page is the last module in a plain chain.
+    "    searchSchemas[id] = mods[mods.length - 1].searchSchema",
     "  }",
     "}",
     "const patterns = [",
@@ -2375,7 +2422,7 @@ export function generateClientEntry(
     // Load the initial route's chunk, then hydrate the Router (chain is cached). The initial head
     // is server-rendered; subsequent navigations update it from the matched route's meta + data.
     "loadModule(initial.routeId).then(() => {",
-    "  mountRouter({ router, routes: chains, container: root })",
+    "  mountRouter({ router, routes: chains, searchSchemas, container: root })",
     // Next frame: the adapter has committed its initial hydration, so handlers are attached. Flip the
     // document to interactive (`data-nifra-hydrated` + `nifra:hydrated`) for apps to gate pre-hydration UI.
     "  requestAnimationFrame(signalHydrated)",

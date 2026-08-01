@@ -1,4 +1,4 @@
-import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
+import { type MountRouterOptions, type RenderProps, searchOf } from "@nifrajs/web"
 /**
  * @nifrajs/web-react/client — React client runtime. `hydrate` hydrates a single SSR'd route;
  * `mountRouter` hydrates a stateful Router that subscribes to the agnostic store (via
@@ -26,10 +26,14 @@ export function hydrate(chain: readonly unknown[], props: RenderProps, container
  * SSR markup on hydration.
  */
 export function mountRouter(options: MountRouterOptions): void {
-  const { router, routes, container } = options
+  const { router, routes, searchSchemas, container } = options
   setMountedRouter(router) // expose it to useFetcher/useFetchers (same page, client-only)
   const Router: FunctionComponent = () => {
     const state = useSyncExternalStore(router.subscribe, router.snapshot, router.snapshot)
+    // Derive this route's typed `search` from the URL query + the route's schema, the SAME `searchOf`
+    // the server ran at match time, so `useSearch` reads an identical value and hydrates with no drift.
+    const q = state.path.indexOf("?")
+    const rawSearch = q === -1 ? "" : state.path.slice(q)
     return compose(routes[state.routeId] ?? [], {
       data: state.data,
       actionData: state.actionData,
@@ -39,6 +43,7 @@ export function mountRouter(options: MountRouterOptions): void {
       // sourced from router state here, matching the SSR render's request-derived values on hydration.
       params: state.params,
       path: state.path,
+      search: searchOf(searchSchemas?.[state.routeId], rawSearch),
       // The in-flight submission (for optimistic UI) — spread only when present.
       ...(state.submission ? { submission: state.submission } : {}),
     })

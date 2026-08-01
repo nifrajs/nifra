@@ -7,7 +7,7 @@ export default function Layout(props: { children?: ReactNode }) {
     <div>
       <nav id="nav">
         <a href="/">home</a> · <a href="/users/7">user 7</a> · <a href="/slow">streaming</a> ·{" "}
-        <a href="/todos">todos</a>
+        <a href="/todos">todos</a> · <a href="/search?page=2&q=hi">search</a>
       </nav>
       {props.children}
     </div>

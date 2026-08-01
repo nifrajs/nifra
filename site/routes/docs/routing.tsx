@@ -39,6 +39,28 @@ export async function loader({ params }) {
 }
 // A catch-all needs ≥1 segment (/files alone won't match) and must be the last segment.`
 
+const SEARCH = `// routes/reports.tsx - a typed, validated ?page=&sort= query.
+import { useSearch } from "@nifrajs/web-react/router"
+import * as v from "valibot" // any Standard Schema works (valibot, zod, arktype)
+
+// The route's search contract. Invalid or hostile input fails closed to these defaults - never a 500.
+export const searchSchema = v.object({
+  page: v.optional(v.fallback(v.number(), 1), 1),
+  sort: v.optional(v.picklist(["new", "top"]), "new"),
+})
+
+// The loader receives the validated query as ctx.search, typed by the third LoaderArgs argument.
+export async function loader({ search, api }: LoaderArgs<typeof backend, unknown, typeof searchSchema>) {
+  return { rows: await api.reports.list(search).get() } // search.page is a number
+}
+
+// The component reads the SAME value - SSR-correct, so page/sort hydrate with no mismatch and you
+// never parse window.location.search by hand.
+export default function Reports({ data }: { data: LoaderData<typeof loader> }) {
+  const { page, sort } = useSearch<typeof searchSchema>() // { page: number; sort: "new" | "top" }
+  return <Pager page={page} sort={sort} rows={data.rows} />
+}`
+
 const BLOCKER = `// routes/posts/[id]/edit.tsx - don't lose a half-finished edit to a stray click.
 import { useState } from "react"
 import { useBlocker } from "@nifrajs/web-react/router"
@@ -133,6 +155,24 @@ export default function Routing() {
         be the final segment.
       </p>
       <CodeBlock code={CATCHALL} />
+
+      <h2>Typed search params</h2>
+      <p>
+        Export a <code>searchSchema</code> - any Standard Schema (valibot, zod, arktype) - and the URL
+        query becomes typed and validated on both sides: the loader receives it as{" "}
+        <code>ctx.search</code> and the component reads the same value with{" "}
+        <code>{`useSearch<typeof searchSchema>()`}</code>. Invalid or hostile input fails closed to the
+        schema's defaults (never a 500), and the value is derived identically on the server and on each
+        client navigation - so a query-reading page hydrates with no mismatch and never touches{" "}
+        <code>window.location.search</code> by hand.
+      </p>
+      <CodeBlock code={SEARCH} lang="tsx" />
+      <p>
+        Without a <code>searchSchema</code>, <code>ctx.search</code> and <code>useSearch()</code> are
+        the raw parsed query (<code>{`Record<string, unknown>`}</code>). <code>useSearch</code> ships
+        for React today; the other adapters follow. For imperative reads and writes of the raw query,{" "}
+        <code>useSearchParams()</code> mirrors react-router's <code>[params, setParams]</code> tuple.
+      </p>
 
       <h2>Guarding navigation</h2>
       <p>

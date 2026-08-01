@@ -10,6 +10,8 @@
  * can use these on the server and the client without dragging a DOM build into the wrong bundle. No JSX
  * (the package builds with plain `tsc`), so everything is `createElement`.
  */
+
+import type { InferOutput, StandardSchemaV1 } from "@nifrajs/core/server"
 import {
   type Blocker,
   type BlockerFunction,
@@ -42,6 +44,10 @@ export interface RouterContextValue {
   readonly params: Readonly<Record<string, string>>
   /** The current URL's `pathname + search` (no hash — the router never carries one). */
   readonly path: string
+  /** The route's typed, validated search params (the loader's `ctx.search`), derived from the URL via
+   * the shared `searchOf` on SSR + client alike, read by {@link useSearch}. `{}` when the route
+   * declares no `searchSchema` (then it is the raw parsed query) or outside a nifra route tree. */
+  readonly search: Record<string, unknown>
   /** True while a client navigation (or revalidation) is in flight — the current route stays mounted
    * until the new one is ready. Always `false` on SSR (loaders block before render). Drives loading UI
    * via {@link useNavigation}. */
@@ -51,14 +57,17 @@ export interface RouterContextValue {
   readonly pendingPath?: string | undefined
 }
 
-// Frozen empty params so the default context value has a stable reference (no needless re-renders).
+// Frozen empty params/search so the default context value has a stable reference (no needless re-renders).
 const EMPTY_PARAMS: Readonly<Record<string, string>> = Object.freeze({})
+const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
 
-/** Router context. The default ({} params, "" path) is what a component sees when rendered outside a
- * nifra route tree — the hooks stay defined (no throw) so a stray `useParams` degrades gracefully. */
+/** Router context. The default ({} params, "" path, {} search) is what a component sees when rendered
+ * outside a nifra route tree (the hooks stay defined, no throw, so a stray `useParams` degrades
+ * gracefully). */
 export const RouterContext = createContext<RouterContextValue>({
   params: EMPTY_PARAMS,
   path: "",
+  search: EMPTY_SEARCH,
   pending: false,
 })
 
@@ -80,6 +89,29 @@ export function useParams<
   T extends Record<string, string | undefined> = Record<string, string>,
 >(): Readonly<T> {
   return useContext(RouterContext).params as Readonly<T>
+}
+
+/**
+ * The route's typed, validated search params: the SAME value the loader received as `ctx.search`.
+ * SSR-correct: `compose` provides it from `searchOf(searchSchema, url.search)` server-side and from the
+ * identical derivation on the client mount, so a value rendered from it doesn't flash on hydration.
+ * Hostile input already failed closed to the schema's defaults at match time, so a component never
+ * parses `window.location.search` or guards against a bad query.
+ *
+ * Pass the route's `searchSchema` as the type argument to get its output type; bare, it's the raw parsed
+ * query (`Record<string, unknown>`), which is also what a route without a `searchSchema` yields.
+ *
+ * ```tsx
+ * export const searchSchema = v.object({ page: v.optional(v.fallback(v.number(), 1), 1) })
+ * const { page } = useSearch<typeof searchSchema>() // page: number
+ * ```
+ */
+export function useSearch<
+  Schema extends StandardSchemaV1 | undefined = undefined,
+>(): Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown> {
+  return useContext(RouterContext).search as Schema extends StandardSchemaV1
+    ? InferOutput<Schema>
+    : Record<string, unknown>
 }
 
 /** The parsed current location. `hash` is always `""` — the fragment is client-only and never reaches

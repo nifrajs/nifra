@@ -56,6 +56,10 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   expect(code).toContain("const loadModule = async (id) =>")
   expect(code).toContain("chains[id] = mods.map((m) => m.default)")
   expect(code).toContain("metas[id] = mods.map((m) => m.meta)")
+  // Typed search: the page module's `searchSchema` is registered per route (undefined when absent), so
+  // the mount derives this route's `search` from the URL, matching the server's `ctx.search`.
+  expect(code).toContain("const searchSchemas = {}")
+  expect(code).toContain("searchSchemas[id] = mods[mods.length - 1].searchSchema")
   // patterns drive client-side matching and must mirror the server routes.
   expect(code).toContain('{ routeId: "index", pattern: "/" }')
   expect(code).toContain('{ routeId: "users/[id]", pattern: "/users/:id" }')
@@ -66,7 +70,7 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   )
   expect(code).toContain("installHistory(router)")
   expect(code).toContain("installForms(router)")
-  expect(code).toContain("mountRouter({ router, routes: chains, container: root })")
+  expect(code).toContain("mountRouter({ router, routes: chains, searchSchemas, container: root })")
   // The hydration signal fires on the frame after the adapter mounts (see the Hydration guide).
   expect(code).toContain("requestAnimationFrame(signalHydrated)")
   // head updates on navigation from the matched route's MERGED chain meta (layouts→page) + data — #3.
@@ -105,6 +109,8 @@ test("generateClientEntry wires the client error boundary for routes with a near
   // loadModule wraps the page in errorBoundary(fallback) for error routes.
   expect(code).toContain("if (errorBoundary && errorRouteIds.has(id)) {")
   expect(code).toContain("chains[id] = [...layouts, errorBoundary(fallback), page]")
+  // The page (second-to-last, before the appended _error) is where the searchSchema is read.
+  expect(code).toContain("searchSchemas[id] = mods[mods.length - 2].searchSchema")
 })
 
 test("generateClientEntry folds a route's layout chain into its lazy loader", () => {

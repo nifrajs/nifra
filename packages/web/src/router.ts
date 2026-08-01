@@ -9,6 +9,7 @@ import {
   compileRoutePattern,
   matchRoutePattern,
 } from "@nifrajs/core/pattern"
+import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import { parseNdjsonData } from "./deferred.ts"
 
 /**
@@ -292,6 +293,11 @@ export interface MountRouterOptions {
   readonly router: ClientRouter
   /** routeId → layout chain (outermost layout → page); built by `generateClientEntry`. */
   readonly routes: Record<string, readonly unknown[]>
+  /** routeId → the route page's `searchSchema` (or `undefined` when it declares none); built by
+   * `generateClientEntry`. The mount derives each route's typed `search` from this plus the URL query
+   * via `searchOf`, matching the server's `ctx.search`/`RenderProps.search` for the same route. Omitted
+   * by callers with no typed search (tests, a hand-built mount) ⇒ every route sees the raw parsed query. */
+  readonly searchSchemas?: Readonly<Record<string, StandardSchemaV1 | undefined>>
   /** Hydration container (opaque — the adapter casts it to its DOM element type). */
   readonly container: unknown
 }

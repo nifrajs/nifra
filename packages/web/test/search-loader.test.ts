@@ -31,9 +31,28 @@ const searchSchema = {
   },
 }
 
-const appWith = (loader: (ctx: LoaderContext) => unknown, searchSchemaExport?: unknown) =>
+// A stub that renders RenderProps.search between markers, so a test can assert the SERVER threads the
+// validated search into the adapter's render input (RenderProps), not just into the loader's ctx.
+const searchStub: RenderAdapter = {
+  renderToStream: (_chain, props) => {
+    const bytes = new TextEncoder().encode(`<<${JSON.stringify(props.search ?? null)}>>`)
+    return new ReadableStream({
+      start(c) {
+        c.enqueue(bytes)
+        c.close()
+      },
+    })
+  },
+  hydrationHead: () => "",
+}
+
+const appWith = (
+  loader: (ctx: LoaderContext) => unknown,
+  searchSchemaExport?: unknown,
+  adapter: RenderAdapter = stub,
+) =>
   createWebApp({
-    adapter: stub,
+    adapter,
     clientEntry: "/c.js",
     manifest: {
       routes: [
@@ -70,4 +89,17 @@ test("without a searchSchema, ctx.search is the raw parsed query", async () => {
   expect(await bodyOf(app, "/reports?page=2&q=hi&flag=true")).toContain(
     '[[{"page":2,"q":"hi","flag":true}]]',
   )
+})
+
+test("the render's RenderProps.search is the same validated value as the loader's ctx.search", async () => {
+  // Proves the server wiring end to end: the page render threads `search` into the adapter's props, so
+  // an adapter's `useSearch` is SSR-correct. The client mount recomputes the identical value via the
+  // shared `searchOf`, which is what makes hydration match.
+  const app = appWith(() => null, searchSchema, searchStub)
+  expect(await bodyOf(app, "/reports?page=3&q=hi")).toContain('<<{"page":3,"q":"hi"}>>')
+})
+
+test("RenderProps.search fails closed to the schema defaults on hostile input", async () => {
+  const app = appWith(() => null, searchSchema, searchStub)
+  expect(await bodyOf(app, "/reports?page=notanumber")).toContain('<<{"page":1,"q":""}>>')
 })

@@ -340,6 +340,45 @@ export async function loader({ params }) {
 // A catch-all needs ≥1 segment (/files alone won't match) and must be the last segment.
 ```
 
+### Typed search params
+
+Export a `searchSchema` - any Standard Schema (valibot, zod, arktype) - and the URL
+query becomes typed and validated on both sides: the loader receives it as
+`ctx.search` and the component reads the same value with
+`useSearch()`. Invalid or hostile input fails closed to the
+schema's defaults (never a 500), and the value is derived identically on the server and on each
+client navigation - so a query-reading page hydrates with no mismatch and never touches
+`window.location.search` by hand.
+
+```ts
+// routes/reports.tsx - a typed, validated ?page=&sort= query.
+import { useSearch } from "@nifrajs/web-react/router"
+import * as v from "valibot" // any Standard Schema works (valibot, zod, arktype)
+
+// The route's search contract. Invalid or hostile input fails closed to these defaults - never a 500.
+export const searchSchema = v.object({
+  page: v.optional(v.fallback(v.number(), 1), 1),
+  sort: v.optional(v.picklist(["new", "top"]), "new"),
+})
+
+// The loader receives the validated query as ctx.search, typed by the third LoaderArgs argument.
+export async function loader({ search, api }: LoaderArgs<typeof backend, unknown, typeof searchSchema>) {
+  return { rows: await api.reports.list(search).get() } // search.page is a number
+}
+
+// The component reads the SAME value - SSR-correct, so page/sort hydrate with no mismatch and you
+// never parse window.location.search by hand.
+export default function Reports({ data }: { data: LoaderData<typeof loader> }) {
+  const { page, sort } = useSearch<typeof searchSchema>() // { page: number; sort: "new" | "top" }
+  return <Pager page={page} sort={sort} rows={data.rows} />
+}
+```
+
+Without a `searchSchema`, `ctx.search` and `useSearch()` are
+the raw parsed query (`Record`). `useSearch` ships
+for React today; the other adapters follow. For imperative reads and writes of the raw query,
+`useSearchParams()` mirrors react-router's `[params, setParams]` tuple.
+
 ### Guarding navigation
 
 A page with unsaved work shouldn't lose it to a stray click or the back button.
@@ -8435,7 +8474,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`Action`, `ACTION_GLOBAL`, `apiKey`, `assertRenderAdapterConformance`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `BrowserNavigate`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createMutation`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `DehydratedState`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `gate`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `getBrowserNavigate`, `GetStaticPaths`, `gone`, `hashQueryKey`, `IDLE_BLOCKER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateOptions`, `notFound`, `openGraph`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `previewEndpoint`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `registerBlocker`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderedPage`, `renderPage`, `RenderPageInput`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `resolvePublicPath`, `RETAIN_HEADER`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `routeStyles`, `ScriptDescriptor`, `serializeData`, `servePublicDir`, `ServePublicDirOptions`, `SERVER_FN_MODULE`, `SERVER_ONLY_MODULE`, `ServerOnly`, `setBlockerController`, `setBrowserNavigate`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `STATUS_HEADER`, `statusPage`, `StatusPageOptions`, `styles`, `Submission`, `SubmitOptions`, `unsafeInlineScript`, `UnsafeScriptDescriptor`, `withISR`
+`Action`, `ACTION_GLOBAL`, `apiKey`, `assertRenderAdapterConformance`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `BrowserNavigate`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createMutation`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `DehydratedState`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `gate`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `getBrowserNavigate`, `GetStaticPaths`, `gone`, `hashQueryKey`, `IDLE_BLOCKER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateOptions`, `notFound`, `openGraph`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `previewEndpoint`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `registerBlocker`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderedPage`, `renderPage`, `RenderPageInput`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `resolvePublicPath`, `RETAIN_HEADER`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `routeStyles`, `ScriptDescriptor`, `searchOf`, `serializeData`, `servePublicDir`, `ServePublicDirOptions`, `SERVER_FN_MODULE`, `SERVER_ONLY_MODULE`, `ServerOnly`, `setBlockerController`, `setBrowserNavigate`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `STATUS_HEADER`, `statusPage`, `StatusPageOptions`, `styles`, `Submission`, `SubmitOptions`, `unsafeInlineScript`, `UnsafeScriptDescriptor`, `withISR`
 
 ## @nifrajs/web-preact
 

@@ -2426,6 +2426,8 @@ Every public export of every package and documented subpath — name, kind, sign
   Return this from an action to declare which routes the mutation changed (alongside the action's `data`). `createWebApp` sets the `X-Nifra-Revalidate` response header; after the submit the client marks those cached routes stale — refetching the active one and any mounted fetcher showing them — so a …
 - **revalidateEndpoint** _(function)_ — `revalidateEndpoint: (options: RevalidateEndpointOptions) => (req: Request) => Promise<Response>`
   An **on-demand revalidation** (purge) endpoint — a `fetch` handler that drops a path's cached entry so the next request re-renders. `POST` with the secret in the token header and the path as `?path=` or a JSON `{ "path": "/blog/x" }` body. The token is checked in **constant time** (wrong/missing → …
+- **searchOf** _(function)_ — `searchOf: (searchSchema: StandardSchemaV1 | undefined, rawSearch: string) => Record<string, unknown>`
+  The search a route sees for a raw URL query: parsed, then validated against `searchSchema` when the route declares one (failing closed to its defaults), or the raw parsed query otherwise. The one place both the server (`renderPage`, loader ctx) and the client (the adapter mount) derive search, so t…
 - **serializeData** _(function)_ — `serializeData: (data: unknown) => string`
   Serialize loader data for embedding inside an inline `<script>`. `JSON.stringify` alone is NOT safe there: a string containing `</script>` or `<!--` would break out of the script element (an XSS vector). Escape `<`/`>` to `\uXXXX`, plus the U+2028/U+2029 separators.
 - **servePublicDir** _(function)_ — `servePublicDir: (options: ServePublicDirOptions) => (request: Request) => Promise<Response | undefined>`
@@ -3019,7 +3021,7 @@ _No named exports (side-effect entrypoint)._
 - **Navigation** _(interface)_ — `interface Navigation`
   The current navigation state, mirroring the Remix `useNavigation()` shape for familiarity.
 - **RouterContext** _(const)_ — `RouterContext: import("react").Context<RouterContextValue>`
-  Router context. The default ({} params, "" path) is what a component sees when rendered outside a nifra route tree — the hooks stay defined (no throw) so a stray `useParams` degrades gracefully.
+  Router context. The default ({} params, "" path, {} search) is what a component sees when rendered outside a nifra route tree (the hooks stay defined, no throw, so a stray `useParams` degrades gracefully).
 - **RouterContextValue** _(interface)_ — `interface RouterContextValue`
   The current route the routing hooks read. Provided by `compose` on SSR + client mount alike.
 - **SearchParamsInit** _(type)_ — `type SearchParamsInit = URLSearchParams | Record<string, string | readonly string[]> | string`
@@ -3038,6 +3040,8 @@ _No named exports (side-effect entrypoint)._
   The matched route's decoded path params — `/users/:id` on `/users/7` → `{ id: "7" }`. SSR-correct: `compose` provides the same value server-side (from the request match) and client-side (from router state), so a param rendered into markup doesn't flash on hydration.
 - **usePending** _(function)_ — `usePending: () => boolean`
   Convenience boolean form of {@link useNavigation}: `true` while a client navigation is in flight.
+- **useSearch** _(function)_ — `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>`
+  The route's typed, validated search params: the SAME value the loader received as `ctx.search`. SSR-correct: `compose` provides it from `searchOf(searchSchema, url.search)` server-side and from the identical derivation on the client mount, so a value rendered from it doesn't flash on hydration. Hos…
 - **useSearchParams** _(function)_ — `useSearchParams: () => readonly [URLSearchParams, SetSearchParams]`
   The current query as a `URLSearchParams` (SSR-correct via the router context) plus a setter that navigates to the new query. Mirrors react-router's `useSearchParams` tuple.
 
