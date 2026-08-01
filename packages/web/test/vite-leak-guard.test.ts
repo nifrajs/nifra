@@ -112,19 +112,28 @@ async function buildWithGuard(
   const vite = await importVite<{
     build(config: Record<string, unknown>): Promise<unknown>
   }>()
-  try {
-    await vite.build({
-      root,
-      logLevel: "silent",
-      build: {
-        write: false,
-        lib: { entry: join(root, "entry.ts"), formats: ["es"], fileName: "entry" },
-        rollupOptions: { external: [/^node:/], plugins: [viteLeakGuard()] },
-      },
-    })
-    return { ok: true }
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  const config = {
+    root,
+    logLevel: "silent",
+    build: {
+      write: false,
+      lib: { entry: join(root, "entry.ts"), formats: ["es"], fileName: "entry" },
+      rollupOptions: { external: [/^node:/], plugins: [viteLeakGuard()] },
+    },
+  }
+  // rolldown-vite's native (napi) bindings can race across repeated in-process builds and throw a
+  // transient "Failed to increase error reference count" INSTEAD of the real build outcome. That is a
+  // rolldown binding flake, not a guard result: a genuine leak error and a clean pass are both
+  // deterministic and never carry that message, so retrying it a few times masks nothing real.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await vite.build(config)
+      return { ok: true }
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err)
+      if (attempt < 4 && error.includes("Failed to increase error reference count")) continue
+      return { ok: false, error }
+    }
   }
 }
 
