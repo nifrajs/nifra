@@ -99,7 +99,7 @@ test("same-basename routes get distinct chunks (index.tsx + blog/index.tsx)", as
   const manifest = await build(root, routesDir)
   const ids = Object.keys(manifest.routes)
   expect(ids.length).toBe(2)
-  // The two routes must not collapse onto one chunk — the collision the manifest-key mapping prevents.
+  // The two routes must not collapse onto one chunk - the collision the manifest-key mapping prevents.
   const chunks = ids.map((id) => manifest.routes[id]?.[0])
   expect(new Set(chunks).size).toBe(2)
 }, 60_000)

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react"
 
-// Nested layout for /docs/* — a sidebar inside the root chrome (layout chain: root → docs → page).
+// Nested layout for /docs/* - a sidebar inside the root chrome (layout chain: root → docs → page).
 // Grouped + ordered for a first-time reader: get a backend running, add a frontend, harden it, ship
 // it, migrate into it.
 const GROUPS: ReadonlyArray<{ title: string; links: ReadonlyArray<{ href: string; label: string }> }> = [
@@ -237,7 +237,7 @@ const NAV_SCRIPT = `(function(){
     var shell = document.querySelector(".docs-shell");
     var headers = document.querySelectorAll(".prose h2");
     if (headers.length === 0) {
-      // No headings on this page — collapse the right column so the grid stays balanced.
+      // No headings on this page - collapse the right column so the grid stays balanced.
       if (shell) shell.classList.add("no-toc");
       return;
     }

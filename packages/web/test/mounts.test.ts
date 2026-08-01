@@ -49,7 +49,7 @@ test("apiStrip removes the mount prefix so a standalone-shaped backend matches",
   expect(await pathSeenBy(full, "/api/v1/forms")).toBe("/api/v1/forms")
 
   // A backend that also runs standalone declares routes WITHOUT the prefix. Without this option every
-  // request 404s inside it, and the workaround is a Proxy rewriting each URL — which two apps wrote
+  // request 404s inside it, and the workaround is a Proxy rewriting each URL - which two apps wrote
   // independently.
   const stripped = createWebApp({
     adapter: stub,
@@ -90,7 +90,7 @@ test("apiStrip preserves method, headers and body", async () => {
 })
 
 test("a mount wins over the api prefix regardless of declaration order", async () => {
-  // better-auth is not a `backend` route — the starter registers it on stack.routes. Without a mount
+  // better-auth is not a `backend` route - the starter registers it on stack.routes. Without a mount
   // the browser's /api/auth/* hits the backend and 404s silently.
   const app = createWebApp({
     adapter: stub,
@@ -112,7 +112,7 @@ test("mounts are matched longest-path-first, not in declaration order", async ()
     manifest: manifest(),
     clientEntry: "/c.js",
     mounts: [
-      // Broad one FIRST — a declaration-order implementation would let it swallow the specific one.
+      // Broad one FIRST - a declaration-order implementation would let it swallow the specific one.
       { path: "/api", app: { fetch: () => Response.json({ from: "broad" }) } },
       { path: "/api/auth", app: { fetch: () => Response.json({ from: "specific" }) } },
     ],

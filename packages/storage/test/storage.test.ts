@@ -101,7 +101,7 @@ const adapters: Array<[string, () => Promise<StorageAdapter>]> = [
 ]
 
 for (const [name, make] of adapters) {
-  describe(`StorageAdapter — ${name}`, () => {
+  describe(`StorageAdapter - ${name}`, () => {
     test("passes the executable public conformance", async () => {
       await assertStorageAdapterConformance({ createAdapter: make })
     })
@@ -303,7 +303,7 @@ class CapableMemoryStorage extends MemoryStorage {
   }
 }
 
-describe("conformance — optional capabilities", () => {
+describe("conformance - optional capabilities", () => {
   test("a fully-capable adapter passes the capability checks too", async () => {
     await assertStorageAdapterConformance({ createAdapter: () => new CapableMemoryStorage() })
   })

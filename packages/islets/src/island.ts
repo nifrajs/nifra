@@ -1,12 +1,12 @@
 /**
- * Islands: named interactive regions inside server-rendered pages. The server marks a host —
+ * Islands: named interactive regions inside server-rendered pages. The server marks a host -
  *
  *   <section data-island="compare" data-island-state='{"count":2,"max":4}'>
  *     <span data-bind-text="count">2</span>
  *     <button data-bind-on="click:add">Add</button>
  *   </section>
  *
- * — and the client registers behavior by name. `state(key, fallback)` returns a signal seeded
+ * - and the client registers behavior by name. `state(key, fallback)` returns a signal seeded
  * from the host's `data-island-state` JSON: the server's loader data becomes client signals with
  * zero extra serialization ceremony (the attribute IS the wire format; `@nifrajs/web-vanilla`'s
  * escaping makes it safe to emit).
@@ -21,7 +21,7 @@ export interface IslandContext {
   readonly root: BindableElement & BindableRoot
   /**
    * A named signal, seeded from `data-island-state`'s value for `key` when present, else
-   * `fallback`. Each key returns the SAME signal across calls — bindings and setup share state.
+   * `fallback`. Each key returns the SAME signal across calls - bindings and setup share state.
    */
   state<T>(key: string, fallback: T): Signal<T>
 }
@@ -42,7 +42,7 @@ export interface IslandHost extends BindableElement, BindableRoot {
 }
 
 /**
- * Mount every registered island under `root` (default: the document). Idempotent — a host is
+ * Mount every registered island under `root` (default: the document). Idempotent - a host is
  * marked once mounted, so calling again (e.g. after a soft navigation swapped content in) only
  * mounts new hosts. Unregistered island names are skipped silently: markup may ship ahead of
  * its script, and progressive enhancement means the static content is already correct.
@@ -55,7 +55,7 @@ export function mountIslands(root: BindableRoot = document as unknown as Bindabl
     if (setup === undefined) continue
     host.setAttribute("data-island-mounted", "")
 
-    // Seed state from the host's JSON attribute. Malformed JSON is a server bug — fail loud in
+    // Seed state from the host's JSON attribute. Malformed JSON is a server bug - fail loud in
     // the console, mount with fallbacks only (the static markup stays usable).
     let seeded: Record<string, unknown> = {}
     const rawState = host.getAttribute("data-island-state")
@@ -91,7 +91,7 @@ export function mountIslands(root: BindableRoot = document as unknown as Bindabl
 }
 
 /**
- * Server-side helper: the value for a host's `data-island-state` attribute. Plain JSON — emit it
+ * Server-side helper: the value for a host's `data-island-state` attribute. Plain JSON - emit it
  * through an escaping renderer (`@nifrajs/web-vanilla`'s `html` escapes quotes in attributes), e.g.
  * `html\`<div data-island="compare" data-island-state="${islandState({ count })}">…\``.
  */

@@ -1,5 +1,5 @@
 /**
- * Realistic-shape HTTP throughput: nifra vs Elysia on identical work — security headers + CORS +
+ * Realistic-shape HTTP throughput: nifra vs Elysia on identical work - security headers + CORS +
  * request-id + bearer-auth + cookie read + validated query + a ~3KB list response. Each server runs
  * in its own subprocess; load is self-generated from this process. Treat the *ratio* as the signal
  * (absolute rps is bounded by this host's load). Mirrors bench/http/compare.ts.
@@ -29,7 +29,7 @@ async function waitReady(url: string, timeoutMs: number): Promise<void> {
         return
       }
     } catch {
-      // connection refused while the server boots — retry
+      // connection refused while the server boots - retry
     }
     await Bun.sleep(50)
   }
@@ -66,7 +66,7 @@ for (const fw of FRAMEWORKS) {
       rps: await loadTest(`${base}${ROUTE}`, DURATION_MS, CONCURRENCY),
     })
   } catch (err) {
-    console.error(`  ${fw.name}: failed — ${err instanceof Error ? err.message : String(err)}`)
+    console.error(`  ${fw.name}: failed - ${err instanceof Error ? err.message : String(err)}`)
   } finally {
     proc.kill()
     await proc.exited
@@ -74,7 +74,7 @@ for (const fw of FRAMEWORKS) {
 }
 
 console.log(
-  `\n  Realistic API throughput — Bun ${Bun.version}  (${CONCURRENCY} conns, ${DURATION_MS / 1000}s, GET ${ROUTE})\n`,
+  `\n  Realistic API throughput - Bun ${Bun.version}  (${CONCURRENCY} conns, ${DURATION_MS / 1000}s, GET ${ROUTE})\n`,
 )
 const best = Math.max(1, ...results.map((r) => r.rps))
 for (const r of results) {

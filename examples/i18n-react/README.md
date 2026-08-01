@@ -1,4 +1,4 @@
-# i18n-react — locale negotiation + ICU formatting on nifra
+# i18n-react - locale negotiation + ICU formatting on nifra
 
 A nifra + React app demonstrating `@nifrajs/i18n`: **locale negotiation**, an **ICU message formatter**
 (plural, interpolation), locale-aware **number/currency** formatting, and a **language switcher**.

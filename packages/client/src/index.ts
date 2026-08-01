@@ -1,5 +1,5 @@
 /**
- * @nifrajs/client — browser-safe, end-to-end-typed client for @nifrajs/core servers.
+ * @nifrajs/client - browser-safe, end-to-end-typed client for @nifrajs/core servers.
  *
  * `client<typeof app>(url)` returns an Eden-style proxy whose calls are typed
  * from the server's accumulated route registry, with zero codegen.

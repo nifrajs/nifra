@@ -5,7 +5,7 @@ export interface PageData {
   start: number
 }
 
-/** A React route component — `data` is the (typed) loader output. The state proves hydration. */
+/** A React route component - `data` is the (typed) loader output. The state proves hydration. */
 export function App(props: { data: PageData }) {
   const [count, setCount] = useState(props.data.start)
   return (

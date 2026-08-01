@@ -5,7 +5,7 @@
  * second reference. HTTP-level throughput vs Elysia/Hono comes with the server
  * in Phase 2 (see bench/http/).
  *
- * NOTE: this is a microbenchmark with a hand-rolled harness — directionally
+ * NOTE: this is a microbenchmark with a hand-rolled harness - directionally
  * honest, not publication-grade. Treat the ratios, not the absolute ops/s, as
  * the signal.
  */
@@ -65,7 +65,7 @@ function scenario(title: string, method: string, path: string): void {
   group(title, entries)
 }
 
-console.log(`\n  router resolution — Bun ${Bun.version}  (${ROUTES.length} routes)`)
+console.log(`\n  router resolution - Bun ${Bun.version}  (${ROUTES.length} routes)`)
 if (!honoReady) console.log("  (hono RegExpRouter skipped: unsupported route shape)")
 
 scenario(`static   "${STATIC_REQUEST.path}"`, STATIC_REQUEST.method, STATIC_REQUEST.path)

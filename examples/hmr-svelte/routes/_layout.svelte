@@ -1,4 +1,4 @@
-<!-- Root layout — wraps every page via its children snippet; the nav proves client nav works. -->
+<!-- Root layout - wraps every page via its children snippet; the nav proves client nav works. -->
 <script>
   let { children } = $props()
 </script>

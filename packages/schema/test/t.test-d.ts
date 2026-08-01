@@ -1,6 +1,6 @@
 /**
- * Type-level contract for `t`: each constructor's inferred output type, and — the
- * payoff — that a `t` schema flows into `c.body` through `@nifrajs/core`'s existing
+ * Type-level contract for `t`: each constructor's inferred output type, and - the
+ * payoff - that a `t` schema flows into `c.body` through `@nifrajs/core`'s existing
  * validation path with no special-casing. Verified by `tsc --noEmit`.
  */
 
@@ -25,7 +25,7 @@ export type _Array = Expect<Equal<InferOutput<typeof list>, string[]>>
 export type _Union = Expect<Equal<InferOutput<typeof either>, string | number>>
 export type _Literal = Expect<Equal<InferOutput<typeof lit>, "active">>
 
-// The payoff: a `t` schema as a route body types `c.body` end-to-end — asserted on
+// The payoff: a `t` schema as a route body types `c.body` end-to-end - asserted on
 // `Context` (exactly what the handler receives), and proven to compile through
 // `server().post`.
 export type _BodyFlow = Expect<

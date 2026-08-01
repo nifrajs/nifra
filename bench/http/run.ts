@@ -1,12 +1,12 @@
 /**
- * HTTP throughput matrix — nifra vs the field — driven by `oha` (a real Rust load
+ * HTTP throughput matrix - nifra vs the field - driven by `oha` (a real Rust load
  * tool), sectioned by runtime. For each framework: spawn its server in an isolated
  * subprocess, wait until ready, warm the JIT, then take N timed oha runs and keep
  * the MEDIAN (robust to box noise; best is reported too). Servers run ONE AT A TIME
- * — no cross-contention. Identical routes + payloads across every framework.
+ * - no cross-contention. Identical routes + payloads across every framework.
  *
  * READ THE RATIOS, NOT THE ABSOLUTES. This shares one (likely virtualized) box with
- * the load client, so absolute req/s is noisy and not publication-grade — but every
+ * the load client, so absolute req/s is noisy and not publication-grade - but every
  * framework pays that tax equally in the SAME run, so the same-run ratio (nifra vs
  * Elysia vs the runtime ceiling) is the trustworthy signal. See BENCHMARKS.md.
  *
@@ -38,7 +38,7 @@ const POST_USERS: Workload = {
   },
 }
 
-// Default is the meaningful pair — one read (routing + path param) + one write (body validation) —
+// Default is the meaningful pair - one read (routing + path param) + one write (body validation) -
 // which roughly halves the suite. `--full` adds the GET / baseline and the GET /search query-
 // validation workloads for the detailed BENCHMARKS.md tables.
 const WORKLOADS: readonly Workload[] = process.argv.includes("--full")
@@ -67,7 +67,7 @@ const bunTarget = (framework: string): Target => ({
 
 const nodeTarget = (framework: string): Target => ({
   framework,
-  // Node 24 strips TS types natively — no build step (the spike confirmed it).
+  // Node 24 strips TS types natively - no build step (the spike confirmed it).
   spawn: (port) => ["node", "bench/http/serve-node.ts", framework, String(port)],
 })
 
@@ -88,7 +88,7 @@ const denoTarget = (framework: string): Target => ({
 })
 
 // nifra on Node: real Node can't resolve the @nifrajs/* workspace packages (Bun resolves
-// them via tsconfig paths, which Node ignores), so bundle the app for Node first — which
+// them via tsconfig paths, which Node ignores), so bundle the app for Node first - which
 // is also nifra's actual Node deploy path. The bundle lands in a gitignored dist/ dir.
 const NIFRA_NODE_BUNDLE = `${import.meta.dir}/dist/serve-node-nifra.js`
 const nifraNodeTarget: Target = {
@@ -158,7 +158,7 @@ function field(obj: unknown, key: string): unknown {
 }
 
 /**
- * Parse oha's `--output-format json` at the trust boundary — it's external tool
+ * Parse oha's `--output-format json` at the trust boundary - it's external tool
  * output, so validate the shape rather than trusting property access. oha reports
  * latencies in SECONDS; we convert to ms here.
  */
@@ -230,7 +230,7 @@ async function waitReady(base: string, timeoutMs: number): Promise<void> {
         return
       }
     } catch {
-      // booting — retry
+      // booting - retry
     }
     await Bun.sleep(50)
   }
@@ -314,7 +314,7 @@ const meta = {
   connections: CONNECTIONS,
 }
 
-// `--json`: one line of machine-readable results for aggregate.ts. No device/host/path info — only
+// `--json`: one line of machine-readable results for aggregate.ts. No device/host/path info - only
 // tool versions + the run knobs + the measured numbers.
 if (jsonMode) {
   console.log(JSON.stringify({ meta, results }))
@@ -323,7 +323,7 @@ if (jsonMode) {
 
 const versions = `Bun ${meta.bun} · Node ${meta.node} · Deno ${meta.deno}`
 console.log(
-  `\nHTTP throughput — oha, median-of-${RUNS} × ${DURATION_S}s @ ${CONNECTIONS} conns  (${versions})\nRatios on the same run are the signal; absolutes are indicative only.\n`,
+  `\nHTTP throughput - oha, median-of-${RUNS} × ${DURATION_S}s @ ${CONNECTIONS} conns  (${versions})\nRatios on the same run are the signal; absolutes are indicative only.\n`,
 )
 
 for (const section of sections) {

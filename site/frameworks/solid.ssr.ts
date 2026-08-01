@@ -1,6 +1,6 @@
 /**
  * Solid SSR renderer for the /frameworks build step. Solid components are `.tsx` compiled by its Babel
- * plugin, whose loader filter matches EVERY `.tsx` — so it cannot share a `Bun.build` with React/Preact
+ * plugin, whose loader filter matches EVERY `.tsx` - so it cannot share a `Bun.build` with React/Preact
  * `.tsx`. build-frameworks.ts compiles this entry in an isolated `Bun.build` (with `solidBunPlugin("ssr")`)
  * and imports the built output to obtain the fragment + the adapter's hydration head. Renders the SAME
  * catalog component the Solid bench app + the Solid client entry use.
@@ -19,7 +19,7 @@ export async function renderFragment(): Promise<string> {
   return String(await solidAdapter.renderToString?.([App], { data }))
 }
 
-/** Solid's per-document bootstrap (`generateHydrationScript()`) — the page injects it before loading
+/** Solid's per-document bootstrap (`generateHydrationScript()`) - the page injects it before loading
  * the Solid client bundle, which hydration requires. Empty for the other adapters. */
 export function hydrationHead(): string {
   return solidAdapter.hydrationHead()

@@ -1,8 +1,8 @@
 /**
- * `@nifrajs/prompt` — type-safe prompts over any LLM provider.
+ * `@nifrajs/prompt` - type-safe prompts over any LLM provider.
  *
  * A prompt binds an instruction to an INPUT schema (the variables it needs) and an OUTPUT schema
- * (the shape the model must return). Both are Standard Schemas — the same `t` contracts routes use —
+ * (the shape the model must return). Both are Standard Schemas - the same `t` contracts routes use -
  * so the compile-time types and the runtime validation come from one definition, and the output
  * schema's JSON Schema is handed to the provider as its structured-output format.
  *
@@ -23,7 +23,7 @@
  *       return res.choices[0].message.content ?? ""
  *     },
  *   })
- *   // contact: { name: string; email: string } — parsed, never cast.
+ *   // contact: { name: string; email: string } - parsed, never cast.
  *
  * The model's reply is parsed (markdown fences stripped) and validated through the output schema's
  * own `~standard.validate`; failures throw {@link PromptOutputError} with the issues, or feed an
@@ -55,7 +55,7 @@ export interface PromptResponseFormat {
 /** Everything a provider adapter needs to execute one prompt call. */
 export interface PromptRequest {
   readonly messages: readonly PromptMessage[]
-  /** Present when the prompt declares `.output()` — pass it as the provider's structured-output format. */
+  /** Present when the prompt declares `.output()` - pass it as the provider's structured-output format. */
   readonly responseFormat?: PromptResponseFormat
 }
 
@@ -64,7 +64,7 @@ export interface RunOptions {
   readonly complete: (request: PromptRequest) => string | Promise<string>
   /**
    * Repair hook: called when the reply fails output validation, with the raw reply and the issues.
-   * Return a corrected raw reply (e.g. by re-asking the model) — it is validated again. Runs at most
+   * Return a corrected raw reply (e.g. by re-asking the model) - it is validated again. Runs at most
    * `healAttempts` times (default 1). Omit to fail fast.
    */
   readonly heal?: (context: {
@@ -78,7 +78,7 @@ export interface RunOptions {
   readonly messages?: readonly PromptMessage[]
 }
 
-/** A failed prompt input — the caller's variables did not satisfy the input schema. */
+/** A failed prompt input - the caller's variables did not satisfy the input schema. */
 export class PromptInputError extends Error {
   constructor(readonly issues: ReadonlyArray<StandardIssue>) {
     super(`prompt input failed validation: ${issues.map((issue) => issue.message).join("; ")}`)
@@ -99,7 +99,7 @@ export class PromptOutputError extends Error {
 }
 
 /**
- * Strip a single markdown code fence (```json … ``` or ``` … ```) wrapping the reply — the most
+ * Strip a single markdown code fence (```json … ``` or ``` … ```) wrapping the reply - the most
  * common structured-output failure mode even with response formats.
  */
 function unfence(raw: string): string {
@@ -112,7 +112,7 @@ const jsonSchemaOf = (schema: StandardSchemaV1, role: string): JsonSchema => {
   const reflected = reflectSchema(schema).jsonSchema
   if (reflected === undefined) {
     throw new Error(
-      `prompt ${role} schema exposes no JSON Schema metadata — use a t/TypeBox schema (or a raw JSON Schema carrier); a validation-only schema cannot be sent to a provider`,
+      `prompt ${role} schema exposes no JSON Schema metadata - use a t/TypeBox schema (or a raw JSON Schema carrier); a validation-only schema cannot be sent to a provider`,
     )
   }
   return reflected
@@ -202,7 +202,7 @@ function build<Input, Output>(state: PromptState): Prompt<Input, Output> {
 
 /**
  * Define a type-safe prompt. Chain `.input()` / `.output()` with Standard Schemas, then `.run()`
- * with a provider `complete` fn. Immutable — each chain step returns a new prompt.
+ * with a provider `complete` fn. Immutable - each chain step returns a new prompt.
  */
 export function prompt(instruction: string): Prompt<undefined, string> {
   return build({ instruction })

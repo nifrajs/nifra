@@ -1,13 +1,13 @@
 import { CodeBlock } from "../../highlight"
 import { pageMeta } from "../../meta"
 
-// Pure content page — no React interactivity (TOC/copy/search are the layout enhancer +
+// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
 // the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
 export const hydrate = false
 
 export const meta = pageMeta(
-  "Nifra — security & hardening",
-  "Bounded request bodies, magic-byte file-upload validation, constant-time webhook verification, and idempotency-key replay — the hardening primitives every production app needs, built in.",
+  "Nifra - security & hardening",
+  "Bounded request bodies, magic-byte file-upload validation, constant-time webhook verification, and idempotency-key replay - the hardening primitives every production app needs, built in.",
 )
 
 const RESPONSE_CONTRACT = `import { server } from "@nifrajs/core/server"
@@ -35,12 +35,12 @@ const BOUNDED = `import { server } from "@nifrajs/core/server"
 
 const app = server()
 
-// A schema route is ALREADY bounded — the validated read enforces \`maxBodyBytes\`.
+// A schema route is ALREADY bounded - the validated read enforces \`maxBodyBytes\`.
 // But a raw-body / file / BYO-validation route reads the body directly, which
 // \`maxBodyBytes\` does not cover. \`c.boundedBody\` caps that read:
 app.post("/import", async (c) => {
   const bytes = await c.boundedBody(5 * 1024 * 1024) // cap THIS route at 5 MiB
-  // Over-cap throws a flat 413; a malformed Content-Length a 400 — as control-flow
+  // Over-cap throws a flat 413; a malformed Content-Length a 400 - as control-flow
   // Responses (caught by the lifecycle like \`throw redirect()\`), so a handler can't
   // accidentally ignore the cap. The over-cap length is rejected BEFORE buffering;
   // a chunked / length-less body is aborted mid-stream once it crosses the cap.
@@ -53,7 +53,7 @@ app.post("/rpc", async (c) => {
   return { method: body.method }
 })`
 
-const UPLOADS = `// doc-check: skip — fragment: \`app\`, \`save\`, \`id\`, and \`env\` are your application's.
+const UPLOADS = `// doc-check: skip - fragment: \`app\`, \`save\`, \`id\`, and \`env\` are your application's.
 import { validateUpload, signDownloadUrl } from "@nifrajs/uploads"
 
 app.post("/avatar", async (c) => {
@@ -61,7 +61,7 @@ app.post("/avatar", async (c) => {
   const file = form.get("file")
   if (!(file instanceof Blob)) { c.set.status = 400; return { ok: false, error: "no_file" } }
 
-  // Size cap + REAL type by magic bytes — a .exe renamed .png (or a spoofed
+  // Size cap + REAL type by magic bytes - a .exe renamed .png (or a spoofed
   // Content-Type) is caught, because the bytes win. An oversized Blob is rejected
   // by its .size BEFORE it's buffered into memory.
   const result = await validateUpload(file, {
@@ -78,16 +78,16 @@ app.post("/avatar", async (c) => {
   return { ok: true, url } // a returned object is serialized as JSON 200
 })`
 
-const STRIP = `// doc-check: skip — fragment: continues the upload handler above (\`result.bytes\`).
+const STRIP = `// doc-check: skip - fragment: continues the upload handler above (\`result.bytes\`).
 import { stripImageMetadata } from "@nifrajs/uploads"
 import { bunImageBackend } from "@nifrajs/image/backends"
 
 // Drop EXIF/GPS by re-encoding through any @nifrajs/image backend. @nifrajs/uploads keeps
-// ZERO dependency on @nifrajs/image — the backend is passed in (structural type), so this
+// ZERO dependency on @nifrajs/image - the backend is passed in (structural type), so this
 // also works with sharpImageBackend(sharp) on Node or wasmImageBackend(...) on the edge.
 const clean = await stripImageMetadata(result.bytes, bunImageBackend())`
 
-const WEBHOOK = `// doc-check: skip — fragment: \`app\`, \`env\`, \`StripeEvent\`, and the rotation keys are your application's.
+const WEBHOOK = `// doc-check: skip - fragment: \`app\`, \`env\`, \`StripeEvent\`, and the rotation keys are your application's.
 import { verifyWebhook } from "@nifrajs/core/webhook"
 
 app.post("/webhooks/stripe", async (c) => {
@@ -109,11 +109,11 @@ await verifyWebhook(c.req, [next, current], {            // an array accepts eit
   header: "x-signature", encoding: "base64", prefix: "v1=",
 })`
 
-const IDEMPOTENCY = `// doc-check: skip — fragment: \`app\`, \`chargeCard\`, and \`id\` are your application's.
+const IDEMPOTENCY = `// doc-check: skip - fragment: \`app\`, \`chargeCard\`, and \`id\` are your application's.
 import { idempotency, MemoryIdempotencyStore } from "@nifrajs/middleware"
 
 // Dev / single-instance. In production use a SHARED store (Redis, etc.) with an atomic
-// claim — MemoryIdempotencyStore throws under NODE_ENV=production unless you opt in.
+// claim - MemoryIdempotencyStore throws under NODE_ENV=production unless you opt in.
 app.use(idempotency({ store: new MemoryIdempotencyStore() }))
 
 app.post("/charge", async (c) => {
@@ -122,7 +122,7 @@ app.post("/charge", async (c) => {
 })
 
 // A client retrying POST /charge with the same \`Idempotency-Key\` header gets the FIRST
-// response replayed (\`Idempotent-Replayed: true\`) — the charge runs once. A concurrent
+// response replayed (\`Idempotent-Replayed: true\`) - the charge runs once. A concurrent
 // retry, while the first is still in flight, gets 409 { error: "idempotency_in_progress" }.
 // Transient 5xx are NOT cached (a failed call stays retryable).`
 
@@ -137,11 +137,11 @@ const app = server()
   // Allow/deny by IPv4/IPv6 + CIDR. FAILS CLOSED with no trusted client IP; X-Forwarded-For is ignored
   // unless trustedProxies > 0 (set it to the number of proxies you actually run in front of the app).
   .use(ipRestriction({ allow: ["10.0.0.0/8", "::1"], trustedProxies: 1 }))
-  // Reject oversized bodies at the EDGE by Content-Length, before routing — fails closed (411) on a
+  // Reject oversized bodies at the EDGE by Content-Length, before routing - fails closed (411) on a
   // length-less body. (The schema / c.boundedBody cap is the read-time guard; this is the cheap pre-filter.)
   .use(bodyLimit({ maxBytes: 1_000_000 }))`
 
-const ASSURANCE = `// doc-check: skip — configuration file imports your application backend.
+const ASSURANCE = `// doc-check: skip - configuration file imports your application backend.
 // nifra.assurance.ts
 import { defineAssuranceConfig, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
 import { app } from "./backend.ts"
@@ -165,7 +165,7 @@ export default defineAssuranceConfig({
 // CI: nifra assure              # human diagnostics
 // CI: nifra assure --json       # complete machine-readable report`
 
-const CAPABILITIES = `// doc-check: skip — combines route and assurance-config excerpts.
+const CAPABILITIES = `// doc-check: skip - combines route and assurance-config excerpts.
 // route: exact effect declaration + correlated execution at the owned adapter seam
 import { executeCapability } from "@nifrajs/core/capabilities"
 
@@ -207,7 +207,7 @@ capabilities: {
 // developer: nifra capabilities snapshot
 // CI:        nifra check && nifra assure && nifra capabilities check`
 
-const DURABLE_EFFECTS = `// doc-check: skip — durable store implementations are deployment-specific.
+const DURABLE_EFFECTS = `// doc-check: skip - durable store implementations are deployment-specific.
 import {
   createApprovalCoordinator,
   createDurableEffectJournal,
@@ -257,8 +257,8 @@ export default function Security() {
     <div className="prose">
       <h1 className="page">Security &amp; hardening</h1>
       <p className="lead">
-        The pieces every production endpoint needs — a body-size cap for raw routes, real file-type
-        validation, constant-time webhook verification, and idempotent retries — ship as first-party
+        The pieces every production endpoint needs - a body-size cap for raw routes, real file-type
+        validation, constant-time webhook verification, and idempotent retries - ship as first-party
         primitives. All are <b>edge-safe</b> (WebCrypto, no <code>node:crypto</code>) and run unchanged
         on Bun, Node, Deno, and Workers.
       </p>
@@ -298,7 +298,7 @@ export default function Security() {
 
       <h2>Bounded request bodies</h2>
       <p>
-        Nifra caps the body of any <b>schema-validated</b> route at <code>maxBodyBytes</code> — an over-cap{" "}
+        Nifra caps the body of any <b>schema-validated</b> route at <code>maxBodyBytes</code> - an over-cap{" "}
         <code>Content-Length</code> is rejected before buffering, and a chunked body is aborted mid-stream.
         But a route that reads the body <i>directly</i> (raw bodies, file uploads, your own validation)
         bypasses that read path. <code>c.boundedBody(maxBytes?)</code> and{" "}
@@ -307,16 +307,16 @@ export default function Security() {
       <CodeBlock code={BOUNDED} />
       <p>
         Over-cap throws a flat <code>413</code>, a malformed <code>Content-Length</code> a <code>400</code>,
-        bad JSON a <code>400</code> — thrown as control-flow <code>Response</code>s the lifecycle catches,
+        bad JSON a <code>400</code> - thrown as control-flow <code>Response</code>s the lifecycle catches,
         so the cap can't be silently skipped. Pass a larger <code>maxBytes</code> for an upload route, a
         smaller one to tighten an endpoint.
       </p>
 
-      <h2>File uploads — <code>@nifrajs/uploads</code></h2>
+      <h2>File uploads - <code>@nifrajs/uploads</code></h2>
       <p>
         A dependency-free package for the upload-hardening basics. <code>validateUpload</code> enforces a
-        size cap and sniffs the <b>real</b> type from magic bytes — never the client-set{" "}
-        <code>Content-Type</code>, which is trivially forged — against an optional allow-list. An oversized{" "}
+        size cap and sniffs the <b>real</b> type from magic bytes - never the client-set{" "}
+        <code>Content-Type</code>, which is trivially forged - against an optional allow-list. An oversized{" "}
         <code>Blob</code> is rejected by its <code>.size</code> before it's ever buffered.
       </p>
       <CodeBlock code={UPLOADS} />
@@ -328,12 +328,12 @@ export default function Security() {
       <p>
         <code>signDownloadUrl</code> / <code>verifyDownloadUrl</code> mint short-TTL, tamper-evident
         download links (HMAC-SHA256 over the path + expiry, constant-time verify). And{" "}
-        <code>stripImageMetadata</code> drops EXIF/GPS by re-encoding the image — through any{" "}
+        <code>stripImageMetadata</code> drops EXIF/GPS by re-encoding the image - through any{" "}
         <a href="/docs/images">@nifrajs/image</a> backend, with no dependency on it:
       </p>
       <CodeBlock code={STRIP} />
 
-      <h2>Webhooks — <code>verifyWebhook</code></h2>
+      <h2>Webhooks - <code>verifyWebhook</code></h2>
       <p>
         The cardinal webhook rule: <b>verify before you parse</b>. A handler that{" "}
         <code>JSON.parse</code>s the body before checking the signature is acting on an unauthenticated
@@ -342,7 +342,7 @@ export default function Security() {
       </p>
       <CodeBlock code={WEBHOOK} />
       <p>
-        Verification is <b>constant-time</b> — the provider's signature goes straight into{" "}
+        Verification is <b>constant-time</b> - the provider's signature goes straight into{" "}
         <code>crypto.subtle.verify</code>, so a wrong signature can't be discovered byte-by-byte through
         timing. Presets cover <b>Stripe</b> (parses <code>t=…,v1=…</code> and enforces a 5-minute replay
         window on the signed timestamp) and <b>GitHub</b> (<code>sha256=…</code>); the <code>generic</code>{" "}
@@ -350,7 +350,7 @@ export default function Security() {
         accept either during a key rotation.
       </p>
 
-      <h2>Idempotency — <code>idempotency()</code> middleware</h2>
+      <h2>Idempotency - <code>idempotency()</code> middleware</h2>
       <p>
         A dropped connection or an impatient double-tap shouldn't double-charge a card. With an{" "}
         <code>Idempotency-Key</code> header, a retried unsafe request replays the first response instead of
@@ -367,12 +367,12 @@ export default function Security() {
         <li>
           <b>Pair it with a DB uniqueness constraint.</b> The middleware stops the <i>retry</i>; the
           constraint is the source of truth for genuinely-concurrent <i>distinct</i> requests. Belt and
-          braces — the constraint is the belt.
+          braces - the constraint is the belt.
         </li>
         <li>
           <b><code>Set-Cookie</code> is never cached or replayed.</b> A session cookie is caller-specific;
           replaying it to a second caller (key collision or abuse) would leak/fixate a session. The first
-          caller still gets their cookie — replays just don't carry it.
+          caller still gets their cookie - replays just don't carry it.
         </li>
         <li>
           Caching buffers the response body, so apply it to JSON/API routes, not streaming SSR responses.
@@ -380,7 +380,7 @@ export default function Security() {
         </li>
       </ul>
 
-      <h2>Edge gating — <code>jwt</code>, <code>csrf</code>, <code>ipRestriction</code>, <code>bodyLimit</code></h2>
+      <h2>Edge gating - <code>jwt</code>, <code>csrf</code>, <code>ipRestriction</code>, <code>bodyLimit</code></h2>
       <p>
         <code>@nifrajs/middleware</code> ships the request-gating set, applied with <code>app.use()</code>.
         Every one is constant-time where it compares secrets and <b>fails closed</b> by default.
@@ -388,28 +388,28 @@ export default function Security() {
       <CodeBlock code={GATING} />
       <ul>
         <li>
-          <code>jwt</code> — WebCrypto verification with a <b>required</b> <code>algorithms</code> allowlist;{" "}
+          <code>jwt</code> - WebCrypto verification with a <b>required</b> <code>algorithms</code> allowlist;{" "}
           <code>alg:none</code> and RSA/HMAC confusion are rejected, <code>exp</code>/<code>nbf</code>/
           <code>iss</code>/<code>aud</code> are checked. Rotating keys via <code>jwks({`{ url }`})</code>{" "}
           (HTTPS-only, cached). Read claims with <code>auth.requireClaims(c.req)</code>.
         </li>
         <li>
-          <code>csrf</code> — signed double-submit token (HMAC, secret ≥ 32 bytes) plus an Origin/Referer
+          <code>csrf</code> - signed double-submit token (HMAC, secret ≥ 32 bytes) plus an Origin/Referer
           check on unsafe methods; both the token match and signature are verified constant-time.
         </li>
         <li>
-          <code>ipRestriction</code> — IPv4/IPv6 exact + CIDR allow/deny. It <b>fails closed</b> when no
+          <code>ipRestriction</code> - IPv4/IPv6 exact + CIDR allow/deny. It <b>fails closed</b> when no
           trustworthy client IP can be derived, and never trusts <code>X-Forwarded-For</code> unless you set{" "}
           <code>trustedProxies</code> to the number of proxies in front of the app.
         </li>
         <li>
-          <code>bodyLimit</code> — a cheap <code>Content-Length</code> pre-filter that rejects oversized
+          <code>bodyLimit</code> - a cheap <code>Content-Length</code> pre-filter that rejects oversized
           bodies before routing (fails closed with <code>411</code> on a length-less body). The read-time
           guard above (<code>c.boundedBody</code> / schema cap) remains the source of truth.
         </li>
       </ul>
 
-      <h2>Route assurance — prove every route is guarded</h2>
+      <h2>Route assurance - prove every route is guarded</h2>
       <p>
         Installing security middleware is not the same as proving it covers every route. Nifra&apos;s
         official auth, CSRF, body-limit, rate-limit, idempotency, IP-restriction, and security-header
@@ -424,7 +424,7 @@ export default function Security() {
         runs only through reflection or <code>nifra assure</code>, so requests pay no assurance cost.
       </p>
 
-      <h2>Effect assurance — declared capability versus provenance</h2>
+      <h2>Effect assurance - declared capability versus provenance</h2>
       <p>
         Authentication does not reveal what a route can do. Capability assurance compares an exact
         route declaration against every approved effect import reachable through that route&apos;s local
@@ -436,7 +436,7 @@ export default function Security() {
       <p>
         Domain writes on <code>GET</code>/<code>HEAD</code> are hard violations. Each write definition may
         require request idempotency or durable command/provider-key evidence. The lockfile contains only
-        method, path, and capability tokens—no payloads or tenant data—and CI never rewrites it.
+        method, path, and capability tokens-no payloads or tenant data-and CI never rewrites it.
       </p>
 
       <h2>Durable approval, compensation, and reconciliation</h2>
@@ -464,7 +464,7 @@ export default function Security() {
         The built-in <code>jsonLogger</code> redacts values under sensitive <b>keys</b>{" "}
         (<code>password</code>, <code>authorization</code>, <code>token</code>, …) by default. For
         secrets that land in a <b>value</b> or the message itself (e.g. an <code>err.message</code> that
-        embeds a token), pass opt-in <code>valuePatterns</code> — <code>commonSecretPatterns</code> covers
+        embeds a token), pass opt-in <code>valuePatterns</code> - <code>commonSecretPatterns</code> covers
         bearer tokens, JWTs, emails, and a few well-known key formats, or supply your own:
       </p>
       <CodeBlock code={LOGGING} />

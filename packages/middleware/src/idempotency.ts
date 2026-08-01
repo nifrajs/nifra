@@ -2,12 +2,12 @@ import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import { METHODS, type Middleware } from "@nifrajs/core/server"
 
 /**
- * Idempotency keys for unsafe requests — a client retrying a `POST` (dropped connection, impatient
+ * Idempotency keys for unsafe requests - a client retrying a `POST` (dropped connection, impatient
  * tap) with the same `Idempotency-Key` gets the **first** response replayed instead of the side effect
  * running twice (double-charge, double-publish). Runs in `onRequest` (before the handler), so a replay
  * or an in-flight collision short-circuits before any mutation.
  *
- * Pair it with a DB uniqueness constraint — this stops the *retry*, the constraint is the source of
+ * Pair it with a DB uniqueness constraint - this stops the *retry*, the constraint is the source of
  * truth for genuinely-concurrent distinct requests. Production MUST use a shared {@link IdempotencyStore}
  * (Redis, etc.) so the guarantee holds across instances; {@link MemoryIdempotencyStore} is dev-only.
  */
@@ -15,7 +15,7 @@ import { METHODS, type Middleware } from "@nifrajs/core/server"
 /** A captured response, replayed verbatim on a retry. Body is base64 (binary-safe + JSON-serializable). */
 export interface IdempotencyRecord {
   readonly status: number
-  /** Response headers, **excluding `Set-Cookie`** (cookies are session-specific — see {@link idempotency}). */
+  /** Response headers, **excluding `Set-Cookie`** (cookies are session-specific - see {@link idempotency}). */
   readonly headers: ReadonlyArray<readonly [string, string]>
   /** Response body, base64-encoded. */
   readonly body: string
@@ -45,7 +45,7 @@ export interface IdempotencyStore {
 }
 
 export interface MemoryIdempotencyStoreOptions {
-  /** Allow the in-memory store in production. Off by default — a per-instance store can't dedupe across instances. */
+  /** Allow the in-memory store in production. Off by default - a per-instance store can't dedupe across instances. */
   readonly allowInProduction?: boolean
 }
 
@@ -253,7 +253,7 @@ function replay(record: IdempotencyRecord): Response {
 /**
  * Idempotency-key middleware. Apply with `app.use(idempotency({ store }))`.
  *
- * **`Set-Cookie` is intentionally not cached or replayed** — a cookie set on the first request is
+ * **`Set-Cookie` is intentionally not cached or replayed** - a cookie set on the first request is
  * session-specific, so replaying it to a different caller (key collision or abuse) would leak/fixate a
  * session. Cache the body + status + the rest of the headers; let auth cookies re-issue per request.
  *
@@ -286,7 +286,7 @@ export function idempotency(options: IdempotencyOptions): Middleware {
     async onRequest(req) {
       if (!methods.has(req.method.toUpperCase())) return undefined
       const key = keyOf(req, header)
-      if (key === null || key === "") return undefined // opt-in per request — no key ⇒ no dedupe
+      if (key === null || key === "") return undefined // opt-in per request - no key ⇒ no dedupe
       const claim = await store.begin(key, lockTtlMs)
       if (claim.state === "replay") return replay(claim.record)
       if (claim.state === "in_flight") {
@@ -318,7 +318,7 @@ export function idempotency(options: IdempotencyOptions): Middleware {
         throw err
       }
       if (!("bytes" in captured)) {
-        await store.release(key) // too large to store — return it, but don't cache
+        await store.release(key) // too large to store - return it, but don't cache
         return captured.response
       }
       const bytes = captured.bytes

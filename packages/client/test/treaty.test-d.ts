@@ -111,7 +111,7 @@ api.users.post({ nope: 1 })
 api.users({ id: "1" }).patch()
 // @ts-expect-error query shape is wrong
 api.search.get({ query: { page: "two" } })
-// @ts-expect-error route declares no `query` schema — passing query is rejected (error message names the fix)
+// @ts-expect-error route declares no `query` schema - passing query is rejected (error message names the fix)
 api.health.get({ query: { page: 1 } })
 // @ts-expect-error a bodyless POST takes no body argument
 api.ping.post({ data: 1 })
@@ -137,7 +137,7 @@ export type _E404 = Expect<Equal<Arm404["data"], { code: "not_found"; id: string
 type Arm409 = Extract<ErrResult, { status: 409 }>
 export type _E409 = Expect<Equal<Arm409["data"], { code: "conflict"; retryAfter: number }>>
 
-// the fallback arm carries every UNDECLARED failure status with `data: unknown` —
+// the fallback arm carries every UNDECLARED failure status with `data: unknown` -
 // and its status union excludes the declared literals, which is what makes
 // `res.status === 404` narrow `data` to the declared body instead of smearing to unknown.
 type FallbackArm = Exclude<Extract<ErrResult, { ok: false }>, { status: 404 } | { status: 409 }>

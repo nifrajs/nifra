@@ -1,5 +1,5 @@
 /**
- * F5 example — file routing + typed data + actions + client navigation, served from a
+ * F5 example - file routing + typed data + actions + client navigation, served from a
  * content-hashed production build. `buildClient` writes dist/manifest.json; the server reads the
  * hashed entry URL and serves the hashed assets with immutable cache headers.
  *
@@ -15,7 +15,7 @@ import { backend } from "./backend"
 
 const routesDir = `${import.meta.dir}/routes`
 const dist = `${import.meta.dir}/dist`
-// Trusted own build output (written by buildClient) — cast after parse.
+// Trusted own build output (written by buildClient) - cast after parse.
 const assets = JSON.parse(
   await Bun.file(`${dist}/manifest.json`)
     .text()
@@ -47,7 +47,7 @@ app.get("/assets/*", async (c) => {
   })
 })
 
-// Only listen when run directly — when imported (by build.ts for prerendering), we just want `app`.
+// Only listen when run directly - when imported (by build.ts for prerendering), we just want `app`.
 if (import.meta.main) {
   const running = app.listen(Number(Bun.env.PORT ?? 3000))
   console.log(`http://localhost:${running.port}`)

@@ -1,5 +1,5 @@
 /**
- * `@nifrajs/devtools` — interactive DevTools overlay for `nifra dev`.
+ * `@nifrajs/devtools` - interactive DevTools overlay for `nifra dev`.
  *
  * Server-side: a middleware plugin that captures request traces into a ring buffer
  * and streams them via SSE at `/_nifra/devtools`.
@@ -7,7 +7,7 @@
  * Client-side: a floating browser overlay that connects to the SSE stream and
  * renders a scrolling log of request traces with ISR status badges.
  *
- * **Zero production overhead** — register conditionally:
+ * **Zero production overhead** - register conditionally:
  * ```ts
  * if (process.env.NODE_ENV !== "production") app.use(devtools())
  * ```

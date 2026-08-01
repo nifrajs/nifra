@@ -15,7 +15,7 @@ import {
 
 const SECRET = "draft-secret-padded-to-at-least-32b"
 
-// A fake `c.set` recording cookie writes/deletes — enough for enableDraft/disableDraft.
+// A fake `c.set` recording cookie writes/deletes - enough for enableDraft/disableDraft.
 function fakeContext() {
   const set = {
     written: [] as Array<{
@@ -79,7 +79,7 @@ const draftManifest = (): Manifest => ({
   notFound: { file: "_404.tsx", load: async () => ({ default: "not-found" }) },
 })
 
-// Data-mode GET (x-nifra-data) returns the loader result as JSON before any render — lets us read ctx.draft.
+// Data-mode GET (x-nifra-data) returns the loader result as JSON before any render - lets us read ctx.draft.
 const dataReq = (cookie?: string): Request =>
   new Request("http://x/page", {
     headers: { "x-nifra-data": "1", ...(cookie === undefined ? {} : { cookie }) },
@@ -166,7 +166,7 @@ test("previewEndpoint authorizes, sets the signed cookie, and redirects", async 
   expect(cookie).toContain("HttpOnly")
   expect(cookie).toContain("SameSite=Lax")
   // `serializeCookie` is pure and applies no security defaults, so `Secure` only appears if the
-  // endpoint passes it explicitly — the exact attribute a direct-serialize path silently drops.
+  // endpoint passes it explicitly - the exact attribute a direct-serialize path silently drops.
   expect(cookie).toContain("Secure")
 
   // The cookie it issues is one `isDraftEnabled` actually accepts (not merely present-and-signed).
@@ -195,7 +195,7 @@ test("previewEndpoint rejects a wrong or missing token without setting a cookie"
 })
 
 test("previewEndpoint refuses an off-site redirect target", async () => {
-  // Each of these starts with "/" — the check people actually write — yet navigates off-site.
+  // Each of these starts with "/" - the check people actually write - yet navigates off-site.
   for (const to of [
     "//evil.com",
     "/\\evil.com",

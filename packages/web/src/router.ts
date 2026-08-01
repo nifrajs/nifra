@@ -1,5 +1,5 @@
 /**
- * The agnostic client-side router core — pure logic, no `window`, no framework. A per-adapter
+ * The agnostic client-side router core - pure logic, no `window`, no framework. A per-adapter
  * Router binding subscribes via `subscribe`/`snapshot` and renders the matched chain; a
  * browser-only `installHistory` (history + link interception) wires on top. Kept DOM-free so it
  * unit-tests without a browser and is safe to import from the SSR core's main entry.
@@ -22,20 +22,20 @@ export const DATA_HEADER = "x-nifra-data"
 /**
  * Global the server injects (`createWebApp({ prerenderedPaths })`) listing the SSG-prerendered paths.
  * The client's default data fetch reads it: a soft-nav INTO a prerendered route fetches its static
- * `<path>/_data.json` (a CDN file — no worker round-trip) instead of the dynamic header-GET.
+ * `<path>/_data.json` (a CDN file - no worker round-trip) instead of the dynamic header-GET.
  */
 export const PRERENDERED_GLOBAL = "__NIFRA_PRERENDERED__"
 
 /**
  * Response header a data-mode action POST uses to convey a redirect (`redirect(...)`) to the
- * client — fetch would otherwise silently follow a 3xx to its HTML, losing the target. The
+ * client - fetch would otherwise silently follow a 3xx to its HTML, losing the target. The
  * client reads this and performs a client-side navigation instead.
  */
 export const REDIRECT_HEADER = "x-nifra-redirect"
 
 /**
  * Response header an action sets (via the `revalidate(paths, data)` helper) to tell the client which
- * routes the mutation changed — a comma-separated list of paths. After the submit, the client marks
+ * routes the mutation changed - a comma-separated list of paths. After the submit, the client marks
  * those cached routes stale (refetching any that are mounted) so a mutation can refresh views beyond
  * the active one. The client validates each path against the manifest matcher before acting on it.
  */
@@ -113,7 +113,7 @@ export interface RouteMatch {
   readonly params: Record<string, string>
 }
 
-/** An in-flight client submit — the action it targets + the `FormData` being sent. Set while the
+/** An in-flight client submit - the action it targets + the `FormData` being sent. Set while the
  * submit is pending, cleared when it settles. A component reads `submission.formData` to render an
  * **optimistic** view (the expected result) before the server responds. */
 export interface Submission {
@@ -138,11 +138,11 @@ export interface RouterState {
   /** The path a navigation is transitioning TO while `pending` (cleared when it settles). Lets a
    * `NavLink` know whether its own `to` is the one loading; `undefined` when idle. */
   readonly pendingPath?: string | undefined
-  /** The in-flight submit (set during a `submit`, cleared when it settles) — for optimistic UI. */
+  /** The in-flight submit (set during a `submit`, cleared when it settles) - for optimistic UI. */
   readonly submission?: Submission
 }
 
-/** A route id paired with its nifra pattern (e.g. `":id"` segments) — the matcher input. */
+/** A route id paired with its nifra pattern (e.g. `":id"` segments) - the matcher input. */
 export interface RoutePattern {
   readonly routeId: string
   readonly pattern: string
@@ -160,7 +160,7 @@ export function createMatcher(
     .map((pattern) => ({ routeId: pattern.routeId, pattern: compileRoutePattern(pattern.pattern) }))
     .sort((left, right) => compareRoutePatternSpecificity(left.pattern, right.pattern))
   return (path) => {
-    // Strip the query without allocating a `split("?")` array — matcher runs per match.
+    // Strip the query without allocating a `split("?")` array - matcher runs per match.
     const q = path.indexOf("?")
     const clean = q === -1 ? path : path.slice(0, q)
     for (const c of compiled) {
@@ -194,7 +194,7 @@ export interface SubmitOptions {
   readonly revalidate?: boolean
 }
 
-/** A fetcher's observable state — independent of the main router. `pending` covers its in-flight
+/** A fetcher's observable state - independent of the main router. `pending` covers its in-flight
  * load/submit; `data` is its last `load()` result; `actionData` its last `submit()` result;
  * `submission` the in-flight submit (for optimistic UI). Client-only (never SSR'd). */
 export interface FetcherState {
@@ -206,7 +206,7 @@ export interface FetcherState {
 
 /**
  * An independent load/submit state machine, retrieved by `router.fetcher(key)`. Runs **concurrently**
- * with the main router and with other fetchers — each is single-flight against *itself* (its own
+ * with the main router and with other fetchers - each is single-flight against *itself* (its own
  * monotonic token), so N row-level mutations / side-channel loads can be in flight at once without
  * disturbing the active view. Loads/submits write the shared cache and honor `X-Nifra-Revalidate`.
  */
@@ -220,7 +220,7 @@ export interface Fetcher {
   load: (path: string) => Promise<void>
   /** Submit an action into this fetcher's own state; honors `X-Nifra-Revalidate` by refreshing the
    * active route + any mounted fetcher showing a changed path. Rejects on failure (caller falls back).
-   * (No `revalidate` opt-out — a fetcher has no active loader of its own to skip.) */
+   * (No `revalidate` opt-out - a fetcher has no active loader of its own to skip.) */
   submit: (action: string, body: NonNullable<RequestInit["body"]>) => Promise<void>
 }
 
@@ -236,7 +236,7 @@ export interface ClientRouter {
    * Submit an action (POST `body` to `action` in data mode): a redirect becomes a client
    * navigation; otherwise the data return is published as `actionData` and the active route's
    * loader is revalidated so the mutation is reflected. Pass `{ revalidate: false }` to SKIP that
-   * revalidation — keep the current `data` and just publish the action's `actionData` (useful when
+   * revalidation - keep the current `data` and just publish the action's `actionData` (useful when
    * the action already returned everything that changed, saving the extra round-trip). A redirect
    * always loads its target regardless. Rejects on failure (caller falls back).
    */
@@ -248,28 +248,28 @@ export interface ClientRouter {
   /**
    * Mark cached route data stale and refresh the active view. With `paths`, target exactly those
    * (e.g. the routes a mutation changed); without, invalidate the whole cache. The active route
-   * refreshes immediately — refetched + republished — whenever it's in scope (an explicit list that
+   * refreshes immediately - refetched + republished - whenever it's in scope (an explicit list that
    * includes it, or an invalidate-all); other stale entries refetch lazily when next read (a
    * fetcher, or the next navigation/access). Rejects if the active refetch fails (like `navigate`).
    * The keyed substrate for targeted revalidation (the `X-Nifra-Revalidate` header) and fetchers.
    */
   invalidate: (paths?: readonly string[]) => Promise<void>
   /**
-   * Warm a path's chunk + loader data into a bounded one-shot cache without publishing state —
+   * Warm a path's chunk + loader data into a bounded one-shot cache without publishing state -
    * a later `navigate` to it transitions with no network round-trip. Best-effort: failures and
    * unmatched paths are no-ops. Wired to link hover/focus by `installHistory`.
    */
   prefetch: (path: string) => Promise<void>
   /**
-   * Get (lazily creating) the stable {@link Fetcher} for `key` — an independent, concurrent
+   * Get (lazily creating) the stable {@link Fetcher} for `key` - an independent, concurrent
    * load/submit state machine for row-level mutations or side-channel loads that must not disturb
    * the active view. The same `key` always returns the same fetcher (so a binding can subscribe to a
    * stable store). Keys are app-chosen and typically stable (e.g. a row id).
    */
   fetcher: (key: string) => Fetcher
-  /** All live fetchers — for a global busy view (e.g. a `useFetchers` binding). */
+  /** All live fetchers - for a global busy view (e.g. a `useFetchers` binding). */
   fetchers: () => readonly Fetcher[]
-  /** Subscribe to any-fetcher-changed (a transition on any fetcher, or a new one created) — backs a
+  /** Subscribe to any-fetcher-changed (a transition on any fetcher, or a new one created) - backs a
    * `useFetchers` binding; returns an unsubscribe fn. */
   subscribeFetchers: (listener: () => void) => () => void
   /** Match a path against the manifest patterns (exposed for history/link wiring). */
@@ -307,13 +307,13 @@ export interface MountRouterOptions {
    * `ctx.search`/`RenderProps.search`. Omitted by callers with no typed search (tests, a hand-built mount)
    * ⇒ every route sees the raw parsed query. */
   readonly searchSchemas?: Readonly<Record<string, readonly (StandardSchemaV1 | undefined)[]>>
-  /** Hydration container (opaque — the adapter casts it to its DOM element type). */
+  /** Hydration container (opaque - the adapter casts it to its DOM element type). */
   readonly container: unknown
 }
 
 /** Read a nifra data response: a deferred loader/action streams NDJSON (parse line 1 + settle
  * `<Await>` markers as resolution lines arrive); a non-deferred one returns a single JSON. Shared by
- * navigation fetches and action submits — both transports are identical. */
+ * navigation fetches and action submits - both transports are identical. */
 const readResponseData = (res: Response, signal?: AbortSignal): Promise<unknown> =>
   (res.headers.get("content-type") ?? "").includes("application/x-ndjson") && res.body !== null
     ? parseNdjsonData(res.body, signal)
@@ -325,7 +325,7 @@ const dataUrlFor = (pathname: string): string =>
   pathname === "/" ? "/_data.json" : `${pathname.replace(/\/+$/, "")}/_data.json`
 
 const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation) => {
-  // SSG fast path: if this path was prerendered, its loader data is a static file — fetch that (no
+  // SSG fast path: if this path was prerendered, its loader data is a static file - fetch that (no
   // worker). Falls through to the dynamic header-GET on any miss (file absent, e.g. a deferred route,
   // or a stale set), so it's always safe. Non-SSG apps have no global → the dynamic path, unchanged.
   const prerendered = (globalThis as { [PRERENDERED_GLOBAL]?: unknown })[PRERENDERED_GLOBAL]
@@ -439,9 +439,9 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   const inflight = new Set<string>()
   // Keyed data cache (path → latest loader data + freshness). Written on every published data
   // (navigate/submit), read by `invalidate` (+ targeted revalidation and fetchers in later F16
-  // increments). Bounded — evict the oldest-inserted past the cap (route data is small; this just
+  // increments). Bounded - evict the oldest-inserted past the cap (route data is small; this just
   // caps memory). `status` is the staleness ledger: `invalidate` flips entries to `stale`; readers
-  // refetch stale ones. Client-only — never serialized/hydrated.
+  // refetch stale ones. Client-only - never serialized/hydrated.
   const MAX_CACHE = 50
   const cache = new Map<
     string,
@@ -465,7 +465,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     }
   }
   // Parse the `X-Nifra-Revalidate` response header into validated paths. The header is response data
-  // (a trust boundary), so each path must match a real manifest pattern — unknown/garbage is dropped
+  // (a trust boundary), so each path must match a real manifest pattern - unknown/garbage is dropped
   // and never triggers a fetch.
   const parseRevalidate = (header: string | null): string[] =>
     header === null
@@ -493,7 +493,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         { routeId: state.routeId, params: state.params },
         ac.signal,
       )
-      if (mine !== token) return // superseded — drop the stale result
+      if (mine !== token) return // superseded - drop the stale result
       cachePut(state.path, loaded)
       state = { ...state, data: loaded.data, layoutData: loaded.layoutData, pending: false }
       emit()
@@ -527,7 +527,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
 
   // Best-effort refresh of every MOUNTED reader of `paths`: the active route (unless `skipActive`,
   // when the caller already refetched it) + any fetcher that loaded one of these paths. Errors are
-  // swallowed — a failed targeted refresh must not fail the mutation that triggered it.
+  // swallowed - a failed targeted refresh must not fail the mutation that triggered it.
   const refreshMounted = async (paths: readonly string[], skipActive: boolean): Promise<void> => {
     const jobs: Promise<void>[] = []
     if (!skipActive && paths.includes(state.path)) jobs.push(refetchActive().catch(() => {}))
@@ -560,7 +560,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           loadRouteData(path, matched, ac.signal),
         ])
         if (mine !== fToken) return // a newer load/submit on THIS fetcher superseded us
-        // Record the loaded path only on SUCCESS — a thrown or superseded load must not
+        // Record the loaded path only on SUCCESS - a thrown or superseded load must not
         // leave `loadedPath` pointing at a path this fetcher never actually showed, or a later
         // `X-Nifra-Revalidate` for it would spuriously refetch onto unexpected data.
         loadedPath = path
@@ -586,7 +586,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       load: runLoad,
       submit: async (action, body) => {
         const mine = ++fToken
-        // Abort any prior in-flight load/submit on THIS fetcher (its fetch + NDJSON drain) — like
+        // Abort any prior in-flight load/submit on THIS fetcher (its fetch + NDJSON drain) - like
         // `runLoad` does for a superseding load. The mutation POST is left to complete; the
         // signal cancels the follow-up data drain if a newer op supersedes this one.
         fAbort?.abort()
@@ -610,7 +610,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           // Publish the fetcher's actionData; clear `submission` (the optimistic window is over).
           fState = { pending: false, data: fState.data, actionData }
           fEmit()
-          // A fetcher has no loader of its own — its mutation's freshness flows through the cache:
+          // A fetcher has no loader of its own - its mutation's freshness flows through the cache:
           // mark the changed routes stale + refresh every mounted reader (active route + fetchers).
           if (changed.length > 0) {
             markStale(changed)
@@ -675,7 +675,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       state = { ...state, pending: true, pendingPath: path }
       emit()
       try {
-        // Use prefetched data when present (one-shot — drop it); else fetch. The chunk is loaded
+        // Use prefetched data when present (one-shot - drop it); else fetch. The chunk is loaded
         // either way (cached + instant after a prefetch), so pending covers both.
         const hit = prefetched.has(path)
         const dataPromise = hit
@@ -691,7 +691,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         if (hit) prefetched.delete(path)
         const [, loaded] = await Promise.all([loadModule?.(matched.routeId), dataPromise])
         if (loaded.terminalRouteId !== undefined) await loadModule?.(loaded.terminalRouteId)
-        if (mine !== token) return // a newer navigation superseded this one — drop the stale result
+        if (mine !== token) return // a newer navigation superseded this one - drop the stale result
         cachePut(path, loaded) // keep the keyed cache coherent with what we publish
         state = {
           routeId: loaded.terminalRouteId ?? matched.routeId,
@@ -704,7 +704,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         }
         emit()
       } catch (err) {
-        // Clear our pending flag + target (only if still current) and rethrow — the caller decides how
+        // Clear our pending flag + target (only if still current) and rethrow - the caller decides how
         // to recover (the history layer falls back to a full-page navigation).
         if (mine === token) {
           state = { ...state, pending: false, pendingPath: undefined }
@@ -716,7 +716,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     submit: async (action, body, opts) => {
       const mine = ++token
       // A superseding navigation/submit aborts this submit's FOLLOW-UP reads (revalidation / redirect
-      // fetch + their NDJSON drains) — not the mutation POST itself, which should complete.
+      // fetch + their NDJSON drains) - not the mutation POST itself, which should complete.
       // Wire into `navAbort` like `navigate`/`refetchActive`, so a later nav cancels the in-flight read.
       navAbort?.abort()
       const ac = new AbortController()
@@ -734,7 +734,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         if (!res.ok) throw new Error(`[nifra/web] action failed (${res.status}): ${action}`)
         const redirectTo = res.headers.get(REDIRECT_HEADER)
         if (redirectTo !== null) {
-          // The action redirected (Post/Redirect/Get) — treat it as a client navigation.
+          // The action redirected (Post/Redirect/Get) - treat it as a client navigation.
           const target = match(redirectTo)
           if (target === null)
             throw new Error(`[nifra/web] action redirect off-route: ${redirectTo}`)
@@ -764,14 +764,14 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           emit()
           return
         }
-        // The action's data — streamed NDJSON if it `defer()`'d slow parts (markers settle as lines
+        // The action's data - streamed NDJSON if it `defer()`'d slow parts (markers settle as lines
         // arrive, for `<Await actionData>`), else one JSON. Abortable so a superseding nav cancels the
         // drain.
         const actionData = res.status === 204 ? undefined : await readResponseData(res, ac.signal)
         // Routes the action declared changed (via the `revalidate()` helper → `X-Nifra-Revalidate`),
         // validated against the manifest.
         const changed = parseRevalidate(res.headers.get(REVALIDATE_HEADER))
-        // Revalidate the active route's loader so the mutation is reflected — unless the caller opted
+        // Revalidate the active route's loader so the mutation is reflected - unless the caller opted
         // out (`revalidate: false`). A server-declared revalidate of the active path overrides the
         // opt-out (the server says it changed, so stale data would be wrong). Default is to revalidate.
         const skipActive = opts?.revalidate === false && !changed.includes(state.path)
@@ -787,7 +787,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         // Mark the OTHER changed routes stale so the next access refetches.
         markStale(changed.filter((p) => p !== state.path))
         // Reconcile: publish the revalidated data + actionData; omit `submission` (the optimistic
-        // window is over — the real data now drives the view).
+        // window is over - the real data now drives the view).
         state = {
           routeId: state.routeId,
           params: state.params,
@@ -799,7 +799,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         }
         emit()
         // Refresh any mounted fetcher showing one of the changed routes (the active route was just
-        // revalidated inline above, so skip it here). Best-effort — never rejects the submit.
+        // revalidated inline above, so skip it here). Best-effort - never rejects the submit.
         await refreshMounted(changed, true)
       } catch (err) {
         if (mine === token) {
@@ -819,11 +819,11 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       }
     },
     invalidate: async (paths) => {
-      // Mark targeted cache entries stale (all entries when no `paths`) — unmounted ones refetch
+      // Mark targeted cache entries stale (all entries when no `paths`) - unmounted ones refetch
       // lazily on next access.
       const targets = paths ?? [...cache.keys()]
       markStale(targets)
-      // Refresh mounted readers now: the active route (when in scope — an explicit list including it,
+      // Refresh mounted readers now: the active route (when in scope - an explicit list including it,
       // or an invalidate-all) + any fetcher showing a targeted path. The active refetch rejects on
       // failure (the caller asked to refresh); fetcher refreshes are best-effort (swallowed).
       const jobs: Promise<void>[] = []
@@ -837,7 +837,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       if (matched === null) return
       inflight.add(path)
       try {
-        // Unwrapped here, so a prefetched entry is the same shape `navigate` builds state from —
+        // Unwrapped here, so a prefetched entry is the same shape `navigate` builds state from -
         // otherwise a prefetch hit would publish an envelope where a miss publishes loader data.
         const [, loaded] = await Promise.all([
           loadModule?.(matched.routeId),
@@ -859,7 +859,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       if (existing !== undefined) return existing.fetcher
       const entry = createFetcher()
       fetchers.set(key, entry)
-      emitFetchers() // a new fetcher appeared — wake any `useFetchers` subscriber
+      emitFetchers() // a new fetcher appeared - wake any `useFetchers` subscriber
       return entry.fetcher
     },
     fetchers: () => fetchersArr,

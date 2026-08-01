@@ -1,4 +1,4 @@
-<!-- Root layout — wraps every page via the `children` snippet (the Chain fold passes the page there). -->
+<!-- Root layout - wraps every page via the `children` snippet (the Chain fold passes the page there). -->
 <script lang="ts">
   let { children } = $props()
   const css = `

@@ -88,7 +88,7 @@ describe("t.pageQuery", () => {
   })
 
   // Query values arrive as STRINGS over HTTP (`?limit=20` → `"20"`). pageQuery coerces so the handler
-  // sees a real number — the case the numeric-literal tests above never exercised.
+  // sees a real number - the case the numeric-literal tests above never exercised.
   test("coerces a string limit from the query, then bounds it", async () => {
     const ok = await validateStandard(query, { limit: "20" })
     expect(ok.ok).toBe(true)
@@ -102,7 +102,7 @@ describe("t.pageQuery", () => {
     expect((await validateStandard(query, { limit: "abc" })).ok).toBe(false) // not numeric → stays string → fails
     expect((await validateStandard(query, {})).ok).toBe(true) // limit optional
 
-    // Convert rounds a fractional limit to an integer (lenient — a query "limit=1.5" is nonsense but harmless).
+    // Convert rounds a fractional limit to an integer (lenient - a query "limit=1.5" is nonsense but harmless).
     const frac = await validateStandard(query, { limit: "1.5" })
     expect(frac.ok).toBe(true)
     if (frac.ok) expect(frac.value.limit).toBe(1)

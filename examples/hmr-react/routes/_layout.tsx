@@ -1,6 +1,6 @@
 import type { ReactNode } from "react"
 
-/** Root layout — wraps every page; the nav proves the layout renders on each route. */
+/** Root layout - wraps every page; the nav proves the layout renders on each route. */
 export default function Layout(props: { children?: ReactNode }) {
   return (
     <div>

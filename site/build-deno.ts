@@ -1,5 +1,5 @@
 /**
- * Build the site for Deno. Output: site/dist-deno/ — server-deno.js (edge build: workerd/edge-light
+ * Build the site for Deno. Output: site/dist-deno/ - server-deno.js (edge build: workerd/edge-light
  * conditions, runs under Deno's Web-standard runtime) + the shared client bundle under assets/. Run
  * with `deno run --allow-net --allow-read --allow-env site/dist-deno/server-deno.js`.
  *
@@ -24,7 +24,7 @@ const client = await buildClient({
 })
 await buildSiteIslands({ outDir: `${dist}/assets` })
 
-// Default target ("browser") = edge conditions — a Web-standard bundle Deno runs natively.
+// Default target ("browser") = edge conditions - a Web-standard bundle Deno runs natively.
 const { worker } = await buildServer({
   routesDir: `${dir}/routes`,
   serverEntry: `${dir}/server-deno.ts`,

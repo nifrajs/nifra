@@ -1,5 +1,5 @@
 // The root error boundary: rendered (status 500, non-hydrated) when a route loader throws and this is
-// the nearest `_error` in the chain. It receives the serialized error as its `data` — `{ name, message }`
+// the nearest `_error` in the chain. It receives the serialized error as its `data` - `{ name, message }`
 // (never the stack). It renders inside the layout chrome at/above its segment.
 export default function ErrorPage(props: { data: { name: string; message: string } }) {
   return (

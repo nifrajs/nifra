@@ -1,13 +1,13 @@
 <!--
-  Todos route — exercises the Svelte bindings: useQuery + useQueryClient (the count panel) and
+  Todos route - exercises the Svelte bindings: useQuery + useQueryClient (the count panel) and
   useFetcher (the bump button). The bindings are Svelte stores, read reactively with `$` (top-level
-  vars only — that's why the bump is a single top-level fetcher, not per-row).
+  vars only - that's why the bump is a single top-level fetcher, not per-row).
 -->
 <script module>
   import { revalidate } from "@nifrajs/web"
 
   export const meta = {
-    title: "nifra + Svelte — Todos (fetchers + query)",
+    title: "nifra + Svelte - Todos (fetchers + query)",
     meta: [{ name: "description", content: "nifra Svelte bindings: useFetcher + useQuery" }],
   }
 

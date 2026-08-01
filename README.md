@@ -1,15 +1,15 @@
 # nifra
 
-**The full-stack TypeScript framework built for AI agents — and for the humans who work alongside them.**
+**The full-stack TypeScript framework built for AI agents - and for the humans who work alongside them.**
 
 Coding agents drift. They call an endpoint that moved, expect a response shape that changed, or hand-roll `fetch` with ad-hoc types that fall out of sync the moment a route changes. nifra removes that class of bug at the framework level:
 
 | | |
 |---|---|
 | **Typed client** | `client<typeof app>` infers every path, param, body, and response from your server's TypeScript type. Any mismatch is a compile error. |
-| **`nifra check`** | Runs typecheck + typed-client lint in one command. Add it to CI — it fails the moment the frontend and backend drift. |
+| **`nifra check`** | Runs typecheck + typed-client lint in one command. Add it to CI - it fails the moment the frontend and backend drift. |
 | **AGENTS.md** | Every scaffold ships a conventions file. Agents (Claude Code, Cursor, Copilot) read it and follow nifra's rules from the first prompt. |
-| **`nifra context`** | Prints this project's real API surface — routes + schemas — as Markdown. Paste into any agent prompt, or let `nifra mcp` deliver it automatically. |
+| **`nifra context`** | Prints this project's real API surface - routes + schemas - as Markdown. Paste into any agent prompt, or let `nifra mcp` deliver it automatically. |
 | **`nifra mcp`** | An MCP server that feeds Claude Code, Cursor, and Copilot Chat this project's live route and schema data. |
 | **Versioned transports** | One bounded codec registry for plain JSON or rich values across HTTP, loaders, and WebSocket frames. |
 | **Durable effects** | Postgres, SQLite, and Durable Object stores plus leased, cursor-bounded reconciliation for approvals and sagas. |
@@ -29,7 +29,7 @@ import { t } from "@nifrajs/schema"
 export const app = server()
   .get("/users/:id", (c) => ({ id: c.params.id }))
   .post("/users", { body: t.object({ name: t.string() }) }, (c) => {
-    // c.body is validated + typed — invalid input is rejected before this runs.
+    // c.body is validated + typed - invalid input is rejected before this runs.
     return { id: crypto.randomUUID(), name: c.body.name }
   })
   .listen(3000)
@@ -37,29 +37,29 @@ export const app = server()
 export type App = typeof app
 ```
 
-## The typed client — the anti-drift seam
+## The typed client - the anti-drift seam
 
 ```ts
-// client.ts — fully typed from the server, zero codegen
+// client.ts - fully typed from the server, zero codegen
 import { client } from "@nifrajs/client"
 import type { App } from "./server"
 
 const api = client<App>("http://localhost:3000")
 
 const res = await api.users({ id: "42" }).get()
-if (res.ok) res.data.id   // typed from the route's return — tsc fails if the route changes
+if (res.ok) res.data.id   // typed from the route's return - tsc fails if the route changes
 else res.error            // errors are returned, never thrown
 ```
 
-The client **never throws** — every call returns `{ ok, status, data, error }`, so the happy path and the failure path are both in the types.
+The client **never throws** - every call returns `{ ok, status, data, error }`, so the happy path and the failure path are both in the types.
 
 ## Agent tooling
 
 nifra ships a purpose-built toolchain so coding agents stay correct as the codebase evolves.
 
-**AGENTS.md** — generated per scaffold, teaches the agent nifra's non-obvious rules:
+**AGENTS.md** - generated per scaffold, teaches the agent nifra's non-obvious rules:
 - validate every input at the boundary with `t` or any Standard Schema
-- always call this app's own API through `client<typeof app>` — never hand-roll `fetch`
+- always call this app's own API through `client<typeof app>` - never hand-roll `fetch`
 - never top-level-import server-only code into a route module
 
 **Adding nifra to an existing app? Run `nifra init-agents`.** It writes the agent-discovery files for you - `.mcp.json` + `.cursor/mcp.json` (registering this project's nifra MCP), a CLAUDE.md MCP-first preamble, and an AGENTS.md section - no-clobber, so it never overwrites a file you've customized. (`nifra check` also nudges you when a project has no `.mcp.json`.)
@@ -78,19 +78,19 @@ claude mcp add nifra -- bunx nifra mcp
 # { "mcpServers": { "nifra": { "command": "bunx", "args": ["nifra", "mcp"] } } }
 ```
 
-Once connected, the agent has fifteen tools — no setup per prompt:
+Once connected, the agent has fifteen tools - no setup per prompt:
 
 | Tool | What it does |
 |---|---|
 | `nifra_context` | This project's live routes + schemas + the exact typed-client **call signature** per route (Markdown). |
-| `nifra_routes` | The same routes as **structured JSON** (`{ method, path, call, body?, query?, response? }`) — for programmatic use. |
+| `nifra_routes` | The same routes as **structured JSON** (`{ method, path, call, body?, query?, response? }`) - for programmatic use. |
 | `nifra_openapi` | OpenAPI 3.1 generated from backend route schemas, as JSON or YAML. |
 | `nifra_check` | Typecheck + drift lint, returned as **structured JSON** with safe fix suggestions. |
 | `nifra_assure` | Classify every route and verify required/forbidden enforcement evidence. |
 | `nifra_levels` | The cumulative verification ladder (L0 typed contract → L4 invariants): what the project proves, and why each level it misses does not hold. |
 | `nifra_doctor` | Flags undeclared imports and duplicate physical Nifra/React installs. |
-| `nifra_run` | Calls a route **in-process** (via `@nifrajs/runner`) — the agent self-verifies an endpoint without booting a server. |
-| `nifra_render` | Server-renders a page to HTML — verify SSR output. |
+| `nifra_run` | Calls a route **in-process** (via `@nifrajs/runner`) - the agent self-verifies an endpoint without booting a server. |
+| `nifra_render` | Server-renders a page to HTML - verify SSR output. |
 | `nifra_ws` | Opens a real Bun WebSocket against the current app, sends test frames, and returns structured evidence. |
 | `nifra_test` | Runs bounded `bun test` and returns structured stdout, stderr, timing, and summary. |
 | `nifra_scaffold` | URL pattern → the correct `routes/` file for the chosen UI framework. |
@@ -98,7 +98,7 @@ Once connected, the agent has fifteen tools — no setup per prompt:
 | `nifra_types` | Look up the exact current TypeScript signature for any public Nifra export. |
 | `nifra_fix` | Apply safe mechanical fixes, then return unresolved diagnostics. |
 
-No MCP? The same data is available as plain commands — paste into any prompt, or run in CI:
+No MCP? The same data is available as plain commands - paste into any prompt, or run in CI:
 
 ```sh
 nifra context          # routes + schemas (+ per-route call signatures) as Markdown
@@ -139,7 +139,7 @@ a handful, so start with those and reach for the rest when a concept actually co
 
 ## Validate input with `t` (and get OpenAPI for free)
 
-`@nifrajs/schema`'s `t` is a TypeBox-backed builder: it validates at the request boundary *and* — because a TypeBox schema **is** a JSON Schema — generates OpenAPI with no extra work. Bring your own [Standard Schema][standard-schema] (zod, valibot, arktype) too; they validate identically.
+`@nifrajs/schema`'s `t` is a TypeBox-backed builder: it validates at the request boundary *and* - because a TypeBox schema **is** a JSON Schema - generates OpenAPI with no extra work. Bring your own [Standard Schema][standard-schema] (zod, valibot, arktype) too; they validate identically.
 
 ```ts
 import { server } from "@nifrajs/core/server"
@@ -155,7 +155,7 @@ const openapi = toOpenAPI(app) // OpenAPI 3.1 document
 
 Invalid bodies are rejected with a structured `422` before your handler runs.
 
-## Graduate to a contract — handlers unchanged
+## Graduate to a contract - handlers unchanged
 
 When you want a decoupled, versionable API surface, lift the same routes into a contract. Handlers written inline lift over **unchanged**.
 
@@ -174,7 +174,7 @@ const app = implement(contract, {
 })
 ```
 
-The client can now be built from the **contract** alone (`client(contract, url)`) — no dependency on the server's source. This is the shape agents reference: `nifra context` emits the live contract; `nifra check` enforces it.
+The client can now be built from the **contract** alone (`client(contract, url)`) - no dependency on the server's source. This is the shape agents reference: `nifra context` emits the live contract; `nifra check` enforces it.
 
 ## Harden it
 
@@ -230,14 +230,14 @@ breaking contracts, lost assurance, expanded effects, or increased response sens
 
 ## Runs on the edge, too
 
-Bun is the first-class runtime (`app.listen()`), but the whole lifecycle is `app.fetch(Request): Promise<Response>` with zero Bun APIs — so the same `app` deploys to **Cloudflare Workers** (`export default app`), **Deno** (`Deno.serve(app.fetch)`), or **Node** (via the [`@nifrajs/node`](packages/node) adapter). See [Deployment](site/routes/docs/deployment.tsx) and [Edge & bindings](site/routes/docs/edge.tsx).
+Bun is the first-class runtime (`app.listen()`), but the whole lifecycle is `app.fetch(Request): Promise<Response>` with zero Bun APIs - so the same `app` deploys to **Cloudflare Workers** (`export default app`), **Deno** (`Deno.serve(app.fetch)`), or **Node** (via the [`@nifrajs/node`](packages/node) adapter). See [Deployment](site/routes/docs/deployment.tsx) and [Edge & bindings](site/routes/docs/edge.tsx).
 
 ## Principles (enforced, not aspirational)
 
-- **Reject invalid input at three boundaries** — compile-time (types), boot-time (config throws loudly), request-time (Standard Schema → structured `422`). "Genuine fallback" is a documented whitelist; everything else rejects.
-- **Tests everywhere, six kinds** — unit, type-level (`*.test-d.ts`), property/fuzz, mode-conformance, benchmark-regression, security-guardrail.
-- **Speed is a measured goal** — tracked with the `oha` HTTP matrix (`bun run bench:http`) across Bun, Node, and Deno against raw runtime handlers plus representative API framework baselines.
-- **Production-grade by default** — graceful shutdown, redacting logs, idempotent guards, integer-money discipline; nothing is "we'll fix it later".
+- **Reject invalid input at three boundaries** - compile-time (types), boot-time (config throws loudly), request-time (Standard Schema → structured `422`). "Genuine fallback" is a documented whitelist; everything else rejects.
+- **Tests everywhere, six kinds** - unit, type-level (`*.test-d.ts`), property/fuzz, mode-conformance, benchmark-regression, security-guardrail.
+- **Speed is a measured goal** - tracked with the `oha` HTTP matrix (`bun run bench:http`) across Bun, Node, and Deno against raw runtime handlers plus representative API framework baselines.
+- **Production-grade by default** - graceful shutdown, redacting logs, idempotent guards, integer-money discipline; nothing is "we'll fix it later".
 
 ## Packages
 
@@ -249,7 +249,7 @@ Bun is the first-class runtime (`app.listen()`), but the whole lifecycle is `app
 | [`@nifrajs/middleware`](packages/middleware) | CORS, security headers, rate limiting |
 | [`@nifrajs/testing`](packages/testing) | Contract-derived hostile inputs, response conformance, runtime matrices, test sessions |
 | [`@nifrajs/node`](packages/node) | Run a nifra app on Node's `http` server (opt-in) |
-| [`@nifrajs/cli`](packages/cli) | `nifra check`, `nifra context`, `nifra mcp` — the agent toolchain |
+| [`@nifrajs/cli`](packages/cli) | `nifra check`, `nifra context`, `nifra mcp` - the agent toolchain |
 
 ## Examples
 

@@ -5,7 +5,7 @@ export function Counter(props: { message: string }) {
   const [count, setCount] = useState(0)
   return (
     <div className={styles.box}>
-      <h1 id="page">nifra CLI — zero-config</h1>
+      <h1 id="page">nifra CLI - zero-config</h1>
       <p id="ssr">{props.message}</p>
       <p id="count" className={styles.live}>
         count: {count}

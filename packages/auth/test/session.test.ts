@@ -36,7 +36,7 @@ test("a short secret is rejected", () => {
   expect(() => createSessions({ secret: "tooshort" })).toThrow(/at least 32 bytes/)
 })
 
-describe("session — store mode", () => {
+describe("session - store mode", () => {
   const make = (now: () => number = () => 1000): SessionManager<Data> =>
     createSessions<Data>({ secret: SECRET, store: new MemorySessionStore(), now, maxAge: 3600 })
 
@@ -52,7 +52,7 @@ describe("session — store mode", () => {
     const sessions = make()
     const a = ctx()
     const session = await sessions.get(a.context)
-    // A distinctive sentinel — if store mode leaked data into the cookie, this 25-char string would
+    // A distinctive sentinel - if store mode leaked data into the cookie, this 25-char string would
     // appear; it can't collide with a random base64url session id.
     session.set("userId", "SENTINEL-DATA-NOT-IN-COOKIE")
     session.set("role", "admin")
@@ -60,7 +60,7 @@ describe("session — store mode", () => {
     expect(a.setCalls).toHaveLength(1)
     expect(a.setCalls[0]?.name).toBe("nifra_session")
 
-    // The cookie value is a signed opaque id (not the data) — store mode keeps data server-side.
+    // The cookie value is a signed opaque id (not the data) - store mode keeps data server-side.
     expect(a.setCalls[0]?.value).not.toContain("SENTINEL-DATA-NOT-IN-COOKIE")
 
     // Round-trip: a new request carrying that cookie loads the same data.
@@ -181,7 +181,7 @@ const sessions2Commit = (
   s: Awaited<ReturnType<SessionManager<Data>["get"]>>,
 ) => m.commit(ctx().context, s)
 
-describe("session — cookie mode (stateless)", () => {
+describe("session - cookie mode (stateless)", () => {
   const make = (now: () => number = () => 1000): SessionManager<Data> =>
     createSessions<Data>({ secret: SECRET, now, maxAge: 3600 })
 
@@ -220,7 +220,7 @@ describe("session — cookie mode (stateless)", () => {
   })
 })
 
-describe("session — expiry modes + cookie options", () => {
+describe("session - expiry modes + cookie options", () => {
   test("rolling (default) slides expiry; absolute keeps the original", async () => {
     // Rolling: maxAge cookie refreshes each commit.
     let t = 0

@@ -1,4 +1,4 @@
-// Build the client bundle with Bun.build. React's JSX is Bun-native — no plugin needed.
+// Build the client bundle with Bun.build. React's JSX is Bun-native - no plugin needed.
 // `process.env.NODE_ENV` is defined so React's browser build doesn't reference `process`.
 const result = await Bun.build({
   entrypoints: [`${import.meta.dir}/client.ts`],

@@ -1,5 +1,5 @@
 /**
- * W3C Trace Context — `traceparent` parsing/formatting + id generation. This is OpenTelemetry's
+ * W3C Trace Context - `traceparent` parsing/formatting + id generation. This is OpenTelemetry's
  * wire format for propagating a trace across services, so producing/forwarding it correctly is the
  * core of distributed tracing regardless of which backend ends up collecting the spans.
  *
@@ -20,7 +20,7 @@ const ZERO_TRACE = "00000000000000000000000000000000"
 const ZERO_SPAN = "0000000000000000"
 
 /**
- * Parse a `traceparent` header, or `null` if it's absent/malformed/version-unknown — per the spec,
+ * Parse a `traceparent` header, or `null` if it's absent/malformed/version-unknown - per the spec,
  * a bad header means "start a fresh trace", never an error. Only version `00` is accepted.
  */
 export function parseTraceparent(header: string | null | undefined): ParsedTraceparent | null {

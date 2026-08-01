@@ -1,11 +1,11 @@
 /**
- * Tail latency under a MIXED workload — the gap uniform single-route benches hide.
+ * Tail latency under a MIXED workload - the gap uniform single-route benches hide.
  *
  *   bun run bench:p99            (env: DURATION_S=10 CONCURRENCY=32)
  *
  * Four route shapes round-robin per connection (bare GET, param GET, validated query GET,
  * validated JSON POST) against a real spawned server process; every request's latency is recorded
- * and the distribution reported. Honesty: the load client is this same machine and Bun's `fetch` —
+ * and the distribution reported. Honesty: the load client is this same machine and Bun's `fetch` -
  * client overhead is in the numbers, so read them as same-machine ratios and tail SHAPE, not as
  * wire-true absolutes.
  */
@@ -42,7 +42,7 @@ async function worker(seed: number): Promise<void> {
     const start = Bun.nanoseconds()
     try {
       const res = await shot()
-      await res.arrayBuffer() // drain — a benched request isn't done until its body is
+      await res.arrayBuffer() // drain - a benched request isn't done until its body is
       if (!res.ok) errors++
     } catch {
       errors++
@@ -60,7 +60,7 @@ const pct = (p: number): string => {
   return `${(v as number).toFixed(2)} ms`
 }
 const total = latencies.length
-console.log(`\nMixed workload — 4 route shapes, ${CONCURRENCY} conns, ${DURATION_S}s, same machine`)
+console.log(`\nMixed workload - 4 route shapes, ${CONCURRENCY} conns, ${DURATION_S}s, same machine`)
 console.log(
   `  requests   ${total.toLocaleString()}  (${Math.round(total / DURATION_S).toLocaleString()} req/s incl. client overhead)`,
 )

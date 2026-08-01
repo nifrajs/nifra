@@ -1,16 +1,16 @@
 import { CodeBlock } from "../../highlight"
 import { pageMeta } from "../../meta"
 
-// Pure content page — no React interactivity (TOC/copy/search are the layout enhancer +
+// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
 // the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
 export const hydrate = false
 
 export const meta = pageMeta(
-  "Nifra — CLI",
+  "Nifra - CLI",
   "The zero-config Nifra CLI (`nifra dev`, `nifra build`, `nifra start`): true HMR and complete target-specific deploy builds.",
 )
 
-const COMMANDS = `nifra dev      # true-HMR dev server (Vite middleware + nifra SSR) — http://localhost:4321
+const COMMANDS = `nifra dev      # true-HMR dev server (Vite middleware + nifra SSR) - http://localhost:4321
 nifra build    # full Bun deploy → dist/server.js + content-hashed dist/assets/ (default target: bun)
 nifra start    # run dist/server.js on Bun
 nifra build --target cf-pages  # also: node | deno | vercel | static; add --report for chunk sizes
@@ -18,13 +18,13 @@ nifra build --target cf-pages  # also: node | deno | vercel | static; add --repo
 # dev + start share the default port 4321. Override per run: --port <n> (alias -p) or the PORT env var.
 # flags: --port <n> (dev/start) · --out <dir> (build/start) · --target <t> (build) · --poll (dev)`
 
-const FRAMEWORK = `// framework.ts — deploy-safe; generated server entries import this file.
+const FRAMEWORK = `// framework.ts - deploy-safe; generated server entries import this file.
 import { reactAdapter } from "@nifrajs/web-react"
 
 export const adapter = reactAdapter
 
-// nifra.config.ts — CLI-only build/dev tooling; never imported by a deployed server.
-// doc-check: skip — needs the third-party @vitejs/plugin-react; install it to run this.
+// nifra.config.ts - CLI-only build/dev tooling; never imported by a deployed server.
+// doc-check: skip - needs the third-party @vitejs/plugin-react; install it to run this.
 import react from "@vitejs/plugin-react"
 export { adapter } from "./framework"
 export const clientModule = "@nifrajs/web-react/client"
@@ -39,7 +39,7 @@ const STRUCTURE = `my-app/
   routes/            # file-based routes (index.tsx, _layout.tsx, [id].tsx, …)
   framework.ts       # deploy-safe render adapter
   nifra.config.ts    # CLI-only client module + dev/build plugins
-  backend.ts         # export const backend = server()...   (optional — the typed contract)`
+  backend.ts         # export const backend = server()...   (optional - the typed contract)`
 
 export default function Cli() {
   return (
@@ -48,7 +48,7 @@ export default function Cli() {
       <p className="lead">
         <code>Nifra</code> is zero-config: it reads <code>routes/</code>, <code>framework.ts</code>, and
         (optionally) <code>backend.ts</code> from your project and wires the right{" "}
-        <code>@nifrajs/web</code> entrypoint — no <code>dev.ts</code>/<code>build.ts</code>/
+        <code>@nifrajs/web</code> entrypoint - no <code>dev.ts</code>/<code>build.ts</code>/
         <code>server.ts</code> to hand-write. (`create-nifra` scaffolds the conventions.)
       </p>
       <CodeBlock code={COMMANDS} />
@@ -63,7 +63,7 @@ export default function Cli() {
       </p>
       <CodeBlock code={STRUCTURE} />
 
-      <h2>framework.ts — naming the framework once</h2>
+      <h2>framework.ts - naming the framework once</h2>
       <p>
         Keep the render <code>adapter</code> in deploy-safe <code>framework.ts</code>. Put{" "}
         <code>clientModule</code>, Vite plugins, compiler plugins, conditions, and defines in CLI-only{" "}

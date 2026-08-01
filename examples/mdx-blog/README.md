@@ -1,12 +1,12 @@
 # mdx-blog (Solid)
 
-A nifra blog that combines **content collections**, an **MDX route**, and the **`<Content>`** helper —
+A nifra blog that combines **content collections**, an **MDX route**, and the **`<Content>`** helper -
 on Solid (a compile-time framework, the trickiest MDX target).
 
 - `content/posts/*.md` → a typed, schema-validated collection (`lib/content.ts`).
-- `routes/index.tsx` — lists posts from `posts.all()` in a loader (server-only via dynamic `import()`).
-- `routes/blog/[slug].tsx` — loads one post and renders its HTML with `<Content html={post.html} />`.
-- `routes/about.mdx` — a page authored in MDX, compiled to a Solid component by `solidMdxBunPlugin`.
+- `routes/index.tsx` - lists posts from `posts.all()` in a loader (server-only via dynamic `import()`).
+- `routes/blog/[slug].tsx` - loads one post and renders its HTML with `<Content html={post.html} />`.
+- `routes/about.mdx` - a page authored in MDX, compiled to a Solid component by `solidMdxBunPlugin`.
 
 ```sh
 bun run examples/mdx-blog/build.ts

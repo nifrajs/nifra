@@ -1,8 +1,8 @@
 /**
- * routing-preact — the SAME app shape as routing-react/routing-solid on Preact, exercising the
+ * routing-preact - the SAME app shape as routing-react/routing-solid on Preact, exercising the
  * @nifrajs/web-preact bindings (useFetcher, useQuery/useQueryClient, <Await>) through the real
  * createWebApp + buildClient pipeline. Proves the bindings work in the production flow (SSR data,
- * client nav, deferred streaming) — not just in isolation.
+ * client nav, deferred streaming) - not just in isolation.
  *
  *   bun run examples/routing-preact/build.ts
  *   bun examples/routing-preact/server.ts        # Preact JSX is Bun-native via the per-file pragma
@@ -16,7 +16,7 @@ import { backend } from "./backend"
 
 const routesDir = `${import.meta.dir}/routes`
 const dist = `${import.meta.dir}/dist`
-// Trusted own build output (written by buildClient) — cast after parse.
+// Trusted own build output (written by buildClient) - cast after parse.
 const assets = JSON.parse(
   await Bun.file(`${dist}/manifest.json`)
     .text()
@@ -49,7 +49,7 @@ app.get("/assets/*", async (c) => {
   })
 })
 
-// Only listen when run directly — when imported (by build.ts for prerendering), we just want `app`.
+// Only listen when run directly - when imported (by build.ts for prerendering), we just want `app`.
 if (import.meta.main) {
   const running = app.listen(Number(Bun.env.PORT ?? 3000))
   console.log(`http://localhost:${running.port}`)

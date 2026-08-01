@@ -12,6 +12,6 @@ const app = createWebApp({
   title: "nifra site",
 })
 
-// Vercel Edge Function — Vercel serves /assets/* from its CDN, so this only SSRs page routes.
+// Vercel Edge Function - Vercel serves /assets/* from its CDN, so this only SSRs page routes.
 export const config = { runtime: "edge" }
 export default (req: Request): Response | Promise<Response> => app.fetch(req)

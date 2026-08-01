@@ -3,7 +3,7 @@ import { validateStandard } from "@nifrajs/core/schema"
 import { t } from "../src/index.ts"
 
 /**
- * Runtime contract for `t`. `validateStandard` is `@nifrajs/core`'s own normalizer —
+ * Runtime contract for `t`. `validateStandard` is `@nifrajs/core`'s own normalizer -
  * using it here also proves the adapter is spec-compliant from the framework's
  * vantage point, not just structurally.
  */
@@ -54,8 +54,8 @@ describe("composites", () => {
   test("object rejects unknown fields by default; looseObject / opt-out accept them", async () => {
     // Strict by default: an extra key fails validation (no mass-assignment via c.body).
     expect((await validateStandard(user, { name: "Ada", age: 36, admin: true })).ok).toBe(false)
-    // t.looseObject accepts + passes through the extra key. (Its Static type is still `{ name }` —
-    // TypeBox widens the runtime, not the type — so read the passthrough via a Record cast.)
+    // t.looseObject accepts + passes through the extra key. (Its Static type is still `{ name }` -
+    // TypeBox widens the runtime, not the type - so read the passthrough via a Record cast.)
     const loose = t.looseObject({ name: t.string() })
     const r = await validateStandard(loose, { name: "Ada", admin: true })
     expect(r.ok).toBe(true)
@@ -101,7 +101,7 @@ describe("composites", () => {
 })
 
 describe("jsonSchema (the OpenAPI substrate)", () => {
-  test("a t schema serializes to clean JSON Schema — no Symbol metadata leaks", () => {
+  test("a t schema serializes to clean JSON Schema - no Symbol metadata leaks", () => {
     const schema = t.object({ name: t.string(), age: t.integer() })
     const json = JSON.parse(JSON.stringify(schema.jsonSchema))
     expect(json).toEqual({

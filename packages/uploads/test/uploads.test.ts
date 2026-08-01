@@ -19,7 +19,7 @@ const isobmff = (brand: string): Uint8Array =>
   bytesOf(0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, ...[...brand].map((c) => c.charCodeAt(0)))
 
 describe("detectFileType", () => {
-  // One row per branch in detect.ts — every magic-byte path is exercised.
+  // One row per branch in detect.ts - every magic-byte path is exercised.
   const cases: ReadonlyArray<readonly [string, Uint8Array, string, string]> = [
     ["jpeg", JPEG, "image/jpeg", "jpg"],
     ["png", PNG, "image/png", "png"],

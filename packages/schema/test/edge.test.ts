@@ -7,9 +7,9 @@ import { t } from "../src/index.ts"
  * unavailable the adapter falls back to TypeBox's eval-free `Value` checker.
  *
  * We simulate the restriction by replacing the global `Function` constructor so `new Function`
- * throws — exactly what those runtimes do. Under the stub the compiled path is *impossible*, so a
+ * throws - exactly what those runtimes do. Under the stub the compiled path is *impossible*, so a
  * validate that still returns the right answer can only have used the eval-free fallback. (On the
- * old code `TypeCompiler.Compile` threw uncaught here — this is the regression guard.)
+ * old code `TypeCompiler.Compile` threw uncaught here - this is the regression guard.)
  *
  * All `expect()` calls run AFTER the real `Function` is restored, so the test runner's own
  * machinery never executes under the stub.
@@ -42,7 +42,7 @@ function isIssues(
   return typeof r === "object" && r !== null && "issues" in r
 }
 
-describe("edge runtime — no dynamic codegen", () => {
+describe("edge runtime - no dynamic codegen", () => {
   test("validates a valid value without new Function (eval-free fallback)", () => {
     const { blocked, result } = whileCodegenBlocked(() => {
       // Fresh, uncompiled schema created inside the blocked window.

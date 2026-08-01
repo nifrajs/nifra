@@ -61,7 +61,7 @@ describe("graceful shutdown", () => {
     expect(process.listenerCount("SIGTERM")).toBe(beforeTerm + 1)
     expect(process.listenerCount("SIGINT")).toBe(beforeInt + 1)
 
-    // Invoke only the handler(s) we added — avoids process.emit touching other listeners.
+    // Invoke only the handler(s) we added - avoids process.emit touching other listeners.
     const added = process.listeners("SIGTERM").slice(beforeTerm) as Array<(...a: unknown[]) => void>
     for (const handler of added) handler()
     await Bun.sleep(80)
@@ -233,7 +233,7 @@ describe("fast JSON respond path parity", () => {
 })
 
 describe("fused web lane parity (bare routes)", () => {
-  // The fused lane only runs on fetch(); resolveNode keeps the generic path — drive BOTH and
+  // The fused lane only runs on fetch(); resolveNode keeps the generic path - drive BOTH and
   // assert equal output so the lanes can never drift.
   test("fetch (fused) and resolveNode (generic) agree on body/status", async () => {
     const make = () =>

@@ -71,7 +71,7 @@ describe("parseArgs", () => {
   })
 })
 
-describe("scaffold — templates", () => {
+describe("scaffold - templates", () => {
   test("api (default) copies the template, restores .gitignore, sets package name", async () => {
     const dir = await freshDir("my-api")
     const res = await scaffold({ target: dir })
@@ -107,7 +107,7 @@ describe("scaffold — templates", () => {
     const api = await freshDir("my-api")
     await scaffold({ target: api })
     const apiMd = await readFile(join(api, "AGENTS.md"), "utf8")
-    expect(apiMd).toContain("# AGENTS.md — my-api")
+    expect(apiMd).toContain("# AGENTS.md - my-api")
     expect(apiMd).toContain("server()") // backend rules
     expect(apiMd).toContain("Validate every input at the boundary")
     expect(apiMd).toContain("never throws") // the typed client
@@ -120,14 +120,14 @@ describe("scaffold — templates", () => {
     const site = await freshDir("my-site")
     await scaffold({ target: site, template: "site", framework: "vue" })
     const siteMd = await readFile(join(site, "AGENTS.md"), "utf8")
-    expect(siteMd).toContain("# AGENTS.md — my-site")
+    expect(siteMd).toContain("# AGENTS.md - my-site")
     expect(siteMd).toContain("never import server-only code at a route's top level")
     expect(siteMd).toContain("Vue")
     expect(siteMd).toContain("@nifrajs/web-vue")
   })
 })
 
-describe("scaffold — agent-discovery files (MCP auto-discovery)", () => {
+describe("scaffold - agent-discovery files (MCP auto-discovery)", () => {
   test("writes .mcp.json registering the nifra MCP with the bin-owning package", async () => {
     const dir = await freshDir("mcp-app")
     await scaffold({ target: dir })
@@ -138,7 +138,7 @@ describe("scaffold — agent-discovery files (MCP auto-discovery)", () => {
     // Claude Code's exact shape: { mcpServers: { <name>: { command, args } } }.
     expect(cfg.mcpServers.nifra).toBeDefined()
     expect(cfg.mcpServers.nifra?.command).toBe("bunx")
-    // `@nifrajs/cli` (not the bare `nifra` pkg) — it's the package that provides the `nifra` bin, so it
+    // `@nifrajs/cli` (not the bare `nifra` pkg) - it's the package that provides the `nifra` bin, so it
     // resolves across api/isr templates that don't carry @nifrajs/cli as a dep. Pinned to an exact
     // version so a stale `bunx` cache can't shadow it (the version is part of bunx's cache key).
     const args = cfg.mcpServers.nifra?.args
@@ -153,7 +153,7 @@ describe("scaffold — agent-discovery files (MCP auto-discovery)", () => {
       readFile(join(dir, ".mcp.json"), "utf8"),
       readFile(join(dir, ".cursor/mcp.json"), "utf8"),
     ])
-    // Both registries serialize the one canonical config — byte-identical, so they can't drift.
+    // Both registries serialize the one canonical config - byte-identical, so they can't drift.
     expect(cursor).toBe(root)
   })
 
@@ -164,7 +164,7 @@ describe("scaffold — agent-discovery files (MCP auto-discovery)", () => {
     expect(md).toContain("nifra MCP server")
     expect(md).toContain("nifra_docs")
     expect(md).toContain("nifra_check") // the done-gate
-    // The `@AGENTS.md` import directive must be on its own line for Claude Code to resolve it — that's
+    // The `@AGENTS.md` import directive must be on its own line for Claude Code to resolve it - that's
     // how the full cookbook stays in AGENTS.md alone (no drift between the two files).
     expect(md.split("\n")).toContain("@AGENTS.md")
   })
@@ -179,7 +179,7 @@ describe("scaffold — agent-discovery files (MCP auto-discovery)", () => {
   })
 })
 
-describe("scaffold — --deploy preset", () => {
+describe("scaffold - --deploy preset", () => {
   test("vercel repoints build/deploy; per-target scripts stay", async () => {
     const dir = await freshDir("vc-app")
     const res = await scaffold({ target: dir, template: "site", deploy: "vercel" })
@@ -214,7 +214,7 @@ describe("scaffold — --deploy preset", () => {
   })
 })
 
-describe("scaffold — rejections", () => {
+describe("scaffold - rejections", () => {
   test("unknown template", async () => {
     const dir = await freshDir("x")
     await expect(scaffold({ target: dir, template: "nope" as "api" })).rejects.toThrow(
@@ -287,7 +287,7 @@ describe("CLI binary (subprocess)", () => {
   })
 })
 
-describe("scaffold — --framework", () => {
+describe("scaffold - --framework", () => {
   test("react (default) → template-site; vue → template-site-vue", async () => {
     const r = await freshDir("fw-react")
     await scaffold({ target: r, template: "site", framework: "react" })
@@ -484,7 +484,7 @@ describe("CI workflows (--ci github)", () => {
   })
 })
 
-describe("scaffold — --db (Drizzle presets)", () => {
+describe("scaffold - --db (Drizzle presets)", () => {
   test("parseArgs reads --db", () => {
     expect(parseArgs(["my-app", "--db", "drizzle-sqlite"])).toEqual({
       target: "my-app",
@@ -560,7 +560,7 @@ describe("scaffold — --db (Drizzle presets)", () => {
   })
 })
 
-describe("scaffold — --db (Prisma + Kysely presets)", () => {
+describe("scaffold - --db (Prisma + Kysely presets)", () => {
   test("prisma-postgres wires schema.prisma (postgresql), a singleton client, scripts, and AGENTS", async () => {
     const dir = await freshDir("my-prisma-pg")
     const res = await scaffold({ target: dir, db: "prisma-postgres" })
@@ -623,7 +623,7 @@ describe("scaffold — --db (Prisma + Kysely presets)", () => {
   })
 })
 
-describe("scaffold — --auth (better-auth, composes with --db)", () => {
+describe("scaffold - --auth (better-auth, composes with --db)", () => {
   test("parseArgs reads --auth", () => {
     expect(parseArgs(["my-app", "--db", "drizzle-libsql", "--auth", "better-auth"])).toEqual({
       target: "my-app",
@@ -694,7 +694,7 @@ describe("scaffold — --auth (better-auth, composes with --db)", () => {
   })
 })
 
-describe("run — db/auth next steps + --link dependency rewriting", () => {
+describe("run - db/auth next steps + --link dependency rewriting", () => {
   test("db + auth scaffold surfaces the migration workflow in order", async () => {
     const { code, message } = await run([
       await freshDir("with-auth"),
@@ -712,7 +712,7 @@ describe("run — db/auth next steps + --link dependency rewriting", () => {
   })
 
   test("--link rewrites @nifrajs/* deps that exist in the linked repo to file: paths", async () => {
-    // A fake nifra monorepo exposing only @nifrajs/core — other deps must stay on the registry.
+    // A fake nifra monorepo exposing only @nifrajs/core - other deps must stay on the registry.
     const linkRoot = await mkdtemp(join(tmpdir(), "nifra-link-"))
     roots.push(linkRoot)
     await mkdir(join(linkRoot, "packages/core"), { recursive: true })

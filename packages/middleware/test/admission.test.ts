@@ -12,7 +12,7 @@ function controller(options: Partial<AdmissionOptions> & { maxInFlight: number }
   return createAdmissionController(options)
 }
 
-describe("createAdmissionController — mechanics", () => {
+describe("createAdmissionController - mechanics", () => {
   test("fast path admits under limit without touching the slow path", async () => {
     const c = controller({ maxInFlight: 4 })
     const a1 = await c.admit(req())
@@ -233,7 +233,7 @@ describe("createAdmissionController — mechanics", () => {
   })
 })
 
-describe("server({ admission }) — request-path integration", () => {
+describe("server({ admission }) - request-path integration", () => {
   test("admits under capacity and serves the route (native matching intact)", async () => {
     const app = server({ admission: controller({ maxInFlight: 4 }) }).get("/hi", () => "ok")
     const res = await app.fetch(req("/hi"))

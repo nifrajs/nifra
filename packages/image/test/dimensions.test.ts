@@ -52,7 +52,7 @@ describe("imageDimensions", () => {
     expect(imageDimensions(withApp0)).toEqual({ width: 240, height: 120, format: "jpeg" })
   })
 
-  test("WebP — VP8 (lossy), VP8L (lossless), VP8X (extended)", () => {
+  test("WebP - VP8 (lossy), VP8L (lossless), VP8X (extended)", () => {
     const vp8 = new Uint8Array(20)
     new DataView(vp8.buffer).setUint16(10, 320, true) // width @26 (16 into the body at +16)
     new DataView(vp8.buffer).setUint16(12, 200, true) // height @28

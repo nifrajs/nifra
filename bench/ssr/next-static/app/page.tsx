@@ -1,4 +1,4 @@
-// Build-time static catalog — the same 50 items as the dynamic SSR bench. Next pre-renders this at
+// Build-time static catalog - the same 50 items as the dynamic SSR bench. Next pre-renders this at
 // `next build`; steady-state requests serve the cached HTML (Next's best-case path for fixed content).
 const ITEMS = Array.from({ length: 50 }, (_, i) => ({
   id: i + 1,

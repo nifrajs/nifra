@@ -6,8 +6,8 @@
  *   const app = server().get("/", () => ({ ok: true }))
  *   await serve(app, { port: 3000 })
  *
- * `Deno.serve`'s handler already receives a Web `Request` and returns a `Response`, so —
- * unlike `@nifrajs/node` — there's no stream bridge: the app's `fetch` *is* the handler.
+ * `Deno.serve`'s handler already receives a Web `Request` and returns a `Response`, so -
+ * unlike `@nifrajs/node` - there's no stream bridge: the app's `fetch` *is* the handler.
  * This adapter adds a Bun-`listen()`-style graceful `stop()` (Deno's `shutdown()` drains
  * in-flight requests) and opt-in signal handling. The app-level request timeout and body
  * cap ride along inside `app.fetch`, so they apply here with no extra wiring.
@@ -38,14 +38,14 @@ interface NifraWsHandler {
   error?(ws: NifraWs, error: unknown): void | Promise<void>
 }
 
-/** Mirror of core's `TopicRegistry` surface — the app's pub/sub the adapter wires `ws.subscribe` to. */
+/** Mirror of core's `TopicRegistry` surface - the app's pub/sub the adapter wires `ws.subscribe` to. */
 interface WsPubSub {
   subscribe(topic: string, ws: NifraWs): void
   unsubscribe(topic: string, ws: NifraWs): void
   unsubscribeAll(ws: NifraWs): void
 }
 
-/** Mirror of core's `WebSocketUpgradeOutcome` — what `resolveWebSocketUpgrade` returns. */
+/** Mirror of core's `WebSocketUpgradeOutcome` - what `resolveWebSocketUpgrade` returns. */
 type WsUpgradeOutcome =
   | { readonly kind: "pass" }
   | { readonly kind: "reject"; readonly response: Response }
@@ -56,7 +56,7 @@ type WsUpgradeOutcome =
       readonly pubsub: WsPubSub
     }
 
-/** Anything exposing a Web `fetch` handler — a nifra `app`, for instance. */
+/** Anything exposing a Web `fetch` handler - a nifra `app`, for instance. */
 export interface FetchHandler {
   fetch(request: Request, platform?: { readonly clientIp?: string }): Response | Promise<Response>
   /** A nifra app also exposes this WS-upgrade seam; present → this adapter serves `app.ws()` routes
@@ -69,7 +69,7 @@ export interface ServeOptions {
   readonly hostname?: string
   /**
    * Install SIGTERM/SIGINT handlers that call `stop()` for a graceful drain on
-   * `docker stop` / Ctrl-C. Off by default — taking over process signals is opt-in,
+   * `docker stop` / Ctrl-C. Off by default - taking over process signals is opt-in,
    * mirroring nifra's Bun `listen({ gracefulSignals })`.
    */
   readonly signals?: boolean
@@ -92,7 +92,7 @@ const DEFAULT_DRAIN_MS = 10_000
  * (matters for `port: 0`).
  */
 export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoServer> {
-  // Aborting this signal force-closes the server — used when the drain deadline elapses.
+  // Aborting this signal force-closes the server - used when the drain deadline elapses.
   const controller = new AbortController()
   let closed = false
 
@@ -110,7 +110,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
       // Gate on the `Upgrade: websocket` header first: a nifra app ALWAYS exposes
       // resolveWebSocketUpgrade, so without this, every plain HTTP request would pay for the full
       // upgrade resolution. Every real WS handshake carries this header (Deno.upgradeWebSocket
-      // requires it), and a non-upgrade request resolves to "pass" → HTTP anyway — so this only
+      // requires it), and a non-upgrade request resolves to "pass" → HTTP anyway - so this only
       // skips wasted work on the hot path, with no behavior change.
       if (
         app.resolveWebSocketUpgrade !== undefined &&
@@ -228,7 +228,7 @@ function attachDenoWebSocket(
       const r = handler.error(ws, error)
       if (r instanceof Promise) r.catch(() => {})
     } catch {
-      /* the error handler itself failed — last resort, swallow */
+      /* the error handler itself failed - last resort, swallow */
     }
   }
   const safe = (call: () => void | Promise<void>): void => {

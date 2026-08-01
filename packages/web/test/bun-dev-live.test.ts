@@ -5,7 +5,7 @@ import { devHtml, injectStyles, styleTags, writeDevFiles } from "../src/dev.ts"
 
 // THE drift detector. The sibling test file pins a CAPTURED page, which by construction keeps passing
 // after Bun changes its output. This one runs a real `Bun.serve` dev server and asserts the PRECISE
-// signal still fires — so a Bun upgrade that renames or drops `data-bun-dev-server-script` fails here,
+// signal still fires - so a Bun upgrade that renames or drops `data-bun-dev-server-script` fails here,
 // loudly, instead of silently demoting the adapter to its fallback (or to nothing).
 
 const dir = `${import.meta.dir}/.tmp-bun-dev-live`
@@ -32,7 +32,7 @@ test("Bun's dev server still marks its bundled entry the way the adapter expects
     const match = parseDevEntry(page)
     expect(match).toBeDefined()
     // `via: "marker"` is the assertion that matters. Falling back to "single-bun-script" would still
-    // work today but means the precise signal is gone — that is exactly the drift worth failing on.
+    // work today but means the precise signal is gone - that is exactly the drift worth failing on.
     expect(match?.via).toBe("marker")
     expect(match?.src).toStartWith("/_bun/")
     // And the CSS import must still surface as a stylesheet link, or every dev page renders unstyled.
@@ -71,7 +71,7 @@ test("injectStyles puts the links inside <head>, before first paint", () => {
   const html = "<!doctype html><html><head><title>x</title></head><body>hi</body></html>"
   const out = injectStyles(html, ["/_bun/asset/a.css"])
   expect(out).toContain('<link rel="stylesheet" href="/_bun/asset/a.css"></head>')
-  // A stylesheet appended after </body> still applies, but only AFTER first paint — the page flashes
+  // A stylesheet appended after </body> still applies, but only AFTER first paint - the page flashes
   // unstyled and dev stops resembling production.
   expect(out.indexOf("a.css")).toBeLessThan(out.indexOf("<body>"))
 })

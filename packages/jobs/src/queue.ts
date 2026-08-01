@@ -1,5 +1,5 @@
 /**
- * The queue — typed `define`/`enqueue` over a {@link JobStore}, plus an in-process worker that leases due
+ * The queue - typed `define`/`enqueue` over a {@link JobStore}, plus an in-process worker that leases due
  * jobs and runs them with bounded concurrency. Mirrors `@nifrajs/cron`'s shape: a factory, an injectable
  * clock for deterministic tests, error isolation (a throw never tears down the loop), and a graceful
  * `stop()` that drains the in-flight round.
@@ -18,7 +18,7 @@
  *   // on shutdown: await worker.stop()
  *
  * For Cloudflare Workers (no long-lived process) drive a durable store from a CF Queues consumer instead
- * of `start()` — `await q.process()` inside the `queue()` handler. See the README.
+ * of `start()` - `await q.process()` inside the `queue()` handler. See the README.
  */
 import { exponentialBackoff } from "./backoff.ts"
 import { MemoryJobStore } from "./memory-store.ts"
@@ -113,7 +113,7 @@ export interface Queue {
 interface Def {
   readonly handler: JobHandler<unknown>
   // Explicit `| undefined` (not `?`) so the object literal can carry an absent schema under
-  // exactOptionalPropertyTypes — the value is genuinely "schema or none", not a maybe-present key.
+  // exactOptionalPropertyTypes - the value is genuinely "schema or none", not a maybe-present key.
   readonly input: StandardSchemaV1 | undefined
   readonly attempts: number
   readonly backoff: Backoff
@@ -216,7 +216,7 @@ export function createQueue(options: QueueOptions = {}): Queue {
   ): Promise<string> {
     const def = defs.get(name)
     if (def === undefined)
-      throw new JobError(`unknown job ${JSON.stringify(name)} — define it first`)
+      throw new JobError(`unknown job ${JSON.stringify(name)} - define it first`)
     const value = await validate(name, def.input, payload)
     const runAt = opts.runAt ?? now() + Math.max(0, opts.delayMs ?? 0)
     return await store.enqueue({ name, payload: value, runAt, maxAttempts: def.attempts })

@@ -307,7 +307,7 @@ export function parseCapabilityLockfile(content: string, sourcePath: string): Ca
     !Array.isArray(candidate.routes)
   ) {
     throw new Error(
-      `[nifra] ${sourcePath} is not a nifra capability lockfile — expected { "nifraCapabilities": 1, "routes": [...] }`,
+      `[nifra] ${sourcePath} is not a nifra capability lockfile - expected { "nifraCapabilities": 1, "routes": [...] }`,
     )
   }
   for (const route of candidate.routes) {
@@ -460,11 +460,11 @@ export async function runCapabilityCheck(
     for (const finding of project.report.findings) console.log(`✖ ${finding.message}`)
     for (const violation of project.violations)
       console.log(
-        `✖ ${violation.method} ${violation.path}: ${violation.chain.join(" → ")} — ${violation.reason}`,
+        `✖ ${violation.method} ${violation.path}: ${violation.chain.join(" → ")} - ${violation.reason}`,
       )
     for (const truncation of project.truncations)
       console.log(
-        `✖ ${truncation.method} ${truncation.path}: ${truncation.chain.join(" → ")} — ${truncation.reason}`,
+        `✖ ${truncation.method} ${truncation.path}: ${truncation.chain.join(" → ")} - ${truncation.reason}`,
       )
     for (const change of changes) console.log(`✖ capability lock drift: ${change}`)
   }

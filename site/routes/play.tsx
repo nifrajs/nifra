@@ -6,11 +6,11 @@ import {
 import { pageMeta } from "../meta"
 
 export const meta = pageMeta(
-  "Nifra — Playground",
-  "Run a real Nifra server() app in your browser — define routes, validate with t, fire requests through app.fetch, see the responses. No backend; the same @nifrajs/core that runs on the server.",
+  "Nifra - Playground",
+  "Run a real Nifra server() app in your browser - define routes, validate with t, fire requests through app.fetch, see the responses. No backend; the same @nifrajs/core that runs on the server.",
 )
 
-// Static page (no React client entry) — the interactive logic ships as a vanilla-JS island that
+// Static page (no React client entry) - the interactive logic ships as a vanilla-JS island that
 // bundles @nifrajs/core + schema + runner and runs the user's app via app.fetch, entirely client-side.
 // `hydrate: false` keeps React from re-rendering (and resetting) the DOM the island owns.
 export const hydrate = false
@@ -33,7 +33,7 @@ export default function Play() {
         <span className="kicker">Playground</span>
         <h1 className="page">Run a real Nifra app, in your browser.</h1>
         <p className="lead">
-          This runs the <b>actual</b> <code>@nifrajs/core</code> — no backend. Define an app with{" "}
+          This runs the <b>actual</b> <code>@nifrajs/core</code> - no backend. Define an app with{" "}
           <code>server()</code> (and validate with <code>t</code>), fire requests through{" "}
           <code>app.fetch</code>, and see the structured responses. It's the same engine coding
           agents run through <code>nifra mcp</code>.
@@ -75,7 +75,7 @@ export default function Play() {
         </section>
 
         <div className="play-main">
-          {/* Sticky controls — presets + Run stay reachable above the editors. */}
+          {/* Sticky controls - presets + Run stay reachable above the editors. */}
           <div className="play-controls">
             <div className="play-presets">
               <span className="play-presets-label">Examples</span>
@@ -112,7 +112,7 @@ export default function Play() {
               <div className="play-pane-head">
                 <Dots />
                 <span className="play-window-title">app.ts</span>
-                <span className="play-pane-hint">server &amp; t in scope — return the app</span>
+                <span className="play-pane-hint">server &amp; t in scope - return the app</span>
                 <span className="play-lang-badge">TS</span>
               </div>
               <textarea

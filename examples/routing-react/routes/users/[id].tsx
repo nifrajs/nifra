@@ -10,13 +10,13 @@ export const getStaticPaths: GetStaticPaths = async () => ({
   paths: [{ params: { id: "1" } }, { params: { id: "2" } }, { params: { id: "7" } }],
 })
 
-// Same typed loader as the Solid example — only the component differs (agnostic data layer).
+// Same typed loader as the Solid example - only the component differs (agnostic data layer).
 export async function loader({ api, params }: LoaderArgs<typeof backend>) {
   const res = await api.users({ id: params.id ?? "" }).get()
   return { user: res.data }
 }
 
-// Dynamic head — a function of the loader data. Updates the title on client navigation.
+// Dynamic head - a function of the loader data. Updates the title on client navigation.
 export function meta({ data }: MetaArgs<LoaderData<typeof loader>>) {
   return { title: data.user ? `User #${data.user.id}` : "User" }
 }

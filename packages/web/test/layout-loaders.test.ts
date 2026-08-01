@@ -70,7 +70,7 @@ test("a layout loader runs and its data lands at its own index", async () => {
 })
 
 test("a layout receives only the params it owns", async () => {
-  // A layout at `orgs/[org]/` must not see `id` — that belongs to a route beneath it, and reading it
+  // A layout at `orgs/[org]/` must not see `id` - that belongs to a route beneath it, and reading it
   // works right up until the layout is reused under a route that has no such param.
   const seen: Record<string, unknown> = {}
   const app = appWith(
@@ -106,7 +106,7 @@ test("a layout without a loader contributes null, keeping the array aligned", as
     ["_layout", "orgs/[org]/_layout"],
     [[], ["org"]],
   )
-  // Index 0 is null, NOT dropped — misalignment would render one layout's data inside another.
+  // Index 0 is null, NOT dropped - misalignment would render one layout's data inside another.
   expect(await body(app)).toContain('L=[null,{"from":"org"}]')
 })
 
@@ -145,7 +145,7 @@ test("without `gate`, the page loader runs in parallel with the layout loader", 
     },
   )
   await body(app)
-  // The page ran while the layout was still suspended — the parallel default, stated plainly.
+  // The page ran while the layout was still suspended - the parallel default, stated plainly.
   expect(order).toEqual(["layout:start", "page", "layout:end"])
 })
 
@@ -308,7 +308,7 @@ test("a retain hint skips an unchanged layout's loader, but never a gate", async
   await body(app)
   expect([rootRuns, gateRuns]).toEqual([1, 1])
 
-  // Ask to retain BOTH. Index 0 is plain data and is skipped; index 1 is a gate and runs anyway —
+  // Ask to retain BOTH. Index 0 is plain data and is skipped; index 1 is a gate and runs anyway -
   // a guard that runs only when the client permits it is not a guard.
   const res = await app.fetch(
     new Request("http://x/orgs/acme/projects/7", {
@@ -454,7 +454,7 @@ const chainLen = async (app: {
 
 test("a layout loader's throw uses a boundary at or ABOVE its own segment", async () => {
   // Boundaries at the root and at `a/b`. The layout at `a/` fails. The NEAREST boundary is
-  // `a/b/_error` — but rendering there would wrap the boundary in `a/b/_layout`, which sits BELOW the
+  // `a/b/_error` - but rendering there would wrap the boundary in `a/b/_layout`, which sits BELOW the
   // layout that just failed, so the root must win. chain=2 is [root layout, _error].
   expect(await chainLen(withBoundaries("a", ["_error", "a/b/_error"]))).toBe(2)
 })
@@ -469,7 +469,7 @@ test("a route error still uses the nearest boundary, unchanged", async () => {
 
 test("a failing layout with a boundary at its OWN segment uses that one", async () => {
   // `a/_error` is at the same segment as the failing `a/_layout`, so it is eligible: renderError
-  // keeps layouts at or above `a/` — chain=3 is [root, a layouts, a/_error].
+  // keeps layouts at or above `a/` - chain=3 is [root, a layouts, a/_error].
   expect(await chainLen(withBoundaries("a", ["_error", "a/_error"]))).toBe(3)
 })
 
@@ -477,7 +477,7 @@ test("a layout can end the request with notFound()", async () => {
   const app = appWith({ _layout: { default: "root", loader: () => notFound() } }, ["_layout"], [[]])
   const res = await app.fetch(new Request("http://x/orgs/acme/projects/7"))
   expect(res.status).toBe(404)
-  // The _404 page rendered — not a soft 200, the exact failure that feature exists to prevent.
+  // The _404 page rendered - not a soft 200, the exact failure that feature exists to prevent.
   expect(await res.text()).toContain('__NIFRA_ROUTE__="_404"')
 })
 

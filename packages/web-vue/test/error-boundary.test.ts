@@ -26,7 +26,7 @@ describe("@nifrajs/web-vue errorBoundary", () => {
       },
     })
     const html = await render(() => h(Throwing))
-    expect(typeof html).toBe("string") // onErrorCaptured handled it — no rejection
+    expect(typeof html).toBe("string") // onErrorCaptured handled it - no rejection
     expect(html).not.toContain("boom") // not leaked into SSR markup
   })
 

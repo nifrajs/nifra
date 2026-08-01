@@ -10,7 +10,7 @@ bunx wrangler dev   # open http://localhost:8787 in two tabs
 
 ## How it works
 
-The `app.ws("/chat", …)` route is identical to the Bun/Deno/Node version — `ws.subscribe` + `app.publish`
+The `app.ws("/chat", …)` route is identical to the Bun/Deno/Node version - `ws.subscribe` + `app.publish`
 unchanged. Two extra lines wire it to Workers:
 
 ```ts

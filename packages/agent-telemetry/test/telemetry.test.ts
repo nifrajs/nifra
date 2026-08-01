@@ -35,7 +35,7 @@ describe("agentTelemetry", () => {
     )
 
     expect(res.status).toBe(200)
-    // Spans end when the response body finishes streaming — consume it first.
+    // Spans end when the response body finishes streaming - consume it first.
     await res.json()
     expect(spans.length).toBe(1)
 

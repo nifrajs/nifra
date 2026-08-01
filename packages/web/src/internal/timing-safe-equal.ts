@@ -2,7 +2,7 @@
  * Constant-time string equality, shared by every secret check in `@nifrajs/web`. Internal: no
  * `exports` entry points here, so it never becomes public API.
  *
- * One owner per package rather than a copy per call site — this is the primitive whose whole value
+ * One owner per package rather than a copy per call site - this is the primitive whose whole value
  * lies in a detail (no early exit) that a well-meaning "simplification" silently removes, and a bug
  * in it is invisible in review and in tests, since a timing-unsafe compare returns the same answers.
  */

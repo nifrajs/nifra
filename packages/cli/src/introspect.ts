@@ -1,6 +1,6 @@
 /**
- * Introspect a loaded nifra project into a Markdown brief — the API routes (`backend.routes()`), the
- * page routes (`discoverRoutes`), and a conventions summary — for piping into an AI coding agent's
+ * Introspect a loaded nifra project into a Markdown brief - the API routes (`backend.routes()`), the
+ * page routes (`discoverRoutes`), and a conventions summary - for piping into an AI coding agent's
  * prompt. Used by `nifra context` (stdout) and the `nifra mcp` server (a tool result), so an agent sees
  * *this* project's actual surface, not just generic docs.
  */
@@ -28,7 +28,7 @@ interface JsonSchemaNode {
 }
 
 /**
- * Render a JSON Schema as a compact TypeScript-like type (`{ id: string, name?: string }`) — the
+ * Render a JSON Schema as a compact TypeScript-like type (`{ id: string, name?: string }`) - the
  * shape agents already think in, at a fraction of the raw JSON Schema's tokens (~70-80% smaller).
  * Anything the renderer doesn't model falls back to the raw JSON for that subtree, so the output
  * is always faithful, just not always minimal.
@@ -74,7 +74,7 @@ export function tsTypeOf(schema: unknown, depth = 0): string {
 }
 
 /** One route's request/response field shapes, indented under its line. Reads the declared schemas off the
- * descriptor so an agent gets the exact input + output contract — not just "this route is validated". */
+ * descriptor so an agent gets the exact input + output contract - not just "this route is validated". */
 function schemaLines(schema: ReflectedRoute["schema"]): string[] {
   const s = schema
   if (!s) return []
@@ -95,11 +95,11 @@ function schemaLines(schema: ReflectedRoute["schema"]): string[] {
 const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
 /**
- * The typed-client call form for a route — the exact `client<typeof app>` proxy chain an agent should
+ * The typed-client call form for a route - the exact `client<typeof app>` proxy chain an agent should
  * write, derived from the same convention `@nifrajs/client` implements (so it never has to read the
  * client tests to learn it): a static segment is a property (`.users`), a path param/wildcard is a call
  * that appends the value (`({ id })`), the root path is `.index`, and the HTTP verb is the terminal call.
- * Body verbs (POST/PUT/PATCH) take the body first then call-options; other verbs take call-options first —
+ * Body verbs (POST/PUT/PATCH) take the body first then call-options; other verbs take call-options first -
  * so the `{ query }` argument lands in the right slot for each.
  */
 export function clientCall(method: string, path: string, schema: unknown): string {
@@ -140,10 +140,10 @@ export function apiRoutesSection(routes: readonly ReflectedRoute[]): string {
       ...schemaLines(r.schema),
       `    - call: \`${clientCall(r.method, r.path, r.schema)}\` → \`{ ok, status, data, error }\``,
     ])
-  return `## API routes (backend.ts)\n\nEach route's \`body\`/\`query\`/\`response\` shape is its contract — the typed client derives request inputs and \`res.data\` from these, so a screen built on \`client<typeof app>\` stays in sync automatically. The \`call\` line is the exact \`client<typeof app>\` form: static path segments are properties, a path param is a call (\`({ id })\`), the verb is the terminal call (body first for POST/PUT/PATCH), and every call returns the never-throwing \`{ ok, status, data, error }\` Result.\n\n${lines.join("\n")}`
+  return `## API routes (backend.ts)\n\nEach route's \`body\`/\`query\`/\`response\` shape is its contract - the typed client derives request inputs and \`res.data\` from these, so a screen built on \`client<typeof app>\` stays in sync automatically. The \`call\` line is the exact \`client<typeof app>\` form: static path segments are properties, a path param is a call (\`({ id })\`), the verb is the terminal call (body first for POST/PUT/PATCH), and every call returns the never-throwing \`{ ok, status, data, error }\` Result.\n\n${lines.join("\n")}`
 }
 
-/** Compact API-routes INDEX for the no-arg `nifra_context` call — `METHOD path` per route, WITHOUT the
+/** Compact API-routes INDEX for the no-arg `nifra_context` call - `METHOD path` per route, WITHOUT the
  * body/query/response shapes or the per-route `call` line. Bounds the first-call payload on a big backend:
  * an agent gets the full route list (so it knows what's mounted) plus a pointer to fetch any route's full
  * contract via the `path`/`kind` slice, instead of every schema up front. */
@@ -154,7 +154,7 @@ export function apiRoutesIndexSection(routes: readonly ReflectedRoute[]): string
   const lines = [...routes]
     .sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))
     .map((r) => `- \`${r.method} ${r.path}\``)
-  return `## API routes (backend.ts)\n\n${routes.length} route${routes.length === 1 ? "" : "s"}. Call \`nifra_context\` again with \`path\` (a route prefix) and/or \`kind: "api"\` for the body/query/response contracts + the exact \`client<typeof app>\` call form — or \`nifra_routes\` for the same as structured JSON.\n\n${lines.join("\n")}`
+  return `## API routes (backend.ts)\n\n${routes.length} route${routes.length === 1 ? "" : "s"}. Call \`nifra_context\` again with \`path\` (a route prefix) and/or \`kind: "api"\` for the body/query/response contracts + the exact \`client<typeof app>\` call form - or \`nifra_routes\` for the same as structured JSON.\n\n${lines.join("\n")}`
 }
 
 /** Markdown section listing the file-routed pages (URL pattern → source file). */
@@ -172,25 +172,25 @@ const CONVENTIONS = `## Conventions (summary)
 
 - **Backend:** \`server()\` from \`@nifrajs/core\`; returning a value sends JSON. Validate untrusted input with
   a route schema (\`{ body, query, params }\` using \`t\` from \`@nifrajs/schema\` or any Standard Schema) and read
-  the typed \`c.body\` / \`c.query\` / \`c.params\` — never hand-parse.
+  the typed \`c.body\` / \`c.query\` / \`c.params\` - never hand-parse.
 - **Cross-cutting concerns** (rate limit / \`429\`, CORS, auth, CSRF, caching, security headers, body limits)
   → \`@nifrajs/middleware\`, applied with \`app.use(...)\`. Don't hand-roll them; call \`nifra_docs("middleware")\`
   for the full list + usage.
 - **Need the exact TypeScript of a \`@nifrajs/*\` symbol?** Call \`nifra_types({ name })\` (e.g. \`RateLimitStore\`,
-  \`RouteSchema\`) — the authoritative, complete declaration. Never read \`@nifrajs\` \`.d.ts\` files.
+  \`RouteSchema\`) - the authoritative, complete declaration. Never read \`@nifrajs\` \`.d.ts\` files.
 - **Response contract (no drift):** declare \`{ response: t.object({...}) }\` on a route to lock its output
-  shape — the handler is type-checked against it and the client sees exactly that shape. The contract above
+  shape - the handler is type-checked against it and the client sees exactly that shape. The contract above
   is the single source of truth for both sides.
-- **Client — ALWAYS use this for API calls:** \`client<typeof app>(url)\` derives request inputs AND
+- **Client - ALWAYS use this for API calls:** \`client<typeof app>(url)\` derives request inputs AND
   \`res.data\` from the backend's route types, so the compiler catches any frontend/backend drift. Never
-  hand-roll \`fetch\` + ad-hoc response types for an internal API — that's exactly how screens drift. It
+  hand-roll \`fetch\` + ad-hoc response types for an internal API - that's exactly how screens drift. It
   never throws: branch on \`res.ok ? res.data : res.error\`.
 - **Pages:** file-routed under \`routes/\`; \`loader\`/\`action\` are server-only but the module is also bundled
-  for the browser — **never top-level-import server-only code** (DB, secrets, \`process.env\`) into a route
+  for the browser - **never top-level-import server-only code** (DB, secrets, \`process.env\`) into a route
   file; reach it via \`ctx.api\` / \`ctx.env\`.
 - \`app.fetch(Request)\` is the universal entry. Full reference: this repo's \`AGENTS.md\`, or \`llms-full.txt\`.`
 
-/** Optional narrowing for {@link describeProject} — a path prefix and/or one section. A filtered
+/** Optional narrowing for {@link describeProject} - a path prefix and/or one section. A filtered
  * brief omits the conventions block (the agent already has it from its first full call), so
  * follow-up calls cost a fraction of the tokens. */
 export interface ContextFilter {
@@ -199,9 +199,9 @@ export interface ContextFilter {
 }
 
 /**
- * Build the project brief as Markdown. A no-arg call returns a tight **INDEX** — the route list (API
+ * Build the project brief as Markdown. A no-arg call returns a tight **INDEX** - the route list (API
  * routes as `METHOD path`, page routes as `pattern → file`) + conventions + a pointer to fetch full
- * contracts via the slice — so learning a big project is cheap, not a full-surface schema dump. Passing a
+ * contracts via the slice - so learning a big project is cheap, not a full-surface schema dump. Passing a
  * {@link ContextFilter} (`path` prefix and/or `kind`) returns the narrowed, FULL detail (per-route
  * body/query/response shapes + the typed-client `call` form), and omits the conventions block (the agent
  * already has it from the index call).
@@ -211,7 +211,7 @@ export function describeProject(app: LoadedApp, filter?: ContextFilter): string 
   try {
     manifest = discoverRoutes(app.routesDir)
   } catch {
-    // No (or unreadable) routes/ — the page-routes section reports that.
+    // No (or unreadable) routes/ - the page-routes section reports that.
   }
   const prefix = filter?.path
   let routes = backendRoutes(app.backend)
@@ -228,10 +228,10 @@ export function describeProject(app: LoadedApp, filter?: ContextFilter): string 
   const sections: string[] = [`# nifra project: ${app.cwd.slice(app.cwd.lastIndexOf("/") + 1)}`]
   if (isIndex) {
     sections.push(
-      "A full-stack nifra app — Web-standard, one app on Bun, Node, Deno, and the edge. This is the route INDEX; fetch a route's full body/query/response contract on demand (see below).",
-      // Point agents at the verified surface, not recalled APIs — nifra is young, so training data is the
+      "A full-stack nifra app - Web-standard, one app on Bun, Node, Deno, and the edge. This is the route INDEX; fetch a route's full body/query/response contract on demand (see below).",
+      // Point agents at the verified surface, not recalled APIs - nifra is young, so training data is the
       // wrong source. The MCP tools (nifra_docs / nifra_example) are checked against the installed version.
-      "> **Build against THIS surface + the verified tools — do not write nifra APIs from memory** (the\n> framework is young; recalled APIs drift). For framework code, call `nifra_example` (snippets\n> typechecked against the installed version) or `nifra_docs`; verify edits with `nifra_run` + `nifra_check`.",
+      "> **Build against THIS surface + the verified tools - do not write nifra APIs from memory** (the\n> framework is young; recalled APIs drift). For framework code, call `nifra_example` (snippets\n> typechecked against the installed version) or `nifra_docs`; verify edits with `nifra_run` + `nifra_check`.",
     )
   }
   if (filter?.kind !== "pages") {
@@ -255,7 +255,7 @@ export interface RouteJson {
 }
 
 /**
- * The backend's API routes as structured JSON — what the `nifra_routes` MCP tool returns, so an agent
+ * The backend's API routes as structured JSON - what the `nifra_routes` MCP tool returns, so an agent
  * consumes the contract programmatically (`list_routes` / `get_route_schema`) instead of parsing the
  * Markdown brief. Optionally filtered to routes whose path starts with `pathPrefix`. Reuses the exact
  * same `call` form and TS-shaped contracts the Markdown brief shows.
@@ -292,11 +292,11 @@ export function routesToJson(app: LoadedApp, pathPrefix?: string): RouteJson[] {
 }
 
 // ===================================================================================================
-// `nifra routes [--json]` — the focused, uniform view of every route the app serves, with methods.
+// `nifra routes [--json]` - the focused, uniform view of every route the app serves, with methods.
 //
 // `nifra context` lists page routes + API routes for an agent's prompt (Markdown, with schemas).
 // `nifra routes` answers a different question: "what does this app actually serve, and with which
-// methods?" — so an agent sees instantly that `POST /api/explain` is (or isn't) mounted, instead of
+// methods?" - so an agent sees instantly that `POST /api/explain` is (or isn't) mounted, instead of
 // discovering it via a 405. It marks which backend routes are AUTO-MOUNTED under the page router's
 // `apiPrefix` (default `/api`), and `--json` makes it machine-consumable. The table-building +
 // rendering are pure (no fs / no module loads), so they're unit-tested; the cwd gathering is the thin
@@ -313,7 +313,7 @@ export interface RouteTableEntry {
   readonly path: string
   /** Methods this route serves, sorted (page: `GET`, plus `POST` when it has an `action`). */
   readonly methods: readonly string[]
-  /** Source file (page only — the route module path relative to `routes/`). */
+  /** Source file (page only - the route module path relative to `routes/`). */
   readonly file?: string
   /** True when this API route is auto-mounted under the page router's `apiPrefix` (so it's reachable
    * through the same web app, no hand-wired `if (pathname.startsWith("/api/"))`). Pages are never
@@ -345,7 +345,7 @@ function isUnderPrefix(path: string, prefix: string): boolean {
 }
 
 /**
- * Build the unified, sorted route table from page routes + backend API routes. Pure — the caller
+ * Build the unified, sorted route table from page routes + backend API routes. Pure - the caller
  * supplies page `hasAction` (resolved via a module load) and the API descriptors (`backend.routes()`).
  * Page routes serve `GET` (+ `POST` when they export an `action`); API routes carry their declared
  * method, and are flagged `autoMounted` when at/under `apiPrefix`. Sorted by path, then kind, then the
@@ -449,7 +449,7 @@ export async function describeRoutes(
   try {
     manifest = discoverRoutes(app.routesDir)
   } catch {
-    // No (or unreadable) routes/ — fall through with no pages; the table still shows API routes.
+    // No (or unreadable) routes/ - fall through with no pages; the table still shows API routes.
   }
   const pages: PageRouteInput[] = []
   for (const route of manifest?.routes ?? []) {

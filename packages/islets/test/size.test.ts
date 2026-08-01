@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { gzipSync } from "bun"
 
 // The reason this package exists is the number this test pins. Bundling the bare index measures
-// nothing (tree-shaking removes unused exports) — so the fixture is a realistic island module
+// nothing (tree-shaking removes unused exports) - so the fixture is a realistic island module
 // exercising EVERY feature: signals, computed, batch, all six bindings via mount, state seeding.
 test("full-feature island bundle stays within the island budget (≤ 2 KB gz)", async () => {
   const dir = mkdtempSync(join(tmpdir(), "islets-size-"))

@@ -51,7 +51,7 @@ describe("value rendering", () => {
     expect(html`<p>${0}</p>`.html).toBe("<p>0</p>")
   })
 
-  test("arrays flatten in order — the list-rendering idiom", () => {
+  test("arrays flatten in order - the list-rendering idiom", () => {
     const items = ["a<b", "c"]
     expect(html`<ul>${items.map((i) => html`<li>${i}</li>`)}</ul>`.html).toBe(
       "<ul><li>a&lt;b</li><li>c</li></ul>",

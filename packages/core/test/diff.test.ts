@@ -6,7 +6,7 @@ const standard: StandardSchemaV1 = {
   "~standard": { version: 1, vendor: "test", validate: (value) => ({ value }) },
 }
 
-/** A Standard Schema carrier with introspectable JSON Schema — what `t.*` produces. */
+/** A Standard Schema carrier with introspectable JSON Schema - what `t.*` produces. */
 const carrier = (jsonSchema: Record<string, unknown>) => ({ ...standard, jsonSchema })
 
 const objectSchema = (properties: Record<string, unknown>, required: readonly string[]) =>
@@ -35,7 +35,7 @@ describe("snapshotRoutes", () => {
     expect(routes[0]?.schema?.body?.jsonSchema).toBeDefined()
     const restored = JSON.parse(JSON.stringify(routes)) as readonly RouteSnapshot[]
     expect(restored).toEqual(routes as never)
-    // Identical snapshots diff to zero changes — the baseline workflow's fixed point.
+    // Identical snapshots diff to zero changes - the baseline workflow's fixed point.
     expect(diffRouteSnapshots(routes, restored).changes).toEqual([])
   })
 
@@ -45,7 +45,7 @@ describe("snapshotRoutes", () => {
   })
 })
 
-describe("diffRouteSnapshots — routes", () => {
+describe("diffRouteSnapshots - routes", () => {
   test("removed route is breaking; added route is compatible", () => {
     const before = snap([route("GET", "/a"), route("GET", "/b")])
     const after = snap([route("GET", "/a"), route("POST", "/c")])
@@ -64,7 +64,7 @@ describe("diffRouteSnapshots — routes", () => {
   })
 })
 
-describe("diffRouteSnapshots — request direction (body/query)", () => {
+describe("diffRouteSnapshots - request direction (body/query)", () => {
   const before = snap([
     route("POST", "/users", {
       body: objectSchema({ name: { type: "string" }, role: { type: "string", enum: ["admin"] } }, [
@@ -174,7 +174,7 @@ describe("diffRouteSnapshots — request direction (body/query)", () => {
   })
 })
 
-describe("diffRouteSnapshots — response direction (response/sse)", () => {
+describe("diffRouteSnapshots - response direction (response/sse)", () => {
   const before = snap([
     route("GET", "/users", {
       response: objectSchema(
@@ -279,7 +279,7 @@ describe("diffRouteSnapshots — response direction (response/sse)", () => {
   })
 })
 
-describe("diffRouteSnapshots — errors + opaque schemas", () => {
+describe("diffRouteSnapshots - errors + opaque schemas", () => {
   test("removed error status breaks; added is compatible; changed body classified", () => {
     const before = snap([
       route("POST", "/pay", {

@@ -21,7 +21,7 @@ type ComputedAttrs =
 export interface ImageComponentProps
   extends ImageProps,
     Omit<HTMLImgAttributes, ComputedAttrs | keyof ImageProps> {
-  /** CDN URL builder. Defaults to the identity loader (no transform — still CLS-safe + lazy). */
+  /** CDN URL builder. Defaults to the identity loader (no transform - still CLS-safe + lazy). */
   loader?: ImageLoader
 }
 

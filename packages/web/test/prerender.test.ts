@@ -10,7 +10,7 @@ import {
   prerenderRoutes,
 } from "../src/prerender.ts"
 
-// A fake route manifest entry — the driver only reads `.pattern` and `.load()` (for `.prerender`).
+// A fake route manifest entry - the driver only reads `.pattern` and `.load()` (for `.prerender`).
 function route(pattern: string, prerender?: boolean): RouteEntry {
   return {
     id: pattern,
@@ -113,7 +113,7 @@ describe("prerenderRoutes", () => {
     expect(result.prerendered[0]?.file).toBe("docs/intro/index.html")
   })
 
-  test("skips a dynamic (param) route — deferred to getStaticPaths", async () => {
+  test("skips a dynamic (param) route - deferred to getStaticPaths", async () => {
     const { app, urls } = fakeApp()
     const result = await prerenderRoutes({ app, routes: [route("/users/:id", true)], outDir: dir })
     expect(urls).toEqual([]) // never fetched

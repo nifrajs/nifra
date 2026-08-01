@@ -11,7 +11,7 @@ export interface CacheControlOptions {
 
 /**
  * Set a `Cache-Control` header on matching responses. `value` is either a fixed directive string or a
- * function of the request (return `undefined` to leave a response untouched — e.g. cache by path).
+ * function of the request (return `undefined` to leave a response untouched - e.g. cache by path).
  * Defaults to `GET`/`HEAD` + 2xx, and never clobbers a `Cache-Control` the handler set itself.
  *
  * ```ts

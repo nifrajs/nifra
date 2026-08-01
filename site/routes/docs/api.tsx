@@ -1,16 +1,16 @@
 import { CodeBlock } from "../../highlight"
 import { pageMeta } from "../../meta"
 
-// Pure content page — no React interactivity (TOC/copy/search are the layout enhancer +
+// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
 // the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
 export const hydrate = false
 
 export const meta = pageMeta(
-  "Nifra — API & typed client",
+  "Nifra - API & typed client",
   "Build a typed JSON API with server()/defineContract + validate inputs with any Standard Schema, then consume it from a zero-codegen, never-throwing typed client.",
 )
 
-const INLINE = `// doc-check: skip — uses the third-party \`zod\` schema lib (any Standard Schema works); install it to run this.
+const INLINE = `// doc-check: skip - uses the third-party \`zod\` schema lib (any Standard Schema works); install it to run this.
 import { server } from "@nifrajs/core/server"
 import { z } from "zod"   // any Standard Schema works: zod, valibot, arktype…
 
@@ -22,11 +22,11 @@ export const app = server()
     (c) => ({ page: c.query.page }))
   .listen(3000)`
 
-const CONTRACT = `// doc-check: skip — uses the third-party \`zod\` schema lib + an illustrative \`users\` repo; install zod to run this.
+const CONTRACT = `// doc-check: skip - uses the third-party \`zod\` schema lib + an illustrative \`users\` repo; install zod to run this.
 import { defineContract, implement } from "@nifrajs/core/contract"
 import { z } from "zod"
 
-// 1. Declare the contract — methods, paths, and input schemas, no handlers.
+// 1. Declare the contract - methods, paths, and input schemas, no handlers.
 //    Share this object between server and (optionally) other services.
 export const contract = defineContract({
   listUsers: { method: "GET", path: "/users" },
@@ -35,7 +35,7 @@ export const contract = defineContract({
   search:    { method: "GET", path: "/search", query: z.object({ page: z.string() }) },
 })
 
-// 2. Implement it — handlers are checked against the contract (path params, body, query all typed).
+// 2. Implement it - handlers are checked against the contract (path params, body, query all typed).
 export const app = implement(contract, {
   listUsers: () => users.all(),
   getUser:   (c) => users.find(c.params.id),
@@ -46,7 +46,7 @@ export const app = implement(contract, {
 const CLIENT = `import { client } from "@nifrajs/client"
 import type { app } from "./server"
 
-// Infers the server's types directly — no codegen, no schema duplication.
+// Infers the server's types directly - no codegen, no schema duplication.
 const api = client<typeof app>("https://api.example.com")
 
 const { data } = await api.users({ id: "1" }).get()         // path param → /users/1
@@ -54,7 +54,7 @@ await api.users.post({ name: "Ada" })                       // POST body
 await api.search.get({ query: { page: "3" } })              // query string
 await api.users({ id: "1" }).posts({ postId: "2" }).get()   // nested params`
 
-const RESULT = `// The client NEVER throws — every call returns a discriminated Result:
+const RESULT = `// The client NEVER throws - every call returns a discriminated Result:
 const res = await api.users({ id: "1" }).get()
 if (res.ok) {
   res.data        // ^? { id: string }   (typed success body)
@@ -74,7 +74,7 @@ const SET = `export const app = server()
     c.set.cookie("session", token, {         // HttpOnly + Secure + SameSite=Lax + Path=/ by default
       maxAge: 60 * 60 * 24,
     })
-    return { ok: true }                      // still a plain object — the typed client stays in sync
+    return { ok: true }                      // still a plain object - the typed client stays in sync
   })
   .post("/logout", (c) => {
     c.set.deleteCookie("session")            // expire it immediately
@@ -86,13 +86,13 @@ export default function Api() {
     <div className="prose">
       <h1 className="page">API &amp; typed client</h1>
       <p className="lead">
-        Nifra is <b>contract-first</b>: you describe an HTTP API once — inline or as a standalone
-        contract — and its types flow to the client with zero codegen. Inputs are validated at the
+        Nifra is <b>contract-first</b>: you describe an HTTP API once - inline or as a standalone
+        contract - and its types flow to the client with zero codegen. Inputs are validated at the
         trust boundary by any <a href="https://standardschema.dev">Standard Schema</a> (zod, valibot,
         arktype, …); outputs are inferred end-to-end.
       </p>
       <p>
-        Everything on this page is just <code>@nifrajs/core</code> — no frontend, no build step. Use Nifra
+        Everything on this page is just <code>@nifrajs/core</code> - no frontend, no build step. Use Nifra
         as a standalone backend the way you'd use Hono or Elysia, deploy it to any runtime, and reach
         for <a href="/docs/frameworks">the frontend adapters</a> only if and when you go full-stack.
       </p>
@@ -100,7 +100,7 @@ export default function Api() {
       <h2>An inline server</h2>
       <p>
         The chainable builder is the quickest start. Attach a <code>body</code> or <code>query</code>{" "}
-        schema to a route and it's parsed-and-validated before your handler runs — <code>c.body</code>{" "}
+        schema to a route and it's parsed-and-validated before your handler runs - <code>c.body</code>{" "}
         and <code>c.query</code> are the <i>validated</i> types, and a bad request gets a structured{" "}
         <code>422</code> automatically. Path params (<code>:id</code>) are typed from the pattern.
       </p>
@@ -111,7 +111,7 @@ export default function Api() {
         Return a plain object and Nifra serializes it with a <code>200</code> (or <code>204</code> when
         you return <code>undefined</code>). To shape the response <i>without</i> giving up the typed
         return, use <code>c.set</code>: assign <code>c.set.status</code>, mutate{" "}
-        <code>c.set.headers</code>, or call <code>c.set.cookie(name, value, opts?)</code> — cookies are{" "}
+        <code>c.set.headers</code>, or call <code>c.set.cookie(name, value, opts?)</code> - cookies are{" "}
         <b>HttpOnly + Secure + SameSite=Lax + Path=/</b> by default, and <code>c.set.deleteCookie(name)</code>{" "}
         expires one. It's lazy: a handler that never touches <code>c.set</code> allocates nothing.
       </p>
@@ -123,8 +123,8 @@ export default function Api() {
         plain-object return fully typed.
       </p>
       <p>
-        When you genuinely want a <code>Response</code> — an <b>error short-circuit</b> from a{" "}
-        <code>derive</code> / <code>beforeHandle</code> (auth, rate limits) — <code>c.json(body, status?)</code>{" "}
+        When you genuinely want a <code>Response</code> - an <b>error short-circuit</b> from a{" "}
+        <code>derive</code> / <code>beforeHandle</code> (auth, rate limits) - <code>c.json(body, status?)</code>{" "}
         and <code>c.text(body, status?)</code> build one in a line:{" "}
         <code>{`throw c.json({ error: "unauthorized" }, 401)`}</code> instead of{" "}
         <code>{`new Response(JSON.stringify(…), { status: 401, headers: … })`}</code>. The second arg is a
@@ -133,14 +133,14 @@ export default function Api() {
         typed client stays in sync.)
       </p>
       <p>
-        The request is on <code>c.req</code>, also available as <code>c.request</code> — the same name a
+        The request is on <code>c.req</code>, also available as <code>c.request</code> - the same name a
         page loader/action receives (which in turn also accepts <code>ctx.req</code>), so one name works
         in both places.
       </p>
 
       <h2>Contract-first (defineContract + implement)</h2>
       <p>
-        For larger apps — or when the contract is shared across services — declare it with{" "}
+        For larger apps - or when the contract is shared across services - declare it with{" "}
         <code>defineContract</code> (methods, paths, schemas; no handlers), then{" "}
         <code>implement</code> it. Handlers are checked against the contract, so a wrong path param,
         body, or return type is a compile error. The result is the same <code>app</code> the inline
@@ -151,7 +151,7 @@ export default function Api() {
       <h2>The end-to-end-typed client</h2>
       <p>
         <code>@nifrajs/client</code> takes the server's type (<code>client&lt;typeof app&gt;</code>) and
-        exposes a fluent, fully-typed proxy — no generated SDK. Path params are call arguments; the body
+        exposes a fluent, fully-typed proxy - no generated SDK. Path params are call arguments; the body
         and query are typed from the route's schema.
       </p>
       <CodeBlock code={CLIENT} />
@@ -160,8 +160,8 @@ export default function Api() {
       <p>
         Every call resolves to a discriminated <code>Result</code>: branch on <code>ok</code> (or
         destructure <code>{"{ data, error }"}</code>). Success carries the typed <code>data</code>;
-        failure carries a structured <code>ApiError</code> — a stable <code>error</code> code plus
-        validation <code>issues</code> — and the HTTP <code>status</code>. No try/catch, no surprise
+        failure carries a structured <code>ApiError</code> - a stable <code>error</code> code plus
+        validation <code>issues</code> - and the HTTP <code>status</code>. No try/catch, no surprise
         exceptions on a 404 or 422.
       </p>
       <CodeBlock code={RESULT} />

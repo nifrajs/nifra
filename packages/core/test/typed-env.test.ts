@@ -9,7 +9,7 @@ interface Env {
 
 test("server<Env>() types c.env in a handler; the platform env reaches it at runtime", async () => {
   const app = server<Env>().get("/", (c) => {
-    // These compile ONLY because c.env is typed `Env` (KV + TOKEN known) — the core assertion.
+    // These compile ONLY because c.env is typed `Env` (KV + TOKEN known) - the core assertion.
     return { hasGet: typeof c.env.KV.get, token: c.env.TOKEN }
   })
   const res = await app.fetch(new Request("http://x/"), {
@@ -32,7 +32,7 @@ test("toFetchHandler types its env argument against the app's Env", async () => 
   const app = server<Env>().get("/", (c) => ({ token: c.env.TOKEN }))
   const res = await toFetchHandler(app).fetch(
     new Request("http://x/"),
-    { KV: { get: async () => null }, TOKEN: "t" }, // typed as Env — wrong shape would not compile
+    { KV: { get: async () => null }, TOKEN: "t" }, // typed as Env - wrong shape would not compile
     { waitUntil: () => {} },
   )
   expect(await res.json()).toEqual({ token: "t" })
@@ -61,7 +61,7 @@ test("typed env: a wrong platform env shape is a compile error", async () => {
 
 test("plain server(): c.env is unknown (not indexable), and fetch accepts any env shape", async () => {
   const app = server().get("/", (c) => {
-    // @ts-expect-error - plain server() leaves c.env `unknown` (today's behavior — cast to use)
+    // @ts-expect-error - plain server() leaves c.env `unknown` (today's behavior - cast to use)
     void c.env.anything
     return { envType: typeof c.env }
   })

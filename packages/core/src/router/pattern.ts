@@ -71,17 +71,17 @@ function validParamName(name: string): boolean {
  *
  * The grammar is per-segment: a segment is wholly static or wholly a parameter, so everything after
  * the colon is the name. `/v/:id.json` therefore asks for a parameter literally named `id.json`,
- * which is not what anyone means by it — but the bare "invalid parameter" that produces reads as a
+ * which is not what anyone means by it - but the bare "invalid parameter" that produces reads as a
  * typo rather than as a rule, leaving the author to guess whether the dot, the length, or the casing
  * was the problem. Naming the actual limitation and showing the two ways out is the difference
  * between a five-second fix and a trip to the source.
  */
 function paramNameHint(name: string): string {
-  if (RESERVED_PARAM_NAMES.has(name)) return ` — "${name}" is reserved (prototype key)`
-  if (name.length === 0) return ` — ":" needs a name after it`
+  if (RESERVED_PARAM_NAMES.has(name)) return ` - "${name}" is reserved (prototype key)`
+  if (name.length === 0) return ` - ":" needs a name after it`
   // No "a segment is wholly static or wholly a parameter" case here any more: mixed segments made
   // that message obsolete. `:id.json` was the shape it explained, and `:id.json` now compiles.
-  return ` — a name must match ${PARAM_NAME.source}`
+  return ` - a name must match ${PARAM_NAME.source}`
 }
 
 function escapeRegex(value: string): string {

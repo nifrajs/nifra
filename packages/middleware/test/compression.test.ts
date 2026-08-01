@@ -56,7 +56,7 @@ describe("compression()", () => {
     expect(res.headers.get("content-encoding")).toBeNull()
   })
 
-  test("skips bodies below the threshold (peeked — no Content-Length needed)", async () => {
+  test("skips bodies below the threshold (peeked - no Content-Length needed)", async () => {
     const app = server()
       .use(compression({ threshold: 1024 }))
       .get("/", () => new Response("tiny", { headers: { "content-type": "text/plain" } }))
@@ -160,7 +160,7 @@ describe("compression()", () => {
     // Cancel propagates async through CompressionStream → pipeTo → source.cancel → reader.cancel.
     for (let i = 0; i < 50 && !cancelled; i++)
       await new Promise((resolve) => setTimeout(resolve, 10))
-    expect(cancelled).toBe(true) // reached the upstream — no leaked reader on disconnect
+    expect(cancelled).toBe(true) // reached the upstream - no leaked reader on disconnect
   })
 
   test("honors a custom compressible predicate", async () => {

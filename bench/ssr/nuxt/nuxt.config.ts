@@ -1,4 +1,4 @@
-// Per-request SSR for `/` — disable Nitro route cache (Nuxt's default favors cached payloads).
+// Per-request SSR for `/` - disable Nitro route cache (Nuxt's default favors cached payloads).
 export default defineNuxtConfig({
   ssr: true,
   nitro: {

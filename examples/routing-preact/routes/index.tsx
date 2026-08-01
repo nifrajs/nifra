@@ -4,14 +4,14 @@ import { defer } from "@nifrajs/web"
 import { Await } from "@nifrajs/web-preact/await"
 import type { backend } from "../backend"
 
-// Static head for this route — SSR-injected + updated on client navigation.
+// Static head for this route - SSR-injected + updated on client navigation.
 export const meta = {
-  title: "nifra + Preact — Home",
+  title: "nifra + Preact - Home",
   meta: [{ name: "description", content: "nifra Preact bindings: loader + action + defer/Await" }],
 }
 
 // SSG: prerender this static route to dist/index.html at build (build.ts → prerenderRoutes). Proves
-// the prerender pipeline is framework-agnostic — same opt-in flag, Preact render output. `defer()`
+// the prerender pipeline is framework-agnostic - same opt-in flag, Preact render output. `defer()`
 // lives only in the action, so the prerendered GET has no unresolved deferreds.
 export const prerender = true
 

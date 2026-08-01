@@ -9,7 +9,7 @@
 import { isDraftEnabled } from "./draft.ts"
 import { timingSafeEqual } from "./internal/timing-safe-equal.ts"
 
-/** A cached SSR response — the bytes + metadata a {@link CacheStore} persists. */
+/** A cached SSR response - the bytes + metadata a {@link CacheStore} persists. */
 export interface CachedResponse {
   /** The rendered document (UTF-8 HTML, fully buffered). */
   readonly body: string
@@ -38,7 +38,7 @@ export interface CacheStore {
 }
 
 export interface MemoryCacheStoreOptions {
-  /** Allow the in-memory store in production. Off by default — per-instance caching means revalidation
+  /** Allow the in-memory store in production. Off by default - per-instance caching means revalidation
    * won't propagate across instances and each instance caches separately. */
   readonly allowInProduction?: boolean
   /** Hard cap on entries; the least-recently-used is evicted past it (default 500). */
@@ -47,7 +47,7 @@ export interface MemoryCacheStoreOptions {
 
 /**
  * In-process ISR cache. Refuses to run in production unless explicitly allowed (mirrors the
- * rate-limit `MemoryStore` — a per-instance cache is unsafe across instances). Bounded **LRU**: a
+ * rate-limit `MemoryStore` - a per-instance cache is unsafe across instances). Bounded **LRU**: a
  * read or write bumps the entry, so the least-recently-used evicts past `max` (a hot, frequently-read
  * page survives a burst of new pages).
  */
@@ -70,7 +70,7 @@ export class MemoryCacheStore implements CacheStore {
   get(key: string): Promise<CachedResponse | undefined> {
     const value = this.cache.get(key)
     // LRU: a read bumps the entry to the tail so the bounded evict drops the LEAST-RECENTLY-USED,
-    // not the oldest-written — otherwise a burst of new pages would evict a hot, frequently-read one.
+    // not the oldest-written - otherwise a burst of new pages would evict a hot, frequently-read one.
     if (value !== undefined) {
       this.cache.delete(key)
       this.cache.set(key, value)
@@ -96,7 +96,7 @@ export class MemoryCacheStore implements CacheStore {
 }
 
 /**
- * Minimal structural shape of a Cloudflare Workers **KV namespace** binding — just the three methods
+ * Minimal structural shape of a Cloudflare Workers **KV namespace** binding - just the three methods
  * {@link KVCacheStore} uses. Structural (not a dependency on `@cloudflare/workers-types`) so any
  * KV-like binding satisfies it and tests can pass an in-memory double.
  */
@@ -112,9 +112,9 @@ export interface KVNamespaceLike {
 export interface KVCacheStoreOptions {
   /**
    * GC backstop (**seconds**) written as the KV entry's `expirationTtl`, so abandoned entries
-   * eventually evict. MUST exceed your longest `revalidate` window — otherwise KV expiry turns a
+   * eventually evict. MUST exceed your longest `revalidate` window - otherwise KV expiry turns a
    * stale-while-revalidate into a *blocking* miss (the entry vanishes instead of being served stale
-   * while it regenerates) — and be ≥ 60 (Cloudflare KV's minimum). Omit ⇒ entries persist until
+   * while it regenerates) - and be ≥ 60 (Cloudflare KV's minimum). Omit ⇒ entries persist until
    * overwritten on regeneration or purged via `revalidateEndpoint`.
    */
   readonly expirationTtl?: number
@@ -146,7 +146,7 @@ const isCachedResponse = (value: unknown): value is CachedResponse => {
 
 /**
  * A {@link CacheStore} backed by a **Cloudflare Workers KV** namespace (or any {@link KVNamespaceLike}
- * binding) — the production-grade shared/durable store ISR wants: cached pages and on-demand purges
+ * binding) - the production-grade shared/durable store ISR wants: cached pages and on-demand purges
  * hold *across* worker instances (unlike the per-instance {@link MemoryCacheStore}). Entries serialize
  * to JSON; every read is validated before it's trusted (a malformed/version-skewed entry is treated as
  * a miss). Construct it in your Workers `fetch` from the binding: `new KVCacheStore(env.ISR_CACHE)`.
@@ -191,13 +191,13 @@ export class KVCacheStore implements CacheStore {
   }
 }
 
-/** Minimal platform shape `withISR` needs — just `waitUntil` (edge runtimes extend the response
+/** Minimal platform shape `withISR` needs - just `waitUntil` (edge runtimes extend the response
  * lifetime so background regeneration finishes). Off-edge it's absent and regen runs fire-and-forget. */
 export interface ISRPlatform {
   readonly waitUntil?: (promise: Promise<unknown>) => void
 }
 
-/** The app `withISR` wraps — anything with a `fetch(req, platform?)` (a `createWebApp` result). */
+/** The app `withISR` wraps - anything with a `fetch(req, platform?)` (a `createWebApp` result). */
 export interface ISRApp {
   fetch(req: Request, platform?: ISRPlatform): Response | Promise<Response>
 }
@@ -208,7 +208,7 @@ export const ISR_STATUS_HEADER = "x-nifra-isr"
 
 /**
  * Response header a route uses to advertise its ISR freshness (**seconds**) to a {@link withISR}
- * wrapper — `createWebApp` emits it from a route's `export const revalidate`. Deliberately distinct
+ * wrapper - `createWebApp` emits it from a route's `export const revalidate`. Deliberately distinct
  * from the action-revalidation `x-nifra-revalidate` header (a CSV path list the *client* parses to
  * refetch): this one is an integer TTL the *wrapper* reads, so the two channels never alias.
  */
@@ -220,14 +220,14 @@ export interface ISROptions {
    * behind). A route overrides it per-page via `export const revalidate` (surfaced as the
    * `x-nifra-isr-revalidate` response header). */
   readonly revalidate: number
-  /** Monotonic clock (ms) — injected for testability; production passes `() => Date.now()`. */
+  /** Monotonic clock (ms) - injected for testability; production passes `() => Date.now()`. */
   readonly now: () => number
   /** Cache key for a request. Default: `origin + pathname + search` so host-routed apps do not share
    * entries across tenants. Return `null` to bypass the cache for this request (it goes straight to the
    * app, uncached). */
   readonly key?: (req: Request) => string | null
   /** Draft/preview secret (the same one given to `createWebApp({ draftSecret })` + `enableDraft`). When
-   * set, a request carrying a valid signed draft cookie **bypasses the cache** — editors always render
+   * set, a request carrying a valid signed draft cookie **bypasses the cache** - editors always render
    * fresh, and a draft render is never written to the store (it can't poison the public cache). */
   readonly draftSecret?: string
 }
@@ -307,7 +307,7 @@ function sanitizeCachedHeaders(headers: Readonly<Record<string, string>>): Recor
  * Wrap a nifra app with **Incremental Static Regeneration**: a cacheable page is served from
  * {@link CacheStore} when fresh, served **stale while a fresh copy regenerates in the background**
  * (`platform.waitUntil` on edge), or rendered + stored on a miss. Framework-agnostic (it caches the
- * rendered bytes). Returns a `fetch(req, platform?)` handler — hand it to `Bun.serve`/the Workers
+ * rendered bytes). Returns a `fetch(req, platform?)` handler - hand it to `Bun.serve`/the Workers
  * `export default`, etc. Regeneration is single-flight per key (no stampede on a hot stale page).
  *
  * Each route's freshness comes from the `revalidate` header the app sets (per-route
@@ -352,7 +352,7 @@ export function withISR(
     })
   }
 
-  // Background regeneration (single-flight per key) — a failed regen keeps the stale entry; the next
+  // Background regeneration (single-flight per key) - a failed regen keeps the stale entry; the next
   // stale hit retries. Never throws (it runs detached / under waitUntil).
   const regenerate = async (
     req: Request,
@@ -413,13 +413,13 @@ export interface RevalidateEndpointOptions {
   readonly secret: string
   /** Header carrying the secret. Default `x-nifra-revalidate-token`. */
   readonly tokenHeader?: string
-  /** Map a to-purge path → its cache key — MUST match the `withISR` `key` fn. The default uses the
+  /** Map a to-purge path → its cache key - MUST match the `withISR` `key` fn. The default uses the
    * revalidation request's origin plus the purged path, matching `withISR`'s default host-aware key. */
   readonly key?: (path: string, req: Request) => string
 }
 
 /**
- * An **on-demand revalidation** (purge) endpoint — a `fetch` handler that drops a path's cached entry
+ * An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops a path's cached entry
  * so the next request re-renders. `POST` with the secret in the token header and the path as `?path=`
  * or a JSON `{ "path": "/blog/x" }` body. The token is checked in **constant time** (wrong/missing →
  * `401`); a missing/relative path → `400`; non-POST → `405`. Mount it on a nifra route, e.g.

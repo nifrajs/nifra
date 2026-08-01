@@ -57,10 +57,10 @@ describe("mountIslands", () => {
     expect(seen).toBeUndefined()
   })
 
-  test("a throwing enhancer is isolated — the others still run", () => {
+  test("a throwing enhancer is isolated - the others still run", () => {
     const errorSpy = mock(() => {})
     const original = console.error
-    console.error = errorSpy // the isolated failure is logged, not thrown — capture it quietly
+    console.error = errorSpy // the isolated failure is logged, not thrown - capture it quietly
     let secondRan = false
     try {
       expect(() =>
@@ -133,7 +133,7 @@ describe("mountIslands", () => {
       )
       expect(observed.length).toBe(1) // observing, not yet run
       expect(runs).toBe(0)
-      // Simulate the element scrolling into view — the real API passes the observer as the 2nd arg
+      // Simulate the element scrolling into view - the real API passes the observer as the 2nd arg
       // (the runtime calls `obs.disconnect()`), so hand the callback our instance.
       captured?.(
         [{ isIntersecting: true } as IntersectionObserverEntry],

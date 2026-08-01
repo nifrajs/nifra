@@ -6,14 +6,14 @@ import type { backend } from "../backend"
 // Row numbers for the scroll-demo filler list (stable, unique → keyed by value, not array index).
 const scrollRows = Array.from({ length: 100 }, (_, i) => i + 1)
 
-// Static head for this route — SSR-injected + updated on client navigation.
+// Static head for this route - SSR-injected + updated on client navigation.
 export const meta = {
-  title: "nifra — Home",
+  title: "nifra - Home",
   meta: [{ name: "description", content: "nifra F7 counter demo" }],
 }
 
 // SSG: prerender this static route to dist/index.html at build (build.ts → prerenderRoutes). The
-// loader runs at build (bakes the initial count); the page is then live after hydration — the form
+// loader runs at build (bakes the initial count); the page is then live after hydration - the form
 // POST + revalidation hit the worker (hybrid). `defer()` here lives only in the action (not the
 // prerendered GET), so the static document has no unresolved deferreds.
 export const prerender = true
@@ -59,7 +59,7 @@ export default function Home(props: {
           {(receipt) => <p id="receipt">{receipt}</p>}
         </Await>
       ) : null}
-      {/* Filler so the page scrolls — demonstrates F7 scroll restoration: scroll down, click
+      {/* Filler so the page scrolls - demonstrates F7 scroll restoration: scroll down, click
           "user 7", then Back, and this position is restored (a fresh nav starts at the top). */}
       <ul id="scroll-demo">
         {scrollRows.map((n) => (

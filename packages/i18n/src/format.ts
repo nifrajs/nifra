@@ -139,8 +139,8 @@ export interface Formatter {
 }
 
 /**
- * A formatter is pure-after-build — its message-AST and `Intl.*` caches are deterministic memoization
- * — so a given `(messages, locale)` pair can safely share ONE instance across requests/renders. This
+ * A formatter is pure-after-build - its message-AST and `Intl.*` caches are deterministic memoization
+ * - so a given `(messages, locale)` pair can safely share ONE instance across requests/renders. This
  * cache (keyed by the message-catalog object's identity, so a GC'd catalog takes its formatters with
  * it) makes per-request creation cheap: without it, an SSR app that calls `createFormatter` per render
  * re-parses every ICU message and reconstructs the heavy `Intl.NumberFormat`/`DateTimeFormat` objects
@@ -150,7 +150,7 @@ const FORMATTER_CACHE = new WeakMap<Messages, Map<string, Formatter>>()
 
 /**
  * Build (or reuse) a {@link Formatter} bound to a locale + its message catalog. Cheap to call per
- * request/render — instances are cached per `(messages, locale)`, and parsed ASTs + `Intl.*` are
+ * request/render - instances are cached per `(messages, locale)`, and parsed ASTs + `Intl.*` are
  * memoized inside each. The catalog is the app's (import a JSON file); this only negotiates (see
  * `negotiateLocale`) and formats.
  */

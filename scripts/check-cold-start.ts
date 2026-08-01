@@ -1,22 +1,22 @@
 /**
- * Cold-start gate — the path a brand-new external user takes: `bun create nifra` → `bun install` →
+ * Cold-start gate - the path a brand-new external user takes: `bun create nifra` → `bun install` →
  * `bun run build`. Two "good" releases shipped broken HERE while the package-level gates were green:
  *
  *   - alpha.1/alpha.2 leaked `workspace:*` into published deps (now caught by check-publish's
  *     packed-manifest gate); and
- *   - alpha.4's create-nifra templates pinned `@nifrajs/*` at `^0.1.0` — a caret range that EXCLUDES
- *     the only-published prerelease `0.1.0-alpha.4` — so every scaffolded app failed `bun install`
+ *   - alpha.4's create-nifra templates pinned `@nifrajs/*` at `^0.1.0` - a caret range that EXCLUDES
+ *     the only-published prerelease `0.1.0-alpha.4` - so every scaffolded app failed `bun install`
  *     ("No version matching ^0.1.0 … but package exists"). publint/attw/typecheck never look at the
  *     templates, so nothing caught it.
  *
  * This gate closes that class with two layers:
  *
- *   1. STATIC (always, fast, offline) — every template's internal dep range (`@nifrajs/*`, `nifra`,
+ *   1. STATIC (always, fast, offline) - every template's internal dep range (`@nifrajs/*`, `nifra`,
  *      `create-nifra`) must be SATISFIED by the monorepo's current version of that package, with
  *      prerelease awareness. `Bun.semver.satisfies("0.1.0-alpha.4", "^0.1.0")` is false → the exact
  *      bug. `^0.1.0-alpha.4` is true → the fix. This is the must-have.
  *
- *   2. FUNCTIONAL (needs `bun run build` first) — pack every publishable package from the CURRENT
+ *   2. FUNCTIONAL (needs `bun run build` first) - pack every publishable package from the CURRENT
  *      source, scaffold `template-site`, force its whole `@nifrajs` tree to the packed tarballs via
  *      `overrides`, then `bun install` + `bun run build`. Catches a template that imports a removed
  *      API or otherwise won't install/build against the artifacts we're about to ship.
@@ -99,7 +99,7 @@ for (const { label: tpl, manifest: m } of manifests) {
       continue
     }
     // `workspace:` shouldn't appear in a shipped template; the publish rewrite is for real packages, not
-    // these static files. Flag it — a scaffolded app can't resolve a `workspace:` dep.
+    // these static files. Flag it - a scaffolded app can't resolve a `workspace:` dep.
     if (range.startsWith("workspace:")) {
       bad.push(
         `${dep}="${range}" → workspace: protocol in a template (unresolvable for an external app)`,
@@ -129,14 +129,14 @@ try {
   await $`mkdir -p ${tarballs}`.quiet()
 
   // Pack every publishable package from the current (built) source. `bun pm pack` rewrites `workspace:`
-  // → the concrete version, exactly as publish would — so we're testing the would-be-published artifacts.
+  // → the concrete version, exactly as publish would - so we're testing the would-be-published artifacts.
   const tarballByName = new Map<string, string>()
   let packFailed = false
   for (const { name, dir } of publishable) {
     const packed = await $`bun pm pack --destination ${tarballs}`.cwd(dir).nothrow().quiet()
     if (packed.exitCode !== 0) {
       console.error(
-        `✗ pack ${name} failed — did you run \`bun run build\` first? (exit ${packed.exitCode})`,
+        `✗ pack ${name} failed - did you run \`bun run build\` first? (exit ${packed.exitCode})`,
       )
       packFailed = true
       break
@@ -147,7 +147,7 @@ try {
     const files = (await $`ls ${tarballs}`.text()).trim().split("\n").filter(Boolean)
     for (const { name } of publishable) {
       const slug = name.replace("@", "").replace("/", "-")
-      // The char right after `<slug>-` must be a digit (the version) — else `nifrajs-web-` would also
+      // The char right after `<slug>-` must be a digit (the version) - else `nifrajs-web-` would also
       // match `nifrajs-web-react-….tgz` and `@nifrajs/web` would get the wrong tarball.
       const file = files.find(
         (f) =>
@@ -166,7 +166,7 @@ try {
     const app = join(work, "app")
     await materializeSite(app, "react")
 
-    // Force the WHOLE @nifrajs tree to the packed tarballs via `overrides` — so the template builds
+    // Force the WHOLE @nifrajs tree to the packed tarballs via `overrides` - so the template builds
     // against the current source, not whatever is on npm. (Layer 1 already validated the pin ranges.)
     const appPkg = readJson(join(app, "package.json")) as Manifest & {
       overrides?: Record<string, string>

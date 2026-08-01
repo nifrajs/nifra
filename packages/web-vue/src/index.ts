@@ -1,6 +1,6 @@
 import type { RenderAdapter } from "@nifrajs/web"
 /**
- * @nifrajs/web-vue — the Vue render adapter for @nifrajs/web (server side). Streaming SSR via Vue's
+ * @nifrajs/web-vue - the Vue render adapter for @nifrajs/web (server side). Streaming SSR via Vue's
  * `renderToWebStream` (a Web `ReadableStream<Uint8Array>`, the seam's native shape); the layout-chain
  * fold is in `./compose`. Client hydration lives in `@nifrajs/web-vue/client`. Uses Vue render functions
  * (`h`), so no SFC compiler / build plugin is needed (contrast `@nifrajs/web-solid`).
@@ -15,7 +15,7 @@ const rootApp = (
   props: Parameters<RenderAdapter["renderToStream"]>[1],
 ) => createSSRApp(defineComponent({ setup: () => () => compose(chain, props) }))
 
-/** The Vue server render adapter — pass to @nifrajs/web's `renderPage`. */
+/** The Vue server render adapter - pass to @nifrajs/web's `renderPage`. */
 export const vueAdapter: RenderAdapter = {
   // Synchronous (well, awaited) one-pass render for non-deferred pages (renderPage's buffered fast
   // path). Vue's `renderToString` resolves the same markup as `renderToWebStream` without the stream.
@@ -28,7 +28,7 @@ export const vueAdapter: RenderAdapter = {
     return renderToWebStream(rootApp(chain, props))
   },
   // Vue hydrates by reconciling against the existing DOM (createSSRApp on the client), so there's
-  // no per-document bootstrap script — like React. The seam allows the empty string.
+  // no per-document bootstrap script - like React. The seam allows the empty string.
   hydrationHead() {
     return ""
   },

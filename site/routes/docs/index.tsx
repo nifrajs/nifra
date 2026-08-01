@@ -1,12 +1,12 @@
 import { pageMeta } from "../../meta"
 import { CodeBlock } from "../../highlight"
 
-// Pure content page — no React interactivity (TOC/copy/search are the layout enhancer +
+// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
 // the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
 export const hydrate = false
 
 export const meta = pageMeta(
-  "Nifra — Getting started",
+  "Nifra - Getting started",
   "Get started with Nifra: install, server, typed client, loaders, deploy.",
 )
 
@@ -20,7 +20,7 @@ server()
 const CLIENT = `import { client } from "@nifrajs/client"
 import type { app } from "./server"
 
-// The client infers the server's types — no codegen. Never throws: { data, error }.
+// The client infers the server's types - no codegen. Never throws: { data, error }.
 const api = client<typeof app>("http://localhost:3000")
 const { data, error } = await api.users({ id: "7" }).get()
 //      ^? { id: string } | undefined`
@@ -41,8 +41,8 @@ export default function Docs() {
     <div className="prose">
       <h1 className="page">Getting started</h1>
       <p className="lead">
-        Nifra is a contract-first TypeScript framework. Start with just a typed backend — like Hono or
-        Elysia — and the client infers its types with zero codegen. Add a frontend only when you need
+        Nifra is a contract-first TypeScript framework. Start with just a typed backend - like Hono or
+        Elysia - and the client infers its types with zero codegen. Add a frontend only when you need
         one: the same route model then drives SSR across React, Solid, Vue, Preact, and Svelte, on
         Bun, Node, Deno, and the edge.
       </p>
@@ -52,7 +52,7 @@ export default function Docs() {
         <code>bun add @nifrajs/core</code>
       </pre>
 
-      <h2>A server — no frontend required</h2>
+      <h2>A server - no frontend required</h2>
       <p>
         Chainable and fully type-inferred. This is a complete app: <code>@nifrajs/core</code> alone is a
         production backend (routing, validation, middleware, auth, WebSockets). Run it on Bun with{" "}
@@ -62,7 +62,7 @@ export default function Docs() {
 
       <h2>An end-to-end-typed client</h2>
       <p>
-        The server's types flow to the client — no schema duplication, no codegen — behind a
+        The server's types flow to the client - no schema duplication, no codegen - behind a
         never-throwing <code>{"{ data, error }"}</code> result.
       </p>
       <CodeBlock code={CLIENT} />
@@ -78,13 +78,13 @@ export default function Docs() {
       <h2>Deploy anywhere</h2>
       <ul>
         <li>
-          <b>Bun</b> — <code>app.listen()</code> (native).
+          <b>Bun</b> - <code>app.listen()</code> (native).
         </li>
         <li>
-          <b>Node / Deno</b> — the <code>@nifrajs/node</code> / <code>@nifrajs/deno</code> adapters.
+          <b>Node / Deno</b> - the <code>@nifrajs/node</code> / <code>@nifrajs/deno</code> adapters.
         </li>
         <li>
-          <b>Cloudflare Workers / Pages</b> — edge build via <code>buildServer</code> +{" "}
+          <b>Cloudflare Workers / Pages</b> - edge build via <code>buildServer</code> +{" "}
           <code>toFetchHandler</code> (the exact way this self-hosted site is compiled and served).
         </li>
       </ul>

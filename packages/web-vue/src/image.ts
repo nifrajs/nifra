@@ -1,5 +1,5 @@
 /**
- * `@nifrajs/web-vue/image` — a CLS-safe responsive Vue `<Image>`. A thin wrapper over `resolveImage` from
+ * `@nifrajs/web-vue/image` - a CLS-safe responsive Vue `<Image>`. A thin wrapper over `resolveImage` from
  * `@nifrajs/image`: it computes the responsive `<img>` attributes (`src`/`srcset`/`sizes`/`width`/`height`/
  * `loading`/`decoding`/`fetchpriority` via `toHtmlAttrs`) and renders an `<img>`. Extra attributes
  * (`class`, `style`, `id`, `data-*`, listeners) fall through to the `<img>` via Vue's attribute

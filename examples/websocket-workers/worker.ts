@@ -1,5 +1,5 @@
 /**
- * A multiplayer chat on Cloudflare Workers — `app.publish` broadcasting across connections via a
+ * A multiplayer chat on Cloudflare Workers - `app.publish` broadcasting across connections via a
  * Durable Object hub. Run it: `bunx wrangler dev` (then open http://localhost:8787 in two tabs).
  *
  * The only Workers-specific wiring is the two lines at the bottom + the wrangler.toml DO binding;
@@ -26,7 +26,7 @@ app.ws("/chat", {
   open: (ws) => ws.subscribe("room"),
   // Every connection lives in the hub DO, so this fans out to all of them.
   message: (_ws, text) => app.publish("room", typeof text === "string" ? text : "(binary)"),
-  close: () => app.publish("room", "— someone left —"),
+  close: () => app.publish("room", "- someone left -"),
 })
 
 // 1. The Durable Object that holds the connections + runs the pub/sub. Bind it in wrangler.toml.

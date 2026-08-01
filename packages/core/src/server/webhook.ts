@@ -1,11 +1,11 @@
 /**
- * Webhook signature verification — **read the raw body, verify the HMAC, *then* parse**. A handler
+ * Webhook signature verification - **read the raw body, verify the HMAC, *then* parse**. A handler
  * that `JSON.parse`s a webhook before checking the signature is trusting an unauthenticated payload;
  * this reads the body bounded (DoS guard, shared with `c.boundedBody`) and verifies before handing
  * back the raw text for the handler to parse with its own schema.
  *
  * Verification is **constant-time**: the provider's signature is fed to `crypto.subtle.verify`
- * (WebCrypto), which checks the HMAC without a byte-by-byte string compare — so a wrong signature
+ * (WebCrypto), which checks the HMAC without a byte-by-byte string compare - so a wrong signature
  * can't be discovered through timing. WebCrypto-only, so it runs on Bun / Node / Deno / workerd.
  *
  * Presets cover Stripe (`t=…,v1=…` with a replay-window check) and GitHub (`sha256=…`); `generic`
@@ -15,7 +15,7 @@ import { requireSecretBytes } from "../internal/secret.ts"
 import { readBoundedBytes } from "./body.ts"
 
 const TEXT = new TextEncoder()
-const DEFAULT_MAX_BYTES = 1024 * 1024 // 1 MiB — webhook payloads are small; cap the raw read.
+const DEFAULT_MAX_BYTES = 1024 * 1024 // 1 MiB - webhook payloads are small; cap the raw read.
 const DEFAULT_TOLERANCE_SECONDS = 300 // 5-min replay window for timestamped schemes (Stripe's default).
 
 export type WebhookProvider = "stripe" | "github" | "generic"
@@ -136,7 +136,7 @@ function parseStripeHeader(value: string): { t: number; v1: string[] } | null {
 
 /**
  * Verify a webhook request's signature and return its raw payload. Reads `req.body` (bounded), so the
- * body is consumed — parse the returned `payload`, don't re-read the request.
+ * body is consumed - parse the returned `payload`, don't re-read the request.
  *
  * @param secret the signing secret (or an array, to accept either during a secret rotation).
  *
@@ -189,7 +189,7 @@ export async function verifyWebhook(
       }
     }
     if (!matched) return { ok: false, reason: "invalid_signature" }
-    // The signature covers `t`, so `t` is authentic once matched — now enforce the replay window.
+    // The signature covers `t`, so `t` is authentic once matched - now enforce the replay window.
     const now = options.now ?? Math.floor(Date.now() / 1000)
     const tolerance = options.toleranceSeconds ?? DEFAULT_TOLERANCE_SECONDS
     if (Math.abs(now - parsed.t) > tolerance) {

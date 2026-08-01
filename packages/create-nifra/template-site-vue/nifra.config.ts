@@ -1,5 +1,5 @@
-// The nifra CLI's config — read by `nifra dev|build|start`. It's imported ONLY by the CLI (which runs on
-// Bun), so it can eagerly import the Vite plugin + the SFC compiler — keeping them OUT of the edge
+// The nifra CLI's config - read by `nifra dev|build|start`. It's imported ONLY by the CLI (which runs on
+// Bun), so it can eagerly import the Vite plugin + the SFC compiler - keeping them OUT of the edge
 // worker bundle that `framework.ts` (the render-adapter source the entries import) must stay free of.
 import { vueBunPlugin } from "@nifrajs/web-vue/plugin"
 import vue from "@vitejs/plugin-vue"

@@ -1,12 +1,12 @@
 import { pageMeta } from "../../meta"
 import { CodeBlock } from "../../highlight"
 
-// Pure content page — no React interactivity (TOC/copy/search are the layout enhancer +
+// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
 // the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
 export const hydrate = false
 
 export const meta = pageMeta(
-  "Nifra — Query cache",
+  "Nifra - Query cache",
   "Nifra's keyed query cache: useQuery / createQuery, dedup, staleness, invalidation.",
 )
 
@@ -24,7 +24,7 @@ function Profile({ id }: { id: string }) {
 
 function CreateUser() {
   const qc = useQueryClient()
-  // After a mutation, invalidate by key (or prefix) — matching queries refetch.
+  // After a mutation, invalidate by key (or prefix) - matching queries refetch.
   return <button onClick={() => qc.invalidateQueries(["user"])}>Refresh</button>
 }`
 
@@ -33,7 +33,7 @@ export default function Query() {
     <div className="prose">
       <h1 className="page">Query cache</h1>
       <p className="lead">
-        For client-side data that isn't a route loader — lists, widgets, anything refetchable —
+        For client-side data that isn't a route loader - lists, widgets, anything refetchable -
         Nifra ships a keyed query cache (TanStack-Query-style), agnostic across React and Solid.
       </p>
 
@@ -49,7 +49,7 @@ export default function Query() {
       <h2>Invalidation</h2>
       <p>
         After a mutation, <code>useQueryClient().invalidateQueries(key)</code> marks matching entries
-        stale (by exact key or array <b>prefix</b>) and refetches the mounted ones — no manual cache
+        stale (by exact key or array <b>prefix</b>) and refetches the mounted ones - no manual cache
         surgery.
       </p>
       <p>

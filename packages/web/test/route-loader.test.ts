@@ -19,7 +19,7 @@ const withRoutes = (files: Record<string, string>, fn: (dir: string) => void | P
 
 test("an injected loader resolves route modules instead of a bare import", async () => {
   // This is what lets a pipeline own SSR: a bare `import()` always resolves through the RUNTIME, so
-  // the Vite dev server served the client while Bun resolved the server — two resolvers, one process.
+  // the Vite dev server served the client while Bun resolved the server - two resolvers, one process.
   await withRoutes({ "index.tsx": "export default 1" }, async (dir) => {
     const seen: string[] = []
     const manifest = discoverRoutes(dir, {
@@ -35,7 +35,7 @@ test("an injected loader resolves route modules instead of a bare import", async
 })
 
 test("no importQuery is appended when a loader is injected", async () => {
-  // An injected loader owns its own invalidation — Vite re-evaluates on change. Appending a
+  // An injected loader owns its own invalidation - Vite re-evaluates on change. Appending a
   // cache-buster would mint a new module id per request and defeat that.
   await withRoutes({ "index.tsx": "export default 1" }, async (dir) => {
     const seen: string[] = []

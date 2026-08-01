@@ -1,5 +1,5 @@
 /**
- * Build the site for Bun (Nifra's flagship runtime). Output: site/dist-bun/ — server-bun.js + client
+ * Build the site for Bun (Nifra's flagship runtime). Output: site/dist-bun/ - server-bun.js + client
  * assets. Run: `bun dist-bun/server-bun.js`.
  *
  *   bun run site/build-bun.ts

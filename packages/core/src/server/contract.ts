@@ -19,7 +19,7 @@ export interface ResponseDef {
 /**
  * One operation in a contract. Input schemas are any Standard Schema; `response` is optional.
  *
- * The fields below `response` are **optional OpenAPI metadata** — they don't affect runtime
+ * The fields below `response` are **optional OpenAPI metadata** - they don't affect runtime
  * validation or the inferred handler types, they enrich the document `toOpenAPI` emits. A contract is
  * the natural home for them: it's the versionable description of the API, decoupled from the impl.
  */
@@ -101,7 +101,7 @@ type OpErrors<O extends OperationDef> = O extends {
  * RouteInfo as a *decoupled consumer* sees it from the contract alone: the
  * `output` is the declared `response` schema's type, or `unknown` when none is
  * declared (the consumer can't know the response without the server). Path/method
- * levels are mutable and fields are `readonly` — matching the inline registry, so
+ * levels are mutable and fields are `readonly` - matching the inline registry, so
  * the two are mutually assignable.
  */
 type RouteInfoForOp<O extends OperationDef> = {
@@ -109,10 +109,10 @@ type RouteInfoForOp<O extends OperationDef> = {
   readonly query: OpQuery<O>
   readonly body: OpBody<O>
   readonly output: OpResponse<O>
-  // The error union from the op's non-2xx `responses` — so a decoupled contract client sees typed error
+  // The error union from the op's non-2xx `responses` - so a decoupled contract client sees typed error
   // bodies, just like an inline route's `errors`. `unknown` when the op declares no error responses.
   readonly errors: OpErrors<O>
-  // Contract operations cannot declare an SSE event contract (yet) — `never` keeps the contract
+  // Contract operations cannot declare an SSE event contract (yet) - `never` keeps the contract
   // registry mutually assignable with the inline registry's RouteInfoFor (mode conformance).
   readonly sse: never
 }
@@ -132,7 +132,7 @@ type SchemaForOp<O extends OperationDef> = (O extends { body: infer B extends St
   (O extends { params: infer P extends StandardSchemaV1 } ? { params: P } : Record<never, never>)
 
 /**
- * The handler context for an op — identical to the inline `Context<Path, S>`, so a
+ * The handler context for an op - identical to the inline `Context<Path, S>`, so a
  * handler written for an inline route type-checks unchanged under `implement`
  * (the graduation guarantee).
  */
@@ -142,9 +142,9 @@ type MaybePromise<T> = T | Promise<T>
 
 /**
  * What a handler may return for an op. When the op declares a `response`, the return is constrained to
- * that contract shape (or a raw `Response`) — so an `implement`ed backend can't drift from the response
+ * that contract shape (or a raw `Response`) - so an `implement`ed backend can't drift from the response
  * the contract's client was built against. With no `response` it's unconstrained (`unknown`), identical
- * to before. Purely type-level — erased at compile time, zero runtime cost — and mirrors the inline
+ * to before. Purely type-level - erased at compile time, zero runtime cost - and mirrors the inline
  * route's `ResponseOf` constraint, so a handler graduates inline↔contract unchanged.
  */
 type HandlerReturnForOp<O extends OperationDef> = O extends {
@@ -202,7 +202,7 @@ type AnyFn = (...args: never[]) => unknown
 
 /**
  * The registry produced by `implement`: input from the contract op; `output` is the declared `response`
- * contract when present (it wins — exactly as in the inline path), else the bound HANDLER's return — so
+ * contract when present (it wins - exactly as in the inline path), else the bound HANDLER's return - so
  * the implemented server stays route-for-route identical to the equivalent inline server (the
  * mode-conformance guarantee), and a contract-typed client and a `typeof app`-typed client agree.
  */
@@ -221,10 +221,10 @@ export type RegistryFromImpl<
         : H[K] extends AnyFn
           ? OutputOf<H[K]>
           : unknown
-      // The error union from the op's non-2xx `responses` (see OpErrors) — a graduated contract client sees
+      // The error union from the op's non-2xx `responses` (see OpErrors) - a graduated contract client sees
       // the same typed error bodies as the inline `errors` path.
       readonly errors: OpErrors<C[K]>
-      // Mirrors RouteInfoForOp: no SSE contract on contract ops (yet) — mode conformance holds.
+      // Mirrors RouteInfoForOp: no SSE contract on contract ops (yet) - mode conformance holds.
       readonly sse: never
     }
   }
@@ -233,7 +233,7 @@ export type RegistryFromImpl<
 /**
  * Bind handlers to a contract, producing a real {@link Server} you can `.listen()`
  * or `.fetch()`. Each op is registered through the same path as the inline
- * builder, so the result is identical to writing the routes inline — handlers
+ * builder, so the result is identical to writing the routes inline - handlers
  * lift over **unchanged** ("graduation"), and body/query schemas validate at the
  * request boundary exactly as in inline mode.
  *
@@ -259,9 +259,9 @@ export function implement<
   const target = (app ?? new Server()) as Server<R, Ctx>
   const routes = Object.entries(contract).map(([name, op]) => {
     // body/query are validated at the request boundary; `response` is a type + introspection contract
-    // ONLY — never validated at runtime and never read on the request hot path (the lifecycle reads
+    // ONLY - never validated at runtime and never read on the request hot path (the lifecycle reads
     // schema.body/query by name; the `bare`/bodyOnly/queryOnly fast-path gates ignore `response`). Built
-    // once here at bind time, not per request — it just carries a reference to the op's existing schema.
+    // once here at bind time, not per request - it just carries a reference to the op's existing schema.
     // A response-less op still yields `undefined`, byte-identical to before.
     const schema: RouteSchema | undefined =
       op.params !== undefined ||

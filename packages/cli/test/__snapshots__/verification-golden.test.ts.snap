@@ -57,14 +57,14 @@ exports[`verification golden output: nifra check dirty project: human report wit
 
 • typecheck skipped (no tsconfig / typescript not installed)
 ✗ hand-rolled fetch() to your own API: 1
-    routes/notes.tsx:3  const res = await fetch("/notes") — hand-rolled fetch() to your own API — call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift
+    routes/notes.tsx:3  const res = await fetch("/notes") - hand-rolled fetch() to your own API - call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift
       fix: Replace own-API fetch with the typed nifra client
       - Call \`nifra_routes\` or read \`nifra://routes\` for the exact typed-client call form.
       - Create \`const api = client<typeof app>(baseUrl)\` from \`@nifrajs/client\`.
       - Replace the relative \`fetch()\` call with the generated \`api...get/post/...\` call and branch on \`{ ok, data, error }\`.
 ✓ client("…") missing its <typeof app> type argument: none
 ✗ server-only import in a route module: 1
-    routes/notes.tsx:1  import { db } from "../db" — server-only "../db" reaches the browser bundle via routes/notes.tsx → ../db (direct edge — couldn't resolve the transitive chain precisely); server-only import in a route module (bundled for the browser) — reach it via c.db / ctx.api inside a loader, never a top-level import
+    routes/notes.tsx:1  import { db } from "../db" - server-only "../db" reaches the browser bundle via routes/notes.tsx → ../db (direct edge - couldn't resolve the transitive chain precisely); server-only import in a route module (bundled for the browser) - reach it via c.db / ctx.api inside a loader, never a top-level import
       fix: Move server-only code behind the route server boundary
       - Remove the top-level \`import … from "../db"\` from this route module (it's bundled for the browser).
       - Access backend/data work through the route \`loader\`/\`action\` context (\`api\`, \`env\`, or project server context).
@@ -94,8 +94,8 @@ exports[`verification golden output: nifra check dirty project: --json 1`] = `
       "severity": "error",
       "file": "routes/notes.tsx",
       "line": 3,
-      "message": "const res = await fetch(\\"/notes\\") — hand-rolled fetch() to your own API — call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift",
-      "fix": "hand-rolled fetch() to your own API — call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift",
+      "message": "const res = await fetch(\\"/notes\\") - hand-rolled fetch() to your own API - call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift",
+      "fix": "hand-rolled fetch() to your own API - call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift",
       "suggestion": {
         "kind": "manual",
         "title": "Replace own-API fetch with the typed nifra client",
@@ -111,8 +111,8 @@ exports[`verification golden output: nifra check dirty project: --json 1`] = `
       "severity": "error",
       "file": "routes/notes.tsx",
       "line": 1,
-      "message": "import { db } from \\"../db\\" — server-only \\"../db\\" reaches the browser bundle via routes/notes.tsx → ../db (direct edge — couldn't resolve the transitive chain precisely); server-only import in a route module (bundled for the browser) — reach it via c.db / ctx.api inside a loader, never a top-level import",
-      "fix": "server-only import in a route module (bundled for the browser) — reach it via c.db / ctx.api inside a loader, never a top-level import",
+      "message": "import { db } from \\"../db\\" - server-only \\"../db\\" reaches the browser bundle via routes/notes.tsx → ../db (direct edge - couldn't resolve the transitive chain precisely); server-only import in a route module (bundled for the browser) - reach it via c.db / ctx.api inside a loader, never a top-level import",
+      "fix": "server-only import in a route module (bundled for the browser) - reach it via c.db / ctx.api inside a loader, never a top-level import",
       "chain": [
         "routes/notes.tsx",
         "../db"
@@ -219,12 +219,12 @@ exports[`verification golden output: nifra levels full assurance project: --json
 exports[`verification golden output: nifra levels plain project (no config): ladder stops at L0 1`] = `
 "✓ L0 typed contract
 ✗ L1 route assurance
-    - [nifra] route assurance config not found: <cwd>/nifra.assurance.ts — create nifra.assurance.ts with a default defineAssuranceConfig({ source, policy }) export.
+    - [nifra] route assurance config not found: <cwd>/nifra.assurance.ts - create nifra.assurance.ts with a default defineAssuranceConfig({ source, policy }) export.
 ✗ L2 capability lockfile
-    - [nifra] route assurance config not found: <cwd>/nifra.assurance.ts — create nifra.assurance.ts with a default defineAssuranceConfig({ source, policy }) export.
+    - [nifra] route assurance config not found: <cwd>/nifra.assurance.ts - create nifra.assurance.ts with a default defineAssuranceConfig({ source, policy }) export.
 ✗ L3 route manifest
-    - [nifra] route assurance config not found: <cwd>/nifra.assurance.ts — create nifra.assurance.ts with a default defineAssuranceConfig({ source, policy }) export.
+    - [nifra] route assurance config not found: <cwd>/nifra.assurance.ts - create nifra.assurance.ts with a default defineAssuranceConfig({ source, policy }) export.
 ✗ L4 invariant-tested
-    - [nifra] route assurance config not found: <cwd>/nifra.assurance.ts — create nifra.assurance.ts with a default defineAssuranceConfig({ source, policy }) export.
+    - [nifra] route assurance config not found: <cwd>/nifra.assurance.ts - create nifra.assurance.ts with a default defineAssuranceConfig({ source, policy }) export.
 [nifra] verification level: L0"
 `;

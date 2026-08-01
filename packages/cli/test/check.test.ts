@@ -22,7 +22,7 @@ import {
   walkServerOnlyChain,
 } from "../src/check.ts"
 
-describe("scanFetchText — own-API fetch detection", () => {
+describe("scanFetchText - own-API fetch detection", () => {
   test("flags relative-URL fetch (string and template), with accurate line numbers", () => {
     const src = [
       "const a = 1",
@@ -49,7 +49,7 @@ describe("scanFetchText — own-API fetch detection", () => {
     expect(scanFetchText("a.ts", "client.fetch(`/users`)")).toHaveLength(0) // a method, not global fetch
     expect(scanFetchText("a.ts", 'app.fetch(new Request("/x"))')).toHaveLength(0)
     expect(scanFetchText("a.ts", 'prefetch("/x")')).toHaveLength(0)
-    expect(scanFetchText("a.ts", "fetch(url)")).toHaveLength(0) // variable — undecidable, left alone
+    expect(scanFetchText("a.ts", "fetch(url)")).toHaveLength(0) // variable - undecidable, left alone
     expect(scanFetchText("a.ts", "fetch(`" + "$" + "{base}/x`)")).toHaveLength(0) // not relative
   })
 
@@ -116,7 +116,7 @@ describe("scanFetchText — own-API fetch detection", () => {
   })
 })
 
-describe("scanProject — walks source, skips deps/build/tests", () => {
+describe("scanProject - walks source, skips deps/build/tests", () => {
   test("flags app source but ignores node_modules, dist, and test files", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))
     await mkdir(join(dir, "routes"), { recursive: true })
@@ -133,7 +133,7 @@ describe("scanProject — walks source, skips deps/build/tests", () => {
   })
 })
 
-describe("scanStaticRouteText — conservative source-only route collection", () => {
+describe("scanStaticRouteText - conservative source-only route collection", () => {
   test("collects simple Nifra route registrations without executing backend code", () => {
     const src = [
       'import { server } from "@nifrajs/core"',
@@ -161,7 +161,7 @@ describe("scanStaticRouteText — conservative source-only route collection", ()
   })
 })
 
-describe("scanServerOnlyImports — server-only imports in route modules", () => {
+describe("scanServerOnlyImports - server-only imports in route modules", () => {
   test("flags DB drivers, node:/bun: builtins, and the ./db module in a routes/ file", () => {
     const flag = (src: string) => scanServerOnlyImports("routes/notes.tsx", src)
     expect(flag('import { Database } from "bun:sqlite"')).toHaveLength(1)
@@ -211,7 +211,7 @@ describe("scanServerOnlyImports — server-only imports in route modules", () =>
   })
 })
 
-describe("collectCheckResult — structured result for --json / the MCP tool", () => {
+describe("collectCheckResult - structured result for --json / the MCP tool", () => {
   test("reports both lint rules as diagnostics; ok=false; typecheck skipped without a tsconfig", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))
     await mkdir(join(dir, "routes"), { recursive: true })
@@ -233,7 +233,7 @@ describe("collectCheckResult — structured result for --json / the MCP tool", (
     const importDiag = result.diagnostics.find((d) => d.rule === "server-only-import")
     expect(importDiag?.suggestion?.title).toContain("server-only")
     // The diagnostic names the import chain it can see: the route module → the server-only specifier it
-    // top-level-imports (the direct edge; not a transitive graph — see CheckDiagnostic.chain).
+    // top-level-imports (the direct edge; not a transitive graph - see CheckDiagnostic.chain).
     expect(importDiag?.chain).toEqual(["routes/notes.tsx", "../db"])
     expect(importDiag?.message).toContain("routes/notes.tsx → ../db")
     expect(importDiag?.message).toContain('server-only "../db"')
@@ -316,7 +316,7 @@ describe("scanResponseRoutes (feedback 2026-06: raw Response collapses typed cli
     ).toHaveLength(0)
   })
 
-  test("is advisory in collectCheckResult — surfaced as a warning, does NOT fail the gate", async () => {
+  test("is advisory in collectCheckResult - surfaced as a warning, does NOT fail the gate", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))
     await writeFile(
       join(dir, "backend.ts"),
@@ -409,7 +409,7 @@ describe("nifra.check.json - external-mount allowlist", () => {
   })
 })
 
-describe("stripComments — blank comments + template literals, keep strings + positions", () => {
+describe("stripComments - blank comments + template literals, keep strings + positions", () => {
   test("blanks line/block comments and backtick contents, preserves newlines + quoted strings", () => {
     const src = [
       'import "react" // comment with "fake"',
@@ -471,7 +471,7 @@ describe("scanUntypedClient (audit 2026-06: missing <typeof app> bypasses anti-d
   })
 })
 
-describe("collectCheckResult — doctor integration for undeclared dependencies", () => {
+describe("collectCheckResult - doctor integration for undeclared dependencies", () => {
   test("flags undeclared packages and fails collectCheckResult", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-check-doctor-"))
     await mkdir(join(dir, "routes"), { recursive: true })
@@ -501,7 +501,7 @@ describe("collectCheckResult — doctor integration for undeclared dependencies"
   })
 })
 
-// #7 — server-manifest drift. A committed, generated `server-manifest.ts` bakes the route list for a
+// #7 - server-manifest drift. A committed, generated `server-manifest.ts` bakes the route list for a
 // disk-less worker; if `routes/` changes but the manifest isn't regenerated, the worker serves a stale
 // route table (silent edge break). The check diffs the committed manifest's route imports against the
 // live routes/ tree.
@@ -510,7 +510,7 @@ describe("collectCheckResult — doctor integration for undeclared dependencies"
  * the GENERATED marker the scanner keys on. */
 const manifestSource = (routeFiles: readonly string[]): string =>
   [
-    "// GENERATED by @nifrajs/web generateServerManifest — route manifest for the disk-less edge",
+    "// GENERATED by @nifrajs/web generateServerManifest - route manifest for the disk-less edge",
     'import { buildManifest } from "@nifrajs/web"',
     ...routeFiles.map((f, i) => `import * as m${i} from "./routes/${f}"`),
     "const modules = { }",
@@ -569,7 +569,7 @@ describe("scanServerManifestDrift", () => {
   })
 })
 
-describe("collectCheckResult — server-manifest drift rule", () => {
+describe("collectCheckResult - server-manifest drift rule", () => {
   test("a drifted manifest fails the gate with the named server-manifest-drift error", async () => {
     const dir = await manifestApp(["index.tsx"], ["index.tsx", "new.tsx"])
     const result = await collectCheckResult(dir, { lintsOnly: true })
@@ -591,7 +591,7 @@ describe("collectCheckResult — server-manifest drift rule", () => {
   })
 })
 
-describe("parseStaticImports — static non-type import specifiers", () => {
+describe("parseStaticImports - static non-type import specifiers", () => {
   test("collects static imports, skips type-only + dynamic imports", () => {
     const src = [
       'import { a } from "./a.ts"',
@@ -604,7 +604,7 @@ describe("parseStaticImports — static non-type import specifiers", () => {
   })
 })
 
-describe("walkServerOnlyChain — bounded transitive walk over a fake module graph (#4.4)", () => {
+describe("walkServerOnlyChain - bounded transitive walk over a fake module graph (#4.4)", () => {
   // A fake local module graph: route → ../data → ../db → (node:crypto). `resolve` maps a relative
   // specifier from a file to an absolute key; `read` returns the module source. No real fs.
   const graph: Record<string, string> = {
@@ -679,7 +679,7 @@ describe("walkServerOnlyChain — bounded transitive walk over a fake module gra
     expect(chain).toEqual(["/app/routes/m.tsx", "../secrets.ts"])
   })
 
-  test("is cycle-safe (a → b → a) — never loops, returns undefined for no sink", () => {
+  test("is cycle-safe (a → b → a) - never loops, returns undefined for no sink", () => {
     const g: Record<string, string> = {
       "/app/routes/c.tsx": 'import { a } from "../a.ts"\nexport default () => a',
       "/app/a.ts": 'import { b } from "./b.ts"\nexport const a = () => b',
@@ -695,7 +695,7 @@ describe("walkServerOnlyChain — bounded transitive walk over a fake module gra
   })
 })
 
-describe("resolveServerOnlyChains — per-route findings with the full chain (#4.4)", () => {
+describe("resolveServerOnlyChains - per-route findings with the full chain (#4.4)", () => {
   test("a direct server-only import yields the direct edge (length-2 chain)", () => {
     const finding = resolveServerOnlyChains(
       "routes/x.tsx",
@@ -730,7 +730,7 @@ describe("resolveServerOnlyChains — per-route findings with the full chain (#4
   })
 })
 
-describe("collectCheckResult — transitive server-only chain end-to-end (#4.4)", () => {
+describe("collectCheckResult - transitive server-only chain end-to-end (#4.4)", () => {
   test("routes/x.tsx → ../data.ts → ../db.ts (node:crypto) yields the full chain", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-check-transitive-"))
     await mkdir(join(dir, "routes"), { recursive: true })
@@ -805,7 +805,7 @@ describe("collectCheckResult — transitive server-only chain end-to-end (#4.4)"
   })
 })
 
-describe("walkSource — respects .gitignore (no huge scans of generated/build trees)", () => {
+describe("walkSource - respects .gitignore (no huge scans of generated/build trees)", () => {
   test("skips a gitignored dir even though it holds a lintable source file", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-check-gi-"))
     Bun.spawnSync(["git", "init", "-q"], { cwd: dir })
@@ -820,7 +820,7 @@ describe("walkSource — respects .gitignore (no huge scans of generated/build t
     await rm(dir, { recursive: true, force: true })
   })
 
-  test("degrades gracefully outside a git repo — no filtering, never throws", async () => {
+  test("degrades gracefully outside a git repo - no filtering, never throws", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-check-nogit-")) // NOT a git repo
     await writeFile(join(dir, ".gitignore"), "generated/\n") // present, but git can't consult it here
     await mkdir(join(dir, "routes"), { recursive: true })
@@ -836,7 +836,7 @@ describe("walkSource — respects .gitignore (no huge scans of generated/build t
   })
 })
 
-describe("collectCheckResult — maxDiagnostics bounds the result (MCP transport safety)", () => {
+describe("collectCheckResult - maxDiagnostics bounds the result (MCP transport safety)", () => {
   test("caps diagnostics + reports truncated; ok reflects the FULL set", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-check-cap-"))
     await mkdir(join(dir, "src"), { recursive: true })

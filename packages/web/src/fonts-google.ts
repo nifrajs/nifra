@@ -1,12 +1,12 @@
 /**
- * Build-time Google Fonts automation — the `next/font/google` equivalent. At **build time** (never on
+ * Build-time Google Fonts automation - the `next/font/google` equivalent. At **build time** (never on
  * the request path) it: builds the Google Fonts CSS2 URL, downloads the stylesheet, parses the
  * `@font-face` rules, downloads each `.woff2`, content-hashes it, writes it next to your assets, and
  * hands back a **self-hosted** `@font-face` stylesheet + the matching `<link rel="preload">`s. The
- * result is identical to dropping the files in yourself and calling {@link fontFace} — no runtime CDN
+ * result is identical to dropping the files in yourself and calling {@link fontFace} - no runtime CDN
  * hotlink, no layout shift, hashed filenames for immutable caching.
  *
- *   // fonts.build.ts — run once at build time (e.g. a prebuild step)
+ *   // fonts.build.ts - run once at build time (e.g. a prebuild step)
  *   import { loadGoogleFont } from "@nifrajs/web/fonts"
  *   const inter = await loadGoogleFont(
  *     { family: "Inter", weights: [400, 700], subsets: ["latin"] },
@@ -16,7 +16,7 @@
  *   // inter.preloads → spread into a root layout's `meta.link`
  *
  * Security: this fetches remote content and writes it to disk, so every input is validated and the
- * font-file host is **allowlisted to `fonts.gstatic.com` over https** — a tampered/MITM'd stylesheet
+ * font-file host is **allowlisted to `fonts.gstatic.com` over https** - a tampered/MITM'd stylesheet
  * cannot make the build fetch an arbitrary URL (SSRF) or write an attacker-chosen blob. Downloads are
  * size-capped. Filenames are derived only from validated tokens + a content hash (no path traversal).
  */
@@ -30,7 +30,7 @@ import type { LinkDescriptor } from "./manifest.ts"
 export interface GoogleFontOptions {
   /** Family name exactly as Google lists it, e.g. `"Inter"`, `"Open Sans"`, `"Roboto Mono"`. */
   readonly family: string
-  /** Weights to request — numbers (`400`), numeric strings, a variable range (`"100 900"`), or the
+  /** Weights to request - numbers (`400`), numeric strings, a variable range (`"100 900"`), or the
    * keywords `"normal"`/`"bold"`. Defaults to `[400]`. */
   readonly weights?: readonly (number | string)[]
   /** Styles to request. Defaults to `["normal"]`. */
@@ -42,7 +42,7 @@ export interface GoogleFontOptions {
   /** `font-display` strategy for the generated faces. Defaults to `"swap"`. */
   readonly display?: FontDisplay
   /** Glyph subsetting: request only the glyphs needed to render exactly this text (Google's `&text=`).
-   * Ideal for a logo/heading font — produces one tiny file. */
+   * Ideal for a logo/heading font - produces one tiny file. */
   readonly text?: string
   /** CLS metric overrides forwarded to every generated `@font-face` (the layout-shift fix). */
   readonly sizeAdjust?: string
@@ -81,7 +81,7 @@ export interface LoadGoogleFontResult {
   readonly css: string
   /** Every file written to `outDir`. */
   readonly assets: readonly FontAsset[]
-  /** `fontPreload()` link-attribute sets — spread the ones you want into a layout's `meta.link`.
+  /** `fontPreload()` link-attribute sets - spread the ones you want into a layout's `meta.link`.
    * Preloading *every* weight/subset is wasteful; usually preload just the primary subset + weight. */
   readonly preloads: readonly LinkDescriptor[]
 }
@@ -121,7 +121,7 @@ const VALID_DISPLAY: ReadonlySet<string> = new Set([
   "optional",
 ])
 
-/** `true` iff `raw` is an `https://fonts.gstatic.com/…` URL — the only host we'll download from. */
+/** `true` iff `raw` is an `https://fonts.gstatic.com/…` URL - the only host we'll download from. */
 export function isAllowedFontUrl(raw: string): boolean {
   let url: URL
   try {
@@ -148,7 +148,7 @@ function validateFamily(family: string): string {
 function normalizeWeight(weight: number | string): string {
   if (typeof weight === "number") {
     if (!Number.isInteger(weight) || weight < 1 || weight > 1000) {
-      throw new Error(`loadGoogleFont: invalid weight ${weight} (1–1000)`)
+      throw new Error(`loadGoogleFont: invalid weight ${weight} (1-1000)`)
     }
     return String(weight)
   }
@@ -221,7 +221,7 @@ function declOf(body: string, prop: string): string | undefined {
 }
 
 /** Parse Google's stylesheet into structured faces, capturing the `/* subset *​/` label that precedes
- * each `@font-face`. Pure — exported so callers can run their own download/write pipeline. */
+ * each `@font-face`. Pure - exported so callers can run their own download/write pipeline. */
 export function parseGoogleFontCss(css: string): ParsedFontFace[] {
   const faces: ParsedFontFace[] = []
   for (const match of css.matchAll(FACE_RE)) {
@@ -250,7 +250,7 @@ export function parseGoogleFontCss(css: string): ParsedFontFace[] {
   return faces
 }
 
-/** First 16 hex chars of the SHA-256 of the bytes — a content hash for an immutable, cache-busting
+/** First 16 hex chars of the SHA-256 of the bytes - a content hash for an immutable, cache-busting
  * filename. Web Crypto, so it runs identically on Bun/Node/edge build hosts. `Uint8Array<ArrayBuffer>`
  * (not the generic `ArrayBufferLike`) to satisfy WebCrypto's `BufferSource` under TS 5.7+ generics. */
 async function contentHash(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
@@ -267,7 +267,7 @@ const slug = (s: string): string =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
 
-/** Host of a URL for error messages — we never echo the full untrusted URL+path. */
+/** Host of a URL for error messages - we never echo the full untrusted URL+path. */
 const hostOf = (raw: string): string => {
   try {
     return new URL(raw).host
@@ -330,7 +330,7 @@ export async function loadGoogleFont(
       `loadGoogleFont: Google returned no @font-face rules for ${JSON.stringify(family)}`,
     )
   }
-  // Filter to requested named subsets — but only when not glyph-subsetting (text mode labels faces
+  // Filter to requested named subsets - but only when not glyph-subsetting (text mode labels faces
   // `[0]`, `[1]`, … which carry no subset name).
   if (wantedSubsets && wantedSubsets.length > 0 && options.text === undefined) {
     faces = faces.filter((f) => wantedSubsets.includes(f.subset))

@@ -1,4 +1,4 @@
-/** Root layout — nav across the collection index + the MDX page. */
+/** Root layout - nav across the collection index + the MDX page. */
 export default function Layout(props: { children?: unknown }) {
   return (
     <div>

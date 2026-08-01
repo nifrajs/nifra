@@ -11,7 +11,7 @@ const passThrough: StandardSchemaV1 = {
   "~standard": { version: 1, vendor: "test", validate: (value) => ({ value }) },
 }
 
-describe("defineContract — validation (L2)", () => {
+describe("defineContract - validation (L2)", () => {
   test("returns the contract on valid input", () => {
     const c = defineContract({
       list: { method: "GET", path: "/users" },
@@ -64,13 +64,13 @@ describe("defineContract — validation (L2)", () => {
   })
 })
 
-describe("implement() — response contract on the descriptor", () => {
+describe("implement() - response contract on the descriptor", () => {
   test("carries a contract op's `response` onto the route schema (for OpenAPI / introspection)", () => {
     const contract = defineContract({
       getMe: { method: "GET", path: "/me", response: passThrough },
     })
     const app = implement(contract, { getMe: () => ({ id: "1" }) })
-    // Same descriptor path as inline routes — toOpenAPI + `nifra context` read it from app.routes().
+    // Same descriptor path as inline routes - toOpenAPI + `nifra context` read it from app.routes().
     expect(app.routes()[0]?.schema?.response).toBe(passThrough)
   })
 

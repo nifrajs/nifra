@@ -1,10 +1,10 @@
 /**
  * Wraps `changeset version` and re-syncs the version refs `changeset version` itself leaves untouched:
- *   - the two hardcoded CLI version constants — cli.ts reads no package.json at runtime, mcp-http.ts runs
+ *   - the two hardcoded CLI version constants - cli.ts reads no package.json at runtime, mcp-http.ts runs
  *     on the edge with no fs, so both hardcode the version; and
  *   - the create-nifra templates' `@nifrajs/*` / `nifra` dep pins + the `--auth` injected
  *     `@nifrajs/better-auth` range. These are plain template/source files (not workspace deps), so
- *     changeset skips them, and a missed bump ships templates that install the PREVIOUS release — the
+ *     changeset skips them, and a missed bump ships templates that install the PREVIOUS release - the
  *     1.0.0 cut shipped stale beta pins exactly this way.
  *
  * `check:publish` re-asserts every one of these matches, so a forgotten bump fails the publish gate
@@ -21,8 +21,8 @@ const { version } = JSON.parse(readFileSync("packages/cli/package.json", "utf8")
 }
 
 // Hardcoded version literals in published source that read no package.json at runtime: the CLI
-// constants (cli.ts / mcp-http.ts) and @nifrajs/core's exported `VERSION` (core runs on the edge — no
-// fs — so it can't derive its own version). Under `fixed` versioning every package shares this version.
+// constants (cli.ts / mcp-http.ts) and @nifrajs/core's exported `VERSION` (core runs on the edge - no
+// fs - so it can't derive its own version). Under `fixed` versioning every package shares this version.
 const constants: Array<{ file: string; re: RegExp }> = [
   { file: "packages/cli/src/cli.ts", re: /(CLI_VERSION\s*=\s*)"[^"]+"/ },
   { file: "packages/cli/src/mcp-http.ts", re: /(const VERSION\s*=\s*)"[^"]+"/ },
@@ -62,7 +62,7 @@ for (const dir of readdirSync(CREATE_NIFRA).filter((d) => d.startsWith("template
 }
 
 // The `--auth better-auth` injected `@nifrajs/better-auth` range in auth.ts's AUTH_PRESETS (its sibling
-// `better-auth` peer pin is a third-party version — left untouched).
+// `better-auth` peer pin is a third-party version - left untouched).
 {
   const file = `${CREATE_NIFRA}/src/auth.ts`
   const src = readFileSync(file, "utf8")
@@ -71,8 +71,8 @@ for (const dir of readdirSync(CREATE_NIFRA).filter((d) => d.startsWith("template
 }
 
 // api-reference.md, the per-package LLM.md cards AND the llms corpora embed exported signatures
-// verbatim — including core's `VERSION` literal just rewritten above, which types.json stores as the
-// literal type `export declare const VERSION: "2.2.0"` — so the version bump makes all three stale and
+// verbatim - including core's `VERSION` literal just rewritten above, which types.json stores as the
+// literal type `export declare const VERSION: "2.2.0"` - so the version bump makes all three stale and
 // `check:api` / `check:cards` / `check:llms` fail on the release commit unless we regenerate here. The
 // "chore: version packages" commit is made by CI and never runs the pre-commit hook, so we regenerate
 // explicitly.
@@ -80,11 +80,11 @@ for (const dir of readdirSync(CREATE_NIFRA).filter((d) => d.startsWith("template
 // `gen:llms` was missing from this list, and the effect was not a cosmetic diff: every "Version
 // Packages" PR failed CI on a stale types.json, and since Release only publishes after CI concludes
 // successfully, nothing could ship. A generator that reads a rewritten literal has to be regenerated
-// here — adding one to `gen:*` means adding it to this line too.
+// here - adding one to `gen:*` means adding it to this line too.
 //
 // Build FIRST. The generators read each `src/index.ts` via the TS compiler API and resolve package
 // subpaths through their built declarations. The CI `check` job builds before `check:api`, so we must
-// match it — buildless regeneration can silently omit re-exported sections and drift from CI (for
+// match it - buildless regeneration can silently omit re-exported sections and drift from CI (for
 // `gen:llms` specifically it guts types.json, whose tell is "0 types from 1 built packages").
 execSync("bun run build && bun run gen:api && bun run gen:cards && bun run gen:llms", {
   stdio: "inherit",

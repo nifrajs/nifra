@@ -1,6 +1,6 @@
 /**
  * Response data-classification tags. A route can declare the highest sensitivity its response body
- * carries (`schema.classification`). This is a declarative, compile-time + introspection fact — never
+ * carries (`schema.classification`). This is a declarative, compile-time + introspection fact - never
  * read on the request hot path and never enforced at runtime here. Downstream consumers use it: a
  * partner-API surface refuses to expose a route whose response is `pii`/`secret`, privacy tooling
  * learns which routes emit regulated data, and the capability lockfile records it so a route that

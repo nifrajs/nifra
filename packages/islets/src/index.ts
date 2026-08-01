@@ -1,8 +1,8 @@
 /**
- * @nifrajs/islets — fine-grained signals + declarative DOM bindings for islands, in ~1 KB gz.
+ * @nifrajs/islets - fine-grained signals + declarative DOM bindings for islands, in ~1 KB gz.
  *
  * The client companion to `@nifrajs/web-vanilla`: the server renders real HTML (zero framework
- * JS); islands attach behavior to it in place — no VDOM, no hydration re-render, no component
+ * JS); islands attach behavior to it in place - no VDOM, no hydration re-render, no component
  * re-execution. Measured at ~0.47 KB gz vs ~4 KB for the smallest framework island; the
  * size budget is enforced by a test.
  *

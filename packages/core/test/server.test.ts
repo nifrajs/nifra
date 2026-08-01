@@ -5,7 +5,7 @@ function request(method: string, path: string, init?: RequestInit): Request {
   return new Request(`http://localhost${path}`, { method, ...init })
 }
 
-describe("Server.fetch — responses", () => {
+describe("Server.fetch - responses", () => {
   test("serializes a returned value to JSON with 200", async () => {
     const app = server().get("/health", () => ({ ok: true }))
     const res = await app.fetch(request("GET", "/health"))
@@ -15,7 +15,7 @@ describe("Server.fetch — responses", () => {
   })
 
   test("types and returns a path param", async () => {
-    // c.params.id only type-checks because the path literal is parsed — this
+    // c.params.id only type-checks because the path literal is parsed - this
     // test doubles as a compile-time check of the inference.
     const app = server().get("/users/:id", (c) => ({ id: c.params.id }))
     expect(await (await app.fetch(request("GET", "/users/42"))).json()).toEqual({ id: "42" })
@@ -65,7 +65,7 @@ describe("Server.fetch — responses", () => {
   })
 })
 
-describe("Server.fetch — errors (404/405/400/500)", () => {
+describe("Server.fetch - errors (404/405/400/500)", () => {
   test("404 not_found for an unknown path", async () => {
     const app = server().get("/x", () => "ok")
     const res = await app.fetch(request("GET", "/nope"))
@@ -106,7 +106,7 @@ describe("Server.fetch — errors (404/405/400/500)", () => {
   })
 })
 
-describe("Server — verbs and listen", () => {
+describe("Server - verbs and listen", () => {
   test("supports all standard verbs", async () => {
     const app = server()
       .get("/r", () => "GET")

@@ -1,5 +1,5 @@
 /**
- * Dev server — the Bun pipeline: `Bun.serve` bundles and hot-reloads the client, Bun's runtime
+ * Dev server - the Bun pipeline: `Bun.serve` bundles and hot-reloads the client, Bun's runtime
  * resolves SSR, and no Vite is involved. `createDevServer` owns the SSR cache-busting, so no
  * `--watch` is needed:
  *

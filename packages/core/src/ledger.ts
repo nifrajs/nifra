@@ -4,7 +4,7 @@
  * Every owned effect seam (a repository write, an external call, an email send) records one entry via
  * the `useCapability` beacon. The entry type is deliberately **token-only**: capability ids, phase,
  * an adapter/resource token, dimensionless cost counters, an optional keyed digest, and an error code.
- * There is no free-form payload field — request bodies, rows, and values cannot enter the ledger, so
+ * There is no free-form payload field - request bodies, rows, and values cannot enter the ledger, so
  * redaction holds by construction rather than by filtering. The sealed ledger carries the **route
  * pattern** (`/users/:id`), never the concrete URL, so path parameters cannot leak either.
  *
@@ -29,7 +29,7 @@ export type EffectCost = Readonly<Record<string, number>>
 
 /** Token-only caller metadata shared by an effect intent and outcome. */
 export interface EffectMetadata {
-  /** Adapter/resource token (`repo:orders`, `provider:payments`). A token — never a value or a row. */
+  /** Adapter/resource token (`repo:orders`, `provider:payments`). A token - never a value or a row. */
   readonly target?: string
   /** Dimensionless counters; see {@link EffectCost}. At most {@link MAX_COST_AXES} axes. */
   readonly cost?: EffectCost
@@ -45,7 +45,7 @@ export interface EffectEntryInput extends EffectMetadata {
   readonly capability: string
   /** Default `"intent"`. Record `committed`/`failed`/`compensated` only after the outcome is known. */
   readonly phase?: EffectPhase
-  /** Outcome error as a bounded token code — never a message, never a stack. */
+  /** Outcome error as a bounded token code - never a message, never a stack. */
   readonly error?: { readonly code: string }
 }
 
@@ -75,10 +75,10 @@ export interface EffectChain {
 /** The immutable result of sealing a request's ledger. Token-only; safe to hand to any sink. */
 export interface SealedEffectLedger {
   readonly method: string
-  /** The registered route pattern (`/users/:id`) — never the concrete request URL. */
+  /** The registered route pattern (`/users/:id`) - never the concrete request URL. */
   readonly path: string
   readonly entries: readonly EffectEntry[]
-  /** The route's declared capability tokens — the runtime-enforcement view: recorded ⊆ declared is
+  /** The route's declared capability tokens - the runtime-enforcement view: recorded ⊆ declared is
    * guaranteed by the beacon, and `declared` minus the recorded ids is the unused declaration set. */
   readonly declared: readonly string[]
   /** Present when the ledger was created with `chain: true`. */
@@ -99,7 +99,7 @@ export class EffectLedgerOverflowError extends Error {
   }
 }
 
-/** Thrown by `append` after `seal()` — e.g. an effect attempted while streaming a response body. */
+/** Thrown by `append` after `seal()` - e.g. an effect attempted while streaming a response body. */
 export class EffectLedgerSealedError extends Error {
   constructor() {
     super("effect ledger is sealed: effects cannot be recorded after the response settles")
@@ -115,14 +115,14 @@ export interface RequestLedger {
   entries(): readonly EffectEntry[]
   readonly size: number
   readonly sealed: boolean
-  /** Finalize the ledger (computing the chain when enabled). Idempotent — always the same result. */
+  /** Finalize the ledger (computing the chain when enabled). Idempotent - always the same result. */
   seal(): Promise<SealedEffectLedger>
 }
 
 export interface CreateRequestLedgerOptions {
   /** HTTP method of the matched route. */
   readonly method: string
-  /** The registered route pattern — callers must never pass the concrete request URL. */
+  /** The registered route pattern - callers must never pass the concrete request URL. */
   readonly path: string
   /** The route's declared capability tokens, surfaced verbatim on the sealed ledger. Default `[]`. */
   readonly declared?: readonly string[]
@@ -255,7 +255,7 @@ class BoundedRequestLedger implements RequestLedger {
     if (input.error !== undefined && !ERROR_CODE.test(input.error.code)) {
       throw new TypeError("effect ledger: error code must be a bounded lowercase token")
     }
-    // Only the known token fields are copied — a stray `payload`-like property never survives append.
+    // Only the known token fields are copied - a stray `payload`-like property never survives append.
     const at = this.clock()
     if (!Number.isFinite(at) || at < 0) {
       throw new TypeError("effect ledger: clock must return a finite non-negative number")
@@ -315,7 +315,7 @@ export function createRequestLedger(options: CreateRequestLedgerOptions): Reques
   return new BoundedRequestLedger(options)
 }
 
-/** Canonical, key-ordered serialization of one entry — the hash-chain input. */
+/** Canonical, key-ordered serialization of one entry - the hash-chain input. */
 function canonicalEntry(entry: EffectEntry): string {
   const cost =
     entry.cost === undefined
@@ -382,7 +382,7 @@ export function createMemoryLedgerSink(options: MemoryLedgerSinkOptions = {}): M
 /** Minimum digest key material. A short key would make the keyed digest brute-forceable. */
 export const MIN_DIGEST_KEY_BYTES = 16
 
-/** Fresh random digest key (32 bytes). Per-process by default — persist one externally to correlate across restarts. */
+/** Fresh random digest key (32 bytes). Per-process by default - persist one externally to correlate across restarts. */
 export function randomEffectDigestKey(): Uint8Array {
   const bytes = new Uint8Array(32)
   crypto.getRandomValues(bytes)

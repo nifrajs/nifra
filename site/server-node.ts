@@ -1,5 +1,5 @@
 /**
- * The site on Node — the same Nifra app, served by `@nifrajs/node`. Cloudflare serves the client bundle
+ * The site on Node - the same Nifra app, served by `@nifrajs/node`. Cloudflare serves the client bundle
  * via `_routes.json`; on Node we hand `serve` a `static` mount so it serves `/assets/*` from disk
  * before the app runs (the SSR/API fast path stays intact for everything else).
  *

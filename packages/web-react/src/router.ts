@@ -1,12 +1,12 @@
 /**
- * `@nifrajs/web-react/router` — React routing bindings over the agnostic `@nifrajs/web` router:
+ * `@nifrajs/web-react/router` - React routing bindings over the agnostic `@nifrajs/web` router:
  * `<Link>`/`<NavLink>`, `useNavigate`, `useParams`, `useLocation`, `useSearchParams`, and `<Navigate>`.
  *
  * These read the current route from a {@link RouterContext} that `compose` provides on BOTH the SSR
  * render and the client mount (seeded from the request match / router state respectively), so the read
  * hooks (`useParams`/`useLocation`/`useSearchParams`) are SSR-correct and hydrate with no mismatch.
  * Navigation goes through `@nifrajs/web`'s DOM-free navigate bridge (`getBrowserNavigate`, populated by
- * `installHistory`) — so this module imports only `react` (never `react-dom/*`), and a route component
+ * `installHistory`) - so this module imports only `react` (never `react-dom/*`), and a route component
  * can use these on the server and the client without dragging a DOM build into the wrong bundle. No JSX
  * (the package builds with plain `tsc`), so everything is `createElement`.
  */
@@ -45,13 +45,13 @@ export type { Blocker, BlockerFunction, BlockerState, NavigateFunction } from "@
 export interface RouterContextValue {
   /** The matched route's decoded path params (`/users/:id` → `{ id: "7" }`). */
   readonly params: Readonly<Record<string, string>>
-  /** The current URL's `pathname + search` (no hash — the router never carries one). */
+  /** The current URL's `pathname + search` (no hash - the router never carries one). */
   readonly path: string
   /** The route's typed, validated search params (the loader's `ctx.search`), derived from the URL via
    * the shared `searchOf` on SSR + client alike, read by {@link useSearch}. `{}` when the route
    * declares no `searchSchema` (then it is the raw parsed query) or outside a nifra route tree. */
   readonly search: Record<string, unknown>
-  /** True while a client navigation (or revalidation) is in flight — the current route stays mounted
+  /** True while a client navigation (or revalidation) is in flight - the current route stays mounted
    * until the new one is ready. Always `false` on SSR (loaders block before render). Drives loading UI
    * via {@link useNavigation}. */
   readonly pending: boolean
@@ -84,7 +84,7 @@ function splitPath(path: string): { readonly pathname: string; readonly search: 
 }
 
 /**
- * The matched route's decoded path params — `/users/:id` on `/users/7` → `{ id: "7" }`. SSR-correct:
+ * The matched route's decoded path params - `/users/:id` on `/users/7` → `{ id: "7" }`. SSR-correct:
  * `compose` provides the same value server-side (from the request match) and client-side (from router
  * state), so a param rendered into markup doesn't flash on hydration.
  */
@@ -117,7 +117,7 @@ export function useSearch<
     : Record<string, unknown>
 }
 
-/** The parsed current location. `hash` is always `""` — the fragment is client-only and never reaches
+/** The parsed current location. `hash` is always `""` - the fragment is client-only and never reaches
  * the router state / server, so exposing a live hash would hydration-mismatch; read `window.location.hash`
  * directly (in an effect) if you truly need it. */
 export interface Location {
@@ -275,7 +275,7 @@ export function useSearchParams(): readonly [URLSearchParams, SetSearchParams] {
   return [searchParams, setSearchParams] as const
 }
 
-/** A left-click with no modifier and no new-tab target — the only click a client router should
+/** A left-click with no modifier and no new-tab target - the only click a client router should
  * intercept (Cmd/Ctrl/Shift/Alt or a `_blank` target means the user wants native behavior). */
 function isPlainLeftClick(event: MouseEvent, target: string | undefined): boolean {
   if (event.button !== 0) return false
@@ -295,7 +295,7 @@ export interface LinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>,
  * A client-navigating anchor. Renders a real `<a href={to}>` (so it's a working link before hydration
  * and for right-click / open-in-new-tab), and on a plain left-click navigates through the router
  * instead of a full reload. Calling `navigate` + `preventDefault` here means `installHistory`'s
- * document-level click handler sees `defaultPrevented` and stands down — exactly one navigation.
+ * document-level click handler sees `defaultPrevented` and stands down - exactly one navigation.
  */
 export const Link = forwardRef<HTMLAnchorElement, LinkProps>(function Link(
   { to, replace, onClick, target, ...rest },
@@ -322,7 +322,7 @@ export interface NavLinkRenderProps {
   readonly isPending: boolean
 }
 
-/** {@link NavLink} props — like {@link LinkProps}, but `className`/`style`/`children` may be functions
+/** {@link NavLink} props - like {@link LinkProps}, but `className`/`style`/`children` may be functions
  * of the active state, and `end`/`caseSensitive` tune matching. */
 export interface NavLinkProps extends Omit<LinkProps, "className" | "style" | "children"> {
   /** Match the full path exactly instead of as a prefix (use for `to="/"` so it isn't always active). */
@@ -399,7 +399,7 @@ export interface NavigateProps {
 }
 
 /**
- * Declaratively navigate on mount — the component analogue of `useNavigate` (e.g. a guard that renders
+ * Declaratively navigate on mount - the component analogue of `useNavigate` (e.g. a guard that renders
  * `<Navigate to="/login" replace />`). Navigates in an effect, so it's a safe no-op during SSR (renders
  * `null`); the redirect happens once on the client after hydration.
  */

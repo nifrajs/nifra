@@ -49,7 +49,7 @@ describe("compileVue", () => {
     expect(code).toContain("export default _sfc_main")
     expect(code).toMatch(/export const loader/)
     expect(code).toMatch(/export const meta/)
-    // The SSR *module* carries no CSS — the scoped stylesheet ships from the client build (via
+    // The SSR *module* carries no CSS - the scoped stylesheet ships from the client build (via
     // compileVueStyles). But the markup is still scoped: the `data-v-<id>` attribute + `__scopeId`
     // are baked in so the SSR HTML matches the bundled scoped selectors.
     expect(code).not.toContain("color: red")
@@ -93,7 +93,7 @@ describe("compileVue", () => {
   })
 })
 
-describe("compileVueStyles — scoped CSS extraction", () => {
+describe("compileVueStyles - scoped CSS extraction", () => {
   test("scoped <style>: selectors rewritten to a [data-v-<id>] attribute selector", () => {
     const css = compileVueStyles(SFC, "/routes/page.vue")
     expect(css).toContain("color: red")
@@ -114,7 +114,7 @@ describe("compileVueStyles — scoped CSS extraction", () => {
   })
 })
 
-describe("vueBunPlugin — scoped <style> round-trip", () => {
+describe("vueBunPlugin - scoped <style> round-trip", () => {
   const fixture = new URL("./fixtures/page.vue", import.meta.url).pathname
 
   test("dom: the .vue import emits a virtual ?vue-css module that loads the scoped stylesheet", async () => {
@@ -140,9 +140,9 @@ describe("vueBunPlugin — scoped <style> round-trip", () => {
   })
 })
 
-describe("vueBunPlugin — end-to-end SSR of a real .vue route", () => {
+describe("vueBunPlugin - end-to-end SSR of a real .vue route", () => {
   // Register the SSR compiler globally, then import a .vue fixture: the dynamic import is compiled by
-  // the plugin, giving us the component (default) + the loader/meta named exports — proof the compiled
+  // the plugin, giving us the component (default) + the loader/meta named exports - proof the compiled
   // SFC renders through the unchanged Vue adapter.
   plugin(vueBunPlugin("ssr"))
 

@@ -28,16 +28,16 @@ test("reactAdapter conforms to the executable RenderAdapter interface", async ()
 })
 
 // SSR side runs under bun (react-dom/server). Full hydration is browser-verified against
-// the real packages (see examples/web-react) — bun:test has no DOM.
+// the real packages (see examples/web-react) - bun:test has no DOM.
 
 test("renderToStream streams a Suspense boundary: the shell's fallback flushes before content", async () => {
   // 100ms keeps the boundary pending past the shell flush (React inlines a *fast*-resolving
-  // boundary instead of emitting a fallback). Read chunk-by-chunk — the first chunk is the
-  // shell (fallback); the resolved content arrives in a later chunk — which proves streaming.
+  // boundary instead of emitting a fallback). Read chunk-by-chunk - the first chunk is the
+  // shell (fallback); the resolved content arrives in a later chunk - which proves streaming.
   const slow = new Promise<string>((r) => setTimeout(() => r("RESOLVED"), 100))
   const Slow = () => createElement("span", null, use(slow))
   // Content outside the boundary (the "SHELL") makes React flush the shell + fallback immediately
-  // instead of waiting — mirrors the /slow route's <h1> sitting outside <Suspense>.
+  // instead of waiting - mirrors the /slow route's <h1> sitting outside <Suspense>.
   const App = () =>
     createElement(
       "div",

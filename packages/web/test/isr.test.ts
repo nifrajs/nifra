@@ -22,7 +22,7 @@ describe("MemoryCacheStore", () => {
     await store.delete("/missing") // no-op, no throw
   })
 
-  test("bounded — oldest-inserted entries evict past `max`", async () => {
+  test("bounded - oldest-inserted entries evict past `max`", async () => {
     const store = new MemoryCacheStore({ max: 2 })
     await store.set("/1", entry("1"))
     await store.set("/2", entry("2"))
@@ -32,7 +32,7 @@ describe("MemoryCacheStore", () => {
     expect((await store.get("/3"))?.body).toBe("3")
   })
 
-  test("a read bumps recency (LRU) — a frequently-read entry survives a burst of new pages [AUDIT]", async () => {
+  test("a read bumps recency (LRU) - a frequently-read entry survives a burst of new pages [AUDIT]", async () => {
     const store = new MemoryCacheStore({ max: 2 })
     await store.set("/1", entry("1"))
     await store.set("/2", entry("2"))
@@ -421,7 +421,7 @@ describe("revalidateEndpoint (on-demand purge)", () => {
     )
     expect(shortWrong.status).toBe(401)
     // Same length, different content → must still be rejected (the constant-time XOR path, not just
-    // the length guard — proving a same-length forgery can't slip through).
+    // the length guard - proving a same-length forgery can't slip through).
     const sameLenWrong = await handler(
       new Request("http://x/__nifra/revalidate?path=/p", {
         method: "POST",
@@ -475,7 +475,7 @@ describe("revalidateEndpoint (on-demand purge)", () => {
 
 import { KVCacheStore, type KVNamespaceLike } from "../src/isr.ts"
 
-// A faithful in-memory KV double — proves KVCacheStore works against the structural binding (real
+// A faithful in-memory KV double - proves KVCacheStore works against the structural binding (real
 // workerd KV needs wrangler + creds; this verifies the contract locally). Records puts for TTL asserts.
 class FakeKV implements KVNamespaceLike {
   readonly store = new Map<string, string>()
@@ -597,7 +597,7 @@ describe("withISR over KVCacheStore (the production store path)", () => {
     expect((await handler(new Request("http://x/p"))).headers.get("x-nifra-isr")).toBe("hit")
     expect(calls()).toBe(1)
 
-    t = 1 // still well within the 1000s window — only a purge can invalidate it
+    t = 1 // still well within the 1000s window - only a purge can invalidate it
     const purged = await purge(
       new Request("http://x/__nifra/revalidate?path=/p", {
         method: "POST",

@@ -1,6 +1,6 @@
 import type { Messages } from "@nifrajs/i18n"
 
-/** Demo catalogs (inline for brevity). A real app loads per-locale JSON — and, for many locales, lazily
+/** Demo catalogs (inline for brevity). A real app loads per-locale JSON - and, for many locales, lazily
  * (don't bundle every catalog into the client). The loader returns just the active locale's messages. */
 export const locales = ["en", "fr"] as const
 export const catalogs: Record<string, Messages> = {

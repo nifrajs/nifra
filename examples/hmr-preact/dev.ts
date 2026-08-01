@@ -1,11 +1,11 @@
 /**
- * True-HMR dev server (Preact) — same `@nifrajs/web/vite` server as the React example, with Preact's
+ * True-HMR dev server (Preact) - same `@nifrajs/web/vite` server as the React example, with Preact's
  * official Vite plugin (`@preact/preset-vite`, which includes prefresh / Preact Fast Refresh).
  *
  *   bun examples/hmr-preact/dev.ts
  *   CHOKIDAR_USEPOLLING=1 bun examples/hmr-preact/dev.ts   # containers/sandboxes (no native fs events)
  *
- * Edit `components/Counter.tsx` while the counter is non-zero — the JSX updates live with the count
+ * Edit `components/Counter.tsx` while the counter is non-zero - the JSX updates live with the count
  * preserved (no reload). Production stays Bun-native.
  */
 

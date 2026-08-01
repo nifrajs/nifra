@@ -14,7 +14,7 @@ const detectNodeBuiltins = (meta: Parameters<typeof fromBunMetafile>[0]) =>
 // text), so it survives minification and can't false-positive on a `"node:..."` string literal.
 
 // A metafile where a USER route imports `node:crypto`, which lands in a client chunk (Bun's polyfill
-// also drags in node:buffer transitively — but only the user-imported builtin should be reported).
+// also drags in node:buffer transitively - but only the user-imported builtin should be reported).
 const META_WITH_NODE = {
   inputs: {
     "routes/index.tsx": { imports: [{ path: "node:crypto", original: "node:crypto" }] },
@@ -71,7 +71,7 @@ test("an `external` node: import (resolved path only, no `original`) is still fl
 })
 
 // #5 (import-chain trace): the finding now includes the SHORTEST user-module import chain from the
-// route entry to the offending builtin — so the dev sees `route → ../data.ts → ../db/client.ts →
+// route entry to the offending builtin - so the dev sees `route → ../data.ts → ../db/client.ts →
 // postgres → node:tls` instead of just the chunk name. Modeled on a realistic transitive leak.
 const META_DEEP_CHAIN = {
   inputs: {
@@ -153,7 +153,7 @@ test("chain BFS does NOT walk through Bun's polyfill subtree (precise, user modu
   expect(found.map((f) => f.builtin)).toEqual(["node:crypto"])
 })
 
-// End-to-end through the real `buildClient` — the temp app lives INSIDE the workspace so the generated
+// End-to-end through the real `buildClient` - the temp app lives INSIDE the workspace so the generated
 // bootstrap's `@nifrajs/web`/`@nifrajs/web/client` imports resolve via node_modules hoisting.
 const WORKSPACE_TMP_BASE = `${import.meta.dir}/.tmp-node-guard-`
 let projectRoot: string
@@ -189,7 +189,7 @@ test("buildClient throws a named error when a route imports node:crypto", async 
 })
 
 test("buildClient does NOT throw on a benign `node:` string literal (no false positive)", async () => {
-  // The string mentions `node:crypto` but never imports it — minified, so any text-based check would
+  // The string mentions `node:crypto` but never imports it - minified, so any text-based check would
   // be defeated; the graph-based check sees no import edge.
   writeFileSync(
     join(routesDir, "index.tsx"),

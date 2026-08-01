@@ -4,11 +4,11 @@
  * The honesty of the artifact: ONE catalog app (`bench/ssr/shared/catalog.ts` + the per-framework
  * components under `bench/ssr/`) is rendered through all five `@nifrajs/web` adapters to five HTML
  * fragments, and shipped as five REAL, separately-measured client hydration bundles. The numbers on the
- * page are the gzip sizes produced here — never hand-typed.
+ * page are the gzip sizes produced here - never hand-typed.
  *
  * Why a dedicated build step (not the worker): the catalog is static (50 fixed items), so everything is
  * prerendered here at build time and emitted as a generated module the static route reads. The request-
- * time worker (`_worker.ts`) stays React-only — it never loads five framework runtimes.
+ * time worker (`_worker.ts`) stays React-only - it never loads five framework runtimes.
  *
  * Build-isolation rule (the load-bearing constraint): Solid's Babel plugin and Svelte's compiler plugin
  * each match a broad file filter (`.tsx` / `.svelte`) and WOULD transform the React/Preact `.tsx` if they
@@ -49,14 +49,14 @@ const VUE_DEFINE: Readonly<Record<string, string>> = {
 
 /** A framework row: its display identity + the client entry + the build knobs that bundle differs by. */
 interface FrameworkSpec {
-  /** Stable id — drives the client-bundle filename (`fw-<id>.client.js`) and the toggle island. */
+  /** Stable id - drives the client-bundle filename (`fw-<id>.client.js`) and the toggle island. */
   readonly id: "react" | "preact" | "vue" | "solid" | "svelte"
   readonly label: string
   /** One-line idiom shown beside the row (matches the marketing /docs/frameworks framing). */
   readonly idiom: string
   /** The client hydration entry (under site/frameworks/) Bun.build bundles for the browser. */
   readonly clientEntry: string
-  /** Module-resolution conditions — Solid needs its "solid" export condition. */
+  /** Module-resolution conditions - Solid needs its "solid" export condition. */
   readonly clientConditions: readonly string[]
   /** Bun build plugins for the client bundle (Solid/Svelte compile their components). */
   readonly clientPlugins: readonly BunPlugin[]
@@ -107,7 +107,7 @@ const SPECS: readonly FrameworkSpec[] = [
     clientEntry: `${DIR}/frameworks/svelte.client.ts`,
     clientConditions: ["bun", "browser"],
     // svelteDedupePlugin first: pin svelte + svelte/internal/* to ONE copy (resolved from the site root)
-    // so the adapter's Chain.svelte and the app's App.svelte hydrate against the SAME Svelte runtime —
+    // so the adapter's Chain.svelte and the app's App.svelte hydrate against the SAME Svelte runtime -
     // without it the two resolve to different physical svelte@5.56.3 installs and hydration crashes.
     clientPlugins: [svelteDedupePlugin(DIR), svelteBunPlugin("dom")],
     define: PROD_DEFINE,
@@ -129,15 +129,15 @@ export interface FrameworkDemoEntry {
   readonly hydrationHead: string
   /** Client hydration bundle URL the toggle island loads when this row is active. */
   readonly bundleUrl: string
-  /** Raw (pre-gzip) bundle bytes — the honest "download" stat alongside the gzip figure. */
+  /** Raw (pre-gzip) bundle bytes - the honest "download" stat alongside the gzip figure. */
   readonly bytesRaw: number
-  /** gzip(level 9) bundle bytes — the headline number the size bars chart. */
+  /** gzip(level 9) bundle bytes - the headline number the size bars chart. */
   readonly bytesGzip: number
 }
 
 export interface BuildFrameworksResult {
   readonly entries: readonly FrameworkDemoEntry[]
-  /** The shared, static catalog payload — embedded once into the page for every row to hydrate from. */
+  /** The shared, static catalog payload - embedded once into the page for every row to hydrate from. */
   readonly data: CatalogPageData
   readonly itemCount: number
 }
@@ -148,7 +148,7 @@ interface BuildFrameworksOptions {
 }
 
 /** Build one client bundle into `outDir` as `fw-<id>.client.js`, returning its raw + gzip byte sizes.
- * One isolated `Bun.build` per call — so each framework's compiler plugin stays scoped to its own files. */
+ * One isolated `Bun.build` per call - so each framework's compiler plugin stays scoped to its own files. */
 async function buildClientBundle(
   spec: FrameworkSpec,
   outDir: string,
@@ -173,16 +173,16 @@ async function buildClientBundle(
   if (!bundle) {
     throw new Error(`[nifra/site] ${spec.id} client bundle produced no fw-${spec.id}.client.js`)
   }
-  // Measure the bytes actually written to /assets — the exact payload the browser downloads.
+  // Measure the bytes actually written to /assets - the exact payload the browser downloads.
   const bytes = await Bun.file(bundle.path).bytes()
-  // Match the proven measurement: gzip level 9, the strongest deflate setting — the figure shown.
+  // Match the proven measurement: gzip level 9, the strongest deflate setting - the figure shown.
   const gzip = Bun.gzipSync(bytes, { level: 9 })
   return { bytesRaw: bytes.byteLength, bytesGzip: gzip.byteLength }
 }
 
 /** Render a framework's SSR fragment + hydration head. React/Preact/Vue render directly (no plugin
- * needed for the render call). Solid/Svelte are prebuilt into an isolated module — their components
- * can't be `import`ed into this file without their compiler plugin — and imported back for the fragment. */
+ * needed for the render call). Solid/Svelte are prebuilt into an isolated module - their components
+ * can't be `import`ed into this file without their compiler plugin - and imported back for the fragment. */
 async function renderFragment(
   spec: FrameworkSpec,
   data: CatalogPageData,
@@ -281,14 +281,14 @@ export async function buildFrameworks(
 }
 
 /** The serialized artifact `site/frameworks/generated.ts` re-exports (typed). Plain JSON-safe data only
- * — fragments are strings, sizes are numbers — so it round-trips through the committed `.json` cleanly. */
+ * - fragments are strings, sizes are numbers - so it round-trips through the committed `.json` cleanly. */
 export interface FrameworksDemoArtifact {
   readonly entries: readonly FrameworkDemoEntry[]
   readonly data: CatalogPageData
   readonly itemCount: number
 }
 
-/** Default artifact path — committed JSON beside the other generated site data (benchmarks.json), so
+/** Default artifact path - committed JSON beside the other generated site data (benchmarks.json), so
  * the route's typed wrapper imports a real, reviewable file and a fresh checkout typechecks. */
 export const FRAMEWORKS_ARTIFACT_PATH = join(DIR, "data", "frameworks-demo.json")
 
@@ -312,7 +312,7 @@ if (import.meta.main) {
   const out = mkdtempSync(join(tmpdir(), "nifra-fw-out-"))
   try {
     const { entries, itemCount } = await writeFrameworksArtifact({ outDir: out })
-    console.log(`frameworks demo — ${itemCount} items/row, ${entries.length} rows:`)
+    console.log(`frameworks demo - ${itemCount} items/row, ${entries.length} rows:`)
     for (const e of entries) {
       console.log(
         `  ${e.id.padEnd(7)} ${(e.bytesGzip / 1024).toFixed(2).padStart(6)} KB gzip` +

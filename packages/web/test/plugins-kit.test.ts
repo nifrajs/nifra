@@ -97,7 +97,7 @@ describe("reproduciblePath", () => {
     expect(reproduciblePath(abs)).toBe(reproduciblePath(abs)) // deterministic
   })
 
-  test("independent of cwd — same file → same path regardless of where the process runs", () => {
+  test("independent of cwd - same file → same path regardless of where the process runs", () => {
     // The whole point of (A): dom build cwd and ssr runtime cwd may differ; the result must not.
     const abs = `${process.cwd()}/packages/web/src/x.module.css`
     const fromRepoRoot = reproduciblePath(abs)

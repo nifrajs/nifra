@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite"
 
-// One connection, opened once at module scope — the standard pattern. `:memory:` keeps the demo
+// One connection, opened once at module scope - the standard pattern. `:memory:` keeps the demo
 // self-contained; swap for a path like "todos.db" to persist to disk. On Node you'd use
-// `better-sqlite3`; on the edge, Cloudflare D1 / Turso (libSQL) — the route code below doesn't change.
+// `better-sqlite3`; on the edge, Cloudflare D1 / Turso (libSQL) - the route code below doesn't change.
 const db = new Database(":memory:")
 db.run("PRAGMA journal_mode = WAL")
 db.run(`
@@ -21,7 +21,7 @@ export interface Todo {
   created_at: string
 }
 
-// Prepared, PARAMETERIZED statements (the `?` placeholders) — never interpolate user input into SQL.
+// Prepared, PARAMETERIZED statements (the `?` placeholders) - never interpolate user input into SQL.
 // The `<Todo>` generic types every row, so `todos.*` is fully typed with no cast.
 const q = {
   all: db.query<Todo, []>("SELECT * FROM todos ORDER BY id DESC"),

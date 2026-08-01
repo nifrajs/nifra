@@ -1,7 +1,7 @@
 /**
- * Cold boot — process spawn → first 200, measured on real child processes, N runs, median
+ * Cold boot - process spawn → first 200, measured on real child processes, N runs, median
  * reported. This is LOCAL process boot (what a container restart, autoscale spawn, or `bun run`
- * costs) — it is **not** a Cloudflare/Vercel edge cold start, which is dominated by the platform's
+ * costs) - it is **not** a Cloudflare/Vercel edge cold start, which is dominated by the platform's
  * isolate provisioning and can only be measured against the real platform.
  *
  *   bun run bench:coldboot       (env: RUNS=10)
@@ -41,7 +41,7 @@ for (let i = 0; i < RUNS; i++) runs.push(await bootOnce())
 runs.sort((a, b) => a - b)
 const ms = (n: number): string => `${n.toFixed(1)} ms`
 console.log(
-  `\nCold boot — spawn → first 200, ${RUNS} runs (local process boot, not edge cold start)`,
+  `\nCold boot - spawn → first 200, ${RUNS} runs (local process boot, not edge cold start)`,
 )
 console.log(`  min     ${ms(runs[0] as number)}`)
 console.log(`  median  ${ms(runs[Math.floor(runs.length / 2)] as number)}`)

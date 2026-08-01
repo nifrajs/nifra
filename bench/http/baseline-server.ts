@@ -1,5 +1,5 @@
 /**
- * Raw `Bun.serve` throughput target — the ceiling our framework's per-request
+ * Raw `Bun.serve` throughput target - the ceiling our framework's per-request
  * overhead is measured against. Our v1 goal (parity within ~10% of Elysia) is
  * really a statement about how thin our layer over this is.
  *

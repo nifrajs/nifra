@@ -13,7 +13,7 @@ import {
   revalidate,
 } from "../src/index.ts"
 
-// The in-process backend mount target — the symbol-keyed `BackendMount` shape `inProcessClient(app)`
+// The in-process backend mount target - the symbol-keyed `BackendMount` shape `inProcessClient(app)`
 // returns. Reproduced here so the web test exercises the real `createWebApp` `/api/*` auto-mount
 // contract WITHOUT a runtime dependency on `@nifrajs/client` (web doesn't depend on it; the symbol
 // mount, not the client proxy, is what the mount consumes).
@@ -21,7 +21,7 @@ const inProcessBridge = (app: { fetch(request: Request): Response | Promise<Resp
   [NIFRA_BACKEND_MOUNT]: (request: Request) => Promise.resolve(app.fetch(request)),
 })
 
-// Turn a string into a one-chunk byte stream — the minimal `renderToStream` an adapter returns.
+// Turn a string into a one-chunk byte stream - the minimal `renderToStream` an adapter returns.
 const streamOf = (s: string): ReadableStream<Uint8Array> => {
   const bytes = new TextEncoder().encode(s)
   return new ReadableStream({
@@ -32,7 +32,7 @@ const streamOf = (s: string): ReadableStream<Uint8Array> => {
   })
 }
 
-// Stub adapter — exercises createWebApp + routing with no Solid/React/DOM. It emits the chain
+// Stub adapter - exercises createWebApp + routing with no Solid/React/DOM. It emits the chain
 // length + the loader data (+ actionData when an action ran), so assertions can see them all.
 const stub: RenderAdapter = {
   renderToStream: (chain, props) =>
@@ -80,7 +80,7 @@ test("createWebApp resolves params, runs the loader, and wraps in the layout cha
 })
 
 test("createWebApp merges a _layout's meta/head into a child route's SSR <head>", async () => {
-  // A _layout that exports `meta` — its tags (a sitewide preconnect/hreflang + a section title) must
+  // A _layout that exports `meta` - its tags (a sitewide preconnect/hreflang + a section title) must
   // land in the SSR <head> of every page below it, merged with the page's own meta.
   const manifest: Manifest = {
     routes: [
@@ -106,7 +106,7 @@ test("createWebApp merges a _layout's meta/head into a child route's SSR <head>"
         file: "_layout.tsx",
         load: async () => ({
           default: "layout",
-          // Sitewide head from the LAYOUT — the home for preconnect/hreflang that #3 lacked.
+          // Sitewide head from the LAYOUT - the home for preconnect/hreflang that #3 lacked.
           meta: {
             title: "Section default",
             link: [
@@ -187,7 +187,7 @@ test("createWebApp resolves MetaArgs.origin from the request host (absolute cano
     await app.fetch(new Request("https://news.example.com:8443/articles/hello"))
   ).text()
   const head = html.split("<body>")[0] ?? ""
-  // origin === URL.origin of the request — scheme + host + port, no trailing slash.
+  // origin === URL.origin of the request - scheme + host + port, no trailing slash.
   expect(head).toContain(
     '<link rel="canonical" href="https://news.example.com:8443/articles/hello" data-nifra>',
   )
@@ -271,7 +271,7 @@ test("createWebApp honors a route module's hydrate=false on document responses",
   expect(postHtml).not.toContain('<script type="module" src="/assets/client.js">')
 })
 
-// A dynamic-route manifest used by the SSG fallback tests — `/users/:id` with a loader echoing the id.
+// A dynamic-route manifest used by the SSG fallback tests - `/users/:id` with a loader echoing the id.
 const dynManifest = (): Manifest => ({
   routes: [
     {
@@ -286,7 +286,7 @@ const dynManifest = (): Manifest => ({
   notFound: { file: "_404.tsx", load: async () => ({ default: "not-found" }) },
 })
 
-test('SSG fallback:"404" — an unlisted dynamic path 404s; listed paths still serve', async () => {
+test('SSG fallback:"404" - an unlisted dynamic path 404s; listed paths still serve', async () => {
   const app = createWebApp({
     adapter: stub,
     manifest: dynManifest(),
@@ -594,7 +594,7 @@ test("a deferred action streams mid-page on a no-JS full-page POST (placeholder 
   }
   const app = createWebApp({ adapter: stub, manifest, clientEntry: "/c.js" })
   const html = await (await app.fetch(new Request("http://x/", { method: "POST" }))).text()
-  // The action result is split like loader data: __NIFRA_ACTION__ carries the placeholder (id 0 — the
+  // The action result is split like loader data: __NIFRA_ACTION__ carries the placeholder (id 0 - the
   // null loader contributes none), and the value streams in a __nifraResolve script after the body.
   expect(html).toContain('window.__NIFRA_ACTION__={"recs":{"__nifra_deferred":0}}')
   expect(html).toContain("window.__nifraResolve(0,")
@@ -657,7 +657,7 @@ test("GET with the X-Nifra-Data header returns loader JSON, not the HTML documen
   )
   expect(res.status).toBe(200)
   expect(res.headers.get("content-type")).toContain("application/json")
-  expect(await res.json()).toEqual({ id: "42" }) // the loader's data, raw — no chain/markup
+  expect(await res.json()).toEqual({ id: "42" }) // the loader's data, raw - no chain/markup
 })
 
 test("a data-only GET on a loaderless route returns null", async () => {
@@ -778,7 +778,7 @@ test("redirect() rejects off-origin destinations unless { external: true } [AUDI
 
 // --- /api/* auto-mount: createWebApp serves the in-process backend over HTTP (dev + prod) ---
 
-// A backend with real routes under /api/* — the same shape an app feeds via `inProcessClient(backend)`.
+// A backend with real routes under /api/* - the same shape an app feeds via `inProcessClient(backend)`.
 const apiBackend = (): { fetch(request: Request): Response | Promise<Response> } =>
   server()
     .post("/api/echo", async (c) => ({ echoed: await c.req.json() }))
@@ -907,7 +907,7 @@ test("createWebApp auto-mount: a custom apiPrefix is honored", async () => {
 })
 
 test("createWebApp auto-mount: a sibling path sharing the prefix string is NOT captured", async () => {
-  // `/apidocs` shares "/api" as a string head but is NOT under the `/api/` boundary — it must reach
+  // `/apidocs` shares "/api" as a string head but is NOT under the `/api/` boundary - it must reach
   // the page router (here: the `_404` page), not the backend. Guards the off-by-one prefix bug.
   const api = inProcessBridge(apiBackend())
   const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })
@@ -925,7 +925,7 @@ test("createWebApp auto-mount: exactly the prefix path (no trailing slash) dispa
 })
 
 test("createWebApp: a non-mountable api (no .fetch) leaves the app pages-only (no crash)", async () => {
-  // A plain object passed as `ctx.api` (not an in-process bridge) must NOT be mounted — the app serves
+  // A plain object passed as `ctx.api` (not an in-process bridge) must NOT be mounted - the app serves
   // pages, and `/api/*` falls through to the page router exactly as before the auto-mount existed.
   const app = createWebApp({
     adapter: stub,

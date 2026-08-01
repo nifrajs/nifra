@@ -27,7 +27,7 @@ test("serves a public file and falls through on a miss", async () => {
     expect(hit?.status).toBe(200)
     expect(await hit?.text()).toBe("icon-bytes")
 
-    // A miss returns undefined rather than a 404, so the caller routes normally — a static probe
+    // A miss returns undefined rather than a 404, so the caller routes normally - a static probe
     // must never shadow a route.
     expect(await serve(get("/nope.ico"))).toBeUndefined()
   })
@@ -94,7 +94,7 @@ test("path traversal is rejected, including encoded and NUL forms", async () => 
     const root = join(dir, "public")
     await mkdir(root, { recursive: true })
     await writeFile(join(root, "ok.txt"), "inside")
-    await writeFile(join(dir, "secret.txt"), "OUTSIDE — must never be served")
+    await writeFile(join(dir, "secret.txt"), "OUTSIDE - must never be served")
     const serve = servePublicDir({ dir: root })
 
     for (const attack of [
@@ -106,7 +106,7 @@ test("path traversal is rejected, including encoded and NUL forms", async () => 
       "/....//secret.txt",
     ]) {
       const res = await serve(get(attack))
-      // Either refused outright or resolved to something inside the root — never the outside file.
+      // Either refused outright or resolved to something inside the root - never the outside file.
       if (res !== undefined) expect(await res.text()).not.toContain("OUTSIDE")
     }
 
@@ -114,7 +114,7 @@ test("path traversal is rejected, including encoded and NUL forms", async () => 
     // consequence, so the sink gets its own assertions rather than only end-to-end ones.
     //
     // The property is CONTAINMENT, not rejection. A leading `..` at the root collapses during
-    // normalize — `/../secret.txt` becomes `/secret.txt`, resolved inside the root — which is the
+    // normalize - `/../secret.txt` becomes `/secret.txt`, resolved inside the root - which is the
     // same clamping every static server does and is safe: it names a file that isn't there.
     // Asserting `undefined` here would be asserting an implementation detail, and would fail for a
     // correct implementation.

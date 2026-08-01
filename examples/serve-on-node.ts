@@ -1,5 +1,5 @@
 /**
- * Serve a nifra app on Node's `http` server via the `@nifrajs/node` adapter — the same
+ * Serve a nifra app on Node's `http` server via the `@nifrajs/node` adapter - the same
  * `app` you'd `app.listen()` on Bun. Runs under Bun *or* Node (the adapter only uses
  * `node:http` + Web `Request`/`Response`).
  *

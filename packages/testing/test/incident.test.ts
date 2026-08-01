@@ -84,7 +84,7 @@ describe("captureIncident", () => {
 
 describe("replayIncident / assertIncidentReplays", () => {
   test("reproduces an unchanged response (golden lock)", async () => {
-    // Two fresh requests (one to fetch, one to capture) rather than `.clone()` — a request body can
+    // Two fresh requests (one to fetch, one to capture) rather than `.clone()` - a request body can
     // only be read once, and `.clone()`'s DOM/undici return type doesn't unify with the Bun `Request`
     // that `app.fetch` expects under the root tsconfig.
     const makeReq = (): Request =>

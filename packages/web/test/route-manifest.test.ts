@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import type { Manifest, RouteModule } from "../src/manifest.ts"
 import { buildRouteManifest, deriveRouteEntry, renderRouteManifest } from "../src/route-manifest.ts"
 
-// A hand-built manifest — `buildRouteManifest` is fs-free by design, so no fixture app is needed.
+// A hand-built manifest - `buildRouteManifest` is fs-free by design, so no fixture app is needed.
 const manifestOf = (
   routes: ReadonlyArray<{ id: string; pattern: string; module: Partial<RouteModule> }>,
 ): Manifest =>
@@ -41,7 +41,7 @@ test("`revalidate` makes a route isr, requiring revalidation as well as a server
   expect(entry.requires).toEqual(["server", "revalidation"])
 })
 
-test("prerender WINS over revalidate — a build-time page is not revalidated at runtime", () => {
+test("prerender WINS over revalidate - a build-time page is not revalidated at runtime", () => {
   // Declaring both is contradictory. The build-time answer is the one that describes what actually
   // ships, so that is what the manifest reports rather than the more optimistic reading.
   const entry = deriveRouteEntry("both", "/both", mod({ prerender: true, revalidate: 60 }))
@@ -70,7 +70,7 @@ test("a dynamic route with getStaticPaths but NO emitted paths is not static", (
 })
 
 test("a STATIC pattern needs no enumerated paths to count as prerendered", () => {
-  // There is only one path, and the build emits it — nothing to enumerate.
+  // There is only one path, and the build emits it - nothing to enumerate.
   expect(deriveRouteEntry("about", "/about", mod({ prerender: true })).mode).toBe("static")
 })
 
@@ -91,7 +91,7 @@ test("a static target flags every route that needs a server, with the consequenc
   expect(manifest.conflicts).toHaveLength(1)
   expect(manifest.conflicts[0]?.pattern).toBe("/feed")
   expect(manifest.conflicts[0]?.capability).toBe("server")
-  // The message names what HAPPENS, not which rule fired — "404s in production while working in dev" is
+  // The message names what HAPPENS, not which rule fired - "404s in production while working in dev" is
   // the sentence that makes someone act.
   expect(manifest.conflicts[0]?.consequence).toContain("404s in production")
 })

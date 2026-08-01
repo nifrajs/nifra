@@ -5,8 +5,8 @@ import { join } from "node:path"
 import { buildClient, publicEnvDefines } from "../src/build.ts"
 
 // #3b: `process.env.PUBLIC_API_URL` compiled to `undefined` (crash fixed, but the VALUE wasn't
-// exposed). buildClient now bakes every PUBLIC_*-prefixed env var into the client `define` —
-// `"process.env.PUBLIC_X": JSON.stringify(value)` — while leaving unprefixed secrets undefined.
+// exposed). buildClient now bakes every PUBLIC_*-prefixed env var into the client `define` -
+// `"process.env.PUBLIC_X": JSON.stringify(value)` - while leaving unprefixed secrets undefined.
 // publicEnvDefines is the pure core of that, so the prefix + redaction contract is testable here.
 
 test("bakes PUBLIC_-prefixed vars (JSON-encoded) and never exposes unprefixed secrets [#3b]", () => {
@@ -22,7 +22,7 @@ test("bakes PUBLIC_-prefixed vars (JSON-encoded) and never exposes unprefixed se
   expect(defines["process.env.PUBLIC_API_URL"]).toBe('"https://api.example.com"')
   expect(defines["process.env.PUBLIC_FEATURE_FLAG"]).toBe('"on"')
 
-  // A non-PUBLIC var gets NO define — the bare `process.env` → `({})` define resolves it to undefined,
+  // A non-PUBLIC var gets NO define - the bare `process.env` → `({})` define resolves it to undefined,
   // so the secret can't reach the client bundle. This is the security boundary.
   expect(defines).not.toHaveProperty("process.env.SECRET_KEY")
   expect(defines).not.toHaveProperty("process.env.DATABASE_URL")
@@ -34,7 +34,7 @@ test("bakes PUBLIC_-prefixed vars (JSON-encoded) and never exposes unprefixed se
 
 test("JSON-encodes values so a value with quotes/braces can't break the define [#3b]", () => {
   const defines = publicEnvDefines("PUBLIC_", { PUBLIC_JSON: '{"a":"b\\""}' })
-  // The result is a valid JS string literal — eval-equivalent round-trips back to the original.
+  // The result is a valid JS string literal - eval-equivalent round-trips back to the original.
   expect(JSON.parse(defines["process.env.PUBLIC_JSON"] as string)).toBe('{"a":"b\\""}')
 })
 
@@ -47,13 +47,13 @@ test("a custom prefix overrides PUBLIC_; the default no longer matches [#3b]", (
   expect(defines).not.toHaveProperty("process.env.PUBLIC_API_URL")
 })
 
-test("an empty prefix opts out entirely — no var is baked in [#3b]", () => {
+test("an empty prefix opts out entirely - no var is baked in [#3b]", () => {
   const defines = publicEnvDefines("", { PUBLIC_API_URL: "https://api.example.com" })
   expect(Object.keys(defines)).toHaveLength(0)
 })
 
 test('skips undefined values so `"undefined"` is never baked in [#3b]', () => {
-  // A deleted/unset key can still enumerate as `undefined` on some env objects — it must be skipped,
+  // A deleted/unset key can still enumerate as `undefined` on some env objects - it must be skipped,
   // not stringified to the literal `undefined` (which would shadow the bare-process.env fallback).
   const defines = publicEnvDefines("PUBLIC_", { PUBLIC_UNSET: undefined, PUBLIC_SET: "x" })
   expect(defines).not.toHaveProperty("process.env.PUBLIC_UNSET")
@@ -76,7 +76,7 @@ afterEach(() => {
   rmSync(projectRoot, { recursive: true, force: true })
   if (externalOut !== undefined) rmSync(externalOut, { recursive: true, force: true })
   externalOut = undefined
-  // Restore the build environment exactly — never leak the test's PUBLIC_*/SECRET_* into later tests.
+  // Restore the build environment exactly - never leak the test's PUBLIC_*/SECRET_* into later tests.
   for (const k of ENV_KEYS) {
     if (savedEnv[k] === undefined) delete (Bun.env as Record<string, string>)[k]
     else (Bun.env as Record<string, string>)[k] = savedEnv[k] as string

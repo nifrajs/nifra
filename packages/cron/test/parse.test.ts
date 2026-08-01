@@ -5,7 +5,7 @@ import { CronError, matches, nextRun, parseCron } from "../src/index.ts"
 const at = (y: number, mo: number, d: number, h: number, mi: number) =>
   new Date(y, mo - 1, d, h, mi)
 
-describe("parseCron — fields", () => {
+describe("parseCron - fields", () => {
   test("every minute", () => {
     const f = parseCron("* * * * *")
     expect(matches(f, at(2026, 6, 13, 3, 7))).toBe(true)
@@ -26,7 +26,7 @@ describe("parseCron — fields", () => {
   })
 
   test("range + list", () => {
-    const f = parseCron("0 9-17 * * 1,3,5") // top of the hour, 9am–5pm, Mon/Wed/Fri
+    const f = parseCron("0 9-17 * * 1,3,5") // top of the hour, 9am-5pm, Mon/Wed/Fri
     expect(matches(f, at(2026, 6, 8, 9, 0))).toBe(true) // 2026-06-08 is a Monday
     expect(matches(f, at(2026, 6, 8, 18, 0))).toBe(false) // 6pm out of range
     expect(matches(f, at(2026, 6, 9, 9, 0))).toBe(false) // Tuesday not in dow list

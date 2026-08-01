@@ -1,5 +1,5 @@
 /**
- * nifra + @nifrajs/web (React) SSR on NODE (via @nifrajs/node) — the same app as server.ts (Bun), so the
+ * nifra + @nifrajs/web (React) SSR on NODE (via @nifrajs/node) - the same app as server.ts (Bun), so the
  * SSR bench can compare nifra to Next/Remix on the SAME runtime (Node), not just Bun-vs-Node. Bundled
  * for Node by build-node.ts; serves its own /client.js (read from disk next to the bundle).
  *

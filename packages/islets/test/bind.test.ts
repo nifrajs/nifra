@@ -8,7 +8,7 @@ const scopeOf = (
   handlers: IslandScope["handlers"] = {},
 ): IslandScope => ({ signals, handlers })
 
-describe("bindScope — the closed attribute set", () => {
+describe("bindScope - the closed attribute set", () => {
   test("text: reflects the signal and updates", () => {
     const count = signal(2)
     const el = new FakeElement({ "data-bind-text": "count" })
@@ -49,7 +49,7 @@ describe("bindScope — the closed attribute set", () => {
     expect(el.getAttribute("aria-expanded")).toBeNull()
   })
 
-  test("value: two-way — signal → input, input event → signal, no caret-jumping rewrite", () => {
+  test("value: two-way - signal → input, input event → signal, no caret-jumping rewrite", () => {
     const q = signal("ada")
     const el = new FakeElement({ "data-bind-value": "q" })
     bindScope(new FakeRoot([el]), scopeOf({ q: q as Signal<unknown> }))

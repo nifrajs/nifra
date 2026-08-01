@@ -1,7 +1,7 @@
 /**
- * The pure attribute builder shared by every adapter `<Image>` — turns image props into CLS-safe,
+ * The pure attribute builder shared by every adapter `<Image>` - turns image props into CLS-safe,
  * responsive `<img>` attributes (`src`/`srcSet`/`sizes`/`width`/`height`/`loading`/`decoding`/
- * `fetchpriority`). The actual resize is delegated to an {@link ImageLoader} (a URL builder) — nifra
+ * `fetchpriority`). The actual resize is delegated to an {@link ImageLoader} (a URL builder) - nifra
  * bundles no codec; point the loader at your image CDN.
  */
 
@@ -10,7 +10,7 @@ import { signImageParams } from "./sign.ts"
 /** Builds a variant URL for `src` at a target pixel `width` (and optional `quality`). */
 export type ImageLoader = (args: { src: string; width: number; quality?: number }) => string
 
-/** Default loader: return the source unchanged (no transform). Use when there's no image CDN — you
+/** Default loader: return the source unchanged (no transform). Use when there's no image CDN - you
  * still get CLS-safe sizing + lazy loading, just no responsive variants. */
 export const identityLoader: ImageLoader = ({ src }) => src
 
@@ -20,7 +20,7 @@ export interface CloudflareLoaderOptions {
 }
 
 /**
- * Cloudflare Images loader — builds `/cdn-cgi/image/<options>/<source>` URLs that the Cloudflare edge
+ * Cloudflare Images loader - builds `/cdn-cgi/image/<options>/<source>` URLs that the Cloudflare edge
  * resizes on the fly (also emits `format=auto` for webp/avif negotiation). Works on Cloudflare Pages /
  * Workers with Images enabled.
  */
@@ -38,9 +38,9 @@ export interface SelfHostedLoaderOptions {
   readonly endpoint: string
   /**
    * HMAC secret for **signed URLs**. When set, each URL gets a stable `&s=` signature and the handler
-   * must be configured with the SAME `signing.secret` — it then rejects any unsigned/forged `(src, w, q)`,
+   * must be configured with the SAME `signing.secret` - it then rejects any unsigned/forged `(src, w, q)`,
    * shutting down resize-bombing. ⚠️ The signer holds the secret, so a loader created with it is
-   * **server-only** — inject it like a session secret (from `env`), never import this config into a
+   * **server-only** - inject it like a session secret (from `env`), never import this config into a
    * route/client module. Signatures are stable (no expiry), so SSR-signed URLs hydrate + cache identically.
    */
   readonly secret?: string
@@ -65,14 +65,14 @@ export function selfHostedLoader(options: SelfHostedLoaderOptions): ImageLoader 
 }
 
 export interface SignImageUrlOptions {
-  /** HMAC secret — must match the handler's `signing.secret`. */
+  /** HMAC secret - must match the handler's `signing.secret`. */
   readonly secret: string
   /** Seconds until the URL expires (adds `&exp=`). Omit for a stable, cacheable-forever signed URL. */
   readonly expiresIn?: number
 }
 
 /**
- * Mint a **signed** self-hosted image URL on the server — for cases the (stable) `selfHostedLoader`
+ * Mint a **signed** self-hosted image URL on the server - for cases the (stable) `selfHostedLoader`
  * doesn't cover, chiefly **time-limited** access (`expiresIn`) to private images. Server-only (it holds
  * the secret). Pair with a passthrough loader, or use the signed string as a plain `src`.
  *
@@ -100,11 +100,11 @@ export function signImageUrl(
 
 export interface ImageProps {
   readonly src: string
-  /** Intrinsic width (px) — **required**, reserves layout space (no CLS). */
+  /** Intrinsic width (px) - **required**, reserves layout space (no CLS). */
   readonly width: number
-  /** Intrinsic height (px) — **required** (no CLS). */
+  /** Intrinsic height (px) - **required** (no CLS). */
   readonly height: number
-  /** Alt text — **required** for accessibility (use `alt=""` for decorative images). */
+  /** Alt text - **required** for accessibility (use `alt=""` for decorative images). */
   readonly alt: string
   /** `sizes` attribute for responsive selection (e.g. `"(max-width: 600px) 100vw, 600px"`). */
   readonly sizes?: string
@@ -147,7 +147,7 @@ export function resolveImage(
     props.height <= 0
   ) {
     throw new Error(
-      `[nifra/image] <Image> requires positive width + height (got ${props.width}×${props.height}) — they reserve layout space to prevent CLS.`,
+      `[nifra/image] <Image> requires positive width + height (got ${props.width}×${props.height}) - they reserve layout space to prevent CLS.`,
     )
   }
   const eager = props.priority === true || props.loading === "eager"
@@ -164,7 +164,7 @@ export function resolveImage(
   const allSame = entries.every((e) => e.url === entries[0]?.url)
   const srcSet = allSame ? undefined : entries.map((e) => `${e.url} ${e.w}w`).join(", ")
 
-  // `src` is the 1× (intrinsic-width) variant — the fallback for browsers ignoring srcSet.
+  // `src` is the 1× (intrinsic-width) variant - the fallback for browsers ignoring srcSet.
   const base: ResolvedImage = {
     src: at(props.width),
     width: props.width,

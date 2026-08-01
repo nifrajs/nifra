@@ -9,13 +9,13 @@ import {
 import type { Server } from "@nifrajs/core/server"
 
 /**
- * OpenAPI 3.1 generation. We model a practical slice of the spec — enough to feed Swagger UI / codegen
+ * OpenAPI 3.1 generation. We model a practical slice of the spec - enough to feed Swagger UI / codegen
  * and to validate structurally: paths, parameters, request bodies, responses (incl. non-200 and
  * non-JSON), tags, security, servers, and `$ref` reuse via `components.schemas`.
  *
  * Schemas carry full detail only for `t`/TypeBox inputs (they expose a JSON Schema); a BYO Standard
  * Schema validates at runtime but exposes no JSON Schema, so its route is emitted without body/response
- * detail. A **contract** is richest — its operations carry `response`, `tags`, `security`, additional
+ * detail. A **contract** is richest - its operations carry `response`, `tags`, `security`, additional
  * `responses`, etc.; an **app** emits request shapes + a generic `200` (an inline handler has no
  * response *schema* to serialize), enrichable via `options.operations`.
  */
@@ -44,7 +44,7 @@ export interface ToOpenAPIOptions {
   readonly description?: string
   /** Server URLs the API is served from (OpenAPI `servers`). */
   readonly servers?: readonly OpenAPIServer[]
-  /** Tag definitions (OpenAPI top-level `tags`) — names referenced by an operation's `tags`. */
+  /** Tag definitions (OpenAPI top-level `tags`) - names referenced by an operation's `tags`. */
   readonly tags?: readonly OpenAPITag[]
   /** Reusable security schemes → `components.securitySchemes` (e.g. `{ bearer: { type: "http", scheme: "bearer" } }`). */
   readonly securitySchemes?: Readonly<Record<string, Record<string, unknown>>>
@@ -53,7 +53,7 @@ export interface ToOpenAPIOptions {
   /**
    * Per-operation overrides, shallow-merged over the generated operation. Keyed by `operationId`
    * (contract op name) or `"METHOD /path"` (e.g. `"GET /users/:id"`). The escape hatch for detail that
-   * can't be introspected — richer response bodies, examples, app-route tags/security.
+   * can't be introspected - richer response bodies, examples, app-route tags/security.
    */
   readonly operations?: Readonly<Record<string, Record<string, unknown>>>
 }
@@ -107,7 +107,7 @@ export interface OpenAPIDocument {
 }
 
 /**
- * Collects schemas that carry a `$id` into `components.schemas`, returning a `$ref` in their place —
+ * Collects schemas that carry a `$id` into `components.schemas`, returning a `$ref` in their place -
  * so a schema used by N operations is emitted once. Schemas without a `$id` stay inline (the existing
  * behavior). The first sighting of an id wins; later ones just `$ref` it.
  */
@@ -211,11 +211,11 @@ interface OperationInput {
   readonly path: string
   readonly body: SchemaReflection | undefined
   readonly query: SchemaReflection | undefined
-  /** Reflected params schema — per-field constraints merge into path parameters. */
+  /** Reflected params schema - per-field constraints merge into path parameters. */
   readonly params: SchemaReflection | undefined
   readonly response: SchemaReflection | undefined
   readonly operationId: string | undefined
-  // `| undefined` (not just `?`) so a contract op's optional fields — `string | undefined` etc. — are
+  // `| undefined` (not just `?`) so a contract op's optional fields - `string | undefined` etc. - are
   // assignable under `exactOptionalPropertyTypes` when spread into this literal.
   readonly summary?: string | undefined
   readonly description?: string | undefined
@@ -356,9 +356,9 @@ export function toOpenAPI(
           body: route.schema?.body,
           query: route.schema?.query,
           params: route.schema?.params,
-          // A route may now declare a `response` contract — emit it as the 200 body schema.
+          // A route may now declare a `response` contract - emit it as the 200 body schema.
           response: route.schema?.response,
-          // …and an `errors` contract — emit each as a non-2xx response.
+          // …and an `errors` contract - emit each as a non-2xx response.
           responses: reflectedErrorsToResponses(route.schema?.errors),
           operationId: undefined,
         },

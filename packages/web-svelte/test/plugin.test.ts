@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { svelteBunPlugin } from "../src/plugin.ts"
 
 /**
- * Unit tests for the `.svelte` compiler Bun plugin — focused on the CSS pipeline (scoped `<style>` →
+ * Unit tests for the `.svelte` compiler Bun plugin - focused on the CSS pipeline (scoped `<style>` →
  * a virtual `?svelte-css` module on the client build; nothing on SSR). The adapter itself (SSR/hydrate)
  * is verified end-to-end via `examples/routing-svelte`; these cover the plugin's build-time contract.
  */

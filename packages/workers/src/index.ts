@@ -2,7 +2,7 @@
  * Cloudflare Workers helpers for nifra.
  *
  * On Workers, a WebSocket lives in a single isolate, so a stateless `fetch` can't broadcast across
- * connections — `app.publish(topic, data)` only reaches sockets in the same long-lived process. A
+ * connections - `app.publish(topic, data)` only reaches sockets in the same long-lived process. A
  * **Durable Object** is that long-lived process: {@link createWebSocketHub} builds a DO class that
  * holds every connection and runs the app's pub/sub registry, so `ws.subscribe` / `app.publish` work
  * with their normal nifra semantics. Route upgrades to it with `toFetchHandler(app, { webSocketHub })`.
@@ -33,7 +33,7 @@
 import type { StandardWebSocket, WebSocketUpgradeOutcome } from "@nifrajs/core/server"
 import { attachWebSocket } from "@nifrajs/core/ws"
 
-/** The nifra-app surface the hub needs — every `server()` app satisfies it. */
+/** The nifra-app surface the hub needs - every `server()` app satisfies it. */
 export interface WebSocketHubApp<Env = unknown> {
   resolveWebSocketUpgrade(
     request: Request,
@@ -46,7 +46,7 @@ interface DurableObjectStateLike {
   waitUntil?(promise: Promise<unknown>): void
 }
 
-/** Cloudflare's `WebSocketPair` (a Workers global) — structurally typed to avoid a CF types dependency. */
+/** Cloudflare's `WebSocketPair` (a Workers global) - structurally typed to avoid a CF types dependency. */
 type WebSocketPairCtor = new () => {
   readonly 0: unknown
   readonly 1: StandardWebSocket & { accept(): void }
@@ -61,7 +61,7 @@ export type WebSocketHubClass<Env> = new (
 /**
  * Build a Durable Object class that serves an app's `app.ws()` routes with **cross-connection
  * broadcast**. Every WebSocket accepted here lives in the DO's isolate, and the app's `TopicRegistry`
- * lives there too — so `ws.subscribe(topic)` and `app.publish(topic, data)` (called from the WS
+ * lives there too - so `ws.subscribe(topic)` and `app.publish(topic, data)` (called from the WS
  * lifecycle) reach every connected client. Route upgrades to it via
  * `toFetchHandler(app, { webSocketHub: (env) => env.YOUR_BINDING })`.
  *
@@ -90,7 +90,7 @@ export function createWebSocketHub<Env = unknown>(
       const outcome = await app.resolveWebSocketUpgrade(request, platform)
       if (outcome.kind === "reject") return outcome.response
       if (outcome.kind !== "upgrade") {
-        // Not a registered WS route (or not an upgrade) — nothing for the hub to do.
+        // Not a registered WS route (or not an upgrade) - nothing for the hub to do.
         return new Response("Upgrade Required", { status: 426 })
       }
       const Pair = (globalThis as { WebSocketPair?: WebSocketPairCtor }).WebSocketPair

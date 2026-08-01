@@ -7,12 +7,12 @@ import type { StandardResult, StandardSchemaV1, StandardTypes } from "../src/sch
  * `app.resolveNode` is the node-direct seam: it runs the *exact same* lifecycle as `app.fetch`
  * (body cap, validation, all hooks) but renders a plain-data result as serialization primitives
  * (`{ kind: "json" }`) instead of building + draining an undici `Response`. The `@nifrajs/node` adapter
- * writes those primitives straight to the socket. Everything that isn't the common JSON-data case —
+ * writes those primitives straight to the socket. Everything that isn't the common JSON-data case -
  * a handler-returned `Response`, 404/405, validation/malformed error, thrown Response, 500, timeout,
- * or any `onResponse` hook — falls back to a `{ kind: "response" }` the adapter writes the Web way.
+ * or any `onResponse` hook - falls back to a `{ kind: "response" }` the adapter writes the Web way.
  *
  * These tests pin (a) the discriminated outcome for each path and (b) byte-for-byte parity with
- * `app.fetch` — the fast path must be observably identical on the wire, only cheaper.
+ * `app.fetch` - the fast path must be observably identical on the wire, only cheaper.
  */
 
 function schema<Output>(
@@ -38,7 +38,7 @@ function req(path: string, init?: RequestInit): Request {
   return new Request(`http://localhost${path}`, init)
 }
 
-describe("resolveNode — JSON-data fast path", () => {
+describe("resolveNode - JSON-data fast path", () => {
   test("plain object → kind:json, status 200, pre-stringified body, no headers/cookies", async () => {
     const app = server()
       .use(nodeDirect())
@@ -141,7 +141,7 @@ describe("resolveNode — JSON-data fast path", () => {
   })
 })
 
-describe("resolveNode — fallback to a Response", () => {
+describe("resolveNode - fallback to a Response", () => {
   test("a lazy response result becomes a node-direct body without constructing a Response", async () => {
     const responseResult = Symbol.for("nifra.response.result")
     let builtResponse = false

@@ -1,11 +1,11 @@
 /**
- * @nifrajs/storage — one blob-storage interface, several adapters. The persistence half of
+ * @nifrajs/storage - one blob-storage interface, several adapters. The persistence half of
  * `@nifrajs/uploads` (which validates + signs but doesn't store): `uploads` decides what's allowed,
  * `storage` puts the bytes somewhere. Adapters: {@link MemoryStorage} (dev/test), `FileStorage` (local
  * disk), `R2Storage` (Cloudflare R2). Bring your own for S3/GCS by implementing {@link StorageAdapter}.
  */
 
-/** Accepted `put` payloads — normalized to bytes by each adapter. */
+/** Accepted `put` payloads - normalized to bytes by each adapter. */
 export type StorageData = Uint8Array | ArrayBuffer | string
 
 export interface PutOptions {
@@ -15,7 +15,7 @@ export interface PutOptions {
   readonly metadata?: Readonly<Record<string, string>>
 }
 
-/** An object read back from storage. `body` is buffered (not streamed) — fine for typical uploads. */
+/** An object read back from storage. `body` is buffered (not streamed) - fine for typical uploads. */
 export interface StorageObject {
   readonly body: Uint8Array
   readonly size: number

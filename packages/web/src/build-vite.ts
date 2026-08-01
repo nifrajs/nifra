@@ -1,5 +1,5 @@
 /**
- * `@nifrajs/web/build-vite` — the **Vite/Rollup production build**: the escape hatch, not the default.
+ * `@nifrajs/web/build-vite` - the **Vite/Rollup production build**: the escape hatch, not the default.
  *
  * nifra's production default is Bun (`@nifrajs/web/build`), and stays so - it is faster and Bun-native,
  * which is what nifra competes on. This exists for the one case that default cannot serve: an app whose
@@ -40,7 +40,7 @@ import { viteServerFnStub } from "./plugins/vite-server-fn.ts"
 import { viteServerOnlyEmpty } from "./plugins/vite-server-only.ts"
 
 // ---------------------------------------------------------------------------------------------------
-// Structural Vite typings — no hard `vite` dependency (mirrors vite.ts). Only the build API is used.
+// Structural Vite typings - no hard `vite` dependency (mirrors vite.ts). Only the build API is used.
 // ---------------------------------------------------------------------------------------------------
 
 /** One entry in Vite's `.vite/manifest.json`: its emitted file + transitive CSS + imported chunks. */
@@ -105,7 +105,7 @@ async function withSerializedNodeEnv<T>(mode: string, run: () => Promise<T>): Pr
   }
 }
 
-/** Options for {@link buildClientVite} — the Bun {@link BuildClientOptions} minus Bun-plugin specifics,
+/** Options for {@link buildClientVite} - the Bun {@link BuildClientOptions} minus Bun-plugin specifics,
  * plus the Vite plugin list the app injects for its transforms. */
 export interface BuildClientViteOptions extends Omit<BuildClientOptions, "plugins"> {
   /** Vite plugins for the app's client transforms (e.g. `react()`, `vue()`). */
@@ -140,7 +140,7 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     `globalThis.process ??= { env: {} };\n${generateClientEntry(routeManifest, { clientModule, resolve })}`,
   )
 
-  // Every unique route/layout/_404 file — each an additional entry so Vite emits a named chunk per file
+  // Every unique route/layout/_404 file - each an additional entry so Vite emits a named chunk per file
   // the bootstrap's lazy import dedupes to, giving the per-route chunk + CSS mapping below.
   const routeFiles = [
     ...new Set([
@@ -150,7 +150,7 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     ]),
   ].sort()
 
-  // Vite manifest keys are the input path RELATIVE TO ROOT — precompute them so the lookup below is exact
+  // Vite manifest keys are the input path RELATIVE TO ROOT - precompute them so the lookup below is exact
   // (survives same-basename collisions like `index.tsx` + `blog/index.tsx`).
   const keyOf = (absPath: string): string => relative(root, absPath).replaceAll("\\", "/")
   const entryKey = keyOf(entryFile)
@@ -159,7 +159,7 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
   for (const file of routeFiles) {
     const abs = resolvePath(resolve(file))
     // FLAT input names (no `/`), so Vite emits `routes_index_tsx-HASH.js` in `outDir` directly, not a
-    // nested `routes/…` dir — the deploy assembly + size report map asset URLs by basename and expect a
+    // nested `routes/…` dir - the deploy assembly + size report map asset URLs by basename and expect a
     // flat layout. The manifest LOOKUP below is keyed by the src path (`keyOf`), independent of this name.
     input[keyOf(abs).replace(/[^\w]/g, "_")] = abs
     fileKey.set(file, keyOf(abs))
@@ -212,7 +212,7 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
             // without this. External here means the guard fails the build (below) with the exact builtin.
             external: [/^node:/],
             input,
-            // The leak guard is a Rollup plugin — last, so it sees the final graph.
+            // The leak guard is a Rollup plugin - last, so it sees the final graph.
             plugins: [viteServerFnStub(), viteServerOnlyEmpty(), leakGuard],
             output: {
               entryFileNames: "[name]-[hash].js",
@@ -272,7 +272,7 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     routes._404 = c !== undefined ? [c] : []
   }
 
-  // CSS per route — Vite's manifest `css` is the transitive stylesheet set for that entry.
+  // CSS per route - Vite's manifest `css` is the transitive stylesheet set for that entry.
   const stylesFor = (files: readonly string[]): readonly string[] => {
     const urls = new Set<string>()
     for (const file of files) {
@@ -282,7 +282,7 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     }
     return [...urls]
   }
-  // CSS aggregate — every stylesheet the app emits, the always-safe fallback.
+  // CSS aggregate - every stylesheet the app emits, the always-safe fallback.
   const allCss = new Set<string>()
   for (const entry of Object.values(viteManifest)) {
     for (const css of entry.css ?? []) allCss.add(url(css))
@@ -294,7 +294,7 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     if (routeManifest.notFound) routeStyles._404 = stylesFor([routeManifest.notFound.file])
   }
 
-  // assets — every emitted file + stylesheet across the manifest (chunks, entries, css).
+  // assets - every emitted file + stylesheet across the manifest (chunks, entries, css).
   const assets = new Set<string>()
   for (const entry of Object.values(viteManifest)) {
     assets.add(url(entry.file))
@@ -318,7 +318,7 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
   return manifest
 }
 
-/** Options for {@link buildServerVite} — the same surface as `buildServer` minus Bun-plugin specifics. */
+/** Options for {@link buildServerVite} - the same surface as `buildServer` minus Bun-plugin specifics. */
 export interface BuildServerViteOptions {
   readonly routesDir: string
   readonly serverEntry: string
@@ -332,7 +332,7 @@ export interface BuildServerViteOptions {
   readonly conditions?: readonly string[]
   readonly define?: Readonly<Record<string, string>>
   readonly minify?: boolean
-  /** The runtime the worker targets — mirrors `buildServer`. `browser` = the edge (workerd/edge-light). */
+  /** The runtime the worker targets - mirrors `buildServer`. `browser` = the edge (workerd/edge-light). */
   readonly target?: "browser" | "node" | "bun"
   /** Vite project root (default: the parent of `routesDir`). */
   readonly root?: string
@@ -437,7 +437,7 @@ export async function buildServerVite(options: BuildServerViteOptions): Promise<
     generateServerManifest(routeManifest, { resolve, clientEntry, styles, routeStyles }),
   )
 
-  // Pin the mode to match NODE_ENV — the react plugin's JSX runtime (jsx vs jsxDEV) follows it, and a
+  // Pin the mode to match NODE_ENV - the react plugin's JSX runtime (jsx vs jsxDEV) follows it, and a
   // mismatch throws `jsxDEV is not a function` at SSR (see buildClientVite for the full reasoning).
   const mode = options.minify === false ? "development" : "production"
   const vite = await loadVite()
@@ -507,7 +507,7 @@ export async function buildServerVite(options: BuildServerViteOptions): Promise<
 }
 
 /**
- * The Vite build STRATEGY — plugged into `buildTargetWith`. `plugins` arriving through the shared
+ * The Vite build STRATEGY - plugged into `buildTargetWith`. `plugins` arriving through the shared
  * orchestrator are the app's Vite plugins (the escape hatch's whole reason), cast to Vite's plugin type.
  */
 export const viteBundler: Bundler = {

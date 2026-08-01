@@ -1,14 +1,14 @@
 /**
- * `nifra doctor` — catches the Bun-workspace footgun the typed-client lint can't: a package that's
+ * `nifra doctor` - catches the Bun-workspace footgun the typed-client lint can't: a package that's
  * IMPORTED in source but NOT declared in `package.json`. Bun resolves it at runtime (via hoisting or a
- * workspace), so tests pass and `bun install` reports "no changes" — false confidence — yet `tsc` fails
+ * workspace), so tests pass and `bun install` reports "no changes" - false confidence - yet `tsc` fails
  * and a fresh or standalone install can't resolve it. doctor diffs every bare import specifier against
  * the package's declared dependencies and flags the gap, with a stable `--json` shape for agents/CI.
  *
  * Scope is intentionally per-package: it checks the `package.json` at `cwd`, because a dependency must be
  * declared by the package that imports it (for `tsc` and for that package to install on its own) even
  * when a monorepo would hoist it. Relative paths, runtime builtins (node core, `node:`/`bun:`, `bun`),
- * the package's own name, and tsconfig `paths` aliases are excluded — none of them are npm deps.
+ * the package's own name, and tsconfig `paths` aliases are excluded - none of them are npm deps.
  */
 import { realpath, stat } from "node:fs/promises"
 import { builtinModules } from "node:module"
@@ -25,7 +25,7 @@ const BUILTINS: ReadonlySet<string> = new Set<string>([
 
 // The four specifier-bearing forms: static import/re-export with a source, side-effect import, dynamic
 // import, and CJS require. Anchored with `(?<![.\w$])` so `myimport`/`.import`/`foorequire` never match.
-// Comments are stripped before these run (see stripComments) — else a doc-comment usage example would be
+// Comments are stripped before these run (see stripComments) - else a doc-comment usage example would be
 // flagged as a real import.
 const IMPORT_PATTERNS: readonly RegExp[] = [
   /(?<![.\w$])(?:import|export)\b[^'"]*?\bfrom\s*['"]([^'"]+)['"]/g,
@@ -56,7 +56,7 @@ export function packageOf(spec: string): string | undefined {
   if (spec.startsWith("node:") || spec.startsWith("bun:")) return undefined
   if (spec.startsWith("@")) {
     const [scope, name] = spec.split("/")
-    if (!scope || scope === "@" || !name) return undefined // `@/alias`, `@foo` — not a real package
+    if (!scope || scope === "@" || !name) return undefined // `@/alias`, `@foo` - not a real package
     const pkg = `${scope}/${name}`
     return isNpmPackageName(pkg) ? pkg : undefined
   }
@@ -66,7 +66,7 @@ export function packageOf(spec: string): string | undefined {
 }
 
 /** Build a predicate matching tsconfig `paths` aliases (e.g. `@/*`, `~/utils`), which resolve to local
- * source, not npm packages — so doctor must not flag them. */
+ * source, not npm packages - so doctor must not flag them. */
 export function aliasMatcher(
   paths: Readonly<Record<string, unknown>> | undefined,
 ): (spec: string) => boolean {
@@ -113,13 +113,13 @@ export function scanUndeclaredImports(
 export interface DoctorFinding {
   readonly file: string
   readonly line: number
-  /** The undeclared package name — add it to `package.json` dependencies. */
+  /** The undeclared package name - add it to `package.json` dependencies. */
   readonly package: string
 }
 
 export interface DoctorResult {
   readonly ok: boolean
-  /** `false` when no `package.json` was found at cwd — doctor can't run (reported, not a crash). */
+  /** `false` when no `package.json` was found at cwd - doctor can't run (reported, not a crash). */
   readonly ran: boolean
   readonly findings: readonly DoctorFinding[]
   /** Packages that resolve to more than one physical install across this workspace. */
@@ -622,7 +622,7 @@ export async function runDoctor(
   }
   console.log("nifra doctor\n")
   if (!result.ran) {
-    console.log("• no package.json at this directory — nothing to check")
+    console.log("• no package.json at this directory - nothing to check")
     return true
   }
   if (result.fixed && result.fixed.length > 0) {
@@ -635,7 +635,7 @@ export async function runDoctor(
   if (result.skippedFixes && result.skippedFixes.length > 0) {
     console.log("• not auto-fixed:")
     for (const f of result.skippedFixes) {
-      console.log(`  ${f.package} — ${f.reason}; run \`${f.command.join(" ")}\``)
+      console.log(`  ${f.package} - ${f.reason}; run \`${f.command.join(" ")}\``)
     }
     console.log("")
   }

@@ -1,5 +1,5 @@
 /**
- * SSR benchmark targets — grouped by UI runtime. Each group has Table A (uncached) and Table B
+ * SSR benchmark targets - grouped by UI runtime. Each group has Table A (uncached) and Table B
  * (cacheable SSG; React also has ISR). See SSR-BENCHMARKS.md before comparing across tables.
  */
 import type { SsrBenchTarget } from "./harness.ts"
@@ -29,7 +29,7 @@ function nifraStatic(name: string, subdir: string, port: number): SsrBenchTarget
   }
 }
 
-/** Same nifra app on Node (@nifrajs/node) — fair same-runtime row vs meta-frameworks on Node. */
+/** Same nifra app on Node (@nifrajs/node) - fair same-runtime row vs meta-frameworks on Node. */
 function nifraNode(name: string, subdir: string, port: number): SsrBenchTarget {
   return {
     name,
@@ -54,7 +54,7 @@ function nifraBun(name: string, subdir: string, port: number): SsrBenchTarget {
   }
 }
 
-/** React — uncached SSR + meta-frameworks. */
+/** React - uncached SSR + meta-frameworks. */
 export const REACT_TABLE_A: readonly SsrBenchTarget[] = [
   nifraBun("nifra+react", "nifra", 4300),
   {
@@ -118,7 +118,7 @@ export const REACT_TABLE_B: readonly SsrBenchTarget[] = [
   },
 ]
 
-/** Solid — nifra vs SolidStart. */
+/** Solid - nifra vs SolidStart. */
 export const SOLID_TABLE_A: readonly SsrBenchTarget[] = [
   nifraBun("nifra+solid", "nifra-solid", 4320),
   nifraNode("nifra+solid (node)", "nifra-solid", 4350),
@@ -156,7 +156,7 @@ export const SOLID_TABLE_B: readonly SsrBenchTarget[] = [
   },
 ]
 
-/** Vue — nifra vs Nuxt. */
+/** Vue - nifra vs Nuxt. */
 export const VUE_TABLE_A: readonly SsrBenchTarget[] = [
   nifraBun("nifra+vue", "nifra-vue", 4321),
   nifraNode("nifra+vue (node)", "nifra-vue", 4351),
@@ -184,7 +184,7 @@ export const VUE_TABLE_B: readonly SsrBenchTarget[] = [
   },
 ]
 
-/** Svelte — nifra vs SvelteKit. */
+/** Svelte - nifra vs SvelteKit. */
 export const SVELTE_TABLE_A: readonly SsrBenchTarget[] = [
   nifraBun("nifra+svelte", "nifra-svelte", 4322),
   nifraNode("nifra+svelte (node)", "nifra-svelte", 4352),
@@ -212,7 +212,7 @@ export const SVELTE_TABLE_B: readonly SsrBenchTarget[] = [
   },
 ]
 
-/** Preact — nifra vs minimal Preact SSR (no maintained meta-framework). */
+/** Preact - nifra vs minimal Preact SSR (no maintained meta-framework). */
 export const PREACT_TABLE_A: readonly SsrBenchTarget[] = [
   nifraBun("nifra+preact", "nifra-preact", 4323),
   nifraNode("nifra+preact (node)", "nifra-preact", 4353),
@@ -238,53 +238,53 @@ export const ALL_TABLE_SECTIONS: readonly {
   readonly targets: readonly SsrBenchTarget[]
 }[] = [
   {
-    label: "React — Table A (uncached SSR)",
+    label: "React - Table A (uncached SSR)",
     blurb: "Per-request render. nifra+react (Bun + Node) vs next (dynamic) vs remix.",
     targets: REACT_TABLE_A,
   },
   {
-    label: "React — Table B (cacheable)",
+    label: "React - Table B (cacheable)",
     blurb: "SSG + ISR (ISR rows cache-warmed before oha).",
     targets: REACT_TABLE_B,
   },
   {
-    label: "Solid — Table A (uncached SSR)",
+    label: "Solid - Table A (uncached SSR)",
     blurb:
       "nifra+solid (Bun + Node) vs SolidStart + solid-ssr. Compare Node rows to Node rows only.",
     targets: SOLID_TABLE_A,
   },
   {
-    label: "Solid — Table B (SSG)",
+    label: "Solid - Table B (SSG)",
     blurb: "Build-time catalog; nifra prerender vs SolidStart prerender.",
     targets: SOLID_TABLE_B,
   },
   {
-    label: "Vue — Table A (uncached SSR)",
+    label: "Vue - Table A (uncached SSR)",
     blurb: "nifra+vue (Bun + Node) vs Nuxt. Compare Node rows to Node rows only.",
     targets: VUE_TABLE_A,
   },
   {
-    label: "Vue — Table B (SSG)",
+    label: "Vue - Table B (SSG)",
     blurb: "nifra prerender vs Nuxt prerender route.",
     targets: VUE_TABLE_B,
   },
   {
-    label: "Svelte — Table A (uncached SSR)",
+    label: "Svelte - Table A (uncached SSR)",
     blurb: "nifra+svelte (Bun + Node) vs SvelteKit. Compare Node rows to Node rows only.",
     targets: SVELTE_TABLE_A,
   },
   {
-    label: "Svelte — Table B (SSG)",
+    label: "Svelte - Table B (SSG)",
     blurb: "nifra prerender vs SvelteKit prerender=true.",
     targets: SVELTE_TABLE_B,
   },
   {
-    label: "Preact — Table A (uncached SSR)",
+    label: "Preact - Table A (uncached SSR)",
     blurb: "nifra+preact (Bun + Node) vs preact-ssr. Compare Node rows to Node rows only.",
     targets: PREACT_TABLE_A,
   },
   {
-    label: "Preact — Table B (SSG)",
+    label: "Preact - Table B (SSG)",
     blurb: "nifra prerender only (no Preact meta-framework baseline).",
     targets: PREACT_TABLE_B,
   },

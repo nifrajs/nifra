@@ -6,7 +6,7 @@ import { load } from "../src/preact-render.ts"
 /**
  * Regression test for the dual-Preact SSR crash (the Preact analogue of the React one): under Bun runtime
  * SSR (`nifra dev` / `nifra start` / `nifra_render`), a STATIC `import "preact-render-to-string"` in the
- * @nifrajs/web-preact adapter binds the `preact` copy nested under the renderer's own node_modules — a
+ * @nifrajs/web-preact adapter binds the `preact` copy nested under the renderer's own node_modules - a
  * DIFFERENT physical `preact` than the consumer app's route components import. `preact-render-to-string`
  * mutates `preact`'s shared `options` global, and `preact/hooks` writes the SAME global; two `preact`
  * copies → two `options` → the renderer walks one while hooks wrote the other → `undefined is not an
@@ -15,7 +15,7 @@ import { load } from "../src/preact-render.ts"
  * `preact`.
  *
  * We prove BOTH directions in a real two-copy install fixture, driving the SSR in a SUBPROCESS whose `cwd`
- * is the fixture app (faithful to runtime SSR — an in-process render shares this test runner's module
+ * is the fixture app (faithful to runtime SSR - an in-process render shares this test runner's module
  * cache, which masks the bug):
  *   - OLD/static path (control): the renderer's nested `preact` (copy A) against a component using the
  *     app's `preact` (copy B) → the hook-state crash. Documents the bug.
@@ -39,12 +39,12 @@ beforeAll(() => {
   const appModules = join(appRoot, "node_modules")
   mkdirSync(appModules, { recursive: true })
 
-  // Copy B: a SECOND PHYSICAL `preact` for the app — a deep copy so its module identity differs from the
+  // Copy B: a SECOND PHYSICAL `preact` for the app - a deep copy so its module identity differs from the
   // store copy (copy A) the static import binds. (Symlinking would collapse them back to one identity.)
   const appPreact = join(appModules, "preact")
   cpSync(STORE_PREACT, appPreact, { recursive: true, dereference: true })
 
-  // The app's own `preact-render-to-string`, with its nested `preact` pointed at the app's copy B — this
+  // The app's own `preact-render-to-string`, with its nested `preact` pointed at the app's copy B - this
   // is what the FIX resolves from the app root, so the renderer binds copy B (matching the components).
   const appRts = join(appModules, "preact-render-to-string")
   cpSync(STORE_RTS, appRts, { recursive: true, dereference: true })
@@ -73,7 +73,7 @@ async function runDriver(source: string, cwd: string): Promise<string> {
 test("convergence: Bun.resolveSync('preact-render-to-string', appRoot) is the app's copy, binding the app's preact", () => {
   const rts = Bun.resolveSync("preact-render-to-string", appRoot)
   expect(rts.startsWith(join(appRoot, "node_modules", "preact-render-to-string"))).toBe(true)
-  // And its transitive `preact` is the app's copy B — the whole point of re-rooting (matches components).
+  // And its transitive `preact` is the app's copy B - the whole point of re-rooting (matches components).
   const preactFromRts = Bun.resolveSync(
     "preact",
     join(appRoot, "node_modules", "preact-render-to-string"),
@@ -82,7 +82,7 @@ test("convergence: Bun.resolveSync('preact-render-to-string', appRoot) is the ap
 })
 
 test("OLD static path crashes: store renderer (preact copy A) + app preact copy B component → hook crash", async () => {
-  // Control: simulate the pre-fix adapter — render with the STORE's preact-render-to-string (its nested
+  // Control: simulate the pre-fix adapter - render with the STORE's preact-render-to-string (its nested
   // preact = copy A) against a component using the app's preact (copy B, resolved from cwd). The exact
   // mismatch the static import produced. Absolute paths keep the driver deterministic.
   const storeRtsEntry = join(STORE_RTS, "dist/index.mjs")
@@ -147,7 +147,7 @@ test("load re-roots the renderer via the injected resolver (the Bun-runtime bran
 })
 
 test("load falls back to the bundled renderer when the resolver throws (no hard failure)", async () => {
-  // A throwing resolver (renderer not at the app root) must NOT crash — it falls through to the static
+  // A throwing resolver (renderer not at the app root) must NOT crash - it falls through to the static
   // import. Exercised for BOTH subpaths so the stream branch of the fallback is covered too.
   const throwing = (): string => {
     throw new Error("not resolvable from app root")

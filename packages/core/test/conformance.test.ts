@@ -27,7 +27,7 @@ const pageQuery = schema<{ page: string }>((v) =>
     : { issues: [{ message: "page is required", path: ["page"] }] },
 )
 
-// The SAME handler values are used by both modes — this is the graduation proof:
+// The SAME handler values are used by both modes - this is the graduation proof:
 // lifting these into a contract requires no change to the handler bodies.
 const listUsers = () => [{ id: "1" }]
 const getUser = (c: Context<"/users/:id">) => ({ id: c.params.id })
@@ -70,7 +70,7 @@ const requests: ReadonlyArray<readonly [string, RequestInit?]> = [
   ["/users", { method: "DELETE" }], // 405
 ]
 
-describe("mode conformance — inline ≡ contract-first", () => {
+describe("mode conformance - inline ≡ contract-first", () => {
   test("both servers respond identically to a shared request set", async () => {
     for (const [path, init] of requests) {
       const url = `http://localhost${path}`

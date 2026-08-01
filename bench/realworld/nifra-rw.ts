@@ -1,5 +1,5 @@
 /** Realistic-shape nifra server: security headers + CORS + request-id + bearer auth, cookie read,
- * validated query/body, ~3KB list responses — the same work elysia-rw.ts does, idiomatically. */
+ * validated query/body, ~3KB list responses - the same work elysia-rw.ts does, idiomatically. */
 import { server } from "@nifrajs/core/server"
 import { cors, securityHeaders } from "@nifrajs/middleware"
 import { t } from "@nifrajs/schema"

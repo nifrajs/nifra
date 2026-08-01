@@ -11,7 +11,7 @@ import {
   scanUndeclaredImports,
 } from "../src/doctor.ts"
 
-describe("packageOf — specifier → installable package name", () => {
+describe("packageOf - specifier → installable package name", () => {
   test("reduces subpaths to the package; keeps scope", () => {
     expect(packageOf("react")).toBe("react")
     expect(packageOf("drizzle-orm/postgres-js")).toBe("drizzle-orm")
@@ -33,7 +33,7 @@ describe("packageOf — specifier → installable package name", () => {
   })
 })
 
-describe("aliasMatcher — tsconfig paths are local, not npm deps", () => {
+describe("aliasMatcher - tsconfig paths are local, not npm deps", () => {
   test("matches alias prefixes (with and without /*)", () => {
     const isAlias = aliasMatcher({ "@/*": [], "~/utils": [], "@ui/*": [] })
     expect(isAlias("@/foo")).toBe(true)
@@ -49,7 +49,7 @@ describe("aliasMatcher — tsconfig paths are local, not npm deps", () => {
   })
 })
 
-describe("scanUndeclaredImports — undeclared bare imports, all import forms", () => {
+describe("scanUndeclaredImports - undeclared bare imports, all import forms", () => {
   const declared = new Set(["react", "@nifrajs/core"])
   const noAlias = () => false
 
@@ -83,7 +83,7 @@ describe("scanUndeclaredImports — undeclared bare imports, all import forms", 
   test("does NOT flag import examples written inside comments (the dogfood false-positive)", () => {
     const src = [
       "/**",
-      ' * Usage: `import { z } from "zod"` — or dynamically `() => import("@vitejs/plugin-vue")`.',
+      ' * Usage: `import { z } from "zod"` - or dynamically `() => import("@vitejs/plugin-vue")`.',
       " */",
       '// also a line comment: require("commented-pkg") and export { y } from "ghost"',
       'import { useState } from "react"', // the only REAL import → declared → ok
@@ -121,7 +121,7 @@ describe("scanUndeclaredImports — undeclared bare imports, all import forms", 
   })
 })
 
-describe("collectDoctorResult — project-level import vs declared-deps diff", () => {
+describe("collectDoctorResult - project-level import vs declared-deps diff", () => {
   test("flags the undeclared import, passes the declared one; reports import sites", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-"))
     await writeFile(
@@ -391,7 +391,7 @@ describe("collectDoctorResult — project-level import vs declared-deps diff", (
   })
 })
 
-describe("collectDuplicateInstalls — discovery anchored at the workspace root", () => {
+describe("collectDuplicateInstalls - discovery anchored at the workspace root", () => {
   test("finds a sibling package's duplicate when run from an app subdirectory", async () => {
     // The configuration the check was blind in, and the normal one: you run `nifra check` from the
     // app, whose manifest declares no `workspaces`, so discovery collapsed to the app itself and the

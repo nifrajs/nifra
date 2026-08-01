@@ -1,5 +1,5 @@
 /**
- * `@nifrajs/mock` — contract-based mock server.
+ * `@nifrajs/mock` - contract-based mock server.
  *
  * Reads a Nifra app's registered routes and their Standard Schema / JSON Schema
  * response definitions, then generates fake responses from supported JSON Schema keywords. Use it
@@ -156,7 +156,7 @@ export function generateMockValue(
     )
   }
 
-  // Enum — pick the first value (deterministic) or random
+  // Enum - pick the first value (deterministic) or random
   const enumValues = raw.enum as readonly unknown[] | undefined
   if (enumValues && Array.isArray(enumValues) && enumValues.length > 0) {
     return enumValues[randomIndex(rand, enumValues.length)]
@@ -274,7 +274,7 @@ export interface MockableRoute {
     | undefined
 }
 
-/** App shape — anything with a `routes()` method. */
+/** App shape - anything with a `routes()` method. */
 export interface MockableApp {
   routes(): readonly MockableRoute[]
 }

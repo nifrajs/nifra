@@ -35,7 +35,7 @@ function makeApp() {
     .get("/health", () => ({ ok: true }))
 }
 
-// The `resolveWebSocketUpgrade` seam — no socket; this is exactly what the @nifrajs/node, @nifrajs/deno, and
+// The `resolveWebSocketUpgrade` seam - no socket; this is exactly what the @nifrajs/node, @nifrajs/deno, and
 // Workers (toFetchHandler) bridges will call, so testing it here covers all adapters' upgrade logic.
 describe("resolveWebSocketUpgrade", () => {
   test("pass when there's no upgrade header", async () => {
@@ -91,7 +91,7 @@ describe("resolveWebSocketUpgrade", () => {
   })
 })
 
-// A real Bun websocket round-trip through app.listen() — the WS-1 MVP.
+// A real Bun websocket round-trip through app.listen() - the WS-1 MVP.
 describe("app.listen() WebSockets", () => {
   function collect(url: string, send: string[], count: number): Promise<string[]> {
     return new Promise((resolve, reject) => {
@@ -241,7 +241,7 @@ describe("app.listen() WebSockets", () => {
   })
 })
 
-// attachWebSocket — the shared bridge the @nifrajs/deno + Workers (toFetchHandler) adapters use over a
+// attachWebSocket - the shared bridge the @nifrajs/deno + Workers (toFetchHandler) adapters use over a
 // standard WebSocket. Tested with a fake socket (no runtime), covering dispatch + normalization.
 describe("attachWebSocket", () => {
   class FakeSocket implements StandardWebSocket {
@@ -411,7 +411,7 @@ describe("attachWebSocket", () => {
 
 // toFetchHandler's Workers WS branch (feature-detected WebSocketPair). Mocked here so the branch runs
 // on Bun; the real 101 round-trip is verified on workerd. The 101 Response only constructs on Workers,
-// so off-workerd the `upgrade` path throws right after accept()+wire — which is what we assert.
+// so off-workerd the `upgrade` path throws right after accept()+wire - which is what we assert.
 describe("toFetchHandler WebSockets (Workers WebSocketPair)", () => {
   const ctx = { waitUntil: () => {}, passThroughOnException: () => {} }
 
@@ -489,7 +489,7 @@ describe("toFetchHandler WebSockets (Workers WebSocketPair)", () => {
       try {
         handler.fetch(new Request("http://t/ws", { headers: { upgrade: "websocket" } }), {}, ctx)
       } catch {
-        // `new Response(null, { status: 101 })` throws off-workerd — expected; accept()+wire already ran.
+        // `new Response(null, { status: 101 })` throws off-workerd - expected; accept()+wire already ran.
       }
     })
     expect(sock.accepted).toBe(true)
@@ -549,7 +549,7 @@ describe("toFetchHandler WebSockets (Workers WebSocketPair)", () => {
   })
 })
 
-// TopicRegistry — the in-process pub/sub backing ws.subscribe + app.publish. Unit-tested with fake
+// TopicRegistry - the in-process pub/sub backing ws.subscribe + app.publish. Unit-tested with fake
 // sockets (no runtime), covering broadcast, unsubscribe, close-cleanup, and send-error isolation.
 describe("TopicRegistry", () => {
   function fakeWs() {
@@ -601,7 +601,7 @@ describe("TopicRegistry", () => {
 // wrapping happens once at app.ws() registration, so this is verified through the public seam + a live
 // round-trip (one path covers every adapter).
 describe("WS messageSchema (contract-validated messages)", () => {
-  // A hand-rolled Standard Schema for { text: string } — no @nifrajs/schema dependency in core tests.
+  // A hand-rolled Standard Schema for { text: string } - no @nifrajs/schema dependency in core tests.
   const textSchema: StandardSchemaV1<unknown, { text: string }> = {
     "~standard": {
       version: 1,

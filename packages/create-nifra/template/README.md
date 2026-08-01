@@ -9,9 +9,9 @@ bun test           # run the tests
 bun run typecheck  # type-check
 ```
 
-- `src/app.ts` — your routes (exported without `listen`, so tests drive it via `app.fetch`).
-- `src/index.ts` — boots the server.
-- `src/app.test.ts` — an example test.
+- `src/app.ts` - your routes (exported without `listen`, so tests drive it via `app.fetch`).
+- `src/index.ts` - boots the server.
+- `src/app.test.ts` - an example test.
 
 Add a typed client from `typeof app`:
 

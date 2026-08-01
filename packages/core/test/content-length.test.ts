@@ -9,8 +9,8 @@ import { parseContentLength } from "../src/server/body.ts"
  * (→ 400), an over-`MAX_SAFE_INTEGER` length saturates to `Infinity` (→ over any cap → 413), and the
  * result matches the legacy regex+`Number` behavior across the normal integer range.
  */
-describe("parseContentLength — body-cap integer guard", () => {
-  test("accepts bare digit strings (incl. leading zeros — HTTP grammar is 1*DIGIT)", () => {
+describe("parseContentLength - body-cap integer guard", () => {
+  test("accepts bare digit strings (incl. leading zeros - HTTP grammar is 1*DIGIT)", () => {
     const cases: ReadonlyArray<readonly [string, number]> = [
       ["0", 0],
       ["1", 1],
@@ -37,8 +37,8 @@ describe("parseContentLength — body-cap integer guard", () => {
       "-5", // negative
       "+5", // signed
       "1.5", // fractional
-      "1e3", // exponential — Number() would accept this; we must NOT
-      "0x10", // hex — Number() would accept this; we must NOT
+      "1e3", // exponential - Number() would accept this; we must NOT
+      "0x10", // hex - Number() would accept this; we must NOT
       "0b1",
       "1,000",
       "Infinity",

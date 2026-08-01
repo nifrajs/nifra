@@ -1,6 +1,6 @@
 # @nifrajs/cache
 
-Typed KV cache for nifra — **TTL**, **stale-while-revalidate**, **tag invalidation**, and **single-flight
+Typed KV cache for nifra - **TTL**, **stale-while-revalidate**, **tag invalidation**, and **single-flight
 stampede protection** on a **pluggable store** (in-memory by default; bring CF KV / Redis for a shared
 cache). **Dependency-free**; runs on Bun/Node/Deno/Workers.
 
@@ -9,7 +9,7 @@ import { createCache } from "@nifrajs/cache"
 
 const cache = createCache({ defaultTtlMs: 30_000 })
 
-// Cache-aside in a loader — one DB hit per key per TTL, even under a stampede:
+// Cache-aside in a loader - one DB hit per key per TTL, even under a stampede:
 export async function loader({ params }) {
   const user = await cache.wrap(
     `user:${params.id}`,
@@ -25,7 +25,7 @@ await cache.invalidateTag(`user:${id}`)
 
 ## Semantics
 
-- **`wrap(key, loader, opts)`** — returns the cached value, or runs `loader`, stores, and returns it.
+- **`wrap(key, loader, opts)`** - returns the cached value, or runs `loader`, stores, and returns it.
   - **Fresh** (`now < staleAt`): the cached value, no loader call.
   - **Stale-but-live** (`staleAt ≤ now < expiresAt`, i.e. within `swrMs`): the stale value is returned
     **immediately** while a **background** refresh runs (deduped). Latency stays flat; data self-heals.
@@ -44,18 +44,18 @@ The default `MemoryCache` is in-process with lazy expiry, a tag index, and an op
 const cache = createCache({ store: new RedisCacheStore(redis) })
 ```
 
-On **Cloudflare Workers** the in-memory cache is per-isolate and short-lived — back it with **CF KV** (or
+On **Cloudflare Workers** the in-memory cache is per-isolate and short-lived - back it with **CF KV** (or
 the Cache API) via a `CacheStore` for anything that should survive across requests/instances.
 
 ## API
 
-- `createCache(options?)` → `Cache` — `{ store?, defaultTtlMs?, now?, onError? }`.
+- `createCache(options?)` → `Cache` - `{ store?, defaultTtlMs?, now?, onError? }`.
 - `cache.wrap(key, loader, { ttlMs?, swrMs?, tags? })` · `get` · `has` · `set` · `delete` · `invalidateTag` · `clear`.
-- `MemoryCache({ maxEntries?, now? })` — the default store; implement `CacheStore` for your own.
+- `MemoryCache({ maxEntries?, now? })` - the default store; implement `CacheStore` for your own.
 
 ## For AI agents
 
-Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports you call + its footguns),
 one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the

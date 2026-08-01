@@ -44,7 +44,7 @@ const gzipHeaders = (source: Headers): Headers => {
  *
  * The body is **peeked** up to `threshold` bytes to enforce the size floor: a response that ends below
  * the threshold is sent uncompressed (gzip's ~20-byte overhead would enlarge it), and only larger
- * bodies are compressed — the buffered prefix is replayed and the remainder streamed. (Runtimes rarely
+ * bodies are compressed - the buffered prefix is replayed and the remainder streamed. (Runtimes rarely
  * set `Content-Length` on a constructed `Response`, so the header alone can't gate this.)
  *
  * Skips: clients that don't accept gzip, already-encoded responses, bodyless responses (204/304/HEAD),
@@ -61,7 +61,7 @@ export function compression(options: CompressionOptions = {}) {
   return definePlugin("compression", (app) =>
     app.onResponse(async (res, req) => {
       const body = res.body
-      if (body === null) return res // 204/304/HEAD — nothing to compress
+      if (body === null) return res // 204/304/HEAD - nothing to compress
       if (!(req.headers.get("accept-encoding") ?? "").toLowerCase().includes("gzip")) return res
       if (res.headers.has("content-encoding")) return res // already encoded
       if (res.status === 206 || res.headers.has("content-range")) return res // ranges pass through
@@ -77,7 +77,7 @@ export function compression(options: CompressionOptions = {}) {
       while (total < threshold) {
         const { done, value } = await reader.read()
         if (done) {
-          // Body ended below the threshold — too small to be worth gzipping. Emit as-is.
+          // Body ended below the threshold - too small to be worth gzipping. Emit as-is.
           return new Response(concat(buffered, total), {
             status: res.status,
             statusText: res.statusText,
@@ -87,7 +87,7 @@ export function compression(options: CompressionOptions = {}) {
         buffered.push(value)
         total += value.byteLength
       }
-      // Over the threshold: replay the buffered prefix, then stream the rest — all through gzip.
+      // Over the threshold: replay the buffered prefix, then stream the rest - all through gzip.
       // (No explicit generic: it lets the chunk type infer from the non-shared reader so the stream
       // matches `CompressionStream`'s `Uint8Array` typing.)
       const source = new ReadableStream({

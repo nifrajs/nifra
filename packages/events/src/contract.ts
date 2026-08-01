@@ -1,6 +1,6 @@
 /**
- * Portable, versioned event contracts. A contract is the *shape* of an event — a typed, versioned
- * envelope validated by any Standard Schema — decoupled from how it is delivered. Producers build
+ * Portable, versioned event contracts. A contract is the *shape* of an event - a typed, versioned
+ * envelope validated by any Standard Schema - decoupled from how it is delivered. Producers build
  * validated envelopes; consumers parse untrusted input against the contract before acting. The
  * transport (queue, SSE, webhook, an outbox relay) is somebody else's concern.
  */
@@ -37,7 +37,7 @@ export class EventContractError extends Error {
   constructor(type: string, version: number, issues: readonly StandardIssue[]) {
     super(
       `event contract ${type}@${version}: payload failed validation` +
-        (issues[0]?.message ? ` — ${issues[0].message}` : ""),
+        (issues[0]?.message ? ` - ${issues[0].message}` : ""),
     )
     this.name = "EventContractError"
     this.type = type
@@ -56,7 +56,7 @@ export interface EventContract<Schema extends StandardSchemaV1 = StandardSchemaV
   readonly payload: Schema
   /**
    * Validate a payload and stamp a full envelope (`id`, `occurredAt`). Throws {@link EventContractError}
-   * on an invalid payload. Sync validators only — an async schema throws (use a sync payload schema for
+   * on an invalid payload. Sync validators only - an async schema throws (use a sync payload schema for
    * events; the whole point is a cheap boundary check).
    */
   create(
@@ -72,7 +72,7 @@ export interface EventContract<Schema extends StandardSchemaV1 = StandardSchemaV
 const TYPE_RE = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/
 
 function newId(): string {
-  // Web Crypto — available on Bun, Node, Deno, and edge runtimes (nifra targets the edge).
+  // Web Crypto - available on Bun, Node, Deno, and edge runtimes (nifra targets the edge).
   return `evt_${globalThis.crypto.randomUUID()}`
 }
 
@@ -102,7 +102,7 @@ export function defineEventContract<Schema extends StandardSchemaV1>(spec: {
     const outcome = validateStandard(payload, value)
     if (outcome instanceof Promise) {
       throw new Error(
-        `event contract ${type}@${version}: async payload schemas are not supported — use a sync schema`,
+        `event contract ${type}@${version}: async payload schemas are not supported - use a sync schema`,
       )
     }
     return outcome.ok

@@ -1,7 +1,7 @@
 /**
- * Auth demo — a nifra + React app with sessions. The protected page's loader reads the session
+ * Auth demo - a nifra + React app with sessions. The protected page's loader reads the session
  * (`sessions.read`) and `requireUser` redirects to /login when absent; login/logout are plain nifra
- * routes (POST /api/login, /api/logout) — they have the full Context needed to WRITE the session
+ * routes (POST /api/login, /api/logout) - they have the full Context needed to WRITE the session
  * cookie, which a file-route action can't. CSRF guards the unsafe routes.
  *
  *   bun run examples/auth-react/build.ts
@@ -15,7 +15,7 @@ import { reactAdapter } from "@nifrajs/web-react"
 import { getSessions } from "./auth"
 
 // One server-side session manager, injected into loaders as `api` (read in the loader via `ctx.api`,
-// never imported into a route module — loaders aren't stripped from the client bundle, so a top-level
+// never imported into a route module - loaders aren't stripped from the client bundle, so a top-level
 // server-only import there would ship `Bun.env`/the store to the browser).
 const sessions = getSessions()
 
@@ -31,14 +31,14 @@ const app = createWebApp({
   manifest: discoverRoutes(`${import.meta.dir}/routes`),
   clientEntry: assets.entry,
   routePreload: assets.routes,
-  api: sessions, // injected into every loader as `ctx.api` — the protected page reads it server-side
-  title: "nifra — auth demo",
+  api: sessions, // injected into every loader as `ctx.api` - the protected page reads it server-side
+  title: "nifra - auth demo",
 })
 
 // CSRF: Origin check on all unsafe methods (login/logout). Same-origin in dev; set { origins } in prod.
 app.use(csrf())
 
-// Login: validate identity (here: any non-empty username — a real app verifies a password / OAuth),
+// Login: validate identity (here: any non-empty username - a real app verifies a password / OAuth),
 // then set the session and redirect. `regenerate` rotates the id on login (session-fixation defense).
 app.post("/api/login", async (c) => {
   const form = await c.req.formData()

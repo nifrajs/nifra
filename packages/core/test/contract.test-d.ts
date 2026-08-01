@@ -56,8 +56,8 @@ const userContract = defineContract({
   getUser: { method: "GET", path: "/users/:id", response: user },
 })
 
-// The implemented server's output is the declared CONTRACT response — even though the handler returns a
-// narrower literal — so it matches what `client(contract)` already sees (response wins, as inline).
+// The implemented server's output is the declared CONTRACT response - even though the handler returns a
+// narrower literal - so it matches what `client(contract)` already sees (response wins, as inline).
 const narrowApp = implement(userContract, {
   getUser: () => ({ id: "1" as const, name: "A" as const }),
 })

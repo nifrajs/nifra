@@ -15,8 +15,8 @@ export interface LoggerOptions {
 }
 
 /**
- * A {@link definePlugin} plugin that logs one structured line per request — method, path, status,
- * and duration — via `onRequest`/`onResponse` (so it covers 404s and errors too). The start time is
+ * A {@link definePlugin} plugin that logs one structured line per request - method, path, status,
+ * and duration - via `onRequest`/`onResponse` (so it covers 404s and errors too). The start time is
  * paired to the request through a `WeakMap` (no per-request allocation leak). Idempotent.
  */
 export function logger(options: LoggerOptions = {}) {

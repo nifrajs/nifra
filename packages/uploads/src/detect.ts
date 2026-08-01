@@ -1,8 +1,8 @@
 /**
- * Magic-byte file-type detection — trust the bytes, not the `Content-Type` header (which a client
+ * Magic-byte file-type detection - trust the bytes, not the `Content-Type` header (which a client
  * sets freely). Reads only the leading bytes; dependency-free + edge-safe. Covers the common upload
  * types; returns `null` for anything unrecognized (incl. text formats like SVG/CSV that have no magic
- * number — handle those explicitly if you accept them).
+ * number - handle those explicitly if you accept them).
  */
 
 export interface FileType {
@@ -23,19 +23,19 @@ export function detectFileType(bytes: Uint8Array): FileType | null {
     return { mime: "image/png", ext: "png" }
   if (at(0, 0x47, 0x49, 0x46, 0x38)) return { mime: "image/gif", ext: "gif" }
 
-  // RIFF container (bytes 0–3 "RIFF", 8–11 the form type)
+  // RIFF container (bytes 0-3 "RIFF", 8-11 the form type)
   if (at(0, 0x52, 0x49, 0x46, 0x46)) {
     if (at(8, 0x57, 0x45, 0x42, 0x50)) return { mime: "image/webp", ext: "webp" }
     if (at(8, 0x57, 0x41, 0x56, 0x45)) return { mime: "audio/wav", ext: "wav" }
     if (at(8, 0x41, 0x56, 0x49, 0x20)) return { mime: "video/x-msvideo", ext: "avi" }
   }
 
-  // ISO-BMFF (`ftyp` box at offset 4) — mp4 / avif / heic / m4a, disambiguated by the major brand.
+  // ISO-BMFF (`ftyp` box at offset 4) - mp4 / avif / heic / m4a, disambiguated by the major brand.
   if (at(4, 0x66, 0x74, 0x79, 0x70)) {
     const brand = String.fromCharCode(bytes[8] ?? 0, bytes[9] ?? 0, bytes[10] ?? 0, bytes[11] ?? 0)
     if (brand === "avif" || brand === "avis") return { mime: "image/avif", ext: "avif" }
     if (brand.startsWith("hei") || brand === "mif1") return { mime: "image/heic", ext: "heic" }
-    // Audio brands share the ISO-BMFF container but are NOT video — labeling them `video/mp4` would
+    // Audio brands share the ISO-BMFF container but are NOT video - labeling them `video/mp4` would
     // both reject real audio under an `audio/*` allow-list and admit it under `video/*`. `M4A `/`M4B `
     // are AAC audio / audiobooks.
     if (brand === "M4A " || brand === "M4B ") return { mime: "audio/mp4", ext: "m4a" }

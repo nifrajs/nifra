@@ -1,11 +1,11 @@
 /**
- * Fine-grained signals — the reactive core of `@nifrajs/islets`. Pull-based auto-tracking with
+ * Fine-grained signals - the reactive core of `@nifrajs/islets`. Pull-based auto-tracking with
  * per-run re-tracking (a branch switch drops the stale branch's subscriptions), `Object.is`
  * equality skips, and an explicit synchronous {@link batch} that coalesces effect re-runs.
  *
- * Deliberately tiny and synchronous: writes outside `batch` re-run subscribers immediately —
+ * Deliberately tiny and synchronous: writes outside `batch` re-run subscribers immediately -
  * predictable for island-scale code (a counter, a filter drawer), and the whole core stays well
- * under a kilobyte. This is NOT a general app framework — just island-scale reactivity.
+ * under a kilobyte. This is NOT a general app framework - just island-scale reactivity.
  */
 
 interface EffectNode {
@@ -33,7 +33,7 @@ const scheduleEffect = (e: EffectNode): void => {
 }
 
 /**
- * Batch writes: effects triggered inside `fn` run ONCE after it returns, deduplicated — so
+ * Batch writes: effects triggered inside `fn` run ONCE after it returns, deduplicated - so
  * `setA(); setB()` updates the DOM once, not twice. Re-entrant; an effect re-queued during the
  * flush runs in the same flush.
  */
@@ -75,7 +75,7 @@ export function signal<T>(initial: T): Signal<T> {
   return read
 }
 
-/** Derived value, cached into a signal — recomputes when its tracked inputs change. */
+/** Derived value, cached into a signal - recomputes when its tracked inputs change. */
 export function computed<T>(fn: () => T): () => T {
   const out = signal<T>(undefined as T)
   effect(() => out.set(fn()))

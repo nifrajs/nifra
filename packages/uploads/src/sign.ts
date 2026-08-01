@@ -1,5 +1,5 @@
 /**
- * Short-TTL **signed download URLs** — serve an uploaded file back via a tamper-evident, expiring URL
+ * Short-TTL **signed download URLs** - serve an uploaded file back via a tamper-evident, expiring URL
  * (HMAC-SHA256 over the path + query + expiry). WebCrypto only (portable across Bun/Node/Deno/workerd,
  * no `node:crypto`). Verification is constant-time (`crypto.subtle.verify`). Sign a *relative*
  * URL/path; the returned string is relative so it works behind any host. `vexp` / `vsig` are reserved
@@ -9,7 +9,7 @@
 const ENC = new TextEncoder()
 const DUMMY_BASE = "http://localhost" // lets us parse a relative path/URL with the WHATWG URL parser
 
-// 256-bit secret floor — mirrors @nifrajs/core's HMAC guard. This package is deliberately
+// 256-bit secret floor - mirrors @nifrajs/core's HMAC guard. This package is deliberately
 // dependency-free (ships its own crypto), so the constant is inlined rather than imported.
 const MIN_SECRET_BYTES = 32
 

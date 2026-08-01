@@ -1,9 +1,9 @@
 /**
- * `@nifrajs/web-preact/i18n` — Preact bindings for `@nifrajs/i18n`. `<I18nProvider locale messages>` builds a
+ * `@nifrajs/web-preact/i18n` - Preact bindings for `@nifrajs/i18n`. `<I18nProvider locale messages>` builds a
  * `Formatter` (memoized) and provides it; `useT()` reads it. Both `locale` + `messages` are
  * serializable, so a loader returns them, the page renders with the negotiated catalog on the server,
  * and the client rebuilds the same formatter from the same props (no mismatch). Uses `preact` +
- * `preact/hooks` — no JSX.
+ * `preact/hooks` - no JSX.
  */
 import { createFormatter, type Formatter, type Messages } from "@nifrajs/i18n"
 import { type ComponentChildren, createContext, createElement, type VNode } from "preact"
@@ -12,7 +12,7 @@ import { useContext, useMemo } from "preact/hooks"
 const I18nContext = createContext<Formatter | null>(null)
 
 // Preact's `createElement` overloads don't reconcile a typed `Context.Provider` (required `value`)
-// under `exactOptionalPropertyTypes` — overload resolution drops `value` and infers the props as `{}`.
+// under `exactOptionalPropertyTypes` - overload resolution drops `value` and infers the props as `{}`.
 // The call is correct at runtime (proven by the tests), so invoke it through a precisely-typed element
 // factory that states the real contract (`{ value }` + children), rather than scatter `any`.
 const createProvider = createElement as (

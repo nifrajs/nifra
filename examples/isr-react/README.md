@@ -1,7 +1,7 @@
-# isr-react — Incremental Static Regeneration on nifra
+# isr-react - Incremental Static Regeneration on nifra
 
 A nifra + React app whose rendered pages are **cached and served stale-while-revalidate** by
-`withISR`. Dynamic pages get static-like speed and revalidate in the background — the same wrapper
+`withISR`. Dynamic pages get static-like speed and revalidate in the background - the same wrapper
 runs on Bun (dev) and Cloudflare Workers (prod); the only line that changes is the store.
 
 ## Run it (Bun, in-memory store)
@@ -33,7 +33,7 @@ curl -X POST 'http://localhost:3000/__nifra/revalidate?path=/' \
 
 ## Run it on the edge (workerd + Workers KV)
 
-`wrangler dev` runs the worker on real workerd with a **local** KV namespace (miniflare) — no
+`wrangler dev` runs the worker on real workerd with a **local** KV namespace (miniflare) - no
 Cloudflare account needed:
 
 ```sh

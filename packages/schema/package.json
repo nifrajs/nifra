@@ -1,7 +1,7 @@
 {
   "name": "@nifrajs/schema",
   "version": "2.2.0",
-  "description": "Built-in schema builder `t` — TypeBox-backed (free JSON Schema + compiled validators), implements Standard Schema so nifra routes validate it natively.",
+  "description": "Built-in schema builder `t` - TypeBox-backed (free JSON Schema + compiled validators), implements Standard Schema so nifra routes validate it natively.",
   "keywords": [
     "bun",
     "typescript",
@@ -35,7 +35,7 @@
     "dist",
     "src"
   ],
-  "comment:sideEffects": "No module here runs work at import time: the standard string formats install lazily from the validate path (src/adapter.ts → src/formats.ts ensureDefaultFormats), not as a top-level import side effect. The previous `sideEffects: [formats]` array did not survive bundling — Bun.build ignores the field — which is why formats were dropped from prod bundles. `false` is accurate now and lets consumers tree-shake freely.",
+  "comment:sideEffects": "No module here runs work at import time: the standard string formats install lazily from the validate path (src/adapter.ts → src/formats.ts ensureDefaultFormats), not as a top-level import side effect. The previous `sideEffects: [formats]` array did not survive bundling - Bun.build ignores the field - which is why formats were dropped from prod bundles. `false` is accurate now and lets consumers tree-shake freely.",
   "sideEffects": false,
   "scripts": {
     "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"

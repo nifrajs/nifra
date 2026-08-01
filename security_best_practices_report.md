@@ -14,7 +14,7 @@ full test, build, clean-consumer smoke, Nifra JSON, and publish-shape gates also
 
 ## Fixed finding
 
-### S-01 — Vulnerable development-tool transitive dependencies (fixed)
+### S-01 - Vulnerable development-tool transitive dependencies (fixed)
 
 - Severity: Moderate (two advisories), Low (one advisory)
 - Affected paths: Drizzle Kit / Vite to `esbuild`, and Changesets to `js-yaml`

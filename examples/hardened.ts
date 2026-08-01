@@ -1,6 +1,6 @@
 /**
  * Production hardening via composable middleware: security headers, CORS, and a rate
- * limit — all applied with `app.use()`.
+ * limit - all applied with `app.use()`.
  *
  *   bun run examples/hardened.ts
  */

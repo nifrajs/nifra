@@ -133,10 +133,10 @@ export type MaybePromise<T> = T | Promise<T>
 
 /**
  * Internal request view. A real Web `Request` already satisfies this shape, so Web/edge runtimes pass
- * their `Request` **directly** (zero wrapper allocation on the hot path — `request` is simply absent and
+ * their `Request` **directly** (zero wrapper allocation on the hot path - `request` is simply absent and
  * {@link requestOf} returns the source itself). Node's adapter passes a *lazy* source whose `request`
  * getter builds an undici `Request` only when user code reads `c.req`, an onRequest/onResponse hook
- * needs it, or a body helper consumes it — so the common Node request never pays for a `Request` build.
+ * needs it, or a body helper consumes it - so the common Node request never pays for a `Request` build.
  */
 export interface RequestSource {
   readonly method: string
@@ -198,7 +198,7 @@ type RawOnRequest = (req: Request, platform?: Platform) => MaybePromise<OnReques
 type RawOnResponse = (response: Response, req: Request) => MaybePromise<Response>
 type RawOnResponseFinalized = (outcome: ResponseFinalization, req: Request) => MaybePromise<void>
 
-/** A registered WebSocket route — just its handler; matching reuses {@link Router} under the GET verb. */
+/** A registered WebSocket route - just its handler; matching reuses {@link Router} under the GET verb. */
 interface WsEntry {
   readonly handler: WebSocketHandler
 }
@@ -258,7 +258,7 @@ function requireMcpRuntime(runtime: McpRuntime | undefined): McpRuntime {
 }
 
 /** The handler's permitted return type. When the route declares a `response` schema, the return is
- * constrained to the contract's type (or a raw `Response`) — so the implementation can't drift from the
+ * constrained to the contract's type (or a raw `Response`) - so the implementation can't drift from the
  * declared contract. Without a `response` schema it's unconstrained (`HandlerResult`), exactly as before. */
 type ResponseOf<S extends RouteSchema> = S extends { response: infer R extends StandardSchemaV1 }
   ? InferOutput<R> | Response
@@ -341,7 +341,7 @@ function hasReplacementParam(params: Record<string, string>): boolean {
  * anything when no handler touched `c.set.*`. Server-internal. */
 export type CtxSet = ResponseControls & {
   _headers?: Record<string, string>
-  /** Accumulated `Set-Cookie` values — a list, since a `Record` would collapse multiple cookies. */
+  /** Accumulated `Set-Cookie` values - a list, since a `Record` would collapse multiple cookies. */
   _cookies?: string[]
 }
 
@@ -376,7 +376,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private readonly wsRouter: Router<WsEntry>
   private wsRouteCount: number
   /** In-process pub/sub backing `ws.subscribe(topic)` + `app.publish(topic, data)` (single-instance).
-   * Created by the first `app.ws()` via the `@nifrajs/core/ws` runtime — `undefined` until then, so a
+   * Created by the first `app.ws()` via the `@nifrajs/core/ws` runtime - `undefined` until then, so a
    * no-WebSocket app never constructs (or bundles) it. */
   private topics: TopicRegistry | undefined
   private readonly maxBodyBytes: number
@@ -425,7 +425,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private readonly onResponseHooks: RawOnResponse[]
   private readonly onResponseFinalizedHooks: RawOnResponseFinalized[]
   private readonly responseRequests: WeakMap<Request, Request>
-  /** Names of plugins/middleware already applied via `use` — for idempotent dedupe. */
+  /** Names of plugins/middleware already applied via `use` - for idempotent dedupe. */
   private readonly appliedPlugins: Set<string>
   /** Order-scoped evidence captured by routes registered after an assured plugin. */
   private readonly activeAssurance: AssuranceDeclaration[]
@@ -589,7 +589,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return this
   }
 
-  /** Transform every outgoing response — success, error, 404, 405, short-circuit. Global. */
+  /** Transform every outgoing response - success, error, 404, 405, short-circuit. Global. */
   onResponse(fn: (response: Response, req: Request) => MaybePromise<Response>): this {
     this.assertConfigurable("onResponse()")
     this.onResponseHooks.push(fn)
@@ -606,7 +606,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   }
 
   /**
-   * Apply a type-**identity** plugin ({@link IdentityPlugin}, from {@link defineIdentityPlugin}) — it
+   * Apply a type-**identity** plugin ({@link IdentityPlugin}, from {@link defineIdentityPlugin}) - it
    * registers routes/hooks but doesn't change the types, so this returns `this` with the route registry
    * and context fully intact. This overload exists specifically so a *named* identity plugin (e.g.
    * `@nifrajs/better-auth`) threads the registry: its `& { pluginName }` intersection would otherwise
@@ -614,14 +614,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    */
   use(plugin: IdentityPlugin): this
   /**
-   * Apply a **plugin function** — `(app) => app`, typically built with {@link definePlugin}. It's
+   * Apply a **plugin function** - `(app) => app`, typically built with {@link definePlugin}. It's
    * called with `this` and its result is returned, so an inline plugin's `derive`/`decorate` thread
    * the added context to handlers defined after `use` (the overload is generic over the concrete
    * `this`). A named plugin already applied is skipped (idempotent dedupe).
    */
   use<Out extends AnyServer>(plugin: (app: this) => Out): Out
   /**
-   * Apply a {@link Middleware} bundle — wire each hook it provides to its lifecycle point. Returns
+   * Apply a {@link Middleware} bundle - wire each hook it provides to its lifecycle point. Returns
    * `this` (no context-type merging); call it before the routes its `beforeHandle`/`afterHandle`
    * should cover (those are order-scoped; `onRequest`/`onResponse` are global). A named bundle already
    * applied is skipped (idempotent).
@@ -689,11 +689,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   }
 
   /**
-   * Register a **typed SSE route** — a GET endpoint streaming `text/event-stream` whose event
+   * Register a **typed SSE route** - a GET endpoint streaming `text/event-stream` whose event
    * payloads are contracted by `schema.sse`. The handler receives the validated context plus a
    * {@link TypedSSEStream}: `stream.send(event)` is compile-time-checked against the schema and
    * JSON-serialized into the SSE `data:` field. The typed client sees the marker and grows a
-   * `.subscribe(onEvent)` for the route with the same payload type — end-to-end typed streaming.
+   * `.subscribe(onEvent)` for the route with the same payload type - end-to-end typed streaming.
    *
    *   import { streaming } from "@nifrajs/core/sse"   // .use(streaming()) enables .sse()
    *   const app = server().use(streaming()).sse("/feed", { sse: t.object({ id: t.integer(), title: t.string() }) },
@@ -855,7 +855,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     )
     this.register("POST", plan.path, plan.schema, plan.run as (context: never) => unknown)
     // Tag the just-registered descriptor as an MCP tool. `tool` is readonly on RouteDescriptor (an
-    // introspection field), so write it through a narrow mutable view — not `any`.
+    // introspection field), so write it through a narrow mutable view - not `any`.
     const lastRoute = this.catalog.lastDescriptor()
     if (lastRoute) {
       ;(lastRoute as { tool?: RouteDescriptor["tool"] }).tool = plan.descriptor
@@ -864,7 +864,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   }
 
   /**
-   * Declare an MCP **resource** — read-only data an agent can fetch through `nifra mcp` (app config, a
+   * Declare an MCP **resource** - read-only data an agent can fetch through `nifra mcp` (app config, a
    * generated document, …). `read` runs in the app process, so capture whatever app state it needs in the
    * closure. `uri` is the MCP resource identifier (e.g. `"myapp://config"`). The sibling of {@link tool}
    * for the resource half of MCP.
@@ -880,7 +880,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   }
 
   /**
-   * Declare an MCP **prompt** — a reusable prompt template an agent can fetch through `nifra mcp`.
+   * Declare an MCP **prompt** - a reusable prompt template an agent can fetch through `nifra mcp`.
    * `handler` receives the caller's arguments and returns the rendered messages.
    */
   prompt(
@@ -893,12 +893,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return this
   }
 
-  /** The MCP resources declared via {@link resource} — enumerated by `nifra mcp`. */
+  /** The MCP resources declared via {@link resource} - enumerated by `nifra mcp`. */
   mcpResources(): readonly McpResourceDescriptor[] {
     return this.mcpResourceList
   }
 
-  /** The MCP prompts declared via {@link prompt} — enumerated by `nifra mcp`. */
+  /** The MCP prompts declared via {@link prompt} - enumerated by `nifra mcp`. */
   mcpPrompts(): readonly McpPromptDescriptor[] {
     return this.mcpPromptList
   }
@@ -907,7 +907,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * Register a **WebSocket** route. The connection upgrades on a `GET` to `path` carrying
    * `Upgrade: websocket`; the optional `handler.upgrade(c)` runs in the request context first and may
    * reject (return a `Response`) or seed per-connection `ws.data`. WebSockets are served by the
-   * adapter (`listen()`, `@nifrajs/node`, `@nifrajs/deno`, `toFetchHandler`) — not by bare `app.fetch`, which
+   * adapter (`listen()`, `@nifrajs/node`, `@nifrajs/deno`, `toFetchHandler`) - not by bare `app.fetch`, which
    * has no socket (a WS path through `app.fetch` is a normal HTTP response).
    *
    * The route also enters the type-level registry (under the pseudo-method `"WS"`), so the typed
@@ -931,10 +931,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     : Server<AddRoute<R, "WS", Path, WsRouteInfoFor<Path, Schema, Send>>, Ctx> {
     this.assertConfigurable("ws()")
     // Boot-time guard: the WS runtime is a subpath (`@nifrajs/core/ws`) so no-WebSocket apps don't
-    // bundle it. Registration is the loud, early failure point — never the first connection.
+    // bundle it. Registration is the loud, early failure point - never the first connection.
     const runtime = requireWsRuntime(this.wsRuntime)
     this.topics ??= runtime.createTopics()
-    // A `messageSchema` wraps `message` with validation once, here — every adapter then dispatches
+    // A `messageSchema` wraps `message` with validation once, here - every adapter then dispatches
     // already-validated, typed messages (Bun/Deno/Node/Workers) with no per-adapter code.
     this.wsRouter.add("GET", path, {
       handler: runtime.wrapHandler(handler as WebSocketHandler),
@@ -945,11 +945,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
 
   /**
    * Broadcast `data` to every WebSocket connection subscribed to `topic` (via `ws.subscribe(topic)`).
-   * In-process and **single-instance** (see {@link TopicRegistry}) — a multi-instance deploy must bridge
+   * In-process and **single-instance** (see {@link TopicRegistry}) - a multi-instance deploy must bridge
    * an external fan-out (Redis, a Durable Object) to this. A no-op when nobody is subscribed.
    */
   publish(topic: string, data: string | ArrayBufferView | ArrayBuffer): void {
-    // No `app.ws()` yet ⇒ no registry and necessarily no subscribers — a publish is a no-op anyway.
+    // No `app.ws()` yet ⇒ no registry and necessarily no subscribers - a publish is a no-op anyway.
     this.topics?.publish(topic, data)
   }
 
@@ -976,7 +976,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
 
   /**
    * Low-level route registration shared by the inline builder and `implement()`.
-   * Captures the server's current `derive`/`decorate` chain into the route — this
+   * Captures the server's current `derive`/`decorate` chain into the route - this
    * is the "compiled", order-scoped per-route chain.
    */
   register(
@@ -1043,7 +1043,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
     const hasDecorations = Reflect.ownKeys(routeDecorations).length > 0
     // An idempotency route runs a dedupe lane that must buffer the body and capture the response, so it
-    // never takes the fused/native fast path — force it onto the portable matched lane (which routes
+    // never takes the fused/native fast path - force it onto the portable matched lane (which routes
     // through `fetchMatched`, where the dedupe wrapper lives). Fail closed: a route may not declare
     // idempotency unless the idempotency runtime is installed, so the safety gate can never be silently
     // dropped by a missing plugin.
@@ -1056,7 +1056,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     const idempotent = this.idempotencyRuntime?.resolve(schema, authenticated, this.maxBodyBytes)
     // A ledgered route (capabilities declared + `.use(effectLedger())`) needs a per-request
     // context to carry the ledger and a settle step to seal + sink it, so it too leaves the
-    // fused/contextless fast path. Resolved per route, at registration — like the capability guard.
+    // fused/contextless fast path. Resolved per route, at registration - like the capability guard.
     const ledgered: ResolvedEffectLedger | undefined = this.effectLedgerRuntime?.resolve(
       capabilities,
       method,
@@ -1355,16 +1355,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   }
 
   /**
-   * Merge another server's routes into this one — the composition escape hatch for large apps.
+   * Merge another server's routes into this one - the composition escape hatch for large apps.
    *
    * WHY: the fluent chain accumulates one type-alias level per route, and TypeScript resolves
-   * that stack in one recursion — a single chain hits TS2589 at ~95 routes. Groups keep every
+   * that stack in one recursion - a single chain hits TS2589 at ~95 routes. Groups keep every
    * chain short: build each domain (`listings`, `agents`, …) as its own `server()` (its registry
-   * resolves independently), then `app.merge(listings).merge(agents)` — each merge adds ONE level
+   * resolves independently), then `app.merge(listings).merge(agents)` - each merge adds ONE level
    * regardless of group size. 300+ routes stay fully typed (see many-routes.test-d.ts). The
    * other escape hatch is contract-first `implement()`, whose registry is a single object type.
    *
-   * Semantics: merged routes keep the chains captured where they were DEFINED — the group's
+   * Semantics: merged routes keep the chains captured where they were DEFINED - the group's
    * `derive`/`decorate`/`beforeHandle`/`afterHandle`/`onError`/`around` apply to its routes
    * exactly as they did standalone, so a group wires its own plugins. The group's request-level
    * hooks (`onRequest`/`onResponse`/`onResponseFinalized`) are appended to this server's. This
@@ -1379,7 +1379,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     if (source.wsRouteCount > 0) {
       throw new RouteConfigError(
         "INVALID_PATH",
-        "merge() does not carry WebSocket routes — register .ws() routes on the parent server",
+        "merge() does not carry WebSocket routes - register .ws() routes on the parent server",
       )
     }
     this.catalog.addBatch(source.catalog.entries().map((route) => this.bindFusedRuntime(route)))
@@ -1441,12 +1441,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   }
 
   /**
-   * Resolve a `Request` to a `Response` — the whole lifecycle, testable without a port. The
+   * Resolve a `Request` to a `Response` - the whole lifecycle, testable without a port. The
    * optional `platform` carries edge inputs (`env`, `waitUntil`); edge adapters pass it, and
    * Bun/Node/Deno omit it (then `c.env` is `undefined` and `c.waitUntil` runs fire-and-forget).
    */
   fetch(req: Request, platform?: Platform<EnvOf<Ctx>>): MaybePromise<Response> {
-    // A real `Request` satisfies `RequestSource`, so it's passed straight through — no per-request
+    // A real `Request` satisfies `RequestSource`, so it's passed straight through - no per-request
     // wrapper allocation on the Web/Bun hot path.
     return this.fetchSource(req, platform)
   }
@@ -1455,7 +1455,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     source: RequestSource,
     platform?: Platform<EnvOf<Ctx>>,
   ): MaybePromise<Response> {
-    // Off path (default): straight through — one property check, no closure, no promise.
+    // Off path (default): straight through - one property check, no closure, no promise.
     if (this.capacityGate === undefined) return this.fetchSourceInner(source, platform)
     return this.admitGated(requestOf(source), () => this.fetchSourceInner(source, platform))
   }
@@ -1479,7 +1479,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     if (this.onResponseHooks.length === 0 && this.onResponseFinalizedHooks.length === 0) {
       return outcome
     }
-    // onResponse sees every response — success, validation error, 404/405, timeout, onRequest
+    // onResponse sees every response - success, validation error, 404/405, timeout, onRequest
     // short-circuit; normalize to a promise, then thread through the hooks.
     return outcome instanceof Promise
       ? outcome.then((response) =>
@@ -1526,7 +1526,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   /**
    * Run `produce` under the capacity gate: admit → run → release exactly once when the response is
    * produced (or the run throws). Only reached when {@link capacityGate} is set, so the off path pays
-   * nothing. The slot is held for the duration of handler execution, not the streaming of the body —
+   * nothing. The slot is held for the duration of handler execution, not the streaming of the body -
    * capacity here bounds concurrent *work*, matching how in-flight is counted.
    */
   private admitGated(req: Request, produce: () => MaybePromise<Response>): MaybePromise<Response> {
@@ -1554,7 +1554,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       release()
       throw error
     }
-    // Release the slot once the response settles — on resolve OR reject — via `finally`, which passes
+    // Release the slot once the response settles - on resolve OR reject - via `finally`, which passes
     // the value/rejection through unchanged. (A single settle hook, rather than separate then-arms: the
     // request pipeline resolves handler errors to a Response, so a rejection arm would be unreachable.)
     if (outcome instanceof Promise) return outcome.finally(release)
@@ -1563,11 +1563,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   }
 
   /**
-   * Like {@link fetch}, but renders a plain-data result **without** building a Web `Response` — the
+   * Like {@link fetch}, but renders a plain-data result **without** building a Web `Response` - the
    * `@nifrajs/node` adapter serializes the returned primitives straight to the socket, skipping the undici
    * `Response` build + body drain (the bulk of the Node bridge cost, measured ≈4µs/req). A handler that
    * returns a `Response`, an error/short-circuit, or any registered `onResponse` hook falls back to the
-   * full Web path (`{ kind: "response" }`), so behavior is identical — only the common JSON-data case is
+   * full Web path (`{ kind: "response" }`), so behavior is identical - only the common JSON-data case is
    * faster. Same lifecycle as {@link fetch} (body cap, validation, hooks all run); only the final
    * render differs.
    */
@@ -1580,7 +1580,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     platform?: Platform<EnvOf<Ctx>>,
     suppliedRuntime?: NodeOutcomeRuntime,
   ): MaybePromise<NodeServeOutcome> {
-    // onResponse hooks transform a Response, and the capacity gate wraps the Web response path — both
+    // onResponse hooks transform a Response, and the capacity gate wraps the Web response path - both
     // force the Web path here (the gated `fetchSource` admits/sheds/releases); wrap its result.
     if (
       this.onResponseHooks.length > 0 ||
@@ -1613,7 +1613,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   }
 
   /**
-   * Resolve a WebSocket upgrade — the seam every serving adapter uses. Returns `pass` (not a WS
+   * Resolve a WebSocket upgrade - the seam every serving adapter uses. Returns `pass` (not a WS
    * upgrade for a registered route → handle as normal HTTP), `reject` (a WS route matched but
    * `upgrade()` rejected, or the path was malformed → return `response`), or `upgrade` (perform the
    * runtime upgrade, then dispatch the native socket's events to `handler`, seeding `ws.data` with
@@ -1648,7 +1648,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           : origin !== null && handler.allowedOrigins.includes(origin)
       if (!allowed) return { kind: "reject", response: jsonError(403, "forbidden_origin") }
     } else if (origin !== null && !wsSameOrigin(origin, req)) {
-      // Secure default (no explicit `allowedOrigins`): reject a CROSS-ORIGIN browser handshake — the
+      // Secure default (no explicit `allowedOrigins`): reject a CROSS-ORIGIN browser handshake - the
       // CSWSH case, since browsers send cookies on WS handshakes and don't apply CORS. Non-browser
       // clients send no `Origin` and pass; same-origin browsers pass. Set `allowedOrigins` to permit
       // specific cross-origin clients (or `() => true` for a genuinely public socket).
@@ -1708,7 +1708,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * result + `set` into the output `T` (`toResponse` → a Web `Response`; `toNodeOutcome` → node-direct
    * primitives), `wrapResponse` lifts an early/error `Response` into that same `T`, and `onTimeout`
    * produces the 503. The Web `fetch` and `resolveNode` are thin callers over this one routing +
-   * context + lifecycle implementation — no duplication across the trust boundary.
+   * context + lifecycle implementation - no duplication across the trust boundary.
    */
   /** Apply the `clientIp` trust declaration to the adapter's raw socket peer, returning a platform
    * whose `clientIp` is the derived caller. Only called when a trust declaration is configured. */
@@ -1726,7 +1726,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     finalize: (result: unknown, set: CtxSet) => T,
     wrapResponse: (response: Response) => T,
     onTimeout: () => T,
-    // True only from the Web `fetch` path — unlocks each route's fused lane, whose output type IS
+    // True only from the Web `fetch` path - unlocks each route's fused lane, whose output type IS
     // `Response` (`T = Response` there by construction; the node path always passes false).
     webFast: boolean,
   ): MaybePromise<T> {
@@ -1745,7 +1745,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
 
   /**
    * onRequest short-circuit path. Synchronous as long as every hook returns synchronously (the
-   * common case — e.g. CORS returning `undefined` for a non-preflight request): an `async` version
+   * common case - e.g. CORS returning `undefined` for a non-preflight request): an `async` version
    * here put EVERY request of any app with one onRequest hook onto the promise machinery, profiled
    * at ~13% of a realistic request. The first hook that returns a Promise hands the REMAINING
    * hooks to the async continuation; behavior is identical.
@@ -1789,7 +1789,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   }
 
   /** Async tail of {@link runWithOnRequest}: applies the first awaited hook's outcome, then runs
-   * the remaining hooks (awaiting freely — we're already async here). */
+   * the remaining hooks (awaiting freely - we're already async here). */
   private async continueOnRequest<T>(
     first: OnRequestResult,
     nextIndex: number,
@@ -1884,7 +1884,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     webFast: boolean,
   ): MaybePromise<T> {
     // An idempotency route runs its dedupe lane first; on a fresh key it delegates to the normal lanes
-    // (with the body buffered). All non-idempotent routes skip straight to the lanes — no added cost.
+    // (with the body buffered). All non-idempotent routes skip straight to the lanes - no added cost.
     // The runtime is always present when a route resolved idempotency (enforced at registration).
     if (entry.idempotent !== undefined && this.idempotencyRuntime !== undefined) {
       return this.idempotencyRuntime.run(
@@ -1985,7 +1985,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
             finalize,
             wrapResponse,
           )
-    // The request timeout only bounds work that is actually pending — a synchronous (bare) result is
+    // The request timeout only bounds work that is actually pending - a synchronous (bare) result is
     // already complete and can't time out, so it's returned as-is (no 503 race, no promise).
     if (controller !== undefined && outcome instanceof Promise) {
       const timedOut =
@@ -2081,11 +2081,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
 
   /**
    * The synchronous fast path selected by a route's execution plan: apply static decorations, call the
-   * handler, render the result — **no `await`** unless the handler itself returns a promise. It mirrors
+   * handler, render the result - **no `await`** unless the handler itself returns a promise. It mirrors
    * the bare slice of {@link runLifecycle} (which a bare route would otherwise no-op through) and shares
    * {@link logRequestError}; a bare route has no `onError` hooks, so error handling is fully synchronous
    * (a thrown `Response` is control flow; anything else is a logged flat 500). This is where nifra skips
-   * the per-request async-frame tax — the same win codegen routers get, but without `eval`.
+   * the per-request async-frame tax - the same win codegen routers get, but without `eval`.
    */
   private runBare<T>(
     entry: RouteEntry,
@@ -2110,12 +2110,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return finalize(result, responseSet(ctx))
   }
 
-  /** Bare-route error rendering — identical to {@link runLifecycle}'s catch minus the (absent) onError
+  /** Bare-route error rendering - identical to {@link runLifecycle}'s catch minus the (absent) onError
    * loop: a thrown `Response` is returned as deliberate control flow; anything else is logged + 500. */
   /**
    * Build a route's fused Web renderer. Composition happens once at
    * registration; the returned closure is what every request to the route runs. Behavior is
-   * byte-identical to the generic `runBare`/`runContextlessBare` + `toResponse` pair — same
+   * byte-identical to the generic `runBare`/`runContextlessBare` + `toResponse` pair - same
    * decoration order, same error routing (thrown `Response` = control flow; anything else logs and
    * 500s), same respond semantics (the lifecycle parity suite pins it).
    */
@@ -2130,7 +2130,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       return jsonError(500, "internal_error")
     }
     if (contextless && decorations === undefined) {
-      // `() => ...` can't observe the context — skip allocating one entirely (errors still build
+      // `() => ...` can't observe the context - skip allocating one entirely (errors still build
       // one for the structured log, exactly like runContextlessBare).
       const contextlessHandler = handler as unknown as ContextlessHandler
       return (source, params, search, signal, budget, platform, nativeContext) => {
@@ -2259,10 +2259,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
 
     // Inline fast path (profiled): a framed, in-cap, non-chunked body parses with the native
-    // `req.json()` directly — one promise, one `.then` closure per request. The generic
+    // `req.json()` directly - one promise, one `.then` closure per request. The generic
     // `readBoundedJson` (an extra async-fn frame + per-request `finish`/`applyValidation`
     // closures) is kept for the chunked / length-less / oversized cases it exists for.
-    // Semantics are identical to readBoundedJsonSource — same checks, same error codes.
+    // Semantics are identical to readBoundedJsonSource - same checks, same error codes.
     const declared = headerOf(source, "content-length")
     if (declared !== null) {
       const length = parseContentLength(declared)
@@ -2295,7 +2295,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
   }
 
-  /** Validate + run the handler for the bodyOnly path — shared by the inline fast path and the
+  /** Validate + run the handler for the bodyOnly path - shared by the inline fast path and the
    * streaming fallback. A method (not per-request closures) so the hot path allocates nothing
    * beyond the one `.then` continuation. */
   private finishBodyOnly<T>(
@@ -2449,7 +2449,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     wrapResponse: (response: Response) => T,
   ): MaybePromise<T> {
     try {
-      // Call the validator directly for the raw StandardResult (read `.issues`/`.value`) — skip
+      // Call the validator directly for the raw StandardResult (read `.issues`/`.value`) - skip
       // `validateStandard`'s per-request wrapper-object allocation, mirroring the bodyOnly path.
       const validation = entry.schema!.query!["~standard"].validate(
         queryObjectOf(ctx[CONTEXT_SEARCH]),
@@ -2521,7 +2521,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
 
   /**
    * Thread the response through each global `onResponse` hook. Stays SYNCHRONOUS until a hook
-   * actually returns a Promise — an `async` version forced a promise + microtask on EVERY response
+   * actually returns a Promise - an `async` version forced a promise + microtask on EVERY response
    * of any app with an onResponse hook (cors/securityHeaders/etag/timing all use onResponse), the
    * same ~13%/req tax the onRequest walk was de-async'd to avoid. The first async hook hands the
    * rest to {@link continueOnResponse}.
@@ -2616,7 +2616,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   /**
    * Bound the response time. On timeout we abort `ctx.signal` (so cancellation-aware
    * handlers can bail) and return 503; the in-flight work keeps running but its
-   * result is discarded — JS can't forcibly cancel a promise.
+   * result is discarded - JS can't forcibly cancel a promise.
    */
   private async withTimeout<T>(
     work: Promise<T>,
@@ -2677,7 +2677,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       }
 
       // Context extensions: static decorations, then per-request derives.
-      // Each hook below only awaits when it actually returns a Promise — a sync hook
+      // Each hook below only awaits when it actually returns a Promise - a sync hook
       // skips the microtask tick (a fast-path; ~64 ns/hook).
       if (entry.hasDecorations) Object.assign(ctx, entry.decorations) // skip the no-op on bare routes
       // The `.length` guards skip iterator setup for the common no-hook route (most
@@ -2753,7 +2753,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     finalize: (result: unknown, set: CtxSet) => T,
     wrapResponse: (response: Response) => T,
   ): Promise<T> {
-    // A *thrown* Response is deliberate control flow, not an error — a guard throws a redirect/401,
+    // A *thrown* Response is deliberate control flow, not an error - a guard throws a redirect/401,
     // an action throws an error page. Return it as-is (Remix/SvelteKit semantics); don't run onError
     // or log it as a 500. This is what makes `throw redirect(...)` / `requireSession(...)` work from
     // any handler or loader.
@@ -2770,7 +2770,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return wrapResponse(jsonError(500, "internal_error"))
   }
 
-  /** Log an unhandled request error to the (redacting) logger — shared by {@link runLifecycle} and the
+  /** Log an unhandled request error to the (redacting) logger - shared by {@link runLifecycle} and the
    * bare fast path ({@link bareError}) so both record the same fields. Never throws; never leaks. */
   private logRequestError(err: unknown, ctx: RawContext): void {
     this.logger.error("unhandled request error", {
@@ -2798,7 +2798,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       if (form instanceof Response) return form
       parsed = form
     } else {
-      // multipart/form-data (file uploads) stays 415 on the schema path by design — files don't
+      // multipart/form-data (file uploads) stays 415 on the schema path by design - files don't
       // fit a value schema; use a schema-less route + @nifrajs/uploads helpers for those.
       return jsonError(415, "unsupported_media_type")
     }
@@ -2846,12 +2846,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   /**
    * Read the body as text, capped at `maxBodyBytes`. Rejects (`null`) on a
    * `Content-Length` over the cap *before* buffering, and aborts mid-stream once the
-   * running byte count exceeds it — so a lying or absent length can't force us to
+   * running byte count exceeds it - so a lying or absent length can't force us to
    * buffer an oversized payload.
    *
    * Fast path: when a non-chunked request carries a `Content-Length` within the cap,
-   * a native `req.json()` is already bounded — under HTTP/1.1 + HTTP/2 framing the
-   * runtime delivers at most `Content-Length` bytes — so we skip the manual stream
+   * a native `req.json()` is already bounded - under HTTP/1.1 + HTTP/2 framing the
+   * runtime delivers at most `Content-Length` bytes - so we skip the manual stream
    * loop and a separate text decode. It trusts the wire
    * *framing*, not the header value: nifra only ever receives framed Requests from the
    * runtime's HTTP server, never a hand-built one with a mismatched length. Chunked or
@@ -2916,7 +2916,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * capture semantics; static and `:param` routes take the native lane. */
   private buildBunNativeRoutes(): BunNativeRoutes | undefined {
     // A `clientIp` trust declaration must run the resolver in `dispatch`, which the fused native lane
-    // bypasses — so an app that declares trust routes through the fetch lane (where `c.clientIp`
+    // bypasses - so an app that declares trust routes through the fetch lane (where `c.clientIp`
     // resolves) instead of Bun's native table. The allocation-free default keeps native fusion.
     if (
       this.onRequestHooks.length > 0 ||
@@ -2962,7 +2962,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * Start a `Bun.serve` instance bound to `port` (use `0` for an ephemeral port).
    *
    * `reusePort` sets `SO_REUSEPORT` so **multiple processes can bind the same port** and the kernel
-   * load-balances connections across them — the standard way to use every core (Bun is
+   * load-balances connections across them - the standard way to use every core (Bun is
    * single-threaded per process). Spawn one process per core, each calling
    * `app.listen(PORT, { reusePort: true })`; see `examples/cluster.ts`. Every process must opt in,
    * and all of them must be the same app. Linux balances ~evenly; macOS accepts the flag but may
@@ -2988,14 +2988,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
     // Bun's `Server` is the concrete handle; we expose the stable `RunningServer`
     // subset so the public types don't depend on the ambient `Bun` global. The cast
-    // bridges them — Bun's `.port` is `number | undefined` (undefined only for unix
+    // bridges them - Bun's `.port` is `number | undefined` (undefined only for unix
     // sockets, never a TCP `listen`) and its `.stop` returns a promise we don't await.
-    // Pass only the request — Bun's `fetch` 2nd arg is the Bun `Server`, not our `platform`.
+    // Pass only the request - Bun's `fetch` 2nd arg is the Bun `Server`, not our `platform`.
     // With WS routes, hand Bun a `websocket` config + a fetch that upgrades matching requests (the
     // `server` 2nd arg is how Bun exposes `upgrade`); otherwise the lean request-only fetch. The
-    // `websocket` handlers are one shared dispatcher — each connection's `ws.data.handler` is the
+    // `websocket` handlers are one shared dispatcher - each connection's `ws.data.handler` is the
     // matched route's handler, set by `server.upgrade`.
-    // With WS routes, the dispatcher comes from the installed `.use(websocket())` runtime — non-null
+    // With WS routes, the dispatcher comes from the installed `.use(websocket())` runtime - non-null
     // because wsRouteCount > 0 means ws() ran, and ws() requires the runtime at registration.
     const wsHandlers =
       this.wsRouteCount === 0
@@ -3040,7 +3040,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
 
   /**
    * Gracefully stop: wait for in-flight requests to finish (up to `drainMs`), then
-   * issue a single terminal stop — graceful if everything drained, forced if
+   * issue a single terminal stop - graceful if everything drained, forced if
    * stragglers remain. Safe to call when not listening.
    *
    * The Bun semantics: poll `pendingRequests` (awaiting
@@ -3061,7 +3061,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   }
 
   private installSignalHandlers(): void {
-    // Drain, then let the process exit naturally — the stopped server no longer
+    // Drain, then let the process exit naturally - the stopped server no longer
     // holds the event loop open. Opt-in (`gracefulSignals`), so taking over the
     // signals is consented; we don't force `process.exit`.
     const onSignal = (): void => {
@@ -3073,7 +3073,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
 }
 
 /**
- * Create a new {@link Server}. Pass an `Env` to type the platform bindings — `server<Env>()` makes
+ * Create a new {@link Server}. Pass an `Env` to type the platform bindings - `server<Env>()` makes
  * `c.env: Env` in every handler + middleware, and types the `env` argument of `app.fetch` /
  * `toFetchHandler`. Omit it and `c.env` is `unknown` (validate/cast before use).
  */
@@ -3081,7 +3081,7 @@ export function server<Env = unknown>(
   options?: ServerOptions,
 ): Server<EmptyRegistry, { readonly env: Env }> {
   // `Env` is a phantom type-level marker: the runtime `env` arrives via `app.fetch(req, { env })` at
-  // request time, not stored on the builder — so seed the context type with a cast (as `derive`/
+  // request time, not stored on the builder - so seed the context type with a cast (as `derive`/
   // `decorate` do for their `Ctx` extensions).
   return new Server(options) as unknown as Server<EmptyRegistry, { readonly env: Env }>
 }

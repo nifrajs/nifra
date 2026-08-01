@@ -1,8 +1,8 @@
 # @nifrajs/jobs
 
-Typed background jobs for nifra — enqueue work off the request path, run it with **retries + exponential
+Typed background jobs for nifra - enqueue work off the request path, run it with **retries + exponential
 backoff + dead-lettering** on a **pluggable store**. The async companion to [`@nifrajs/cron`](../cron)
-(cron schedules; jobs does the deferred work — email, webhooks, image processing). **Dependency-free.**
+(cron schedules; jobs does the deferred work - email, webhooks, image processing). **Dependency-free.**
 
 ```ts
 import { createQueue } from "@nifrajs/jobs"
@@ -18,7 +18,7 @@ const email = q.define("send-email", {
   },
 })
 
-// In a route handler — enqueue and return immediately:
+// In a route handler - enqueue and return immediately:
 await email.enqueue({ to: "a@b.com", subject: "Welcome" })
 await email.enqueue({ to: "b@b.com", subject: "Later" }, { delayMs: 60_000 }) // run in 1 min
 
@@ -28,7 +28,7 @@ const worker = q.start({ concurrency: 4 })
 ```
 
 `enqueue` is typed against the handler's payload, and `input` (any [Standard Schema](https://standardschema.dev)
-validator — `@nifrajs/schema`'s `t`, Zod, Valibot, …) validates it before it's stored, so a bad payload
+validator - `@nifrajs/schema`'s `t`, Zod, Valibot, …) validates it before it's stored, so a bad payload
 fails at the call site, not three retries later.
 
 ## Retries
@@ -45,7 +45,7 @@ createQueue({ backoff: exponentialBackoff({ baseMs: 500, maxMs: 60_000, jitter: 
 
 ## Stores
 
-The default `MemoryJobStore` is single-process — correct for dev and a single server, but not durable and
+The default `MemoryJobStore` is single-process - correct for dev and a single server, but not durable and
 not multi-worker. Implement the `JobStore` interface (`enqueue` / `lease` / `complete` / `retry` /
 `deadLetter` / `counts`) over Redis/Postgres for durability or horizontal workers:
 
@@ -73,17 +73,17 @@ export default {
 
 ## API
 
-- `createQueue(options?)` → `Queue` — `{ store?, onError?, now?, defaultAttempts?, backoff? }`.
+- `createQueue(options?)` → `Queue` - `{ store?, onError?, now?, defaultAttempts?, backoff? }`.
 - `queue.define(name, { handler, input?, retries? })` → typed `JobHandle` with `.enqueue(payload, { delayMs? | runAt? })`.
-- `queue.enqueue(name, payload, options?)` — enqueue by name.
+- `queue.enqueue(name, payload, options?)` - enqueue by name.
 - `queue.start({ concurrency?, pollIntervalMs?, leaseMs? })` → `Worker` (`.stop()` drains gracefully).
-- `queue.process()` — run one poll round (for Workers / custom drivers). `queue.drain()` — process until empty.
-- `queue.counts()` → `{ pending, active, dead }`. `queue.store` — the underlying store.
+- `queue.process()` - run one poll round (for Workers / custom drivers). `queue.drain()` - process until empty.
+- `queue.counts()` → `{ pending, active, dead }`. `queue.store` - the underlying store.
 - Stores: `MemoryJobStore`. Backoff: `exponentialBackoff`, `fixedBackoff`, `noBackoff`.
 
 ## For AI agents
 
-Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports you call + its footguns),
 one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the

@@ -1,6 +1,6 @@
 /**
  * vinxi@0.5.x expects Vite 8 manifests at router base; Vite 8 still emits
- * `.vite/manifest.json` (same as 5–7). Patch once after install when vite 8 is present.
+ * `.vite/manifest.json` (same as 5-7). Patch once after install when vite 8 is present.
  */
 import { readFileSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"

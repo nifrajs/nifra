@@ -1,27 +1,27 @@
 /**
- * `nifra mcp` — a Model Context Protocol server (stdio) that lets a coding agent (Claude, Cursor, …)
+ * `nifra mcp` - a Model Context Protocol server (stdio) that lets a coding agent (Claude, Cursor, …)
  * act on a nifra project, not just read about it:
  *
- *   - `nifra_context` — this project's API routes + page routes + conventions (see {@link describeProject}).
- *   - `nifra_run`     — run HTTP requests through the project's backend and return structured results
+ *   - `nifra_context` - this project's API routes + page routes + conventions (see {@link describeProject}).
+ *   - `nifra_run`     - run HTTP requests through the project's backend and return structured results
  *     (status, body, errors). The write → run → see-the-failure → fix loop, powered by `@nifrajs/runner`.
  *     Each call runs the backend in a FRESH subprocess, so it reflects the agent's latest edits.
- *   - `nifra_render`  — SSR a page route through the project's web app; returns the rendered HTML (the
+ *   - `nifra_render`  - SSR a page route through the project's web app; returns the rendered HTML (the
  *     page half of `nifra_run`). Fresh subprocess per call; no build needed.
- *   - `nifra_ws`      — verify a WebSocket route with a real Bun WebSocket round-trip.
- *   - `nifra_docs`    — keyword-search the framework docs; returns only the matching sections.
- *   - `nifra_example` — a verified, copy-pasteable snippet for a task (typechecked against the live API,
+ *   - `nifra_ws`      - verify a WebSocket route with a real Bun WebSocket round-trip.
+ *   - `nifra_docs`    - keyword-search the framework docs; returns only the matching sections.
+ *   - `nifra_example` - a verified, copy-pasteable snippet for a task (typechecked against the live API,
  *     so it can't hallucinate a drifted nifra API).
- *   - `nifra_scaffold`— map a URL path to the correct `routes/` file + a contract-correct page stub.
- *   - `nifra_check`   — the drift gate (typecheck + lints, each with a structured fix), for an agent to fix against.
- *   - `nifra_assure`  — route classification + enforcement-evidence gate.
+ *   - `nifra_scaffold`- map a URL path to the correct `routes/` file + a contract-correct page stub.
+ *   - `nifra_check`   - the drift gate (typecheck + lints, each with a structured fix), for an agent to fix against.
+ *   - `nifra_assure`  - route classification + enforcement-evidence gate.
  *   - `nifra_levels`  - the cumulative verification ladder (L0 contract → L4 invariants): what the
  *     project actually proves, and why each level it misses does not hold.
- *   - `nifra_doctor`  — package.json dependency drift detector, with safe local-version auto-fix.
+ *   - `nifra_doctor`  - package.json dependency drift detector, with safe local-version auto-fix.
  *
  * Wire it into a client (e.g. Claude Desktop / Cursor) as: command `nifra`, args `["mcp"]`, run in the
  * project root. The protocol is hand-rolled (newline-delimited JSON-RPC 2.0 over stdio), including
- * standard MCP progress notifications and request cancellation — no SDK dependency, the same
+ * standard MCP progress notifications and request cancellation - no SDK dependency, the same
  * minimal-surface choice as the rest of nifra. The pure dispatch lives in `./mcp-protocol.ts`; this
  * module is the I/O shell (stdin loop, tool wiring, the run subprocess).
  */
@@ -159,7 +159,7 @@ type PipeSubprocess = ReturnType<typeof Bun.spawn> & {
 
 /** A persistent `mcp-run`/`mcp-render` `--worker` subprocess: the backend/web app is loaded ONCE and
  * reused across newline-delimited `{ id, input }` requests, replying `{ id, output }`. The same machinery
- * powers both `nifra_run warm` and `nifra_render warm` — `child` selects which engine, `label` shapes the
+ * powers both `nifra_run warm` and `nifra_render warm` - `child` selects which engine, `label` shapes the
  * cancellation message. The owning handler ({@link createWarmHandler}) fingerprints the source tree and
  * replaces the worker when a file changes, so warm reuse never serves a stale result. Exported for the
  * concurrency test that proves a single per-request cancel doesn't tear down the shared worker. */
@@ -217,7 +217,7 @@ export class WarmWorker {
         // Per-request cancel: drop just THIS id and resolve its cancellation. The worker is shared
         // across concurrent requests (`pending` is id-keyed for exactly this reason), so killing the
         // process here would reject every OTHER in-flight request via the `exited` handler and force a
-        // cold rebuild. Leave it hot — `createWarmHandler` already replaces it on file change.
+        // cold rebuild. Leave it hot - `createWarmHandler` already replaces it on file change.
         this.pending.delete(id)
         clearTimeout(timer)
         const reason = typeof signal?.reason === "string" ? `: ${signal.reason}` : ""
@@ -297,7 +297,7 @@ export class WarmWorker {
 
 /** A warm handler that reuses a hot {@link WarmWorker} across calls and falls back to a one-shot fresh
  * subprocess on any worker failure. Shared by `nifra_run` (`child: "mcp-run"`, `label: "run"`) and
- * `nifra_render` (`child: "mcp-render"`, `label: "render"`) — the only differences are the engine and the
+ * `nifra_render` (`child: "mcp-render"`, `label: "render"`) - the only differences are the engine and the
  * message label, so there's a single source for the reuse + auto-restart-on-file-change logic. */
 function createWarmHandler(
   child: "mcp-run" | "mcp-render",
@@ -616,7 +616,7 @@ export function projectFeatures(
 }
 
 /**
- * Resolve an optional `dir` tool argument — a subdirectory of the project root the caller wants to scope a
+ * Resolve an optional `dir` tool argument - a subdirectory of the project root the caller wants to scope a
  * check/test to (e.g. `nifra check` on `app/` when the MCP server's root is a monorepo). Returns the
  * absolute target, or `null` if `dir` escapes the root (a path-traversal guard: no `..` out, no absolute
  * path elsewhere). `undefined`/empty → the root itself.
@@ -630,7 +630,7 @@ export function resolveProjectDir(root: string, dir: string | undefined): string
 /** Consistent error string for a `dir` that escapes the project root. */
 function dirError(dir: string | undefined): string {
   return JSON.stringify(
-    { ok: false, error: `dir must be a subdirectory of the project root — "${dir}" escapes it.` },
+    { ok: false, error: `dir must be a subdirectory of the project root - "${dir}" escapes it.` },
     null,
     2,
   )
@@ -647,7 +647,7 @@ export function projectTools(
     {
       name: "nifra_context",
       description:
-        "Get this nifra project's surface. Call it once UNFILTERED for a tight INDEX: the route list (API routes as `METHOD path`, page routes as `pattern → file`) + framework conventions + a pointer — cheap even on a big app, no per-route schema dump. Then pass `path` (a route prefix like /api/orders) and/or `kind` (api|pages) to fetch the FULL contract for that slice (body/query/response TS shapes + the exact typed-client call form).",
+        "Get this nifra project's surface. Call it once UNFILTERED for a tight INDEX: the route list (API routes as `METHOD path`, page routes as `pattern → file`) + framework conventions + a pointer - cheap even on a big app, no per-route schema dump. Then pass `path` (a route prefix like /api/orders) and/or `kind` (api|pages) to fetch the FULL contract for that slice (body/query/response TS shapes + the exact typed-client call form).",
       inputSchema: {
         type: "object",
         properties: {
@@ -671,7 +671,7 @@ export function projectTools(
     {
       name: "nifra_routes",
       description:
-        "List this project's API routes as STRUCTURED JSON — each `{ method, path, call, body?, query?, response? }`, where `call` is the exact typed-client call form and the shapes are compact TS-typed contracts. For programmatic use (list_routes / get_route_schema) instead of parsing the nifra_context Markdown. No args = every route; pass `path` (a path or prefix like /api/orders) to narrow to those routes.",
+        "List this project's API routes as STRUCTURED JSON - each `{ method, path, call, body?, query?, response? }`, where `call` is the exact typed-client call form and the shapes are compact TS-typed contracts. For programmatic use (list_routes / get_route_schema) instead of parsing the nifra_context Markdown. No args = every route; pass `path` (a path or prefix like /api/orders) to narrow to those routes.",
       inputSchema: {
         type: "object",
         properties: {
@@ -851,7 +851,7 @@ export function projectTools(
     {
       name: "nifra_scaffold",
       description:
-        'Map a URL path to the CORRECT routes/ file and get a contract-correct page stub. Agents routinely place file routes wrong — this applies the convention for you: ":id"/"[id]" → [id], "*rest" → [...rest], "/" → index. Pass path (e.g. "/users/:id"). Returns the file to create + the route-module contract (loader/action/meta/default) + a stub (ready-to-write for react/preact/solid; path+contract for vue/svelte/vanilla — use nifra_example for those bodies).',
+        'Map a URL path to the CORRECT routes/ file and get a contract-correct page stub. Agents routinely place file routes wrong - this applies the convention for you: ":id"/"[id]" → [id], "*rest" → [...rest], "/" → index. Pass path (e.g. "/users/:id"). Returns the file to create + the route-module contract (loader/action/meta/default) + a stub (ready-to-write for react/preact/solid; path+contract for vue/svelte/vanilla - use nifra_example for those bodies).',
       inputSchema: {
         type: "object",
         properties: {
@@ -887,7 +887,7 @@ export function projectTools(
     {
       name: "nifra_check",
       description:
-        'Run the project\'s drift gate and return a structured result { ok, typecheck, diagnostics[] }: typecheck (the frontend↔backend contract), plus lints for hand-rolled fetch() to your own API, untyped client("…") calls missing <typeof app>, and server-only imports in routes/. Pass lintsOnly:true for a near-instant lint pass while iterating; run the full gate (default) to confirm the work is done — fix every diagnostic before finishing.',
+        'Run the project\'s drift gate and return a structured result { ok, typecheck, diagnostics[] }: typecheck (the frontend↔backend contract), plus lints for hand-rolled fetch() to your own API, untyped client("…") calls missing <typeof app>, and server-only imports in routes/. Pass lintsOnly:true for a near-instant lint pass while iterating; run the full gate (default) to confirm the work is done - fix every diagnostic before finishing.',
       inputSchema: {
         type: "object",
         properties: {
@@ -1086,7 +1086,7 @@ export function projectTools(
     {
       name: "nifra_doctor",
       description:
-        "Check this project for packages imported in source but NOT declared in package.json — the Bun-workspace trap where an import resolves at runtime (hoisting/workspace) so tests pass and `bun install` says no changes, yet tsc fails and a fresh/standalone install can't resolve it. Returns { ok, ran, findings[], fixed?, skippedFixes? }. Pass autoFix:true to update package.json only when the dependency version can be inferred locally from an ancestor package.json or installed package metadata; otherwise the tool returns the exact bun add command to run.",
+        "Check this project for packages imported in source but NOT declared in package.json - the Bun-workspace trap where an import resolves at runtime (hoisting/workspace) so tests pass and `bun install` says no changes, yet tsc fails and a fresh/standalone install can't resolve it. Returns { ok, ran, findings[], fixed?, skippedFixes? }. Pass autoFix:true to update package.json only when the dependency version can be inferred locally from an ancestor package.json or installed package metadata; otherwise the tool returns the exact bun add command to run.",
       inputSchema: {
         type: "object",
         properties: {

@@ -1,5 +1,5 @@
 /**
- * CSRF protection via an **Origin / Referer check** on state-changing requests — OWASP's recommended
+ * CSRF protection via an **Origin / Referer check** on state-changing requests - OWASP's recommended
  * defense for cookie-authenticated apps. A browser always attaches `Origin` (or at least `Referer`) to
  * a cross-origin or same-origin *unsafe* request; it must match an allowed origin, else `403`. Safe
  * methods (GET/HEAD/OPTIONS) pass. Apply with `app.use(csrf({ origins: ["https://example.com"] }))`.
@@ -10,7 +10,7 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
 
 export interface CsrfOptions {
   /**
-   * Allowed origins (e.g. `["https://example.com"]`). **Set this in production behind a proxy** — when
+   * Allowed origins (e.g. `["https://example.com"]`). **Set this in production behind a proxy** - when
    * omitted, the check derives same-origin from the request URL, which is correct in dev / when the
    * proxy preserves `Host` but not when the public origin differs from the worker's.
    */
@@ -31,7 +31,7 @@ export function csrf(options: CsrfOptions = {}): Middleware {
       const origin = req.headers.get("origin")
       if (origin !== null) return allowed.has(origin) ? undefined : forbidden()
 
-      // Some same-origin requests omit `Origin` — fall back to the `Referer`'s origin.
+      // Some same-origin requests omit `Origin` - fall back to the `Referer`'s origin.
       const referer = req.headers.get("referer")
       if (referer !== null) {
         let refererOrigin: string

@@ -1,5 +1,5 @@
 /**
- * @nifrajs/cache — types for the typed KV cache.
+ * @nifrajs/cache - types for the typed KV cache.
  *
  * The facade ({@link Cache}) is typed + owns TTL/SWR/stampede logic; the {@link CacheStore} is a raw
  * key→entry adapter (memory by default; bring CF KV / Redis for shared or durable caching). Dependency-free.
@@ -8,7 +8,7 @@
 /** A cached entry as the store holds it. */
 export interface StoredEntry {
   readonly value: unknown
-  /** Epoch-ms after which the entry is gone — a miss. */
+  /** Epoch-ms after which the entry is gone - a miss. */
   readonly expiresAt: number
   /** Epoch-ms after which the entry is stale: still served during the SWR window while a refresh runs.
    * Equal to `expiresAt` when there's no stale-while-revalidate window. */
@@ -17,7 +17,7 @@ export interface StoredEntry {
 
 /**
  * Raw key→entry storage. The default {@link MemoryCache} is in-process; implement this over CF KV /
- * Redis / etc. for a cache shared across instances. All methods may be sync or async — the cache awaits them.
+ * Redis / etc. for a cache shared across instances. All methods may be sync or async - the cache awaits them.
  */
 export interface CacheStore {
   /** The live entry for `key`, or `undefined` if missing or hard-expired (`now >= expiresAt`). */

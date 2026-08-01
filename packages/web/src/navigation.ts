@@ -1,15 +1,15 @@
 /**
- * `@nifrajs/web` navigation bridge — a tiny, DOM-free seam that lets an adapter's `useNavigate`
- * (a route component, which must import only from the agnostic `@nifrajs/web` main entry — never the
+ * `@nifrajs/web` navigation bridge - a tiny, DOM-free seam that lets an adapter's `useNavigate`
+ * (a route component, which must import only from the agnostic `@nifrajs/web` main entry - never the
  * DOM-only `/client`) reach the browser's history-aware navigate, WITHOUT the route component pulling
  * `@nifrajs/web/client` (and its `document`/`history` access) into a bundle that also renders on the
  * server.
  *
  * The browser layer (`installHistory`, in `./client.ts`) populates this on setup and clears it on
- * teardown; a framework binding reads it via {@link getBrowserNavigate}. Module-level singleton — the
+ * teardown; a framework binding reads it via {@link getBrowserNavigate}. Module-level singleton - the
  * browser mounts exactly one app per page (the same convention the adapters' `setMountedRouter` uses).
  * On the server (and before hydration) the getter returns `undefined`, so a binding degrades to the
- * native `<a href>` full-page navigation — progressive enhancement, no throw.
+ * native `<a href>` full-page navigation - progressive enhancement, no throw.
  */
 
 import { serializeSearch } from "./search.ts"
@@ -100,7 +100,7 @@ export type BrowserNavigate = (to: string | number, options?: NavigateOptions) =
 // per page; absent on the server and before hydration.
 let browserNavigate: BrowserNavigate | undefined
 
-/** Register (or clear, with `undefined`) the browser navigate — called by `installHistory`. Not for
+/** Register (or clear, with `undefined`) the browser navigate - called by `installHistory`. Not for
  * app use. */
 export function setBrowserNavigate(navigate: BrowserNavigate | undefined): void {
   browserNavigate = navigate

@@ -1,17 +1,17 @@
 /**
  * Resolve `preact-render-to-string` (+ its `/stream` subpath) so the renderer shares ONE `preact`
- * module-global with the route components — the fix for the dual-Preact SSR crash (`undefined is not an
+ * module-global with the route components - the fix for the dual-Preact SSR crash (`undefined is not an
  * object (evaluating '…__H')` / silently-empty hook output).
  *
  * WHY this exists: `preact-render-to-string` imports `options` and `h` from `preact` and mutates the
  * shared `options` hooks; `preact/hooks` registers its render hook on the SAME `options` global. Under Bun
  * **runtime** SSR (`nifra dev`, `nifra start`, `nifra_render`, all in-process), a static
  * `import "preact-render-to-string"` in this adapter is resolved from THIS package's own (symlinked)
- * node_modules — which can be a DIFFERENT physical `preact` than the consumer app's components import. Two
+ * node_modules - which can be a DIFFERENT physical `preact` than the consumer app's components import. Two
  * `preact` copies → two `options` globals → the renderer walks one while `preact/hooks` wrote the other →
  * the vnode never gets its hook-state list → the crash. Resolving the renderer from the consumer **app
  * root** makes it pull the app's `preact` transitively, matching the components: one `options`, one core,
- * no crash. (Empirically verified against a two-copy install fixture — see test/dual-preact.test.ts.)
+ * no crash. (Empirically verified against a two-copy install fixture - see test/dual-preact.test.ts.)
  *
  * Guarding precisely so the PRODUCTION/BUILT path is untouched: when `Bun.resolveSync` is unavailable
  * (Node / Deno / Cloudflare / Vercel / any bundled output), the build has already bundled a single
@@ -31,7 +31,7 @@ export interface PreactRenderToStream {
 }
 
 // Narrow only the one Bun method we need (it isn't in the ambient lib types) so no `any` is introduced.
-// `resolveSync(specifier, from)` is the only lever that re-roots a BARE specifier — a runtime
+// `resolveSync(specifier, from)` is the only lever that re-roots a BARE specifier - a runtime
 // `Bun.plugin` onResolve does NOT fire for bare specifiers like `preact-render-to-string` (verified).
 interface BunResolver {
   resolveSync(specifier: string, from: string): string

@@ -1,6 +1,6 @@
 /**
  * MCP Apps dogfood for nifra's own public docs MCP (the `/mcp` endpoint of nifra.dev). nifra ships a
- * docs MCP built with `@nifrajs/cli`; here it ALSO becomes an MCP App — `nifra_examples_app` returns the
+ * docs MCP built with `@nifrajs/cli`; here it ALSO becomes an MCP App - `nifra_examples_app` returns the
  * verified code examples as `structuredContent`, rendered by the {@link examplesWidget} `ui://` widget in
  * MCP Apps hosts (ChatGPT Apps, MCPJam, Goose). Additive: the existing text tools are untouched, and
  * text-only hosts still get the example list as plain text.

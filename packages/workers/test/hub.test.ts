@@ -65,7 +65,7 @@ describe("createWebSocketHub", () => {
         try {
           await hub.fetch(upgrade("/room"))
         } catch {
-          // `new Response(null, { status: 101 })` throws off-workerd — accept + wire + open already ran.
+          // `new Response(null, { status: 101 })` throws off-workerd - accept + wire + open already ran.
         }
       })
     }
@@ -111,7 +111,7 @@ describe("createWebSocketHub", () => {
       try {
         await hub.fetch(upgrade("/w"))
       } catch {
-        // 101 Response throws off-workerd — the guard (and its waitUntil) already ran.
+        // 101 Response throws off-workerd - the guard (and its waitUntil) already ran.
       }
     })
     expect(waited.length).toBe(1)
@@ -122,7 +122,7 @@ describe("createWebSocketHub", () => {
       .use(websocket())
       .ws("/x", { open: () => {} })
     const hub = new (createWebSocketHub(app))({}, {})
-    // No WebSocketPair mock here — it's undefined under Bun, exercising the not-a-Workers guard.
+    // No WebSocketPair mock here - it's undefined under Bun, exercising the not-a-Workers guard.
     expect((await hub.fetch(upgrade("/x"))).status).toBe(500)
   })
 })

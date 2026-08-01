@@ -1,6 +1,6 @@
 <!--
-  Root layout (Vue SFC) — wraps every page; the compose fold passes the page through the default slot.
-  The global stylesheet is rendered as a <style> element via <component :is="'style'"> — SFC <style>
+  Root layout (Vue SFC) - wraps every page; the compose fold passes the page through the default slot.
+  The global stylesheet is rendered as a <style> element via <component :is="'style'"> - SFC <style>
   blocks are dropped (nifra has no CSS pipeline), and a dynamic component sidesteps the template
   compiler's special-casing of a literal <style> tag. Keeps the whole template single-file.
 -->

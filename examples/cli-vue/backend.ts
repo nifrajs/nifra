@@ -1,6 +1,6 @@
 import { server } from "@nifrajs/core/server"
 
-// In-memory demo state — single-process example only (see the global DB defaults for the real pattern).
+// In-memory demo state - single-process example only (see the global DB defaults for the real pattern).
 let count = 0
 
 /** Minimal contract: a loader reads `message`/`count`, the action bumps `count`. */

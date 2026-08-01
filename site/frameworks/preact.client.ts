@@ -1,5 +1,5 @@
 /**
- * Preact hydration entry for the /frameworks live demo — same shape as the React entry, against the
+ * Preact hydration entry for the /frameworks live demo - same shape as the React entry, against the
  * Preact catalog component (`bench/ssr/nifra-preact`). The chain is `[App]` (no Layout), matching the
  * Preact SSR fragment the page embedded so hydration reconciles cleanly.
  */

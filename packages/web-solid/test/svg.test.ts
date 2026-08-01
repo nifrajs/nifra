@@ -23,7 +23,7 @@ describe("solidSvgComponentBunPlugin", () => {
     // babel-preset-solid output: a template + a component export. It compiled without throwing.
     expect(out.contents.length).toBeGreaterThan(0)
     expect(out.contents).toContain("SvgComponent")
-    // Solid keeps `class` (not className) — the source fed to babel used classProp: "class".
+    // Solid keeps `class` (not className) - the source fed to babel used classProp: "class".
     expect(out.contents).toContain("class")
   })
 

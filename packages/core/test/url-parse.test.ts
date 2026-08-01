@@ -7,13 +7,13 @@ import { pathnameOf, queryObjectOf, searchOf, urlPartsOf } from "../src/server/s
 // on first read, or replaced by the validated value when a query schema is declared). These tests
 // pin equivalence with WHATWG `new URL(req.url)` so the optimization can never silently diverge:
 //   - the pathname is consumed RAW (handed to the router), so we assert byte-equivalence with
-//     `.pathname` — including percent-encoded segments, which the router decodes per-param later.
+//     `.pathname` - including percent-encoded segments, which the router decodes per-param later.
 //   - the query is consumed PARSED (fed to `URLSearchParams` for `c.query`), so we assert the parsed
 //     params equal `.searchParams`. A lone trailing "?" serializes as "?" here vs "" in `.search`,
-//     but both parse to the same empty params — parsed-level equivalence is the real contract.
+//     but both parse to the same empty params - parsed-level equivalence is the real contract.
 
 // `req.url` is always an absolute, normalized URL in every supported runtime. Fragment shapes are
-// included because Bun's `new Request(url).url` PRESERVES the fragment, so `req.url` can carry one —
+// included because Bun's `new Request(url).url` PRESERVES the fragment, so `req.url` can carry one -
 // and a "?" that appears only inside the fragment is NOT a query (matches WHATWG).
 const ABSOLUTE_URLS = [
   "http://localhost/",
@@ -32,7 +32,7 @@ const ABSOLUTE_URLS = [
   "http://h/p#f?x=1", // "?" lives inside the fragment → not a query
 ]
 
-describe("pathnameOf / searchOf — equivalent to `new URL`, without the parse [AUDIT Perf-1]", () => {
+describe("pathnameOf / searchOf - equivalent to `new URL`, without the parse [AUDIT Perf-1]", () => {
   test.each(ABSOLUTE_URLS)("pathname of %s equals new URL().pathname", (url) => {
     expect(pathnameOf(url)).toBe(new URL(url).pathname)
     expect(urlPartsOf(url).pathname).toBe(new URL(url).pathname)
@@ -72,7 +72,7 @@ describe("pathnameOf / searchOf — equivalent to `new URL`, without the parse [
   ])("queryObjectOf(%s) matches URLSearchParams semantics (repeats → arrays)", (search) => {
     const actual = queryObjectOf(search)
     // The reference contract: URLSearchParams pair iteration with repeated keys promoted to
-    // arrays (audit 2026-06 — last-wins silently dropped values; an array query schema needs
+    // arrays (audit 2026-06 - last-wins silently dropped values; an array query schema needs
     // them all). Single-occurrence keys stay plain strings.
     const expected: Record<string, string | string[]> = Object.create(null)
     for (const [key, value] of new URLSearchParams(search)) {
@@ -82,7 +82,7 @@ describe("pathnameOf / searchOf — equivalent to `new URL`, without the parse [
       else existing.push(value)
     }
     expect(actual).toEqual(expected)
-    // Hostile keys are inert own data keys on a null-prototype record — never the prototype,
+    // Hostile keys are inert own data keys on a null-prototype record - never the prototype,
     // never an inherited collision (`constructor` was a crash before the null-proto fix).
     expect(Object.getPrototypeOf(actual)).toBeNull()
     expect(Object.hasOwn(actual, "__proto__")).toBe(Object.hasOwn(expected, "__proto__"))
@@ -93,13 +93,13 @@ describe("pathnameOf / searchOf — equivalent to `new URL`, without the parse [
     expect(pathnameOf("http://host")).toBe("/")
     expect(pathnameOf("http://host")).toBe(new URL("http://host").pathname)
     expect(searchOf("http://host")).toBe("")
-    // Schemeless fallback (defensive — `req.url` carries a scheme): the first "/" opens the path.
+    // Schemeless fallback (defensive - `req.url` carries a scheme): the first "/" opens the path.
     expect(pathnameOf("/relative/path?x=1")).toBe("/relative/path")
     expect(searchOf("/relative/path?x=1")).toBe("?x=1")
   })
 })
 
-describe("c.query — lazy parse wired through the server [AUDIT Perf-1]", () => {
+describe("c.query - lazy parse wired through the server [AUDIT Perf-1]", () => {
   const echo = () =>
     server()
       .get("/", (c) => ({ where: "root", q: Object.fromEntries(c.query) }))
@@ -135,7 +135,7 @@ describe("c.query — lazy parse wired through the server [AUDIT Perf-1]", () =>
     })
   })
 
-  test("c.query is memoized — repeated reads return the same instance (lazy getter caches)", async () => {
+  test("c.query is memoized - repeated reads return the same instance (lazy getter caches)", async () => {
     let same = false
     const app = server().get("/c", (c) => {
       const a = c.query
@@ -149,7 +149,7 @@ describe("c.query — lazy parse wired through the server [AUDIT Perf-1]", () =>
 
   test("a fragment in req.url leaks into neither routing nor c.query", async () => {
     // Bun preserves the fragment in req.url; the path still matches and the in-fragment "?x=1" is
-    // NOT a query — equivalent to new URL (pathname "/a/b/c", search "").
+    // NOT a query - equivalent to new URL (pathname "/a/b/c", search "").
     const res = await echo().fetch(new Request("http://localhost/a/b/c#sec?x=1"))
     expect(res.status).toBe(200)
     const body = (await res.json()) as { where: string; q: Record<string, string> }

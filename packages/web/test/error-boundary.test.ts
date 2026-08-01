@@ -135,7 +135,7 @@ describe("agnostic loader-error rendering", () => {
     expect(html).toContain('"message":"deep boom"')
   })
 
-  test("a thrown Response (guard redirect) passes through — not caught as an error", async () => {
+  test("a thrown Response (guard redirect) passes through - not caught as an error", async () => {
     const app = createWebApp({
       adapter: stub,
       manifest: errorManifest(redirect("/login")),
@@ -217,7 +217,7 @@ describe("SSR render-throw (not a loader throw)", () => {
         layoutIds: [],
         errorIds: ["_error"],
         file: "bomb.tsx",
-        load: async () => ({ default: "render-bomb" }), // no loader — the *render* throws
+        load: async () => ({ default: "render-bomb" }), // no loader - the *render* throws
       },
     ],
     layouts: {},
@@ -239,7 +239,7 @@ describe("SSR render-throw (not a loader throw)", () => {
 })
 
 describe("onLoaderError reporting hook", () => {
-  test("observes loader failures — boundary-rendered AND rethrown — with route + error", async () => {
+  test("observes loader failures - boundary-rendered AND rethrown - with route + error", async () => {
     const seen: Array<{ route: string; message: string }> = []
     const app = createWebApp({
       adapter: stub,
@@ -255,7 +255,7 @@ describe("onLoaderError reporting hook", () => {
     ])
   })
 
-  test("a thrown Response (redirect/guard) is NOT reported — it's control flow", async () => {
+  test("a thrown Response (redirect/guard) is NOT reported - it's control flow", async () => {
     const seen: unknown[] = []
     const m = errorManifest(new Error("x"))
     // Swap /boom's loader to throw a Response (a guard redirect).

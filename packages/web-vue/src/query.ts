@@ -5,11 +5,11 @@ import {
   type QueryState,
 } from "@nifrajs/web"
 /**
- * `@nifrajs/web-vue/query` — Vue bindings for the keyed query-cache. `useQuery(key, fn)` subscribes a
+ * `@nifrajs/web-vue/query` - Vue bindings for the keyed query-cache. `useQuery(key, fn)` subscribes a
  * component to a query (a `shallowRef` fed by `handle.subscribe`) and fetches on mount; `useQueryClient`
  * exposes `invalidateQueries` for after a mutation. Imports only `vue` + `@nifrajs/web`.
  *
- * The query client is created lazily **client-side only** (the `typeof window` guard) — on the server
+ * The query client is created lazily **client-side only** (the `typeof window` guard) - on the server
  * there is none, so `useQuery` renders the idle/pending state (queries are client-first; loaders are the
  * SSR data source). The first client render uses the same idle snapshot, so no mismatch. The key is read
  * once at setup (Vue composables don't re-run with new args); for a changing key, key the component.

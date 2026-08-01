@@ -1,6 +1,6 @@
 import type { Deferred } from "@nifrajs/web"
 /**
- * `@nifrajs/web-react/await` — the `<Await>` primitive for deferred loader data (`defer()`). Isomorphic
+ * `@nifrajs/web-react/await` - the `<Await>` primitive for deferred loader data (`defer()`). Isomorphic
  * and imports only `react` + a type from `@nifrajs/web` (never `react-dom/server`), so route components
  * can use it without dragging server code into the client bundle. No JSX (the package builds with
  * plain `tsc`).
@@ -8,7 +8,7 @@ import type { Deferred } from "@nifrajs/web"
  * The server streams the boundary: `use(promise)` suspends, React flushes the fallback then the
  * resolved content mid-stream. On the client the registry promise is already settled (the core's
  * streamed `__nifraResolve` script tagged it `fulfilled`), so `use()` returns the value synchronously
- * — React hydrates the server-revealed boundary's content directly (no re-fetch, no fallback flash).
+ * - React hydrates the server-revealed boundary's content directly (no re-fetch, no fallback flash).
  */
 import { Component, createElement, type ReactNode, Suspense, use } from "react"
 

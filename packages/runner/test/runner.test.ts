@@ -96,7 +96,7 @@ describe("runRequest", () => {
     expect(seen[1]).toBe("https://api.example.com/b")
   })
 
-  test("a body on GET is ignored (GET can't carry one) — no throw", async () => {
+  test("a body on GET is ignored (GET can't carry one) - no throw", async () => {
     const r = await runRequest(echoApp, { method: "GET", path: "/users/1", body: { x: 1 } })
     expect(r.status).toBe(200)
   })

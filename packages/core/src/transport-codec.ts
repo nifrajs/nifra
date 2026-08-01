@@ -29,9 +29,9 @@ export class TransportCodecError extends TypeError {
  * Run a decode step and normalize whatever it throws into {@link TransportCodecError}.
  *
  * Decoding is the one place this module touches attacker-controlled bytes, and the primitives it
- * delegates to raise their own native types — `JSON.parse` throws `SyntaxError`, a BYO codec throws
+ * delegates to raise their own native types - `JSON.parse` throws `SyntaxError`, a BYO codec throws
  * whatever it likes. Every other failure here is a `TransportCodecError`, so letting those escape
- * would mean a malformed payload — the single most likely hostile input — is the one case that slips
+ * would mean a malformed payload - the single most likely hostile input - is the one case that slips
  * past a caller catching the documented error type. The original is kept as `cause`, so the parse
  * failure stays diagnosable; a codec already speaking the contract is re-thrown untouched.
  */

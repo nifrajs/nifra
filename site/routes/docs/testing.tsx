@@ -4,7 +4,7 @@ import { pageMeta } from "../../meta"
 export const hydrate = false
 
 export const meta = pageMeta(
-  "Nifra — Contract-derived adversarial testing",
+  "Nifra - Contract-derived adversarial testing",
   "Turn route schemas into hostile input, response-conformance, replay, shrinking, and runtime-matrix tests with @nifrajs/testing.",
 )
 

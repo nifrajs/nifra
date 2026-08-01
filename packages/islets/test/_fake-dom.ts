@@ -1,5 +1,5 @@
 /** Minimal structural DOM for driving the binder/island logic under bun:test (no real DOM).
- * Implements exactly the surfaces `BindableElement`/`BindableRoot` declare — if the walker grows
+ * Implements exactly the surfaces `BindableElement`/`BindableRoot` declare - if the walker grows
  * a DOM dependency these fakes don't model, the type system flags it here first. */
 
 export class FakeElement {

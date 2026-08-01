@@ -4,7 +4,7 @@
  * Each server runs in its own subprocess (isolated from the load generator, so
  * the numbers actually discriminate). Load is self-generated from this process
  * with N concurrent keep-alive fetch workers. This is NOT a tuned external load
- * test (oha/autocannon on separate hardware) — treat the *ratios* as the signal.
+ * test (oha/autocannon on separate hardware) - treat the *ratios* as the signal.
  * Its job: show whether nifra is in the same class end-to-end, and whether the
  * router's per-request cost is even visible once real HTTP work dominates.
  */
@@ -35,7 +35,7 @@ async function waitReady(base: string, timeoutMs: number): Promise<void> {
         return
       }
     } catch {
-      // connection refused while the server boots — retry
+      // connection refused while the server boots - retry
     }
     await Bun.sleep(50)
   }
@@ -75,7 +75,7 @@ for (let i = 0; i < FRAMEWORKS.length; i++) {
     }
     results.push({ framework, routes })
   } catch (err) {
-    console.error(`  ${framework}: failed — ${err instanceof Error ? err.message : String(err)}`)
+    console.error(`  ${framework}: failed - ${err instanceof Error ? err.message : String(err)}`)
   } finally {
     proc.kill()
     await proc.exited
@@ -83,7 +83,7 @@ for (let i = 0; i < FRAMEWORKS.length; i++) {
 }
 
 console.log(
-  `\n  HTTP throughput — Bun ${Bun.version}  (${CONCURRENCY} conns, ${DURATION_MS / 1000}s/route, self-generated load)\n`,
+  `\n  HTTP throughput - Bun ${Bun.version}  (${CONCURRENCY} conns, ${DURATION_MS / 1000}s/route, self-generated load)\n`,
 )
 for (const route of ROUTES) {
   console.log(`  ${route}`)

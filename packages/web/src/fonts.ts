@@ -1,17 +1,17 @@
 /**
- * Font optimization primitives — generate a **CLS-safe `@font-face`** rule and the matching
+ * Font optimization primitives - generate a **CLS-safe `@font-face`** rule and the matching
  * **preload `<link>`** for a self-hosted font. The two fixes that matter most (the ones `next/font`
  * automates) are right here: `font-display: swap` (text paints immediately, no invisible-text FOIT)
  * plus a preload so the file downloads with the document, and optional metric overrides
  * (`size-adjust`/`ascent-override`/…) so swapping from the fallback to the web font doesn't shift layout.
  *
- * Self-host the file (drop a `.woff2` in your assets — never hotlink Google's CDN), then:
+ * Self-host the file (drop a `.woff2` in your assets - never hotlink Google's CDN), then:
  *
- *   // fonts.css (imported by your app — the CSS pipeline bundles + links it)
+ *   // fonts.css (imported by your app - the CSS pipeline bundles + links it)
  *   import { fontFace } from "@nifrajs/web"
  *   export default fontFace({ family: "Inter", src: [{ url: "/fonts/inter.woff2" }], weight: "100 900" })
  *
- *   // a root layout's meta — becomes a <link rel="preload" as="font"> in <head>
+ *   // a root layout's meta - becomes a <link rel="preload" as="font"> in <head>
  *   export const meta = { link: [fontPreload({ href: "/fonts/inter.woff2" })] }
  */
 import type { LinkDescriptor } from "./manifest.ts"
@@ -35,7 +35,7 @@ export interface FontFace {
   readonly style?: "normal" | "italic" | "oblique"
   /** Defaults to `"swap"` (no flash of invisible text). */
   readonly display?: FontDisplay
-  /** Restrict the glyphs this face covers, e.g. `"U+0000-00FF"` — lets the browser skip the download
+  /** Restrict the glyphs this face covers, e.g. `"U+0000-00FF"` - lets the browser skip the download
    * for pages without those characters. */
   readonly unicodeRange?: string
   /** Metric overrides that eliminate layout shift when the fallback swaps to the web font (the
@@ -124,14 +124,14 @@ export interface FontPreloadInput {
   readonly href: string
   /** MIME type (`font/woff2`, …). Inferred from the extension when omitted. */
   readonly type?: string
-  /** `crossorigin` mode — defaults to `"anonymous"`. Fonts are always fetched in CORS mode, and a
+  /** `crossorigin` mode - defaults to `"anonymous"`. Fonts are always fetched in CORS mode, and a
    * preload whose `crossorigin` doesn't match the actual fetch is **wasted** (downloaded twice), so
    * this is on by default. */
   readonly crossOrigin?: "anonymous" | "use-credentials"
 }
 
 /**
- * Build a font preload as a `<link>` attribute set for a route/layout's `meta.link` — nifra injects it
+ * Build a font preload as a `<link>` attribute set for a route/layout's `meta.link` - nifra injects it
  * into `<head>` (`<link rel="preload" as="font" type="font/woff2" crossorigin="anonymous">`). Values are
  * escaped at injection by the head renderer. Preloading the font file removes a render-blocking round
  * trip (the browser would otherwise discover the font only after parsing the CSS).

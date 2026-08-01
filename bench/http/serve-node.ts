@@ -1,7 +1,7 @@
 /**
  * Per-framework benchmark server for the NODE section, selected by CLI arg, serving
  * the IDENTICAL routes to serve.ts (the Bun section) so the comparison is fair across
- * runtimes. Run by Node (v24 strips TS types natively — no build step), spawned as an
+ * runtimes. Run by Node (v24 strips TS types natively - no build step), spawned as an
  * isolated subprocess by run.ts.
  *
  * Routes (identical to the Bun servers):
@@ -10,7 +10,7 @@
  *   GET  /search      → validate query, return { q, limit }
  *   POST /users       → validate { name: string; age: number }, return { id, name }
  *
- * Each framework's idiomatic validation — Fastify: JSON-Schema (its built-in, compiled
+ * Each framework's idiomatic validation - Fastify: JSON-Schema (its built-in, compiled
  * validator); Hono: its built-in validator; Express: `express.json()` + a manual guard;
  * node-raw: manual parse + guard. (Reported as such in BENCHMARKS.md.)
  *
@@ -148,7 +148,7 @@ if (framework === "fastify") {
   })
   app.listen(port)
 } else if (framework === "elysia") {
-  // Elysia on Node via its official adapter — IDENTICAL routes + TypeBox validation to the Bun
+  // Elysia on Node via its official adapter - IDENTICAL routes + TypeBox validation to the Bun
   // server (only `{ adapter: node() }` changes), so a Bun-vs-Node delta is Elysia's own, not ours.
   const { Elysia, t } = await import("elysia")
   const { node } = await import("@elysiajs/node")

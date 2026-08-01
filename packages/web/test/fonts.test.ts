@@ -77,7 +77,7 @@ describe("fontFace()", () => {
       src: [{ url: '/f.woff2") ; } body{color:red} /*' }],
       weight: "400; } body { color: red }",
     })
-    // The family + url stay inside their quoted strings — the `"` is escaped, so it can't break out
+    // The family + url stay inside their quoted strings - the `"` is escaped, so it can't break out
     // and start a new rule. The injected text survives as inert (escaped) string content; what must
     // NOT appear is an *unescaped* closing quote (`Evil";`) that would terminate the value early.
     expect(css).toContain('font-family: "Evil\\"')

@@ -9,7 +9,7 @@ function makeClock(start = 1_000_000): { now: () => number; advance: (ms: number
   return { now: () => ms, advance: (d) => (ms += d) }
 }
 
-/** A tiny Standard Schema that requires `{ to: string }` — exercises validation without a dep. */
+/** A tiny Standard Schema that requires `{ to: string }` - exercises validation without a dep. */
 const toSchema: StandardSchemaV1<{ to: string }> = {
   "~standard": {
     version: 1,
@@ -27,7 +27,7 @@ const deferred = (): { promise: Promise<void>; resolve: () => void } => {
   return { promise, resolve }
 }
 
-describe("createQueue — define + enqueue + run", () => {
+describe("createQueue - define + enqueue + run", () => {
   test("drain runs the typed handler with payload + ctx", async () => {
     const clock = makeClock()
     const q = createQueue({ now: clock.now })
@@ -60,7 +60,7 @@ describe("createQueue — define + enqueue + run", () => {
   })
 })
 
-describe("createQueue — retries + dead-letter", () => {
+describe("createQueue - retries + dead-letter", () => {
   test("retries a throwing handler after backoff, then succeeds", async () => {
     const clock = makeClock()
     let calls = 0
@@ -106,7 +106,7 @@ describe("createQueue — retries + dead-letter", () => {
   })
 })
 
-describe("createQueue — scheduling", () => {
+describe("createQueue - scheduling", () => {
   test("a delayed job is not run before its runAt", async () => {
     const clock = makeClock()
     const q = createQueue({ now: clock.now })
@@ -149,7 +149,7 @@ describe("createQueue — scheduling", () => {
   })
 })
 
-describe("createQueue — worker lifecycle (real timers)", () => {
+describe("createQueue - worker lifecycle (real timers)", () => {
   test("start() processes enqueued jobs; stop() drains the in-flight round", async () => {
     const q = createQueue() // real clock
     const gate = deferred()

@@ -1,5 +1,5 @@
 /**
- * Bounded request-body reading — the single source of truth for nifra's body-size cap. A lying or
+ * Bounded request-body reading - the single source of truth for nifra's body-size cap. A lying or
  * absent `Content-Length` can't force us to buffer an oversized payload: a declared length over the
  * cap is rejected *before* buffering, and a chunked / length-less body is aborted mid-stream once the
  * running byte count exceeds the cap. Shared by the server's schema path, `c.boundedBody`, and
@@ -26,7 +26,7 @@ export function parseContentLength(value: string): number | undefined {
 
 /** The shared streaming byte-cap loop: read until done, or cancel + 413 once over `maxBytes`.
  * A single-chunk body (the common case for small chunked payloads) returns the runtime's own
- * chunk directly — no chunk array, no copy-merge. */
+ * chunk directly - no chunk array, no copy-merge. */
 export async function drainCapped(
   body: ReadableStream<Uint8Array>,
   maxBytes: number,

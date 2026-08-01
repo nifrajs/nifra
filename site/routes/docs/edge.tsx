@@ -1,16 +1,16 @@
 import { pageMeta } from "../../meta"
 import { CodeBlock } from "../../highlight"
 
-// Pure content page — no React interactivity (TOC/copy/search are the layout enhancer +
+// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
 // the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
 export const hydrate = false
 
 export const meta = pageMeta(
-  "Nifra — Edge & bindings",
+  "Nifra - Edge & bindings",
   "Typed platform bindings in Nifra: c.env, Platform<Env>, c.waitUntil, KV/D1 on the edge.",
 )
 
-const ENV = `// server<Env>() types the platform env end-to-end — c.env is your Env in every
+const ENV = `// server<Env>() types the platform env end-to-end - c.env is your Env in every
 // handler AND in derive/decorate middleware, with no cast.
 interface Env { KV: KVNamespace; DB: D1Database }
 
@@ -29,7 +29,7 @@ app.post("/event", (c) => {
   return { ok: true }   // returns immediately; the put finishes in the background
 })`
 
-const CRON = `// doc-check: skip — \`env.KV\` is typed by your app's \`Env\` (the ./app import), supplied by the reader.
+const CRON = `// doc-check: skip - \`env.KV\` is typed by your app's \`Env\` (the ./app import), supplied by the reader.
 import { toFetchHandler } from "@nifrajs/core/server"
 import { app } from "./app"
 
@@ -52,7 +52,7 @@ export default function Edge() {
       <p>
         <code>server&lt;Env&gt;()</code> threads your <code>Env</code> type through the whole app:{" "}
         <code>c.env</code> is <code>Env</code> in every handler <b>and</b> in{" "}
-        <code>derive</code>/<code>decorate</code> middleware — read <code>c.env.KV</code> directly, no
+        <code>derive</code>/<code>decorate</code> middleware - read <code>c.env.KV</code> directly, no
         cast. <code>app.fetch(req, {"{ env }"})</code> / <code>toFetchHandler</code> type-check the
         bindings too. In <code>@nifrajs/web</code>, a route's loader/action gets the same typed{" "}
         <code>env</code>.
@@ -61,8 +61,8 @@ export default function Edge() {
 
       <h2>Background work</h2>
       <p>
-        <code>c.waitUntil(promise)</code> keeps work alive after the response is sent — cache writes,
-        analytics, fan-out — without blocking the user. (Typing is not validation: platform bindings
+        <code>c.waitUntil(promise)</code> keeps work alive after the response is sent - cache writes,
+        analytics, fan-out - without blocking the user. (Typing is not validation: platform bindings
         are trusted inputs; validate anything untrusted at the boundary.)
       </p>
       <CodeBlock code={WAIT} />
@@ -72,12 +72,12 @@ export default function Edge() {
         Edge runtimes block dynamic code generation (<code>new Function</code>), which trips many
         schema libraries. Nifra's <code>t</code> handles it transparently: it compiles a fast
         validator on Bun and Node, and falls back to an eval-free checker on Cloudflare Workers,
-        Vercel Edge, and Deno Deploy — <b>the same routes validate everywhere</b>, with no
+        Vercel Edge, and Deno Deploy - <b>the same routes validate everywhere</b>, with no
         edge-specific schema module. Because core validates any{" "}
         <a href="https://standardschema.dev" rel="external">
           Standard Schema
         </a>
-        , you can also bring Zod, Valibot, or ArkType (all eval-free) — only <code>t</code> also
+        , you can also bring Zod, Valibot, or ArkType (all eval-free) - only <code>t</code> also
         emits OpenAPI from the same definition.
       </p>
       <p>

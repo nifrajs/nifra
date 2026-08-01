@@ -1,6 +1,6 @@
 import type { ClientRouter, Fetcher, FetcherState } from "@nifrajs/web"
 /**
- * `@nifrajs/web-solid/fetcher` — Solid bindings for concurrent fetchers. `createFetcher(key)` bridges an
+ * `@nifrajs/web-solid/fetcher` - Solid bindings for concurrent fetchers. `createFetcher(key)` bridges an
  * independent {@link Fetcher}'s `subscribe`/`snapshot` store into a Solid signal (the pattern the F16
  * spike confirmed) and returns its reactive state accessor plus `load`/`submit`; `useFetchers()`
  * bridges the whole live collection. Imports only `solid-js` (never `solid-js/web`), so route
@@ -8,7 +8,7 @@ import type { ClientRouter, Fetcher, FetcherState } from "@nifrajs/web"
  * bundle. No JSX (the package builds with plain `tsc`).
  *
  * The router that owns the fetchers registers itself via `setMountedRouter` from `mountRouter`. On the
- * server (no mount) the accessors return an idle state — fetchers are client-only — so SSR markup is
+ * server (no mount) the accessors return an idle state - fetchers are client-only - so SSR markup is
  * unchanged and the first client render after `mountRouter` takes over cleanly.
  */
 import { type Accessor, createSignal, onCleanup } from "solid-js"
@@ -16,7 +16,7 @@ import { type Accessor, createSignal, onCleanup } from "solid-js"
 // The active client router (set by `mountRouter`). Module-scoped: one app per page, client-only.
 let mountedRouter: ClientRouter | undefined
 
-/** Register (or clear) the router that owns fetchers — called by `mountRouter`. Not for app use. */
+/** Register (or clear) the router that owns fetchers - called by `mountRouter`. Not for app use. */
 export function setMountedRouter(router: ClientRouter | undefined): void {
   mountedRouter = router
 }
@@ -50,7 +50,7 @@ export function createFetcher(key: string): FetcherHandle {
 }
 
 /**
- * Bind the whole live fetcher collection — for a global busy view. Returns a reactive accessor; read
+ * Bind the whole live fetcher collection - for a global busy view. Returns a reactive accessor; read
  * each entry's `.snapshot()` for its state. Updates whenever any fetcher transitions or one is created.
  */
 export function useFetchers(): Accessor<readonly Fetcher[]> {

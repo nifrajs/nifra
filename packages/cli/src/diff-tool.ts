@@ -1,5 +1,5 @@
 /**
- * `nifra snapshot` / `nifra diff` — the API breaking-change gate.
+ * `nifra snapshot` / `nifra diff` - the API breaking-change gate.
  *
  *   nifra snapshot [--out api-snapshot.json]   Write the backend's route contract as plain JSON.
  *   nifra diff <baseline.json> [--json]        Re-snapshot and compare against the committed
@@ -10,7 +10,7 @@
  * before it ships. Classification lives in `@nifrajs/core/diff` (direction-aware, fails closed);
  * this module only loads `backend.ts` and renders the result.
  *
- * Loads ONLY `backend.ts` — the API contract — so it works on an API-only project with no
+ * Loads ONLY `backend.ts` - the API contract - so it works on an API-only project with no
  * framework config or routes/ directory (unlike the eager `loadApp`).
  */
 
@@ -24,7 +24,7 @@ import {
   snapshotRoutes,
 } from "@nifrajs/core/diff"
 
-/** Snapshot file envelope — versioned so a future format change can migrate instead of misparse. */
+/** Snapshot file envelope - versioned so a future format change can migrate instead of misparse. */
 export interface SnapshotFile {
   readonly nifraSnapshot: 1
   readonly routes: readonly RouteSnapshot[]
@@ -39,7 +39,7 @@ export function parseSnapshotFile(content: string, sourcePath: string): Snapshot
     parsed = JSON.parse(content)
   } catch {
     throw new Error(
-      `[nifra] ${sourcePath} is not valid JSON — regenerate it with \`nifra snapshot\`.`,
+      `[nifra] ${sourcePath} is not valid JSON - regenerate it with \`nifra snapshot\`.`,
     )
   }
   const record = parsed as Partial<SnapshotFile> | null
@@ -50,7 +50,7 @@ export function parseSnapshotFile(content: string, sourcePath: string): Snapshot
     !Array.isArray(record.routes)
   ) {
     throw new Error(
-      `[nifra] ${sourcePath} is not a nifra API snapshot — expected { "nifraSnapshot": 1, "routes": [...] }.`,
+      `[nifra] ${sourcePath} is not a nifra API snapshot - expected { "nifraSnapshot": 1, "routes": [...] }.`,
     )
   }
   return record as SnapshotFile
@@ -76,7 +76,7 @@ export function formatDiff(diff: RoutesDiff): string {
     .map(describeChange)
   const breaking = diff.changes.filter((change) => change.severity === "breaking").length
   const summary = diff.hasBreaking
-    ? `${breaking} breaking change${breaking === 1 ? "" : "s"} — existing clients will fail.`
+    ? `${breaking} breaking change${breaking === 1 ? "" : "s"} - existing clients will fail.`
     : "No breaking changes."
   return `${lines.join("\n")}\n\n${summary}`
 }
@@ -86,7 +86,7 @@ async function snapshotBackend(cwd: string): Promise<readonly RouteSnapshot[]> {
   const backendPath = resolve(cwd, "backend.ts")
   if (!existsSync(backendPath)) {
     throw new Error(
-      `[nifra] no backend.ts in ${cwd} — \`nifra snapshot\`/\`nifra diff\` compare the API contract, which lives in backend.ts.`,
+      `[nifra] no backend.ts in ${cwd} - \`nifra snapshot\`/\`nifra diff\` compare the API contract, which lives in backend.ts.`,
     )
   }
   const backend = ((await import(backendPath)) as { backend?: unknown }).backend
@@ -115,7 +115,7 @@ export async function runDiff(
   const baselineFile = Bun.file(resolved)
   if (!(await baselineFile.exists())) {
     throw new Error(
-      `[nifra] baseline not found: ${resolved} — create it on your main branch with \`nifra snapshot\`.`,
+      `[nifra] baseline not found: ${resolved} - create it on your main branch with \`nifra snapshot\`.`,
     )
   }
   const baseline = parseSnapshotFile(await baselineFile.text(), baselinePath)

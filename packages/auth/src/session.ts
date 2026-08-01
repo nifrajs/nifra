@@ -1,18 +1,18 @@
 /**
- * The session manager — `createSessions<Data>()` returns get/commit/destroy/regenerate bound to a
+ * The session manager - `createSessions<Data>()` returns get/commit/destroy/regenerate bound to a
  * signing secret + cookie config. Two modes:
  *   • **store mode** (a {@link SessionStore} is given): a random session id rides a signed cookie; the
  *     data lives in the store. Big/sensitive data, server-side revocation.
  *   • **cookie mode** (no store): the data itself is signed into the cookie (stateless, edge-friendly,
  *     ≤4 KB). No server state.
  * The cookie value is **always HMAC-signed** (tamper-evident; verified constant-time) and the session
- * cookie is always `HttpOnly`. Reads **fail closed** — a tampered/missing/expired cookie yields a fresh
+ * cookie is always `HttpOnly`. Reads **fail closed** - a tampered/missing/expired cookie yields a fresh
  * anonymous session, never an error.
  */
 import { type CookieOptions, parseCookies, signValue, unsignValue } from "@nifrajs/core/cookies"
 import type { SessionRecord, SessionStore } from "./store.ts"
 
-/** The cookie + response surface the manager needs — a structural subset of nifra's `Context`, so any
+/** The cookie + response surface the manager needs - a structural subset of nifra's `Context`, so any
  * `c` satisfies it and it's testable with a stub. */
 export interface SessionContext {
   readonly cookies: Readonly<Record<string, string>>
@@ -22,7 +22,7 @@ export interface SessionContext {
   }
 }
 
-/** A typed session handle. Every key is optional — a fresh session is empty. */
+/** A typed session handle. Every key is optional - a fresh session is empty. */
 export interface Session<Data extends Record<string, unknown> = Record<string, unknown>> {
   get<K extends keyof Data>(key: K): Data[K] | undefined
   set<K extends keyof Data>(key: K, value: Data[K]): void
@@ -35,7 +35,7 @@ export interface Session<Data extends Record<string, unknown> = Record<string, u
   readonly isEmpty: boolean
 }
 
-/** Cookie attributes a session may tune. `httpOnly` is **not** offered — a session cookie is always
+/** Cookie attributes a session may tune. `httpOnly` is **not** offered - a session cookie is always
  * HttpOnly; `maxAge`/`expires` are derived from the session's lifetime. */
 export type SessionCookieOptions = Pick<CookieOptions, "secure" | "sameSite" | "path" | "domain">
 
@@ -53,21 +53,21 @@ export interface SessionOptions {
   /** Extra cookie attributes (the session cookie is always HttpOnly; `Secure`/`SameSite=Lax`/`Path=/`
    * default via `c.set.cookie`). Pass `{ secure: false }` for local http dev. */
   readonly cookie?: SessionCookieOptions
-  /** Clock (ms) — injected for testability; production passes `() => Date.now()` (the default). */
+  /** Clock (ms) - injected for testability; production passes `() => Date.now()` (the default). */
   readonly now?: () => number
 }
 
 export interface SessionManager<Data extends Record<string, unknown> = Record<string, unknown>> {
   /** Load the session from the request cookie (verified + un-expired), or a fresh anonymous one. */
   get(c: SessionContext): Promise<Session<Data>>
-  /** Read-only load from a raw `Request` — for `@nifrajs/web` loaders (which can read the request but not
+  /** Read-only load from a raw `Request` - for `@nifrajs/web` loaders (which can read the request but not
    * write cookies). Identical verify/expiry to {@link get}; commit/destroy in a route or action. */
   read(request: Request): Promise<Session<Data>>
   /** Persist the session: write the store (store mode) + the signed cookie. */
   commit(c: SessionContext, session: Session<Data>): Promise<void>
   /** End the session: drop the store record (store mode) + clear the cookie. */
   destroy(c: SessionContext, session?: Session<Data>): Promise<void>
-  /** Rotate the session id on the next commit (call on privilege change — login — to defend against
+  /** Rotate the session id on the next commit (call on privilege change - login - to defend against
    * session fixation). Data is preserved; the old store record is dropped. */
   regenerate(session: Session<Data>): void
 }
@@ -85,7 +85,7 @@ const encodeBase64Url = (bytes: Uint8Array): string => {
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
 }
 
-/** A 256-bit random session id (base64url). High-entropy + unguessable — the cookie also signs it. */
+/** A 256-bit random session id (base64url). High-entropy + unguessable - the cookie also signs it. */
 const randomId = (): string => encodeBase64Url(crypto.getRandomValues(new Uint8Array(32)))
 
 interface Payload {
@@ -93,7 +93,7 @@ interface Payload {
   expiresAt: number
 }
 
-/** Validate a cookie-mode payload at the trust boundary — malformed JSON / shape → `null` (no session). */
+/** Validate a cookie-mode payload at the trust boundary - malformed JSON / shape → `null` (no session). */
 const parsePayload = (json: string): Payload | null => {
   let value: unknown
   try {
@@ -121,7 +121,7 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
   const maxAge = options.maxAge ?? 7 * DAY_SECONDS
   const rolling = options.rolling ?? true
   const now = options.now ?? (() => Date.now())
-  // Annotated (not just `?? {}`) so `cookieOpts.path`/`.domain` stay typed — `?? {}` alone widens the
+  // Annotated (not just `?? {}`) so `cookieOpts.path`/`.domain` stay typed - `?? {}` alone widens the
   // type to include the empty-object literal, which the package's build tsconfig rejects on access.
   const cookieOpts: SessionCookieOptions = options.cookie ?? {}
 
@@ -187,7 +187,7 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
       const record = await store.get(unsigned)
       if (record === undefined) return make({})
       if (record.expiresAt <= now()) {
-        await store.delete(unsigned) // expired — evict + treat as no session
+        await store.delete(unsigned) // expired - evict + treat as no session
         return make({})
       }
       return make({ id: unsigned, data: record.data, expiresAt: record.expiresAt })
@@ -200,7 +200,7 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
 
   const get = (c: SessionContext): Promise<Session<Data>> => loadFromRaw(c.cookies[cookieName])
 
-  // Read-only load from a raw Request — for @nifrajs/web loaders, which have the request but can't write
+  // Read-only load from a raw Request - for @nifrajs/web loaders, which have the request but can't write
   // cookies (commit/destroy belong in a route/action with the full Context). Same verify + expiry.
   const read = (request: Request): Promise<Session<Data>> =>
     loadFromRaw(parseCookies(request.headers.get("cookie"))[cookieName])

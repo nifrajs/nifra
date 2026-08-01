@@ -55,7 +55,7 @@ describe("defineMcpWidget", () => {
   })
 })
 
-describe("defineMcpTool — render intent", () => {
+describe("defineMcpTool - render intent", () => {
   test("intent lands in _meta.ui.intent (builder hosts)", () => {
     const tool = defineMcpTool({
       name: "list_things",
@@ -85,7 +85,7 @@ describe("defineMcpTool — render intent", () => {
   })
 })
 
-describe("defineMcpTool — standard-schema input", () => {
+describe("defineMcpTool - standard-schema input", () => {
   interface EchoArgs {
     message: string
   }
@@ -177,7 +177,7 @@ describe("defineMcpTool — standard-schema input", () => {
   })
 })
 
-describe("handleRpc — MCP Apps extensions", () => {
+describe("handleRpc - MCP Apps extensions", () => {
   const features = { resources: [widget.resource], ui: { mimeTypes: [UI_MIME] } }
 
   test("initialize advertises the io.modelcontextprotocol/ui extension", async () => {
@@ -245,7 +245,7 @@ describe("handleRpc — MCP Apps extensions", () => {
   })
 })
 
-describe("createMcpServer.fetch — end to end over HTTP", () => {
+describe("createMcpServer.fetch - end to end over HTTP", () => {
   const mcp = createMcpServer({
     name: "orders",
     version: "1.0.0",
@@ -267,7 +267,7 @@ describe("createMcpServer.fetch — end to end over HTTP", () => {
     const extensions = (
       init as { result: { capabilities: { extensions?: Record<string, unknown> } } }
     ).result.capabilities.extensions
-    // NB: the key has dots, so toHaveProperty would mis-parse it as a path — assert directly.
+    // NB: the key has dots, so toHaveProperty would mis-parse it as a path - assert directly.
     expect(extensions?.[UI_EXTENSION_KEY]).toEqual({ mimeTypes: [UI_MIME] })
 
     const call = await (

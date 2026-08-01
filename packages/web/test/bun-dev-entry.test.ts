@@ -99,7 +99,7 @@ test("the not-found error names what was searched for AND what was actually ther
   )
   expect(message).toContain("http://127.0.0.1:3000/__nifra/dev-entry")
   expect(message).toContain("data-bun-dev-server-script")
-  // The actual markup is echoed back — without it the reader cannot tell what Bun changed.
+  // The actual markup is echoed back - without it the reader cannot tell what Bun changed.
   expect(message).toContain('<script src="/x.js">')
 })
 

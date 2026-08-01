@@ -1,5 +1,5 @@
 /**
- * Cloudflare Workers entry — the app, cached in Workers KV so cached pages and on-demand purges hold
+ * Cloudflare Workers entry - the app, cached in Workers KV so cached pages and on-demand purges hold
  * ACROSS instances. `ctx.waitUntil` keeps the worker alive while a stale page regenerates behind the
  * response. `bun run build` then `bunx wrangler dev` (a local KV is provided automatically).
  */
@@ -30,7 +30,7 @@ interface Env {
   readonly REVALIDATE_SECRET?: string
 }
 
-/** Minimal shape of the Workers execution context — just `waitUntil`. */
+/** Minimal shape of the Workers execution context - just `waitUntil`. */
 interface ExecutionContext {
   waitUntil(promise: Promise<unknown>): void
 }

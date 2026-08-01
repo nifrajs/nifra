@@ -1,5 +1,5 @@
 /**
- * @nifrajs/cache — a typed KV cache for nifra: TTL, stale-while-revalidate, tag invalidation, and
+ * @nifrajs/cache - a typed KV cache for nifra: TTL, stale-while-revalidate, tag invalidation, and
  * single-flight stampede protection, on a pluggable store (in-memory by default; bring CF KV / Redis for
  * a shared cache). Dependency-free; runs on Bun/Node/Deno/Workers.
  *

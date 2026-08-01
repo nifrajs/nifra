@@ -1,8 +1,8 @@
 /**
- * Standard 5-field cron parsing + matching — `minute hour day-of-month month day-of-week`.
+ * Standard 5-field cron parsing + matching - `minute hour day-of-month month day-of-week`.
  * Pure and fully tested; the scheduler is a thin timer over `matches`. Minute granularity (the
  * cron standard). Each field supports a star, a star-step, a single value, a range, a range-step,
- * and comma lists of those — plus the common `@macros`.
+ * and comma lists of those - plus the common `@macros`.
  */
 
 /** A parsed expression: one allowed-values Set per field, + whether dom/dow were restricted (for
@@ -73,7 +73,7 @@ function parseField(
     }
     if (!Number.isInteger(lo) || !Number.isInteger(hi) || lo < min || hi > max || lo > hi) {
       throw new CronError(
-        `out-of-range value "${part}" in ${fieldName} field (${min}–${max})`,
+        `out-of-range value "${part}" in ${fieldName} field (${min}-${max})`,
         expr,
       )
     }
@@ -82,7 +82,7 @@ function parseField(
   return out
 }
 
-/** Thrown on a malformed cron expression — loud at registration, never at fire time. */
+/** Thrown on a malformed cron expression - loud at registration, never at fire time. */
 export class CronError extends Error {
   constructor(reason: string, expr: string) {
     super(`[nifra/cron] invalid cron expression ${JSON.stringify(expr)}: ${reason}`)
@@ -114,7 +114,7 @@ export function parseCron(expression: string): CronFields {
 }
 
 /**
- * Does `date` (in its LOCAL time — cron is local-time by convention) match the fields, to the
+ * Does `date` (in its LOCAL time - cron is local-time by convention) match the fields, to the
  * minute? Day-of-month and day-of-week follow the standard OR rule: when BOTH are restricted, a
  * match on EITHER is a match; when only one is restricted, only that one must match.
  */

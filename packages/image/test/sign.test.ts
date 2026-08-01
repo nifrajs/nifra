@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { hmacSha256Hex, signImageParams, verifyImageParams } from "../src/sign.ts"
 
-describe("hmacSha256Hex — known-answer tests", () => {
+describe("hmacSha256Hex - known-answer tests", () => {
   // Classic vector (exercises a short key + multi-block message).
   test("HMAC-SHA256('key', 'The quick brown fox…')", () => {
     expect(hmacSha256Hex("key", "The quick brown fox jumps over the lazy dog")).toBe(
@@ -14,7 +14,7 @@ describe("hmacSha256Hex — known-answer tests", () => {
       "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843",
     )
   })
-  // A key longer than the 64-byte block is hashed first (RFC 2104) — exercises that branch.
+  // A key longer than the 64-byte block is hashed first (RFC 2104) - exercises that branch.
   test("hashes an over-long key (deterministic, non-empty)", () => {
     const sig = hmacSha256Hex("x".repeat(100), "hello")
     expect(sig).toMatch(/^[0-9a-f]{64}$/)

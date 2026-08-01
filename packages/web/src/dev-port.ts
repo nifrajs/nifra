@@ -1,5 +1,5 @@
 /**
- * `@nifrajs/web/dev-port` — what a dev server says when it cannot bind.
+ * `@nifrajs/web/dev-port` - what a dev server says when it cannot bind.
  *
  * Both pipelines need this and neither should own it: the Vite server binds through Node's `http`
  * (asynchronous `error` event), the Bun server binds through `Bun.serve` (synchronous throw). Two very
@@ -36,7 +36,7 @@ const asError = (err: unknown): Error => (err instanceof Error ? err : new Error
 export const explainBindFailure = (err: unknown, port: number): Error =>
   isAddressInUse(err) ? new Error(portInUseMessage(port)) : asError(err)
 
-/** The bits of a Node server {@link listenOrExplain} touches — structural, so a test can fake it. */
+/** The bits of a Node server {@link listenOrExplain} touches - structural, so a test can fake it. */
 export interface ListenTarget {
   listen(port: number, cb: () => void): void
   once(event: "error", cb: (err: unknown) => void): void

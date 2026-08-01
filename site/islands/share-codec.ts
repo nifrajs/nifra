@@ -1,14 +1,14 @@
 /**
  * Share-link codec for the playground. Serializes the two editor strings ({ code, requests }) into a
- * compact, URL-safe payload that lives in the page `#fragment` — so a link reconstructs the exact
+ * compact, URL-safe payload that lives in the page `#fragment` - so a link reconstructs the exact
  * editor state and runs the real app in the opener's tab. The fragment never reaches the server, so
  * CDN/URL-length server limits don't apply; the only real cap is the browser address bar.
  *
  * Security: a share payload is attacker-controlled. Decoding validates strictly at the trust boundary
  * (version + shape + per-field length) and bounds the decompressed size to defuse a gzip bomb. It never
- * throws — a malformed link returns null and the caller falls back to the default preset. (Running the
+ * throws - a malformed link returns null and the caller falls back to the default preset. (Running the
  * decoded code is the *existing* playground trust model: it executes in the opener's own tab, same as
- * pasting into the devtools console — surface that in the UI, don't pretend the link is sandboxed.)
+ * pasting into the devtools console - surface that in the UI, don't pretend the link is sandboxed.)
  */
 
 const VERSION = 1
@@ -45,7 +45,7 @@ async function gzip(bytes: Uint8Array): Promise<Uint8Array> {
   return new Uint8Array(await new Response(stream).arrayBuffer())
 }
 
-/** Decompress with a hard output cap — a small gzip can expand to gigabytes, so abort past the limit. */
+/** Decompress with a hard output cap - a small gzip can expand to gigabytes, so abort past the limit. */
 async function gunzipBounded(bytes: Uint8Array, max: number): Promise<Uint8Array> {
   const ds = new DecompressionStream("gzip")
   const writer = ds.writable.getWriter()
@@ -92,7 +92,7 @@ export async function decodeState(payload: string): Promise<ShareState | null> {
     if (code.length > MAX_FIELD_CHARS || requests.length > MAX_FIELD_CHARS) return null
     return { code, requests }
   } catch {
-    return null // never throw at the trust boundary — caller falls back to the default preset
+    return null // never throw at the trust boundary - caller falls back to the default preset
   }
 }
 

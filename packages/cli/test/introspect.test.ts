@@ -15,7 +15,7 @@ import {
 } from "../src/introspect.ts"
 import type { LoadedApp } from "../src/load.ts"
 
-// A minimal LoadedApp whose backend exposes the routes routesToJson reads — the only field it touches.
+// A minimal LoadedApp whose backend exposes the routes routesToJson reads - the only field it touches.
 const appWith = (routes: unknown[]): LoadedApp =>
   ({ backend: { routes: () => routes } }) as unknown as LoadedApp
 
@@ -30,7 +30,7 @@ const projectWith = (routes: unknown[]): LoadedApp =>
     backend: { routes: () => routes },
   }) as unknown as LoadedApp
 
-// The token-efficiency contract: JSON Schema in, compact TS-shaped contract out — faithful, and a
+// The token-efficiency contract: JSON Schema in, compact TS-shaped contract out - faithful, and a
 // fraction of the raw schema's tokens (the MCP nifra_context payload is built from these).
 
 describe("tsTypeOf", () => {
@@ -97,9 +97,9 @@ describe("tsTypeOf", () => {
   })
 })
 
-// The call signature must match @nifrajs/client's proxy convention exactly — it's what an agent copies
+// The call signature must match @nifrajs/client's proxy convention exactly - it's what an agent copies
 // instead of reading client.test.ts (user feedback 2026-06).
-describe("clientCall — typed-client call form per route", () => {
+describe("clientCall - typed-client call form per route", () => {
   test("static path + verb (no schema)", () => {
     expect(clientCall("GET", "/users", undefined)).toBe("await api.users.get()")
   })
@@ -144,7 +144,7 @@ describe("clientCall — typed-client call form per route", () => {
 })
 
 // Structured route JSON for the nifra_routes MCP tool (feedback 2026-06: agents want JSON, not markdown).
-describe("routesToJson — structured list_routes / get_route_schema", () => {
+describe("routesToJson - structured list_routes / get_route_schema", () => {
   const bodySchema = {
     jsonSchema: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
   }
@@ -186,7 +186,7 @@ describe("routesToJson — structured list_routes / get_route_schema", () => {
   })
 })
 
-// `nifra routes [--json]` — the focused, uniform route view (page + API routes, with methods). The
+// `nifra routes [--json]` - the focused, uniform route view (page + API routes, with methods). The
 // table builder + renderer are pure; describeRoutes is the cwd-gathering wrapper.
 
 describe("buildRouteTable", () => {
@@ -337,7 +337,7 @@ describe("describeRoutes (cwd integration)", () => {
   })
 })
 
-describe("describeProject — nifra_context index vs slice", () => {
+describe("describeProject - nifra_context index vs slice", () => {
   // A backend with a route carrying a real schema, so the difference between the compact index (no
   // schema) and the full slice (the schema rendered as a TS shape) is observable in the output.
   const ROUTES = [

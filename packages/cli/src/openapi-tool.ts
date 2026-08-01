@@ -45,7 +45,7 @@ function toYaml(value: unknown, depth = 0): string {
  * Render a project's backend as OpenAPI 3.1. Frontend-only apps get a valid empty document, which is
  * easier for agents and API tooling to handle than a tool error.
  *
- * `pathPrefix` narrows the document to operations whose (OpenAPI-templated) path starts with the prefix —
+ * `pathPrefix` narrows the document to operations whose (OpenAPI-templated) path starts with the prefix -
  * mirroring `nifra_routes`'s `path` filter so a large backend needn't return the whole document. The keys
  * are templated (`/users/{id}`), so a prefix up to the first param (`/api/orders`) matches `/api/orders`
  * and `/api/orders/{id}` alike. `components.schemas` is left intact: it's keyed by schema name (not path),
@@ -57,7 +57,7 @@ export function renderOpenApi(app: LoadedApp, format: OpenApiFormat, pathPrefix?
   const input = hasRoutesMethod(app.backend) ? app.backend : {}
   const generated = toOpenAPI(input, { title, version: "1.0.0" })
   // Narrow to operations under the prefix, rebuilding the doc (its `paths` is readonly). `components`
-  // stays — see the doc comment for why the schema set isn't recomputed.
+  // stays - see the doc comment for why the schema set isn't recomputed.
   const document =
     pathPrefix !== undefined && pathPrefix !== ""
       ? {

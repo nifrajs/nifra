@@ -21,7 +21,7 @@ describe("Server.routes()", () => {
 
   test("carries a declared response schema so tooling/agents can introspect the output shape", () => {
     const app = server().get("/me", { response: passThrough }, () => ({ id: "1" }))
-    // The response contract rides the same descriptor path as body/query — the OpenAPI generator and
+    // The response contract rides the same descriptor path as body/query - the OpenAPI generator and
     // `nifra context`/MCP read it from `app.routes()` to surface the exact output shape.
     expect(app.routes()[0]?.schema?.response).toBe(passThrough)
   })
@@ -81,9 +81,9 @@ describe("audit 2026-06: param/query/body parity fixes", () => {
     const body = (await res.json()) as Record<string, unknown>
     // Bracket access on purpose throughout: dot access on these names resolves through the
     // inherited Object.prototype TYPES (constructor: Function, toString: () => string), and an
-    // object-literal `__proto__: "x"` expectation would set the literal's prototype — the very
+    // object-literal `__proto__: "x"` expectation would set the literal's prototype - the very
     // traps this test exists to cover.
-    // biome-ignore lint/complexity/useLiteralKeys: see above — the bracket IS the assertion
+    // biome-ignore lint/complexity/useLiteralKeys: see above - the bracket IS the assertion
     expect(body["constructor"]).toEqual(["a", "b"])
     expect(Object.hasOwn(body, "__proto__")).toBe(true)
     // biome-ignore lint/complexity/useLiteralKeys: see above

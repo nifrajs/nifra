@@ -1,4 +1,4 @@
-// ISR — same 50-item loader as the dynamic bench, but Next caches the rendered page between
+// ISR - same 50-item loader as the dynamic bench, but Next caches the rendered page between
 // revalidations. The runner warms the cache before oha so this row reflects steady-state ISR hits.
 export const revalidate = 3600
 

@@ -1,7 +1,7 @@
 /**
  * The span model + exporter seam. Attribute names follow OpenTelemetry HTTP semantic conventions
  * (`http.request.method`, `url.path`, `http.response.status_code`, …) so a span maps cleanly onto an
- * OTel `Span` when bridged — but nothing here depends on the OTel SDK. You supply an
+ * OTel `Span` when bridged - but nothing here depends on the OTel SDK. You supply an
  * {@link ObservationAdapter}
  * (a ~10-line adapter to `@opentelemetry/api`, or the bundled {@link consoleSpanExporter}).
  */
@@ -18,7 +18,7 @@ export interface ObservationLink {
 
 /** A completed (or in-flight) server span for one request. */
 export interface NifraSpan {
-  /** 32-hex W3C trace id — shared across every span/service in the trace. */
+  /** 32-hex W3C trace id - shared across every span/service in the trace. */
   readonly traceId: string
   /** 16-hex id of this span. */
   readonly spanId: string
@@ -26,11 +26,11 @@ export interface NifraSpan {
   readonly parentSpanId?: string
   /** Whether the trace is sampled (the W3C flag). */
   readonly sampled: boolean
-  /** Span name — `"<METHOD> <path>"`. */
+  /** Span name - `"<METHOD> <path>"`. */
   readonly name: string
   /** Wall-clock start (epoch ms). */
   readonly startTime: number
-  /** Wall-clock end (epoch ms) — set on completion. */
+  /** Wall-clock end (epoch ms) - set on completion. */
   endTime?: number
   /** Duration in ms (monotonic). */
   durationMs?: number

@@ -1,15 +1,15 @@
 /**
- * Bundle-size benchmark — **deterministic** (no load test, no box noise; bytes are bytes).
+ * Bundle-size benchmark - **deterministic** (no load test, no box noise; bytes are bytes).
  *
  *   bun run bench:size
  *
  * Measures the **server footprint**: a trivial 2-route JSON server per framework (nifra / Hono /
- * Elysia / raw `Bun.serve`) bundled with `Bun.build({ minify: true })` and gzipped — what actually
+ * Elysia / raw `Bun.serve`) bundled with `Bun.build({ minify: true })` and gzipped - what actually
  * ships in your deploy artifact (the framework's own code, tree-shaken; not the package install size).
  *
  * Honest by construction: identical app shape per row, same minifier, raw + gzip both shown, the raw
  * `Bun.serve` floor included. Versions are whatever's installed (printed below). (Client/hydration
- * payload is a separate axis — see SSR-BENCHMARKS.md's "client JS" column + /docs/frameworks.)
+ * payload is a separate axis - see SSR-BENCHMARKS.md's "client JS" column + /docs/frameworks.)
  */
 
 import { mkdirSync, rmSync, writeFileSync } from "node:fs"
@@ -152,7 +152,7 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
 }
 
 const main = async (): Promise<void> => {
-  console.log(`\nBundle size — Bun.build({ minify: true }) + gzip  (Bun ${Bun.version})`)
+  console.log(`\nBundle size - Bun.build({ minify: true }) + gzip  (Bun ${Bun.version})`)
   console.log("Deterministic: identical app shape per row, same minifier. Lower is better.")
 
   const server: Size[] = []
@@ -160,14 +160,14 @@ const main = async (): Promise<void> => {
     const s = await measure(label, source, { target: "bun" })
     if (s) server.push(s)
   }
-  table("Server bundle — minimal 2-route JSON app (target: bun)", server, "bun-raw")
+  table("Server bundle - minimal 2-route JSON app (target: bun)", server, "bun-raw")
 
   const features: Size[] = []
   for (const [label, source] of Object.entries(NIFRA_FEATURES)) {
     const measured = await measure(label, source, { target: "bun" })
     if (measured) features.push(measured)
   }
-  table("Nifra feature matrix — marginal runtime reachability", features, "nifra-bare")
+  table("Nifra feature matrix - marginal runtime reachability", features, "nifra-bare")
 
   // Reconcile what was MEASURED against what was DECLARED, before comparing budgets.
   //
@@ -217,10 +217,10 @@ const main = async (): Promise<void> => {
   }
 
   console.log("\nRows are each framework's own bundled code (tree-shaken) on top of the runtime's")
-  console.log("native HTTP — what ships in your server artifact, not the package install size.")
+  console.log("native HTTP - what ships in your server artifact, not the package install size.")
 
   // Push the gzipped numbers to the website's single source of truth (site-bench.ts's doc says
-  // bench:size owns the `bundle` slice — bun-raw is a floor, not a framework row, so it's skipped).
+  // bench:size owns the `bundle` slice - bun-raw is a floor, not a framework row, so it's skipped).
   const SITE_LABELS: Record<string, string> = { nifra: "Nifra", hono: "Hono", elysia: "Elysia" }
   const bundle = server
     .filter((s) => s.label in SITE_LABELS)
@@ -234,7 +234,7 @@ const main = async (): Promise<void> => {
     const { writeSiteBench } = await import("../site-bench.ts")
     await writeSiteBench({ bundle })
   } else if (bundle.length !== Object.keys(SITE_LABELS).length) {
-    console.error("  ! site bundle slice NOT updated — a framework row failed to build")
+    console.error("  ! site bundle slice NOT updated - a framework row failed to build")
   }
 }
 

@@ -36,7 +36,7 @@ describe("rateLimit", () => {
     expect((await app.fetch(new Request("http://x/"))).status).toBe(200)
   })
 
-  test("MemoryStore is bounded — caps keys + sweeps expired (no unbounded growth) [AUDIT]", async () => {
+  test("MemoryStore is bounded - caps keys + sweeps expired (no unbounded growth) [AUDIT]", async () => {
     // test-only introspection of the private window map to assert it never grows without bound.
     const sizeOf = (s: MemoryStore): number =>
       (s as unknown as { windows: Map<string, unknown> }).windows.size
@@ -76,7 +76,7 @@ describe("rateLimit", () => {
 
     // Worst case for eviction: every key is fresh (long window) and the amortized sweep is disabled,
     // so each over-cap insertion hits the eviction path with no expired entry to reclaim. Measure the
-    // ALGORITHM (entries scanned per over-cap insert), not wall-clock — wall-clock conflates O() with
+    // ALGORITHM (entries scanned per over-cap insert), not wall-clock - wall-clock conflates O() with
     // machine load and flakes under a busy host. A full O(n) sweep per insertion (the pre-fix bug)
     // scans ~maxKeys entries each; the bounded scan caps at MAX_EVICTION_SCAN (64). Cap holds exactly.
     const maxKeys = 20_000

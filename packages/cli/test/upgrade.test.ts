@@ -112,7 +112,7 @@ describe("pinSweepText", () => {
     expect(changes).toHaveLength(2)
   })
 
-  test("is idempotent — a second sweep makes no changes", () => {
+  test("is idempotent - a second sweep makes no changes", () => {
     const pkg = JSON.stringify({ dependencies: { "@nifrajs/core": "^1.7.0" } }, null, 2)
     const first = pinSweepText(pkg, RECIPE.pins)
     const second = pinSweepText(first.text, RECIPE.pins)

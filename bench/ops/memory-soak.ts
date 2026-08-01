@@ -1,5 +1,5 @@
 /**
- * Memory under sustained load — the leak check. A real server process is hammered with the mixed
+ * Memory under sustained load - the leak check. A real server process is hammered with the mixed
  * workload while it samples its own RSS; flat-after-warmup is the pass, monotonic growth is the
  * red flag.
  *
@@ -50,16 +50,16 @@ const samples = lines
   .filter((l) => l.startsWith("rss "))
   .map((l) => Number(l.slice(4)) / (1024 * 1024))
 if (samples.length < 3) {
-  console.error("not enough RSS samples — soak too short?")
+  console.error("not enough RSS samples - soak too short?")
   process.exit(1)
 }
 const mb = (n: number): string => `${n.toFixed(1)} MB`
 const first = samples[0] as number
 const last = samples[samples.length - 1] as number
-// Steady-state growth: compare the post-warmup sample (1/3 in) to the end — startup allocation
+// Steady-state growth: compare the post-warmup sample (1/3 in) to the end - startup allocation
 // (JIT, route compile, first-GC high-water) isn't leak signal.
 const steady = samples[Math.floor(samples.length / 3)] as number
-console.log(`\nMemory soak — ${requests.toLocaleString()} requests over ${SOAK_S}s`)
+console.log(`\nMemory soak - ${requests.toLocaleString()} requests over ${SOAK_S}s`)
 console.log(`  rss first sample   ${mb(first)}`)
 console.log(`  rss post-warmup    ${mb(steady)}`)
 console.log(`  rss last sample    ${mb(last)}`)

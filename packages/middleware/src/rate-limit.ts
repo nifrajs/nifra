@@ -10,7 +10,7 @@ export interface RateLimitResult {
 
 /**
  * Counter backend. Production deploys MUST use a shared store (Redis, etc.) so the
- * limit holds across instances — that's a user dependency, not ours, hence the
+ * limit holds across instances - that's a user dependency, not ours, hence the
  * interface. {@link MemoryStore} is for dev / single-instance only.
  */
 export interface RateLimitStore {
@@ -18,7 +18,7 @@ export interface RateLimitStore {
 }
 
 export interface MemoryStoreOptions {
-  /** Allow the in-memory store in production. Off by default — a per-instance limiter is unsafe across instances. */
+  /** Allow the in-memory store in production. Off by default - a per-instance limiter is unsafe across instances. */
   readonly allowInProduction?: boolean
   /** Hard cap on tracked client keys; expired keys are evicted first, then oldest active keys. Default `100_000`.
    * Bounds memory against an unbounded key space (bot scans, per-IP buckets). */
@@ -29,7 +29,7 @@ export interface MemoryStoreOptions {
 
 /** Max entries scanned (oldest-first) per eviction looking for an expired victim before falling back
  * to evicting the oldest-inserted. Bounds eviction to O(1) per insertion instead of a full O(n) sweep
- * under a distinct-key flood — the abuse the key cap defends against. */
+ * under a distinct-key flood - the abuse the key cap defends against. */
 const MAX_EVICTION_SCAN = 64
 
 /**
@@ -38,8 +38,8 @@ const MAX_EVICTION_SCAN = 64
  * Bounded against unbounded growth: expired windows are swept lazily (amortized, at most once per
  * `sweepIntervalMs`) and the key set is hard-capped at `maxKeys` (expired keys are evicted first,
  * then oldest active keys).
- * Without this, expired entries for keys never seen again — and the unbounded key space of a bot scan
- * — would accumulate in the map forever and OOM a single-instance deploy.
+ * Without this, expired entries for keys never seen again - and the unbounded key space of a bot scan
+ * - would accumulate in the map forever and OOM a single-instance deploy.
  */
 export class MemoryStore implements RateLimitStore {
   private readonly windows = new Map<string, { count: number; resetAt: number }>()
@@ -48,7 +48,7 @@ export class MemoryStore implements RateLimitStore {
   private lastSweep = 0
   private evictionScans = 0
 
-  /** Cumulative entries inspected by the eviction scan since construction — an eviction-pressure
+  /** Cumulative entries inspected by the eviction scan since construction - an eviction-pressure
    * gauge. The bounded scan keeps this ~O(1) per over-cap insert (≤ {@link MAX_EVICTION_SCAN}); a
    * regressed full O(n) sweep would make it ~maxKeys per insert (what the regression test asserts). */
   get evictionScanCount(): number {
@@ -98,7 +98,7 @@ export class MemoryStore implements RateLimitStore {
   private enforceMaxKeys(now: number): void {
     if (this.windows.size <= this.maxKeys) return
     // Prefer evicting an expired window over an active user's, but bound the work. A full sweep on
-    // every insertion is O(n)/request under a distinct-key flood — the exact abuse the cap defends
+    // every insertion is O(n)/request under a distinct-key flood - the exact abuse the cap defends
     // against. Scan only a small fixed budget (oldest-first, where expired entries cluster) for a
     // victim; if none is found, evict the oldest-inserted (O(1)). Expired entries beyond the budget
     // are still reclaimed by the amortized sweep in `hit`.
@@ -132,13 +132,13 @@ export interface RateLimitOptions {
    * Default `0`.
    *
    * The default key reads the client IP from `X-Forwarded-For` as the address your **edge** proxy
-   * observed — the entry `trustedProxies` from the right (1 proxy → the rightmost hop; 2 → the
+   * observed - the entry `trustedProxies` from the right (1 proxy → the rightmost hop; 2 → the
    * second-from-right; …). Your proxies append on the right, so a client can only inject fake hops on
    * the *left*, which this skips → not spoofable when `trustedProxies` matches your topology.
    *
    * ⚠️ With the default `0`, `X-Forwarded-For` is treated as fully client-controlled and **ignored**.
    * Reading the
-   * *first* XFF hop — the old behavior — let any client mint a fresh bucket per request and defeat the
+   * *first* XFF hop - the old behavior - let any client mint a fresh bucket per request and defeat the
    * limiter. Set `trustedProxies` (only safe behind a proxy you control that appends XFF), configure a
    * trusted single-IP {@link header}, or supply a custom {@link key} (e.g. an authenticated user id).
    */
@@ -151,7 +151,7 @@ export interface RateLimitOptions {
    */
   readonly allowGlobalKey?: boolean
   /**
-   * Bucket key for a request. Overrides the default XFF-based key entirely — set this for accurate
+   * Bucket key for a request. Overrides the default XFF-based key entirely - set this for accurate
    * per-client limiting (e.g. an authenticated user id, or a header your proxy sets). A `Middleware`
    * can't see the socket IP (that needs the server instance).
    */

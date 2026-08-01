@@ -1,12 +1,12 @@
 /**
- * `nifra port` — a portability linter. It scans an app's source for features whose runtime guarantees
+ * `nifra port` - a portability linter. It scans an app's source for features whose runtime guarantees
  * differ across deploy targets, prints a feature × target capability matrix, and (in CI mode) fails
  * when a *detected* feature is unsupported on the app's resolved deploy target.
  *
  * The premise: nifra runs the same app on five targets (Bun, Node, Deno, Cloudflare Pages, Vercel), but
  * a per-instance in-memory store, a long-lived in-process cron loop, or a `Bun.*` global is portable
  * across some and a silent footgun on others. The framework's stores already *runtime*-guard this (e.g.
- * `MemorySessionStore` throws under `NODE_ENV=production`); `port` is the *build-time* counterpart — it
+ * `MemorySessionStore` throws under `NODE_ENV=production`); `port` is the *build-time* counterpart - it
  * tells you before you deploy, and gates CI so the regression can't ship.
  *
  * Detection works on reliable import/symbol signals only (a real `@nifrajs/*` import paired with the
@@ -24,7 +24,7 @@ export type Target = (typeof TARGETS)[number]
 
 const isTarget = (value: string): value is Target => (TARGETS as readonly string[]).includes(value)
 
-/** The portability hazards `port` detects. Stable ids — they're part of the `--json` contract. */
+/** The portability hazards `port` detects. Stable ids - they're part of the `--json` contract. */
 export const FEATURE_IDS = [
   "in-memory-session-store",
   "in-memory-isr-cache",
@@ -46,12 +46,12 @@ interface FeatureSpec {
   /** Short explanation of WHY this feature is a portability hazard at all (printed in the legend/report). */
   readonly summary: string
   readonly verdicts: Readonly<Record<Target, Verdict>>
-  /** Per-target reason — why this verdict, and (for caveat/unsupported) the fix. */
+  /** Per-target reason - why this verdict, and (for caveat/unsupported) the fix. */
   readonly reasons: Readonly<Record<Target, string>>
 }
 
 // In-memory stores (session/ISR/rate-limit) share a verdict shape: fine single-instance on a long-lived
-// runtime (caveat — lost on restart, not shared across instances), unsupported on the distributed edge.
+// runtime (caveat - lost on restart, not shared across instances), unsupported on the distributed edge.
 const inMemoryVerdicts: Readonly<Record<Target, Verdict>> = {
   bun: "caveat",
   node: "caveat",
@@ -79,7 +79,7 @@ export const FEATURES: Readonly<Record<FeatureId, FeatureSpec>> = {
     summary: "MemorySessionStore keeps sessions per-instance (@nifrajs/auth)",
     verdicts: inMemoryVerdicts,
     reasons: inMemoryReasons(
-      "distributed edge has no shared per-instance memory — use KVSessionStore (Workers KV) or another shared store",
+      "distributed edge has no shared per-instance memory - use KVSessionStore (Workers KV) or another shared store",
     ),
   },
   "in-memory-isr-cache": {
@@ -87,7 +87,7 @@ export const FEATURES: Readonly<Record<FeatureId, FeatureSpec>> = {
     summary: "MemoryCacheStore caches rendered pages per-instance (@nifrajs/web)",
     verdicts: inMemoryVerdicts,
     reasons: inMemoryReasons(
-      "each edge instance caches separately and revalidation won't propagate — use KVCacheStore (Workers KV) or the platform Cache API",
+      "each edge instance caches separately and revalidation won't propagate - use KVCacheStore (Workers KV) or the platform Cache API",
     ),
   },
   "in-memory-rate-limit": {
@@ -95,7 +95,7 @@ export const FEATURES: Readonly<Record<FeatureId, FeatureSpec>> = {
     summary: "MemoryStore counts hits per-instance (@nifrajs/middleware)",
     verdicts: inMemoryVerdicts,
     reasons: inMemoryReasons(
-      "a per-instance limiter doesn't hold across edge instances — use a shared store (Redis / Durable Object)",
+      "a per-instance limiter doesn't hold across edge instances - use a shared store (Redis / Durable Object)",
     ),
   },
   "in-process-cron": {
@@ -113,8 +113,8 @@ export const FEATURES: Readonly<Record<FeatureId, FeatureSpec>> = {
       node: "long-lived process runs the scheduler loop",
       deno: "long-lived process runs the scheduler loop",
       "cf-pages":
-        "no long-lived loop on Workers — use the platform `scheduled` trigger via toFetchHandler(app, { scheduled }) and a wrangler [triggers] cron",
-      vercel: "no long-lived process — use a Vercel Cron Job hitting an endpoint",
+        "no long-lived loop on Workers - use the platform `scheduled` trigger via toFetchHandler(app, { scheduled }) and a wrangler [triggers] cron",
+      vercel: "no long-lived process - use a Vercel Cron Job hitting an endpoint",
     },
   },
   "in-process-websocket": {
@@ -132,7 +132,7 @@ export const FEATURES: Readonly<Record<FeatureId, FeatureSpec>> = {
       node: "all sockets live in one process; app.publish broadcasts to every client",
       deno: "all sockets live in one process; app.publish broadcasts to every client",
       "cf-pages":
-        "a stateless fetch can't broadcast across isolates — wrap the app in createWebSocketHub (a Durable Object) from @nifrajs/workers",
+        "a stateless fetch can't broadcast across isolates - wrap the app in createWebSocketHub (a Durable Object) from @nifrajs/workers",
       vercel: "Vercel's serverless functions don't hold long-lived WebSocket connections",
     },
   },
@@ -148,8 +148,8 @@ export const FEATURES: Readonly<Record<FeatureId, FeatureSpec>> = {
     },
     reasons: {
       bun: "the Bun runtime provides the Bun global",
-      node: "no Bun global on Node — use the node: / Web equivalents",
-      deno: "no Bun global on Deno — use the Deno / Web equivalents",
+      node: "no Bun global on Node - use the node: / Web equivalents",
+      deno: "no Bun global on Deno - use the Deno / Web equivalents",
       "cf-pages": "no Bun global in the Workers runtime",
       vercel: "no Bun global in the Vercel runtime",
     },
@@ -165,8 +165,8 @@ export const FEATURES: Readonly<Record<FeatureId, FeatureSpec>> = {
       vercel: "unsupported",
     },
     reasons: {
-      bun: "no Deno global on Bun — use the Bun / Web equivalents",
-      node: "no Deno global on Node — use the node: / Web equivalents",
+      bun: "no Deno global on Bun - use the Bun / Web equivalents",
+      node: "no Deno global on Node - use the node: / Web equivalents",
       deno: "the Deno runtime provides the Deno global",
       "cf-pages": "no Deno global in the Workers runtime",
       vercel: "no Deno global in the Vercel runtime",
@@ -197,7 +197,7 @@ export const FEATURES: Readonly<Record<FeatureId, FeatureSpec>> = {
 export interface Evidence {
   readonly file: string
   readonly line: number
-  /** The trimmed source line — the signal in context, for the human report. */
+  /** The trimmed source line - the signal in context, for the human report. */
   readonly snippet: string
 }
 
@@ -233,9 +233,9 @@ const ISR_CACHE = /(?<![.\w$])MemoryCacheStore\b/g
 const RATE_LIMIT = /(?<![.\w$])MemoryStore\b/g
 // In-process cron: the scheduler factory. Paired with the @nifrajs/cron import.
 const CRON_SCHEDULER = /(?<![.\w$])createScheduler\s*\(/g
-// `.ws(` method call — a WebSocket route registration on a nifra app. `(?<![.\w$])` keeps it from
+// `.ws(` method call - a WebSocket route registration on a nifra app. `(?<![.\w$])` keeps it from
 // matching identifiers that merely END in `ws` (e.g. `rows(`, `views(`). It DOES match `app.ws(`,
-// `server().ws(`, `x.ws(` — all the chained forms — because the dot is consumed by the call, and the
+// `server().ws(`, `x.ws(` - all the chained forms - because the dot is consumed by the call, and the
 // negative lookbehind only guards the char BEFORE `ws`, which is the dot here. We exclude the dot from
 // the lookbehind set on purpose: a method call is exactly what we want.
 const WS_ROUTE = /\.ws\s*\(/g
@@ -268,7 +268,7 @@ const pushHits = (
  */
 interface ScanState {
   readonly evidence: Map<FeatureId, Evidence[]>
-  /** True once any file references `createWebSocketHub` — suppresses the in-process-websocket finding. */
+  /** True once any file references `createWebSocketHub` - suppresses the in-process-websocket finding. */
   hasWebSocketHub: boolean
 }
 
@@ -303,7 +303,7 @@ export function scanFileForFeatures(file: string, content: string, state: ScanSt
 }
 
 // Mirror nifra check/doctor's ignore set: deps, build output, generated/per-runtime dist dirs, VCS.
-// PLUS *.config.* and obvious build scripts (build*.ts) — `port` scans request/app source, not tooling.
+// PLUS *.config.* and obvious build scripts (build*.ts) - `port` scans request/app source, not tooling.
 const IGNORED =
   /(^|\/)(node_modules|dist(-[a-z0-9]+)?|build|\.nifra|\.git|\.wrangler|coverage)\/|\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)[^/]*\.config\.[cm]?[jt]sx?$|(^|\/)build[^/]*\.[cm]?[jt]sx?$/
 
@@ -334,7 +334,7 @@ export async function detectFeatures(cwd: string): Promise<DetectedFeature[]> {
     const evidence = state.evidence.get(id)
     if (evidence === undefined || evidence.length === 0) continue
     // in-process WebSocket is only a portability hazard when the app does NOT use createWebSocketHub
-    // (the Workers Durable Object hub) — its presence means the WS routes are already edge-ready.
+    // (the Workers Durable Object hub) - its presence means the WS routes are already edge-ready.
     if (id === "in-process-websocket" && state.hasWebSocketHub) continue
     const spec = FEATURES[id]
     detected.push({
@@ -351,7 +351,7 @@ export async function detectFeatures(cwd: string): Promise<DetectedFeature[]> {
 
 export interface ResolvedTarget {
   readonly target: Target
-  /** How the target was determined — surfaced so the report explains itself. */
+  /** How the target was determined - surfaced so the report explains itself. */
   readonly source: "flag" | "package-json-build" | "package-json-deploy" | "wrangler" | "vercel"
 }
 
@@ -466,7 +466,7 @@ export interface PortResult {
 
 /**
  * Compute the full `port` result: detect features, resolve the target, and derive the blocking findings.
- * A finding blocks when the detected feature is `unsupported` on the resolved target — always — and
+ * A finding blocks when the detected feature is `unsupported` on the resolved target - always - and
  * (with `strict`) also when it's a `caveat`. With no resolved target there's nothing to gate against,
  * so `blocked` is empty and `ok` reflects "are there hazards at all" only when the caller asks.
  */
@@ -523,19 +523,19 @@ const padCell = (s: string, width: number): string => {
 /** Render the feature × target matrix + evidence + summary as a readable report. */
 export function renderReport(result: PortResult, opts: { readonly strict?: boolean }): string {
   const { detected, resolved, json } = result
-  const out: string[] = ["nifra port — portability matrix", ""]
+  const out: string[] = ["nifra port - portability matrix", ""]
 
   if (resolved !== undefined) {
     out.push(`target: ${resolved.target} (detected from ${describeSource(resolved.source)})`)
   } else {
     out.push(
-      "target: not detected — pass --target <bun|node|deno|cf-pages|vercel> to gate against one",
+      "target: not detected - pass --target <bun|node|deno|cf-pages|vercel> to gate against one",
     )
   }
   out.push("")
 
   if (detected.length === 0) {
-    out.push("✓ no portability hazards detected — this app is portable across all targets.")
+    out.push("✓ no portability hazards detected - this app is portable across all targets.")
     return out.join("\n")
   }
 
@@ -583,9 +583,9 @@ export function renderReport(result: PortResult, opts: { readonly strict?: boole
         `✓ no blockers for ${resolved.target}, but ${caveatHere.length} feature(s) need a change there:`,
       )
       for (const f of caveatHere) {
-        out.push(`  ⚠ ${f.label} — ${FEATURES[f.id].reasons[resolved.target]}`)
+        out.push(`  ⚠ ${f.label} - ${FEATURES[f.id].reasons[resolved.target]}`)
       }
-      out.push("\n(caveats don't fail the gate — run with --strict to treat them as blockers)")
+      out.push("\n(caveats don't fail the gate - run with --strict to treat them as blockers)")
     }
     return out.join("\n")
   }
@@ -595,12 +595,12 @@ export function renderReport(result: PortResult, opts: { readonly strict?: boole
   out.push(`✗ ${json.blocked.length} feature(s) block deploying to ${resolved.target}:`)
   for (const b of [...unsupported, ...caveats]) {
     const mark = b.verdict === "unsupported" ? "✗" : "⚠"
-    out.push(`  ${mark} ${FEATURES[b.feature].label} — ${b.verdict} on ${resolved.target}`)
+    out.push(`  ${mark} ${FEATURES[b.feature].label} - ${b.verdict} on ${resolved.target}`)
     out.push(`      fix: ${b.reason}`)
     out.push(`      at:  ${b.evidence.join(", ")}`)
   }
   if (!opts.strict && unsupported.length === 0) {
-    out.push("\n(only caveats — run with --strict to fail on these)")
+    out.push("\n(only caveats - run with --strict to fail on these)")
   }
   return out.join("\n")
 }
@@ -630,7 +630,7 @@ export interface RunPortOptions {
 }
 
 /**
- * Run `nifra port`: detect, resolve, render. Returns `true` when the run "passes" — meaning either the
+ * Run `nifra port`: detect, resolve, render. Returns `true` when the run "passes" - meaning either the
  * gate is off, or the gate is on and nothing blocks. The caller maps `false` → exit 1.
  *
  * The gate fires when `--ci` is passed OR a `--target` is set (an explicit target signals intent to

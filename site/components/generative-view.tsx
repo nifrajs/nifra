@@ -15,7 +15,7 @@ const CARD_STYLE: React.CSSProperties = {
 }
 
 /**
- * **Starter component** — auto-renders arbitrary structured data (e.g. an MCP `.tool()` / agent result) as a
+ * **Starter component** - auto-renders arbitrary structured data (e.g. an MCP `.tool()` / agent result) as a
  * table, cards, metric tiles, or a detail list, chosen from an explicit `intent` (or `_meta.ui.intent`) or a
  * shape heuristic. Meant as a drop-in for previewing agent output, **not** a hardened data grid: it uses
  * array-index keys, inline styles keyed to the host's CSS variables (`--fg`, `--panel`, `--line-2`, …), and

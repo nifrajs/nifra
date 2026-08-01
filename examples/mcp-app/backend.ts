@@ -1,5 +1,5 @@
 /**
- * An MCP App built with nifra — a normal nifra backend that also exposes an MCP server (with an
+ * An MCP App built with nifra - a normal nifra backend that also exposes an MCP server (with an
  * interactive `ui://` widget) at `POST /mcp`. Run it and point an MCP Apps host (MCPJam, ChatGPT Apps,
  * Goose) at the endpoint; calling `list_orders` renders the {@link ordersWidget} table.
  *
@@ -14,14 +14,14 @@ import { reactWidget } from "@nifrajs/mcp/react"
 import { hostDemoPage } from "./host-demo"
 import { ordersWidget } from "./widget"
 
-// In-memory demo data — single-process example only, NOT a production pattern.
+// In-memory demo data - single-process example only, NOT a production pattern.
 const ORDERS = [
   { id: 1001, customer: "Ada Lovelace", total: 42 },
   { id: 1002, customer: "Alan Turing", total: 128 },
   { id: 1003, customer: "Grace Hopper", total: 7 },
 ]
 
-// A host's design tokens (here: an example theme preset — shadcn semantic HSL tokens). The harness pushes
+// A host's design tokens (here: an example theme preset - shadcn semantic HSL tokens). The harness pushes
 // these over the bridge so the widget restyles to match the embedding app. Swap to demo a different theme.
 const HOST_THEME = {
   mode: "light",
@@ -73,7 +73,7 @@ const mcp = createMcpServer({
   version: "1.0.0",
   tools: [listOrders, listOrdersReact],
   widgets: [ordersWidget, ordersReactWidget],
-  health: "orders MCP App (nifra) — POST JSON-RPC 2.0 here. Tools: list_orders, list_orders_react.",
+  health: "orders MCP App (nifra) - POST JSON-RPC 2.0 here. Tools: list_orders, list_orders_react.",
 })
 
 /** The nifra app. Handlers may return a raw `Response`, so mounting the MCP server is one line per verb. */

@@ -2,8 +2,8 @@ import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 import { type Todo, todos } from "./db"
 
-// A typed todos API backed by SQLite. nifra owns the HTTP boundary — routing, validation, and the
-// end-to-end-typed client — while the database is plain `bun:sqlite`. Point `./db` at Postgres,
+// A typed todos API backed by SQLite. nifra owns the HTTP boundary - routing, validation, and the
+// end-to-end-typed client - while the database is plain `bun:sqlite`. Point `./db` at Postgres,
 // Drizzle, or D1 and these routes don't change. No frontend: this is nifra used as a backend.
 export const app = server()
   .get("/todos", (): Todo[] => todos.list())
@@ -12,7 +12,7 @@ export const app = server()
     const todo = Number.isInteger(id) ? todos.get(id) : null
     return todo ?? new Response("Not found", { status: 404 })
   })
-  // The body is validated (1–500 chars) before the handler runs — invalid input never reaches the DB.
+  // The body is validated (1-500 chars) before the handler runs - invalid input never reaches the DB.
   .post("/todos", { body: t.object({ text: t.string({ minLength: 1, maxLength: 500 }) }) }, (c) =>
     todos.create(c.body.text),
   )

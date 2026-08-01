@@ -1,4 +1,4 @@
-/** Realistic-shape Elysia server — identical work to nifra-rw.ts via Elysia idioms. */
+/** Realistic-shape Elysia server - identical work to nifra-rw.ts via Elysia idioms. */
 import { Elysia, t as et } from "elysia"
 
 const ORDERS = Array.from({ length: 25 }, (_, i) => ({

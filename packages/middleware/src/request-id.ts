@@ -10,7 +10,7 @@ export interface RequestIdOptions {
 /**
  * A {@link definePlugin} plugin that gives every request a stable id: it reuses an inbound
  * `x-request-id` (or generates one), exposes it on the handler context as **`c.requestId`** (typed,
- * threaded by `derive`), and echoes it on the response header. Idempotent — applying it twice is a
+ * threaded by `derive`), and echoes it on the response header. Idempotent - applying it twice is a
  * no-op.
  *
  * ```ts

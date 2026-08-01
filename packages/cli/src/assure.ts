@@ -1,4 +1,4 @@
-/** `nifra assure` — evaluate a project's reflected routes against `nifra.assurance.ts`. */
+/** `nifra assure` - evaluate a project's reflected routes against `nifra.assurance.ts`. */
 
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
@@ -24,7 +24,7 @@ export async function loadAssuranceConfig(
   const path = resolve(cwd, configPath)
   if (!existsSync(path)) {
     throw new Error(
-      `[nifra] route assurance config not found: ${path} — create ${DEFAULT_ASSURANCE_CONFIG} with a default defineAssuranceConfig({ source, policy }) export.`,
+      `[nifra] route assurance config not found: ${path} - create ${DEFAULT_ASSURANCE_CONFIG} with a default defineAssuranceConfig({ source, policy }) export.`,
     )
   }
   const specifier = pathToFileURL(path)

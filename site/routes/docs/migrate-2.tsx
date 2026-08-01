@@ -4,7 +4,7 @@ import { pageMeta } from "../../meta"
 export const hydrate = false
 
 export const meta = pageMeta(
-  "Nifra 2.0 migration guide — upgrade from 1.x",
+  "Nifra 2.0 migration guide - upgrade from 1.x",
   "Upgrade a Nifra 1.x application to 2.0: automated package and import moves, opt-in runtime plugins, client and web changes, external auth mounts, and release verification.",
 )
 
@@ -17,7 +17,7 @@ const COMMANDS = [
 ].join("\n")
 
 const OPTIONAL_PLUGINS = [
-  "// doc-check: skip — migration fragment uses the application's existing stores and handlers",
+  "// doc-check: skip - migration fragment uses the application's existing stores and handlers",
   "// 1.x",
   'import "@nifrajs/core/ws"',
   "const app = server({ idempotencyStore, effectLedger: { sink } })",
@@ -40,7 +40,7 @@ const OPTIONAL_PLUGINS = [
 ].join("\n")
 
 const BUDGET = [
-  "// doc-check: skip — before/after migration block includes the removed 1.x package",
+  "// doc-check: skip - before/after migration block includes the removed 1.x package",
   "// 1.x",
   'import { createRequestBudget } from "@nifrajs/budget"',
   "",
@@ -49,7 +49,7 @@ const BUDGET = [
 ].join("\n")
 
 const WEB_MOUNT = [
-  "// doc-check: skip — fragment uses the application adapter, manifest, and client entry",
+  "// doc-check: skip - fragment uses the application adapter, manifest, and client entry",
   'import { inProcessClient } from "@nifrajs/client"',
   'import { createWebApp } from "@nifrajs/web"',
   'import { backend } from "./backend"',

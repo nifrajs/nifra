@@ -3,7 +3,7 @@ import type { MetaArgs } from "@nifrajs/web"
 import { createSignal } from "solid-js"
 import type { backend } from "../../backend"
 
-// Param route + typed loader — proves dynamic segments + data loading SSR on the edge.
+// Param route + typed loader - proves dynamic segments + data loading SSR on the edge.
 export async function loader({ api, params }: LoaderArgs<typeof backend>) {
   const res = await api.users({ id: params.id ?? "" }).get()
   return { user: res.data }

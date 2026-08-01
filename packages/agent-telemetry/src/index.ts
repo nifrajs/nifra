@@ -1,11 +1,11 @@
 /**
- * `@nifrajs/agent-telemetry` — child-span instrumentation for AI agent tool calls.
+ * `@nifrajs/agent-telemetry` - child-span instrumentation for AI agent tool calls.
  *
  * Extends `@nifrajs/otel`'s span model: when an AI agent invokes a tool via
  * `/_nifra/tool/*` or the MCP endpoint, this middleware creates a child span
  * tracking tool name, input size, output size, and execution time.
  *
- * **Zero production overhead when not registered** — Nifra's `bare` flag keeps
+ * **Zero production overhead when not registered** - Nifra's `bare` flag keeps
  * routes on the sync fast path unless hooks are present at registration time.
  */
 
@@ -49,7 +49,7 @@ interface HookContext {
  *
  * Creates child spans for requests targeting tool endpoints (`/_nifra/tool/*`)
  * or the MCP endpoint (`/mcp`). Non-matching requests pass through with zero overhead
- * (a single `startsWith` check — O(1), no regex).
+ * (a single `startsWith` check - O(1), no regex).
  */
 export function agentTelemetry(options: AgentTelemetryOptions) {
   const toolPrefix = options.toolPathPrefix ?? "/_nifra/tool/"

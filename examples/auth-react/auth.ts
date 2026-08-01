@@ -8,7 +8,7 @@ export interface SessionData extends Record<string, unknown> {
 
 // LAZY on purpose. A route module (index.tsx) imports this for its loader, and that route is *also*
 // bundled for the browser. If we called `createSessions(...)` at module top-level, that call is a
-// side effect Bun can't tree-shake — so the store + `Bun.env` would leak into the client chunk and
+// side effect Bun can't tree-shake - so the store + `Bun.env` would leak into the client chunk and
 // crash hydration. With only declarations here (no top-level call), the module is side-effect-free, so
 // once the client strips the loader the whole import drops. Server-only singletons → lazy.
 let manager: SessionManager<SessionData> | undefined

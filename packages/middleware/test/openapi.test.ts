@@ -73,7 +73,7 @@ describe("buildOpenApiDocument()", () => {
 
   test("a BYO Standard Schema (no JSON Schema) emits the route but omits unintrospectable body/query", () => {
     // zod/valibot/arktype validate at runtime but expose no portable JSON Schema, so we don't fabricate
-    // a shape — the operation still appears, detail comes from `options.operations`.
+    // a shape - the operation still appears, detail comes from `options.operations`.
     const doc = build([{ method: "POST", path: "/items", schema: stubSchema }])
     const op = doc.paths["/items"]?.post
     expect(op).toBeDefined()
@@ -135,7 +135,7 @@ describe("buildOpenApiDocument()", () => {
 })
 
 describe("openapi() plugin", () => {
-  test("serves the generated document at /openapi.json (lazy — sees later routes)", async () => {
+  test("serves the generated document at /openapi.json (lazy - sees later routes)", async () => {
     const app = server()
       .use(openapi({ info: { title: "My API", version: "1.0.0" } }))
       .get("/users/:id", (c) => ({ id: c.params.id })) // registered AFTER the plugin

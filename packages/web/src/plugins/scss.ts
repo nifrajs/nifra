@@ -1,17 +1,17 @@
 /**
- * `@nifrajs/web/plugins/scss` — a SASS/SCSS (`*.scss`, `*.sass`) Bun plugin, in its OWN module so the SSR
+ * `@nifrajs/web/plugins/scss` - a SASS/SCSS (`*.scss`, `*.sass`) Bun plugin, in its OWN module so the SSR
  * preload registers it BEFORE any Sass file loads. Mirrors the `@nifrajs/web-vue/plugin` seam: pass
  * `"dom"` for the client bundle (`buildClient({ plugins: [...] })`) and preload `"ssr"` for the server
  * (`bun --preload`).
  *
- * The Dart Sass compiler is an **optional peer** (`sass`, or the faster `sass-embedded` — same API), not
+ * The Dart Sass compiler is an **optional peer** (`sass`, or the faster `sass-embedded` - same API), not
  * a hard dependency: it's loaded on first Sass file and fails loud with an install hint if absent. Pass
  * your own `compiler` to override (e.g. `sass-embedded`, or a stub in tests).
  *
  * Composes with CSS Modules: a `*.module.scss` / `*.module.sass` file is compiled to CSS and then run
  * through the same scoped-class transform as `@nifrajs/web/plugins/css-modules`, so its `import styles`
  * yields the `{ original: scoped }` map (SSR/dom class-map parity included). A plain `*.scss` is a
- * side-effect import — its CSS is bundled (dom) and it resolves to an empty module (ssr).
+ * side-effect import - its CSS is bundled (dom) and it resolves to an empty module (ssr).
  */
 import { dirname } from "node:path"
 import { pathToFileURL } from "node:url"

@@ -91,7 +91,7 @@ afterAll(() => {
   instance.stop()
 })
 
-describe("client — success paths", () => {
+describe("client - success paths", () => {
   test("GET static returns the full typed Result", async () => {
     expect(await api.health.get()).toEqual({
       ok: true,
@@ -169,7 +169,7 @@ describe("client — success paths", () => {
   })
 })
 
-describe("client — headers", () => {
+describe("client - headers", () => {
   test("default and per-call headers (per-call wins)", async () => {
     const authed = client<App>(url(), { headers: { authorization: "Bearer base" } })
     expect((await authed.secure.get()).data).toEqual({ auth: "Bearer base" })
@@ -179,7 +179,7 @@ describe("client — headers", () => {
   })
 })
 
-describe("client — error paths (never throws)", () => {
+describe("client - error paths (never throws)", () => {
   const raw = (): RawClient => client<App>(url()) as unknown as RawClient
 
   test("404 → not_found (failure `data` carries the parsed error body)", async () => {
@@ -222,7 +222,7 @@ describe("client — error paths (never throws)", () => {
     const res = await api.orders.post({ name: "missing" })
     expect(res.status).toBe(404)
     if (!res.ok && res.status === 404) {
-      // Type-level: `status === 404` narrows `res.data` to the declared 404 error body — accessing
+      // Type-level: `status === 404` narrows `res.data` to the declared 404 error body - accessing
       // `.code`/`.item` only compiles because the failure union is status-discriminated, not the
       // success `{ orderId }` (nor a smeared union of every error body).
       const code: "no_such_item" = res.data.code
@@ -247,7 +247,7 @@ describe("client — error paths (never throws)", () => {
 })
 
 describe("testClient", () => {
-  test("is the in-process test client — full lifecycle, typed, never throws", async () => {
+  test("is the in-process test client - full lifecycle, typed, never throws", async () => {
     const app = server()
       .get("/ping", () => ({ pong: true }))
       .get("/users/:id", (c) => ({ id: c.params.id }))

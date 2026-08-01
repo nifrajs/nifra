@@ -1,8 +1,8 @@
 /**
- * `@nifrajs/web/client` — the agnostic browser layer for client-side navigation. It wires the pure
+ * `@nifrajs/web/client` - the agnostic browser layer for client-side navigation. It wires the pure
  * router store ({@link ClientRouter}) to the browser: `pushState` on navigate, `popstate` →
  * navigate, and delegated interception of same-origin `<a>` clicks (client transition instead of
- * a full page load). DOM-only — never imported on the server, so the store stays SSR-safe.
+ * a full page load). DOM-only - never imported on the server, so the store stays SSR-safe.
  */
 import { trustedHeadAttributes } from "./internal/head-attributes.ts"
 import { EXECUTABLE_SCRIPT_TYPES, INERT_SCRIPT_TYPES } from "./internal/script-types.ts"
@@ -78,7 +78,7 @@ export function installHistory(
     return document.getElementById(id)
   }
 
-  // Wrap a navigation's render in a View Transition when the browser supports it — a graceful
+  // Wrap a navigation's render in a View Transition when the browser supports it - a graceful
   // enhancement (no-op elsewhere). The captured "before" is held across the data fetch, so pair
   // with link prefetch (hover/focus warms the cache) to keep most transitions instant.
   type ViewTransition = {
@@ -97,7 +97,7 @@ export function installHistory(
     }
     const vt = doc.startViewTransition(run)
     // Rapid in-app clicks supersede an in-flight transition; the browser skips it and rejects its
-    // promises. Reasons vary by engine — InvalidStateError "Transition was aborted because of
+    // promises. Reasons vary by engine - InvalidStateError "Transition was aborted because of
     // invalid state", or AbortError "Transition was skipped". The navigation still completes, so
     // we swallow these expected aborts rather than let them surface as unhandled rejections.
     for (const p of [vt.ready, vt.finished, vt.updateCallbackDone]) p.catch(() => {})
@@ -234,9 +234,9 @@ export function installHistory(
     const url = new URL(anchor.href)
     if (url.origin !== location.origin) return null
     if (router.match(url.pathname) === null) return null
-    // A same-page fragment link (`#section`, `/here#section` — only the hash differs) → null: let the
+    // A same-page fragment link (`#section`, `/here#section` - only the hash differs) → null: let the
     // browser do its native in-page anchor jump. Intercepting it would drop the fragment from the URL
-    // and force a scroll-to-top (a fresh push restores [0,0]) — i.e. break every in-page anchor (AUDIT
+    // and force a scroll-to-top (a fresh push restores [0,0]) - i.e. break every in-page anchor (AUDIT
     // H2). (A same-page link with NO hash still soft-navigates, as before.)
     if (url.pathname === location.pathname && url.search === location.search && url.hash !== "")
       return null
@@ -345,20 +345,20 @@ export function installHistory(
 
 /**
  * Intercept submissions of same-origin `<form method="post">` whose action targets an app route:
- * submit via the router (no full reload — POST the action, then revalidate the active loader). On
+ * submit via the router (no full reload - POST the action, then revalidate the active loader). On
  * failure it falls back to a native submit, so the form still works. Returns a teardown function.
  */
 /**
  * Sync the document head to a route's resolved {@link Meta} on client navigation. Sets the title
- * (when provided) and replaces the **managed** (`data-nifra`) `<meta>`/`<link>` tags — static head
+ * (when provided) and replaces the **managed** (`data-nifra`) `<meta>`/`<link>` tags - static head
  * content (charset, hand-written tags) is never touched. SSR injects the same `data-nifra` tags, so
  * the first navigation cleanly takes over from the server-rendered head.
  */
 export function applyHead(head: Meta): void {
   if (head.title !== undefined) document.title = head.title
-  // `<html lang>`/`<html dir>` — applied AUTHORITATIVELY (unlike `title`, which is left alone when the
+  // `<html lang>`/`<html dir>` - applied AUTHORITATIVELY (unlike `title`, which is left alone when the
   // route omits it), mirroring the SSR shell's defaulting exactly: `lang` falls back to `"en"`, `dir` is
-  // removed when unset. Anything laxer drifts on a multilingual site — navigating /ur → /en would leave
+  // removed when unset. Anything laxer drifts on a multilingual site - navigating /ur → /en would leave
   // `dir="rtl"` behind and lay the English page out right-to-left, a bug a hard reload would not show.
   const root = document.documentElement
   root.setAttribute("lang", head.lang ?? "en")
@@ -366,7 +366,7 @@ export function applyHead(head: Meta): void {
   else root.setAttribute("dir", head.dir)
   for (const el of document.head.querySelectorAll("[data-nifra]")) el.remove()
   // Values follow the same HTML attribute conventions as the SSR `tagAttrs`: a string sets the value,
-  // `true` sets the bare boolean attribute, `false`/`undefined` skip it — so a soft-nav head matches
+  // `true` sets the bare boolean attribute, `false`/`undefined` skip it - so a soft-nav head matches
   // the server-rendered one exactly (no hydration drift on the managed tags).
   const add = (tag: "meta" | "link", attrs: Readonly<object>): void => {
     const trusted = trustedHeadAttributes(tag, attrs)
@@ -380,9 +380,9 @@ export function applyHead(head: Meta): void {
   }
   for (const m of head.meta ?? []) add("meta", m)
   for (const l of head.link ?? []) add("link", l)
-  // `<script>` slot (JSON-LD etc.) — soft-nav parity with the SSR `headTags` script render. Set the body
+  // `<script>` slot (JSON-LD etc.) - soft-nav parity with the SSR `headTags` script render. Set the body
   // via `textContent`, NOT `innerHTML`: `textContent` assigns the raw string without HTML re-parsing, so
-  // a `</script>` (or `<!--`/`]]>`) payload in the JSON-LD can't break out — the DOM-native equivalent of
+  // a `</script>` (or `<!--`/`]]>`) payload in the JSON-LD can't break out - the DOM-native equivalent of
   // the server's `escapeScriptContent`. `type` defaults to `application/ld+json` (matching the SSR side).
   for (const s of head.script ?? []) {
     const type = s.type ?? "application/ld+json"
@@ -430,7 +430,7 @@ export function installForms(router: ClientRouter): () => void {
     // actionData drives the update); absent or any other value keeps the default revalidation.
     const revalidate = form.dataset.nifraRevalidate !== "false"
     router.submit(url.pathname + url.search, new FormData(form), { revalidate }).catch(() => {
-      form.submit() // data submit failed — fall back to a full-page POST
+      form.submit() // data submit failed - fall back to a full-page POST
     })
   }
   document.addEventListener("submit", onSubmit)
@@ -442,7 +442,7 @@ export function installForms(router: ClientRouter): () => void {
  * and fires a one-shot `nifra:hydrated` event. The generated client entry calls this on the next frame
  * after the adapter mounts (so every framework binding gets it), letting apps gate a custom JS-only
  * interaction that would otherwise fire before its handler is attached. Idempotent. nifra's own
- * progressive-enhancement forms/links don't need it — only hand-wired onClick/onSubmit handlers with no
+ * progressive-enhancement forms/links don't need it - only hand-wired onClick/onSubmit handlers with no
  * native fallback do. See the Hydration guide.
  */
 export function signalHydrated(): void {

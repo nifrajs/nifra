@@ -1,5 +1,5 @@
 /**
- * `@nifrajs/auth` — session primitives for nifra. Signed-cookie + server-store sessions, with the same
+ * `@nifrajs/auth` - session primitives for nifra. Signed-cookie + server-store sessions, with the same
  * pluggable-store + prod-guard discipline as the ISR cache. **Bring your own identity** (Better Auth,
  * Lucia, your own OAuth/password logic); nifra owns the session cookie, store, CSRF, and route guards.
  */

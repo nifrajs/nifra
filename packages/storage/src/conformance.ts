@@ -46,7 +46,7 @@ const hasMove = (storage: StorageAdapter): storage is MovableStorageAdapter =>
  * only after proving byte + metadata round-trips, overwrite, missing/delete semantics, prefix/limit listing,
  * and uniform unsafe-key rejection across every key-taking method. When the adapter also implements an
  * optional capability ({@link PagedStorageAdapter}, {@link PresignableStorageAdapter},
- * {@link MovableStorageAdapter}), that capability's contract is proven too — implementing a capability
+ * {@link MovableStorageAdapter}), that capability's contract is proven too - implementing a capability
  * partially or unsafely fails conformance rather than silently escaping it.
  */
 export async function assertStorageAdapterConformance(

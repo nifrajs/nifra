@@ -35,7 +35,7 @@ describe("data-classification helpers", () => {
   })
 })
 
-describe("route classification — reflection + lockfile", () => {
+describe("route classification - reflection + lockfile", () => {
   const policy = {
     definitions: [{ id: "db.read", zone: "operational", access: "read" }],
     provenance: { imports: [], forbiddenImports: [] },

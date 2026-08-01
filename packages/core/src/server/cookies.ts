@@ -1,5 +1,5 @@
 /**
- * Cookie primitives — parse a request `Cookie` header, serialize a `Set-Cookie`, and sign/verify a
+ * Cookie primitives - parse a request `Cookie` header, serialize a `Set-Cookie`, and sign/verify a
  * value with HMAC-SHA256 via **WebCrypto** (`crypto.subtle`), so they're portable across Bun, Node,
  * Deno, and workerd with no `node:crypto` dependency. Pure + runtime-agnostic: `c.cookies` (read) and
  * `c.set.cookie` (write) build on these, and `@nifrajs/auth` builds sessions on top.
@@ -22,9 +22,9 @@ export interface CookieOptions {
 
 // RFC 6265 cookie-name token: visible ASCII minus separators/whitespace/controls.
 const COOKIE_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
-const MAX_COOKIE_BYTES = 4096 // browsers cap a cookie near 4 KB — reject oversized before the wire
+const MAX_COOKIE_BYTES = 4096 // browsers cap a cookie near 4 KB - reject oversized before the wire
 
-/** True if `v` contains a character illegal in a cookie attribute (control char or `;` separator) —
+/** True if `v` contains a character illegal in a cookie attribute (control char or `;` separator) -
  * the header-injection guard for dev-supplied `Path`/`Domain`. */
 const hasIllegalChar = (v: string): boolean => {
   for (let i = 0; i < v.length; i++) {
@@ -35,7 +35,7 @@ const hasIllegalChar = (v: string): boolean => {
 }
 
 const safeDecode = (v: string): string => {
-  // No `%` ⇒ nothing to decode — skip the call AND its try frame (profiled: cookie values are
+  // No `%` ⇒ nothing to decode - skip the call AND its try frame (profiled: cookie values are
   // overwhelmingly plain; this was ~3% of a realistic request).
   if (!v.includes("%")) return v
   try {
@@ -46,7 +46,7 @@ const safeDecode = (v: string): string => {
 }
 
 /** Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are
- * skipped rather than throwing — a junk `Cookie` header shouldn't fail the request.
+ * skipped rather than throwing - a junk `Cookie` header shouldn't fail the request.
  *
  * Hand-rolled index walk instead of `split(";")` + `trim()` chains: those allocated an array + up
  * to three substrings per pair and showed up at ~6% of a realistic (auth + cookie) request. Same
@@ -97,9 +97,9 @@ export function parseCookies(header: string | null | undefined): Record<string, 
 }
 
 /**
- * Serialize a `Set-Cookie` header value. Pure — applies **no** security defaults (the caller, e.g.
+ * Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g.
  * `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a
- * header-injecting `Path`/`Domain`, a non-integer `maxAge`, or an oversized result — a serialization
+ * header-injecting `Path`/`Domain`, a non-integer `maxAge`, or an oversized result - a serialization
  * bug should fail loudly, not silently emit a cookie the browser drops.
  */
 export function serializeCookie(name: string, value: string, options: CookieOptions = {}): string {
@@ -170,7 +170,7 @@ const fromBase64Url = (s: string): Uint8Array<ArrayBuffer> | null => {
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
     return bytes
   } catch {
-    return null // not valid base64 — treat as a bad signature
+    return null // not valid base64 - treat as a bad signature
   }
 }
 

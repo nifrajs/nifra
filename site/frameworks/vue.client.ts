@@ -1,5 +1,5 @@
 /**
- * Vue hydration entry for the /frameworks live demo — same shape as the React entry, against the Vue
+ * Vue hydration entry for the /frameworks live demo - same shape as the React entry, against the Vue
  * catalog component (`bench/ssr/nifra-vue`). Chain `[App]` matches the Vue SSR fragment.
  */
 

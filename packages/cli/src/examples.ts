@@ -1,8 +1,8 @@
 /**
- * `nifra_example` — verified, copy-pasteable code examples for agents. The corpus is `examples.json`
+ * `nifra_example` - verified, copy-pasteable code examples for agents. The corpus is `examples.json`
  * (written into this package by `bun run gen:llms`): the same doc snippets `check:docs` typechecks
  * against the live `@nifrajs/*` API. So every example this returns is GUARANTEED to compile against the
- * installed version — the antidote to an agent hallucinating a framework API from stale training.
+ * installed version - the antidote to an agent hallucinating a framework API from stale training.
  *
  * Keyword-scored over each example's name/topic/slug (curated identifiers, heavily weighted) and its
  * code body. No query → a grouped index of what's available (the cheap discovery call).
@@ -12,9 +12,9 @@ import { countBodyHits, queryTermGroups, tokenize, tokenSetHas } from "./search-
 
 export interface Example {
   readonly name: string
-  /** The doc page's title, e.g. "Nifra — Auth & sessions". */
+  /** The doc page's title, e.g. "Nifra - Auth & sessions". */
   readonly topic: string
-  /** The doc page slug, e.g. "auth" — a short, matchable tag. */
+  /** The doc page slug, e.g. "auth" - a short, matchable tag. */
   readonly slug: string
   readonly code: string
 }
@@ -63,19 +63,19 @@ export function renderExamplesResult(
     const index = [...byTopic.entries()]
       .map(([topic, names]) => `- **${topic}**: ${names.join(", ")}`)
       .join("\n")
-    return `# nifra examples — index (${examples.length} verified snippets; pass \`query\` to fetch code)\n\nEvery snippet is typechecked against the installed nifra version — prefer these over recalling an API.\n\n${index}`
+    return `# nifra examples - index (${examples.length} verified snippets; pass \`query\` to fetch code)\n\nEvery snippet is typechecked against the installed nifra version - prefer these over recalling an API.\n\n${index}`
   }
   const matches = searchExamples(examples, query, limit)
   if (matches.length === 0) {
     return `No examples matched ${JSON.stringify(query)}. Call without a query for the index, or try a broader term (e.g. "auth", "upload", "isr", "client").`
   }
   return matches
-    .map((m) => `## ${m.name} — ${m.topic}\n\n\`\`\`ts\n${m.code}\n\`\`\``)
+    .map((m) => `## ${m.name} - ${m.topic}\n\n\`\`\`ts\n${m.code}\n\`\`\``)
     .join("\n\n---\n\n")
 }
 
 /** Load the bundled example corpus. Resolves relative to this module so it works from `src/` (repo dev)
- * and `dist/` (published) alike — `docs/examples.json` sits at the package root next to both. */
+ * and `dist/` (published) alike - `docs/examples.json` sits at the package root next to both. */
 export async function loadExamplesCorpus(): Promise<Example[] | undefined> {
   const url = new URL("../docs/examples.json", import.meta.url)
   try {

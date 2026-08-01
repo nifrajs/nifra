@@ -154,7 +154,7 @@ class UnboundedRequestBudget implements RequestBudget {
 
 /**
  * Create a budget from an admitted absolute deadline. Wall time is sampled once; every subsequent
- * `remaining()` call is monotonic. This function does not arm a timer—the owner of `signal` does.
+ * `remaining()` call is monotonic. This function does not arm a timer-the owner of `signal` does.
  */
 export function createRequestBudget(options: CreateRequestBudgetOptions): RequestBudget {
   assertDeadline(options.deadline)

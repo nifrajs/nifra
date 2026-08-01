@@ -1,5 +1,5 @@
 /**
- * In-process `app.fetch()` microbenchmark — no network, no load generator, so it
+ * In-process `app.fetch()` microbenchmark - no network, no load generator, so it
  * isolates the framework's per-request cost (route match → context → lifecycle →
  * handler → serialize). Measures a bare route vs. the same route behind a
  * derive + beforeHandle + afterHandle stack: the delta is the middleware overhead
@@ -39,7 +39,7 @@ const mwOps = await opsPerSec(withMiddleware, 21, 5000)
 const overheadNs = 1e9 / mwOps - 1e9 / bareOps
 const overheadPct = ((bareOps - mwOps) / bareOps) * 100
 
-console.log(`\n  in-process app.fetch() — Bun ${Bun.version}\n`)
+console.log(`\n  in-process app.fetch() - Bun ${Bun.version}\n`)
 console.log(
   `  bare route                  ${Math.round(bareOps).toLocaleString().padStart(10)} req/s`,
 )

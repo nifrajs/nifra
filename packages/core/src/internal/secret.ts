@@ -7,7 +7,7 @@ const MIN_SECRET_BYTES = 32
 const SECRET_ENCODER = new TextEncoder()
 
 /**
- * Boot-time guard: reject an HMAC secret under 256 bits, loudly, at construction — never at the
+ * Boot-time guard: reject an HMAC secret under 256 bits, loudly, at construction - never at the
  * first request. UTF-8 byte length (not char count), so a multibyte secret is measured honestly.
  * The single source of truth for the framework's secret-strength floor; every HMAC entry point
  * (signed cookies, `@nifrajs/auth` sessions, webhook verification, signed upload/image URLs) routes

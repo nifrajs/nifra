@@ -1,7 +1,7 @@
 /**
- * Solid MDX runtime — the `useMDXComponents` provider that `@nifrajs/web-solid/mdx`'s compiled MDX imports
+ * Solid MDX runtime - the `useMDXComponents` provider that `@nifrajs/web-solid/mdx`'s compiled MDX imports
  * (via `@mdx-js`'s `providerImportSource`). MDX emits intrinsic elements (`h1`, `p`, …) as *string*
- * component references, but Solid can't `createComponent("h1")` — its JSX is compile-time. So we map
+ * component references, but Solid can't `createComponent("h1")` - its JSX is compile-time. So we map
  * each Markdown-output tag to a Solid component that renders it via `<Dynamic component={tag}>`.
  */
 import { createComponent } from "solid-js"

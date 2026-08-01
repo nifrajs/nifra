@@ -1,5 +1,5 @@
 /**
- * The `tracing()` plugin — establishes a span per request, propagates W3C trace context, and exposes
+ * The `tracing()` plugin - establishes a span per request, propagates W3C trace context, and exposes
  * `c.trace` for forwarding the trace to downstream services. OpenTelemetry-compatible by wire format
  * (traceparent) and attribute names (HTTP semantic conventions); the span itself is exported through
  * your {@link ObservationAdapter} (bridge to the OTel SDK, or log via `consoleSpanExporter`).
@@ -33,7 +33,7 @@ export interface TracingOptions {
   readonly serviceName?: string
   /**
    * Set the outbound `traceparent` on the RESPONSE too (handy for browser/client correlation).
-   * Default false — most setups only propagate downstream, not back to the caller.
+   * Default false - most setups only propagate downstream, not back to the caller.
    */
   readonly responseHeader?: boolean
   /**

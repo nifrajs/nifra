@@ -13,7 +13,7 @@ import { viteLeakGuard } from "../src/plugins/vite-leak-guard.ts"
 /**
  * The Vite/Rollup production leak guards. Two layers of proof:
  *   1. `fromRollupBundle` maps a Rollup-shaped bundle into the neutral graph so the SAME guards fire.
- *   2. A REAL `vite build` with `viteLeakGuard()` fails on a real leak and passes on clean code — the
+ *   2. A REAL `vite build` with `viteLeakGuard()` fails on a real leak and passes on clean code - the
  *      part that matters, because the whole point is that a second production pipeline is safe.
  */
 
@@ -140,7 +140,7 @@ test("real vite build FAILS when a node: builtin reaches the client, with the sh
 
 test("real vite build FAILS when a server-only module reaches the client", async () => {
   // The marker resolves to @nifrajs/web/server-only; the guard flags any module importing it that lands
-  // in a client chunk. Uses a relative stub for the marker so the fixture needs no node_modules wiring —
+  // in a client chunk. Uses a relative stub for the marker so the fixture needs no node_modules wiring -
   // the guard matches on the resolved basename `server-only.ts`, which this satisfies.
   const result = await buildWithGuard({
     "server-only.ts": "export {}\n",

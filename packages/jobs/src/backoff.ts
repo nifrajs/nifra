@@ -33,5 +33,5 @@ export const fixedBackoff =
   () =>
     ms
 
-/** No delay — retry immediately. */
+/** No delay - retry immediately. */
 export const noBackoff: Backoff = () => 0

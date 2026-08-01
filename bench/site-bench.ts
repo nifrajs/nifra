@@ -48,12 +48,12 @@ export interface SiteBench {
 
 const SITE_DATA = join(import.meta.dir, "..", "site", "data", "benchmarks.json")
 
-/** Merge a partial set of slices over the current data — pure; only the passed slices change. */
+/** Merge a partial set of slices over the current data - pure; only the passed slices change. */
 export function mergeSiteBench(current: SiteBench, partial: Partial<SiteBench>): SiteBench {
   return { ...current, ...partial }
 }
 
-/** The HTTP slice the landing shows: Node, `GET /users/:id` (routing + path param — the representative
+/** The HTTP slice the landing shows: Node, `GET /users/:id` (routing + path param - the representative
  * read, and in the default core workload set), the framework set it compares on. Pulls each framework's
  * req/s from an aggregate's `results.node`; skips any that didn't run. */
 export function httpSliceFromNode(

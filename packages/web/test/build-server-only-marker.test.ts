@@ -16,11 +16,11 @@ import {
 
 // §3.3/§5.1: the `server-only` poison-import marker. A module of PURE server logic (no `node:` import,
 // not named `*.server`) opts in with `import "@nifrajs/web/server-only"` and the CLIENT build fails
-// loud — with the import chain — if it reaches a browser chunk. detectServerOnlyInClient is the pure
+// loud - with the import chain - if it reaches a browser chunk. detectServerOnlyInClient is the pure
 // core; it works off Bun's metafile graph (NOT the emitted text), so it survives minification.
 
 // A metafile where a route imports a module that opted into the marker (so the module is "marked"),
-// and that module lands in a client chunk. The marker module itself imports nothing — it must NOT be
+// and that module lands in a client chunk. The marker module itself imports nothing - it must NOT be
 // reported (it's the import target, not an opt-in).
 const META_MARKED = {
   inputs: {
@@ -56,7 +56,7 @@ test("flags the marked module + its chunk + the import chain (entry → marked) 
 })
 
 test("the marker module itself (imports nothing) is never reported [server-only]", () => {
-  // Only the marker module is in the graph, as a leaf — there is no module that *opts in*, so it's clean.
+  // Only the marker module is in the graph, as a leaf - there is no module that *opts in*, so it's clean.
   const found = detectServerOnly({
     inputs: { "node_modules/@nifrajs/web/dist/server-only.js": { imports: [] } },
     outputs: {
@@ -183,7 +183,7 @@ test("buildClient throws naming the marker + the chain when a marked module reac
   await expect(promise).rejects.toThrow(/\.\.\/secrets\.ts/)
 })
 
-test("the server build KEEPS a marker-importing module (no throw — marker is a server no-op)", async () => {
+test("the server build KEEPS a marker-importing module (no throw - marker is a server no-op)", async () => {
   // The marker is an empty module on the server, so a server-only module importing it builds fine and
   // the real module is retained (it runs server-side).
   writeFileSync(
@@ -236,6 +236,6 @@ test("buildClient is unaffected by a normal (unmarked) module", async () => {
 
 test("the marker module itself is empty / a no-op (re-exports nothing)", async () => {
   const mod = (await import("../src/server-only.ts")) as Record<string, unknown>
-  // No runtime exports — the marker is purely the import side-effect the build guard keys off.
+  // No runtime exports - the marker is purely the import side-effect the build guard keys off.
   expect(Object.keys(mod).filter((k) => k !== "default")).toHaveLength(0)
 })

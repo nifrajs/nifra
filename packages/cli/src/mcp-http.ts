@@ -1,13 +1,13 @@
 /**
- * The PUBLIC nifra docs MCP — Streamable-HTTP transport exposing the project-INDEPENDENT tools
+ * The PUBLIC nifra docs MCP - Streamable-HTTP transport exposing the project-INDEPENDENT tools
  * (`nifra_docs` + `nifra_example`) so any remote AI agent can learn nifra without a local checkout.
  * Both tools read the bundled corpus (llms-full.txt / examples.json shipped in this package) and ignore
- * `cwd`, so they reuse the exact definitions from {@link projectTools} — one source, no drift.
+ * `cwd`, so they reuse the exact definitions from {@link projectTools} - one source, no drift.
  *
  * The transport itself (body cap, CORS, JSON-RPC dispatch) lives in `@nifrajs/mcp/http`; this module is
  * the docs-specific layer over it: it supplies the bundled corpus tools and the `nifra-docs` server info.
- * {@link handleMcpHttp} self-hosts ANYWHERE Bun runs — the simplest path is `nifra docs-mcp` on a VPS; the
- * same handler runs on Cloudflare/Vercel edge (there inline the corpus as string imports — a Worker has no
+ * {@link handleMcpHttp} self-hosts ANYWHERE Bun runs - the simplest path is `nifra docs-mcp` on a VPS; the
+ * same handler runs on Cloudflare/Vercel edge (there inline the corpus as string imports - a Worker has no
  * filesystem). `export default { port, fetch }` also lets `bun run mcp-http.ts` serve it directly.
  */
 
@@ -29,7 +29,7 @@ export type { TypeEntry } from "./types-search.ts"
 const VERSION = "2.2.0"
 const SERVER_INFO = { name: "nifra-docs", version: VERSION }
 const DOCS_HEALTH =
-  "nifra docs MCP — POST JSON-RPC 2.0 here (methods: initialize, tools/list, tools/call). Tools: nifra_docs, nifra_example."
+  "nifra docs MCP - POST JSON-RPC 2.0 here (methods: initialize, tools/list, tools/call). Tools: nifra_docs, nifra_example."
 
 /** The two project-independent tools, reading the package's bundled corpus from disk (CLI use). */
 export function publicDocsTools(): McpTool[] {
@@ -57,7 +57,7 @@ export function handleMcpHttp(request: Request): Promise<Response> {
 /**
  * Worker/edge + local entry. `export default { fetch }` is the universal server shape: Cloudflare /
  * Vercel edge / Deno deploy use `fetch` (and ignore `port`); `bun run mcp-http.ts` auto-serves it on
- * `port` (PORT env, default 8787) — Bun serves a module's default-exported server, so NO manual
+ * `port` (PORT env, default 8787) - Bun serves a module's default-exported server, so NO manual
  * `Bun.serve` here (that would double-bind the port).
  */
 export default {

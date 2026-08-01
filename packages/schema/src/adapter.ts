@@ -11,7 +11,7 @@ import { ensureDefaultFormats } from "./formats.ts"
 
 /**
  * A `t` schema. It is a Standard Schema (so any nifra route validates it with no
- * special-casing) whose raw TypeBox definition stays reachable as `jsonSchema` —
+ * special-casing) whose raw TypeBox definition stays reachable as `jsonSchema` -
  * and because a TypeBox schema *is* a JSON Schema, that field is exactly what lets
  * `toOpenAPI` emit a real request/response schema for the route. BYO Standard
  * Schemas (zod/valibot/arktype) validate too but expose no JSON Schema, so only
@@ -39,13 +39,13 @@ function toIssue(error: { readonly message: string; readonly path: string }): St
  *
  * **Validation is fast where it can be, and works everywhere.** The first `validate`
  * builds a compiled `TypeCompiler` validator (codegen via `new Function`) and memoizes
- * it — composing schemas (`t.object({ a: t.string() })`) never compiles the inner
+ * it - composing schemas (`t.object({ a: t.string() })`) never compiles the inner
  * pieces; only a schema actually used to validate a request pays the one-time codegen
  * cost. On Bun and Node this is the only path and it is untouched.
  *
  * Edge runtimes (Cloudflare Workers, Vercel Edge, Deno Deploy) **forbid dynamic code
  * generation**, so that first compile throws there. We catch it once per schema and
- * fall back to TypeBox's eval-free `Value` checker — same semantics (and same global
+ * fall back to TypeBox's eval-free `Value` checker - same semantics (and same global
  * `FormatRegistry`, so `t.string({ format })` behaves identically), no `new Function`.
  * The branch is decided once and memoized, so the hot path is a single check either way.
  *
@@ -54,7 +54,7 @@ function toIssue(error: { readonly message: string; readonly path: string }): St
  *
  * `options.coerce` runs TypeBox's `Value.Convert` (string→number/integer/boolean, per the schema)
  * BEFORE validating. Query values always arrive as strings (`?limit=20` → `"20"`), so a query schema
- * with a numeric field can't validate without this — it's how `t.pageQuery` yields a real `number`.
+ * with a numeric field can't validate without this - it's how `t.pageQuery` yields a real `number`.
  * Leave it OFF (the default) for body/JSON schemas: a JSON number is already a number, and coercing
  * would silently accept `"20"` where the contract said `20`.
  */
@@ -72,7 +72,7 @@ export function fromTypeBox<T extends TSchema>(
       validate: (value: unknown): StandardResult<Static<T>> => {
         // Install the standard string formats before the first Compile/Check. Driven from this
         // reachable path (not a top-level import side effect) so a production bundle can't
-        // tree-shake the registration away — see ./formats.ts. Idempotent, ~free after first call.
+        // tree-shake the registration away - see ./formats.ts. Idempotent, ~free after first call.
         ensureDefaultFormats()
         // Coerce first when asked (query schemas): `Value.Convert` turns "20"→20 per the schema, so the
         // compiled/eval-free Check below sees the target type. A non-convertible value (e.g. "abc" for an

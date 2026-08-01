@@ -5,4 +5,4 @@ draft: false
 ---
 # First
 
-Hello **world** — a [link](/docs).
+Hello **world** - a [link](/docs).

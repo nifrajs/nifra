@@ -3,11 +3,11 @@ import { negotiateLocale } from "@nifrajs/i18n"
 import { I18nProvider, useT } from "@nifrajs/web-react/i18n"
 import { catalogs, locales } from "../catalogs"
 
-export const meta = { title: "nifra — i18n demo" }
+export const meta = { title: "nifra - i18n demo" }
 
 // Locale resolution: an explicit `?lang=` (the switcher) wins, else negotiate from Accept-Language
-// (a cookie could persist the choice). All browser-safe — negotiateLocale is pure + the catalogs are
-// data — so this loader bundles fine (no server-only leak). The loader returns ONLY the active locale's
+// (a cookie could persist the choice). All browser-safe - negotiateLocale is pure + the catalogs are
+// data - so this loader bundles fine (no server-only leak). The loader returns ONLY the active locale's
 // messages; the client provider + useT format from those serialized props.
 export async function loader({ request }: { request: Request }) {
   const fromQuery = new URL(request.url).searchParams.get("lang")

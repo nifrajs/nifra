@@ -82,10 +82,10 @@ export function fromBunMetafile(meta: BunMetafileLike | undefined): ClientModule
 /**
  * The slice of a Rollup/Vite output bundle this seam consumes. `OutputBundle` is
  * `Record<fileName, OutputChunk | OutputAsset>`; only chunks carry a module graph. Typed structurally
- * (no `rollup`/`vite` type dependency) — the fields are stable Rollup output API.
+ * (no `rollup`/`vite` type dependency) - the fields are stable Rollup output API.
  */
 export interface RollupChunkLike {
-  /** `"chunk"` for JS output, `"asset"` for CSS/static — assets have no module graph. */
+  /** `"chunk"` for JS output, `"asset"` for CSS/static - assets have no module graph. */
   readonly type?: string
   /** The entry module id this chunk was built for, if it is an entry. Rollup's `facadeModuleId`. */
   readonly facadeModuleId?: string | null
@@ -95,12 +95,12 @@ export interface RollupChunkLike {
 export type RollupBundleLike = Readonly<Record<string, RollupChunkLike>>
 
 /**
- * Adapt a Rollup/Vite output bundle to the neutral graph — the second producer the seam was built for.
+ * Adapt a Rollup/Vite output bundle to the neutral graph - the second producer the seam was built for.
  *
  * The bundle records which modules landed in which chunk (`moduleIds`) but NOT each module's import
  * edges, so those come from `importsOf`, which the caller backs with `this.getModuleInfo(id).importedIds`
- * inside a plugin hook (a test backs it with a plain map). Edges carry only the RESOLVED id — Rollup does
- * not keep the as-written specifier per edge — so `path` is set and `original` is left undefined. Both
+ * inside a plugin hook (a test backs it with a plain map). Edges carry only the RESOLVED id - Rollup does
+ * not keep the as-written specifier per edge - so `path` is set and `original` is left undefined. Both
  * guards read the resolved `path` as their fallback (a `node:` prefix, the `server-only` basename), so
  * detection is unaffected; only the human-readable chain shows resolved paths instead of as-written ones.
  *
@@ -136,7 +136,7 @@ export function fromRollupBundle(
       }
     }
     chunks[fileName] = {
-      // `facadeModuleId` is null for a shared/common chunk (no single entry) — omit it then, matching
+      // `facadeModuleId` is null for a shared/common chunk (no single entry) - omit it then, matching
       // how a non-entry Bun output omits `entryPoint`, so the guards' entry set stays the real entries.
       ...(output.facadeModuleId ? { entryPoint: output.facadeModuleId } : {}),
       modules: chunkModules,

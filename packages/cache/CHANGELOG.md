@@ -42,7 +42,7 @@
 
 ### Minor Changes
 
-- 8b5f045: feat(cache): add `@nifrajs/cache` — typed KV cache
+- 8b5f045: feat(cache): add `@nifrajs/cache` - typed KV cache
 
   TTL, stale-while-revalidate, tag invalidation, and single-flight stampede protection on a pluggable
   store (an in-memory default with lazy expiry + a tag index + an optional LRU cap; bring CF KV / Redis for

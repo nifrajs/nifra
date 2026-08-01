@@ -32,7 +32,7 @@ const idsWithEvidence = (state: MutScanState): string[] =>
 
 // --- Detection accuracy (the product) -----------------------------------------------------------------
 
-describe("scanFileForFeatures — detects each feature from its real signal", () => {
+describe("scanFileForFeatures - detects each feature from its real signal", () => {
   test("in-memory-session-store: MemorySessionStore + @nifrajs/auth import", () => {
     const src = [
       'import { MemorySessionStore } from "@nifrajs/auth"',
@@ -66,7 +66,7 @@ describe("scanFileForFeatures — detects each feature from its real signal", ()
       'const cron = createScheduler().add("x", "@daily", () => {})',
     ].join("\n")
     const state = scanOne("cron.ts", src)
-    // Evidence is the createScheduler() CALL site (line 2), not the import — the call is the usage.
+    // Evidence is the createScheduler() CALL site (line 2), not the import - the call is the usage.
     expect(state.evidence.get("in-process-cron")?.map((e) => e.line)).toEqual([2])
   })
 
@@ -111,7 +111,7 @@ describe("scanFileForFeatures — detects each feature from its real signal", ()
   })
 })
 
-describe("scanFileForFeatures — guards against false positives", () => {
+describe("scanFileForFeatures - guards against false positives", () => {
   test("MemorySessionStore WITHOUT @nifrajs/auth import is not flagged (same-named local class)", () => {
     const src = ["class MemorySessionStore {}", "const s = new MemorySessionStore()"].join("\n")
     const state = scanOne("local.ts", src)
@@ -230,7 +230,7 @@ async function makeApp(files: Record<string, string>): Promise<string> {
   return dir
 }
 
-describe("detectFeatures — project walk + WS hub post-pass + ignores", () => {
+describe("detectFeatures - project walk + WS hub post-pass + ignores", () => {
   test("WS route is detected when no createWebSocketHub exists in the project", async () => {
     const dir = await makeApp({
       "package.json": JSON.stringify({ name: "app" }),
@@ -278,7 +278,7 @@ describe("detectFeatures — project walk + WS hub post-pass + ignores", () => {
   })
 })
 
-describe("collectPortResult — gating + --json shape", () => {
+describe("collectPortResult - gating + --json shape", () => {
   test("clean app → portable, no blocks, ok:true, empty features", async () => {
     const dir = await makeApp({
       "package.json": JSON.stringify({ name: "app", scripts: { build: "bun run build.ts" } }),
@@ -333,7 +333,7 @@ describe("collectPortResult — gating + --json shape", () => {
     }
   })
 
-  test("the same Bun.* app is fine on bun (ok) — no blocks", async () => {
+  test("the same Bun.* app is fine on bun (ok) - no blocks", async () => {
     const dir = await makeApp({
       "package.json": JSON.stringify({ name: "app" }),
       "server.ts": "Bun.serve({ port: 3000, fetch: app.fetch })",
@@ -386,7 +386,7 @@ describe("collectPortResult — gating + --json shape", () => {
 
 // --- Target auto-detection ----------------------------------------------------------------------------
 
-describe("resolveTarget — flag override + auto-detection", () => {
+describe("resolveTarget - flag override + auto-detection", () => {
   test("--target wins and is validated", async () => {
     const dir = await makeApp({ "package.json": "{}" })
     try {

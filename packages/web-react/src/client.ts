@@ -1,6 +1,6 @@
 import { type MountRouterOptions, type RenderProps, searchOfChain } from "@nifrajs/web"
 /**
- * @nifrajs/web-react/client — React client runtime. `hydrate` hydrates a single SSR'd route;
+ * @nifrajs/web-react/client - React client runtime. `hydrate` hydrates a single SSR'd route;
  * `mountRouter` hydrates a stateful Router that subscribes to the agnostic store (via
  * `useSyncExternalStore`) and re-renders the matched chain on every client navigation (no full
  * reload). Kept in its own entry so server code stays out of the client bundle.
@@ -10,7 +10,7 @@ import { hydrateRoot } from "react-dom/client"
 import { compose } from "./compose.ts"
 import { setMountedRouter } from "./fetcher.ts"
 
-// The `_error` boundary chain element — defined in its own (react-dom-free) module, re-exported here so
+// The `_error` boundary chain element - defined in its own (react-dom-free) module, re-exported here so
 // nifra's client codegen resolves it from `@nifrajs/web-react/client` alongside `mountRouter`.
 export { errorBoundary } from "./error.ts"
 
@@ -21,7 +21,7 @@ export function hydrate(chain: readonly unknown[], props: RenderProps, container
 
 /**
  * Hydrate a stateful React Router. `useSyncExternalStore` subscribes to the agnostic store and
- * re-renders the matched layout chain on each store change — so client navigations swap routes
+ * re-renders the matched layout chain on each store change - so client navigations swap routes
  * without a full reload. `getServerSnapshot` (3rd arg) returns the initial state, matching the
  * SSR markup on hydration.
  */
@@ -40,12 +40,12 @@ export function mountRouter(options: MountRouterOptions): void {
       actionData: state.actionData,
       pending: state.pending,
       ...(state.pendingPath !== undefined ? { pendingPath: state.pendingPath } : {}),
-      // `params`/`path` feed the routing hooks (useParams/useLocation) via compose's RouterContext —
+      // `params`/`path` feed the routing hooks (useParams/useLocation) via compose's RouterContext -
       // sourced from router state here, matching the SSR render's request-derived values on hydration.
       params: state.params,
       path: state.path,
       search: searchOfChain(searchSchemas?.[state.routeId] ?? [], rawSearch),
-      // The in-flight submission (for optimistic UI) — spread only when present.
+      // The in-flight submission (for optimistic UI) - spread only when present.
       ...(state.submission ? { submission: state.submission } : {}),
     })
   }

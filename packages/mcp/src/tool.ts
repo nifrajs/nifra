@@ -1,10 +1,10 @@
 /**
- * `defineMcpTool` — author a tool for a nifra MCP server, optionally backed by an MCP Apps widget.
+ * `defineMcpTool` - author a tool for a nifra MCP server, optionally backed by an MCP Apps widget.
  *
  * The handler returns either a `string` (a plain text result, base MCP) or an object with `structuredContent`
  * (the data a linked {@link ./widget.ts | widget} renders) and/or `text` (the model-facing summary). When a
  * `widget` is passed, the tool advertises it via `_meta.ui.resourceUri` on both `tools/list` and each
- * `tools/call` result, so the host knows to render the widget — see {@link ../protocol.ts}.
+ * `tools/call` result, so the host knows to render the widget - see {@link ../protocol.ts}.
  */
 
 import type { McpContentBlock, McpTool, McpToolContext, McpToolResult } from "./protocol.ts"
@@ -20,7 +20,7 @@ export type McpToolHandlerResult =
       readonly text?: string
       /** Explicit content blocks (overrides `text`). */
       readonly content?: readonly McpContentBlock[]
-      /** Structured data for the linked widget — NOT added to the model's context. */
+      /** Structured data for the linked widget - NOT added to the model's context. */
       readonly structuredContent?: Record<string, unknown>
       readonly _meta?: Record<string, unknown>
       readonly isError?: boolean
@@ -30,7 +30,7 @@ export type McpToolHandlerResult =
  * A render-intent hint for GENERATIVE hosts: how to present the result's
  * `structuredContent` when the host renders its OWN themed UI rather than an iframe widget. The host maps
  * the intent to a component in its design system (a shadcn/Tailwind table, form, metric card, …). Open
- * union — pick a known tag or a custom one.
+ * union - pick a known tag or a custom one.
  */
 export type McpUiIntent =
   | "table"
@@ -64,7 +64,7 @@ export interface DefineMcpToolOptions<S extends StandardSchemaV1 = UntypedArgs> 
   /** Link a widget so the tool's result renders as interactive UI in MCP Apps hosts (iframe). */
   readonly widget?: McpWidget
   /** Render-intent for generative hosts that build their own themed UI from `structuredContent`. Lands
-   * in `_meta.ui.intent`. Independent of `widget` — a tool can offer both (widget for MCP Apps hosts,
+   * in `_meta.ui.intent`. Independent of `widget` - a tool can offer both (widget for MCP Apps hosts,
    * intent for generative builders). */
   readonly intent?: McpUiIntent
   readonly handler: (

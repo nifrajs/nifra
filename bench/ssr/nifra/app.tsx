@@ -2,7 +2,7 @@ import type { CatalogPageData } from "../shared/catalog.ts"
 
 export type PageData = CatalogPageData
 
-/** SSR bench page — identical workload across every nifra UI adapter. */
+/** SSR bench page - identical workload across every nifra UI adapter. */
 export function App(props: { data: PageData }) {
   return (
     <main>

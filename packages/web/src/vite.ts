@@ -1,14 +1,14 @@
 /**
- * `@nifrajs/web/vite` — a **dev-only** server with true HMR, backed by Vite in middleware mode. nifra's
+ * `@nifrajs/web/vite` - a **dev-only** server with true HMR, backed by Vite in middleware mode. nifra's
  * production pipeline stays Bun-native (`@nifrajs/web/build` → `Bun.build`); this is purely for the dev
  * loop. Bun's own HMR is dev-server-only and DCE's `import.meta.hot` under `Bun.build` (nifra's bundler),
  * so HMR comes from Vite + the framework's official Vite plugin (React Fast Refresh, Vue/Svelte/Solid
- * HMR) — which you inject via `plugins` (the same structural-injection idiom as the Bun/codec plugins).
+ * HMR) - which you inject via `plugins` (the same structural-injection idiom as the Bun/codec plugins).
  *
  * Flow: Vite serves + HMR-swaps the client modules (nifra's codegen'd entry + the route files); nifra
  * still **SSRs** each request, and the rendered HTML is run through `vite.transformIndexHtml` so Vite
  * injects its HMR client + the framework's refresh preamble. Node `http` (not `Bun.serve`) because
- * Vite's `middlewares` are Connect-style — it runs fine under Bun.
+ * Vite's `middlewares` are Connect-style - it runs fine under Bun.
  */
 import { writeFileSync } from "node:fs"
 import {
@@ -26,7 +26,7 @@ import { importVite } from "./internal/vite-import.ts"
 import { viteServerFnStub } from "./plugins/vite-server-fn.ts"
 import { viteServerOnlyEmpty } from "./plugins/vite-server-only.ts"
 
-/** Minimal app surface — `createWebApp(...)` satisfies it. */
+/** Minimal app surface - `createWebApp(...)` satisfies it. */
 interface FetchApp {
   fetch(request: Request): Response | Promise<Response>
 }
@@ -49,7 +49,7 @@ interface ViteModule {
   readonly rolldownVersion?: string
 }
 
-// `node:http` server type the request handler runs on (also the HMR WebSocket host — see below).
+// `node:http` server type the request handler runs on (also the HMR WebSocket host - see below).
 type NodeHttpServer = ReturnType<typeof createHttpServer>
 
 export interface ViteDevServerOptions {
@@ -70,10 +70,10 @@ export interface ViteDevServerOptions {
     clientEntry: string,
     load: (absolutePath: string) => Promise<unknown>,
   ) => FetchApp | Promise<FetchApp>
-  /** Vite plugins — inject your framework's official plugin, e.g. `[react()]`. */
+  /** Vite plugins - inject your framework's official plugin, e.g. `[react()]`. */
   readonly plugins?: readonly unknown[]
   /**
-   * Extra `resolve.conditions` prepended ahead of nifra's defaults — some frameworks need their own
+   * Extra `resolve.conditions` prepended ahead of nifra's defaults - some frameworks need their own
    * (e.g. Solid's `"solid"` condition routes `solid-js` to its source/JSX-dev build).
    */
   readonly conditions?: readonly string[]
@@ -88,7 +88,7 @@ export interface ViteDevServerOptions {
   readonly port?: number
   /**
    * Use polling for the file watcher. Native fs events (fsevents/inotify) are unreliable inside
-   * containers, networked filesystems, and some sandboxes — there, HMR silently never fires. Set
+   * containers, networked filesystems, and some sandboxes - there, HMR silently never fires. Set
    * `true` (or the env var `CHOKIDAR_USEPOLLING=1`) to poll instead. Default: off (native events).
    */
   readonly poll?: boolean
@@ -134,11 +134,11 @@ function toWebRequest(req: IncomingMessage, body: Buffer | undefined): Request {
 }
 
 // A Vite `config` hook: a plain function, OR the object form `{ handler, order }` Vite accepts for hook
-// ordering (`order: "pre" | "post"`). We wrap the handler in either shape — see normalizeRolldownPlugins.
+// ordering (`order: "pre" | "post"`). We wrap the handler in either shape - see normalizeRolldownPlugins.
 type ConfigFn = (config: unknown, env: unknown) => unknown
 type ConfigHook = ConfigFn | { readonly handler: ConfigFn; readonly order?: unknown }
 
-// A Vite plugin — the only hook we wrap is `config`. Typed structurally (no `vite` type dep). Everything
+// A Vite plugin - the only hook we wrap is `config`. Typed structurally (no `vite` type dep). Everything
 // else on the plugin object is preserved by spread, so wrapping is transparent to Vite.
 interface VitePluginLike {
   readonly name?: string
@@ -146,7 +146,7 @@ interface VitePluginLike {
   readonly [key: string]: unknown
 }
 
-/** The bits of a Node ServerResponse `pipeWebBodyToNode` touches — structural, to avoid a node:http dep here. */
+/** The bits of a Node ServerResponse `pipeWebBodyToNode` touches - structural, to avoid a node:http dep here. */
 interface NodeResLike {
   flushHeaders?(): void
   on(event: "close", cb: () => void): void
@@ -161,7 +161,7 @@ interface NodeHeaderSink {
 
 /**
  * Copy a Web `Response`'s headers onto a Node response, emitting EACH `Set-Cookie` as its own header. The
- * `Headers` iterator (and `.get`) join multiple set-cookie values with ", ", which corrupts cookies — e.g.
+ * `Headers` iterator (and `.get`) join multiple set-cookie values with ", ", which corrupts cookies - e.g.
  * better-auth's `session_token` + `session_data` collapse into one unparseable cookie and the session is
  * silently lost. `getSetCookie()` returns them split; Node's `setHeader` emits one header per array element.
  */
@@ -176,7 +176,7 @@ export function applyResponseHeaders(headers: Headers, res: NodeHeaderSink): voi
 
 /**
  * Stream a Web `Response` body to a Node response chunk-by-chunk. Buffering the whole body (e.g.
- * `arrayBuffer()`) waits for the stream to END — which an open-ended SSE (`text/event-stream`) body never
+ * `arrayBuffer()`) waits for the stream to END - which an open-ended SSE (`text/event-stream`) body never
  * does, so it hung `nifra dev` (the Bun production server streamed it fine). This flushes each chunk as it
  * arrives and cancels the reader if the client disconnects; a finite body just streams its chunk(s) + ends.
  */
@@ -198,23 +198,23 @@ export async function pipeWebBodyToNode(
       res.write(value)
     }
   } catch {
-    // client disconnected mid-stream — the `close` handler already cancelled the reader
+    // client disconnected mid-stream - the `close` handler already cancelled the reader
   }
   res.end()
 }
 
 /**
  * Strip `optimizeDeps.rollupOptions.jsx` from a plugin's `config` hook output when running under
- * rolldown-vite — the source of the scary, harmless `Warning: Invalid input options … "jsx" Invalid
+ * rolldown-vite - the source of the scary, harmless `Warning: Invalid input options … "jsx" Invalid
  * key: Expected never but received "jsx"` on `nifra dev`.
  *
  * Why it happens: `@vitejs/plugin-react@4.x` (and peers) target an *older* rolldown-vite optimizeDeps
- * API — they inject `optimizeDeps.rollupOptions.jsx` to tell the dep pre-bundler to transform JSX. Vite
+ * API - they inject `optimizeDeps.rollupOptions.jsx` to tell the dep pre-bundler to transform JSX. Vite
  * 8's rolldown dep-optimizer renamed that surface to `optimizeDeps.rolldownOptions` (and moved jsx under
  * `transform.jsx`), so the stale `rollupOptions.jsx` is an unrecognized input option → the warning. It's
  * a version-skew artifact, not a real misconfig: the route source JSX transform runs through the
  * plugin's own `transform` hook (untouched here), and node_modules deps that get pre-bundled almost
- * never contain raw JSX — so dropping the dead key changes no behavior and keeps HMR/Fast Refresh
+ * never contain raw JSX - so dropping the dead key changes no behavior and keeps HMR/Fast Refresh
  * intact. We *strip* (rather than translate to `rolldownOptions`) so the fix is version-agnostic: a
  * plugin already emitting the correct `rolldownOptions` is left untouched, and a future plugin bump that
  * stops emitting `rollupOptions.jsx` makes this a no-op.
@@ -222,12 +222,12 @@ export async function pipeWebBodyToNode(
  * Scoped narrowly: only the `optimizeDeps.rollupOptions.jsx` key is removed, only under rolldown-vite,
  * and only from the value a plugin's `config` hook returns. Non-rolldown Vite is passed through verbatim.
  *
- * FLATTEN FIRST: a Vite plugin factory may return an ARRAY of plugins — `@vitejs/plugin-react`'s `react()`
+ * FLATTEN FIRST: a Vite plugin factory may return an ARRAY of plugins - `@vitejs/plugin-react`'s `react()`
  * returns `[vite:react-babel, vite:react-refresh]`, and it's `react:react-babel`'s `config` hook that emits
  * the offending `optimizeDeps.rollupOptions.jsx`. `nifra.config.ts` writes `vitePlugins = [react()]`, so the
  * plugin list arrives NESTED (`[[babel, refresh]]`). Without flattening, `.map` sees the inner array (which
- * has no `config`), leaves it untouched, and Vite — which flattens plugin arrays itself before running them
- * — then executes the un-stripped babel hook, so the warning survives. Flattening here (Vite accepts a flat
+ * has no `config`), leaves it untouched, and Vite - which flattens plugin arrays itself before running them
+ * - then executes the un-stripped babel hook, so the warning survives. Flattening here (Vite accepts a flat
  * list identically) is what lets the strip reach every real plugin.
  */
 export function normalizeRolldownPlugins(
@@ -257,7 +257,7 @@ export function normalizeRolldownPlugins(
     if (typeof handler !== "function") return plugin
     const wrappedHandler: ConfigFn = (config, env) => {
       const returned = handler(config, env)
-      // The hook may return a promise — normalize both shapes.
+      // The hook may return a promise - normalize both shapes.
       return returned instanceof Promise ? returned.then(stripJsxKey) : stripJsxKey(returned)
     }
     // Preserve the ORIGINAL shape: a function stays a function; the object form keeps its `order`
@@ -291,7 +291,7 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   const entryUrl = `/${DEV_ENTRY}`
 
   // Create our HTTP server FIRST, then hand it to Vite as the HMR WebSocket host (`hmr.server`). In
-  // middleware mode Vite would otherwise open a *separate* ws port (24678) — fragile: it conflicts
+  // middleware mode Vite would otherwise open a *separate* ws port (24678) - fragile: it conflicts
   // across restarts ("Port undefined is already in use" → the client never connects). Sharing one
   // port means HMR rides the same origin as the app, robust across restarts. The handler closes over
   // `vite`, which is assigned just below before the server starts listening.
@@ -308,7 +308,7 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
           const contentType = nifraRes.headers.get("content-type") ?? ""
           res.statusCode = nifraRes.status
           if (!contentType.includes("text/html")) {
-            // Data / redirect / asset response — pass through untouched, streamed (SSE-safe). Set-Cookie is
+            // Data / redirect / asset response - pass through untouched, streamed (SSE-safe). Set-Cookie is
             // emitted per-header so multi-cookie responses (e.g. better-auth sessions) aren't collapsed.
             applyResponseHeaders(nifraRes.headers, res)
             await pipeWebBodyToNode(nifraRes.body, res)
@@ -320,7 +320,7 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
           res.end(html)
         } catch (err) {
           // Source-map the stack first (Vite maps the bundled frames back to your `.ts`), then render
-          // the readable dev overlay instead of a bare text dump. Dev-only — production maps to `_error`.
+          // the readable dev overlay instead of a bare text dump. Dev-only - production maps to `_error`.
           if (err instanceof Error) vite.ssrFixStacktrace(err)
           res.statusCode = 500
           res.setHeader("content-type", "text/html; charset=utf-8")
@@ -331,14 +331,14 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   })
 
   // `conditions: ["bun"]` makes Vite resolve nifra's workspace packages (`@nifrajs/web-react/client`, …) to
-  // their TS **source** — so the dev server needs no prior `dist` build of the adapter packages.
+  // their TS **source** - so the dev server needs no prior `dist` build of the adapter packages.
   const usePolling = options.poll ?? process.env.CHOKIDAR_USEPOLLING === "1"
   // Never `import("vite")` directly here: the guard in `importVite` has to run first, and the dev
   // server importing vite unguarded is precisely what poisoned the module for the whole process.
   const viteModule = await importVite<ViteModule>()
   const { createServer } = viteModule
   // Under rolldown-vite (Vite 8+), strip the stale `optimizeDeps.rollupOptions.jsx` some framework
-  // plugins still emit — it triggers a noisy "Invalid key … jsx" warning but does nothing useful here.
+  // plugins still emit - it triggers a noisy "Invalid key … jsx" warning but does nothing useful here.
   const plugins = normalizeRolldownPlugins(
     options.plugins ?? [],
     viteModule.rolldownVersion !== undefined,
@@ -363,7 +363,7 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
       // Dedupe React to ONE copy. In a multi-root workspace a shared package can pull react/react-dom
       // from a SIBLING app's node_modules, so the dev server loads two React cores → a second hook
       // dispatcher → `resolveDispatcher().useState` null on any hook-using route (the error points at the
-      // component, not the resolution — brutal to diagnose). Mirrors the build-time reactDedupePlugin so
+      // component, not the resolution - brutal to diagnose). Mirrors the build-time reactDedupePlugin so
       // dev matches prod. No-op for non-React apps (the package simply isn't present to dedupe).
       dedupe: ["react", "react-dom"],
     },

@@ -1,5 +1,5 @@
 /**
- * nifra SSR + Preact — the SAME `renderPage` seam as the React/Solid/Vue examples, with the Preact
+ * nifra SSR + Preact - the SAME `renderPage` seam as the React/Solid/Vue examples, with the Preact
  * adapter. Proof the @nifrajs/web seam is framework-agnostic: only the adapter import + the components
  * change.
  *
@@ -17,7 +17,7 @@ const clientJs = await Bun.file(`${import.meta.dir}/dist/client.js`)
   .catch(() => "// run build.ts first")
 
 function loader(): PageData {
-  return { message: "nifra SSR + Preact — same renderPage, different adapter", start: 41 }
+  return { message: "nifra SSR + Preact - same renderPage, different adapter", start: 41 }
 }
 
 const app = server()

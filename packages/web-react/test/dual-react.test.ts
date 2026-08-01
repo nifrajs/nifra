@@ -10,13 +10,13 @@ import {
 /**
  * Regression test for the dual-React SSR crash: under Bun runtime SSR (`nifra dev` / `nifra start` /
  * `nifra_render`), a STATIC `import "react-dom/server"` in the @nifrajs/web-react adapter is resolved from
- * the ADAPTER's own node_modules — a DIFFERENT physical `react` than the consumer app's route components
+ * the ADAPTER's own node_modules - a DIFFERENT physical `react` than the consumer app's route components
  * resolve. Two React cores → two hook dispatchers → "Invalid hook call: mismatching versions of React and
  * the renderer" (or a null `resolveDispatcher().useState`). The fix (src/react-dom-server.ts) resolves
  * `react-dom/server` from the CONSUMER APP ROOT so react-dom shares the components' React.
  *
  * We prove BOTH directions in a real two-copy install fixture, driving the SSR in a SUBPROCESS whose `cwd`
- * is the fixture app (faithful to runtime SSR — an in-process render shares this test runner's module
+ * is the fixture app (faithful to runtime SSR - an in-process render shares this test runner's module
  * cache, which masks the bug; see packages/cli/test/mcp-render.test.ts:67):
  *   - OLD/static path (control): render-to-string resolved from the ADAPTER side (react-dom@B) against a
  *     component using the app's react@A → the dispatcher-mismatch crash. Documents the bug.
@@ -26,11 +26,11 @@ import {
 
 // The dual-install the bug needs = TWO DISTINCT React module instances. We make them by COPYING the one
 // installed react/react-dom into two separate node_modules trees (`app/` and `static/`): same version,
-// different physical paths → Bun loads each as its own core (its own hook dispatcher). This is portable —
+// different physical paths → Bun loads each as its own core (its own hook dispatcher). This is portable -
 // it depends only on the single hoisted copy, not on two versions happening to sit in the store (a clean
 // CI install hoists exactly one, so the old "symlink to react@19.2.6 vs @19.2.7" fixture ENOENT'd there).
 // The app uses the `app/` copy; the pre-fix adapter's STATIC `react-dom/server` is simulated by importing
-// the `static/` copy — a different instance → the mismatch crash. The FIXED adapter re-roots react-dom to
+// the `static/` copy - a different instance → the mismatch crash. The FIXED adapter re-roots react-dom to
 // the app root (the `app/` copy) → it matches → renders. Reverting the fix to a static import → RED.
 const SRC_REACT = dirname(Bun.resolveSync("react/package.json", import.meta.dir))
 const SRC_REACT_DOM = dirname(Bun.resolveSync("react-dom/package.json", import.meta.dir))
@@ -81,7 +81,7 @@ test("convergence: Bun.resolveSync('react-dom/server', appRoot) is the app's cop
 })
 
 test("OLD static path crashes: static react-dom (copy A) + app react (copy B) component → hook dispatcher mismatch", async () => {
-  // Control: simulate the pre-fix adapter — render with react-dom resolved the way the STATIC import does
+  // Control: simulate the pre-fix adapter - render with react-dom resolved the way the STATIC import does
   // (copy A, the hoisted monorepo copy) against a component that uses the app's react (copy B, resolved
   // from cwd). This is the exact mismatch the static import produced. We import react-dom/server from copy
   // A's ABSOLUTE path so this driver is deterministic regardless of the test runner's own react.
@@ -153,7 +153,7 @@ test("loadReactDomServer re-roots via the injected resolver (the Bun-runtime bra
 })
 
 test("loadReactDomServer falls back to the bundled copy when the resolver throws (no hard failure)", async () => {
-  // A resolver that throws (react-dom not at the app root / unusual layout) must NOT crash — it falls
+  // A resolver that throws (react-dom not at the app root / unusual layout) must NOT crash - it falls
   // through to the static `import "react-dom/server"`. Covers the catch + fallback branch.
   const throwing = (): string => {
     throw new Error("not resolvable from app root")
@@ -174,7 +174,7 @@ test("loadReactDomServer uses the bundled copy on a non-Bun host (resolver undef
 
 test("assertSingleReactCore is SILENT on the healthy fixture (react-dom re-rooted, one react)", () => {
   // The re-rooted happy path: react-dom resolved from the app root shares the app's react (siblings under
-  // one node_modules). Real Bun.resolveSync, real realpath — no throw.
+  // one node_modules). Real Bun.resolveSync, real realpath - no throw.
   const serverPath = Bun.resolveSync("react-dom/server", appRoot)
   const resolve = (spec: string, from: string): string => Bun.resolveSync(spec, from)
   // componentsReact is resolved from process.cwd() inside the function; the runner's cwd is the repo,
@@ -194,7 +194,7 @@ test("assertSingleReactCore THROWS with both paths when react-dom nests a differ
     mkdirSync(nm, { recursive: true })
     cpSync(SRC_REACT, join(nm, "react"), { recursive: true, dereference: true }) // components' react
     cpSync(SRC_REACT_DOM, join(nm, "react-dom"), { recursive: true, dereference: true })
-    // react-dom's OWN nested react — a second physical copy, same version, different path.
+    // react-dom's OWN nested react - a second physical copy, same version, different path.
     cpSync(SRC_REACT, join(nm, "react-dom", "node_modules", "react"), {
       recursive: true,
       dereference: true,
@@ -225,7 +225,7 @@ test("assertSingleReactCore THROWS with both paths when react-dom nests a differ
 
 test("NIFRA_SSR_BUNDLED marker disables re-root even when Bun.resolveSync exists (the bun-target bundle fix)", () => {
   // Regression for the `target:"bun"` bundle crash: a Bun bundle keeps `Bun.resolveSync`, so the resolver
-  // test alone (this runner IS Bun) would re-root to a DISK react-dom — a 2nd React core → `…H.useRef of
+  // test alone (this runner IS Bun) would re-root to a DISK react-dom - a 2nd React core → `…H.useRef of
   // null` at SSR. buildServer tags every bundle with this marker; the default resolver must then be
   // `undefined` (→ the static, bundled+deduped import). Without the marker the Bun runtime still re-roots.
   expect(typeof bunResolverFn()).toBe("function") // unbundled Bun runtime: re-root resolver present

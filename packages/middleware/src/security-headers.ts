@@ -3,7 +3,7 @@ import type { Middleware } from "@nifrajs/core/server"
 import { withHeaders } from "./_utils.ts"
 
 export interface SecurityHeadersOptions {
-  /** `Strict-Transport-Security`. Off by default — opt in once you're sure you're HTTPS-only. */
+  /** `Strict-Transport-Security`. Off by default - opt in once you're sure you're HTTPS-only. */
   readonly hsts?: {
     readonly maxAge: number
     readonly includeSubDomains?: boolean
@@ -40,7 +40,7 @@ export function securityHeaders(options: SecurityHeadersOptions = {}): Middlewar
     {
       name: "security-headers",
       // Mutate in place on the common (mutable-headers) response; clone only for an immutable one
-      // (see withHeaders — the old always-clone was ~3% of a realistic request).
+      // (see withHeaders - the old always-clone was ~3% of a realistic request).
       onResponse: (res) =>
         withHeaders(res, (headers) => {
           headers.set("X-Content-Type-Options", "nosniff")

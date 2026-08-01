@@ -19,7 +19,7 @@ test("maps a Bun metafile to the neutral graph", () => {
   ])
   expect(graph.chunks["dist/index.js"]).toEqual({
     entryPoint: "routes/index.tsx",
-    // The record of ids becomes a list — the only shape change, and what a Rollup adapter will emit.
+    // The record of ids becomes a list - the only shape change, and what a Rollup adapter will emit.
     modules: ["routes/index.tsx", "src/db.ts"],
   })
 })

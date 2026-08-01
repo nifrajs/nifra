@@ -39,7 +39,7 @@ export function envSchema<Output>(
   }
 }
 
-/** A single issue. Messages NEVER include the variable's value — it may be a secret. */
+/** A single issue. Messages NEVER include the variable's value - it may be a secret. */
 export const issue = (message: string): { readonly issues: ReadonlyArray<StandardIssue> } => ({
   issues: [{ message }],
 })

@@ -5,7 +5,7 @@ import { defineContract, implement } from "../src/server/contract.ts"
 
 /**
  * The synchronous fast path (RouteEntry.bare → `runBare`): a route with no body/query schema and no
- * derive/before/after/onError hooks runs without the `async` lifecycle machinery — a sync handler
+ * derive/before/after/onError hooks runs without the `async` lifecycle machinery - a sync handler
  * produces its Response with no promise allocated. These tests pin that the fast path is behaviorally
  * **identical** to the full async lifecycle across every outcome: data, async data, thrown error,
  * thrown Response (control flow), decorations, and the request timeout (which must still bound a bare
@@ -15,7 +15,7 @@ function req(path: string, init?: RequestInit): Request {
   return new Request(`http://x${path}`, init)
 }
 
-describe("sync fast path — bare routes", () => {
+describe("sync fast path - bare routes", () => {
   test("a sync handler returns data (200 + JSON), identical to the lifecycle", async () => {
     const app = server().get("/u/:id", (c) => ({ id: c.params.id }))
     const res = await app.fetch(req("/u/9"))
@@ -102,9 +102,9 @@ describe("sync fast path — bare routes", () => {
   })
 
   test("a declared `response` contract does NOT push the route off the sync fast path", () => {
-    // The response schema is a type + introspection contract only — the per-request lifecycle never
+    // The response schema is a type + introspection contract only - the per-request lifecycle never
     // reads it and the `bare` gate ignores it. Observable proof: a bare sync handler on an implemented
-    // route that declares a response still returns its Response *synchronously* (not a Promise) — i.e.
+    // route that declares a response still returns its Response *synchronously* (not a Promise) - i.e.
     // it runs `runBare`, exactly as the same route with no response would. Zero hot-path cost.
     const userResponse: StandardSchemaV1<unknown, { id: string }> = {
       "~standard": {
@@ -124,7 +124,7 @@ describe("sync fast path — bare routes", () => {
 
   test("the request timeout still bounds a bare ASYNC handler (503)", async () => {
     // The fast path returns sync results directly (no timeout race), but a bare *async* handler returns
-    // a promise — which must still be raced against the timeout.
+    // a promise - which must still be raced against the timeout.
     const app = server({ requestTimeoutMs: 30 }).get("/slow", async () => {
       await new Promise((r) => setTimeout(r, 300))
       return { done: true }
@@ -135,7 +135,7 @@ describe("sync fast path — bare routes", () => {
   })
 })
 
-describe("sync fast path — routes that must NOT take it", () => {
+describe("sync fast path - routes that must NOT take it", () => {
   const nameBody = ((): StandardSchemaV1<unknown, { name: string }> => ({
     "~standard": {
       version: 1,

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Copy repo-root brand assets into site/public (no cropping — use pre-sized exports).
-# 64/256 exports are the crystal-N mark only (no wordmark, tight crop) — favicon must read at 16px.
+# Copy repo-root brand assets into site/public (no cropping - use pre-sized exports).
+# 64/256 exports are the crystal-N mark only (no wordmark, tight crop) - favicon must read at 16px.
 # 512 keeps the full logo + wordmark: it serves the OG/social card where the text helps.
 # nifra_background.png is the text-free mountains strip (hero atmosphere; H1 carries the headline).
 set -euo pipefail

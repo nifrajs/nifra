@@ -16,10 +16,10 @@ bun create nifra my-app
 
 The framework is a set of focused packages under the `@nifrajs/*` scope:
 
-- `@nifrajs/core` — the Bun-native, Web-standard server (`server()`, routing, validation). This package re-exports it.
-- `@nifrajs/web` + `@nifrajs/web-{react,vue,svelte,solid,preact,vanilla}` — full-stack SSR on five UI frameworks.
-- `@nifrajs/client` — the end-to-end typed client.
-- `@nifrajs/schema` · `@nifrajs/middleware` · `@nifrajs/better-auth` · `@nifrajs/otel` · `@nifrajs/cli` … — schema, middleware, auth, tracing, the CLI/MCP toolchain, and more.
+- `@nifrajs/core` - the Bun-native, Web-standard server (`server()`, routing, validation). This package re-exports it.
+- `@nifrajs/web` + `@nifrajs/web-{react,vue,svelte,solid,preact,vanilla}` - full-stack SSR on five UI frameworks.
+- `@nifrajs/client` - the end-to-end typed client.
+- `@nifrajs/schema` · `@nifrajs/middleware` · `@nifrajs/better-auth` · `@nifrajs/otel` · `@nifrajs/cli` … - schema, middleware, auth, tracing, the CLI/MCP toolchain, and more.
 
 Docs + an AI-readable reference: [`/llms.txt`](https://nifra.dev/llms.txt) · [`/llms-full.txt`](https://nifra.dev/llms-full.txt).
 
@@ -27,7 +27,7 @@ MIT.
 
 ## For AI agents
 
-Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports you call + its footguns),
 one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the

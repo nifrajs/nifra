@@ -1,6 +1,6 @@
 # nifra + ISR
 
-A nifra + React app with **Incremental Static Regeneration** — pages are cached and served
+A nifra + React app with **Incremental Static Regeneration** - pages are cached and served
 stale-while-revalidate, backed by **Workers KV** in production (so the cache and on-demand purges hold
 across instances) and an in-memory store for local dev.
 

@@ -1,5 +1,5 @@
 /**
- * @nifrajs/testing — helpers for testing nifra apps in-process. `@nifrajs/client`'s `testClient` is the
+ * @nifrajs/testing - helpers for testing nifra apps in-process. `@nifrajs/client`'s `testClient` is the
  * typed, no-network request client (the supertest/inject equivalent); this adds what it doesn't: a
  * {@link cookieJar} and a cookie-persisting {@link testSession}, so stateful auth/session flows are as
  * easy to test as a single request.

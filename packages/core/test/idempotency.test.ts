@@ -334,7 +334,7 @@ describe("idempotency primitives", () => {
   })
 })
 
-describe("server({ idempotency }) — request path", () => {
+describe("server({ idempotency }) - request path", () => {
   test("durable scope rejects an in-memory store at registration", () => {
     expect(() =>
       server()

@@ -1,10 +1,10 @@
 /**
- * WebSocket seam — portable types shared by `@nifrajs/core`'s `app.ws()` and every serving adapter
+ * WebSocket seam - portable types shared by `@nifrajs/core`'s `app.ws()` and every serving adapter
  * (Bun `listen()`, `@nifrajs/node`, `@nifrajs/deno`, `toFetchHandler` on Workers). No runtime code here, so
  * it stays edge-safe and dependency-free; each adapter implements {@link NifraWebSocket} over its
  * runtime's native socket and dispatches to the handler.
  *
- * A WS upgrade can't go through `app.fetch` (which has no socket) — it's adapter-integrated. The
+ * A WS upgrade can't go through `app.fetch` (which has no socket) - it's adapter-integrated. The
  * adapter calls `app.resolveWebSocketUpgrade(req)` (runs the route's `upgrade()` guard in a real
  * request context), then performs the runtime upgrade with the returned data.
  */
@@ -33,22 +33,22 @@ type WsMessageInput<Schema extends StandardSchemaV1 | undefined> = Schema extend
 export interface NifraWebSocket<Data = unknown> {
   /** Send a text (`string`) or binary (`ArrayBuffer`/typed-array) frame. No-op once closed. */
   send(data: string | ArrayBufferView | ArrayBuffer): void
-  /** Close the connection (optional code 1000–4999 + short reason). */
+  /** Close the connection (optional code 1000-4999 + short reason). */
   close(code?: number, reason?: string): void
   /** `WebSocket.readyState` (0 CONNECTING · 1 OPEN · 2 CLOSING · 3 CLOSED). */
   readonly readyState: number
-  /** Join a pub/sub topic — `app.publish(topic, data)` then reaches this connection. Idempotent. */
+  /** Join a pub/sub topic - `app.publish(topic, data)` then reaches this connection. Idempotent. */
   subscribe(topic: string): void
   /** Leave a pub/sub topic. Idempotent. (All topics are dropped automatically on close.) */
   unsubscribe(topic: string): void
-  /** Per-connection state — seeded by `upgrade()`, mutable for the connection's lifetime. */
+  /** Per-connection state - seeded by `upgrade()`, mutable for the connection's lifetime. */
   data: Data
   /** Escape hatch to the runtime's native socket (Bun `ServerWebSocket`, Web `WebSocket`, `ws`). */
   readonly raw: unknown
 }
 
 /**
- * In-process pub/sub for `ws.subscribe(topic)` + `app.publish(topic, data)`. **Single-instance only** —
+ * In-process pub/sub for `ws.subscribe(topic)` + `app.publish(topic, data)`. **Single-instance only** -
  * topics live in this process's memory, so a multi-instance deploy (multiple servers behind a load
  * balancer) needs an external fan-out (Redis pub/sub, a Cloudflare Durable Object, NATS, …) bridged to
  * `app.publish`. The same registry instance is shared by an app's connections and its `publish`.
@@ -76,12 +76,12 @@ export class TopicRegistry {
     const subs = this.topics.get(topic)
     if (subs !== undefined) {
       subs.delete(ws)
-      if (subs.size === 0) this.topics.delete(topic) // reclaim empty topics — no unbounded growth
+      if (subs.size === 0) this.topics.delete(topic) // reclaim empty topics - no unbounded growth
     }
     this.memberships.get(ws)?.delete(topic)
   }
 
-  /** Drop every subscription for a connection — called on close so a registry never leaks dead sockets. */
+  /** Drop every subscription for a connection - called on close so a registry never leaks dead sockets. */
   unsubscribeAll(ws: NifraWebSocket): void {
     const mine = this.memberships.get(ws)
     if (mine === undefined) return
@@ -110,7 +110,7 @@ export class TopicRegistry {
 }
 
 /**
- * The request-context subset the `upgrade()` guard sees — the same lazy accessors a route handler's
+ * The request-context subset the `upgrade()` guard sees - the same lazy accessors a route handler's
  * `c` has (cookies/headers/env are read straight off the upgrade request). Structurally a slice of the
  * core `RawContext`, so the real context object satisfies it.
  */
@@ -134,7 +134,7 @@ export interface WebSocketHandler<
   Send extends StandardSchemaV1 | undefined = undefined,
 > {
   /**
-   * Cross-site WebSocket hijacking (CSWSH) guard — checked BEFORE `upgrade()`. A browser does not
+   * Cross-site WebSocket hijacking (CSWSH) guard - checked BEFORE `upgrade()`. A browser does not
    * apply CORS to WebSocket handshakes and DOES send the page's cookies, so without an Origin check
    * any site can open an authenticated socket to your app. Set this to lock the route to known
    * origins: a string allow-list (exact `Origin` header match) or a predicate. A request whose
@@ -145,11 +145,11 @@ export interface WebSocketHandler<
    * whose host differs from the request's) is rejected with `403`. Non-browser clients (no `Origin`) and
    * same-origin browsers pass. Set this to allow specific cross-origin clients, or `() => true` for a
    * genuinely public socket. Non-browser clients can spoof `Origin`, so this is a browser-CSWSH defense,
-   * not authentication — pair it with auth in `upgrade()`.
+   * not authentication - pair it with auth in `upgrade()`.
    */
   allowedOrigins?: ReadonlyArray<string> | ((origin: string | null) => boolean)
   /**
-   * Runs in the HTTP request context **before** the upgrade (and after {@link allowedOrigins}) — the
+   * Runs in the HTTP request context **before** the upgrade (and after {@link allowedOrigins}) - the
    * place to authenticate or rate-limit. Return the initial per-connection `data` (→ `ws.data`), or a
    * `Response` to **reject** the upgrade (the client never connects). Omit to accept with
    * `data: undefined`. A thrown error rejects with a flat 500.
@@ -188,10 +188,10 @@ export interface WebSocketHandler<
 }
 
 /**
- * The outcome of `app.resolveWebSocketUpgrade(req)` — for serving adapters:
- * - `pass` — not a WS upgrade for a registered WS route; handle as a normal HTTP request.
- * - `reject` — a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`.
- * - `upgrade` — perform the runtime upgrade, then dispatch the native socket's events to `handler`,
+ * The outcome of `app.resolveWebSocketUpgrade(req)` - for serving adapters:
+ * - `pass` - not a WS upgrade for a registered WS route; handle as a normal HTTP request.
+ * - `reject` - a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`.
+ * - `upgrade` - perform the runtime upgrade, then dispatch the native socket's events to `handler`,
  *   seeding `ws.data` with `data`.
  */
 export type WebSocketUpgradeOutcome =
@@ -201,7 +201,7 @@ export type WebSocketUpgradeOutcome =
       readonly kind: "upgrade"
       readonly handler: WebSocketHandler
       readonly data: unknown
-      /** The app's pub/sub registry — the adapter wires `ws.subscribe` + close-cleanup to it. */
+      /** The app's pub/sub registry - the adapter wires `ws.subscribe` + close-cleanup to it. */
       readonly pubsub: TopicRegistry
       /** The installed runtime's {@link attachWebSocket}, carried on the outcome so an adapter can wire
        * a standard socket without a static import of the WS implementation (which would defeat the
@@ -218,7 +218,7 @@ export type WsAttach = (
 ) => NifraWebSocket
 
 /**
- * A standard server-side `WebSocket` — the half returned by Deno's `Deno.upgradeWebSocket` and the
+ * A standard server-side `WebSocket` - the half returned by Deno's `Deno.upgradeWebSocket` and the
  * Workers `WebSocketPair`. {@link attachWebSocket} wires one to a nifra handler, so the Deno and Workers
  * bridges share all the dispatch/normalization/error-isolation logic (only the upgrade call differs).
  */
@@ -235,14 +235,14 @@ function toBinary(raw: unknown): Uint8Array {
   if (raw instanceof Uint8Array) return raw
   if (raw instanceof ArrayBuffer) return new Uint8Array(raw)
   if (ArrayBuffer.isView(raw)) return new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength)
-  return new Uint8Array(0) // unknown (e.g. an unconverted Blob) — adapters set binaryType to avoid this
+  return new Uint8Array(0) // unknown (e.g. an unconverted Blob) - adapters set binaryType to avoid this
 }
 
 /**
  * Wire a standard server-side `WebSocket` to a nifra {@link WebSocketHandler}, returning the portable
  * {@link NifraWebSocket}. Shared by the Deno and Workers bridges. `openNow` fires `open` immediately
  * (Workers, where the socket is already open after `accept()`); otherwise `open` waits for the socket's
- * `open` event (Deno). Lifecycle callbacks are error-isolated — a throw (or async rejection) routes to
+ * `open` event (Deno). Lifecycle callbacks are error-isolated - a throw (or async rejection) routes to
  * `error()` and never tears the process down; binary frames are normalized to `Uint8Array`.
  */
 export function attachWebSocket(
@@ -269,7 +269,7 @@ export function attachWebSocket(
       const r = handler.error(ws, error)
       if (r instanceof Promise) r.catch(() => {})
     } catch {
-      /* the error handler itself failed — last resort, swallow */
+      /* the error handler itself failed - last resort, swallow */
     }
   }
   const safe = (call: () => MaybePromise<void>): void => {
@@ -306,7 +306,7 @@ export function attachWebSocket(
 const WS_MESSAGE_DECODER = new TextDecoder()
 
 /**
- * If the handler declares a `messageSchema`, return a copy whose `message` validates each frame —
+ * If the handler declares a `messageSchema`, return a copy whose `message` validates each frame -
  * parse as JSON, run the Standard Schema, then call the user's `message` with the typed value, or
  * `onInvalidMessage` on failure. Returns the handler unchanged when no schema is set. Called once at
  * `app.ws()` registration, so every adapter dispatches validated messages with no per-adapter code.

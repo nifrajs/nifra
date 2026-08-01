@@ -1,5 +1,5 @@
 /**
- * nifra MDX blog (Solid) — content collections + an `.mdx` route + `<Content>`, served from a
+ * nifra MDX blog (Solid) - content collections + an `.mdx` route + `<Content>`, served from a
  * content-hashed production build.
  *
  *   bun run examples/mdx-blog/build.ts

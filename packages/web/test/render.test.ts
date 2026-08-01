@@ -19,7 +19,7 @@ import {
 const LINE_SEP = String.fromCharCode(0x2028)
 const PARA_SEP = String.fromCharCode(0x2029)
 
-// Turn a string into a one-chunk byte stream — the minimal `renderToStream` an adapter returns.
+// Turn a string into a one-chunk byte stream - the minimal `renderToStream` an adapter returns.
 const streamOf = (s: string): ReadableStream<Uint8Array> => {
   const bytes = new TextEncoder().encode(s)
   return new ReadableStream({
@@ -30,7 +30,7 @@ const streamOf = (s: string): ReadableStream<Uint8Array> => {
   })
 }
 
-// A stub adapter — proves the core orchestration is genuinely framework-agnostic (no Solid,
+// A stub adapter - proves the core orchestration is genuinely framework-agnostic (no Solid,
 // no React, no DOM). It "folds" the chain trivially: emits the chain length + the data.
 const stub: RenderAdapter = {
   renderToStream: (chain, props) =>
@@ -71,7 +71,7 @@ test("renderPage modulepreloads the matched route's chunks (deduped against the 
   ).text()
   expect(html).toContain('<link rel="modulepreload" href="/assets/_layout-a.js">')
   expect(html).toContain('<link rel="modulepreload" href="/assets/index-b.js">')
-  // The entry preload appears exactly once — the route list's duplicate of it is dropped.
+  // The entry preload appears exactly once - the route list's duplicate of it is dropped.
   expect(html.match(/modulepreload" href="\/assets\/client\.js"/g)?.length).toBe(1)
 })
 
@@ -104,7 +104,7 @@ test("renderPage emits stylesheets even on a non-hydrated page (e.g. _error)", a
   expect(html).toContain('<link rel="stylesheet" href="/assets/app-z.css">')
   // ...but no client entry (non-hydrated terminal page).
   expect(html).not.toContain('<script type="module"')
-  // ...and no pre-hydration guard — a non-hydrating page has no client handlers to race.
+  // ...and no pre-hydration guard - a non-hydrating page has no client handlers to race.
   expect(html).not.toContain("addEventListener('submit'")
   // Preload links are attribute-escaped (no breakout).
   const esc = await (
@@ -207,7 +207,7 @@ test("renderPage rejects executable and off-contract head attributes", async () 
 })
 
 test("renderPage keeps the full standard <link> attr set (hreflang, crossorigin, …) in <head>", async () => {
-  // Regression: the attribute filter is a name-shape guard, NOT a hardcoded allowlist — so every
+  // Regression: the attribute filter is a name-shape guard, NOT a hardcoded allowlist - so every
   // standard <link> attribute (hreflang/crossorigin/media/sizes/as/integrity/fetchpriority/…) must
   // survive. A hardcoded list previously dropped hreflang/crossorigin.
   const html = await (
@@ -240,7 +240,7 @@ test("renderPage keeps the full standard <link> attr set (hreflang, crossorigin,
 test("renderPage renders LinkDescriptor boolean attrs: true → bare, false/undefined → omitted [#A]", async () => {
   // LinkDescriptor values are `string | boolean | undefined`: a string renders `name="value"`,
   // `true` renders the bare boolean attribute (HTML convention), `false`/`undefined` are skipped
-  // entirely. Regression for the typed-partial fix — a `{ rel, href }` interface is now assignable.
+  // entirely. Regression for the typed-partial fix - a `{ rel, href }` interface is now assignable.
   const html = await (
     await renderPage({
       adapter: stub,
@@ -292,7 +292,7 @@ test("renderPage renders the head <script> slot (JSON-LD), default type, managed
 test("renderPage head <script>: a </script> (and <!-- / ]]>) payload is breakout-escaped", async () => {
   // The XSS vector: a JSON-LD string field containing `</script>` (or `<!--`, `]]>`) would otherwise
   // close the element early and inject markup. Escaping rewrites `<`/the `]]>` `>` to a JS unicode
-  // escape — byte-equivalent JSON after parse, but the raw boundary chars the HTML tokenizer scans for
+  // escape - byte-equivalent JSON after parse, but the raw boundary chars the HTML tokenizer scans for
   // are gone.
   const payload = '{"x":"</script><img src=x onerror=alert(1)> <!-- ]]>"}'
   const html = await (
@@ -304,19 +304,19 @@ test("renderPage head <script>: a </script> (and <!-- / ]]>) payload is breakout
       head: { script: [{ content: payload }] },
     })
   ).text()
-  // The injected breakout `</script><img …>` must NOT appear — every `<` is escaped to `<`.
+  // The injected breakout `</script><img …>` must NOT appear - every `<` is escaped to `<`.
   expect(html).not.toContain("</script><img")
   expect(html).toContain("\\u003c/script>\\u003cimg")
   // The `<!--` open and the `]]>` close are neutralized too.
   expect(html).toContain("\\u003c!--")
   expect(html).toContain("]]\\u003e")
-  // The JSON-LD slot is followed by exactly its OWN real close tag — the escaped one inside the body
+  // The JSON-LD slot is followed by exactly its OWN real close tag - the escaped one inside the body
   // doesn't add a second close for the slot (isolate to the slot's start to avoid counting the
   // data-global script's own legitimate `</script>`).
   const slotStart = html.indexOf('<script type="application/ld+json"')
   const slot = html.slice(slotStart)
   expect(slot.indexOf("</script>")).toBeGreaterThan(0) // a real close exists
-  // No second `</script>` before the (single) real close — i.e. the body didn't smuggle one in.
+  // No second `</script>` before the (single) real close - i.e. the body didn't smuggle one in.
   const realClose = slot.indexOf("</script>")
   expect(slot.slice(0, realClose)).not.toContain("</script>")
 })
@@ -462,7 +462,7 @@ test("jsonLd() builds an application/ld+json script entry; head renderer escapes
       head: { script: [entry] },
     })
   ).text()
-  // The `</script>` inside the JSON-LD is escaped — no early close.
+  // The `</script>` inside the JSON-LD is escaped - no early close.
   expect(html).not.toContain("</script> in the title")
   expect(html).toContain("\\u003c/script> in the title")
 })
@@ -474,7 +474,7 @@ test("mergeHeads concatenates the script slot (layout chain first, page last)", 
     { meta: [{ name: "x", content: "y" }] },
   ])
   expect(merged.script).toEqual([{ content: "A" }, { content: "B" }])
-  // A single head returns by reference (the existing fast path) — unaffected by the new slot.
+  // A single head returns by reference (the existing fast path) - unaffected by the new slot.
   const one = { script: [{ content: "solo" }] }
   expect(mergeHeads([one])).toBe(one)
 })
@@ -601,13 +601,13 @@ test("renderPage streams __nifraReject for a deferred that rejects (no broken bo
     stderr: "pipe",
   })
   const html = proc.stdout.toString()
-  // A rejected deferred streams __nifraReject (no broken body) — REDACTED to a stable opaque code,
+  // A rejected deferred streams __nifraReject (no broken body) - REDACTED to a stable opaque code,
   // never the raw error text ("boom secret detail" is logged server-side, not leaked).
   expect(html).toContain('window.__nifraReject(0,"deferred_error")')
   expect(html).not.toContain("boom secret detail")
 })
 
-test("renderPage streams deferred resolutions out-of-order — a slow defer() doesn't block a fast one", async () => {
+test("renderPage streams deferred resolutions out-of-order - a slow defer() doesn't block a fast one", async () => {
   // #0 resolves slowly, #1 quickly. The fast one's resolve script must stream FIRST (not FIFO).
   const res = await renderPage({
     adapter: stub,
@@ -658,7 +658,7 @@ test("resolveMeta: function meta builds an absolute canonical from the origin ar
   expect(meta.link).toEqual([{ rel: "canonical", href: "https://news.example.com/x/9" }])
 })
 
-test("MetaArgs.origin: SSR (URL.origin) and client (location.origin) resolve an IDENTICAL head — no drift", () => {
+test("MetaArgs.origin: SSR (URL.origin) and client (location.origin) resolve an IDENTICAL head - no drift", () => {
   // The drift proof: SSR derives the origin via `new URL(req.url).origin`; the client passes
   // `location.origin`. Both are the standard `URL.origin` for the SAME page URL, so a function meta
   // re-resolves byte-identical absolute tags on a soft-nav. Model both sides off one URL.
@@ -683,13 +683,13 @@ test("MetaArgs.origin: SSR (URL.origin) and client (location.origin) resolve an 
 
 test("MetaArgs.origin: a STATIC meta is origin-independent and serializes once (memo stays sound)", async () => {
   // The memo (headTagsCache, keyed by resolved-Meta identity) must stay correct now that meta is "a
-  // function of origin". A STATIC meta is an object returned by reference every request — it can't
+  // function of origin". A STATIC meta is an object returned by reference every request - it can't
   // depend on origin, so the same identity recurs → one cache hit, serialized once. A FUNCTION meta
   // builds a fresh object per request (new identity) → always a miss → recompute, so it never serves a
   // stale/cross-origin head. Prove the static side: the SAME resolved object is reused across renders,
   // and the head renders identically regardless of which request origin the page was served from.
   const STATIC = { link: [canonical("https://site.com/about")] } as const
-  // `resolveMeta` returns a static meta BY REFERENCE (the memo-key contract) — so the cache hits.
+  // `resolveMeta` returns a static meta BY REFERENCE (the memo-key contract) - so the cache hits.
   expect(resolveMeta(STATIC, { data: null, params: {}, origin: "https://a.example" })).toBe(STATIC)
   expect(resolveMeta(STATIC, { data: null, params: {}, origin: "https://b.example" })).toBe(STATIC)
   // And the rendered <head> is the same whichever host served the page (a static meta ignores origin).
@@ -737,7 +737,7 @@ test("mergeHeads: lang/dir are nearest-wins, like title", () => {
   const merged = mergeHeads([{ lang: "en" }, { lang: "ur", dir: "rtl" }])
   expect(merged.lang).toBe("ur") // page overrides the layout default
   expect(merged.dir).toBe("rtl")
-  // A page that says nothing keeps the layout's — so a site-wide `lang` in `_layout` reaches every page.
+  // A page that says nothing keeps the layout's - so a site-wide `lang` in `_layout` reaches every page.
   expect(mergeHeads([{ lang: "hi" }, {}]).lang).toBe("hi")
   // Neither contributed ⇒ the keys are absent, so the shell applies its own defaults.
   expect(mergeHeads([{ title: "a" }, { title: "b" }]).lang).toBeUndefined()
@@ -752,7 +752,7 @@ test("renderPage: <html> defaults to lang=en with no dir (unchanged for a monoli
   expect(html).not.toContain("dir=") // absent IS html's ltr default; emitting it would change every app
 })
 
-test("renderPage: head.lang/head.dir drive <html> — the only way to localize the document", async () => {
+test("renderPage: head.lang/head.dir drive <html> - the only way to localize the document", async () => {
   const html = await (
     await renderPage({
       adapter: stub,
@@ -800,7 +800,7 @@ test("serializeData maps null and undefined to null", () => {
   expect(serializeData({ a: 1 })).toBe('{"a":1}')
 })
 
-// An adapter offering BOTH a sync `renderToString` and a streaming `renderToStream` — proves
+// An adapter offering BOTH a sync `renderToString` and a streaming `renderToStream` - proves
 // renderPage picks the buffered (sync) path for non-deferred pages and the streaming path when
 // anything defer()s. Each method tags its output so the test can tell which one ran.
 const dual: RenderAdapter = {
@@ -860,7 +860,7 @@ test("renderPage falls back to the streaming path when a value defers (needs pro
 })
 
 test("renderPage streams for an adapter without renderToString", async () => {
-  // `stub` (defined above) has no renderToString — the streaming path must remain the default.
+  // `stub` (defined above) has no renderToString - the streaming path must remain the default.
   const html = await (
     await renderPage({ adapter: stub, chain: [null], data: { a: 1 }, clientEntry: "/c.js" })
   ).text()
@@ -893,7 +893,7 @@ test("renderPage loads islandScripts on a STATIC page (hydrate:false) with no fr
   ).text()
   expect(html).toContain('<script type="module" src="/assets/island.js"></script>') // island bundle
   // …preloaded in <head> so the (often heavy) island bundle downloads in parallel with parsing instead
-  // of only being discovered at end-of-body — the fix for "static page stuck on its placeholder until
+  // of only being discovered at end-of-body - the fix for "static page stuck on its placeholder until
   // the late island fetch lands" on a cold first load.
   expect(html).toContain('<head><meta charset="utf-8"')
   expect(html.split("<body>")[0]).toContain('<link rel="modulepreload" href="/assets/island.js">')

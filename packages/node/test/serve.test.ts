@@ -11,7 +11,7 @@ afterEach(async () => {
   running = undefined
 })
 
-/** A minimal Standard Schema for the body-cap tests (hand-rolled — no lib dependency). */
+/** A minimal Standard Schema for the body-cap tests (hand-rolled - no lib dependency). */
 const nameBody: StandardSchemaV1<unknown, { name: string }> = {
   "~standard": {
     version: 1,
@@ -98,7 +98,7 @@ test("serves GET (JSON) + POST (body), resolves the bound port", async () => {
 
 test("emits multiple Set-Cookie headers as separate lines (not comma-joined)", async () => {
   // `Headers.forEach` joins repeated headers with ", "; for Set-Cookie that's wrong (a cookie's
-  // `Expires` contains a comma). The adapter must split them via `getSetCookie()` — so a response
+  // `Expires` contains a comma). The adapter must split them via `getSetCookie()` - so a response
   // that sets a session + a CSRF cookie arrives as two distinct header lines.
   running = await serve(demoApp(), { port: 0 })
   const res = await fetch(`http://localhost:${running.port}/cookies`)
@@ -129,7 +129,7 @@ test("serve() installs node-direct on the app - app.resolveNode() works with no 
 })
 
 test("a handler-returned Response (redirect) round-trips via the response fallback", async () => {
-  // Not the JSON fast path — `resolveNode` returns `{ kind: "response" }`, which the adapter writes
+  // Not the JSON fast path - `resolveNode` returns `{ kind: "response" }`, which the adapter writes
   // the usual Web way (status + headers preserved).
   running = await serve(demoApp(), { port: 0 })
   const res = await fetch(`http://localhost:${running.port}/redirect`, { redirect: "manual" })
@@ -444,7 +444,7 @@ test("a throwing resolveNode yields a flat 500 (no leak)", async () => {
 })
 
 test("a resolveNodeSource whose promise REJECTS (async) yields a flat 500 (no stack leak)", async () => {
-  // The node-direct seam should never reject — nifra catches internally and renders a 500 outcome — but
+  // The node-direct seam should never reject - nifra catches internally and renders a 500 outcome - but
   // the adapter still guards it: an async rejection maps to the flat 500, never a leaked stack/detail.
   const asyncReject = {
     resolveNodeSource: (): Promise<never> => Promise.reject(new Error("boom secret detail")),
@@ -535,7 +535,7 @@ test("stop() drains an in-flight request, then is idempotent", async () => {
 
 test("inherits the app-level requestTimeoutMs (503) through app.fetch", async () => {
   // The timeout lives inside app.fetch (not Bun's listen()), so it applies through any
-  // adapter that calls app.fetch — no Node-specific timeout wiring needed.
+  // adapter that calls app.fetch - no Node-specific timeout wiring needed.
   const app = server({ requestTimeoutMs: 40 }).get("/slow", async () => {
     await Bun.sleep(200)
     return { done: true }
@@ -554,13 +554,13 @@ test("signals:true installs SIGTERM/SIGINT handlers that stop the server, then c
   expect(process.listenerCount("SIGINT")).toBe(sigintBefore + 1)
 
   const { port } = running
-  // Invoke the registered handler directly — emitting a real signal would kill the test runner.
+  // Invoke the registered handler directly - emitting a real signal would kill the test runner.
   const handler = process.listeners("SIGTERM").at(-1) as () => void
   handler()
   await Bun.sleep(20) // let stop() close the listening socket
 
   await expect(fetch(`http://localhost:${port}/users/1`)).rejects.toThrow()
-  // handlers removed — no leak across serve()/stop() cycles
+  // handlers removed - no leak across serve()/stop() cycles
   expect(process.listenerCount("SIGTERM")).toBe(sigtermBefore)
   expect(process.listenerCount("SIGINT")).toBe(sigintBefore)
   running = undefined // already stopped
@@ -568,7 +568,7 @@ test("signals:true installs SIGTERM/SIGINT handlers that stop the server, then c
 
 // ── Lazy RequestSource (node-direct fast path) ───────────────────────────────────────────────────
 // The adapter hands nifra a lazy `RequestSource` so the undici `Request` is only built when user code
-// reads `c.req`. These tests pin the behaviors that change introduced — c.req materialization and,
+// reads `c.req`. These tests pin the behaviors that change introduced - c.req materialization and,
 // critically, that the body-size cap still holds when the body flows through the lazy source.
 
 test("c.req materializes lazily and exposes method/url/headers", async () => {
@@ -638,7 +638,7 @@ test("c.req.json() works through the lazy source on a POST", async () => {
 })
 
 test("a schema-validated body still reaches the handler AND c.req is readable after (one-shot)", async () => {
-  // nifra reads + validates the body, then the handler also touches c.req — the lazy source must
+  // nifra reads + validates the body, then the handler also touches c.req - the lazy source must
   // build a Request whose body is already consumed (no double-read crash), while c.body is intact.
   const app = server().post("/u", { body: nameBody }, (c) => ({
     name: c.body.name,
@@ -654,7 +654,7 @@ test("a schema-validated body still reaches the handler AND c.req is readable af
 })
 
 test("SECURITY: an oversized Content-Length is rejected (413) through the lazy source", async () => {
-  // nifra's default cap is 1 MB. A schema route reads the body, so the cap applies — and the lazy
+  // nifra's default cap is 1 MB. A schema route reads the body, so the cap applies - and the lazy
   // source must reject an over-cap Content-Length BEFORE buffering it.
   const app = server().post("/u", { body: nameBody }, (c) => c.body)
   running = await serve(app, { port: 0 })
@@ -670,7 +670,7 @@ test("SECURITY: an oversized STREAMED (chunked) body is capped before the handle
   // No Content-Length → the lazy source exposes the live stream, and nifra's streaming byte-cap must
   // cancel it once over the cap. We assert the SERVER-SIDE property (the handler never sees the
   // oversized body), not the client status: when a server caps + responds mid-upload, the streaming
-  // client may observe a reset/odd status — so the reliable signal is that the cap short-circuited
+  // client may observe a reset/odd status - so the reliable signal is that the cap short-circuited
   // *before* validation + the handler. (curl confirms the server stops reading at ~1 MB, not 2 MB.)
   let handlerRan = false
   const app = server().post("/u", { body: nameBody }, (c) => {
@@ -693,7 +693,7 @@ test("SECURITY: an oversized STREAMED (chunked) body is capped before the handle
       duplex: "half", // required for a streamed request body
     } as RequestInit & { duplex: "half" })
   } catch {
-    // A streaming client can see a connection reset when the server caps mid-upload — expected.
+    // A streaming client can see a connection reset when the server caps mid-upload - expected.
   }
   await Bun.sleep(50) // let the cap short-circuit settle
   expect(handlerRan).toBe(false) // the body cap rejected the payload before it reached the handler

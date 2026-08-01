@@ -5,7 +5,7 @@ export interface PageData {
   start: number
 }
 
-/** A route component — `data` is the (typed) loader output. The signal proves hydration. */
+/** A route component - `data` is the (typed) loader output. The signal proves hydration. */
 export function App(props: { data: PageData }) {
   const [count, setCount] = createSignal(props.data.start)
   return (

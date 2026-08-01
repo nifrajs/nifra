@@ -40,7 +40,7 @@ export interface SchemaReflection {
 export interface ReflectedRouteSchema {
   readonly body?: SchemaReflection
   readonly query?: SchemaReflection
-  /** Path-params schema — constraints (uuid format, integer min/max) declared via `params: t.object(…)`. */
+  /** Path-params schema - constraints (uuid format, integer min/max) declared via `params: t.object(…)`. */
   readonly params?: SchemaReflection
   readonly response?: SchemaReflection
   readonly errors?: Readonly<Record<string, SchemaReflection>>

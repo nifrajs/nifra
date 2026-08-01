@@ -17,7 +17,7 @@ describe("bearer()", () => {
     const auth = bearer({ verify: lookup })
     const app = server()
       .use(auth)
-      // `requirePrincipal` returns `User` (typed) — `.role` is `string`, not `any`.
+      // `requirePrincipal` returns `User` (typed) - `.role` is `string`, not `any`.
       .get("/private", (c) => ({ role: auth.requirePrincipal(c.req).role }))
     const res = await app.fetch(withAuth({ authorization: "Bearer good" }))
     expect(res.status).toBe(200)
@@ -68,7 +68,7 @@ describe("bearer()", () => {
     const auth = bearer({ verify: lookup, optional: true })
     const app = server()
       .use(auth)
-      .get("/strict", (c) => auth.requirePrincipal(c.req)) // throws 401 — short-circuits
+      .get("/strict", (c) => auth.requirePrincipal(c.req)) // throws 401 - short-circuits
     expect((await app.fetch(new Request("http://x/strict"))).status).toBe(401)
   })
 
@@ -131,7 +131,7 @@ describe("apiKey({ verify })", () => {
   })
 })
 
-describe("apiKey({ keys }) — constant-time static keys", () => {
+describe("apiKey({ keys }) - constant-time static keys", () => {
   test("accepts a valid key (principal is the matched key) and rejects others", async () => {
     const auth = apiKey({ keys: ["alpha", "beta"] })
     const app = server()

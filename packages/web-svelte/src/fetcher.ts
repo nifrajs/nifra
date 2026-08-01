@@ -1,15 +1,15 @@
 import type { ClientRouter, Fetcher, FetcherState } from "@nifrajs/web"
 /**
- * `@nifrajs/web-svelte/fetcher` — Svelte bindings for concurrent fetchers, as **Svelte stores** (plain
+ * `@nifrajs/web-svelte/fetcher` - Svelte bindings for concurrent fetchers, as **Svelte stores** (plain
  * `.ts`, no runes/compiler needed). `useFetcher(key)` returns a `Readable<FetcherState>` augmented with
- * `load`/`submit` — read it reactively in a component with `$fetcher` (auto-subscription), call
+ * `load`/`submit` - read it reactively in a component with `$fetcher` (auto-subscription), call
  * `fetcher.load(...)` / `fetcher.submit(...)` imperatively. `useFetchers()` returns the live collection
  * as a store. The store's start/stop notifier subscribes to the agnostic store lazily (on the first
- * `$`-subscription) and unsubscribes on the last — so lifecycle is tied to the component automatically.
+ * `$`-subscription) and unsubscribes on the last - so lifecycle is tied to the component automatically.
  *
- * The router that owns the fetchers is the one `mountRouter` hydrated — it registers itself here via
+ * The router that owns the fetchers is the one `mountRouter` hydrated - it registers itself here via
  * `setMountedRouter`. On the server (no mount) there is no router, so the stores hold an idle value
- * (fetchers are client-only); the first client render starts from the same idle snapshot — no mismatch.
+ * (fetchers are client-only); the first client render starts from the same idle snapshot - no mismatch.
  */
 import { type Readable, readable } from "svelte/store"
 
@@ -17,7 +17,7 @@ import { type Readable, readable } from "svelte/store"
 // page, and fetchers never exist on the server. Shared with `client.ts`'s `mountRouter`.
 let mountedRouter: ClientRouter | undefined
 
-/** Register (or clear) the router that owns fetchers — called by `mountRouter`. Not for app use. */
+/** Register (or clear) the router that owns fetchers - called by `mountRouter`. Not for app use. */
 export function setMountedRouter(router: ClientRouter | undefined): void {
   mountedRouter = router
 }
@@ -52,7 +52,7 @@ export function useFetcher(key: string): FetcherStore {
 }
 
 /**
- * Subscribe to the whole live fetcher collection — for a global busy view (e.g. "3 saving…"). Read
+ * Subscribe to the whole live fetcher collection - for a global busy view (e.g. "3 saving…"). Read
  * each entry's `.snapshot()` for its state. The store updates whenever any fetcher transitions or a
  * new one is created.
  */

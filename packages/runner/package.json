@@ -1,7 +1,7 @@
 {
   "name": "@nifrajs/runner",
   "version": "2.2.0",
-  "description": "Run requests through a nifra app's fetch and capture structured results — the engine behind the playground and the agent run/verify tool. Dependency-free; runs in the browser, Bun, Node, Deno, and on the edge.",
+  "description": "Run requests through a nifra app's fetch and capture structured results - the engine behind the playground and the agent run/verify tool. Dependency-free; runs in the browser, Bun, Node, Deno, and on the edge.",
   "keywords": [
     "bun",
     "typescript",

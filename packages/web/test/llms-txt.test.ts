@@ -11,7 +11,7 @@ const pageRoutes = [
   { pattern: "/users/:id", id: "users.$id" },
 ]
 
-/** A fake backend exposing `.routes()` — the only surface {@link generateLlmsTxt} reads. Routes cover the
+/** A fake backend exposing `.routes()` - the only surface {@link generateLlmsTxt} reads. Routes cover the
  * JSON-Schema shapes `tsTypeOf` renders (object/array/enum/union/const/primitives) and the `clientCall`
  * path/body/query permutations (index, path param, body verb, query-only GET). */
 const backend = {

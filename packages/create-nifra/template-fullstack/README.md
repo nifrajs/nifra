@@ -17,9 +17,9 @@ bun test           # run the tests
 bun run typecheck  # type-check
 ```
 
-- `src/app.ts` — routes + the `notes` domain, exported (without `listen`) so tests drive it via `app.fetch`.
-- `src/index.ts` — boots the server and starts the job worker (`queue.start()`).
-- `src/app.test.ts` — exercises pagination, the background job (`queue.drain()`), the cache, and storage.
+- `src/app.ts` - routes + the `notes` domain, exported (without `listen`) so tests drive it via `app.fetch`.
+- `src/index.ts` - boots the server and starts the job worker (`queue.start()`).
+- `src/app.test.ts` - exercises pagination, the background job (`queue.drain()`), the cache, and storage.
 
 Swap the in-memory `notes` array for your database, the `MemoryStorage` for `FileStorage`/`R2Storage`, and
 the default in-memory cache/job stores for shared (Redis / CF KV) ones when you go multi-process.

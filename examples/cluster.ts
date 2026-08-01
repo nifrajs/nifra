@@ -1,16 +1,16 @@
 /**
- * Multi-core nifra on Bun — one process per CPU core sharing a port via `SO_REUSEPORT`.
+ * Multi-core nifra on Bun - one process per CPU core sharing a port via `SO_REUSEPORT`.
  *
  *   bun run examples/cluster.ts            → spawns navigator.hardwareConcurrency workers on :3000
  *   WORKERS=4 bun run examples/cluster.ts  → spawn exactly 4
  *
  * Bun is single-threaded per process, so this is the standard way to use the whole machine:
  * every worker binds the same port with `reusePort: true` and the kernel load-balances accepted
- * connections across them. Each worker is a full, independent app — anything that must be shared
+ * connections across them. Each worker is a full, independent app - anything that must be shared
  * across workers (rate-limit buckets, sessions, WebSocket pub/sub) needs a shared store (Redis,
  * a database), exactly as in any multi-instance deploy.
  *
- * Note: kernel behavior differs — Linux balances ~evenly; macOS accepts the flag but may favor
+ * Note: kernel behavior differs - Linux balances ~evenly; macOS accepts the flag but may favor
  * one socket. Benchmark multi-core throughput on Linux.
  */
 

@@ -1,7 +1,7 @@
 /**
  * A registry of event contracts keyed by `type@version`. Give it the contracts a boundary accepts,
  * hand it untrusted input (an SSE frame, a queue message, a webhook body), and it dispatches to the
- * matching contract and parses — or fails closed when no contract owns that `type@version`.
+ * matching contract and parses - or fails closed when no contract owns that `type@version`.
  */
 
 import type { EventContract, EventEnvelope } from "./contract.ts"

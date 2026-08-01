@@ -1,12 +1,12 @@
 /**
- * Server-Sent Events — a portable `text/event-stream` response helper.
+ * Server-Sent Events - a portable `text/event-stream` response helper.
  *
  * `sse(c, run)` returns a streaming `Response` a handler can return directly. The `run` callback
  * receives a stream it pushes messages to; the connection stays open until `run`'s promise resolves,
  * it calls `stream.close()`, or the client disconnects (`c.req.signal`). Works on every nifra runtime
- * (Bun, Node via `@nifrajs/node`, Deno, Cloudflare/Vercel edge) — it only uses a Web `ReadableStream`.
+ * (Bun, Node via `@nifrajs/node`, Deno, Cloudflare/Vercel edge) - it only uses a Web `ReadableStream`.
  *
- *   // finite stream — run resolves, the connection closes
+ *   // finite stream - run resolves, the connection closes
  *   app.get("/ticks", (c) => sse(c, async (stream) => {
  *     for (let i = 0; i < 5; i++) {
  *       stream.send({ event: "tick", data: String(i) })
@@ -14,7 +14,7 @@
  *     }
  *   }))
  *
- *   // event-driven — keep `run` pending until the client leaves
+ *   // event-driven - keep `run` pending until the client leaves
  *   app.get("/feed", (c) => sse(c, (stream) => {
  *     const off = bus.subscribe((e) => stream.send({ data: JSON.stringify(e) }))
  *     return new Promise<void>((resolve) =>
@@ -43,11 +43,11 @@ export interface SSEStream {
   send(message: SSEMessage): void
   /** End the stream now. */
   close(): void
-  /** Aborts when the client disconnects — use it to tear down subscriptions/loops. */
+  /** Aborts when the client disconnects - use it to tear down subscriptions/loops. */
   readonly signal: AbortSignal
 }
 
-/** Minimal context shape `sse` needs — the live request, for its client-disconnect signal. */
+/** Minimal context shape `sse` needs - the live request, for its client-disconnect signal. */
 export interface SSEContext {
   readonly req: Request
 }
@@ -63,7 +63,7 @@ export interface SSEInit {
 
 /**
  * The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and
- * serializes it (JSON) into the SSE `data:` field — the compile-time half of the `sse` contract.
+ * serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
  */
 export interface TypedSSEStream<Event> {
   /** Send one typed event. `init` sets the optional SSE frame fields (`event`, `id`, `retry`). */
@@ -72,7 +72,7 @@ export interface TypedSSEStream<Event> {
   comment(text: string): void
   /** End the stream now. */
   close(): void
-  /** Aborts when the client disconnects — use it to tear down subscriptions/loops. */
+  /** Aborts when the client disconnects - use it to tear down subscriptions/loops. */
   readonly signal: AbortSignal
 }
 
@@ -93,7 +93,7 @@ export function typedSSEStream<Event>(stream: SSEStream): TypedSSEStream<Event> 
 const CRLF = /[\r\n]/g
 const LINE_SPLIT = /\r\n|\r|\n/
 
-/** `event:`/`id:`/`comment` must be single-line — stripping CR/LF prevents SSE frame injection. */
+/** `event:`/`id:`/`comment` must be single-line - stripping CR/LF prevents SSE frame injection. */
 function formatMessage(m: SSEMessage): string {
   let frame = ""
   if (m.comment !== undefined) frame += `: ${m.comment.replace(CRLF, "")}\n`
@@ -139,7 +139,7 @@ export function sse(
         try {
           controller.close()
         } catch {
-          // Already closed by the runtime's cancel() — safe to ignore.
+          // Already closed by the runtime's cancel() - safe to ignore.
         }
       }
       const stream: SSEStream = {
@@ -180,7 +180,7 @@ export function sse(
       })
     },
     cancel() {
-      // Consumer/runtime canceled (client gone) — pending sends become no-ops.
+      // Consumer/runtime canceled (client gone) - pending sends become no-ops.
       closed = true
       teardown()
     },

@@ -1,7 +1,7 @@
 /**
- * Signed image URLs — a portable, **synchronous** HMAC-SHA256 so the (sync) `selfHostedLoader` can sign
+ * Signed image URLs - a portable, **synchronous** HMAC-SHA256 so the (sync) `selfHostedLoader` can sign
  * URLs inline, on any runtime including the edge (WebCrypto's HMAC is async-only; `node:crypto` isn't on
- * Workers). A signed URL lets `createImageHandler` reject any `(src, w, q)` it didn't authorize —
+ * Workers). A signed URL lets `createImageHandler` reject any `(src, w, q)` it didn't authorize -
  * shutting down resize-bombing (width/quality enumeration) and locking the endpoint to your own images.
  *
  * Pure JS, dependency-free, KAT-tested against the SHA-256 / RFC 4231 HMAC vectors. The secret never
@@ -124,14 +124,14 @@ export function hmacSha256Hex(key: string, message: string): string {
   return hex(hmacSha256(encoder.encode(key), encoder.encode(message)))
 }
 
-/** base64url (RFC 4648 §5, unpadded) of a byte array — URL-safe, compact (43 chars for a 32-byte tag). */
+/** base64url (RFC 4648 §5, unpadded) of a byte array - URL-safe, compact (43 chars for a 32-byte tag). */
 function base64url(bytes: Uint8Array): string {
   let binary = ""
   for (const b of bytes) binary += String.fromCharCode(b)
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
 }
 
-/** Constant-time string compare — length-independent of where the first difference is. */
+/** Constant-time string compare - length-independent of where the first difference is. */
 function safeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false
   let diff = 0
@@ -154,7 +154,7 @@ export interface ImageSignatureParts {
 const canonical = (p: ImageSignatureParts): string =>
   `${p.src}\n${p.w}\n${p.q ?? ""}\n${p.exp ?? ""}`
 
-// 256-bit secret floor — mirrors @nifrajs/core's HMAC guard. This package is dependency-free (ships
+// 256-bit secret floor - mirrors @nifrajs/core's HMAC guard. This package is dependency-free (ships
 // its own SHA-256), so the constant is inlined rather than imported.
 const MIN_SECRET_BYTES = 32
 

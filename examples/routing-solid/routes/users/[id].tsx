@@ -10,7 +10,7 @@ export async function loader({ api, params }: LoaderArgs<typeof backend>) {
   return { user: res.data }
 }
 
-// Dynamic head — a function of the loader data. Updates the title on client navigation.
+// Dynamic head - a function of the loader data. Updates the title on client navigation.
 export function meta({ data }: MetaArgs<LoaderData<typeof loader>>) {
   return { title: data.user ? `User #${data.user.id}` : "User" }
 }

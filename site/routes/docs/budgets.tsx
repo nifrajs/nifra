@@ -4,7 +4,7 @@ import { pageMeta } from "../../meta"
 export const hydrate = false
 
 export const meta = pageMeta(
-  "Nifra — Request budgets",
+  "Nifra - Request budgets",
   "Propagate one absolute deadline through Nifra requests and downstream adapters without resetting time at each hop.",
 )
 
@@ -20,7 +20,7 @@ const app = server({
   return { remainingMs: c.budget.remaining() }
 })`
 
-const FORWARD = `// doc-check: skip — context and downstream adapter are established by the app
+const FORWARD = `// doc-check: skip - context and downstream adapter are established by the app
 const child = c.budget.child(50) // keep 50ms to serialize the response
 
 await fetch(url, {

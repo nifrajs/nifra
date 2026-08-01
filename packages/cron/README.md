@@ -15,7 +15,7 @@ const cron = createScheduler({
 
 cron.start()           // checks every 15s; fires each job once per matching minute
 // on shutdown:
-cron.stop()            // graceful — in-flight handlers finish
+cron.stop()            // graceful - in-flight handlers finish
 ```
 
 ## Expressions
@@ -38,20 +38,20 @@ either fires the job.
 
 ## Guarantees
 
-- **Overlap-safe** — a job still running when its next minute arrives is *skipped*, not stacked.
-- **Error-isolated** — a handler that throws or rejects goes to `onError` (default `console.error`);
+- **Overlap-safe** - a job still running when its next minute arrives is *skipped*, not stacked.
+- **Error-isolated** - a handler that throws or rejects goes to `onError` (default `console.error`);
   it never tears down the scheduler loop.
-- **Graceful stop** — `stop()` clears the timer; in-flight handlers run to completion.
-- **Loud at registration** — a bad expression or a duplicate job name throws at `add()`, not at fire.
-- **Doesn't pin the process** — the interval is `unref`'d, so the scheduler alone won't keep a
+- **Graceful stop** - `stop()` clears the timer; in-flight handlers run to completion.
+- **Loud at registration** - a bad expression or a duplicate job name throws at `add()`, not at fire.
+- **Doesn't pin the process** - the interval is `unref`'d, so the scheduler alone won't keep a
   process alive.
 
 ## Testing
 
-`tick(date)` runs every job due at a given instant with no real timers — drive it with controlled
+`tick(date)` runs every job due at a given instant with no real timers - drive it with controlled
 dates to test schedules deterministically. `runNow(name)` fires a job off-schedule (e.g. an admin
-"run now" button). The pure core — `parseCron(expr)`, `matches(fields, date)`, `nextRun(fields, from)`
-— is exported too.
+"run now" button). The pure core - `parseCron(expr)`, `matches(fields, date)`, `nextRun(fields, from)`
+- is exported too.
 
 ## Cloudflare Workers
 
@@ -61,7 +61,7 @@ trigger instead: `toFetchHandler(app, { scheduled })` from `@nifrajs/core` + a `
 
 ## For AI agents
 
-Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports you call + its footguns),
 one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the

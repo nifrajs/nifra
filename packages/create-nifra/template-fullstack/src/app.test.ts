@@ -15,7 +15,7 @@ test("create + background index job", async () => {
   expect(res.status).toBe(201)
   const note = (await res.json()) as { id: number }
 
-  // The index job was enqueued, not run yet — drain the queue once, then it's indexed.
+  // The index job was enqueued, not run yet - drain the queue once, then it's indexed.
   expect(wasIndexed(note.id)).toBe(false)
   await queue.drain()
   expect(wasIndexed(note.id)).toBe(true)

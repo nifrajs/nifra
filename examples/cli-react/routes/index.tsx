@@ -3,7 +3,7 @@ import type { backend } from "../backend"
 import { Counter } from "../components/Counter"
 
 export const meta = {
-  title: "nifra — CLI demo",
+  title: "nifra - CLI demo",
   meta: [{ name: "description", content: "Driven entirely by the nifra CLI (zero-config)." }],
 }
 

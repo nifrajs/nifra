@@ -22,7 +22,7 @@ import { generateServerManifest } from "../src/index.ts"
 
 // --- Bundle-size report -------------------------------------------------------------------------------
 
-describe("aggregateSizeReport — sorts biggest gzip first + sums totals", () => {
+describe("aggregateSizeReport - sorts biggest gzip first + sums totals", () => {
   test("orders by gzip desc, ties by raw bytes then name; totals are the sums", () => {
     const chunks: ChunkSize[] = [
       { name: "small.js", bytes: 100, gzip: 50 },
@@ -233,7 +233,7 @@ describe("generateServerEntry", () => {
     expect(src).toContain("export default")
   })
 
-  test("static has no server entry — throws", () => {
+  test("static has no server entry - throws", () => {
     expect(() =>
       generateServerEntry({ target: "static", adapterImport: "../framework.ts" }),
     ).toThrow(/static/)
@@ -249,7 +249,7 @@ describe("generateServerEntry", () => {
   })
 })
 
-describe("generateServerManifest — bakes styles for createWebApp", () => {
+describe("generateServerManifest - bakes styles for createWebApp", () => {
   const EMPTY = { routes: [], layouts: {} } as unknown as Parameters<
     typeof generateServerManifest
   >[0]
@@ -375,7 +375,7 @@ describe("cloudflareRouteRules", () => {
   })
 })
 
-describe("generateServerEntry — cf-pages static fallback", () => {
+describe("generateServerEntry - cf-pages static fallback", () => {
   test("serves an allowlisted public path through ASSETS instead of 404ing in the router", () => {
     // `_routes.json` cannot always name every public file, so a static request CAN reach the worker.
     // Correctness must not depend on how much of that list fit.

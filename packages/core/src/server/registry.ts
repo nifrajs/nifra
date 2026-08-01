@@ -108,20 +108,20 @@ export type WsRouteInfoFor<
 /**
  * Merge a new route into the registry, combining methods that share a path.
  *
- * SCALING CEILING (measured — see many-routes.test-d.ts and the isolation study below): a single
- * fluent chain hits TS2589 at ~95-100 routes. This intersection is NOT the cause — in isolation it
+ * SCALING CEILING (measured - see many-routes.test-d.ts and the isolation study below): a single
+ * fluent chain hits TS2589 at ~95-100 routes. This intersection is NOT the cause - in isolation it
  * accumulates 1000+ routes cleanly, and heavy per-route `Params<Path>`/schema inference alone
  * reaches 600+. The wall is an INTERACTION unique to the fluent builder: each `.get(path, handler)`
  * both (a) computes the handler's context type from the path (`c.params.id` inferred from `:id`)
  * AND (b) returns `Server<AddRoute<growing-R, …>, Ctx>`. Neither alone strains the compiler; the
- * PRODUCT — recomputing the handler context while re-threading the ever-larger registry at each of
- * N steps — exhausts TypeScript's per-expression instantiation budget around N≈95. It is therefore
+ * PRODUCT - recomputing the handler context while re-threading the ever-larger registry at each of
+ * N steps - exhausts TypeScript's per-expression instantiation budget around N≈95. It is therefore
  * O(N) and inherent to any builder that infers handler context AND accumulates a typed route
  * registry (Elysia/tRPC/hono's typed clients cap the same way); it is not fixable by reshaping
  * AddRoute. Past ~90 routes, use a path that DOESN'T form the product: split into domain groups and
  * `.merge()` them (each group is a short chain; a merge is one `R & R2` intersection with no
  * per-call context work), or contract-first `implement()` (the registry is one object type declared
- * upfront — no grow-R-per-call, so no ceiling at all).
+ * upfront - no grow-R-per-call, so no ceiling at all).
  */
 export type AddRoute<
   R extends Registry,

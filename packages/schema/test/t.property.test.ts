@@ -30,11 +30,11 @@ const validUser = fc.record({
   active: fc.boolean(),
 })
 
-test("property: soundness — every well-typed record is accepted", () => {
+test("property: soundness - every well-typed record is accepted", () => {
   fc.assert(fc.property(validUser, (user) => expect(accepts(userSchema, user)).toBe(true)))
 })
 
-test("property: completeness — corrupting any one field's type is rejected", () => {
+test("property: completeness - corrupting any one field's type is rejected", () => {
   const wrongFor = { name: 1, age: "x", tags: "nope", active: 0 } as const
   const fields = ["name", "age", "tags", "active"] as const
   const corrupted = validUser.chain((user) =>

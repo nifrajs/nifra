@@ -1,5 +1,5 @@
 /**
- * Solid hydration entry for the /frameworks live demo — same shape as the React entry, against the
+ * Solid hydration entry for the /frameworks live demo - same shape as the React entry, against the
  * Solid catalog component (`bench/ssr/nifra-solid`). Chain `[App]` matches the Solid SSR fragment.
  * Built with the Solid Babel plugin (`generate: "dom"`, `hydratable`) so the client tree aligns with
  * the `data-hk`-keyed SSR markup; the page injects Solid's `generateHydrationScript()` (the adapter's

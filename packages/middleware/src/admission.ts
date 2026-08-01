@@ -3,7 +3,7 @@ import type { AdmissionController, AdmissionDecision } from "@nifrajs/core/serve
 /**
  * Adaptive capacity admission. Rate limiting bounds request *frequency* and `@nifrajs/core/budget` bounds
  * request *duration*; neither stops a healthy instance from accepting more *concurrent* work than it
- * can finish. This gate admits on live capacity evidence — in-flight count + event-loop lag — briefly
+ * can finish. This gate admits on live capacity evidence - in-flight count + event-loop lag - briefly
  * queues at the edge, and sheds the rest with `429` + `Retry-After`, so p99 stays bounded under load
  * instead of collapsing.
  *
@@ -11,7 +11,7 @@ import type { AdmissionController, AdmissionDecision } from "@nifrajs/core/serve
  * hook layers tenant priority and reserved capacity on top without leaking
  * those concerns into the OSS core.
  *
- * Wire it as the server's `admission` option (NOT an `onRequest` hook — a hook disables the native
+ * Wire it as the server's `admission` option (NOT an `onRequest` hook - a hook disables the native
  * route table). Off by default: when unset, the request path is untouched.
  */
 
@@ -97,7 +97,7 @@ export interface LoopDelayHistogram {
  */
 export type LoopDelayMonitor = (resolutionMs: number) => LoopDelayHistogram | undefined
 
-/** Shared no-op sampler — the fallback when an explicitly supplied monitor has no histogram. */
+/** Shared no-op sampler - the fallback when an explicitly supplied monitor has no histogram. */
 const NO_LAG: () => number = () => 0
 
 /**
@@ -274,7 +274,7 @@ export function createAdmissionController(options: AdmissionOptions): AdmissionC
       }
     }
 
-    // Loop-lag shed: the box is behind on the event loop — reject regardless of slot count.
+    // Loop-lag shed: the box is behind on the event loop - reject regardless of slot count.
     if (lag > maxLagMs) return shedResponse("loop-lag")
 
     // FAST PATH (O(1)): a slot is free and lag is fine. No timer, no queue, no extra await.

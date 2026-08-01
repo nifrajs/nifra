@@ -7,13 +7,13 @@ import { materializeAll } from "./_scaffold-fixtures.ts"
 
 // Regression guard for the "fresh scaffold fails its own `nifra check`" bug:
 // (1) demo backends must lock output shapes with a `response` schema (AGENTS.md doctrine);
-// (2) demo loaders must narrow on `res.ok` before touching `res.data` — un-narrowed `data`
+// (2) demo loaders must narrow on `res.ok` before touching `res.data` - un-narrowed `data`
 //     is `{}` under the typed client, so `res.data?.count` is a compile error.
 //
 // Two tiers:
 //   - static tier (always runs): asserts the template sources carry both fixes;
 //   - live tier (SMOKE_SCAFFOLD=1): scaffolds with --link against this monorepo, installs,
-//     and runs the real `nifra check` — the full done-gate, too slow for every unit run.
+//     and runs the real `nifra check` - the full done-gate, too slow for every unit run.
 
 const TEMPLATES_DIR = resolve(import.meta.dir, "..")
 
@@ -76,7 +76,7 @@ afterAll(async () => {
 // `node_modules/@nifrajs/core` symlinked to `packages/core` and see whether it passes against HEAD.
 //
 // Live tier scaffolds from the LOCAL template sources but installs PUBLISHED @nifrajs/*
-// packages — the exact combination a user gets, and the one that shipped broken (template
+// packages - the exact combination a user gets, and the one that shipped broken (template
 // stale vs published client types). --link is deliberately not used: linked source packages
 // carry workspace:* interdeps that can't resolve outside this monorepo.
 describe.if(SMOKE)(

@@ -6,7 +6,7 @@ import { validateStandard } from "../src/schema/standard.ts"
  * `validateStandard` was changed from always-`async` to **sync-or-async**: a synchronous Standard
  * Schema validator now returns the outcome WITHOUT a Promise (so the lifecycle's query/body validation
  * doesn't allocate a promise for the common sync schema), while an async validator is still awaited.
- * `await validateStandard(...)` works for both — but callers that branch on `instanceof Promise` (the
+ * `await validateStandard(...)` works for both - but callers that branch on `instanceof Promise` (the
  * server does) depend on the sync path actually staying sync. These tests pin that contract + that
  * both paths still validate + reject correctly.
  */
@@ -28,7 +28,7 @@ const syncFail = schema<{ n: number }>(() => ({ issues: [{ message: "bad", path:
 const asyncOk = schema<{ n: number }>(async () => ({ value: { n: 2 } }))
 const asyncFail = schema<{ n: number }>(async () => ({ issues: [{ message: "bad async" }] }))
 
-describe("validateStandard — sync stays sync, async is awaited", () => {
+describe("validateStandard - sync stays sync, async is awaited", () => {
   test("a sync validator returns a NON-Promise success outcome (the perf invariant)", () => {
     const out = validateStandard(syncOk, {})
     expect(out instanceof Promise).toBe(false)

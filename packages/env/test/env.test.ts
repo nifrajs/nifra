@@ -19,13 +19,13 @@ describe("env coercing helpers", () => {
     )
   })
 
-  test("port: integer 1–65535", () => {
+  test("port: integer 1-65535", () => {
     expect(defineEnv({ P: env.port({ default: 3000 }) }, { source: {} }).P).toBe(3000)
     expect(defineEnv({ P: env.port() }, { source: { P: "8080" } }).P).toBe(8080)
     expect(() => defineEnv({ P: env.port() }, { source: { P: "70000" } })).toThrow(
-      /port in 1–65535/,
+      /port in 1-65535/,
     )
-    expect(() => defineEnv({ P: env.port() }, { source: { P: "1.5" } })).toThrow(/port in 1–65535/)
+    expect(() => defineEnv({ P: env.port() }, { source: { P: "1.5" } })).toThrow(/port in 1-65535/)
   })
 
   test("boolean: truthy/falsy strings, case-insensitive", () => {

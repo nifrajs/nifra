@@ -476,7 +476,7 @@ export function evaluateCapabilityAssurance(
 
 /**
  * Optional effect-ledger fields for one `useCapability` beacon. Token-only by design: an adapter
- * names *what* it touched and *how much resource* it used — never the value it read or wrote.
+ * names *what* it touched and *how much resource* it used - never the value it read or wrote.
  */
 export interface UseCapabilityOptions {
   /** Adapter/resource token recorded on the ledger entry (`repo:orders`). */

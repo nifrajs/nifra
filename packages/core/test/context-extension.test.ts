@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
 
-describe("context extension — derive / decorate", () => {
+describe("context extension - derive / decorate", () => {
   test("decorate (static) and derive (per-request) reach the handler", async () => {
     const app = server()
       .decorate("version", "1.0")

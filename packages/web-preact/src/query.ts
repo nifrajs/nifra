@@ -5,12 +5,12 @@ import {
   type QueryState,
 } from "@nifrajs/web"
 /**
- * `@nifrajs/web-preact/query` — Preact bindings for the keyed query-cache. `useQuery(key, fn)` subscribes a
+ * `@nifrajs/web-preact/query` - Preact bindings for the keyed query-cache. `useQuery(key, fn)` subscribes a
  * component to a query (via `useSyncExternalStore` from preact/compat) and fetches on mount / key change;
  * `useQueryClient` exposes `invalidateQueries` for after a mutation. Imports only `preact/compat` +
  * `preact/hooks` + `@nifrajs/web`, so route components use it on the server *and* client. No JSX.
  *
- * The query client is created lazily **client-side only** (the `typeof window` guard) — on the server
+ * The query client is created lazily **client-side only** (the `typeof window` guard) - on the server
  * there is none, so `useQuery` renders the idle/pending state (queries are client-first; loaders are
  * the SSR data source). The first client render uses the same idle snapshot, so no mismatch.
  */
@@ -45,7 +45,7 @@ const noopAsync = async (): Promise<never> => {
 
 /** A query's reactive {@link QueryState} plus `isPending` + `refetch`. */
 export interface UseQueryResult<T> extends QueryState<T> {
-  /** `status === "pending"` — no data yet (initial load). */
+  /** `status === "pending"` - no data yet (initial load). */
   readonly isPending: boolean
   /** Force a refetch (ignores `staleTime`). */
   readonly refetch: () => Promise<T>

@@ -9,7 +9,7 @@
  *   GET  /search      → validate query, return { q, limit }
  *   POST /users       → validate { name: string; age: number }, return { id, name }
  *
- * The POST row uses each framework's *idiomatic* validation — nifra: a Standard
+ * The POST row uses each framework's *idiomatic* validation - nifra: a Standard
  * Schema; Elysia: TypeBox (`t`); Hono: the built-in `validator`; raw rows: a manual
  * type guard. So that row measures real-world body-parse + validation cost, not
  * pure routing. (Reported as such in BENCHMARKS.md.)
@@ -29,7 +29,7 @@ if (!Number.isInteger(port)) {
  * The one validation predicate every framework's POST /users branch shares, so
  * the *semantics* validated are identical and only the framework's plumbing
  * (its validation hook) differs. After `typeof v === "object" && v !== null`,
- * `"k" in v` narrows `v` to carry `k: unknown` — no casts needed.
+ * `"k" in v` narrows `v` to carry `k: unknown` - no casts needed.
  */
 function isUser(v: unknown): v is { name: string; age: number } {
   return (
@@ -53,7 +53,7 @@ function isSearch(v: unknown): v is { q: string; limit: string } {
   )
 }
 
-// Manual pathname scan — the same trick nifra (urlPartsOf) and deno-raw use, so the raw ceiling
+// Manual pathname scan - the same trick nifra (urlPartsOf) and deno-raw use, so the raw ceiling
 // isn't handicapped by a full `new URL()` parse on every request. (Kept in sync with serve-deno.ts.)
 function pathnameOf(url: string): string {
   const schemeEnd = url.indexOf("://")
@@ -72,7 +72,7 @@ function pathnameOf(url: string): string {
 
 if (framework === "nifra") {
   // Shared with the Node nifra row (serve-node-nifra.ts) so both sections measure the
-  // identical app — no drift between runtimes.
+  // identical app - no drift between runtimes.
   const { makeNifraApp } = await import("./_nifra-app.ts")
   makeNifraApp().listen(port)
 } else if (framework === "hono") {
@@ -90,7 +90,7 @@ if (framework === "nifra") {
     )
     .post(
       "/users",
-      // Hono's built-in validator — its idiomatic, dependency-free validation hook.
+      // Hono's built-in validator - its idiomatic, dependency-free validation hook.
       validator("json", (value, c) => (isUser(value) ? value : c.json({ error: "invalid" }, 400))),
       (c) => c.json({ id: "1", name: c.req.valid("json").name }),
     )

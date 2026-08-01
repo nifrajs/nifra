@@ -1,5 +1,5 @@
 /**
- * @nifrajs/jobs — types for the typed background-job queue.
+ * @nifrajs/jobs - types for the typed background-job queue.
  *
  * Dependency-free: the Standard Schema surface below is the public spec, declared structurally so
  * `define({ input })` can validate + infer a payload from any Standard-Schema validator (e.g.
@@ -30,7 +30,7 @@ export interface JobContext {
   readonly attempt: number
 }
 
-/** A job processor. A throw/rejection routes to `onError` and triggers retry/dead-letter — never crashes the worker. */
+/** A job processor. A throw/rejection routes to `onError` and triggers retry/dead-letter - never crashes the worker. */
 export type JobHandler<Payload> = (payload: Payload, ctx: JobContext) => void | Promise<void>
 
 /** ms to wait before the next attempt, given the number of attempts already made (1-based). */
@@ -46,7 +46,7 @@ export interface RetryPolicy {
 /** A job definition registered on a queue. */
 export interface JobDefinition<Payload> {
   readonly handler: JobHandler<Payload>
-  /** Optional Standard Schema — validates the payload at `enqueue` (the trust boundary); a failure throws. */
+  /** Optional Standard Schema - validates the payload at `enqueue` (the trust boundary); a failure throws. */
   readonly input?: StandardSchemaV1<Payload>
   /** `number` is shorthand for `{ attempts }`. */
   readonly retries?: number | RetryPolicy
@@ -103,7 +103,7 @@ export interface JobCounts {
 /**
  * Persistence + leasing for the queue. The default {@link MemoryJobStore} is single-process (dev / a
  * single long-running server); implement this over Redis/Postgres/etc. for durability or multiple
- * workers. All methods may be sync or async — the queue awaits them.
+ * workers. All methods may be sync or async - the queue awaits them.
  */
 export interface JobStore {
   /** Persist a new job; return its id. */
@@ -115,11 +115,11 @@ export interface JobStore {
   }): string | Promise<string>
   /** Atomically claim up to `limit` jobs due at/before `now`, hiding them for `leaseMs`. */
   lease(now: number, limit: number, leaseMs: number): StoredJob[] | Promise<StoredJob[]>
-  /** A job finished successfully — remove it. */
+  /** A job finished successfully - remove it. */
   complete(id: string): void | Promise<void>
-  /** A job failed but has attempts left — bump its attempt count and reschedule for `runAt`. */
+  /** A job failed but has attempts left - bump its attempt count and reschedule for `runAt`. */
   retry(id: string, runAt: number): void | Promise<void>
-  /** A job exhausted its attempts — move it to the dead-letter set with the last error. */
+  /** A job exhausted its attempts - move it to the dead-letter set with the last error. */
   deadLetter(id: string, error: string): void | Promise<void>
   /** Snapshot counts (observability + tests). */
   counts(): JobCounts | Promise<JobCounts>

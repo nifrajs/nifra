@@ -1,6 +1,6 @@
 import { type MountRouterOptions, type RenderProps, searchOfChain } from "@nifrajs/web"
 /**
- * @nifrajs/web-vue/client — Vue client runtime. `hydrate` hydrates a single SSR'd route; `mountRouter`
+ * @nifrajs/web-vue/client - Vue client runtime. `hydrate` hydrates a single SSR'd route; `mountRouter`
  * hydrates a stateful Router whose root component subscribes to the agnostic store (a `shallowRef`
  * fed by `router.subscribe`) and re-renders the matched chain on every client navigation (no full
  * reload). `createSSRApp(...).mount` reconciles against the SSR markup (Vue's hydration). Kept in its
@@ -10,7 +10,7 @@ import { type Component, createSSRApp, defineComponent, onScopeDispose, shallowR
 import { compose } from "./compose.ts"
 import { setMountedRouter } from "./fetcher.ts"
 
-// The `_error` boundary chain element — defined in its own module, re-exported here so nifra's client
+// The `_error` boundary chain element - defined in its own module, re-exported here so nifra's client
 // codegen resolves it from `@nifrajs/web-vue/client` alongside `mountRouter`.
 export { errorBoundary } from "./error.ts"
 
@@ -24,7 +24,7 @@ export function hydrate(chain: readonly unknown[], props: RenderProps, container
 
 /**
  * Hydrate a stateful Vue Router. A `shallowRef` holds the store snapshot; `router.subscribe` writes
- * each new snapshot into it, so the root re-renders the matched layout chain on every store change —
+ * each new snapshot into it, so the root re-renders the matched layout chain on every store change -
  * client navigations swap routes without a full reload. The initial snapshot matches the SSR markup.
  */
 export function mountRouter(options: MountRouterOptions): void {

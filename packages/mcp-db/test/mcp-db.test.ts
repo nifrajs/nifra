@@ -52,7 +52,7 @@ describe("construction fails closed", () => {
     ).toThrow(McpDbConfigError)
   })
 
-  test("query_only is set on the connection — writes are rejected engine-side", () => {
+  test("query_only is set on the connection - writes are rejected engine-side", () => {
     const db = seededDb()
     serveDatabaseAsMcp(db, { tables: ["habits"] })
     expect(() => db.run("INSERT INTO habits (name) VALUES ('x')")).toThrow()

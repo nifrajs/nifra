@@ -1,5 +1,5 @@
 /**
- * Shared SSR benchmark harness — oha load, hydration payload accounting, server lifecycle.
+ * Shared SSR benchmark harness - oha load, hydration payload accounting, server lifecycle.
  * Used by bench/ssr/run.ts (and kept aligned with prerender-ttfb.ts methodology).
  */
 
@@ -80,7 +80,7 @@ export function parseOha(raw: string): SsrBenchMeasure {
   }
   if (success < 0.99) {
     throw new Error(
-      `oha: only ${(success * 100).toFixed(0)}% of requests succeeded — server shed load or refused connections`,
+      `oha: only ${(success * 100).toFixed(0)}% of requests succeeded - server shed load or refused connections`,
     )
   }
   return { rps: Math.round(rps), p50ms: p50 * 1000, p99ms: p99 * 1000 }
@@ -97,7 +97,7 @@ export async function runOha(url: string, durationS: number): Promise<SsrBenchMe
     "json",
     url,
   ]
-  // oha 1.14+ rejects NO_COLOR=1 (common in CI) — its --no-color only accepts true/false literals.
+  // oha 1.14+ rejects NO_COLOR=1 (common in CI) - its --no-color only accepts true/false literals.
   const env = { ...process.env }
   delete env.NO_COLOR
   delete env.CLERK_NO_COLOR
@@ -194,7 +194,7 @@ export async function waitServerReady(base: string, timeoutMs: number): Promise<
         return
       }
     } catch {
-      // booting — retry
+      // booting - retry
     }
     await Bun.sleep(100)
   }

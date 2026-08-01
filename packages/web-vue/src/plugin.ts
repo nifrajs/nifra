@@ -9,7 +9,7 @@ import {
 import type { BunPlugin } from "bun"
 
 /**
- * `@nifrajs/web-vue/plugin` — the `.vue` Single-File-Component compiler Bun plugin, in its OWN module (no
+ * `@nifrajs/web-vue/plugin` - the `.vue` Single-File-Component compiler Bun plugin, in its OWN module (no
  * `.vue` imports), so the SSR preload registers it BEFORE any `.vue` file loads. Mirrors
  * `@nifrajs/web-svelte/plugin`: pass `"dom"` for the client bundle (`buildClient({ plugins: [...] })`) and
  * preload `"ssr"` for the server (`bun --preload`). Needs `@vue/compiler-sfc` (a peer that matches your
@@ -23,7 +23,7 @@ const STYLE_NS = "nifra-vue-css"
 /**
  * Deterministic 8-hex scope id for `data-v-<id>`. Hashes the cwd-relative path (not the machine's
  * absolute one) via the shared plugin kit, so the same `.vue` file yields the same scope id across
- * machines/CI — and so `compileVue` (markup) and `compileVueStyles` (CSS) always agree.
+ * machines/CI - and so `compileVue` (markup) and `compileVueStyles` (CSS) always agree.
  */
 function scopeId(filename: string): string {
   return hash8(reproduciblePath(filename))
@@ -34,7 +34,7 @@ const templateErrorMessage = (e: string | { message?: string }): string =>
 
 /**
  * Compile a `.vue` SFC to a JS module: the component as the **default export**, plus the plain
- * `<script>`'s named exports (`loader`/`action`/`meta` — nifra's route convention) preserved as-is.
+ * `<script>`'s named exports (`loader`/`action`/`meta` - nifra's route convention) preserved as-is.
  * `<template>` compiles to a `render` (dom) or `ssrRender` (ssr) function bound onto the component.
  *
  * Scoped `<style>`: when any style block is `scoped`, the template gets the `data-v-<id>` scope
@@ -72,7 +72,7 @@ export function compileVue(source: string, filename: string, generate: "dom" | "
       filename,
       id,
       ssr,
-      ssrCssVars: [], // nifra has no `v-bind()` CSS-var pipeline — empty silences the SSR warning
+      ssrCssVars: [], // nifra has no `v-bind()` CSS-var pipeline - empty silences the SSR warning
       compilerOptions: {
         ...(bindings !== undefined ? { bindingMetadata: bindings } : {}),
         ...(scopeAttr !== undefined ? { scopeId: scopeAttr } : {}), // bake `data-v-<id>` onto elements
@@ -121,7 +121,7 @@ export function compileVueStyles(source: string, filename: string): string {
 /**
  * The `.vue` compiler Bun plugin. `"dom"` → client-hydratable output; `"ssr"` → server render. On the
  * `"dom"` build, a SFC's `<style>` CSS is emitted as a virtual `?vue-css` module that `Bun.build`'s CSS
- * bundler folds into the app stylesheet (served as a `<link>`). The `"ssr"` build emits no CSS — the
+ * bundler folds into the app stylesheet (served as a `<link>`). The `"ssr"` build emits no CSS - the
  * scope attributes are already in the markup and the stylesheet ships from the client build. With
  * `nifra dev`, `@vitejs/plugin-vue` handles the styles instead.
  */

@@ -2,7 +2,7 @@
  * Idempotency primitive. A mutating route can declare `schema.idempotency`; the server then dedupes
  * on an `Idempotency-Key` header: the first request runs and its response is stored, and a retry with
  * the same key replays the stored response byte-for-byte without re-running the handler. A retry that
- * reuses a key with a *different* request body is rejected (409) — a key binds to one request.
+ * reuses a key with a *different* request body is rejected (409) - a key binds to one request.
  *
  * This module is the runtime-neutral core: the store interface, an in-memory store, the request
  * fingerprint, and response (de)serialization. The server owns the request-path lane that reads the
@@ -136,7 +136,7 @@ const encoder = new TextEncoder()
 
 /**
  * SHA-256 fingerprint binding a key to one request: method, path (+ query), and the raw body bytes.
- * A collision-resistant hash matters — a weak hash would let a crafted body replay another's response.
+ * A collision-resistant hash matters - a weak hash would let a crafted body replay another's response.
  */
 export async function computeIdempotencyFingerprint(
   method: string,
@@ -297,7 +297,7 @@ export function responseFromStored(
   const headers = new Headers(replaySafeHeaders(stored.headers) as [string, string][])
   headers.set(IDEMPOTENT_REPLAY_HEADER, "1")
   // Reference the Response body type structurally: `BodyInit` isn't a named type under every lib config,
-  // but a fresh `Uint8Array` is a valid body — the cast bridges the `ArrayBufferLike` generic variance.
+  // but a fresh `Uint8Array` is a valid body - the cast bridges the `ArrayBufferLike` generic variance.
   const body = (stored.body === "" ? null : base64ToBytes(stored.body)) as ConstructorParameters<
     typeof Response
   >[0]
@@ -320,7 +320,7 @@ export interface MemoryIdempotencyStoreOptions {
 }
 
 /**
- * In-process idempotency store. Reservation is atomic by construction — `begin` never awaits, so the
+ * In-process idempotency store. Reservation is atomic by construction - `begin` never awaits, so the
  * single-threaded event loop serializes concurrent callers for one key. Expired entries are treated
  * as absent (lazy eviction on access); a periodic {@link MemoryIdempotencyStore.sweep} bounds memory.
  */

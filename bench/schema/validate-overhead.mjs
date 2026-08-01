@@ -1,10 +1,10 @@
-// Schema validation overhead benchmark — runs on Node (V8) and Bun (JSC): `node bench/schema/validate-overhead.mjs`
+// Schema validation overhead benchmark - runs on Node (V8) and Bun (JSC): `node bench/schema/validate-overhead.mjs`
 //
 // Question: is an opt-in "fast-path" (core calls a t-schema's compiled checker directly, skipping the
 // Standard Schema wrapper) worth building? This measures the steady-state per-request cost of:
-//   A  — current path: validateStandard(nifraSchema, value)  [Standard Schema wrapper + outcome normalize]
-//   B1 — fast-path:    compiled.Check(value) then build {ok,value}  [realistic: still returns an outcome]
-//   B2 — floor:        compiled.Check(value) only               [theoretical max if core uses value inline]
+//   A  - current path: validateStandard(nifraSchema, value)  [Standard Schema wrapper + outcome normalize]
+//   B1 - fast-path:    compiled.Check(value) then build {ok,value}  [realistic: still returns an outcome]
+//   B2 - floor:        compiled.Check(value) only               [theoretical max if core uses value inline]
 // plus first-hit compile latency and the interpreted (edge-safe, no-eval) alternative.
 
 import { Type } from "@sinclair/typebox"
@@ -68,7 +68,7 @@ const lVal = {
 }
 
 // ── Harness: warmup + best-of-N median. Results are stored to a module-level holder so V8/JSC escape
-// analysis cannot scalar-replace the allocated outcome objects — in a real server the validated value
+// analysis cannot scalar-replace the allocated outcome objects - in a real server the validated value
 // escapes into ctx.query and the handler, so we must measure the allocations, not let the JIT elide them.
 const HOLDER = { ref: null }
 function bench(fn, iters, trials = 7) {
@@ -135,7 +135,7 @@ for (const c of cases) {
 }
 
 console.log(
-  "\nEdge-safe alt — interpreted Value.Check (no new Function) vs compiled, steady-state:",
+  "\nEdge-safe alt - interpreted Value.Check (no new Function) vs compiled, steady-state:",
 )
 for (const c of cases) {
   const interp = bench(() => Value.Check(c.schema, c.val), ITERS)

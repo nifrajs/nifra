@@ -18,7 +18,7 @@ export type UploadResult =
 export interface ValidateUploadOptions {
   /** Max byte length. A `Blob` over this is rejected without reading it. */
   readonly maxBytes: number
-  /** Allowed MIME types — exact (`"image/png"`) or a `image/*` wildcard. Omit ⇒ any recognized type. */
+  /** Allowed MIME types - exact (`"image/png"`) or a `image/*` wildcard. Omit ⇒ any recognized type. */
   readonly accept?: readonly string[]
 }
 

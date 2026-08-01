@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from "@nifrajs/web-vue/query"
 import { defineComponent, h } from "vue"
 import type { backend } from "../backend"
 
-// A keyed query for client-interactive data — distinct from the route loader. Fetches the home count
+// A keyed query for client-interactive data - distinct from the route loader. Fetches the home count
 // (data-mode GET), caches under ["count"]; "refresh" invalidates to refetch. Proves useQuery + client.
 const CountQuery = defineComponent({
   name: "CountQuery",
@@ -32,14 +32,14 @@ const CountQuery = defineComponent({
   },
 })
 
-// A todo row with its OWN bump fetcher — submitting runs in an independent, concurrent state, so many
+// A todo row with its OWN bump fetcher - submitting runs in an independent, concurrent state, so many
 // rows can bump at once (each showing its own pending) without disturbing the list or each other.
 const TodoRow = defineComponent({
   name: "TodoRow",
   props: { todo: { required: true } },
   setup(props) {
     // `id` is stable for this instance (rows are keyed by id), so it's safe to read once. The text,
-    // though, changes on revalidation — read `props.todo` INSIDE the render fn to stay reactive
+    // though, changes on revalidation - read `props.todo` INSIDE the render fn to stay reactive
     // (destructuring/capturing a prop in setup() loses Vue reactivity).
     const id = (props.todo as { id: number }).id
     const fetcher = useFetcher(`bump-${id}`)
@@ -64,7 +64,7 @@ const TodoRow = defineComponent({
 })
 
 export const meta = {
-  title: "nifra + Vue — Todos (fetchers + query)",
+  title: "nifra + Vue - Todos (fetchers + query)",
   meta: [{ name: "description", content: "nifra Vue bindings: useFetcher + useQuery" }],
 }
 

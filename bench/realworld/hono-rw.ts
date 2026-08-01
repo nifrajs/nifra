@@ -1,4 +1,4 @@
-/** Realistic-shape Hono server — identical work to nifra-rw.ts via Hono idioms (secure headers + CORS
+/** Realistic-shape Hono server - identical work to nifra-rw.ts via Hono idioms (secure headers + CORS
  * + request-id + bearer auth + cookie read + validated query + a ~3KB list response). */
 import { Hono } from "hono"
 import { getCookie } from "hono/cookie"

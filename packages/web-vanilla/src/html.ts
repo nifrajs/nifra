@@ -1,11 +1,11 @@
 /**
- * The tagged-template HTML engine — `html` builds an escaped-by-construction {@link Template}.
+ * The tagged-template HTML engine - `html` builds an escaped-by-construction {@link Template}.
  *
  * Security model (the part that matters): every interpolated value is HTML-escaped by default.
- * The ONLY ways to emit unescaped markup are (1) nesting another `html` template — already escaped
- * by construction — and (2) an explicit {@link raw} wrapper, which is the audit-greppable opt-out.
+ * The ONLY ways to emit unescaped markup are (1) nesting another `html` template - already escaped
+ * by construction - and (2) an explicit {@link raw} wrapper, which is the audit-greppable opt-out.
  * The escaper covers text and double-quoted attribute contexts (`& < > " '`); interpolations into
- * unquoted attributes or inline scripts are NOT safe by design — the docs say "always quote".
+ * unquoted attributes or inline scripts are NOT safe by design - the docs say "always quote".
  */
 
 /** Branded wrapper marking a string as pre-trusted markup. Construct only via {@link raw}. */
@@ -17,7 +17,7 @@ export class RawHtml {
 }
 
 /**
- * Mark a string as trusted, pre-escaped markup — it is emitted verbatim. The deliberate escape
+ * Mark a string as trusted, pre-escaped markup - it is emitted verbatim. The deliberate escape
  * hatch (CMS-sanitized HTML, pre-rendered markdown): every call site is greppable, exactly like
  * React's dangerouslySetInnerHTML, without the JSX.
  */
@@ -27,7 +27,7 @@ export function raw(trusted: string): RawHtml {
 
 const ESCAPE_RE = /[&<>"']/
 const escapeHtml = (s: string): string => {
-  // Fast path: most text has nothing to escape — one regex probe, zero allocation.
+  // Fast path: most text has nothing to escape - one regex probe, zero allocation.
   if (!ESCAPE_RE.test(s)) return s
   let out = ""
   let last = 0
@@ -58,7 +58,7 @@ const escapeHtml = (s: string): string => {
   return out + s.slice(last)
 }
 
-/** A rendered HTML fragment — what `html` returns and components produce. Stringified once. */
+/** A rendered HTML fragment - what `html` returns and components produce. Stringified once. */
 export class Template {
   /** The final markup. Built eagerly at tag time (interpolations are already values by then). */
   readonly html: string
@@ -95,9 +95,9 @@ function renderValue(value: HtmlValue): string {
     for (const item of value) out += renderValue(item)
     return out
   }
-  // Objects/functions are a bug at the call site — render loudly rather than "[object Object]".
+  // Objects/functions are a bug at the call site - render loudly rather than "[object Object]".
   throw new TypeError(
-    `[nifra/web-vanilla] html: unsupported interpolation of type ${typeof value} — interpolate strings, numbers, nested html\`…\`, raw(), or arrays of those`,
+    `[nifra/web-vanilla] html: unsupported interpolation of type ${typeof value} - interpolate strings, numbers, nested html\`…\`, raw(), or arrays of those`,
   )
 }
 

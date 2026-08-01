@@ -1,16 +1,16 @@
 /**
- * @nifrajs/web/islands — the framework-agnostic islands client runtime.
+ * @nifrajs/web/islands - the framework-agnostic islands client runtime.
  *
  * An "island" is a server-rendered `<nifra-island>` element whose interactivity is mounted by a small
  * **plain-DOM** enhancer instead of a framework runtime. On a route that opts out of full-document
  * hydration (`export const hydrate = false`), the page ships **zero** framework JS; only the island
  * bundle (this runtime + your enhancers) loads. This variant ships ~99% less client JS than full
- * React hydration on a mostly-static page — the framework runtime is the cost, and islands skip it
+ * React hydration on a mostly-static page - the framework runtime is the cost, and islands skip it
  * entirely here.
  *
  * Server side: render the marker with `@nifrajs/web-react`'s `<Island>` (or any framework's host element
  * `<nifra-island data-id data-strategy data-props>`). Props are JSON-encoded inline in `data-props`
- * (attribute-escaped by the framework) — no central registry, so concurrent SSR renders never share
+ * (attribute-escaped by the framework) - no central registry, so concurrent SSR renders never share
  * state. Client side: bundle one entry that calls `mountIslands({ <id>: enhancer })` and load it via
  * the route's `islandScripts`.
  */
@@ -23,10 +23,10 @@ export type IslandCleanup = () => void
 
 /**
  * Enhances one island element with its (typed) props. Return a cleanup function to tear down on
- * `dispose()` (listeners, observers) — optional; an enhancer with nothing to clean up returns nothing.
+ * `dispose()` (listeners, observers) - optional; an enhancer with nothing to clean up returns nothing.
  * The `void` member is the no-cleanup case, the same shape as React's `EffectCallback`.
  */
-// biome-ignore lint/suspicious/noConfusingVoidType: `void` = "no cleanup returned", like React's EffectCallback — cleanup is optional.
+// biome-ignore lint/suspicious/noConfusingVoidType: `void` = "no cleanup returned", like React's EffectCallback - cleanup is optional.
 export type IslandEnhancer<P = unknown> = (el: HTMLElement, props: P) => IslandCleanup | void
 
 const NOOP = (): void => {}
@@ -79,7 +79,7 @@ function whenStrategy(el: HTMLElement, strategy: IslandStrategy, run: () => void
 /**
  * Find every `<nifra-island data-id>` under `root` (default `document`) and enhance each with the
  * matching enhancer, honoring its `data-strategy`. An island whose `id` has no enhancer is left as
- * inert SSR HTML (forward-compatible). An enhancer that throws is isolated — it never blocks the
+ * inert SSR HTML (forward-compatible). An enhancer that throws is isolated - it never blocks the
  * others (each island is independent). Returns a disposer that cancels pending triggers and runs every
  * enhancer's cleanup (call it on soft-nav teardown; harmless if your app never navigates).
  */
@@ -114,7 +114,7 @@ export function mountIslands(
       try {
         dispose()
       } catch {
-        // best-effort teardown — a failing cleanup must not block the rest
+        // best-effort teardown - a failing cleanup must not block the rest
       }
     }
   }

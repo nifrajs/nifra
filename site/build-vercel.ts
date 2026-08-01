@@ -2,9 +2,9 @@
  * Build the site for Vercel, emitting Vercel's **Build Output API v3** at site/.vercel/output/ so it
  * deploys with no framework preset: `vercel deploy --prebuilt` (or `vercel deploy` after `vercel build`).
  * Layout:
- *   .vercel/output/config.json                      — serve static files, else SSR via the function
- *   .vercel/output/static/assets/<client bundle>     — Vercel's CDN serves these directly
- *   .vercel/output/functions/index.func/index.js     — the Edge SSR function (default fetch handler)
+ *   .vercel/output/config.json                      - serve static files, else SSR via the function
+ *   .vercel/output/static/assets/<client bundle>     - Vercel's CDN serves these directly
+ *   .vercel/output/functions/index.func/index.js     - the Edge SSR function (default fetch handler)
  *   .vercel/output/functions/index.func/.vc-config.json
  *
  *   bun run site/build-vercel.ts
@@ -30,7 +30,7 @@ const client = await buildClient({
 })
 await buildSiteIslands({ outDir: `${out}/static/assets` })
 
-// Default target ("browser") = edge conditions (workerd/edge-light) — the Vercel Edge runtime.
+// Default target ("browser") = edge conditions (workerd/edge-light) - the Vercel Edge runtime.
 const { worker } = await buildServer({
   routesDir: `${dir}/routes`,
   serverEntry: `${dir}/server-vercel.ts`,

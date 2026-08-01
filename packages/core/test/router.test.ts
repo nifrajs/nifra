@@ -6,7 +6,7 @@ function router() {
   return new Router<string>()
 }
 
-describe("Router.find — matching", () => {
+describe("Router.find - matching", () => {
   test("matches a static route with empty params", () => {
     const r = router()
     r.add("GET", "/health", "health")
@@ -92,7 +92,7 @@ describe("Router.find — matching", () => {
   })
 })
 
-describe("Router.find — precedence and backtracking", () => {
+describe("Router.find - precedence and backtracking", () => {
   test("static beats param at the same position", () => {
     const r = router()
     r.add("GET", "/users/:id", "param")
@@ -130,7 +130,7 @@ describe("Router.find — precedence and backtracking", () => {
   })
 })
 
-describe("Router.find — 404 vs 405", () => {
+describe("Router.find - 404 vs 405", () => {
   test("returns not-found for an unknown path", () => {
     const r = router()
     r.add("GET", "/known", "x")
@@ -165,7 +165,7 @@ describe("Router.find — 404 vs 405", () => {
   })
 })
 
-describe("Router.find — tolerance", () => {
+describe("Router.find - tolerance", () => {
   test("matches regardless of method casing", () => {
     const r = router()
     r.add("GET", "/x", "x")
@@ -215,7 +215,7 @@ describe("Router.find — tolerance", () => {
   })
 })
 
-describe("Router.add — boot-time rejection (L2)", () => {
+describe("Router.add - boot-time rejection (L2)", () => {
   const cases: ReadonlyArray<readonly [string, () => void, string]> = [
     [
       "duplicate route",

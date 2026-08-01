@@ -1,4 +1,4 @@
-/** Root layout — wraps every page; the nav drives client-side navigation on the edge. */
+/** Root layout - wraps every page; the nav drives client-side navigation on the edge. */
 export default function Layout(props: { children?: unknown }) {
   return (
     <div>

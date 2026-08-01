@@ -18,7 +18,7 @@ const corpus = [big, small]
 
 test("a query collapses an oversized declaration but keeps it identifiable", () => {
   const out = renderTypesResult(corpus, undefined, "server", 5)
-  // A search is "which symbol did I mean?" — one match used to return ~32,000 characters.
+  // A search is "which symbol did I mean?" - one match used to return ~32,000 characters.
   expect(out.length).toBeLessThan(1000)
   expect(out).toContain("Server")
   expect(out).toContain("@nifrajs/core")
@@ -32,7 +32,7 @@ test("a query collapses an oversized declaration but keeps it identifiable", () 
 test("a query includes a one-line summary so candidates can be told apart", () => {
   const out = renderTypesResult(corpus, undefined, "server", 5)
   expect(out).toContain("The route builder.")
-  // First sentence only — not the whole doc block, and no comment syntax.
+  // First sentence only - not the whole doc block, and no comment syntax.
   expect(out).not.toContain("Chainable, immutable")
   expect(out).not.toContain("/**")
 })
@@ -44,7 +44,7 @@ test("a small declaration is never collapsed", () => {
 })
 
 test("an exact name lookup is always complete", () => {
-  // This is the case where the caller asked for that symbol — collapsing here would be wrong.
+  // This is the case where the caller asked for that symbol - collapsing here would be wrong.
   const out = renderTypesResult(corpus, "Server", undefined, 5)
   expect(out.length).toBeGreaterThan(5000)
   expect(out).not.toContain("members …")

@@ -1,6 +1,6 @@
 import { type MountRouterOptions, type RenderProps, searchOfChain } from "@nifrajs/web"
 /**
- * @nifrajs/web-preact/client — Preact client runtime. `hydrate` hydrates a single SSR'd route;
+ * @nifrajs/web-preact/client - Preact client runtime. `hydrate` hydrates a single SSR'd route;
  * `mountRouter` hydrates a stateful Router that subscribes to the agnostic store (via
  * `useSyncExternalStore` from preact/compat) and re-renders the matched chain on every client
  * navigation (no full reload). Kept in its own entry so server code (preact-render-to-string) stays
@@ -11,7 +11,7 @@ import { useSyncExternalStore } from "preact/compat"
 import { compose } from "./compose.ts"
 import { setMountedRouter } from "./fetcher.ts"
 
-// The `_error` boundary chain element — defined in its own (DOM-free) module, re-exported here so
+// The `_error` boundary chain element - defined in its own (DOM-free) module, re-exported here so
 // nifra's client codegen resolves it from `@nifrajs/web-preact/client` alongside `mountRouter`.
 export { errorBoundary } from "./error.ts"
 
@@ -22,7 +22,7 @@ export function hydrate(chain: readonly unknown[], props: RenderProps, container
 
 /**
  * Hydrate a stateful Preact Router. `useSyncExternalStore` (preact/compat) subscribes to the
- * agnostic store and re-renders the matched layout chain on each store change — so client
+ * agnostic store and re-renders the matched layout chain on each store change - so client
  * navigations swap routes without a full reload. Preact's compat `useSyncExternalStore` is 2-arg
  * (no `getServerSnapshot`); `router.snapshot` is deterministic, so hydration matches the SSR markup.
  */
@@ -40,7 +40,7 @@ export function mountRouter(options: MountRouterOptions): void {
       actionData: state.actionData,
       pending: state.pending,
       search: searchOfChain(searchSchemas?.[state.routeId] ?? [], rawSearch),
-      // The in-flight submission (for optimistic UI) — spread only when present.
+      // The in-flight submission (for optimistic UI) - spread only when present.
       ...(state.submission ? { submission: state.submission } : {}),
     })
   }

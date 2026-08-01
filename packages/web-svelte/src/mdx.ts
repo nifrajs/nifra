@@ -2,9 +2,9 @@ import type { BunPlugin } from "bun"
 import { compile } from "svelte/compiler"
 
 /**
- * `@nifrajs/web-svelte/mdx` — compile `.mdx` routes/files to **Svelte** components. Svelte has no JSX
- * runtime, so (unlike the JSX-family `mdxBunPlugin`) MDX-for-Svelte goes through `mdsvex` — Svelte's
- * own Markdown compiler — which produces a `.svelte` module, then the standard `svelte/compiler` runs
+ * `@nifrajs/web-svelte/mdx` - compile `.mdx` routes/files to **Svelte** components. Svelte has no JSX
+ * runtime, so (unlike the JSX-family `mdxBunPlugin`) MDX-for-Svelte goes through `mdsvex` - Svelte's
+ * own Markdown compiler - which produces a `.svelte` module, then the standard `svelte/compiler` runs
  * (`generate: "server"` for SSR, `"client"` for the browser). Pass it to `buildClient`/`buildServer`'s
  * `plugins` alongside `svelteBunPlugin` (one handles `.svelte`, this one `.mdx`). `mdsvex` is an
  * optional peer, lazy-loaded at build time.
@@ -32,13 +32,13 @@ export function svelteMdxBunPlugin(generate: "dom" | "ssr"): BunPlugin {
         mdsvexCompile = ((await import(MDSVEX_MODULE)) as Mdsvex).compile
       } catch {
         throw new Error(
-          "@nifrajs/web-svelte/mdx: compiling `.mdx` for Svelte needs the `mdsvex` package — install it (`bun add mdsvex`).",
+          "@nifrajs/web-svelte/mdx: compiling `.mdx` for Svelte needs the `mdsvex` package - install it (`bun add mdsvex`).",
         )
       }
       build.onLoad({ filter: /\.mdx(\?|$)/ }, async (args) => {
         const path = args.path.split("?")[0] ?? args.path
         // 1. Markdown/MDX → Svelte source (mdsvex). `extensions` must include `.mdx` or mdsvex skips the
-        // file (returns undefined — it only processes its configured extensions, default `.svx`).
+        // file (returns undefined - it only processes its configured extensions, default `.svx`).
         const pre = await mdsvexCompile(await Bun.file(path).text(), {
           filename: path,
           extensions: [".mdx", ".svx", ".md"],

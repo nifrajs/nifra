@@ -89,9 +89,9 @@ function pngChunk(type: string, data: Uint8Array): Uint8Array {
   return new Uint8Array([...len, ...body, ...crc])
 }
 
-/** Build a valid RGBA PNG of `w`×`h` (zlib IDAT via node:zlib — Bun.deflateSync emits raw deflate).
+/** Build a valid RGBA PNG of `w`×`h` (zlib IDAT via node:zlib - Bun.deflateSync emits raw deflate).
  * `declaredW`/`declaredH` override the IHDR dimensions (with a correct CRC) while still emitting only
- * `w`×`h` real pixels — used to forge a decompression bomb that `metadata()` rejects on pixel count. */
+ * `w`×`h` real pixels - used to forge a decompression bomb that `metadata()` rejects on pixel count. */
 function makePng(w: number, h: number, declaredW = w, declaredH = h): Uint8Array {
   const sig = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
   const ihdr = new Uint8Array(13)
@@ -439,7 +439,7 @@ describe("caching", () => {
     expect(res.status).toBe(304)
     expect(res.headers.get("ETag")).toBe(etag)
     expect(await res.text()).toBe("")
-    expect(stub.transformCalls.length).toBe(1) // unchanged — no second transform
+    expect(stub.transformCalls.length).toBe(1) // unchanged - no second transform
   })
 
   test("ETag varies by Accept (webp vs not), width, and quality", async () => {
@@ -514,7 +514,7 @@ describe("bunImageBackend (real Bun.Image)", () => {
   })
 
   test("declared decompression bomb → ImageProcessingError(too_large)", async () => {
-    // IHDR declares 60000×60000 (valid CRC) but only 2×2 real pixels — Bun.Image rejects at
+    // IHDR declares 60000×60000 (valid CRC) but only 2×2 real pixels - Bun.Image rejects at
     // metadata() time on the pixel count, before touching the IDAT.
     const bomb = makePng(2, 2, 60000, 60000)
     await expect(backend.probe(bomb)).rejects.toMatchObject({ kind: "too_large" })

@@ -1,6 +1,6 @@
 /**
  * Per-release upgrade recipes, as data. Each recipe declares the mechanical edits a target version
- * needs — dependency pins and exact import-specifier moves — so `nifra upgrade <version>` can apply
+ * needs - dependency pins and exact import-specifier moves - so `nifra upgrade <version>` can apply
  * them deterministically. Recipes are static imports (they bundle) and keyed by target version.
  */
 
@@ -33,7 +33,7 @@ export interface UpgradeRecipe {
   readonly pins: readonly PinRule[]
   readonly dependencyMoves?: readonly DependencyMove[]
   readonly importMoves: readonly ImportMove[]
-  /** Human notes printed after the plan — e.g. structural changes the runner deliberately can't do. */
+  /** Human notes printed after the plan - e.g. structural changes the runner deliberately can't do. */
   readonly notes?: readonly string[]
 }
 

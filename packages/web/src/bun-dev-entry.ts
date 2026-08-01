@@ -1,5 +1,5 @@
 /**
- * `@nifrajs/web/bun-dev-entry` — discovering the client-entry URL Bun's dev server assigns.
+ * `@nifrajs/web/bun-dev-entry` - discovering the client-entry URL Bun's dev server assigns.
  *
  * ## Why this file exists at all
  *

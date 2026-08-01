@@ -1,19 +1,19 @@
 /**
- * `@nifrajs/image/backends` — the codec seam + the official {@link ImageBackend} implementations, kept
+ * `@nifrajs/image/backends` - the codec seam + the official {@link ImageBackend} implementations, kept
  * **dependency-free and edge-safe** (no `node:` imports), so the WASM backend can run on Workers /
- * Vercel-Edge / Deno-Deploy. `createImageHandler` (in `@nifrajs/image/server`, Node-only — it touches the
+ * Vercel-Edge / Deno-Deploy. `createImageHandler` (in `@nifrajs/image/server`, Node-only - it touches the
  * filesystem) consumes this seam and owns all request-level security; a backend only
  * decodes/resizes/encodes and translates codec failures into {@link ImageProcessingError}.
  *
  * Pick a backend for your runtime:
- * - {@link bunImageBackend} — `Bun.Image` (libjpeg-turbo / libspng / libwebp). Bun servers.
- * - {@link sharpImageBackend} — pass your `sharp` import. Node servers.
- * - {@link wasmImageBackend} — pass WASM codecs (e.g. jSquash). Any runtime, including the edge.
+ * - {@link bunImageBackend} - `Bun.Image` (libjpeg-turbo / libspng / libwebp). Bun servers.
+ * - {@link sharpImageBackend} - pass your `sharp` import. Node servers.
+ * - {@link wasmImageBackend} - pass WASM codecs (e.g. jSquash). Any runtime, including the edge.
  */
 
 import { imageDimensions } from "./dimensions.ts"
 
-/** Output formats nifra's endpoint can emit. AVIF is intentionally excluded — `Bun.Image` reports
+/** Output formats nifra's endpoint can emit. AVIF is intentionally excluded - `Bun.Image` reports
  * `ERR_IMAGE_FORMAT_UNSUPPORTED` for AVIF encode on common platforms, so offering it would 500. */
 export type OutputFormat = "webp" | "jpeg" | "png"
 
@@ -24,7 +24,7 @@ export const CONTENT_TYPE: Record<OutputFormat, string> = {
 }
 
 /** Header-only probe of a source image: intrinsic dimensions + decoded format. Must be cheap (no full
- * decode) — it gates the decompression-bomb and no-upscale checks before the expensive resize. */
+ * decode) - it gates the decompression-bomb and no-upscale checks before the expensive resize. */
 export interface ImageProbe {
   readonly width: number
   readonly height: number
@@ -34,7 +34,7 @@ export interface ImageProbe {
 
 export interface ResizeInput {
   readonly bytes: Uint8Array
-  /** Target width in px — already clamped to `[1, maxWidth]` **and** to the source's intrinsic width
+  /** Target width in px - already clamped to `[1, maxWidth]` **and** to the source's intrinsic width
    * (the handler never asks a backend to upscale). Aspect ratio is preserved. */
   readonly width: number
   /** Encoder quality `1..100` (ignored for lossless `png`). */
@@ -141,7 +141,7 @@ function toBunError(err: unknown): ImageProcessingError {
 // --- sharp backend (Node) ----------------------------------------------------------------------------
 
 /** The slice of a [sharp](https://sharp.pixelplumbing.com) instance this backend uses. Declared
- * structurally so `@nifrajs/image` has no dependency on sharp — pass your own `sharp` import. */
+ * structurally so `@nifrajs/image` has no dependency on sharp - pass your own `sharp` import. */
 export type SharpLike = (input: Uint8Array) => SharpInstance
 interface SharpInstance {
   metadata(): Promise<{ width?: number; height?: number; format?: string }>
@@ -154,7 +154,7 @@ interface SharpInstance {
 
 /**
  * {@link ImageBackend} backed by [sharp](https://sharp.pixelplumbing.com) (libvips) for Node servers.
- * Pass your `sharp` import — `@nifrajs/image` never imports it, so it stays dependency-free and you control
+ * Pass your `sharp` import - `@nifrajs/image` never imports it, so it stays dependency-free and you control
  * the version:
  *
  * ```ts
@@ -208,7 +208,7 @@ function toSharpError(err: unknown): ImageProcessingError {
 
 // --- WASM backend (edge-portable) --------------------------------------------------------------------
 
-/** A decoded image: RGBA pixels + dimensions — the lingua franca of WASM codecs (jSquash, Photon, …). */
+/** A decoded image: RGBA pixels + dimensions - the lingua franca of WASM codecs (jSquash, Photon, …). */
 export interface DecodedImage {
   /** RGBA bytes, length `width * height * 4`. */
   readonly data: Uint8Array
@@ -217,7 +217,7 @@ export interface DecodedImage {
 }
 
 /**
- * Pluggable WASM codec set — decode/resize/encode. Declared structurally so `@nifrajs/image` depends on no
+ * Pluggable WASM codec set - decode/resize/encode. Declared structurally so `@nifrajs/image` depends on no
  * WASM library; wire your own (jSquash is the common pure-WASM, edge-safe choice). The handler probes
  * dimensions from the source header (bomb-safe), so `decode` runs only inside `transform`.
  */
@@ -235,7 +235,7 @@ export interface WasmImageCodecs {
 }
 
 /**
- * {@link ImageBackend} backed by injected WASM codecs — the only backend that runs on the **edge**
+ * {@link ImageBackend} backed by injected WASM codecs - the only backend that runs on the **edge**
  * (Workers / Vercel-Edge / Deno-Deploy), where neither `Bun.Image` nor sharp exists. `probe` reads the
  * source header via nifra's dependency-free reader (so decompression bombs are rejected before any
  * decode); `transform` decodes → resizes (aspect-preserving) → encodes through your codecs.
@@ -249,7 +249,7 @@ export interface WasmImageCodecs {
 export function wasmImageBackend(codecs: WasmImageCodecs): ImageBackend {
   return {
     async probe(bytes) {
-      const info = imageDimensions(bytes) // header-only — never allocates a decoded buffer
+      const info = imageDimensions(bytes) // header-only - never allocates a decoded buffer
       if (info === null) {
         throw new ImageProcessingError("decode", "unrecognized image header")
       }

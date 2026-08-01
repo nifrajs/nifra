@@ -1,14 +1,14 @@
 # @nifrajs/islets
 
-Fine-grained signals + declarative DOM bindings for islands — **interactivity in ~1.4 KB gz**, no
+Fine-grained signals + declarative DOM bindings for islands - **interactivity in ~1.4 KB gz**, no
 framework runtime. The client companion to `@nifrajs/web-vanilla`: the server renders real HTML
-(zero framework JS); islands attach behavior to it in place. No VDOM, no hydration re-render —
+(zero framework JS); islands attach behavior to it in place. No VDOM, no hydration re-render -
 the markup the server sent IS the initial state.
 
 The full island bundle is about 1.4 KB gzipped and has a size test that keeps it under 2 KB. Use
 it for small interactive widgets where a full framework runtime would be overkill.
 
-## Server side (any adapter — `@nifrajs/web-vanilla` shown)
+## Server side (any adapter - `@nifrajs/web-vanilla` shown)
 
 ```ts
 import { html } from "@nifrajs/web-vanilla"
@@ -21,7 +21,7 @@ html`<section data-island="compare" data-island-state="${islandState({ count: ho
 ```
 
 The state attribute is the loader-data → client-signal seam: emit it through an escaping renderer
-(vanilla's `html` escapes attribute quotes) and the island reads it back with `state()` — no
+(vanilla's `html` escapes attribute quotes) and the island reads it back with `state()` - no
 separate hydration payload, no data globals.
 
 ## Client side (an `islandScripts` entry)
@@ -34,10 +34,10 @@ island("compare", ({ state }) => {
   return { add: () => count.set((n) => n + 1) }
 })
 
-mountIslands() // idempotent — safe to call again after soft navigation
+mountIslands() // idempotent - safe to call again after soft navigation
 ```
 
-## The binding set (closed — six bindings, no expression language)
+## The binding set (closed - six bindings, no expression language)
 
 | Attribute | Effect |
 | --- | --- |
@@ -48,21 +48,21 @@ mountIslands() // idempotent — safe to call again after soft navigation
 | `data-bind-value="query"` | two-way `<input>`/`<select>`/`<textarea>` (`input` event) |
 | `data-bind-on="click:inc,submit:save"` | `addEventListener` per pair |
 
-Values are signal/handler **names** resolved in the island's scope — never evaluated code, so
+Values are signal/handler **names** resolved in the island's scope - never evaluated code, so
 markup cannot inject behavior. Unknown names warn once and skip; the server-rendered content
 stays as-is (progressive enhancement never throws).
 
 ## Signals
 
-`signal(initial)` / `computed(fn)` / `effect(fn) → dispose` / `batch(fn)` — auto-tracking with
+`signal(initial)` / `computed(fn)` / `effect(fn) → dispose` / `batch(fn)` - auto-tracking with
 per-run re-tracking, `Object.is` skips, synchronous updates; `batch` coalesces multiple writes
 into one flush. Island-scale by design: if a widget outgrows this (lists, ownership trees,
-async orchestration), that's the signal to use the Solid adapter for that page — both tiers are
+async orchestration), that's the signal to use the Solid adapter for that page - both tiers are
 first-class.
 
 ## For AI agents
 
-Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports you call + its footguns),
 one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the

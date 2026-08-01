@@ -1,9 +1,9 @@
 /**
- * The /frameworks toggle island — the only client JS the (static, `hydrate: false`) showcase ships
+ * The /frameworks toggle island - the only client JS the (static, `hydrate: false`) showcase ships
  * itself: a few hundred bytes of vanilla DOM that switches which framework is shown and lazily makes it
  * LIVE. Each of the five rows is server-rendered into its own `#fw-stage-<id>` (all present, only the
  * active one visible). On first activation of a row it injects that adapter's hydration head (Solid
- * needs it; the others are empty) and imports that framework's real client bundle — so the shown
+ * needs it; the others are empty) and imports that framework's real client bundle - so the shown
  * framework genuinely hydrates and runs in the tab. Already-hydrated rows just flip back to visible.
  *
  * No HTML is ever built from strings here: the fragments are baked at build time, and every dynamic
@@ -13,7 +13,7 @@
 
 interface FrameworkMeta {
   readonly id: string
-  /** The client bundle URL — validated against this allowlist before any dynamic import. */
+  /** The client bundle URL - validated against this allowlist before any dynamic import. */
   readonly bundleUrl: string
   /** Per-document bootstrap the adapter's hydration requires (Solid only; "" otherwise). */
   readonly hydrationHead: string
@@ -21,13 +21,13 @@ interface FrameworkMeta {
 
 interface FrameworksConfig {
   readonly activeId: string
-  /** The shared catalog payload — published to the data global before any bundle hydrates. */
+  /** The shared catalog payload - published to the data global before any bundle hydrates. */
   readonly data: unknown
   readonly dataGlobal: string
   readonly frameworks: readonly FrameworkMeta[]
 }
 
-/** Parse + shape-check the embedded config. A malformed blob (should never happen — we emit it) leaves
+/** Parse + shape-check the embedded config. A malformed blob (should never happen - we emit it) leaves
  * the page as the static, server-rendered showcase rather than throwing in the user's tab. */
 function readConfig(): FrameworksConfig | null {
   const node = document.getElementById("fw-config")
@@ -51,7 +51,7 @@ function readConfig(): FrameworksConfig | null {
   for (const f of c.frameworks) {
     if (typeof f !== "object" || f === null) return null
     const fm = f as Record<string, unknown>
-    // Only allow same-origin /assets/* bundle URLs — the dynamic import target is config we emit, but
+    // Only allow same-origin /assets/* bundle URLs - the dynamic import target is config we emit, but
     // validating it keeps the import() target provably local even if the blob were ever tampered with.
     if (
       typeof fm.id !== "string" ||
@@ -70,12 +70,12 @@ function readConfig(): FrameworksConfig | null {
 const hydrated = new Set<string>()
 
 /** Make `meta`'s row live: inject its hydration head (once), publish the data global, import its bundle.
- * Idempotent — a second call for the same id is a no-op (the module is already in the import cache and
+ * Idempotent - a second call for the same id is a no-op (the module is already in the import cache and
  * the row is already hydrated). */
 async function ensureLive(meta: FrameworkMeta, data: unknown, dataGlobal: string): Promise<void> {
   if (hydrated.has(meta.id)) return
   hydrated.add(meta.id)
-  // The data global is shared (the same static catalog for every row) — set it once, before the first
+  // The data global is shared (the same static catalog for every row) - set it once, before the first
   // bundle runs. Each client entry reads `globalThis[dataGlobal]` synchronously on import. `globalThis`
   // (not `window`) carries an index signature, matching how the client entries read the same global.
   ;(globalThis as Record<string, unknown>)[dataGlobal] = data
@@ -100,7 +100,7 @@ async function ensureLive(meta: FrameworkMeta, data: unknown, dataGlobal: string
     // above; the `import(/* @vite-ignore */ ...)` is a plain dynamic import of a first-party module.
     await import(meta.bundleUrl)
   } catch {
-    // A failed bundle load leaves the server-rendered (static) markup in place — still correct, just not
+    // A failed bundle load leaves the server-rendered (static) markup in place - still correct, just not
     // interactive. Allow a later retry by clearing the hydrated flag.
     hydrated.delete(meta.id)
   }

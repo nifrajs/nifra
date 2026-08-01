@@ -93,8 +93,8 @@ const readHtml = async (
  * and hydration-head output is a stable string. It rejects with
  * {@link RenderAdapterConformanceError} naming the first failed check.
  *
- * Framework semantics outside the interface—Suspense scheduling, compiler plugins, DOM hydration,
- * error boundaries, and framework-specific primitives—remain the adapter package's local tests.
+ * Framework semantics outside the interface-Suspense scheduling, compiler plugins, DOM hydration,
+ * error boundaries, and framework-specific primitives-remain the adapter package's local tests.
  */
 export async function assertRenderAdapterConformance(
   adapter: RenderAdapter,
@@ -135,7 +135,7 @@ export async function assertRenderAdapterConformance(
     if (typeof buffered !== "string") fail("buffered render", "renderToString must return a string")
     const bufferedHtml = buffered as string
     if (fixture.deferred) {
-      // Deferred content differs between streaming and buffered renders — only require every marker.
+      // Deferred content differs between streaming and buffered renders - only require every marker.
       for (const marker of [
         markers.outer,
         markers.inner,

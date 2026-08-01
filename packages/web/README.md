@@ -1,8 +1,8 @@
 # @nifrajs/web
 
-Framework-agnostic SSR core for nifra — the render seam + HTML document orchestration.
+Framework-agnostic SSR core for nifra - the render seam + HTML document orchestration.
 
-Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework — one core, five UI libraries, every runtime. Scaffold a new app with `bun create nifra`.
+Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one core, five UI libraries, every runtime. Scaffold a new app with `bun create nifra`.
 
 ## Install
 
@@ -19,7 +19,7 @@ MIT
 
 ## For AI agents
 
-Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports you call + its footguns),
 one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the

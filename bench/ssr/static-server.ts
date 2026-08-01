@@ -1,6 +1,6 @@
 /**
  * Minimal static-file server for the prerendered-TTFB benchmark: serves a built SSG `dist/` the way a
- * CDN would — `/` → `dist/index.html`, any other path → the file under `dist` (or 404). This is the
+ * CDN would - `/` → `dist/index.html`, any other path → the file under `dist` (or 404). This is the
  * "served a prerendered file" side of the SSG-vs-SSR comparison (see prerender-ttfb.ts).
  *   DIST=examples/routing-react/dist PORT=4400 bun run bench/ssr/static-server.ts
  */

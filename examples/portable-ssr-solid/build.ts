@@ -1,5 +1,5 @@
 // The same five-runtime build as portable-ssr-react, on Solid. buildClient uses solidBunPlugin("dom")
-// (+ the `solid` condition); buildServer uses solidBunPlugin("ssr") — its built-in shim pins
+// (+ the `solid` condition); buildServer uses solidBunPlugin("ssr") - its built-in shim pins
 // solid-js/web to its server build on the edge (browser) targets, and the `solid`/`node` conditions
 // resolve it on Node. One bundle per runtime.
 //   bun run build && bun run examples/portable-ssr-solid/build.ts

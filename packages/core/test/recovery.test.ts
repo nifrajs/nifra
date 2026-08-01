@@ -24,7 +24,7 @@ function isSearch(v: unknown): v is Search {
   return !!v && typeof v === "object" && "q" in v && typeof v.q === "string"
 }
 
-/** A body schema whose validator is optionally async — exercises the `Promise` branches of recovery. */
+/** A body schema whose validator is optionally async - exercises the `Promise` branches of recovery. */
 function bodySchema(async: boolean): StandardSchemaV1<unknown, Person> {
   return {
     "~standard": {
@@ -96,7 +96,7 @@ describe("onValidationError recovery", () => {
     expect(res.status).toBe(422)
   })
 
-  test("body: returning undefined gives up — the original 422 stands", async () => {
+  test("body: returning undefined gives up - the original 422 stands", async () => {
     let called = false
     const app = server().post(
       "/users",

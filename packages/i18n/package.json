@@ -1,7 +1,7 @@
 {
   "name": "@nifrajs/i18n",
   "version": "2.2.0",
-  "description": "Framework-agnostic i18n for nifra — locale negotiation + a tiny ICU message formatter on the platform Intl. Dependency-free.",
+  "description": "Framework-agnostic i18n for nifra - locale negotiation + a tiny ICU message formatter on the platform Intl. Dependency-free.",
   "keywords": [
     "bun",
     "typescript",

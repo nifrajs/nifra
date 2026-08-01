@@ -1,5 +1,5 @@
 /**
- * `@nifrajs/web/plugins/vite-leak-guard` — nifra's two client-leak guards, for a Vite/Rollup production
+ * `@nifrajs/web/plugins/vite-leak-guard` - nifra's two client-leak guards, for a Vite/Rollup production
  * build.
  *
  * ## Why this exists
@@ -60,7 +60,7 @@ interface RollupPluginContext {
   error(error: Error): never
 }
 
-/** The minimal Rollup plugin shape this returns — `generateBundle` bound to the plugin context. */
+/** The minimal Rollup plugin shape this returns - `generateBundle` bound to the plugin context. */
 export interface LeakGuardPlugin {
   readonly name: string
   /**

@@ -1,5 +1,5 @@
 /**
- * Svelte hydration entry for the /frameworks live demo — same shape as the React entry, against the
+ * Svelte hydration entry for the /frameworks live demo - same shape as the React entry, against the
  * Svelte catalog component (`bench/ssr/nifra-svelte`). Chain `[App]` matches the Svelte SSR fragment.
  * Built with the `.svelte` compiler plugin in `"dom"` (hydratable) mode so the client mounts onto the
  * server-rendered markup instead of replacing it.

@@ -1,6 +1,6 @@
 /**
  * A stateful, cookie-aware in-process test client. `@nifrajs/client`'s `testClient` already drives an
- * app's `fetch` with end-to-end types (no server/port/network) — this wraps it with a {@link CookieJar}
+ * app's `fetch` with end-to-end types (no server/port/network) - this wraps it with a {@link CookieJar}
  * that carries `Set-Cookie` across calls, so a login → authenticated-request flow just works.
  *
  *   import { testSession } from "@nifrajs/testing"
@@ -14,7 +14,7 @@
 import { type ClientOptions, client, type FetchFn, type Treaty } from "@nifrajs/client"
 import { type CookieJar, cookieJar } from "./cookies.ts"
 
-/** The minimal shape a nifra `server()` app satisfies — its own `fetch`. */
+/** The minimal shape a nifra `server()` app satisfies - its own `fetch`. */
 export interface AppLike {
   fetch(request: Request): Response | Promise<Response>
 }
@@ -27,9 +27,9 @@ export interface TestSessionOptions extends Omit<ClientOptions, "fetch"> {
 }
 
 export interface TestSession<App> {
-  /** The end-to-end-typed in-process client — every call carries + captures cookies. */
+  /** The end-to-end-typed in-process client - every call carries + captures cookies. */
   readonly client: Treaty<App>
-  /** The jar backing this session — inspect (`cookies.get("sid")`), seed, or `clear()` it. */
+  /** The jar backing this session - inspect (`cookies.get("sid")`), seed, or `clear()` it. */
   readonly cookies: CookieJar
 }
 

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { join } from "node:path"
 import { renderPages } from "../src/mcp-render.ts"
 
-// A real, in-workspace nifra React app (framework.ts + routes/ + backend.ts) — the faithful fixture.
+// A real, in-workspace nifra React app (framework.ts + routes/ + backend.ts) - the faithful fixture.
 const APP = join(import.meta.dir, "../../../examples/cli-react")
 
 type RenderResult = Awaited<ReturnType<typeof renderPages>>
@@ -63,10 +63,10 @@ function spawnRenderWorker(cwd: string): {
 }
 
 /**
- * Invoke the one-shot child entry the way production does (`bun mcp-render.ts <cwd>` — see `mcp.ts`'s
+ * Invoke the one-shot child entry the way production does (`bun mcp-render.ts <cwd>` - see `mcp.ts`'s
  * nifra_render handler): SSR runs in a FRESH process, so its React/react-dom resolution is isolated from
  * this test runner. An IN-PROCESS `renderPages()` call instead shares this Bun test process's module cache
- * — under SSR that can surface a duplicate React (the component's react ≠ react-dom's react → a null hook
+ * - under SSR that can surface a duplicate React (the component's react ≠ react-dom's react → a null hook
  * dispatcher), which is environment-dependent and not how the tool is ever invoked. Subprocess = faithful.
  */
 async function renderViaSubprocess(cwd: string, requests: unknown): Promise<RenderResult> {
@@ -84,7 +84,7 @@ async function renderViaSubprocess(cwd: string, requests: unknown): Promise<Rend
 
 describe("renderPages", () => {
   test("SSRs a real page route to HTML (loader runs), 404s an unknown path", async () => {
-    // Subprocess (fresh process) — the production invocation path; an in-process call can mis-resolve a
+    // Subprocess (fresh process) - the production invocation path; an in-process call can mis-resolve a
     // duplicate React under SSR in a shared test runner (CI). The warm-worker tests below prove the same.
     const r = await renderViaSubprocess(APP, [{ path: "/" }, { path: "/no-such-page" }])
     expect(isErr(r)).toBe(false)
@@ -104,7 +104,7 @@ describe("renderPages", () => {
   })
 
   test("a project with no nifra config → actionable error (not a crash)", async () => {
-    const r = await renderPages(join(import.meta.dir, ".."), [{ path: "/" }]) // packages/cli — no config
+    const r = await renderPages(join(import.meta.dir, ".."), [{ path: "/" }]) // packages/cli - no config
     expect(isErr(r)).toBe(true)
   })
 })
@@ -113,15 +113,15 @@ describe("mcp-render --worker (nifra_render warm)", () => {
   test("answers sequential requests on one hot process (the warm reuse loop)", async () => {
     const worker = spawnRenderWorker(APP)
     try {
-      // Two requests, one process: each gets a reply keyed by its own id. Proves the persistent loop —
-      // the warm path nifra_render exposes — without re-spawning per call. (The SSR status itself can vary
+      // Two requests, one process: each gets a reply keyed by its own id. Proves the persistent loop -
+      // the warm path nifra_render exposes - without re-spawning per call. (The SSR status itself can vary
       // by environment; the behavioral change under test is "one worker serves many calls".)
       const first = await worker.call(1, [{ path: "/" }])
       const second = await worker.call(2, [{ path: "/" }])
       expect(first.id).toBe(1)
       expect(second.id).toBe(2)
       // The web app was built once at worker start; both calls ran against it (the process never exited
-      // between them — readLine would have thrown "worker exited before response" otherwise).
+      // between them - readLine would have thrown "worker exited before response" otherwise).
     } finally {
       await worker.close()
     }
@@ -129,7 +129,7 @@ describe("mcp-render --worker (nifra_render warm)", () => {
 
   test("a build failure is computed once and returned for every request (built-once reuse)", async () => {
     // packages/cli has no nifra config → buildWebApp fails. The worker builds ONCE at startup, so the same
-    // actionable error comes back for each request instead of re-loading per call — the reuse guarantee.
+    // actionable error comes back for each request instead of re-loading per call - the reuse guarantee.
     const worker = spawnRenderWorker(join(import.meta.dir, ".."))
     try {
       const first = await worker.call(1, [{ path: "/" }])

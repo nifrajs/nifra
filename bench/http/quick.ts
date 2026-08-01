@@ -1,17 +1,17 @@
 /**
- * Fast COMPARATIVE HTTP smoke-benchmark — nifra vs the field, ranked, in ~30s.
+ * Fast COMPARATIVE HTTP smoke-benchmark - nifra vs the field, ranked, in ~30s.
  *
  * The full suite (`bun run bench:http:update`) spawns every framework on every runtime across four
- * workloads, medianed over many runs — minutes to ~an hour. This runs ONE runtime section's whole
+ * workloads, medianed over many runs - minutes to ~an hour. This runs ONE runtime section's whole
  * field on ONE workload with a single short `oha` run each, then prints a ranked table. Same servers
- * (serve*.ts) and same `oha` invocation as run.ts — right shape, fast.
+ * (serve*.ts) and same `oha` invocation as run.ts - right shape, fast.
  *
  *   bun run bench/http/quick.ts                  # node section (nifra·hono·fastify·express·elysia·raw)
  *   bun run bench/http/quick.ts bun              # bun section  (nifra·hono·elysia·raw)
  *   bun run bench/http/quick.ts deno /users/123  # deno section, on a chosen workload path
  *   bun run bench/http/quick.ts node post        # POST /users workload (validated body) instead of GET
  *
- * Default is `node` — the canonical backend field (the site's HTTP chart). Elysia is Bun-first but
+ * Default is `node` - the canonical backend field (the site's HTTP chart). Elysia is Bun-first but
  * runs on Node via its official adapter, so it's benched in both. READ THE RATIO, NOT THE ABSOLUTE:
  * this shares one box with the load client, so absolutes are noisy; the same-run ratio is the signal.
  */
@@ -47,7 +47,7 @@ const field = (obj: unknown, key: string): unknown =>
     ? (obj as Record<string, unknown>)[key]
     : undefined
 
-/** Parse `oha --output-format json` at the trust boundary — validate the shape, don't trust it. */
+/** Parse `oha --output-format json` at the trust boundary - validate the shape, don't trust it. */
 function parseOha(raw: string): Measure {
   let json: unknown
   try {
@@ -106,14 +106,14 @@ async function waitReady(base: string, timeoutMs: number): Promise<void> {
         return
       }
     } catch {
-      // booting — retry
+      // booting - retry
     }
     await Bun.sleep(50)
   }
   throw new Error(`server at ${base} did not become ready within ${timeoutMs}ms`)
 }
 
-// nifra-on-Node needs a Node-targeted bundle (real Node can't resolve the @nifrajs/* workspace) —
+// nifra-on-Node needs a Node-targeted bundle (real Node can't resolve the @nifrajs/* workspace) -
 // the same single-file bundle nifra deploys to Node as. Built once, lazily.
 const NIFRA_NODE_BUNDLE = `${DIR}/dist/serve-node-nifra.js`
 let nifraNodeBuilt = false
@@ -162,7 +162,7 @@ async function measure(
   path: string,
   post?: Post,
 ): Promise<Measure> {
-  const base = `http://127.0.0.1:${port}` // pin IPv4 loopback — `localhost` can resolve to ::1 first
+  const base = `http://127.0.0.1:${port}` // pin IPv4 loopback - `localhost` can resolve to ::1 first
   const proc = Bun.spawn(await spawnArgv(runtime, framework, port), {
     stdout: "ignore",
     stderr: "ignore",
@@ -208,18 +208,18 @@ const ranked = [...rows].sort((a, b) => (b.m?.rps ?? -1) - (a.m?.rps ?? -1))
 
 const pad = (s: string, n: number): string => s.padStart(n)
 console.log(
-  `\nquick HTTP bench — ${runtime} · ${label} · ${CONNECTIONS} conns · ${WARMUP_S}s warm + ${DURATION_S}s · bun ${Bun.version}`,
+  `\nquick HTTP bench - ${runtime} · ${label} · ${CONNECTIONS} conns · ${WARMUP_S}s warm + ${DURATION_S}s · bun ${Bun.version}`,
 )
 console.log(
   `  ${pad("framework", 11)} ${pad("req/s", 9)} ${pad("p50", 8)} ${pad("p99", 8)} ${pad("×nifra", 7)} ${pad("%ceil", 6)}`,
 )
 for (const { fw, m } of ranked) {
   if (!m) {
-    console.log(`  ${pad(fw, 11)} ${pad("—", 9)}  (unavailable)`)
+    console.log(`  ${pad(fw, 11)} ${pad("-", 9)}  (unavailable)`)
     continue
   }
-  const xnifra = nifraRps > 0 ? (m.rps / nifraRps).toFixed(2) : "—"
-  const pctCeil = ceilRps > 0 ? `${Math.round((m.rps / ceilRps) * 100)}%` : "—"
+  const xnifra = nifraRps > 0 ? (m.rps / nifraRps).toFixed(2) : "-"
+  const pctCeil = ceilRps > 0 ? `${Math.round((m.rps / ceilRps) * 100)}%` : "-"
   const tag = fw === "nifra" ? " ★ nifra" : fw === ceiling ? " (ceiling)" : ""
   console.log(
     `  ${pad(fw, 11)} ${pad(m.rps.toLocaleString(), 9)} ${pad(`${m.p50ms.toFixed(2)}ms`, 8)} ${pad(`${m.p99ms.toFixed(2)}ms`, 8)} ${pad(xnifra, 7)} ${pad(pctCeil, 6)}${tag}`,
@@ -228,7 +228,7 @@ for (const { fw, m } of ranked) {
 
 const secs = ((performance.now() - started) / 1000).toFixed(1)
 console.log(
-  `\n(${secs}s — smoke signal only; ratios > absolutes. Run \`bun run bench:http:update\` for the medianed matrix.)`,
+  `\n(${secs}s - smoke signal only; ratios > absolutes. Run \`bun run bench:http:update\` for the medianed matrix.)`,
 )
 
 // Mark this script as a module so the top-level `await` above is allowed under the repo tsconfig.

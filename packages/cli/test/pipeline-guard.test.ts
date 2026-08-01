@@ -45,7 +45,7 @@ test("a plugin whose shape says nothing is left alone", () => {
 })
 
 test("setup wins when a plugin carries both shapes", () => {
-  // Bun dispatches on `setup` and nothing else, so its presence is decisive — a plugin exposing both
+  // Bun dispatches on `setup` and nothing else, so its presence is decisive - a plugin exposing both
   // is a Bun plugin that happens to have a `transform` helper, not a Vite plugin.
   expect(
     checkPipelineSlot("clientPlugins", [
@@ -72,7 +72,7 @@ test("every Rollup hook shape is recognised", () => {
 })
 
 // ---------------------------------------------------------------------------------------------------
-// chooseBuildPipeline — the PHASE-crossing half of the same problem.
+// chooseBuildPipeline - the PHASE-crossing half of the same problem.
 //
 // The slot guard above catches a plugin in the wrong slot. It cannot catch a plugin in the right slot
 // whose pipeline never runs: `nifra dev` is Vite, `nifra build` defaults to Bun, and the Bun build reads

@@ -144,12 +144,12 @@ export async function verifyHmacSha256(
 
 /**
  * Apply header mutations to a response, in place when possible. Framework-built responses
- * (`new Response`, `Response.json`) have mutable headers across every runtime — so the common path
+ * (`new Response`, `Response.json`) have mutable headers across every runtime - so the common path
  * mutates `res` directly and returns it, allocating nothing. Only an *immutable*-headers response
- * (`Response.redirect()`/`Response.error()`, or a proxied `fetch()` response on Node/Deno/workerd —
+ * (`Response.redirect()`/`Response.error()`, or a proxied `fetch()` response on Node/Deno/workerd -
  * never on Bun) makes `.set`/`.append` throw; that path clones into a fresh `Headers` + `Response`,
  * exactly the old always-clone behavior. `apply` runs once either way (immutability is all-or-nothing
- * — the first mutation throws before any partial change), so a mutation chain is safe to pass.
+ * - the first mutation throws before any partial change), so a mutation chain is safe to pass.
  */
 export function withHeaders(res: Response, apply: (headers: Headers) => void): Response {
   try {

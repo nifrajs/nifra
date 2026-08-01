@@ -1,5 +1,5 @@
 /**
- * F2.1 example — a nifra app that server-renders a Solid layout CHAIN (Layout → Page) and
+ * F2.1 example - a nifra app that server-renders a Solid layout CHAIN (Layout → Page) and
  * serves the client bundle that hydrates it. SSR is just a nifra route handler returning the
  * `renderPage` Response.
  *
@@ -19,7 +19,7 @@ const clientJs = await Bun.file(`${import.meta.dir}/dist/client.js`)
 // A plain typed loader. (The contract-first in-process `api` arrives in a later phase.)
 function loader(): PageData {
   return {
-    message: "nifra SSR + Solid — layout chain on the real @nifrajs/web packages",
+    message: "nifra SSR + Solid - layout chain on the real @nifrajs/web packages",
     start: 41,
   }
 }

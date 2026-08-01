@@ -1,5 +1,5 @@
 /**
- * `@nifrajs/web-solid/i18n` — Solid bindings for `@nifrajs/i18n`. `<I18nProvider locale messages>` builds a
+ * `@nifrajs/web-solid/i18n` - Solid bindings for `@nifrajs/i18n`. `<I18nProvider locale messages>` builds a
  * `Formatter` (a `createMemo`, so switching locale rebuilds it) and provides it; `useT()` reads it.
  * Both `locale` + `messages` are serializable, so a loader returns them, the page renders with the
  * negotiated catalog on the server, and the client rebuilds the same formatter on hydrate (no

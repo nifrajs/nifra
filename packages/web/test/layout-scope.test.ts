@@ -32,7 +32,7 @@ test("a route group contributes no segment, so its layout owns nothing", () => {
 
 test("one layout can own different params on different expanded patterns", () => {
   // The case that makes scope a property of the (route, layout) PAIR rather than of the layout.
-  // `[[lang]]` expands one file into two patterns, and the layout's prefix differs between them —
+  // `[[lang]]` expands one file into two patterns, and the layout's prefix differs between them -
   // keying by layout id alone would be wrong for one of the two.
   expect(scopes(["[[lang]]/docs/_layout.tsx", "[[lang]]/docs/[slug].tsx"])).toEqual({
     "/docs/:slug": { "[[lang]]/docs/_layout": [] },
@@ -78,7 +78,7 @@ test("layoutParams is index-aligned with layoutIds", () => {
 
 test("depths stay aligned with the file's path parts", () => {
   // `depths[k]` is the URL-segment count after the first k path parts, including parts that emit
-  // nothing — otherwise a group or an `index` would shift every layout's scope by one.
+  // nothing - otherwise a group or an `index` would shift every layout's scope by one.
   expect(filePathToRoutes("(marketing)/about.tsx")).toEqual([
     { pattern: "/about", depths: [0, 0, 1] },
   ])

@@ -16,7 +16,7 @@ const api = inProcessClient(backend)
 // Coupled: a typed loader via the annotation (a pure type → tree-shakes out of client bundles).
 async function load({ api, params }: LoaderArgs<typeof backend>) {
   const res = await api.users({ id: params.id ?? "" }).get()
-  // @ts-expect-error res.data is typed from the contract — there is no `bogus` field
+  // @ts-expect-error res.data is typed from the contract - there is no `bogus` field
   void res.data?.bogus
   return { user: res.data }
 }
@@ -65,10 +65,10 @@ const contract = defineContract({
   getUser: { method: "GET", path: "/users/:id", response: userOut },
 })
 
-// Only the type argument changed (typeof backend → typeof contract) — the body is identical.
+// Only the type argument changed (typeof backend → typeof contract) - the body is identical.
 async function loadGraduated({ api, params }: LoaderArgs<typeof contract>) {
   const res = await api.users({ id: params.id ?? "" }).get()
-  // @ts-expect-error api is typed from the contract's response — there is no `bogus` field
+  // @ts-expect-error api is typed from the contract's response - there is no `bogus` field
   void res.data?.bogus
   return { user: res.data }
 }
@@ -82,7 +82,7 @@ async function act({ api, params, request }: ActionArgs<typeof backend>) {
   const body = await request.formData()
   if (!body.get("name")) return new Response("name required", { status: 400 })
   const res = await api.users({ id: params.id ?? "" }).get()
-  // @ts-expect-error api is typed from the contract — there is no `bogus` field
+  // @ts-expect-error api is typed from the contract - there is no `bogus` field
   void res.data?.bogus
   return { ok: true as const, name: String(body.get("name")) }
 }
@@ -103,7 +103,7 @@ test("an action with ActionArgs runs in-process and returns its data branch", as
   expect(data).toEqual({ ok: true, name: "Ada" })
 })
 
-// ActionData drops the Response branch — only the data shape reaches the page's `actionData`.
+// ActionData drops the Response branch - only the data shape reaches the page's `actionData`.
 type _AData = ActionData<typeof act>
 const _aok: _AData = { ok: true, name: "Ada" }
 // @ts-expect-error a Response is excluded from ActionData

@@ -1,5 +1,5 @@
 /**
- * Build the site for Cloudflare Pages. Output: site/dist/ — a `_worker.js` (the Nifra SSR worker)
+ * Build the site for Cloudflare Pages. Output: site/dist/ - a `_worker.js` (the Nifra SSR worker)
  * + the content-hashed client bundle under /assets/*. Deploy with `wrangler pages deploy dist`.
  *
  *   bun run site/build.ts
@@ -13,7 +13,7 @@ import { buildSiteIslands } from "./build-islands"
 const dir = import.meta.dir
 const dist = `${dir}/dist`
 
-// `.mdx` routes (e.g. /docs/content) compile to React components — Nifra dogfoods its own MDX support.
+// `.mdx` routes (e.g. /docs/content) compile to React components - Nifra dogfoods its own MDX support.
 const mdx = mdxBunPlugin({ jsxImportSource: "react" })
 
 rmSync(dist, { recursive: true, force: true })
@@ -23,7 +23,7 @@ mkdirSync(`${dist}/assets`, { recursive: true })
 // fragments + five real client hydration bundles (dist/assets/fw-*.client.js), and measure each bundle's
 // gzip size. Runs BEFORE the React client/server builds because the /frameworks route imports the JSON
 // artifact this writes (../data/frameworks-demo.json). Each framework is its own isolated Bun.build, so
-// Solid's Babel plugin / Svelte's compiler don't leak onto the React/Preact .tsx — see build-frameworks.ts.
+// Solid's Babel plugin / Svelte's compiler don't leak onto the React/Preact .tsx - see build-frameworks.ts.
 await writeFrameworksArtifact({ outDir: `${dist}/assets` })
 
 // (1) Client bundle → dist/assets/* (served by Pages at /assets/*).
@@ -60,15 +60,15 @@ cpSync(`${dir}/../llms.txt`, `${dist}/llms.txt`)
 cpSync(`${dir}/../llms-full.txt`, `${dist}/llms-full.txt`)
 // The generated library API reference (every public export + signature + doc), served at /api-reference.md.
 cpSync(`${dir}/../api-reference.md`, `${dist}/api-reference.md`)
-// The verified-example corpus, served at /examples.json — the `/mcp` worker route fetches this (and
+// The verified-example corpus, served at /examples.json - the `/mcp` worker route fetches this (and
 // /llms-full.txt) same-origin to back nifra_example / nifra_docs without bundling. See _worker.ts.
 cpSync(`${dir}/../packages/cli/docs/examples.json`, `${dist}/examples.json`)
-// The type-signature corpus, served at /types.json — the `/mcp` worker route fetches it same-origin to
+// The type-signature corpus, served at /types.json - the `/mcp` worker route fetches it same-origin to
 // back nifra_types (the exact TypeScript of every @nifrajs/* export). See _worker.ts.
 cpSync(`${dir}/../packages/cli/docs/types.json`, `${dist}/types.json`)
 rmSync(`${dir}/dist-server`, { recursive: true, force: true })
 
-// (4) `_routes.json` — exclude paths the Worker should NOT handle so Pages serves them statically from
+// (4) `_routes.json` - exclude paths the Worker should NOT handle so Pages serves them statically from
 // its CDN (a `_worker.js` is otherwise invoked for every path): the client bundle under /assets/*, plus
 // the static llms.txt / llms-full.txt. Everything else falls through to the Worker (SSR).
 writeFileSync(

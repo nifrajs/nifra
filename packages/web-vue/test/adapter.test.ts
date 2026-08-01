@@ -4,9 +4,9 @@ import { defineComponent, h } from "vue"
 import { vueAdapter } from "../src/index.ts"
 
 // SSR side runs under bun (vue/server-renderer). Full hydration is browser-verified against the
-// real packages (see examples/web-vue) — bun:test has no DOM. Unlike React, Vue SSR resolves
+// real packages (see examples/web-vue) - bun:test has no DOM. Unlike React, Vue SSR resolves
 // async deps before flushing (no fallback-then-content boundary semantics), so there is no
-// streaming-order test here — Vue's `renderToWebStream` chunks the serialized buffer, it does
+// streaming-order test here - Vue's `renderToWebStream` chunks the serialized buffer, it does
 // not progressively render Suspense fallbacks the way React's `renderToReadableStream` does.
 
 // A layout component that renders its child through the default slot (the `compose` contract).

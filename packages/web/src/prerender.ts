@@ -2,7 +2,7 @@
  * Build-time SSG driver. Prerendering is framework-agnostic by construction: a nifra SSR page is
  * "just `app.fetch(GET)` returning a streamed `Response`", so prerendering = drive that same handler
  * at build with a synthetic request, drain the body to bytes, and write the HTML to disk. No adapter
- * (React/Solid/Vue/Preact/Svelte) is touched — this sits entirely above the render seam.
+ * (React/Solid/Vue/Preact/Svelte) is touched - this sits entirely above the render seam.
  *
  * Handles **static** routes (opt in via `export const prerender = true`) and **dynamic** `:param`
  * routes (enumerate concrete params via `export const getStaticPaths`). Catch-all/wildcard (`*`)
@@ -13,7 +13,7 @@ import { dirname, resolve, sep } from "node:path"
 import { fillRoutePattern, type RouteEntry } from "./manifest.ts"
 import { DATA_HEADER } from "./router.ts"
 
-/** Minimal app surface the driver needs — just a fetch handler (a built `createWebApp`). */
+/** Minimal app surface the driver needs - just a fetch handler (a built `createWebApp`). */
 export interface PrerenderApp {
   fetch(req: Request): Response | Promise<Response>
 }
@@ -47,7 +47,7 @@ export interface PrerenderEntry {
 export interface PrerenderResult {
   readonly prerendered: readonly PrerenderEntry[]
   readonly skipped: readonly { readonly path: string; readonly reason: string }[]
-  /** Per dynamic route pattern, its `getStaticPaths` `fallback` (`"ssr"` default) — so the deploy
+  /** Per dynamic route pattern, its `getStaticPaths` `fallback` (`"ssr"` default) - so the deploy
    * layer knows whether unlisted paths should hit the worker (`"ssr"`) or 404 (`"404"`). */
   readonly fallbacks: Readonly<Record<string, "ssr" | "404">>
 }
@@ -71,7 +71,7 @@ const outputPath = (root: string, file: string): string | undefined => {
 
 /**
  * Render every opted-in static route to a static `index.html` under `outDir`. Run AFTER `buildClient`
- * (so the app references the hashed client entry). Returns a report of what was emitted vs skipped —
+ * (so the app references the hashed client entry). Returns a report of what was emitted vs skipped -
  * the caller can use `prerendered` to wire a hybrid deploy (e.g. exclude those paths from the SSR
  * worker so the CDN serves the static file). Never throws on a per-route miss: a non-OK response or a
  * non-opted/dynamic route is recorded in `skipped` and the build continues.
@@ -88,7 +88,7 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
   const renderPath = async (path: string): Promise<void> => {
     const res = await options.app.fetch(new Request(`${origin}${path}`))
     if (!res.ok) {
-      // A failed render is a per-route skip, not a build failure — surfaced for the caller to log.
+      // A failed render is a per-route skip, not a build failure - surfaced for the caller to log.
       skipped.push({ path, reason: `render returned HTTP ${res.status}` })
       return
     }
@@ -104,7 +104,7 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
 
     // Also emit the loader data as a static `_data.json` next to it, so a client soft-nav into this
     // route fetches a file instead of hitting the worker. Only when the data-mode response is plain
-    // JSON — a deferred loader answers with NDJSON, which the static fast-path doesn't cover (the
+    // JSON - a deferred loader answers with NDJSON, which the static fast-path doesn't cover (the
     // client falls back to the worker for those).
     let dataFile: string | undefined
     const dataRes = await options.app.fetch(
@@ -123,7 +123,7 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
         writeFileSync(dataAbs, await dataRes.text())
       }
     } else {
-      await dataRes.body?.cancel() // not emitting (non-OK or NDJSON) — release the stream
+      await dataRes.body?.cancel() // not emitting (non-OK or NDJSON) - release the stream
     }
 
     prerendered.push({ path, file, bytes: html.length, ...(dataFile ? { dataFile } : {}) })
@@ -131,7 +131,7 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
 
   for (const route of options.routes) {
     if (route.pattern.includes("*")) {
-      skipped.push({ path: route.pattern, reason: "catch-all/wildcard route — not supported" })
+      skipped.push({ path: route.pattern, reason: "catch-all/wildcard route - not supported" })
       continue
     }
     const mod = await route.load()
@@ -182,7 +182,7 @@ export interface CloudflarePagesRoutes {
 
 export interface CloudflarePagesRoutesOptions {
   /** Prerendered request paths (e.g. `prerenderRoutes(...).prerendered.map(p => p.path)`, or the
-   * build's `prerendered.json`). Each is excluded from the worker — plus its static `_data.json`. */
+   * build's `prerendered.json`). Each is excluded from the worker - plus its static `_data.json`. */
   readonly prerendered: readonly string[]
   /** Extra globs to keep OFF the worker (CDN-served). Default `["/assets/*"]` (the hashed bundle). */
   readonly staticGlobs?: readonly string[]
@@ -195,7 +195,7 @@ export interface CloudflarePagesRoutesOptions {
  *
  * ⚠️ Cloudflare caps `_routes.json` at **100** include+exclude rules total, and each prerendered path
  * costs 2 (the doc + its `_data.json`). For a large SSG site, exclude by **prefix glob** (e.g.
- * `/blog/*`) instead of listing every path — pass those via `staticGlobs` and a smaller `prerendered`.
+ * `/blog/*`) instead of listing every path - pass those via `staticGlobs` and a smaller `prerendered`.
  */
 export function cloudflarePagesRoutes(
   options: CloudflarePagesRoutesOptions,

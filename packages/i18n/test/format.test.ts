@@ -11,7 +11,7 @@ const messages: Messages = {
   empty: "just text",
 }
 
-describe("createFormatter — caching [AUDIT]", () => {
+describe("createFormatter - caching [AUDIT]", () => {
   test("reuses one instance per (locale, messages) so ASTs + Intl.* persist across calls", () => {
     const a = createFormatter("en", messages)
     expect(createFormatter("en", messages)).toBe(a) // same locale + catalog → reused (cheap per request)
@@ -20,7 +20,7 @@ describe("createFormatter — caching [AUDIT]", () => {
   })
 })
 
-describe("createFormatter — t()", () => {
+describe("createFormatter - t()", () => {
   const f = createFormatter("en", messages)
 
   test("interpolation", () => {
@@ -70,7 +70,7 @@ describe("createFormatter — t()", () => {
   })
 })
 
-describe("createFormatter — n() / d()", () => {
+describe("createFormatter - n() / d()", () => {
   test("number formatting per locale (memoized)", () => {
     const de = createFormatter("de-DE", {})
     expect(de.n(1234.5)).toBe("1.234,5")
@@ -85,7 +85,7 @@ describe("createFormatter — n() / d()", () => {
   })
 })
 
-describe("createFormatter — malformed messages fail soft", () => {
+describe("createFormatter - malformed messages fail soft", () => {
   test("unterminated / bad placeholders return the raw message instead of throwing", () => {
     const bad = [
       "{unterminated",

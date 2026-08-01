@@ -1,6 +1,6 @@
 /**
  * Type-level proof that `Server` accumulates every route into its type (3a).
- * Verified by `tsc`. The ~14-route app also exercises instantiation depth — if
+ * Verified by `tsc`. The ~14-route app also exercises instantiation depth - if
  * accumulation blew up ("excessively deep"), this file would fail to compile.
  */
 import type { Equal, Expect } from "@nifrajs/test-utils"
@@ -9,7 +9,7 @@ import { server } from "../src/index.ts"
 
 type RegistryOf<S> = S extends Server<infer R> ? R : never
 
-// Declared (type-only) schemas — this file never runs.
+// Declared (type-only) schemas - this file never runs.
 declare const nameBody: StandardSchemaV1<unknown, { name: string }>
 declare const pageQuery: StandardSchemaV1<unknown, { page: number }>
 
@@ -78,7 +78,7 @@ export type _Paths = Expect<
 declare const idOnly: StandardSchemaV1<unknown, { id: string }>
 
 // The handler returns the narrower literal `{ id: "always-1" }`, but the client-visible output is the
-// declared contract `{ id: string }` — proving the response schema wins over the inferred return.
+// declared contract `{ id: string }` - proving the response schema wins over the inferred return.
 const contractApp = server().get("/c", { response: idOnly }, () => ({ id: "always-1" as const }))
 export type _ResponseContractWins = Expect<
   Equal<RegistryOf<typeof contractApp>["/c"]["GET"]["output"], { id: string }>

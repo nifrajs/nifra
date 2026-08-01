@@ -1,6 +1,6 @@
 {
   // Shared emit settings for publishable packages. Extends tsconfig.base (NOT the root
-  // tsconfig) so it has **no `paths`** — for emit, a cross-package import like
+  // tsconfig) so it has **no `paths`** - for emit, a cross-package import like
   // `@nifrajs/core` must resolve to that package's built `dist` (external), not its `src`
   // (which would drag foreign files under this package's `rootDir`). So build order
   // matters: `@nifrajs/core` first. `rewriteRelativeImportExtensions` fixes the emitted

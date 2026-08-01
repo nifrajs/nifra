@@ -1,5 +1,5 @@
 /**
- * @nifrajs/cron — runtime-agnostic in-process cron for long-running nifra servers (Bun/Node/Deno).
+ * @nifrajs/cron - runtime-agnostic in-process cron for long-running nifra servers (Bun/Node/Deno).
  *
  *   import { createScheduler } from "@nifrajs/cron"
  *
@@ -14,7 +14,7 @@
  * job is skipped, not stacked), error-isolated (a throw goes to `onError`, never kills the loop),
  * graceful `stop()`. Dependency-free.
  *
- * Cloudflare Workers has no long-lived process — there, use the platform `scheduled` trigger via
+ * Cloudflare Workers has no long-lived process - there, use the platform `scheduled` trigger via
  * `toFetchHandler(app, { scheduled })` (`@nifrajs/core`), not this.
  */
 

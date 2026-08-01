@@ -1,5 +1,5 @@
 /**
- * ISR (Incremental Static Regeneration) demo on Bun — a nifra app whose document responses are cached
+ * ISR (Incremental Static Regeneration) demo on Bun - a nifra app whose document responses are cached
  * and served stale-while-revalidate by `withISR`, backed by an in-memory store for local dev. The
  * index route declares `revalidate = 2` (seconds).
  *
@@ -11,7 +11,7 @@
  *   curl -X POST 'http://localhost:3000/__nifra/revalidate?path=/' -H 'x-nifra-revalidate-token: dev-secret'
  *
  * Production swaps the in-memory store for a shared KV store (worker.ts) so the cache and purges hold
- * across instances — the only line that changes is the store.
+ * across instances - the only line that changes is the store.
  */
 import { inProcessClient } from "@nifrajs/client"
 import { createWebApp, MemoryCacheStore, revalidateEndpoint, withISR } from "@nifrajs/web"
@@ -20,8 +20,8 @@ import { discoverRoutes } from "@nifrajs/web/fs"
 import { reactAdapter } from "@nifrajs/web-react"
 import { backend } from "./backend"
 
-// buildClient writes to public/assets (so /assets/* maps to a file under the assets dir — the layout
-// Workers Assets also uses, see worker.ts). Trusted own build output — cast after parse.
+// buildClient writes to public/assets (so /assets/* maps to a file under the assets dir - the layout
+// Workers Assets also uses, see worker.ts). Trusted own build output - cast after parse.
 const publicDir = `${import.meta.dir}/public`
 const assets = JSON.parse(
   await Bun.file(`${publicDir}/assets/manifest.json`)
@@ -35,10 +35,10 @@ const app = createWebApp({
   clientEntry: assets.entry,
   routePreload: assets.routes,
   api: inProcessClient(backend),
-  title: "nifra — ISR demo",
+  title: "nifra - ISR demo",
 })
 
-// Serve the content-hashed bundle (immutable — hashed URLs). The ISR `key` below skips these. The
+// Serve the content-hashed bundle (immutable - hashed URLs). The ISR `key` below skips these. The
 // pathname is /assets/<hash>.js → public/assets/<hash>.js (Workers Assets serves the same layout).
 app.get("/assets/*", async (c) => {
   const file = Bun.file(`${publicDir}${new URL(c.req.url).pathname}`)

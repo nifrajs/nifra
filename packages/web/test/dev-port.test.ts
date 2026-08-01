@@ -14,7 +14,7 @@ test("EADDRINUSE rejects with the named nifra explanation (not Node's internal t
     const second = createServer(() => {})
     const promise = listenOrExplain(second, port)
     await expect(promise).rejects.toThrow(`port ${port} is already in use`)
-    // The stale-output cause is spelled out — that sentence is the whole point of the guard.
+    // The stale-output cause is spelled out - that sentence is the whole point of the guard.
     await expect(promise).rejects.toThrow(/PREVIOUS build/)
     // Both escape hatches are given, with the port substituted so they're copy-pasteable.
     await expect(promise).rejects.toThrow(new RegExp(`lsof -ti:${port}`))

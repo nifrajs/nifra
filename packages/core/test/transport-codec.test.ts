@@ -117,7 +117,7 @@ describe("versioned transport codecs", () => {
     // caller catching the documented error type.
     expect(() => decodeTransportFrame("{not json", registry)).toThrow(TransportCodecError)
 
-    // A well-formed envelope whose inner payload is garbage — the second, separately-parsed layer.
+    // A well-formed envelope whose inner payload is garbage - the second, separately-parsed layer.
     const badPayload = JSON.stringify({ codec: "json", version: 1, payload: "{nope" })
     expect(() => decodeTransportFrame(badPayload, registry)).toThrow(TransportCodecError)
 

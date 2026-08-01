@@ -16,13 +16,13 @@ name: Release
 # suite means no publish, with no separate approval step to remember.
 #
 # `changeset publish` replaces every internal `workspace:*` range with the concrete
-# resolved version in the published tarball (so no workspace: protocol leaks to npm —
+# resolved version in the published tarball (so no workspace: protocol leaks to npm -
 # the alpha.1/alpha.2 failure mode) and publishes in dependency order.
 #
 # ONE-TIME SETUP: add an `NPM_TOKEN` repo secret (npm automation token with publish
 # rights to the @nifrajs scope) under Settings → Secrets and variables → Actions.
 # Until that secret exists the publish step finds no auth and fails loudly only when
-# there is actually something to publish — there is no silent half-publish.
+# there is actually something to publish - there is no silent half-publish.
 
 # Gated on CI, not on the push. `on: push` published whatever landed on main, whether or not the
 # checks passed - and the Version PR merging IS a push, so a red suite was one click from npm. That
@@ -41,7 +41,7 @@ permissions:
   pull-requests: write
   id-token: write # required for npm provenance (see NPM_CONFIG_PROVENANCE below)
 
-# Never run two releases concurrently — a second push mid-publish must wait, not race.
+# Never run two releases concurrently - a second push mid-publish must wait, not race.
 concurrency: release-${{ github.event.workflow_run.head_branch }}
 
 jobs:
@@ -59,7 +59,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14 # pinned to match CI — reproducible publishes
+          bun-version: 1.3.14 # pinned to match CI - reproducible publishes
 
       - name: Install
         run: bun install --frozen-lockfile
@@ -78,7 +78,7 @@ jobs:
           # from each tarball back to this workflow run and commit, so a consumer can prove the
           # published bytes were built here and not injected by a leaked NPM_TOKEN. Requires the
           # `id-token: write` permission above plus a `repository` field on every published
-          # package.json — `check:publish` enforces that precondition in CI, so a new package
+          # package.json - `check:publish` enforces that precondition in CI, so a new package
           # cannot silently break the publish. If a publish ever errors on provenance,
           # commenting this line out is the safe fallback.
           NPM_CONFIG_PROVENANCE: "true"

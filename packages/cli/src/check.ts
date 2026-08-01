@@ -1,14 +1,14 @@
 /**
- * `nifra check` — the agent's (and CI's) definition of done. It makes the guarantees that keep a nifra
+ * `nifra check` - the agent's (and CI's) definition of done. It makes the guarantees that keep a nifra
  * app drift-proof actually *fire*, instead of relying on the agent to remember them:
  *
- *   1. **typecheck** (`tsc --noEmit`) — the frontend↔backend contract is compiler-enforced. The typed
+ *   1. **typecheck** (`tsc --noEmit`) - the frontend↔backend contract is compiler-enforced. The typed
  *      client derives request + response types from the routes, so a shape mismatch is a type error.
- *   2. **typed-client lint** — flags hand-rolled `fetch()` to this app's *own* API (a relative URL),
+ *   2. **typed-client lint** - flags hand-rolled `fetch()` to this app's *own* API (a relative URL),
  *      which bypasses `client<typeof app>` so the compiler can't see the drift.
- *   3. **server-only-import lint** — flags a top-level import of server-only code (a DB driver, `node:`/
+ *   3. **server-only-import lint** - flags a top-level import of server-only code (a DB driver, `node:`/
  *      `bun:` builtins, the `./db` module) into a `routes/` page module. Those modules are bundled for
- *      the browser too, so the import ships server code to the client and breaks the build — the #1
+ *      the browser too, so the import ships server code to the client and breaks the build - the #1
  *      full-stack footgun. Reach server resources via `c.db` / `ctx.api`, never a top-level import.
  *
  * `collectCheckResult` returns a structured, machine-readable result (consumed by `--json` and the
@@ -36,10 +36,10 @@ export interface ServerImportFinding extends SourceFinding {
   readonly specifier: string
 }
 
-// `fetch( <ws> ('|"|`) / (not /)` — a string/template arg starting with a single `/` is a relative URL,
+// `fetch( <ws> ('|"|`) / (not /)` - a string/template arg starting with a single `/` is a relative URL,
 // i.e. same-origin = this app's own API. `(?<![.\w])` skips `.fetch(` (a method) and `prefetch(`; the
 // `(?!\/)` skips protocol-relative `//host` (an external origin). A variable arg (`fetch(url)`) is left
-// alone on purpose — undecidable from source, and flagging it would punish legitimate external calls.
+// alone on purpose - undecidable from source, and flagging it would punish legitimate external calls.
 const GLOBAL_FETCH_CALL = /(?<![.\w])fetch\s*\(/g
 const FETCH_CALL = /(?<![.\w])fetch\s*\(/g
 const HTTP_VERBS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
@@ -50,7 +50,7 @@ const SIMPLE_REWRITE_METHODS = new Set(["GET", "DELETE", "HEAD", "OPTIONS"])
 const IGNORED =
   /(^|\/)(node_modules|dist(-[a-z0-9]+)?|build|\.nifra|\.git|\.wrangler|coverage)\/|\.(test|spec)\.[cm]?[jt]sx?$/
 
-// A file under `routes/` — a page module bundled for the browser, where a server-only import is unsafe.
+// A file under `routes/` - a page module bundled for the browser, where a server-only import is unsafe.
 const ROUTE_FILE = /(^|\/)routes\//
 
 // Module specifiers that must never be VALUE-imported into a route module: node:/bun: builtins, common
@@ -228,13 +228,13 @@ function scanRoutePattern(
 }
 
 /**
- * Blank, with spaces (newlines preserved, so every byte offset — and line number — is unchanged):
+ * Blank, with spaces (newlines preserved, so every byte offset - and line number - is unchanged):
  *   - `//` line comments and block comments;
- *   - the CONTENTS of backtick template literals — code-as-text (doc `CodeBlock` examples, code
+ *   - the CONTENTS of backtick template literals - code-as-text (doc `CodeBlock` examples, code
  *     generators), never a real statement to lint.
  * Single/double-quoted strings are KEPT (a real import/Response specifier lives in one). A small
  * char-state machine, not a full lexer: it doesn't model regex literals, so a regex containing a quote
- * could mis-skip — in practice the constructs these scanners look for sit before any such regex.
+ * could mis-skip - in practice the constructs these scanners look for sit before any such regex.
  * Shared by the source scanners here and by `nifra doctor` ({@link ./doctor.ts}).
  */
 export function stripComments(src: string): string {
@@ -646,10 +646,10 @@ export async function scanProjectSql(cwd: string): Promise<SourceFinding[] | und
   return out.sort(bySite)
 }
 
-// `client("` / `client('` / `client(\`` — a URL-first call WITHOUT the `<typeof app>` generic:
+// `client("` / `client('` / `client(\`` - a URL-first call WITHOUT the `<typeof app>` generic:
 // the compiler has nothing to derive types from, so the anti-drift guarantee silently vanishes.
 // `client<typeof app>("…")` has `<…>` between the name and `(` so it never matches; the published-
-// contract form `client(contract, url)` starts with an identifier, not a quote — also unmatched.
+// contract form `client(contract, url)` starts with an identifier, not a quote - also unmatched.
 const CLIENT_CALL = /(?<![.\w])client\s*\(/g
 
 /** Scan one file's text for untyped `client("…")` calls. Pure + line-accurate. */
@@ -693,14 +693,14 @@ const REMOVED_IMPORTS: ReadonlyArray<{
     specifier: "@nifrajs/budget",
     since: "2.0",
     replacement:
-      'import from "@nifrajs/core/budget" — the package folded into core and npm `latest` is still 1.13.0, so a `^2` range resolves to nothing',
+      'import from "@nifrajs/core/budget" - the package folded into core and npm `latest` is still 1.13.0, so a `^2` range resolves to nothing',
   },
   {
     specifier: "@nifrajs/core/ws",
     since: "2.0",
     sideEffectOnly: true,
     replacement:
-      'a bare `import "@nifrajs/core/ws"` no longer installs the runtime — register it explicitly with `.use(websocket())`, importing `websocket` from the same module',
+      'a bare `import "@nifrajs/core/ws"` no longer installs the runtime - register it explicitly with `.use(websocket())`, importing `websocket` from the same module',
   },
 ]
 
@@ -752,7 +752,7 @@ export function scanServerOnlyImports(file: string, content: string): ServerImpo
 }
 
 // ---------------------------------------------------------------------------------------------------
-// #4.4 — TRANSITIVE import-chain resolution for `server-only-import`. `scanServerOnlyImports` above is a
+// #4.4 - TRANSITIVE import-chain resolution for `server-only-import`. `scanServerOnlyImports` above is a
 // pure per-file regex scan: it sees only the route's DIRECT `import` line, so it reports the direct edge
 // `routes/x → ../db`. The build leak-guard, which has the real module graph, reports the full transitive
 // `route → ../data → ../db → pg`. These helpers give `nifra check` the same depth via a BOUNDED
@@ -761,14 +761,14 @@ export function scanServerOnlyImports(file: string, content: string): ServerImpo
 // that can't be precisely resolved (a bare pkg, a tsconfig path alias) falls back to the direct edge.
 // ---------------------------------------------------------------------------------------------------
 
-// Server-only specifiers that are TERMINAL sinks — a bare `node:`/`bun:` builtin or a known server-only
+// Server-only specifiers that are TERMINAL sinks - a bare `node:`/`bun:` builtin or a known server-only
 // npm package. These are never local source we can walk into, so the chain ends here. (Same vocabulary
-// as SERVER_ONLY, minus the relative `../db` arm — a relative `db` module IS local source we resolve.)
+// as SERVER_ONLY, minus the relative `../db` arm - a relative `db` module IS local source we resolve.)
 const SERVER_ONLY_SINK =
   /^(?:node:|bun:)|^(?:postgres|pg|mysql2|ioredis|redis|better-sqlite3|mongodb|@libsql\/client)$|^drizzle-orm\/(?:node-postgres|postgres-js|bun-sqlite|libsql|mysql2|pglite)\b/
 // The `.server` convention: a module named `*.server.ts(x)` is server-only (the client build empties it).
 const SERVER_MODULE_FILE = /\.server(\.[cm]?[jt]sx?)?$/
-// The explicit poison-import marker (`@nifrajs/web/server-only`) — a module opting into the client-leak
+// The explicit poison-import marker (`@nifrajs/web/server-only`) - a module opting into the client-leak
 // guard. A resolved file whose source carries this side-effect import is a server-only sink.
 const SERVER_ONLY_MARKER_IMPORT = /import\s+["']@nifrajs\/web\/server-only["']/
 // Depth/visited caps keep the walk linear + cycle-safe. A route's server-only dependency sits within a
@@ -776,13 +776,13 @@ const SERVER_ONLY_MARKER_IMPORT = /import\s+["']@nifrajs\/web\/server-only["']/
 const TRANSITIVE_MAX_DEPTH = 8
 const TRANSITIVE_MAX_VISITED = 200
 
-/** A relative module specifier (`./x`, `../y`) — the only kind we resolve + walk into (a bare specifier
+/** A relative module specifier (`./x`, `../y`) - the only kind we resolve + walk into (a bare specifier
  * is either a sink we recognise by name or a third-party dep we don't follow into node_modules). */
 const isRelativeSpecifier = (spec: string): boolean =>
   spec.startsWith("./") || spec.startsWith("../")
 
-// A FRESH copy of the static-import regex per scan. The transitive walk is REENTRANT — the outer
-// per-route loop and the inner BFS both scan imports — and a single shared global-flag regex carries
+// A FRESH copy of the static-import regex per scan. The transitive walk is REENTRANT - the outer
+// per-route loop and the inner BFS both scan imports - and a single shared global-flag regex carries
 // `lastIndex` state, so reusing the module-level `STATIC_IMPORT` across nested calls corrupts the outer
 // loop's position (it restarts forever). A fresh instance per call keeps each scan's state private.
 const staticImportRegex = (): RegExp => new RegExp(STATIC_IMPORT.source, STATIC_IMPORT.flags)
@@ -810,7 +810,7 @@ export function parseStaticImports(content: string): string[] {
 }
 
 /** The server-only SINK an import specifier names directly (a `node:`/`bun:` builtin or a known
- * server-only package), or `undefined` if it isn't a by-name sink. Pure — the label is the specifier
+ * server-only package), or `undefined` if it isn't a by-name sink. Pure - the label is the specifier
  * itself (it's already the actionable name). */
 export function directSinkSpecifier(spec: string): string | undefined {
   return SERVER_ONLY_SINK.test(spec) ? spec : undefined
@@ -819,7 +819,7 @@ export function directSinkSpecifier(spec: string): string | undefined {
 /** One transitive server-only finding: the route module, the route's offending top-level import (the
  * first hop / `specifier`), the line + snippet of that import, and the FULL chain to the sink. */
 export interface TransitiveServerImportFinding extends ServerImportFinding {
-  /** `[routeFile, ...as-written specifiers…, sink]` — the shortest path the walk found. Length 2 means
+  /** `[routeFile, ...as-written specifiers…, sink]` - the shortest path the walk found. Length 2 means
    * the route imports the sink directly (same as the regex scan's direct edge). */
   readonly chain: readonly string[]
   /** True when a precise transitive resolve wasn't possible for the first hop (a bare pkg / path alias),
@@ -842,7 +842,7 @@ export type ModuleReader = (absPath: string) => string | undefined
  * unresolvable alias). At each node, a by-name sink import (`node:fs`, `postgres`) OR a resolved
  * `*.server` / `server-only`-marked dependency terminates the chain. Bounded by depth + a visited set, so
  * it's linear and cycle-free. `routeFile`/`routeContent` seed the walk; `resolve`/`read` supply the graph
- * — pure given those, so it's unit-testable with a fake graph.
+ * - pure given those, so it's unit-testable with a fake graph.
  */
 export function walkServerOnlyChain(
   routeFile: string,
@@ -871,11 +871,11 @@ export function walkServerOnlyChain(
         const sink = directSinkSpecifier(spec)
         if (sink !== undefined) return [...node.chain, sink]
         // (b) Only relative specifiers are local source we resolve + walk into. A bare third-party
-        // specifier that isn't a known sink is a leaf — don't follow it into node_modules.
+        // specifier that isn't a known sink is a leaf - don't follow it into node_modules.
         if (!isRelativeSpecifier(spec)) continue
         const abs = resolve(node.abs, spec)
         if (abs === undefined || seen.has(abs)) continue
-        // (c) A resolved `*.server` module is a server-only sink by the `.server` convention — the chain
+        // (c) A resolved `*.server` module is a server-only sink by the `.server` convention - the chain
         // ends at it (named by the as-written specifier).
         if (SERVER_MODULE_FILE.test(abs)) return [...node.chain, spec]
         const content = read(abs)
@@ -896,8 +896,8 @@ export function walkServerOnlyChain(
 /**
  * Resolve the FULL transitive server-only chain(s) for a route module, given a real fs-backed resolver +
  * reader. For each of the route's top-level imports, if a precise transitive walk finds a sink, the
- * finding carries the full chain; otherwise — when the first hop is itself a direct by-name sink the
- * regex scan already flags, or when a relative import can't be resolved — it falls back to the DIRECT
+ * finding carries the full chain; otherwise - when the first hop is itself a direct by-name sink the
+ * regex scan already flags, or when a relative import can't be resolved - it falls back to the DIRECT
  * edge (`fallback: true`), never a fabricated chain. Returns one finding per offending top-level import,
  * de-duplicated to the shortest chain per first-hop specifier. Non-route files yield `[]`.
  */
@@ -918,21 +918,21 @@ export function resolveServerOnlyChains(
     if (flaggedSpecifiers.has(specifier)) continue
     const line = lineAt(content, index)
     const snippet = (lines[line - 1] ?? "").trim()
-    // (1) A direct by-name sink (`node:fs`, `postgres`) — the route imports it itself; chain is the
+    // (1) A direct by-name sink (`node:fs`, `postgres`) - the route imports it itself; chain is the
     // direct edge. (Length-2 chain == the regex scan's existing `[route, specifier]`.)
     if (directSinkSpecifier(specifier) !== undefined) {
       flaggedSpecifiers.add(specifier)
       out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: false })
       continue
     }
-    // (2) A relative local import — try the transitive walk from the resolved dependency. If it reaches
+    // (2) A relative local import - try the transitive walk from the resolved dependency. If it reaches
     // a sink, emit the full chain rooted at THIS route's import line.
     if (isRelativeSpecifier(specifier)) {
       const abs = resolve(file, specifier)
       if (abs === undefined) {
         // Unresolvable relative import. If it's the known server-only `../db` convention the regex scan
-        // flags directly, fall back to the direct edge (precise resolve impossible — say so via
-        // `fallback`). Any other unresolvable relative import we can't assert is server-only — skip it.
+        // flags directly, fall back to the direct edge (precise resolve impossible - say so via
+        // `fallback`). Any other unresolvable relative import we can't assert is server-only - skip it.
         if (SERVER_ONLY.test(specifier)) {
           flaggedSpecifiers.add(specifier)
           out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: true })
@@ -963,7 +963,7 @@ export function resolveServerOnlyChains(
         continue
       }
       // (3) The relative `../db`-style convention the regex scan flags directly, but where the walk
-      // found no deeper sink (e.g. the file wasn't readable past the first hop) — fall back to the
+      // found no deeper sink (e.g. the file wasn't readable past the first hop) - fall back to the
       // direct edge so we still surface the known-server-only convention rather than going silent.
       if (SERVER_ONLY.test(specifier)) {
         flaggedSpecifiers.add(specifier)
@@ -975,7 +975,7 @@ export function resolveServerOnlyChains(
 }
 
 // A route handler returning a raw `Response` (`=> new Response(`, `return Response.json(`, …) makes the
-// typed client infer `data: never` (`Jsonify<Response>` is `never`) — so frontend/backend drift detection
+// typed client infer `data: never` (`Jsonify<Response>` is `never`) - so frontend/backend drift detection
 // silently vanishes for that route. Advisory, not a failure: a raw Response is sometimes intended
 // (redirects, files, streams). Fix is to return a plain object, or declare `{ response: t.… }` to type it.
 const RESPONSE_RETURN = /(?:=>\s*|return\s+)(?:new\s+Response|Response\s*\.\s*json)\s*\(/g
@@ -1013,12 +1013,12 @@ const RAW_RESPONSE_PRAGMA = "nifra-expect raw-response"
 /** Walk the project's `.ts`/`.tsx` source (skipping deps/build/tests), calling `visit` per file.
  * Exported so `nifra doctor` ({@link ./doctor.ts}) scans the same source surface as `nifra check`. */
 /**
- * Paths git considers ignored under `cwd`, in ONE batched `git check-ignore` call — so `.gitignore`
+ * Paths git considers ignored under `cwd`, in ONE batched `git check-ignore` call - so `.gitignore`
  * (root + nested + the global excludesfile) is honoured, not just the built-in {@link IGNORED} list. This
  * is what keeps the scan out of generated/build trees that live under a repo but aren't source: a monorepo
- * that gitignores, say, `builder/projects/` (238 generated apps) would otherwise be walked in full — 40k+
+ * that gitignores, say, `builder/projects/` (238 generated apps) would otherwise be walked in full - 40k+
  * findings, a 50 MB+ result that overwhelms the caller. Returns an EMPTY set when there's no git / not a
- * repo / git errors, so the scan simply degrades to the {@link IGNORED} regex — never throws, never blocks.
+ * repo / git errors, so the scan simply degrades to the {@link IGNORED} regex - never throws, never blocks.
  */
 async function gitIgnored(cwd: string, rels: readonly string[]): Promise<Set<string>> {
   if (rels.length === 0) return new Set()
@@ -1049,7 +1049,7 @@ export async function walkSource(
   cwd: string,
   visit: (rel: string, content: string) => void,
 ): Promise<void> {
-  // List candidates first (cheap — no reads), drop the built-in ignores, then exclude gitignored paths in
+  // List candidates first (cheap - no reads), drop the built-in ignores, then exclude gitignored paths in
   // one batch before the (expensive) reads. So a gitignored generated/build tree is never read or scanned.
   const rels: string[] = []
   for await (const rel of new Glob("**/*.{ts,tsx,mts,cts}").scan({ cwd, dot: false })) {
@@ -1072,15 +1072,15 @@ export async function scanProject(cwd: string): Promise<SourceFinding[]> {
   return out.sort(bySite)
 }
 
-// #7 — server-manifest drift. `server-manifest.ts` is a COMMITTED generated file (it bakes the route
+// #7 - server-manifest drift. `server-manifest.ts` is a COMMITTED generated file (it bakes the route
 // list + client-entry hash for a disk-less worker). If `routes/` changes but the manifest isn't
-// regenerated, the worker serves a stale route table — a silent edge break that no other check catches.
+// regenerated, the worker serves a stale route table - a silent edge break that no other check catches.
 // We diff each committed manifest's imported route files against the live `routes/` tree.
 
-// The marker comment `generateServerManifest` emits at the top of the file — identifies a generated
+// The marker comment `generateServerManifest` emits at the top of the file - identifies a generated
 // manifest unambiguously (so a user file merely named `server-manifest.ts` isn't mistaken for one).
 const GENERATED_MARKER = "GENERATED by @nifrajs/web generateServerManifest"
-// The first route-import specifier's prefix up to `routes/` (e.g. `./`, `../`, `./src/`) — used to
+// The first route-import specifier's prefix up to `routes/` (e.g. `./`, `../`, `./src/`) - used to
 // locate the routes dir relative to the manifest, and to strip to route-relative keys.
 const ROUTES_PREFIX = /["'](\.{1,2}(?:\/[^"'/]+)*?\/routes\/)[^"']+["']/
 // Route file extensions discovery recognises (mirrors `@nifrajs/web/fs`'s filter).
@@ -1089,7 +1089,7 @@ const ROUTE_FILE_EXT = /\.(tsx|jsx|svelte|vue|mdx)$/
 export interface ManifestDriftFinding {
   /** The committed server-manifest file (relative to cwd). */
   readonly file: string
-  /** Route files in `routes/` missing from the manifest (stale manifest — these routes won't serve). */
+  /** Route files in `routes/` missing from the manifest (stale manifest - these routes won't serve). */
   readonly missing: readonly string[]
   /** Route files the manifest imports that no longer exist in `routes/` (a dangling import). */
   readonly extra: readonly string[]
@@ -1111,12 +1111,12 @@ export async function scanServerManifestDrift(cwd: string): Promise<ManifestDrif
   for await (const rel of new Glob("**/server-manifest.ts").scan({ cwd, dot: false })) {
     if (IGNORED.test(rel)) continue
     const source = await Bun.file(join(cwd, rel)).text()
-    if (!source.includes(GENERATED_MARKER)) continue // not a generated manifest — skip
+    if (!source.includes(GENERATED_MARKER)) continue // not a generated manifest - skip
     const prefixMatch = ROUTES_PREFIX.exec(source)
     if (prefixMatch?.[1] === undefined) continue // no `routes/` imports → nothing to diff (empty app)
     const routesPrefix = prefixMatch[1]
     const manifestFiles = parseManifestRouteFiles(source, routesPrefix)
-    // The routes dir sits at `<manifest dir>/<prefix>` — resolve it relative to the manifest file.
+    // The routes dir sits at `<manifest dir>/<prefix>` - resolve it relative to the manifest file.
     const manifestDir = rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : ""
     const routesDir = join(cwd, manifestDir, routesPrefix)
     let discovered: string[]
@@ -1127,7 +1127,7 @@ export async function scanServerManifestDrift(cwd: string): Promise<ManifestDrif
         .map((f) => f.replaceAll("\\", "/"))
         .filter((f) => ROUTE_FILE_EXT.test(f))
     } catch {
-      continue // routes dir gone/unreadable — not a drift we can assess
+      continue // routes dir gone/unreadable - not a drift we can assess
     }
     const drift = diffManifestRoutes(manifestFiles, discovered)
     if (!isManifestInSync(drift)) {
@@ -1192,7 +1192,7 @@ async function typecheck(cwd: string, signal?: AbortSignal): Promise<TypecheckRe
 // `src/x.tsx(12,5): error TS2322: <message>` → one structured diagnostic.
 const TSC_LINE = /^(.+?)\((\d+),\d+\):\s*(?:error|warning)\s+TS\d+:\s*(.+)$/
 
-/** A single machine-readable check failure — the unit an agent (or CI) acts on. */
+/** A single machine-readable check failure - the unit an agent (or CI) acts on. */
 export interface CheckDiagnostic {
   readonly rule:
     | "typecheck"
@@ -1209,14 +1209,14 @@ export interface CheckDiagnostic {
     | "capability-assurance"
     | "capability-config"
     | "check-config"
-  /** `error` fails the gate (a real contract break); `warning` is advisory — surfaced to the agent but
+  /** `error` fails the gate (a real contract break); `warning` is advisory - surfaced to the agent but
    * does NOT fail `nifra check`, for patterns that are sometimes intentional (a route returning a raw
    * `Response`, which silently drops the typed client to `data: never` but is valid for files/redirects). */
   readonly severity: "error" | "warning"
   readonly file?: string
   readonly line?: number
   readonly message: string
-  /** The canonical, rule-level fix — clean of the per-occurrence snippet, so an agent can apply it
+  /** The canonical, rule-level fix - clean of the per-occurrence snippet, so an agent can apply it
    * directly. Set for the lint rules (they have one correct fix); omitted for `typecheck` (the fix is
    * specific to each type error). */
   readonly fix?: string
@@ -1227,12 +1227,12 @@ export interface CheckDiagnostic {
    * The import chain that pulls server-only code into the browser bundle, as display labels
    * `[routeFile, …as-written specifiers…, sink]`. Set only on `server-only-import`.
    *
-   * #4.4: this is now the FULL **transitive** chain — a bounded import-resolution walk (`Bun.resolveSync`
+   * #4.4: this is now the FULL **transitive** chain - a bounded import-resolution walk (`Bun.resolveSync`
    * from each file's dir, BFS the local module graph) follows `route → ../data → ../db → node:crypto`,
    * matching the build leak-guard's depth (`detectNodeBuiltinsInClient` in `@nifrajs/web/build`). A
    * length-2 chain (`[routeFile, specifier]`) means the route imports the sink directly. When a hop can't
    * be resolved precisely (a bare pkg, a tsconfig path alias), the walk degrades to the honest direct
-   * edge rather than fabricating a deeper path — never a lie.
+   * edge rather than fabricating a deeper path - never a lie.
    */
   readonly chain?: readonly string[]
 }
@@ -1246,7 +1246,7 @@ export interface CheckSuggestion {
   readonly steps?: readonly string[]
 }
 
-/** The structured result of a full check — what `--json` prints and the `nifra_check` MCP tool returns. */
+/** The structured result of a full check - what `--json` prints and the `nifra_check` MCP tool returns. */
 export interface CheckResult {
   readonly ok: boolean
   readonly typecheck: "pass" | "fail" | "skipped"
@@ -1255,7 +1255,7 @@ export interface CheckResult {
    * better-auth). Echoed here so `--json` / the MCP tool / the report can show what the typed-client scan
    * deliberately skipped - a suppressed prefix stays auditable instead of silently hiding real drift. */
   readonly externalMounts?: readonly string[]
-  /** Set only when the caller passed `maxDiagnostics` and there were more — `diagnostics` then holds the
+  /** Set only when the caller passed `maxDiagnostics` and there were more - `diagnostics` then holds the
    * first `shown` of `total`. It caps the serialized size so the `nifra_check` MCP tool can't emit a
    * message large enough to break the stdio transport; fix the shown diagnostics and re-run for the rest. */
   readonly truncated?: { readonly shown: number; readonly total: number }
@@ -1308,25 +1308,25 @@ async function loadCheckConfig(cwd: string): Promise<{ config: CheckConfig; erro
 }
 
 const UNTYPED_CLIENT_HINT =
-  'client("…") without a type argument — write client<typeof app>("…") (or client(contract, url)) so the compiler can catch drift'
+  'client("…") without a type argument - write client<typeof app>("…") (or client(contract, url)) so the compiler can catch drift'
 const FETCH_HINT =
-  "hand-rolled fetch() to your own API — call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift"
+  "hand-rolled fetch() to your own API - call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift"
 const SERVER_IMPORT_HINT =
-  "server-only import in a route module (bundled for the browser) — reach it via c.db / ctx.api inside a loader, never a top-level import"
+  "server-only import in a route module (bundled for the browser) - reach it via c.db / ctx.api inside a loader, never a top-level import"
 const RESPONSE_ROUTE_HINT =
   "route handler returns a raw Response - the typed client infers `data: never`, so drift detection is lost for this route. Return a plain object (it's serialized for you); for a stream use a typed SSE route (`app.sse(...)`), which keeps typed events; or, if a raw Response is intended (file/redirect), add `{ response: t.… }` or a `// nifra-expect raw-response` comment to mark it and silence this"
 const UNDECLARED_DEP_HINT =
-  "imported package is not declared in package.json dependencies — run bun add to declare it"
+  "imported package is not declared in package.json dependencies - run bun add to declare it"
 const SQL_COMPILER_MISSING_HINT =
   "the interpolated-SQL rule did NOT run - it parses source with the TypeScript compiler, which is an optional peer and is not installed here. This report says nothing about SQL injection either way. Install it with `bun add -d typescript`"
 const SQL_INTERPOLATION_EXAMPLE = "$" + "{value}"
 const INTERPOLATED_SQL_HINT = `SQL built by interpolating a value into the statement text - the value becomes statement, not a parameter, so anything the caller controls can end the literal and continue as SQL. Pass it as a bound parameter (\`?\` / \`$1\` and an argument), or use your driver's tagged template (sql\`… ${SQL_INTERPOLATION_EXAMPLE} …\`), which binds the substitutions for you`
 const MANIFEST_DRIFT_HINT =
-  "server-manifest.ts is out of sync with routes/ — re-run the build to regenerate it (a disk-less worker bakes this route table, so the drift is a silent edge break), then commit it"
+  "server-manifest.ts is out of sync with routes/ - re-run the build to regenerate it (a disk-less worker bakes this route table, so the drift is a silent edge break), then commit it"
 const TRUST_MANIFEST_DRIFT_HINT =
-  "nifra.manifest.json is missing, invalid, or out of sync — run `nifra manifest emit`, review it, and commit the regenerated trust artifact"
+  "nifra.manifest.json is missing, invalid, or out of sync - run `nifra manifest emit`, review it, and commit the regenerated trust artifact"
 const CAPABILITY_HINT =
-  "effect/capability assurance failed — align the route declaration with approved adapter provenance; never bypass an owned effect seam"
+  "effect/capability assurance failed - align the route declaration with approved adapter provenance; never bypass an owned effect seam"
 
 function oneLineDiff(file: string, line: number, before: string, after: string): string {
   return `--- ${file}:${line}\n+++ ${file}:${line}\n@@\n-${before}\n+${after}`
@@ -1428,11 +1428,11 @@ function serverImportSuggestion(
 ): CheckSuggestion {
   const sink = chain[chain.length - 1] ?? specifier
   // Surface the resolved chain in the fix steps so the agent sees the full path (`route → ../data →
-  // ../db → node:crypto`) and which module to cut — not just the route's own top-level import.
+  // ../db → node:crypto`) and which module to cut - not just the route's own top-level import.
   const chainStep =
     chain.length > 2
       ? fallback
-        ? `Server-only code reaches this route through \`${chain.join(" → ")}\` (the deeper chain couldn't be resolved precisely — trace it from \`${specifier}\`).`
+        ? `Server-only code reaches this route through \`${chain.join(" → ")}\` (the deeper chain couldn't be resolved precisely - trace it from \`${specifier}\`).`
         : `Server-only code reaches this route transitively: \`${chain.join(" → ")}\`. The sink is \`${sink}\`; break the chain at the first hop (\`${specifier}\`) or move the sink behind the server boundary.`
       : undefined
   return {
@@ -1486,7 +1486,7 @@ export async function collectCheckResult(
   const responseRoutes: SourceFinding[] = []
   const interpolatedSql: SourceFinding[] = []
   // Route modules (rel + content) collected during the walk, so the TRANSITIVE server-only resolution
-  // (#4.4) — which needs fs-backed import resolution, not just per-file text — runs after the walk.
+  // (#4.4) - which needs fs-backed import resolution, not just per-file text - runs after the walk.
   const routeModules: Array<{ rel: string; content: string }> = []
   // Load the optional check config first - the typed-client scan needs the external-mount allowlist as it
   // walks. It's a tiny pure-JSON read; a malformed file surfaces as a warning below, never blocking.
@@ -1496,7 +1496,7 @@ export async function collectCheckResult(
   // handed a clean report the rule never produced.
   const sqlCompiler = await (opts.loadTypeScript ?? importTypeScript)()
   // lintsOnly: skip the tsc pass (seconds on a big project) and run just the near-instant source
-  // lints — the agent inner-loop mode; the full gate stays the definition of done.
+  // lints - the agent inner-loop mode; the full gate stays the definition of done.
   const [tc, _, dr, manifestDrift] = await Promise.all([
     opts.lintsOnly
       ? Promise.resolve<TypecheckResult>({ ran: false, ok: true, note: "skipped (lintsOnly)" })
@@ -1523,7 +1523,7 @@ export async function collectCheckResult(
   const resolveModule: ModuleResolver = (fromFile, specifier) => {
     try {
       // `fromFile` is a cwd-RELATIVE route path on the first hop (`routes/x.tsx`) but ABSOLUTE on the
-      // deeper hops the walk takes (it carries resolved absolute paths) — resolve the dir for each.
+      // deeper hops the walk takes (it carries resolved absolute paths) - resolve the dir for each.
       const fromAbs = isAbsolute(fromFile) ? fromFile : join(cwd, fromFile)
       return Bun.resolveSync(specifier, dirname(fromAbs))
     } catch {
@@ -1595,7 +1595,7 @@ export async function collectCheckResult(
       severity: "error",
       file: f.file,
       line: f.line,
-      message: `${f.snippet} — ${FETCH_HINT}`,
+      message: `${f.snippet} - ${FETCH_HINT}`,
       fix: FETCH_HINT,
       suggestion: ownFetchSuggestion(f, routes),
     })
@@ -1611,7 +1611,7 @@ export async function collectCheckResult(
       severity: "error",
       file: f.file,
       line: f.line,
-      message: `${f.snippet} — removed in nifra ${entry?.since ?? "2.0"}: ${entry?.replacement ?? "see the changelog"}`,
+      message: `${f.snippet} - removed in nifra ${entry?.since ?? "2.0"}: ${entry?.replacement ?? "see the changelog"}`,
       fix: entry?.replacement ?? "see the changelog",
     })
   }
@@ -1621,14 +1621,14 @@ export async function collectCheckResult(
       severity: "error",
       file: f.file,
       line: f.line,
-      message: `${f.snippet} — ${UNTYPED_CLIENT_HINT}`,
+      message: `${f.snippet} - ${UNTYPED_CLIENT_HINT}`,
       fix: UNTYPED_CLIENT_HINT,
       suggestion: untypedClientSuggestion(f),
     })
   }
   for (const f of serverImports.sort(bySite)) {
-    // #4.4: the FULL transitive chain the import-resolution walk found — `route → ../data → ../db →
-    // node:crypto`, matching the build leak-guard's depth — instead of just the direct edge. The chain's
+    // #4.4: the FULL transitive chain the import-resolution walk found - `route → ../data → ../db →
+    // node:crypto`, matching the build leak-guard's depth - instead of just the direct edge. The chain's
     // tail is the actual server-only sink; the head is the route. When a precise resolve wasn't possible
     // (a bare pkg / path alias), `fallback` is set and the chain degrades to the honest direct edge.
     const chain = f.chain
@@ -1638,7 +1638,7 @@ export async function collectCheckResult(
       severity: "error",
       file: f.file,
       line: f.line,
-      message: `${f.snippet} — server-only "${sink}" reaches the browser bundle via ${chain.join(" → ")}${f.fallback ? " (direct edge — couldn't resolve the transitive chain precisely)" : ""}; ${SERVER_IMPORT_HINT}`,
+      message: `${f.snippet} - server-only "${sink}" reaches the browser bundle via ${chain.join(" → ")}${f.fallback ? " (direct edge - couldn't resolve the transitive chain precisely)" : ""}; ${SERVER_IMPORT_HINT}`,
       fix: SERVER_IMPORT_HINT,
       chain,
       suggestion: serverImportSuggestion(f.specifier, chain, f.fallback),
@@ -1679,14 +1679,14 @@ export async function collectCheckResult(
       },
     })
   }
-  // Advisory — surfaced but NOT folded into `ok`, so it never fails the gate (a raw Response is valid).
+  // Advisory - surfaced but NOT folded into `ok`, so it never fails the gate (a raw Response is valid).
   for (const f of responseRoutes.sort(bySite)) {
     diagnostics.push({
       rule: "response-route",
       severity: "warning",
       file: f.file,
       line: f.line,
-      message: `${f.snippet} — ${RESPONSE_ROUTE_HINT}`,
+      message: `${f.snippet} - ${RESPONSE_ROUTE_HINT}`,
       fix: RESPONSE_ROUTE_HINT,
       suggestion: responseRouteSuggestion(),
     })
@@ -1698,7 +1698,7 @@ export async function collectCheckResult(
         severity: "error",
         file: f.file,
         line: f.line,
-        message: `imports ${f.package} which is not declared in package.json — ${UNDECLARED_DEP_HINT}`,
+        message: `imports ${f.package} which is not declared in package.json - ${UNDECLARED_DEP_HINT}`,
         fix: `add ${f.package} to package.json dependencies`,
         suggestion: {
           kind: "command",
@@ -1726,7 +1726,7 @@ export async function collectCheckResult(
       })
     }
   }
-  // #7: a committed server-manifest.ts that drifted from routes/ — name the exact missing/extra routes.
+  // #7: a committed server-manifest.ts that drifted from routes/ - name the exact missing/extra routes.
   for (const f of manifestDrift) {
     const parts: string[] = []
     if (f.missing.length > 0) parts.push(`missing from manifest: ${f.missing.join(", ")}`)
@@ -1735,13 +1735,13 @@ export async function collectCheckResult(
       rule: "server-manifest-drift",
       severity: "error",
       file: f.file,
-      message: `${f.file} drifted from routes/ (${parts.join("; ")}) — ${MANIFEST_DRIFT_HINT}`,
+      message: `${f.file} drifted from routes/ (${parts.join("; ")}) - ${MANIFEST_DRIFT_HINT}`,
       fix: MANIFEST_DRIFT_HINT,
       suggestion: {
         kind: "manual",
         title: "Regenerate the committed server manifest",
         steps: [
-          "Re-run your build (`nifra build --target <t>` or your build script) — it regenerates server-manifest.ts from the current routes/.",
+          "Re-run your build (`nifra build --target <t>` or your build script) - it regenerates server-manifest.ts from the current routes/.",
           "Commit the updated server-manifest.ts.",
         ],
       },
@@ -1800,7 +1800,7 @@ export async function collectCheckResult(
               : truncation !== undefined
                 ? { chain: truncation.chain }
                 : {}),
-            message: `${finding.message} — ${CAPABILITY_HINT}`,
+            message: `${finding.message} - ${CAPABILITY_HINT}`,
             fix: CAPABILITY_HINT,
             suggestion: {
               kind: "manual",
@@ -1859,7 +1859,7 @@ export async function collectCheckResult(
             rule: "manifest-drift",
             severity: "error",
             file: path,
-            message: `${message} — ${TRUST_MANIFEST_DRIFT_HINT}`,
+            message: `${message} - ${TRUST_MANIFEST_DRIFT_HINT}`,
             fix: TRUST_MANIFEST_DRIFT_HINT,
             suggestion: {
               kind: "command",
@@ -1891,7 +1891,7 @@ export async function collectCheckResult(
   }
 
   // Cap the diagnostics when asked (the MCP path), so a project with thousands of findings can't return a
-  // message that breaks the stdio transport. `ok` reflects the FULL set — truncation never flips it.
+  // message that breaks the stdio transport. `ok` reflects the FULL set - truncation never flips it.
   const total = diagnostics.length
   const max = opts.maxDiagnostics
   const shown = max !== undefined && total > max ? diagnostics.slice(0, max) : diagnostics
@@ -1925,7 +1925,7 @@ export async function runCheck(
     result.typecheck === "pass"
       ? "✓ typecheck passed"
       : result.typecheck === "fail"
-        ? "✗ typecheck failed — the frontend/backend contract is broken"
+        ? "✗ typecheck failed - the frontend/backend contract is broken"
         : "• typecheck skipped (no tsconfig / typescript not installed)",
   )
   if (result.externalMounts !== undefined && result.externalMounts.length > 0) {

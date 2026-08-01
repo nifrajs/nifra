@@ -83,7 +83,7 @@ test("supports .svelte routes (loader/action/meta come from <script module>)", (
   expect(Object.keys(m.layouts)).toEqual(["_layout"]) // _layout.svelte detected
 })
 
-// A fake importer — the manifest logic is pure; the module never actually loads here.
+// A fake importer - the manifest logic is pure; the module never actually loads here.
 const fakeImporter = (file: string) => async (): Promise<RouteModule> => ({ default: file })
 
 const route = (files: string[], pattern: string) => {

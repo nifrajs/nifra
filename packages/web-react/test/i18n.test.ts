@@ -3,7 +3,7 @@ import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { I18nProvider, useT } from "../src/i18n.ts"
 
-const messages = { greeting: "Hi {name} — {n, plural, one {# message} other {# messages}}" }
+const messages = { greeting: "Hi {name} - {n, plural, one {# message} other {# messages}}" }
 
 function Greeting(props: { name: string; n: number }) {
   const { t, locale, n: num } = useT()
@@ -23,7 +23,7 @@ describe("@nifrajs/web-react/i18n", () => {
         createElement(Greeting, { name: "Ada", n: 1 }),
       ),
     )
-    expect(html).toContain("Hi Ada — 1 message")
+    expect(html).toContain("Hi Ada - 1 message")
     expect(html).toContain('data-locale="en"')
     expect(html).toContain('data-num="1,234.5"') // en number formatting via the formatter's n()
   })
@@ -36,7 +36,7 @@ describe("@nifrajs/web-react/i18n", () => {
         createElement(Greeting, { name: "Bo", n: 5 }),
       ),
     )
-    expect(html).toContain("Hi Bo — 5 messages")
+    expect(html).toContain("Hi Bo - 5 messages")
   })
 
   test("useT() outside a provider throws", () => {

@@ -18,13 +18,13 @@ import type { Platform } from "./context.ts"
 import type { MaybePromise } from "./server.ts"
 import type { StandardWebSocket, WebSocketUpgradeOutcome } from "./websocket.ts"
 
-/** A Cloudflare Workers-style execution context (the `fetch` 3rd arg). Structural — only
+/** A Cloudflare Workers-style execution context (the `fetch` 3rd arg). Structural - only
  * `waitUntil` is used; declared here so `@nifrajs/core` needs no Workers type dependency. */
 export interface ExecutionContext {
   waitUntil(promise: Promise<unknown>): void
 }
 
-/** A Cloudflare Workers-style scheduled (cron) controller. Structural — no Workers type dependency. */
+/** A Cloudflare Workers-style scheduled (cron) controller. Structural - no Workers type dependency. */
 export interface ScheduledController {
   /** Epoch ms the run was scheduled for. */
   readonly scheduledTime: number
@@ -41,30 +41,30 @@ export type ScheduledHandler<Env = unknown> = (
   context: { readonly env: Env; waitUntil(promise: Promise<unknown>): void },
 ) => MaybePromise<void>
 
-/** Cloudflare's `WebSocketPair` — feature-detected (absent off Workers). Yields `{ 0: client, 1: server }`. */
+/** Cloudflare's `WebSocketPair` - feature-detected (absent off Workers). Yields `{ 0: client, 1: server }`. */
 type WebSocketPairCtor = new () => {
   readonly 0: unknown
   readonly 1: StandardWebSocket & { accept(): void }
 }
 
-/** Structural view of a Cloudflare Durable Object namespace binding — keeps `@cloudflare/workers-types`
+/** Structural view of a Cloudflare Durable Object namespace binding - keeps `@cloudflare/workers-types`
  * out of `@nifrajs/core`. The real `DurableObjectNamespace` satisfies it. */
 export interface DurableObjectNamespaceLike {
   idFromName(name: string): unknown
   get(id: unknown): { fetch(request: Request): Promise<Response> }
 }
 
-/** The single hub Durable Object id nifra routes WS upgrades to (one hub per app — see `@nifrajs/workers`). */
+/** The single hub Durable Object id nifra routes WS upgrades to (one hub per app - see `@nifrajs/workers`). */
 const NIFRA_WS_HUB_ID = "nifra-ws-hub"
 
 /**
- * Adapt a nifra app to an edge "ExportedHandler" — use it as a Cloudflare Workers (or any
+ * Adapt a nifra app to an edge "ExportedHandler" - use it as a Cloudflare Workers (or any
  * `fetch(request, env, ctx)` runtime) default export. It threads `env` + `ctx.waitUntil` into the
  * nifra Context, so handlers read `c.env` and schedule background work via `c.waitUntil`:
  *
  *   export default toFetchHandler(app)
  *
- * Pass `{ scheduled }` to also export a Workers cron handler (for a `[triggers]` schedule) — it
+ * Pass `{ scheduled }` to also export a Workers cron handler (for a `[triggers]` schedule) - it
  * receives the platform controller plus the same typed `env`/`waitUntil`:
  *
  *   export default toFetchHandler(app, {
@@ -72,7 +72,7 @@ const NIFRA_WS_HUB_ID = "nifra-ws-hub"
  *       waitUntil(env.KV.put("last-run", String(controller.scheduledTime))),
  *   })
  *
- * No Workers-only deps — `app.fetch` stays a portable Web-standard handler; this is the thin
+ * No Workers-only deps - `app.fetch` stays a portable Web-standard handler; this is the thin
  * shim from the platform's 3-arg `fetch`/`scheduled` to it.
  */
 export function toFetchHandler<Env = unknown>(
@@ -87,7 +87,7 @@ export function toFetchHandler<Env = unknown>(
     scheduled?: ScheduledHandler<Env>
     /**
      * Route WebSocket upgrades to a Durable Object that holds the connections and runs the app's
-     * pub/sub — enabling cross-connection broadcast (`app.publish`) on Cloudflare Workers, where a
+     * pub/sub - enabling cross-connection broadcast (`app.publish`) on Cloudflare Workers, where a
      * stateless isolate can't. Pass the DO namespace binding from `env`; pair with `@nifrajs/workers`'
      * `createWebSocketHub(app)` (the DO class) + a `wrangler.toml` binding. Without this, WS upgrades use
      * a per-connection `WebSocketPair` (no broadcast).
@@ -115,7 +115,7 @@ export function toFetchHandler<Env = unknown>(
         return ns.get(ns.idFromName(NIFRA_WS_HUB_ID)).fetch(request)
       }
       // Workers WebSockets: a WS upgrade for a registered route becomes a `WebSocketPair` + a 101.
-      // Feature-detected, so non-Workers edge runtimes (which lack `WebSocketPair` — e.g. Deno Deploy
+      // Feature-detected, so non-Workers edge runtimes (which lack `WebSocketPair` - e.g. Deno Deploy
       // uses `@nifrajs/deno`'s `Deno.upgradeWebSocket`) simply fall through to the normal `fetch`.
       const Pair = (globalThis as { WebSocketPair?: WebSocketPairCtor }).WebSocketPair
       if (resolveWs !== undefined && Pair !== undefined) {
@@ -132,7 +132,7 @@ export function toFetchHandler<Env = unknown>(
             pubsub: outcome.pubsub,
           })
           // `webSocket` is a Workers-only `ResponseInit` field (absent from the standard type), and a
-          // 101 status is only valid on the Workers runtime — both gated by the `Pair` feature check.
+          // 101 status is only valid on the Workers runtime - both gated by the `Pair` feature check.
           return new Response(null, { status: 101, webSocket: pair[0] } as unknown as ResponseInit)
         }
         const out = resolveWs(request, platform)

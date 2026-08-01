@@ -67,7 +67,7 @@ async function loadTypes(requestUrl: string): Promise<TypeEntry[] | undefined> {
 }
 
 const handler = toFetchHandler(app)
-// Exact arg tuple of the SSR handler's fetch — keeps env/ctx strongly typed without `any`.
+// Exact arg tuple of the SSR handler's fetch - keeps env/ctx strongly typed without `any`.
 type FetchArgs = Parameters<typeof handler.fetch>
 
 // Cloudflare Pages advanced mode (`_worker.js`): this handles requests; Pages serves matching
@@ -77,7 +77,7 @@ export default {
     const [request] = args
     const url = new URL(request.url)
     if (url.pathname === "/mcp") {
-      // Public read-only docs MCP — `respondMcpHttp` validates method + caps the body at 1 MB. nifra's
+      // Public read-only docs MCP - `respondMcpHttp` validates method + caps the body at 1 MB. nifra's
       // own MCP is also an MCP App: `nifra_examples_app` renders the examples in the `examplesWidget`.
       const tools = [
         ...docsTools(

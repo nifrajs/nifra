@@ -1,13 +1,13 @@
 /**
- * The pure MCP (Model Context Protocol) JSON-RPC dispatch — no I/O, no `Bun.*`, no side effects, so it
+ * The pure MCP (Model Context Protocol) JSON-RPC dispatch - no I/O, no `Bun.*`, no side effects, so it
  * unit-tests cleanly. A transport (stdio in `@nifrajs/cli`'s `mcp.ts`, Streamable-HTTP in {@link ./http.ts})
  * wires this to a byte stream; the tools/resources are injected, so the protocol logic is exercised
  * without spawning or reading streams.
  *
- * Beyond base MCP this also implements the server half of **MCP Apps (SEP-1865)** — interactive `ui://`
+ * Beyond base MCP this also implements the server half of **MCP Apps (SEP-1865)** - interactive `ui://`
  * widgets: a tool links a UI resource via `_meta.ui.resourceUri`, `tools/call` returns `structuredContent`
  * for the widget to render, and `initialize` advertises the `io.modelcontextprotocol/ui` extension. All of
- * it is additive — a tool whose handler returns a plain `string` behaves exactly as before.
+ * it is additive - a tool whose handler returns a plain `string` behaves exactly as before.
  */
 
 export const PROTOCOL_VERSION = "2024-11-05"
@@ -28,7 +28,7 @@ export interface McpToolContext {
   readonly reportProgress: (progress: number, total?: number) => void
 }
 
-/** A single content block in a tool result. Today only text — the model-facing representation. */
+/** A single content block in a tool result. Today only text - the model-facing representation. */
 export interface McpContentBlock {
   readonly type: "text"
   readonly text: string
@@ -49,7 +49,7 @@ export interface McpToolResult {
 
 /** A tool the agent can call. `handler` returns the text shown to the agent, or a rich {@link McpToolResult}
  * (for MCP Apps: structured data + a `ui://` widget link). `_meta` is the per-tool descriptor metadata
- * surfaced in `tools/list` — for a widget tool it carries `ui.resourceUri`. */
+ * surfaced in `tools/list` - for a widget tool it carries `ui.resourceUri`. */
 /** MCP tool safety hints (`readOnlyHint`/`destructiveHint`/…) surfaced in `tools/list`, per the MCP spec. */
 export interface McpToolAnnotations {
   readonly title?: string
@@ -375,7 +375,7 @@ export async function handleRpc(
           ],
         })
       } catch {
-        // Don't surface the raw read error — it can leak a filesystem path. Return a generic message.
+        // Don't surface the raw read error - it can leak a filesystem path. Return a generic message.
         return rpcError(rid, -32000, `failed to read resource: ${String(uri)}`)
       }
     }

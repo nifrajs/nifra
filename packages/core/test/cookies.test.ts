@@ -120,7 +120,7 @@ describe("c.cookies (read) + c.set.cookie (write)", () => {
     expect(sc[0]).toContain("Path=/")
   })
 
-  test("MULTIPLE c.set.cookie calls all survive (multiplicity fix — not collapsed)", async () => {
+  test("MULTIPLE c.set.cookie calls all survive (multiplicity fix - not collapsed)", async () => {
     const app = server().get("/m", (c) => {
       c.set.cookie("sid", "abc")
       c.set.cookie("csrf", "xyz", { sameSite: "strict" })

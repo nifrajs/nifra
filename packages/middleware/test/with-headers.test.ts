@@ -6,7 +6,7 @@ describe("withHeaders", () => {
   test("mutable response: mutates in place, returns the SAME instance (no clone)", () => {
     const res = new Response("body", { status: 200 })
     const out = withHeaders(res, (h) => h.set("x-a", "1"))
-    expect(out).toBe(res) // same object — allocation-free
+    expect(out).toBe(res) // same object - allocation-free
     expect(out.headers.get("x-a")).toBe("1")
   })
 

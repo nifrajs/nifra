@@ -27,7 +27,7 @@ export async function action({ api }: ActionArgs<typeof backend>) {
 <section class="hero">
   <h1>Your nifra app,<br /><span class="grad">everywhere.</span></h1>
   <p>
-    SSR + hydration, end-to-end types, Svelte. One source — deploy to Cloudflare Pages, Node, Deno,
+    SSR + hydration, end-to-end types, Svelte. One source - deploy to Cloudflare Pages, Node, Deno,
     or Vercel Edge. Edit <code>routes/index.svelte</code> to begin.
   </p>
 </section>

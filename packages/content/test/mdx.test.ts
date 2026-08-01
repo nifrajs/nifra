@@ -31,7 +31,7 @@ test("jsxImportSource is honored (preact)", async () => {
 })
 
 test("jsxImportSource is honored (vue)", async () => {
-  // Vue 3 ships a JSX runtime, so the same plugin covers it — no Vue-specific MDX compiler needed.
+  // Vue 3 ships a JSX runtime, so the same plugin covers it - no Vue-specific MDX compiler needed.
   const built = await Bun.build({
     entrypoints: [fixture],
     plugins: [mdxBunPlugin({ jsxImportSource: "vue" })],

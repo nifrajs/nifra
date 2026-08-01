@@ -1,9 +1,9 @@
 /**
- * @nifrajs/web — the framework-agnostic SSR core. It owns the render *seam* and the HTML
+ * @nifrajs/web - the framework-agnostic SSR core. It owns the render *seam* and the HTML
  * document orchestration, and knows nothing about any specific UI framework: a render
  * adapter (@nifrajs/web-solid, @nifrajs/web-react, …) supplies the actual render + hydrate.
  *
- * The core treats a "component" and a hydration "container" as opaque `unknown` — only
+ * The core treats a "component" and a hydration "container" as opaque `unknown` - only
  * the adapter interprets them. That keeps this package both framework-agnostic and free
  * of DOM types: it is pure server orchestration + string building.
  */
@@ -56,7 +56,7 @@ import {
 } from "./router.ts"
 import { searchOf, searchOfChain } from "./search.ts"
 
-// Draft / preview mode — a signed cookie that flips `ctx.draft` for loaders + bypasses ISR for editors.
+// Draft / preview mode - a signed cookie that flips `ctx.draft` for loaders + bypasses ISR for editors.
 export {
   DRAFT_COOKIE,
   type DraftCookieControls,
@@ -67,7 +67,7 @@ export {
   type PreviewEndpointOptions,
   previewEndpoint,
 } from "./draft.ts"
-// Font optimization — a CLS-safe `@font-face` generator + a preload `<link>` for self-hosted fonts.
+// Font optimization - a CLS-safe `@font-face` generator + a preload `<link>` for self-hosted fonts.
 export {
   type FontDisplay,
   type FontFace,
@@ -95,7 +95,7 @@ export {
   revalidateEndpoint,
   withISR,
 } from "./isr.ts"
-// File-based routing manifest — pure + fs-free. `discoverRoutes` (fs) lives in `@nifrajs/web/fs`.
+// File-based routing manifest - pure + fs-free. `discoverRoutes` (fs) lives in `@nifrajs/web/fs`.
 export {
   type Action,
   buildManifest,
@@ -120,7 +120,7 @@ export {
   type StaticRoutes,
   type UnsafeScriptDescriptor,
 } from "./manifest.ts"
-// Navigation bridge — a DOM-free seam the browser layer (`installHistory`) populates so an adapter's
+// Navigation bridge - a DOM-free seam the browser layer (`installHistory`) populates so an adapter's
 // `useNavigate` (a route component, importing only this agnostic entry) reaches history-aware nav.
 export {
   type Blocker,
@@ -141,14 +141,14 @@ export {
   setBlockerController,
   setBrowserNavigate,
 } from "./navigation.ts"
-// public/ — user-authored static files, served identically in dev and production by one handler.
+// public/ - user-authored static files, served identically in dev and production by one handler.
 export {
   type PublicDirCache,
   resolvePublicPath,
   type ServePublicDirOptions,
   servePublicDir,
 } from "./public-dir.ts"
-// Keyed query-cache (agnostic) — a `query(key, fn)` primitive (dedup + staleness + invalidation + GC)
+// Keyed query-cache (agnostic) - a `query(key, fn)` primitive (dedup + staleness + invalidation + GC)
 // consumed by the per-adapter `useQuery`/`createQuery` bindings.
 export {
   createMutation,
@@ -169,7 +169,7 @@ export {
   type QueryState,
   type QueryStatus,
 } from "./query.ts"
-// Agnostic client-side router core (pure + DOM-free) — consumed by per-adapter Router bindings.
+// Agnostic client-side router core (pure + DOM-free) - consumed by per-adapter Router bindings.
 // `DATA_HEADER` marks a navigation's data-only GET; `createWebApp` answers it with loader JSON.
 export {
   type ClientRouter,
@@ -192,27 +192,27 @@ export {
   type Submission,
   type SubmitOptions,
 } from "./router.ts"
-// Deferred loader data (`defer()` + the `Deferred<T>` type) — consumed by the adapter's `<Await>`.
+// Deferred loader data (`defer()` + the `Deferred<T>` type) - consumed by the adapter's `<Await>`.
 export { type Deferred, defer }
 
 /** Phantom brand key for {@link ServerOnly}. A unique symbol so the brand can't be forged by a plain
  * object literal; `unique symbol` keys never appear in the emitted JS, so the brand is purely
  * type-level (zero runtime cost). The property is optional + `never`-typed, so a `ServerOnly<T>`
- * stays assignment-compatible with `T` — it documents intent without obstructing real use. */
+ * stays assignment-compatible with `T` - it documents intent without obstructing real use. */
 declare const SERVER_ONLY_BRAND: unique symbol
 
 /**
- * Type-level intent marker for a value that must only exist on the server — a secret, a DB handle, a
+ * Type-level intent marker for a value that must only exist on the server - a secret, a DB handle, a
  * server-only client. `ServerOnly<T>` is structurally `T` (the brand is an optional phantom field, so
  * existing code keeps type-checking), but it advertises to readers + the compiler that the value is
- * not meant to cross to the browser. It is **purely type-level** and erases at build — it does NOT,
+ * not meant to cross to the browser. It is **purely type-level** and erases at build - it does NOT,
  * by itself, keep the value out of the client bundle.
  *
  * The enforcement is two runtime conventions:
- *  - add the side-effect import `import "@nifrajs/web/server-only"` at the top of the module — the
+ *  - add the side-effect import `import "@nifrajs/web/server-only"` at the top of the module - the
  *    client build ({@link buildClient}) fails loud, with the import chain, if it reaches a browser
  *    chunk (the poison-import marker);
- *  - or name the file `*.server.ts` — the `.server` convention empties it in the client build.
+ *  - or name the file `*.server.ts` - the `.server` convention empties it in the client build.
  *
  * Use this brand to express the intent in the types; pair it with one of those runtime markers so a
  * leak is caught at build time rather than shipping a secret to the client.
@@ -238,7 +238,7 @@ export { type SearchOf, searchOf, searchOfChain, serializeSearch } from "./searc
 
 /** The data handed to a route component. Opaque to the core. `actionData` is the return of a
  * route `action` after a POST (absent on plain GETs). `pending` + `submission` are client-only
- * (absent on SSR): they drive **optimistic UI** — render from `submission.formData` while `pending`. */
+ * (absent on SSR): they drive **optimistic UI** - render from `submission.formData` while `pending`. */
 export interface RenderProps {
   readonly data: unknown
   /**
@@ -261,7 +261,7 @@ export interface RenderProps {
    * SSR (from the request match) and on client navigation (from router state) so an adapter's
    * `useParams` reads the same value on both, with no hydration mismatch. Absent ⇒ no params (`{}`). */
   readonly params?: Readonly<Record<string, string>>
-  /** The current URL's `pathname + search` (no hash — the hash never reaches the server). Threaded on
+  /** The current URL's `pathname + search` (no hash - the hash never reaches the server). Threaded on
    * SSR and client alike so an adapter's `useLocation`/`useSearchParams` hydrate consistently. Absent
    * on adapters/callers that don't supply it (treated as `""`). */
   readonly path?: string
@@ -283,7 +283,7 @@ export interface RenderAdapter {
    * (the loader data); each layout wraps the child via its `children`. Returns (or resolves to)
    * a Web `ReadableStream<Uint8Array>`: a streaming renderer flushes the shell first and streams
    * Suspense boundaries as they resolve; a non-streaming renderer may return a one-chunk stream.
-   * May be async — e.g. React resolves once the shell is renderable, so a shell-render throw can
+   * May be async - e.g. React resolves once the shell is renderable, so a shell-render throw can
    * still map to an error status before any byte is sent.
    */
   renderToStream(
@@ -293,10 +293,10 @@ export interface RenderAdapter {
   /**
    * Server (optional): render the chain to a complete HTML **string** in one pass, with the same
    * hydration markers `renderToStream` produces. When provided, `renderPage` uses it for any page
-   * that does **not** `defer()` — buffering the document is faster than the streaming pipeline there,
+   * that does **not** `defer()` - buffering the document is faster than the streaming pipeline there,
    * because the framework's synchronous renderer (React `renderToString`, Solid `renderToString`,
    * Preact `render`, Vue `renderToString`, Svelte `render`) is markedly cheaper than its streaming
-   * renderer — most visibly on Bun, where React Fizz / Solid `renderToStream` are the heaviest. Pages
+   * renderer - most visibly on Bun, where React Fizz / Solid `renderToStream` are the heaviest. Pages
    * that `defer()` keep the streaming path (progressive `<Await>` needs it). Markup MUST be
    * hydration-equivalent to `renderToStream`; a throw surfaces like the streaming shell-readiness
    * await (the `_error` boundary maps it to a status). Omit it to always stream.
@@ -336,12 +336,12 @@ export const ACTION_GLOBAL = "__NIFRA_ACTION__"
 export const ROOT_ATTRIBUTE = "data-nifra-root"
 
 /**
- * Pre-hydration form guard — a tiny inline script flushed in `<head>` (it runs in the window between
+ * Pre-hydration form guard - a tiny inline script flushed in `<head>` (it runs in the window between
  * first paint and the island bundle taking over). It neutralizes the one real hydration footgun: a
  * JS-only form (a hand-wired `onSubmit` with no native fallback) submitting *natively* before its
  * handler is attached, which navigates the browser to a broken `?field=…` GET of the current page.
  *
- * It blocks ONLY that shape — an effective-GET form whose action targets the current document — and
+ * It blocks ONLY that shape - an effective-GET form whose action targets the current document - and
  * only until hydration commits (`data-nifra-hydrated`, set by the client entry). Method-`post` forms
  * (progressive enhancement: the native POST hits the route `action`) and GET forms with a real action
  * (a search box → `/search`) pass through untouched. Opt out per-form with `data-native`. Static text
@@ -359,12 +359,12 @@ export const PRE_HYDRATION_GUARD =
 /**
  * The single default port for the dev server (`@nifrajs/web/dev`, `@nifrajs/web/vite`) **and**
  * `nifra start`. Deliberately uncommon: `3000`/`5173`/`8080` collide with whatever else is running
- * (Next, Vite, a stray Node API). `4321` rarely is — and being the *same* constant across `nifra dev`
+ * (Next, Vite, a stray Node API). `4321` rarely is - and being the *same* constant across `nifra dev`
  * and `nifra start` means a project's URL doesn't change between commands. Override per-run with
  * `--port <n>` or the `PORT` env var. */
 export const DEFAULT_DEV_PORT = 4321
 
-// Shared, stateless — allocated once at module load, not per render/stream.
+// Shared, stateless - allocated once at module load, not per render/stream.
 const TEXT_ENCODER = new TextEncoder()
 
 type MaybePromise<T> = T | Promise<T>
@@ -397,11 +397,11 @@ export interface RenderedPage {
 
 export interface RenderPageOptions {
   readonly adapter: RenderAdapter
-  /** The layout chain to render — outermost layout → page (opaque; the adapter renders it). */
+  /** The layout chain to render - outermost layout → page (opaque; the adapter renders it). */
   readonly chain: readonly unknown[]
   /** The loader output for this request. */
   readonly data: unknown
-  /** An action's data return (POST only) — surfaced to the page as `actionData` + serialized
+  /** An action's data return (POST only) - surfaced to the page as `actionData` + serialized
    * for the client so post-POST hydration matches. Omit on GETs. */
   readonly actionData?: unknown
   /**
@@ -413,11 +413,11 @@ export interface RenderPageOptions {
    */
   readonly clientEntry?: string
   /** Chunk URLs for the **matched** route (its layout chain + own chunk) to `modulepreload` in the
-   * shell — so the route code downloads in parallel with the entry instead of after it
+   * shell - so the route code downloads in parallel with the entry instead of after it
    * (`buildClient`'s per-route map). Empty/omitted ⇒ only the entry is preloaded (unchanged). */
   readonly preload?: readonly string[]
   /** Stylesheet URLs for the **matched** route (its layout chain + own CSS, from `buildClient`'s
-   * `BuildManifest.css`) — injected as `<link rel="stylesheet">` in `<head>` so styles arrive with the
+   * `BuildManifest.css`) - injected as `<link rel="stylesheet">` in `<head>` so styles arrive with the
    * first paint (no FOUC). Rendered even on non-hydrated pages. Empty/omitted ⇒ none (unchanged). */
   readonly styles?: readonly string[]
   /** SSG: the prerendered-path set, serialized to `window.__NIFRA_PRERENDERED__` so the client fetches
@@ -428,11 +428,11 @@ export interface RenderPageOptions {
   readonly revalidate?: number
   /** Matched route id; written to `window.__NIFRA_ROUTE__` so the client hydrates this chain. */
   readonly routeId?: string
-  /** The matched route's decoded path params — surfaced to the page as `params` (via {@link RenderProps})
+  /** The matched route's decoded path params - surfaced to the page as `params` (via {@link RenderProps})
    * so an adapter's `useParams` is SSR-correct. Omit ⇒ `{}` (a route with no dynamic segments, or an
    * error/404 render). */
   readonly params?: Readonly<Record<string, string>>
-  /** The request's `pathname + search` — surfaced as `path` (via {@link RenderProps}) so an adapter's
+  /** The request's `pathname + search` - surfaced as `path` (via {@link RenderProps}) so an adapter's
    * `useLocation`/`useSearchParams` render the right URL server-side and hydrate without drift. Omit ⇒
    * `""`. */
   readonly path?: string
@@ -451,12 +451,12 @@ export interface RenderPageOptions {
   readonly headers?: HeadersLike
   /** Document title (fallback when `head.title` is unset). */
   readonly title?: string
-  /** Resolved route head — `title` overrides `title` above; `meta`/`link` render as managed
+  /** Resolved route head - `title` overrides `title` above; `meta`/`link` render as managed
    * (`data-nifra`) tags the client updates on navigation.
    *
    * **Head contract (the layout chain contributes).** `createWebApp` resolves this via
    * {@link mergeHeads}: a route's head is its **layout chain's** `meta`/`head` exports merged with the
-   * page's. A `_layout.tsx` may `export const meta` (or `export function meta(args)`) — its tags land
+   * page's. A `_layout.tsx` may `export const meta` (or `export function meta(args)`) - its tags land
    * on every page below it (the home for `hreflang`, `preconnect`, a section-default `<title>`). The
    * merge is **nearest-wins for scalars** (the page's `title` overrides an inner layout's, which
    * overrides an outer one; an undefined page title keeps the layout's) and **concatenated for the
@@ -467,13 +467,13 @@ export interface RenderPageOptions {
    * {@link ROOT_ATTRIBUTE}, which is how the generated client entry finds the container to hydrate -
    * the entry is built once and cannot know what a given render chose. */
   readonly rootId?: string
-  /** When `false`, emit a complete but **non-hydrated** document — no client entry script, data
+  /** When `false`, emit a complete but **non-hydrated** document - no client entry script, data
    * globals, or modulepreloads. Used for server-rendered `_error` pages: a terminal state that needs no
    * client takeover, and it sidesteps an SSR/hydrate mismatch (the server rendered the boundary, not
    * the page the client manifest maps this route id to). Default `true`. */
   readonly hydrate?: boolean
   /** Island client bundles (`@nifrajs/web/islands`) to load as `<script type="module">` in the document
-   * tail — emitted **regardless of `hydrate`**, so a static (`hydrate: false`) page can still mount
+   * tail - emitted **regardless of `hydrate`**, so a static (`hydrate: false`) page can still mount
    * no-framework islands. URLs are attribute-escaped. Empty/omitted ⇒ none (unchanged output). */
   readonly islandScripts?: readonly string[]
   /** CSP nonce applied to every framework-owned executable script in this document. */
@@ -490,8 +490,8 @@ export type RenderPageInput = RenderPageOptions &
   ({ readonly hydrate?: true; readonly clientEntry: string } | { readonly hydrate: false })
 
 /**
- * Server: render a full HTML document for a page — the adapter's hydration head + the SSR
- * markup (**streamed**) + the serialized loader data + the client module — as a `Response`.
+ * Server: render a full HTML document for a page - the adapter's hydration head + the SSR
+ * markup (**streamed**) + the serialized loader data + the client module - as a `Response`.
  * The shell (`<head>` + the open container) flushes first, the adapter's app stream follows,
  * then the tail (data globals + client entry). Pure Web Standards, so it returns straight from
  * a nifra route handler and streams on any fetch runtime (Bun/Node/Deno/Workers).
@@ -527,7 +527,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   }
   const nonceAttr = nonce === undefined ? "" : ` nonce="${escapeAttr(nonce)}"`
   const route = routeId === undefined ? "" : `window.${ROUTE_GLOBAL}=${serializeData(routeId)};`
-  // The SSG prerendered-path set (when an app declares it) — the client reads it to fetch a static
+  // The SSG prerendered-path set (when an app declares it) - the client reads it to fetch a static
   // `_data.json` on soft-nav into a prerendered route instead of hitting the worker. Empty ⇒ omitted.
   const prerendered =
     prerenderedPaths.length === 0
@@ -535,7 +535,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
       : `window.${PRERENDERED_GLOBAL}=${serializeData(prerenderedPaths)};`
   // Split deferred values: the component sees markers (id + promise) to `<Await>`; the serialized
   // data carries `{__nifra_deferred: id}` placeholders (promises don't serialize). `actionData` may
-  // also `defer()` — split it too, continuing the id space so a single registry settles both. The
+  // also `defer()` - split it too, continuing the id space so a single registry settles both. The
   // inline registry runtime is emitted only when something defers, so non-deferred output is unchanged.
   const { forComponent, forClient, deferred } = prepareDeferred(data)
   // Each layout's data is split in turn, each continuing the id space, so a `defer()` in a layout
@@ -555,7 +555,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
       ? undefined
       : prepareDeferred(actionData, deferred.length + layoutDeferred.length)
   const allDeferred = [...deferred, ...layoutDeferred, ...(actionSplit ? actionSplit.deferred : [])]
-  // Omitted entirely when no layout has a loader — a page-only app emits exactly what it did before.
+  // Omitted entirely when no layout has a loader - a page-only app emits exactly what it did before.
   const layoutTail =
     options.layoutData === undefined
       ? ""
@@ -569,7 +569,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   const deferredRuntime =
     allDeferred.length > 0 ? `<script${nonceAttr}>${DEFERRED_RUNTIME}</script>` : ""
   // Matched-route chunk preloads, concatenated directly (skip the `filter().map()`
-  // intermediate arrays — and the whole loop — on the common no-extra-preload render). De-duped
+  // intermediate arrays - and the whole loop - on the common no-extra-preload render). De-duped
   // against the entry, which is preloaded separately below.
   let preloadLinks = ""
   if (preload.length > 0) {
@@ -578,7 +578,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
         preloadLinks += `<link rel="modulepreload" href="${escapeAttr(url)}">`
     }
   }
-  // The matched route's stylesheets — `<link rel="stylesheet">` in `<head>` so CSS arrives with the
+  // The matched route's stylesheets - `<link rel="stylesheet">` in `<head>` so CSS arrives with the
   // first paint (no FOUC). Render-blocking by design, and emitted regardless of `hydrate` (a static or
   // `_error` page still wants its styles). In dev (Vite) CSS is injected client-side instead, so
   // `styles` is empty there.
@@ -586,18 +586,18 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   for (const url of styles) styleLinks += `<link rel="stylesheet" href="${escapeAttr(url)}">`
   // Island bundles are referenced only by a `<script type="module">` at the END of `<body>` (below), so
   // the browser doesn't discover them until the whole page is parsed. `modulepreload` them in `<head>`
-  // so the fetch starts immediately, in parallel with parsing — regardless of `hydrate` (an island page
+  // so the fetch starts immediately, in parallel with parsing - regardless of `hydrate` (an island page
   // is typically hydrate:false). Without this, a heavy island bundle on a cold first load leaves its
   // server-rendered placeholder visible until that late, un-prefetched fetch lands ("stuck loading").
   let islandPreloads = ""
   for (const src of islandScripts)
     islandPreloads += `<link rel="modulepreload" href="${escapeAttr(src)}">`
-  // Shell — flushed before the app finishes rendering: `<head>` (title, meta, hydration head) + the
-  // open container. `modulepreload` of the client entry — plus the matched route's own chunks
-  // (`preloadLinks`) — lets the JS download while the body streams. One template literal (no
-  // intermediate array + `join`) — byte-identical to the prior output.
+  // Shell - flushed before the app finishes rendering: `<head>` (title, meta, hydration head) + the
+  // open container. `modulepreload` of the client entry - plus the matched route's own chunks
+  // (`preloadLinks`) - lets the JS download while the body streams. One template literal (no
+  // intermediate array + `join`) - byte-identical to the prior output.
   // A non-hydrated page (e.g. an `_error` boundary) omits the client-entry preload, route-chunk
-  // preloads, and deferred runtime — there's no client takeover to feed.
+  // preloads, and deferred runtime - there's no client takeover to feed.
   const hydrationLinks = hydrate
     ? `<link rel="modulepreload" href="${escapeAttr(clientEntry ?? "")}">${preloadLinks}${deferredRuntime}`
     : ""
@@ -605,7 +605,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // hydrating page (a static/_error page has no client handlers, so no footgun).
   const hydrationGuard = hydrate ? `<script${nonceAttr}>${PRE_HYDRATION_GUARD}</script>` : ""
   // `<html>` attributes. `lang` defaults to `"en"` (so an app that never sets it is byte-identical to
-  // before); `dir` is omitted entirely when unset, which IS HTML's `ltr` default — emitting it
+  // before); `dir` is omitted entirely when unset, which IS HTML's `ltr` default - emitting it
   // unconditionally would change every existing app's output for no gain. Both attribute-escaped.
   // `client.ts`'s `applyHead` mirrors this exact defaulting on soft-nav, so a hard load and a client
   // navigation to the same URL produce the same `<html>` (no drift on a multilingual site).
@@ -621,9 +621,9 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // Closes the hydration container; deferred resolve scripts go AFTER it (outside `#root`) so they
   // aren't part of the adapter's hydrated tree (an inline script inside it breaks hydration).
   const closeRootHtml = "</div>"
-  // Tail — the loader-data globals + the client module. Module scripts defer (run after parse), so
+  // Tail - the loader-data globals + the client module. Module scripts defer (run after parse), so
   // the data global + every streamed deferred resolution are set before the entry hydrates.
-  // Island bundles load regardless of `hydrate` — a static page (hydrate:false) ships no framework
+  // Island bundles load regardless of `hydrate` - a static page (hydrate:false) ships no framework
   // client but can still mount no-framework islands (`@nifrajs/web/islands`).
   let islandTags = ""
   for (const src of islandScripts)
@@ -650,7 +650,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     data: forComponent,
     actionData: actionSplit?.forComponent,
     // `params`/`path` thread the matched route + URL to the adapter's `useParams`/`useLocation` so they
-    // render SSR-correct. Spread only when supplied (exactOptionalPropertyTypes) — an adapter with no
+    // render SSR-correct. Spread only when supplied (exactOptionalPropertyTypes) - an adapter with no
     // router bindings simply never reads them.
     ...(options.params !== undefined ? { params: options.params } : {}),
     ...(options.path !== undefined ? { path: options.path } : {}),
@@ -709,7 +709,7 @@ async function renderStreamedPage(
   headers: Record<string, string>,
   nonceAttr: string,
 ): Promise<Response> {
-  // Streaming path — required for `defer()` (progressive `<Await>` resolution) and used by any adapter
+  // Streaming path - required for `defer()` (progressive `<Await>` resolution) and used by any adapter
   // that doesn't implement `renderToString`. Awaiting `renderToStream` resolves on shell-readiness
   // (React: on-shell-ready; Solid: synchronously), so a shell-render throw surfaces before any byte is
   // sent. A *mid*-stream failure errors the body instead.
@@ -772,8 +772,8 @@ function htmlResponse(body: string, init: ResponseInit): Response {
 /**
  * Assemble the document stream: `shell` → the app `stream` (forwarded chunk-by-chunk, so a streaming
  * renderer's progressive flushing is preserved) → `closeRoot` → one `__nifraResolve`/`__nifraReject`
- * script per deferred value (emitted once its promise settles — by now the app stream has awaited
- * the same Suspense boundaries — and placed OUTSIDE `#root`) → `tail`. A mid-stream app error errors
+ * script per deferred value (emitted once its promise settles - by now the app stream has awaited
+ * the same Suspense boundaries - and placed OUTSIDE `#root`) → `tail`. A mid-stream app error errors
  * the result (the body breaks) rather than silently truncating a 200.
  */
 function streamDocument(
@@ -796,7 +796,7 @@ function streamDocument(
           controller.enqueue(value)
         }
         controller.enqueue(closeRoot)
-        // Stream each resolution as ITS OWN promise settles — NOT in array order. A slow
+        // Stream each resolution as ITS OWN promise settles - NOT in array order. A slow
         // defer() must not block a faster one; each script self-addresses by id, so order is irrelevant.
         await Promise.all(
           deferred.map(async (d) => {
@@ -806,7 +806,7 @@ function streamDocument(
                 enc.encode(`<script${nonceAttr}>window.__nifraResolve(${d.id},${value})</script>`),
               )
             } catch (err) {
-              // A rejected deferred streams __nifraReject (the client `<Await>` surfaces it) — it must
+              // A rejected deferred streams __nifraReject (the client `<Await>` surfaces it) - it must
               // not break the whole body. Redact: stream a stable opaque code, never the raw error
               // text; log the real reason server-side.
               console.error("[nifra/web] deferred value rejected:", err)
@@ -847,12 +847,12 @@ function isSameOriginPath(location: string): boolean {
 }
 
 /**
- * Build a redirect `Response` — return it from a route `action` for the Post/Redirect/Get
+ * Build a redirect `Response` - return it from a route `action` for the Post/Redirect/Get
  * pattern (POST mutates, 303 sends the browser to a fresh GET, so a reload doesn't re-submit).
  * Defaults to 303 (See Other); pass `{ status: 307 }` or `{ status: 308 }` to preserve the method.
  *
  * **Secure by default:** `location` must be a same-origin path (begins with `/`, not `//`). An
- * off-origin/absolute destination throws unless you pass `{ external: true }` — this closes the
+ * off-origin/absolute destination throws unless you pass `{ external: true }` - this closes the
  * open-redirect footgun of `return redirect(formData.get("next"))` on the no-JS (native-form) path,
  * which returns the action's `Response` verbatim.
  *
@@ -864,13 +864,13 @@ export function redirect(location: string, options: RedirectOptions = {}): Respo
       `[nifra/web] redirect(${JSON.stringify(location)}) is not a same-origin path. Use a path beginning with "/" (not "//"), or redirect(location, { external: true }) for a deliberate off-origin redirect. This guards against open redirects from unvalidated input.`,
     )
   }
-  // Reject CR/LF in the Location explicitly — defense-in-depth (response splitting / header
+  // Reject CR/LF in the Location explicitly - defense-in-depth (response splitting / header
   // injection). Spec-correct runtimes' Headers setter throws on CR/LF, but `external: true` lets
   // unvalidated input reach this sink, so we don't rely on the runtime. Same posture as
   // serializeCookie / the SSE frame formatter, which strip CRLF at their sinks.
   if (/[\r\n]/.test(location)) {
     throw new Error(
-      `[nifra/web] redirect location contains a CR/LF character — refusing to emit a header-injecting redirect.`,
+      `[nifra/web] redirect location contains a CR/LF character - refusing to emit a header-injecting redirect.`,
     )
   }
   return new Response(null, { status: options.status ?? 303, headers: { location } })
@@ -1080,7 +1080,7 @@ export function statusPage(status: number, options: StatusPageOptions = {}): nev
 
 /** The wrapper `revalidate()` returns: the action's `data` plus the paths it changed. A plain tagged
  * shape (not a class) so `@nifrajs/client`'s `ActionData` can unwrap it structurally without importing
- * from `@nifrajs/web`. `createWebApp` strips the wrapper — the client receives `data` as the body and
+ * from `@nifrajs/web`. `createWebApp` strips the wrapper - the client receives `data` as the body and
  * the paths via the `X-Nifra-Revalidate` header. */
 export interface RevalidateResult<T> {
   readonly __nifraRevalidate: readonly string[]
@@ -1090,7 +1090,7 @@ export interface RevalidateResult<T> {
 /**
  * Return this from an action to declare which routes the mutation changed (alongside the action's
  * `data`). `createWebApp` sets the `X-Nifra-Revalidate` response header; after the submit the client
- * marks those cached routes stale — refetching the active one and any mounted fetcher showing them —
+ * marks those cached routes stale - refetching the active one and any mounted fetcher showing them -
  * so a mutation can refresh views beyond the one that was submitted. `data` is still surfaced to the
  * component as `actionData` (the wrapper is transparent to `ActionData<typeof action>`).
  */
@@ -1115,10 +1115,10 @@ function escapeHtml(value: string): string {
 /**
  * Escape a `<script>` element's text content so it cannot break out of the element. Per the HTML spec,
  * a script's text may contain any character EXCEPT the sequences that the parser treats as element
- * boundaries: `</` (which would begin the end tag — `</script>` is the obvious XSS vector, but ANY `</`
+ * boundaries: `</` (which would begin the end tag - `</script>` is the obvious XSS vector, but ANY `</`
  * starts script-data-end-tag parsing), and the comment/CDATA edges `<!--` / `]]>`. We escape the `<`
  * (and the `>` of `]]>`) to its JS unicode escape: inside a JS/JSON string literal `<` is the
- * identical character, so a JSON-LD payload is byte-equivalent after parsing — but the raw `<`/`>` the
+ * identical character, so a JSON-LD payload is byte-equivalent after parsing - but the raw `<`/`>` the
  * HTML tokenizer scans for is gone. This is the JSON-LD-in-HTML rule (content is JSON, never raw HTML),
  * mirroring {@link serializeData}'s posture for the data-global script. Idempotent on already-safe text.
  */
@@ -1167,8 +1167,8 @@ function assertExecutableScriptType(type: string): void {
 /** Render a route's `meta`/`link`/`script` as managed (`data-nifra`) head tags. Title is set
  * separately. XSS-safe by construction: every attribute flows through the shared tag-specific trust
  * policy then value escaping, and each `script[].content` through `escapeScriptContent`
- * (breakout-escaped) — so loader-derived strings (LLM-authored `og:*`, user content) can't inject markup
- * or close the tag early. String concatenation (no intermediate `.map()` arrays + spread) — parity with
+ * (breakout-escaped) - so loader-derived strings (LLM-authored `og:*`, user content) can't inject markup
+ * or close the tag early. String concatenation (no intermediate `.map()` arrays + spread) - parity with
  * the already concat-based preloadLinks/styleLinks/islandPreloads loops; byte-identical output. Result
  * is memoized per resolved-`Meta` identity (static meta → serialized once per route). */
 function headTags(head: Meta | undefined): string {
@@ -1186,7 +1186,7 @@ function headTags(head: Meta | undefined): string {
       const attrs = tagAttrs("link", l)
       if (attrs !== null) out += `<link${attrs === "" ? "" : ` ${attrs}`} data-nifra>`
     }
-  // `<script>` slot — JSON-LD + other inert head scripts. `type` is attribute-escaped; `content` is
+  // `<script>` slot - JSON-LD + other inert head scripts. `type` is attribute-escaped; `content` is
   // breakout-escaped (`escapeScriptContent`) so a `</script>` (or `<!--`/`]]>`) payload can't close the
   // element early. Managed (`data-nifra`) so a soft-nav's `applyHead` cleanly replaces it.
   if (head.script !== undefined)
@@ -1235,7 +1235,7 @@ export function canonical(href: string): LinkDescriptor {
   return { rel: "canonical", href }
 }
 
-/** Inputs for {@link openGraph} — the common Open Graph properties. All optional; only the provided
+/** Inputs for {@link openGraph} - the common Open Graph properties. All optional; only the provided
  * ones become tags. `type` defaults to `"website"`. */
 export interface OpenGraphInput {
   readonly title?: string
@@ -1244,7 +1244,7 @@ export interface OpenGraphInput {
   readonly image?: string
   /** Canonical URL of the page (`og:url`). */
   readonly url?: string
-  /** Object type (`og:type`) — `"website"`, `"article"`, … Default `"website"`. */
+  /** Object type (`og:type`) - `"website"`, `"article"`, … Default `"website"`. */
   readonly type?: string
 }
 
@@ -1265,7 +1265,7 @@ export function openGraph(input: OpenGraphInput): MetaDescriptor[] {
   add("og:description", input.description)
   add("og:image", input.image)
   add("og:url", input.url)
-  // `og:type` always present (the spec's required property) — default "website" when unset.
+  // `og:type` always present (the spec's required property) - default "website" when unset.
   tags.push({ property: "og:type", content: input.type ?? "website" })
   return tags
 }
@@ -1316,20 +1316,20 @@ export function unsafeInlineScript(
  * `meta` to put sitewide tags (`hreflang`, `preconnect`, a default `<title>`, …) on every page below
  * it. `heads` is passed **outermost layout → … → innermost layout → page** (the same order as the
  * render chain), and merges:
- *  - **`title`** — *nearest-wins*: the last defined value across the list, so the page overrides an
+ *  - **`title`** - *nearest-wins*: the last defined value across the list, so the page overrides an
  *    inner layout, which overrides an outer one. A layout `title` is the section default; an undefined
  *    page `title` keeps it.
- *  - **`meta` / `link`** — *concatenated* in list order (outermost first, page last). Duplicate-tag
+ *  - **`meta` / `link`** - *concatenated* in list order (outermost first, page last). Duplicate-tag
  *    de-duplication is the caller's concern; the framework emits exactly what's declared so a layout
  *    can ship N `<link rel="alternate" hreflang>` tags and a page can add its own canonical.
  *
  * Returns a fresh object whose identity is stable per `heads` *content* only when every entry is a
- * static (by-reference) `Meta` and there is exactly one — otherwise a new object each call. That is
+ * static (by-reference) `Meta` and there is exactly one - otherwise a new object each call. That is
  * fine: {@link headTags}'s memo is keyed on identity, so a per-request merge simply recomputes (its
  * content can vary with loader data anyway).
  */
 export function mergeHeads(heads: readonly Meta[]): Meta {
-  // Single-head fast path (a route with no layout `meta`, by far the common case) — return the
+  // Single-head fast path (a route with no layout `meta`, by far the common case) - return the
   // resolved object by reference so headTags' identity-keyed memo hits across requests for static meta.
   if (heads.length === 1) return heads[0] as Meta
   let title: string | undefined
@@ -1348,7 +1348,7 @@ export function mergeHeads(heads: readonly Meta[]): Meta {
     if (h.script !== undefined) script.push(...h.script) // concatenated like meta/link (outermost first)
     if (h.unsafeScript !== undefined) unsafeScript.push(...h.unsafeScript)
   }
-  // Build the result with only the fields that were actually contributed — an empty `meta`/`link`/
+  // Build the result with only the fields that were actually contributed - an empty `meta`/`link`/
   // `script` array would otherwise be a spurious (if harmless) key. A mutable local; the cast to `Meta`
   // is sound because a key is assigned only when defined (so `exactOptionalPropertyTypes` never sees
   // `undefined`).
@@ -1378,7 +1378,7 @@ export interface CreateWebAppOptions {
   readonly clientEntry: string
   /** Default document title for all pages. */
   readonly title?: string
-  /** Injected into each loader's `ctx.api` — typically an `inProcessClient(app)` (typed
+  /** Injected into each loader's `ctx.api` - typically an `inProcessClient(app)` (typed
    * per-route via `@nifrajs/client`'s `createRoutes`). Opaque to the core.
    *
    * **Auto-mount.** Every `inProcessClient(backend)` exposes the symbol-keyed platform-aware backend
@@ -1425,15 +1425,15 @@ export interface CreateWebAppOptions {
    * signed `__nifra_draft` cookie gets `ctx.draft === true` in loaders/actions (else always `false`).
    * Pair with `withISR({ draftSecret })` so editors bypass the cache. Omit to disable draft mode. */
   readonly draftSecret?: string
-  /** Per-route chunk URLs (`buildClient`'s `BuildManifest.routes`) — `routeId → [layout chunks…, own
+  /** Per-route chunk URLs (`buildClient`'s `BuildManifest.routes`) - `routeId → [layout chunks…, own
    * chunk]`. When present, each page `modulepreload`s its matched route's chunks alongside the entry,
    * so the route code downloads in parallel (no entry→route-chunk waterfall). Omit ⇒ entry-only. */
   readonly routePreload?: Readonly<Record<string, readonly string[]>>
-  /** The app's bundled stylesheet URLs (`buildClient`'s `BuildManifest.css`) — the aggregate, injected
+  /** The app's bundled stylesheet URLs (`buildClient`'s `BuildManifest.css`) - the aggregate, injected
    * as `<link rel="stylesheet">` in a page's `<head>`. Used as the fallback for any route absent from
    * {@link routeStyles}. Omit ⇒ no links (dev, where Vite injects CSS, or a CSS-free app). */
   readonly styles?: readonly string[]
-  /** Per-route stylesheet URLs (`buildClient`'s `BuildManifest.routeStyles`) — `routeId → [chain CSS]`.
+  /** Per-route stylesheet URLs (`buildClient`'s `BuildManifest.routeStyles`) - `routeId → [chain CSS]`.
    * When a matched route has an entry here, only those (its layout chain + own CSS) are linked instead
    * of the aggregate `styles`, so a page ships only the CSS it uses. An empty array ⇒ no `<link>` (the
    * page imports no CSS). Routes absent here fall back to `styles`. Omit ⇒ always use `styles`. */
@@ -1444,14 +1444,14 @@ export interface CreateWebAppOptions {
   readonly prerenderedPaths?: readonly string[]
   /** SSG: per dynamic route pattern, its `getStaticPaths` `fallback` (from `enumerateStaticRoutes` or
    * the build's `prerendered.json`). A route mapped to `"404"` rejects any path NOT in
-   * `prerenderedPaths` with the 404 page — the unlisted path simply doesn't exist. `"ssr"` (the
+   * `prerenderedPaths` with the 404 page - the unlisted path simply doesn't exist. `"ssr"` (the
    * default for unmapped routes) renders unlisted paths on-demand. */
   readonly staticFallbacks?: Readonly<Record<string, "ssr" | "404">>
-  /** Observe every loader/action failure — for error-reporting plugins (Sentry-style). Called for
+  /** Observe every loader/action failure - for error-reporting plugins (Sentry-style). Called for
    * real throws (not control-flow `Response`s like `redirect`), **before** the nearest `_error`
-   * boundary renders / a soft-nav 500 / a rethrow — so it sees errors that the boundary would
+   * boundary renders / a soft-nav 500 / a rethrow - so it sees errors that the boundary would
    * otherwise hide. Observation only; its own throws are swallowed so a faulty reporter can't break
-   * rendering. (`beforeLoader` is intentionally omitted — the core HTTP hooks already cover
+   * rendering. (`beforeLoader` is intentionally omitted - the core HTTP hooks already cover
    * pre-request work.) */
   readonly onLoaderError?: (
     error: unknown,
@@ -1463,7 +1463,7 @@ export interface CreateWebAppOptions {
   ) => void
 }
 
-/** The handler context fields createWebApp uses — a structural subset of nifra's `Context`. */
+/** The handler context fields createWebApp uses - a structural subset of nifra's `Context`. */
 interface RouteContext {
   readonly params: Record<string, string>
   readonly req: Request
@@ -1506,15 +1506,15 @@ function backendMountOf(api: unknown): BackendMountHandler | undefined {
 /**
  * Build a nifra app from a route manifest: every route SSRs its layout chain via `renderPage`,
  * and a wildcard catch-all renders `_404` (or a plain 404). Reuses @nifrajs/core's router +
- * lifecycle, so matching, params, and precedence are battle-tested. fs-free — feed it a
+ * lifecycle, so matching, params, and precedence are battle-tested. fs-free - feed it a
  * manifest from `discoverRoutes` (`@nifrajs/web/fs`) at startup, so the served app stays portable.
  *
- * **Typed platform bindings.** Pass `Env` — `createWebApp<Env>({ … })` — to declare the app's Workers
+ * **Typed platform bindings.** Pass `Env` - `createWebApp<Env>({ … })` - to declare the app's Workers
  * bindings ONCE. It seeds the returned `Server`'s context with `{ env: Env }` (exactly as the backend's
  * `server<Env>()` does), so `app.fetch(req, { env })` / `toFetchHandler(app)` type-check the `env`
- * argument against the declared shape — no per-binding cast at the edge entry. Per-route loaders/actions
+ * argument against the declared shape - no per-binding cast at the edge entry. Per-route loaders/actions
  * stay typed independently of this call: annotate them with `@nifrajs/client`'s `LoaderArgs<Api, Env>`
- * (same `Env`) so `ctx.env.MY_KV` is typed there too. Omit the parameter and `Env` is `unknown` — the
+ * (same `Env`) so `ctx.env.MY_KV` is typed there too. Omit the parameter and `Env` is `unknown` - the
  * secure default; validate at the trust boundary before use.
  */
 export function createWebApp<Env = unknown>(
@@ -1534,7 +1534,7 @@ export function createWebApp<Env = unknown>(
     return chunks ? { preload: chunks } : {}
   }
   // The matched route's stylesheet links (spread into renderPage). Per-route when the build mapped it
-  // (`routeStyles[id]` — only the chain's CSS; an empty array ⇒ no `<link>`), else the aggregate
+  // (`routeStyles[id]` - only the chain's CSS; an empty array ⇒ no `<link>`), else the aggregate
   // `styles`. Omitted entirely when CSS-free (for exactOptionalPropertyTypes).
   const stylesOf = (id: string): { styles?: readonly string[] } => {
     const perRoute = options.routeStyles?.[id]
@@ -1547,7 +1547,7 @@ export function createWebApp<Env = unknown>(
   const app = server<Env>()
   // Auto-mount the in-process backend over HTTP at `apiPrefix` (default `/api`), BEFORE page routing.
   // `onRequest` runs on the raw request ahead of the router, so this wins over the page wildcard `/*`
-  // for every method (POST/GET/PUT/…) — not just the GET page routes — and a backend 404 (`/api/none`)
+  // for every method (POST/GET/PUT/…) - not just the GET page routes - and a backend 404 (`/api/none`)
   // surfaces as the backend's own response, never the page 404. We dispatch the SAME `Request` object
   // (its body unread) so streamed/large bodies pass through untouched; the backend defines its routes
   // at the full prefixed path (`server().post("/api/sync", …)`), matching the `inProcessClient` call
@@ -1571,7 +1571,7 @@ export function createWebApp<Env = unknown>(
         if (!underPrefix(pathname, mount.path)) continue
         return mount.app.fetch(mount.stripPrefix === true ? stripMountPrefix(req, mount.path) : req)
       }
-      // Exactly the prefix (`/api`) or a sub-path (`/api/…`) — NOT a sibling like `/apixyz` that merely
+      // Exactly the prefix (`/api`) or a sub-path (`/api/…`) - NOT a sibling like `/apixyz` that merely
       // shares the prefix as a string head. Dispatch the original `req` (body intact) to the backend.
       if (mountedApi !== undefined && apiPrefix !== "" && underPrefix(pathname, apiPrefix)) {
         return mountedApi(apiStrip ? stripMountPrefix(req, apiPrefix) : req, platform)
@@ -1590,7 +1590,7 @@ export function createWebApp<Env = unknown>(
 
   // Load a route's layout modules (outermost layout → innermost), keeping each module whole so the
   // render path can take both its `default` (the component chain) AND its `meta` (the sitewide head it
-  // contributes). Loaded lazily — the data-only and 405 branches return before any layout is needed.
+  // contributes). Loaded lazily - the data-only and 405 branches return before any layout is needed.
   const loadLayoutModules = async (route: RouteEntry): Promise<LoadedLayoutModules> => {
     const modules = await Promise.all(
       // layoutIds only reference layouts present in the manifest (buildManifest invariant).
@@ -1602,7 +1602,7 @@ export function createWebApp<Env = unknown>(
       if ((modules[i] as { action?: unknown }).action === undefined) continue
       const id = route.layoutIds[i] as string
       throw new Error(
-        `[nifra/web] "${(manifest.layouts[id] as LayoutEntry).file}" exports an \`action\`, but layouts do not run one — only route files do. Move the mutation into the route that submits to it.`,
+        `[nifra/web] "${(manifest.layouts[id] as LayoutEntry).file}" exports an \`action\`, but layouts do not run one - only route files do. Move the mutation into the route that submits to it.`,
       )
     }
     return modules
@@ -1831,11 +1831,11 @@ export function createWebApp<Env = unknown>(
     return undefined
   }
 
-  // The request's origin (scheme + host + port, NO trailing slash) — the one server fact `meta()` needs
+  // The request's origin (scheme + host + port, NO trailing slash) - the one server fact `meta()` needs
   // for absolute `canonical`/`og:url`/`og:image` but can't otherwise see (it also runs on the client).
   // `URL.origin` is exactly that shape; it matches the browser's `location.origin` for the same URL, so
   // a soft-nav's `applyHead` resolves an identical `<head>` (no hydration drift). A malformed `req.url`
-  // (shouldn't happen on a real request) degrades to `""` — the documented unknown-origin default —
+  // (shouldn't happen on a real request) degrades to `""` - the documented unknown-origin default -
   // rather than throwing during render.
   const originOf = (req: Request): string => {
     try {
@@ -1845,7 +1845,7 @@ export function createWebApp<Env = unknown>(
     }
   }
 
-  // The request's `pathname + search` — threaded into `renderPage` so an adapter's `useLocation`/
+  // The request's `pathname + search` - threaded into `renderPage` so an adapter's `useLocation`/
   // `useSearchParams` render the current URL server-side and hydrate against the client's initial state
   // (which the client entry seeds from `location.pathname + location.search`). No hash: it never reaches
   // the server. A malformed `req.url` degrades to "/" rather than throwing during render.
@@ -1860,11 +1860,11 @@ export function createWebApp<Env = unknown>(
 
   /**
    * Render the **nearest `_error` boundary** when a route's loader throws (the agnostic, server-side
-   * half of error UI — works on every adapter, no client takeover). The boundary renders in place of
+   * half of error UI - works on every adapter, no client takeover). The boundary renders in place of
    * the page, wrapped by the layouts **at or above** its segment (deeper layouts are dropped). It's
    * served **non-hydrated** at status 500: a terminal page, and rendering a boundary (not the page the
    * client maps this route to) would otherwise hydrate-mismatch. The component receives `{ name,
-   * message }` — never the stack (no internals leak into HTML).
+   * message }` - never the stack (no internals leak into HTML).
    */
   const renderError = async (
     route: RouteEntry,
@@ -1895,7 +1895,7 @@ export function createWebApp<Env = unknown>(
     })
   }
 
-  // The 404 response — the `_404` page (status 404) or a plain-text fallback. Shared by the wildcard
+  // The 404 response - the `_404` page (status 404) or a plain-text fallback. Shared by the wildcard
   // catch-all (unmatched paths) and the `fallback: "404"` enforcement (unlisted paths under a route
   // that opted out of on-demand SSR).
   const renderNotFound = (path?: string): Promise<Response | RenderedPage> =>
@@ -1984,7 +1984,7 @@ export function createWebApp<Env = unknown>(
   }
 
   for (const route of manifest.routes) {
-    // A dynamic route whose `getStaticPaths` declared `fallback: "404"` — only its prerendered paths
+    // A dynamic route whose `getStaticPaths` declared `fallback: "404"` - only its prerendered paths
     // exist; anything else 404s (computed once per route, not per request).
     const is404Fallback = options.staticFallbacks?.[route.pattern] === "404"
     app.register("GET", route.pattern, undefined, async (c: RouteContext) => {
@@ -2040,7 +2040,7 @@ export function createWebApp<Env = unknown>(
         // is what keeps a hand-rolled `throw new Response(...)` served verbatim, as it always was.
         if (isStatusSignal(err)) return renderStatusSignal(c.req, err)
         // A thrown `Response` is a control-flow signal (a guard's `redirect(...)`, an explicit error
-        // response) — let it propagate to core, which returns it as-is. Real errors render the nearest
+        // response) - let it propagate to core, which returns it as-is. Real errors render the nearest
         // `_error` boundary, if any; with none, rethrow (unchanged 500 behavior).
         if (err instanceof Response) throw err
         // Let reporting plugins observe the data-layer failure before it's rendered/rethrown/500'd.
@@ -2053,7 +2053,7 @@ export function createWebApp<Env = unknown>(
         }
         const errorId = boundaryFor(route, err)
         if (errorId === undefined) throw err
-        // A soft-nav data fetch can't render a boundary — 500 so the client falls back to a full-page
+        // A soft-nav data fetch can't render a boundary - 500 so the client falls back to a full-page
         // navigation, which lands here as a document and renders the `_error` page.
         if (c.req.headers.get(DATA_HEADER) !== null) {
           return new Response("Internal Server Error", {
@@ -2063,10 +2063,10 @@ export function createWebApp<Env = unknown>(
         }
         return renderError(route, errorId, withDuplicateInstanceHint(err))
       }
-      // Client-side navigation asks (via the X-Nifra-Data header) for just the loader data — no full
+      // Client-side navigation asks (via the X-Nifra-Data header) for just the loader data - no full
       // document, no layout chain. A route with deferred data streams NDJSON (critical data first,
       // then each deferred value as it settles); otherwise one JSON (the fast path). Same loader,
-      // same auth — only the transport differs.
+      // same auth - only the transport differs.
       if (c.req.headers.get(DATA_HEADER) !== null) {
         const pageSplit = prepareDeferred(data)
         const layoutSplits: Array<ReturnType<typeof prepareDeferred>> = []
@@ -2086,7 +2086,7 @@ export function createWebApp<Env = unknown>(
                 layoutData: layoutSplits.map((split) => split.forClient),
                 retained: layoutRetained,
               }
-        // Bare value when there is no layout data — the pre-envelope shape, so a client running older
+        // Bare value when there is no layout data - the pre-envelope shape, so a client running older
         // code against a newer server keeps working.
         if (deferred.length === 0) {
           return Response.json(payload ?? null)
@@ -2107,7 +2107,7 @@ export function createWebApp<Env = unknown>(
       const hydrateRoute = mod.hydrate !== false
       try {
         // `await` so a shell-render throw (renderToStream rejects before any byte) is caught here and
-        // can render the `_error` page — not just a loader throw. Mid-stream (post-shell) throws can't
+        // can render the `_error` page - not just a loader throw. Mid-stream (post-shell) throws can't
         // be recovered to a full page; the per-adapter client boundary catches client render errors.
         return await renderPageResult({
           adapter,
@@ -2132,7 +2132,7 @@ export function createWebApp<Env = unknown>(
           ...titleOption,
         })
       } catch (err) {
-        // Same precedence as the loader catch above — a `meta()` may signal too.
+        // Same precedence as the loader catch above - a `meta()` may signal too.
         if (isStatusSignal(err)) return renderStatusSignal(c.req, err)
         if (err instanceof Response) throw err
         // Let reporting plugins observe the data-layer failure before it's rendered/rethrown/500'd.
@@ -2151,7 +2151,7 @@ export function createWebApp<Env = unknown>(
 
     // POST runs the route's `action` (mutation). A `Response` return (e.g. a `redirect(...)`)
     // passes straight through; a data return re-renders the page (the loader re-runs for fresh
-    // data) with `actionData`. Routes without an action reject POST with 405 — not a stray 404.
+    // data) with `actionData`. Routes without an action reject POST with 405 - not a stray 404.
     app.register("POST", route.pattern, undefined, async (c: RouteContext) => {
       const mod = await route.load()
       const draft = await draftFlag(c.req)
@@ -2177,7 +2177,7 @@ export function createWebApp<Env = unknown>(
       const isDataRequest = c.req.headers.get(DATA_HEADER) !== null
       // An action may wrap its data in `revalidate(paths, data)` to declare which routes it changed.
       // Unwrap to the inner data; the paths ride the `X-Nifra-Revalidate` header on the data-mode
-      // responses (the client acts on them — a full-page POST re-runs loaders inline, so no header).
+      // responses (the client acts on them - a full-page POST re-runs loaders inline, so no header).
       const isRevalidate =
         result !== null && typeof result === "object" && "__nifraRevalidate" in result
       const actionResult = isRevalidate ? (result as RevalidateResult<unknown>).data : result
@@ -2196,7 +2196,7 @@ export function createWebApp<Env = unknown>(
       // Client submit wants just the action's data (it revalidates the loader itself); a native
       // form POST re-renders the full page (loader re-runs) with the action data.
       if (isDataRequest) {
-        // An action may `defer()` slow parts of its result — stream them (critical data first, then
+        // An action may `defer()` slow parts of its result - stream them (critical data first, then
         // each deferred as it settles) exactly like a loader; a non-deferred action returns one JSON.
         const { forClient, deferred } = prepareDeferred(actionResult)
         if (deferred.length === 0)
@@ -2226,7 +2226,7 @@ export function createWebApp<Env = unknown>(
         origin: originOf(c.req),
       })
       const hydrateRoute = mod.hydrate !== false
-      // A full-page POST streams the action's `defer()`'d parts mid-document behind `<Await>` too —
+      // A full-page POST streams the action's `defer()`'d parts mid-document behind `<Await>` too -
       // `renderPage` splits `actionData` like loader data (works with JS off; hydrates after).
       return renderPageResult({
         adapter,
@@ -2274,7 +2274,7 @@ export interface GenerateClientEntryOptions {
    * Module specifier for the adapter's client runtime, e.g. `"@nifrajs/web-solid/client"`.
    *
    * **Contract:** the module MUST export `mountRouter({ router, routes, container })`. The generated
-   * bootstrap imports the specifier and calls it — so a self-executing entry that mounts on import
+   * bootstrap imports the specifier and calls it - so a self-executing entry that mounts on import
    * builds cleanly and then does nothing, which is the trap this contract exists to name. The type is
    * a bare `string` because a specifier is resolved by the bundler, not the type system, so the
    * requirement is enforced by the bootstrap instead: it throws immediately, naming this module and
@@ -2304,7 +2304,7 @@ export function generateClientEntry(
   const loaderRows: string[] = []
   const patternRows: string[] = []
   const statusRoutes: Record<number, string> = {}
-  // Routes whose loader appends a nearest `_error` module (LAST) — the client wraps the page in the
+  // Routes whose loader appends a nearest `_error` module (LAST) - the client wraps the page in the
   // adapter's `errorBoundary(fallback)` for these, so a client render error shows the `_error` UI.
   const errorRouteIds: string[] = []
   // Lazy loader returns the raw modules (for both the component chain + the page's `meta` export).
@@ -2345,7 +2345,7 @@ export function generateClientEntry(
     'import { createClientRouter, createMatcher, mergeHeads, resolveMeta } from "@nifrajs/web"',
     'import { applyHead, installForms, installHistory, signalHydrated } from "@nifrajs/web/client"',
     // Namespace import: `errorBoundary` is optional (an adapter may not export it). A namespace member
-    // access yields `undefined` if absent — unlike a named import, which would be a link error.
+    // access yields `undefined` if absent - unlike a named import, which would be a link error.
     `import * as __adapter from ${JSON.stringify(clientModule)}`,
     "const { mountRouter } = __adapter",
     // The `clientModule` contract is a string specifier, so nothing type-checks that the module it
@@ -2354,7 +2354,7 @@ export function generateClientEntry(
     // module nor the requirement - a self-executing entry passes every build and fails only here.
     `if (typeof mountRouter !== "function") throw new Error(${JSON.stringify(
       `[nifra/web] clientModule ${JSON.stringify(clientModule)} does not export \`mountRouter\`. ` +
-        "A client module must export `mountRouter({ router, routes, container })` — it is called by " +
+        "A client module must export `mountRouter({ router, routes, container })` - it is called by " +
         "the generated bootstrap, so a self-executing entry will not work. Use your adapter's " +
         '`/client` entry (e.g. "@nifrajs/web-react/client"), or re-export mountRouter from it.',
     )})`,
@@ -2382,7 +2382,7 @@ export function generateClientEntry(
     // hydrated tree matches the SSR markup (which has no boundary). Falls back to the plain chain when
     // the adapter has no `errorBoundary`.
     // `metas[id]` is the chain's `meta` exports in head order (outermost layout → … → page), so a
-    // soft-nav merges the layout chain's head with the page's — matching the SSR `<head>` (sitewide
+    // soft-nav merges the layout chain's head with the page's - matching the SSR `<head>` (sitewide
     // layout tags persist across client navigation, no flash of page-only head). `_error` carries no
     // head (a terminal boundary), so it's excluded from the meta list for error routes.
     "  if (errorBoundary && errorRouteIds.has(id)) {",
@@ -2455,10 +2455,10 @@ export function generateClientEntry(
     "  requestAnimationFrame(signalHydrated)",
     "  router.subscribe(() => {",
     "    const s = router.snapshot()",
-    // Merge the matched route's chain meta (layouts→page) into one head — same contract as SSR.
+    // Merge the matched route's chain meta (layouts→page) into one head - same contract as SSR.
     "    if (!s.pending) {",
     // `origin: location.origin` matches the SSR `originOf(req)` (both are `URL.origin` for the same
-    // page URL), so a soft-nav re-resolves the SAME absolute canonical/og:url — no head drift.
+    // page URL), so a soft-nav re-resolves the SAME absolute canonical/og:url - no head drift.
     "      const args = { data: s.data, params: s.params, origin: location.origin }",
     "      applyHead(mergeHeads((metas[s.routeId] ?? [undefined]).map((m) => resolveMeta(m, args))))",
     "    }",
@@ -2515,21 +2515,21 @@ export function generateRouteSearchTypes(
 }
 
 export interface GenerateServerManifestOptions {
-  /** Turn a route/layout source file (relative to the routes dir) into an import specifier —
+  /** Turn a route/layout source file (relative to the routes dir) into an import specifier -
    * same contract as `generateClientEntry`'s `resolve`. */
   readonly resolve: (file: string) => string
   /** The content-hashed client entry URL (from `buildClient`'s manifest), **baked** into the emitted
-   * module — a disk-less worker can't read `manifest.json` at runtime. */
+   * module - a disk-less worker can't read `manifest.json` at runtime. */
   readonly clientEntry: string
-  /** The app's aggregate stylesheet URLs (`buildClient`'s `BuildManifest.css`) — baked as
+  /** The app's aggregate stylesheet URLs (`buildClient`'s `BuildManifest.css`) - baked as
    * `export const styles` so the server entry can hand them to `createWebApp` (→ `<link rel="stylesheet">`
    * in `<head>`). Without this the built SSR page ships no CSS link and renders unstyled. */
   readonly styles?: readonly string[] | undefined
-  /** Per-route stylesheet URLs (`buildClient`'s `BuildManifest.routeStyles`) — baked as
+  /** Per-route stylesheet URLs (`buildClient`'s `BuildManifest.routeStyles`) - baked as
    * `export const routeStyles` so a page links only the CSS its route chain uses. */
   readonly routeStyles?: Readonly<Record<string, readonly string[]>> | undefined
   /** Emit **lazy** per-route loaders (`() => import("./routes/x")`, a static specifier) instead of
-   * eager `import * as`, so a bundler with code-splitting emits one chunk per route — loaded on the
+   * eager `import * as`, so a bundler with code-splitting emits one chunk per route - loaded on the
    * first request to it, not all at boot (smaller cold-start parse). Default `false` (eager). Both
    * modes are fs-free with statically-analyzable specifiers; only the *when* differs. */
   readonly lazy?: boolean
@@ -2537,10 +2537,10 @@ export interface GenerateServerManifestOptions {
 
 /**
  * Codegen: emit a **server manifest** module (as source) for disk-less edge runtimes (Cloudflare
- * Workers, …) — and, with a `target`, any portable server bundle. `discoverRoutes` scans `node:fs`
- * and dynamic-imports each route by a *runtime* path — neither exists on workerd. This instead emits
+ * Workers, …) - and, with a `target`, any portable server bundle. `discoverRoutes` scans `node:fs`
+ * and dynamic-imports each route by a *runtime* path - neither exists on workerd. This instead emits
  * **statically-analyzable** imports of every route/layout/`_error`/terminal status page (so the bundler includes them) and
- * rebuilds the manifest with `buildManifest` — the SAME pure logic `discoverRoutes` feeds, so patterns
+ * rebuilds the manifest with `buildManifest` - the SAME pure logic `discoverRoutes` feeds, so patterns
  * + layout chains are identical. Eager (`import * as`) by default; `lazy` emits `() => import(...)` so
  * a code-splitting bundler chunks per route. The emitted module exports `manifest` (consumed by
  * `createWebApp`, unchanged) + `clientEntry` (baked). Write it to a file and bundle it into the worker
@@ -2562,7 +2562,7 @@ export function generateServerManifest(
     ]),
   ].sort()
   const header = [
-    "// GENERATED by @nifrajs/web generateServerManifest — route manifest for the disk-less edge",
+    "// GENERATED by @nifrajs/web generateServerManifest - route manifest for the disk-less edge",
     "// (no filesystem; route imports are static specifiers the bundler resolves). buildManifest is",
     "// the same pure logic discoverRoutes feeds, so patterns + layout chains match exactly.",
     'import { buildManifest } from "@nifrajs/web"',

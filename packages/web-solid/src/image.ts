@@ -1,5 +1,5 @@
 /**
- * `@nifrajs/web-solid/image` — a CLS-safe responsive Solid `<Image>`. A thin wrapper over `resolveImage`
+ * `@nifrajs/web-solid/image` - a CLS-safe responsive Solid `<Image>`. A thin wrapper over `resolveImage`
  * from `@nifrajs/image`: it computes the responsive `<img>` attributes (`src`/`srcset`/`sizes`/`width`/
  * `height`/`loading`/`decoding`/`fetchpriority` via `toHtmlAttrs`) and renders an `<img>` through
  * Solid's `<Dynamic>`. Extra DOM props (`class`, `style`, `id`, `data-*`, handlers) pass through
@@ -10,7 +10,7 @@ import { type ImageLoader, type ImageProps, resolveImage, toHtmlAttrs } from "@n
 import { createComponent, type JSX, mergeProps, splitProps } from "solid-js"
 import { Dynamic } from "solid-js/web"
 
-/** Attributes `resolveImage` computes — callers can't override them via DOM passthrough. */
+/** Attributes `resolveImage` computes - callers can't override them via DOM passthrough. */
 type ComputedAttrs =
   | "src"
   | "srcset"
@@ -25,7 +25,7 @@ type ComputedAttrs =
 export interface ImageComponentProps
   extends ImageProps,
     Omit<JSX.ImgHTMLAttributes<HTMLImageElement>, ComputedAttrs | keyof ImageProps> {
-  /** CDN URL builder. Defaults to the identity loader (no transform — still CLS-safe + lazy). */
+  /** CDN URL builder. Defaults to the identity loader (no transform - still CLS-safe + lazy). */
   readonly loader?: ImageLoader
 }
 

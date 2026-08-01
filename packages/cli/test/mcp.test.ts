@@ -360,9 +360,9 @@ describe("createCachedAppLoader", () => {
   })
 })
 
-describe("runBackend (nifra_run engine) — input guards", () => {
+describe("runBackend (nifra_run engine) - input guards", () => {
   // The import-driven paths (run a real backend, report a no-app / failed-import module) are covered by
-  // the end-to-end subprocess smoke in test/mcp-run.smoke.ts and by @nifrajs/runner's own suite — an
+  // the end-to-end subprocess smoke in test/mcp-run.smoke.ts and by @nifrajs/runner's own suite - an
   // in-process dynamic import() of a fixture leaks module-loader state that trips Bun's test runner.
   // These guards run before any import, so they're safe + cheap to assert here.
   test("reports when no backend entry exists", async () => {
@@ -658,7 +658,7 @@ describe("monorepo detection + tool namespacing", () => {
   })
 })
 
-describe("nifra_check / nifra_test — `dir` scopes to a subdirectory", () => {
+describe("nifra_check / nifra_test - `dir` scopes to a subdirectory", () => {
   test("resolveProjectDir resolves subdirs and rejects escapes (path-traversal guard)", () => {
     const root = "/proj"
     expect(resolveProjectDir(root, undefined)).toBe(root) // no dir → root

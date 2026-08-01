@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Free SSR bench ports (4300–4337) and stop stray bench / meta-framework servers.
+# Free SSR bench ports (4300-4337) and stop stray bench / meta-framework servers.
 set -eu
 
 for port in $(seq 4300 4359); do
@@ -16,4 +16,4 @@ pkill -f "solidstart/.output/server" 2>/dev/null || true
 pkill -f "react-router-serve" 2>/dev/null || true
 
 sleep 1
-echo "ports 4300–4359 clear"
+echo "ports 4300-4359 clear"

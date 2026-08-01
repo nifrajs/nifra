@@ -235,16 +235,16 @@ describe("createQueryClient", () => {
     const off = c.query(["gone"], g.fn).subscribe(() => {})
     off() // subscribers → 0; gcAt = now()+200 = 200
     t = 100
-    c.query(["touch"], g.fn) // triggers a sweep — 100 < 200, "gone" survives
+    c.query(["touch"], g.fn) // triggers a sweep - 100 < 200, "gone" survives
     expect(c.query(["gone"], g.fn)).toBe(c.query(["gone"], g.fn)) // still the same cached entry
     const goneHandle = c.query(["gone"], g.fn)
     t = 300
-    c.query(["touch2"], g.fn) // sweep — 300 >= 200 → "gone" evicted
+    c.query(["touch2"], g.fn) // sweep - 300 >= 200 → "gone" evicted
     expect(c.query(["gone"], g.fn)).not.toBe(goneHandle) // re-created (was evicted)
     expect(c.query(["kept"], g.fn)).toBe(kept) // subscribed entry survived
   })
 
-  test("the cache is bounded — past `max`, the oldest unsubscribed entries are evicted", () => {
+  test("the cache is bounded - past `max`, the oldest unsubscribed entries are evicted", () => {
     const g = gated()
     const c = createQueryClient({ now: () => 0, max: 3 })
     const first = c.query(["q", 0], g.fn) // oldest, unsubscribed
@@ -257,7 +257,7 @@ describe("createQueryClient", () => {
 describe("invalidation epoch (M3) + emit (Perf-6)", () => {
   // The core M3 bug: a fetch in flight when a mutation invalidates the query must NOT satisfy the
   // post-mutation refetch (its data is pre-mutation). Old behavior: refetch JOINED the in-flight
-  // fetch, published its stale data as fresh, and cleared `invalidated` — the refetch never happened.
+  // fetch, published its stale data as fresh, and cleared `invalidated` - the refetch never happened.
   test("invalidateQueries during an in-flight fetch supersedes it; stale result isn't published", async () => {
     const g = gated()
     const c = createQueryClient({ now: () => 0, staleTime: 1_000_000 })
@@ -318,7 +318,7 @@ describe("invalidation epoch (M3) + emit (Perf-6)", () => {
     let unsubTwo = (): void => {}
     h.subscribe(() => {
       seen.push("one")
-      unsubTwo() // remove the other subscriber mid-emit — must not throw (live-set iteration)
+      unsubTwo() // remove the other subscriber mid-emit - must not throw (live-set iteration)
     })
     unsubTwo = h.subscribe(() => seen.push("two"))
     const p = h.fetch() // setState(isFetching) → emit over the live listener set
@@ -355,7 +355,7 @@ describe("imperative cache: getQueryData / setQueryData / prefetchQuery", () => 
     const c = createQueryClient({ now: () => 0 })
     c.setQueryData(["seeded"], "S")
     // No fetcher was ever bound; reading the (fresh, staleTime 0 but success) entry via a handle with a
-    // real fn now would fetch — but simply reading data must not. The seeded value stands.
+    // real fn now would fetch - but simply reading data must not. The seeded value stands.
     expect(c.getQueryData<string>(["seeded"])).toBe("S")
   })
 
@@ -372,7 +372,7 @@ describe("imperative cache: getQueryData / setQueryData / prefetchQuery", () => 
     expect(c.getQueryData<string>(["k"])).toBe("P")
     t = 500 // still within staleTime
     await c.query(["k"], fn).fetch()
-    expect(calls).toBe(1) // fresh cache hit — no refetch
+    expect(calls).toBe(1) // fresh cache hit - no refetch
   })
 
   test("setQueryData supersedes an in-flight fetch (optimistic write wins)", async () => {
@@ -383,7 +383,7 @@ describe("imperative cache: getQueryData / setQueryData / prefetchQuery", () => 
     const p = h.fetch()
     c.setQueryData(["k"], "OPTIMISTIC") // write while the fetch is in flight
     t = 10
-    g.resolve(0, "STALE") // the fetch resolves late — must NOT overwrite the optimistic value
+    g.resolve(0, "STALE") // the fetch resolves late - must NOT overwrite the optimistic value
     await p
     expect(c.getQueryData<string>(["k"])).toBe("OPTIMISTIC")
   })
@@ -537,7 +537,7 @@ describe("createMutation", () => {
     const p2 = m.mutate(2) // supersedes p1
     await new Promise((r) => setTimeout(r, 0)) // let both mutationFn calls register their resolvers
     g.resolve(1, 20) // resolve the SECOND call first
-    g.resolve(0, 10) // then the first (older) — must not clobber
+    g.resolve(0, 10) // then the first (older) - must not clobber
     expect(await p1).toBe(10)
     expect(await p2).toBe(20)
     expect(m.snapshot()).toMatchObject({ status: "success", data: 20, variables: 2 })

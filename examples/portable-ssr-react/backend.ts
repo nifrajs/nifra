@@ -1,6 +1,6 @@
 import { server } from "@nifrajs/core/server"
 
-// In-memory demo state (per-process / per-isolate — a real app uses a shared store via c.env).
+// In-memory demo state (per-process / per-isolate - a real app uses a shared store via c.env).
 let count = 0
 
 /** The backend API (the contract). The same app runs on five runtimes; only the entry differs. */

@@ -1,20 +1,20 @@
 /**
- * `nifra upgrade <version>` — an executable, per-release upgrade runner. Framework and shared-package
+ * `nifra upgrade <version>` - an executable, per-release upgrade runner. Framework and shared-package
  * bumps otherwise spread the same mechanical edits across every consuming app by hand; a recipe turns
  * them into `detect → transform → verify`:
  *
- *   1. **pin sweep** — set every matching dependency to the target version across the workspace's
+ *   1. **pin sweep** - set every matching dependency to the target version across the workspace's
  *      package.json files, preserving the caret/tilde/exact style and skipping `workspace:`/`link:` specs.
- *   2. **dependency moves** — replace removed packages with their supported successor without
+ *   2. **dependency moves** - replace removed packages with their supported successor without
  *      reserializing package.json or leaving duplicate dependency keys.
- *   3. **import moves** — rewrite exact import specifiers to their updated module paths.
- *   4. **verify** — reuse the existing `nifra check` gate; no new verification surface.
+ *   3. **import moves** - rewrite exact import specifiers to their updated module paths.
+ *   4. **verify** - reuse the existing `nifra check` gate; no new verification surface.
  *
  * Dry-run by default (prints the plan, writes nothing); `--write` applies. Fail-closed on an unknown
  * target version or a missing package.json, and deterministic (same repo + target → same edits).
  *
  * Deliberately NOT a codemod engine: transforms are string/specifier-level only. Structural (AST)
- * transforms are a future addition — a recipe that needs one is the signal to add the engine, not before.
+ * transforms are a future addition - a recipe that needs one is the signal to add the engine, not before.
  */
 
 import { readFileSync, writeFileSync } from "node:fs"
@@ -75,8 +75,8 @@ const DEP_FIELDS = [
   "optionalDependencies",
 ] as const
 
-// Only a bare semver spec is rewritten. Anything else — workspace:*, link:/file:, npm: aliases, git
-// urls, "*", "latest", or a multi-part range — is intentionally left untouched (skipped, not guessed).
+// Only a bare semver spec is rewritten. Anything else - workspace:*, link:/file:, npm: aliases, git
+// urls, "*", "latest", or a multi-part range - is intentionally left untouched (skipped, not guessed).
 const SEMVER_SPEC =
   /^([\^~]|>=|<=|>|<|=)?\s*(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
 
@@ -95,7 +95,7 @@ export function rewriteVersionSpec(spec: string, toVersion: string): string | nu
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
 /**
- * Apply pin rules to one package.json's TEXT (format-preserving — targeted string replaces, never a
+ * Apply pin rules to one package.json's TEXT (format-preserving - targeted string replaces, never a
  * JSON re-serialize that would reorder keys or drop comments-as-formatting). Returns the new text and
  * the changes made.
  */
@@ -336,7 +336,7 @@ function renderPlan(plan: UpgradePlan, write: boolean): string {
     plan.dependencyMoves.length === 0 &&
     plan.importMoves.length === 0
   ) {
-    lines.push("Already up to date — no changes.")
+    lines.push("Already up to date - no changes.")
     return lines.join("\n")
   }
   if (plan.dependencyMoves.length > 0) {
@@ -393,7 +393,7 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
     readFileSync(join(cwd, "package.json"), "utf8")
   } catch {
     console.error(
-      `[nifra] no package.json in ${relative(process.cwd(), cwd) || "."} — run from a project root`,
+      `[nifra] no package.json in ${relative(process.cwd(), cwd) || "."} - run from a project root`,
     )
     return false
   }
@@ -413,7 +413,7 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
     const ok = await runCheck(cwd, { json: false })
     if (!ok) {
       if (!options.json)
-        console.error("\n[nifra] upgrade applied but `nifra check` failed — review above.")
+        console.error("\n[nifra] upgrade applied but `nifra check` failed - review above.")
       return false
     }
   }

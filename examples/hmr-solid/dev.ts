@@ -1,12 +1,12 @@
 /**
- * True-HMR dev server (Solid) — the `@nifrajs/web/vite` server with `vite-plugin-solid` (client HMR via
+ * True-HMR dev server (Solid) - the `@nifrajs/web/vite` server with `vite-plugin-solid` (client HMR via
  * solid-refresh). `solidBunPlugin("ssr")` (preloaded, see ssr-preload.ts) handles the Bun-side SSR.
  *
  *   bun --preload hmr-solid/ssr-preload.ts hmr-solid/dev.ts
  *   (containers/sandboxes: prefix CHOKIDAR_USEPOLLING=1)
  *
- * Solid needs the `"solid"` resolve condition (routes solid-js to its source/JSX-dev build) — passed
- * via `conditions`. Edit `components/Counter.tsx` while the counter is non-zero — it updates live.
+ * Solid needs the `"solid"` resolve condition (routes solid-js to its source/JSX-dev build) - passed
+ * via `conditions`. Edit `components/Counter.tsx` while the counter is non-zero - it updates live.
  */
 
 import { inProcessClient } from "@nifrajs/client"
@@ -23,7 +23,7 @@ const server = await createViteDevServer({
   routesDir,
   clientModule: "@nifrajs/web-solid/client",
   // `ssr: true` makes vite-plugin-solid emit *hydratable* client output (generate: "dom" +
-  // hydratable), matching nifra's Bun SSR (solidBunPlugin "ssr") — without it, Solid throws a
+  // hydratable), matching nifra's Bun SSR (solidBunPlugin "ssr") - without it, Solid throws a
   // hydration mismatch ("Failed attempt to create new DOM elements during hydration").
   plugins: [solid({ ssr: true })],
   conditions: ["solid"],

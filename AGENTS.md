@@ -1,4 +1,4 @@
-# AGENTS.md — Nifra quick reference for coding agents
+# AGENTS.md - Nifra quick reference for coding agents
 
 Nifra is a Bun-native, multi-runtime, end-to-end-typed full-stack TS framework. This is the
 copy-paste cookbook so you don't have to read the source. Deeper docs live in `docs/` and at
@@ -55,7 +55,7 @@ app.post("/things", { body: t.object({ name: t.string() }) }, (c) => {
 ```
 
 For full control, return a `Response`. **Throw rule:** `throw new Response("", { status: 404 })` =
-an intentional HTTP response (control flow — bypasses `_error`); `throw new Error(…)` = the nearest
+an intentional HTTP response (control flow - bypasses `_error`); `throw new Error(…)` = the nearest
 `_error` boundary / a 500.
 
 ## 5 · Call it with the end-to-end typed client (no codegen)
@@ -63,7 +63,7 @@ an intentional HTTP response (control flow — bypasses `_error`); `throw new Er
 ```ts
 import { client, inProcessClient } from "@nifrajs/client"
 
-const api = client<typeof app>("") // `import type { app }` — the type is erased at build
+const api = client<typeof app>("") // `import type { app }` - the type is erased at build
 const res = await api.users.post({ name: "Ada", age: 36 })
 if (res.ok && "id" in res.data) res.data.id // narrows cleanly
 
@@ -86,41 +86,41 @@ const app = createWebApp({
 ```
 
 The backend's routes are auto-mounted under `apiPrefix` (default `"/api"`), so `POST /api/*` hits the
-backend in `nifra dev` and in prod alike — no hand-dispatch in `server-bun.ts` / `_worker.ts`. Set
+backend in `nifra dev` and in prod alike - no hand-dispatch in `server-bun.ts` / `_worker.ts`. Set
 `apiPrefix: ""` to opt out and dispatch yourself.
 
 ## Gotchas (the documented time-sinks)
 
 - **`PUBLIC_*` env** is baked into the client bundle (Vite/Next convention). Any other `process.env.X`
-  compiles to `undefined` in the browser — no `process is not defined` crash, and secrets can't leak.
+  compiles to `undefined` in the browser - no `process is not defined` crash, and secrets can't leak.
 - **Reading secrets/env in a server handler.** `process.env.X` is `undefined` in the browser (keep secret
   reads server-side), but on the SERVER it's there on Bun/Node/Deno **and** on Workers/Pages with
-  `nodejs_compat` — Cloudflare then populates `process.env` from the deployment's vars + secrets (a
+  `nodejs_compat` - Cloudflare then populates `process.env` from the deployment's vars + secrets (a
   `wrangler … secret put` value lands in `process.env`). So with `nodejs_compat` on, `process.env.KEY` is the
   one portable, type-safe server read. `ctx.env` is the raw platform binding (typed `Env`); reach for it only
   when you can't enable `nodejs_compat`, and then declare the shape (`LoaderArgs<typeof backend, Env>`) or cast
-  — an arbitrary key off the typed `Env` fails `TS2339`.
-- **Loaders/actions are typed with `LoaderArgs`/`ActionArgs` from `@nifrajs/client`** — e.g.
+  - an arbitrary key off the typed `Env` fails `TS2339`.
+- **Loaders/actions are typed with `LoaderArgs`/`ActionArgs` from `@nifrajs/client`** - e.g.
   `export async function action({ request }: ActionArgs<typeof backend>)`. They are NOT `LoaderFunctionArgs`/
-  `ActionFunctionArgs`, and never imported from `@nifrajs/core` — those are Remix shapes and fail with
+  `ActionFunctionArgs`, and never imported from `@nifrajs/core` - those are Remix shapes and fail with
   `TS2305: no exported member` (a frequent LLM mistake).
 - **Loader data** arrives as `props.data` (not spread into props).
-- **Dynamic `[param]`**: plain SSR runs the loader for ANY param value — guard and
+- **Dynamic `[param]`**: plain SSR runs the loader for ANY param value - guard and
   `throw new Response("", { status: 404 })` for unknown ids.
 - **React is deduped** in both the build and the vite dev server, so a `file:`-linked package shipping
   its own React no longer nulls the SSR hook dispatcher.
 - **Server-only code** → three ways to keep it out of the browser bundle:
-  - put it in a `*.server.ts` module — the client build empties it (its `node:` / native imports never
+  - put it in a `*.server.ts` module - the client build empties it (its `node:` / native imports never
     ship), no extra import needed;
   - for **pure server logic with no `node:` import** (a secret, a server-only API call), add
-    `import "@nifrajs/web/server-only"` at the top — the client build fails loud, naming the import
+    `import "@nifrajs/web/server-only"` at the top - the client build fails loud, naming the import
     **chain**, if that module ever reaches a browser chunk (the node-builtin guard can't catch it);
-  - mark the value's type `ServerOnly<T>` (from `@nifrajs/web`) to document intent — but it's
+  - mark the value's type `ServerOnly<T>` (from `@nifrajs/web`) to document intent - but it's
     type-level only and erases at build, so always pair it with `.server.ts` or the import marker.
   - or import a heavy / `node:`-using npm SDK (stripe, a DB driver, an API client) DYNAMICALLY *inside* the
-    `loader`/`action`: `const X = (await import('pkg')).default` — it then never sits in the route's
+    `loader`/`action`: `const X = (await import('pkg')).default` - it then never sits in the route's
     top-level (client-reachable) scope, so its `node:` builtins can't leak into the browser bundle.
-  A server-only import **co-located** in a route file fails the build loud — error: `… reached the
+  A server-only import **co-located** in a route file fails the build loud - error: `… reached the
   client bundle via <chain>`. `nifra check` reports the same transitive chain pre-build. See
   `/docs/troubleshooting` (keyed on the literal error strings).
 - Run **`nifra check`** (`--json` for agents) as the done-gate: typecheck + typed-client drift +

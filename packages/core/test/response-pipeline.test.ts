@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { type Middleware, server, silentLogger } from "../src/index.ts"
 
-/** Return a copy of `res` with an `x-app` header — onResponse can't mutate in place. */
+/** Return a copy of `res` with an `x-app` header - onResponse can't mutate in place. */
 function tagged(res: Response, value: string): Response {
   const headers = new Headers(res.headers)
   headers.set("x-app", value)

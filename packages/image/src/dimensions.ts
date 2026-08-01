@@ -1,5 +1,5 @@
 /**
- * Read an image's intrinsic dimensions from its file **header**, in pure JS — no decode, no codec, no
+ * Read an image's intrinsic dimensions from its file **header**, in pure JS - no decode, no codec, no
  * dependency. Supports PNG, JPEG, GIF, and WebP (VP8/VP8L/VP8X). Used to give `<Image>` CLS-safe
  * `width`/`height` (build-time tooling can pre-read them into a manifest).
  */
@@ -29,7 +29,7 @@ const jpeg = (b: Uint8Array, dv: DataView): ImageInfo | null => {
   while (offset + 9 < b.length) {
     if (dv.getUint8(offset) !== 0xff) return null // not aligned on a marker → malformed
     const marker = dv.getUint8(offset + 1)
-    // SOF0..SOF15 carry the frame's height/width — except DHT(c4)/DNL(c8)/DAC(cc).
+    // SOF0..SOF15 carry the frame's height/width - except DHT(c4)/DNL(c8)/DAC(cc).
     if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
       return { height: dv.getUint16(offset + 5), width: dv.getUint16(offset + 7), format: "jpeg" }
     }
@@ -80,7 +80,7 @@ export function imageDimensions(bytes: Uint8Array): ImageInfo | null {
 /**
  * Read just the leading bytes of an image file (via the platform `Bun.file`/`fetch` blob) and parse its
  * dimensions. Build-time tooling: pre-read dimensions into a manifest so `<Image>` is CLS-safe without
- * hardcoding sizes. Reads at most `maxBytes` (default 64 KB — enough for any header).
+ * hardcoding sizes. Reads at most `maxBytes` (default 64 KB - enough for any header).
  */
 export async function readImageDimensions(
   source: { arrayBuffer(): Promise<ArrayBuffer>; stream?: () => ReadableStream<Uint8Array> },

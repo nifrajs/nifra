@@ -4,7 +4,7 @@ import { definePlugin, type NifraPlugin } from "@nifrajs/core/server"
 type MaybePromise<T> = T | Promise<T>
 
 /**
- * A token-auth plugin (`bearer` / `apiKey`). Apply it with `app.use(auth)` — it rejects unauthorized
+ * A token-auth plugin (`bearer` / `apiKey`). Apply it with `app.use(auth)` - it rejects unauthorized
  * requests to **routes defined after it** with `401` (unless `optional`). Read the verified principal
  * inside a handler/loader via {@link AuthPlugin.principal} (nullable) or
  * {@link AuthPlugin.requirePrincipal} (throws `401` when absent). The principal is verified once per
@@ -51,11 +51,11 @@ function createTokenAuth<P>(config: TokenAuthConfig<P>): AuthPlugin<P> {
   const plugin = definePlugin(config.name, (app) =>
     app.beforeHandle(async (c: { readonly req: Request }) => {
       const token = config.extract(c.req)
-      // Empty string is treated as "no credential" — never passed to verify.
+      // Empty string is treated as "no credential" - never passed to verify.
       const principal = token !== undefined && token !== "" ? await config.verify(token) : null
       if (principal !== null && principal !== undefined) {
         store.set(c.req, principal)
-        return undefined // authorized — continue to the handler
+        return undefined // authorized - continue to the handler
       }
       return config.optional ? undefined : reject() // 401 short-circuits (skips the handler)
     }),
@@ -79,7 +79,7 @@ function createTokenAuth<P>(config: TokenAuthConfig<P>): AuthPlugin<P> {
 
 export interface BearerOptions<P> {
   /** Verify a bearer token → a principal (truthy) or `null`/`undefined` (rejected). May be async
-   * (DB/JWT lookup). For a constant-secret comparison, use a constant-time compare — never `===`. */
+   * (DB/JWT lookup). For a constant-secret comparison, use a constant-time compare - never `===`. */
   readonly verify: (token: string) => MaybePromise<P | null | undefined>
   /** When `true`, requests without a valid token pass through (`principal` is `null`) instead of `401`. */
   readonly optional?: boolean
@@ -90,7 +90,7 @@ export interface BearerOptions<P> {
 /**
  * `Authorization: Bearer <token>` authentication. Parses the header, runs `verify`, and rejects with
  * `401` (+ `WWW-Authenticate: Bearer`) when the token is missing/invalid (unless `optional`). The
- * verified principal is read via the returned instance — see {@link AuthPlugin}.
+ * verified principal is read via the returned instance - see {@link AuthPlugin}.
  */
 export function bearer<P>(options: BearerOptions<P>): AuthPlugin<P> {
   const realm = options.realm ?? "api"
@@ -140,7 +140,7 @@ function timingSafeEqualBytes(a: Uint8Array, b: Uint8Array): boolean {
 /**
  * Build a constant-time verifier for a fixed key set. Each valid key is hashed once (SHA-256, fixed
  * 32 bytes); per request the candidate is hashed and compared against every digest **without early
- * exit**, so timing depends only on the (public) key count — never on the secret value or which key
+ * exit**, so timing depends only on the (public) key count - never on the secret value or which key
  * matched. Portable across all runtimes via WebCrypto.
  */
 function staticKeyVerify(keys: readonly string[]): (candidate: string) => Promise<string | null> {
@@ -158,11 +158,11 @@ function staticKeyVerify(keys: readonly string[]): (candidate: string) => Promis
 
 /**
  * API-key authentication via a header (default `x-api-key`). Two forms:
- * - `apiKey({ keys })` — a fixed key set, compared in **constant time**; the matched key is the principal.
- * - `apiKey({ verify })` — custom (e.g. DB-backed) verification returning a typed principal.
+ * - `apiKey({ keys })` - a fixed key set, compared in **constant time**; the matched key is the principal.
+ * - `apiKey({ verify })` - custom (e.g. DB-backed) verification returning a typed principal.
  *
  * Rejects missing/invalid keys with `401` (unless `optional`). Read the principal via the returned
- * instance — see {@link AuthPlugin}.
+ * instance - see {@link AuthPlugin}.
  */
 export function apiKey(options: ApiKeyStaticOptions): AuthPlugin<string>
 export function apiKey<P>(options: ApiKeyVerifyOptions<P>): AuthPlugin<P>

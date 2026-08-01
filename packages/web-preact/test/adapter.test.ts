@@ -4,7 +4,7 @@ import { type ComponentChildren, type FunctionComponent, h } from "preact"
 import { preactAdapter } from "../src/index.ts"
 
 // SSR side runs under bun (preact-render-to-string/stream). Full hydration is browser-verified
-// against the real packages (see examples/web-preact) — bun:test has no DOM. Suspense streaming
+// against the real packages (see examples/web-preact) - bun:test has no DOM. Suspense streaming
 // order is Preact's behaviour (already proven for the seam by the React adapter + F8 work); these
 // framework-specific hydration behaviour stays local; shared render invariants run below.
 

@@ -1,10 +1,10 @@
 /**
- * Production Workers entry for the ISR demo — the same app, but its page cache lives in **Workers KV**
+ * Production Workers entry for the ISR demo - the same app, but its page cache lives in **Workers KV**
  * (KVCacheStore), so cached pages and on-demand purges hold ACROSS worker instances (a per-instance
  * MemoryCacheStore can't). `ctx.waitUntil` keeps the worker alive while a stale page regenerates
  * behind the request.
  *
- * Build + run locally on real workerd (miniflare provides a local KV — no Cloudflare account needed):
+ * Build + run locally on real workerd (miniflare provides a local KV - no Cloudflare account needed):
  *   bun run examples/isr-react/build.ts
  *   (cd examples/isr-react && bunx wrangler dev)
  *
@@ -29,7 +29,7 @@ const app = createWebApp({
   manifest,
   clientEntry,
   api: inProcessClient(backend),
-  title: "nifra — ISR demo (edge)",
+  title: "nifra - ISR demo (edge)",
 })
 
 /** Workers bindings (wrangler.toml → [[kv_namespaces]] + [vars]). */
@@ -40,7 +40,7 @@ interface Env {
   readonly REVALIDATE_SECRET?: string
 }
 
-/** Minimal shape of the Workers execution context — just `waitUntil`. */
+/** Minimal shape of the Workers execution context - just `waitUntil`. */
 interface ExecutionContext {
   waitUntil(promise: Promise<unknown>): void
 }

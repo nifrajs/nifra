@@ -1,5 +1,5 @@
 /**
- * `errorBoundary` — the Vue error-boundary chain element for nifra's `_error.tsx`. Its own module
+ * `errorBoundary` - the Vue error-boundary chain element for nifra's `_error.tsx`. Its own module
  * (imports only `vue`) so the client codegen can import it from `@nifrajs/web-vue/client` (which
  * re-exports it). No template (render function).
  */
@@ -18,7 +18,7 @@ export function errorBoundary(fallback: unknown): unknown {
       const error = ref<Error | null>(null)
       onErrorCaptured((e: unknown) => {
         error.value = e instanceof Error ? e : new Error(String(e))
-        return false // handled — stop propagation
+        return false // handled - stop propagation
       })
       return () => {
         const e = error.value

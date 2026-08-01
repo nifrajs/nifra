@@ -2,7 +2,7 @@ import { useState } from "react"
 import { pageMeta } from "../meta"
 
 export const meta = pageMeta(
-  "Nifra — AI Agent Onboarding",
+  "Nifra - AI Agent Onboarding",
   "Generate customized rules and instructions for Cursor, Claude Code, and other AI coding agents in your Nifra workspace.",
 )
 

@@ -35,7 +35,7 @@ export type RouterMatch<T> =
 /**
  * Payload at a terminal node: per-method handlers plus the ordered param names
  * for this path shape. Bundling them means "a node that has handlers always has
- * param names" is enforced by the type, not by a runtime invariant — which
+ * param names" is enforced by the type, not by a runtime invariant - which
  * removes the otherwise-dead defensive branches in `find`.
  */
 interface Terminal<T> {
@@ -85,7 +85,7 @@ interface RouteNode<T> {
    * no allocation, and one `undefined` check on the match path.
    */
   mixedChildren: MixedChild<T>[] | undefined
-  /** Catch-all `*` child, if any — always terminal. */
+  /** Catch-all `*` child, if any - always terminal. */
   wildcardChild: RouteNode<T> | undefined
   /** Set once this node terminates one or more routes. */
   terminal: Terminal<T> | undefined
@@ -129,7 +129,7 @@ function sameNames(a: readonly string[], b: readonly string[]): boolean {
  * instead of pre-splitting it into an array. `start` is the index of the first
  * char of the current segment; the segment runs to the next `/` (or end). Tries
  * static, then param, then wildcard; if a static branch dead-ends, param/wildcard
- * are still attempted — so `/a/b/c` and `/a/:x/d` coexist and `/a/b/d` resolves
+ * are still attempted - so `/a/b/c` and `/a/:x/d` coexist and `/a/b/d` resolves
  * to the param route. Fills `paramValues` along the successful path; abandoned
  * branches are popped. Avoiding the split keeps `find` allocation-light: only the
  * segment substrings needed for map lookups (and matched param values) are cut.
@@ -179,9 +179,9 @@ function matchNode<T>(
   }
 
   const paramChild = node.paramChild
-  // An empty segment (`/users//posts`) never matches a `:param` — matching would hand the handler
+  // An empty segment (`/users//posts`) never matches a `:param` - matching would hand the handler
   // `id: ""` and downstream code a `WHERE id = ''` class of bug. Peers (Hono, Elysia, Next) 404
-  // here too; a static "" child can still match (none is ever registered — INVALID_PATH guards).
+  // here too; a static "" child can still match (none is ever registered - INVALID_PATH guards).
   if (paramChild !== undefined && seg.length > 0) {
     paramValues.push(seg)
     if (isLast) {

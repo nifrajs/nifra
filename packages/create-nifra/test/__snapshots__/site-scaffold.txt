@@ -112,9 +112,9 @@ console.log("Node output → dist-node (run: node dist-node/server-node.js)")
 ===== site-react :: build-vercel.ts
 // Build for Vercel, emitting Vercel's Build Output API v3 at .vercel/output/ so it deploys with no
 // framework preset: `vercel deploy --prebuilt`. Layout:
-//   .vercel/output/config.json                   — serve static files, else SSR via the function
-//   .vercel/output/static/assets/<client bundle>  — Vercel's CDN serves these directly
-//   .vercel/output/functions/index.func/index.js  — the Edge SSR function (+ .vc-config.json)
+//   .vercel/output/config.json                   - serve static files, else SSR via the function
+//   .vercel/output/static/assets/<client bundle>  - Vercel's CDN serves these directly
+//   .vercel/output/functions/index.func/index.js  - the Edge SSR function (+ .vc-config.json)
 import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { buildClient, buildServer } from "@nifrajs/web/build"
 
@@ -400,9 +400,9 @@ console.log("Node output → dist-node (run: node dist-node/server-node.js)")
 ===== site-preact :: build-vercel.ts
 // Build for Vercel, emitting Vercel's Build Output API v3 at .vercel/output/ so it deploys with no
 // framework preset: `vercel deploy --prebuilt`. Layout:
-//   .vercel/output/config.json                   — serve static files, else SSR via the function
-//   .vercel/output/static/assets/<client bundle>  — Vercel's CDN serves these directly
-//   .vercel/output/functions/index.func/index.js  — the Edge SSR function (+ .vc-config.json)
+//   .vercel/output/config.json                   - serve static files, else SSR via the function
+//   .vercel/output/static/assets/<client bundle>  - Vercel's CDN serves these directly
+//   .vercel/output/functions/index.func/index.js  - the Edge SSR function (+ .vc-config.json)
 import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { buildClient, buildServer } from "@nifrajs/web/build"
 
@@ -702,9 +702,9 @@ console.log("Node output → dist-node (run: node dist-node/server-node.js)")
 ===== site-solid :: build-vercel.ts
 // Build for Vercel, emitting Vercel's Build Output API v3 at .vercel/output/ so it deploys with no
 // framework preset: `vercel deploy --prebuilt`. Layout:
-//   .vercel/output/config.json                   — serve static files, else SSR via the function
-//   .vercel/output/static/assets/<client bundle>  — Vercel's CDN serves these directly
-//   .vercel/output/functions/index.func/index.js  — the Edge SSR function (+ .vc-config.json)
+//   .vercel/output/config.json                   - serve static files, else SSR via the function
+//   .vercel/output/static/assets/<client bundle>  - Vercel's CDN serves these directly
+//   .vercel/output/functions/index.func/index.js  - the Edge SSR function (+ .vc-config.json)
 import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { buildClient, buildServer } from "@nifrajs/web/build"
 import { solidBunPlugin } from "@nifrajs/web-solid"
@@ -1014,9 +1014,9 @@ console.log("Node output → dist-node (run: node dist-node/server-node.js)")
 ===== site-svelte :: build-vercel.ts
 // Build for Vercel, emitting Vercel's Build Output API v3 at .vercel/output/ so it deploys with no
 // framework preset: `vercel deploy --prebuilt`. Layout:
-//   .vercel/output/config.json                   — serve static files, else SSR via the function
-//   .vercel/output/static/assets/<client bundle>  — Vercel's CDN serves these directly
-//   .vercel/output/functions/index.func/index.js  — the Edge SSR function (+ .vc-config.json)
+//   .vercel/output/config.json                   - serve static files, else SSR via the function
+//   .vercel/output/static/assets/<client bundle>  - Vercel's CDN serves these directly
+//   .vercel/output/functions/index.func/index.js  - the Edge SSR function (+ .vc-config.json)
 import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { buildClient, buildServer } from "@nifrajs/web/build"
 import { svelteBunPlugin } from "@nifrajs/web-svelte/plugin"
@@ -1342,9 +1342,9 @@ console.log("Node output → dist-node (run: node dist-node/server-node.js)")
 ===== site-vue :: build-vercel.ts
 // Build for Vercel, emitting Vercel's Build Output API v3 at .vercel/output/ so it deploys with no
 // framework preset: `vercel deploy --prebuilt`. Layout:
-//   .vercel/output/config.json                   — serve static files, else SSR via the function
-//   .vercel/output/static/assets/<client bundle>  — Vercel's CDN serves these directly
-//   .vercel/output/functions/index.func/index.js  — the Edge SSR function (+ .vc-config.json)
+//   .vercel/output/config.json                   - serve static files, else SSR via the function
+//   .vercel/output/static/assets/<client bundle>  - Vercel's CDN serves these directly
+//   .vercel/output/functions/index.func/index.js  - the Edge SSR function (+ .vc-config.json)
 import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { buildClient, buildServer } from "@nifrajs/web/build"
 import { vueBunPlugin } from "@nifrajs/web-vue/plugin"

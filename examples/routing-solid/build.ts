@@ -17,7 +17,7 @@ const manifest = await buildClient({
 console.log("built", manifest.entry)
 
 // SSG on Solid: prerendering renders components SERVER-SIDE in THIS process, so register Solid's SSR
-// transform globally NOW — AFTER buildClient (which scoped its own "dom" transform to that build) and
+// transform globally NOW - AFTER buildClient (which scoped its own "dom" transform to that build) and
 // BEFORE importing the app, so the dynamically-imported route .tsx get the "ssr" generate. Then SSG.
 plugin(solidBunPlugin("ssr"))
 const { app } = await import("./server")

@@ -27,7 +27,7 @@ afterEach(() => {
   rmSync(projectRoot, { recursive: true, force: true })
 })
 
-/** Boot the dev server against the temp app. Leak guards off — `buildClient` is covered by its own tests. */
+/** Boot the dev server against the temp app. Leak guards off - `buildClient` is covered by its own tests. */
 const boot = async (): Promise<DevServer> => {
   server = await createDevServer({
     routesDir,
@@ -53,7 +53,7 @@ test("pages reference the STABLE entry URL, never Bun's hashed one", async () =>
   const page = await (await fetch(`http://127.0.0.1:${dev.port}/`)).text()
   expect(page).toContain(`src="${CLIENT_ENTRY_PATH}"`)
   // A hashed URL in the document is the bug this whole design exists to prevent: it is a content hash over
-  // the client graph, so it dies on the next rebuild and Bun answers it with a reload stub — forever.
+  // the client graph, so it dies on the next rebuild and Bun answers it with a reload stub - forever.
   expect(page).not.toContain("/_bun/client/")
 })
 
@@ -85,7 +85,7 @@ test("Bun's stylesheets are injected into the SSR'd <head>", async () => {
 test("SSR never lags the client: the render that follows a rebuild is already rebuilt too", async () => {
   // The ordering guarantee, stated precisely. SSR freshness is derived from Bun's entry hash at request
   // time rather than from a file watcher, so the moment Bun's client moves, the NEXT page render has
-  // moved with it. Nothing here claims SSR leads the filesystem — it cannot, and does not need to. What
+  // moved with it. Nothing here claims SSR leads the filesystem - it cannot, and does not need to. What
   // it must never do is still be rendering old code when the browser reloads with new code, which is what
   // produces a hydration mismatch nobody can reproduce on request.
   const dev = await boot()
@@ -103,7 +103,7 @@ test("SSR never lags the client: the render that follows a rebuild is already re
     join(routesDir, "index.tsx"),
     "export const changed = true\nexport default function Index() { return null }\n",
   )
-  // Wait for BUN to rebuild — that is the event the guarantee is relative to.
+  // Wait for BUN to rebuild - that is the event the guarantee is relative to.
   let chunkAfter = chunkBefore
   for (let i = 0; i < 100 && chunkAfter === chunkBefore; i += 1) {
     await Bun.sleep(50)

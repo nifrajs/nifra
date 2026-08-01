@@ -27,10 +27,10 @@ test("solidAdapter conforms to the executable RenderAdapter interface", async ()
 })
 
 // SSR side runs under bun (server build of solid-js/web). Full hydration interactivity is
-// browser-verified against the real packages (see the example) — bun:test has no DOM.
+// browser-verified against the real packages (see the example) - bun:test has no DOM.
 
 test("renderToStream streams a Suspense boundary: fallback bytes precede the resolved content", async () => {
-  // No JSX — `createComponent` is what the Solid transform emits; lets this run under bun:test.
+  // No JSX - `createComponent` is what the Solid transform emits; lets this run under bun:test.
   const Slow = () => {
     const [r] = createResource(
       () => new Promise<string>((res) => setTimeout(() => res("RESOLVED"), 30)),
@@ -67,7 +67,7 @@ test("solidBunPlugin compiles a .tsx through Solid's Babel transform", async () 
       onLoad = cb
     },
   }
-  // Minimal PluginBuilder stub — the test only exercises the registered onLoad callback.
+  // Minimal PluginBuilder stub - the test only exercises the registered onLoad callback.
   plugin.setup(builder as unknown as Parameters<typeof plugin.setup>[0])
   expect(plugin.name).toBe("nifra-solid-dom")
   expect(onLoad).toBeDefined()

@@ -1,7 +1,7 @@
 import { server } from "@nifrajs/core"
 import { serve } from "../src/index.ts"
 
-// Minimal local assertions — keeps `deno test` offline + dependency-free.
+// Minimal local assertions - keeps `deno test` offline + dependency-free.
 function assertEquals(actual: unknown, expected: unknown): void {
   const a = JSON.stringify(actual)
   const e = JSON.stringify(expected)
@@ -81,7 +81,7 @@ Deno.test("stop() drains an in-flight request, then is idempotent", async () => 
 
 Deno.test("inherits the app-level requestTimeoutMs (503) through app.fetch", async () => {
   const app = server({ requestTimeoutMs: 40 }).get("/slow", async (c) => {
-    // Respect the abort signal so the handler's timer clears on timeout — otherwise
+    // Respect the abort signal so the handler's timer clears on timeout - otherwise
     // Deno's resource sanitizer would flag the leaked setTimeout.
     await new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, 200)
@@ -103,7 +103,7 @@ Deno.test("inherits the app-level requestTimeoutMs (503) through app.fetch", asy
 })
 
 Deno.test("app.listen() throws a clear, actionable error on non-Bun runtimes", () => {
-  // This suite runs under Deno, where `Bun` is undefined — so listen()'s guard fires.
+  // This suite runs under Deno, where `Bun` is undefined - so listen()'s guard fires.
   // (Under `bun test`, `Bun` is always defined, so this path can only be checked here.)
   const app = server().get("/", () => ({ ok: true }))
   let caught: Error | undefined

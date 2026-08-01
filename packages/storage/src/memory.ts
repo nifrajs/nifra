@@ -1,5 +1,5 @@
 /**
- * In-process {@link StorageAdapter} — a Map of key → bytes + metadata. For dev and tests; not durable
+ * In-process {@link StorageAdapter} - a Map of key → bytes + metadata. For dev and tests; not durable
  * (a restart empties it) and not shared across instances. Methods are `async` so an unsafe key REJECTS
  * (consistent with the disk/R2 adapters), never throws synchronously.
  */

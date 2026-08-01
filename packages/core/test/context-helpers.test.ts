@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
 
-describe("context helpers — c.request alias + c.json/c.text", () => {
+describe("context helpers - c.request alias + c.json/c.text", () => {
   test("c.request is the SAME Request as c.req", async () => {
     const app = server().get("/r", (c) => ({ same: c.request === c.req, url: c.request.url }))
     const res = await app.fetch(new Request("http://x/r"))

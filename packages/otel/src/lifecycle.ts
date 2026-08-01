@@ -62,7 +62,7 @@ export interface ActiveObservation {
     additionalAdapters?: readonly ObservationAdapter[],
   ): ActiveObservation
   /**
-   * Merge attributes onto the in-flight span — the seam for plugins that learn something mid-request
+   * Merge attributes onto the in-flight span - the seam for plugins that learn something mid-request
    * (an authenticated principal, a feature-flag bucket, a cache verdict) after the span opened.
    * Silently ignored once the observation has ended (the exported span is immutable).
    */

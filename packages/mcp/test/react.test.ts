@@ -20,7 +20,7 @@ describe("reactWidget", () => {
     expect(text).toContain("window.mcpApp")
     // ...and the bundled React runtime is inlined (react + react-dom is large).
     expect(text.length).toBeGreaterThan(50_000)
-    // The closing </body> survives — i.e. the bundle's own `</script` didn't terminate the inline script.
+    // The closing </body> survives - i.e. the bundle's own `</script` didn't terminate the inline script.
     expect(text.trimEnd().endsWith("</html>")).toBe(true)
   }, 20_000)
 

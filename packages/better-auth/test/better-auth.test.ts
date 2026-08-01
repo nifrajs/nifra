@@ -3,7 +3,7 @@ import { betterAuth, getSession, requireSession } from "@nifrajs/better-auth"
 import { server } from "@nifrajs/core"
 
 /**
- * A structural stub of a better-auth instance — `handler` echoes the path/method so we can assert the
+ * A structural stub of a better-auth instance - `handler` echoes the path/method so we can assert the
  * mount, and `getSession` returns a typed payload when the test cookie is present. No DB, no
  * better-auth install: this is exactly the structural contract `@nifrajs/better-auth` consumes.
  */
@@ -101,13 +101,13 @@ describe("requireSession() guard", () => {
     }
   })
 
-  test("rejects an off-origin redirectTo (config bug — fails loud, not a redirect)", async () => {
+  test("rejects an off-origin redirectTo (config bug - fails loud, not a redirect)", async () => {
     await expect(
       requireSession(stubAuth, new Request("http://x/me"), { redirectTo: "//evil.com" }),
     ).rejects.toThrow(/same-origin/)
   })
 
-  test("integrates as a route guard — 401 short-circuits the handler", async () => {
+  test("integrates as a route guard - 401 short-circuits the handler", async () => {
     const app = server()
       .use(betterAuth(stubAuth))
       .get("/me", async (c) => (await requireSession(stubAuth, c.req)).user)

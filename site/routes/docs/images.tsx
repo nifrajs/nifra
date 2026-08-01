@@ -1,24 +1,24 @@
 import { CodeBlock } from "../../highlight"
 import { pageMeta } from "../../meta"
 
-// Pure content page — no React interactivity (TOC/copy/search are the layout enhancer +
+// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
 // the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
 export const hydrate = false
 
 export const meta = pageMeta(
-  "Nifra — images",
-  "A CLS-safe responsive <Image> with pluggable loaders — a CDN, or Nifra's self-hosted resize endpoint (Bun.Image, sharp, or WASM on the edge) with optional signed URLs.",
+  "Nifra - images",
+  "A CLS-safe responsive <Image> with pluggable loaders - a CDN, or Nifra's self-hosted resize endpoint (Bun.Image, sharp, or WASM on the edge) with optional signed URLs.",
 )
 
-const BACKENDS = `// doc-check: skip — illustrates third-party codecs (sharp, @jsquash/*); install them to run it.
+const BACKENDS = `// doc-check: skip - illustrates third-party codecs (sharp, @jsquash/*); install them to run it.
 import { createImageHandler } from "@nifrajs/image/server"
 import { sharpImageBackend, wasmImageBackend } from "@nifrajs/image/backends"
 
-// Node — libvips via sharp. Pass your own import (nifra never depends on it):
+// Node - libvips via sharp. Pass your own import (nifra never depends on it):
 import sharp from "sharp"
 createImageHandler({ backend: sharpImageBackend(sharp), root: "./public" })
 
-// Edge (Workers / Vercel-Edge / Deno-Deploy) — pure-WASM codecs, e.g. jSquash:
+// Edge (Workers / Vercel-Edge / Deno-Deploy) - pure-WASM codecs, e.g. jSquash:
 import decodeJpeg from "@jsquash/jpeg/decode"
 import resize from "@jsquash/resize"
 import encodeWebp from "@jsquash/webp/encode"   // + @jsquash/png, @jsquash/jpeg encoders
@@ -31,7 +31,7 @@ createImageHandler({
   }),
 })`
 
-const SIGNING = `// Lock the endpoint to URLs YOU minted — kills resize-bombing (w/q enumeration).
+const SIGNING = `// Lock the endpoint to URLs YOU minted - kills resize-bombing (w/q enumeration).
 // SAME secret on loader + handler; it's server-only (inject from env, like a session secret).
 import { selfHostedLoader, signImageUrl } from "@nifrajs/image"
 import { createImageHandler } from "@nifrajs/image/server"
@@ -95,7 +95,7 @@ import { createImageHandler } from "@nifrajs/image/server"
 const image = createImageHandler({
   root: "./public",                          // local sources resolve under here (traversal+symlink guarded)
   allowedOrigins: ["https://cdn.example"],   // remote sources: allowlist only (omit ⇒ none)
-  // maxWidth, maxSourceBytes, maxSourcePixels, concurrency, cacheMaxAge — all tunable
+  // maxWidth, maxSourceBytes, maxSourcePixels, concurrency, cacheMaxAge - all tunable
 })
 
 // mount it in your router:
@@ -103,7 +103,7 @@ app.get("/_image", (c) => image(c.req))`
 
 const DIMENSIONS = `import { imageDimensions, readImageDimensions } from "@nifrajs/image"
 
-// Pure-JS header read — PNG / JPEG / GIF / WebP. No decode, no codec, no deps.
+// Pure-JS header read - PNG / JPEG / GIF / WebP. No decode, no codec, no deps.
 const info = await readImageDimensions(Bun.file("public/hero.jpg"))
 // → { width: 1200, height: 630, format: "jpeg" }   (null if unrecognized)
 
@@ -119,7 +119,7 @@ export default function Images() {
       <h1 className="page">Images</h1>
       <p className="lead">
         <code>@nifrajs/image</code> gives you a CLS-safe, responsive <code>&lt;Image&gt;</code> with
-        lazy-by-default loading and a pluggable loader. The <b>core bundles no image codec</b> — point the
+        lazy-by-default loading and a pluggable loader. The <b>core bundles no image codec</b> - point the
         loader at a CDN and the runtime stays tiny. Or self-host: the optional{" "}
         <code>@nifrajs/image/server</code> resizes your own images with <code>Bun.Image</code>.
       </p>
@@ -127,7 +127,7 @@ export default function Images() {
       <h2>The &lt;Image&gt; component</h2>
       <p>
         <code>width</code> and <code>height</code> are <b>required</b> and validated{" "}
-        <code>&gt; 0</code> — they reserve layout space so the page never shifts when the image loads
+        <code>&gt; 0</code> - they reserve layout space so the page never shifts when the image loads
         (the CLS contract). It's <code>loading="lazy"</code> + <code>decoding="async"</code> by default;
         mark the LCP image with <code>priority</code> to get <code>eager</code> +{" "}
         <code>fetchpriority="high"</code>. Extra DOM props (<code>className</code>, <code>style</code>,{" "}
@@ -145,15 +145,15 @@ export default function Images() {
       <p>
         A loader is a pure <code>{`({ src, width, quality? }) => string`}</code> URL builder. Ship with
         <code> cloudflareLoader()</code> (Cloudflare Images) or the no-op <code>identityLoader</code>,
-        or write your own for any CDN — Imgix, Cloudinary, a signed-URL service, anything.
+        or write your own for any CDN - Imgix, Cloudinary, a signed-URL service, anything.
       </p>
       <CodeBlock code={LOADERS} />
 
-      <h2>Self-hosting — nifra's own resize endpoint</h2>
+      <h2>Self-hosting - nifra's own resize endpoint</h2>
       <p>
         No CDN? <code>@nifrajs/image/server</code>'s <code>createImageHandler</code> is a self-hosted resize
         endpoint backed by <code>Bun.Image</code> (libjpeg-turbo / libspng / libwebp, decoded off-thread).
-        Pair it with <code>selfHostedLoader</code> and nifra resizes your own images — no third party in the
+        Pair it with <code>selfHostedLoader</code> and nifra resizes your own images - no third party in the
         path.
       </p>
       <CodeBlock code={SELFHOST} />
@@ -182,24 +182,24 @@ export default function Images() {
       </ul>
       <p>
         The handler reads the filesystem, so its <i>local-source</i> path targets <b>Node/Bun servers</b>
-        — but the codec itself is a pluggable <code>ImageBackend</code>, so it runs anywhere (see below).
+        - but the codec itself is a pluggable <code>ImageBackend</code>, so it runs anywhere (see below).
       </p>
 
-      <h2>Backends — Bun, sharp, or WASM (edge)</h2>
+      <h2>Backends - Bun, sharp, or WASM (edge)</h2>
       <p>
         The codec is a seam: the handler owns all the security above; a backend just
         decodes/resizes/encodes. Three official backends, all from <code>@nifrajs/image/backends</code>:
       </p>
       <ul>
         <li>
-          <code>bunImageBackend()</code> — the default; <code>Bun.Image</code> on Bun servers.
+          <code>bunImageBackend()</code> - the default; <code>Bun.Image</code> on Bun servers.
         </li>
         <li>
-          <code>sharpImageBackend(sharp)</code> — libvips for Node. You pass your <code>sharp</code> import
+          <code>sharpImageBackend(sharp)</code> - libvips for Node. You pass your <code>sharp</code> import
           (nifra keeps zero dependency on it, and you pin the version).
         </li>
         <li>
-          <code>wasmImageBackend(codecs)</code> — pure-WASM decode/resize/encode you wire up (jSquash is
+          <code>wasmImageBackend(codecs)</code> - pure-WASM decode/resize/encode you wire up (jSquash is
           the common choice). The <b>only backend that runs on the edge</b> (Workers / Vercel-Edge /
           Deno-Deploy), where there's no native codec. <code>@nifrajs/image/backends</code> has no{" "}
           <code>node:</code> imports, so it bundles for the edge cleanly; the bomb-safe header probe is
@@ -209,23 +209,23 @@ export default function Images() {
       <CodeBlock code={BACKENDS} />
       <p>
         Prefer not to run a codec on the edge at all? <code>cloudflareLoader</code> still resizes at the
-        CDN — same <code>&lt;Image&gt;</code>, swap the loader.
+        CDN - same <code>&lt;Image&gt;</code>, swap the loader.
       </p>
 
       <h2>Signed URLs</h2>
       <p>
         Because <code>src</code>/<code>w</code>/<code>q</code> are attacker-controllable, a public resize
-        endpoint can be <b>resize-bombed</b> — enumerating widths/qualities to flood CPU + cache. Signing
+        endpoint can be <b>resize-bombed</b> - enumerating widths/qualities to flood CPU + cache. Signing
         shuts that down: set a <code>secret</code> on the loader and the handler, and the endpoint{" "}
         <b>rejects any URL it didn't mint</b> (forged, tampered, or expired) with <code>403</code>, before
         any fetch or decode. The signature is a portable <b>synchronous</b> HMAC-SHA256, so the (sync)
-        loader can sign inline — even on the edge.
+        loader can sign inline - even on the edge.
       </p>
       <CodeBlock code={SIGNING} />
       <p>
         Signatures over <code>(src, w, q)</code> are <b>stable</b> (no expiry), so an SSR-rendered{" "}
         <code>&lt;Image&gt;</code> srcset hydrates and caches identically. The secret makes a loader{" "}
-        config <b>server-only</b> — inject it from <code>env</code> and never import it into a route/client
+        config <b>server-only</b> - inject it from <code>env</code> and never import it into a route/client
         module (same discipline as a <a href="/docs/auth">session secret</a>). For time-limited links to
         private images, <code>signImageUrl(…, {`{ expiresIn }`})</code> adds an <code>&amp;exp=</code> the
         handler enforces.
@@ -234,7 +234,7 @@ export default function Images() {
       <h2>Reading intrinsic dimensions</h2>
       <p>
         Don't want to hardcode <code>width</code>/<code>height</code>? Read them from the file{" "}
-        <b>header</b> in pure JS — no decode, no native dependency — and bake them into a build-time
+        <b>header</b> in pure JS - no decode, no native dependency - and bake them into a build-time
         manifest. Supports PNG, JPEG (scans <code>SOFn</code>, skipping earlier segments), GIF, and WebP
         (VP8 / VP8L / VP8X).
       </p>
@@ -253,7 +253,7 @@ export default function Images() {
         </li>
         <li>
           <code>&lt;Image&gt;</code> ships for <b>all five adapters</b> (React, Preact, Vue, Solid,
-          Svelte) — import from <code>@nifrajs/web-&lt;framework&gt;/image</code>. Each builds the same{" "}
+          Svelte) - import from <code>@nifrajs/web-&lt;framework&gt;/image</code>. Each builds the same{" "}
           <code>&lt;img&gt;</code> from the agnostic <code>resolveImage</code> (non-React adapters map to
           lowercase HTML attrs via <code>toHtmlAttrs</code>).
         </li>

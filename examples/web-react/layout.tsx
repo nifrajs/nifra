@@ -1,6 +1,6 @@
 import type { ReactNode } from "react"
 
-/** A React layout — wraps the page via `props.children`. Composed by the chain in server.ts. */
+/** A React layout - wraps the page via `props.children`. Composed by the chain in server.ts. */
 export default function Layout(props: { children?: ReactNode }) {
   return (
     <div className="app">

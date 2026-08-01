@@ -1,7 +1,7 @@
 /**
- * Filesystem-backed content collections — `defineCollection` reads a directory of Markdown files and
+ * Filesystem-backed content collections - `defineCollection` reads a directory of Markdown files and
  * gives you a typed, validated API over them. Build/server-time (Bun/Node/Deno); for the edge, bake the
- * entries at build (the manifest approach `@nifrajs/web/fs` uses for routes) — tracked as a follow-up.
+ * entries at build (the manifest approach `@nifrajs/web/fs` uses for routes) - tracked as a follow-up.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs"
 import { resolve, sep } from "node:path"
@@ -18,7 +18,7 @@ export interface CollectionConfig<S extends StandardSchemaV1> {
 
 /** A typed collection over a content directory. */
 export interface Collection<Frontmatter> {
-  /** Every entry in the directory (unordered — sort/filter in your loader). Throws if any file's
+  /** Every entry in the directory (unordered - sort/filter in your loader). Throws if any file's
    * frontmatter is invalid. */
   all(): Promise<Array<Entry<Frontmatter>>>
   /** One entry by slug (filename without extension), or `null` if not found. */
@@ -66,7 +66,7 @@ interface CollectionSnapshot<Frontmatter> {
 /**
  * Define a content collection backed by a directory. `all()` discovers + parses every matching file;
  * `get(slug)` loads one. Frontmatter is validated against `schema`, so entries are fully typed and a
- * malformed file fails loudly. Reads the filesystem — use it at build time (SSG/prerender) or on a
+ * malformed file fails loudly. Reads the filesystem - use it at build time (SSG/prerender) or on a
  * long-lived server (Bun/Node/Deno).
  */
 export function defineCollection<S extends StandardSchemaV1>(

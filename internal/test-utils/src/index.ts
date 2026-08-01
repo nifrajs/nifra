@@ -10,7 +10,7 @@ export type Expect<T extends true> = T
 /**
  * Strict type equality. Uses the conditional-inference trick so that
  * `Equal<{ a: 1 }, { a: 1 }>` is `true` but `Equal<string, "a">` is `false`,
- * and — unlike a naive `extends` — it does not collapse `any`.
+ * and - unlike a naive `extends` - it does not collapse `any`.
  */
 export type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false

@@ -1,11 +1,11 @@
 /**
- * The /play enhancer — the interactive playground, as a self-contained browser island. It bundles the
- * real `@nifrajs/core` (`server`), `@nifrajs/schema` (`t`), and `@nifrajs/runner` (`runApp`) — the SAME code
- * that runs on the server — and runs the user's app entirely client-side via `app.fetch`. No backend:
+ * The /play enhancer - the interactive playground, as a self-contained browser island. It bundles the
+ * real `@nifrajs/core` (`server`), `@nifrajs/schema` (`t`), and `@nifrajs/runner` (`runApp`) - the SAME code
+ * that runs on the server - and runs the user's app entirely client-side via `app.fetch`. No backend:
  * `server()`/`app.fetch` are Web-standard (the only Bun-specific bit, `.listen()`, is never called here),
  * so the whole request lifecycle works in the tab.
  *
- * The user's snippet runs through `new Function` — it's their own code, in their own tab (same trust as
+ * The user's snippet runs through `new Function` - it's their own code, in their own tab (same trust as
  * the devtools console), and it never leaves the browser.
  */
 
@@ -43,7 +43,7 @@ return app`,
   validation: {
     label: "Validation",
     code: `// Inputs are validated at the boundary with \`t\`. An invalid body is rejected
-// with a 400 BEFORE your handler runs — edit the second request to see it.
+// with a 400 BEFORE your handler runs - edit the second request to see it.
 const app = server()
   .post(
     "/users",
@@ -101,7 +101,7 @@ function statusBadge(r: RunResult): HTMLElement {
   return el("span", `play-badge play-badge-${tone}`, String(status))
 }
 
-/** Render one request's result as a card (all via textContent — the body never becomes live HTML). */
+/** Render one request's result as a card (all via textContent - the body never becomes live HTML). */
 function renderResult(r: RunResult): HTMLElement {
   const card = el("div", "play-card")
   const head = el("div", "play-card-head")
@@ -129,11 +129,11 @@ async function run(
 ): Promise<void> {
   out.replaceChildren(el("div", "play-running", "Running…"))
   try {
-    // The snippet is the user's own code, running in their own tab — same trust as the console.
+    // The snippet is the user's own code, running in their own tab - same trust as the console.
     const factory = new Function("server", "t", code.value) as (s: unknown, t: unknown) => unknown
     const app = factory(server, t) as { fetch?: unknown } | undefined
     if (!app || typeof app.fetch !== "function") {
-      throw new Error("Your code must `return` a nifra app — e.g. `return server().get(...)`.")
+      throw new Error("Your code must `return` a nifra app - e.g. `return server().get(...)`.")
     }
     let requests: unknown
     try {
@@ -168,7 +168,7 @@ async function share(
     const hash = shareHash(await encodeState({ code: code.value, requests: reqs.value }))
     const url = location.origin + location.pathname + location.search + hash
     history.replaceState(null, "", hash) // make the link real without a reload
-    note = url.length > 8000 ? "Copied — long link, may not paste everywhere" : "Link copied"
+    note = url.length > 8000 ? "Copied - long link, may not paste everywhere" : "Link copied"
     try {
       await navigator.clipboard.writeText(url)
     } catch {
@@ -200,7 +200,7 @@ async function init(): Promise<void> {
   runBtn.addEventListener("click", () => {
     void run(code, reqs, out)
   })
-  // Cmd/Ctrl+Enter runs from either editor — the expected hotkey for a code playground.
+  // Cmd/Ctrl+Enter runs from either editor - the expected hotkey for a code playground.
   const runHotkey = (event: KeyboardEvent): void => {
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
       event.preventDefault()
@@ -296,7 +296,7 @@ async function init(): Promise<void> {
     code.value = restored.code
     reqs.value = restored.requests
     for (const btn of document.querySelectorAll<HTMLButtonElement>("[data-preset]")) {
-      btn.classList.remove("active") // custom code — no preset is active
+      btn.classList.remove("active") // custom code - no preset is active
     }
   }
   // Run once so the results panel is populated on first paint (restored or default).

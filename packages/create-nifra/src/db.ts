@@ -1,15 +1,15 @@
 /**
- * `--db <preset>` — wire a Drizzle data layer into a freshly scaffolded app, so a human (or a coding
+ * `--db <preset>` - wire a Drizzle data layer into a freshly scaffolded app, so a human (or a coding
  * agent) starts from a correct, production-grade DB setup instead of inventing one. nifra ships NO DB
- * abstraction (that belongs to Drizzle/libSQL, not a web framework) — this just bundles the existing
+ * abstraction (that belongs to Drizzle/libSQL, not a web framework) - this just bundles the existing
  * tool, the Redwood-style "batteries available" move: a starter schema, a typed client, a migration
  * config, scripts, and env, all rip-out-able.
  *
  * Three presets, by runtime fit:
- *   - drizzle-libsql   — SQLite that runs EVERYWHERE incl. the edge (local file, or Turso). The default
+ *   - drizzle-libsql   - SQLite that runs EVERYWHERE incl. the edge (local file, or Turso). The default
  *                        cross-runtime answer.
- *   - drizzle-postgres — Postgres (postgres.js) on Bun/Node/Deno.
- *   - drizzle-sqlite   — Bun's built-in `bun:sqlite` (sync, local file). Bun-only.
+ *   - drizzle-postgres - Postgres (postgres.js) on Bun/Node/Deno.
+ *   - drizzle-sqlite   - Bun's built-in `bun:sqlite` (sync, local file). Bun-only.
  *
  * The starter `notes` table follows the production-grade DB defaults for its dialect; what a dialect
  * can't express inline (CHECK constraints, RLS, uuidv7) is called out in a comment, per those rules.
@@ -28,7 +28,7 @@ export const DB_CHOICES = [
 ] as const
 export type DbChoice = (typeof DB_CHOICES)[number]
 
-/** ORM family of a preset — drives the auth adapter, the AGENTS DB rules, and the `c.db` query idiom. */
+/** ORM family of a preset - drives the auth adapter, the AGENTS DB rules, and the `c.db` query idiom. */
 export type Orm = "drizzle" | "prisma" | "kysely"
 
 export interface DbPreset {
@@ -76,12 +76,12 @@ export type Note = typeof notes.$inferSelect
 export type NewNote = typeof notes.$inferInsert
 `
 
-// SQLite has no UUID/TIMESTAMPTZ/RLS — so: text id (app-generated UUID), millisecond-epoch timestamps
+// SQLite has no UUID/TIMESTAMPTZ/RLS - so: text id (app-generated UUID), millisecond-epoch timestamps
 // (timestamp_ms mode → JS Date), NOT NULL by default, soft-delete via deleted_at. Shared by the
 // bun:sqlite and libSQL presets (same dialect). CHECK constraints are deferred to the migration.
 const SQLITE_SCHEMA = `import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core"
 
-// Production-grade starter table (SQLite dialect — see the comment in your DB defaults for what the
+// Production-grade starter table (SQLite dialect - see the comment in your DB defaults for what the
 // dialect can't enforce inline: CHECK constraints go in the generated migration).
 export const notes = sqliteTable("notes", {
   id: text("id")
@@ -192,10 +192,10 @@ ${WIRE_DOC}
 
 const url = process.env.DATABASE_URL
 if (url === undefined || url === "") {
-  throw new Error("DATABASE_URL is not set — copy .env.example to .env and fill it in.")
+  throw new Error("DATABASE_URL is not set - copy .env.example to .env and fill it in.")
 }
 
-// One pooled client per process (per instance in a multi-instance deploy — fine for Postgres).
+// One pooled client per process (per instance in a multi-instance deploy - fine for Postgres).
 export const db = drizzle(postgres(url), { schema })
 export * from "./schema.ts"
 `
@@ -206,7 +206,7 @@ import * as schema from "./schema.ts"
 
 ${WIRE_DOC}
 
-// Bun's built-in SQLite — sync + fast, local file. (Bun-only; for Node/Deno/edge use the libsql preset.)
+// Bun's built-in SQLite - sync + fast, local file. (Bun-only; for Node/Deno/edge use the libsql preset.)
 export const db = drizzle(new Database(process.env.DATABASE_URL ?? "local.db"), { schema })
 export * from "./schema.ts"
 `
@@ -217,7 +217,7 @@ import * as schema from "./schema.ts"
 
 ${WIRE_DOC}
 
-// libSQL runs everywhere — a local file (file:local.db), a remote Turso URL (libsql://…) with an auth
+// libSQL runs everywhere - a local file (file:local.db), a remote Turso URL (libsql://…) with an auth
 // token, or an embedded replica. The one SQLite client that also works on the edge (Cloudflare Workers).
 const token = process.env.DATABASE_AUTH_TOKEN
 export const db = drizzle(
@@ -282,7 +282,7 @@ DATABASE_URL="file:local.db"
 `
 
 // --- Prisma presets ---------------------------------------------------------------------------------
-// Prisma owns its schema DSL (prisma/schema.prisma), client codegen, and migration engine — so the
+// Prisma owns its schema DSL (prisma/schema.prisma), client codegen, and migration engine - so the
 // scaffold is schema + a singleton client + the prisma scripts (no drizzle-kit equivalent needed).
 
 const PRISMA_CLIENT_VERSION = "^6.5.0"
@@ -326,7 +326,7 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// Production-grade starter model (SQLite dialect — no native UUID/TIMESTAMPTZ/RLS; Prisma stores the
+// Production-grade starter model (SQLite dialect - no native UUID/TIMESTAMPTZ/RLS; Prisma stores the
 // String id + DateTime stamps for you). NOT NULL by default, soft-delete via deletedAt. CHECK
 // constraints are deferred to the generated migration SQL.
 model Note {
@@ -423,10 +423,10 @@ ${WIRE_DOC}
 
 const url = process.env.DATABASE_URL
 if (url === undefined || url === "") {
-  throw new Error("DATABASE_URL is not set — copy .env.example to .env and fill it in.")
+  throw new Error("DATABASE_URL is not set - copy .env.example to .env and fill it in.")
 }
 
-// One pooled client per process (per instance in a multi-instance deploy — fine for Postgres).
+// One pooled client per process (per instance in a multi-instance deploy - fine for Postgres).
 export const db = new Kysely<DB>({
   dialect: new PostgresDialect({ pool: new Pool({ connectionString: url }) }),
 })
@@ -435,7 +435,7 @@ export type { DB } from "./schema.ts"
 
 const KYSELY_MIGRATION = `import { type Kysely, sql } from "kysely"
 
-// Production-grade starter table. Postgres: UUID PK (gen_random_uuid — swap to gen_uuidv7() for insert
+// Production-grade starter table. Postgres: UUID PK (gen_random_uuid - swap to gen_uuidv7() for insert
 // locality on hot tables once available), TIMESTAMPTZ stamps, NOT NULL by default, soft-delete via
 // deleted_at. Add CHECK constraints (e.g. length caps) and RLS here per your DB defaults.
 export async function up(db: Kysely<unknown>): Promise<void> {
@@ -505,7 +505,7 @@ export const DB_PRESETS: Readonly<Record<DbChoice, DbPreset>> = {
     label: "Drizzle + Postgres",
     orm: "drizzle",
     dialect: "postgres",
-    note: "Postgres (postgres.js) on Bun/Node/Deno — not the edge.",
+    note: "Postgres (postgres.js) on Bun/Node/Deno - not the edge.",
     deps: { "drizzle-orm": DRIZZLE_ORM, postgres: "^3.4.5" },
     devDeps: { "drizzle-kit": DRIZZLE_KIT },
     scripts: SCRIPTS,
@@ -523,7 +523,7 @@ export const DB_PRESETS: Readonly<Record<DbChoice, DbPreset>> = {
     label: "Drizzle + SQLite (bun:sqlite)",
     orm: "drizzle",
     dialect: "sqlite",
-    note: "Bun's built-in SQLite — local file, Bun-only.",
+    note: "Bun's built-in SQLite - local file, Bun-only.",
     deps: { "drizzle-orm": DRIZZLE_ORM },
     devDeps: { "drizzle-kit": DRIZZLE_KIT },
     scripts: SCRIPTS,
@@ -541,7 +541,7 @@ export const DB_PRESETS: Readonly<Record<DbChoice, DbPreset>> = {
     label: "Prisma + Postgres",
     orm: "prisma",
     dialect: "postgres",
-    note: "Prisma ORM on Postgres (Bun/Node/Deno) — own schema DSL, migrate engine, and Studio.",
+    note: "Prisma ORM on Postgres (Bun/Node/Deno) - own schema DSL, migrate engine, and Studio.",
     deps: { "@prisma/client": PRISMA_CLIENT_VERSION },
     devDeps: { prisma: PRISMA_CLIENT_VERSION },
     scripts: PRISMA_SCRIPTS,
@@ -561,7 +561,7 @@ export const DB_PRESETS: Readonly<Record<DbChoice, DbPreset>> = {
     label: "Prisma + SQLite",
     orm: "prisma",
     dialect: "sqlite",
-    note: "Prisma ORM on a local SQLite file — fastest start; migrate to Postgres later by swapping the datasource.",
+    note: "Prisma ORM on a local SQLite file - fastest start; migrate to Postgres later by swapping the datasource.",
     deps: { "@prisma/client": PRISMA_CLIENT_VERSION },
     devDeps: { prisma: PRISMA_CLIENT_VERSION },
     scripts: PRISMA_SCRIPTS,
@@ -581,7 +581,7 @@ export const DB_PRESETS: Readonly<Record<DbChoice, DbPreset>> = {
     label: "Kysely + Postgres",
     orm: "kysely",
     dialect: "postgres",
-    note: "Kysely typed query builder on Postgres (node-postgres) — you own the schema types + migrations.",
+    note: "Kysely typed query builder on Postgres (node-postgres) - you own the schema types + migrations.",
     deps: { kysely: KYSELY_VERSION, pg: "^8.13.1" },
     devDeps: { "@types/pg": "^8.11.10" },
     scripts: KYSELY_SCRIPTS,
@@ -624,7 +624,7 @@ export async function writeDbFiles(target: string, choice: DbChoice): Promise<vo
   try {
     current = await readFile(gitignorePath, "utf8")
   } catch {
-    // No .gitignore in this template — create one with just the DB block.
+    // No .gitignore in this template - create one with just the DB block.
   }
   if (!current.includes("local.db")) {
     await writeFile(gitignorePath, `${current}${GITIGNORE_BLOCK}`)

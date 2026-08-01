@@ -81,7 +81,7 @@ export interface RouteEntry {
   readonly derives: ReadonlyArray<RawDerive>
   /** Static context extensions captured at registration. */
   readonly decorations: Record<PropertyKey, unknown>
-  /** Whether {@link decorations} has any keys — precomputed so the hot path skips a no-op
+  /** Whether {@link decorations} has any keys - precomputed so the hot path skips a no-op
    * `Object.assign` on the (common) no-decoration route. */
   readonly hasDecorations: boolean
   /** Lifecycle hooks captured at registration (order-scoped). */

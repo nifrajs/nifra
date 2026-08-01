@@ -1,41 +1,41 @@
 import { CodeBlock } from "../../highlight"
 import { pageMeta } from "../../meta"
 
-// Pure content page — no React interactivity (TOC/copy/search are the layout enhancer + the Nira
+// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer + the Nira
 // island), so ship zero framework JS and avoid hydrating the inline-script DOM.
 export const hydrate = false
 
 export const meta = pageMeta(
-  "Nifra — Troubleshooting",
+  "Nifra - Troubleshooting",
   "Fixes keyed on the literal error strings Nifra prints: `reached the client bundle` (a node:/native import in the browser bundle), `server-only module reached the client bundle` (the server-only marker), and `resolveDispatcher` / `Invalid hook call` (duplicate React).",
 )
 
-// The server-only marker — the new opt-in client-leak guard. A pure-server module with no `node:`
+// The server-only marker - the new opt-in client-leak guard. A pure-server module with no `node:`
 // import (so the node-builtin guard can't catch it) opts in with the side-effect import; the type
 // brand documents intent. This snippet imports from @nifrajs/web, so `check:docs` typechecks it.
-const SERVER_ONLY_MARKER = `// secrets.ts — pure server logic: a secret constant, no \`node:\` import to catch.
+const SERVER_ONLY_MARKER = `// secrets.ts - pure server logic: a secret constant, no \`node:\` import to catch.
 import "@nifrajs/web/server-only"             // ← fails the CLIENT build (loud, with the import chain)
 import type { ServerOnly } from "@nifrajs/web" // ← type-level intent: this value is server-only
 
 // \`ServerOnly<string>\` is structurally \`string\` (the brand is an optional phantom field), so it
-// stays assignment-compatible — it documents intent without obstructing real use.
+// stays assignment-compatible - it documents intent without obstructing real use.
 export const apiKey: ServerOnly<string> = process.env.SECRET_API_KEY!
 
 // If this module ever reaches a browser chunk, buildClient fails with:
 //   server-only module reached the client bundle via routes/x.tsx → ./secrets.ts (marked server-only)
 // Reach it from a loader/action (server-only) instead, and the secret never ships to the client.`
 
-// The .server.ts convention — the auto-empty alternative. No marker import needed: the filename is
+// The .server.ts convention - the auto-empty alternative. No marker import needed: the filename is
 // the signal, and the client build replaces the module with an empty one. Multi-file by design
 // (db.server.ts + routes/notes.tsx with a relative import), so it opts out of the single-file
 // doc-check; the marker snippet above is the one check:docs typechecks against the live API.
-const SERVER_CONVENTION = `// doc-check: skip — illustrative two-file layout (a relative cross-file import).
-// db.server.ts — the \`.server\` convention: the client build EMPTIES this module, so its
-// \`node:\` / native imports never ship to the browser. No marker import needed — the filename is it.
+const SERVER_CONVENTION = `// doc-check: skip - illustrative two-file layout (a relative cross-file import).
+// db.server.ts - the \`.server\` convention: the client build EMPTIES this module, so its
+// \`node:\` / native imports never ship to the browser. No marker import needed - the filename is it.
 import { Database } from "bun:sqlite"
 export const db = new Database("app.db")
 
-// routes/notes.tsx — import the server module from a loader; it runs only on the server during SSR.
+// routes/notes.tsx - import the server module from a loader; it runs only on the server during SSR.
 import type { LoaderContext } from "@nifrajs/web"
 import { db } from "../db.server"
 export async function loader(_ctx: LoaderContext) {
@@ -93,17 +93,17 @@ export default function Troubleshooting() {
         the runtime all use the same wording so you can grep for it.
       </p>
 
-      <h2><code>reached the client bundle</code> — a <code>node:</code> / native import leaked to the browser</h2>
+      <h2><code>reached the client bundle</code> - a <code>node:</code> / native import leaked to the browser</h2>
       <p>
         The client build refuses to ship a Node built-in (<code>node:fs</code>, <code>node:crypto</code>,{" "}
         <code>bun:sqlite</code>, a native driver like <code>pg</code>) to the browser. Bun would
-        silently substitute a polyfill that breaks — or leaks server code — at runtime, so Nifra fails
+        silently substitute a polyfill that breaks - or leaks server code - at runtime, so Nifra fails
         the build instead. The message names the offending builtin and the <strong>import chain</strong>{" "}
         that pulled it in:
       </p>
       <blockquote>
         <p>
-          [nifra/web] Node built-in(s) in the client bundle — move them behind a server-only path
+          [nifra/web] Node built-in(s) in the client bundle - move them behind a server-only path
           <br />
           {"  "}- node:crypto reached the client bundle via routes/x.tsx → ../data.ts → ../db.ts
           (chunk: x-abc123.js)
@@ -139,17 +139,17 @@ export default function Troubleshooting() {
         </p>
       </blockquote>
 
-      <h2><code>server-only module reached the client bundle</code> — the server-only marker fired</h2>
+      <h2><code>server-only module reached the client bundle</code> - the server-only marker fired</h2>
       <p>
         This is the companion guard for <strong>pure server logic that carries no <code>node:</code>{" "}
-        import</strong> — a secret-bearing constant, a server-only API call — so the node-builtin guard
+        import</strong> - a secret-bearing constant, a server-only API call - so the node-builtin guard
         above has nothing to catch and the <code>.server</code> convention needs the file to be{" "}
         <em>named</em> <code>*.server</code>. You opt a module in with a side-effect import, and the
         client build fails loud (with the import chain) if it ever lands in a browser chunk:
       </p>
       <blockquote>
         <p>
-          [nifra/web] server-only module(s) in the client bundle — a module marked{" "}
+          [nifra/web] server-only module(s) in the client bundle - a module marked{" "}
           <code>import "@nifrajs/web/server-only"</code> reached the browser.
           <br />
           {"  "}- server-only module reached the client bundle via routes/x.tsx → ./secrets.ts (marked
@@ -190,7 +190,7 @@ export default function Troubleshooting() {
             <td>
               <code>{"ServerOnly<T>"}</code> type
             </td>
-            <td>type-level intent only — does NOT keep it out of the bundle</td>
+            <td>type-level intent only - does NOT keep it out of the bundle</td>
             <td>
               documenting that a value must not cross to the browser; pair it with one of the two
               runtime markers
@@ -199,7 +199,7 @@ export default function Troubleshooting() {
         </tbody>
       </table>
       <p>
-        A worked example — a secret with no <code>node:</code> import, marked so a leak fails the build
+        A worked example - a secret with no <code>node:</code> import, marked so a leak fails the build
         rather than shipping the key to every visitor:
       </p>
       <CodeBlock code={SERVER_ONLY_MARKER} />
@@ -211,7 +211,7 @@ export default function Troubleshooting() {
         <code>.server</code> filename.
       </p>
 
-      <h2><code>resolveDispatcher</code> / <code>Invalid hook call</code> — duplicate React</h2>
+      <h2><code>resolveDispatcher</code> / <code>Invalid hook call</code> - duplicate React</h2>
       <p>
         If SSR throws <code>Cannot read properties of null (reading 'useState')</code> inside{" "}
         <code>resolveDispatcher</code>, or React logs <strong>"Invalid hook call. Hooks can only be
@@ -232,7 +232,7 @@ export default function Troubleshooting() {
           dependency), so it resolves to the app's single copy.
         </li>
         <li>
-          Ensure one React version across the workspace — pin it in the root{" "}
+          Ensure one React version across the workspace - pin it in the root{" "}
           <code>package.json</code> <code>overrides</code> (Nifra's own repo pins{" "}
           <code>react</code> / <code>react-dom</code> this way) so every package resolves the same
           copy.
@@ -264,7 +264,7 @@ export default function Troubleshooting() {
             A route returns a raw <code>Response</code>.
           </b>{" "}
           That route's <code>data</code> infers <code>never</code> (Nifra can't see the shape). Return a
-          plain object and shape the response with <code>c.set</code> — reach for <code>c.json</code> /{" "}
+          plain object and shape the response with <code>c.set</code> - reach for <code>c.json</code> /{" "}
           <code>c.text</code> only for an error short-circuit (<code>throw</code> from a{" "}
           <code>derive</code> / <code>beforeHandle</code>), not a route's happy path. See{" "}
           <a href="/docs/api">API &amp; typed client</a>.
@@ -288,7 +288,7 @@ export default function Troubleshooting() {
       </h3>
       <p>
         If <code>api.thing.get(&#123; query: &#123; … &#125; &#125;)</code> errors, the route declares no{" "}
-        <code>query</code> schema — its query types as <code>never</code>, so the client can't accept query
+        <code>query</code> schema - its query types as <code>never</code>, so the client can't accept query
         params. The error reads out the fix; add a schema to the route:{" "}
         <code>{`.get("/thing", { query: z.object({ page: z.string() }) }, h)`}</code>. Then{" "}
         <code>c.query</code> is the validated type and the client accepts a typed <code>query</code>.
@@ -377,7 +377,7 @@ export default function Troubleshooting() {
 
       <h2>Still stuck?</h2>
       <p>
-        Run <code>nifra check --json</code> as the done-gate — it surfaces the import-chain leaks,
+        Run <code>nifra check --json</code> as the done-gate - it surfaces the import-chain leaks,
         typed-client drift, and raw-<code>Response</code>-from-a-route issues before you ship. The
         full machine-readable contract is at <a href="/llms-full.txt">/llms-full.txt</a>, and each
         package ships a tight <code>LLM.md</code> contract card.

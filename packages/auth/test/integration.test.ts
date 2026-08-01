@@ -49,7 +49,7 @@ describe("auth end-to-end (real nifra server: login → protected → logout)", 
     expect(login.status).toBe(200)
     const cookie = cookieHeader(login)
     expect(cookie.startsWith("nifra_session=")).toBe(true)
-    // Store mode keeps data server-side — the user id is not in the cookie.
+    // Store mode keeps data server-side - the user id is not in the cookie.
     expect(cookie).not.toContain("alice")
     const setCookie = login.headers.getSetCookie()[0] ?? ""
     expect(setCookie).toContain("HttpOnly")

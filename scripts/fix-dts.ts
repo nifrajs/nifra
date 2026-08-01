@@ -10,7 +10,7 @@
 import { Glob } from "bun"
 
 const dir = process.argv[2] ?? "dist"
-// `from "./x.ts"` / `from '../y.ts'` and `import("./x.ts")` — relative specifiers only.
+// `from "./x.ts"` / `from '../y.ts'` and `import("./x.ts")` - relative specifiers only.
 const RELATIVE_TS = /((?:from|import\()\s*["'])(\.\.?\/[^"']*?)\.ts(["'])/g
 
 let changed = 0

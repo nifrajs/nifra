@@ -22,7 +22,7 @@ describe("MemorySessionStore", () => {
     await store.delete("missing") // no-op
   })
 
-  test("bounded — oldest-inserted evicts past max; re-set refreshes recency", async () => {
+  test("bounded - oldest-inserted evicts past max; re-set refreshes recency", async () => {
     const store = new MemorySessionStore({ max: 2 })
     await store.set("1", rec({ n: 1 }))
     await store.set("2", rec({ n: 2 }))
@@ -52,7 +52,7 @@ describe("MemorySessionStore", () => {
   })
 })
 
-// A faithful in-memory KV double — records puts so the expiration backstop can be asserted.
+// A faithful in-memory KV double - records puts so the expiration backstop can be asserted.
 class FakeKV implements KVNamespaceLike {
   readonly store = new Map<string, string>()
   readonly puts: Array<{ key: string; value: string; expiration: number | undefined }> = []

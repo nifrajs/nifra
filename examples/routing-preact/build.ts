@@ -1,6 +1,6 @@
 // Build the client bundle via @nifrajs/web/build: discover routes → codegen → Bun.build, content-hashed
 // + minified, writing dist/manifest.json (read by server.ts). The route .tsx files carry a
-// `/** @jsxImportSource preact */` pragma, so Bun transpiles their JSX to preact/jsx-runtime — no
+// `/** @jsxImportSource preact */` pragma, so Bun transpiles their JSX to preact/jsx-runtime - no
 // build plugin needed (contrast routing-solid's Babel preload).
 //   bun run examples/routing-preact/build.ts
 import { buildClient, prerenderRoutes } from "@nifrajs/web/build"

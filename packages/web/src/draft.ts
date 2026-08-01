@@ -1,8 +1,8 @@
 /**
- * Draft / preview mode — let an editor see unpublished content by flipping a signed cookie that
+ * Draft / preview mode - let an editor see unpublished content by flipping a signed cookie that
  * loaders read (`ctx.draft`) and ISR bypasses (fresh render, never cached). The cookie is **HMAC-signed**
- * (so a visitor can't forge it) and **HttpOnly** (JS can't read it). You gate `enableDraft` yourself —
- * behind an editor login or a `?token=` check — exactly like Next's `draftMode().enable()`.
+ * (so a visitor can't forge it) and **HttpOnly** (JS can't read it). You gate `enableDraft` yourself -
+ * behind an editor login or a `?token=` check - exactly like Next's `draftMode().enable()`.
  *
  *   // a route you've protected (e.g. checked ?token= against a secret):
  *   app.get("/api/draft", async (c) => {
@@ -26,11 +26,11 @@ import { timingSafeEqual } from "./internal/timing-safe-equal.ts"
 /** The cookie name nifra uses for draft/preview mode. */
 export const DRAFT_COOKIE = "__nifra_draft"
 
-// The signed cookie's payload is a fixed marker — a *valid signature* (not the value) is the signal
+// The signed cookie's payload is a fixed marker - a *valid signature* (not the value) is the signal
 // that the server issued this via enableDraft(). Nothing secret is stored in it.
 const DRAFT_MARKER = "1"
 
-/** The response-cookie surface `enableDraft`/`disableDraft` need — nifra's `c.set`. Structural, so any
+/** The response-cookie surface `enableDraft`/`disableDraft` need - nifra's `c.set`. Structural, so any
  * nifra handler context satisfies it without importing the full `Context`. */
 export interface DraftCookieControls {
   cookie(name: string, value: string, options?: CookieOptions): void
@@ -38,18 +38,18 @@ export interface DraftCookieControls {
 }
 
 export interface EnableDraftOptions {
-  /** Cookie lifetime in **seconds** (default `3600` = 1h). Keep it short — draft is an editor session. */
+  /** Cookie lifetime in **seconds** (default `3600` = 1h). Keep it short - draft is an editor session. */
   readonly maxAgeSeconds?: number
   /** Cookie `Path` (default `"/"`). */
   readonly path?: string
-  /** Override the `Secure` attribute (defaults to `true` — secure-by-default). Pass `false` only for
+  /** Override the `Secure` attribute (defaults to `true` - secure-by-default). Pass `false` only for
    * local `http://` dev, where a `Secure` cookie isn't stored. */
   readonly secure?: boolean
 }
 
 /**
  * Turn draft mode **on** for this client by setting a signed, HttpOnly `__nifra_draft` cookie. Call it
- * from a route you've already authorized. `secret` signs the cookie — pass the SAME secret to
+ * from a route you've already authorized. `secret` signs the cookie - pass the SAME secret to
  * `createWebApp({ draftSecret })` and `withISR({ draftSecret })` so the framework can verify it.
  */
 export async function enableDraft(
@@ -68,7 +68,7 @@ export async function enableDraft(
  *
  * `secure` is resolved here rather than left to the caller: `serializeCookie` is pure and applies
  * **no** security defaults, so the `previewEndpoint` path would silently emit a cookie without
- * `Secure` — over plain HTTP that hands the draft cookie to any network observer. Passing it
+ * `Secure` - over plain HTTP that hands the draft cookie to any network observer. Passing it
  * explicitly makes both paths identical instead of one inheriting a default the other never sees.
  */
 function draftCookieOptions(options: EnableDraftOptions): CookieOptions {
@@ -106,7 +106,7 @@ export async function isDraftEnabled(request: Request, secret: string): Promise<
  *
  * A redirect target that arrives in the query string is attacker-controlled: anyone can mint a link
  * to your own preview route and choose where the editor lands. "Starts with `/`" is the check people
- * write and it is not enough — `//evil.com` is a protocol-relative URL and `/\evil.com` is normalized
+ * write and it is not enough - `//evil.com` is a protocol-relative URL and `/\evil.com` is normalized
  * to one by browsers, so both start with a slash and navigate off-site. Control characters are refused
  * as well, since a newline in a `Location` header splits the response.
  */
@@ -124,7 +124,7 @@ function safeRedirectPath(value: string): string | null {
 export interface PreviewEndpointOptions {
   /** Shared secret the preview link must carry. Compared in **constant time**. */
   readonly secret: string
-  /** Secret that **signs** the draft cookie — the same one passed to `createWebApp({ draftSecret })`
+  /** Secret that **signs** the draft cookie - the same one passed to `createWebApp({ draftSecret })`
    * and `withISR({ draftSecret })`. Keep it distinct from {@link secret}: that one travels in URLs
    * (logs, `Referer`, browser history), this one never leaves the server. */
   readonly draftSecret: string
@@ -140,17 +140,17 @@ export interface PreviewEndpointOptions {
 }
 
 /**
- * A **preview / draft-mode entry point** — a `fetch` handler that checks a preview token, turns draft
+ * A **preview / draft-mode entry point** - a `fetch` handler that checks a preview token, turns draft
  * mode on, and redirects the editor to the page they wanted. `GET` with `?token=<secret>&to=/some/path`;
  * mount it on a nifra route, e.g. `app.get("/api/preview", (c) => handler(c.req))`.
  *
- * This is the link-borne sibling of `revalidateEndpoint`. It exists because the alternative — telling
- * you to gate the route yourself — means hand-rolling two checks that are easy to get subtly wrong and
+ * This is the link-borne sibling of `revalidateEndpoint`. It exists because the alternative - telling
+ * you to gate the route yourself - means hand-rolling two checks that are easy to get subtly wrong and
  * that fail silently when you do: the token compare must not exit early on the first wrong character,
  * and the `?to=` destination must not be allowed to point off-site. Both are handled here.
  *
  * A CMS "Preview" button is a plain link, so the token has to ride the query string. That has a cost
- * no endpoint can remove — the secret lands in server logs, the `Referer` header, and browser history.
+ * no endpoint can remove - the secret lands in server logs, the `Referer` header, and browser history.
  * Use a preview token minted for that purpose, rotate it, and never reuse a token that grants anything
  * beyond draft mode.
  *

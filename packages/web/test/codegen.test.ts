@@ -53,7 +53,7 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   expect(code).toContain('"_404": () => Promise.all([')
   expect(code).toContain('"_410": () => Promise.all([')
   // loadModule caches the component chain + the chain's meta list (layouts→page) per route, so a
-  // soft-nav merges the layout chain's head with the page's (matching the SSR <head>) — #3.
+  // soft-nav merges the layout chain's head with the page's (matching the SSR <head>) - #3.
   expect(code).toContain("const loadModule = async (id) =>")
   expect(code).toContain("chains[id] = mods.map((m) => m.default)")
   expect(code).toContain("metas[id] = mods.map((m) => m.meta)")
@@ -78,12 +78,12 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   expect(code).toContain("mountRouter({ router, routes: chains, searchSchemas, container: root })")
   // The hydration signal fires on the frame after the adapter mounts (see the Hydration guide).
   expect(code).toContain("requestAnimationFrame(signalHydrated)")
-  // head updates on navigation from the matched route's MERGED chain meta (layouts→page) + data — #3.
+  // head updates on navigation from the matched route's MERGED chain meta (layouts→page) + data - #3.
   expect(code).toContain(
     "applyHead(mergeHeads((metas[s.routeId] ?? [undefined]).map((m) => resolveMeta(m, args))))",
   )
   // Item 1: the client passes `origin: location.origin` into MetaArgs. It equals the SSR-side
-  // `URL(req.url).origin`, so a soft-nav re-resolves the SAME absolute canonical/og:url — no head drift.
+  // `URL(req.url).origin`, so a soft-nav re-resolves the SAME absolute canonical/og:url - no head drift.
   expect(code).toContain("const args = { data: s.data, params: s.params, origin: location.origin }")
   // Initial data is mapped through `mapDeferred` so `{__nifra_deferred: id}` placeholders become the
   // registry's promises (a no-op for non-deferred pages).
@@ -93,7 +93,7 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   expect(code).toContain("window.__nifraDeferred(d.__nifra_deferred)")
   expect(code).toContain("d.map(mapDeferred)")
   expect(code).toContain("actionData: mapDeferred(window.__NIFRA_ACTION__)")
-  // Initial `path` carries the query too (`pathname + search`) — SSR threads `pathname+search` into
+  // Initial `path` carries the query too (`pathname + search`) - SSR threads `pathname+search` into
   // useLocation/useSearchParams, so the hydrating state must match or a query-reading page would drift.
   expect(code).toContain("path: location.pathname + location.search")
 })
@@ -142,7 +142,7 @@ test("generateServerManifest emits STATIC imports + a buildManifest-backed manif
     clientEntry: "/assets/entry-abc123.js",
   })
   expect(code).toContain('import { buildManifest } from "@nifrajs/web"')
-  // STATIC `import * as` per unique file (5) — including dedicated terminal status pages.
+  // STATIC `import * as` per unique file (5) - including dedicated terminal status pages.
   expect(code.match(/^import \* as m\d+ from /gm)?.length).toBe(5)
   // Files are sorted: _404 (m0), _410 (m1), _layout (m2), index (m3), users/[id] (m4).
   expect(code).toContain('import * as m1 from "./routes/_410.tsx"')
@@ -152,7 +152,7 @@ test("generateServerManifest emits STATIC imports + a buildManifest-backed manif
   expect(code).toContain('"_410.tsx": m1,')
   expect(code).toContain('"index.tsx": m3,')
   expect(code).toContain('"users/[id].tsx": m4,')
-  // clientEntry baked — a disk-less worker can't read manifest.json at runtime.
+  // clientEntry baked - a disk-less worker can't read manifest.json at runtime.
   expect(code).toContain('export const clientEntry = "/assets/entry-abc123.js"')
   // Rebuilt via the SAME pure logic discoverRoutes feeds (patterns + layout chains match exactly).
   expect(code).toContain(
@@ -164,7 +164,7 @@ test("generateServerManifest emits STATIC imports + a buildManifest-backed manif
 })
 
 test("generateServerManifest's runtime pattern round-trips through createWebApp (no fs)", async () => {
-  // The exact expression generateServerManifest emits — exercised with in-memory route modules
+  // The exact expression generateServerManifest emits - exercised with in-memory route modules
   // (the bundled worker's `import * as` namespaces) to prove createWebApp SSRs from it, unchanged.
   const modules: Record<string, RouteModule> = {
     "_layout.tsx": { default: "layout" },
@@ -177,7 +177,7 @@ test("generateServerManifest's runtime pattern round-trips through createWebApp 
     (file) => () => Promise.resolve(modules[file] as RouteModule),
   )
   const app = createWebApp({ adapter: stub, manifest, clientEntry: "/c.js" })
-  // index: loader ran, wrapped in the root _layout (chain 2 = [layout, page]) — buildManifest applies
+  // index: loader ran, wrapped in the root _layout (chain 2 = [layout, page]) - buildManifest applies
   // the root layout to every route, proving the layout-chain derivation survives the codegen pattern.
   expect(await (await app.fetch(new Request("http://x/"))).text()).toContain(
     'chain=2:{"hello":"edge"}',

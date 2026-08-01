@@ -20,17 +20,17 @@ const app = server()
 
 ## What it does per request
 
-- **Continues an inbound trace** — parses the `traceparent` header; reuses its `trace-id` and records
+- **Continues an inbound trace** - parses the `traceparent` header; reuses its `trace-id` and records
   the inbound span as the parent. No inbound header → starts a fresh trace.
 - **Opens a span** with HTTP semantic-convention attributes (`http.request.method`, `url.path`,
   `http.response.status_code`, optional `service.name`), ended on response with duration + status
   (`error` for 5xx, `ok` otherwise).
-- **Exposes `c.trace`** (`{ traceId, spanId, parentSpanId?, sampled, traceparent }`) — spread
+- **Exposes `c.trace`** (`{ traceId, spanId, parentSpanId?, sampled, traceparent }`) - spread
   `traceHeaders(c.trace)` into any downstream `fetch`/`ctx.api` call to continue the trace.
 - **Exposes `c.causality`** - a bounded, payload-free request node that survives durable command,
   event, workflow, projection, and repair seams. `traceHeaders(c.trace, c.causality)` forwards both
   conventions to a trusted downstream service.
-- **Exposes `c.observation`** — integrations can start correctly-parented child observations or
+- **Exposes `c.observation`** - integrations can start correctly-parented child observations or
   attach an adapter without rebuilding request lifecycle state.
 - `responseHeader: true` also sets `traceparent` on the response (browser/client correlation).
 
@@ -70,10 +70,10 @@ interface ObservationAdapter {
 }
 ```
 
-- `consoleSpanExporter()` — logs each completed span as one structured line (dev / starting point).
-- `tracing({ adapters: [devtoolsAdapter, privateAdapter] })` — fan out the same lifecycle; adapter
+- `consoleSpanExporter()` - logs each completed span as one structured line (dev / starting point).
+- `tracing({ adapters: [devtoolsAdapter, privateAdapter] })` - fan out the same lifecycle; adapter
   failures are isolated and never alter the response.
-- **OpenTelemetry SDK bridge** — a ~10-line adapter maps `NifraSpan` onto a real OTel `Span` from a
+- **OpenTelemetry SDK bridge** - a ~10-line adapter maps `NifraSpan` onto a real OTel `Span` from a
   `Tracer` (the attribute names already follow OTel conventions, so they pass straight through). Your
   app depends on `@opentelemetry/*`; `@nifrajs/otel` does not.
 
@@ -88,7 +88,7 @@ it over hand-rolling traceparent parsing, clocks, error status, or completion gu
 
 ## For AI agents
 
-Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports you call + its footguns),
 one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the

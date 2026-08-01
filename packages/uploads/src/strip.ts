@@ -1,16 +1,16 @@
 /**
- * Strip EXIF/GPS/metadata from an uploaded image by **re-encoding** it — decoders don't carry
+ * Strip EXIF/GPS/metadata from an uploaded image by **re-encoding** it - decoders don't carry
  * embedded metadata through, so a decode→encode round-trip drops it (and normalizes the format).
  *
  * Backend-agnostic: pass any `@nifrajs/image` backend (`bunImageBackend`, `sharpImageBackend`,
- * `wasmImageBackend`) — the structural type below matches them, so this package takes **no** dependency
+ * `wasmImageBackend`) - the structural type below matches them, so this package takes **no** dependency
  * on `@nifrajs/image`. Run server-side (the codecs are Node/Bun-only); validate the upload first
  * (`validateUpload`) so you only re-encode real images.
  */
 
 type StripFormat = "webp" | "jpeg" | "png"
 
-/** The slice of `@nifrajs/image`'s `ImageBackend` this needs — `probe` for dims/format, `transform` to re-encode. */
+/** The slice of `@nifrajs/image`'s `ImageBackend` this needs - `probe` for dims/format, `transform` to re-encode. */
 export interface ImageReencoder {
   probe(
     bytes: Uint8Array,
@@ -26,7 +26,7 @@ export interface ImageReencoder {
 export interface StripImageMetadataOptions {
   /** Output format. Default: keep png/jpeg, else re-encode to webp. */
   readonly format?: StripFormat
-  /** Encode quality (1–100). Default 82. */
+  /** Encode quality (1-100). Default 82. */
   readonly quality?: number
 }
 

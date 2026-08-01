@@ -42,7 +42,7 @@ function jsonRequest(method: string, path: string, body: unknown): Request {
 }
 
 /**
- * A POST whose body is a `ReadableStream` — which carries NO `Content-Length`, so it
+ * A POST whose body is a `ReadableStream` - which carries NO `Content-Length`, so it
  * exercises the streaming byte-cap path (the security guard), not the native fast path.
  */
 function streamRequest(path: string, payload: string): Request {
@@ -60,7 +60,7 @@ function streamRequest(path: string, payload: string): Request {
 }
 
 /**
- * A POST with an explicit `Content-Length` — which triggers the native fast path.
+ * A POST with an explicit `Content-Length` - which triggers the native fast path.
  * Defaults to the real byte length; override `declared` to simulate an over-cap claim.
  */
 function lengthedRequest(path: string, payload: string, declared?: number): Request {
@@ -117,7 +117,7 @@ describe("body validation", () => {
   test("a malformed Content-Length is rejected with 400, not silently streamed", async () => {
     const app = server().post("/users", { body: userBody }, (c) => c.body)
     // A non-`1*DIGIT` length (negative/fractional/non-numeric/exponential/hex) is malformed. Real HTTP
-    // servers never deliver these, but a hand-built Request can — reject up front rather than falling
+    // servers never deliver these, but a hand-built Request can - reject up front rather than falling
     // through to the streaming guard (an upper-bound cap that would still read a lying-smaller body).
     for (const bad of ["-5", "1.5", "abc", "1e3", "0x10"]) {
       const req = new Request("http://localhost/users", {
@@ -165,7 +165,7 @@ describe("body validation", () => {
 
   test("an oversized streamed body (no Content-Length) is rejected by the streaming byte-cap", async () => {
     // The security guarantee the fast path must NOT regress: a chunked / length-less
-    // body still can't force unbounded buffering — the running byte count aborts it.
+    // body still can't force unbounded buffering - the running byte count aborts it.
     const app = server({ maxBodyBytes: 10 }).post("/users", { body: userBody }, (c) => c.body)
     const req = streamRequest("/users", JSON.stringify({ name: "x".repeat(100) }))
     expect(req.headers.get("content-length")).toBeNull()

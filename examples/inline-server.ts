@@ -10,6 +10,6 @@ const app = server()
   .get("/users/:id", (c) => ({ id: c.params.id }))
 
 // `app.fetch(Request) -> Promise<Response>` runs the whole lifecycle without binding
-// a port — handy for demos and tests. In production you'd `app.listen(3000)` instead.
+// a port - handy for demos and tests. In production you'd `app.listen(3000)` instead.
 const res = await app.fetch(new Request("http://localhost/users/42"))
 console.log(res.status, await res.json()) // 200 { id: "42" }

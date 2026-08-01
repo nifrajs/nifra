@@ -34,7 +34,7 @@ import { createViteDevServer, type ViteDevServer } from "../src/vite.ts"
 // Inside the workspace so the fixture's `@nifrajs/web/client` import resolves via node_modules hoisting,
 // exactly as a real app's would.
 const TMP_BASE = `${import.meta.dir}/.tmp-parity-`
-/** A string that appears in exactly one fixture source file — used to count copies in the bundle. */
+/** A string that appears in exactly one fixture source file - used to count copies in the bundle. */
 const SHARED_MARKER = "nifra-parity-shared-singleton"
 
 let root: string
@@ -217,7 +217,7 @@ test("both regimes actually SCOPE every class (a passthrough would collide acros
 
 test("both regimes leave :global alone (the documented escape hatch)", async () => {
   // If one regime scopes `:global(.untouched)`, a hand-written or third-party selector matches locally
-  // and stops matching in production — with no error anywhere.
+  // and stops matching in production - with no error anywhere.
   const devCss = await (await fetch(`${devOrigin}/styles.module.css?direct`)).text()
   const prodCss = transformCssModule(
     readFileSync(join(root, "styles.module.css"), "utf8"),

@@ -1,23 +1,23 @@
 import { pageMeta } from "../../meta"
 import { CodeBlock } from "../../highlight"
 
-// Pure content page — no React interactivity (TOC/copy/search are the layout enhancer +
+// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
 // the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
 export const hydrate = false
 
 export const meta = pageMeta(
-  "Nifra — Migrating from Next.js, Nuxt, SvelteKit & SolidStart",
+  "Nifra - Migrating from Next.js, Nuxt, SvelteKit & SolidStart",
   "Move from a meta-framework to Nifra: file routes, data loading, API routes, layouts, and SSG/ISR map across React (Next), Vue (Nuxt), Svelte (SvelteKit), and Solid (SolidStart).",
 )
 
-const NEXT = `// Next.js — app/users/[id]/page.tsx
+const NEXT = `// Next.js - app/users/[id]/page.tsx
 export default async function Page({ params }) {
   const res = await fetch(\`https://api/users/\${params.id}\`)
   const user = await res.json()
   return <h1>{user.name}</h1>
 }
 
-// nifra — routes/users/[id].tsx
+// nifra - routes/users/[id].tsx
 export async function loader({ params, api }: LoaderArgs<typeof backend>) {
   const res = await api.users({ id: params.id }).get()   // typed, in-process during SSR
   return { user: res.data }
@@ -26,10 +26,10 @@ export default function User({ data }: { data: LoaderData<typeof loader> }) {
   return <h1>{data.user?.name}</h1>
 }`
 
-const SVELTEKIT = `// SvelteKit — +page.server.ts + +page.svelte
+const SVELTEKIT = `// SvelteKit - +page.server.ts + +page.svelte
 export async function load({ params }) { return { post: await getPost(params.slug) } }
 
-// nifra — routes/blog/[slug].svelte (loader is a module export, page is the .svelte)
+// nifra - routes/blog/[slug].svelte (loader is a module export, page is the .svelte)
 export async function loader({ params }) { return { post: await getPost(params.slug) } }`
 
 export default function MigrateFrontend() {
@@ -39,7 +39,7 @@ export default function MigrateFrontend() {
       <p className="lead">
         Nifra is framework-agnostic, so you keep your UI library and replace the meta-framework around
         it: Next.js → Nifra + React, Nuxt → Nifra + Vue, SvelteKit → Nifra + Svelte, SolidStart → Nifra +
-        Solid. The concepts map one-to-one, and you can migrate incrementally — stand up Nifra's API
+        Solid. The concepts map one-to-one, and you can migrate incrementally - stand up Nifra's API
         first, point your existing app at it, then move routes over.
       </p>
 
@@ -55,32 +55,32 @@ export default function MigrateFrontend() {
           <tr>
             <td>File routes (`pages/`, `app/`, `routes/`)</td>
             <td>
-              <code>routes/</code> — `.tsx` / `.vue` / `.svelte` / `.mdx`, same dynamic{" "}
+              <code>routes/</code> - `.tsx` / `.vue` / `.svelte` / `.mdx`, same dynamic{" "}
               <code>[param]</code> / <code>[...catch-all]</code> conventions
             </td>
           </tr>
           <tr>
             <td>`getServerSideProps` · `load` · `createAsync` · `asyncData`</td>
             <td>
-              <code>export async function loader()</code> — runs on the server, typed into the page
+              <code>export async function loader()</code> - runs on the server, typed into the page
             </td>
           </tr>
           <tr>
             <td>API routes (`pages/api`, `+server.ts`, route handlers)</td>
             <td>
-              a <code>server()</code> backend + the typed client — no <code>fetch()</code> wrappers
+              a <code>server()</code> backend + the typed client - no <code>fetch()</code> wrappers
             </td>
           </tr>
           <tr>
             <td>Layouts (`layout.tsx`, `+layout`, `app.vue`)</td>
             <td>
-              <code>_layout.tsx</code> — nested layout chains
+              <code>_layout.tsx</code> - nested layout chains
             </td>
           </tr>
           <tr>
             <td>Form actions / route handlers for mutations</td>
             <td>
-              <code>export async function action()</code> — typed, progressive-enhancement forms
+              <code>export async function action()</code> - typed, progressive-enhancement forms
             </td>
           </tr>
           <tr>
@@ -91,7 +91,7 @@ export default function MigrateFrontend() {
           </tr>
           <tr>
             <td>`&lt;Link&gt;` · `&lt;NuxtLink&gt;` · `&lt;a data-sveltekit-preload&gt;`</td>
-            <td>Nifra's client router — `Link` + hover/focus prefetch, scroll restoration</td>
+            <td>Nifra's client router - `Link` + hover/focus prefetch, scroll restoration</td>
           </tr>
           <tr>
             <td>`next/image` · `nuxt/image`</td>
@@ -111,13 +111,13 @@ export default function MigrateFrontend() {
       <h2>Data loading (Next.js → Nifra + React)</h2>
       <p>
         The biggest change: data fetching becomes a typed <code>loader</code> that calls your backend
-        in-process during SSR — no <code>fetch</code> to your own API, no untyped JSON.
+        in-process during SSR - no <code>fetch</code> to your own API, no untyped JSON.
       </p>
       <CodeBlock code={NEXT} lang="tsx" />
 
       <h2>Svelte / Solid / Vue</h2>
       <p>
-        Identical shape — only the page file's extension and component syntax change. The{" "}
+        Identical shape - only the page file's extension and component syntax change. The{" "}
         <code>loader</code>/<code>action</code>/<code>meta</code> exports are the same on every
         framework (that's Nifra's render seam). SvelteKit's <code>+page.server.ts</code> load, for
         example:
@@ -127,11 +127,11 @@ export default function MigrateFrontend() {
       <h2>What Nifra adds</h2>
       <ul>
         <li>
-          <b>One model, any UI library</b> — switch React→Solid later by changing one import, not your
+          <b>One model, any UI library</b> - switch React→Solid later by changing one import, not your
           app.
         </li>
         <li>
-          <b>Much faster SSR</b> — Nifra renders ~22× Next.js, ~7× Nuxt, ~3× SvelteKit/SolidStart on
+          <b>Much faster SSR</b> - Nifra renders ~22× Next.js, ~7× Nuxt, ~3× SvelteKit/SolidStart on
           dynamic pages, with a fraction of the client JS. See <a href="/benchmarks">benchmarks</a>.
         </li>
         <li>

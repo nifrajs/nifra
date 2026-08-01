@@ -36,7 +36,7 @@ let defaultsRegistered = false
  * This is driven from the validate path (see `./adapter.ts`) rather than run as a bare
  * top-level import side effect *on purpose*: a production bundler (`Bun.build`, esbuild)
  * tree-shakes a module that is only imported for its effect, and Bun.build does **not**
- * honor the `sideEffects` package.json field — so the old top-level registration loop was
+ * honor the `sideEffects` package.json field - so the old top-level registration loop was
  * dropped from prod server bundles, making every `t.string({ format })` reject with
  * "Unknown format" while unbundled `nifra dev` worked. Calling this from code the validator
  * actually reaches keeps the registration in the bundle.

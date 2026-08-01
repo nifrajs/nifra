@@ -1,7 +1,7 @@
 /**
  * Clean-dir install-and-use smoke (the Phase 8 exit criterion). Builds + packs every
  * library, installs the tarballs into a fresh directory with no workspace, and runs a
- * small app that exercises core + client + schema + middleware end-to-end — proving the
+ * small app that exercises core + client + schema + middleware end-to-end - proving the
  * *published* packages work for a real consumer. Runs it twice:
  *   • under Bun  → resolves the `bun` export condition (shipped `src`)
  *   • under Node → resolves `default`/`types` (built `dist`)
@@ -30,7 +30,7 @@ for (const lib of LIBS) {
   tarballs.push(tgz)
   // Install all four as direct `file:` deps so sibling dependencies and peers are
   // satisfied locally. (Installing tarballs by path alone makes bun resolve the peer
-  // from the npm registry — a 404, since nothing is published yet.)
+  // from the npm registry - a 404, since nothing is published yet.)
   deps[`@nifrajs/${lib}`] = `file:${tgz}`
 }
 
@@ -94,5 +94,5 @@ if (!nodeOut.includes("SMOKE_OK")) throw new Error(`Node smoke failed:\n${nodeOu
 
 await $`rm -rf ${app} ${tarballs}`.quiet().nothrow()
 console.log(
-  "\n✓ clean-dir smoke passed — core + client + schema + middleware, Bun (src) & Node (dist)",
+  "\n✓ clean-dir smoke passed - core + client + schema + middleware, Bun (src) & Node (dist)",
 )

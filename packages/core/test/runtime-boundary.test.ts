@@ -2,8 +2,8 @@ import { expect, test } from "bun:test"
 import { Glob } from "bun"
 
 // Invariant: the request lifecycle is runtime-agnostic. Bun APIs may appear ONLY in
-// server.ts's listen()/stop() seam — never in routing, validation, or the app.fetch
-// path — so the same app keeps running on Node, Deno, and Workers. Any new `Bun.x()`
+// server.ts's listen()/stop() seam - never in routing, validation, or the app.fetch
+// path - so the same app keeps running on Node, Deno, and Workers. Any new `Bun.x()`
 // call anywhere in core trips this test, forcing a deliberate decision (and a doc/guard
 // update) rather than silently re-coupling core to Bun.
 test("Bun APIs stay confined to the server.ts runtime seam (serve + sleep only)", async () => {

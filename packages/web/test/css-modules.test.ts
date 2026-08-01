@@ -32,7 +32,7 @@ function setupCssModulesPlugin(generate: "dom" | "ssr") {
 
 const SCOPED = /^[\w-]+_[0-9a-f]{8}$/
 
-describe("transformCssModule — class scoping", () => {
+describe("transformCssModule - class scoping", () => {
   test("simple class is scoped + exported; the scoped name follows `<name>_<hash8>`", () => {
     const { exports, css } = transformCssModule(".title { color: red }", "/routes/x.module.css")
     expect(Object.keys(exports)).toEqual(["title"])
@@ -73,7 +73,7 @@ describe("transformCssModule — class scoping", () => {
   })
 })
 
-describe("transformCssModule — :global / :local", () => {
+describe("transformCssModule - :global / :local", () => {
   test(":global(...) leaves its classes unscoped + out of the export map; unwraps the wrapper", () => {
     const { exports, css } = transformCssModule(
       ":global(.no-touch) .card { color: red }",
@@ -115,7 +115,7 @@ describe("transformCssModule — :global / :local", () => {
   })
 })
 
-describe("transformCssModule — at-rules, nesting, and non-selector contexts", () => {
+describe("transformCssModule - at-rules, nesting, and non-selector contexts", () => {
   test("@media block: nested rule selectors are scoped, the prelude is left alone", () => {
     const { exports, css } = transformCssModule(
       "@media (min-width: 700px) { .grid { display: grid } }",
@@ -130,7 +130,7 @@ describe("transformCssModule — at-rules, nesting, and non-selector contexts", 
       "@keyframes spin { from { opacity: 0 } to { opacity: 1 } }",
       "/r/x.module.css",
     )
-    // The keyframe NAME is exported (see below); `from`/`to`/`50%` are not — they are selectors inside
+    // The keyframe NAME is exported (see below); `from`/`to`/`50%` are not - they are selectors inside
     // the block, not exportable identifiers.
     expect(Object.keys(exports)).toEqual(["spin"])
     expect(css).toContain("from { opacity: 0 }") // the from/to block is untouched
@@ -139,7 +139,7 @@ describe("transformCssModule — at-rules, nesting, and non-selector contexts", 
   test("the @keyframes NAME is exported, scoped, matching the stylesheet", () => {
     // Keyframe names are part of the CSS Modules export namespace: postcss-modules exports them, so Vite
     // does, so nifra's dev pipeline does. Omitting them made `styles.spin` a real value in dev and
-    // `undefined` in production — a divergence with no error at either end. Pinned by the dev/prod parity
+    // `undefined` in production - a divergence with no error at either end. Pinned by the dev/prod parity
     // gate (packages/web/test/pipeline-parity.test.ts).
     const { exports, css } = transformCssModule(
       "@keyframes spin { from { opacity: 0 } }",
@@ -244,7 +244,7 @@ describe("transformCssModule — at-rules, nesting, and non-selector contexts", 
   })
 })
 
-describe("transformCssModule — determinism + cross-file isolation", () => {
+describe("transformCssModule - determinism + cross-file isolation", () => {
   test("identical input → byte-identical output across runs (no time/random)", () => {
     const a = transformCssModule(".a { color: red }", "/r/x.module.css")
     const b = transformCssModule(".a { color: red }", "/r/x.module.css")
@@ -258,7 +258,7 @@ describe("transformCssModule — determinism + cross-file isolation", () => {
   })
 })
 
-describe("transformCssModule — unsupported features fail loud", () => {
+describe("transformCssModule - unsupported features fail loud", () => {
   test('"composes" throws with the file + a workaround (with and without a trailing semicolon)', () => {
     expect(() => transformCssModule(".a { composes: base; }", "/r/x.module.css")).toThrow(
       /"composes" is unsupported in \/r\/x\.module\.css/,
@@ -279,7 +279,7 @@ describe("transformCssModule — unsupported features fail loud", () => {
   })
 })
 
-describe("transformCssModule — robustness on malformed/edge input", () => {
+describe("transformCssModule - robustness on malformed/edge input", () => {
   test("unbalanced braces bail gracefully (emit remainder, no throw)", () => {
     expect(() => transformCssModule(".a { color: red", "/r/x.module.css")).not.toThrow()
     const { css } = transformCssModule(".a { color: red", "/r/x.module.css")
@@ -309,7 +309,7 @@ describe("transformCssModule — robustness on malformed/edge input", () => {
   })
 })
 
-describe("cssModulesBunPlugin — wiring + SSR/dom parity", () => {
+describe("cssModulesBunPlugin - wiring + SSR/dom parity", () => {
   const fixture = new URL("./fixtures/styles.module.css", import.meta.url).pathname
 
   test("dom: the import emits the class map AND a virtual ?nifra-css-module CSS import", async () => {
@@ -358,7 +358,7 @@ describe("cssModulesBunPlugin — wiring + SSR/dom parity", () => {
   })
 })
 
-describe("cssModulesBunPlugin — real Bun.build (production path)", () => {
+describe("cssModulesBunPlugin - real Bun.build (production path)", () => {
   const outDirs: string[] = []
   afterAll(() => {
     for (const dir of outDirs) rmSync(dir, { recursive: true, force: true })
@@ -367,7 +367,7 @@ describe("cssModulesBunPlugin — real Bun.build (production path)", () => {
   test("dom build: JS imports the scoped class map AND a scoped CSS asset is emitted", async () => {
     const workDir = mkdtempSync(join(tmpdir(), "nifra-cssm-"))
     outDirs.push(workDir)
-    // Build-input written to a temp dir (not committed source) so it isn't part of the TS program —
+    // Build-input written to a temp dir (not committed source) so it isn't part of the TS program -
     // a `.module.css` import needs the shipped ambient declaration to typecheck, which app tsconfigs
     // opt into; the root monorepo program stays free of a global `*.module.css` module.
     const entry = join(workDir, "entry.ts")

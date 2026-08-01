@@ -5,7 +5,7 @@ import { MCP_CLI_VERSION } from "../src/agent-files.ts"
 import { AUTH_PRESETS } from "../src/auth.ts"
 import { materializeAll } from "./_scaffold-fixtures.ts"
 
-// Guards the hand-maintained scaffold/template version refs that `changeset version` does NOT update —
+// Guards the hand-maintained scaffold/template version refs that `changeset version` does NOT update -
 // the class that silently drifted to beta at the 1.0.0 cut. `scripts/version.ts` re-syncs them on bump
 // and `scripts/check-publish.ts` gates them at publish; this is the same invariant as a fast `bun test`
 // so a stale ref surfaces in the normal dev loop, not only when packing for npm. `fixed` changeset
@@ -19,10 +19,10 @@ const pkgVersion = async (pkgDir: string): Promise<string> =>
 
 const isInternalDep = (name: string): boolean => name.startsWith("@nifrajs/") || name === "nifra"
 
-describe("version-sync — scaffold/template refs track the published version", () => {
+describe("version-sync - scaffold/template refs track the published version", () => {
   test("agent-files MCP_CLI_VERSION is derived to equal @nifrajs/cli's version", async () => {
     // Derived from create-nifra's own package.json at load time; under `fixed` versioning that equals
-    // @nifrajs/cli — so this also asserts the `fixed` link hasn't broken.
+    // @nifrajs/cli - so this also asserts the `fixed` link hasn't broken.
     expect(MCP_CLI_VERSION).toBe(await pkgVersion("cli"))
   })
 

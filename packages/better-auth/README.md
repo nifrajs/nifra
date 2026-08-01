@@ -5,7 +5,7 @@ Mount [better-auth](https://better-auth.com) into a [nifra](https://github.com/n
 session, 2FA, magic links, …) under `/api/auth/*`, plus typed `getSession` / `requireSession` guards
 for reading and protecting routes.
 
-This package has **no runtime dependency on better-auth** — it consumes your `auth` object
+This package has **no runtime dependency on better-auth** - it consumes your `auth` object
 structurally, so your better-auth types flow through by inference and your tests need no DB.
 
 ## Install
@@ -51,14 +51,14 @@ works in both core handlers (`c.req`) and `@nifrajs/web` loaders/actions (`reque
 import { getSession } from "@nifrajs/better-auth"
 
 app.get("/me", async (c) => {
-  const session = await getSession(auth, c.req) // { user, session } | null — fully typed
+  const session = await getSession(auth, c.req) // { user, session } | null - fully typed
   return session ? { email: session.user.email } : { email: null }
 })
 ```
 
 ## Protect a route
 
-`requireSession(auth, request, options?)` returns the non-null session or **throws a `Response`** —
+`requireSession(auth, request, options?)` returns the non-null session or **throws a `Response`** -
 nifra returns a thrown `Response` as-is, short-circuiting the handler:
 
 ```ts
@@ -82,7 +82,7 @@ export const loader = async ({ request }) => {
 | Export | Description |
 | --- | --- |
 | `betterAuth(auth, options?)` | Plugin that mounts better-auth's handler at `${basePath}/*` for GET + POST. |
-| `getSession(auth, request)` | `Promise<SessionOf<A> \| null>` — typed wrapper over `auth.api.getSession`. |
+| `getSession(auth, request)` | `Promise<SessionOf<A> \| null>` - typed wrapper over `auth.api.getSession`. |
 | `requireSession(auth, request, options?)` | Returns the session or throws a `Response` (302 `redirectTo` / 401). |
 | `SessionOf<A>` | The non-null session payload type inferred from your `auth`. |
 | `BetterAuthLike` | The structural contract a better-auth instance satisfies. |
@@ -93,7 +93,7 @@ MIT
 
 ## For AI agents
 
-Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports you call + its footguns),
 one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the

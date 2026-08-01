@@ -1,5 +1,5 @@
 // Build the client bundle: discover routes (incl. `.mdx`) → codegen → Bun.build (hashed + minified).
-// Solid `.tsx` compiles via solidBunPlugin; `.mdx` via solidMdxBunPlugin — both "dom" for the client.
+// Solid `.tsx` compiles via solidBunPlugin; `.mdx` via solidMdxBunPlugin - both "dom" for the client.
 //   bun run examples/mdx-blog/build.ts
 import { buildClient } from "@nifrajs/web/build"
 import { solidBunPlugin } from "@nifrajs/web-solid"

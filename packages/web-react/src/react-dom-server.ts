@@ -1,23 +1,23 @@
 /**
- * Resolve `react-dom/server` so it shares ONE React core with the route components — the fix for the
+ * Resolve `react-dom/server` so it shares ONE React core with the route components - the fix for the
  * dual-React SSR crash (`resolveDispatcher().useState` is null / "Invalid hook call: mismatching versions
  * of React and the renderer").
  *
  * WHY this exists: under Bun **runtime** SSR (`nifra dev`, `nifra start`, `nifra_render`, all in-process),
  * a static `import "react-dom/server"` in this adapter is resolved by Bun from THIS package's own
- * (symlinked) node_modules — which can be a DIFFERENT physical `react` than the one the consumer app's
+ * (symlinked) node_modules - which can be a DIFFERENT physical `react` than the one the consumer app's
  * route components import. Two React cores → two hook dispatchers → the renderer's dispatcher is the wrong
  * (or null) one → the crash. Resolving `react-dom/server` from the consumer **app root** instead makes
  * react-dom pull the app's `react` transitively, matching the components' `react`: a single core, a single
- * dispatcher, no crash. (Empirically verified against a two-copy install fixture — see
+ * dispatcher, no crash. (Empirically verified against a two-copy install fixture - see
  * test/dual-react.test.ts.)
  *
- * Guarding precisely so the BUILT path is untouched: a bundle is detected two ways — `Bun.resolveSync` is
+ * Guarding precisely so the BUILT path is untouched: a bundle is detected two ways - `Bun.resolveSync` is
  * unavailable (Node / Deno / Cloudflare / Vercel), OR `buildServer` tagged the output with
  * `process.env.NIFRA_SSR_BUNDLED` (a `target:"bun"` bundle DOES keep `Bun.resolveSync` under the Bun
  * runtime, so the resolver test alone can't see it). In either case the build already bundled+deduped a
  * single `react-dom` (buildServer's `reactDedupePlugin` pins `react`), so the static `import` is correct.
- * Re-rooting a bundle would instead re-import a SECOND react-dom from disk — a second React core whose hook
+ * Re-rooting a bundle would instead re-import a SECOND react-dom from disk - a second React core whose hook
  * dispatcher is null for the bundled components → the `…H.useRef of null` SSR crash. The app-root re-root
  * therefore runs ONLY under an UNBUNDLED Bun runtime (nifra dev/start, nifra_render), where the duplication
  * can occur, `Bun.resolveSync` exists, and no bundle marker is present.
@@ -26,7 +26,7 @@
 import type { ReactNode } from "react"
 
 /** The slice of `react-dom/server` this adapter uses. Typed locally so the dynamic import (which Bun
- * resolves to an absolute path string) stays strict — no `any` crosses the boundary. */
+ * resolves to an absolute path string) stays strict - no `any` crosses the boundary. */
 export interface ReactDomServer {
   renderToString(node: ReactNode): string
   renderToReadableStream(node: ReactNode): Promise<ReadableStream<Uint8Array>>
@@ -51,7 +51,7 @@ function runtimeRealpath(path: string): string {
 
 // `globalThis.Bun` isn't in the ambient lib types; narrow exactly the one method we need so we never
 // reach for `any`. `resolveSync(specifier, from)` returns the absolute path the specifier resolves to
-// when required from `from` — Bun's runtime resolver, the only lever that re-roots a BARE specifier
+// when required from `from` - Bun's runtime resolver, the only lever that re-roots a BARE specifier
 // (a runtime `Bun.plugin` onResolve does NOT fire for bare specifiers like `react-dom/server`, verified).
 interface BunResolver {
   resolveSync(specifier: string, from: string): string
@@ -150,7 +150,7 @@ export async function loadReactDomServer(
     // Bun runtime SSR: re-root to the app's copy so react-dom shares the components' React. `react-dom`
     // is a PEER dependency of this adapter, so a correct install puts it at the app root and this
     // resolves. If it somehow doesn't (an unusual nested layout), fall through to the bundled specifier
-    // rather than crashing — degraded (possible duplicate) but never a hard failure.
+    // rather than crashing - degraded (possible duplicate) but never a hard failure.
     try {
       const resolved = resolve("react-dom/server", appRoot())
       // Before returning the module, verify the react-dom we just re-rooted shares the components' React.
@@ -173,7 +173,7 @@ export async function loadReactDomServer(
 }
 
 /**
- * The resolver `loadReactDomServer` uses by default, or `undefined` when re-rooting must NOT happen — a
+ * The resolver `loadReactDomServer` uses by default, or `undefined` when re-rooting must NOT happen - a
  * non-Bun host (no `Bun.resolveSync`; the static import is the only path) OR a BUNDLED SSR output.
  * `buildServer` defines `process.env.NIFRA_SSR_BUNDLED` to `"1"` in every bundle, where react-dom is
  * already inlined + deduped to the components' React (reactDedupePlugin); re-rooting there would re-import

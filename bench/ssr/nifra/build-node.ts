@@ -15,7 +15,7 @@ mkdirSync(dist, { recursive: true })
 const define = { "process.env.NODE_ENV": '"production"' }
 const nodeSourceConditions = ["bun", "node"]
 
-// Client hydration bundle (browser) — served by the app at /client.js.
+// Client hydration bundle (browser) - served by the app at /client.js.
 const client = await Bun.build({
   entrypoints: [`${dir}/client.ts`],
   outdir: dist,

@@ -1,5 +1,5 @@
 /**
- * Pipeline separation guard — one bundler owns a phase, never two.
+ * Pipeline separation guard - one bundler owns a phase, never two.
  *
  * nifra supports both Vite and Bun, and the config keeps them in separate slots: `vitePlugins` for
  * the Vite pipeline, `clientPlugins`/`serverPlugins` for the Bun one. Nothing enforces the split, so

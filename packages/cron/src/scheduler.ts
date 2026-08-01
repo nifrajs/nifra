@@ -1,5 +1,5 @@
 /**
- * The scheduler — a thin, testable timer over the pure {@link parseCron}/{@link matches} core.
+ * The scheduler - a thin, testable timer over the pure {@link parseCron}/{@link matches} core.
  * Runtime-agnostic (`setInterval`/`Date`, available on Bun/Node/Deno). For LONG-RUNNING servers;
  * Cloudflare Workers has no long-lived process, so use the platform `scheduled` trigger there
  * (`toFetchHandler(app, { scheduled })`) instead.
@@ -18,7 +18,7 @@ interface Job {
   readonly fields: CronFields
   readonly handler: CronHandler
   running: boolean
-  /** `YYYY-M-D-H-M` of the last minute this job fired — so one tick-per-minute fires it once. */
+  /** `YYYY-M-D-H-M` of the last minute this job fired - so one tick-per-minute fires it once. */
   lastFiredMinute: string
 }
 
@@ -32,7 +32,7 @@ export interface SchedulerOptions {
 export interface Scheduler {
   /** Register a job. Throws `CronError` now (not at fire time) on a bad expression or duplicate name. */
   add(name: string, expression: string, handler: CronHandler): Scheduler
-  /** Begin checking on an interval (default 15s — well under a minute, so no minute is missed). */
+  /** Begin checking on an interval (default 15s - well under a minute, so no minute is missed). */
   start(checkIntervalMs?: number): void
   /** Stop checking. In-flight handlers are left to finish (graceful). */
   stop(): void

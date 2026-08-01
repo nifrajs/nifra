@@ -5,7 +5,7 @@ export interface PageData {
   start: number
 }
 
-// A Vue route component (render function — no SFC compiler needed). `data` is the loader output;
+// A Vue route component (render function - no SFC compiler needed). `data` is the loader output;
 // the ref-backed counter proves hydration (it's interactive only after the client hydrates).
 export const App = defineComponent({
   props: { data: { type: Object, required: true } },

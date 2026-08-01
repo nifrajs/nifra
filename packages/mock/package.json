@@ -1,7 +1,7 @@
 {
   "name": "@nifrajs/mock",
   "version": "2.2.0",
-  "description": "Contract-based mock server — reads route schemas and generates fake responses.",
+  "description": "Contract-based mock server - reads route schemas and generates fake responses.",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",

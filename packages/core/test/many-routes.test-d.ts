@@ -2,12 +2,12 @@
  * Type-level SCALING regression for the route registry.
  *
  * Measured ceiling: a single fluent chain accumulates one alias level per route and TypeScript
- * resolves the stack in one recursion — TS2589 fires at ~95-100 chained calls. This file pins
+ * resolves the stack in one recursion - TS2589 fires at ~95-100 chained calls. This file pins
  * BOTH sides of that contract:
  *   1. a 90-route single chain stays clean (headroom below the ceiling must not regress), and
  *   2. 120 routes composed from 4 merged 30-route groups typecheck with full fidelity
  *      (merge() is the supported way past the ceiling; contract-first implement() is the other).
- * If this file starts erroring, AddRoute (or the compiler) changed shape — see registry.ts.
+ * If this file starts erroring, AddRoute (or the compiler) changed shape - see registry.ts.
  */
 import { server } from "../src/index.ts"
 
@@ -106,7 +106,7 @@ const chained = server()
 
 export type Chained = typeof chained
 
-// ── 2. composition: 4 domain groups × 30 routes, merged — 120 routes, no ceiling ─────────────
+// ── 2. composition: 4 domain groups × 30 routes, merged - 120 routes, no ceiling ─────────────
 const group0 = server()
   .get("/g0/r0/:id", (c) => ({ id: c.params.id, n: 0 }))
   .get("/g0/r1/:id", (c) => ({ id: c.params.id, n: 1 }))
@@ -249,7 +249,7 @@ const typed = server()
   .merge(group0)
   .get("/after/:uid", (c) => ({ uid: c.params.uid }))
 
-// @ts-expect-error — a param that does not exist on the path must still be rejected
+// @ts-expect-error - a param that does not exist on the path must still be rejected
 const bad = typed.get("/strict/:one", (c) => c.params.two)
 void bad
 

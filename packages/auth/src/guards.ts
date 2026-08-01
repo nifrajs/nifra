@@ -1,12 +1,12 @@
 /**
- * Route guards — run at the top of a protected loader/action/handler. On a missing session they
+ * Route guards - run at the top of a protected loader/action/handler. On a missing session they
  * **throw a `Response`** (a 302 to your login path, or a 401); nifra returns a thrown Response as-is, so
  * the guard short-circuits the rest of the handler. Pairs with `@nifrajs/auth` sessions but only needs the
  * `Session` shape, so it's framework-agnostic.
  */
 import type { Session } from "./session.ts"
 
-/** What a guard does when the check fails: 302 to `redirectTo` (a same-origin path), or — omitted — a
+/** What a guard does when the check fails: 302 to `redirectTo` (a same-origin path), or - omitted - a
  * 401 JSON (`{ ok: false, error: "unauthorized" }`). */
 export interface GuardOptions {
   readonly redirectTo?: string
@@ -18,7 +18,7 @@ const rejection = (options: GuardOptions): Response => {
     return Response.json({ ok: false, error: "unauthorized" }, { status: 401 })
   }
   // Same-origin guard (mirrors @nifrajs/web `redirect`): a single leading "/", never "//host" or an
-  // absolute URL. `redirectTo` is dev-authored, so a bad value is a config bug — fail loud here.
+  // absolute URL. `redirectTo` is dev-authored, so a bad value is a config bug - fail loud here.
   if (!to.startsWith("/") || to.startsWith("//")) {
     throw new Error(
       `[nifra/auth] guard redirectTo must be a same-origin path beginning with "/" (got ${JSON.stringify(to)})`,

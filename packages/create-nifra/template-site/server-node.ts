@@ -14,7 +14,7 @@ const app = createWebApp({
   title: "nifra site",
 })
 
-// @nifrajs/node serves app.fetch only — so serve /assets/* (the client bundle) from disk here.
+// @nifrajs/node serves app.fetch only - so serve /assets/* (the client bundle) from disk here.
 const ASSETS = new URL("./assets/", import.meta.url)
 const TYPES: Readonly<Record<string, string>> = { js: "text/javascript", css: "text/css" }
 

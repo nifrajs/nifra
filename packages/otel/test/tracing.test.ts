@@ -343,7 +343,7 @@ describe("tracing plugin", () => {
   })
 })
 
-describe("setAttributes — the mid-request annotation seam", () => {
+describe("setAttributes - the mid-request annotation seam", () => {
   test("a handler (or later plugin) annotates the in-flight span via c.observation", async () => {
     const c = collector()
     const app = server()
@@ -359,7 +359,7 @@ describe("setAttributes — the mid-request annotation seam", () => {
     expect(c.spans[0]?.attributes["http.response.status_code"]).toBe(200)
   })
 
-  test("setAttributes after end is a silent no-op — the exported span is immutable", async () => {
+  test("setAttributes after end is a silent no-op - the exported span is immutable", async () => {
     const c = collector()
     let leaked: { setAttributes(a: Record<string, string>): void } | undefined
     const app = server()

@@ -1,5 +1,5 @@
 /**
- * nifra WebSockets — a tiny chat server with an upgrade guard + topic pub/sub.
+ * nifra WebSockets - a tiny chat server with an upgrade guard + topic pub/sub.
  *
  *   bun run examples/websocket-chat.ts     → open http://localhost:3000
  *
@@ -8,7 +8,7 @@
  *   Deno:              serve(app, { port: 3000 })                from @nifrajs/deno
  *   Node:              serve(app, { port: 3000 })                from @nifrajs/node   (+ `npm i ws`)
  *   Cloudflare Workers: export default toFetchHandler(app)       (per-connection only; broadcast
- *                       across clients needs a Durable Object — see the WebSockets guide)
+ *                       across clients needs a Durable Object - see the WebSockets guide)
  */
 import { server } from "@nifrajs/core/server"
 import { websocket } from "@nifrajs/core/ws" // .use(websocket()) enables app.ws() (kept out of no-WS bundles)

@@ -1,8 +1,8 @@
 <!--
-  Chain.svelte — folds a nifra layout chain (outermost layout → page) into nested Svelte components:
+  Chain.svelte - folds a nifra layout chain (outermost layout → page) into nested Svelte components:
   the page (innermost, chain[last]) receives `props` (the loader data); each layout wraps the rest via
   its `children` snippet ({@render children()} in the layout). Recurses on itself. This is the Svelte
-  analogue of the React/Vue `compose` — Svelte components are compiled (not callable), so the fold is a
+  analogue of the React/Vue `compose` - Svelte components are compiled (not callable), so the fold is a
   component, not a function returning a node.
 
   `layoutData` is the per-layout loader data, aligned with the chain's LEADING layout prefix. It is

@@ -1,5 +1,5 @@
 /**
- * i18n demo — locale negotiation + an ICU formatter (plural, currency) with a language switcher.
+ * i18n demo - locale negotiation + an ICU formatter (plural, currency) with a language switcher.
  *   bun run examples/i18n-react/build.ts
  *   bun examples/i18n-react/server.ts        # http://localhost:3000  (try ?lang=fr)
  */
@@ -20,7 +20,7 @@ const app = createWebApp({
   manifest: discoverRoutes(`${import.meta.dir}/routes`),
   clientEntry: assets.entry,
   routePreload: assets.routes,
-  title: "nifra — i18n demo",
+  title: "nifra - i18n demo",
 })
 
 app.get("/assets/*", async (c) => {

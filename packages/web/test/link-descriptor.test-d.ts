@@ -4,7 +4,7 @@
  * each assertion as used.
  *
  * The regression these guard: `Meta["link"]` was `ReadonlyArray<Record<string, string>>`, so a typed
- * partial like `{ rel, href, hreflang }` (an `interface` with optional fields) was NOT assignable —
+ * partial like `{ rel, href, hreflang }` (an `interface` with optional fields) was NOT assignable -
  * `Record<string, string>` demands *every* property be a present string. `LinkDescriptor` fixes that
  * by spelling the common attrs as optional + an index signature for custom/`data-*` attrs.
  */
@@ -16,10 +16,10 @@ import type { LinkDescriptor, Meta } from "../src/manifest.ts"
 type Alternate = { rel: "alternate"; href: "/x"; hreflang: "en" }
 export type _AlternateIsLink = Expect<Extends<Alternate, LinkDescriptor>>
 
-// …and into a `meta.link` array (the actual call site — `export const meta = { link: [...] }`).
+// …and into a `meta.link` array (the actual call site - `export const meta = { link: [...] }`).
 export type _AlternateIntoMetaLink = Expect<Extends<readonly Alternate[], Meta["link"]>>
 
-// A bare `{ rel, href }` (the most minimal canonical/preconnect tag) is assignable — every typed
+// A bare `{ rel, href }` (the most minimal canonical/preconnect tag) is assignable - every typed
 // field is optional, so a partial is fine. This was the exact bug: a partial used to be rejected.
 export type _MinimalRelHref = Expect<Extends<{ rel: "canonical"; href: "/" }, LinkDescriptor>>
 
@@ -29,7 +29,7 @@ export type _CustomAttr = Expect<Extends<{ rel: "x"; "data-test": "y" }, LinkDes
 // Boolean attributes (e.g. `disabled`) are allowed by the descriptor.
 export type _BooleanAttr = Expect<Extends<{ rel: "stylesheet"; disabled: true }, LinkDescriptor>>
 
-// A descriptor value is `string | boolean | undefined` — never an arbitrary object, so a nested
+// A descriptor value is `string | boolean | undefined` - never an arbitrary object, so a nested
 // object can't slip in as an attribute value (it would silently mis-render).
 export type _NoObjectValues = Expect<Not<Extends<{ rel: { nested: true } }, LinkDescriptor>>>
 

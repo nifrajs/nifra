@@ -10,7 +10,7 @@ const toText = (
 const Fallback = (props: { data: { name: string; message: string } }) =>
   createElement("div", { id: "err" }, `${props.data.name}: ${props.data.message}`)
 
-// React error boundaries are a CLIENT-side recovery mechanism — `renderToReadableStream` rejects on a
+// React error boundaries are a CLIENT-side recovery mechanism - `renderToReadableStream` rejects on a
 // shell throw rather than rendering the boundary fallback (that path is nifra's 3a server catch). So the
 // catch behavior is unit-tested on the class directly here, and browser-verified end-to-end in the
 // example; SSR only confirms the boundary is transparent (renders children, adds no DOM).

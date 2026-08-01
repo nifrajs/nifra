@@ -4,11 +4,11 @@ import { HOME_COUNTER_ENTRY } from "../islands/entries"
 import { pageMeta } from "../meta"
 
 export const meta = pageMeta(
-  "Nifra — the TypeScript framework for AI-edited codebases",
+  "Nifra - the TypeScript framework for AI-edited codebases",
   "Build typed APIs and full-stack apps that humans and coding agents can change safely. Nifra combines live MCP project context, verified scaffolds, a no-codegen typed client, multi-framework SSR, and one app across Bun, Node, Deno, and the edge.",
 )
 
-// Static page — ships zero framework JS. The only client code is a tiny enhancer (the install
+// Static page - ships zero framework JS. The only client code is a tiny enhancer (the install
 // command's copy button), loaded through `islandScripts`. The framework switcher + runtime grid
 // below are CSS-only (`:checked` radio tabs), so they stay interactive with zero added JS.
 export const hydrate = false
@@ -17,18 +17,18 @@ export const islandScripts = [HOME_COUNTER_ENTRY]
 const BACKEND_CODE = `import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
-// A typed API — no frontend required. Use nifra like Hono or Elysia.
+// A typed API - no frontend required. Use nifra like Hono or Elysia.
 export const app = server()
   .get("/users/:id", (c) => ({ id: c.params.id }))
   .post("/users", { body: t.object({ name: t.string() }) }, (c) => {
-    // c.body is validated + typed — invalid input is rejected before this runs.
+    // c.body is validated + typed - invalid input is rejected before this runs.
     return { id: crypto.randomUUID(), name: c.body.name }
   })
 
 export default { fetch: app.fetch }   // Bun. Node, Deno, and the edge are one line each.`
 
 const CLIENT_CODE = `import { client } from "@nifrajs/client"
-import type { app } from "./server"   // a type import — server code never ships to the client
+import type { app } from "./server"   // a type import - server code never ships to the client
 
 const api = client<typeof app>("https://api.example.com")
 
@@ -41,18 +41,18 @@ if (res.ok) {
   res.error          // client-call failures are returned, never thrown
 }`
 
-const AGENT_CODE = `$ nifra context        # the project's live API surface — pipe into any agent prompt
+const AGENT_CODE = `$ nifra context        # the project's live API surface - pipe into any agent prompt
   GET  /users/:id   → response { id: string, name: string }
   POST /users       body { name: string } → response { id: string, name: string }
 
-$ nifra mcp            # same data as an MCP server — Claude Code & Cursor read it automatically
+$ nifra mcp            # same data as an MCP server - Claude Code & Cursor read it automatically
 
-# The typed client is the safety lock — an agent physically can't call a route that changed:
+# The typed client is the safety lock - an agent physically can't call a route that changed:
 const res = await api.users({ id: "42" }).get()
 if (res.ok) res.data.name
 //              ^ tsc error here the moment the route or response shape changes
 
-$ nifra check          # CI gate: typecheck + typed-client lint — drift fails the build`
+$ nifra check          # CI gate: typecheck + typed-client lint - drift fails the build`
 
 const RUNTIME_CODE = `import { app } from "./app"   // one app, defined once
 
@@ -66,7 +66,7 @@ export default { port: 3000, fetch: app.fetch }
 import { toFetchHandler } from "@nifrajs/core/server"
 export default toFetchHandler(app)`
 
-// The five UI adapters, shown as a CSS-only switcher: the SAME routes/loaders/actions/islands —
+// The five UI adapters, shown as a CSS-only switcher: the SAME routes/loaders/actions/islands -
 // only the adapter import changes. Real packages (@nifrajs/web-<fw>), so the swap is truthful.
 const FW_TABS = [
   {
@@ -76,7 +76,7 @@ const FW_TABS = [
 import { reactAdapter } from "@nifrajs/web-react"
 export default createWebApp({ adapter: reactAdapter, manifest, clientEntry })
 
-// routes/hello.tsx — your page, written in React
+// routes/hello.tsx - your page, written in React
 export function Page({ data }: { data: { name: string } }) {
   return <h1>Hello {data.name}</h1>
 }`,
@@ -88,7 +88,7 @@ export function Page({ data }: { data: { name: string } }) {
 import { solidAdapter } from "@nifrajs/web-solid"
 export default createWebApp({ adapter: solidAdapter, manifest, clientEntry })
 
-// routes/hello.tsx — same page, Solid's fine-grained JSX
+// routes/hello.tsx - same page, Solid's fine-grained JSX
 export function Page(props: { data: { name: string } }) {
   return <h1>Hello {props.data.name}</h1>
 }`,
@@ -100,7 +100,7 @@ export function Page(props: { data: { name: string } }) {
 import { vueAdapter } from "@nifrajs/web-vue"
 export default createWebApp({ adapter: vueAdapter, manifest, clientEntry })
 
-<!-- routes/hello.vue — same page, as a Vue SFC -->
+<!-- routes/hello.vue - same page, as a Vue SFC -->
 <script setup lang="ts">defineProps<{ data: { name: string } }>()</script>
 <template><h1>Hello {{ data.name }}</h1></template>`,
   },
@@ -111,7 +111,7 @@ export default createWebApp({ adapter: vueAdapter, manifest, clientEntry })
 import { preactAdapter } from "@nifrajs/web-preact"
 export default createWebApp({ adapter: preactAdapter, manifest, clientEntry })
 
-// routes/hello.tsx — same page; Preact's 3 KB runtime, identical React API
+// routes/hello.tsx - same page; Preact's 3 KB runtime, identical React API
 export function Page({ data }: { data: { name: string } }) {
   return <h1>Hello {data.name}</h1>
 }`,
@@ -123,13 +123,13 @@ export function Page({ data }: { data: { name: string } }) {
 import { svelteAdapter } from "@nifrajs/web-svelte"
 export default createWebApp({ adapter: svelteAdapter, manifest, clientEntry })
 
-<!-- routes/hello.svelte — same page, as a Svelte component -->
+<!-- routes/hello.svelte - same page, as a Svelte component -->
 <script lang="ts">export let data: { name: string }</script>
 <h1>Hello {data.name}</h1>`,
   },
 ] as const
 
-// Runtime targets — the same app ships everywhere via Web-standard fetch.
+// Runtime targets - the same app ships everywhere via Web-standard fetch.
 const RUNTIME_CARDS = [
   { name: "Bun", note: "Native dev speed", deploy: "export default { fetch: app.fetch }" },
   { name: "Node", note: "Mature, everywhere", deploy: "serve(app, { port: 3000 })" },
@@ -142,7 +142,7 @@ const RUNTIME_CARDS = [
 const SOURCE_OUTPUTS = [
   { title: "Runtime validation", note: "Bad input → 422 before your handler" },
   { title: "TypeScript types", note: "Inferred params, body, response" },
-  { title: "Typed client", note: "No codegen — drift is a compile error" },
+  { title: "Typed client", note: "No codegen - drift is a compile error" },
   { title: "OpenAPI spec", note: "Generated, never hand-written" },
   { title: "MCP tools", note: "Agents read the live contract" },
 ] as const
@@ -439,7 +439,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* VALUE ROW — lead with the why */}
+      {/* VALUE ROW - lead with the why */}
       <section className="value-row">
         <div className="value-item">
           <strong>Agents read your live API</strong>
@@ -458,7 +458,7 @@ export default function Home() {
         <div className="value-item">
           <strong>Ship to any runtime</strong>
           <span>
-            The same app runs on Bun, Node, Deno, Cloudflare, and Vercel — switching targets is one
+            The same app runs on Bun, Node, Deno, Cloudflare, and Vercel - switching targets is one
             line of adapter code.
           </span>
         </div>
@@ -508,14 +508,14 @@ export default function Home() {
         <CodeBlock code={CLIENT_CODE} lang="ts" />
       </section>
 
-      {/* FEATURE 3: MULTI-UI SSR — CSS-only framework switcher */}
+      {/* FEATURE 3: MULTI-UI SSR - CSS-only framework switcher */}
       <section id="sec-frontend" className="feature-showcase">
         <div className="feature-info">
           <span className="kicker">03 · Unified Frontend</span>
           <h2>One full-stack engine. Five UI libraries.</h2>
           <p>
             React, Solid, Vue, Preact, and Svelte all sit on the same render engine. Loaders,
-            actions, streaming, prefetching, and islands are identical across all five — switching
+            actions, streaming, prefetching, and islands are identical across all five - switching
             is a single import. No meta-framework lock-in.
           </p>
           <a href="/docs/frameworks" className="perf-link">
@@ -581,7 +581,7 @@ export default function Home() {
           <span className="kicker">Ecosystem Packages</span>
           <h2>A complete framework, batteries included.</h2>
           <p>
-            Nifra isn't just a router—it's a modular suite of type-safe packages built for high
+            Nifra isn't just a router-it's a modular suite of type-safe packages built for high
             performance, edge scalability, and robust developer ergonomics.
           </p>
           <p className="note" style={{ marginTop: 14 }}>
@@ -617,7 +617,7 @@ export default function Home() {
           <p>
             Nifra runs close to raw Bun/Node speed. Full-stack SSR renders 3× to 22× faster than
             standard meta-frameworks on Node, while the backend router matches the fastest Node
-            frameworks — tens of thousands of requests per second on a single core.
+            frameworks - tens of thousands of requests per second on a single core.
           </p>
         </div>
 
@@ -717,7 +717,7 @@ export default function Home() {
         <span className="kicker">Ready when you are</span>
         <h2>Build something that survives the next AI edit.</h2>
         <p>
-          One command scaffolds a typed Nifra app — start as a fast API, grow into full-stack SSR,
+          One command scaffolds a typed Nifra app - start as a fast API, grow into full-stack SSR,
           and let your agents read the live contract instead of guessing.
         </p>
         <div className="hero-actions">

@@ -3,8 +3,8 @@ import type { Template } from "./html.ts"
 
 /**
  * A vanilla "component": a plain function from props to a {@link Template}. The page (innermost
- * chain element) receives the loader {@link RenderProps}; a layout receives `{ children }` — the
- * already-rendered inner fragment — plus the same render props, mirroring the React/Preact
+ * chain element) receives the loader {@link RenderProps}; a layout receives `{ children }` - the
+ * already-rendered inner fragment - plus the same render props, mirroring the React/Preact
  * adapters' `children` contract.
  */
 export type VanillaComponent = (props: RenderProps & { children?: Template }) => Template

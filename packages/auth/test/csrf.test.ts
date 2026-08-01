@@ -10,7 +10,7 @@ const handlerOf = (origins?: string[]) => {
     onRequest(new Request(url, { method, headers }))
 }
 
-describe("csrf — Origin/Referer check", () => {
+describe("csrf - Origin/Referer check", () => {
   const run = handlerOf(["https://app.example"])
 
   test("safe methods always pass", async () => {
@@ -44,7 +44,7 @@ describe("csrf — Origin/Referer check", () => {
   })
 })
 
-describe("csrf — same-origin default (no origins configured)", () => {
+describe("csrf - same-origin default (no origins configured)", () => {
   const run = handlerOf()
 
   test("derives the allowed origin from the request URL", async () => {

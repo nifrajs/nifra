@@ -1,6 +1,6 @@
 /**
  * Type-level tests. These never run; they are verified by `tsc --noEmit`.
- * If inference regresses, the build fails here even when runtime tests pass —
+ * If inference regresses, the build fails here even when runtime tests pass -
  * which is the point, since inference IS the product.
  *
  * Each assertion is exported so `noUnusedLocals` treats it as used.
@@ -9,7 +9,7 @@ import type { Equal, Expect } from "@nifrajs/test-utils"
 import type { VERSION, Version } from "../src/index.ts"
 
 // VERSION must stay a NARROW, semver-shaped string literal (so consumers can pin it at the type level)
-// — but NOT a specific value, which would break this test on every release bump. We assert the shape
+// - but NOT a specific value, which would break this test on every release bump. We assert the shape
 // and the narrowing without naming the version.
 export type _VersionIsSemverLiteral = Expect<
   typeof VERSION extends `${number}.${number}.${number}` ? true : false

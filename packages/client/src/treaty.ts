@@ -9,12 +9,12 @@ export type RegistryOf<App> = App extends Server<infer R, infer _Ctx> ? R : neve
 
 /**
  * The `query` option's type for a route that declares NO `query` schema. It's a descriptive string
- * literal, so passing query params to such a route fails with an error that READS OUT the fix —
- * `Type '{ page: string }' is not assignable to type 'add a `query` schema…'` — instead of the opaque
+ * literal, so passing query params to such a route fails with an error that READS OUT the fix -
+ * `Type '{ page: string }' is not assignable to type 'add a `query` schema…'` - instead of the opaque
  * `not assignable to type 'never'`. The error surfaces at the call site; the fix is at the route.
  */
 type QueryNotTyped =
-  "add a `query` schema to this route — `{ query: z.object({ … }) }` — so the typed client can accept query params here"
+  "add a `query` schema to this route - `{ query: z.object({ … }) }` - so the typed client can accept query params here"
 
 type CallOptions<I extends RouteInfo> = {
   query?: [I["query"]] extends [never] ? QueryNotTyped : I["query"]
@@ -55,7 +55,7 @@ export interface SubscribeOptions<I extends RouteInfo> {
   /** Abort to close the subscription (same effect as calling `close()`). */
   signal?: AbortSignal
   /**
-   * Reconnect after a dropped/errored stream (default true — EventSource semantics, so a proxy
+   * Reconnect after a dropped/errored stream (default true - EventSource semantics, so a proxy
    * closing an idle feed doesn't silently kill it). A FINITE stream should pass `false` so a clean
    * server-side end completes the subscription instead of replaying it. Delays follow exponential
    * backoff with jitter, honoring the server's `retry:` hint when sent.
@@ -164,7 +164,7 @@ type StaticSegs<R, Prefix extends string> = Exclude<
 type ParamSeg<R, Prefix extends string> = Extract<NextSegs<R, Prefix>, `:${string}` | `*${string}`>
 
 // `unknown` (not `{}`/`never`) is the intersection identity, so empty branches
-// don't poison the node — and we never `Prettify` the node (it would strip the
+// don't poison the node - and we never `Prettify` the node (it would strip the
 // param call-signature and trip TS2456 on the recursion).
 type MethodsAt<R, Prefix extends string> = Prefix extends keyof R ? Methods<R[Prefix]> : unknown
 
@@ -190,7 +190,7 @@ type TreatyNode<R, Prefix extends string> = MethodsAt<R, Prefix> &
 type RootIndex<R> = "/" extends keyof R ? { readonly index: Methods<R["/"]> } : unknown
 
 /**
- * The Eden-style proxy type for a route registry — the shared core used by both
+ * The Eden-style proxy type for a route registry - the shared core used by both
  * `Treaty<App>` (coupled, from `typeof app`) and `client(contract, url)`
  * (decoupled, from a contract's `RegistryFor`).
  */

@@ -13,7 +13,7 @@ import {
 
 // SSR-only assertions (bun:test has no DOM, so useEffect never fires). We verify: the server snapshot a
 // hook reads (idle without a provider, the hydrated data with one), the imperative surface (mutate,
-// invalidate, setQueryData — none of which need effects), and that HydrationBoundary seeds during render.
+// invalidate, setQueryData - none of which need effects), and that HydrationBoundary seeds during render.
 // Fetch-on-mount + re-render-on-transition are browser-verified against the real packages.
 
 // Render a probe through react-dom/server and hand back whatever it captured.
@@ -35,7 +35,7 @@ test("useQuery renders idle on the server with no provider", async () => {
   render(createElement(Probe), () => result)
   expect(result).toMatchObject({ status: "pending", isPending: true, isSuccess: false })
   expect(typeof result?.refetch).toBe("function")
-  // The no-provider (NOOP) handle's refetch is a throwing no-op — a query action with no client.
+  // The no-provider (NOOP) handle's refetch is a throwing no-op - a query action with no client.
   await expect(result?.refetch()).rejects.toThrow(/no query client/)
 })
 

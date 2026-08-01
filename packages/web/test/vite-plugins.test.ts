@@ -19,7 +19,7 @@ const cfgOf = (plugin: unknown): unknown => {
 test("normalizeRolldownPlugins strips optimizeDeps.rollupOptions.jsx under rolldown", () => {
   const [wrapped] = normalizeRolldownPlugins([reactBabelPlugin()], true)
   const cfg = cfgOf(wrapped) as { optimizeDeps: { rollupOptions: Record<string, unknown> } }
-  // The dead `jsx` key is gone — no more "Invalid key" warning.
+  // The dead `jsx` key is gone - no more "Invalid key" warning.
   expect("jsx" in cfg.optimizeDeps.rollupOptions).toBe(false)
   // optimizeDeps.rollupOptions itself survives (now empty here), and the plugin's other props are kept.
   expect(cfg.optimizeDeps.rollupOptions).toEqual({})
@@ -27,7 +27,7 @@ test("normalizeRolldownPlugins strips optimizeDeps.rollupOptions.jsx under rolld
   expect(typeof (wrapped as { transform: unknown }).transform).toBe("function")
 })
 
-test("normalizeRolldownPlugins flattens a nested plugin array — react() returns [babel, refresh]", () => {
+test("normalizeRolldownPlugins flattens a nested plugin array - react() returns [babel, refresh]", () => {
   // The real shape: `@vitejs/plugin-react`'s `react()` returns an ARRAY of plugins, and `nifra.config.ts`
   // writes `vitePlugins = [react()]`, so the list arrives NESTED (`[[babel, refresh]]`). The earlier tests
   // only passed a flat `[plugin]`, which is why the "Invalid key jsx" warning shipped: without flattening,
@@ -81,7 +81,7 @@ test("normalizeRolldownPlugins passes through plugins without a config hook, and
 })
 
 test("normalizeRolldownPlugins wraps an object-form config hook and preserves its order", () => {
-  // Vite allows `config: { handler, order }` for hook ordering. The wrapper must keep the object shape —
+  // Vite allows `config: { handler, order }` for hook ordering. The wrapper must keep the object shape -
   // collapsing it to a bare function would silently drop the `order`.
   const plugin = {
     name: "obj-hook",

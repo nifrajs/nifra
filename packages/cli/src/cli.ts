@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 /**
- * `nifra` — the zero-config CLI for a nifra app. Reads `framework.ts` + `backend.ts` + `routes/` from
+ * `nifra` - the zero-config CLI for a nifra app. Reads `framework.ts` + `backend.ts` + `routes/` from
  * the project root (see {@link loadApp}) and wires the right `@nifrajs/web` entrypoint:
  *
- *   nifra dev      true-HMR dev server (Vite middleware + nifra SSR)        — @nifrajs/web/vite
- *   nifra build    emit a complete target-specific deploy directory        — @nifrajs/web/build
- *   nifra start    run the default Bun build                               — dist/server.js
+ *   nifra dev      true-HMR dev server (Vite middleware + nifra SSR)        - @nifrajs/web/vite
+ *   nifra build    emit a complete target-specific deploy directory        - @nifrajs/web/build
+ *   nifra start    run the default Bun build                               - dist/server.js
  *
  * Bun-only (it runs the framework's TS + Bun plugins directly). The *output* runs anywhere.
  */
@@ -36,15 +36,15 @@ export interface Flags {
   /** `nifra build --vite`: force the client + server through Vite/Rollup. Without a flag the pipeline is
    * chosen per app (`chooseBuildPipeline`) - Bun unless the app's only transforms are `vitePlugins`. */
   readonly vite: boolean
-  /** `nifra dev --bun`: run the Bun-pipeline dev server (Bun.serve native HMR — including React Fast
-   * Refresh with state preserved — and no Vite in the process). Default stays Vite for its plugin
+  /** `nifra dev --bun`: run the Bun-pipeline dev server (Bun.serve native HMR - including React Fast
+   * Refresh with state preserved - and no Vite in the process). Default stays Vite for its plugin
    * ecosystem; `--bun` trades that for one bundler across dev and prod. Refuses CSS-Modules apps.
    *
    * `nifra build --bun`: force the Bun build. Refuses when that would drop the app's `vitePlugins`. */
   readonly bun: boolean
 }
 
-const HELP = `nifra — zero-config dev/build/start for a nifra app
+const HELP = `nifra - zero-config dev/build/start for a nifra app
 
 Usage:
   nifra dev     [--port <n>] [--poll]    Start the true-HMR dev server (Vite). Default port ${DEFAULT_DEV_PORT}.
@@ -90,7 +90,7 @@ Usage:
                                          nifra_example (verified snippets), nifra_scaffold (route→file),
                                          nifra_check (drift gate + fixes), nifra_levels (verification
                                          ladder), nifra_doctor (deps + duplicate installs).
-  nifra docs-mcp [--port <n>]            Serve the PUBLIC docs MCP over HTTP (nifra_docs + nifra_example) —
+  nifra docs-mcp [--port <n>]            Serve the PUBLIC docs MCP over HTTP (nifra_docs + nifra_example) -
                                          self-host on a VPS so any remote agent can learn nifra. Default :8787.
   nifra check   [--json] [--lints-only]  Gate: typecheck + lints (hand-rolled fetch(), untyped client("…"),
                                          server-only imports in routes/). Run as "done"; --json for agents;
@@ -102,12 +102,12 @@ Usage:
                                          is typed against each static route's searchSchema (a stale shape is a
                                          tsc error). Include the file in your tsconfig. Pure file write.
   nifra snapshot [--out <file>]          Write the backend's API contract (routes + schemas) as plain
-                                         JSON — the baseline for \`nifra diff\`. Default api-snapshot.json.
+                                         JSON - the baseline for \`nifra diff\`. Default api-snapshot.json.
   nifra diff    [<baseline>] [--json]    Breaking-change gate: re-snapshot the contract and compare
                                          against the committed baseline. Direction-aware (a new required
                                          request field or a removed response field breaks; widening a
                                          request enum or adding a response field doesn't) and fails
-                                         closed. Exits non-zero on any breaking change — run it in CI.
+                                         closed. Exits non-zero on any breaking change - run it in CI.
   nifra assure  [--config <file>] [--json]  Route-assurance gate: load nifra.assurance.ts, classify every
                                          reflected backend route, and fail when required enforcement
                                          evidence is missing/forbidden or a route is unclassified.
@@ -198,7 +198,7 @@ export function formatCliError(err: unknown): string {
  * Bun's dev server and `Bun.build` are not the same bundler. `Bun.build` transforms `*.module.css` into a
  * scoped class map (the Bun production build of a CSS-Modules app works, verified), but the dev server's
  * bundler does not: the import compiles to a dangling reference and the browser throws
- * `ReferenceError: import_X_module is not defined` from inside the component — a message that names
+ * `ReferenceError: import_X_module is not defined` from inside the component - a message that names
  * neither CSS Modules nor the dev server, so the cause is invisible.
  *
  * A silently-broken client is the one outcome worth failing the command over, so this checks up front and
@@ -276,7 +276,7 @@ export async function assertBunDevSupportsApp(app: LoadedApp): Promise<void> {
 }
 
 async function dev(app: LoadedApp, flags: Flags): Promise<void> {
-  // `--bun`: the Bun-pipeline dev server — Bun.serve's native HMR bundles + hot-reloads the client while
+  // `--bun`: the Bun-pipeline dev server - Bun.serve's native HMR bundles + hot-reloads the client while
   // Bun's runtime resolves SSR, with no Vite in the process at all. The mirror of `nifra build --vite`:
   // each pipeline is selectable in BOTH phases, and neither ever runs inside the other.
   if (flags.bun) {
@@ -288,7 +288,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
       outDir,
       clientModule: fw.clientModule,
       port: flags.port,
-      // The Bun pipeline's own plugins (SFC compilers etc.) — never `vitePlugins`, which belong to the
+      // The Bun pipeline's own plugins (SFC compilers etc.) - never `vitePlugins`, which belong to the
       // other pipeline; `assertPipelineSeparation` already refuses a plugin sitting in the wrong slot.
       plugins: asBunPlugins(app.resolvedPlugins.clientPlugins),
       ...(fw.publicDir !== undefined ? { publicDir: fw.publicDir } : {}),
@@ -352,9 +352,9 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
 }
 
 /**
- * `nifra build --target <t>` — package the engine (buildClient + buildServer + prerender) into one
+ * `nifra build --target <t>` - package the engine (buildClient + buildServer + prerender) into one
  * command that emits a full deploy dir, so an app no longer hand-writes build-bun.ts + _worker.ts +
- * _routes.json per target. The adapter is imported from `framework.ts` (the edge-bundlable file — never
+ * _routes.json per target. The adapter is imported from `framework.ts` (the edge-bundlable file - never
  * `nifra.config.ts`, which pulls in Vite plugins), and the backend from `backend.ts` when present;
  * `buildTarget` generates the per-target server entry from those + the app's `routes/`.
  */
@@ -374,7 +374,7 @@ async function buildForTarget(app: LoadedApp, target: string, flags: Flags): Pro
     flags.vite ? "vite" : flags.bun ? "bun" : undefined,
   )
   const useVite = decision.pipeline === "vite"
-  // Same deploy-dir output — buildTargetVite delegates to the same orchestrator as buildTarget — so only
+  // Same deploy-dir output - buildTargetVite delegates to the same orchestrator as buildTarget - so only
   // the bundler and the plugin FORMAT (Vite plugins, not Bun) differ.
   const buildTarget = useVite
     ? (await import("@nifrajs/web/build-vite")).buildTargetVite
@@ -413,7 +413,7 @@ async function buildForTarget(app: LoadedApp, target: string, flags: Flags): Pro
     ...(fw.define ? { define: fw.define } : {}),
     ...(fw.publicDir !== undefined ? { publicDir: fw.publicDir } : {}),
     ...(fw.publicEnvPrefix !== undefined ? { publicEnvPrefix: fw.publicEnvPrefix } : {}),
-    // The static target needs a built app to drive prerendering — only build it when targeting static.
+    // The static target needs a built app to drive prerendering - only build it when targeting static.
     ...(target === "static" ? { prerenderApp: await buildPrerenderApp(app) } : {}),
   })
   console.log(`nifra build (${target}${useVite ? ", vite" : ""}) → ${result.run}`)
@@ -426,7 +426,7 @@ async function buildForTarget(app: LoadedApp, target: string, flags: Flags): Pro
 /** Build the app FACTORY for the `static` target's prerender pass. Registers the
  * framework's SSR Bun plugins (so `.vue`/`.svelte`/Solid routes import) once, then return a factory that
  * `createWebApp`s the app for the client build's manifest. The client entry MUST be the real content-hashed
- * bundle (`client.entry`) — it's the hydration `<script src>` the prerendered HTML emits, so a placeholder
+ * bundle (`client.entry`) - it's the hydration `<script src>` the prerendered HTML emits, so a placeholder
  * would 404 and the pages would render but never hydrate (inert controls). Styles/route-preload are wired
  * from the same manifest so the static HTML matches the deployed app. */
 async function buildPrerenderApp(
@@ -467,7 +467,7 @@ async function start(app: LoadedApp, flags: Flags): Promise<void> {
       )
     }
     throw new Error(
-      `[nifra] no ${serverFile} — run \`nifra build\` or \`nifra build --target bun\` first.`,
+      `[nifra] no ${serverFile} - run \`nifra build\` or \`nifra build --target bun\` first.`,
     )
   }
   Bun.env.PORT = String(flags.port)
@@ -512,14 +512,14 @@ async function main(): Promise<void> {
     console.log(`nifra (@nifrajs/cli) ${CLI_VERSION}`)
     return
   }
-  // `mcp` runs a long-lived stdio server and loads the project lazily per-tool — it must not go through
+  // `mcp` runs a long-lived stdio server and loads the project lazily per-tool - it must not go through
   // the eager `loadApp` below (which would fail fast on a project that's API-only / not yet built).
   if (command === "mcp") {
     const { runMcpServer } = await import("./mcp.ts")
     await runMcpServer(process.cwd(), CLI_VERSION)
     return
   }
-  // `docs-mcp` runs the PUBLIC docs MCP over HTTP — project-independent (serves the bundled corpus), so
+  // `docs-mcp` runs the PUBLIC docs MCP over HTTP - project-independent (serves the bundled corpus), so
   // it self-hosts anywhere Bun runs (a VPS behind a reverse proxy, a container). Long-lived; no loadApp.
   if (command === "docs-mcp") {
     const { handleMcpHttp } = await import("./mcp-http.ts")
@@ -532,7 +532,7 @@ async function main(): Promise<void> {
     console.log(`nifra docs MCP (HTTP) → ${server.url}`)
     return
   }
-  // `check` is a pure cwd-based gate (typecheck + lint) — it must run even when the project doesn't
+  // `check` is a pure cwd-based gate (typecheck + lint) - it must run even when the project doesn't
   // load (API-only, not built yet), so it dispatches before the eager `loadApp` below.
   if (command === "check") {
     const { runCheck } = await import("./check.ts")
@@ -571,7 +571,7 @@ async function main(): Promise<void> {
     if (!(await runSyncRoutes(process.cwd()))) process.exitCode = 1
     return
   }
-  // `doctor` is a pure cwd check (imports vs declared deps) — like `check`, dispatch before `loadApp`
+  // `doctor` is a pure cwd check (imports vs declared deps) - like `check`, dispatch before `loadApp`
   // so it runs on an API-only / not-yet-built project.
   if (command === "doctor") {
     const { runDoctor } = await import("./doctor.ts")
@@ -584,7 +584,7 @@ async function main(): Promise<void> {
       process.exitCode = 1
     return
   }
-  // `snapshot` / `diff` load ONLY backend.ts (the API contract) — like `check`, they must run on an
+  // `snapshot` / `diff` load ONLY backend.ts (the API contract) - like `check`, they must run on an
   // API-only project, so they dispatch before the eager `loadApp`.
   if (command === "snapshot") {
     const { runSnapshot } = await import("./diff-tool.ts")
@@ -756,7 +756,7 @@ async function main(): Promise<void> {
     return
   }
   // `upgrade` is a pure cwd file-transformer (package.json pins + import moves) driven by a per-release
-  // recipe, then verified with `nifra check`. Dispatch before the eager `loadApp` — it must run on any
+  // recipe, then verified with `nifra check`. Dispatch before the eager `loadApp` - it must run on any
   // repo (API-only, not built, or mid-upgrade with edits that don't yet typecheck under dry-run).
   if (command === "upgrade") {
     const { runUpgrade } = await import("./upgrade.ts")
@@ -776,7 +776,7 @@ async function main(): Promise<void> {
     }
     return
   }
-  // `port` is a pure cwd-based portability linter (scans source, doesn't run the app) — like `check`/
+  // `port` is a pure cwd-based portability linter (scans source, doesn't run the app) - like `check`/
   // `doctor`, dispatch before the eager `loadApp` so it runs on an API-only / not-yet-built project.
   if (command === "port") {
     const { runPort } = await import("./port.ts")

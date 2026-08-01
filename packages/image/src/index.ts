@@ -1,5 +1,5 @@
 /**
- * `@nifrajs/image` — image optimization for nifra. A CLS-safe responsive `<Image>` (per-adapter) built on
+ * `@nifrajs/image` - image optimization for nifra. A CLS-safe responsive `<Image>` (per-adapter) built on
  * the pure attribute builder `resolveImage`, pluggable CDN `ImageLoader`s (Cloudflare Images + an
  * identity default), and dependency-free intrinsic-dimension reading. nifra bundles no image codec; the
  * resize is delegated to the edge CDN via the loader. Per-adapter `<Image>` lives in the adapter packages.

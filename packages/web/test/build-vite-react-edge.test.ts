@@ -10,7 +10,7 @@ import { linkWorkspacePackages } from "./workspace-link.ts"
 // workerd/edge-light conditions instead, and THIS test is what proves that actually happens rather than
 // resolving react-dom's node build (which would crash on the edge) or a second React core (the dual-React
 // null-dispatcher crash). It builds a real React app, then RUNS the emitted edge worker in-process and
-// asserts real SSR output — hook-driven markup and the scoped CSS-module class both present.
+// asserts real SSR output - hook-driven markup and the scoped CSS-module class both present.
 //
 // A real React app is needed (react/react-dom + @vitejs/plugin-react resolve from the workspace), so this
 // is heavier than the vanilla-adapter e2e; it is the one framework case worth paying for.
@@ -37,8 +37,8 @@ function scaffoldReactApp(): {
     writeFileSync(p, content)
   }
   w("framework.ts", 'export { reactAdapter as adapter } from "@nifrajs/web-react"\n')
-  // A route with a real hook (useState) so the render exercises the dispatcher — the exact path that
-  // throws if two React cores reach SSR — plus a CSS module so the edge build's CSS pipeline is covered.
+  // A route with a real hook (useState) so the render exercises the dispatcher - the exact path that
+  // throws if two React cores reach SSR - plus a CSS module so the edge build's CSS pipeline is covered.
   w(
     "routes/index.tsx",
     `import { useState } from "react"
@@ -73,7 +73,7 @@ async function ssrThroughWorker(entry: string): Promise<{ status: number; html: 
   return { status: res.status, html: await res.text() }
 }
 
-// @vitejs/plugin-react is a devDep of the examples, not of @nifrajs/web — resolve it from the example that
+// @vitejs/plugin-react is a devDep of the examples, not of @nifrajs/web - resolve it from the example that
 // ships it rather than adding a heavy build-only dep here. Skips (loudly) if it isn't installed, so a lean
 // checkout doesn't red the suite on a plugin the framework itself doesn't depend on.
 const EXAMPLE_WITH_REACT = join(import.meta.dir, "..", "..", "..", "examples", "cli-react")
@@ -111,7 +111,7 @@ test.skipIf(reactPluginPath === undefined)(
     // The document is nifra's shell with the hydration container + the hashed client entry.
     expect(html).toContain('id="root"')
     expect(html).toMatch(/<script type="module" src="\/assets\/[^"]+"><\/script>/)
-    // The CSS-module class is SCOPED (hashed), not the raw `title` — the Vite CSS pipeline ran on the edge
+    // The CSS-module class is SCOPED (hashed), not the raw `title` - the Vite CSS pipeline ran on the edge
     // build too, and SSR markup carries the same scoped class the client stylesheet defines.
     expect(html).toMatch(/class="_title_[\w]+"/i)
   },

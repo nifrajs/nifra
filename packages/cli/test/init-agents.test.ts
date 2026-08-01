@@ -24,7 +24,7 @@ const read = (dir: string, rel: string): Promise<string> => readFile(join(dir, r
 const actionFor = (r: InitAgentsResult, path: string): string | undefined =>
   r.files.find((f) => f.path === path)?.action
 
-describe("safeJoin — confines writes to the project root", () => {
+describe("safeJoin - confines writes to the project root", () => {
   test("resolves a normal relative path under cwd", () => {
     expect(safeJoin("/proj", ".cursor/mcp.json")).toBe("/proj/.cursor/mcp.json")
     expect(safeJoin("/proj", "CLAUDE.md")).toBe("/proj/CLAUDE.md")
@@ -40,12 +40,12 @@ describe("safeJoin — confines writes to the project root", () => {
   })
 })
 
-describe("initAgents — fresh project", () => {
+describe("initAgents - fresh project", () => {
   test("writes all four agent-discovery files", async () => {
     const dir = await freshDir()
     const result = await initAgents(dir)
 
-    // .mcp.json — Claude Code's exact shape, registering the bin-owning package.
+    // .mcp.json - Claude Code's exact shape, registering the bin-owning package.
     const mcp = JSON.parse(await read(dir, ".mcp.json")) as {
       mcpServers: Record<string, { command: string; args: string[] }>
     }
@@ -54,16 +54,16 @@ describe("initAgents — fresh project", () => {
     expect(mcp.mcpServers.nifra?.args?.[0]).toMatch(/^@nifrajs\/cli@\d+\.\d+\.\d+/)
     expect(mcp.mcpServers.nifra?.args?.[1]).toBe("mcp")
 
-    // .cursor/mcp.json — same server config, byte-identical (single source of truth).
+    // .cursor/mcp.json - same server config, byte-identical (single source of truth).
     expect(await read(dir, ".cursor/mcp.json")).toBe(await read(dir, ".mcp.json"))
 
-    // CLAUDE.md — MCP-first preamble that imports AGENTS.md on its own line (no drift).
+    // CLAUDE.md - MCP-first preamble that imports AGENTS.md on its own line (no drift).
     const claude = await read(dir, "CLAUDE.md")
     expect(claude).toContain("nifra MCP server")
     expect(claude).toContain("nifra_check")
     expect(claude.split("\n")).toContain("@AGENTS.md")
 
-    // AGENTS.md — written fresh (none existed) with the MCP section.
+    // AGENTS.md - written fresh (none existed) with the MCP section.
     const agents = await read(dir, "AGENTS.md")
     expect(agents).toContain("## MCP server")
     expect(agents).toMatch(/bunx @nifrajs\/cli@\d+\.\d+\.\d+\S* mcp/)
@@ -72,7 +72,7 @@ describe("initAgents — fresh project", () => {
   })
 })
 
-describe("initAgents — no-clobber + idempotency", () => {
+describe("initAgents - no-clobber + idempotency", () => {
   test("a second run skips the owned files and keeps an AGENTS.md that already has the section", async () => {
     const dir = await freshDir()
     await initAgents(dir)
@@ -94,7 +94,7 @@ describe("initAgents — no-clobber + idempotency", () => {
     const result = await initAgents(dir)
     expect(actionFor(result, "CLAUDE.md")).toBe("skipped")
     expect(await read(dir, "CLAUDE.md")).toBe(custom)
-    // The other files still land — only the existing one is spared.
+    // The other files still land - only the existing one is spared.
     expect(actionFor(result, ".mcp.json")).toBe("wrote")
   })
 
@@ -109,7 +109,7 @@ describe("initAgents — no-clobber + idempotency", () => {
   })
 })
 
-describe("initAgents — --force", () => {
+describe("initAgents - --force", () => {
   test("overwrites the owned files", async () => {
     const dir = await freshDir()
     await writeFile(join(dir, "CLAUDE.md"), "# stale\n")
@@ -126,7 +126,7 @@ describe("initAgents — --force", () => {
   })
 })
 
-describe("initAgents — AGENTS.md is additive, never overwritten", () => {
+describe("initAgents - AGENTS.md is additive, never overwritten", () => {
   test("appends the MCP section to an existing AGENTS.md, preserving the user's conventions", async () => {
     const dir = await freshDir()
     const existing = "# AGENTS.md\n\nMy existing conventions.\n"
@@ -137,7 +137,7 @@ describe("initAgents — AGENTS.md is additive, never overwritten", () => {
     const md = await read(dir, "AGENTS.md")
     expect(md).toContain("My existing conventions.") // preserved
     expect(md).toContain("## MCP server") // appended
-    // --force doesn't change the additive behavior — it still appends, never overwrites.
+    // --force doesn't change the additive behavior - it still appends, never overwrites.
   })
 
   test("does not double-append when the section is already present (even with --force)", async () => {
@@ -148,7 +148,7 @@ describe("initAgents — AGENTS.md is additive, never overwritten", () => {
     const result = await initAgents(dir, { force: true })
     expect(actionFor(result, "AGENTS.md")).toBe("present")
     expect(await read(dir, "AGENTS.md")).toBe(once)
-    // Exactly one MCP-server heading — no duplication.
+    // Exactly one MCP-server heading - no duplication.
     expect(once.match(/## MCP server/g)?.length).toBe(1)
   })
 

@@ -1,7 +1,7 @@
 /**
  * The Standard Schema v1 interface (https://standardschema.dev), vendored as
- * types + a tiny runtime helper so any compliant validator — zod, valibot,
- * arktype, … — validates requests without coupling the framework to one lib.
+ * types + a tiny runtime helper so any compliant validator - zod, valibot,
+ * arktype, … - validates requests without coupling the framework to one lib.
  * The spec is MIT-licensed and explicitly designed to be copied.
  */
 

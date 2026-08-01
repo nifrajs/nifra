@@ -1,10 +1,10 @@
 /**
  * Coercing env validators. Every value in `process.env` is a `string | undefined`, so these turn
- * that into the typed value you actually want — with defaults, optionality, and clear errors. Each
+ * that into the typed value you actually want - with defaults, optionality, and clear errors. Each
  * is a Standard Schema, so they slot straight into {@link defineEnv} (and could be used anywhere a
  * Standard Schema is accepted).
  *
- * Error messages are **value-free** — they say what was wrong, never echo the variable's value
+ * Error messages are **value-free** - they say what was wrong, never echo the variable's value
  * (it may be a secret). {@link defineEnv} prepends the variable name.
  */
 
@@ -47,7 +47,7 @@ export function number(opts: Base<number> & Optional = {}): StandardSchemaV1<num
   })
 }
 
-/** A TCP port: an integer in 1–65535. */
+/** A TCP port: an integer in 1-65535. */
 export function port(opts: Base<number> = {}): StandardSchemaV1<number> {
   return envSchema((raw) => {
     if (isUnset(raw)) {
@@ -56,7 +56,7 @@ export function port(opts: Base<number> = {}): StandardSchemaV1<number> {
     }
     const n = Number(raw)
     if (!Number.isInteger(n) || n < 1 || n > 65535) {
-      return issue("must be an integer port in 1–65535")
+      return issue("must be an integer port in 1-65535")
     }
     return { value: n }
   }) as StandardSchemaV1<number>
@@ -111,7 +111,7 @@ export function url(opts: Base<string> & Optional = {}): StandardSchemaV1<string
   })
 }
 
-/** The coercing env validators, grouped — `env.string()`, `env.port()`, `env.enum([...])`, … */
+/** The coercing env validators, grouped - `env.string()`, `env.port()`, `env.enum([...])`, … */
 export const env = {
   string,
   number,

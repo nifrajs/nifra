@@ -25,7 +25,7 @@ describe("app.sse()", () => {
   })
 
   test("query schema validates like any other route", async () => {
-    // Query values arrive as strings — same contract as every route (use a coercing schema for numbers).
+    // Query values arrive as strings - same contract as every route (use a coercing schema for numbers).
     const app = server()
       .use(streaming())
       .sse(

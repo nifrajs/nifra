@@ -1,7 +1,7 @@
 import type { Deferred } from "@nifrajs/web"
 import type { ComponentChildren, VNode } from "preact"
 /**
- * `@nifrajs/web-preact/await` — the `<Await>` primitive for deferred loader data (`defer()`). Isomorphic
+ * `@nifrajs/web-preact/await` - the `<Await>` primitive for deferred loader data (`defer()`). Isomorphic
  * and imports only `preact`/`preact/compat` + a type from `@nifrajs/web` (never the server renderer), so
  * route components can use it without dragging server code into the client bundle. No JSX (the package
  * builds with plain `tsc`).

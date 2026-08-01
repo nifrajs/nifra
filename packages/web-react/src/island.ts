@@ -1,8 +1,8 @@
 import type { IslandStrategy } from "@nifrajs/web/islands"
 /**
- * `@nifrajs/web-react/island` — the `<Island>` marker for no-framework islands. Server-renders its
+ * `@nifrajs/web-react/island` - the `<Island>` marker for no-framework islands. Server-renders its
  * children inside a `<nifra-island>` element that the framework-agnostic `mountIslands` runtime
- * (`@nifrajs/web/islands`) picks up on the client. Imports only `react` (+ a type) — no `react-dom`,
+ * (`@nifrajs/web/islands`) picks up on the client. Imports only `react` (+ a type) - no `react-dom`,
  * no JSX (the package builds with plain `tsc`).
  *
  * Use on a route with `export const hydrate = false`: the page ships zero framework JS, and only the
@@ -18,7 +18,7 @@ export interface IslandProps {
   readonly props?: unknown
   /** When the enhancer runs (default `load`). `visible` (IntersectionObserver) wins TTI on long pages. */
   readonly strategy?: IslandStrategy
-  /** The island's server-rendered content — real HTML, present with JS off. */
+  /** The island's server-rendered content - real HTML, present with JS off. */
   readonly children?: ReactNode
 }
 

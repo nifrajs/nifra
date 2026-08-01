@@ -1,9 +1,9 @@
 /**
- * A minimal "host harness" page — what an MCP Apps host (MCPJam, ChatGPT) does to render a widget, so the
+ * A minimal "host harness" page - what an MCP Apps host (MCPJam, ChatGPT) does to render a widget, so the
  * example is viewable in a plain browser without one. It loads the REAL widget HTML into a sandboxed
  * iframe, then plays the host side of the bridge over `postMessage`: it pushes the tool's
  * `structuredContent` in (`ui/notifications/tool-result`) and answers the widget's `tools/call` requests
- * (the Refresh button) — exercising the actual widget bytes and the real bridge, end to end.
+ * (the Refresh button) - exercising the actual widget bytes and the real bridge, end to end.
  */
 
 /** Build the host-harness HTML embedding `widgetHtml`, feeding it `structuredContent`, and (optionally)
@@ -22,7 +22,7 @@ export function hostDemoPage(
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>nifra MCP App — host harness</title>
+<title>nifra MCP App - host harness</title>
 <style>
   body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: #f6f6f7; color: #1a1a1a; }
   header { padding: 16px 20px; border-bottom: 1px solid #e3e3e6; background: #fff; }
@@ -36,7 +36,7 @@ export function hostDemoPage(
 <body>
 <header>
   <h1>MCP Apps host harness</h1>
-  <p>Rendering <code>ui://orders/table</code> — the real widget, driven over the postMessage bridge.</p>
+  <p>Rendering <code>ui://orders/table</code> - the real widget, driven over the postMessage bridge.</p>
 </header>
 <main><div class="frame"><iframe id="w" sandbox="allow-scripts" title="orders widget"></iframe></div></main>
 <script>

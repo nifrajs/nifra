@@ -10,8 +10,8 @@ import { pathToFileURL } from "node:url"
  * `nifra build` runs the server through `Bun.build` with `minify`/tree-shaking on. The standard
  * string formats USED to register as a bare top-level side effect of `./src/formats.ts`, reachable
  * only via the `export { registerFormat } from "./formats.ts"` re-export in the entry. An app that
- * imports `t` but never names `registerFormat` gives the bundler nothing to anchor that module to —
- * and `Bun.build` does NOT honor the `sideEffects` package.json field — so the registration loop was
+ * imports `t` but never names `registerFormat` gives the bundler nothing to anchor that module to -
+ * and `Bun.build` does NOT honor the `sideEffects` package.json field - so the registration loop was
  * dropped from the bundle and every `t.string({ format })` rejected with "Unknown format" in
  * production while unbundled `nifra dev` worked.
  *
@@ -21,7 +21,7 @@ import { pathToFileURL } from "node:url"
  * code; passes once registration is driven from the reachable validate path.
  */
 
-// The `bun` export condition resolves `@nifrajs/schema` to this source entry — bundling it directly is
+// The `bun` export condition resolves `@nifrajs/schema` to this source entry - bundling it directly is
 // equivalent to what a `target: "bun"` app build resolves, and keeps the test hermetic (no dist needed).
 const SRC_INDEX = join(import.meta.dir, "..", "src", "index.ts")
 
@@ -34,7 +34,7 @@ async function buildMinifiedBundleAndRun(): Promise<{
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "nifra-schema-bundle-")))
   try {
     const entryPath = join(dir, "entry.ts")
-    // Deliberately import ONLY `t` — never `registerFormat` — so nothing references ./formats.ts except
+    // Deliberately import ONLY `t` - never `registerFormat` - so nothing references ./formats.ts except
     // the validate path. This is the exact import shape that triggered the bug.
     writeFileSync(
       entryPath,
@@ -82,7 +82,7 @@ describe("string formats survive a minified production bundle", () => {
     // Before the fix this was `{ issues: [{ message: "Unknown format 'email'" }] }`.
     expect(isValue(good)).toBe(true)
 
-    // Rejected because the value doesn't match the format — NOT because the format went unregistered.
+    // Rejected because the value doesn't match the format - NOT because the format went unregistered.
     expect(isIssues(badFormat)).toBe(true)
     if (isIssues(badFormat)) {
       const messages = badFormat.issues.map((i) => i.message).join(" | ")

@@ -5,13 +5,13 @@ import {
   type QueryState,
 } from "@nifrajs/web"
 /**
- * `@nifrajs/web-svelte/query` — Svelte bindings for the keyed query-cache, as **Svelte stores** (plain
- * `.ts`). `useQuery(key, fn)` returns a `Readable<QueryState<T>>` augmented with `refetch` — read it
+ * `@nifrajs/web-svelte/query` - Svelte bindings for the keyed query-cache, as **Svelte stores** (plain
+ * `.ts`). `useQuery(key, fn)` returns a `Readable<QueryState<T>>` augmented with `refetch` - read it
  * reactively with `$query`. The store fetches on mount (the start notifier fires on the first
  * `$`-subscription) and subscribes to the cache entry; concurrent `useQuery`s with the same key share
  * one entry + one in-flight fetch (dedup). `useQueryClient` exposes `invalidateQueries`.
  *
- * The query client is created lazily **client-side only** (the `typeof window` guard) — on the server
+ * The query client is created lazily **client-side only** (the `typeof window` guard) - on the server
  * there is none, so `useQuery` holds the idle/pending state (queries are client-first; loaders are the
  * SSR data source). The first client render uses the same idle snapshot, so no mismatch.
  */

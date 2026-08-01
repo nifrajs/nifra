@@ -14,8 +14,8 @@ export interface HtmlImageAttrs {
 }
 
 /**
- * Map a {@link ResolvedImage} to plain lowercase HTML `<img>` attribute names — `srcset` (not React's
- * `srcSet`), `fetchpriority` (not `fetchPriority`) — dropping unset optionals. For the adapters that
+ * Map a {@link ResolvedImage} to plain lowercase HTML `<img>` attribute names - `srcset` (not React's
+ * `srcSet`), `fetchpriority` (not `fetchPriority`) - dropping unset optionals. For the adapters that
  * spread attributes straight onto a host element (Solid / Vue / Svelte / Preact); React consumes
  * `ResolvedImage` directly because it requires the camelCased prop names.
  */

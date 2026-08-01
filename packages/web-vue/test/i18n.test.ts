@@ -3,7 +3,7 @@ import { createSSRApp, defineComponent, h } from "vue"
 import { renderToString } from "vue/server-renderer"
 import { I18nProvider, useT } from "../src/i18n.ts"
 
-const messages = { greeting: "Hi {name} — {n, plural, one {# message} other {# messages}}" }
+const messages = { greeting: "Hi {name} - {n, plural, one {# message} other {# messages}}" }
 
 const Greeting = defineComponent({
   props: { name: { type: String, required: true }, n: { type: Number, required: true } },
@@ -26,14 +26,14 @@ const render = (slot: () => unknown): Promise<string> =>
 describe("@nifrajs/web-vue/i18n", () => {
   test("I18nProvider provides a formatter; useT renders translated text (SSR)", async () => {
     const html = await render(() => h(Greeting, { name: "Ada", n: 1 }))
-    expect(html).toContain("Hi Ada — 1 message")
+    expect(html).toContain("Hi Ada - 1 message")
     expect(html).toContain('data-locale="en"')
     expect(html).toContain('data-num="1,234.5"')
   })
 
   test("plural switches with the count", async () => {
     const html = await render(() => h(Greeting, { name: "Bo", n: 5 }))
-    expect(html).toContain("Hi Bo — 5 messages")
+    expect(html).toContain("Hi Bo - 5 messages")
   })
 
   test("useT() outside a provider throws", () => {

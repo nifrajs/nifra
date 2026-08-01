@@ -1,5 +1,5 @@
 # nifra on Node, containerized. Build with Bun (nifra's build toolchain), then run the self-contained
-# bundle on a slim Node image — the final image carries no build tools or node_modules.
+# bundle on a slim Node image - the final image carries no build tools or node_modules.
 #   docker build -t my-nifra-app .
 #   docker run -p 3000:3000 my-nifra-app
 FROM oven/bun:1 AS build

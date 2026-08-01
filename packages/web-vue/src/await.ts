@@ -1,13 +1,13 @@
 import type { Deferred } from "@nifrajs/web"
 /**
- * `@nifrajs/web-vue/await` — the `<Await>` primitive for deferred loader/action data (`defer()`), as a Vue
+ * `@nifrajs/web-vue/await` - the `<Await>` primitive for deferred loader/action data (`defer()`), as a Vue
  * component consumed with scoped slots: `default` (the resolved value), `fallback`, and `error`.
  *
  * Vue's SSR resolves async deps before flushing, so a `<Suspense>`-based Await would *block* the stream
  * (defeating `defer()`'s non-blocking point). Instead this renders the `fallback` on the server and
  * resolves the deferred **reactively on the client** (`onMounted` → the registry promise the core
  * streamed via `__nifraResolve` settles → re-render). Trade-off vs React/Preact (which stream the
- * resolved content into the SSR HTML): with JS off, Vue shows the fallback for deferred content —
+ * resolved content into the SSR HTML): with JS off, Vue shows the fallback for deferred content -
  * acceptable since deferred data is non-critical by design (critical data is the loader proper). The
  * deferred value still arrives correctly on the client (hydration + soft nav).
  */
@@ -31,12 +31,12 @@ type AwaitState = { phase: 0 | 1 | 2; value?: unknown; error?: unknown }
  */
 export const Await = defineComponent({
   name: "Await",
-  // `required` with no `type` accepts any value (Deferred<T> | T) — the call site types it.
+  // `required` with no `type` accepts any value (Deferred<T> | T) - the call site types it.
   props: { resolve: { required: true as const } },
   setup(props, { slots }) {
     const state = shallowRef<AwaitState>({ phase: 0 })
     // `current` guards against a superseded promise settling after `resolve` changed (e.g. a second
-    // submit hands the same <Await> instance a new deferred) — only the latest resolve writes state.
+    // submit hands the same <Await> instance a new deferred) - only the latest resolve writes state.
     let current: unknown
     // `immediate` runs synchronously in setup on BOTH server and client: a non-deferred value renders
     // immediately; a deferred renders the fallback now and settles later. On the server the late

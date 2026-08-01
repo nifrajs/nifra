@@ -103,11 +103,11 @@ describe("googleFontsCssUrl()", () => {
   test("rejects out-of-range / nonsense weights and bad styles/display", () => {
     expect(() => googleFontsCssUrl({ family: "Inter", weights: [5000] })).toThrow(/invalid weight/)
     expect(() => googleFontsCssUrl({ family: "Inter", weights: ["abc"] })).toThrow(/invalid weight/)
-    // @ts-expect-error — style not in the union
+    // @ts-expect-error - style not in the union
     expect(() => googleFontsCssUrl({ family: "Inter", styles: ["slanted"] })).toThrow(
       /invalid style/,
     )
-    // @ts-expect-error — display not in the union
+    // @ts-expect-error - display not in the union
     expect(() => googleFontsCssUrl({ family: "Inter", display: "explode" })).toThrow(
       /invalid display/,
     )

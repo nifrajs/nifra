@@ -7,7 +7,7 @@ import {
 } from "../src/docs-search.ts"
 
 const DOC = [
-  "# nifra — full developer documentation",
+  "# nifra - full developer documentation",
   "Intro paragraph about the framework.",
   "## WebSockets",
   "app.ws() registers a typed WebSocket route. Import @nifrajs/core/ws once at the entry.",

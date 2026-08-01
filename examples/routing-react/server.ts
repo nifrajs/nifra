@@ -1,10 +1,10 @@
 /**
- * F5 example — the SAME app as routing-solid on React, served from a content-hashed production
+ * F5 example - the SAME app as routing-solid on React, served from a content-hashed production
  * build. `buildClient` writes dist/manifest.json; the server reads the hashed entry + serves the
  * hashed assets with immutable cache headers.
  *
  *   bun run examples/routing-react/build.ts
- *   bun examples/routing-react/server.ts        # no SSR preload — React JSX is Bun-native
+ *   bun examples/routing-react/server.ts        # no SSR preload - React JSX is Bun-native
  */
 import { inProcessClient } from "@nifrajs/client"
 import { createWebApp, enumerateStaticRoutes } from "@nifrajs/web"
@@ -15,7 +15,7 @@ import { backend } from "./backend"
 
 const routesDir = `${import.meta.dir}/routes`
 const dist = `${import.meta.dir}/dist`
-// Trusted own build output (written by buildClient) — cast after parse.
+// Trusted own build output (written by buildClient) - cast after parse.
 const assets = JSON.parse(
   await Bun.file(`${dist}/manifest.json`)
     .text()
@@ -37,7 +37,7 @@ export const app = createWebApp({
   adapter: reactAdapter,
   manifest,
   clientEntry: assets.entry,
-  // Each page modulepreloads its matched route's chunks (built map) alongside the entry — the route
+  // Each page modulepreloads its matched route's chunks (built map) alongside the entry - the route
   // code downloads in parallel instead of after the entry discovers the lazy import.
   routePreload: assets.routes,
   // The app's bundled stylesheet (`buildClient`'s manifest.css) → `<link rel="stylesheet">` in every
@@ -67,7 +67,7 @@ app.get("/assets/*", async (c) => {
   })
 })
 
-// Only listen when run directly (`bun server.ts`) — when imported (by build.ts for prerendering),
+// Only listen when run directly (`bun server.ts`) - when imported (by build.ts for prerendering),
 // we just want the `app`, not a live server.
 if (import.meta.main) {
   const running = app.listen(Number(Bun.env.PORT ?? 3000))

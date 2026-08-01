@@ -1,6 +1,6 @@
 /**
  * The website's benchmark numbers, as a single source of truth. The data lives in `benchmarks.json`
- * (machine-readable) so the bench suite can update it on every run — see `bench/site-bench.ts`, which
+ * (machine-readable) so the bench suite can update it on every run - see `bench/site-bench.ts`, which
  * `bun run bench:http:update` / `bench:ssr` / `bench:size` call to merge their slice. The site imports
  * the typed slices below, so a fresh run flows straight to the landing + /benchmarks with no hand-edit.
  */

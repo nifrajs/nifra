@@ -249,7 +249,7 @@ export function cache(options: CacheOptions): Middleware {
         return withStatusHeader(res, cacheStatusHeader, "BYPASS")
       }
       // Shared-cache safety (RFC 9111 §3.5): never store a response to an authenticated request
-      // (Authorization or Cookie) unless it's explicitly public — otherwise a personalized 200 leaks
+      // (Authorization or Cookie) unless it's explicitly public - otherwise a personalized 200 leaks
       // across users. Opt in with `cacheAuthenticated: true` for a route that's the same for everyone.
       if (
         !cacheAuthenticated &&

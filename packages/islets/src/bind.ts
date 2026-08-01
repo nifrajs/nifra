@@ -1,9 +1,9 @@
 /**
- * The declarative binding walker — attaches signal-driven behavior to SERVER-RENDERED markup.
+ * The declarative binding walker - attaches signal-driven behavior to SERVER-RENDERED markup.
  * No VDOM, no hydration re-render: the HTML the server sent (e.g. via `@nifrajs/web-vanilla`) is
  * already the initial state; bindings update it surgically when signals change.
  *
- * The attribute set is CLOSED and documented — six bindings, no expression language. Values are
+ * The attribute set is CLOSED and documented - six bindings, no expression language. Values are
  * signal/handler NAMES looked up in the island's scope, never evaluated code, so markup can't
  * inject behavior:
  *
@@ -23,13 +23,13 @@ export type IslandScope = {
 }
 
 const warned = new Set<string>()
-/** Unknown names warn once (loud in dev, resilient in prod — progressive enhancement must not
+/** Unknown names warn once (loud in dev, resilient in prod - progressive enhancement must not
  * throw over a typo'd attribute) and the binding is skipped. */
 function warnOnce(kind: string, name: string): void {
   const key = `${kind}:${name}`
   if (warned.has(key)) return
   warned.add(key)
-  console.warn(`[nifra/islets] unknown ${kind} ${JSON.stringify(name)} — binding skipped`)
+  console.warn(`[nifra/islets] unknown ${kind} ${JSON.stringify(name)} - binding skipped`)
 }
 
 function signalOf(scope: IslandScope, name: string): Signal<unknown> | undefined {
@@ -51,7 +51,7 @@ function pairs(spec: string): Array<[string, string]> {
   return out
 }
 
-/** The element surface the walker needs — structural, so tests can drive it without a real DOM. */
+/** The element surface the walker needs - structural, so tests can drive it without a real DOM. */
 export interface BindableElement {
   getAttribute(name: string): string | null
   setAttribute(name: string, value: string): void

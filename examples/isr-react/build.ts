@@ -1,6 +1,6 @@
 // Build the ISR demo: (1) buildClient → public/assets (the content-hashed client bundle, served at
 // /assets/* by the Bun server and by Workers Assets on the edge), and (2) buildServer →
-// dist-server/worker.js (the self-contained edge worker — see worker.ts + wrangler.toml). ISR is the
+// dist-server/worker.js (the self-contained edge worker - see worker.ts + wrangler.toml). ISR is the
 // *dynamic* alternative to SSG, so there's no prerender step.
 //   bun run examples/isr-react/build.ts
 //   bun examples/isr-react/server.ts                      # Bun, in-memory store

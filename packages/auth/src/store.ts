@@ -1,11 +1,11 @@
 /**
- * Session stores (the **store mode** backend) — a pluggable `SessionStore` plus an in-memory
+ * Session stores (the **store mode** backend) - a pluggable `SessionStore` plus an in-memory
  * implementation (dev / single-instance, prod-guarded) and a Cloudflare Workers KV implementation
  * (the durable, shared production path). The store is dumb persistence: the session *manager* owns the
  * clock and authoritatively enforces expiry, so the store stays clock-free and trivially testable.
  */
 
-/** A persisted session — its data plus an absolute expiry (ms epoch). */
+/** A persisted session - its data plus an absolute expiry (ms epoch). */
 export interface SessionRecord {
   readonly data: Record<string, unknown>
   /** Absolute expiry (ms epoch). The manager treats `expiresAt <= now` as no session. */
@@ -14,7 +14,7 @@ export interface SessionRecord {
 
 /**
  * Pluggable session backend (store mode). Async so a network store (KV/Redis) fits the same shape.
- * **Production needs a shared/durable store** so sessions hold across instances — {@link MemorySessionStore}
+ * **Production needs a shared/durable store** so sessions hold across instances - {@link MemorySessionStore}
  * prod-guards against the per-instance footgun.
  */
 export interface SessionStore {
@@ -27,7 +27,7 @@ export interface SessionStore {
 }
 
 export interface MemorySessionStoreOptions {
-  /** Allow the in-memory store in production. Off by default — per-instance sessions don't hold across
+  /** Allow the in-memory store in production. Off by default - per-instance sessions don't hold across
    * instances and are lost on restart. */
   readonly allowInProduction?: boolean
   /** Hard cap on stored sessions; the oldest-inserted is evicted past it (default 10_000). */
@@ -36,7 +36,7 @@ export interface MemorySessionStoreOptions {
 
 /**
  * In-process session store. Refuses to run in production unless explicitly allowed (mirrors the ISR
- * `MemoryCacheStore` + the rate-limit `MemoryStore` — a per-instance store is unsafe across instances).
+ * `MemoryCacheStore` + the rate-limit `MemoryStore` - a per-instance store is unsafe across instances).
  * Bounded: oldest-inserted entries evict past `max`.
  */
 export class MemorySessionStore implements SessionStore {
@@ -77,7 +77,7 @@ export class MemorySessionStore implements SessionStore {
 }
 
 /**
- * Minimal structural shape of a Cloudflare Workers **KV namespace** binding — just the three methods
+ * Minimal structural shape of a Cloudflare Workers **KV namespace** binding - just the three methods
  * {@link KVSessionStore} uses. Structural (no `@cloudflare/workers-types` dependency) so any KV-like
  * binding satisfies it and tests can pass an in-memory double.
  */
@@ -104,9 +104,9 @@ const isSessionRecord = (value: unknown): value is SessionRecord => {
 
 /**
  * A {@link SessionStore} backed by a **Cloudflare Workers KV** namespace (or any {@link KVNamespaceLike})
- * — the durable, shared production store: sessions hold across worker instances and survive restarts.
+ * - the durable, shared production store: sessions hold across worker instances and survive restarts.
  * Records serialize to JSON; the entry's KV `expiration` is set from the record's `expiresAt` so KV
- * auto-evicts the session (a GC backstop — the manager still authoritatively checks expiry on read).
+ * auto-evicts the session (a GC backstop - the manager still authoritatively checks expiry on read).
  * Every read is validated, so a corrupt/skewed entry reads as no session.
  */
 export class KVSessionStore implements SessionStore {

@@ -1,5 +1,5 @@
 /**
- * `@nifrajs/web/dev` — the **Bun pipeline's** dev server: one toolchain, no Vite in the process.
+ * `@nifrajs/web/dev` - the **Bun pipeline's** dev server: one toolchain, no Vite in the process.
  *
  * nifra ships two dev pipelines and the rule between them is that a pipeline owns a whole phase. The
  * Vite server (`@nifrajs/web/vite`) is the default - mature framework plugins, and it resolves SSR as
@@ -7,12 +7,12 @@
  * and hot-reloads the client while Bun's runtime resolves SSR. Only one toolchain is present, so the two
  * cannot disagree.
  *
- * What you get: React Fast Refresh WITH state preserved — Bun's dev server applies it natively, no plugin
+ * What you get: React Fast Refresh WITH state preserved - Bun's dev server applies it natively, no plugin
  * (verified: editing a component-only module swaps its markup while a `useState` counter keeps its value,
  * no reload). The usual boundary rule still applies, and it is the same rule Vite has: a module whose
  * exports are all components is a refresh boundary, so a ROUTE file that also exports `loader`/`meta` is
  * not, and saving it does a clean full reload. Plus no Vite dependency and ONE bundler across dev and
- * production, which is the real prize — the dev/prod seam disappears.
+ * production, which is the real prize - the dev/prod seam disappears.
  *
  * What you give up: `*.module.css`. Bun's DEV-server bundler has no CSS-Modules transform (its production
  * `Bun.build` does), so the import compiles to a dangling reference. Plain CSS and Tailwind are fine. The
@@ -60,14 +60,14 @@ import { discoverRoutes } from "./fs.ts"
 import { DEFAULT_DEV_PORT, generateClientEntry } from "./index.ts"
 import { servePublicDir } from "./public-dir.ts"
 
-/** Minimal app surface the dev server needs — `createWebApp(...)` satisfies it. */
+/** Minimal app surface the dev server needs - `createWebApp(...)` satisfies it. */
 interface FetchApp {
   fetch(request: Request): Response | Promise<Response>
 }
 
 export interface DevServerOptions extends Omit<BuildClientOptions, "minify"> {
   /**
-   * Build the nifra app for the current client entry. `importQuery` changes on every reload — pass it to
+   * Build the nifra app for the current client entry. `importQuery` changes on every reload - pass it to
    * `discoverRoutes(routesDir, { importQuery })` so SSR re-imports edited route modules instead of Bun's
    * cached copies.
    */
@@ -93,7 +93,7 @@ export interface DevServerOptions extends Omit<BuildClientOptions, "minify"> {
 export interface DevServer {
   readonly port: number
   /**
-   * The URL pages point their client entry at — always {@link CLIENT_ENTRY_PATH}, never Bun's hashed
+   * The URL pages point their client entry at - always {@link CLIENT_ENTRY_PATH}, never Bun's hashed
    * chunk. Deliberately not the underlying chunk URL: that one moves on every rebuild, and anything
    * holding onto it is holding onto a URL that will stop working.
    */
@@ -154,7 +154,7 @@ function writeIfChanged(path: string, content: string): void {
   try {
     if (readFileSync(path, "utf8") === content) return
   } catch {
-    // missing or unreadable — fall through and write
+    // missing or unreadable - fall through and write
   }
   writeFileSync(path, content)
 }
@@ -196,13 +196,13 @@ export function writeDevFiles(options: WriteDevFilesOptions): void {
     // A bare relative path reads as a PACKAGE specifier to a bundler; `./` is what makes it a file.
     return rel.startsWith(".") ? rel : `./${rel}`
   }
-  // No `import.meta.hot.accept` here, deliberately. When an edit lands OUTSIDE a Fast Refresh boundary —
-  // a route file, which also exports `loader`/`meta` — Bun walks up to this generated entry, finds no
+  // No `import.meta.hot.accept` here, deliberately. When an edit lands OUTSIDE a Fast Refresh boundary -
+  // a route file, which also exports `loader`/`meta` - Bun walks up to this generated entry, finds no
   // `accept`, logs "hot update was not accepted" and does a full reload. That reload is correct: the route
   // module's non-component exports changed, so patching it into the live tree would be wrong. Accepting
   // here is worse than the warning: Bun re-evaluates the module BEFORE the accept callback runs, so the
   // entry re-executes against a container React already mounted ("createRoot() on a container that has
-  // already been passed to createRoot()") and only then does the callback get to reload — trading an
+  // already been passed to createRoot()") and only then does the callback get to reload - trading an
   // accurate warning for a real error. Editing a component-only module never reaches this path: Bun
   // applies React Fast Refresh there and state is preserved.
   writeIfChanged(entryPath, generateClientEntry(manifest, { clientModule, resolve: toSpecifier }))
@@ -261,9 +261,9 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
   const htmlModule = (await import(htmlPath)) as { default: HtmlBundle }
 
   let server: BunServerHandle
-  // The last resolved entry, with the time it was resolved. Deliberately short-lived — see `currentEntry`.
+  // The last resolved entry, with the time it was resolved. Deliberately short-lived - see `currentEntry`.
   let cache: { readonly entry: DevEntryMatch; readonly at: number } | undefined
-  // The app, tagged with the entry hash it was built against — see `appFor`.
+  // The app, tagged with the entry hash it was built against - see `appFor`.
   let built: { readonly entry: string; readonly app: FetchApp } | undefined
   let building: { readonly entry: string; readonly promise: Promise<FetchApp> } | undefined
   let version = 0

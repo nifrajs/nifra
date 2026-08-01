@@ -1,8 +1,8 @@
 /**
- * A tiny cookie jar for in-process tests — parses `Set-Cookie` off responses and emits a `Cookie`
+ * A tiny cookie jar for in-process tests - parses `Set-Cookie` off responses and emits a `Cookie`
  * request header, so a login → authenticated-request flow works without threading headers by hand. It
  * honours removal (`Max-Age=0` / a past `Expires`) so logout clears the cookie; other attributes
- * (Domain/Path/Secure/SameSite) are ignored — everything is same-origin in-process.
+ * (Domain/Path/Secure/SameSite) are ignored - everything is same-origin in-process.
  */
 
 export interface CookieJar {

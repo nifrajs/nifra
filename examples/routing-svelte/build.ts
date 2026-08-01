@@ -20,7 +20,7 @@ const manifest = await buildClient({
 console.log("built", manifest.entry)
 
 // SSG on Svelte: prerendering compiles + renders .svelte components SERVER-SIDE in THIS process, so
-// register Svelte's SSR-generate transform globally NOW — AFTER buildClient (which scoped its own
+// register Svelte's SSR-generate transform globally NOW - AFTER buildClient (which scoped its own
 // "dom" compile to that build) and BEFORE importing the app, so the dynamically-imported .svelte
 // routes get the "ssr" generate. Then drive the SSG.
 plugin(svelteBunPlugin("ssr"))

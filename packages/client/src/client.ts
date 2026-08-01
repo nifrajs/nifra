@@ -30,14 +30,14 @@ const HTTP_VERBS: ReadonlySet<string> = new Set([
 const BODY_VERBS: ReadonlySet<string> = new Set(["post", "put", "patch"])
 
 /**
- * The fetch shape the client needs — looser than `typeof fetch` so an in-process bridge or a
+ * The fetch shape the client needs - looser than `typeof fetch` so an in-process bridge or a
  * test mock satisfies it without the extra members (`.preconnect`, overloads) of the global.
  */
 export type FetchFn = (input: string, init?: RequestInit) => Promise<Response>
 
 type MaybePromise<T> = T | Promise<T>
 
-/** Safe retry policy. Off unless `retry` is set; retries ONLY idempotent methods and transient 5xx —
+/** Safe retry policy. Off unless `retry` is set; retries ONLY idempotent methods and transient 5xx -
  * never a 4xx/429 and never a non-idempotent method, so a retry can't double a side effect. */
 export interface ClientRetryOptions {
   /** Max RETRIES after the first attempt. Default 2. */
@@ -57,7 +57,7 @@ export interface ClientOptions {
   readonly fetch?: FetchFn
   /**
    * Runs before each request (including each retry). Return a header map to MERGE onto the outgoing
-   * request — the place to inject a fresh auth token. `await`ed, so async token refresh works.
+   * request - the place to inject a fresh auth token. `await`ed, so async token refresh works.
    */
   readonly onRequest?: (request: {
     readonly url: string
@@ -138,8 +138,8 @@ export type InProcessClient<App> = Treaty<App> & BackendMount
 
 export interface InProcessClientOptions extends Omit<ClientOptions, "fetch"> {
   /**
-   * Assert every JSON response against the route's declared contract — `schema.response` for 2xx,
-   * `schema.errors[status]` for declared failures — and THROW on mismatch, so a handler whose real
+   * Assert every JSON response against the route's declared contract - `schema.response` for 2xx,
+   * `schema.errors[status]` for declared failures - and THROW on mismatch, so a handler whose real
    * output drifts from its schema fails the test instead of passing silently. Statuses with no
    * declared schema, non-JSON bodies, and 204/205/HEAD pass through unchecked. Test-focused: the
    * check parses a clone of each JSON body, a cost that belongs in tests, not production hot paths.
@@ -156,16 +156,16 @@ interface CallOptions {
 /**
  * Create an end-to-end-typed client for a nifra server. Two modes:
  *
- *   // coupled — typed from the server's type (`typeof app`)
+ *   // coupled - typed from the server's type (`typeof app`)
  *   const api = client<typeof app>("http://localhost:3000")
  *
- *   // decoupled — typed from a contract VALUE, no server import
+ *   // decoupled - typed from a contract VALUE, no server import
  *   const api = client(contract, "https://api.example.com")
  *
  *   const { data, error } = await api.users({ id: "1" }).get()
  *
  * Both return the same Eden-style proxy. Browser-safe: uses only `fetch` /
- * `Proxy` / `URL`, never the server runtime. Never throws — network and non-2xx
+ * `Proxy` / `URL`, never the server runtime. Never throws - network and non-2xx
  * responses surface as a `Result` `error`.
  */
 export function client<App>(baseUrl: string, options?: ClientOptions): Treaty<App>
@@ -189,7 +189,7 @@ export function client(
 }
 
 /**
- * A {@link client} whose `fetch` calls a nifra app's own `fetch` in-process — no network, full
+ * A {@link client} whose `fetch` calls a nifra app's own `fetch` in-process - no network, full
  * lifecycle (validation, middleware, contracts). For SSR loaders. Typed from `App` exactly like
  * the network client. The `(url, init) → Request` bridge is required because the client calls
  * `fetch(url, init)` while `app.fetch` takes a `Request`.
@@ -208,8 +208,8 @@ export function inProcessClient<
   const bridge = options?.validateResponses === true ? withResponseValidation(app, direct) : direct
   const mount: BackendMountHandler = (request, platform) =>
     Promise.resolve((app.fetch as BackendMountHandler)(request, platform))
-  // NO_SOCKET marks the options so a typed `.ws()` call fails with a real explanation — an
-  // in-process app has no socket to upgrade — instead of dialing ws://nifra.internal into the void.
+  // NO_SOCKET marks the options so a typed `.ws()` call fails with a real explanation - an
+  // in-process app has no socket to upgrade - instead of dialing ws://nifra.internal into the void.
   const proxy = client<App>("http://nifra.internal", {
     ...options,
     fetch: bridge,
@@ -226,9 +226,9 @@ export function inProcessClient<
 }
 
 /**
- * The in-process test client — the Fastify-`inject` / supertest equivalent for nifra. Drives the
+ * The in-process test client - the Fastify-`inject` / supertest equivalent for nifra. Drives the
  * app's own `fetch` directly: no server, no port, no network, the full real lifecycle (validation,
- * middleware, contracts, auth), and end-to-end types from `App`. Calls never throw — branch on
+ * middleware, contracts, auth), and end-to-end types from `App`. Calls never throw - branch on
  * `res.ok`. An alias of {@link inProcessClient} with a test-focused name; identical behavior.
  *
  * ```ts
@@ -253,13 +253,13 @@ function createProxy(base: string, path: string, options: ClientOptions): unknow
           execute(base, path, key.toLowerCase(), args, options)
       }
       // Typed SSE subscription for `app.sse()` routes. Like `fetch` on the in-process client,
-      // `subscribe` is a reserved proxy key — a literal `/subscribe` path segment is unreachable
+      // `subscribe` is a reserved proxy key - a literal `/subscribe` path segment is unreachable
       // through the typed proxy (no nifra app defines one reached this way).
       if (key === "subscribe") {
         return (onEvent: (event: unknown) => void, subscribeOptions?: SubscribeCallOptions) =>
           subscribeSse(base, path, onEvent, subscribeOptions, options)
       }
-      // Typed WebSocket handle for `app.ws()` routes — `ws` is a reserved proxy key like `subscribe`.
+      // Typed WebSocket handle for `app.ws()` routes - `ws` is a reserved proxy key like `subscribe`.
       if (key === "ws") {
         return (wsOptions?: Parameters<typeof openWebSocket>[2]) =>
           openWebSocket(
@@ -277,11 +277,11 @@ function createProxy(base: string, path: string, options: ClientOptions): unknow
       return createProxy(base, key === "index" ? path : `${path}/${key}`, options)
     },
     apply(_target, _thisArg, args) {
-      // A param call (`api.users({ id })`): append the single value, encoded — encoding "/"
+      // A param call (`api.users({ id })`): append the single value, encoded - encoding "/"
       // round-trips through the server's decode, so wildcards and params share this one path.
       // The Treaty type requires the object, but the runtime must stay graceful: a no-arg call
-      // (`api.users()`) or empty object (`api.users({})`) must NOT throw — the client's contract is
-      // to never throw — nor synthesize an `"undefined"` path segment. With no value, fall through
+      // (`api.users()`) or empty object (`api.users({})`) must NOT throw - the client's contract is
+      // to never throw - nor synthesize an `"undefined"` path segment. With no value, fall through
       // to the bare path, which the server resolves as an ordinary `{ ok: false }` (404) Result.
       const first = args[0]
       const value =
@@ -341,7 +341,7 @@ async function execute(
     try {
       response = await doFetch(url, init)
     } catch (error) {
-      // A contract violation is a test assertion (validateResponses), not a call outcome — let it
+      // A contract violation is a test assertion (validateResponses), not a call outcome - let it
       // fail the test instead of degrading into a `Result` the test would happily branch on.
       if (error instanceof ResponseContractViolation) throw error
       if (methodRetryable && attempt < maxRetries) {
@@ -440,7 +440,7 @@ async function readSseStream(
       const parsed = Number(value)
       if (Number.isFinite(parsed)) frame.retry = parsed
     }
-    // `event:` names pass through untyped for now — the contract types the data payload.
+    // `event:` names pass through untyped for now - the contract types the data payload.
   }
 
   try {
@@ -466,7 +466,7 @@ async function readSseStream(
 
 /**
  * The `.subscribe()` runtime for `app.sse()` routes. fetch-based (never `EventSource`), so it
- * streams over the configured fetcher — network, an in-process bridge, or a test mock — with
+ * streams over the configured fetcher - network, an in-process bridge, or a test mock - with
  * EventSource semantics where they matter: auto-reconnect with backoff + jitter (honoring the
  * server's `retry:` hint), `Last-Event-ID` resumption, JSON-parsed typed events. Never throws:
  * failures reach `onError`; a terminal end reaches `onClose`.

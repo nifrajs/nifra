@@ -9,7 +9,7 @@ import { MemoryStorage } from "@nifrajs/storage"
 // feature is a module - a second feature with a database of its own gets its own file, not a section.
 //
 // A full-stack starter: cursor pagination (@nifrajs/schema), background jobs (@nifrajs/jobs), a typed
-// cache (@nifrajs/cache), and blob storage (@nifrajs/storage) — over an in-memory "notes" store you'd
+// cache (@nifrajs/cache), and blob storage (@nifrajs/storage) - over an in-memory "notes" store you'd
 // swap for your database. Everything is exported so `app.test.ts` can drive it via `app.fetch`.
 
 export interface Note {
@@ -82,7 +82,7 @@ export const noteRoutes = server()
     if (note === undefined) return c.json({ error: "not found" }, 404)
     return note
   })
-  // Attach raw bytes for a note — stored through the pluggable storage adapter.
+  // Attach raw bytes for a note - stored through the pluggable storage adapter.
   .put("/notes/:id/attachment", async (c) => {
     const bytes = await c.boundedBody()
     const key = `notes/${c.params.id}/attachment`

@@ -31,7 +31,7 @@ test("buildClient empties a .server module so its node: subtree stays out of the
     join(root, "db.server.ts"),
     'import { randomUUID } from "node:crypto"\nexport const newId = () => randomUUID()\n',
   )
-  // a route whose (server-only) loader uses it — the loader export survives client bundling (entrypoint)
+  // a route whose (server-only) loader uses it - the loader export survives client bundling (entrypoint)
   writeFileSync(
     join(routes, "index.tsx"),
     'import { newId } from "../db.server.ts"\nexport const loader = () => ({ id: newId() })\nexport default () => "home"\n',

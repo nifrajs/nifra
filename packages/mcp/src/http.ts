@@ -1,8 +1,8 @@
 /**
- * The transport core shared by every HTTP host of an MCP server — the dev/docs MCP in `@nifrajs/cli`
+ * The transport core shared by every HTTP host of an MCP server - the dev/docs MCP in `@nifrajs/cli`
  * (`nifra docs-mcp`), the site's edge worker, and a nifra app mounting `POST /mcp` via
  * {@link ./server.ts}. {@link respondMcpHttp} is a plain Web `fetch` handler: POST a JSON-RPC body →
- * JSON-RPC response; GET is a health page; OPTIONS is the CORS preflight. It never throws — a bad body
+ * JSON-RPC response; GET is a health page; OPTIONS is the CORS preflight. It never throws - a bad body
  * becomes a JSON-RPC parse error. Pass the tools (and optional {@link McpServerFeatures} for resources /
  * prompts / the MCP Apps `ui://` widgets) so each host supplies its own corpus/source behind one core.
  */
@@ -88,7 +88,7 @@ async function readJsonBounded(
 
 /**
  * Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → JSON-RPC
- * response; GET → a plain-text health page; OPTIONS → CORS preflight. Never throws — a bad body becomes a
+ * response; GET → a plain-text health page; OPTIONS → CORS preflight. Never throws - a bad body becomes a
  * JSON-RPC parse error. The dispatch is the shared, transport-agnostic {@link handleRpc}.
  */
 export async function respondMcpHttp(
@@ -101,7 +101,7 @@ export async function respondMcpHttp(
   if (request.method === "GET") {
     return new Response(
       options.health ??
-        "MCP server — POST JSON-RPC 2.0 here (methods: initialize, tools/list, tools/call).",
+        "MCP server - POST JSON-RPC 2.0 here (methods: initialize, tools/list, tools/call).",
       { headers: { "content-type": "text/plain; charset=utf-8", ...CORS } },
     )
   }
@@ -125,7 +125,7 @@ export async function respondMcpHttp(
   const response = await handleRpc(message, tools, serverInfo, options.features ?? {}, {
     signal: request.signal,
   })
-  // A notification (no id) yields null — acknowledge with 204, no body.
+  // A notification (no id) yields null - acknowledge with 204, no body.
   if (response === null) return new Response(null, { status: 204, headers: CORS })
   return Response.json(response, { headers: CORS })
 }

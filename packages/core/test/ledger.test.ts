@@ -17,7 +17,7 @@ import {
 
 const ledgerOptions = { method: "POST", path: "/pay" }
 
-describe("createRequestLedger — mechanics", () => {
+describe("createRequestLedger - mechanics", () => {
   test("append assigns monotonic seq + clock time and freezes entries", () => {
     let now = 10
     const ledger = createRequestLedger({ ...ledgerOptions, clock: () => now })
@@ -207,7 +207,7 @@ describe("memory sink + digest", () => {
   })
 })
 
-describe("server({ effectLedger }) — request path", () => {
+describe("server({ effectLedger }) - request path", () => {
   const post = (path: string): Request => new Request(`http://test${path}`, { method: "POST" })
 
   test("executeCapability correlates one intent with its automatic terminal outcome", async () => {
@@ -439,7 +439,7 @@ describe("server({ effectLedger }) — request path", () => {
     expect(memory.ledgers).toHaveLength(1)
     const sealed = memory.ledgers[0] as SealedEffectLedger
     expect(sealed.method).toBe("POST")
-    expect(sealed.path).toBe("/orders/:id") // the pattern — never the concrete URL
+    expect(sealed.path).toBe("/orders/:id") // the pattern - never the concrete URL
     expect(sealed.entries.map((entry) => entry.capability)).toEqual([
       "db.write",
       "db.write",

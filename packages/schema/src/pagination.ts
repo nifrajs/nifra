@@ -1,9 +1,9 @@
 /**
- * Cursor-pagination runtime helpers — an opaque cursor codec + a page builder. Pair with `t.paginated`
+ * Cursor-pagination runtime helpers - an opaque cursor codec + a page builder. Pair with `t.paginated`
  * (the response schema) and `t.pageQuery` (the request schema).
  *
  * Edge-safe: `btoa`/`atob` + `TextEncoder`/`TextDecoder` (no `Buffer`), so it runs on Bun/Node/Deno/
- * Workers. Cursors are opaque but NOT signed — treat a decoded cursor as untrusted client input: validate
+ * Workers. Cursors are opaque but NOT signed - treat a decoded cursor as untrusted client input: validate
  * its shape before keying a DB query off it (it's a position hint, not an authorization token).
  */
 
@@ -27,7 +27,7 @@ export function encodeCursor(value: unknown): string {
   return toBase64Url(JSON.stringify(value))
 }
 
-/** Decode a cursor back to its value. Returns `undefined` for a null/empty/malformed cursor — treat that
+/** Decode a cursor back to its value. Returns `undefined` for a null/empty/malformed cursor - treat that
  * as "start from the beginning" rather than erroring on a client-supplied string. */
 export function decodeCursor<T = unknown>(cursor: string | null | undefined): T | undefined {
   if (cursor === null || cursor === undefined || cursor === "") return undefined
@@ -38,7 +38,7 @@ export function decodeCursor<T = unknown>(cursor: string | null | undefined): T 
   }
 }
 
-/** A cursor-pagination page — matches the shape of `t.paginated(item)`. */
+/** A cursor-pagination page - matches the shape of `t.paginated(item)`. */
 export interface Page<Item> {
   readonly items: Item[]
   readonly nextCursor: string | null

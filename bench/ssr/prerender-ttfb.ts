@@ -1,11 +1,11 @@
 /**
- * Prerendered (SSG) vs SSR TTFB — the same nifra + React app (examples/routing-react, which opts its
+ * Prerendered (SSG) vs SSR TTFB - the same nifra + React app (examples/routing-react, which opts its
  * index route into `prerender = true`), served two ways:
  *   • SSG: the prerendered `dist/index.html` served as a static file (what a CDN/Workers Assets does).
  *   • SSR: the same route rendered on-demand by the nifra server.
  * Identical bytes; the only difference is file-read vs render. Quantifies the SSG TTFB win.
  *
- * Methodology mirrors bench:ssr — 127.0.0.1 (not localhost: avoids IPv6 ::1 refusals), a warmup, and
+ * Methodology mirrors bench:ssr - 127.0.0.1 (not localhost: avoids IPv6 ::1 refusals), a warmup, and
  * the median of N oha runs, with each run's successRate verified ≈100% before its numbers are trusted.
  * The two servers are measured SEQUENTIALLY (never concurrently), so neither steals the other's CPU.
  *
@@ -52,7 +52,7 @@ function parseOha(raw: string): Measure {
     throw new Error(`oha: unexpected JSON shape: ${raw.slice(0, 200)}`)
   }
   if (success < 0.99) {
-    throw new Error(`oha: only ${(success * 100).toFixed(0)}% succeeded — server shed load`)
+    throw new Error(`oha: only ${(success * 100).toFixed(0)}% succeeded - server shed load`)
   }
   return { rps: Math.round(rps), p50ms: p50 * 1000, p99ms: p99 * 1000 }
 }
@@ -91,7 +91,7 @@ async function waitReady(url: string): Promise<void> {
       await res.body?.cancel()
       if (res.ok) return
     } catch {
-      // not up yet — retry
+      // not up yet - retry
     }
     await Bun.sleep(100)
   }
@@ -140,7 +140,7 @@ if ((await build.exited) !== 0) {
 }
 
 console.log(
-  `\nPrerendered (SSG) vs SSR TTFB — same nifra+React app, oha median-of-${RUNS} × ${DURATION_S}s @ ${CONNECTIONS} conns (Bun ${Bun.version})`,
+  `\nPrerendered (SSG) vs SSR TTFB - same nifra+React app, oha median-of-${RUNS} × ${DURATION_S}s @ ${CONNECTIONS} conns (Bun ${Bun.version})`,
 )
 const ssr = await measure(
   "SSR  (nifra renders /)        ",
@@ -159,5 +159,5 @@ const ttfbDrop = ((1 - ssg.p50ms / ssr.p50ms) * 100).toFixed(0)
 const rpsGain = (ssg.rps / Math.max(1, ssr.rps)).toFixed(1)
 console.log(
   `\nSSG cuts TTFB p50 by ~${ttfbDrop}% (${ssr.p50ms.toFixed(2)}ms → ${ssg.p50ms.toFixed(2)}ms) and serves ~${rpsGain}× the req/s` +
-    ` (${ssr.rps} → ${ssg.rps}).\nIdentical HTML — the win is serving a file vs rendering it. Use SSG for content that's the same for everyone; ISR when it changes occasionally.`,
+    ` (${ssr.rps} → ${ssg.rps}).\nIdentical HTML - the win is serving a file vs rendering it. Use SSG for content that's the same for everyone; ISR when it changes occasionally.`,
 )

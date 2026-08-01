@@ -1,5 +1,5 @@
 /**
- * `@nifrajs/web/route-manifest` — what each route actually DOES, as one artifact.
+ * `@nifrajs/web/route-manifest` - what each route actually DOES, as one artifact.
  *
  * The facts are already in the route modules: `prerender`, `getStaticPaths`, `revalidate`, `hydrate`.
  * What has never existed is anywhere to read them together. To answer "which pages are static?", "which
@@ -199,7 +199,7 @@ export function renderRouteManifest(manifest: RouteManifest): string {
   lines.push(
     manifest.target === undefined
       ? "nifra route manifest"
-      : `nifra route manifest — target: ${manifest.target}`,
+      : `nifra route manifest - target: ${manifest.target}`,
   )
   lines.push("")
   if (manifest.routes.length === 0) {
@@ -233,7 +233,7 @@ export function renderRouteManifest(manifest: RouteManifest): string {
     lines.push("")
     lines.push(`✗ ${manifest.conflicts.length} route(s) the target cannot honour:`)
     for (const conflict of manifest.conflicts) {
-      lines.push(`  ✗ ${conflict.pattern} — ${conflict.consequence}`)
+      lines.push(`  ✗ ${conflict.pattern} - ${conflict.consequence}`)
     }
   }
   return lines.join("\n")

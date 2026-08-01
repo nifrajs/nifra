@@ -1,12 +1,12 @@
 /**
- * The cache facade — typed get/set/wrap over a {@link CacheStore}, with TTL, stale-while-revalidate, and
+ * The cache facade - typed get/set/wrap over a {@link CacheStore}, with TTL, stale-while-revalidate, and
  * single-flight stampede protection. Mirrors the other nifra primitives: a factory, an injectable clock,
  * and error isolation (a background revalidation that throws goes to `onError`, never rejects the caller).
  *
  *   import { createCache } from "@nifrajs/cache"
  *
  *   const cache = createCache({ defaultTtlMs: 30_000 })
- *   // Cache-aside in a loader — one DB hit per 30s per key, stampede-safe:
+ *   // Cache-aside in a loader - one DB hit per 30s per key, stampede-safe:
  *   const user = await cache.wrap(`user:${id}`, () => db.user(id), { ttlMs: 30_000, swrMs: 60_000, tags: [`user:${id}`] })
  *   await cache.invalidateTag(`user:${id}`) // on write
  */

@@ -1,5 +1,5 @@
 /**
- * @nifrajs/storage — one blob-storage interface, several adapters. The persistence half of
+ * @nifrajs/storage - one blob-storage interface, several adapters. The persistence half of
  * `@nifrajs/uploads`: `uploads` validates + signs, `storage` puts the bytes somewhere. Adapters cover
  * dev (memory), a long-running server (local disk), and the edge (Cloudflare R2); implement
  * {@link StorageAdapter} for S3/GCS/etc. Dependency-free.

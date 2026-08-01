@@ -1,16 +1,16 @@
 import type { ClientRouter, Fetcher, FetcherState } from "@nifrajs/web"
 /**
- * `@nifrajs/web-preact/fetcher` — Preact bindings for concurrent fetchers. `useFetcher(key)` subscribes a
+ * `@nifrajs/web-preact/fetcher` - Preact bindings for concurrent fetchers. `useFetcher(key)` subscribes a
  * component to an independent {@link Fetcher} (via `useSyncExternalStore` from preact/compat) and
  * returns its reactive state plus `load`/`submit`; `useFetchers()` subscribes to the whole live
  * collection. Imports only `preact/compat` + `@nifrajs/web` types, so route components can use it on the
  * server *and* client. No JSX (the package builds with plain `tsc`).
  *
- * The router that owns the fetchers is the one `mountRouter` hydrated — it registers itself here via
+ * The router that owns the fetchers is the one `mountRouter` hydrated - it registers itself here via
  * `setMountedRouter`. On the server (no mount) there is no router, so the hooks return an idle state
  * (fetchers are client-only). Preact's compat `useSyncExternalStore` is 2-arg (no `getServerSnapshot`);
  * with no router the `getSnapshot` already returns idle, so the first client render after `mountRouter`
- * matches the SSR markup — no hydration mismatch.
+ * matches the SSR markup - no hydration mismatch.
  */
 import { useSyncExternalStore } from "preact/compat"
 
@@ -18,7 +18,7 @@ import { useSyncExternalStore } from "preact/compat"
 // page, and fetchers never exist on the server. Shared with `client.ts`'s `mountRouter`.
 let mountedRouter: ClientRouter | undefined
 
-/** Register (or clear) the router that owns fetchers — called by `mountRouter`. Not for app use. */
+/** Register (or clear) the router that owns fetchers - called by `mountRouter`. Not for app use. */
 export function setMountedRouter(router: ClientRouter | undefined): void {
   mountedRouter = router
 }
@@ -55,7 +55,7 @@ export function useFetcher(key: string): FetcherHandle {
 }
 
 /**
- * Subscribe to the whole live fetcher collection — for a global busy view (e.g. "3 saving…"). Read
+ * Subscribe to the whole live fetcher collection - for a global busy view (e.g. "3 saving…"). Read
  * each entry's `.snapshot()` for its state. Re-renders whenever any fetcher transitions or a new one
  * is created.
  */

@@ -1,5 +1,5 @@
 /**
- * Build-time font self-hosting — the `next/font/google` equivalent for nifra.
+ * Build-time font self-hosting - the `next/font/google` equivalent for nifra.
  *
  * Run this once as a prebuild step (it hits the network):
  *
@@ -27,7 +27,7 @@ const inter = await loadGoogleFont(
   { outDir: "public/fonts", publicPath: "/fonts" },
 )
 
-// The generated @font-face stylesheet — import this from your app entry / root layout.
+// The generated @font-face stylesheet - import this from your app entry / root layout.
 await mkdir(dirname("app/fonts.css"), { recursive: true })
 await writeFile("app/fonts.css", `${inter.css}\n`)
 
@@ -40,6 +40,6 @@ for (const a of inter.assets) console.log(`  ${a.href}  (${a.bytes.byteLength} b
 //   export const meta = { link: interPreloads }
 //
 // Preloading the primary (latin 400) file removes a render-blocking round trip. Don't preload every
-// weight/subset — that forces downloads the page may not need.
+// weight/subset - that forces downloads the page may not need.
 await writeFile("app/fonts.preloads.json", `${JSON.stringify(inter.preloads, null, 2)}\n`)
 console.log(`✓ wrote app/fonts.css + app/fonts.preloads.json`)

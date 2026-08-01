@@ -1,6 +1,6 @@
 <!--
   Component-only SFC → a Vue HMR boundary. Editing the <template> (e.g. the <h1> text) triggers Vue's
-  rerender path with `count` state PRESERVED (no reload) — keep a route's view here; the route file
+  rerender path with `count` state PRESERVED (no reload) - keep a route's view here; the route file
   (which exports loader/meta in a plain <script>) full-reloads on save.
 -->
 <script setup lang="ts">
@@ -15,7 +15,7 @@ const count = ref(0)
 
 <template>
   <div>
-    <h1 id="page">nifra + Vite — true HMR (Vue)</h1>
+    <h1 id="page">nifra + Vite - true HMR (Vue)</h1>
     <p id="ssr">{{ message }}</p>
     <p id="count">count: {{ count }}</p>
     <button id="inc" type="button" @click="count++">increment</button>

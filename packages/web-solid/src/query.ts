@@ -1,11 +1,11 @@
 import { createQueryClient, type QueryClient, type QueryState } from "@nifrajs/web"
 /**
- * `@nifrajs/web-solid/query` — Solid bindings for the keyed query-cache. `createQuery(key, fn)` bridges a
+ * `@nifrajs/web-solid/query` - Solid bindings for the keyed query-cache. `createQuery(key, fn)` bridges a
  * query's `subscribe`/`snapshot` store into a Solid signal and fetches on mount; `useQueryClient`
  * exposes `invalidateQueries` for after a mutation. Imports only `solid-js` + `@nifrajs/web` (never
  * `solid-js/web`), so route components use it on the server *and* client. No JSX.
  *
- * The query client is created lazily **client-side only** (`typeof window`) — on the server the
+ * The query client is created lazily **client-side only** (`typeof window`) - on the server the
  * accessor returns the idle/pending state (queries are client-first; loaders are the SSR data source).
  * The `key` is captured once (Solid setup runs once); a reactive key is a documented future enhancement.
  */

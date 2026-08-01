@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
 # Keep the source-derived docs in lockstep with the code, so a stale `api-reference.md` or an
-# `LLM.md` card can never be committed — and then fail CI's `check:api` / `check:cards` after a push.
+# `LLM.md` card can never be committed - and then fail CI's `check:api` / `check:cards` after a push.
 #
 # Both generators (`gen:api`, `gen:cards`) extract every public export from each `src/index.ts` with the
-# TypeScript compiler API — they read SOURCE, not `dist`, so this needs no build and runs in a few
+# TypeScript compiler API - they read SOURCE, not `dist`, so this needs no build and runs in a few
 # seconds. It fires ONLY when package source (or a generator script) is staged; a commit that touches
 # only tests/docs/config skips it entirely and stays instant. When it does fire, it regenerates the docs
-# and re-stages the artifacts INTO this commit (they are pure generated output — never hand-edited).
+# and re-stages the artifacts INTO this commit (they are pure generated output - never hand-edited).
 #
 # The llms corpora (`gen:llms` -> llms.txt, llms-full.txt, examples.json, types.json) are deliberately
 # NOT refreshed here: `types.json` is parsed from each package's built `dist/**/*.d.ts`, so keeping it
@@ -26,11 +26,11 @@ if ! git diff --cached --name-only --diff-filter=ACMR \
 fi
 
 if ! command -v bun >/dev/null 2>&1; then
-  echo "pre-commit: 'bun' not found — cannot refresh docs. Install bun or run 'bun run gen:api && bun run gen:cards' + re-stage." >&2
+  echo "pre-commit: 'bun' not found - cannot refresh docs. Install bun or run 'bun run gen:api && bun run gen:cards' + re-stage." >&2
   exit 1
 fi
 
-echo "pre-commit: package source staged — refreshing api-reference.md + LLM.md cards…"
+echo "pre-commit: package source staged - refreshing api-reference.md + LLM.md cards…"
 bun run gen:api >/dev/null
 bun run gen:cards >/dev/null
 

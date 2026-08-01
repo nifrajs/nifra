@@ -2,7 +2,7 @@
  * Deferred loader data (`defer()`). A loader may mark slow values as deferred: the critical data
  * renders in the shell, the deferred data streams in behind a `<Suspense>` (the adapter's `<Await>`
  * consumes it) and resolves on the client **without a re-fetch**. This module owns the agnostic
- * protocol — the marker, the resolved/deferred split, and the tiny client registry that streamed
+ * protocol - the marker, the resolved/deferred split, and the tiny client registry that streamed
  * resolution scripts settle. The per-adapter `<Await>` lives in `@nifrajs/web-{solid,react}/client`.
  */
 import { plainJsonCodec, type TransportCodec } from "@nifrajs/core/transport-codec"
@@ -10,7 +10,7 @@ import { plainJsonCodec, type TransportCodec } from "@nifrajs/core/transport-cod
 /**
  * A loader value marked to stream in after the shell. The component consumes it with the adapter's
  * `<Await resolve={...}>`; until the promise settles the shell shows the `<Suspense>` fallback.
- * `id` is assigned by the server at serialization time — the streamed resolve script keys off it.
+ * `id` is assigned by the server at serialization time - the streamed resolve script keys off it.
  */
 export interface Deferred<T> {
   readonly __nifra_deferred: true
@@ -19,8 +19,8 @@ export interface Deferred<T> {
 }
 
 /**
- * Mark a loader value as deferred — it streams in after the shell instead of blocking it. Works
- * **anywhere** in the loader's returned data — a top-level key, or nested in objects/arrays:
+ * Mark a loader value as deferred - it streams in after the shell instead of blocking it. Works
+ * **anywhere** in the loader's returned data - a top-level key, or nested in objects/arrays:
  *
  *   return { user: await api.user.get(), feed: defer(api.user.feed()),
  *            panels: [{ chart: defer(api.metrics()) }] }
@@ -48,8 +48,8 @@ function isDeferred(value: unknown): value is Deferred<unknown> {
 /**
  * Split a loader (or action) result into the **component-facing** data (deferred values carry their
  * assigned `id` + promise, for `<Await>`) and the **client-serializable** data (deferred values
- * replaced with a `{__nifra_deferred: id}` placeholder — promises don't serialize). Walks the tree
- * **recursively** — `defer()` works at any depth, inside nested objects and arrays — assigning ids in
+ * replaced with a `{__nifra_deferred: id}` placeholder - promises don't serialize). Walks the tree
+ * **recursively** - `defer()` works at any depth, inside nested objects and arrays - assigning ids in
  * walk order. `idOffset` continues the id space when a page splits two results (loader data **and**
  * action data) into one shared client registry, so their ids don't collide. `deferred` lists the
  * promises for callers that await them. Recurses plain objects + arrays only; the data is expected to
@@ -65,7 +65,7 @@ export function prepareDeferred(
 } {
   const deferred: Array<{ id: number; promise: Promise<unknown> }> = []
   // Structural sharing: a subtree with no deferred value returns the ORIGINAL node for
-  // both sides (`fc`/`cl` identical to the input), so a deferred-free result — the common case — is
+  // both sides (`fc`/`cl` identical to the input), so a deferred-free result - the common case - is
   // returned by reference with no persisted clone, no downstream copy, and no throwaway clone
   // allocations. Only the path to a `defer()` marker is rebuilt; unchanged siblings are shared by
   // reference.
@@ -140,19 +140,19 @@ export function prepareDeferred(
 }
 
 /**
- * Stable, non-leaking payload streamed to the client when a deferred value rejects — never the raw
+ * Stable, non-leaking payload streamed to the client when a deferred value rejects - never the raw
  * error text. The real reason is logged server-side; `<Await>`'s `errorFallback` receives
  * this code. (A future typed `DeferredError` could opt into a public, intentional message.) Shared by
  * the NDJSON soft-nav transport and the full-document SSR path (`renderPage`'s `streamDocument`).
  */
 export const DEFERRED_ERROR_CODE = "deferred_error"
-// Shared, stateless — allocated once at module load, not per stream.
+// Shared, stateless - allocated once at module load, not per stream.
 const NDJSON_ENCODER = new TextEncoder()
 
 /**
  * Stream a loader result as NDJSON for a client (soft) navigation: line 1 is the critical data with
  * `{__nifra_deferred: id}` placeholders (`forClient`), then one line per deferred as its promise
- * settles — `{"i": id, "v": value}` on resolve, `{"i": id, "e": "deferred_error"}` on reject (a
+ * settles - `{"i": id, "v": value}` on resolve, `{"i": id, "e": "deferred_error"}` on reject (a
  * rejection is data, not a stream error; the opaque code never leaks the raw reason). Closes when all
  * settle. The client (`defaultFetchData`) returns the
  * data after line 1 and settles `<Await>`'s markers as the resolution lines arrive. `JSON.stringify`
@@ -210,7 +210,7 @@ export const DEFERRED_RUNTIME = `(() => {
     return e;
   };
   window.__nifraDeferred = (id) => get(id).p;
-  // Tag the promise (status/value/reason) — React's use() reads them and returns SYNCHRONOUSLY at
+  // Tag the promise (status/value/reason) - React's use() reads them and returns SYNCHRONOUSLY at
   // hydration, so it renders the resolved content directly into the <Suspense> boundary the server
   // streamed (no re-suspend, no fallback flash). r/j also wake awaiters (Solid uses its own _$HY).
   window.__nifraResolve = (id, v) => { const e = get(id); e.p.status = "fulfilled"; e.p.value = v; e.r(v); };
@@ -219,7 +219,7 @@ export const DEFERRED_RUNTIME = `(() => {
 
 /**
  * Source emitted into the generated client entry: maps serialized `{__nifra_deferred: id}` placeholders
- * (at any depth — nested objects/arrays) to the registry's promises, so the component receives real
+ * (at any depth - nested objects/arrays) to the registry's promises, so the component receives real
  * promises to `<Await>`. A no-op for data without placeholders (so non-deferred pages are unchanged).
  */
 export const MAP_DEFERRED_SOURCE = `const mapDeferred = (d) => {
@@ -233,18 +233,18 @@ export const MAP_DEFERRED_SOURCE = `const mapDeferred = (d) => {
 
 type Pending = Map<number, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>
 
-/** Replace `{__nifra_deferred: <number>}` placeholders (at any depth — nested objects/arrays) with
+/** Replace `{__nifra_deferred: <number>}` placeholders (at any depth - nested objects/arrays) with
  * `Deferred` markers whose promises are held open in `pending` (settled later by
  * {@link parseNdjsonData}'s drain). Mirrors `prepareDeferred`'s recursive walk. */
 function markersFromPlaceholders(data: unknown, pending: Pending): unknown {
-  // Markers already created in THIS parse, keyed by id — so a repeated id aliases the first marker.
+  // Markers already created in THIS parse, keyed by id - so a repeated id aliases the first marker.
   const byId = new Map<number, Deferred<unknown>>()
   const walk = (value: unknown): unknown => {
     const id = (value as { __nifra_deferred?: unknown } | null)?.__nifra_deferred
     if (value !== null && typeof value === "object" && typeof id === "number") {
       // The NDJSON stream is a trust boundary; the server assigns unique ids, but a corrupt/crafted
       // line-1 could repeat one. Alias a duplicate id to the first marker (same promise) instead of
-      // overwriting its resolver in `pending` — otherwise the first marker would never settle (a
+      // overwriting its resolver in `pending` - otherwise the first marker would never settle (a
       // permanently-pending promise that leaks on abort). One resolve line then settles both.
       const seen = byId.get(id)
       if (seen !== undefined) return seen
@@ -280,7 +280,7 @@ function markersFromPlaceholders(data: unknown, pending: Pending): unknown {
  * the NDJSON body into a data object whose deferred markers settle as resolution lines arrive.
  * Returns after **line 1** so the router can apply the critical data + render immediately; the
  * markers' promises settle/reject in the background. If the stream ends (or `signal` aborts) with
- * markers unsettled, they reject — so `<Await>` never hangs.
+ * markers unsettled, they reject - so `<Await>` never hangs.
  */
 export async function parseNdjsonData(
   stream: ReadableStream<Uint8Array>,
@@ -331,7 +331,7 @@ export async function parseNdjsonData(
         else entry.resolve(msg.v)
       }
     } catch {
-      // stream errored — leftovers are rejected below (unless this was an abort)
+      // stream errored - leftovers are rejected below (unless this was an abort)
     } finally {
       signal?.removeEventListener("abort", onAbort) // no-op if it already fired ({ once: true })
       // A natural stream end with markers unsettled = truncation → reject (so `<Await>` shows its

@@ -1,5 +1,5 @@
 /**
- * Locale negotiation — pick the best supported locale for a request, from (in priority order) an
+ * Locale negotiation - pick the best supported locale for a request, from (in priority order) an
  * explicit cookie, then the `Accept-Language` header (quality-ranked, with a base-tag fallback so
  * `fr-CA` matches a supported `fr`). Pure + runtime-agnostic.
  */

@@ -1,5 +1,5 @@
 <!--
-  Home route (Vue SFC). The plain <script> carries nifra's route convention — loader/action/meta are
+  Home route (Vue SFC). The plain <script> carries nifra's route convention - loader/action/meta are
   server-only named exports the client codegen tree-shakes out. <script setup> + <template> are the
   component. The form POST is the SSR action path; after a client submit the loader revalidates with
   no full reload (progressive enhancement). Compiled by @nifrajs/web-vue/plugin.
@@ -26,7 +26,7 @@ export async function action({ api }: ActionArgs<typeof backend>) {
 </script>
 
 <script setup lang="ts">
-// compose() spreads data/actionData/pending/submission as props — declare them so they aren't attrs.
+// compose() spreads data/actionData/pending/submission as props - declare them so they aren't attrs.
 defineProps(["data", "actionData", "pending", "submission"])
 </script>
 
@@ -35,7 +35,7 @@ defineProps(["data", "actionData", "pending", "submission"])
     <section class="hero">
       <h1>Your nifra app,<br /><span class="grad">everywhere.</span></h1>
       <p>
-        SSR + hydration, end-to-end types, Vue. One source — deploy to Cloudflare Pages, Node, Deno,
+        SSR + hydration, end-to-end types, Vue. One source - deploy to Cloudflare Pages, Node, Deno,
         or Vercel Edge. Edit <code>routes/index.vue</code> to begin.
       </p>
     </section>

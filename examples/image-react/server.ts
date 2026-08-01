@@ -1,5 +1,5 @@
 /**
- * Image demo — a CLS-safe responsive <Image> with two backends: a stand-in "image CDN" that serves
+ * Image demo - a CLS-safe responsive <Image> with two backends: a stand-in "image CDN" that serves
  * labeled SVGs (so you can see which srcSet candidate the browser picked), and nifra's real self-hosted
  * resize endpoint (`@nifrajs/image/server`, Bun.Image) at `/_image`, which downsizes a real PNG.
  *   bun run examples/image-react/build.ts
@@ -23,7 +23,7 @@ const app = createWebApp({
   manifest: discoverRoutes(`${import.meta.dir}/routes`),
   clientEntry: assets.entry,
   routePreload: assets.routes,
-  title: "nifra — image demo",
+  title: "nifra - image demo",
 })
 
 // nifra's real self-hosted resize endpoint: decodes + downsizes `public/photo.png` with Bun.Image.
@@ -38,7 +38,7 @@ const escapeXml = (s: string): string => s.replace(/[<>&"']/g, (c) => `&#${c.cha
 /**
  * Stand-in "image CDN": returns an SVG sized + labeled by the validated `?w=` query param, so the
  * browser visibly shows which `srcSet` candidate it selected (by device-pixel-ratio / viewport). A real
- * deployment points the loader at an actual CDN (Cloudflare Images, etc.) — nifra bundles no codec.
+ * deployment points the loader at an actual CDN (Cloudflare Images, etc.) - nifra bundles no codec.
  */
 app.get("/img/*", (c) => {
   const url = new URL(c.req.url)

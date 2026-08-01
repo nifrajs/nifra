@@ -48,7 +48,7 @@ test("throws naming BOTH paths when the two reacts differ", () => {
   } catch (err) {
     message = err instanceof Error ? err.message : String(err)
   }
-  // Both physical paths must be present — they ARE the diagnosis; a message without them is the useless
+  // Both physical paths must be present - they ARE the diagnosis; a message without them is the useless
   // React-internal error this fix exists to replace.
   expect(message).toContain("/app/node_modules/react-dom/node_modules/react/index.js")
   expect(message).toContain("/app/node_modules/react/index.js")
@@ -75,7 +75,7 @@ test("realpath is applied before comparing (two symlinks to one real copy are NO
 })
 
 test("never manufactures a failure when a side cannot be resolved", () => {
-  // A resolver that cannot answer is not evidence of a duplicate — throwing here would break SSR on a
+  // A resolver that cannot answer is not evidence of a duplicate - throwing here would break SSR on a
   // layout that was actually fine.
   const resolve = resolverFrom({
     // only the components' side resolves; the react-dom side is missing

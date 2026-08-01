@@ -6,7 +6,7 @@
     "moduleResolution": "bundler",
     "lib": ["ESNext"],
     // TS 6.0 no longer auto-enumerates node_modules/@types. List ambient types
-    // explicitly — `@types/bun` supplies the `Bun` global, `process`, and the web
+    // explicitly - `@types/bun` supplies the `Bun` global, `process`, and the web
     // globals (fetch/Request/Response/…) we rely on under `lib: ["ESNext"]` (no DOM).
     "types": ["bun"],
 

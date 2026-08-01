@@ -1,5 +1,5 @@
 /**
- * Local Bun dev server (no wrangler) — the same app with an in-memory ISR store. `bun run dev:bun`
+ * Local Bun dev server (no wrangler) - the same app with an in-memory ISR store. `bun run dev:bun`
  * after `bun run build`. Production uses Workers KV (worker.ts); the only line that changes is the
  * store. Watch the `x-nifra-isr` response header: miss → hit → stale.
  */

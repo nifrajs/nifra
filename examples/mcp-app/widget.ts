@@ -1,6 +1,6 @@
 /**
  * An MCP Apps (`ui://`) widget built with nifra. It renders the orders a tool returns as
- * `structuredContent`, and its "Refresh" button calls the tool back through the host bridge — so the same
+ * `structuredContent`, and its "Refresh" button calls the tool back through the host bridge - so the same
  * widget is both a static display and a fully interactive app.
  *
  * Styled with the shadcn/Tailwind semantic tokens (`hsl(var(--primary))`, `var(--card)`, `var(--border)`,

@@ -1,5 +1,5 @@
 /**
- * The site on Deno — the same Nifra app, served by `@nifrajs/deno` (Deno.serve under the hood). Like
+ * The site on Deno - the same Nifra app, served by `@nifrajs/deno` (Deno.serve under the hood). Like
  * the Node entry, it wraps `app.fetch` with a `/assets/*` static handler (reading the client bundle
  * via `Deno.readFile`), since the adapter serves `app.fetch` only.
  *

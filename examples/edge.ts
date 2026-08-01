@@ -1,8 +1,8 @@
 /**
  * nifra on the edge / non-Bun runtimes.
  *
- * `app.fetch` is a pure `(Request) => Promise<Response>` — the Web-standard handler
- * shape — and uses ZERO Bun APIs. So it *is* the entrypoint everywhere; only
+ * `app.fetch` is a pure `(Request) => Promise<Response>` - the Web-standard handler
+ * shape - and uses ZERO Bun APIs. So it *is* the entrypoint everywhere; only
  * `app.listen()` is Bun-specific. Hand `app.fetch` to whatever runtime you deploy on:
  *
  *   Bun:                 app.listen(3000)
@@ -24,7 +24,7 @@ const app = server()
     name: c.body.name,
   }))
 
-// Proof: invoke `app.fetch` exactly as Workers / Deno would call your handler — no
+// Proof: invoke `app.fetch` exactly as Workers / Deno would call your handler - no
 // Bun, no `listen`, no port. (The 8f clean-dir smoke runs this same path under Node.)
 const res = await app.fetch(
   new Request("http://edge/users", {

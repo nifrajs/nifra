@@ -1,11 +1,11 @@
 /**
- * `@nifrajs/web-solid/content` — render pre-rendered HTML (e.g. a `@nifrajs/content` collection entry's
+ * `@nifrajs/web-solid/content` - render pre-rendered HTML (e.g. a `@nifrajs/content` collection entry's
  * `.html`) into the DOM. Solid sets `innerHTML` reactively on a `<Dynamic>` element. Pairs with content
  * collections: `<Content html={entry.html} />`. No JSX (`createComponent`/`Dynamic`), so it builds with
  * plain `tsc`.
  *
  * Security: injects raw HTML, so `html` MUST be trusted (your own Markdown/content, rendered at
- * build/server time) — never pass user-supplied HTML without sanitizing it first.
+ * build/server time) - never pass user-supplied HTML without sanitizing it first.
  */
 import { createComponent, type JSX, mergeProps, splitProps } from "solid-js"
 import { Dynamic } from "solid-js/web"

@@ -1,21 +1,21 @@
 /**
  * API breaking-change detection over route reflection.
  *
- * `snapshotRoutes` turns an app (or reflected descriptors) into a plain-JSON snapshot — the
+ * `snapshotRoutes` turns an app (or reflected descriptors) into a plain-JSON snapshot - the
  * `standard` validators are dropped, so a snapshot survives `JSON.stringify` and can be committed
  * as a CI baseline. `diffRouteSnapshots` compares two snapshots and classifies every change by
  * wire compatibility, direction-aware:
  *
- *   request direction (body/query — what clients SEND):  a new required field, a removed field, or
+ *   request direction (body/query - what clients SEND):  a new required field, a removed field, or
  *     a narrowed type breaks existing callers; widening (new optional field, enum superset,
  *     required→optional) is compatible.
- *   response direction (response/sse/errors — what clients RECEIVE): a removed field, a field made
+ *   response direction (response/sse/errors - what clients RECEIVE): a removed field, a field made
  *     optional, or a widened type breaks existing readers; narrowing (new field, optional→required,
  *     enum subset) is compatible.
  *
  * The classifier FAILS CLOSED: a schema change it cannot prove compatible is reported as breaking.
  * Schemas without JSON Schema metadata (validation-only Standard Schemas) cannot be compared and
- * yield `info` — never a silent pass presented as proof.
+ * yield `info` - never a silent pass presented as proof.
  */
 
 import {
@@ -39,7 +39,7 @@ export interface RouteSnapshotSchema {
   readonly errors?: Readonly<Record<string, SchemaSnapshot>>
 }
 
-/** One route in a snapshot — plain JSON, safe to persist as a CI baseline. */
+/** One route in a snapshot - plain JSON, safe to persist as a CI baseline. */
 export interface RouteSnapshot {
   readonly method: string
   readonly path: string
@@ -61,7 +61,7 @@ export interface RouteChange {
 
 export interface RoutesDiff {
   readonly changes: readonly RouteChange[]
-  /** True when any change is `breaking` — the CI-gate signal. */
+  /** True when any change is `breaking` - the CI-gate signal. */
   readonly hasBreaking: boolean
 }
 
@@ -269,9 +269,9 @@ const diffSchemaSection = (
     return
   }
   if (before.jsonSchema === undefined || after.jsonSchema === undefined) {
-    // Validation-only schemas expose no JSON Schema metadata — nothing provable either way.
+    // Validation-only schemas expose no JSON Schema metadata - nothing provable either way.
     if (before.jsonSchema !== after.jsonSchema || before.fields !== after.fields) {
-      push(ctx, "info", `${ctx.section} schema is not introspectable — cannot verify compatibility`)
+      push(ctx, "info", `${ctx.section} schema is not introspectable - cannot verify compatibility`)
     }
     return
   }

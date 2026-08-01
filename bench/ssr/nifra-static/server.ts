@@ -1,5 +1,5 @@
 /**
- * nifra + React SSG bench — `createWebApp` used only at build/prerender time; steady-state serving is
+ * nifra + React SSG bench - `createWebApp` used only at build/prerender time; steady-state serving is
  * the prerendered `dist/` via bench/ssr/static-server.ts (Table B).
  */
 import { createWebApp, enumerateStaticRoutes } from "@nifrajs/web"

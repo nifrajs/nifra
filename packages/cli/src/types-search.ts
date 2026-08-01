@@ -1,7 +1,7 @@
 /**
- * `nifra_types` — the EXACT TypeScript of every exported `@nifrajs/*` symbol. The corpus is `types.json`
+ * `nifra_types` - the EXACT TypeScript of every exported `@nifrajs/*` symbol. The corpus is `types.json`
  * (written into this package by `bun run gen:llms`): each entry's `signature` is the literal declaration
- * parsed from the package's BUILT `.d.ts` with the TS compiler — a clean signature, never prose, never
+ * parsed from the package's BUILT `.d.ts` with the TS compiler - a clean signature, never prose, never
  * truncated. So an agent that needs the precise shape of a type (`RateLimitStore`, `RouteSchema`, a
  * function signature) gets the authoritative source here and never has to read a `.d.ts` file.
  *
@@ -15,7 +15,7 @@ export interface TypeEntry {
   readonly name: string
   readonly kind: "interface" | "type" | "class" | "function" | "enum" | "const"
   readonly package: string
-  /** The literal declaration text from the `.d.ts` — a clean signature, no implementation. */
+  /** The literal declaration text from the `.d.ts` - a clean signature, no implementation. */
   readonly signature: string
   /** The declaration's JSDoc block, if any. */
   readonly doc?: string
@@ -25,7 +25,7 @@ export interface ScoredType extends TypeEntry {
   readonly score: number
 }
 
-/** Exact (case-insensitive) name lookup — returns every declaration with that name (a name can exist in
+/** Exact (case-insensitive) name lookup - returns every declaration with that name (a name can exist in
  * more than one package). */
 export function lookupType(types: readonly TypeEntry[], name: string): TypeEntry[] {
   const wanted = name.trim().toLowerCase()
@@ -55,7 +55,7 @@ export function searchTypes(
 }
 
 function renderEntry(t: TypeEntry): string {
-  const head = `## ${t.name} — ${t.kind}, \`${t.package}\``
+  const head = `## ${t.name} - ${t.kind}, \`${t.package}\``
   const doc = t.doc ? `${t.doc}\n` : ""
   return `${head}\n\n\`\`\`ts\n${doc}${t.signature}\n\`\`\``
 }
@@ -96,7 +96,7 @@ function collapseSignature(signature: string): string {
 
 /** A search hit: enough to choose, not the whole declaration. */
 function renderSearchHit(t: TypeEntry): string {
-  const head = `## ${t.name} — ${t.kind}, \`${t.package}\``
+  const head = `## ${t.name} - ${t.kind}, \`${t.package}\``
   const summary = summarize(t.doc)
   const signature =
     t.signature.length <= SEARCH_SIGNATURE_MAX ? t.signature : collapseSignature(t.signature)
@@ -110,7 +110,7 @@ function renderSearchHit(t: TypeEntry): string {
 /**
  * Render the tool result. `name` → the exact declaration(s); else `query` → the top matches; else a
  * per-package index of type names. The signatures are authoritative (generated from the built `.d.ts`),
- * so this is the complete answer — there is no need to read a `.d.ts` file.
+ * so this is the complete answer - there is no need to read a `.d.ts` file.
  */
 export function renderTypesResult(
   types: readonly TypeEntry[],
@@ -144,7 +144,7 @@ export function renderTypesResult(
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([pkg, names]) => `- **${pkg}**: ${names.sort().join(", ")}`)
     .join("\n")
-  return `# nifra types — index (${types.length} exported symbols; pass \`name\` for the exact declaration, or \`query\` to search)\n\nSignatures are generated from the built \`.d.ts\` — authoritative + complete. Use this instead of reading any \`.d.ts\` file.\n\n${index}`
+  return `# nifra types - index (${types.length} exported symbols; pass \`name\` for the exact declaration, or \`query\` to search)\n\nSignatures are generated from the built \`.d.ts\` - authoritative + complete. Use this instead of reading any \`.d.ts\` file.\n\n${index}`
 }
 
 /** Load the bundled type corpus (`docs/types.json`), resolved relative to this module so it works from

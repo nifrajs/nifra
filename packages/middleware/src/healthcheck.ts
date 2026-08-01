@@ -3,9 +3,9 @@ import { definePlugin } from "@nifrajs/core/server"
 type MaybePromise<T> = T | Promise<T>
 
 export interface HealthcheckOptions {
-  /** Liveness path — always `200` while the process is up. Default `"/health"`. */
+  /** Liveness path - always `200` while the process is up. Default `"/health"`. */
   readonly path?: string
-  /** Readiness path — runs `checks`; `200` if all pass, `503` otherwise. Default `"/ready"`. */
+  /** Readiness path - runs `checks`; `200` if all pass, `503` otherwise. Default `"/ready"`. */
   readyPath?: string
   /** Readiness checks (DB ping, cache reachable, …). Each returns a boolean or throws; a throw counts
    * as failing. `/ready` reports each by name and is `200` only when all pass. */
@@ -38,7 +38,7 @@ export function healthcheck(options: HealthcheckOptions = {}) {
     app.register("GET", readyPath, undefined, async () => {
       const results: Record<string, boolean> = {}
       let ready = true
-      // Run checks concurrently; a throw (or false) marks that check — and the whole probe — not ready.
+      // Run checks concurrently; a throw (or false) marks that check - and the whole probe - not ready.
       await Promise.all(
         checkNames.map(async (name) => {
           try {

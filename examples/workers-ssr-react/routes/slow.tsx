@@ -2,10 +2,10 @@ import type { LoaderData } from "@nifrajs/client"
 import { defer } from "@nifrajs/web"
 import { Await } from "@nifrajs/web-react/await"
 
-export const meta = { title: "nifra on the edge — streaming" }
+export const meta = { title: "nifra on the edge - streaming" }
 
 // Deferred data: the shell + the <Await fallback> flush immediately, then `feed` streams in behind
-// <Suspense> ~400ms later and hydrates with no client re-fetch — streaming SSR on workerd. On a
+// <Suspense> ~400ms later and hydrates with no client re-fetch - streaming SSR on workerd. On a
 // client navigation the same data streams over the soft-nav NDJSON endpoint (F10).
 export function loader() {
   return {

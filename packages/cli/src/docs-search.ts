@@ -1,8 +1,8 @@
 /**
- * `nifra_docs` — searchable framework documentation for agents. The corpus is the generated
+ * `nifra_docs` - searchable framework documentation for agents. The corpus is the generated
  * `llms-full.txt` (written into this package by `bun run gen:llms`, so it can't drift from the
  * source it's generated from). Instead of dumping the whole ~150 KB into an agent's context, the
- * tool keyword-scores the document's `##` sections and returns only the top matches — or, with no
+ * tool keyword-scores the document's `##` sections and returns only the top matches - or, with no
  * query, just the section index (the cheap discovery call).
  *
  * Deliberately NOT a vector search: the corpus is one curated document with descriptive headings;
@@ -68,7 +68,7 @@ export function searchSections(
   return scored.sort((a, b) => b.score - a.score).slice(0, limit)
 }
 
-/** Cap a section body for the tool result — whole sections can be pages long; the agent can ask
+/** Cap a section body for the tool result - whole sections can be pages long; the agent can ask
  * again with a narrower query if the trim cuts what it needed. */
 const MAX_SECTION_CHARS = 2800
 
@@ -81,7 +81,7 @@ export function renderDocsResult(
   const sections = splitSections(markdown)
   if (query === undefined || query.trim() === "") {
     const index = sections.map((s) => `- ${s.heading}`).join("\n")
-    return `# nifra docs — section index (pass \`query\` to fetch matching sections)\n\n${index}`
+    return `# nifra docs - section index (pass \`query\` to fetch matching sections)\n\n${index}`
   }
   const matches = searchSections(sections, query, limit)
   if (matches.length === 0) {
@@ -91,7 +91,7 @@ export function renderDocsResult(
     .map((m) => {
       const body =
         m.body.length > MAX_SECTION_CHARS
-          ? `${m.body.slice(0, MAX_SECTION_CHARS)}\n…(trimmed — narrow the query for the rest)`
+          ? `${m.body.slice(0, MAX_SECTION_CHARS)}\n…(trimmed - narrow the query for the rest)`
           : m.body
       return `## ${m.heading}\n\n${body}`
     })
@@ -99,7 +99,7 @@ export function renderDocsResult(
 }
 
 /** Load the bundled corpus. Resolves relative to this module so it works from `src/` (repo dev)
- * and `dist/` (published) alike — `docs/llms-full.txt` sits at the package root next to both. */
+ * and `dist/` (published) alike - `docs/llms-full.txt` sits at the package root next to both. */
 export async function loadDocsCorpus(): Promise<string | undefined> {
   const url = new URL("../docs/llms-full.txt", import.meta.url)
   try {

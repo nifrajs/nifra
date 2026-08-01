@@ -14,7 +14,7 @@ const TYPES: TypeEntry[] = [
     package: "@nifrajs/middleware",
     signature:
       "export interface RateLimitStore {\n    hit(key: string, windowMs: number): Promise<RateLimitResult>;\n}",
-    doc: "/** Counter backend — a shared store in production. */",
+    doc: "/** Counter backend - a shared store in production. */",
   },
   {
     name: "rateLimit",

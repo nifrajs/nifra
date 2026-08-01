@@ -1,10 +1,10 @@
 /**
- * `nifra_scaffold` — turn a URL path into the correct `routes/` file (the convention an agent most often
+ * `nifra_scaffold` - turn a URL path into the correct `routes/` file (the convention an agent most often
  * gets wrong) + a minimal, contract-correct stub. The mapping is the inverse of @nifrajs/web's
  * `filePathToPatterns`: `:id`/`[id]` → `[id]`, `*rest`/`[...rest]` → `[...rest]`, `[[lang]]` optional,
  * `/` → `index`. The framework (→ file extension) comes from the project's `clientModule`.
  *
- * Page stubs are emitted only for the JSX family (react/preact/solid — one shared, verified shape);
+ * Page stubs are emitted only for the JSX family (react/preact/solid - one shared, verified shape);
  * for vue/svelte/vanilla we return the correct PATH + the route-module contract and point at
  * `nifra_example` for the body, rather than hand-writing an SFC we can't typecheck here.
  */
@@ -53,10 +53,10 @@ export function routePathToFile(urlPath: string, ext: string): string {
 }
 
 const ROUTE_CONTRACT = `A route module may export:
-- \`export default function Page(props: { data: LoaderData<typeof loader> }) { … }\` — the page component.
-- \`export async function loader({ params, request, api }: LoaderArgs<typeof backend>) { … }\` — server-only; data for SSR. Reach the backend via \`api\` (typed) / DB via the backend, NEVER a top-level server-only import.
-- \`export async function action({ request, api }: ActionArgs<typeof backend>) { … }\` — server-only; handles the form POST.
-- \`export const meta = { title, meta:[…] }\` — head tags.
+- \`export default function Page(props: { data: LoaderData<typeof loader> }) { … }\` - the page component.
+- \`export async function loader({ params, request, api }: LoaderArgs<typeof backend>) { … }\` - server-only; data for SSR. Reach the backend via \`api\` (typed) / DB via the backend, NEVER a top-level server-only import.
+- \`export async function action({ request, api }: ActionArgs<typeof backend>) { … }\` - server-only; handles the form POST.
+- \`export const meta = { title, meta:[…] }\` - head tags.
 Path params are typed on \`params\`.`
 
 function jsxStub(file: string, params: string[]): string {
@@ -66,7 +66,7 @@ function jsxStub(file: string, params: string[]): string {
     params.length > 0
       ? `// export async function loader({ params, api }: LoaderArgs<typeof backend>) { return { /* fetch by ${params[0]} */ } }`
       : `// export async function loader({ api }: LoaderArgs<typeof backend>) { return {} }`
-  return `// ${file} — server-only loader/action allowed; never top-level-import server-only code (DB/secrets).
+  return `// ${file} - server-only loader/action allowed; never top-level-import server-only code (DB/secrets).
 // Available here: ${paramsNote}. Fetch data in a loader via the typed \`api\`; see nifra_example("loader").
 ${loaderLine}
 export default function Page() {
@@ -151,7 +151,7 @@ export async function writeScaffoldRoute(
   return { ...result, written: true }
 }
 
-/** Render the tool result as markdown — the file path, the stub (if any), and the contract note. */
+/** Render the tool result as markdown - the file path, the stub (if any), and the contract note. */
 export function renderScaffold(urlPath: string, framework: Framework): string {
   let r: ScaffoldResult
   try {

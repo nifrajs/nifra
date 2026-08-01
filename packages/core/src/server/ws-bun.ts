@@ -1,8 +1,8 @@
 /**
- * Bun WebSocket plumbing — the `websocket` dispatcher config `listen()` hands to Bun's serve when
+ * Bun WebSocket plumbing - the `websocket` dispatcher config `listen()` hands to Bun's serve when
  * the app has WS routes. Lives behind the `@nifrajs/core/ws` subpath (via `ws-hook.ts`) so the base
  * bundle of a no-WebSocket app never ships it; `server.ts` only imports the **types** from here
- * (erased). No `Bun.*` calls here — the runtime seam stays in `server.ts` (see runtime-boundary.test).
+ * (erased). No `Bun.*` calls here - the runtime seam stays in `server.ts` (see runtime-boundary.test).
  */
 
 import type { NifraWebSocket, TopicRegistry, WebSocketData, WebSocketHandler } from "./websocket.ts"
@@ -16,7 +16,7 @@ export interface BunWsData {
   nifra?: NifraWebSocket
 }
 
-/** Structural view of Bun's `ServerWebSocket` — keeps `Bun.*` types out of the public `.d.ts`
+/** Structural view of Bun's `ServerWebSocket` - keeps `Bun.*` types out of the public `.d.ts`
  * (`listen()` casts for the same reason). The real socket satisfies this. */
 export interface BunSocket {
   send(data: string | ArrayBufferView | ArrayBuffer, compress?: boolean): number
@@ -80,7 +80,7 @@ function dispatchWsCallback(
   }
 }
 
-/** The shared Bun `websocket` dispatcher config for one app — each connection's
+/** The shared Bun `websocket` dispatcher config for one app - each connection's
  * `ws.data.handler` is the matched route's handler, set by `server.upgrade`. */
 export function createBunWsHandlers(topics: TopicRegistry): BunWsHandlers {
   return {

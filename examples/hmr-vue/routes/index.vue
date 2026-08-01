@@ -8,7 +8,7 @@ import type { LoaderArgs, LoaderData } from "@nifrajs/client"
 import type { backend } from "../backend"
 
 export const meta = {
-  title: "nifra — HMR (Vue)",
+  title: "nifra - HMR (Vue)",
   meta: [{ name: "description", content: "True HMR via @nifrajs/web/vite" }],
 }
 
@@ -23,7 +23,7 @@ export type Data = LoaderData<typeof loader>
 <script setup lang="ts">
 import Counter from "../components/Counter.vue"
 
-// compose() spreads data/actionData/pending/submission as props — declare them so they aren't attrs.
+// compose() spreads data/actionData/pending/submission as props - declare them so they aren't attrs.
 defineProps<{ data: Data; actionData?: unknown; pending?: unknown; submission?: unknown }>()
 </script>
 

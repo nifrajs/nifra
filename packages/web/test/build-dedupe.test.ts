@@ -15,7 +15,7 @@ function collectPins(plugin: BunPlugin): {
     },
   }
   // setup's real param is Bun's PluginBuilder; this unit only exercises onResolve, so a minimal stub is
-  // enough — the cast is scoped to the stub's known shape.
+  // enough - the cast is scoped to the stub's known shape.
   ;(plugin.setup as unknown as (b: typeof buildStub) => unknown)(buildStub)
   return {
     pinned: (spec) => handlers.find((h) => h.filter.test(spec))?.cb().path,
@@ -35,7 +35,7 @@ test("reactDedupePlugin pins react + jsx runtimes to one copy, leaves react-dom/
   // JSX runtimes pin too, so the transform's React is the same copy
   expect(pinned("react/jsx-runtime")).toBe(Bun.resolveSync("react/jsx-runtime", process.cwd()))
 
-  // exact-match only — same-prefix specifiers must NOT be pinned (react-dom keeps its own conditions;
+  // exact-match only - same-prefix specifiers must NOT be pinned (react-dom keeps its own conditions;
   // a third-party react-router must resolve normally)
   expect(matches("react-dom")).toBe(false)
   expect(matches("react-dom/server")).toBe(false)
@@ -43,7 +43,7 @@ test("reactDedupePlugin pins react + jsx runtimes to one copy, leaves react-dom/
 })
 
 // `examples/web-preact` is the nearest dir where `preact` resolves inside the nifra tree (it isn't a dep
-// of @nifrajs/web itself). The plugin pins to whatever `from` resolves — so we assert against the same.
+// of @nifrajs/web itself). The plugin pins to whatever `from` resolves - so we assert against the same.
 const PREACT_FROM = `${import.meta.dir}/../../../examples/web-preact`
 
 test("preactDedupePlugin pins preact + hooks/compat/jsx to one copy, leaves preact-render-to-string alone", () => {
@@ -52,11 +52,11 @@ test("preactDedupePlugin pins preact + hooks/compat/jsx to one copy, leaves prea
 
   // preact core (where the `options` global the renderer + hooks share lives) pins to one resolved path
   expect(pinned("preact")).toBe(Bun.resolveSync("preact", PREACT_FROM))
-  // hooks must be the SAME copy — they register onto preact core's `options`; a split copy is the bug
+  // hooks must be the SAME copy - they register onto preact core's `options`; a split copy is the bug
   expect(pinned("preact/hooks")).toBe(Bun.resolveSync("preact/hooks", PREACT_FROM))
   expect(pinned("preact/compat")).toBe(Bun.resolveSync("preact/compat", PREACT_FROM))
 
-  // exact-match only — the renderer keeps its own resolution (it transitively binds the pinned `preact`),
+  // exact-match only - the renderer keeps its own resolution (it transitively binds the pinned `preact`),
   // and same-prefix third-party packages must resolve normally
   expect(matches("preact-render-to-string")).toBe(false)
   expect(matches("preact-render-to-string/stream")).toBe(false)

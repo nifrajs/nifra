@@ -43,7 +43,7 @@ function resolveAllowOrigin(
  * short-circuits to `204` via `onRequest`; the origin/credentials headers are added in
  * `onResponse`, so they also land on errors, 404s, and the preflight itself.
  *
- * Throws at construction if `credentials: true` is paired with `origin: "*"` — the
+ * Throws at construction if `credentials: true` is paired with `origin: "*"` - the
  * browser rejects that combination, so we fail loud instead of shipping dead CORS.
  */
 export function cors(options: CorsOptions = {}): Middleware {
@@ -51,7 +51,7 @@ export function cors(options: CorsOptions = {}): Middleware {
   const credentials = options.credentials ?? false
   if (credentials && origin === "*") {
     throw new Error(
-      'cors: `credentials: true` cannot be combined with `origin: "*"` — list explicit origin(s).',
+      'cors: `credentials: true` cannot be combined with `origin: "*"` - list explicit origin(s).',
     )
   }
   const methods = (options.methods ?? DEFAULT_METHODS).join(", ")

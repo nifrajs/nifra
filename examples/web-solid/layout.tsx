@@ -1,4 +1,4 @@
-/** A Solid layout — wraps the page via `props.children`. Composed by the chain in server.ts. */
+/** A Solid layout - wraps the page via `props.children`. Composed by the chain in server.ts. */
 export default function Layout(props: { children?: unknown }) {
   return (
     <div class="app">

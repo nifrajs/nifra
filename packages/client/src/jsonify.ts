@@ -2,7 +2,7 @@ import type { BinaryResponse } from "@nifrajs/core/binary"
 
 /**
  * Maps a value to the shape it takes after a JSON round-trip, so the client's
- * `data` type reflects the wire — not the handler's in-memory return.
+ * `data` type reflects the wire - not the handler's in-memory return.
  *
  * - `Date` → `string`; `undefined` / functions / `bigint` → dropped from objects
  * - arrays and plain objects recurse; optionality (`?`) is preserved

@@ -8,7 +8,7 @@ import { mcp } from "../src/mcp.ts"
 import { nodeDirect } from "../src/node-direct.ts"
 import { websocket } from "../src/ws.ts" // ws runtime, for the "merge refuses WebSocket groups" case
 
-describe("merge — domain-group composition", () => {
+describe("merge - domain-group composition", () => {
   test("merged routes serve with the chains captured where they were DEFINED", async () => {
     const listings = server()
       .derive(() => ({ domain: "listings" }))
@@ -27,7 +27,7 @@ describe("merge — domain-group composition", () => {
       .merge(agents)
 
     expect(await (await app.fetch(new Request("http://x/health"))).json()).toEqual({ ok: true })
-    // Each group's own derive applies to its routes — not the parent's, not the other group's.
+    // Each group's own derive applies to its routes - not the parent's, not the other group's.
     expect(await (await app.fetch(new Request("http://x/listings"))).json()).toEqual({
       from: "listings",
     })
@@ -128,7 +128,7 @@ describe("merge — domain-group composition", () => {
 
     await app.fetch(new Request("http://x/own"))
     await app.fetch(new Request("http://x/grouped"))
-    expect(seen).toEqual(["/own", "/grouped"]) // onRequest is global — appended to the parent
+    expect(seen).toEqual(["/own", "/grouped"]) // onRequest is global - appended to the parent
     expect(app.routes().map((r) => `${r.method} ${r.path}`)).toEqual(["GET /own", "GET /grouped"])
   })
 

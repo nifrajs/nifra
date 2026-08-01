@@ -20,12 +20,12 @@ const app = server().post("/users", { body: t.object({ name: t.string(), age: t.
 const openapi = toOpenAPI(app) // OpenAPI 3.1
 ```
 
-- **`t` builder** — `string`/`number`/`integer`/`boolean`/`null`/`literal`/`object`/
+- **`t` builder** - `string`/`number`/`integer`/`boolean`/`null`/`literal`/`object`/
   `array`/`optional`/`union`/`record`, with options (`min`/`max`, `pattern`, `format`,
   …) that become JSON Schema constraints. Validators are compiled (fast).
-- **Validating string formats** — `email`/`uuid`/`date-time`/`date`/`time`/`uri`/`ipv4`
+- **Validating string formats** - `email`/`uuid`/`date-time`/`date`/`time`/`uri`/`ipv4`
   validate *and* annotate; register more with `registerFormat`.
-- **`toOpenAPI`** — richest from a contract (it carries `response` schemas + op names →
+- **`toOpenAPI`** - richest from a contract (it carries `response` schemas + op names →
   `operationId`s); also works on a live app. Routes using a BYO Standard Schema are
   emitted without a detailed schema (Standard Schema exposes no JSON Schema).
 
@@ -52,14 +52,14 @@ It emits `paths`, `parameters` (path + object query), `requestBody`, and `respon
 - **`servers`**, **top-level `tags`**, and an info **`description`** (document options).
 - **`securitySchemes`** → `components.securitySchemes`, a document-wide **`security`**, and per-operation
   `security` (`[]` marks an operation explicitly public).
-- **Non-200 responses** and **non-JSON content** — a contract op's `responses` map declares extra status
+- **Non-200 responses** and **non-JSON content** - a contract op's `responses` map declares extra status
   codes; `requestContentType` / `responseContentType` set media types other than `application/json`.
-- **`$ref` reuse** — a schema with a `$id` (`t.object({…}, { $id: "User" })`) is hoisted into
+- **`$ref` reuse** - a schema with a `$id` (`t.object({…}, { $id: "User" })`) is hoisted into
   `components.schemas` once and referenced by `$ref` everywhere it's used.
-- Per-operation **`summary`**, **`description`**, **`tags`**, **`deprecated`** — declared on the contract op.
+- Per-operation **`summary`**, **`description`**, **`tags`**, **`deprecated`** - declared on the contract op.
 
 A **contract** is richest (its ops carry all of the above); in **app** mode a route's response is a
-generic `200` with no schema — declare a `defineContract` with `response` schemas, or pass
+generic `200` with no schema - declare a `defineContract` with `response` schemas, or pass
 `options.operations` (keyed by `"METHOD /path"`) to enrich app routes. Routes using a BYO Standard Schema
 are still emitted without body/response detail (Standard Schema exposes no JSON Schema).
 
@@ -67,7 +67,7 @@ are still emitted without body/response detail (Standard Schema exposes no JSON 
 
 ## For AI agents
 
-Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports you call + its footguns),
 one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the

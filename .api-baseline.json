@@ -31,7 +31,7 @@
       "LoaderArgs": "{ api: ApiProxy<Api>; draft: boolean; env: Env; params: Record<string, string>; req: Request; request: Request }",
       "LoaderData": "LoaderData<L>",
       "RegistryOf": "RegistryOf<App>",
-      "SubscribeOptions": "{ headers?: Record<string, string>; onClose?: () => void; onError?: (error: unknown) => void; query?: [I[\"query\"]] extends [never] ? \"add a `query` schema to this route — `{ query: z.object({ … }) }` — so the typed client can accept query params here\" : I[\"query\"]; reconnect?: boolean | { baseDelayMs?: number; maxDelayMs?: number; }; signal?: AbortSignal }",
+      "SubscribeOptions": "{ headers?: Record<string, string>; onClose?: () => void; onError?: (error: unknown) => void; query?: [I[\"query\"]] extends [never] ? \"add a `query` schema to this route - `{ query: z.object({ … }) }` - so the typed client can accept query params here\" : I[\"query\"]; reconnect?: boolean | { baseDelayMs?: number; maxDelayMs?: number; }; signal?: AbortSignal }",
       "Subscription": "{ close: () => void }",
       "Treaty": "Treaty<App>",
       "TreatyFromRegistry": "TreatyFromRegistry<R>",

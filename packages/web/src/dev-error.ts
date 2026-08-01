@@ -1,7 +1,7 @@
 /**
  * Dev-only error overlay. When a loader/action/render throws during `@nifrajs/web/vite` dev, this
- * renders a readable full-page overlay — the message, the source-mapped stack (Vite's
- * `ssrFixStacktrace` runs first), and the request line — instead of the bare `err.stack` text dump.
+ * renders a readable full-page overlay - the message, the source-mapped stack (Vite's
+ * `ssrFixStacktrace` runs first), and the request line - instead of the bare `err.stack` text dump.
  * Dev-only by construction: it's called solely from the Vite middleware's catch, never in
  * production (production maps errors to the `_error` route boundary).
  */
@@ -35,7 +35,7 @@ export function renderDevErrorOverlay(err: unknown, req: { method: string; url: 
     frames.length > 0
       ? `<ol class="frames">${frames.map((f) => `<li>${esc(f)}</li>`).join("")}</ol>`
       : `<p class="no-frames">No stack frames.</p>`
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${name} — nifra dev</title>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${name} - nifra dev</title>
 <style>
   :root { color-scheme: dark }
   body { margin: 0; background: #0b0d10; color: #e6e6e6; font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }

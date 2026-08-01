@@ -1,5 +1,5 @@
 /**
- * `@nifrajs/web-react/query` — React bindings for the keyed query-cache + mutations: `useQuery`,
+ * `@nifrajs/web-react/query` - React bindings for the keyed query-cache + mutations: `useQuery`,
  * `useInfiniteQuery`, `useMutation`, `useQueryClient`, `QueryClientProvider`, and the SSR
  * `HydrationBoundary` (+ `dehydrate` re-exported). A drop-in for the TanStack Query surface,
  * backed by `@nifrajs/web`'s agnostic engine. Imports only `react` + `@nifrajs/web` (never `react-dom/*`),
@@ -7,7 +7,7 @@
  *
  * Resolution order for the client a hook uses: a `QueryClientProvider` in the tree (required for SSR
  * dehydrate/hydrate and for tests), else a lazily-created **client-side** module singleton (the simple
- * client-only app — the `typeof window` guard means the server has none, so hooks render idle/pending
+ * client-only app - the `typeof window` guard means the server has none, so hooks render idle/pending
  * and the first client render matches for a clean hydration).
  */
 import {
@@ -61,7 +61,7 @@ const NOOP_CLIENT: QueryClient = {
 
 const QueryClientContext = createContext<QueryClient | undefined>(undefined)
 
-/** Provide a {@link QueryClient} to the tree — required for SSR dehydrate/hydrate and for tests; a
+/** Provide a {@link QueryClient} to the tree - required for SSR dehydrate/hydrate and for tests; a
  * client-only app can omit it and rely on the built-in client-side singleton. */
 export function QueryClientProvider(props: {
   readonly client: QueryClient
@@ -113,13 +113,13 @@ const IDLE_INFINITE_HANDLE = {
 
 /** Options for {@link useQuery}. */
 export interface UseQueryOptions extends QueryOptions {
-  /** When `false`, don't fetch (the query stays idle) — for dependent queries. Default `true`. */
+  /** When `false`, don't fetch (the query stays idle) - for dependent queries. Default `true`. */
   readonly enabled?: boolean
 }
 
 /** A query's reactive {@link QueryState} plus `isPending` + `refetch`. */
 export interface UseQueryResult<T> extends QueryState<T> {
-  /** `status === "pending"` — no data yet (initial load). */
+  /** `status === "pending"` - no data yet (initial load). */
   readonly isPending: boolean
   /** `status === "error"`. */
   readonly isError: boolean
@@ -148,7 +148,7 @@ export function useQuery<T>(
   // A disabled query still binds a handle (so it re-renders when re-enabled), but never fetches.
   const handle: QueryHandle<T> = client.query<T>(key, fn, queryOpts)
   // Server snapshot = the handle's own snapshot: without a provider the client is the NOOP one (idle),
-  // but WITH a hydrated provider client it returns the server-seeded data — so a HydrationBoundary-fed
+  // but WITH a hydrated provider client it returns the server-seeded data - so a HydrationBoundary-fed
   // query renders its data during SSR and the first client render matches (no loading flash, no drift).
   const state = useSyncExternalStore<QueryState<T>>(
     handle.subscribe,
@@ -175,7 +175,7 @@ export interface UseMutationResult<TData, TVariables> extends MutationState<TDat
   readonly isSuccess: boolean
   /** Fire-and-forget: runs the mutation and swallows rejection (read `error`/`isError` for failures). */
   readonly mutate: (variables: TVariables) => void
-  /** Run the mutation and return the promise (rejects on failure) — for `await`. */
+  /** Run the mutation and return the promise (rejects on failure) - for `await`. */
   readonly mutateAsync: (variables: TVariables) => Promise<TData>
   /** Reset back to idle. */
   readonly reset: () => void
@@ -210,7 +210,7 @@ export function useMutation<TData, TVariables = void>(
   }
 }
 
-/** Options for {@link useInfiniteQuery} — the engine's {@link InfiniteQueryOptions} plus `enabled`. */
+/** Options for {@link useInfiniteQuery} - the engine's {@link InfiniteQueryOptions} plus `enabled`. */
 export interface UseInfiniteQueryOptions<T, P> extends InfiniteQueryOptions<T, P> {
   readonly enabled?: boolean
 }
@@ -258,7 +258,7 @@ export function useInfiniteQuery<T, P>(
 }
 
 /**
- * Seed the context's {@link QueryClient} from a server {@link dehydrate} snapshot — the SSR data bridge.
+ * Seed the context's {@link QueryClient} from a server {@link dehydrate} snapshot - the SSR data bridge.
  * Wrap the app (inside `QueryClientProvider`) so server-prefetched queries are in the cache before the
  * first client render, avoiding a loading flash. Hydration runs during render (idempotent, fresher-wins),
  * so the data is available synchronously to child `useQuery`s.

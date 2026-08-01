@@ -6,7 +6,7 @@ export interface PageData {
   start: number
 }
 
-// A Preact route component (render function — no JSX, so no build plugin needed). `data` is the
+// A Preact route component (render function - no JSX, so no build plugin needed). `data` is the
 // loader output; the useState counter proves hydration (it's interactive only after the client
 // hydrates).
 export function App(props: { data: PageData }): VNode {

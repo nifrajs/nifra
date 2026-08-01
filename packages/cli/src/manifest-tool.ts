@@ -1,4 +1,4 @@
-/** `nifra manifest` — emit/sign/diff the deployable route trust artifact. */
+/** `nifra manifest` - emit/sign/diff the deployable route trust artifact. */
 
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"

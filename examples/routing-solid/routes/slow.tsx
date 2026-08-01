@@ -2,7 +2,7 @@ import type { LoaderData } from "@nifrajs/client"
 import { defer } from "@nifrajs/web"
 import { Await } from "@nifrajs/web-solid/await"
 
-export const meta = { title: "nifra — streaming" }
+export const meta = { title: "nifra - streaming" }
 
 // The loader DEFERS slow data: the shell (the <h1> + the fallback) renders immediately, then `feed`
 // streams in behind <Await> and resolves on the client without a re-fetch. The 400ms delay stands

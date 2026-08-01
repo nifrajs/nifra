@@ -1,5 +1,5 @@
 /**
- * @nifrajs/web/fs — filesystem route discovery. Separated from the main entry so `app.fetch`
+ * @nifrajs/web/fs - filesystem route discovery. Separated from the main entry so `app.fetch`
  * (and the rest of @nifrajs/web) stays fs-free + edge-portable: this runs at build/startup
  * only. It scans a routes dir and feeds the pure `buildManifest`.
  */
@@ -8,7 +8,7 @@ import { buildManifest, type Manifest, type RouteModule } from "./manifest.ts"
 
 /** Options for {@link discoverRoutes}. */
 export interface DiscoverRoutesOptions {
-  /** Appended (as `?<importQuery>`) to each route's dynamic import — the dev server sets a
+  /** Appended (as `?<importQuery>`) to each route's dynamic import - the dev server sets a
    * changing value to bust Bun's module cache so SSR picks up edited route files. Ignored when
    * {@link load} is supplied, which does its own cache handling. */
   readonly importQuery?: string

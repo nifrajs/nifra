@@ -1,15 +1,15 @@
 /**
- * `solidMdxBunPlugin` — compile `.mdx` routes/files to **Solid** components. MDX is JSX-oriented but
+ * `solidMdxBunPlugin` - compile `.mdx` routes/files to **Solid** components. MDX is JSX-oriented but
  * Solid's JSX is compile-time, so this: (1) compiles MDX → JSX with `@mdx-js` (keeping JSX), pointing
  * intrinsic elements at `@nifrajs/web-solid/mdx-runtime` (which renders them via Solid's `<Dynamic>`), then
- * (2) runs `babel-preset-solid` — the same transform `solidBunPlugin` applies to `.tsx`. Pass it to
+ * (2) runs `babel-preset-solid` - the same transform `solidBunPlugin` applies to `.tsx`. Pass it to
  * `buildClient`/`buildServer`'s `plugins` (`"dom"` for the client, `"ssr"` for the server), like
  * `solidBunPlugin`. `@mdx-js/mdx` is an optional peer (lazy-loaded at build time).
  */
 import { transformAsync } from "@babel/core"
-// @ts-expect-error — no type declarations published
+// @ts-expect-error - no type declarations published
 import presetTypeScript from "@babel/preset-typescript"
-// @ts-expect-error — no type declarations published
+// @ts-expect-error - no type declarations published
 import presetSolid from "babel-preset-solid"
 import type { BunPlugin } from "bun"
 
@@ -31,7 +31,7 @@ export function solidMdxBunPlugin(generate: "dom" | "ssr"): BunPlugin {
         compile = ((await import(MDX_MODULE)) as MdxCompiler).compile
       } catch {
         throw new Error(
-          "@nifrajs/web-solid/mdx: compiling `.mdx` needs the `@mdx-js/mdx` package — install it (`bun add @mdx-js/mdx`).",
+          "@nifrajs/web-solid/mdx: compiling `.mdx` needs the `@mdx-js/mdx` package - install it (`bun add @mdx-js/mdx`).",
         )
       }
       build.onLoad({ filter: /\.mdx(\?|$)/ }, async (args) => {

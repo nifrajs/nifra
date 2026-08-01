@@ -99,7 +99,7 @@ describe("sharpImageBackend", () => {
 // --- WASM backend (stubbed codecs, real PNG header for probe) ----------------------------------------
 
 /** A minimal PNG header: 8-byte signature + IHDR with width@16 / height@20 (big-endian), which is all
- * `imageDimensions` reads. No pixel data — exactly the bomb-safe, header-only probe path. */
+ * `imageDimensions` reads. No pixel data - exactly the bomb-safe, header-only probe path. */
 function pngHeader(width: number, height: number): Uint8Array {
   const b = new Uint8Array(24)
   b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0) // PNG signature

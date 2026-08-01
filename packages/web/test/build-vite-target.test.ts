@@ -23,7 +23,7 @@ function scaffoldApp(): { root: string; routesDir: string; outDir: string; workD
     mkdirSync(join(p, ".."), { recursive: true })
     writeFileSync(p, content)
   }
-  // A tiny hand-rolled adapter that renders a string — enough to exercise SSR end to end without pulling
+  // A tiny hand-rolled adapter that renders a string - enough to exercise SSR end to end without pulling
   // a framework's SSR build into the test.
   w(
     "framework.ts",

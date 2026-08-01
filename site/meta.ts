@@ -2,7 +2,7 @@ import type { Meta } from "@nifrajs/web"
 
 // Shared per-route <head>: title + description + Open Graph + theme-color + favicon.
 // createWebApp has no site-wide head, and React-19 metadata hoisting wouldn't reach Nifra's own
-// <head> (Nifra renders the app as a body subtree) — so each route spreads this through Nifra's
+// <head> (Nifra renders the app as a body subtree) - so each route spreads this through Nifra's
 // meta/link head API, the idiomatic path.
 
 // Brand assets in public/ → /assets/* at deploy: the no-text ice-wolf mark is favicon (tab),

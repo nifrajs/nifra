@@ -42,7 +42,7 @@
 
 ### Minor Changes
 
-- 56c3ee7: feat(jobs): add `@nifrajs/jobs` — typed background job queue
+- 56c3ee7: feat(jobs): add `@nifrajs/jobs` - typed background job queue
 
   Enqueue work off the request path and run it with retries, exponential backoff, and dead-lettering on a
   pluggable store (`JobStore` + an in-memory default). An in-process worker for Bun/Node/Deno with bounded

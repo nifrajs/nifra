@@ -16,7 +16,7 @@ export async function renderFragment(): Promise<string> {
   return String(await svelteAdapter.renderToString?.([App], { data }))
 }
 
-/** Svelte reconciles against the existing DOM on hydrate — no per-document bootstrap needed. */
+/** Svelte reconciles against the existing DOM on hydrate - no per-document bootstrap needed. */
 export function hydrationHead(): string {
   return svelteAdapter.hydrationHead()
 }

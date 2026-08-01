@@ -1,13 +1,13 @@
 /**
- * `nifra levels` — the verification ladder, computed from gates that already exist:
+ * `nifra levels` - the verification ladder, computed from gates that already exist:
  *
- *   L0 typed contract      — `nifra check` passes (compiler-enforced frontend↔backend contract)
- *   L1 route assurance     — `nifra.assurance.ts` present and every route satisfies its policy
- *   L2 capability lockfile — capability/effect assurance passes and the lockfile is in sync
- *   L3 route manifest      — the emitted manifest hash-verifies and matches the current app
- *   L4 invariant-tested    — every route passes through an explicitly isolated executor
+ *   L0 typed contract      - `nifra check` passes (compiler-enforced frontend↔backend contract)
+ *   L1 route assurance     - `nifra.assurance.ts` present and every route satisfies its policy
+ *   L2 capability lockfile - capability/effect assurance passes and the lockfile is in sync
+ *   L3 route manifest      - the emitted manifest hash-verifies and matches the current app
+ *   L4 invariant-tested    - every route passes through an explicitly isolated executor
  *
- * A level counts only when every level below it holds — the ladder is cumulative, so "L3" is one
+ * A level counts only when every level below it holds - the ladder is cumulative, so "L3" is one
  * honest word for a whole posture. Levels are computed, never self-declared.
  */
 
@@ -28,7 +28,7 @@ export interface VerificationLevelStatus {
   readonly level: number
   readonly name: string
   readonly ok: boolean
-  /** Why the level does not hold — a gate failure or a missing prerequisite. Empty when ok. */
+  /** Why the level does not hold - a gate failure or a missing prerequisite. Empty when ok. */
   readonly reasons: readonly string[]
 }
 
@@ -59,7 +59,7 @@ export async function collectVerificationLevels(
   })
   const statuses: { level: number; name: string; ok: boolean; reasons: string[] }[] = []
 
-  // L0 — typed contract (`nifra check`).
+  // L0 - typed contract (`nifra check`).
   const check = await verification.check()
   statuses.push({
     level: 0,
@@ -86,7 +86,7 @@ export async function collectVerificationLevels(
   }
   const config = verification.config
 
-  // L1 — route assurance.
+  // L1 - route assurance.
   const assurance = verification.routeAssurance as AssuranceReport
   statuses.push({
     level: 1,
@@ -95,7 +95,7 @@ export async function collectVerificationLevels(
     reasons: assurance.findings.map((f) => f.message).slice(0, 5),
   })
 
-  // L2 — capability assurance + lockfile in sync.
+  // L2 - capability assurance + lockfile in sync.
   const l2Reasons: string[] = []
   const capabilityReport = verification.capability?.report
   if (config.capabilities === undefined) {
@@ -121,11 +121,11 @@ export async function collectVerificationLevels(
     reasons: l2Reasons,
   })
 
-  // L3 — emitted manifest hash-verifies AND matches the current app.
+  // L3 - emitted manifest hash-verifies AND matches the current app.
   const l3Reasons: string[] = []
   const manifestPath = resolve(cwd, config.manifest?.path ?? DEFAULT_MANIFEST_FILE)
   if (!existsSync(manifestPath)) {
-    l3Reasons.push(`manifest missing (${manifestPath}) — run \`nifra manifest emit\``)
+    l3Reasons.push(`manifest missing (${manifestPath}) - run \`nifra manifest emit\``)
   } else {
     try {
       const recorded = await parseNifraManifest(await Bun.file(manifestPath).text(), manifestPath)
@@ -136,7 +136,7 @@ export async function collectVerificationLevels(
           ...(capabilityReport !== undefined ? { capabilities: capabilityReport } : {}),
         })
         if (current.contentHash !== recorded.contentHash) {
-          l3Reasons.push("manifest is stale — the app changed since it was emitted")
+          l3Reasons.push("manifest is stale - the app changed since it was emitted")
         }
       } else {
         l3Reasons.push("manifest cannot be validated while assurance is failing")
@@ -152,11 +152,11 @@ export async function collectVerificationLevels(
     reasons: l3Reasons,
   })
 
-  // L4 — contract-generated invariants against an explicitly isolated executor.
+  // L4 - contract-generated invariants against an explicitly isolated executor.
   const l4Reasons: string[] = []
   if (config.invariants === undefined) {
     l4Reasons.push(
-      "no isolated invariant executor configured — add `invariants.executor` in nifra.assurance.ts",
+      "no isolated invariant executor configured - add `invariants.executor` in nifra.assurance.ts",
     )
   } else {
     const invariants = await runAdversarialContract(config.source as ContractTestApp, {

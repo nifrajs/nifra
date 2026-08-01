@@ -141,7 +141,7 @@ const INTENTS: readonly TopicAnswer[] = [
       "nira",
     ],
     answer:
-      'I\'m Nira, your guide to Nifra — a small built-in bot, not a person. I can explain what Nifra is, walk through its features, and show you how to get started. Try: "What is Nifra?", "What are the main features?", or "How do I get started?"',
+      'I\'m Nira, your guide to Nifra - a small built-in bot, not a person. I can explain what Nifra is, walk through its features, and show you how to get started. Try: "What is Nifra?", "What are the main features?", or "How do I get started?"',
   },
   {
     triggers: ["hi", "hello", "hey", "hiya", "yo", "greetings", "howdy"],
@@ -243,7 +243,7 @@ const STOP_WORDS = new Set([
   "use",
   "what",
   "with",
-  // Conversational filler — these show up in off-topic questions and (sometimes) in doc headings,
+  // Conversational filler - these show up in off-topic questions and (sometimes) in doc headings,
   // so dropping them keeps the doc search from matching on a generic word like "you" or "work".
   "you",
   "your",
@@ -319,7 +319,7 @@ const SECTION_BLOCKLIST = [
 ]
 
 let docsPromise: Promise<readonly DocSection[]> | undefined
-// Last resolved homepage section *id* (e.g. "sec-agent") — the fallback when no section is in band.
+// Last resolved homepage section *id* (e.g. "sec-agent") - the fallback when no section is in band.
 // Kept distinct from the displayed tip text so scroll updates resolve the right section every time.
 let lastSectionId = "hero"
 let suppressNextClick = false
@@ -401,7 +401,7 @@ function ensureShell(): void {
   messages.append(
     make("p", {
       className: "nifra-bot-message bot",
-      text: "Hi, I'm Nira — Nifra's docs guide. I'm a tiny island myself: static HTML first, one focused client script after. Ask me about MCP, typed clients, islands, runtimes, security, or benchmarks.",
+      text: "Hi, I'm Nira - Nifra's docs guide. I'm a tiny island myself: static HTML first, one focused client script after. Ask me about MCP, typed clients, islands, runtimes, security, or benchmarks.",
     }),
   )
 
@@ -435,7 +435,7 @@ function ensureShell(): void {
     make("div", {
       className: "nifra-bubble",
       id: "nifra-bubble",
-      text: "Hi, I'm Nira — scroll for tips, or tap me to ask about Nifra.",
+      text: "Hi, I'm Nira - scroll for tips, or tap me to ask about Nifra.",
     }),
   )
 
@@ -518,7 +518,7 @@ function splitSentences(value: string): readonly string[] {
 }
 
 // Match the question against INTENTS (identity/what-is/features/…) then the per-feature TOPICS.
-// Multi-word triggers match as a phrase (weight 2 — more specific); single-word triggers match a
+// Multi-word triggers match as a phrase (weight 2 - more specific); single-word triggers match a
 // whole word from the question (weight 1), so "this" never matches "hi".
 const INTENT_TABLE: readonly TopicAnswer[] = [...INTENTS, ...TOPICS]
 
@@ -563,7 +563,7 @@ function sectionAnswer(question: string, sections: readonly DocSection[]): strin
       bestScore = score
     }
   }
-  // Require a real topical hit — a query term in a section heading scores 5. An off-topic question
+  // Require a real topical hit - a query term in a section heading scores 5. An off-topic question
   // with only an incidental body word (score 1) falls through to the off-topic redirect instead.
   if (!best || bestScore < 5) return undefined
 
@@ -582,8 +582,8 @@ async function answerQuestion(question: string): Promise<string> {
   const fromDocs = sectionAnswer(question, await loadDocs())
   if (fromDocs) return fromDocs
 
-  // No intent and nothing in the docs matched — treat as off-topic and steer back to Nifra.
-  return "I'm Nira, and I only answer questions about Nifra — the TypeScript framework. I can cover what Nifra is, its features, the typed client, runtimes, security, agents/MCP, or how to get started. What would you like to know?"
+  // No intent and nothing in the docs matched - treat as off-topic and steer back to Nifra.
+  return "I'm Nira, and I only answer questions about Nifra - the TypeScript framework. I can cover what Nifra is, its features, the typed client, runtimes, security, agents/MCP, or how to get started. What would you like to know?"
 }
 
 function appendMessage(role: MessageRole, text: string): HTMLParagraphElement | undefined {
@@ -680,15 +680,15 @@ function showTip(text: string): void {
 
 // --- Tip engine: purely IntersectionObserver-driven. The old version read
 // getBoundingClientRect for every section + every `.prose h2` on EVERY scroll/wheel/touchmove
-// frame — synchronous layout in the scroll path = jank. The observer instead reports crossings
+// frame - synchronous layout in the scroll path = jank. The observer instead reports crossings
 // only when they happen, so scrolling does zero layout work here.
 let homeEls: HTMLElement[] = []
 let docEls: HTMLElement[] = []
 
-// The element straddling (or nearest to) a target line ~28% down the viewport — the one being
+// The element straddling (or nearest to) a target line ~28% down the viewport - the one being
 // read. getBoundingClientRect here is fine: this runs ONLY on IntersectionObserver callbacks
 // (a handful of times per scroll, at section boundaries), never on the scroll hot path.
-const TARGET_FRACTION = 0.26 // the "reading line" — active section is the one crossing ~26% down
+const TARGET_FRACTION = 0.26 // the "reading line" - active section is the one crossing ~26% down
 
 function nearestToTarget(els: readonly HTMLElement[]): HTMLElement | undefined {
   const target = window.innerHeight * TARGET_FRACTION
@@ -727,7 +727,7 @@ function refreshTip(): void {
 }
 
 // Scroll updates are rAF-coalesced AND gated to ≥12px of movement, so the rect reads in activeTip
-// run only a handful of times per second during a scroll — never once per frame. That, plus the
+// run only a handful of times per second during a scroll - never once per frame. That, plus the
 // cached target arrays (no per-frame querySelectorAll) and the textContent dedupe in showTip, is
 // what keeps scrolling smooth where the old per-frame recompute janked.
 let tipFrame = 0
@@ -773,12 +773,12 @@ function onSubmit(question: string): void {
       appendMessage("bot", answer)
     }
   }
-  // Always settle the placeholder, even if the docs lookup fails — never leave "Thinking…" stuck.
+  // Always settle the placeholder, even if the docs lookup fails - never leave "Thinking…" stuck.
   void answerQuestion(trimmed)
     .then(settle)
     .catch(() =>
       settle(
-        "I'm Nira — ask me about Nifra: what it is, its features, the typed client, runtimes, or how to get started.",
+        "I'm Nira - ask me about Nifra: what it is, its features, the typed client, runtimes, or how to get started.",
       ),
     )
 }

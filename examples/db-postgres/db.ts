@@ -4,7 +4,7 @@ import { drizzle } from "drizzle-orm/pglite"
 import { migrate } from "drizzle-orm/pglite/migrator"
 import * as schema from "./schema"
 
-// PGlite is real Postgres, embedded in-process — zero setup, so this example runs anywhere with no DB
+// PGlite is real Postgres, embedded in-process - zero setup, so this example runs anywhere with no DB
 // server. For PRODUCTION, swap these lines for a server connection; the schema, queries, and
 // migrations are byte-identical:
 //   import { drizzle } from "drizzle-orm/postgres-js"

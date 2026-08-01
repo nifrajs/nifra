@@ -1,5 +1,5 @@
 /**
- * In-process {@link CacheStore} — a Map with lazy expiry, a tag index for group invalidation, and an
+ * In-process {@link CacheStore} - a Map with lazy expiry, a tag index for group invalidation, and an
  * optional LRU cap. Correct for a single instance; for a cache shared across instances/workers, implement
  * `CacheStore` over CF KV / Redis. Not persisted (a restart empties it).
  */

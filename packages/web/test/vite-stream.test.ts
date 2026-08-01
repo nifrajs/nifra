@@ -68,8 +68,8 @@ function mockRes() {
 }
 
 // THE regression: each frame must flush as it arrives. The old code `res.end(await res.arrayBuffer())`
-// waited for the whole stream to END — an open-ended SSE body never ends, hanging `nifra dev`.
-test("pipeWebBodyToNode flushes each frame as it arrives — does NOT wait for the stream to end (SSE-safe)", async () => {
+// waited for the whole stream to END - an open-ended SSE body never ends, hanging `nifra dev`.
+test("pipeWebBodyToNode flushes each frame as it arrives - does NOT wait for the stream to end (SSE-safe)", async () => {
   const m = mockRes()
   let push!: (s: string) => void
   let close!: () => void
@@ -83,7 +83,7 @@ test("pipeWebBodyToNode flushes each frame as it arrives — does NOT wait for t
   const done = pipeWebBodyToNode(body, m.res)
   push("data: frame-1\n\n")
   await new Promise((r) => setTimeout(r, 15))
-  expect(m.chunks).toContain("data: frame-1\n\n") // flushed before the stream closed — a buffering impl wouldn't have it
+  expect(m.chunks).toContain("data: frame-1\n\n") // flushed before the stream closed - a buffering impl wouldn't have it
   expect(m.ended).toBe(false)
   close()
   await done

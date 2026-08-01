@@ -15,7 +15,7 @@ const routeArb = fc.record({
   segments: fc.array(fc.record({ isParam: fc.boolean(), staticVal: word, paramVal: token }), {
     maxLength: 6,
   }),
-  // Optional trailing catch-all with a tail of 1–3 segments.
+  // Optional trailing catch-all with a tail of 1-3 segments.
   wildcardTail: fc.option(fc.array(token, { minLength: 1, maxLength: 3 }), { nil: undefined }),
 })
 

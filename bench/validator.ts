@@ -1,10 +1,10 @@
 /**
  * Validation hot-path microbench. `t` validators are TypeBox-compiled (codegen via
- * `new Function`), so this isolates the per-validate cost on a representative body —
+ * `new Function`), so this isolates the per-validate cost on a representative body -
  * the cost every request carrying a body/query schema pays. Phase 6 puts `t` on the
  * hot path, so this is the perf-cadence checkpoint for the phase.
  *
- * NOTE: hand-rolled in-process harness — directionally honest, not publication
+ * NOTE: hand-rolled in-process harness - directionally honest, not publication
  * grade. Rigorous external-tool numbers come in Phase 7/8.
  */
 import { t } from "@nifrajs/schema"
@@ -34,6 +34,6 @@ function opsPerSec(rounds: number, batch: number): number {
 }
 
 const ops = opsPerSec(21, 50_000)
-console.log(`\n  t validator (TypeBox-compiled) — Bun ${Bun.version}\n`)
+console.log(`\n  t validator (TypeBox-compiled) - Bun ${Bun.version}\n`)
 console.log(`  validate(object, 5 fields)   ${Math.round(ops).toLocaleString().padStart(12)} ops/s`)
 console.log(`  per validation               ${(1e9 / ops).toFixed(1).padStart(12)} ns\n`)

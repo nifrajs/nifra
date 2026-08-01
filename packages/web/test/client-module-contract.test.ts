@@ -21,7 +21,7 @@ test("the bootstrap refuses a clientModule that does not export mountRouter", ()
   })
   // A specifier is resolved by the bundler, not the type system, so nothing upstream can check this.
   expect(src).toContain('typeof mountRouter !== "function"')
-  // The message must name the module and the missing export — the failure it replaces was
+  // The message must name the module and the missing export - the failure it replaces was
   // "mountRouter is not a function" from inside a bundled chunk, naming neither.
   expect(src).toContain("some-ui-kit/entry")
   expect(src).toContain("mountRouter")

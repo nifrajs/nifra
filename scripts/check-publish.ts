@@ -49,7 +49,7 @@ let failures = 0
 
 // Stray-scope gate: after the @nifra/* → @nifrajs/* rename, a single un-renamed import (`@nifra/core`)
 // resolves to nothing for a consumer and silently breaks their `bun install` (real user report,
-// 2026-06). The substring `@nifra/` never occurs inside `@nifrajs/` — the `js` sits before the slash —
+// 2026-06). The substring `@nifra/` never occurs inside `@nifrajs/` - the `js` sits before the slash -
 // so this matches ONLY the dead scope. Scan all published source + manifests; fail loudly on any straggler.
 const stray =
   await $`grep -rnE "@nifra/" packages --include='*.ts' --include='*.tsx' --include='*.json' --exclude-dir=node_modules --exclude-dir=dist`.nothrow()
@@ -62,19 +62,19 @@ if (stray.exitCode === 0) {
 }
 
 // Publish-resolution gate: `changeset publish` shells `npm publish`, which does NOT rewrite the
-// `workspace:` protocol — so `changeset:publish` runs resolve-workspace-deps first. This asserts every
+// `workspace:` protocol - so `changeset:publish` runs resolve-workspace-deps first. This asserts every
 // internal `workspace:` dep in a published block (dependencies/peer/optional) points to a known
 // sibling, so that rewrite can't leave a `workspace:*` to ship to npm. (Packing here with `bun pm
-// pack` rewrites workspace: for free and hid the alpha.1/2 + beta.0 EUNSUPPORTEDPROTOCOL break — npm
+// pack` rewrites workspace: for free and hid the alpha.1/2 + beta.0 EUNSUPPORTEDPROTOCOL break - npm
 // publish does not, which is what actually ships.)
 const resolveCheck = await $`bun run scripts/resolve-workspace-deps.ts --check`.nothrow()
 if (resolveCheck.exitCode !== 0) {
   failures += 1
   console.error(
-    "✗ unresolvable workspace: dep(s) in a published block — publish would leak workspace:",
+    "✗ unresolvable workspace: dep(s) in a published block - publish would leak workspace:",
   )
 }
-// ...and the publish script must actually RUN the resolver before `changeset publish` — removing it
+// ...and the publish script must actually RUN the resolver before `changeset publish` - removing it
 // would silently reship the workspace: leak (npm publish does not rewrite it). Guard the wiring.
 const publishScript = (
   JSON.parse(await Bun.file("package.json").text()) as { scripts: Record<string, string> }
@@ -88,7 +88,7 @@ if (publishScript === undefined || !publishScript.includes("resolve-workspace-de
 
 await $`bun run build`
 
-// Note: the `nifra mcp` corpus (`packages/cli/docs/{types,examples}.json`) is NOT byte-gated here — it's
+// Note: the `nifra mcp` corpus (`packages/cli/docs/{types,examples}.json`) is NOT byte-gated here - it's
 // generated from the built `.d.ts`, which differs subtly across build environments (bun/OS), so a
 // committed-vs-CI-regen diff yields false failures. Freshness is guaranteed at the source instead:
 // `changeset:publish` runs `gen:llms` after the build, so every published tarball carries a corpus
@@ -106,7 +106,7 @@ for (const pkg of LIBRARIES) {
   }
 }
 
-// `@nifrajs/deno` (Deno-native, ships TS — no dist), `create-nifra` (bin-only CLI), and
+// `@nifrajs/deno` (Deno-native, ships TS - no dist), `create-nifra` (bin-only CLI), and
 // `@nifrajs/web-svelte` get publint only: attw models Node/bundler type resolution, which doesn't apply
 // to a Deno-consumed TS package, a CLI with no library exports, or a Svelte package whose `.svelte`
 // components resolve through the consumer's Svelte toolchain (no `.d.ts` for `*.svelte`).
@@ -155,7 +155,7 @@ for (const file of [...new Set(workspaceManifests)].sort()) {
     }
     // Provenance precondition. `NPM_CONFIG_PROVENANCE` (release.yml) refuses to attest a package
     // whose manifest carries no `repository`, and it fails the WHOLE publish rather than skipping
-    // that one package — so a single new package missing this field breaks the release for every
+    // that one package - so a single new package missing this field breaks the release for every
     // other one. Gate it here so the gap surfaces on the PR instead of mid-release. `directory` is
     // checked against the real path too: it is the field that makes the attestation point at the
     // right monorepo subpath, and cloning a sibling manifest is exactly how it goes stale.
@@ -203,7 +203,7 @@ for (const { name, dir } of PUBLINT_ONLY) {
 // the unscoped `nifra` entry point) were uninstallable for every external consumer
 // (`@nifrajs/schema@workspace:* failed to resolve`). publint is monorepo-aware and does NOT flag this. So
 // we pack each package exactly as `bun publish` does and assert NO `workspace:` survives in any consumer
-// dependency block — the single invariant that, had it run, would have caught the break at publish time.
+// dependency block - the single invariant that, had it run, would have caught the break at publish time.
 console.log("\n=== packed-manifest workspace: gate ===")
 const ALL_DIRS = [...PUBLIC_PACKAGE_DIRS]
 for (const dir of ALL_DIRS) {
@@ -275,10 +275,10 @@ for (const dir of ALL_DIRS) {
   }
 }
 
-// Version-consistency gate: the CLI hardcodes its version in two source files — the tsc-built CLI
+// Version-consistency gate: the CLI hardcodes its version in two source files - the tsc-built CLI
 // reads no package.json at runtime, and mcp-http.ts must run on edge runtimes with no fs. Assert both
 // match packages/cli/package.json so a release bump can't leave a stale `nifra --version` or a stale
-// MCP server-info version (alpha.1 shipped while the package was past it — this gate stops the recurrence).
+// MCP server-info version (alpha.1 shipped while the package was past it - this gate stops the recurrence).
 {
   const cliVersion = JSON.parse(await Bun.file("packages/cli/package.json").text())
     .version as string
@@ -294,14 +294,14 @@ for (const dir of ALL_DIRS) {
     } else if (found[1] !== cliVersion) {
       failures += 1
       console.error(
-        `✗ ${file}: version constant "${found[1]}" ≠ @nifrajs/cli ${cliVersion} — bump it`,
+        `✗ ${file}: version constant "${found[1]}" ≠ @nifrajs/cli ${cliVersion} - bump it`,
       )
     } else {
       console.log(`✓ ${file}: version constant matches @nifrajs/cli ${cliVersion}`)
     }
   }
 
-  // @nifrajs/core exports a public literal `VERSION` (it runs on the edge — no fs — so it can't derive
+  // @nifrajs/core exports a public literal `VERSION` (it runs on the edge - no fs - so it can't derive
   // its own version). changeset version skips it; version.ts re-syncs it. Checked against core's OWN
   // package version (not cli's), so it also fails loudly if the `fixed` link between them ever breaks.
   // It shipped at "0.0.0" through 1.0.0 before this gate existed.
@@ -315,7 +315,7 @@ for (const dir of ALL_DIRS) {
       console.error(`✗ ${file}: no exported VERSION constant`)
     } else if (found[1] !== coreVersion) {
       failures += 1
-      console.error(`✗ ${file}: VERSION "${found[1]}" ≠ @nifrajs/core ${coreVersion} — bump it`)
+      console.error(`✗ ${file}: VERSION "${found[1]}" ≠ @nifrajs/core ${coreVersion} - bump it`)
     } else {
       console.log(`✓ ${file}: VERSION matches @nifrajs/core ${coreVersion}`)
     }
@@ -328,14 +328,14 @@ for (const dir of ALL_DIRS) {
 
   // (a) The scaffolded `.mcp.json` pins `@nifrajs/cli@<MCP_CLI_VERSION>`; a stale pin launches an old MCP
   // server in every new project. agent-files derives it from create-nifra's own version, and `fixed`
-  // versioning locks create-nifra to @nifrajs/cli — so this also guards the `fixed` link itself.
+  // versioning locks create-nifra to @nifrajs/cli - so this also guards the `fixed` link itself.
   const { MCP_CLI_VERSION } = (await import("../packages/create-nifra/src/agent-files.ts")) as {
     MCP_CLI_VERSION: string
   }
   if (MCP_CLI_VERSION !== cliVersion) {
     failures += 1
     console.error(
-      `✗ create-nifra MCP_CLI_VERSION "${MCP_CLI_VERSION}" ≠ @nifrajs/cli ${cliVersion} — bump it`,
+      `✗ create-nifra MCP_CLI_VERSION "${MCP_CLI_VERSION}" ≠ @nifrajs/cli ${cliVersion} - bump it`,
     )
   } else {
     console.log(`✓ create-nifra MCP_CLI_VERSION matches @nifrajs/cli ${cliVersion}`)
@@ -380,7 +380,7 @@ for (const dir of ALL_DIRS) {
   if (authPin !== `^${betterAuthVersion}`) {
     failures += 1
     console.error(
-      `✗ auth.ts @nifrajs/better-auth pin "${authPin}" ≠ ^${betterAuthVersion} — bump it`,
+      `✗ auth.ts @nifrajs/better-auth pin "${authPin}" ≠ ^${betterAuthVersion} - bump it`,
     )
   } else {
     console.log(`✓ auth.ts @nifrajs/better-auth pin matches ^${betterAuthVersion}`)

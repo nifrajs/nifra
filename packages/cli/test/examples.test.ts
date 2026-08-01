@@ -9,19 +9,19 @@ import {
 const EXAMPLES: Example[] = [
   {
     name: "PROTECTED_ROUTE",
-    topic: "Nifra — Auth & sessions",
+    topic: "Nifra - Auth & sessions",
     slug: "auth",
     code: 'import { requireSession } from "@nifrajs/better-auth"\n// guard a route',
   },
   {
     name: "UPLOAD",
-    topic: "Nifra — Uploads",
+    topic: "Nifra - Uploads",
     slug: "uploads",
     code: 'import { presign } from "@nifrajs/uploads"\n// signed upload url',
   },
   {
     name: "ISR_PAGE",
-    topic: "Nifra — ISR & caching",
+    topic: "Nifra - ISR & caching",
     slug: "isr",
     code: 'import { withISR } from "@nifrajs/web"\n// revalidate on a schedule',
   },
@@ -51,7 +51,7 @@ describe("searchExamples", () => {
 describe("renderExamplesResult", () => {
   test("no query → grouped index, not code", () => {
     const out = renderExamplesResult(EXAMPLES, undefined, 3)
-    expect(out).toContain("Nifra — Auth & sessions")
+    expect(out).toContain("Nifra - Auth & sessions")
     expect(out).toContain("PROTECTED_ROUTE")
     expect(out).not.toContain("```") // index lists names, not code blocks
     expect(out).toContain("typechecked against the installed") // states the guarantee

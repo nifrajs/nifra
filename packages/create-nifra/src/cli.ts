@@ -8,7 +8,7 @@
  *   bun create nifra my-app --deploy vercel      # site, with Vercel as the default deploy target
  *
  * Copies the bundled template, restores `.gitignore` (npm strips a literal one from packages), sets the
- * app's `package.json` name, and — with `--deploy <target>` (site template only) — repoints the default
+ * app's `package.json` name, and - with `--deploy <target>` (site template only) - repoints the default
  * `build`/`deploy` scripts at that target and fills the project name into its config. Refuses to overwrite.
  */
 import { realpathSync } from "node:fs"
@@ -43,7 +43,7 @@ const TEMPLATES = {
 export type TemplateName = keyof typeof TEMPLATES
 
 /** Frontend frameworks the `site` template can scaffold. React is the default (`template-site`); the
- * rest live in `template-site-<framework>` siblings — same multi-target deploy story, different adapter
+ * rest live in `template-site-<framework>` siblings - same multi-target deploy story, different adapter
  * + routes. */
 const FRAMEWORKS = ["react", "preact", "vue", "solid", "svelte"] as const
 export type Framework = (typeof FRAMEWORKS)[number]
@@ -51,7 +51,7 @@ export type Framework = (typeof FRAMEWORKS)[number]
 /**
  * Deploy targets for the multi-target `site` template. Every target's build + server entry already ships
  * in the template; choosing one repoints the canonical `build`/`deploy` scripts at it (the per-target
- * `build:*` scripts stay, so you can still switch). nifra never runs the deploy or enters credentials —
+ * `build:*` scripts stay, so you can still switch). nifra never runs the deploy or enters credentials -
  * `deploy` shells out to the vendor CLI you've authed yourself.
  */
 interface DeployPreset {
@@ -97,10 +97,10 @@ const DEPLOY: Record<string, DeployPreset> = {
   },
 }
 
-// Self-hosted servers (bun/node) have no canonical push-to-deploy — CI builds + uploads the artifact and
+// Self-hosted servers (bun/node) have no canonical push-to-deploy - CI builds + uploads the artifact and
 // leaves a host-specific placeholder. The managed targets use the vendor's official action/CLI.
 const SELF_HOSTED_STEP = (hint: string): string =>
-  `      # Self-hosted: deploy is host-specific. The build output is in dist*/ — add your step here
+  `      # Self-hosted: deploy is host-specific. The build output is in dist*/ - add your step here
       # (${hint}). Until then, CI builds on every push and uploads the bundle as an artifact.
       - name: Upload build
         if: github.ref == 'refs/heads/main'
@@ -113,7 +113,7 @@ const SELF_HOSTED_STEP = (hint: string): string =>
 interface CiDeploy {
   /** Lines under the workflow's top-level `permissions:` (2-space indented). */
   readonly permissions: string
-  /** Repository secrets the deploy needs — listed in a header comment so the user knows what to set. */
+  /** Repository secrets the deploy needs - listed in a header comment so the user knows what to set. */
   readonly secrets: readonly string[]
   /** YAML for the deploy step(s), indented to sit under `steps:` (`NAME` → the app name). */
   readonly step: string
@@ -127,10 +127,10 @@ const CI_DEPLOY: Record<string, CiDeploy> = {
   node: {
     permissions: "  contents: read",
     secrets: [],
-    step: SELF_HOSTED_STEP("the template ships a Dockerfile — push to a registry, or flyctl/SSH"),
+    step: SELF_HOSTED_STEP("the template ships a Dockerfile - push to a registry, or flyctl/SSH"),
   },
   deno: {
-    // OIDC: link the repo in the Deno Deploy dashboard (no token needed) — needs id-token: write.
+    // OIDC: link the repo in the Deno Deploy dashboard (no token needed) - needs id-token: write.
     permissions: "  contents: read\n  id-token: write",
     secrets: [],
     step: `      - name: Publish to Deno Deploy
@@ -210,17 +210,17 @@ export interface ScaffoldOptions {
   readonly template?: TemplateName
   /** Frontend framework (site template only). Default `"react"`. */
   readonly framework?: string
-  /** Deploy target (site template only) — repoints the default `build`/`deploy` scripts. */
+  /** Deploy target (site template only) - repoints the default `build`/`deploy` scripts. */
   readonly deploy?: string
   /** Emit a CI deploy workflow for the chosen `--deploy` target. Only `"github"` today. */
   readonly ci?: string
   /** Wire a data layer: `drizzle-{libsql,postgres,sqlite}` | `prisma-{postgres,sqlite}` | `kysely-postgres`. */
   readonly db?: string
-  /** Wire authentication: `better-auth` (requires `--db` — auth needs a database). */
+  /** Wire authentication: `better-auth` (requires `--db` - auth needs a database). */
   readonly auth?: string
   /** Allow scaffolding into a non-empty directory (copies template, overwrites collisions). */
   readonly force?: boolean
-  /** Path to a local nifra monorepo — replaces `@nifrajs/*` semver deps with `file:` refs so
+  /** Path to a local nifra monorepo - replaces `@nifrajs/*` semver deps with `file:` refs so
    *  the app runs against the local source before the packages are published to npm. */
   readonly link?: string
 }
@@ -284,7 +284,7 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
     }
   }
 
-  // DB preset (any template — an API or a site can both want persistence).
+  // DB preset (any template - an API or a site can both want persistence).
   let db: DbChoice | undefined
   if (opts.db !== undefined) {
     if (!DB_CHOICES.includes(opts.db as DbChoice)) {
@@ -293,7 +293,7 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
     db = opts.db as DbChoice
   }
 
-  // Auth preset — needs a database, so it requires `--db` (the auth tables live in your Drizzle DB).
+  // Auth preset - needs a database, so it requires `--db` (the auth tables live in your Drizzle DB).
   let auth: AuthChoice | undefined
   if (opts.auth !== undefined) {
     if (!AUTH_CHOICES.includes(opts.auth as AuthChoice)) {
@@ -327,7 +327,7 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
   try {
     await rename(join(opts.target, "gitignore"), join(opts.target, ".gitignore"))
   } catch {
-    // A template without a `gitignore` — nothing to restore.
+    // A template without a `gitignore` - nothing to restore.
   }
 
   const name = basename(opts.target)
@@ -366,9 +366,9 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
   }
   applyFeatures(pkg, features)
   // --link: replace @nifrajs/* semver refs with file: paths pointing at the local monorepo's packages/
-  // directory — lets an app consume nifra from a sibling repo before the packages are published.
+  // directory - lets an app consume nifra from a sibling repo before the packages are published.
   if (opts.link !== undefined) {
-    // realpath both ends before computing the relative file: path — otherwise a symlinked
+    // realpath both ends before computing the relative file: path - otherwise a symlinked
     // segment on either side (macOS tmpdir: /var/folders → /private/var/folders) skews the
     // ../ count and every linked dependency resolves to a nonexistent directory.
     const real = (p: string): string => {
@@ -395,7 +395,7 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
   await writeFile(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`)
 
   // Ship agent guidance so a coding agent (Claude Code, Cursor, …) writes correct nifra code from the
-  // first prompt — the conventions + the gotchas, tailored to this template.
+  // first prompt - the conventions + the gotchas, tailored to this template.
   await writeFile(
     join(opts.target, "AGENTS.md"),
     agentsMd({
@@ -428,7 +428,7 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
       const toml = await readFile(wranglerPath, "utf8")
       await writeFile(wranglerPath, toml.replace(/^name = ".*"$/m, `name = "${name}"`))
     } catch {
-      // No wrangler.toml — skip the name fill.
+      // No wrangler.toml - skip the name fill.
     }
   }
 
@@ -513,7 +513,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
 const USAGE = `usage: bun create nifra <directory> [--template api|site|isr|fullstack] [--framework react|preact|vue|solid|svelte] [--deploy bun|node|deno|cf-pages|vercel] [--ci github] [--db ${DB_CHOICES.join("|")}] [--auth ${AUTH_CHOICES.join("|")}] [--force] [--link <path-to-nifra-repo>]`
 
 /**
- * Run the CLI for `argv` and return the exit code + the message to print — no `process.exit`, `console`,
+ * Run the CLI for `argv` and return the exit code + the message to print - no `process.exit`, `console`,
  * or `process.argv`, so the whole flow (parse → scaffold → next-steps) is unit-testable in-process.
  */
 export async function run(argv: readonly string[]): Promise<{ code: 0 | 1; message: string }> {
@@ -535,7 +535,7 @@ export async function run(argv: readonly string[]): Promise<{ code: 0 | 1; messa
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    // A copy failure is almost always "destination exists" — say so plainly.
+    // A copy failure is almost always "destination exists" - say so plainly.
     const friendly = /exist/i.test(msg)
       ? `refusing to scaffold: "${target}" already exists. Use --force to overwrite.`
       : msg
@@ -544,7 +544,7 @@ export async function run(argv: readonly string[]): Promise<{ code: 0 | 1; messa
 
   const steps: string[] = [`cd ${target}`, "bun install", "bun run dev"]
   if (result.ci !== undefined) {
-    // CI deploys on push — surface the workflow + the secrets to set first.
+    // CI deploys on push - surface the workflow + the secrets to set first.
     steps[2] = "bun run dev          # local preview"
     if (result.ciSecrets !== undefined && result.ciSecrets.length > 0) {
       steps.push(`# set repo secrets: ${result.ciSecrets.join(", ")}`)
@@ -576,7 +576,7 @@ export async function run(argv: readonly string[]): Promise<{ code: 0 | 1; messa
   ]
   if (result.link !== undefined) {
     steps.push(
-      `# @nifrajs/* packages linked from ${result.link} — move the app and update file: paths if you relocate it`,
+      `# @nifrajs/* packages linked from ${result.link} - move the app and update file: paths if you relocate it`,
     )
   }
   const header =
@@ -589,7 +589,7 @@ export async function run(argv: readonly string[]): Promise<{ code: 0 | 1; messa
 
 /**
  * True when this module is the program entry point. `import.meta.main` covers Bun, Deno, and Node ≥ 24;
- * on older Node it's `undefined`, so fall back to comparing the resolved entry path — otherwise
+ * on older Node it's `undefined`, so fall back to comparing the resolved entry path - otherwise
  * `npx create-nifra` / `npm create nifra` would silently no-op (the block below never runs).
  */
 function isMainModule(): boolean {

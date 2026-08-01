@@ -19,7 +19,7 @@ export default function Index(props: { data: LoaderData<typeof loader> }) {
         <For each={props.data.posts}>
           {(p) => (
             <li>
-              <a href={`/blog/${p.slug}`}>{p.title}</a> — <span>{p.summary}</span>
+              <a href={`/blog/${p.slug}`}>{p.title}</a> - <span>{p.summary}</span>
             </li>
           )}
         </For>

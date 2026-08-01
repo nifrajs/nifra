@@ -17,7 +17,7 @@ const photo = makePng(1600, 900)
 await Bun.write(`${import.meta.dir}/public/photo.png`, photo)
 console.log(`source photo: public/photo.png (${1600}×${900}, ${photo.length} bytes)`)
 
-/** Build a valid RGBA PNG with a diagonal gradient. IDAT uses node:zlib (a real zlib stream — Bun's
+/** Build a valid RGBA PNG with a diagonal gradient. IDAT uses node:zlib (a real zlib stream - Bun's
  * `deflateSync` emits raw deflate, which PNG decoders reject). */
 function makePng(w: number, h: number): Uint8Array {
   const crc32 = (buf: Uint8Array): number => {

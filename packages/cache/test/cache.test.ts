@@ -9,7 +9,7 @@ function makeClock(start = 1_000_000): { now: () => number; advance: (ms: number
 /** Let any fire-and-forget background revalidation settle. */
 const flush = (): Promise<void> => Bun.sleep(2)
 
-describe("createCache — wrap (cache-aside)", () => {
+describe("createCache - wrap (cache-aside)", () => {
   test("a miss loads + caches; a fresh hit does not call the loader", async () => {
     const clock = makeClock()
     const cache = createCache({ now: clock.now, defaultTtlMs: 1000 })
@@ -77,7 +77,7 @@ describe("createCache — wrap (cache-aside)", () => {
   })
 })
 
-describe("createCache — invalidation", () => {
+describe("createCache - invalidation", () => {
   test("invalidateTag drops every entry carrying the tag", async () => {
     const cache = createCache()
     await cache.set("a", 1, { tags: ["user:1"] })
@@ -103,7 +103,7 @@ describe("createCache — invalidation", () => {
 
 // Background revalidation is fire-and-forget, so its error handling is the only thing between a failing
 // loader and either a silent disappearance or an unhandled rejection taking down the process.
-describe("createCache — background revalidation errors", () => {
+describe("createCache - background revalidation errors", () => {
   test("a failing revalidate is reported and leaves the stale value servable", async () => {
     const clock = makeClock()
     const reported: Array<{ key: string; message: string }> = []

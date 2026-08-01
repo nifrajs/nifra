@@ -1,12 +1,12 @@
 /**
- * Turn a failed request into a committed regression test — the one thing a generic error tracker
+ * Turn a failed request into a committed regression test - the one thing a generic error tracker
  * (Sentry, PostHog) can't do, because it needs the framework's contract + in-process replay. Capture
  * the request + observed response, replay it against the CURRENT app, and assert the response contract
  * (status, optionally shape) still reproduces. This does NOT replace error tracking or store incidents
- * — it converts one into a permanent test.
+ * - it converts one into a permanent test.
  *
  * Two surfaces, deliberately separate on the PII axis:
- *   - `replayIncident` / `assertIncidentReplays` run in memory against the REAL captured inputs — nothing
+ *   - `replayIncident` / `assertIncidentReplays` run in memory against the REAL captured inputs - nothing
  *     is written, so reproduction is exact and there is no leak surface.
  *   - `generateRegressionTest` emits a file you commit, so it redacts request values BY DEFAULT and
  *     bannered a sanitize step: a committed fixture must never carry raw PII/secrets.
@@ -234,7 +234,7 @@ const REDACTED = "<redacted>"
 
 /**
  * Redact leaf string values by default (unless the dotted key path is allow-listed). Non-strings are
- * kept — they carry the structure that makes the fixture reproduce — so review the emitted file. This
+ * kept - they carry the structure that makes the fixture reproduce - so review the emitted file. This
  * is intentionally aggressive: a committed fixture must not leak PII/secrets.
  */
 export function redactForEmission(value: unknown, allow: ReadonlySet<string>, path = ""): unknown {
@@ -264,7 +264,7 @@ export interface GenerateRegressionTestOptions {
 
 /**
  * Emit a committable regression test from a capsule. Request string values are redacted BY DEFAULT with
- * a sanitize banner — replace the `<redacted>` placeholders with safe, reproducing values before you
+ * a sanitize banner - replace the `<redacted>` placeholders with safe, reproducing values before you
  * commit. The test asserts the response contract via {@link assertIncidentReplays}.
  */
 export function generateRegressionTest(

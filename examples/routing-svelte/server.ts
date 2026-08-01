@@ -1,5 +1,5 @@
 /**
- * routing-svelte — the SAME app shape as routing-react/vue/preact on Svelte, exercising the
+ * routing-svelte - the SAME app shape as routing-react/vue/preact on Svelte, exercising the
  * @nifrajs/web-svelte bindings (useFetcher, useQuery/useQueryClient, <Await>) through the real
  * createWebApp + buildClient pipeline. Route discovery now matches `.svelte` files (their loader/
  * action/meta come from `<script module>`). Run with the SSR plugin preloaded:
@@ -16,7 +16,7 @@ import { backend } from "./backend"
 
 const routesDir = `${import.meta.dir}/routes`
 const dist = `${import.meta.dir}/dist`
-// Trusted own build output (written by buildClient) — cast after parse.
+// Trusted own build output (written by buildClient) - cast after parse.
 const assets = JSON.parse(
   await Bun.file(`${dist}/manifest.json`)
     .text()
@@ -49,7 +49,7 @@ app.get("/assets/*", async (c) => {
   })
 })
 
-// Only listen when run directly — when imported (by build.ts for prerendering), we just want `app`.
+// Only listen when run directly - when imported (by build.ts for prerendering), we just want `app`.
 if (import.meta.main) {
   const running = app.listen(Number(Bun.env.PORT ?? 3000))
   console.log(`http://localhost:${running.port}`)

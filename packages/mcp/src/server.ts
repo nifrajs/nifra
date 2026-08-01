@@ -1,5 +1,5 @@
 /**
- * `createMcpServer` — assemble a mountable MCP server for a nifra app, with MCP Apps (`ui://`) widgets.
+ * `createMcpServer` - assemble a mountable MCP server for a nifra app, with MCP Apps (`ui://`) widgets.
  *
  * Pass tools (ideally from {@link ./tool.ts | defineMcpTool}) and widgets (from {@link ./widget.ts |
  * defineMcpWidget}); the widgets' resources are registered and the `io.modelcontextprotocol/ui` capability
@@ -14,7 +14,7 @@
  *
  * {@link McpServer.handle} dispatches a single JSON-RPC message directly (for headless verification / tests).
  *
- * SECURITY: this has NO built-in authentication — once mounted, every tool is callable by anyone who can
+ * SECURITY: this has NO built-in authentication - once mounted, every tool is callable by anyone who can
  * reach the route (the CORS header is `*` and no credentials are used, so it is effectively public). That
  * is fine for read-only/public tools; if any tool mutates state or returns private data, gate the route
  * yourself (check an `Authorization` header / session in the nifra handler before calling `mcp.fetch`).
@@ -37,7 +37,7 @@ export interface CreateMcpServerOptions {
   readonly name: string
   readonly version: string
   readonly tools?: readonly McpTool[]
-  /** MCP Apps widgets — their resources are registered and the UI capability is advertised. */
+  /** MCP Apps widgets - their resources are registered and the UI capability is advertised. */
   readonly widgets?: readonly McpWidget[]
   /** Extra (non-widget) resources to expose. */
   readonly resources?: readonly McpResource[]
@@ -52,9 +52,9 @@ export interface McpServer {
   readonly tools: McpTool[]
   readonly features: McpServerFeatures
   readonly serverInfo: { name: string; version: string }
-  /** Web `fetch` handler — mount at `POST /mcp` (GET is a health page, OPTIONS the CORS preflight). */
+  /** Web `fetch` handler - mount at `POST /mcp` (GET is a health page, OPTIONS the CORS preflight). */
   fetch(request: Request): Promise<Response>
-  /** Dispatch one JSON-RPC message directly (no HTTP) — for headless verification and unit tests. */
+  /** Dispatch one JSON-RPC message directly (no HTTP) - for headless verification and unit tests. */
   handle(message: JsonRpcRequest): Promise<JsonRpcResponse | null>
 }
 

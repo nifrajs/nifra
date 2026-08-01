@@ -1,5 +1,5 @@
 /**
- * routing-vue-sfc — nifra + Vue authored as **`.vue` Single-File Components** (contrast `routing-vue`,
+ * routing-vue-sfc - nifra + Vue authored as **`.vue` Single-File Components** (contrast `routing-vue`,
  * which uses render functions). Route discovery matches `.vue`; each route's loader/action/meta come
  * from its plain `<script>` block, the component from `<script setup>` + `<template>`. The same
  * createWebApp + buildClient pipeline, just the Vue SFC compiler plugin. Run with the SSR plugin
@@ -34,7 +34,7 @@ export const app = createWebApp({
   title: "nifra (Vue SFC)",
 })
 
-// Serve the content-hashed client bundle (immutable — the hash changes on every content change).
+// Serve the content-hashed client bundle (immutable - the hash changes on every content change).
 app.get("/assets/*", async (c) => {
   const name = new URL(c.req.url).pathname.slice("/assets/".length)
   if (!/^[A-Za-z0-9._-]+$/.test(name)) return new Response("Bad Request", { status: 400 })

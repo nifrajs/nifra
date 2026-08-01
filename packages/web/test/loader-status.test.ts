@@ -74,7 +74,7 @@ test("gone() answers 410, and prefers _410 over _404 when the app authored one",
   expect(res.status).toBe(410)
   expect(await res.text()).toContain("the-410-page")
 
-  // With no _410 authored it still answers 410 — only the page falls back.
+  // With no _410 authored it still answers 410 - only the page falls back.
   const fallback = createWebApp({
     adapter: stub,
     manifest: manifestWith(() => gone()),
@@ -93,7 +93,7 @@ test("statusPage() covers any 4xx/5xx and rejects everything else at the call si
   })
   expect((await get(app)).status).toBe(451)
 
-  // 3xx belongs to redirect(), 2xx is a successful render — neither is a terminal status, and
+  // 3xx belongs to redirect(), 2xx is a successful render - neither is a terminal status, and
   // silently accepting them would produce a page nobody can explain.
   expect(() => statusPage(302)).toThrow(/4xx or 5xx/)
   expect(() => statusPage(200)).toThrow(/4xx or 5xx/)
@@ -136,7 +136,7 @@ test("a caller-supplied content-type cannot override the document's own", async 
 })
 
 test("every pre-existing throw keeps its exact behaviour", async () => {
-  // A hand-rolled Response is still served verbatim — this is what the brand check ahead of the
+  // A hand-rolled Response is still served verbatim - this is what the brand check ahead of the
   // pass-through protects, and an app relying on it must not silently start getting the _404 page.
   const verbatim = createWebApp({
     adapter: stub,
@@ -193,7 +193,7 @@ test("the signal brand does not leak into the response body or enumeration", asy
 
 test("a prerendered path whose loader signals notFound() is omitted, not baked as a 200 shell", async () => {
   // A baked soft 404 is strictly worse than a runtime one: it is a static file that survives a
-  // redeploy. `prerenderRoutes` skips any non-ok render, and a signal IS a non-ok render — this
+  // redeploy. `prerenderRoutes` skips any non-ok render, and a signal IS a non-ok render - this
   // pins that the two compose rather than needing a special case.
   const { mkdtempSync, rmSync, existsSync } = await import("node:fs")
   const { tmpdir } = await import("node:os")

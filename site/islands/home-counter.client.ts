@@ -1,5 +1,5 @@
 /**
- * Homepage enhancer bundle — the only client JS the (static, `hydrate: false`) homepage ships:
+ * Homepage enhancer bundle - the only client JS the (static, `hydrate: false`) homepage ships:
  * a copy button for the install command. A few hundred bytes of vanilla DOM, no framework runtime.
  * Loaded via the route's `islandScripts`.
  */
@@ -16,7 +16,7 @@ function enhanceCopyButtons(): void {
           delete button.dataset.copied
         }, 2000)
       } catch {
-        delete button.dataset.copied // clipboard denied — leave the button idle
+        delete button.dataset.copied // clipboard denied - leave the button idle
       }
     })
   }

@@ -1,8 +1,8 @@
 /**
- * Run requests through a nifra app and capture **structured results** — the shared engine behind the
+ * Run requests through a nifra app and capture **structured results** - the shared engine behind the
  * website playground (humans) and the agent run/verify tool (AI writes code → runs it → sees the
  * failure → fixes). It only touches `app.fetch(Request) → Response`, which is Web-standard, so it runs
- * unchanged in the browser, Bun, Node, Deno, and on the edge — and depends on nothing.
+ * unchanged in the browser, Bun, Node, Deno, and on the edge - and depends on nothing.
  *
  *   import { runApp } from "@nifrajs/runner"
  *   const results = await runApp(app, [
@@ -12,11 +12,11 @@
  *   // → [{ status: 200, ok: true, body: {...}, durationMs }, …]
  *
  * It is a *runner*, not a security sandbox: it calls the app you hand it in-process, with no isolation.
- * Isolation, when you need it, comes from the host — the browser tab for the playground, your own
+ * Isolation, when you need it, comes from the host - the browser tab for the playground, your own
  * process/CI for the agent runner. Don't feed it code you wouldn't already run.
  */
 
-/** Anything with a Web-standard fetch handler — a nifra app, or any `(Request) => Response`. Declared
+/** Anything with a Web-standard fetch handler - a nifra app, or any `(Request) => Response`. Declared
  * structurally so this package has zero dependency on `@nifrajs/core`. */
 export interface AppLike {
   fetch(request: Request): Response | Promise<Response>
@@ -44,7 +44,7 @@ export interface RunResult {
   readonly path: string
   /** `true` when the app returned a 2xx response. `false` for non-2xx, or when `app.fetch` threw. */
   readonly ok: boolean
-  /** HTTP status — present when the app returned a response (absent when it threw). */
+  /** HTTP status - present when the app returned a response (absent when it threw). */
   readonly status?: number
   readonly statusText?: string
   readonly headers?: Readonly<Record<string, string>>
@@ -77,7 +77,7 @@ const now = (): number =>
 
 const METHODS_WITHOUT_BODY: ReadonlySet<string> = new Set(["GET", "HEAD"])
 
-/** A plain JSON-ish object/array (encode it as JSON) — vs a string/binary body we pass through. */
+/** A plain JSON-ish object/array (encode it as JSON) - vs a string/binary body we pass through. */
 function isJsonBody(body: unknown): body is Record<string, unknown> | unknown[] {
   if (body === null || typeof body !== "object") return false
   if (body instanceof Uint8Array || body instanceof ArrayBuffer || body instanceof Blob)
@@ -113,7 +113,7 @@ function headersToObject(headers: Headers): Record<string, string> {
   return out
 }
 
-/** Drive a single request through the app, capturing the outcome (never throws — a thrown app error
+/** Drive a single request through the app, capturing the outcome (never throws - a thrown app error
  * becomes `result.error`). */
 export async function runRequest(
   app: AppLike,
@@ -134,7 +134,7 @@ export async function runRequest(
   try {
     request = buildRequest(spec, origin)
   } catch (err) {
-    // A malformed spec (bad URL, GET-with-body via a custom method, …) — report it, don't throw.
+    // A malformed spec (bad URL, GET-with-body via a custom method, …) - report it, don't throw.
     return { ...base, ok: false, durationMs: now() - start, error: toError(err) }
   }
 
@@ -149,7 +149,7 @@ export async function runRequest(
       try {
         body = JSON.parse(text)
       } catch {
-        // Content-Type lied, or the body is partial — keep the text form.
+        // Content-Type lied, or the body is partial - keep the text form.
       }
     }
     return {

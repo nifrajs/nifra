@@ -1,5 +1,5 @@
 /**
- * nifra SSR + Svelte — the SAME `renderPage` seam as the React/Solid/Vue/Preact examples, with the
+ * nifra SSR + Svelte - the SAME `renderPage` seam as the React/Solid/Vue/Preact examples, with the
  * Svelte adapter. Proof the @nifrajs/web seam is framework-agnostic: only the adapter import + the
  * components change. Run with the SSR plugin preloaded (it compiles the .svelte imports):
  *
@@ -17,7 +17,7 @@ const clientJs = await Bun.file(`${import.meta.dir}/dist/client.js`)
   .catch(() => "// run build.ts first")
 
 function loader(): { message: string; start: number } {
-  return { message: "nifra SSR + Svelte — same renderPage, different adapter", start: 41 }
+  return { message: "nifra SSR + Svelte - same renderPage, different adapter", start: 41 }
 }
 
 const app = server()

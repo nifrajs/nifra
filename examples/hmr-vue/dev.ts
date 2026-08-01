@@ -1,12 +1,12 @@
 /**
- * True-HMR dev server (Vue SFC) — the `@nifrajs/web/vite` server with Vue's official Vite plugin.
+ * True-HMR dev server (Vue SFC) - the `@nifrajs/web/vite` server with Vue's official Vite plugin.
  *
  *   bun --preload hmr-vue/ssr-preload.ts hmr-vue/dev.ts
  *   (containers/sandboxes: prefix CHOKIDAR_USEPOLLING=1)
  *
  * Two compile pipelines for the same `.vue`: Vite + `@vitejs/plugin-vue` compiles + HMRs the CLIENT;
  * `vueBunPlugin("ssr")` (preloaded, see ssr-preload.ts) compiles for nifra's Bun-side SSR. Edit
- * `components/Counter.vue`'s <template> while the counter is non-zero — it updates live, count kept.
+ * `components/Counter.vue`'s <template> while the counter is non-zero - it updates live, count kept.
  */
 
 import { inProcessClient } from "@nifrajs/client"

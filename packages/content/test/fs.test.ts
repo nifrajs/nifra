@@ -97,7 +97,7 @@ test("all() reuses parsed entries until files change", async () => {
 test("bakeCollection + fromBaked: fs collection → serializable → edge-safe reader (no fs)", async () => {
   const baked = await bakeCollection(blog)
   expect(baked.entries.map((e) => e.slug)).toEqual(["first-post", "second-post"])
-  // Survives JSON serialization — this is what ships in the edge (Workers) bundle.
+  // Survives JSON serialization - this is what ships in the edge (Workers) bundle.
   const shipped = JSON.parse(JSON.stringify(baked)) as typeof baked
   const edge = fromBaked(shipped)
   expect((await edge.all()).map((e) => e.slug)).toEqual(["first-post", "second-post"])

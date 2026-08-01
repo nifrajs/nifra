@@ -105,7 +105,7 @@ export function highlight(code: string): string {
   return out
 }
 
-// `chrome` (default on) wraps the block in a mac-style window — dots + a language/filename tab —
+// `chrome` (default on) wraps the block in a mac-style window - dots + a language/filename tab -
 // matching the docs code-windows so every code block reads the same. Pass `chrome={false}` for the
 // compact inline snippets (e.g. ecosystem cards) that shouldn't carry a header bar.
 export function CodeBlock({

@@ -1,4 +1,4 @@
-// Forced per-request SSR (not SSG/ISR) — the loader runs every request, the identical
+// Forced per-request SSR (not SSG/ISR) - the loader runs every request, the identical
 // 50-item workload as every other framework.
 export const dynamic = "force-dynamic"
 

@@ -1,14 +1,14 @@
 <!--
   Home route as a Vue SFC, run through the `nifra` CLI (no dev.ts/build.ts/server.ts). The plain
   <script> carries the loader/meta (server-only); <script setup> + <template> are the component. The
-  local counter proves hydration; the scoped <style> proves the CSS pipeline — all through `nifra dev`.
+  local counter proves hydration; the scoped <style> proves the CSS pipeline - all through `nifra dev`.
 -->
 <script lang="ts">
 import type { LoaderArgs } from "@nifrajs/client"
 import type { backend } from "../backend"
 
 export const meta = {
-  title: "nifra CLI — Vue",
+  title: "nifra CLI - Vue",
   meta: [{ name: "description", content: "nifra Vue app via the zero-config nifra CLI" }],
 }
 
@@ -28,7 +28,7 @@ const local = ref(0)
 
 <template>
   <div>
-    <h1 id="page">nifra CLI — zero-config (Vue)</h1>
+    <h1 id="page">nifra CLI - zero-config (Vue)</h1>
     <p id="ssr">{{ data.message }}</p>
     <p id="count">server count: {{ data.count }}</p>
     <button id="local" type="button" @click="local++">local: {{ local }}</button>

@@ -163,7 +163,7 @@ export class AdversarialContractError extends Error {
         .slice(0, 5)
         .map(
           (failure) =>
-            `${failure.runtime}: ${failure.id} — ${failure.message} (replay seed ${report.seed})`,
+            `${failure.runtime}: ${failure.id} - ${failure.message} (replay seed ${report.seed})`,
         ),
       ...report.gaps
         .slice(0, 5)

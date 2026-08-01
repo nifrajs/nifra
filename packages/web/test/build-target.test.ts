@@ -9,14 +9,14 @@ import { createWebApp } from "../src/index.ts"
 // #5 end-to-end: `nifra build --target <t>` packages buildClient + buildServer (+ prerender) into one
 // dist/. The CLI is a thin wrapper over `buildTarget`; this exercises the engine directly on a tiny app.
 // To keep the engine framework-agnostic (the web package can't depend on web-react), the fixture ships
-// a STUB adapter + a STUB client module — same approach as render.test.ts. The temp app lives INSIDE the
+// a STUB adapter + a STUB client module - same approach as render.test.ts. The temp app lives INSIDE the
 // workspace so the generated entry's `@nifrajs/web` import resolves via node_modules hoisting.
 
 const WORKSPACE_TMP_BASE = `${import.meta.dir}/.tmp-build-target-`
 let projectRoot: string
 let routesDir: string
 
-// A one-chunk byte stream — the minimal `renderToStream` an adapter returns (mirrors render.test.ts).
+// A one-chunk byte stream - the minimal `renderToStream` an adapter returns (mirrors render.test.ts).
 const streamOf = (s: string): ReadableStream<Uint8Array> => {
   const bytes = new TextEncoder().encode(s)
   return new ReadableStream({
@@ -41,7 +41,7 @@ beforeEach(() => {
     join(routesDir, "index.tsx"),
     "export const prerender = true\nexport default function Home() { return null }\n",
   )
-  // The app's framework wiring — exports a stub adapter the generated server entry imports. It emits a
+  // The app's framework wiring - exports a stub adapter the generated server entry imports. It emits a
   // fixed marker ("nifra") so the prerendered HTML is assertable without a real UI framework.
   writeFileSync(
     join(projectRoot, "framework.ts"),
@@ -130,7 +130,7 @@ test("--target static → prerenders opted-in routes to index.html", async () =>
   // The client bundle is still emitted under /assets for hydration.
   expect(existsSync(join(outDir, "assets"))).toBe(true)
   // Regression guard (static hydration): the emitted HTML must reference the REAL content-hashed client
-  // entry, and that file must actually exist under /assets — a placeholder 404s → the page never hydrates.
+  // entry, and that file must actually exist under /assets - a placeholder 404s → the page never hydrates.
   expect(result.client.entry).toMatch(/\/_nifra-entry-[A-Za-z0-9]+\.js$/)
   expect(html).toContain(`"${result.client.entry}"`)
   expect(existsSync(join(outDir, result.client.entry.replace(/^\//, "")))).toBe(true)

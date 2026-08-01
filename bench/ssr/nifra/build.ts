@@ -1,7 +1,7 @@
 const define = { "process.env.NODE_ENV": '"production"' }
 
 // Build the client hydration bundle (the JS payload the SSR page ships) with Bun.build.
-// React's JSX is Bun-native — no plugin. NODE_ENV=production so React ships its prod build.
+// React's JSX is Bun-native - no plugin. NODE_ENV=production so React ships its prod build.
 const client = await Bun.build({
   entrypoints: [`${import.meta.dir}/client.ts`],
   outdir: `${import.meta.dir}/dist`,

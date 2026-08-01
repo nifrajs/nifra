@@ -1,4 +1,4 @@
-/** Shared SSR bench catalog — identical 50-item payload for every framework row. */
+/** Shared SSR bench catalog - identical 50-item payload for every framework row. */
 export interface CatalogItem {
   readonly id: number
   readonly name: string

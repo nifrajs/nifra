@@ -1,7 +1,7 @@
-<!-- A second route — the client-nav target. Template-only-ish (just a meta export + a <template>),
+<!-- A second route - the client-nav target. Template-only-ish (just a meta export + a <template>),
      exercising the no-<script setup> path of the compiler. -->
 <script>
-export const meta = { title: "nifra + Vue SFC — About" }
+export const meta = { title: "nifra + Vue SFC - About" }
 </script>
 
 <template>

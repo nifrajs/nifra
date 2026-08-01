@@ -1,6 +1,6 @@
 import { boolean, pgTable, serial, text, timestamp } from "drizzle-orm/pg-core"
 
-// The schema is the source of truth — `drizzle-kit generate` derives SQL migrations from it.
+// The schema is the source of truth - `drizzle-kit generate` derives SQL migrations from it.
 // TIMESTAMPTZ + NOT NULL by default (production-grade columns).
 export const todos = pgTable("todos", {
   id: serial("id").primaryKey(),

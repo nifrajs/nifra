@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Generate `api-reference.md` — the library API reference (every public export of every package: name,
+ * Generate `api-reference.md` - the library API reference (every public export of every package: name,
  * kind, signature, and doc summary) extracted from source with the TypeScript compiler API, so it can
  * NEVER drift from the code. This is the symbol-level counterpart to two other generated surfaces:
  * the HTTP route reference (Scalar, from `toOpenAPI(app)`) and `llms-full.txt` (which lists export
@@ -107,7 +107,7 @@ function cap(s: string): string {
   return flat.length > SIG_CAP ? `${flat.slice(0, SIG_CAP - 1)}…` : flat
 }
 
-/** A one-line signature for the export, by declaration kind — value types via the checker, declared
+/** A one-line signature for the export, by declaration kind - value types via the checker, declared
  * types by their header (members elided; the source is the full detail). */
 function signatureOf(
   name: string,
@@ -139,7 +139,7 @@ function summaryOf(sym: ts.Symbol, checker: ts.TypeChecker): string {
     .replace(/\s+/g, " ")
     // Normalize inline `{@link X }` → `{@link X}`. TypeScript's `displayPartsToString` serializes the
     // space before the closing brace inconsistently across environments (local vs CI), and that one-char
-    // shift moves the 300-char truncation point below — making the generated api-reference
+    // shift moves the 300-char truncation point below - making the generated api-reference
     // ENVIRONMENT-DEPENDENT, so a file committed locally fails `check:api` in CI (and vice versa). Collapsing
     // the link spacing to a single canonical form makes the output deterministic everywhere.
     .replace(/\{@(link|linkcode|linkplain)\s+([^}]*?)\s*\}/g, "{@$1 $2}")
@@ -157,7 +157,7 @@ export function generateApiReference(): string {
 
   const sections: string[] = [
     "# nifra API reference (generated)",
-    "Every public export of every package and documented subpath — name, kind, signature, and doc summary — extracted from each package's `exports` map with the TypeScript compiler API, so it cannot drift from the code. For HTTP route shapes (request/response bodies), see the OpenAPI + Scalar reference your app serves at `/reference`. For prose guides, see `llms-full.txt`.",
+    "Every public export of every package and documented subpath - name, kind, signature, and doc summary - extracted from each package's `exports` map with the TypeScript compiler API, so it cannot drift from the code. For HTTP route shapes (request/response bodies), see the OpenAPI + Scalar reference your app serves at `/reference`. For prose guides, see `llms-full.txt`.",
   ]
 
   for (const pkg of pkgs) {
@@ -175,7 +175,7 @@ export function generateApiReference(): string {
         const sig = signatureOf(raw.getName(), sym, decl, checker)
         const summary = summaryOf(sym, checker)
         lines.push(
-          `- **${raw.getName()}** _(${kindOf(decl)})_ — \`${sig}\`${summary ? `\n  ${summary}` : ""}`,
+          `- **${raw.getName()}** _(${kindOf(decl)})_ - \`${sig}\`${summary ? `\n  ${summary}` : ""}`,
         )
       }
       const heading = pkg.entries.length > 1 ? `### \`${entry.importPath}\`\n\n` : ""
@@ -211,7 +211,7 @@ if (import.meta.main) {
   if (process.argv.includes("--check")) {
     const current = existsSync(target) ? readFileSync(target, "utf8") : ""
     if (current !== out) {
-      console.error("✗ api-reference.md is stale — run `bun run gen:api` and commit the result.")
+      console.error("✗ api-reference.md is stale - run `bun run gen:api` and commit the result.")
       process.exit(1)
     }
     console.log(`✓ api-reference.md is up to date (${count} exports)`)

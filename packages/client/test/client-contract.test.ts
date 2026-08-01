@@ -33,7 +33,7 @@ const notFoundError = schema<{ code: "not_found"; id: string }>((v) => ({
 const contract = defineContract({
   getUser: { method: "GET", path: "/users/:id", response: userOut },
   createUser: { method: "POST", path: "/users", body: nameBody, response: userOut },
-  // Declares a non-2xx error response — its schema types the decoupled client's failure `data`.
+  // Declares a non-2xx error response - its schema types the decoupled client's failure `data`.
   getOrder: {
     method: "GET",
     path: "/orders/:id",
@@ -63,14 +63,14 @@ let api: TreatyFromRegistry<RegistryFor<typeof contract>>
 
 beforeAll(() => {
   instance = app.listen(0)
-  // Decoupled: typed entirely from the contract VALUE — no server import.
+  // Decoupled: typed entirely from the contract VALUE - no server import.
   api = client(contract, `http://localhost:${instance.port}`)
 })
 afterAll(() => {
   instance.stop()
 })
 
-describe("decoupled client — client(contract, url)", () => {
+describe("decoupled client - client(contract, url)", () => {
   test("GET round-trips, typed from the contract's response schema", async () => {
     const res = await api.users({ id: "5" }).get()
     expect(res.data).toEqual({ id: "5", name: "ada" })
@@ -101,7 +101,7 @@ describe("decoupled client — client(contract, url)", () => {
     expect(res.status).toBe(404)
     if (!res.ok && res.status === 404) {
       // compile-time: `status === 404` narrows `data` to THE declared 404 body from the
-      // contract's `responses` — not a union of every error body.
+      // contract's `responses` - not a union of every error body.
       const code: "not_found" = res.data.code
       const id: string = res.data.id
       expect(code).toBe("not_found")

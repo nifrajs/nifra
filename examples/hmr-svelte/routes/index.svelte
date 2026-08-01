@@ -1,11 +1,11 @@
 <!--
-  Home route. `<script module>` exports loader/meta (server-only — tree-shaken from the client); the
+  Home route. `<script module>` exports loader/meta (server-only - tree-shaken from the client); the
   instance `<script>` + markup are the component. The view lives in <Counter> so editing it
   hot-swaps with state intact; this route file full-reloads on save (it exports loader/meta).
 -->
 <script module>
   export const meta = {
-    title: "nifra — HMR (Svelte)",
+    title: "nifra - HMR (Svelte)",
     meta: [{ name: "description", content: "True HMR via @nifrajs/web/vite" }],
   }
 

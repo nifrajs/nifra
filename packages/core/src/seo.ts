@@ -1,5 +1,5 @@
 /**
- * `sitemap.xml` + `robots.txt` builders — pure, edge-safe string generators (no I/O, no runtime deps).
+ * `sitemap.xml` + `robots.txt` builders - pure, edge-safe string generators (no I/O, no runtime deps).
  * Wire them to a route on any runtime:
  *
  *   app.get("/sitemap.xml", () =>
@@ -21,7 +21,7 @@ const XML_ESCAPES: Readonly<Record<string, string>> = {
   "'": "&apos;",
 }
 
-/** Escape the five XML metacharacters — `<loc>` and `<lastmod>` carry app- or DB-derived strings. */
+/** Escape the five XML metacharacters - `<loc>` and `<lastmod>` carry app- or DB-derived strings. */
 function escapeXml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => XML_ESCAPES[char] as string)
 }
@@ -48,10 +48,10 @@ const CHANGE_FREQS: ReadonlySet<string> = new Set([
 export interface SitemapEntry {
   /** An absolute URL, or a path that `hostname` will make absolute. */
   readonly url: string
-  /** Last-modified — a `Date` (serialized as ISO 8601) or a pre-formatted W3C-datetime string. */
+  /** Last-modified - a `Date` (serialized as ISO 8601) or a pre-formatted W3C-datetime string. */
   readonly lastmod?: string | Date
   readonly changefreq?: SitemapChangeFreq
-  /** Crawl priority, `0.0`–`1.0`. */
+  /** Crawl priority, `0.0`-`1.0`. */
   readonly priority?: number
 }
 
@@ -67,7 +67,7 @@ const SITEMAP_MAX_URLS = 50_000
 export function sitemap(entries: readonly SitemapEntry[], options: SitemapOptions = {}): string {
   if (entries.length > SITEMAP_MAX_URLS) {
     throw new RangeError(
-      `sitemap: ${entries.length} entries exceeds the ${SITEMAP_MAX_URLS}-URL per-file limit — split into a sitemap index`,
+      `sitemap: ${entries.length} entries exceeds the ${SITEMAP_MAX_URLS}-URL per-file limit - split into a sitemap index`,
     )
   }
   const base = options.hostname?.replace(/\/+$/, "")
@@ -96,7 +96,7 @@ export function sitemap(entries: readonly SitemapEntry[], options: SitemapOption
 
 function resolveLoc(url: string, base: string | undefined): string {
   if (/^https?:\/\//i.test(url)) return url // already absolute
-  if (base === undefined) return url // relative — caller's choice (sitemaps prefer absolute)
+  if (base === undefined) return url // relative - caller's choice (sitemaps prefer absolute)
   return `${base}${url.startsWith("/") ? "" : "/"}${url}`
 }
 

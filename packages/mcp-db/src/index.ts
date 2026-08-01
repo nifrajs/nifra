@@ -1,9 +1,9 @@
 /**
- * `@nifrajs/mcp-db` — serve a SQLite database as an MCP server, fail-closed.
+ * `@nifrajs/mcp-db` - serve a SQLite database as an MCP server, fail-closed.
  *
  * Out of the box only SCHEMA tools are exposed (`list_tables`, `describe_table`), and only for
  * tables on the explicit `tables` allowlist. Query execution is OPT-IN and requires BOTH the
- * allowlist and an `authorize` hook — a database is PII by default, and an MCP client is an LLM;
+ * allowlist and an `authorize` hook - a database is PII by default, and an MCP client is an LLM;
  * this package refuses to be mounted open rather than defaulting open.
  *
  * Read-only is enforced in layers, not promised: `PRAGMA query_only = ON` on the connection
@@ -12,7 +12,7 @@
  * capped by rows and bytes (an LLM does not need 100k rows; a transport does not want them) with
  * an explicit `truncated` marker.
  *
- * Bun/Node SQLite only (anything `bun:sqlite`-shaped, bound structurally — no driver dependency).
+ * Bun/Node SQLite only (anything `bun:sqlite`-shaped, bound structurally - no driver dependency).
  * There is deliberately NO D1 mode: D1 has no `query_only`, so read-only cannot be guaranteed.
  *
  *   import { Database } from "bun:sqlite"
@@ -33,7 +33,7 @@ export interface SqliteDatabaseLike {
   run(sql: string): unknown
 }
 
-/** Context forwarded to `authorize` — the inbound HTTP Request carrying the `run_query` call. */
+/** Context forwarded to `authorize` - the inbound HTTP Request carrying the `run_query` call. */
 export interface McpDbAuthorizeContext {
   readonly toolName: "run_query"
   readonly request: Request
@@ -43,8 +43,8 @@ export interface RunQueryOptions {
   /**
    * REQUIRED. Authorize each `run_query` call at the transport boundary (inspect the inbound
    * Request's auth). Return false to reject with a JSON-RPC error. There is no unauthenticated
-   * mode — schema tools are the anonymous surface. Note: `run_query` is therefore HTTP-only;
-   * direct `handle()` dispatch rejects it (no Request to authorize — fails closed).
+   * mode - schema tools are the anonymous surface. Note: `run_query` is therefore HTTP-only;
+   * direct `handle()` dispatch rejects it (no Request to authorize - fails closed).
    */
   readonly authorize: (context: McpDbAuthorizeContext) => boolean | Promise<boolean>
   /** Max rows returned per query (default 100). */
@@ -67,9 +67,9 @@ export interface ServeDatabaseAsMcpOptions {
   readonly version?: string
   /**
    * Set `PRAGMA query_only = ON` on the connection at construction (default true). Disable ONLY
-   * when the same connection must also serve writes elsewhere in the app — with it disabled,
+   * when the same connection must also serve writes elsewhere in the app - with it disabled,
    * `run_query` still gates on SELECT/WITH + plan verification, but the engine-level guarantee is
-   * yours to provide (e.g. open a second, read-only connection for the MCP mount — preferred).
+   * yours to provide (e.g. open a second, read-only connection for the MCP mount - preferred).
    */
   readonly enforceQueryOnly?: boolean
 }
@@ -81,7 +81,7 @@ export class McpDbConfigError extends Error {
   }
 }
 
-/** A safe SQL identifier — quoting is not enough for PRAGMA args, so reject instead. */
+/** A safe SQL identifier - quoting is not enough for PRAGMA args, so reject instead. */
 const SAFE_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 /** Build SQL containing identifiers only after validating every substitution at this boundary. */
@@ -117,7 +117,7 @@ const isReadStatement = (sql: string): boolean => {
 
 /**
  * Serve `db` as a mountable MCP server (`mcp.fetch` at `POST /mcp`). See module docs for the
- * security model. Throws {@link McpDbConfigError} on any unsafe configuration — always at
+ * security model. Throws {@link McpDbConfigError} on any unsafe configuration - always at
  * construction (boot), never at request time.
  */
 export function serveDatabaseAsMcp(
@@ -126,7 +126,7 @@ export function serveDatabaseAsMcp(
 ): McpServer {
   if (options.tables.length === 0) {
     throw new McpDbConfigError(
-      "an explicit non-empty `tables` allowlist is required — this package never defaults to exposing a whole database",
+      "an explicit non-empty `tables` allowlist is required - this package never defaults to exposing a whole database",
     )
   }
   for (const table of options.tables) {
@@ -143,7 +143,7 @@ export function serveDatabaseAsMcp(
       db.run("PRAGMA query_only = ON")
     } catch (error) {
       throw new McpDbConfigError(
-        `could not set PRAGMA query_only on the connection (${String(error)}) — pass a bun:sqlite-shaped database or set enforceQueryOnly: false with a read-only connection`,
+        `could not set PRAGMA query_only on the connection (${String(error)}) - pass a bun:sqlite-shaped database or set enforceQueryOnly: false with a read-only connection`,
       )
     }
   }
@@ -270,7 +270,7 @@ export function serveDatabaseAsMcp(
   if (options.runQuery === undefined) return server
 
   // `run_query` is authorized at the TRANSPORT boundary, where the inbound Request's credentials
-  // are visible — the handler itself performs no auth, so every path to it must pass this gate:
+  // are visible - the handler itself performs no auth, so every path to it must pass this gate:
   // the wrapped fetch authorizes, and direct handle() dispatch fails closed (no Request → no auth).
   const { authorize } = options.runQuery
 

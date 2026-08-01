@@ -1,6 +1,6 @@
 /**
  * URL-safe output chunk naming. Bun names a code-split chunk after its source file's basename, so a
- * dynamic-route file like `[slug].tsx` emits `[slug]-<hash>.js` — the `[ ]` make a URL a static server
+ * dynamic-route file like `[slug].tsx` emits `[slug]-<hash>.js` - the `[ ]` make a URL a static server
  * (server-bun, CF Pages) reject with 400, so the lazy import fails and the route silently never
  * hydrates (SSR looks perfect; all interactivity is dead). `sanitizeOutputNames` renames every output
  * whose basename isn't URL-path-safe (`[slug]` → `_slug_`) and rewrites the references to it inside the

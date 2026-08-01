@@ -22,7 +22,7 @@ import {
 } from "../src/router.ts"
 
 // SSR-only assertions (bun:test has no DOM): we render through react-dom/server and verify the routing
-// context the hooks read is threaded correctly — which is exactly what makes hydration match. Click /
+// context the hooks read is threaded correctly - which is exactly what makes hydration match. Click /
 // navigation behavior is browser-verified against the real packages (examples/web-react).
 
 // Provide a router context (params + path + search) around a node, the way `compose` does on both sides.
@@ -131,7 +131,7 @@ test("NavLink marks aria-current on a prefix match", () => {
   expect(inactive).not.toContain("aria-current")
 })
 
-test("NavLink end matches exactly — home isn't active on a subpath", () => {
+test("NavLink end matches exactly - home isn't active on a subpath", () => {
   const onSub = withRoute("/dashboard", createElement(NavLink, { to: "/", end: true }, "Home"))
   expect(onSub).not.toContain("aria-current")
 
@@ -249,7 +249,7 @@ function captureSetSearchParams(path: string): SetSearchParams {
   return setter
 }
 
-test("setSearchParams navigates with the new query — record/string/URLSearchParams/updater/array/empty", () => {
+test("setSearchParams navigates with the new query - record/string/URLSearchParams/updater/array/empty", () => {
   const calls: string[] = []
   setBrowserNavigate((to) => calls.push(to as string))
   const set = captureSetSearchParams("/s?q=old")
@@ -332,7 +332,7 @@ test("Link runs the user onClick first; a user preventDefault suppresses navigat
   expect(calls).toEqual([]) // defaultPrevented after the user handler → bail
 })
 
-test("Link click before hydration (no bridge) is a no-op — the native <a href> handles it", () => {
+test("Link click before hydration (no bridge) is a no-op - the native <a href> handles it", () => {
   setBrowserNavigate(undefined)
   const e = mockClick()
   linkOnClick({ to: "/x" })(e)

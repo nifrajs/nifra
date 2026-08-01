@@ -213,9 +213,9 @@ console.log("Deno output → dist-deno (run: deno run -A dist-deno/server-deno.j
     file: "build-vercel.ts",
     header: `// Build for Vercel, emitting Vercel's Build Output API v3 at .vercel/output/ so it deploys with no
 // framework preset: \`vercel deploy --prebuilt\`. Layout:
-//   .vercel/output/config.json                   — serve static files, else SSR via the function
-//   .vercel/output/static/assets/<client bundle>  — Vercel's CDN serves these directly
-//   .vercel/output/functions/index.func/index.js  — the Edge SSR function (+ .vc-config.json)`,
+//   .vercel/output/config.json                   - serve static files, else SSR via the function
+//   .vercel/output/static/assets/<client bundle>  - Vercel's CDN serves these directly
+//   .vercel/output/functions/index.func/index.js  - the Edge SSR function (+ .vc-config.json)`,
     serverConditions: { before: ["workerd", "edge-light"], after: ["browser"] },
     extraFsImports: ["writeFileSync"],
     setup: `const out = \`\${dir}/.vercel/output\`

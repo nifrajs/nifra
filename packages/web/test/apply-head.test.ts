@@ -5,7 +5,7 @@ import { applyHead } from "../src/client.ts"
 // when a route omits it. That asymmetry is the whole point and the reason these tests exist: the SSR
 // shell defaults `lang` to "en" and omits `dir`, so a soft-nav that merely *skipped* absent values would
 // strand the previous route's direction on the document. Navigating /ur → /en would leave `dir="rtl"` and
-// lay the English page out right-to-left — in a state a hard reload never reproduces, which is the worst
+// lay the English page out right-to-left - in a state a hard reload never reproduces, which is the worst
 // kind of bug to be handed.
 //
 // A hand-rolled DOM, matching the repo's idiom for client code (see packages/islets/test/_fake-dom.ts):
@@ -79,7 +79,7 @@ test("a route's lang and dir reach <html>", () => {
 
 test("navigating away from an RTL route CLEARS dir (the /ur → /en drift)", () => {
   applyHead({ lang: "ur", dir: "rtl" })
-  applyHead({}) // an English route that sets neither — exactly what a default `_layout` produces
+  applyHead({}) // an English route that sets neither - exactly what a default `_layout` produces
   expect(document.documentElement.getAttribute("dir")).toBeNull()
   // And lang falls back to the same default the SSR shell emits, so a soft-nav and a hard load of the
   // same URL agree on `<html>`.
@@ -98,7 +98,7 @@ test("dir=auto is applied verbatim (not treated as absent)", () => {
   expect(document.documentElement.getAttribute("dir")).toBe("auto")
 })
 
-test("title keeps its lax behaviour — absent means UNCHANGED, not reset", () => {
+test("title keeps its lax behaviour - absent means UNCHANGED, not reset", () => {
   // The deliberate asymmetry with lang/dir. A route without a `title` inherits whatever is on screen;
   // resetting it would blank the tab on every navigation to a title-less route.
   applyHead({ title: "Home" })
@@ -110,7 +110,7 @@ test("managed head tags are still replaced alongside the <html> attributes", () 
   applyHead({ meta: [{ name: "description", content: "first" }] })
   expect(document.head.children).toHaveLength(1)
   applyHead({ lang: "de", meta: [{ name: "description", content: "second" }] })
-  // Replaced, not accumulated — one description, and the <html> attrs applied in the same pass.
+  // Replaced, not accumulated - one description, and the <html> attrs applied in the same pass.
   expect(document.head.children).toHaveLength(1)
   expect(document.head.children[0]?.getAttribute("content")).toBe("second")
   expect(document.documentElement.getAttribute("lang")).toBe("de")

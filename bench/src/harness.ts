@@ -4,7 +4,7 @@
  * Honest enough for a baseline and a CI regression gate; it warms up the JIT,
  * times batches (so per-call `nanoseconds()` overhead doesn't dominate fast
  * ops), and reports the median across rounds plus a tail figure. It is NOT a
- * replacement for a statistics-grade tool — a later phase may swap in `mitata` for
+ * replacement for a statistics-grade tool - a later phase may swap in `mitata` for
  * publish-grade numbers. The point today is a working harness and a
  * reproducible number.
  */

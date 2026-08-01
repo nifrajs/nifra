@@ -1,7 +1,7 @@
 import { pageMeta } from "../meta"
 
 export const meta = pageMeta(
-  "Nifra — Benchmarks",
+  "Nifra - Benchmarks",
   "Nifra vs Next.js, Nuxt, SvelteKit, SolidStart, and Remix on full-stack SSR, plus HTTP throughput vs Elysia, Hono, Fastify, and Express across Bun, Node, and Deno.",
 )
 
@@ -160,7 +160,7 @@ const MULTIPLIERS = [
 ]
 
 // ---- Backend: raw HTTP throughput across runtimes ----
-// Four identical workloads per framework — see BENCHMARKS.md.
+// Four identical workloads per framework - see BENCHMARKS.md.
 type HttpRow = {
   name: string
   getRoot: string
@@ -318,11 +318,11 @@ export default function Benchmarks() {
       </p>
 
       {/* ---- Frontend: full-stack SSR vs the meta-frameworks ---- */}
-      <h2 style={{ marginTop: 40 }}>Full-stack SSR — Nifra vs the meta-frameworks</h2>
+      <h2 style={{ marginTop: 40 }}>Full-stack SSR - Nifra vs the meta-frameworks</h2>
       <p className="lead">
         A data-loaded HTML page rendered on <b>every request</b> (no caching). Meta-frameworks run
         on Node through their own production server. Nifra runs on <b>Bun</b>, <b>Node</b>, and{" "}
-        <b>Deno</b> — three rows per UI library — so you can see Nifra at its best (Bun) and compare
+        <b>Deno</b> - three rows per UI library - so you can see Nifra at its best (Bun) and compare
         apples-to-apples on Node.
       </p>
       <div className="mult-grid" style={{ margin: "20px 0 8px" }}>
@@ -364,10 +364,10 @@ export default function Benchmarks() {
       </div>
 
       {/* ---- Backend: HTTP throughput across runtimes ---- */}
-      <h2 style={{ marginTop: 48 }}>Backend — HTTP throughput across runtimes</h2>
+      <h2 style={{ marginTop: 48 }}>Backend - HTTP throughput across runtimes</h2>
       <p className="lead">
-        Nifra is also a standalone API framework. Four workloads — root JSON, path params, validated
-        query, validated POST — each runtime through Nifra's real adapter, next to that runtime's
+        Nifra is also a standalone API framework. Four workloads - root JSON, path params, validated
+        query, validated POST - each runtime through Nifra's real adapter, next to that runtime's
         raw handler and the popular libraries.
       </p>
       <div className="bench-grid">

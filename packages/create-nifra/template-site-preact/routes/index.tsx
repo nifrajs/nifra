@@ -28,7 +28,7 @@ export default function Home(props: { data: LoaderData<typeof loader> }) {
           <span className="grad">everywhere.</span>
         </h1>
         <p>
-          SSR + hydration, end-to-end types, Preact. One source — deploy to Cloudflare Pages, Node,
+          SSR + hydration, end-to-end types, Preact. One source - deploy to Cloudflare Pages, Node,
           Deno, or Vercel Edge. Edit <code>routes/index.tsx</code> to begin.
         </p>
       </section>

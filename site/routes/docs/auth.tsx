@@ -1,21 +1,21 @@
 import { CodeBlock } from "../../highlight"
 import { pageMeta } from "../../meta"
 
-// Pure content page — no React interactivity (TOC/copy/search are the layout enhancer +
+// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
 // the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
 export const hydrate = false
 
 export const meta = pageMeta(
-  "Nifra — Auth & sessions",
+  "Nifra - Auth & sessions",
   "Turnkey auth with @nifrajs/better-auth (OAuth, magic links, 2FA), or signed-cookie + server-store sessions, route guards, and CSRF with @nifrajs/auth.",
 )
 
-const BETTERAUTH = `// doc-check: skip — needs the third-party \`better-auth\` package + your \`db\`; install it to run this.
-// auth.ts — your configured Better Auth instance (database, providers, …):
+const BETTERAUTH = `// doc-check: skip - needs the third-party \`better-auth\` package + your \`db\`; install it to run this.
+// auth.ts - your configured Better Auth instance (database, providers, …):
 import { betterAuth as createBetterAuth } from "better-auth"
 export const auth = createBetterAuth({ database: db, emailAndPassword: { enabled: true } })
 
-// server.ts — ONE use() mounts every Better Auth endpoint at /api/auth/*:
+// server.ts - ONE use() mounts every Better Auth endpoint at /api/auth/*:
 import { betterAuth, getSession, requireSession } from "@nifrajs/better-auth"
 const app = server()
   .use(betterAuth(auth))                                       // sign-in/up/out, OAuth, 2FA, session…
@@ -23,12 +23,12 @@ const app = server()
 
 // In a loader/action, read the session from the raw Request:
 export async function loader({ request }) {
-  const session = await getSession(auth, request)              // { user, session } | null — typed
+  const session = await getSession(auth, request)              // { user, session } | null - typed
   const { user } = await requireSession(auth, request, { redirectTo: "/login" })  // or guard it
   return { user }
 }`
 
-const SETUP = `// auth.ts — one session manager. LAZY so a route module can import it without shipping it to the
+const SETUP = `// auth.ts - one session manager. LAZY so a route module can import it without shipping it to the
 // browser (see the warning below). Store mode keeps data server-side; cookie mode (no store) is stateless.
 import { createSessions, MemorySessionStore } from "@nifrajs/auth"
 
@@ -39,7 +39,7 @@ export const getSessions = () => (manager ??= createSessions({
   // cookie: { secure: false },                 // local http dev only
 }))`
 
-const LOGIN = `// server.ts — login/logout are plain nifra routes (full Context → they can WRITE the cookie).
+const LOGIN = `// server.ts - login/logout are plain nifra routes (full Context → they can WRITE the cookie).
 const sessions = getSessions()
 app.use(csrf())                                          // Origin check on unsafe methods
 
@@ -60,8 +60,8 @@ app.post("/api/logout", async (c) => {
 
 createWebApp({ /* … */ api: sessions })                  // inject the manager into loaders as ctx.api`
 
-const GUARD = `// doc-check: skip — fragment: \`api\` is the session manager createWebApp injected (see setup above).
-// A protected route's loader — reads the session and redirects when absent.
+const GUARD = `// doc-check: skip - fragment: \`api\` is the session manager createWebApp injected (see setup above).
+// A protected route's loader - reads the session and redirects when absent.
 import { requireUser } from "@nifrajs/auth"   // browser-safe; OK to import in a route module
 
 export async function loader({ request, api }) {
@@ -77,10 +77,10 @@ export default function Auth() {
     <div className="prose">
       <h1 className="page">Auth &amp; sessions</h1>
       <p className="lead">
-        Two paths. <b><a href="#better-auth">@nifrajs/better-auth</a></b> is turnkey — mount{" "}
+        Two paths. <b><a href="#better-auth">@nifrajs/better-auth</a></b> is turnkey - mount{" "}
         <a href="https://better-auth.com">Better Auth</a> (OAuth, magic links, 2FA, …) into your app in
-        one line. <b><a href="#sessions">@nifrajs/auth</a></b> is the framework half — <b>signed-cookie or
-        server-store sessions</b>, <b>route guards</b>, and <b>CSRF</b> — when you want to own identity
+        one line. <b><a href="#sessions">@nifrajs/auth</a></b> is the framework half - <b>signed-cookie or
+        server-store sessions</b>, <b>route guards</b>, and <b>CSRF</b> - when you want to own identity
         yourself. Nifra owns the <i>session</i>; you bring (or mount) the <i>who</i>.
       </p>
 
@@ -88,12 +88,12 @@ export default function Auth() {
       <p>
         <code>@nifrajs/better-auth</code> bridges <a href="https://better-auth.com">Better Auth</a> into
         nifra: <code>betterAuth(auth)</code> mounts its handler at <code>/api/auth/*</code> (GET + POST),
-        so every endpoint — sign-in/up/out, OAuth callbacks, session, 2FA, magic links — is served by
+        so every endpoint - sign-in/up/out, OAuth callbacks, session, 2FA, magic links - is served by
         your nifra server. Read the session with <code>getSession(auth, request)</code> (typed{" "}
         <code>{`{ user, session } | null`}</code>) or guard a route with{" "}
         <code>requireSession(auth, request, options?)</code> (returns it, or throws a 401/redirect{" "}
-        <code>Response</code>). It's declared <b>structurally</b> — no hard dependency on Better Auth, so
-        your tests need no database — and your Better Auth types flow through by inference.
+        <code>Response</code>). It's declared <b>structurally</b> - no hard dependency on Better Auth, so
+        your tests need no database - and your Better Auth types flow through by inference.
       </p>
       <CodeBlock code={BETTERAUTH} />
       <p>
@@ -112,7 +112,7 @@ export default function Auth() {
 
       <h2>Log in &amp; out</h2>
       <p>
-        A loader can <i>read</i> the session but can't write cookies — so login/logout live in plain
+        A loader can <i>read</i> the session but can't write cookies - so login/logout live in plain
         Nifra routes that have the full <code>Context</code>. <code>regenerate()</code> rotates the
         session id on login to defend against fixation; the <code>Set-Cookie</code> rides the redirect.
       </p>
@@ -121,7 +121,7 @@ export default function Auth() {
       <h2>Guard a route</h2>
       <p>
         <code>requireSession</code> / <code>requireUser</code> throw a <code>Response</code> (a 302 to{" "}
-        <code>redirectTo</code>, or a 401) when the session is missing — nifra returns a thrown Response
+        <code>redirectTo</code>, or a 401) when the session is missing - nifra returns a thrown Response
         as-is, so the guard short-circuits the loader.
       </p>
       <CodeBlock code={GUARD} />
@@ -129,18 +129,18 @@ export default function Auth() {
       <h2 id="server-only">⚠️ Never import server-only code into a route module</h2>
       <p>
         A route's <code>loader</code> runs only on the server, but its module is <b>also bundled for the
-        browser</b> (for the component) — and the loader is <b>not</b> stripped from that bundle. So a
+        browser</b> (for the component) - and the loader is <b>not</b> stripped from that bundle. So a
         top-level <code>import</code> of the session manager (or a DB client, or anything touching{" "}
         <code>process.env</code>) would ship server code to the client and crash hydration. Reach server
         resources through <code>ctx.api</code> / <code>ctx.env</code> instead (inject them via{" "}
-        <code>createWebApp</code>) — exactly how the manager is passed as <code>api</code> above.{" "}
+        <code>createWebApp</code>) - exactly how the manager is passed as <code>api</code> above.{" "}
         <code>requireUser</code> is fine to import: it only builds a <code>Response</code>, no secrets.
       </p>
 
       <h2>CSRF</h2>
       <p>
         <code>{"app.use(csrf({ origins }))"}</code> rejects any unsafe-method request whose{" "}
-        <code>Origin</code>/<code>Referer</code> doesn't match an allowed origin — the recommended
+        <code>Origin</code>/<code>Referer</code> doesn't match an allowed origin - the recommended
         defense for cookie-auth. Pair it with the rate-limit middleware on your login route.
       </p>
 
@@ -150,16 +150,16 @@ export default function Auth() {
       </p>
       <ul>
         <li>
-          <b>HttpOnly</b> — not accessible to JavaScript (prevents XSS theft)
+          <b>HttpOnly</b> - not accessible to JavaScript (prevents XSS theft)
         </li>
         <li>
-          <b>Secure</b> — sent only over HTTPS (set <code>{"{ secure: false }"}</code> for local http dev)
+          <b>Secure</b> - sent only over HTTPS (set <code>{"{ secure: false }"}</code> for local http dev)
         </li>
         <li>
-          <b>SameSite=Lax</b> — mitigates CSRF without blocking top-level navigation
+          <b>SameSite=Lax</b> - mitigates CSRF without blocking top-level navigation
         </li>
         <li>
-          <b>Path=/</b> — sent on all requests (override with <code>{"{ path: '/admin' }"}</code> if needed)
+          <b>Path=/</b> - sent on all requests (override with <code>{"{ path: '/admin' }"}</code> if needed)
         </li>
       </ul>
       <p>
@@ -190,7 +190,7 @@ export default function Auth() {
       />
       <p>
         Without <code>trustedProxies</code> configured correctly, the middleware will fall back to the
-        proxy's IP address, and your entire user base will share a single rate-limit bucket — defeating
+        proxy's IP address, and your entire user base will share a single rate-limit bucket - defeating
         the protection. Check your proxy's documentation for how it sets{" "}
         <code>X-Forwarded-For</code> (Cloudflare uses <code>cf-connecting-ip</code>, AWS ALB/NLB use{" "}
         <code>x-forwarded-for</code>).

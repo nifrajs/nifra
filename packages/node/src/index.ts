@@ -6,7 +6,7 @@
  *   const app = server().get("/", () => ({ ok: true }))
  *   serve(app, { port: 3000 })
  *
- * nifra's lifecycle is `app.fetch(Request): Response | Promise<Response>` — pure Web Standards —
+ * nifra's lifecycle is `app.fetch(Request): Response | Promise<Response>` - pure Web Standards -
  * so this adapter just bridges Node's stream-based `(req, res)` to/from Web
  * `Request`/`Response`, plus a Bun-`listen()`-style graceful `stop()`.
  */
@@ -21,12 +21,12 @@ import { extname, resolve, sep } from "node:path"
 import { type Duplex, Readable } from "node:stream"
 import { fileURLToPath } from "node:url"
 
-/** The runtime platform a nifra app accepts as `fetch`'s 2nd arg — here, the observed socket peer. */
+/** The runtime platform a nifra app accepts as `fetch`'s 2nd arg - here, the observed socket peer. */
 interface NodePlatform {
   readonly clientIp?: string
 }
 
-/** Anything exposing a Web `fetch` handler — a nifra `app`, for instance. */
+/** Anything exposing a Web `fetch` handler - a nifra `app`, for instance. */
 export interface FetchHandler {
   fetch(request: Request, platform?: NodePlatform): Response | Promise<Response>
   /** Nifra apps also expose this WS-upgrade seam; present → this adapter serves `app.ws()` routes via
@@ -36,7 +36,7 @@ export interface FetchHandler {
 }
 
 // --- WebSocket types: structurally mirrored from @nifrajs/core (this adapter has no @nifrajs/core
-// dependency — see NodeServeOutcome above). Kept in lockstep by the WS integration test. ---
+// dependency - see NodeServeOutcome above). Kept in lockstep by the WS integration test. ---
 
 /** A received frame, normalized: text → `string`, binary → `Uint8Array`. */
 type NifraWsData = string | Uint8Array
@@ -52,14 +52,14 @@ interface NifraWs {
   readonly raw: unknown
 }
 
-/** Mirror of core's `TopicRegistry` surface — the app's pub/sub the adapter wires `ws.subscribe` to. */
+/** Mirror of core's `TopicRegistry` surface - the app's pub/sub the adapter wires `ws.subscribe` to. */
 interface WsPubSub {
   subscribe(topic: string, ws: NifraWs): void
   unsubscribe(topic: string, ws: NifraWs): void
   unsubscribeAll(ws: NifraWs): void
 }
 
-/** A nifra WS route's lifecycle (mirror of core's `WebSocketHandler` — the post-upgrade callbacks). */
+/** A nifra WS route's lifecycle (mirror of core's `WebSocketHandler` - the post-upgrade callbacks). */
 interface NifraWsHandler {
   open?(ws: NifraWs): void | Promise<void>
   message?(ws: NifraWs, data: NifraWsData): void | Promise<void>
@@ -67,7 +67,7 @@ interface NifraWsHandler {
   error?(ws: NifraWs, error: unknown): void | Promise<void>
 }
 
-/** Mirror of core's `WebSocketUpgradeOutcome` — what `resolveWebSocketUpgrade` returns. */
+/** Mirror of core's `WebSocketUpgradeOutcome` - what `resolveWebSocketUpgrade` returns. */
 type WsUpgradeOutcome =
   | { readonly kind: "pass" }
   | { readonly kind: "reject"; readonly response: Response }
@@ -78,7 +78,7 @@ type WsUpgradeOutcome =
       readonly pubsub: WsPubSub
     }
 
-/** Structural view of the `ws` package's `WebSocket` (no `@types/ws` dependency — see `loadWsServer`). */
+/** Structural view of the `ws` package's `WebSocket` (no `@types/ws` dependency - see `loadWsServer`). */
 interface WsSocket {
   send(data: string | ArrayBufferView | ArrayBuffer): void
   close(code?: number, reason?: string): void
@@ -105,7 +105,7 @@ export type RequestProtocolOption =
 type RequestProtocolResolver = (request: IncomingMessage) => RequestProtocol
 
 /**
- * The node-direct render returned by a nifra app's `resolveNode` — structurally mirrored here so this
+ * The node-direct render returned by a nifra app's `resolveNode` - structurally mirrored here so this
  * adapter stays decoupled from `@nifrajs/core` (it bridges *any* handler exposing this seam, and has no
  * runtime dependency on nifra). A `kind: "json"` outcome is a plain-data result we serialize straight to
  * the socket; a `kind: "body"` outcome is a marked buffered response body (notably @nifrajs/web's
@@ -153,7 +153,7 @@ interface NodeOutcomeRuntime {
 }
 
 /** A `FetchHandler` that *also* exposes the node-direct fast path (every nifra app does). May resolve
- * **synchronously** (a bare route + sync handler allocates no promise) — we `await` it regardless. */
+ * **synchronously** (a bare route + sync handler allocates no promise) - we `await` it regardless. */
 interface NodeFastHandler extends FetchHandler {
   resolveNode(
     request: Request,
@@ -167,7 +167,7 @@ interface NodeFastHandler extends FetchHandler {
 }
 
 /**
- * The `Content-Type` the host runtime's `Response.json` emits — Node's undici uses `application/json`,
+ * The `Content-Type` the host runtime's `Response.json` emits - Node's undici uses `application/json`,
  * Bun uses `application/json;charset=utf-8`. Probed once at module load (zero per-request cost) so the
  * fast path is byte-for-byte identical to the `Response`-building path on whatever runtime hosts us.
  */
@@ -280,16 +280,16 @@ function appendCookiesToNodeHeaders(
 }
 
 /**
- * Serve static files from a directory (e.g. the client build) under a URL prefix — so a self-hosted
+ * Serve static files from a directory (e.g. the client build) under a URL prefix - so a self-hosted
  * Node deploy doesn't need a CDN or a hand-rolled `/assets/*` handler. (On Cloudflare/Vercel the
  * platform serves assets; this is for `node server.js`.)
  */
 export interface ServeStaticOptions {
-  /** Directory to read files from — an absolute path or a `file://` URL (`new URL("./assets/", import.meta.url)`). */
+  /** Directory to read files from - an absolute path or a `file://` URL (`new URL("./assets/", import.meta.url)`). */
   readonly dir: string | URL
   /** URL prefix these files are served under. Default `"/assets"`. Use `"/"` to serve the whole dir. */
   readonly prefix?: string
-  /** Emit `cache-control: public, max-age=31536000, immutable` — correct for content-hashed files. Default `true`. */
+  /** Emit `cache-control: public, max-age=31536000, immutable` - correct for content-hashed files. Default `true`. */
   readonly immutable?: boolean
   /** Extra headers merged onto every served file. */
   readonly headers?: Readonly<Record<string, string>>
@@ -308,17 +308,17 @@ export interface ServeOptions {
   readonly protocol?: RequestProtocolOption
   /**
    * Install SIGTERM/SIGINT handlers that call `stop()` for a graceful drain on
-   * `docker stop` / Ctrl-C. Off by default — taking over process signals is opt-in,
+   * `docker stop` / Ctrl-C. Off by default - taking over process signals is opt-in,
    * mirroring nifra's Bun `listen({ gracefulSignals })`.
    *
    * The app-level request timeout (`server({ requestTimeoutMs })` → 503) and body cap
-   * are *not* set here — they live inside `app.fetch`, so they already apply through
+   * are *not* set here - they live inside `app.fetch`, so they already apply through
    * this adapter. Slow-client protection is Node's built-in `requestTimeout` (300s) /
    * `headersTimeout` (60s) defaults.
    */
   readonly signals?: boolean
   /**
-   * Serve static files from disk for matching GET/HEAD requests *before* the app runs — non-matching
+   * Serve static files from disk for matching GET/HEAD requests *before* the app runs - non-matching
    * requests fall through to `app.fetch` with the node-direct fast path intact (no perf regression on
    * SSR/API routes). Replaces the hand-rolled `/assets/*` reader in self-hosted entries.
    */
@@ -377,7 +377,7 @@ function staticStateOf(options: ServeStaticOptions): StaticState {
 }
 
 /**
- * Resolve a request URL to a file under the served root — **synchronously**, so non-matching requests
+ * Resolve a request URL to a file under the served root - **synchronously**, so non-matching requests
  * stay on the app's sync fast path. Returns `"pass"` (let the app handle it), a rejection `Response`
  * (malformed encoding / NUL / `..` traversal out of root), or a confined absolute file path to read.
  */
@@ -400,7 +400,7 @@ function staticMatch(
   if (rel === "" || rel.endsWith("/")) return "pass" // a directory request → the app decides
   if (rel.includes("\0")) return { reject: new Response("Bad Request", { status: 400 }) }
   const file = resolve(state.root, rel)
-  // Confine to the served directory — block `..` from escaping root.
+  // Confine to the served directory - block `..` from escaping root.
   if (file !== state.root && !file.startsWith(state.root + sep)) {
     return { reject: new Response("Forbidden", { status: 403 }) }
   }
@@ -453,7 +453,7 @@ async function readStatic(
 }
 
 /**
- * Serve a Web-`fetch` app on a Node `http` server. Resolves once bound — Node binds
+ * Serve a Web-`fetch` app on a Node `http` server. Resolves once bound - Node binds
  * the port asynchronously, so awaiting gives you the real port (matters for `port: 0`).
  */
 // The node-direct fast path renders plain data instead of building + draining a `Response`. Serving on
@@ -496,7 +496,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
   })
 
   // WebSocket upgrades (a nifra app exposing the seam): handled on the http server's `upgrade` event via
-  // the optional `ws` package — lazy-imported (and the server lazily built) on the FIRST real WS
+  // the optional `ws` package - lazy-imported (and the server lazily built) on the FIRST real WS
   // upgrade, so a non-WS Node app never loads `ws`.
   const resolveWs = app.resolveWebSocketUpgrade?.bind(app)
   if (resolveWs !== undefined) {
@@ -580,7 +580,7 @@ function handle(
   }
 
   // Fast path: a nifra app exposes `resolveNode`, which renders a plain-data result as primitives we
-  // write straight to the socket — skipping the undici `Response` build + body drain (the bulk of the
+  // write straight to the socket - skipping the undici `Response` build + body drain (the bulk of the
   // Web-bridge cost on Node). A handler-returned `Response`/redirect, 404/405, error, timeout, or any
   // `onResponse` hook comes back as `{ kind: "response" }` and takes the same Web path as before, so
   // behavior is identical. A plain `{ fetch }` handler (no `resolveNode`) uses the Web path too.
@@ -652,14 +652,14 @@ function writeNodeOutcome(
   return writeNodeResponse(outcome.response, nodeRes)
 }
 
-/** A flat 500 with no leaked detail — the adapter's last-resort guard if a handler throws. */
+/** A flat 500 with no leaked detail - the adapter's last-resort guard if a handler throws. */
 function writeInternalError(nodeRes: ServerResponse): void {
   nodeRes.writeHead(500, { "content-type": "application/json" })
   nodeRes.end(INTERNAL_ERROR_BODY)
 }
 
 /**
- * Serialize a node-direct JSON outcome straight to the socket — no undici `Response`, no stream drain.
+ * Serialize a node-direct JSON outcome straight to the socket - no undici `Response`, no stream drain.
  * Mirrors `Response.json(data, { status, headers })` byte-for-byte: user headers are lowercased to
  * match undici's `Headers` normalization, the JSON `Content-Type` matches the host runtime's, and each
  * queued cookie is emitted as its own `Set-Cookie` line (never comma-joined).
@@ -672,7 +672,7 @@ function writeJsonOutcome(
   if (outcome.headers !== undefined) {
     for (const [key, value] of Object.entries(outcome.headers)) headers[key.toLowerCase()] = value
   }
-  // A `null` body is a 204/no-content render — `new Response(null)` carries no Content-Type, so we add
+  // A `null` body is a 204/no-content render - `new Response(null)` carries no Content-Type, so we add
   // none either; a non-null body is JSON, matching `Response.json`'s Content-Type.
   if (outcome.body !== null) headers["content-type"] = JSON_CONTENT_TYPE
   if (outcome.cookies !== undefined && outcome.cookies.length > 0) {
@@ -970,7 +970,7 @@ function writeNodeResponse(response: Response, nodeRes: ServerResponse): void | 
   response.headers.forEach((value, key) => {
     headers[key] = value
   })
-  // `Headers.forEach` comma-joins repeated `Set-Cookie` into one value — wrong, since a cookie's
+  // `Headers.forEach` comma-joins repeated `Set-Cookie` into one value - wrong, since a cookie's
   // `Expires` attribute itself contains a comma (so a client can't safely split it back). Emit one
   // header line per cookie via the un-joined `getSetCookie()` array (a response can set several:
   // e.g. a session cookie + a CSRF cookie).
@@ -1031,7 +1031,7 @@ function nodeResponseBody(response: Response): string | Uint8Array | undefined {
 
 type WsServerCtor = new (options: { noServer: true }) => WsServer
 
-/** A non-literal specifier so TS treats `import(...)` as `any` — `ws` is an optional peer with no
+/** A non-literal specifier so TS treats `import(...)` as `any` - `ws` is an optional peer with no
  * `@types/ws` dependency here (the surface is structurally typed via {@link WsServer}/{@link WsSocket}). */
 const WS_MODULE_SPECIFIER = "ws"
 
@@ -1045,7 +1045,7 @@ async function loadWsServer(): Promise<WsServer | undefined> {
     const Ctor = mod.WebSocketServer ?? mod.default?.WebSocketServer
     return Ctor === undefined ? undefined : new Ctor({ noServer: true })
   } catch {
-    return undefined // `ws` not installed — caller responds 501
+    return undefined // `ws` not installed - caller responds 501
   }
 }
 
@@ -1094,7 +1094,7 @@ async function handleUpgrade(
 }
 
 /** Wire a `ws` socket (already open in `handleUpgrade`'s callback) to a nifra WS handler. The Node copy
- * of core's `attachWebSocket` — binary frames normalize to `Uint8Array`; a thrown/rejected callback
+ * of core's `attachWebSocket` - binary frames normalize to `Uint8Array`; a thrown/rejected callback
  * routes to `error()` and never crashes the connection. */
 function attachNodeWebSocket(
   ws: WsSocket,
@@ -1119,7 +1119,7 @@ function attachNodeWebSocket(
       const r = handler.error(nifra, error)
       if (r instanceof Promise) r.catch(() => {})
     } catch {
-      /* the error handler itself failed — last resort, swallow */
+      /* the error handler itself failed - last resort, swallow */
     }
   }
   const safe = (call: () => void | Promise<void>): void => {

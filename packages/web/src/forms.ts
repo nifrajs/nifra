@@ -1,6 +1,6 @@
 /**
- * `@nifrajs/web/forms` — a typed form ↔ backend-schema binding. The three artifacts that must agree —
- * a form's `<input name>`, the action's `formData.get`, and the typed-client payload — all key off the
+ * `@nifrajs/web/forms` - a typed form ↔ backend-schema binding. The three artifacts that must agree -
+ * a form's `<input name>`, the action's `formData.get`, and the typed-client payload - all key off the
  * ONE route body schema, derived purely from `typeof backend`. A typo'd field name, or a field the
  * schema doesn't have, becomes a COMPILE error instead of a silent runtime empty.
  *
@@ -8,14 +8,14 @@
  *   import { formFor } from "@nifrajs/web/forms"
  *
  *   const f = formFor<typeof backend, "/todos">()   // method defaults to "post"
- *   // In the component (any framework — spread the props onto an input):
+ *   // In the component (any framework - spread the props onto an input):
  *   <input {...f.field("text")} />                  // "text" ∈ the body's keys, else a compile error
  *   // In the action:
  *   const text = f.read(await request.formData(), "text")   // an orphan key won't compile
  *   await api.todos.post({ text })                  // payload already typed by nifra
  *
  * Framework-agnostic + dependency-free: no codegen, no schema is bundled into the client, and the
- * runtime is a trivial pass-through — all the work is in the types. It checks the field KEY, never the
+ * runtime is a trivial pass-through - all the work is in the types. It checks the field KEY, never the
  * MEANING (a `field("email")` collecting a phone is still valid here); that stays an app/AI concern.
  */
 import type { RouteInfo, Server } from "@nifrajs/core/server"
@@ -28,7 +28,7 @@ type FormEntries = ReturnType<FormData["getAll"]>
 /** The route registry baked into a server's type (`typeof app`). */
 type RegistryOf<App> = App extends Server<infer R, infer _Ctx> ? R : never
 
-/** Every route path the app declares — constrains `Path`, so a wrong path is itself a type error. */
+/** Every route path the app declares - constrains `Path`, so a wrong path is itself a type error. */
 export type RoutePaths<App> = keyof RegistryOf<App> & string
 
 /** The body object type of `App`'s `Method Path` route (`never` when the route declares no body). */
@@ -42,7 +42,7 @@ export type RouteBody<
     : never
   : never
 
-/** The valid field names for that route's body — the schema's keys as a string union. */
+/** The valid field names for that route's body - the schema's keys as a string union. */
 export type FieldKey<App, Path extends string, Method extends string> = [
   RouteBody<App, Path, Method>,
 ] extends [never]
@@ -53,13 +53,13 @@ export type FieldKey<App, Path extends string, Method extends string> = [
 export type FieldProps = Record<string, unknown>
 
 export interface FormHandle<App, Path extends string, Method extends string> {
-  /** Input props for a schema field. `name` is constrained to the body's keys — a typo, or a field the
+  /** Input props for a schema field. `name` is constrained to the body's keys - a typo, or a field the
    * schema doesn't have, is a COMPILE error. Spread onto an element: `<input {...f.field("text")} />`. */
   field<K extends FieldKey<App, Path, Method>>(
     name: K,
     props?: FieldProps,
   ): FieldProps & { name: K }
-  /** `formData.get`, key-constrained to the body's fields — reading an orphan key won't compile. */
+  /** `formData.get`, key-constrained to the body's fields - reading an orphan key won't compile. */
   read<K extends FieldKey<App, Path, Method>>(form: FormData, name: K): FormEntry
   /** `formData.getAll`, key-checked the same way. */
   readAll<K extends FieldKey<App, Path, Method>>(form: FormData, name: K): FormEntries

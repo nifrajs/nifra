@@ -1,15 +1,15 @@
 import { definePlugin } from "@nifrajs/core/server"
-// The OpenAPI generator only — `@nifrajs/schema/openapi` is pure (no TypeBox runtime), so the openapi()
+// The OpenAPI generator only - `@nifrajs/schema/openapi` is pure (no TypeBox runtime), so the openapi()
 // plugin gets full `t`-schema introspection without pulling the `t` builder into every consumer.
 import { toOpenAPI } from "@nifrajs/schema/openapi"
 
-/** A registered route as seen by {@link buildOpenApiDocument} — structurally a `@nifrajs/core`
+/** A registered route as seen by {@link buildOpenApiDocument} - structurally a `@nifrajs/core`
  * `RouteDescriptor` (so `app.routes()` is passed straight through). */
 export interface RouteLike {
   readonly method: string
   readonly path: string
-  // `| undefined` (not just `?`) so a core `RouteDescriptor` — whose `schema` is a *required*
-  // `RouteSchema | undefined` — is assignable under `exactOptionalPropertyTypes`.
+  // `| undefined` (not just `?`) so a core `RouteDescriptor` - whose `schema` is a *required*
+  // `RouteSchema | undefined` - is assignable under `exactOptionalPropertyTypes`.
   readonly schema?:
     | { readonly body?: unknown; readonly query?: unknown; readonly response?: unknown }
     | undefined
@@ -57,7 +57,7 @@ export interface OpenApiOptions {
   readonly path?: string
   /** Exclude routes from the document (the doc path itself is always excluded). */
   readonly exclude?: (route: { readonly method: string; readonly path: string }) => boolean
-  /** Per-operation overrides keyed by `"GET /users/:id"`, shallow-merged over the generated skeleton —
+  /** Per-operation overrides keyed by `"GET /users/:id"`, shallow-merged over the generated skeleton -
    * the escape hatch for rich request/response schemas, tags, and per-op security (Standard Schema
    * can't be introspected). */
   readonly operations?: Readonly<Record<string, Record<string, unknown>>>
@@ -127,10 +127,10 @@ function scalarPage(specUrl: string, title: string, cdn: string): string {
 }
 
 /**
- * Serve an OpenAPI 3.1 document (a structural subset — see {@link buildOpenApiDocument}) at
+ * Serve an OpenAPI 3.1 document (a structural subset - see {@link buildOpenApiDocument}) at
  * `options.path` (default `/openapi.json`), generated from the app's registered routes. Generation is
  * **lazy + memoized**: it reads `app.routes()` on the first request, by which point every route is
- * registered — so the plugin's own position in the chain doesn't matter.
+ * registered - so the plugin's own position in the chain doesn't matter.
  *
  * Pass `ui: true` (or `ui: { path, title, cdn }`) to also serve a Scalar API-reference page (default
  * `/reference`) that renders the spec. The page loads Scalar from a CDN; pin/self-host via `ui.cdn`,
@@ -149,7 +149,7 @@ export function openapi(options: OpenApiOptions = {}) {
   let uiCached: string | undefined
   return definePlugin("openapi", (app) => {
     // Capture `app` (the same mutable builder every later `.get()`/`.post()` registers on) and read its
-    // routes lazily, at request time — so all routes exist regardless of where the plugin sits.
+    // routes lazily, at request time - so all routes exist regardless of where the plugin sits.
     app.register("GET", docPath, undefined, () => {
       cached ??= JSON.stringify(
         buildOpenApiDocument(app.routes(), {

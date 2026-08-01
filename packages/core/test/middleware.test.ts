@@ -121,7 +121,7 @@ describe("lifecycle hooks", () => {
 })
 
 describe("around (wrapping hook)", () => {
-  // A pass-through Standard Schema — exercises the body-schema (bodyOnly) route under an around wrap.
+  // A pass-through Standard Schema - exercises the body-schema (bodyOnly) route under an around wrap.
   const passThrough: StandardSchemaV1 = {
     "~standard": { version: 1, vendor: "test", validate: (value) => ({ value }) },
   }

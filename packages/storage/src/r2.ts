@@ -1,5 +1,5 @@
 /**
- * Cloudflare R2 {@link StorageAdapter} — wraps an R2 bucket binding. The binding is typed structurally
+ * Cloudflare R2 {@link StorageAdapter} - wraps an R2 bucket binding. The binding is typed structurally
  * (the slice we use), so this stays dependency-free: no `@cloudflare/workers-types`. Pass `env.MY_BUCKET`.
  *
  *   const storage = new R2Storage(env.UPLOADS)

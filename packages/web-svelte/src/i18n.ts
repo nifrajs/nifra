@@ -1,5 +1,5 @@
 /**
- * `@nifrajs/web-svelte/i18n` — Svelte bindings for `@nifrajs/i18n`: the `<I18nProvider>` component (re-exported
+ * `@nifrajs/web-svelte/i18n` - Svelte bindings for `@nifrajs/i18n`: the `<I18nProvider>` component (re-exported
  * from `I18nProvider.svelte`) plus `useT()`, which reads the provided `Formatter` from Svelte context.
  * Call `useT()` during a component's initialization (like any `getContext`).
  */

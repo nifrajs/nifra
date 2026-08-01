@@ -1,5 +1,5 @@
 /**
- * SSR benchmark runner — honest tables per UI runtime (see SSR-BENCHMARKS.md).
+ * SSR benchmark runner - honest tables per UI runtime (see SSR-BENCHMARKS.md).
  *
  *   bun run bench:ssr
  */
@@ -33,7 +33,7 @@ async function runTable(
 }
 
 console.log(
-  `SSR benchmarks — Bun ${Bun.version} · Node ${nodeVersion()} · oha median-of-${SSR_BENCH_RUNS} × ${SSR_BENCH_DURATION_S}s @ ${SSR_BENCH_CONNECTIONS} conns`,
+  `SSR benchmarks - Bun ${Bun.version} · Node ${nodeVersion()} · oha median-of-${SSR_BENCH_RUNS} × ${SSR_BENCH_DURATION_S}s @ ${SSR_BENCH_CONNECTIONS} conns`,
 )
 
 for (const section of ALL_TABLE_SECTIONS) {

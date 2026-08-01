@@ -1,5 +1,5 @@
 /**
- * `@nifrajs/web-react/i18n` — React bindings for `@nifrajs/i18n`. `<I18nProvider locale messages>` builds a
+ * `@nifrajs/web-react/i18n` - React bindings for `@nifrajs/i18n`. `<I18nProvider locale messages>` builds a
  * `Formatter` (memoized) and provides it; `useT()` reads it. Both `locale` + `messages` are
  * serializable, so a loader returns them, the page renders with the negotiated catalog on the server,
  * and the client rebuilds the same formatter from the same props (no mismatch). Imports only `react` +

@@ -43,7 +43,7 @@ describe("defer + prepareDeferred", () => {
       x: defer(p1),
       y: defer(p2),
     })
-    // Client (serialized) gets numeric-id placeholders — no promises.
+    // Client (serialized) gets numeric-id placeholders - no promises.
     expect(forClient).toEqual({ now: 1, x: { __nifra_deferred: 0 }, y: { __nifra_deferred: 1 } })
     // Component gets markers carrying the assigned id + the original promise (same reference).
     const comp = forComponent as Record<string, unknown>
@@ -55,13 +55,13 @@ describe("defer + prepareDeferred", () => {
     expect(deferred[1]?.promise).toBe(p2)
   })
 
-  test("a plain object (no defer) is returned BY REFERENCE — no clone (structural sharing)", () => {
+  test("a plain object (no defer) is returned BY REFERENCE - no clone (structural sharing)", () => {
     // hits isDeferred's three negative branches: primitive, null-free object without the flag.
     const input = { a: 1, b: { nested: true } }
     const { forComponent, forClient, deferred } = prepareDeferred(input)
     expect(forClient).toEqual({ a: 1, b: { nested: true } })
     expect(deferred).toEqual([])
-    // Deferred-free data isn't deep-cloned into two trees — both sides ARE the original input.
+    // Deferred-free data isn't deep-cloned into two trees - both sides ARE the original input.
     expect(forComponent).toBe(input)
     expect(forClient).toBe(input)
   })
@@ -146,7 +146,7 @@ describe("defer + prepareDeferred", () => {
     expect(calls).toEqual([0, 1]) // both nested placeholders resolved via the registry
   })
 
-  test("idOffset continues the id space — data + action deferred share one registry, no collision", () => {
+  test("idOffset continues the id space - data + action deferred share one registry, no collision", () => {
     // A full-page POST splits BOTH the loader data and the action result into one client registry;
     // the action split offsets its ids past the data's so they don't collide.
     const dataSplit = prepareDeferred({ feed: defer(Promise.resolve("d")) })
@@ -160,15 +160,15 @@ describe("defer + prepareDeferred", () => {
   })
 })
 
-// A rejecting deferred. `ndjsonStream` handles it correctly (redacts, streams the opaque code — the
+// A rejecting deferred. `ndjsonStream` handles it correctly (redacts, streams the opaque code - the
 // assertions below prove it), but Bun still reports the rejection "unhandled" at PROCESS EXIT, which
 // makes `bun test` exit nonzero with 0 test failures.
 //
-// This was diagnosed to a Bun runtime bug, NOT a code defect (2026-07-24): the rejection IS handled —
-// via `.then`/`await` inside the stream — but Bun mis-flags it whenever the handled promise is consumed
+// This was diagnosed to a Bun runtime bug, NOT a code defect (2026-07-24): the rejection IS handled -
+// via `.then`/`await` inside the stream - but Bun mis-flags it whenever the handled promise is consumed
 // CONCURRENTLY (`Promise.all(...map(async …))`, or a floated `.then`). A strictly SEQUENTIAL `for-await`
 // is the only shape Bun doesn't flag, and switching to it would regress the deliberate out-of-order
-// deferred streaming — a real feature traded for a cosmetic exit code, so it is NOT done. The
+// deferred streaming - a real feature traded for a cosmetic exit code, so it is NOT done. The
 // reject timing (`setTimeout` vs eager vs microtask) makes no difference; neither does a pre-attached
 // `.catch`, a process `unhandledRejection` handler, or `--unhandled-rejections=warn`. Production is
 // unaffected: a server never exits, so the exit-time report never fires. Left as-is deliberately; do not
@@ -197,7 +197,7 @@ describe("ndjsonStream (server soft-nav transport)", () => {
     // ids 0 + 1 each get a settle line (order is by settle time, so match by id)
     const byId = new Map(lines.slice(1).map((m) => [m.i, m]))
     expect(byId.get(0)).toEqual({ i: 0, v: ["a", "b"] })
-    // Rejection is data, not a stream error — and REDACTED: the opaque code, never the raw reason
+    // Rejection is data, not a stream error - and REDACTED: the opaque code, never the raw reason
     // ("upstream failed" is logged server-side, not leaked to the client).
     expect(byId.get(1)).toEqual({ i: 1, e: "deferred_error" })
     expect(JSON.stringify(lines)).not.toContain("upstream failed")
@@ -260,7 +260,7 @@ describe("parseNdjsonData (client soft-nav transport)", () => {
     expect(data).toEqual({ count: 5 })
   })
 
-  test("an aborted stream leaves markers pending (a superseded nav — no error flash)", async () => {
+  test("an aborted stream leaves markers pending (a superseded nav - no error flash)", async () => {
     const ac = new AbortController()
     const data = (await parseNdjsonData(
       streamOf([
@@ -269,7 +269,7 @@ describe("parseNdjsonData (client soft-nav transport)", () => {
       ]),
       ac.signal,
     )) as Record<string, unknown>
-    ac.abort() // a newer navigation abandons this stream — markers detach, not error
+    ac.abort() // a newer navigation abandons this stream - markers detach, not error
     const outcome = await Promise.race([
       asMarker(data.feed).promise.then(
         () => "settled",
@@ -280,7 +280,7 @@ describe("parseNdjsonData (client soft-nav transport)", () => {
     expect(outcome).toBe("pending") // neither settled nor rejected (detached + GC'd, no flash)
   })
 
-  test("duplicate placeholder ids in line 1 alias one promise — neither marker leaks", async () => {
+  test("duplicate placeholder ids in line 1 alias one promise - neither marker leaks", async () => {
     const data = (await parseNdjsonData(
       streamOf([
         { text: '{"a":{"__nifra_deferred":0},"b":{"__nifra_deferred":0}}\n' }, // same id twice
@@ -294,7 +294,7 @@ describe("parseNdjsonData (client soft-nav transport)", () => {
     expect(await data.b.promise).toBe("shared")
   })
 
-  test("removes its abort listener once the stream completes — no listener accumulation", async () => {
+  test("removes its abort listener once the stream completes - no listener accumulation", async () => {
     const ac = new AbortController()
     let added = 0
     let removed = 0

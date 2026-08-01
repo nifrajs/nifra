@@ -388,7 +388,7 @@ const css = `
   .feature-showcase.reverse .feature-info {
     order: 2;
   }
-  /* The code block is now wrapped in .code-window (the grid child) — target that for placement. */
+  /* The code block is now wrapped in .code-window (the grid child) - target that for placement. */
   .feature-showcase .code-window { margin: 0; }
   .feature-showcase.reverse .code-window {
     order: 1;
@@ -818,7 +818,7 @@ const css = `
     .play-grid { grid-template-columns: 1fr; }
   }
 
-  /* ---- /play playground — editor-first: code full-width on top, requests + response paired below ---- */
+  /* ---- /play playground - editor-first: code full-width on top, requests + response paired below ---- */
   .play-head { max-width: 760px; margin-bottom: 22px; }
 
   .play-layout {
@@ -914,7 +914,7 @@ const css = `
     font-weight: 600;
   }
 
-  /* Sticky controls bar (presets + Run) — never lost under an editor, always reachable. */
+  /* Sticky controls bar (presets + Run) - never lost under an editor, always reachable. */
   .play-controls {
     position: sticky; top: 64px; z-index: 6;
     display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;
@@ -1021,9 +1021,9 @@ const css = `
     .play-editor-requests, .play-results { min-height: 160px; }
   }
 
-  /* ---- /frameworks live demo — one app, five renderers, real measured bundle sizes ---- */
+  /* ---- /frameworks live demo - one app, five renderers, real measured bundle sizes ---- */
   .fw-head { display: flex; flex-direction: column; gap: 10px; margin-bottom: 28px; }
-  /* A <fieldset> for grouping semantics — reset its default chrome; it lays out as a pill row. */
+  /* A <fieldset> for grouping semantics - reset its default chrome; it lays out as a pill row. */
   .fw-toggle { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 22px; padding: 0; border: 0; min-inline-size: 0; }
   .fw-toggle-btn {
     display: inline-flex; align-items: center; gap: 8px; padding: 9px 15px; border-radius: 10px;
@@ -1054,7 +1054,7 @@ const css = `
     content: ""; width: 7px; height: 7px; border-radius: 99px; background: var(--green);
   }
   .fw-stage-body { padding: 16px 20px; max-height: 360px; overflow: auto; }
-  /* The shared catalog markup — same DOM whichever framework rendered it. */
+  /* The shared catalog markup - same DOM whichever framework rendered it. */
   .fw-stage-body main h1 { font-size: 16px; margin: 0 0 12px; color: var(--fg); }
   .fw-stage-body main ul { display: grid; grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); gap: 6px; margin: 0; padding: 0; list-style: none; }
   .fw-stage-body main li {
@@ -1320,7 +1320,7 @@ const css = `
   }
   .nifra-bubble {
     pointer-events: auto;
-    /* Opaque (no backdrop-filter): a live blur re-samples the scrolling backdrop every frame — the
+    /* Opaque (no backdrop-filter): a live blur re-samples the scrolling backdrop every frame - the
        real remaining scroll cost. box-shadow composites without re-rasterizing like filter does. */
     background: #0b0f19;
     color: #f3f4f6;
@@ -1710,14 +1710,14 @@ const css = `
 
   /* ===================== Homepage overhaul + polish ===================== */
 
-  /* Hero headline accent — gradient text */
+  /* Hero headline accent - gradient text */
   .hero h1 em {
     background: linear-gradient(120deg, var(--green-2), var(--green));
     -webkit-background-clip: text; background-clip: text;
     -webkit-text-fill-color: transparent; color: transparent;
   }
 
-  /* Hero value row — lead with the "why" (3 value props) before the dense feature sections. */
+  /* Hero value row - lead with the "why" (3 value props) before the dense feature sections. */
   .value-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 0 0 56px; }
   .value-item {
     padding: 20px 22px; border: 1px solid var(--line); border-radius: var(--radius-lg);
@@ -1729,7 +1729,7 @@ const css = `
   .value-item span { display: block; font-size: 13.5px; line-height: 1.55; color: var(--muted); }
   @media (max-width: 760px) { .value-row { grid-template-columns: 1fr; } }
 
-  /* Framework switcher — CSS-only (:checked radio tabs, zero JS) */
+  /* Framework switcher - CSS-only (:checked radio tabs, zero JS) */
   .fw-switcher { width: 100%; min-width: 0; }
   /* The global .fw-panels is a 2-column grid (code + preview) for the /frameworks page. Inside the
      homepage switcher each panel is ONLY a code-window, so the 2-col grid left the code in column 1
@@ -1782,7 +1782,7 @@ const css = `
     border-radius: 6px; padding: 6px 8px; overflow-x: auto; white-space: nowrap;
   }
 
-  /* Single source of truth — schema fan diagram */
+  /* Single source of truth - schema fan diagram */
   .source-fan {
     display: grid; grid-template-columns: 200px 1fr; gap: 28px; align-items: center;
     max-width: 980px; margin: 0 auto 56px; padding: 24px;
@@ -1828,7 +1828,7 @@ const css = `
   .docs-shell.no-toc { grid-template-columns: 240px minmax(0, 1fr); }
   .docs-shell.no-toc .docs-toc { display: none; }
 
-  /* Responsive — new homepage blocks */
+  /* Responsive - new homepage blocks */
   @media (max-width: 960px) {
     .runtime-section { margin-top: 0; }
     .runtime-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1932,7 +1932,7 @@ export default function Layout(props: { children?: ReactNode }) {
       <main className="wrap">{props.children}</main>
       <footer className="site">
         <div className="wrap">
-          <span>Proudly built with Nifra — server-rendered on Cloudflare Pages.</span>
+          <span>Proudly built with Nifra - server-rendered on Cloudflare Pages.</span>
           <span className="foot-links">
             <a href="/frameworks">5 Frameworks</a>
             <a href="https://github.com/nifrajs/nifra" target="_blank" rel="noopener noreferrer">

@@ -19,12 +19,12 @@ bench/size/.tmp
 # crashed run from leaving an uncommitted dir). They must live in-tree so @nifrajs/* resolves.
 packages/web/test/.tmp-*
 
-# Internal working docs (planning, design, audit) — kept on disk for local reference, never committed.
+# Internal working docs (planning, design, audit) - kept on disk for local reference, never committed.
 # (README.md stays tracked.)
 /AUDIT*.md
 /*FEEDBACK*.md
 
-# Benchmark RESULTS — generated locally, never committed (numbers move with machine load; see
+# Benchmark RESULTS - generated locally, never committed (numbers move with machine load; see
 # bench/README.md). The benchmark CODE under bench/ stays tracked.
 /BENCHMARKS.md
 /SSR-BENCHMARKS.md
@@ -45,12 +45,12 @@ bench/**/*.md
 !bench/README.md
 /plans
 
-# Local editor/agent tooling — machine-specific (absolute paths, local settings); never committed.
+# Local editor/agent tooling - machine-specific (absolute paths, local settings); never committed.
 .claude/launch.json
 .claude/settings.local.json
 .code-review-graph/
 
-# check:docs snippet sandbox (transient) — lives under site/ so workspace @nifrajs/* symlinks resolve
+# check:docs snippet sandbox (transient) - lives under site/ so workspace @nifrajs/* symlinks resolve
 site/.tmp-doc-check
 .codex/
 /packages/core/test/.tmp-nifra-many-routes

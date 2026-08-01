@@ -1,12 +1,12 @@
 /**
- * True-HMR dev server (Svelte) — the `@nifrajs/web/vite` server with `@sveltejs/vite-plugin-svelte`
+ * True-HMR dev server (Svelte) - the `@nifrajs/web/vite` server with `@sveltejs/vite-plugin-svelte`
  * (Svelte 5's built-in HMR for the client). `svelteBunPlugin("ssr")` (preloaded, see ssr-preload.ts)
  * handles the Bun-side SSR compile.
  *
  *   bun --preload hmr-svelte/ssr-preload.ts hmr-svelte/dev.ts
  *   (containers/sandboxes: prefix CHOKIDAR_USEPOLLING=1)
  *
- * Edit `components/Counter.svelte` while the counter is non-zero — it updates live, count preserved.
+ * Edit `components/Counter.svelte` while the counter is non-zero - it updates live, count preserved.
  */
 
 import { inProcessClient } from "@nifrajs/client"

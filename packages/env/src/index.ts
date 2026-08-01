@@ -1,5 +1,5 @@
 /**
- * @nifrajs/env — typed, validated environment variables. Define a schema once at startup; get a
+ * @nifrajs/env - typed, validated environment variables. Define a schema once at startup; get a
  * frozen typed object, or a loud boot-time failure listing every problem. Coercing helpers
  * (`env.number`/`port`/`boolean`/`url`/`enum`) turn `string | undefined` into the value you want;
  * any Standard Schema (`t`, zod, valibot) is also accepted. Dependency-free, edge-safe.

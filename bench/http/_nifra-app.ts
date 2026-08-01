@@ -1,5 +1,5 @@
 /**
- * The nifra app under benchmark — shared verbatim by the Bun server (serve.ts, via
+ * The nifra app under benchmark - shared verbatim by the Bun server (serve.ts, via
  * `.listen()`) and the Node server (serve-node-nifra.ts, via `@nifrajs/node`'s `serve()`),
  * so the nifra row in BOTH runtime sections measures the identical app. Same routes +
  * validation as every other framework's bench server.
@@ -32,7 +32,7 @@ function isSearch(v: unknown): v is { q: string; limit: string } {
 
 // nifra's idiomatic validation is any Standard Schema. Hand-rolled here (no lib) so the
 // row measures nifra's validation *plumbing* (readAndValidateBody + the `~standard.validate`
-// call), comparable to Hono's built-in validator — not the cost of a heavy schema lib.
+// call), comparable to Hono's built-in validator - not the cost of a heavy schema lib.
 const userBody: StandardSchemaV1<unknown, { name: string; age: number }> = {
   "~standard": {
     version: 1,

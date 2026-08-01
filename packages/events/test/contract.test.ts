@@ -9,7 +9,7 @@ const OrderPaid = defineEventContract({
   payload: t.object({ orderId: t.string(), cents: t.number() }),
 })
 
-describe("@nifrajs/events — defineEventContract", () => {
+describe("@nifrajs/events - defineEventContract", () => {
   test("rejects an invalid type or version at definition time", () => {
     expect(() =>
       defineEventContract({ type: "Order Paid", version: 1, payload: t.object({}) }),
@@ -81,7 +81,7 @@ describe("@nifrajs/events — defineEventContract", () => {
   })
 })
 
-describe("@nifrajs/events — parse (untrusted input)", () => {
+describe("@nifrajs/events - parse (untrusted input)", () => {
   const valid = OrderPaid.create({ orderId: "o_1", cents: 1 })
 
   test("round-trips a valid envelope", () => {
@@ -117,7 +117,7 @@ describe("@nifrajs/events — parse (untrusted input)", () => {
   })
 })
 
-describe("@nifrajs/events — registry", () => {
+describe("@nifrajs/events - registry", () => {
   const OrderPaidV2 = defineEventContract({
     type: "order.paid",
     version: 2,

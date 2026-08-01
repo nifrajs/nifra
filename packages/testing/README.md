@@ -65,7 +65,7 @@ const report = await assertAdversarialContract(app, {
 
 `runAdversarialContract` returns the same structured report without throwing. Every failure includes
 `replay: { seed, caseId, runtime }`; rerun one case with `only: caseId`. Contract runs execute one valid
-request for each declared response schema, so use an isolated test app/database—never point the
+request for each declared response schema, so use an isolated test app/database-never point the
 laboratory at production.
 
 `nifra levels` L4 uses this same deep engine through the explicitly configured isolated executor;
@@ -149,7 +149,7 @@ await client.auth.logout.post()                    // a Max-Age=0 Set-Cookie cle
 expect(cookies.get("sid")).toBeUndefined()
 ```
 
-Same in-process client as `testClient` — the app's own `fetch`, no server/port/network, the full real
+Same in-process client as `testClient` - the app's own `fetch`, no server/port/network, the full real
 lifecycle (validation, middleware, contracts, auth) and end-to-end types from `App`. The only addition is
 that every call carries and captures cookies via a shared jar.
 
@@ -162,14 +162,14 @@ that every call carries and captures cookies via a shared jar.
 - `certifyAdapter({ profile, adapterId, createAdapter })` → capability matrix + SHA-256 evidence.
 - `verifyAdapterCertification(report)` → recompute and verify portable certification evidence.
 - `testSession<App>(app, { origin?, cookies? })` → `{ client: Treaty<App>, cookies: CookieJar }`.
-- `cookieJar()` → `CookieJar` — `header()` · `applyTo(headers)` · `store(response)` · `set` · `get` · `clear` · `size`.
+- `cookieJar()` → `CookieJar` - `header()` · `applyTo(headers)` · `store(response)` · `set` · `get` · `clear` · `size`.
   Honours removal (`Max-Age=0` / past `Expires`); other cookie attributes are ignored (in-process, same-origin).
 
 For a **stateless** request (no cookies), use `testClient` from `@nifrajs/client` directly.
 
 ## For AI agents
 
-Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports you call + its footguns),
 one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the

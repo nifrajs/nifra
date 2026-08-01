@@ -1,8 +1,8 @@
 /**
- * `@nifrajs/middleware` — composable, dependency-free middleware + plugins applied via `app.use()`.
+ * `@nifrajs/middleware` - composable, dependency-free middleware + plugins applied via `app.use()`.
  * The hardening set (`cors`, `rateLimit`, `securityHeaders`) returns a `@nifrajs/core` `Middleware`
  * (a hook bundle, context-agnostic). The seeded plugins (`requestId`, `logger`, `etag`, `bearer`,
- * `apiKey`) use the `definePlugin` convention — named (idempotent dedupe), and `requestId` threads
+ * `apiKey`) use the `definePlugin` convention - named (idempotent dedupe), and `requestId` threads
  * `c.requestId` into the handler context.
  */
 

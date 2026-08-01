@@ -1,8 +1,8 @@
 /**
- * The agnostic keyed query-cache — a `query(key, fn)` primitive with in-flight dedup, `staleTime`
+ * The agnostic keyed query-cache - a `query(key, fn)` primitive with in-flight dedup, `staleTime`
  * freshness, prefix `invalidateQueries`, imperative cache read/write, prefetch, SSR dehydrate/hydrate,
  * infinite (paged) queries, and standalone mutations. Pure logic, no `window`, no framework, no
- * `Date.now`/timers (the clock is injected) — so it unit-tests deterministically and is safe to import
+ * `Date.now`/timers (the clock is injected) - so it unit-tests deterministically and is safe to import
  * from the SSR core's main entry. A per-adapter binding (`useQuery`/`useMutation`/`createQuery`)
  * subscribes to a query/mutation's `subscribe`/`snapshot` store (the same shape the router + fetchers
  * use).
@@ -15,13 +15,13 @@
 /** A query's lifecycle status. `pending` = no data yet; `success`/`error` once it has settled once. */
 export type QueryStatus = "pending" | "success" | "error"
 
-/** A query's observable state — what a binding renders. A new (frozen) object per transition, so a
+/** A query's observable state - what a binding renders. A new (frozen) object per transition, so a
  * `useSyncExternalStore`/signal binding can compare by reference. */
 export interface QueryState<T = unknown> {
   readonly status: QueryStatus
   readonly data: T | undefined
   readonly error: unknown
-  /** True while a fetch is in flight — the initial load OR a background refetch (data may still show). */
+  /** True while a fetch is in flight - the initial load OR a background refetch (data may still show). */
   readonly isFetching: boolean
   /** When `data` was last set (via the injected clock); drives `staleTime`. `-Infinity` until first set. */
   readonly updatedAt: number
@@ -46,14 +46,14 @@ export interface QueryOptions {
 }
 
 export interface QueryClientOptions {
-  /** Monotonic clock in ms — injected so the core stays deterministic + testable; the adapter binding
+  /** Monotonic clock in ms - injected so the core stays deterministic + testable; the adapter binding
    * passes `() => Date.now()`. */
   readonly now: () => number
   /** Data stays fresh this long after a fetch; older ⇒ refetch on the next `fetch()` (default `0`). */
   readonly staleTime?: number
   /** Evict an entry this long (ms) after its last subscriber leaves (default 5 min). */
   readonly gcTime?: number
-  /** Hard cap on cached entries — LRU-evict the oldest *unsubscribed* entry past it (default 1000). */
+  /** Hard cap on cached entries - LRU-evict the oldest *unsubscribed* entry past it (default 1000). */
   readonly max?: number
 }
 
@@ -65,7 +65,7 @@ export interface InfiniteData<T, P> {
 }
 
 /** Options for an {@link InfiniteQueryHandle}. `getNextPageParam` (required) derives the param for the
- * next page from the last page — return `undefined`/`null` to signal there is no next page. */
+ * next page from the last page - return `undefined`/`null` to signal there is no next page. */
 export interface InfiniteQueryOptions<T, P> extends QueryOptions {
   /** The param the FIRST page is fetched with. */
   readonly initialPageParam: P
@@ -104,7 +104,7 @@ export interface InfiniteQueryHandle<T, P> {
   hasPreviousPage: () => boolean
 }
 
-/** A serializable snapshot of the cache's successful queries — the SSR→client bridge payload. */
+/** A serializable snapshot of the cache's successful queries - the SSR→client bridge payload. */
 export interface DehydratedState {
   readonly queries: ReadonlyArray<{
     readonly key: unknown
@@ -144,7 +144,7 @@ export interface QueryClient {
 
 /**
  * Hash a query key to a stable cache string. Object keys are sorted (so `{a,b}` ≡ `{b,a}`); arrays
- * keep order. Keys must be serializable — a function/symbol in the key throws (it can't be a stable
+ * keep order. Keys must be serializable - a function/symbol in the key throws (it can't be a stable
  * identity). Mirrors TanStack Query's structural hashing.
  */
 export function hashQueryKey(key: unknown): string {
@@ -179,7 +179,7 @@ interface Entry {
   staleTime: number
   state: QueryState
   promise: Promise<unknown> | undefined
-  /** The {@link generation} the in-flight {@link promise} started at — so a fetch begun *before* an
+  /** The {@link generation} the in-flight {@link promise} started at - so a fetch begun *before* an
    * `invalidateQueries` (which bumps `generation`) is recognized as superseded, not joined. */
   promiseGen: number
   /** Bumped by `invalidateQueries`/`refetch` to supersede any in-flight fetch begun before it. */
@@ -217,7 +217,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
   const cache = new Map<string, Entry>()
 
   // Lazily evict entries whose GC timer has elapsed (no subscribers), then enforce the hard cap by
-  // dropping the oldest-inserted unsubscribed entries. Called on every `query()` — no background timer.
+  // dropping the oldest-inserted unsubscribed entries. Called on every `query()` - no background timer.
   const sweep = (): void => {
     const t = now()
     for (const [h, e] of cache) {
@@ -251,8 +251,8 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       handle: undefined as unknown as QueryHandle,
     }
     const emit = (): void => {
-      // Iterate the live set — no per-emit copy (the common case is 0–1 subscribers). Contract: a
-      // listener must not synchronously subscribe/unsubscribe during notification — `useSyncExternalStore`/
+      // Iterate the live set - no per-emit copy (the common case is 0-1 subscribers). Contract: a
+      // listener must not synchronously subscribe/unsubscribe during notification - `useSyncExternalStore`/
       // signal/store bindings don't (un/subscribe happens in a later effect/cleanup tick).
       if (entry.listeners.size === 0) return
       for (const l of entry.listeners) l()
@@ -265,19 +265,19 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       entry.invalidated || now() - entry.state.updatedAt >= entry.staleTime
 
     entry.run = (force: boolean): Promise<unknown> => {
-      // Dedup — but join the in-flight fetch ONLY when it belongs to the current generation. An
+      // Dedup - but join the in-flight fetch ONLY when it belongs to the current generation. An
       // `invalidateQueries` bumps `generation`, so a fetch that started *before* the invalidation is
       // superseded and must NOT satisfy this call (its data is pre-mutation); fall through and kick a
       // fresh fetch instead of returning the stale in-flight one.
       if (entry.promise !== undefined && entry.promiseGen === entry.generation) return entry.promise
       if (!force && entry.state.status === "success" && !isStale())
-        return Promise.resolve(entry.state.data) // fresh cache hit — no fn call
+        return Promise.resolve(entry.state.data) // fresh cache hit - no fn call
       const gen = entry.generation
       entry.setState({ ...entry.state, isFetching: true }) // show the background/initial fetch
       const promise = (async () => {
         try {
           const data = await entry.fn()
-          // A newer generation (a later invalidate/refetch) owns the entry now — discard this result
+          // A newer generation (a later invalidate/refetch) owns the entry now - discard this result
           // rather than publishing pre-mutation data as fresh or clearing `invalidated`. The fetch
           // that superseded this one publishes the post-mutation data.
           if (gen !== entry.generation) return data
@@ -304,7 +304,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
       snapshot: () => entry.state,
       subscribe: (listener: () => void) => {
         entry.subscribers++
-        entry.gcAt = undefined // in use again — cancel any pending eviction
+        entry.gcAt = undefined // in use again - cancel any pending eviction
         entry.listeners.add(listener)
         return () => {
           entry.listeners.delete(listener)
@@ -342,7 +342,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     for (const entry of cache.values()) {
       if (!keyMatchesPrefix(entry.key, keyOrPrefix)) continue
       entry.invalidated = true // next fetch refetches even within staleTime
-      // Supersede any in-flight fetch begun before this point — its result is pre-mutation and must
+      // Supersede any in-flight fetch begun before this point - its result is pre-mutation and must
       // not resolve as "fresh" or clear `invalidated`. The refetch below (or the next `fetch()`)
       // starts a new generation that publishes the post-mutation data.
       entry.generation++
@@ -358,7 +358,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
   }
 
   const setQueryData = <T>(key: unknown, updater: T | ((prev: T | undefined) => T)): void => {
-    // Create a placeholder entry if none exists — its `fn` throws until a real `query(key, fn)` re-binds
+    // Create a placeholder entry if none exists - its `fn` throws until a real `query(key, fn)` re-binds
     // it, so a `setQueryData` for a key nobody queries yet never triggers a fetch on its own.
     const entry = upsert(
       key,
@@ -370,7 +370,7 @@ export function createQueryClient(options: QueryClientOptions): QueryClient {
     const prev = entry.state.status === "success" ? (entry.state.data as T) : undefined
     const data =
       typeof updater === "function" ? (updater as (p: T | undefined) => T)(prev) : updater
-    // A direct write is the new truth — bump the generation so any in-flight fetch can't overwrite it,
+    // A direct write is the new truth - bump the generation so any in-flight fetch can't overwrite it,
     // and clear the invalidated flag (the caller just supplied fresh data).
     entry.generation++
     entry.invalidated = false
@@ -629,7 +629,7 @@ const IDLE_MUTATION: MutationState<unknown, unknown> = Object.freeze({
 })
 
 /**
- * Create a standalone mutation state machine — framework-agnostic, so a per-adapter `useMutation`
+ * Create a standalone mutation state machine - framework-agnostic, so a per-adapter `useMutation`
  * binding just subscribes to it. Single-flight by a monotonic token: overlapping `mutate` calls each
  * run their `fn`, but only the latest publishes state (an older, slower response can't clobber a newer
  * one). The callbacks fire in TanStack order: `onMutate` (before), then `onSuccess`/`onError`, then
@@ -667,7 +667,7 @@ export function createMutation<TData, TVariables>(
     mutate: async (variables) => {
       const mine = ++token
       setState({ status: "pending", data: undefined, error: undefined, variables })
-      // Only await a callback when one is actually supplied — an `await undefined` would insert a
+      // Only await a callback when one is actually supplied - an `await undefined` would insert a
       // needless microtask before the mutationFn runs (and complicates single-flight timing).
       if (cbs.onMutate !== undefined) await cbs.onMutate(variables)
       try {

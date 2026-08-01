@@ -1,12 +1,12 @@
 /**
- * The `nifra_render` engine + its child-process entry — the page half of `nifra_run`. Where `nifra_run`
+ * The `nifra_render` engine + its child-process entry - the page half of `nifra_run`. Where `nifra_run`
  * runs requests through the BACKEND, this SSRs page routes through the WEB app (`createWebApp`), so an
  * agent can verify a page renders and its loader ran after an edit. Spawned fresh per call (`bun
  * mcp-render.ts <cwd>`) so the project's CURRENT route/loader code is loaded.
  *
- * No build required: a placeholder `clientEntry` is injected (the SSR HTML renders regardless — the
+ * No build required: a placeholder `clientEntry` is injected (the SSR HTML renders regardless - the
  * client bundle only matters for hydration in the browser, not for "did this page render server-side").
- * {@link renderPages} never throws — every failure (no config, a loader error, a render throw) becomes
+ * {@link renderPages} never throws - every failure (no config, a loader error, a render throw) becomes
  * `{ error }` so the agent gets the actionable message.
  */
 
@@ -19,7 +19,7 @@ import { loadApp, resolvePlugins } from "./load.ts"
 const errString = (err: unknown): string =>
   err instanceof Error ? `${err.name}: ${err.message}` : String(err)
 
-/** Load the project, register its SSR plugins, and build the SSR `createWebApp` once — the cost the warm
+/** Load the project, register its SSR plugins, and build the SSR `createWebApp` once - the cost the warm
  * worker amortizes across calls. Never throws (every failure → `{ error }`). Factored out of
  * {@link renderPages} so the cold path (fresh process per call) and the warm worker share one builder. */
 async function buildWebApp(cwd: string): Promise<{ app: AppLike } | { error: string }> {
@@ -92,7 +92,7 @@ function redirectConsoleToStderr(): void {
 /**
  * Warm-worker loop (`--worker`): build the web app ONCE, then SSR each `{ id, input: { requests } }` line
  * against that hot app and reply `{ id, output }`. The parent (`mcp.ts`'s warm-render handler) spawns this,
- * fingerprints the source tree, and restarts the worker when a file changes — so warm reuse never serves a
+ * fingerprints the source tree, and restarts the worker when a file changes - so warm reuse never serves a
  * stale render. Mirrors `mcp-run.ts`'s worker (single backend entry → no per-call entry key needed here).
  */
 async function runWorker(cwd: string): Promise<void> {
@@ -148,7 +148,7 @@ if (import.meta.main) {
   // The parent (mcp.ts) spawns `bun mcp-render.ts <cwd>` WITHOUT setting the subprocess `cwd` option, so
   // this process inherits the MCP server's working dir, not the app's. SSR resolves `react-dom/server`
   // from `process.cwd()` to share ONE React core with the app's route components (the dual-React fix in
-  // @nifrajs/web-react) — so we must chdir to the app root before any render. Best-effort: a bad path
+  // @nifrajs/web-react) - so we must chdir to the app root before any render. Best-effort: a bad path
   // surfaces later as a load error rather than crashing the child here.
   if (cwd !== process.cwd()) {
     try {

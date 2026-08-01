@@ -22,7 +22,7 @@ test("mdx-runtime maps Markdown intrinsics to Solid components", () => {
   ]) {
     expect(typeof c[tag]).toBe("function")
   }
-  // Invoking one yields a Solid component result (createComponent(<Dynamic>, …)) — doesn't throw.
+  // Invoking one yields a Solid component result (createComponent(<Dynamic>, …)) - doesn't throw.
   expect(c.h1!({ children: "x" })).toBeDefined()
 })
 

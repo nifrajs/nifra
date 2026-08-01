@@ -4,7 +4,7 @@
  *
  *   host → widget : `ui/notifications/tool-result` (the tools/call result incl. `structuredContent`),
  *                   `ui/notifications/tool-input` (the call arguments), and `ui/notifications/theme`
- *                   (the host's design tokens) — pushed as JSON-RPC notifications.
+ *                   (the host's design tokens) - pushed as JSON-RPC notifications.
  *   widget → host : `tools/call` requests (id-matched) so a button can re-invoke a tool through the host.
  *
  * Theming follows the shadcn/Tailwind semantic-token convention (`--background`, `--foreground`,
@@ -13,7 +13,7 @@
  * app with zero per-widget work.
  *
  * It exposes a small global the widget author scripts against, so authoring a widget is just
- * `mcpApp.onData(render)` + (optionally) `mcpApp.callTool(name, args)` — no postMessage plumbing.
+ * `mcpApp.onData(render)` + (optionally) `mcpApp.callTool(name, args)` - no postMessage plumbing.
  *
  * Returned as a string so {@link ./widget.ts} can inline it in the resource HTML (a widget ships as ONE
  * self-contained document; the host renders it in a sandboxed iframe with no network of its own).
@@ -23,7 +23,7 @@
 export interface McpAppBridge {
   /** Latest `structuredContent` the host pushed (or `null` before the first result). */
   data: unknown
-  /** Register a callback for `structuredContent` — fired immediately if data already arrived, then on
+  /** Register a callback for `structuredContent` - fired immediately if data already arrived, then on
    * every later `ui/notifications/tool-result`. The common case: `mcpApp.onData(render)`. */
   onData(cb: (data: unknown) => void): void
   /** Register a callback for the raw tool-call arguments (`ui/notifications/tool-input`). */
@@ -94,7 +94,7 @@ const BRIDGE_SOURCE = `(function () {
   window.addEventListener("message", function (event) {
     // Only trust the embedding host (the parent window). A widget renders in a sandboxed iframe whose host
     // posts via the parent (or a sandbox-proxy parent), so event.source === window.parent. Reject anything
-    // else — including a null source (synthetic/dispatched events) — so a sibling/opener frame or in-page
+    // else - including a null source (synthetic/dispatched events) - so a sibling/opener frame or in-page
     // script can't spoof tool-results, tool-call responses, or theme. (A top-level widget has no host.)
     if (event.source !== window.parent || window.parent === window) return;
     var msg = event.data;

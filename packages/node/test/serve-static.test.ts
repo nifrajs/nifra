@@ -59,7 +59,7 @@ test("non-prefix paths fall through to the app (fast path intact)", async () => 
 
 test("path traversal out of the served dir is rejected (403)", async () => {
   const base = await startWithStatic()
-  // `%2e%2e%2f` = `../` — survives URL normalization, decoded only after the prefix is stripped.
+  // `%2e%2e%2f` = `../` - survives URL normalization, decoded only after the prefix is stripped.
   const res = await fetch(`${base}/assets/%2e%2e%2fsecret.txt`)
   expect(res.status).toBe(403)
 })

@@ -16,7 +16,7 @@
   // routes/orgs/[org]/_layout.tsx
   export const gate = true                       // optional; see below
   export async function loader({ params, req }) {
-    return { org: await findOrg(params.org) }    // params is { org } — nothing deeper
+    return { org: await findOrg(params.org) }    // params is { org } - nothing deeper
   }
   export default function Layout({ data, children }) { … }
   ```

@@ -8,7 +8,7 @@ import { join, resolve } from "node:path"
 import { $ } from "bun"
 
 if (!process.env.NPM_TOKEN) {
-  console.log("point-latest: no NPM_TOKEN — skipping (local run)")
+  console.log("point-latest: no NPM_TOKEN - skipping (local run)")
   process.exit(0)
 }
 

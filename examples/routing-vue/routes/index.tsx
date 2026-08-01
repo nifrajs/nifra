@@ -4,14 +4,14 @@ import { Await } from "@nifrajs/web-vue/await"
 import { defineComponent, h } from "vue"
 import type { backend } from "../backend"
 
-// Static head for this route — SSR-injected + updated on client navigation.
+// Static head for this route - SSR-injected + updated on client navigation.
 export const meta = {
-  title: "nifra + Vue — Home",
+  title: "nifra + Vue - Home",
   meta: [{ name: "description", content: "nifra Vue bindings: loader + action + defer/Await" }],
 }
 
 // SSG: prerender this static route to dist/index.html at build (build.ts → prerenderRoutes). Proves
-// the prerender pipeline is framework-agnostic — same opt-in flag, Vue render output. `defer()` lives
+// the prerender pipeline is framework-agnostic - same opt-in flag, Vue render output. `defer()` lives
 // only in the action, so the prerendered GET has no unresolved deferreds.
 export const prerender = true
 
@@ -36,7 +36,7 @@ export async function action({ api }: ActionArgs<typeof backend>) {
 
 export default defineComponent({
   name: "Home",
-  // compose() passes data/actionData/pending/submission as props — declare them so they aren't attrs.
+  // compose() passes data/actionData/pending/submission as props - declare them so they aren't attrs.
   props: {
     data: { required: true },
     actionData: { required: false, default: undefined },

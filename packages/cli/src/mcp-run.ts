@@ -1,6 +1,6 @@
 /**
  * The `nifra_run` engine + its child-process entry. The MCP server spawns this file fresh on every
- * `nifra_run` call (`bun mcp-run.ts <cwd>`) so the project's CURRENT backend code is loaded — picking
+ * `nifra_run` call (`bun mcp-run.ts <cwd>`) so the project's CURRENT backend code is loaded - picking
  * up the agent's latest edits. {@link runBackend} is the pure-ish core (resolve entry → import → run),
  * exported so it's unit-testable in-process; the entry below wires it to stdin/stdout.
  */
@@ -48,7 +48,7 @@ export async function loadBackend(
 
 /**
  * Resolve the backend entry under `cwd`, import it, and run `requests` through its exported app. Never
- * throws — every failure (missing/invalid entry, import/compile/runtime error) becomes `{ error }`, so
+ * throws - every failure (missing/invalid entry, import/compile/runtime error) becomes `{ error }`, so
  * the caller (and the agent) always gets actionable output. An import error here IS the failure the
  * agent needs to see and fix.
  */

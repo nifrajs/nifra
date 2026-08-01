@@ -50,7 +50,7 @@
 
 ### Patch Changes
 
-- bd3433f: Security + correctness hardening: `FileStorage` refuses paths that cross symbolic links (component-wise `lstat` walk + `O_NOFOLLOW` writes; `list()` skips symlinks) so a planted symlink can no longer redirect reads/writes outside the storage root. OTel spans no longer copy raw `Error.message` into exported attributes (exception text routinely carries credentials/URLs); spans record `error.recorded: true` instead. New `onResponseFinalized` terminal observer on the server (`Middleware.onResponseFinalized` / `ResponseFinalization`) runs after every transforming `onResponse` hook and is fail-open — tracing now records the true final status even when a later hook rewrites or throws. OpenAPI generation sanitizes URI-style `$id` values into valid component names/`$ref` pointers (hex-derived, collision-suffixed) and is immune to `__proto__` key pollution.
+- bd3433f: Security + correctness hardening: `FileStorage` refuses paths that cross symbolic links (component-wise `lstat` walk + `O_NOFOLLOW` writes; `list()` skips symlinks) so a planted symlink can no longer redirect reads/writes outside the storage root. OTel spans no longer copy raw `Error.message` into exported attributes (exception text routinely carries credentials/URLs); spans record `error.recorded: true` instead. New `onResponseFinalized` terminal observer on the server (`Middleware.onResponseFinalized` / `ResponseFinalization`) runs after every transforming `onResponse` hook and is fail-open - tracing now records the true final status even when a later hook rewrites or throws. OpenAPI generation sanitizes URI-style `$id` values into valid component names/`$ref` pointers (hex-derived, collision-suffixed) and is immune to `__proto__` key pollution.
 
 ## 1.4.0
 
@@ -66,7 +66,7 @@
 
 - 4a4b1c4: feat: `errors` response contract on routes + typed client error bodies
 
-  A route's `RouteSchema` may now declare `errors` — a `{ status → Standard Schema }` map of its failure modes.
+  A route's `RouteSchema` may now declare `errors` - a `{ status → Standard Schema }` map of its failure modes.
   Like `response`, it's a compile-time + introspection contract (not validated at runtime, zero hot-path cost):
   the declared error bodies flow into OpenAPI as non-2xx `responses` and into the `/llms.txt` context, so
   tooling and coding agents can read the _whole_ contract, not just the happy path.
@@ -74,10 +74,10 @@
   The **typed client** now surfaces them: on a failure `Result`, `data` is the parsed error body typed from the
   route's `errors` (a union across declared statuses; `unknown` when none declared), discriminated by `ok`.
   `error` remains the normalized `{ error, issues }` summary. The **decoupled contract client**
-  (`client(contract, url)`) gets the same treatment — its failure `data` is typed from the op's non-2xx
+  (`client(contract, url)`) gets the same treatment - its failure `data` is typed from the op's non-2xx
   `responses` schemas.
 
-  **Behavior change:** on failure, `data` is now the parsed error response body (previously always `null`) — so
+  **Behavior change:** on failure, `data` is now the parsed error response body (previously always `null`) - so
   `const { ok, data } = await api.orders.post(...)` gives you the typed error body in the `!ok` branch. `data`
   is still `null` only on a transport error (status `0`, no response).
 
@@ -91,17 +91,17 @@
 
 ### Minor Changes
 
-- 17e57c4: feat(schema): cursor pagination — `t.paginated`, `t.pageQuery`, and cursor helpers
+- 17e57c4: feat(schema): cursor pagination - `t.paginated`, `t.pageQuery`, and cursor helpers
 
   `t.paginated(item)` is the response envelope schema `{ items: T[]; nextCursor: string | null }`, and
   `t.pageQuery({ maxLimit })` the request query schema `{ cursor?: string; limit?: number }` (an over-limit
-  value fails validation). Runtime helpers `encodeCursor` / `decodeCursor` (opaque, URL-safe, edge-safe —
+  value fails validation). Runtime helpers `encodeCursor` / `decodeCursor` (opaque, URL-safe, edge-safe -
   no `Buffer`) and `paginate(rows, limit, cursorOf)` build a page from a `limit + 1` fetch. Cursor
-  pagination — not OFFSET — is the production default: stable under concurrent inserts, O(1) per page.
+  pagination - not OFFSET - is the production default: stable under concurrent inserts, O(1) per page.
 
   `t.pageQuery` coerces its `limit`: query values arrive as strings (`?limit=20` → `"20"`), so without
   coercion the integer `limit` could never validate a real request. Adds an opt-in `fromTypeBox(schema,
-{ coerce })` (runs TypeBox `Value.Convert` before `Check`) that `t.pageQuery` uses — body/JSON schemas
+{ coerce })` (runs TypeBox `Value.Convert` before `Check`) that `t.pageQuery` uses - body/JSON schemas
   stay strict.
 
 ## 1.0.0

@@ -26,7 +26,7 @@ const post = (key?: string): Request =>
   })
 
 describe("idempotency middleware", () => {
-  test("replays the first response on a retry with the same key — handler runs once", async () => {
+  test("replays the first response on a retry with the same key - handler runs once", async () => {
     const { app, calls } = counterApp({ store: new MemoryIdempotencyStore() })
 
     const first = await app.fetch(post("k1"))
@@ -83,7 +83,7 @@ describe("idempotency middleware", () => {
     expect(calls()).toBe(0) // the handler never ran
   })
 
-  test("the default key is route-scoped — the same key on a different path does not collide", async () => {
+  test("the default key is route-scoped - the same key on a different path does not collide", async () => {
     const store = new MemoryIdempotencyStore()
     const json = (v: unknown) =>
       new Response(JSON.stringify(v), {
@@ -107,7 +107,7 @@ describe("idempotency middleware", () => {
     expect(refund.headers.get("idempotent-replayed")).toBeNull()
   })
 
-  test("a 5xx is not cached — the lock releases so a retry re-runs the handler", async () => {
+  test("a 5xx is not cached - the lock releases so a retry re-runs the handler", async () => {
     let calls = 0
     const app = server()
       .use(idempotency({ store: new MemoryIdempotencyStore() }))

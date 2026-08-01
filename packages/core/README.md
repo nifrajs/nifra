@@ -30,7 +30,7 @@ import { defineAssurancePolicy } from "@nifrajs/core/assurance"
 
 - **Inline or contract-first.** Write routes inline (types inferred from the
   builder), or `defineContract(...)` + `implement(...)` for a decoupled, versionable
-  surface — handlers lift over unchanged.
+  surface - handlers lift over unchanged.
 - **Validation at the boundary.** Per-route `body`/`query` is any
   [Standard Schema](https://standardschema.dev) (zod/valibot/arktype, or `@nifrajs/schema`'s
   `t`); invalid input is rejected with a structured `422` before the handler runs.
@@ -96,7 +96,7 @@ ESM-only; requires Bun at runtime. MIT.
 
 ## For AI agents
 
-Start with [`LLM.md`](./LLM.md) — this package's contract card (the exports you call + its footguns),
+Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports you call + its footguns),
 one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the

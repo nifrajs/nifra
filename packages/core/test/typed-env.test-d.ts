@@ -7,7 +7,7 @@
 import { server, toFetchHandler } from "@nifrajs/core"
 import type { Equal, Expect } from "@nifrajs/test-utils"
 
-// An app's declared platform bindings — a Workers KV namespace + a secret string.
+// An app's declared platform bindings - a Workers KV namespace + a secret string.
 interface KVNamespace {
   get(key: string): Promise<string | null>
   put(key: string, value: string): Promise<void>
@@ -18,10 +18,10 @@ interface AppEnv {
 }
 
 // Declared once via `server<AppEnv>()`: every handler reads `c.env.MY_KV` / `c.env.API_SECRET` typed,
-// no per-binding cast. `tsc` checking this handler body IS the assertion — a stray cast or an
+// no per-binding cast. `tsc` checking this handler body IS the assertion - a stray cast or an
 // `unknown` `c.env` (the pre-fix state, which forced `kvFromEnv`/`readEnvString`) would error here.
 export const _typedApp = server<AppEnv>().get("/cached", async (c) => {
-  const cached = await c.env.MY_KV.get("k") // c.env is AppEnv — direct binding access, no guard
+  const cached = await c.env.MY_KV.get("k") // c.env is AppEnv - direct binding access, no guard
   return { cached, hasSecret: c.env.API_SECRET.length > 0 }
 })
 
@@ -31,11 +31,11 @@ const handler = toFetchHandler(_typedApp)
 type WorkerEnv = Parameters<typeof handler.fetch>[1]
 export type _WorkerEnvIsAppEnv = Expect<Equal<WorkerEnv, AppEnv>>
 
-// Negative: an UNDECLARED `server()` keeps `c.env: unknown` — the secure default. A
+// Negative: an UNDECLARED `server()` keeps `c.env: unknown` - the secure default. A
 // property access off it must NOT typecheck without first narrowing; `@ts-expect-error` proves it's
 // `unknown`, not silently `any` (an `any` `c.env` would make this access compile and fail the test).
 export const _untypedApp = server().get("/raw", (c) => {
-  // @ts-expect-error `c.env` is `unknown` when no `Env` is declared — validate before use.
+  // @ts-expect-error `c.env` is `unknown` when no `Env` is declared - validate before use.
   const kv = c.env.MY_KV
   return { kv }
 })

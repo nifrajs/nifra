@@ -1,6 +1,6 @@
 import type { ReactNode } from "react"
 
-/** Root layout — rendered inside the document shell `renderPage` emits. */
+/** Root layout - rendered inside the document shell `renderPage` emits. */
 export default function Layout(props: { children?: ReactNode }) {
   return (
     <main

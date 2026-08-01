@@ -1,6 +1,6 @@
 import { server } from "@nifrajs/core/server"
 
-// In-memory demo state. NOTE: on Workers this lives per-isolate (not shared/durable) — a real edge
+// In-memory demo state. NOTE: on Workers this lives per-isolate (not shared/durable) - a real edge
 // app would use KV / Durable Objects / D1 (reached via `c.env`). Fine for a single-isolate demo.
 let count = 0
 

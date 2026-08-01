@@ -34,7 +34,7 @@ function webhookRequest(body: string, headers: Record<string, string>): Request 
   })
 }
 
-describe("verifyWebhook — Stripe preset", () => {
+describe("verifyWebhook - Stripe preset", () => {
   const secret = "whsec_test_padded_to_at_least_32b"
   const payload = JSON.stringify({ id: "evt_1", type: "payment_intent.succeeded" })
 
@@ -94,7 +94,7 @@ describe("verifyWebhook — Stripe preset", () => {
   })
 })
 
-describe("verifyWebhook — GitHub preset", () => {
+describe("verifyWebhook - GitHub preset", () => {
   const secret = "ghsecret_padded_to_at_least_32byt"
   const payload = JSON.stringify({ action: "opened" })
 
@@ -124,7 +124,7 @@ describe("verifyWebhook — GitHub preset", () => {
   })
 })
 
-describe("verifyWebhook — generic", () => {
+describe("verifyWebhook - generic", () => {
   const secret = "s_padded_to_at_least_thirty_two_b"
   const payload = "raw-body"
 

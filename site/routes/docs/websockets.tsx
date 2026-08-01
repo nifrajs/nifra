@@ -1,12 +1,12 @@
 import { CodeBlock } from "../../highlight"
 import { pageMeta } from "../../meta"
 
-// Pure content page — no interactivity, so ship zero framework JS.
+// Pure content page - no interactivity, so ship zero framework JS.
 export const hydrate = false
 
 export const meta = pageMeta(
-  "Nifra — WebSockets",
-  "app.ws(path, handler) registers a typed WebSocket route — an upgrade guard, a portable socket, contract-validated messages, and topic pub/sub — served on Bun, Deno, Node, and Cloudflare Workers.",
+  "Nifra - WebSockets",
+  "app.ws(path, handler) registers a typed WebSocket route - an upgrade guard, a portable socket, contract-validated messages, and topic pub/sub - served on Bun, Deno, Node, and Cloudflare Workers.",
 )
 
 const BASIC = `import { server } from "@nifrajs/core/server"
@@ -22,9 +22,9 @@ const app = server()
 
 app.listen(3000) // Bun`
 
-const LIFECYCLE = `// doc-check: skip — illustrative lifecycle (empty close/error bodies, cookie shape).
+const LIFECYCLE = `// doc-check: skip - illustrative lifecycle (empty close/error bodies, cookie shape).
 app.ws<{ user: string }>("/chat", {
-  // upgrade(c) runs in the full HTTP request context, BEFORE the socket opens —
+  // upgrade(c) runs in the full HTTP request context, BEFORE the socket opens -
   // authenticate, check origin, rate-limit. Return the per-connection data (→ ws.data,
   // typed), or a Response to REJECT the upgrade. A thrown error rejects with 500.
   upgrade(c) {
@@ -38,13 +38,13 @@ app.ws<{ user: string }>("/chat", {
   error: (ws, err) => {}, // a throw in any callback routes here, never crashing the connection
 })`
 
-const SCHEMA = `// doc-check: skip — illustrative: validated inbound frames on an existing app.
+const SCHEMA = `// doc-check: skip - illustrative: validated inbound frames on an existing app.
 import { t } from "@nifrajs/schema"
 
 app.ws("/chat", {
   messageSchema: t.Object({ kind: t.Literal("say"), text: t.String({ maxLength: 500 }) }),
   message(ws, msg) {
-    // msg is typed { kind: "say"; text: string } — already parsed + validated.
+    // msg is typed { kind: "say"; text: string } - already parsed + validated.
     app.publish("room", msg.text)
   },
   onInvalidMessage(ws, issues) {
@@ -52,13 +52,13 @@ app.ws("/chat", {
   },
 })`
 
-const PUBSUB = `// doc-check: skip — illustrative pub/sub on an existing app.
+const PUBSUB = `// doc-check: skip - illustrative pub/sub on an existing app.
 app.ws("/room/:id", {
   open: (ws) => ws.subscribe("room"),
   message: (ws, text) => app.publish("room", text), // fan out to all subscribers
 })`
 
-const WORKERS = `// doc-check: skip — Workers entry: a Durable Object hub holds the connections.
+const WORKERS = `// doc-check: skip - Workers entry: a Durable Object hub holds the connections.
 import { createWebSocketHub, toFetchHandler } from "@nifrajs/workers"
 
 export const NifraWebSocketHub = createWebSocketHub(app) // bind as NIFRA_WS_HUB in wrangler.toml
@@ -72,22 +72,22 @@ export default function WebSockets() {
       <h1 className="page">WebSockets</h1>
       <p className="lead">
         <code>app.ws(path, handler)</code> registers a WebSocket route. It mirrors{" "}
-        <code>.get()</code>/<code>.post()</code> — chainable, with per-connection state typed
-        through a generic — and runs on every runtime nifra serves: Bun, Deno, Node, and Cloudflare
+        <code>.get()</code>/<code>.post()</code> - chainable, with per-connection state typed
+        through a generic - and runs on every runtime nifra serves: Bun, Deno, Node, and Cloudflare
         Workers.
       </p>
       <p>
         The WebSocket runtime ships as an opt-in plugin, so apps that never use it don’t bundle it.
         Enable it with <code>.use(websocket())</code> from <code>@nifrajs/core/ws</code>;{" "}
         <code>app.ws()</code> without it fails loud at registration with{" "}
-        <code>WS_RUNTIME_MISSING</code>. It installs on that server instance only — the same{" "}
+        <code>WS_RUNTIME_MISSING</code>. It installs on that server instance only - the same{" "}
         <code>.use()</code> opt-in as <code>mcp()</code> and <code>streaming()</code>.
       </p>
       <CodeBlock code={BASIC} />
 
       <h2>Lifecycle</h2>
       <p>
-        Every callback is optional — <code>{"{ message }"}</code> alone is a valid echo server.{" "}
+        Every callback is optional - <code>{"{ message }"}</code> alone is a valid echo server.{" "}
         <code>upgrade</code> is the only one that runs before the socket opens, so it’s the one place
         to reject a connection.
       </p>
@@ -153,15 +153,15 @@ export default function WebSockets() {
       <h2>Contract-validated messages</h2>
       <p>
         Inbound frames arrive raw (<code>string | Uint8Array</code>) by default. Add a{" "}
-        <code>messageSchema</code> — any{" "}
-        <a href="https://standardschema.dev">Standard Schema</a> (<code>t</code>, zod, valibot) — and
+        <code>messageSchema</code> - any{" "}
+        <a href="https://standardschema.dev">Standard Schema</a> (<code>t</code>, zod, valibot) - and
         nifra parses each frame as JSON, validates it, and hands <code>message</code> the typed
         value; anything that fails goes to <code>onInvalidMessage</code> instead (so a malformed
         frame can never reach your handler).
       </p>
       <CodeBlock code={SCHEMA} />
 
-      <h2>Pub/sub — app.publish</h2>
+      <h2>Pub/sub - app.publish</h2>
       <p>
         <code>ws.subscribe(topic)</code> joins a topic; <code>app.publish(topic, data)</code>{" "}
         broadcasts to everyone in it. Subscriptions drop automatically when a connection closes.
@@ -169,18 +169,18 @@ export default function WebSockets() {
       <CodeBlock code={PUBSUB} />
       <p>
         Bun, Deno, and Node are long-lived processes, so this works directly on a single instance.
-        Across a load balancer, <code>app.publish</code> only reaches sockets on the same instance —
+        Across a load balancer, <code>app.publish</code> only reaches sockets on the same instance -
         bridge an external fan-out (Redis pub/sub, NATS, a queue) to broadcast across all of them. On{" "}
         <strong>Cloudflare Workers</strong>, a stateless isolate can’t broadcast across connections,
         so nifra ships a Durable Object hub: <code>createWebSocketHub(app)</code> holds the
         connections, and <code>toFetchHandler(app, {"{ webSocketHub }"})</code> routes upgrades to it
-        — then <code>ws.subscribe</code> / <code>app.publish</code> behave exactly as on Bun.
+        - then <code>ws.subscribe</code> / <code>app.publish</code> behave exactly as on Bun.
       </p>
       <CodeBlock code={WORKERS} />
 
-      <h2>Serving — adapter-integrated, not app.fetch</h2>
+      <h2>Serving - adapter-integrated, not app.fetch</h2>
       <p>
-        A WebSocket upgrade can’t go through <code>app.fetch(Request)</code> — it needs the live
+        A WebSocket upgrade can’t go through <code>app.fetch(Request)</code> - it needs the live
         socket, which only the runtime’s serving layer holds. So WS is wired by each serving entry;{" "}
         <code>app.ws()</code> and the handler are identical everywhere.
       </p>
@@ -232,7 +232,7 @@ export default function WebSockets() {
         </tbody>
       </table>
       <p>
-        Node has no built-in WebSocket server, so <code>@nifrajs/node</code> uses <code>ws</code> — an
+        Node has no built-in WebSocket server, so <code>@nifrajs/node</code> uses <code>ws</code> - an
         optional peer dependency, lazy-imported on the first upgrade (a non-WS Node app never loads
         it). Install it when you use <code>app.ws()</code>; without it a WS upgrade gets a clean{" "}
         <code>501</code> and the HTTP routes are unaffected.

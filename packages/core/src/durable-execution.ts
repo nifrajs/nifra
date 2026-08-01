@@ -1,8 +1,8 @@
 /**
  * Durable capability execution primitives. This subpath is opt-in so the bare HTTP runtime stays
  * lean. Approval and journal records are token-only. Saga input, results, and compensation arguments
- * intentionally live only in the caller-supplied durable saga store — never in the effect ledger or
- * telemetry — and production stores should encrypt them according to the application's data policy.
+ * intentionally live only in the caller-supplied durable saga store - never in the effect ledger or
+ * telemetry - and production stores should encrypt them according to the application's data policy.
  */
 
 import { type EffectLifecycleObserver, emitEffectLifecycle } from "./effect-lifecycle.ts"

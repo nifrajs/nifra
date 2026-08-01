@@ -1,7 +1,7 @@
 /** @jsxImportSource preact */
 import type { ComponentChildren } from "preact"
 
-/** Root layout — wraps every page; the nav proves the layout renders + client nav works on Preact. */
+/** Root layout - wraps every page; the nav proves the layout renders + client nav works on Preact. */
 export default function Layout(props: { children?: ComponentChildren }) {
   return (
     <div>

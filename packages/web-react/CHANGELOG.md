@@ -16,7 +16,7 @@
   // routes/orgs/[org]/_layout.tsx
   export const gate = true                       // optional; see below
   export async function loader({ params, req }) {
-    return { org: await findOrg(params.org) }    // params is { org } — nothing deeper
+    return { org: await findOrg(params.org) }    // params is { org } - nothing deeper
   }
   export default function Layout({ data, children }) { … }
   ```
@@ -184,7 +184,7 @@
 
 ### Patch Changes
 
-- 3eb27ae: Tidy the `@nifrajs/web-react/query` module documentation comment. Docs only — no API or behavior change.
+- 3eb27ae: Tidy the `@nifrajs/web-react/query` module documentation comment. Docs only - no API or behavior change.
 - Updated dependencies [3eb27ae]
   - @nifrajs/web@1.9.1
   - @nifrajs/core@1.9.1
@@ -195,9 +195,9 @@
 
 ### Minor Changes
 
-- 0e1b4cc: Add a full React Query core on `@nifrajs/web-react/query` — `useQuery` (now with `enabled`/`staleTime`),
+- 0e1b4cc: Add a full React Query core on `@nifrajs/web-react/query` - `useQuery` (now with `enabled`/`staleTime`),
   `useMutation`, `useInfiniteQuery`, `useQueryClient`, `QueryClientProvider`, and the SSR
-  `HydrationBoundary` — a drop-in for the TanStack Query surface, backed by an expanded agnostic engine in
+  `HydrationBoundary` - a drop-in for the TanStack Query surface, backed by an expanded agnostic engine in
   `@nifrajs/web`.
 
   The engine (`createQueryClient`) gains imperative cache ops (`getQueryData`/`setQueryData` for optimistic
@@ -208,13 +208,13 @@
   client-side singleton (SSR-idle); with a `HydrationBoundary`-fed provider client, queries render their
   server-seeded data during SSR with no hydration flash.
 
-- 6b67833: Add first-class React routing bindings on the new `@nifrajs/web-react/router` subpath — `<Link>`,
-  `<NavLink>`, `useNavigate`, `useParams`, `useLocation`, `useSearchParams`, and `<Navigate>` — a
+- 6b67833: Add first-class React routing bindings on the new `@nifrajs/web-react/router` subpath - `<Link>`,
+  `<NavLink>`, `useNavigate`, `useParams`, `useLocation`, `useSearchParams`, and `<Navigate>` - a
   drop-in replacement for `react-router-dom`'s routing surface over nifra's own file-based router.
 
   The read hooks are SSR-correct: `@nifrajs/web` now threads the matched route's `params` and the
   request `path` (`pathname + search`) through the render seam (`RenderProps`), and the React adapter's
-  `compose` provides them via a `RouterContext` on both the server render and the client mount — so
+  `compose` provides them via a `RouterContext` on both the server render and the client mount - so
   `useParams`/`useLocation`/`useSearchParams` return the same value on each side with no hydration
   mismatch. Programmatic navigation flows through a new DOM-free bridge (`getBrowserNavigate` /
   `setBrowserNavigate`, populated by `installHistory`), which also gains history `replace` support, so a

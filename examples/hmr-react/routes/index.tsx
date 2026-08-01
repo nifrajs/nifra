@@ -3,7 +3,7 @@ import type { backend } from "../backend"
 import { Counter } from "../components/Counter"
 
 export const meta = {
-  title: "nifra — HMR (React)",
+  title: "nifra - HMR (React)",
   meta: [{ name: "description", content: "True HMR via @nifrajs/web/vite" }],
 }
 

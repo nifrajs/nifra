@@ -1,5 +1,5 @@
 /**
- * nifra + React ISR bench — `withISR` caches GET HTML; runner warms the store before measuring.
+ * nifra + React ISR bench - `withISR` caches GET HTML; runner warms the store before measuring.
  */
 import { createWebApp, MemoryCacheStore, withISR } from "@nifrajs/web"
 import type { BuildManifest } from "@nifrajs/web/build"

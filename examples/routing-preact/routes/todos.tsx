@@ -5,7 +5,7 @@ import { useFetcher } from "@nifrajs/web-preact/fetcher"
 import { useQuery, useQueryClient } from "@nifrajs/web-preact/query"
 import type { backend } from "../backend"
 
-// A keyed query for client-interactive data — distinct from the route loader. It fetches the home
+// A keyed query for client-interactive data - distinct from the route loader. It fetches the home
 // route's count (data-mode GET), caches it under ["count"], and "refresh" invalidates that key to
 // refetch (showing `isFetching` over the cached value). Proves useQuery + useQueryClient on Preact.
 function CountQuery() {
@@ -27,7 +27,7 @@ function CountQuery() {
 }
 
 export const meta = {
-  title: "nifra + Preact — Todos (fetchers + query)",
+  title: "nifra + Preact - Todos (fetchers + query)",
   meta: [{ name: "description", content: "nifra Preact bindings: useFetcher + useQuery" }],
 }
 
@@ -54,7 +54,7 @@ export async function action({ request, api }: ActionArgs<typeof backend>) {
 }
 
 // A todo row with its OWN bump fetcher. Submitting runs in an independent, concurrent state, so many
-// rows can bump at once — each showing its own pending — without disturbing the list or each other.
+// rows can bump at once - each showing its own pending - without disturbing the list or each other.
 function TodoRow(props: { todo: { id: number; text: string } }) {
   const fetcher = useFetcher(`bump-${props.todo.id}`)
   const onBump = (): void => {

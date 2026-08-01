@@ -1,5 +1,5 @@
 /**
- * nifra SSR + Vue — the SAME `renderPage` seam as the React/Solid examples, with the Vue adapter.
+ * nifra SSR + Vue - the SAME `renderPage` seam as the React/Solid examples, with the Vue adapter.
  * Proof the @nifrajs/web seam is framework-agnostic: only the adapter import + the components change.
  *
  *   bun run examples/web-vue/build.ts
@@ -16,7 +16,7 @@ const clientJs = await Bun.file(`${import.meta.dir}/dist/client.js`)
   .catch(() => "// run build.ts first")
 
 function loader(): PageData {
-  return { message: "nifra SSR + Vue — same renderPage, different adapter", start: 41 }
+  return { message: "nifra SSR + Vue - same renderPage, different adapter", start: 41 }
 }
 
 const app = server()

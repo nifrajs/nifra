@@ -76,7 +76,7 @@ describe("formatDiff", () => {
     }
     const text = formatDiff(diff)
     expect(text.indexOf("✖ breaking")).toBeLessThan(text.indexOf("✓ compatible"))
-    expect(text).toContain("1 breaking change — existing clients will fail.")
+    expect(text).toContain("1 breaking change - existing clients will fail.")
     expect(formatDiff({ hasBreaking: false, changes: [] })).toBe("No API contract changes.")
   })
 })

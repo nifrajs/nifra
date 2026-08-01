@@ -1,11 +1,11 @@
 import type { ClientRouter, Fetcher, FetcherState } from "@nifrajs/web"
 /**
- * `@nifrajs/web-vue/fetcher` — Vue bindings for concurrent fetchers. `useFetcher(key)` subscribes a
+ * `@nifrajs/web-vue/fetcher` - Vue bindings for concurrent fetchers. `useFetcher(key)` subscribes a
  * component to an independent {@link Fetcher} (a `shallowRef` fed by `fetcher.subscribe`, cleaned up via
  * `onScopeDispose`) and returns its reactive state plus `load`/`submit`; `useFetchers()` subscribes to
  * the whole live collection. Imports only `vue` + `@nifrajs/web` types.
  *
- * The router that owns the fetchers is the one `mountRouter` hydrated — it registers itself here via
+ * The router that owns the fetchers is the one `mountRouter` hydrated - it registers itself here via
  * `setMountedRouter`. On the server (no mount) there is no router, so the composables return an idle
  * state (fetchers are client-only); the first client render after `mountRouter` starts from the same
  * idle snapshot, so there's no hydration mismatch.
@@ -16,7 +16,7 @@ import { onScopeDispose, type ShallowRef, shallowRef } from "vue"
 // page, and fetchers never exist on the server. Shared with `client.ts`'s `mountRouter`.
 let mountedRouter: ClientRouter | undefined
 
-/** Register (or clear) the router that owns fetchers — called by `mountRouter`. Not for app use. */
+/** Register (or clear) the router that owns fetchers - called by `mountRouter`. Not for app use. */
 export function setMountedRouter(router: ClientRouter | undefined): void {
   mountedRouter = router
 }
@@ -52,7 +52,7 @@ export function useFetcher(key: string): FetcherHandle {
 }
 
 /**
- * Subscribe to the whole live fetcher collection — for a global busy view (e.g. "3 saving…"). Read
+ * Subscribe to the whole live fetcher collection - for a global busy view (e.g. "3 saving…"). Read
  * each entry's `.snapshot()` for its state. The ref updates whenever any fetcher transitions or a new
  * one is created.
  */

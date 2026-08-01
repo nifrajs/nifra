@@ -1,5 +1,5 @@
 /**
- * Route manifest — the fs-free heart of file-based routing. Maps route file paths to nifra
+ * Route manifest - the fs-free heart of file-based routing. Maps route file paths to nifra
  * router patterns + their nested layout chain. `discoverRoutes` (in `@nifrajs/web/fs`) scans
  * the filesystem and feeds `buildManifest`; everything here is pure logic, so it stays
  * portable (no fs, no DOM) and fully unit-testable. Edge deploys pre-build the manifest.
@@ -11,7 +11,7 @@ import type { StandardSchemaV1 } from "@nifrajs/core/server"
 export interface LoaderContext {
   readonly params: Record<string, string>
   readonly request: Request
-  /** Alias of {@link request} — mirrors a route handler's `c.req` so the same name works in both. */
+  /** Alias of {@link request} - mirrors a route handler's `c.req` so the same name works in both. */
   readonly req: Request
   readonly api: unknown
   /** Platform bindings forwarded from the request `c.env` (Workers env/KV/D1). Opaque here. */
@@ -30,14 +30,14 @@ export type Loader = (ctx: LoaderContext) => unknown | Promise<unknown>
 
 /**
  * A route's optional mutation, run on POST. Shares the loader context (params/request/api);
- * read the form/JSON body off `request`. Returns either a `Response` (e.g. a redirect —
+ * read the form/JSON body off `request`. Returns either a `Response` (e.g. a redirect -
  * passed straight through) or data, surfaced to the page component as `actionData`.
  */
 export type Action = (ctx: LoaderContext) => unknown | Promise<unknown>
 
 /**
  * One `<link>` tag's attributes for a route/layout's `meta.link`. The common HTML `<link>` attributes
- * are spelled out and **optional** so a typed partial like `{ rel, href, hreflang }` is assignable —
+ * are spelled out and **optional** so a typed partial like `{ rel, href, hreflang }` is assignable -
  * the previous `Record<string, string>` required *every* value to be a present string, which rejected
  * exactly that idiomatic shape (the bug this fixes). Standard attributes are explicit and the template
  * index signature admits inert `data-*` metadata without opening executable `on*` attributes. `boolean`
@@ -79,10 +79,10 @@ export interface MetaDescriptor {
   readonly [attr: `data-${string}`]: string | undefined
 }
 
-/** One `<script>` element a route contributes to `<head>` — for structured data (JSON-LD) and other
+/** One `<script>` element a route contributes to `<head>` - for structured data (JSON-LD) and other
  * inert, non-executable head scripts. The `content` is the script body; `type` defaults to
  * `"application/ld+json"` (the common case). The renderer escapes `content` against an HTML breakout
- * (`</`, `<!--`, `]]>`) — see `escapeScriptContent` — so a JSON-LD payload can never close the
+ * (`</`, `<!--`, `]]>`) - see `escapeScriptContent` - so a JSON-LD payload can never close the
  * `<script>` element early. `content` is **JSON/text, never raw HTML**: this slot is not an XSS escape
  * hatch for arbitrary markup. */
 export type InertScriptType = "application/ld+json" | "application/json"
@@ -103,10 +103,10 @@ export interface UnsafeScriptDescriptor {
 }
 
 /**
- * The document head a route contributes — title + `<meta>`/`<link>`/`<script>` tag sets. Returned by a
+ * The document head a route contributes - title + `<meta>`/`<link>`/`<script>` tag sets. Returned by a
  * route/layout `meta` (statically, or from a {@link MetaArgs} function). Every value is serialized into
  * managed (`data-nifra`) head tags: tag-specific attribute allowlists reject event handlers and active
- * URL/refresh contexts, values are HTML-escaped at render, and `script[].content` is breakout-escaped —
+ * URL/refresh contexts, values are HTML-escaped at render, and `script[].content` is breakout-escaped -
  * so loader-derived strings (LLM-authored `og:*`, user content) are XSS-safe by construction.
  * Layout-chain heads merge with the page's via `mergeHeads` (arrays concat outermost→page; `title` is
  * nearest-wins). Build `og:*`/`twitter:*` with `openGraph(...)`, canonical with `canonical(...)`, and
@@ -121,16 +121,16 @@ export interface Meta {
   /** Executable inline scripts. Prefer external modules; construct only with `unsafeInlineScript()`. */
   readonly unsafeScript?: readonly UnsafeScriptDescriptor[]
   /**
-   * The document language — `<html lang="...">`. Nearest-wins like `title`, so a localized route can
+   * The document language - `<html lang="...">`. Nearest-wins like `title`, so a localized route can
    * override a layout's default. Defaults to `"en"` when no head in the chain sets it.
    *
    * This is the ONLY way to set it: the shell's `<html>` is framework-owned, so a multilingual app
-   * otherwise serves every URL as `lang="en"` — which tells a screen reader to pronounce every locale
+   * otherwise serves every URL as `lang="en"` - which tells a screen reader to pronounce every locale
    * with an English voice, and suppresses the browser's translation offer.
    */
   readonly lang?: string
   /**
-   * The document writing direction — `<html dir="...">`. Nearest-wins like `title`. Omitted from the
+   * The document writing direction - `<html dir="...">`. Nearest-wins like `title`. Omitted from the
    * shell when unset, which is HTML's `ltr` default, so an LTR app's output is byte-identical.
    *
    * Required for Arabic/Hebrew/Urdu/Persian: without it the browser lays the page out left-to-right
@@ -141,7 +141,7 @@ export interface Meta {
 
 /**
  * Args for a route's `meta` function: the loader's `data` + the route `params` + the request `origin`.
- * `meta()` runs in BOTH SSR and client navigation, so it has **no `request`/`process.env`/server access** —
+ * `meta()` runs in BOTH SSR and client navigation, so it has **no `request`/`process.env`/server access** -
  * `origin` is the only server-resolved fact it gets (so you needn't thread `siteUrl` through loader data
  * for absolute `og:url`/`canonical`/`og:image` URLs). See {@link origin}.
  */
@@ -149,10 +149,10 @@ export interface MetaArgs<Data = unknown> {
   readonly data: Data
   readonly params: Record<string, string>
   /**
-   * The site origin — scheme + host (+ port), e.g. `"https://news.example.com"`, **with no trailing
+   * The site origin - scheme + host (+ port), e.g. `"https://news.example.com"`, **with no trailing
    * slash**. The single piece of server/env knowledge `meta()` otherwise can't see: it runs in BOTH
    * SSR and client navigation, so it has no `request`/`process.env`. The framework resolves it from the
-   * request URL during SSR and from `location.origin` on client nav — and they match, so an absolute
+   * request URL during SSR and from `location.origin` on client nav - and they match, so an absolute
    * `og:url`/`canonical`/`og:image` built from it never drifts between the server-rendered `<head>` and
    * a soft-nav. Use it for absolute URLs (`origin + "/posts/" + slug`) instead of threading `siteUrl`
    * through loader data. Empty string (`""`) when the origin is unknown (e.g. a hand-built test render
@@ -162,7 +162,7 @@ export interface MetaArgs<Data = unknown> {
 }
 
 /** A route's `meta`: a static {@link Meta}, or a function of the loader data + params + the request
- * origin ({@link MetaArgs}). Use the `origin` arg for absolute `canonical`/`og:url`/`og:image` URLs —
+ * origin ({@link MetaArgs}). Use the `origin` arg for absolute `canonical`/`og:url`/`og:image` URLs -
  * it's resolved server-side from the request and matches the client's `location.origin`. */
 export type MetaInput = Meta | ((args: MetaArgs) => Meta)
 
@@ -177,7 +177,7 @@ export interface StaticPaths {
   readonly paths: readonly StaticPath[]
   /**
    * How a path NOT in `paths` is handled. `"ssr"` (default) → rendered on-demand by the worker
-   * (the natural hybrid behavior — an unlisted path simply isn't a static file); `"404"` → only the
+   * (the natural hybrid behavior - an unlisted path simply isn't a static file); `"404"` → only the
    * listed paths exist. Recorded by `prerenderRoutes` for the deploy layer.
    */
   readonly fallback?: "ssr" | "404"
@@ -186,7 +186,7 @@ export interface StaticPaths {
 /** A dynamic route's build-time param enumeration (the SSG equivalent of "which pages exist"). */
 export type GetStaticPaths = () => StaticPaths | Promise<StaticPaths>
 
-/** A route module — the default component + optional loader / action / meta. */
+/** A route module - the default component + optional loader / action / meta. */
 export interface RouteModule {
   readonly default: unknown
   readonly loader?: Loader
@@ -212,12 +212,12 @@ export interface RouteModule {
   /**
    * Opt a **static** route (no `:param`/`*`) into build-time prerendering (SSG): `prerenderRoutes`
    * (from `@nifrajs/web/build`) renders it to a static `index.html` at build. The loader runs at build
-   * with the in-process `api` (build-safe data only — no per-request cookies/secrets); `defer()` on a
+   * with the in-process `api` (build-safe data only - no per-request cookies/secrets); `defer()` on a
    * prerendered route resolves at build. For **dynamic** routes use {@link getStaticPaths} instead.
    */
   readonly prerender?: boolean
   /**
-   * Enumerate the concrete params to prerender for a **dynamic** (`:param`) route — the SSG path list
+   * Enumerate the concrete params to prerender for a **dynamic** (`:param`) route - the SSG path list
    * (blogs/docs/etc.). Runs at build; `prerenderRoutes` renders one `index.html` per returned path.
    */
   readonly getStaticPaths?: GetStaticPaths
@@ -229,7 +229,7 @@ export interface RouteModule {
   readonly revalidate?: number
   /**
    * No-framework island bundles (`@nifrajs/web/islands`) to load on this route, as `<script
-   * type="module">` in the document tail. Loaded **regardless of `hydrate`** — pair with
+   * type="module">` in the document tail. Loaded **regardless of `hydrate`** - pair with
    * `export const hydrate = false` for a static page that ships zero framework JS and mounts
    * interactivity through `<Island>` markers + `mountIslands` enhancers instead.
    */
@@ -239,7 +239,7 @@ export interface RouteModule {
 /** A layout (or `_404`/`_error`) entry: its source file (for client codegen) + a lazy loader.
  *
  * A `_layout.tsx` may export `meta` (static {@link Meta} or a function of the loader data + params,
- * same shape as a route's) to contribute sitewide `<head>` tags — `hreflang`/`preconnect`/etc. that
+ * same shape as a route's) to contribute sitewide `<head>` tags - `hreflang`/`preconnect`/etc. that
  * belong on every page under the layout. The layout chain's heads merge with the page's: arrays
  * (`meta`/`link`) concatenate outermost→innermost→page; scalars (`title`) are nearest-wins (the page
  * overrides an inner layout, which overrides an outer one). See `mergeHeads` in `@nifrajs/web`. */
@@ -288,7 +288,7 @@ export interface Manifest {
 
 // `.svelte` and `.vue` routes are supported too: their `default` export is the component and
 // `loader`/`action`/`meta` come from a module-level script block (Svelte `<script module>`, Vue's plain
-// `<script>`) as named ESM exports — the same RouteModule shape as `.tsx`. Both compile via their
+// `<script>`) as named ESM exports - the same RouteModule shape as `.tsx`. Both compile via their
 // package's Bun plugin (`@nifrajs/web-svelte/plugin`, `@nifrajs/web-vue/plugin`).
 const ROUTE_EXT = /\.(tsx|jsx|svelte|vue|mdx)$/
 const PARAM = /^\[([A-Za-z_][A-Za-z0-9_]*)\]$/
@@ -297,7 +297,7 @@ const CATCH_ALL = /^\[\.\.\.([A-Za-z_][A-Za-z0-9_]*)\]$/
 // two patterns (`:lang` present / absent), so `[[lang]]/about` serves both `/about` and `/en/about`.
 const OPTIONAL = /^\[\[([A-Za-z_][A-Za-z0-9_]*)\]\]$/
 // A route group: a `(name)` folder organizes routes (and can hold its own `_layout`) without
-// contributing a URL segment — mirrors Next/Remix. Requires content between the parens.
+// contributing a URL segment - mirrors Next/Remix. Requires content between the parens.
 const GROUP = /^\(.+\)$/
 // A terminal status page: `_410.tsx`, `_451.tsx`. `_404` is matched before this and stays its own
 // thing. Restricted to 3 digits so `_401k` or `_4` is treated as an ordinary underscore-prefixed
@@ -315,7 +315,7 @@ const errorIdFor = (dir: string): string => (dir === "" ? "_error" : `${dir}/_er
  * Derive **every** nifra router pattern a route file maps to (relative to the routes dir):
  * `index` → the parent path, `[id]` → `:id`, `[...slug]` → `*slug` (catch-all, captures the rest of
  * the path into one param), `(group)` folders are dropped from the URL (organization only), and an
- * optional `[[lang]]` expands the set — once with the segment present (`:lang`) and once absent. A file
+ * optional `[[lang]]` expands the set - once with the segment present (`:lang`) and once absent. A file
  * with no optionals yields exactly one pattern. Throws on an invalid param or a catch-all that isn't
  * the last segment.
  */
@@ -352,12 +352,12 @@ function mixedFileSegment(seg: string, file: string): string | undefined {
     const inner = marker[1] ?? ""
     if (inner.startsWith("...")) {
       throw new Error(
-        `[nifra/web] catch-all "[${inner}]" cannot be combined with literal text in "${file}" (segment "${seg}") — a catch-all captures the rest of the path, so a trailing literal can never match. Give it its own segment.`,
+        `[nifra/web] catch-all "[${inner}]" cannot be combined with literal text in "${file}" (segment "${seg}") - a catch-all captures the rest of the path, so a trailing literal can never match. Give it its own segment.`,
       )
     }
     if (inner.startsWith("[")) {
       throw new Error(
-        `[nifra/web] optional "[${inner}]]" cannot be combined with literal text in "${file}" (segment "${seg}") — there is no sensible form for the segment when it is absent. Use a required [name], or give the optional its own segment.`,
+        `[nifra/web] optional "[${inner}]]" cannot be combined with literal text in "${file}" (segment "${seg}") - there is no sensible form for the segment when it is absent. Use a required [name], or give the optional its own segment.`,
       )
     }
     if (!FILE_PARAM_NAME.test(inner)) {
@@ -413,11 +413,11 @@ export function filePathToRoutes(file: string): FileRoutePattern[] {
       continue
     }
     if (GROUP.test(seg)) {
-      // Route group — no URL segment (its `_layout` still applies, keyed by dir).
+      // Route group - no URL segment (its `_layout` still applies, keyed by dir).
       mark()
       continue
     }
-    // A segment that is part literal, part `[param]` — `[inKey].txt`, `post-[id].html`. Checked
+    // A segment that is part literal, part `[param]` - `[inKey].txt`, `post-[id].html`. Checked
     // before the whole-segment forms below, which only handle a marker spanning the entire segment.
     const mixed = mixedFileSegment(seg, file)
     if (mixed !== undefined) {
@@ -466,7 +466,7 @@ export function filePathToRoutes(file: string): FileRoutePattern[] {
 }
 
 /**
- * The **canonical** single pattern for a route file — all optional segments present. A file with no
+ * The **canonical** single pattern for a route file - all optional segments present. A file with no
  * optionals yields its one pattern. Use {@link filePathToPatterns} to get every pattern (optionals
  * expand the set).
  */
@@ -510,7 +510,7 @@ const ancestorDirs = (file: string): string[] => {
 
 /**
  * Build a manifest from route file paths (relative to the routes dir) + an `importer` that
- * turns a path into a lazy module loader. Pure — no fs. Throws at boot (the loud-and-early
+ * turns a path into a lazy module loader. Pure - no fs. Throws at boot (the loud-and-early
  * RouteConfigError ethos) on duplicate patterns. `_layout`/`_404`/`_error` files are special; other
  * `_`-prefixed files are ignored (private/colocated, never routed).
  */
@@ -618,7 +618,7 @@ export function fillRoutePattern(
 /** The static-routing facts a server needs from the route modules: which concrete paths are
  * prerendered, plus each dynamic route's `getStaticPaths` fallback policy. */
 export interface StaticRoutes {
-  /** Concrete prerendered paths — static `prerender` routes + each `getStaticPaths` entry. */
+  /** Concrete prerendered paths - static `prerender` routes + each `getStaticPaths` entry. */
   readonly paths: string[]
   /** Per dynamic route pattern, its `getStaticPaths` `fallback` (`"ssr"` default). `createWebApp` uses
    * `"404"` to reject an unlisted path under that route at runtime (the path simply doesn't exist). */
@@ -626,7 +626,7 @@ export interface StaticRoutes {
 }
 
 /**
- * Enumerate the static-routing facts `prerenderRoutes` would produce — static routes opted in via
+ * Enumerate the static-routing facts `prerenderRoutes` would produce - static routes opted in via
  * `export const prerender = true`, each `getStaticPaths` entry of a dynamic route, and each dynamic
  * route's `fallback` policy. Pure (no rendering), so a server can compute what to hand `createWebApp`
  * (the prerendered set for the client's static-`_data.json` soft-nav + the fallback map for

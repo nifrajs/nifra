@@ -1,12 +1,12 @@
 /**
  * Zero-config app discovery. The CLI reads a few conventions from the project root:
- *   - `routes/`         — the file-based routes (per `@nifrajs/web/fs`).
- *   - `nifra.config.ts`  — the CLI's framework wiring (see {@link NifraFramework}); `framework.ts` is
+ *   - `routes/`         - the file-based routes (per `@nifrajs/web/fs`).
+ *   - `nifra.config.ts`  - the CLI's framework wiring (see {@link NifraFramework}); `framework.ts` is
  *                         used as a fallback. One of the two is required.
- *   - `backend.ts`      — exports `backend` (a `@nifrajs/core` server, the contract). Optional.
+ *   - `backend.ts`      - exports `backend` (a `@nifrajs/core` server, the contract). Optional.
  *
  * Why two filenames: a multi-target app's edge entry (`_worker.ts`) imports `framework.ts` for the
- * render adapter, so `framework.ts` must stay edge-bundlable — it can't reference Vite plugins or the
+ * render adapter, so `framework.ts` must stay edge-bundlable - it can't reference Vite plugins or the
  * SFC compiler (Bun would pull them into the `target:"browser"` worker and fail on `child_process`).
  * `nifra.config.ts` holds that build/dev tooling instead: it's imported ONLY by this CLI (which runs on
  * Bun), so its Vite plugin + SFC-compiler imports (`@vitejs/plugin-vue`, `@nifrajs/web-vue/plugin`) never
@@ -17,9 +17,9 @@ import { resolve } from "node:path"
 import { checkPipelineSeparation } from "./pipeline-guard.ts"
 
 /**
- * A plugin list — either an array, or a **thunk** that returns one (optionally async). Both forms are
+ * A plugin list - either an array, or a **thunk** that returns one (optionally async). Both forms are
  * accepted; {@link resolvePlugins} normalizes them. The thunk is just a convenience for deferring a
- * plugin's construction — it does NOT make a plugin edge-safe (Bun.build follows a dynamic `import()`
+ * plugin's construction - it does NOT make a plugin edge-safe (Bun.build follows a dynamic `import()`
  * even from an unused export, so a Vite/compiler import in an edge-bundled file fails regardless). Edge
  * safety comes from WHERE the config lives: keep these fields in `nifra.config.ts` (CLI-only), not in
  * the edge-imported `framework.ts`. See the module header.
@@ -29,7 +29,7 @@ export type PluginsField =
   | (() => readonly unknown[] | Promise<readonly unknown[]>)
 
 /**
- * The CLI's framework wiring — exported from `nifra.config.ts` (or `framework.ts` as a fallback).
+ * The CLI's framework wiring - exported from `nifra.config.ts` (or `framework.ts` as a fallback).
  * `create-nifra` generates it. Only `adapter` + `clientModule` are required; the plugin/condition
  * fields are framework-specific extras (Vue/Svelte/Solid need them; React/Preact don't).
  */
@@ -43,7 +43,7 @@ export interface NifraFramework {
   /** Bun build plugins that compile routes for the CLIENT bundle (`nifra build`), e.g.
    * `[vueBunPlugin("dom")]`. React/Preact JSX is Bun-native → none. */
   readonly clientPlugins?: PluginsField
-  /** Bun runtime plugins that compile routes for SSR — `nifra dev` (Bun-native route import) and
+  /** Bun runtime plugins that compile routes for SSR - `nifra dev` (Bun-native route import) and
    * `nifra start` register them via `Bun.plugin`, e.g. `[vueBunPlugin("ssr")]`. React/Preact → none. */
   readonly serverPlugins?: PluginsField
   /** Extra Bun.build / Vite resolve conditions, e.g. Solid's `["solid"]`. */
@@ -109,7 +109,7 @@ export interface LoadAppOptions {
 }
 
 /**
- * Root-level monorepo config — exported from `nifra.config.ts` at the workspace root.
+ * Root-level monorepo config - exported from `nifra.config.ts` at the workspace root.
  * Each key in `apps` is the short name used to namespace MCP tools (`nifra_<name>_context` etc.);
  * each value is a path relative to the root that contains its own `nifra.config.ts` / `framework.ts`.
  *
@@ -145,7 +145,7 @@ export async function detectMonorepo(
 
 /**
  * Load all apps declared in a monorepo config. Returns `{ name, cwd, app }[]` in declaration order.
- * Individual app load failures throw — each app must be valid.
+ * Individual app load failures throw - each app must be valid.
  */
 export async function loadMonorepoApps(
   rootCwd: string,
@@ -187,7 +187,7 @@ export async function loadApp(
   }
   if (!existsSync(resolve(cwd, "routes"))) {
     throw new Error(
-      `[nifra] no routes/ directory in ${cwd} — nifra apps are file-routed under routes/.`,
+      `[nifra] no routes/ directory in ${cwd} - nifra apps are file-routed under routes/.`,
     )
   }
   const fw = (await importWithQuery(configPath, options.importQuery)) as Partial<NifraFramework>

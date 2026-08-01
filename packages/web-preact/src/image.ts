@@ -1,14 +1,14 @@
 /**
- * `@nifrajs/web-preact/image` — a CLS-safe responsive Preact `<Image>`. A thin wrapper over `resolveImage`
+ * `@nifrajs/web-preact/image` - a CLS-safe responsive Preact `<Image>`. A thin wrapper over `resolveImage`
  * from `@nifrajs/image`: it computes the responsive `<img>` attributes (`src`/`srcset`/`sizes`/`width`/
- * `height`/`loading`/`decoding`/`fetchpriority` — Preact uses lowercase HTML attribute names, so it
+ * `height`/`loading`/`decoding`/`fetchpriority` - Preact uses lowercase HTML attribute names, so it
  * spreads `toHtmlAttrs`) and forwards any extra DOM props (`class`, `style`, `id`, `data-*`, handlers).
  * Resizing is delegated to the `loader` (an image CDN); nifra bundles no codec. No JSX (`h`).
  */
 import { type ImageLoader, type ImageProps, resolveImage, toHtmlAttrs } from "@nifrajs/image"
 import { h, type JSX, type VNode } from "preact"
 
-/** Attributes `resolveImage` computes — callers can't override them via DOM passthrough. */
+/** Attributes `resolveImage` computes - callers can't override them via DOM passthrough. */
 type ComputedAttrs =
   | "src"
   | "srcset"
@@ -23,7 +23,7 @@ type ComputedAttrs =
 export interface ImageComponentProps
   extends ImageProps,
     Omit<JSX.IntrinsicElements["img"], ComputedAttrs | keyof ImageProps> {
-  /** CDN URL builder. Defaults to the identity loader (no transform — still CLS-safe + lazy). */
+  /** CDN URL builder. Defaults to the identity loader (no transform - still CLS-safe + lazy). */
   readonly loader?: ImageLoader
 }
 

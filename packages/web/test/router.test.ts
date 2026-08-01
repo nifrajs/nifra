@@ -233,7 +233,7 @@ describe("createClientRouter", () => {
   test("the default fetchData GETs loader JSON with the X-Nifra-Data header", async () => {
     const calls: Array<{ url: string; header: string | null }> = []
     const realFetch = globalThis.fetch
-    // cast: minimal fetch stub for the test — only the (url, init) shape is exercised.
+    // cast: minimal fetch stub for the test - only the (url, init) shape is exercised.
     globalThis.fetch = (async (url: string, init?: RequestInit) => {
       calls.push({ url: String(url), header: new Headers(init?.headers).get("x-nifra-data") })
       return new Response(JSON.stringify({ id: "9" }), {
@@ -364,7 +364,7 @@ describe("createClientRouter", () => {
       const r = createClientRouter({ patterns, initial })
       await r.navigate("/users/9")
       expect(r.snapshot().data).toEqual({ id: "static" })
-      // Fetched the static file (no x-nifra-data header) — not the dynamic worker route.
+      // Fetched the static file (no x-nifra-data header) - not the dynamic worker route.
       expect(calls).toEqual([{ url: "/users/9/_data.json", header: null }])
     } finally {
       globalThis.fetch = realFetch
@@ -415,7 +415,7 @@ describe("createClientRouter", () => {
     expect(fetches).toBe(1) // prefetch fetched the data
     expect(notified).toBe(0) // ...but published no state (no re-render)
     await r.navigate("/users/7")
-    expect(fetches).toBe(1) // navigate reused the prefetched data — no second fetch
+    expect(fetches).toBe(1) // navigate reused the prefetched data - no second fetch
     expect(r.snapshot().data).toEqual({ id: "7" })
     await r.navigate("/users/7")
     expect(fetches).toBe(2) // one-shot: the cached entry was consumed, so this refetches
@@ -437,7 +437,7 @@ describe("createClientRouter", () => {
     expect(fetches).toBe(1)
   })
 
-  test("prefetch cache is bounded — evicts the oldest past the cap", async () => {
+  test("prefetch cache is bounded - evicts the oldest past the cap", async () => {
     let fetches = 0
     const r = createClientRouter({
       patterns,
@@ -504,7 +504,7 @@ describe("createClientRouter", () => {
       fetchData: async (_p, m, signal) => {
         calls += 1
         if (calls === 1) {
-          // the submit's revalidation fetch — hang so a navigation can supersede it mid-flight
+          // the submit's revalidation fetch - hang so a navigation can supersede it mid-flight
           revalSignal = signal
           await new Promise<void>((res) => {
             releaseReval = res
@@ -561,7 +561,7 @@ describe("createClientRouter", () => {
     }
   })
 
-  test("a fetcher load that FAILS doesn't set loadedPath — no spurious revalidation refetch", async () => {
+  test("a fetcher load that FAILS doesn't set loadedPath - no spurious revalidation refetch", async () => {
     const realFetch = globalThis.fetch
     // A mutation POST that declares it changed /users/7 (the path whose load failed).
     globalThis.fetch = (async (_url: string, _init?: RequestInit) =>
@@ -587,7 +587,7 @@ describe("createClientRouter", () => {
       // With the bug, `failer` (loadedPath wrongly === "/users/7") would refetch it; with the fix it
       // never showed /users/7, so it doesn't.
       await r.fetcher("mutator").submit("/things", new URLSearchParams())
-      expect(calls).toEqual(["/users/7"]) // still just one — no spurious refetch by `failer`
+      expect(calls).toEqual(["/users/7"]) // still just one - no spurious refetch by `failer`
     } finally {
       globalThis.fetch = realFetch
     }
@@ -691,7 +691,7 @@ describe("createClientRouter", () => {
     } finally {
       globalThis.fetch = realFetch
     }
-    // Revert: submission gone, pending cleared, and `data` is the untouched pre-submit value — so
+    // Revert: submission gone, pending cleared, and `data` is the untouched pre-submit value - so
     // the optimistic entry vanishes and the original list shows through (no special handling).
     expect(r.snapshot().submission).toBeUndefined()
     expect(r.snapshot().pending).toBe(false)
@@ -819,7 +819,7 @@ describe("createClientRouter", () => {
     expect(r.snapshot().pending).toBe(false)
   })
 
-  test("the keyed cache is bounded — navigating past the cap evicts without error", async () => {
+  test("the keyed cache is bounded - navigating past the cap evicts without error", async () => {
     let n = 0
     const r = createClientRouter({
       patterns,
@@ -857,7 +857,7 @@ describe("createClientRouter", () => {
     })
     try {
       // revalidate:false would normally skip the loader, but the server explicitly listed the active
-      // path as changed — so it refetches anyway (stale data would be wrong).
+      // path as changed - so it refetches anyway (stale data would be wrong).
       await r.submit("/users/7", new URLSearchParams({ x: "1" }), { revalidate: false })
       expect(loaderCalls).toBe(1)
       expect(r.snapshot().data).toEqual({ n: 1 })
@@ -959,7 +959,7 @@ describe("fetchers (concurrent)", () => {
     })
     const f = r.fetcher("x")
     const p1 = f.load("/users/1") // token 1 (slow)
-    const p2 = f.load("/users/2") // token 2 (fast) — supersedes
+    const p2 = f.load("/users/2") // token 2 (fast) - supersedes
     await Promise.all([p1, p2])
     expect(f.snapshot().data).toEqual({ p: "/users/2" }) // the slow token-1 result was dropped
   })
@@ -1075,7 +1075,7 @@ describe("fetchers (concurrent)", () => {
     const f = r.fetcher("x")
     try {
       const pSubmit = f.submit("/list", new URLSearchParams()) // fToken 1 (slow POST)
-      const pLoad = f.load("/users/7") // fToken 2 — supersedes
+      const pLoad = f.load("/users/7") // fToken 2 - supersedes
       await Promise.all([pSubmit, pLoad])
       expect(f.snapshot().data).toEqual({ id: "loaded" }) // the load won
       expect(f.snapshot().actionData).toBeUndefined() // the superseded submit dropped its result
@@ -1140,7 +1140,7 @@ describe("fetchers (concurrent)", () => {
       },
     })
     const pInval = r.invalidate(["/list"]) // refetchActive /list (slow, token 1)
-    const pNav = r.navigate("/users/7") // token 2 — supersedes
+    const pNav = r.navigate("/users/7") // token 2 - supersedes
     await Promise.all([pInval, pNav])
     expect(r.snapshot().path).toBe("/users/7") // the navigation won
     expect(r.snapshot().data).toEqual({ path: "/users/7" })
@@ -1162,7 +1162,7 @@ describe("fetchers (concurrent)", () => {
     expect(fires).toBe(snapshot)
   })
 
-  test("a fetcher submit's targeted refresh is best-effort — a failing cross-refresh won't fail it", async () => {
+  test("a fetcher submit's targeted refresh is best-effort - a failing cross-refresh won't fail it", async () => {
     const realFetch = globalThis.fetch
     globalThis.fetch = (async (_u: string, _i?: RequestInit) =>
       new Response(JSON.stringify({ ok: true }), {
@@ -1206,7 +1206,7 @@ describe("fetchers (concurrent)", () => {
     try {
       const pa = fa.submit("/list", new URLSearchParams())
       const pb = fb.submit("/list", new URLSearchParams())
-      expect(fa.snapshot().pending).toBe(true) // both in flight at once — independent state machines
+      expect(fa.snapshot().pending).toBe(true) // both in flight at once - independent state machines
       expect(fb.snapshot().pending).toBe(true)
       await Promise.all([pa, pb])
       expect(fa.snapshot().actionData).toEqual({ ok: true })

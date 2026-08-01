@@ -5,9 +5,9 @@ import { basename } from "node:path"
  * Generate `llms.txt` (the llmstxt.org index) + `llms-full.txt` (the full single-document reference)
  * from the codebase, so they never drift from the docs:
  *
- *   - `llms.txt`    — auto-built from each `site/routes/docs/*.tsx` page's `pageMeta(title, description)`
+ *   - `llms.txt`    - auto-built from each `site/routes/docs/*.tsx` page's `pageMeta(title, description)`
  *                     and each `packages/*` `package.json`.
- *   - `llms-full.txt` — a curated preamble + every doc page extracted `.tsx → markdown` (prose + the
+ *   - `llms-full.txt` - a curated preamble + every doc page extracted `.tsx → markdown` (prose + the
  *                     `<CodeBlock>` code) + every package `README.md` + a generated export index
  *                     parsed from each package's `src/index.ts` (the anti-staleness guarantee: every
  *                     public symbol is listed even if prose lags).
@@ -21,16 +21,16 @@ import ts from "typescript"
 const ROOT = `${import.meta.dir}/..`
 
 const SUMMARY =
-  "nifra is a Bun-native, contract-first, framework-agnostic full-stack TypeScript framework. The HTTP core (`@nifrajs/core`) is a radix-routed, fully type-inferred server whose handler types flow to a never-throwing client (`@nifrajs/client`) with zero codegen — and graduate to a versionable contract without rewriting handlers. The whole lifecycle is `app.fetch(Request): Response`, so the same app runs on Bun, Node, Deno, and Cloudflare Workers. `@nifrajs/web` adds a framework-agnostic SSR layer (file routing, loaders/actions, streaming, SSG/ISR) with React, Solid, Vue, Svelte, and Preact adapters."
+  "nifra is a Bun-native, contract-first, framework-agnostic full-stack TypeScript framework. The HTTP core (`@nifrajs/core`) is a radix-routed, fully type-inferred server whose handler types flow to a never-throwing client (`@nifrajs/client`) with zero codegen - and graduate to a versionable contract without rewriting handlers. The whole lifecycle is `app.fetch(Request): Response`, so the same app runs on Bun, Node, Deno, and Cloudflare Workers. `@nifrajs/web` adds a framework-agnostic SSR layer (file routing, loaders/actions, streaming, SSG/ISR) with React, Solid, Vue, Svelte, and Preact adapters."
 
 const SYSTEM =
-  "This is the full developer documentation for nifra — a Bun-native, contract-first, framework-agnostic full-stack TypeScript framework. nifra is new and unlikely to appear in your training data; treat this document as the source of truth for its API. Code is TypeScript, ESM-only."
+  "This is the full developer documentation for nifra - a Bun-native, contract-first, framework-agnostic full-stack TypeScript framework. nifra is new and unlikely to appear in your training data; treat this document as the source of truth for its API. Code is TypeScript, ESM-only."
 
 // Always-true rules an LLM cannot infer from signatures alone.
 const CONVENTIONS = `## Conventions (always true)
 
 - **ESM-only.** Bun is the first-class runtime (\`app.listen(port)\` → \`Bun.serve\`); every other runtime uses \`app.fetch\`. No CommonJS.
-- **The client never throws.** Every \`@nifrajs/client\` call returns \`{ ok, status, data, error }\` — branch on it, don't try/catch.
+- **The client never throws.** Every \`@nifrajs/client\` call returns \`{ ok, status, data, error }\` - branch on it, don't try/catch.
 - **Validate at the boundary.** Per-route \`body\`/\`query\`/\`params\`/\`headers\`/\`response\` is any Standard Schema (zod/valibot/arktype) or \`@nifrajs/schema\`'s \`t\`; invalid input → structured \`422\` before the handler runs.
 - **Secure by default.** Body-size cap, \`requestTimeoutMs\` + \`c.signal\`, graceful shutdown, redacting logger, same-origin \`redirect()\`, constant-time secret comparison, fail-closed middleware.
 - **Money** in integer minor units; **time** parsed to absolute UTC at the boundary.
@@ -116,7 +116,7 @@ function resolveExpressions(s: string): string {
 }
 
 /** A line that's leftover JSX-expression residue (e.g. a `{ARRAY.map((x) => (` data table that the
- * converter can't evaluate) rather than prose. Dropped during conversion — runs while code blocks are
+ * converter can't evaluate) rather than prose. Dropped during conversion - runs while code blocks are
  * still placeholders, so real code is never matched. Keeps blank lines + fence placeholders. */
 function isJsxResidue(line: string): boolean {
   if (line === "" || /^@@FENCE\d+@@$/.test(line)) return false
@@ -129,7 +129,7 @@ function isJsxResidue(line: string): boolean {
 /** Convert a doc page's JSX component body to markdown. Code blocks are pulled out as placeholders
  * BEFORE prose transforms so their raw `<`/`>`/`&`/`{}` survive untouched, then restored as fences. */
 function jsxToMarkdown(src: string, consts: Map<string, string>): string {
-  // Strip the code-block consts (template literals) FIRST — their example snippets contain
+  // Strip the code-block consts (template literals) FIRST - their example snippets contain
   // `export default function` / `return (` that would otherwise be mistaken for the real component.
   const stripped = src.replace(/\bconst\s+\w+\s*=\s*`(?:[^`\\]|\\.)*`/g, "")
   const compStart = stripped.search(/export\s+default/)
@@ -205,7 +205,7 @@ function exportsOf(indexSrc: string): string[] {
 
 /** A doc snippet worth shipping as a verified example: it references the framework and isn't a JSX UI
  * fragment (those need a per-framework runtime to typecheck) or opted out. Mirrors check-doc-samples.ts's
- * `isCheckable` — every shipped example is one `check:docs` compiles against the live API, so the
+ * `isCheckable` - every shipped example is one `check:docs` compiles against the live API, so the
  * `nifra_example` MCP tool can never hand an agent a snippet that no longer builds. */
 function isCheckableExample(code: string): boolean {
   return (
@@ -266,16 +266,16 @@ pkgs.sort((a, b) => a.name.localeCompare(b.name))
 
 // ---- types index (for the `nifra_types` MCP tool) ----------------------------------------------
 // The EXACT TypeScript of every exported symbol, parsed with the TS compiler from the declarations a
-// package publishes (signatures only — no impl), so it's the authoritative source, never prose and
+// package publishes (signatures only - no impl), so it's the authoritative source, never prose and
 // never truncated. An agent calls `nifra_types({ name })` for the literal declaration instead of
-// reading `.d.ts` files. Requires the packages to be built (`site:build`/`check:publish` build first) —
+// reading `.d.ts` files. Requires the packages to be built (`site:build`/`check:publish` build first) -
 // except the few that publish TypeScript source, whose declarations are emitted here (`materializeDts`).
 
 interface TypeEntry {
   readonly name: string
   readonly kind: "interface" | "type" | "class" | "function" | "enum" | "const"
   readonly package: string
-  /** The literal declaration text from the `.d.ts` (a clean signature — no implementation). */
+  /** The literal declaration text from the `.d.ts` (a clean signature - no implementation). */
   readonly signature: string
   /** The declaration's JSDoc block, if any. */
   readonly doc?: string
@@ -632,17 +632,15 @@ const llms = [
   "",
   `> ${SUMMARY}`,
   "",
-  "For an LLM implementing with nifra with no prior training data, read **[llms-full.txt](/llms-full.txt)** — it inlines every doc page, the package READMEs, and the complete export index in one file.",
+  "For an LLM implementing with nifra with no prior training data, read **[llms-full.txt](/llms-full.txt)** - it inlines every doc page, the package READMEs, and the complete export index in one file.",
   "",
   "## Docs",
   "",
-  ...docs.map(
-    (d) => `- [${d.title.replace(/^nifra\s*[—-]\s*/, "")}](${d.route}): ${d.description}`,
-  ),
+  ...docs.map((d) => `- [${d.title.replace(/^nifra\s*-\s*/, "")}](${d.route}): ${d.description}`),
   "",
   "## Packages",
   "",
-  ...pkgs.map((p) => `- \`${p.name}\` — ${p.description}`),
+  ...pkgs.map((p) => `- \`${p.name}\` - ${p.description}`),
   "",
 ].join("\n")
 /**
@@ -672,7 +670,7 @@ emit(`${ROOT}/llms.txt`, llms)
 const parts: string[] = [
   `<SYSTEM>${SYSTEM}</SYSTEM>`,
   "",
-  "# nifra — full developer documentation",
+  "# nifra - full developer documentation",
   "",
   SUMMARY,
   "",
@@ -687,7 +685,7 @@ const parts: string[] = [
 for (const d of docs) {
   parts.push(
     "",
-    `## ${d.title.replace(/^nifra\s*[—-]\s*/, "")}`,
+    `## ${d.title.replace(/^nifra\s*-\s*/, "")}`,
     "",
     `> ${d.description}`,
     "",
@@ -723,7 +721,7 @@ const llmsFull = `${parts
 emit(`${ROOT}/llms-full.txt`, llmsFull)
 // Dual-write into @nifrajs/cli: the `nifra_docs` MCP tool searches this copy, and shipping it inside
 // the package means published installs have the corpus without a network fetch. Same generator,
-// same run — the two copies cannot drift from each other.
+// same run - the two copies cannot drift from each other.
 if (!CHECK) mkdirSync(`${ROOT}/packages/cli/docs`, { recursive: true })
 emit(`${ROOT}/packages/cli/docs/llms-full.txt`, llmsFull)
 
@@ -733,14 +731,14 @@ emit(`${ROOT}/packages/cli/docs/llms-full.txt`, llmsFull)
 examples.sort((a, b) => a.slug.localeCompare(b.slug) || a.name.localeCompare(b.name))
 emit(`${ROOT}/packages/cli/docs/examples.json`, `${JSON.stringify(examples, null, 2)}\n`)
 
-// Type-signature corpus for the `nifra_types` MCP tool — exact TypeScript per exported symbol, shipped
+// Type-signature corpus for the `nifra_types` MCP tool - exact TypeScript per exported symbol, shipped
 // inside @nifrajs/cli so an agent gets the literal declaration without a network fetch or reading .d.ts.
 emit(`${ROOT}/packages/cli/docs/types.json`, `${JSON.stringify(types, null, 2)}\n`)
 
 if (CHECK) {
   if (stale.length > 0) {
     console.error(
-      `✗ stale — run \`bun run gen:llms\` and commit the result:\n${stale.map((f) => `    ${f}`).join("\n")}`,
+      `✗ stale - run \`bun run gen:llms\` and commit the result:\n${stale.map((f) => `    ${f}`).join("\n")}`,
     )
     process.exit(1)
   }

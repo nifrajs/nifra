@@ -1,7 +1,7 @@
 import type { ActionArgs, LoaderArgs, LoaderData } from "@nifrajs/client"
 import type { backend } from "../backend"
 
-export const meta = { title: "nifra — portable SSR" }
+export const meta = { title: "nifra - portable SSR" }
 
 export async function loader({ api }: LoaderArgs<typeof backend>) {
   const res = await api.count.get()

@@ -1,13 +1,13 @@
 /**
- * `@nifrajs/image/server` — nifra's **self-hosted** image resize endpoint. `createImageHandler` returns a
+ * `@nifrajs/image/server` - nifra's **self-hosted** image resize endpoint. `createImageHandler` returns a
  * `(req: Request) => Promise<Response>` you mount at the path your {@link selfHostedLoader} points to
  * (e.g. `"/_image"`). It validates the query, safely resolves the source (local file under a `root`, or
- * a remote URL on an `allowedOrigins` allowlist — both **fail-closed** against SSRF), then decodes →
+ * a remote URL on an `allowedOrigins` allowlist - both **fail-closed** against SSRF), then decodes →
  * resizes (never upscaling) → re-encodes via a pluggable {@link ImageBackend}. The default
  * {@link bunImageBackend} uses `Bun.Image` (libjpeg-turbo / libspng / libwebp, off-thread).
  *
  * This subpath touches the filesystem and a native codec, so it is for **Node/Bun servers**, not the
- * edge. On Workers / Vercel-Edge / Deno-Deploy there is no native codec — use the CDN `cloudflareLoader`
+ * edge. On Workers / Vercel-Edge / Deno-Deploy there is no native codec - use the CDN `cloudflareLoader`
  * from `@nifrajs/image` instead. The dependency-free core (`@nifrajs/image`) never imports this module.
  */
 
@@ -24,7 +24,7 @@ import {
 import { verifyImageParams } from "./sign.ts"
 
 // The codec seam + every official backend (Bun/sharp/WASM) live in the edge-safe `./backend.ts`
-// (`@nifrajs/image/backends`), importable WITHOUT this module's `node:fs` — so a WASM backend can ship to
+// (`@nifrajs/image/backends`), importable WITHOUT this module's `node:fs` - so a WASM backend can ship to
 // the edge. Re-export them so `@nifrajs/image/server` stays the single import for Node servers.
 export * from "./backend.ts"
 
@@ -39,7 +39,7 @@ export interface ImageHandlerOptions {
   readonly allowedOrigins?: readonly string[]
   /** Max bytes read from a source before rejecting (413). Default 20 MiB. */
   readonly maxSourceBytes?: number
-  /** Max source pixels (w×h) before rejecting (413) — decompression-bomb guard. Default 40 MP. */
+  /** Max source pixels (w×h) before rejecting (413) - decompression-bomb guard. Default 40 MP. */
   readonly maxSourcePixels?: number
   /** Hard cap on the requested width; larger `?w` is clamped down. Default 3840. */
   readonly maxWidth?: number
@@ -56,7 +56,7 @@ export interface ImageHandlerOptions {
   readonly fetch?: typeof fetch
   /** Require **signed URLs**: every request must carry a valid `&s=` HMAC over `(src, w, q[, exp])` or
    * it's rejected with `403`. Use the SAME `secret` as your `selfHostedLoader`/`signImageUrl`. This
-   * locks the endpoint to URLs your app minted — the defense against resize-bombing. */
+   * locks the endpoint to URLs your app minted - the defense against resize-bombing. */
   readonly signing?: { readonly secret: string }
 }
 
@@ -114,12 +114,12 @@ function resolveConfig(options: ImageHandlerOptions): ResolvedConfig {
 }
 
 async function handle(req: Request, cfg: ResolvedConfig): Promise<Response> {
-  // 1. Method — only safe reads. (HEAD shares the GET path; the body is stripped at the end.)
+  // 1. Method - only safe reads. (HEAD shares the GET path; the body is stripped at the end.)
   if (req.method !== "GET" && req.method !== "HEAD") {
     return errorResponse(405, "method_not_allowed", { Allow: "GET, HEAD" })
   }
 
-  // 2. Validate the query at the trust boundary (strict scalar parsing — no Number() coercion).
+  // 2. Validate the query at the trust boundary (strict scalar parsing - no Number() coercion).
   const url = new URL(req.url)
   const src = url.searchParams.get("src")
   if (src === null || src.length === 0 || src.length > MAX_SRC_LEN) {
@@ -138,7 +138,7 @@ async function handle(req: Request, cfg: ResolvedConfig): Promise<Response> {
   const wantsWebp = (req.headers.get("accept") ?? "").includes("image/webp")
 
   // 2b. Signed-URL enforcement (when configured): reject any request we didn't mint. Verifies the
-  //     `&s=` HMAC over the raw (src, w, q[, exp]) — exactly what the loader/`signImageUrl` signed —
+  //     `&s=` HMAC over the raw (src, w, q[, exp]) - exactly what the loader/`signImageUrl` signed -
   //     and the expiry. Done before the ETag/fetch so unsigned/forged requests cost nothing.
   if (cfg.signing !== null) {
     const sig = url.searchParams.get("s")
@@ -204,7 +204,7 @@ async function handle(req: Request, cfg: ResolvedConfig): Promise<Response> {
       if (err.kind === "too_large") return errorResponse(413, "source_too_large")
       return errorResponse(415, "unsupported_media_type") // decode | unsupported
     }
-    // Unexpected — never leak internals to the client.
+    // Unexpected - never leak internals to the client.
     return errorResponse(500, "internal_error")
   } finally {
     cfg.release()
@@ -238,7 +238,7 @@ async function fetchRemote(url: URL, cfg: ResolvedConfig): Promise<SourceResult>
   let res: Response
   try {
     res = await cfg.fetchImpl(url, {
-      redirect: "error", // a redirect could bounce to a disallowed origin — refuse it.
+      redirect: "error", // a redirect could bounce to a disallowed origin - refuse it.
       signal: AbortSignal.timeout(cfg.fetchTimeoutMs),
       headers: { Accept: "image/*" },
     })
@@ -256,7 +256,7 @@ async function fetchRemote(url: URL, cfg: ResolvedConfig): Promise<SourceResult>
 
 async function readLocal(src: string, cfg: ResolvedConfig): Promise<SourceResult> {
   if (cfg.root === null) return { ok: false, status: 403, code: "source_not_allowed" }
-  // `src` is already percent-decoded by URLSearchParams — do NOT decode again (double-decode bypass).
+  // `src` is already percent-decoded by URLSearchParams - do NOT decode again (double-decode bypass).
   if (src.includes("\0")) return { ok: false, status: 400, code: "invalid_src" }
   // Strip leading slashes so a site-absolute ("/hero.jpg") or protocol-relative ("//evil") path is
   // treated as root-relative; `resolve` then collapses any "../" and the containment check rejects it.
@@ -273,7 +273,7 @@ async function readLocal(src: string, cfg: ResolvedConfig): Promise<SourceResult
   }
   if (!info.isFile()) return { ok: false, status: 404, code: "source_not_found" }
   if (info.size > cfg.maxSourceBytes) return { ok: false, status: 413, code: "source_too_large" }
-  // Defense-in-depth: a symlink inside root could point outside it — re-check the real path.
+  // Defense-in-depth: a symlink inside root could point outside it - re-check the real path.
   try {
     const real = await realpath(resolved)
     const realRoot = await realpath(cfg.root)
@@ -287,7 +287,7 @@ async function readLocal(src: string, cfg: ResolvedConfig): Promise<SourceResult
 }
 
 /** Read a response body, aborting (→ null) once `limit` bytes are exceeded. Trusts neither the
- * `Content-Length` header (checked as a fast reject) nor an absent one — the running total is the gate. */
+ * `Content-Length` header (checked as a fast reject) nor an absent one - the running total is the gate. */
 async function readBoundedBytes(res: Response, limit: number): Promise<Uint8Array | null> {
   const declared = res.headers.get("content-length")
   if (declared !== null && /^\d+$/.test(declared) && Number(declared) > limit) return null
@@ -371,7 +371,7 @@ function errorResponse(
 }
 
 /**
- * Async counting semaphore with direct slot hand-off — a released slot is passed straight to the next
+ * Async counting semaphore with direct slot hand-off - a released slot is passed straight to the next
  * waiter (the active count is never transiently decremented), so a concurrent `acquire()` can't slip
  * past the limit in the microtask gap. Bounds concurrent codec work.
  */

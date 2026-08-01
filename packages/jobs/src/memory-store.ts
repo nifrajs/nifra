@@ -1,10 +1,10 @@
 /**
- * In-process {@link JobStore} — a single-process queue backed by a Map. Correct for dev and for a single
+ * In-process {@link JobStore} - a single-process queue backed by a Map. Correct for dev and for a single
  * long-running server (Bun/Node/Deno). It is NOT durable (a restart loses pending jobs) and NOT safe
- * across multiple worker processes — bring a Redis/Postgres-backed store for that.
+ * across multiple worker processes - bring a Redis/Postgres-backed store for that.
  *
  * Leasing model: a leased job is hidden until its `leaseUntil` passes, so a worker that dies mid-job
- * (never calling `complete`/`retry`) releases the job back to the queue automatically — at-least-once.
+ * (never calling `complete`/`retry`) releases the job back to the queue automatically - at-least-once.
  */
 import type { JobCounts, JobStore, StoredJob } from "./types.ts"
 
@@ -97,7 +97,7 @@ export class MemoryJobStore implements JobStore {
     return { pending, active, dead: this.dead.size }
   }
 
-  /** The dead-letter queue — inspect/requeue failed jobs (not part of the {@link JobStore} contract). */
+  /** The dead-letter queue - inspect/requeue failed jobs (not part of the {@link JobStore} contract). */
   deadLetters(): DeadRecord[] {
     return [...this.dead.values()]
   }

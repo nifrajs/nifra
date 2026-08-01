@@ -1,5 +1,5 @@
 /**
- * Build the site for Node. Output: site/dist-node/ — server-node.js (the @nifrajs/node server, target
+ * Build the site for Node. Output: site/dist-node/ - server-node.js (the @nifrajs/node server, target
  * `node` so node:* stay external) + the shared client bundle under assets/. Run with
  * `node site/dist-node/server-node.js`. Same source as the Cloudflare build; only the server differs.
  *

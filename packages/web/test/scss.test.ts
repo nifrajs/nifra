@@ -11,7 +11,7 @@ type LoadCb = (args: {
 
 const SCOPED = /^[\w-]+_[0-9a-f]{8}$/
 
-/** A stub Sass compiler that records its calls and returns canned CSS — no real Dart Sass needed. */
+/** A stub Sass compiler that records its calls and returns canned CSS - no real Dart Sass needed. */
 function stubCompiler(css: string) {
   const calls: Array<{ source: string; syntax: string | undefined }> = []
   const compiler: SassCompiler = {
@@ -35,7 +35,7 @@ function setupScssPlugin(generate: "dom" | "ssr", compiler: SassCompiler) {
   return scssLoad as LoadCb
 }
 
-describe("scssBunPlugin — plain *.scss (side-effect import)", () => {
+describe("scssBunPlugin - plain *.scss (side-effect import)", () => {
   test("dom: compiles and emits the CSS as a virtual import, no default export", async () => {
     const { compiler, calls } = stubCompiler(".a { color: red }")
     const load = setupScssPlugin("dom", compiler)
@@ -63,7 +63,7 @@ describe("scssBunPlugin — plain *.scss (side-effect import)", () => {
   })
 })
 
-describe("scssBunPlugin — *.module.scss (composes with CSS Modules)", () => {
+describe("scssBunPlugin - *.module.scss (composes with CSS Modules)", () => {
   const moduleFixture = new URL("./fixtures/scoped.module.scss", import.meta.url).pathname
 
   test("dom: exports the scoped class map AND emits the scoped CSS", async () => {
@@ -96,7 +96,7 @@ describe("scssBunPlugin — *.module.scss (composes with CSS Modules)", () => {
   })
 })
 
-describe("scssBunPlugin — compile errors", () => {
+describe("scssBunPlugin - compile errors", () => {
   test("a Sass compile failure is attributed to the file + package (not a raw stack)", async () => {
     const throwing: SassCompiler = {
       compileString() {
@@ -111,7 +111,7 @@ describe("scssBunPlugin — compile errors", () => {
   })
 })
 
-describe("scssBunPlugin — real Dart Sass via Bun.build (production path)", () => {
+describe("scssBunPlugin - real Dart Sass via Bun.build (production path)", () => {
   const workDirs: string[] = []
   afterAll(() => {
     for (const dir of workDirs) rmSync(dir, { recursive: true, force: true })
@@ -169,7 +169,7 @@ describe("scssBunPlugin — real Dart Sass via Bun.build (production path)", () 
   test(".module.sass (indented syntax): real Sass compiles + the result is class-scoped", async () => {
     const workDir = mkdtempSync(join(tmpdir(), "nifra-scss-"))
     workDirs.push(workDir)
-    // Indented (`.sass`) syntax: no braces/semicolons — exercises the `syntax: "indented"` branch.
+    // Indented (`.sass`) syntax: no braces/semicolons - exercises the `syntax: "indented"` branch.
     writeFileSync(join(workDir, "x.module.sass"), "$c: red\n.title\n  color: $c\n")
     const entry = join(workDir, "entry.ts")
     writeFileSync(entry, `import s from "./x.module.sass"\nexport const t = s.title\n`)
