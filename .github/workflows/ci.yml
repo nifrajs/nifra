@@ -42,7 +42,7 @@ jobs:
       - name: Typecheck (also runs the *.test-d.ts type-level tests)
         run: bun run typecheck
 
-      - name: Test (scoped to the library test dirs; coverage + threshold via bunfig)
+      - name: Test (scoped to the library test dirs; pass/fail only - coverage is the ratchet step below)
         run: bun run test
 
       # The floor in bunfig says "≥90%". This says "not less than last time". A file at 99% can shed

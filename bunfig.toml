@@ -1,9 +1,13 @@
 # Test runner configuration.
-# Coverage is on for every `bun test`. The 0.9 floor is the global gate
-# (≥90% line/function coverage per file); the router/validator/descriptor core is held to
-# 100% by review (the per-file report makes any regression visible immediately).
+# Coverage is opt-in, requested per run with `--coverage` (the `test:coverage` script does this for the
+# ratchet's graded set). A plain `bun test` - and the pass/fail `test` step - therefore stays a clean
+# pass/fail signal, and must NOT run coverage: a per-file threshold miss prints `0 fail` with no
+# `(fail)` line, so it is indistinguishable from the tolerated Bun shutdown-exit quirk and the
+# `tolerant-test.ts` wrapper would mask it. When coverage IS requested, the 0.9 floor below is the gate
+# (≥90% line/function coverage per file) - honoured off the CLI flag even without `coverage = true`
+# (verified on 1.3.14); the router/validator/descriptor core is held to 100% by review (the per-file
+# report makes any regression visible immediately).
 [test]
-coverage = true
 coverageThreshold = 0.9
 # Loads before any test file. Disables fetch connection pooling for loopback only, so a recycled
 # ephemeral port cannot serve a request from a pooled connection to the server that previously held
