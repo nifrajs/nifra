@@ -52,6 +52,7 @@ import {
   STATUS_HEADER,
   type Submission,
 } from "./router.ts"
+import { parseSearch, validateSearch } from "./search.ts"
 
 // Draft / preview mode — a signed cookie that flips `ctx.draft` for loaders + bypasses ISR for editors.
 export {
@@ -1670,6 +1671,18 @@ export function createWebApp<Env = unknown>(
     return valid
   }
 
+  // The validated (or raw-parsed) search a route's loader context receives; `validateSearch` fails closed
+  // to the schema's defaults on hostile input, so this never throws on an attacker-picked query.
+  const loaderSearch = (
+    searchSchema: RouteModule["searchSchema"],
+    request: Request,
+  ): Record<string, unknown> => {
+    const parsed = parseSearch(new URL(request.url).search)
+    return searchSchema === undefined
+      ? parsed
+      : (validateSearch(searchSchema, parsed) as Record<string, unknown>)
+  }
+
   const runLayoutChain = async (
     route: RouteEntry,
     ctx: LoaderContext,
@@ -1954,6 +1967,7 @@ export function createWebApp<Env = unknown>(
           api,
           env: c.env,
           draft,
+          search: loaderSearch(mod.searchSchema, c.req),
         }
         // Layout loaders run for BOTH the document and the data-only request. A gate that only ran on
         // the document path would be bypassed by adding the data header, which is exactly the request
@@ -2105,6 +2119,7 @@ export function createWebApp<Env = unknown>(
         api,
         env: c.env,
         draft,
+        search: loaderSearch(mod.searchSchema, c.req),
       }
       // A gate is an authorization boundary for everything beneath its layout, mutations included.
       // Run only gates before the action; ordinary layout data loaders run after a native mutation.
@@ -2142,7 +2157,15 @@ export function createWebApp<Env = unknown>(
         })
       }
       const data = mod.loader
-        ? await mod.loader({ params: c.params, request: c.req, req: c.req, api, env: c.env, draft })
+        ? await mod.loader({
+            params: c.params,
+            request: c.req,
+            req: c.req,
+            api,
+            env: c.env,
+            draft,
+            search: loaderSearch(mod.searchSchema, c.req),
+          })
         : null
       const { chain, head } = resolveChainAndHead(layoutModules, mod, {
         data,

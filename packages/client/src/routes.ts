@@ -1,4 +1,5 @@
 import type { ContractShape, RegistryFor } from "@nifrajs/core/contract"
+import type { InferOutput, StandardSchemaV1 } from "@nifrajs/core/server"
 import type { Treaty, TreatyFromRegistry } from "./treaty.ts"
 
 /**
@@ -14,7 +15,7 @@ export type ApiProxy<Api> = Api extends ContractShape
  * Context a route `loader` receives: the route params, the request, a typed in-process `api` (an
  * {@link ApiProxy} for the app contract `Api`), and the platform `env`. Pair with `inProcessClient`.
  */
-export interface LoaderArgs<Api, Env = unknown> {
+export interface LoaderArgs<Api, Env = unknown, Search = undefined> {
   readonly params: Record<string, string>
   readonly request: Request
   /** Alias of {@link request} — the same `Request`. Mirrors a route handler's `c.req`, so the same name
@@ -31,6 +32,11 @@ export interface LoaderArgs<Api, Env = unknown> {
   /** `true` when the request carries a valid draft/preview cookie (when the app sets a `draftSecret`;
    * otherwise always `false`). Branch on it to load unpublished content for editors — see `enableDraft`. */
   readonly draft: boolean
+  /** The URL search params, validated server-side (fails closed to the schema's defaults, so it is safe
+   * to use directly). Declare a route `searchSchema` and pass its type as the third argument -
+   * `LoaderArgs<typeof app, Env, typeof searchSchema>` - to read it typed; otherwise a raw
+   * `Record<string, unknown>` of the parsed query. */
+  readonly search: Search extends StandardSchemaV1 ? InferOutput<Search> : Record<string, unknown>
 }
 
 /** The (awaited) return of a `loader`, for typing a page component's `data` prop. */
@@ -42,7 +48,7 @@ export type LoaderData<L> = L extends (...args: never[]) => infer R ? Awaited<R>
  * `api` + platform `env`. An action returns either data (surfaced to the page as `actionData`) or a
  * `Response` (e.g. a `redirect(...)` for the Post/Redirect/Get pattern).
  */
-export type ActionArgs<Api, Env = unknown> = LoaderArgs<Api, Env>
+export type ActionArgs<Api, Env = unknown, Search = undefined> = LoaderArgs<Api, Env, Search>
 
 /**
  * The (awaited) data return of an `action`, for typing a page component's `actionData` prop.

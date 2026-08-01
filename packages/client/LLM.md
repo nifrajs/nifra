@@ -18,12 +18,12 @@ Browser-safe, end-to-end-typed client for @nifrajs/core servers (Eden-style prox
 - **ClientOptions** _(interface)_ — `interface ClientOptions`
 - **ClientRetryOptions** _(interface)_ — `interface ClientRetryOptions`
 - **InProcessClientOptions** _(interface)_ — `interface InProcessClientOptions`
-- **LoaderArgs** _(interface)_ — `interface LoaderArgs<Api, Env = unknown>`
+- **LoaderArgs** _(interface)_ — `interface LoaderArgs<Api, Env = unknown, Search = undefined>`
 - **SubscribeOptions** _(interface)_ — `interface SubscribeOptions<I extends RouteInfo>`
 - **Subscription** _(interface)_ — `interface Subscription`
 - **WsCallOptions** _(interface)_ — `interface WsCallOptions`
 - **WsHandle** _(interface)_ — `interface WsHandle<In, Out>`
-- **ActionArgs** _(type)_ — `type ActionArgs<Api, Env = unknown> = LoaderArgs<Api, Env>`
+- **ActionArgs** _(type)_ — `type ActionArgs<Api, Env = unknown, Search = undefined> = LoaderArgs<Api, Env, Search>`
 
 _…and 10 more — see [`api-reference.md`](../../api-reference.md#nifrajsclient) for the complete list._
 

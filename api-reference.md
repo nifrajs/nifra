@@ -108,7 +108,7 @@ Every public export of every package and documented subpath — name, kind, sign
 
 ## @nifrajs/client
 
-- **ActionArgs** _(type)_ — `type ActionArgs<Api, Env = unknown> = LoaderArgs<Api, Env>`
+- **ActionArgs** _(type)_ — `type ActionArgs<Api, Env = unknown, Search = undefined> = LoaderArgs<Api, Env, Search>`
   Context a route `action` (a mutation, run on POST) receives — identical to a loader's: route params, the request (read the form/JSON body off this), and the typed in-process `api` + platform `env`. An action returns either data (surfaced to the page as `actionData`) or a `Response` (e.g. a `redirec…
 - **ActionData** _(type)_ — `type ActionData<A> = A extends (...args: never[]) => infer R ? Awaited<R> extends { readonly __nifraRevalidate: readonly string[]; readonly data: infer D } ? Exclude<D, Response> : Exclude<Awaited<R>, Response> : never`
   The (awaited) data return of an `action`, for typing a page component's `actionData` prop. A `Response` return (redirect/custom) is excluded — it never reaches the component. A `revalidate(paths, data)` wrapper (from `@nifrajs/web`) is transparent: matched structurally (so this stays decoupled from…
@@ -126,7 +126,7 @@ Every public export of every package and documented subpath — name, kind, sign
 - **InProcessClientOptions** _(interface)_ — `interface InProcessClientOptions`
 - **Jsonify** _(type)_ — `type Jsonify<T>`
   Maps a value to the shape it takes after a JSON round-trip, so the client's `data` type reflects the wire — not the handler's in-memory return.
-- **LoaderArgs** _(interface)_ — `interface LoaderArgs<Api, Env = unknown>`
+- **LoaderArgs** _(interface)_ — `interface LoaderArgs<Api, Env = unknown, Search = undefined>`
   Context a route `loader` receives: the route params, the request, a typed in-process `api` (an {@link ApiProxy} for the app contract `Api`), and the platform `env`. Pair with `inProcessClient`.
 - **LoaderData** _(type)_ — `type LoaderData<L> = L extends (...args: never[]) => infer R ? Awaited<R> : never`
   The (awaited) return of a `loader`, for typing a page component's `data` prop.

@@ -29,6 +29,7 @@ test("inProcessClient + a typed loader resolve data in-process (no network)", as
     api,
     env: undefined,
     draft: false,
+    search: {},
   })
   expect(data).toEqual({ user: { id: "7", name: "Ada" } })
 })
@@ -97,6 +98,7 @@ test("an action with ActionArgs runs in-process and returns its data branch", as
     api,
     env: undefined,
     draft: false,
+    search: {},
   })
   expect(data).toEqual({ ok: true, name: "Ada" })
 })

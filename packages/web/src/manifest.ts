@@ -4,6 +4,7 @@
  * the filesystem and feeds `buildManifest`; everything here is pure logic, so it stays
  * portable (no fs, no DOM) and fully unit-testable. Edge deploys pre-build the manifest.
  */
+import type { StandardSchemaV1 } from "@nifrajs/core/server"
 
 /** Context passed to a route `loader`. The `api` + `env` are injected by `createWebApp` and typed
  * per-route via `@nifrajs/client`'s `LoaderArgs<Api, Env>` (here they are opaque to the agnostic core). */
@@ -18,6 +19,10 @@ export interface LoaderContext {
   /** `true` when the request carries a valid draft/preview cookie (only when `createWebApp` is given a
    * `draftSecret`; otherwise always `false`). Branch on it to load unpublished content for editors. */
   readonly draft: boolean
+  /** The URL search params, validated against the route's `searchSchema` (a Standard Schema) when it
+   * declares one - failing closed to the schema's defaults - else the raw parsed query. Typed per-route
+   * via `@nifrajs/client`'s `LoaderArgs<Api, Env, Search>`. */
+  readonly search: Record<string, unknown>
 }
 
 /** A route's optional data loader: params/request in, data out. */
@@ -172,6 +177,10 @@ export interface RouteModule {
   readonly default: unknown
   readonly loader?: Loader
   readonly action?: Action
+  /** A Standard Schema validating this route's URL search params. When present, `ctx.search` is parsed +
+   * validated against it (failing closed to the schema's defaults on invalid input); type it into the
+   * loader with `LoaderArgs<Api, Env, typeof searchSchema>`. */
+  readonly searchSchema?: StandardSchemaV1
   readonly meta?: MetaInput
   /**
    * Opt this route out of nifra's full-document client hydration. The server still renders the full
