@@ -16,6 +16,11 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 
 execSync("changeset version", { stdio: "inherit" })
 
+// Refresh the lockfile to record the just-bumped workspace versions. Without it the lockfile still pins
+// the previous release, so `bun pm pack` resolves an internal `workspace:*` dep to the stale version -
+// which fails the publish-consumer matrix, whose loopback registry only serves the newly-bumped tarballs.
+execSync("bun install", { stdio: "inherit" })
+
 const { version } = JSON.parse(readFileSync("packages/cli/package.json", "utf8")) as {
   version: string
 }
@@ -92,3 +97,15 @@ execSync("bun run build && bun run gen:api && bun run gen:cards && bun run gen:l
 console.log(
   "✓ built + regenerated api-reference.md, LLM.md cards and llms corpora for the new version",
 )
+
+// The committed site-scaffold snapshot embeds the internal `@nifrajs/*` dep pins just rewritten to
+// `^<version>` above, so it goes stale on every bump exactly like the generated docs - and its test
+// (`scaffold-snapshot.test.ts`) then fails the "Version Packages" commit. Regenerate it through the
+// test's own UPDATE path so the release commit stays green without a manual step.
+execSync(
+  "UPDATE_SCAFFOLD_SNAPSHOT=1 bun test packages/create-nifra/test/scaffold-snapshot.test.ts",
+  {
+    stdio: "inherit",
+  },
+)
+console.log("✓ regenerated the site scaffold snapshot for the new version")
