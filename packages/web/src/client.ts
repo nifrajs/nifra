@@ -146,26 +146,21 @@ export function installHistory(
     }
   }
 
-  // Commit a navigation only after its URL and route are known-safe. An unmatched same-origin path or
-  // an ordinary cross-origin HTTP(S) destination becomes a hard load BEFORE history is mutated; otherwise
-  // the address bar could change while the router intentionally kept rendering the old route.
-  const commit = (path: string, mode: "push" | "replace"): void => {
-    let url: URL
+  // Commit a navigation only after its URL and origin are known-safe. An unmatched same-origin path
+  // becomes a hard load BEFORE history is mutated; otherwise the address bar could change while the
+  // router intentionally kept rendering the old route.
+  const parseNavigationUrl = (path: string): URL | null => {
     try {
-      url = new URL(path, location.origin)
+      const url = new URL(path, location.origin)
+      if (url.protocol !== "http:" && url.protocol !== "https:") return null
+      if (url.origin !== location.origin) return null
+      return url
     } catch {
-      settle()
-      return
+      return null
     }
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
-      settle()
-      return
-    }
-    if (url.origin !== location.origin) {
-      settle()
-      fallback(url.href)
-      return
-    }
+  }
+
+  const commit = (path: string, url: URL, mode: "push" | "replace"): void => {
     const routePath = url.pathname + url.search
     if (router.match(routePath) === null) {
       settle()
@@ -192,14 +187,22 @@ export function installHistory(
   }
 
   const go = (path: string, mode: "push" | "replace"): void => {
-    if (guard(path, () => commit(path, mode))) return
-    commit(path, mode)
+    // Validate before the blocker observes the target. A blocker receives parsed locations, so letting a
+    // malformed string reach `locationOf` would make an otherwise no-throw navigate unexpectedly throw.
+    const url = parseNavigationUrl(path)
+    if (url === null) {
+      settle()
+      return
+    }
+    if (guard(path, () => commit(path, url, mode))) return
+    commit(path, url, mode)
   }
 
   // Programmatic navigation for adapter `useNavigate` bindings, published through the DOM-free bridge
   // (`@nifrajs/web`'s `getBrowserNavigate`). A string path pushes (or replaces); a number is a history
-  // delta (`-1` back / `1` forward), matching `history.go`. Off-route and cross-origin HTTP(S)
-  // destinations hard-load without first creating a stale in-document history entry.
+  // delta (`-1` back / `1` forward), matching `history.go`. Off-route same-origin destinations hard-load
+  // without first creating a stale in-document history entry. Cross-origin and active-scheme strings are
+  // rejected; callers that intentionally leave the app use a normal `<a>`.
   const navigate: BrowserNavigate = (to, navOptions) => {
     if (typeof to === "number") {
       history.go(to)

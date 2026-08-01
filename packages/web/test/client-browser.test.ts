@@ -368,7 +368,7 @@ test("history integration covers click, prefetch, fragments, popstate, fallback 
   expect(getBrowserNavigate()).toBeUndefined()
 })
 
-test("programmatic navigation hard-loads unmatched paths before mutating history", async () => {
+test("programmatic navigation hard-loads unmatched paths but rejects cross-origin targets", async () => {
   resetBrowser()
   const { router, navigated } = makeRouter()
   const fallback: string[] = []
@@ -387,8 +387,25 @@ test("programmatic navigation hard-loads unmatched paths before mutating history
   expect(historyCalls).toEqual([])
 
   getBrowserNavigate()?.("https://elsewhere.test/page")
-  expect(fallback).toEqual(["/outside", "https://elsewhere.test/page"])
+  expect(fallback).toEqual(["/outside"])
   expect(historyCalls).toEqual([])
+  stop()
+})
+
+test("a malformed programmatic target is rejected before an active blocker inspects it", () => {
+  resetBrowser()
+  const { router } = makeRouter()
+  const stop = installHistory(router)
+  const unregister = registerBlocker(
+    () => false,
+    () => {},
+  )
+
+  expect(() => getBrowserNavigate()?.("http://[")).not.toThrow()
+  expect(historyCalls).toEqual([])
+  expect(locationState.assigned).toEqual([])
+
+  unregister()
   stop()
 })
 

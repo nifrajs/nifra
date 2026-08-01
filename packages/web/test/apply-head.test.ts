@@ -143,6 +143,15 @@ test("soft navigation applies the same trusted attribute policy as SSR", () => {
   expect(link?.hasAttribute("onload")).toBe(false)
 })
 
+test("a stylesheet cannot use a non-network data URL", () => {
+  applyHead({ link: [{ rel: "stylesheet", href: "data:text/css,body%7Bdisplay:none%7D" }] })
+
+  expect(document.head.children).toHaveLength(1)
+  const link = document.head.children[0]
+  expect(link?.getAttribute("rel")).toBe("stylesheet")
+  expect(link?.hasAttribute("href")).toBe(false)
+})
+
 /**
  * The script slots, on the soft-navigation side.
  *

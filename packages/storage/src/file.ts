@@ -5,8 +5,8 @@
  * objects created before sidecar support still infer content type from their extension.
  */
 import { constants } from "node:fs"
-import { type FileHandle, lstat, mkdir, open, readdir, realpath, rm } from "node:fs/promises"
-import { dirname, join, posix, resolve, sep } from "node:path"
+import { type FileHandle, lstat, mkdir, open, readdir, realpath, unlink } from "node:fs/promises"
+import { basename, dirname, join, posix, resolve, sep } from "node:path"
 import { assertSafeKey, StorageKeyError } from "./key.ts"
 import {
   type ListOptions,
@@ -85,10 +85,41 @@ export class FileStorage implements StorageAdapter {
     // Node exposes POSIX mode bits on Bun/Node/Deno Unix runtimes. A group/world-writable ancestor lets
     // another local principal swap path components between otherwise-correct checks; fail closed so
     // descriptor validation only has to defend against ordinary filesystem races within one principal.
-    if (process.platform !== "win32" && info.isDirectory() && (Number(info.mode) & 0o022) !== 0) {
+    if (process.platform === "win32" || !info.isDirectory()) return
+    const uid = typeof process.getuid === "function" ? process.getuid() : undefined
+    const untrustedOwner = uid !== undefined && info.uid !== uid && info.uid !== 0
+    if (untrustedOwner || (Number(info.mode) & 0o022) !== 0) {
       throw new StorageKeyError(
-        `storage key ${JSON.stringify(key)} crosses a group/world-writable directory`,
+        `storage key ${JSON.stringify(key)} crosses an untrusted writable directory`,
       )
+    }
+  }
+
+  /**
+   * Prove that another local principal cannot rename any directory leading to `base` after validation.
+   * A sticky shared parent (the ordinary `/tmp` case) is safe only while its child belongs to this uid.
+   * Root-owned system directories are trusted; a directory owned by any other uid is not.
+   */
+  private async assertTrustedAncestorChain(base: string, key: string): Promise<void> {
+    if (process.platform === "win32" || typeof process.getuid !== "function") return
+    const uid = process.getuid()
+    let current = await realpath(base)
+    let child = await lstat(current)
+    for (;;) {
+      const parent = dirname(current)
+      if (parent === current) return
+      const info = await lstat(parent)
+      const mode = Number(info.mode)
+      const trustedOwner = info.uid === uid || info.uid === 0
+      const writableByAnotherPrincipal = (mode & 0o022) !== 0
+      const stickyProtectsChild = (mode & 0o1000) !== 0 && child.uid === uid
+      if (!trustedOwner || (writableByAnotherPrincipal && !stickyProtectsChild)) {
+        throw new StorageKeyError(
+          `storage key ${JSON.stringify(key)} crosses an untrusted writable ancestor`,
+        )
+      }
+      current = parent
+      child = info
     }
   }
 
@@ -310,9 +341,35 @@ export class FileStorage implements StorageAdapter {
     const handle = await this.openContained(base, path, key)
     if (handle === null) return
     try {
+      await this.assertTrustedAncestorChain(base, key)
       const baseBefore = await lstat(base)
       await this.assertOpenedContained(base, path, key, handle, baseBefore)
-      await rm(path, { force: true })
+      if (process.platform === "linux") {
+        // Node exposes no unlinkat(2), but Linux's procfs gives an equivalent descriptor-relative path.
+        // Anchor the final lookup to an opened, validated parent so replacing an intermediate directory
+        // cannot redirect deletion outside the storage root.
+        const parentPath = dirname(path)
+        const parentHandle = await this.openContained(base, parentPath, key)
+        if (parentHandle === null) throw this.symlinkError(key)
+        try {
+          const anchoredPath = join("/proc/self/fd", String(parentHandle.fd), basename(path))
+          const [opened, current] = await Promise.all([handle.stat(), lstat(anchoredPath)])
+          if (
+            current.isSymbolicLink() ||
+            opened.dev !== current.dev ||
+            opened.ino !== current.ino
+          ) {
+            throw this.symlinkError(key)
+          }
+          await unlink(anchoredPath)
+        } finally {
+          await parentHandle.close()
+        }
+      } else {
+        // Other Node-compatible runtimes expose no descriptor-relative unlink. The verified ownership /
+        // permission chain above removes the cross-principal swap capability before this pathname lookup.
+        await unlink(path)
+      }
     } finally {
       await handle.close()
     }

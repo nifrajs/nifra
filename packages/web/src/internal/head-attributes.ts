@@ -46,14 +46,17 @@ const LINK_ATTRIBUTES: ReadonlySet<string> = new Set([
 ])
 
 // Browsers ignore embedded ASCII whitespace/control characters while recognizing URL schemes. Remove
-// them before checking so `java\nscript:` cannot evade the active-scheme rejection.
-function hasActiveScheme(value: string): boolean {
+// them before checking so `java\nscript:` cannot evade the scheme policy. Relative and protocol-relative
+// URLs are allowed; an explicit scheme must be HTTP(S). This rejects active and local schemes such as
+// javascript:, vbscript:, data:, blob:, and file: before a descriptor reaches either renderer.
+function hasDisallowedLinkScheme(value: string): boolean {
   let compact = ""
   for (const char of value) {
     const code = char.charCodeAt(0)
     if (code > 0x20 && code !== 0x7f) compact += char.toLowerCase()
   }
-  return compact.startsWith("javascript:") || compact.startsWith("vbscript:")
+  const scheme = /^([a-z][a-z0-9+.-]*):/.exec(compact)?.[1]
+  return scheme !== undefined && scheme !== "http" && scheme !== "https"
 }
 
 /**
@@ -64,11 +67,22 @@ export function trustedHeadAttributes(
   tag: HeadTag,
   attrs: Readonly<object>,
 ): readonly TrustedHeadAttribute[] | null {
+  if (typeof attrs !== "object" || attrs === null) return []
+  let entries: Array<[string, unknown]>
+  try {
+    entries = Object.entries(attrs)
+  } catch {
+    // A route can cross this runtime boundary through untyped JavaScript or a cast. A hostile Proxy/getter
+    // must not strand SSR or a soft navigation; reject the descriptor rather than partially trusting it.
+    return []
+  }
+
   if (tag === "meta") {
-    for (const [rawName, value] of Object.entries(attrs)) {
+    for (const [rawName, value] of entries) {
       if (
         rawName.toLowerCase() === "http-equiv" &&
-        String(value).trim().toLowerCase() === "refresh"
+        typeof value === "string" &&
+        value.trim().toLowerCase() === "refresh"
       )
         return null
     }
@@ -76,12 +90,18 @@ export function trustedHeadAttributes(
 
   const allowed = tag === "meta" ? META_ATTRIBUTES : LINK_ATTRIBUTES
   const out: TrustedHeadAttribute[] = []
-  for (const [rawName, value] of Object.entries(attrs)) {
+  for (const [rawName, value] of entries) {
     if (value === undefined || value === false) continue
+    if (value !== true && typeof value !== "string") continue
     const name = rawName.toLowerCase()
     if (!SAFE_ATTR_NAME.test(name) || EVENT_ATTR_NAME.test(name)) continue
     if (!allowed.has(name) && !DATA_ATTR_NAME.test(name)) continue
-    if (tag === "link" && name === "href" && typeof value === "string" && hasActiveScheme(value))
+    if (
+      tag === "link" &&
+      name === "href" &&
+      typeof value === "string" &&
+      hasDisallowedLinkScheme(value)
+    )
       continue
     out.push([name, value === true ? true : value])
   }

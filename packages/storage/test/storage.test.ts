@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { chmod, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -232,6 +232,19 @@ describe("FileStorage filesystem containment", () => {
     await expect(storage.get("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
     await expect(storage.exists("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
     await expect(storage.delete("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
+  })
+
+  test("delete rejects a root whose parent can be swapped by another local principal", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "nifra-storage-parent-"))
+    const root = join(parent, "objects")
+    tmpDirs.push(parent, `${root}.nifra-metadata`)
+    await mkdir(root, { mode: 0o700 })
+    await writeFile(join(root, "object.txt"), "secret")
+    await chmod(parent, 0o777)
+
+    const storage = new FileStorage(root)
+    await expect(storage.delete("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
+    expect(await readFile(join(root, "object.txt"), "utf8")).toBe("secret")
   })
 })
 
