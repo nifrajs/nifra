@@ -159,6 +159,40 @@ const apiOf = (backend: unknown): { api?: unknown } =>
   backend === undefined ? {} : { api: inProcessClient(backend as never) }
 
 /**
+ * Render an error for the CLI, unwrapping the detail a bare `.message` drops.
+ *
+ * `Bun.build` reports a bundling failure as an `AggregateError` whose `.message` is a generic
+ * "Bundle failed" and whose `.errors` hold the real causes - the unresolved import, the plugin that
+ * threw, each with a file and line. `buildClient`/`buildServer` catch a RETURNED `{ success: false }`
+ * and print `result.logs`, but a `Bun.build` that THROWS (a plugin `onLoad`/`onResolve` that throws, a
+ * resolution failure) rejects before that check runs, so the AggregateError reaches the CLI whole and a
+ * catch printing only `.message` throws the causes away. That is the difference between "Bundle failed"
+ * and "Could not resolve ./db from routes/x.tsx". So unwrap an AggregateError - directly, or one carried
+ * as a `.cause` - into a line per underlying error.
+ */
+export function formatCliError(err: unknown): string {
+  const aggregate =
+    err instanceof AggregateError
+      ? err
+      : err instanceof Error && err.cause instanceof AggregateError
+        ? err.cause
+        : undefined
+  if (aggregate !== undefined && aggregate.errors.length > 0) {
+    const outer = err instanceof Error ? err.message : ""
+    const head = outer !== "" && outer !== "Bundle failed" ? outer : "build failed"
+    // `String(e)` (not `e.message`) so a Bun BuildMessage/ResolveMessage renders with its file + line,
+    // not just the bare text. Multi-line entries are indented to stay under the head. Deduplicated
+    // because Bun can repeat one cause across `.errors`.
+    const details = [...new Set(aggregate.errors.map((e) => String(e).trim()))].map(
+      (line) => `  - ${line.replace(/\n/g, "\n    ")}`,
+    )
+    return [head, ...details].join("\n")
+  }
+  if (err instanceof Error) return err.message
+  return String(err)
+}
+
+/**
  * Refuse `nifra dev --bun` for an app Bun's DEV-server bundler cannot compile.
  *
  * Bun's dev server and `Bun.build` are not the same bundler. `Bun.build` transforms `*.module.css` into a
@@ -564,7 +598,7 @@ async function main(): Promise<void> {
     try {
       await runSnapshot(process.cwd(), out !== undefined ? { out } : {})
     } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err))
+      console.error(formatCliError(err))
       process.exitCode = 1
     }
     return
@@ -577,7 +611,7 @@ async function main(): Promise<void> {
         process.exitCode = 1
       }
     } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err))
+      console.error(formatCliError(err))
       process.exitCode = 1
     }
     return
@@ -602,7 +636,7 @@ async function main(): Promise<void> {
       )
         process.exitCode = 1
     } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err))
+      console.error(formatCliError(err))
       process.exitCode = 1
     }
     return
@@ -643,7 +677,7 @@ async function main(): Promise<void> {
         throw new Error("[nifra] capabilities needs `snapshot` or `check`")
       }
     } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err))
+      console.error(formatCliError(err))
       process.exitCode = 1
     }
     return
@@ -685,7 +719,7 @@ async function main(): Promise<void> {
         throw new Error("[nifra] manifest needs `emit` or `diff`")
       }
     } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err))
+      console.error(formatCliError(err))
       process.exitCode = 1
     }
     return
@@ -716,7 +750,7 @@ async function main(): Promise<void> {
       )
         process.exitCode = 1
     } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err))
+      console.error(formatCliError(err))
       process.exitCode = 1
     }
     return
@@ -737,7 +771,7 @@ async function main(): Promise<void> {
       })
       if (!ok) process.exitCode = 1
     } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err))
+      console.error(formatCliError(err))
       process.exitCode = 1
     }
     return
@@ -762,7 +796,7 @@ async function main(): Promise<void> {
       })
       if (!passed) process.exitCode = 1
     } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err))
+      console.error(formatCliError(err))
       process.exitCode = 1
     }
     return
@@ -817,7 +851,7 @@ async function main(): Promise<void> {
 // exported `parseFlags`. `import.meta.main` is true only for the process's entry module.
 if (import.meta.main) {
   main().catch((err) => {
-    console.error(err instanceof Error ? err.message : String(err))
+    console.error(formatCliError(err))
     process.exitCode = 1
   })
 }
