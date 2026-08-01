@@ -14,7 +14,6 @@ import {
   validCapabilityId,
 } from "@nifrajs/core/capabilities"
 import { reflectRoutes } from "@nifrajs/core/reflection"
-import { loadAssuranceConfig } from "./assure.ts"
 import { scanStaticRouteText, stripComments, walkSource } from "./check.ts"
 
 const EFFECT_IMPORT =
@@ -388,14 +387,24 @@ async function currentProject(
   readonly policy: CapabilityPolicy
   readonly project: CapabilityProjectReport
 }> {
-  const config = await loadAssuranceConfig(cwd, configPath)
-  if (config.capabilities === undefined) {
+  // Source the capability report from the one project verification that `check`/`assure`/`levels` also
+  // read, rather than loading the config and walking the module graph a second time here. `snapshot` and
+  // `check` are then thin faces over the shared core; the lockfile write/diff is the only work that stays
+  // capability-specific.
+  const { collectProjectVerification } = await import("./verification.ts")
+  const verification = await collectProjectVerification(
+    cwd,
+    configPath !== undefined ? { config: configPath } : {},
+  )
+  // A missing/broken config threw here before; re-throw the same error to keep that contract.
+  if (verification.configError !== undefined) throw verification.configError
+  const policy = verification.config?.capabilities
+  if (policy === undefined) {
     throw new Error("[nifra] assurance config does not define capabilities")
   }
-  return {
-    policy: config.capabilities,
-    project: await collectCapabilityProjectReport(cwd, config.source, config.capabilities),
-  }
+  // The core computes `capability` exactly when the config declares a capabilities policy, so it is
+  // present whenever `policy` is.
+  return { policy, project: verification.capability as CapabilityProjectReport }
 }
 
 function unsafeProject(project: CapabilityProjectReport): boolean {

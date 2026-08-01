@@ -1,10 +1,12 @@
 /**
- * One project verification, three views. `nifra check`, `nifra assure`, and `nifra levels` are not
- * three separate audits - they are three renderings of the same reflected project: the typed-contract
- * scan, the route-assurance evaluation, and the static capability provenance. Historically each command
- * re-derived the slice it needed, so a caller had to know which command ran which policy (and `levels`
- * paid for the capability walk twice). `collectProjectVerification` runs each underlying policy exactly
- * once and hands back a single value; the commands become formatters over subsets of it.
+ * One project verification, four commands. `nifra check`, `nifra assure`, `nifra levels`, and
+ * `nifra capabilities` are not separate audits - they are renderings of the same reflected project: the
+ * typed-contract scan, the route-assurance evaluation, and the static capability provenance. Historically
+ * each command re-derived the slice it needed, so a caller had to know which command ran which policy (and
+ * `levels` paid for the capability walk twice). `collectProjectVerification` runs each underlying policy
+ * exactly once and hands back a single value; the commands become thin formatters over subsets of it -
+ * `check`/`assure`/`levels` read their view directly, and `capabilities snapshot`/`check` read the same
+ * capability report before writing or diffing the lockfile.
  *
  * The typed-contract check is the one heavy pass (source walk + optional `tsc`), and `nifra assure`
  * never needs it, so it is exposed as a lazily-invoked `check()` rather than computed up front.
