@@ -196,6 +196,15 @@ export async function loadApp(
       `[nifra] ${configFile} must export \`adapter\` (a render adapter object) and \`clientModule\` (a string).`,
     )
   }
+  // A `clientModule` given as a RELATIVE path (a local client entry, e.g. `./src/client.tsx`) is
+  // resolved to absolute here. It is embedded verbatim as an import specifier in the generated client
+  // entry, and `nifra dev` and `nifra build` write that entry into DIFFERENT directories - so a relative
+  // specifier would resolve against different bases and load in one phase but not the other. A bare or
+  // package specifier (`@nifrajs/web-react/client`) is location-independent and passes through unchanged.
+  const clientModule =
+    fw.clientModule.startsWith("./") || fw.clientModule.startsWith("../")
+      ? resolve(cwd, fw.clientModule)
+      : fw.clientModule
   const [vitePlugins, clientPlugins, serverPlugins] = await Promise.all([
     resolvePlugins(fw.vitePlugins),
     resolvePlugins(fw.clientPlugins),
@@ -215,7 +224,7 @@ export async function loadApp(
     cwd,
     routesDir: resolve(cwd, "routes"),
     outDir: resolve(cwd, outDirName),
-    framework: fw as NifraFramework,
+    framework: { ...fw, clientModule } as NifraFramework,
     resolvedPlugins,
     backend,
   }

@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import { loadApp } from "../src/load.ts"
 
 const dirs: string[] = []
@@ -37,4 +37,30 @@ test("plugin thunks resolve exactly once and remain available to later phases", 
   } finally {
     delete globals.__nifraPluginThunkCalls
   }
+})
+
+async function loadWithClientModule(spec: string): Promise<string> {
+  const root = mkdtempSync(`${import.meta.dir}/.tmp-load-`)
+  dirs.push(root)
+  mkdirSync(join(root, "routes"))
+  writeFileSync(join(root, "routes", "index.ts"), "export default function Page() {}\n")
+  writeFileSync(
+    join(root, "framework.ts"),
+    `export const adapter = {}\nexport const clientModule = ${JSON.stringify(spec)}\n`,
+  )
+  const app = await loadApp(root, "dist", { importQuery: `test=${crypto.randomUUID()}` })
+  return app.framework.clientModule
+}
+
+// The generated client entry embeds `clientModule` verbatim as an import specifier, and `nifra dev` and
+// `nifra build` write that entry into different directories - so a RELATIVE clientModule must be
+// absolutized at load, or it resolves against different bases and loads in one phase but not the other.
+test("a relative clientModule is resolved to absolute at load", async () => {
+  const resolved = await loadWithClientModule("./src/client.tsx")
+  expect(resolved.endsWith("/src/client.tsx")).toBe(true)
+  expect(resolve(resolved)).toBe(resolved) // already absolute
+})
+
+test("a bare/package clientModule specifier is left unchanged", async () => {
+  expect(await loadWithClientModule("@nifrajs/web-react/client")).toBe("@nifrajs/web-react/client")
 })
