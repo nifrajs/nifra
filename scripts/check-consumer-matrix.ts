@@ -116,16 +116,30 @@ async function packInstalledInto(
   const before = new Set(readdirSync(destination))
   // Installed third-party packages sometimes retain a `prepack` script whose source-only build inputs
   // are intentionally absent. npm's ignore-scripts mode packs the installed payload as-is.
-  const result =
-    await $`npm pack --ignore-scripts --pack-destination ${destination} --cache ${cache}`
+  //
+  // On CI, `npm pack` in Bun's symlinked store intermittently dies with a spawn-level exit (127/254/2)
+  // that has nothing to do with the package - the identical pack succeeds on a dev machine and on a
+  // retry, and other deps in the same sequential loop pack fine. Retry a few times so a transient does
+  // not fail the whole matrix; on the FINAL attempt let npm's own stderr through, so a package that
+  // genuinely cannot be packed surfaces its real error instead of a bare exit code.
+  let lastExit = 0
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const finalAttempt = attempt === 4
+    const command = $`npm pack --ignore-scripts --pack-destination ${destination} --cache ${cache}`
       .cwd(packageDir)
       .nothrow()
-      .quiet()
-  const packed = readdirSync(destination).find((file) => !before.has(file) && file.endsWith(".tgz"))
-  if (result.exitCode !== 0 || packed === undefined) {
-    throw new Error(`npm pack failed for ${packageDir} (exit ${result.exitCode})`)
+    const result = await (finalAttempt ? command : command.quiet())
+    const packed = readdirSync(destination).find(
+      (file) => !before.has(file) && file.endsWith(".tgz"),
+    )
+    if (result.exitCode === 0 && packed !== undefined) return packed
+    lastExit = result.exitCode
+    if (!finalAttempt) {
+      console.warn(`  … npm pack ${packageDir} exited ${result.exitCode}; retry ${attempt + 1}/4`)
+      await Bun.sleep(200 * (attempt + 1))
+    }
   }
-  return packed
+  throw new Error(`npm pack failed for ${packageDir} (exit ${lastExit})`)
 }
 
 const packageByName = new Map<string, { dir: string; manifest: Manifest }>()
