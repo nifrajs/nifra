@@ -1,5 +1,109 @@
 # @nifrajs/client
 
+## 2.3.0
+
+### Minor Changes
+
+- 8c77d47: The response size limit is reachable, applies to text as well as JSON, and never applies to a download.
+
+  ```ts
+  client<App>(url, { maxDecodedBytes: 64 * 1024 * 1024 });
+  ```
+
+  `maxBytes` lived under `transport`, whose `codec` is required - so raising your own response limit
+  meant opting into a versioned transport representation you had not asked for, and the call did not
+  compile without it. The 16 MB default protected everyone while the knob was reachable by nobody. It is
+  a top-level option now, with a doc comment saying what it bounds.
+
+  It bounds text as well as JSON, because a 2 GB string costs what a 2 GB object costs and one number
+  should answer for both. It deliberately does NOT bound a binary body: that is a download, and a size
+  limit on a download is a bug rather than a defence.
+
+  Exceeding it is a result, not a throw: `{ ok: false, status: 0, error: { error: "response_too_large" } }`,
+  the shape a timeout already takes. It used to throw a `TransportCodecError` straight out of the client,
+  which meant the only safe way to use the option was the try/catch the client's contract exists to
+  remove. The older `transport.maxBytes` spelling still works and still wins for the transport path.
+
+- 5fe332a: A route can declare that it returns bytes, and the client types it as `Blob`.
+
+  ```ts
+  import { bytes } from "@nifrajs/core/binary";
+
+  app.get("/invoice.pdf", async (c) =>
+    bytes(await render(c.params.id), {
+      type: "application/pdf",
+      filename: "invoice.pdf",
+    })
+  );
+  ```
+
+  Sending bytes was always possible - return a raw `Response` - but a raw `Response` is exactly what the
+  typed client cannot describe. So a download route needed a `// nifra-expect raw-response` pragma to
+  quiet the drift advisory, and its caller got no type at all. One category of endpoint sat outside the
+  contract the framework is otherwise strict about.
+
+  `bytes()` closes that. The brand it carries is a phantom - nothing is added to the value at runtime -
+  and it exists so the type can say a thing the value cannot: that these bytes are the payload rather
+  than a serialization accident. A plain `Response` is unaffected and still types as it did.
+
+  `filename` handles anything a person can type. Characters that would end the header value early are
+  stripped, and a name ASCII cannot carry is encoded per RFC 6266 (`filename*=UTF-8''...`) rather than
+  throwing - setting a header containing `\u62a5\u544a.pdf` or an emoji raises, which on a download route
+  would be a 500 for the ordinary act of naming a file, and the name is usually the user's own.
+
+- c823915: Typed, validated search params: a route declares a `searchSchema` and both its loader and its component read the parsed, validated query.
+
+  Export a Standard Schema as `searchSchema` from a route. The loader's `ctx.search` becomes the parsed URL query validated against it (typed via `LoaderArgs<typeof app, Env, typeof searchSchema>`), and the component reads the same value with `useSearch<typeof searchSchema>()`. Invalid or hostile input fails closed to the schema's defaults (never a 500); without a `searchSchema`, both are the raw parsed query. Validation runs at match time and the value is derived identically on the server and on client navigation, so a component never parses `window.location.search` by hand and the query it renders hydrates with no mismatch.
+
+  ```tsx
+  export const searchSchema = v.object({
+    page: v.optional(v.fallback(v.number(), 1), 1),
+  });
+
+  export async function loader({
+    search,
+    api,
+  }: LoaderArgs<typeof backend, unknown, typeof searchSchema>) {
+    return { rows: await api.reports.list(search).get() }; // search.page is a number
+  }
+
+  export default function Reports({ data }) {
+    const { page } = useSearch<typeof searchSchema>(); // page: number, SSR-correct
+    return <Pager page={page} />;
+  }
+  ```
+
+  A `_layout` can declare its own `searchSchema` for keys shared across a section (`?org`, `?theme`); the route's effective search merges the layout chain's schemas with the page's, page-wins on a conflict, so both the layout and the page read their validated slice from one object.
+
+  A route can also list `searchClientKeys` - search keys that are purely client-side UI (`?tab`, a client-side `?sort`, `?modal`). When a client navigation changes only those keys, the URL updates (so `useSearch` re-renders) without re-running the loader; any other key change revalidates as before, so data is never stale.
+
+  `useSearch` ships on every adapter - React (a value), Preact (a value), Vue (a `Ref`), Solid (an `Accessor`), and Svelte (an accessor), each in that framework's own shape.
+
+  `navigate` gains an object form on every adapter: `navigate({ to, search, replace })` serializes `search` onto `to` (no hand-built query strings). Run `nifra sync-routes` to generate `nifra-routes.d.ts` (each static route mapped to its schema output) and include it in your tsconfig, and `search` is typed against the target route's `searchSchema` - a wrong shape for a known route is a compile error, while an unmapped path takes a loose `search`. Regenerated from the route files, so a stale shape becomes a `tsc` error. The string-path and history-delta forms are unchanged.
+
+  ```ts
+  navigate({ to: "/reports", search: { page: 2 } }); // search typed against /reports's schema
+  ```
+
+### Patch Changes
+
+- 9b110b9: A binary response arrives intact, as a `Blob`.
+
+  The client handled JSON and then fell back to `.text()` for everything else. Decoding bytes as UTF-8
+  does not fail, it SUBSTITUTES: every invalid sequence becomes U+FFFD, so a PNG came back as a string
+  of replacement characters that could not be turned back into the image.
+
+      sent      89 50 4e 47 ff d8
+      received  ef bf bd 50 4e 47 ef bf bd ef bf bd
+
+  That is worse than refusing the body, because it reads as a broken file rather than a broken client.
+
+  The media type decides now: JSON decodes as before, text decodes as before, everything else comes back
+  as a `Blob` carrying its type. `text/*` is untouched, and so is anything ending `+xml` or `+json` -
+  an SVG is a document, and returning one as a `Blob` would break callers reading it as markup. A
+  response with no content-type is still parsed as JSON-or-text, which is what a hand-written
+  `new Response("…")` produces.
+
 ## 2.2.0
 
 ## 2.1.0

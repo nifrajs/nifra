@@ -1,5 +1,287 @@
 # @nifrajs/cli
 
+## 2.3.0
+
+### Minor Changes
+
+- 77715ca: `nifra check` fails on SQL built by interpolating a value into the statement text.
+
+  ```ts
+  db.query(`SELECT * FROM notes WHERE id = ${id}`); // fails the check
+  db.query("SELECT * FROM notes WHERE id = ?").get(id); // bound
+  db.execute(sql`SELECT * FROM notes WHERE id = ${id}`); // bound by the tag
+  ```
+
+  The interpolated value becomes statement rather than parameter, so anything the caller controls can end
+  the literal and continue as SQL.
+
+  Two things it deliberately stays quiet about, because flagging a safe idiom is how a rule gets ignored:
+  a TAGGED template (`` sql`… ${id} …` `` in postgres.js, drizzle and kysely binds its substitutions -
+  that IS the parameterised form), and any literal without a substitution. A SQL keyword is required in
+  the literal too, so `cache.query(`user:${id}`)` is left alone; the named escape hatches
+  (`$queryRawUnsafe`, `sql.unsafe`) are flagged on the call alone, since taking a statement as text is
+  their entire purpose.
+
+- ea0a27f: Capability provenance says when it could not finish, instead of reporting a clean project.
+
+  The reachability walk stops at a module count and an import depth so a pathological graph cannot hang
+  the check. Hitting either limit used to end the walk quietly, and the route came back covered - a
+  passing report whose subject was partly unexamined, which is the shape of failure this whole gate
+  exists to prevent.
+
+  Both limits now produce a `provenance-truncated` finding naming the route and the chain that reached
+  it, the check fails, and the lockfile refuses to record a snapshot taken from a truncated walk.
+
+- a4ecca9: The `.server` convention now holds in every client pipeline, not just one.
+
+  A `*.server.ts` module is server-only: the client build empties it so its import subtree - `node:`
+  builtins, native modules, secrets - never reaches a browser. That was implemented once, as a
+  `Bun.build` plugin, so it held in exactly one of the four client paths. `nifra build` emptied the
+  module; `nifra dev` (Vite), a Vite production build, and `nifra dev --bun` all bundled it whole.
+
+  A guard that holds in one pipeline is worse than no guard, because the file NAME reads as protection
+  everywhere it appears.
+
+  - `@nifrajs/web/plugins/vite-server-only` empties the module for Vite, registered in both the dev
+    server and the production build. A parity test asserts it emits bytes identical to the Bun plugin.
+  - `nifra dev --bun` refuses to start on an app containing one, naming the files - the same treatment
+    `*.fn` already had, because Bun's dev bundler takes no plugins and cannot be fixed with one.
+
+  The three `nifra dev --bun` refusals (CSS Modules, `*.fn`, `*.server`) now have tests. Two of them
+  guard secrets, and none of them had one.
+
+- a92104e: The interpolated-SQL rule catches string concatenation, the oldest injection shape.
+
+  ```ts
+  db.query("SELECT * FROM users WHERE id = " + req.params.id); // now fails the check
+  ```
+
+  The rule inspected template literals only: a quoted string was skipped before the SQL-keyword test ever
+  ran. So a codebase predating template literals - or an LLM emitting older-style JS - got a clean
+  `nifra check` on textbook-injectable SQL, and `nifra check` reporting clean is a security claim that
+  feeds the assurance ladder.
+
+  The same keyword requirement applies, so `cache.query("user:" + id)` stays quiet, and a statement built
+  into a variable elsewhere still says nothing at the call site.
+
+  Also fixes the service-worker test suite, whose offline case never reached the code it claimed to test:
+  the stub was assigned to `globalThis.fetch` after the worker had already captured `fetch` as a
+  parameter, so the assertion was satisfied by a real network failure. A worker mutated to serve the
+  offline page to every visitor passed all 19 tests; it now fails, and an online navigation is covered.
+
+- ea0a27f: The interpolated-SQL rule reads the syntax tree, and TypeScript is an optional peer rather than a
+  dependency.
+
+  The rule used to work on text, which meant guessing where strings and comments began and ending up
+  lenient in the direction that matters: EVERY tagged template was treated as parameter binding, so
+  `String.raw` or any no-op custom tag hid an interpolated statement from the check. It now parses with
+  the compiler and trusts only `sql` and `Prisma.sql`. It also reads a concatenated statement built
+  across `+`, and skips a file the parser could not read rather than turning recovery nodes into a second
+  misleading diagnostic.
+
+  Trust is by NAME, and that is the honest limit of a scanner that reads syntax and runs no type checker:
+  `sql` is what postgres.js, drizzle, slonik and Bun's driver all call theirs, and nothing here can prove
+  a given `sql` binds anything. A no-op function with that name is trusted too. The rule finds mistakes,
+  not an adversary who has read it - deciding otherwise needs a type checker, which is a different tool.
+  Names earn their place on that list by being what drivers already call the thing.
+
+  The compiler is a ~25 MB install, and the CLI's own typecheck step already treats `tsc` as something
+  the project provides. Forcing it on every install to run one rule was the wrong trade, so it is an
+  optional peer resolved when the rule runs. Every Nifra project has TypeScript - the templates all ship
+  a `typecheck` script - so this resolves in practice.
+
+  When it does not, `nifra check` says the rule did not run and how to enable it. That part is not
+  cosmetic: an empty result is indistinguishable from a clean one, and for this rule a clean result means
+  "no SQL injection was found". Silence there is the one answer it must never give.
+
+- c823915: Typed, validated search params: a route declares a `searchSchema` and both its loader and its component read the parsed, validated query.
+
+  Export a Standard Schema as `searchSchema` from a route. The loader's `ctx.search` becomes the parsed URL query validated against it (typed via `LoaderArgs<typeof app, Env, typeof searchSchema>`), and the component reads the same value with `useSearch<typeof searchSchema>()`. Invalid or hostile input fails closed to the schema's defaults (never a 500); without a `searchSchema`, both are the raw parsed query. Validation runs at match time and the value is derived identically on the server and on client navigation, so a component never parses `window.location.search` by hand and the query it renders hydrates with no mismatch.
+
+  ```tsx
+  export const searchSchema = v.object({
+    page: v.optional(v.fallback(v.number(), 1), 1),
+  });
+
+  export async function loader({
+    search,
+    api,
+  }: LoaderArgs<typeof backend, unknown, typeof searchSchema>) {
+    return { rows: await api.reports.list(search).get() }; // search.page is a number
+  }
+
+  export default function Reports({ data }) {
+    const { page } = useSearch<typeof searchSchema>(); // page: number, SSR-correct
+    return <Pager page={page} />;
+  }
+  ```
+
+  A `_layout` can declare its own `searchSchema` for keys shared across a section (`?org`, `?theme`); the route's effective search merges the layout chain's schemas with the page's, page-wins on a conflict, so both the layout and the page read their validated slice from one object.
+
+  A route can also list `searchClientKeys` - search keys that are purely client-side UI (`?tab`, a client-side `?sort`, `?modal`). When a client navigation changes only those keys, the URL updates (so `useSearch` re-renders) without re-running the loader; any other key change revalidates as before, so data is never stale.
+
+  `useSearch` ships on every adapter - React (a value), Preact (a value), Vue (a `Ref`), Solid (an `Accessor`), and Svelte (an accessor), each in that framework's own shape.
+
+  `navigate` gains an object form on every adapter: `navigate({ to, search, replace })` serializes `search` onto `to` (no hand-built query strings). Run `nifra sync-routes` to generate `nifra-routes.d.ts` (each static route mapped to its schema output) and include it in your tsconfig, and `search` is typed against the target route's `searchSchema` - a wrong shape for a known route is a compile error, while an unmapped path takes a loose `search`. Regenerated from the route files, so a stale shape becomes a `tsc` error. The string-path and history-delta forms are unchanged.
+
+  ```ts
+  navigate({ to: "/reports", search: { page: 2 } }); // search typed against /reports's schema
+  ```
+
+### Patch Changes
+
+- e88f36b: Two CI gates that could report success having measured nothing.
+
+  `@nifrajs/events` shipped with 17 passing tests CI had never executed. The two run scripts list their
+  30-odd test directories by hand and nobody added the new one, so the package published untested and the
+  coverage ratchet was blind to it. The dead suite was the fail-closed half of a durable event boundary.
+  A completeness check now asserts every package with test files appears in both scripts, with an
+  explicit, reasoned opt-out list.
+
+  `check:size` dropped any row that failed to build - logging to stderr, returning null - and then
+  compared budgets only against rows that survived. Rename a `@nifrajs/core/*` subpath and its row
+  vanishes with its budget, every remaining row passes, and the gate exits 0. It now reconciles measured
+  rows against declared rows, and the budget table against the feature matrix, before comparing anything.
+
+- b9f4525: `nifra build` and `nifra dev` now print the real cause of a failed bundle. When `Bun.build` throws, it raises an `AggregateError` whose own message is a generic "Bundle failed" and whose underlying errors - the unresolved import, the plugin that threw, each with a file and line - were dropped by the CLI's error output. Those causes are now unwrapped and printed, one per line, at every CLI error boundary.
+- 1fbfb62: A `clientModule` given as a relative path (a local client entry, e.g. `./src/client.tsx`) now works in both `nifra dev` and `nifra build`. It is resolved to an absolute path when the framework config loads, so the generated client entry - which dev and build write into different directories - resolves it identically in both phases instead of loading in one and breaking in the other. A bare or package specifier (`@nifrajs/web-react/client`) is location-independent and unchanged.
+- c42d777: Documents seven packages that shipped without a single reference.
+
+  `web-vanilla` (zero-framework adapter) joins the frameworks page and gains `examples/web-vanilla`;
+  `devtools` joins dev; `mock` joins testing; `events` joins backends; `prompt`, `agent-telemetry` and
+  `mcp-db` join the coding-agents page.
+
+  All were real - 185 to 381 lines each, 9 to 23 tests each - and none were findable. Every added sample
+  is compiled by the docs gate against the live API.
+
+- fc034c6: Documents server functions and effect provenance.
+
+  Two features shipped without a page. Server functions span seven packages and had none at all, and the
+  effect provenance firewall - now armed in every template - emits a finding (`unconfined-write-reach`)
+  whose fix is structural and was explained nowhere outside code comments.
+
+  Both pages join the docs corpus the MCP server and `nifra_docs` search read from, so an agent finds them
+  too.
+
+- 45b0733: `nifra dev --bun` no longer waves `.fn.mts` / `.fn.cts` / `.fn.mjs` / `.fn.cjs` into the browser.
+
+  The refusal that keeps a server function off the Bun dev pipeline matched a hand-written glob,
+  `**/*.fn.{ts,tsx,js,jsx}`, while both build pipelines stub anything matching
+  `/\.fn(\.[cm]?[jt]sx?)?$/`. So a `todos.fn.mts` was a server function everywhere except the one check
+  that exists to stop it leaking - it started the dev server and shipped the function bodies, and
+  whatever they close over, to the browser. Measured across all eight extensions, four leaked.
+
+  Both refusals now test against the same matchers the transforms use, exported as `SERVER_FN_MODULE`
+  and `SERVER_ONLY_MODULE` from `@nifrajs/web`. `SERVER_ONLY_MODULE` had two definitions and now has one
+  owner. A test drives every accepted extension through the guard, so widening a convention without
+  widening the guard fails there rather than in someone's browser.
+
+- ea0a27f: A scaffolded project's `check` script runs the assurance gate it ships with, and the dev refusals cover
+  extensionless modules.
+
+  Every template ships an assurance config, and every template's `check` script ran `nifra check` only -
+  so the policy was shipped, documented, and never executed by the command a project actually runs in CI.
+  It now runs `nifra check && nifra assure`.
+
+  `nifra dev --bun` refuses `.server` and `.fn` modules because Bun's dev bundler takes no plugins and
+  would ship them whole. The refusal missed a module with no extension at all, which is the one shape a
+  directory import produces.
+
+- 1ed58b8: The documentation site now holds the bar it sells: `nifra.assurance.ts` plus a capability lockfile, at
+  L2.
+
+  It is also the first validation of the capability model on an app nobody designed around it. Two things
+  that only a real app can answer:
+
+  - **No false positives.** 47 route files carry dozens of documentation samples containing
+    `import { Database } from "bun:sqlite"` and friends inside template literals. None became capability
+    evidence, because the scanner blanks template contents before reading imports.
+  - **Real imports are still caught.** Adding one genuine `bun:sqlite` import to the backend immediately
+    flagged all four routes, including the GET dead end with its structural message.
+
+- 803ec9d: `nifra_types` answers for every published package.
+
+  `@nifrajs/deno`, `@nifrajs/content` and `@nifrajs/workers` contributed nothing to the type index the
+  MCP tool reads. They ship `files: ["src"]` and point `types` at `./src/index.ts`, which is right for a
+  package resolved by Deno, workerd or Bun, while the index only ever looked for a built `dist/*.d.ts`.
+  Asked about `serve`, `defineCollection` or `createWebSocketHub`, an agent got nothing back and wrote
+  the API it guessed instead.
+
+  Their declarations are now emitted from source, per file and without a type checker, so the index
+  starts where a consumer's resolver starts either way. Signatures are declarations, not implementations
+  pasted in; the 1,545 entries already there are byte-identical.
+
+  The `--check` gate could not have caught this - it compares the regenerated file against the committed
+  one, and a package missing from both matches forever. So `gen:llms` now fails when a published package
+  contributes no types at all, which also turns the quietest failure here into a loud one: run it without
+  building first and the file used to be rewritten with almost nothing in it.
+
+- 5177627: `nifra check`, `nifra assure` and `nifra levels` are three views of one project verification.
+
+  All three read the same reflected project: the typed-contract scan, the route-assurance evaluation,
+  and the static capability provenance. Each had grown its own orchestration over those pieces, so which
+  command ran which policy was something a caller had to keep in their head, and `nifra levels` paid for
+  it twice. Its L0 rung runs the whole check, and then L1 and L2 re-derived the route-assurance and
+  capability-provenance evidence that same check had just produced. On a project with a capabilities
+  policy the provenance walk is the expensive part, and it ran on every `levels` invocation once for the
+  check and again for the ladder.
+
+  They now derive from a single verification pass. Each command renders its own slice of it: `assure`
+  still never triggers the typecheck it has no use for, and `levels` climbs the ladder from evidence
+  gathered once rather than a second time per rung. The output of all three is unchanged down to the
+  byte, and a golden test per command and per mode holds that line so it stays that way.
+
+- 4eb4e15: The release's version script regenerates the llms corpora, so the "Version Packages" PR can pass CI.
+
+  `types.json` stores exported signatures verbatim, including core's `VERSION` as the literal type
+  `export declare const VERSION: "2.2.0"`. Bumping the version rewrote that constant and regenerated
+  `api-reference.md` and the LLM cards, but not the corpora - so every Version PR failed `check:llms` on a
+  stale `types.json`, and since Release only publishes after CI concludes successfully, nothing could
+  ship.
+
+- Updated dependencies [6f5b3ad]
+- Updated dependencies [cee03d7]
+- Updated dependencies [85b354d]
+- Updated dependencies [9b110b9]
+- Updated dependencies [7293a1c]
+- Updated dependencies [c8b79d7]
+- Updated dependencies [8514caa]
+- Updated dependencies [ea0a27f]
+- Updated dependencies [ea0a27f]
+- Updated dependencies [45b0733]
+- Updated dependencies [c42d777]
+- Updated dependencies [ea0a27f]
+- Updated dependencies [82b2053]
+- Updated dependencies [b271164]
+- Updated dependencies [8c77d47]
+- Updated dependencies [ea0a27f]
+- Updated dependencies [26cec7d]
+- Updated dependencies [8807004]
+- Updated dependencies [ea0a27f]
+- Updated dependencies [35af9fe]
+- Updated dependencies [ea0a27f]
+- Updated dependencies [d190b1c]
+- Updated dependencies [a4ecca9]
+- Updated dependencies [de8d992]
+- Updated dependencies [a92104e]
+- Updated dependencies [7f55876]
+- Updated dependencies [5fe332a]
+- Updated dependencies [c823915]
+- Updated dependencies [d2840ac]
+- Updated dependencies [62a8d03]
+- Updated dependencies [dcacfe7]
+- Updated dependencies [28704d7]
+- Updated dependencies [ea0a27f]
+- Updated dependencies [0c2de22]
+  - @nifrajs/core@2.3.0
+  - create-nifra@2.3.0
+  - @nifrajs/client@2.3.0
+  - @nifrajs/web@2.3.0
+  - @nifrajs/schema@2.3.0
+  - @nifrajs/testing@2.3.0
+  - @nifrajs/mcp@2.3.0
+  - @nifrajs/runner@2.3.0
+
 ## 2.2.0
 
 ### Minor Changes

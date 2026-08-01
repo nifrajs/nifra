@@ -1,5 +1,25 @@
 # @nifrajs/testing
 
+## 2.3.0
+
+### Patch Changes
+
+- Updated dependencies [6f5b3ad]
+- Updated dependencies [85b354d]
+- Updated dependencies [9b110b9]
+- Updated dependencies [8514caa]
+- Updated dependencies [ea0a27f]
+- Updated dependencies [ea0a27f]
+- Updated dependencies [b271164]
+- Updated dependencies [8c77d47]
+- Updated dependencies [ea0a27f]
+- Updated dependencies [5fe332a]
+- Updated dependencies [c823915]
+- Updated dependencies [d2840ac]
+  - @nifrajs/core@2.3.0
+  - @nifrajs/client@2.3.0
+  - @nifrajs/mock@2.3.0
+
 ## 2.2.0
 
 ### Patch Changes

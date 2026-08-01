@@ -1,5 +1,358 @@
 # @nifrajs/web
 
+## 2.3.0
+
+### Minor Changes
+
+- ea0a27f: `head.script` carries data; executable code goes through a named escape hatch with a CSP nonce.
+
+  ```ts
+  head: {
+    script: [{ content: JSON.stringify(article) }],          // application/ld+json or application/json
+    unsafeScript: [unsafeInlineScript("window.dataLayer = []", { nonce })],
+  }
+  ```
+
+  **Breaking**, deliberately. The slot used to take any `type`, including `module`. Its escaping guards
+  against closing the element early - `</script>`, `<!--`, `]]>` - which is exactly what inert JSON needs
+  and is no protection whatsoever for code. A route interpolating loader data into an executable body
+  therefore had escaping that looked like a boundary and was not one. The slot now accepts only what it
+  can actually make safe: a wrong `type` is a compile error, and it throws at render for callers the
+  types do not reach.
+
+  `unsafeInlineScript()` is the replacement, named after what it is and requiring a nonce. Pass the same
+  nonce to `renderPage` and it reaches every framework-owned script in the document - the hydration
+  bootstrap, the pre-hydration guard, the data script, streamed deferred resolutions, island tags, and an
+  adapter's own hydration head - so a strict `script-src 'nonce-…'` policy becomes achievable rather than
+  aspirational. A render without a nonce emits exactly the bytes it did before.
+
+  Both `type` fields are allowlists rather than escaped values, checked in one place for the server
+  render and the client soft-navigation together: a head that renders and then throws on the next
+  navigation is worse than one that never rendered.
+
+- 45b0733: `nifra dev --bun` no longer waves `.fn.mts` / `.fn.cts` / `.fn.mjs` / `.fn.cjs` into the browser.
+
+  The refusal that keeps a server function off the Bun dev pipeline matched a hand-written glob,
+  `**/*.fn.{ts,tsx,js,jsx}`, while both build pipelines stub anything matching
+  `/\.fn(\.[cm]?[jt]sx?)?$/`. So a `todos.fn.mts` was a server function everywhere except the one check
+  that exists to stop it leaking - it started the dev server and shipped the function bodies, and
+  whatever they close over, to the browser. Measured across all eight extensions, four leaked.
+
+  Both refusals now test against the same matchers the transforms use, exported as `SERVER_FN_MODULE`
+  and `SERVER_ONLY_MODULE` from `@nifrajs/web`. `SERVER_ONLY_MODULE` had two definitions and now has one
+  owner. A test drives every accepted extension through the guard, so widening a convention without
+  widening the guard fails there rather than in someone's browser.
+
+- c42d777: `clientEntry` is optional on a `hydrate: false` page.
+
+  A non-hydrated document references it nowhere - all three uses sit behind the `hydrate` guard - yet
+  every static page had to pass one anyway. `RenderPageInput` is now a union, so omitting it is allowed
+  exactly when `hydrate: false` is set and stays a compile error otherwise, rather than rendering
+  `<script src="">` and silently failing to hydrate.
+
+  Found by writing `examples/web-vanilla`, which is the first caller that genuinely has no client entry
+  to give.
+
+- ea0a27f: A server function has one type per half, so both the server call and the hook argument are honest.
+
+  ```ts
+  export type ClientServerFn<Input, Output> = (
+    input: Input
+  ) => MaybePromise<Output>;
+  export type ServerFnReference<Input, Output> =
+    | ServerFn<Input, Output>
+    | ClientServerFn<Input, Output>;
+  ```
+
+  One type could not describe both halves. `ServerFn` is the SERVER declaration and takes `(input,
+context)`; the client imports a generated stub that takes one argument. Widening the single type so a
+  one-argument call compiled made a direct server call type-check while handing the declaration
+  `undefined` for a context its implementation requires - a runtime failure the compiler had just been
+  told to allow.
+
+  Now the two are separate and `useServerFn` accepts either through `ServerFnReference`, which is the
+  one place the two halves legitimately meet. Calling a declaration from your own server code needs the
+  context, and omitting it is a compile error again.
+
+- d190b1c: Add `@nifrajs/web/fn` - server functions, mounted as ordinary routes.
+
+  ```ts
+  // app/actions/todos.fn.ts
+  export const addTodo = serverFn(
+    {
+      input: t.object({ text: t.string({ minLength: 1 }) }),
+      capabilities: ["db.write"],
+    },
+    async ({ text }, c) => db.todos.insert({ text })
+  );
+
+  // server
+  import * as todos from "./actions/todos.fn";
+  app.use(serverFunctions("todos", todos)); // -> POST /_nifra/fn/todos/addTodo
+  ```
+
+  A mounted function registers through the ordinary public `register()`, so it is a route like any other
+  and inherits the body cap, schema validation, capability declarations, the effect ledger, and
+  `nifra assure`. Nothing in `@nifrajs/core` changed and no request-path branch was added, so an app that
+  mounts none of them pays nothing.
+
+  Every server function is a public POST endpoint whose arguments the caller controls entirely, so the
+  guards are structural rather than documented:
+
+  - **`application/json` only.** A cross-origin form can send only urlencoded, multipart or text/plain,
+    so requiring JSON forces a preflight the browser blocks. Both alternatives were measured first: a
+    body schema alone still accepts a cross-origin urlencoded form, and `c.boundedJson` alone accepts a
+    `text/plain` body crafted to parse as JSON. A function with no input schema has no body reader at
+    all, which is where this guard is the only defence.
+  - **Same-origin only** when an `Origin` is present - defence in depth behind the JSON requirement.
+  - **Input is always validated**; no schema means no argument, never an unchecked one.
+  - **No closures.** A function is a module-level export taking explicit arguments, which removes the
+    serialised-closure class rather than defending it.
+
+  The client build replaces a `*.fn.ts` module with one stub per export, each POSTing to its mounted
+  route, so the function bodies and everything they import never reach a browser.
+
+  `nifra dev --bun` refuses to start on an app that has server functions. Bun's dev-server bundler takes
+  no plugins - a runtime `Bun.plugin` onLoad does not reach it, measured rather than assumed - so the
+  module would ship whole, secrets included. Refusing matches how that pipeline already handles CSS
+  Modules. `nifra build` and `nifra dev` (Vite) transform it correctly.
+
+- a4ecca9: The `.server` convention now holds in every client pipeline, not just one.
+
+  A `*.server.ts` module is server-only: the client build empties it so its import subtree - `node:`
+  builtins, native modules, secrets - never reaches a browser. That was implemented once, as a
+  `Bun.build` plugin, so it held in exactly one of the four client paths. `nifra build` emptied the
+  module; `nifra dev` (Vite), a Vite production build, and `nifra dev --bun` all bundled it whole.
+
+  A guard that holds in one pipeline is worse than no guard, because the file NAME reads as protection
+  everywhere it appears.
+
+  - `@nifrajs/web/plugins/vite-server-only` empties the module for Vite, registered in both the dev
+    server and the production build. A parity test asserts it emits bytes identical to the Bun plugin.
+  - `nifra dev --bun` refuses to start on an app containing one, naming the files - the same treatment
+    `*.fn` already had, because Bun's dev bundler takes no plugins and cannot be fixed with one.
+
+  The three `nifra dev --bun` refusals (CSS Modules, `*.fn`, `*.server`) now have tests. Two of them
+  guard secrets, and none of them had one.
+
+- de8d992: `@nifrajs/web/service-worker` generates a service worker from a build manifest.
+
+  ```ts
+  const sw = generateServiceWorker(manifest, {
+    buildId: gitSha,
+    offlineUrl: "/offline",
+  });
+  ```
+
+  Opt-in and generated at build time, so an app that never calls it ships nothing.
+
+  The generated worker is deliberately narrow, because a service worker outlives a deploy and can hand
+  one visitor a response produced for another:
+
+  - **Only content-hashed assets are precached.** A hashed URL names its bytes, so cache-first is correct
+    by construction; unhashed URLs are left to the network.
+  - **Documents are never cached.** Only navigations that FAIL are answered, and only with the static
+    offline page you nominate. Caching HTML is how a worker serves one signed-in user the page rendered
+    for another.
+  - **GET, same-origin, `ok`, not `no-store`.** Everything else goes straight to the network.
+  - **The cache name carries the build id**, and activation deletes every older cache, so a stale worker
+    cannot pin an old build.
+
+  Omit `offlineUrl` and a failed navigation simply fails - an offline page you have not written is not
+  better than a browser error.
+
+- c823915: Typed, validated search params: a route declares a `searchSchema` and both its loader and its component read the parsed, validated query.
+
+  Export a Standard Schema as `searchSchema` from a route. The loader's `ctx.search` becomes the parsed URL query validated against it (typed via `LoaderArgs<typeof app, Env, typeof searchSchema>`), and the component reads the same value with `useSearch<typeof searchSchema>()`. Invalid or hostile input fails closed to the schema's defaults (never a 500); without a `searchSchema`, both are the raw parsed query. Validation runs at match time and the value is derived identically on the server and on client navigation, so a component never parses `window.location.search` by hand and the query it renders hydrates with no mismatch.
+
+  ```tsx
+  export const searchSchema = v.object({
+    page: v.optional(v.fallback(v.number(), 1), 1),
+  });
+
+  export async function loader({
+    search,
+    api,
+  }: LoaderArgs<typeof backend, unknown, typeof searchSchema>) {
+    return { rows: await api.reports.list(search).get() }; // search.page is a number
+  }
+
+  export default function Reports({ data }) {
+    const { page } = useSearch<typeof searchSchema>(); // page: number, SSR-correct
+    return <Pager page={page} />;
+  }
+  ```
+
+  A `_layout` can declare its own `searchSchema` for keys shared across a section (`?org`, `?theme`); the route's effective search merges the layout chain's schemas with the page's, page-wins on a conflict, so both the layout and the page read their validated slice from one object.
+
+  A route can also list `searchClientKeys` - search keys that are purely client-side UI (`?tab`, a client-side `?sort`, `?modal`). When a client navigation changes only those keys, the URL updates (so `useSearch` re-renders) without re-running the loader; any other key change revalidates as before, so data is never stale.
+
+  `useSearch` ships on every adapter - React (a value), Preact (a value), Vue (a `Ref`), Solid (an `Accessor`), and Svelte (an accessor), each in that framework's own shape.
+
+  `navigate` gains an object form on every adapter: `navigate({ to, search, replace })` serializes `search` onto `to` (no hand-built query strings). Run `nifra sync-routes` to generate `nifra-routes.d.ts` (each static route mapped to its schema output) and include it in your tsconfig, and `search` is typed against the target route's `searchSchema` - a wrong shape for a known route is a compile error, while an unmapped path takes a loose `search`. Regenerated from the route files, so a stale shape becomes a `tsc` error. The string-path and history-delta forms are unchanged.
+
+  ```ts
+  navigate({ to: "/reports", search: { page: 2 } }); // search typed against /reports's schema
+  ```
+
+- 62a8d03: Add `useServerFn` - a server function's pending, data and error state - to all five adapters.
+
+  ```tsx
+  const addTodo = useServerFn(fns.addTodo)
+  <button disabled={addTodo.pending} onClick={() => addTodo.call({ text }).catch(() => {})}>add</button>
+  ```
+
+  Calling a server function never needed a binding: the client stub is `(input) => Promise<Output>`.
+  This adds only the state a component wants around it.
+
+  The state machine is `@nifrajs/web`'s `createServerFnStore`, shared by every adapter, so "is it
+  pending" has one answer rather than five that drift. Each binding contributes just its subscription
+  primitive: `useSyncExternalStore` (React, Preact), a signal (Solid), a `shallowRef` (Vue), a `readable`
+  (Svelte).
+
+  Two behaviours worth knowing:
+
+  - **The last call wins.** A response that is no longer the newest is discarded rather than written, so
+    a slow first call landing after a fast second cannot overwrite fresh data with stale.
+  - **`call` still rejects.** The error is recorded for rendering AND the promise rejects, so `await`
+    behaves normally. A caller that only renders from state should attach `.catch(() => {})`, as with
+    `useFetcher`'s `submit`.
+
+  `data` is kept while the next call is in flight, so a rendered list does not blank on every refetch.
+
+- dcacfe7: Guard navigation away from unsaved work with `useBlocker`.
+
+  Mirrors react-router's shape: pass a boolean or a `({ currentLocation, nextLocation }) => boolean`
+  predicate and get back `{ state, proceed, reset }`. When a navigation is intercepted - a `<Link>` or
+  anchor click, `useNavigate`, or a browser back/forward - `state` becomes `"blocked"`, so you render
+  your OWN confirmation and call `proceed()` to continue or `reset()` to stay. A plain boolean can't
+  express an async "are you sure?"; these two callbacks can.
+
+  ```tsx
+  import { useBlocker } from "@nifrajs/web-react/router";
+
+  const blocker = useBlocker(form.isDirty);
+
+  return blocker.state === "blocked" ? (
+    <ConfirmDialog onConfirm={blocker.proceed} onCancel={blocker.reset} />
+  ) : null;
+  ```
+
+  Back and forward are guarded too: the destination URL is restored before you are asked, so the page
+  never changes underneath the prompt. It also arms the browser's native "Leave site?" prompt on tab
+  close and reload. Idle on the server and before hydration, so it degrades to native navigation and
+  stays hydration-safe.
+
+- ea0a27f: The Vite pipelines honour Nifra's public-env boundary, keep `.server` out of the browser on Vite 5,
+  and serve a valid ESM replacement in dev.
+
+  **Breaking if you relied on `VITE_*` reaching the browser.** Vite exposes any variable matching its own
+  `envPrefix` to client code, and Nifra never overrode it - so an app with one documented boundary
+  (`publicEnvPrefix`, default `PUBLIC_`) silently had a second one it had not configured. The dev server
+  and the production build now bind Vite's prefix to Nifra's, including the "expose nothing" setting.
+  Move anything the browser genuinely needs to your public prefix.
+
+  Two more holes in the same convention:
+
+  - Vite 5 has no `applyToEnvironment`, so the `.server` and `.fn` transforms ran for the SSR graph too
+    and stubbed the modules the server itself needs. Both now decline when the transform is told it is
+    running for SSR.
+  - The `.server` replacement was CommonJS, which is right for the Bun bundler and invalid in Vite dev's
+    native ESM graph. Dev now gets inert ESM bindings derived from the module's exported names, with the
+    implementation and its imports discarded. A shape the generator does not model declares no binding,
+    so the import fails to link - server code is never served as the fallback.
+
+- 0c2de22: Ambient types for a generated `server-manifest` module, so a hand-written server entry that imports `./server-manifest` typechecks before the first build has generated that file - no `@ts-nocheck` on the file that deploys. Reference it with `/// <reference types="@nifrajs/web/server-manifest" />`, or list `"@nifrajs/web/server-manifest"` in your tsconfig `compilerOptions.types`. Once a build (or `nifra sync-manifest`) writes the real file next to your entry, TypeScript resolves the import to it and its types win. Not needed with `nifra build --target`, which generates and bundles its own entry.
+
+### Patch Changes
+
+- 7293a1c: A custom `rootId` hydrates.
+
+  ```ts
+  renderPage({ adapter, chain, data, clientEntry, rootId: "app" });
+  ```
+
+  That render produced a flawless server-rendered document that then hydrated nothing, forever, with an
+  empty console: the generated client entry mounted into `document.getElementById("root")` and skipped
+  mounting when it found nothing. Every framework binding, every loader and the whole SSR pass worked,
+  and the page was static.
+
+  `rootId` is chosen per RENDER while the client entry is emitted once per BUILD, so an id baked into the
+  entry can only ever be a guess. The container announces itself instead - a non-default `rootId` also
+  carries `ROOT_ATTRIBUTE` (`data-nifra-root`), which the entry looks for before falling back to `#root`.
+  It has to be the DOM and not another `window.__NIFRA_*` global, because a second copy of the id can
+  drift from the markup while an attribute written by the same expression as the id cannot.
+
+  A default render emits exactly the bytes it did before - the marker is absent, and `#root` is still
+  what the entry finds. When a document has neither, the entry now throws and names what it looked for
+  rather than leaving a live page that answers no clicks.
+
+  The container is looked up as `body > div[data-nifra-root]` rather than by the attribute alone. A
+  `<meta>` in the head may legally carry any `data-*` attribute, and one carrying this marker appears
+  earlier in document order - so an unscoped lookup would hand hydration a tag in the head and mount the
+  application into it.
+
+- ea0a27f: The same-origin check works behind a TLS-terminating proxy, and both seams that use it now agree.
+
+  Nifra had two of these - the WebSocket handshake's cross-origin default and the server-function mount -
+  and they answered differently for one request, so a browser that could open a socket was told its POST
+  was cross-origin. `isSameOriginRequest` from `@nifrajs/core/server` is now the single owner.
+
+  The rule it encodes: the host must match, and the Origin's scheme may be equal or STRONGER, never
+  weaker. A server behind Cloudflare, a tunnel or an ingress sees a plain HTTP socket, so `request.url`
+  says `http:` while the browser correctly reports an `https:` page - the shape almost every deployment
+  produces. Comparing full origins rejects it, which is not the stricter option but an outage: measured,
+  every server-function POST returned 403 behind a terminating proxy, while the cross-origin caller the
+  comparison aimed at had already been rejected on the host alone. The reverse - an `http:` page against
+  an `https:` request URL - is a downgrade with no legitimate cause, and is refused, as is any Origin
+  that is not an http(s) page origin at all.
+
+  `X-Forwarded-Proto` is still not read, and that is the point: a forwarded header is attacker-controlled
+  unless something upstream is proven to overwrite it, so trusting one by default would hand every
+  unproxied deployment a spoofable origin check. Ordering the two schemes reconciles them without it.
+
+- a92104e: The interpolated-SQL rule catches string concatenation, the oldest injection shape.
+
+  ```ts
+  db.query("SELECT * FROM users WHERE id = " + req.params.id); // now fails the check
+  ```
+
+  The rule inspected template literals only: a quoted string was skipped before the SQL-keyword test ever
+  ran. So a codebase predating template literals - or an LLM emitting older-style JS - got a clean
+  `nifra check` on textbook-injectable SQL, and `nifra check` reporting clean is a security claim that
+  feeds the assurance ladder.
+
+  The same keyword requirement applies, so `cache.query("user:" + id)` stays quiet, and a statement built
+  into a variable elsewhere still says nothing at the call site.
+
+  Also fixes the service-worker test suite, whose offline case never reached the code it claimed to test:
+  the stub was assigned to `globalThis.fetch` after the worker had already captured `fetch` as a
+  parameter, so the assertion was satisfied by a real network failure. A worker mutated to serve the
+  offline page to every visitor passed all 19 tests; it now fails, and an online navigation is covered.
+
+- 28704d7: The dev server's public-env boundary is covered by a test that drives it.
+
+  Vite inlines any `VITE_*` variable into client source by default, which is a second boundary running
+  beside Nifra's `PUBLIC_` one - so a `VITE_DATABASE_URL` reached the browser without passing the policy
+  meant to decide that. Both pipelines were fixed, but only the production build was tested. A guard
+  holding in one pipeline while the option reads like protection in both is the exact shape of the bug
+  that motivated the fix.
+
+  The dev server now has the equivalent: a real dev server, a module asking for both variables, and an
+  assertion about what it actually serves. It fails without the fix, and it cannot pass on an error page.
+
+- Updated dependencies [6f5b3ad]
+- Updated dependencies [85b354d]
+- Updated dependencies [8514caa]
+- Updated dependencies [ea0a27f]
+- Updated dependencies [ea0a27f]
+- Updated dependencies [b271164]
+- Updated dependencies [8c77d47]
+- Updated dependencies [ea0a27f]
+- Updated dependencies [5fe332a]
+- Updated dependencies [d2840ac]
+  - @nifrajs/core@2.3.0
+
 ## 2.2.0
 
 ### Minor Changes

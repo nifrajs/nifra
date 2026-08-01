@@ -1,5 +1,210 @@
 # @nifrajs/core
 
+## 2.3.0
+
+### Minor Changes
+
+- 6f5b3ad: Assurance rules can match a CLASS of capability rather than a list of token names.
+
+  ```ts
+  { name: "authenticated-write", match: { access: "write", zone: "domain" }, require: [AUTHENTICATED] }
+  ```
+
+  Naming exact tokens is precise but closed. A rule listing `db.write` does not cover `storage.write`, so
+  every policy has to enumerate every write in the system, and a capability introduced next year escapes
+  the rule until someone remembers to widen it. `access` and `zone` are read from the capability
+  definitions, so the rule is keyed on what the capability IS - a new token is covered the day it is
+  declared.
+
+  Both constraints must hold for the SAME capability: a route that reads business state and writes an
+  audit log does not satisfy `{ access: "write", zone: "domain" }` by combining halves of two tokens.
+
+  The selectors resolve through the capability definitions, so `evaluateRouteAssurance` takes them via a
+  new third argument (`{ definitions }`) and `defineAssuranceConfig` refuses a policy that uses them
+  without a `capabilities` block. Without definitions such a rule could only ever match nothing - and a
+  rule that matches nothing does not fail, it lets the route fall past to whatever laxer rule comes next.
+
+- 85b354d: Assurance rules can match on a route's declared capabilities, and a misspelled selector key is now an error.
+
+  ```ts
+  { name: "authenticated-write", match: { capabilities: ["db.write"] }, require: [NIFRA_ASSURANCE.AUTHENTICATED] }
+  ```
+
+  A path glob is the wrong tool for "anything that writes must prove who asked": it breaks when a route
+  moves, and it cannot see a route that acquires the capability later. The declared tokens already reach
+  reflection, so a policy can be written against what a route DOES. Matches when the route declares any of
+  the listed tokens.
+
+  Every `create-nifra` template ships this rule, which is what stops a server function - a public POST
+  endpoint whose arguments the caller controls - from shipping unauthenticated.
+
+  The selector is rebuilt from an allowlist of known keys, so an unrecognised one used to be dropped
+  silently. A selector that loses its only constraint matches EVERY route, so the rule swallows
+  everything after it - in a policy whose first rule is the lenient one, a single typo disabled the rest
+  of the file. Unknown selector keys are refused rather than ignored.
+
+- 8514caa: A capability requiring durable idempotency has an adapter that satisfies it.
+
+  ```ts
+  import { createDurableEffectJournal } from "@nifrajs/core/durable-execution";
+  import { durableCommand } from "@nifrajs/middleware";
+
+  const app = server()
+    .use(durableCommand({ journal: createDurableEffectJournal({ store }) }))
+    .post("/charge", { capabilities: ["billing.charge"] }, (c) =>
+      executeCapability(c, "billing.charge", {}, () => gateway.charge(order))
+    );
+  ```
+
+  A capability defined `idempotency: "durable"` requires `nifra.durable-command` evidence, and nothing
+  shipped produced it. The tier was reachable, but only by writing `assurance: ["nifra.durable-command"]`
+  on the route - an assertion with nothing behind it, and wrong in both directions: a route that
+  genuinely journals its effects but omits the string fails `nifra check`, and a route that journals
+  nothing but includes it passes. Every other assurance id has a shipped emitter; this one now does too.
+
+  The evidence is a by-product rather than a claim. Installing the adapter puts the journal on the
+  request, so `executeCapability` records intent before an effect runs and exactly one terminal outcome
+  after - which is what the tier is asking about. `executeCapability` resolves an explicitly passed
+  `journal` first, so existing call sites are untouched, and a journal missing a transition is refused at
+  wiring time rather than surfacing as a TypeError partway through a production effect.
+
+  `attachCapabilityJournal` and `capabilityJournalOf` are exported from `@nifrajs/core/capabilities` as
+  the seam the adapter uses.
+
+  Response replay is still not durable-command evidence, and that is deliberate: if the process dies
+  between the effect and storing its response there is nothing to replay, so replay cannot be what makes
+  an effect exactly-once. The journal survives that; only the journal clears the tier.
+
+- ea0a27f: Capability provenance says when it could not finish, instead of reporting a clean project.
+
+  The reachability walk stops at a module count and an import depth so a pathological graph cannot hang
+  the check. Hitting either limit used to end the walk quietly, and the route came back covered - a
+  passing report whose subject was partly unexamined, which is the shape of failure this whole gate
+  exists to prevent.
+
+  Both limits now produce a `provenance-truncated` finding naming the route and the chain that reached
+  it, the check fails, and the lockfile refuses to record a snapshot taken from a truncated walk.
+
+- b271164: Add `responseContract()`, an opt-in plugin that makes a route's declared `response` schema hold at runtime.
+
+  A `response` schema is a lower bound: it says "at least these fields", never "only these". A handler
+  that returns a database row satisfying it also ships every other column, and nothing points at it -
+  TypeScript's excess-property check does not reach a handler's return position, and the client's type
+  reports the contract rather than the bytes. The result can appear with no code change at all: add a
+  column, and the next deploy ships it to browsers.
+
+  ```ts
+  import { responseContract } from "@nifrajs/core/response-contract";
+  app.use(responseContract("enforce"));
+  ```
+
+  - not installed (default) - unchanged behaviour, and the lane is absent from the bundle entirely.
+  - `"warn"` - checks each response, logs the undeclared fields by name, serves the payload unchanged.
+  - `"enforce"` - serializes the validated value, so undeclared data cannot reach the wire.
+
+  Enforcement follows the schema's own semantics, since Standard Schema exposes `validate` and no way to
+  enumerate declared keys: a stripping schema (Zod, Valibot) yields a cleaned value, while a strict one
+  (`@nifrajs/schema`'s `t.object`) reports issues and the response becomes a 500 with the detail logged
+  rather than returned. Routes with a `response` schema leave the fused and native fast paths while this
+  is enabled, the same trade an idempotent route makes.
+
+  It is a plugin rather than a server option so that apps which do not use it do not carry it: as an
+  option the check was statically imported by the kernel and cost every app ~0.5 KB gzip, which the
+  bundle-size gate caught. Behind the `@nifrajs/core/response-contract` subpath the lane arrives only
+  when installed, and the kernel keeps just the install seam (~0.2 KB).
+
+- 5fe332a: A route can declare that it returns bytes, and the client types it as `Blob`.
+
+  ```ts
+  import { bytes } from "@nifrajs/core/binary";
+
+  app.get("/invoice.pdf", async (c) =>
+    bytes(await render(c.params.id), {
+      type: "application/pdf",
+      filename: "invoice.pdf",
+    })
+  );
+  ```
+
+  Sending bytes was always possible - return a raw `Response` - but a raw `Response` is exactly what the
+  typed client cannot describe. So a download route needed a `// nifra-expect raw-response` pragma to
+  quiet the drift advisory, and its caller got no type at all. One category of endpoint sat outside the
+  contract the framework is otherwise strict about.
+
+  `bytes()` closes that. The brand it carries is a phantom - nothing is added to the value at runtime -
+  and it exists so the type can say a thing the value cannot: that these bytes are the payload rather
+  than a serialization accident. A plain `Response` is unaffected and still types as it did.
+
+  `filename` handles anything a person can type. Characters that would end the header value early are
+  stripped, and a name ASCII cannot carry is encoded per RFC 6266 (`filename*=UTF-8''...`) rather than
+  throwing - setting a header containing `\u62a5\u544a.pdf` or an emoji raises, which on a download route
+  would be a 500 for the ordinary act of naming a file, and the name is usually the user's own.
+
+- d2840ac: A safe-method route that can reach a domain write is reported once, with the fix it actually has.
+
+  It used to draw two findings giving opposite advice: `undeclared-capability-evidence` (declare what you
+  reach) and `safe-method-domain-write` (a safe method may not declare a domain write). Both are correct
+  and together they are a dead end - the route cannot declare its way out, because the declaration was
+  never the problem.
+
+  Reach is computed from the module that registers a route, so a read endpoint sitting beside a write
+  seam has write powers in scope. The new `unconfined-write-reach` finding says that, and says to move
+  the route or the effect. Still an error, and the report still fails; a GET that explicitly DECLARES a
+  domain write is unchanged, because that one really is an HTTP semantics mistake.
+
+### Patch Changes
+
+- ea0a27f: A durable table prefix cannot collide after PostgreSQL truncates it.
+
+  **Breaking for prefixes longer than 45 characters**, which now fail at construction rather than later.
+  PostgreSQL truncates identifiers to 63 bytes, and this adapter appends up to `_records_reconcile` (18)
+  to the prefix. Two distinct prefixes long enough to be cut short became one table name, silently
+  sharing state between what the caller believed were separate deployments. The accepted length now
+  reserves the longest suffix, so an accepted prefix survives truncation intact.
+
+  Both adapters also assemble their statements through a tagged template that validates every
+  substitution as an identifier at the boundary, so the check is at the seam rather than trusted from a
+  caller several frames up.
+
+- 8c77d47: The response size limit is reachable, applies to text as well as JSON, and never applies to a download.
+
+  ```ts
+  client<App>(url, { maxDecodedBytes: 64 * 1024 * 1024 });
+  ```
+
+  `maxBytes` lived under `transport`, whose `codec` is required - so raising your own response limit
+  meant opting into a versioned transport representation you had not asked for, and the call did not
+  compile without it. The 16 MB default protected everyone while the knob was reachable by nobody. It is
+  a top-level option now, with a doc comment saying what it bounds.
+
+  It bounds text as well as JSON, because a 2 GB string costs what a 2 GB object costs and one number
+  should answer for both. It deliberately does NOT bound a binary body: that is a download, and a size
+  limit on a download is a bug rather than a defence.
+
+  Exceeding it is a result, not a throw: `{ ok: false, status: 0, error: { error: "response_too_large" } }`,
+  the shape a timeout already takes. It used to throw a `TransportCodecError` straight out of the client,
+  which meant the only safe way to use the option was the try/catch the client's contract exists to
+  remove. The older `transport.maxBytes` spelling still works and still wins for the transport path.
+
+- ea0a27f: The same-origin check works behind a TLS-terminating proxy, and both seams that use it now agree.
+
+  Nifra had two of these - the WebSocket handshake's cross-origin default and the server-function mount -
+  and they answered differently for one request, so a browser that could open a socket was told its POST
+  was cross-origin. `isSameOriginRequest` from `@nifrajs/core/server` is now the single owner.
+
+  The rule it encodes: the host must match, and the Origin's scheme may be equal or STRONGER, never
+  weaker. A server behind Cloudflare, a tunnel or an ingress sees a plain HTTP socket, so `request.url`
+  says `http:` while the browser correctly reports an `https:` page - the shape almost every deployment
+  produces. Comparing full origins rejects it, which is not the stricter option but an outage: measured,
+  every server-function POST returned 403 behind a terminating proxy, while the cross-origin caller the
+  comparison aimed at had already been rejected on the host alone. The reverse - an `http:` page against
+  an `https:` request URL - is a downgrade with no legitimate cause, and is refused, as is any Origin
+  that is not an http(s) page origin at all.
+
+  `X-Forwarded-Proto` is still not read, and that is the point: a forwarded header is attacker-controlled
+  unless something upstream is proven to overwrite it, so trusting one by default would hand every
+  unproxied deployment a spoofable origin check. Ordering the two schemes reconciles them without it.
+
 ## 2.2.0
 
 ### Minor Changes

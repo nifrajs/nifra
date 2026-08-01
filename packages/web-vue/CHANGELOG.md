@@ -1,5 +1,158 @@
 # @nifrajs/web-vue
 
+## 2.3.0
+
+### Minor Changes
+
+- 2d9beaa: Preact, Vue, Solid and Svelte gain `useNavigate` and `useBlocker`, from `@nifrajs/web-<framework>/router`.
+
+  `useNavigate` returns a programmatic navigate (a path pushes or replaces; a number is a history delta),
+  matching the React adapter. `useBlocker` is the unsaved-changes guard - pass a boolean or a
+  `({ currentLocation, nextLocation }) => boolean` predicate and get back a `{ state, proceed, reset }`
+  value in each framework's own reactive shape (a Vue ref, a Solid accessor, a Svelte store, a plain value
+  in Preact). When a navigation is intercepted, `state` becomes `"blocked"`; show your own confirmation and
+  call `proceed()` or `reset()`. It also arms the native "Leave site?" prompt on tab close and reload.
+
+  ```svelte
+  <script>
+    import { useBlocker } from "@nifrajs/web-svelte/router"
+    let dirty = false
+    const blocker = useBlocker(() => dirty)
+  </script>
+
+  {#if $blocker.state === "blocked"}
+    <dialog open>
+      <button on:click={$blocker.reset}>Keep editing</button>
+      <button on:click={$blocker.proceed}>Discard</button>
+    </dialog>
+  {/if}
+  ```
+
+  In Vue, Solid and Svelte the hook is created once, so pass a function to track a changing flag
+  (`useBlocker(() => dirty)`); a bare boolean is captured as-is. The guarding itself already ran on every
+  adapter at the browser layer - this exposes it as a reactive hook.
+
+- c823915: Typed, validated search params: a route declares a `searchSchema` and both its loader and its component read the parsed, validated query.
+
+  Export a Standard Schema as `searchSchema` from a route. The loader's `ctx.search` becomes the parsed URL query validated against it (typed via `LoaderArgs<typeof app, Env, typeof searchSchema>`), and the component reads the same value with `useSearch<typeof searchSchema>()`. Invalid or hostile input fails closed to the schema's defaults (never a 500); without a `searchSchema`, both are the raw parsed query. Validation runs at match time and the value is derived identically on the server and on client navigation, so a component never parses `window.location.search` by hand and the query it renders hydrates with no mismatch.
+
+  ```tsx
+  export const searchSchema = v.object({
+    page: v.optional(v.fallback(v.number(), 1), 1),
+  });
+
+  export async function loader({
+    search,
+    api,
+  }: LoaderArgs<typeof backend, unknown, typeof searchSchema>) {
+    return { rows: await api.reports.list(search).get() }; // search.page is a number
+  }
+
+  export default function Reports({ data }) {
+    const { page } = useSearch<typeof searchSchema>(); // page: number, SSR-correct
+    return <Pager page={page} />;
+  }
+  ```
+
+  A `_layout` can declare its own `searchSchema` for keys shared across a section (`?org`, `?theme`); the route's effective search merges the layout chain's schemas with the page's, page-wins on a conflict, so both the layout and the page read their validated slice from one object.
+
+  A route can also list `searchClientKeys` - search keys that are purely client-side UI (`?tab`, a client-side `?sort`, `?modal`). When a client navigation changes only those keys, the URL updates (so `useSearch` re-renders) without re-running the loader; any other key change revalidates as before, so data is never stale.
+
+  `useSearch` ships on every adapter - React (a value), Preact (a value), Vue (a `Ref`), Solid (an `Accessor`), and Svelte (an accessor), each in that framework's own shape.
+
+  `navigate` gains an object form on every adapter: `navigate({ to, search, replace })` serializes `search` onto `to` (no hand-built query strings). Run `nifra sync-routes` to generate `nifra-routes.d.ts` (each static route mapped to its schema output) and include it in your tsconfig, and `search` is typed against the target route's `searchSchema` - a wrong shape for a known route is a compile error, while an unmapped path takes a loose `search`. Regenerated from the route files, so a stale shape becomes a `tsc` error. The string-path and history-delta forms are unchanged.
+
+  ```ts
+  navigate({ to: "/reports", search: { page: 2 } }); // search typed against /reports's schema
+  ```
+
+- 62a8d03: Add `useServerFn` - a server function's pending, data and error state - to all five adapters.
+
+  ```tsx
+  const addTodo = useServerFn(fns.addTodo)
+  <button disabled={addTodo.pending} onClick={() => addTodo.call({ text }).catch(() => {})}>add</button>
+  ```
+
+  Calling a server function never needed a binding: the client stub is `(input) => Promise<Output>`.
+  This adds only the state a component wants around it.
+
+  The state machine is `@nifrajs/web`'s `createServerFnStore`, shared by every adapter, so "is it
+  pending" has one answer rather than five that drift. Each binding contributes just its subscription
+  primitive: `useSyncExternalStore` (React, Preact), a signal (Solid), a `shallowRef` (Vue), a `readable`
+  (Svelte).
+
+  Two behaviours worth knowing:
+
+  - **The last call wins.** A response that is no longer the newest is discarded rather than written, so
+    a slow first call landing after a fast second cannot overwrite fresh data with stale.
+  - **`call` still rejects.** The error is recorded for rendering AND the promise rejects, so `await`
+    behaves normally. A caller that only renders from state should attach `.catch(() => {})`, as with
+    `useFetcher`'s `submit`.
+
+  `data` is kept while the next call is in flight, so a rendered list does not blank on every refetch.
+
+### Patch Changes
+
+- fd04bb5: Solid's and Vue's `useServerFn` seed their reactive state from the store rather than from the idle
+  constant.
+
+  Both values are identical today - the store is created one line above and cannot have moved - so this
+  changes no behaviour. It removes the dependence on that staying true. Svelte's binding had the same
+  line reading the constant, and because its subscription is lazy the first render showed idle for a
+  call that had already finished. Reading the snapshot makes correctness independent of when the
+  subscription attaches.
+
+- ea0a27f: A server function has one type per half, so both the server call and the hook argument are honest.
+
+  ```ts
+  export type ClientServerFn<Input, Output> = (
+    input: Input
+  ) => MaybePromise<Output>;
+  export type ServerFnReference<Input, Output> =
+    | ServerFn<Input, Output>
+    | ClientServerFn<Input, Output>;
+  ```
+
+  One type could not describe both halves. `ServerFn` is the SERVER declaration and takes `(input,
+context)`; the client imports a generated stub that takes one argument. Widening the single type so a
+  one-argument call compiled made a direct server call type-check while handing the declaration
+  `undefined` for a context its implementation requires - a runtime failure the compiler had just been
+  told to allow.
+
+  Now the two are separate and `useServerFn` accepts either through `ServerFnReference`, which is the
+  one place the two halves legitimately meet. Calling a declaration from your own server code needs the
+  context, and omitting it is a compile error again.
+
+- Updated dependencies [6f5b3ad]
+- Updated dependencies [85b354d]
+- Updated dependencies [7293a1c]
+- Updated dependencies [8514caa]
+- Updated dependencies [ea0a27f]
+- Updated dependencies [ea0a27f]
+- Updated dependencies [45b0733]
+- Updated dependencies [c42d777]
+- Updated dependencies [ea0a27f]
+- Updated dependencies [b271164]
+- Updated dependencies [8c77d47]
+- Updated dependencies [ea0a27f]
+- Updated dependencies [ea0a27f]
+- Updated dependencies [d190b1c]
+- Updated dependencies [a4ecca9]
+- Updated dependencies [de8d992]
+- Updated dependencies [a92104e]
+- Updated dependencies [5fe332a]
+- Updated dependencies [c823915]
+- Updated dependencies [d2840ac]
+- Updated dependencies [62a8d03]
+- Updated dependencies [dcacfe7]
+- Updated dependencies [28704d7]
+- Updated dependencies [ea0a27f]
+- Updated dependencies [0c2de22]
+  - @nifrajs/core@2.3.0
+  - @nifrajs/web@2.3.0
+  - @nifrajs/i18n@2.3.0
+  - @nifrajs/image@2.3.0
+
 ## 2.2.0
 
 ### Minor Changes

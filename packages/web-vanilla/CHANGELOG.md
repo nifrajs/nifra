@@ -1,5 +1,7 @@
 # @nifrajs/web-vanilla
 
+## 2.3.0
+
 ## 2.2.0
 
 ### Minor Changes
