@@ -29,7 +29,7 @@ Svelte 5 render adapter for @nifrajs/web — SSR + hydration + the .svelte compi
 - **useQuery** _(function)_ — `useQuery: <T>(key: unknown, fn: () => Promise<T>) => QueryStore<T>` · from `@nifrajs/web-svelte/query`
 - **useQueryClient** _(function)_ — `useQueryClient: () => Pick<QueryClient, "invalidateQueries">` · from `@nifrajs/web-svelte/query`
 
-_…and 12 more — see [`api-reference.md`](../../api-reference.md#nifrajswebsvelte) for the complete list._
+_…and 13 more — see [`api-reference.md`](../../api-reference.md#nifrajswebsvelte) for the complete list._
 
 ## Footguns
 

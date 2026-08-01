@@ -40,3 +40,29 @@ test("svelteAdapter conforms under the real SSR plugin", async () => {
   expect(`${stdout}${stderr}`).toBe("")
   expect(codeResult).toBe(0)
 })
+
+test("useSearch reads the route's search from Chain's context (SSR-correct)", async () => {
+  // The server puts the validated search in RenderProps.search; Chain.svelte provides it via context and
+  // the page's `useSearch()` reads it. The client mount derives the same value, so hydration matches.
+  const code = `
+    import { plugin } from "bun";
+    import { svelteBunPlugin } from ${asImport("../src/plugin.ts")};
+    plugin(svelteBunPlugin("ssr"));
+
+    const { svelteAdapter } = await import(${asImport("../src/index.ts")});
+    const SearchPage = (await import(${asImport("./fixtures/search-page.svelte")})).default;
+
+    const html = svelteAdapter.renderToString([SearchPage], {
+      data: null, search: { page: 2 }, path: "/r?page=2",
+    });
+    if (!/data-search[^>]*>2</.test(html)) throw new Error("useSearch did not read search; got: " + html);
+  `
+  const proc = Bun.spawn(["bun", "--eval", code], { stdout: "pipe", stderr: "pipe" })
+  const [stdout, stderr, codeResult] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ])
+  expect(`${stdout}${stderr}`).toBe("")
+  expect(codeResult).toBe(0)
+})

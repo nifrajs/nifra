@@ -1,3 +1,4 @@
+import type { InferOutput, StandardSchemaV1 } from "@nifrajs/core/server"
 import {
   type Blocker,
   type BlockerFunction,
@@ -8,14 +9,66 @@ import {
 } from "@nifrajs/web"
 /**
  * `@nifrajs/web-vue/router` - Vue routing bindings over the agnostic `@nifrajs/web` history layer:
- * `useNavigate` (programmatic navigation) and `useBlocker` (the unsaved-changes guard). Both go through
- * `@nifrajs/web`'s DOM-free bridges (`getBrowserNavigate` / `registerBlocker`, populated by
- * `installHistory`), so this module imports only `vue`. Idle before hydration (native `<a>` navigation
- * still works), so it is SSR-safe.
+ * `useNavigate` (programmatic navigation), `useBlocker` (the unsaved-changes guard), and `useSearch`
+ * (the route's typed, validated search, as a reactive ref). Navigation goes through `@nifrajs/web`'s
+ * DOM-free bridges (`getBrowserNavigate` / `registerBlocker`, populated by `installHistory`); `useSearch`
+ * reads the value `compose` provides on SSR + client mount alike. Imports only `vue`, so it is SSR-safe.
  */
-import { onScopeDispose, type ShallowRef, shallowRef } from "vue"
+import {
+  computed,
+  defineComponent,
+  type InjectionKey,
+  inject,
+  onScopeDispose,
+  provide,
+  type Ref,
+  type ShallowRef,
+  shallowRef,
+} from "vue"
 
 export type { Blocker, BlockerFunction, BlockerState } from "@nifrajs/web"
+
+// Frozen empty search + a stable fallback ref for a `useSearch` used outside a nifra route tree.
+const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
+const EMPTY_SEARCH_REF: Ref<Record<string, unknown>> = shallowRef(EMPTY_SEARCH)
+
+const SEARCH_KEY: InjectionKey<Ref<Record<string, unknown>>> = Symbol("nifra-search")
+
+/**
+ * The provider `compose` wraps the layout tree in. It `provide`s a `computed` view of its `value` prop,
+ * so as the mount re-renders with each navigation's search the injected ref updates reactively (setup
+ * runs once, but the computed keeps tracking the prop). Renders its default slot (the folded chain).
+ */
+export const SearchProvider = defineComponent({
+  name: "NifraSearchProvider",
+  props: { value: { type: Object, required: true } },
+  setup(props, { slots }) {
+    provide(
+      SEARCH_KEY,
+      computed(() => (props.value ?? EMPTY_SEARCH) as Record<string, unknown>),
+    )
+    return () => slots.default?.()
+  },
+})
+
+/**
+ * The route's typed, validated search params as a reactive ref - the SAME value the loader received as
+ * `ctx.search`. SSR-correct: `compose` provides it from the URL server-side and from the identical
+ * client-mount derivation, so a value rendered from it doesn't flash on hydration. Read `search.value`
+ * (reactive across navigation). Pass the route's `searchSchema` as the type argument for its output type.
+ *
+ * ```vue
+ * const search = useSearch<typeof searchSchema>() // Ref<{ page: number }>
+ * // template: {{ search.page }}
+ * ```
+ */
+export function useSearch<Schema extends StandardSchemaV1 | undefined = undefined>(): Readonly<
+  Ref<Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>>
+> {
+  return inject(SEARCH_KEY, EMPTY_SEARCH_REF) as Readonly<
+    Ref<Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>>
+  >
+}
 
 /** A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta
  * (`-1`/`1`). A no-op on the server / before hydration (use a `<a href>` there). */

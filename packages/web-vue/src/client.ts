@@ -1,4 +1,4 @@
-import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
+import { type MountRouterOptions, type RenderProps, searchOfChain } from "@nifrajs/web"
 /**
  * @nifrajs/web-vue/client — Vue client runtime. `hydrate` hydrates a single SSR'd route; `mountRouter`
  * hydrates a stateful Router whose root component subscribes to the agnostic store (a `shallowRef`
@@ -28,7 +28,7 @@ export function hydrate(chain: readonly unknown[], props: RenderProps, container
  * client navigations swap routes without a full reload. The initial snapshot matches the SSR markup.
  */
 export function mountRouter(options: MountRouterOptions): void {
-  const { router, routes, container } = options
+  const { router, routes, searchSchemas, container } = options
   setMountedRouter(router) // expose it to useFetcher/useFetchers (same page, client-only)
   const Root = defineComponent({
     setup() {
@@ -39,10 +39,15 @@ export function mountRouter(options: MountRouterOptions): void {
       onScopeDispose(unsubscribe)
       return () => {
         const s = state.value
+        // This route's typed `search` from the URL + schema chain (the SAME `searchOfChain` the server
+        // ran), recomputed each render so `useSearch` stays reactive and hydrates with no drift.
+        const q = s.path.indexOf("?")
+        const rawSearch = q === -1 ? "" : s.path.slice(q)
         return compose(routes[s.routeId] ?? [], {
           data: s.data,
           actionData: s.actionData,
           pending: s.pending,
+          search: searchOfChain(searchSchemas?.[s.routeId] ?? [], rawSearch),
           ...(s.submission ? { submission: s.submission } : {}),
         })
       }

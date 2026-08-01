@@ -6,8 +6,10 @@ import {
   setBlockerController,
   setBrowserNavigate,
 } from "@nifrajs/web"
-import { effectScope } from "vue"
-import { useBlocker, useNavigate } from "../src/router.ts"
+import { createSSRApp, defineComponent, effectScope, h } from "vue"
+import { renderToString } from "vue/server-renderer"
+import { compose } from "../src/compose.ts"
+import { useBlocker, useNavigate, useSearch } from "../src/router.ts"
 
 /**
  * The interception + restore-then-prompt state machine is tested exhaustively in `@nifrajs/web`'s suite.
@@ -76,4 +78,33 @@ test("useBlocker boolean form reads as itself", () => {
   scope.run(() => useBlocker(true))
   expect(cap.shouldBlock?.({ currentLocation: loc(), nextLocation: loc() })).toBe(true)
   scope.stop()
+})
+
+test("compose threads RenderProps.search to useSearch (reactive ref, SSR-correct)", async () => {
+  // The value the server puts in RenderProps.search flows through compose's SearchProvider to useSearch;
+  // the client mount derives the same value via searchOfChain, so the two renders match.
+  const Page = defineComponent({
+    setup() {
+      const search = useSearch()
+      return () => h("span", null, String(search.value.page))
+    },
+  })
+  const html = await renderToString(
+    createSSRApp({
+      render: () => compose([Page], { data: null, search: { page: 2 }, path: "/r?page=2" }),
+    }),
+  )
+  // Vue applies undeclared props as fallthrough attrs on the root element, so match the text tolerantly.
+  expect(html).toContain(">2</span>")
+})
+
+test("useSearch is an empty ref for a render with no search context", async () => {
+  const Page = defineComponent({
+    setup() {
+      const search = useSearch()
+      return () => h("span", null, String(Object.keys(search.value).length))
+    },
+  })
+  const html = await renderToString(createSSRApp({ render: () => compose([Page], { data: null }) }))
+  expect(html).toContain("<span>0</span>")
 })

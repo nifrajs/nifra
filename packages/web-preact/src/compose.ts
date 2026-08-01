@@ -1,11 +1,26 @@
 import type { RenderProps } from "@nifrajs/web"
-import { type ComponentType, h, type VNode } from "preact"
+import { type ComponentChildren, type ComponentType, createElement, h, type VNode } from "preact"
+import { SearchContext } from "./router.ts"
+
+// Frozen empty search so a render with no search context has a stable provider value.
+const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
+
+// Preact's `createElement` overloads drop a typed `Context.Provider`'s required `value` under
+// exactOptionalPropertyTypes (same issue i18n's provider hits); invoke it through a precisely-typed
+// factory that states the real `{ value }` + children contract rather than scatter `any`.
+const createSearchProvider = createElement as (
+  type: typeof SearchContext.Provider,
+  props: { value: Record<string, unknown> },
+  children?: ComponentChildren,
+) => VNode
 
 /**
  * Fold a layout chain (outermost layout → page) into a single Preact tree: the page (innermost)
  * receives `props` (the loader data); each layout wraps the child via its `children` (Preact passes
- * the 3rd `h` arg as `props.children`). Shared by the server adapter (renderToReadableStream) and
- * the client (hydrate / mountRouter) — the Preact analogue of the React adapter's `compose`.
+ * the 3rd `h` arg as `props.children`). The whole tree is wrapped in a {@link SearchContext} provider
+ * carrying the validated `search` (threaded through `RenderProps` identically on SSR + client), so
+ * `useSearch` reads the same value on both sides - no hydration mismatch. Shared by the server adapter
+ * (renderToReadableStream) and the client (hydrate / mountRouter) - the Preact analogue of React's `compose`.
  */
 export function compose(chain: readonly unknown[], props: RenderProps): VNode {
   const last = chain.length - 1
@@ -26,5 +41,5 @@ export function compose(chain: readonly unknown[], props: RenderProps): VNode {
       node,
     ) as VNode
   }
-  return node
+  return createSearchProvider(SearchContext.Provider, { value: props.search ?? EMPTY_SEARCH }, node)
 }

@@ -30,7 +30,7 @@ export function hydrate(chain: readonly unknown[], props: RenderProps, container
  * matched route), so hydration reconciles cleanly.
  */
 export function mountRouter(options: MountRouterOptions): void {
-  const { router, routes, container } = options
+  const { router, routes, searchSchemas, container } = options
   setMountedRouter(router) // expose it to useFetcher/useFetchers (same page, client-only)
-  svelteHydrate(Router, { target: container as Element, props: { router, routes } })
+  svelteHydrate(Router, { target: container as Element, props: { router, routes, searchSchemas } })
 }

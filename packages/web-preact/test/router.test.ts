@@ -2,7 +2,8 @@ import { afterEach, expect, test } from "bun:test"
 import { setBrowserNavigate } from "@nifrajs/web"
 import { h } from "preact"
 import { renderToString } from "preact-render-to-string"
-import { useBlocker, useNavigate } from "../src/router.ts"
+import { compose } from "../src/compose.ts"
+import { useBlocker, useNavigate, useSearch } from "../src/router.ts"
 
 /**
  * The interception + restore-then-prompt state machine is tested exhaustively in `@nifrajs/web`'s suite;
@@ -41,4 +42,22 @@ test("useBlocker is idle on SSR (effects don't run) - hydration-safe", () => {
   expect(blocker?.state).toBe("unblocked")
   expect(blocker?.proceed).toBeUndefined()
   expect(blocker?.reset).toBeUndefined()
+})
+
+test("compose threads RenderProps.search to useSearch (SSR-correct)", () => {
+  // The value the server puts in RenderProps.search flows through compose's SearchContext to useSearch;
+  // the client mount derives the same value via searchOfChain, so the two renders match.
+  const Page = () => {
+    const search = useSearch()
+    return h("span", null, String(search.page))
+  }
+  const html = renderToString(
+    compose([Page], { data: null, search: { page: 2 }, path: "/r?page=2" }),
+  )
+  expect(html).toContain("<span>2</span>")
+})
+
+test("useSearch is {} for a render with no search context", () => {
+  const Page = () => h("span", null, String(Object.keys(useSearch()).length))
+  expect(renderToString(compose([Page], { data: null }))).toContain("<span>0</span>")
 })

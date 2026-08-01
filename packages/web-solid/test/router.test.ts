@@ -7,7 +7,9 @@ import {
   setBrowserNavigate,
 } from "@nifrajs/web"
 import { createRoot } from "solid-js"
-import { useBlocker, useNavigate } from "../src/router.ts"
+import { renderToString } from "solid-js/web"
+import { compose } from "../src/compose.ts"
+import { useBlocker, useNavigate, useSearch } from "../src/router.ts"
 
 /**
  * The interception + restore-then-prompt state machine is tested exhaustively in `@nifrajs/web`'s suite.
@@ -78,4 +80,25 @@ test("useBlocker boolean form reads as itself", () => {
     expect(cap.shouldBlock?.({ currentLocation: loc(), nextLocation: loc() })).toBe(true)
     dispose()
   })
+})
+
+test("compose threads RenderProps.search to useSearch (accessor, SSR-correct)", () => {
+  // The value the server puts in RenderProps.search flows through compose's SearchContext to useSearch;
+  // the client mount derives the same value via searchOfChain, so the two renders match.
+  const Page = () => {
+    const search = useSearch()
+    return `[${(search() as { page?: number }).page}]`
+  }
+  const html = renderToString(
+    compose([Page], { data: null, search: { page: 2 }, path: "/r?page=2" }),
+  )
+  expect(html).toContain("[2]")
+})
+
+test("useSearch is an empty accessor for a render with no search context", () => {
+  const Page = () => {
+    const search = useSearch()
+    return `[${Object.keys(search()).length}]`
+  }
+  expect(renderToString(compose([Page], { data: null }))).toContain("[0]")
 })

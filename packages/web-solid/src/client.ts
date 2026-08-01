@@ -1,4 +1,4 @@
-import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
+import { type MountRouterOptions, type RenderProps, searchOfChain } from "@nifrajs/web"
 /**
  * @nifrajs/web-solid/client — Solid client runtime. `hydrate` hydrates a single SSR'd route;
  * `mountRouter` hydrates the initial route then drives navigation through a Solid signal — so a
@@ -34,7 +34,7 @@ export function hydrate(chain: readonly unknown[], props: RenderProps, container
  *   they don't shift Solid's structural hydration keys — unlike a `<Show>`, which would.)
  */
 export function mountRouter(options: MountRouterOptions): void {
-  const { router, routes, container } = options
+  const { router, routes, searchSchemas, container } = options
   setMountedRouter(router) // expose it to createFetcher/useFetchers (same page, client-only)
   const el = container as Element
 
@@ -64,6 +64,16 @@ export function mountRouter(options: MountRouterOptions): void {
         },
         get pending() {
           return snapshot().pending
+        },
+        get search() {
+          // The SAME searchOfChain the server ran, over this snapshot's URL - a same-route search change
+          // updates in place (fine-grained), matching the SSR value on hydration.
+          const s = snapshot()
+          const idx = s.path.indexOf("?")
+          return searchOfChain(
+            searchSchemas?.[s.routeId] ?? [],
+            idx === -1 ? "" : s.path.slice(idx),
+          )
         },
         get submission() {
           return snapshot().submission

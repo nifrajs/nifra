@@ -29,7 +29,7 @@ Solid render adapter for @nifrajs/web — SSR + hydration + the Solid Babel buil
 - **solidSvgComponentBunPlugin** _(function)_ — `solidSvgComponentBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-solid/svg`
 - **useBlocker** _(function)_ — `useBlocker: (shouldBlock: boolean | BlockerFunction) => Accessor<Blocker>` · from `@nifrajs/web-solid/router`
 
-_…and 18 more — see [`api-reference.md`](../../api-reference.md#nifrajswebsolid) for the complete list._
+_…and 20 more — see [`api-reference.md`](../../api-reference.md#nifrajswebsolid) for the complete list._
 
 ## Footguns
 

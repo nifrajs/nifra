@@ -6,7 +6,7 @@ export default function Layout(props: { children?: ComponentChildren }) {
   return (
     <div>
       <nav id="nav">
-        <a href="/">home</a> · <a href="/todos">todos</a>
+        <a href="/">home</a> · <a href="/todos">todos</a> · <a href="/search?page=2&q=hi">search</a>
       </nav>
       {props.children}
     </div>

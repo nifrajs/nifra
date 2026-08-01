@@ -1,11 +1,17 @@
 import type { RenderProps } from "@nifrajs/web"
 import { type Component, h, type VNode } from "vue"
+import { SearchProvider } from "./router.ts"
+
+// Frozen empty search so a render with no search context has a stable provider value.
+const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
 
 /**
  * Fold a layout chain (outermost layout → page) into a single Vue VNode: the page (innermost)
- * receives `props` (the loader data); each layout wraps the child via its default slot. Shared by
- * the server adapter (renderToWebStream) and the client (hydrate / mountRouter) — the Vue analogue
- * of the React adapter's `compose`.
+ * receives `props` (the loader data); each layout wraps the child via its default slot. The whole tree
+ * is wrapped in a {@link SearchProvider} carrying the validated `search` (threaded through `RenderProps`
+ * identically on SSR + client), so `useSearch` reads the same value on both sides - no hydration
+ * mismatch. Shared by the server adapter (renderToWebStream) and the client (hydrate / mountRouter) -
+ * the Vue analogue of the React adapter's `compose`.
  */
 export function compose(chain: readonly unknown[], props: RenderProps): VNode {
   const last = chain.length - 1
@@ -22,5 +28,5 @@ export function compose(chain: readonly unknown[], props: RenderProps): VNode {
       { default: () => child },
     )
   }
-  return node
+  return h(SearchProvider, { value: props.search ?? EMPTY_SEARCH }, { default: () => node })
 }

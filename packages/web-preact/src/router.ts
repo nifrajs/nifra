@@ -1,3 +1,4 @@
+import type { InferOutput, StandardSchemaV1 } from "@nifrajs/core/server"
 import {
   type Blocker,
   type BlockerFunction,
@@ -8,14 +9,42 @@ import {
 } from "@nifrajs/web"
 /**
  * `@nifrajs/web-preact/router` - Preact routing bindings over the agnostic `@nifrajs/web` history layer:
- * `useNavigate` (programmatic navigation) and `useBlocker` (the unsaved-changes guard). Both go through
- * `@nifrajs/web`'s DOM-free bridges (`getBrowserNavigate` / `registerBlocker`, populated by
- * `installHistory`), so this module imports only `preact/compat` and a route component can use these on
- * the server and the client. Idle before hydration (native `<a>` navigation still works). No JSX.
+ * `useNavigate` (programmatic navigation), `useBlocker` (the unsaved-changes guard), and `useSearch`
+ * (the route's typed, validated search). Navigation goes through `@nifrajs/web`'s DOM-free bridges
+ * (`getBrowserNavigate` / `registerBlocker`, populated by `installHistory`); `useSearch` reads the value
+ * `compose` provides on SSR + client mount alike. Client-safe (no `preact-render-to-string`). No JSX.
  */
-import { useCallback, useEffect, useRef, useState } from "preact/compat"
+import { createContext } from "preact"
+import { useCallback, useContext, useEffect, useRef, useState } from "preact/compat"
 
 export type { Blocker, BlockerFunction, BlockerState } from "@nifrajs/web"
+
+// Frozen empty search so the default context value has a stable reference.
+const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
+
+/** The current route's validated search, provided by `compose` on SSR + client mount alike (derived from
+ * the URL via the shared `searchOfChain`). `{}` outside a nifra route tree. Read via {@link useSearch}. */
+export const SearchContext = createContext<Record<string, unknown>>(EMPTY_SEARCH)
+
+/**
+ * The route's typed, validated search params - the SAME value the loader received as `ctx.search`.
+ * SSR-correct: `compose` provides it from the URL server-side and from the identical derivation on the
+ * client mount, so a value rendered from it doesn't flash on hydration. Hostile input already failed
+ * closed to the schema's defaults at match time. Pass the route's `searchSchema` as the type argument to
+ * get its output type; bare, it's the raw parsed query (`Record<string, unknown>`).
+ *
+ * ```tsx
+ * export const searchSchema = v.object({ page: v.optional(v.fallback(v.number(), 1), 1) })
+ * const { page } = useSearch<typeof searchSchema>() // page: number
+ * ```
+ */
+export function useSearch<
+  Schema extends StandardSchemaV1 | undefined = undefined,
+>(): Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown> {
+  return useContext(SearchContext) as Schema extends StandardSchemaV1
+    ? InferOutput<Schema>
+    : Record<string, unknown>
+}
 
 /** A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta
  * (`-1`/`1`). A no-op on the server / before hydration (use a `<a href>` there). */

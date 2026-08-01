@@ -2895,10 +2895,14 @@ _No named exports (side-effect entrypoint)._
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
 - **NavigateFunction** _(type)_ — `type NavigateFunction = (to: string | number, options?: NavigateOptions) => void`
   A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta (`-1`/`1`). A no-op on the server / before hydration (use a `<a href>` there).
+- **SearchContext** _(const)_ — `SearchContext: import("preact").Context<Record<string, unknown>>`
+  The current route's validated search, provided by `compose` on SSR + client mount alike (derived from the URL via the shared `searchOfChain`). `{}` outside a nifra route tree. Read via {@link useSearch}.
 - **useBlocker** _(function)_ — `useBlocker: (shouldBlock: boolean | BlockerFunction) => Blocker`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean (`useBlocker(isDirty)`) or a predicate `({ currentLocation, nextLocation }) => boolean`, and get back a {@link Blocker}. When a navigation (an anchor click, `u…
 - **useNavigate** _(function)_ — `useNavigate: () => NavigateFunction`
   Get the {@link NavigateFunction}. Stable across renders; resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
+- **useSearch** _(function)_ — `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>`
+  The route's typed, validated search params - the SAME value the loader received as `ctx.search`. SSR-correct: `compose` provides it from the URL server-side and from the identical derivation on the client mount, so a value rendered from it doesn't flash on hydration. Hostile input already failed cl…
 
 ## @nifrajs/web-react
 
@@ -3137,10 +3141,14 @@ _No named exports (side-effect entrypoint)._
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
 - **NavigateFunction** _(type)_ — `type NavigateFunction = (to: string | number, options?: NavigateOptions) => void`
   A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta (`-1`/`1`). A no-op on the server / before hydration (use a `<a href>` there).
+- **SearchContext** _(const)_ — `SearchContext: import("solid-js").Context<Accessor<Record<string, unknown>> | undefined>`
+  The current route's validated search accessor, provided by `compose` on SSR + client mount alike (derived from the URL via the shared `searchOfChain`). Read via {@link useSearch}.
 - **useBlocker** _(function)_ — `useBlocker: (shouldBlock: boolean | BlockerFunction) => Accessor<Blocker>`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a reactive {@link Blocker} accessor. When a navigation (an anchor click, `useNavi…
 - **useNavigate** _(function)_ — `useNavigate: () => NavigateFunction`
   Get the {@link NavigateFunction}. Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
+- **useSearch** _(function)_ — `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Accessor<Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>>`
+  The route's typed, validated search params as a reactive accessor - the SAME value the loader received as `ctx.search`. SSR-correct: `compose` provides it from the URL server-side and from the identical client-mount derivation, so a value rendered from it doesn't flash on hydration. Call it to read…
 
 ### `@nifrajs/web-solid/svg`
 
@@ -3222,6 +3230,8 @@ _No named exports (side-effect entrypoint)._
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a {@link Blocker} store (read with `$blocker`). When a navigation (an anchor clic…
 - **useNavigate** _(function)_ — `useNavigate: () => NavigateFunction`
   Get the {@link NavigateFunction}. Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
+- **useSearch** _(function)_ — `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => () => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>`
+  The route's typed, validated search params as a reactive accessor - the SAME value the loader received as `ctx.search`. SSR-correct: `Chain.svelte` provides it from the URL server-side and from the identical client derivation, so a value rendered from it doesn't flash on hydration. Call it (in a `$…
 
 ### `@nifrajs/web-svelte/svg`
 
@@ -3332,10 +3342,14 @@ _No named exports (side-effect entrypoint)._
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
 - **NavigateFunction** _(type)_ — `type NavigateFunction = (to: string | number, options?: NavigateOptions) => void`
   A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta (`-1`/`1`). A no-op on the server / before hydration (use a `<a href>` there).
+- **SearchProvider** _(const)_ — `SearchProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ value: { type: ObjectConstructor; required: true; }; }>, () => import("vue").VNode<import("vue").RendererNode, import("vue").RendererElement…`
+  The provider `compose` wraps the layout tree in. It `provide`s a `computed` view of its `value` prop, so as the mount re-renders with each navigation's search the injected ref updates reactively (setup runs once, but the computed keeps tracking the prop). Renders its default slot (the folded chain).
 - **useBlocker** _(function)_ — `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readonly<ShallowRef<Blocker>>`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a reactive {@link Blocker} ref. When a navigation (an anchor click, `useNavigate`…
 - **useNavigate** _(function)_ — `useNavigate: () => NavigateFunction`
   Get the {@link NavigateFunction}. Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
+- **useSearch** _(function)_ — `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Readonly<Ref<Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>>>`
+  The route's typed, validated search params as a reactive ref - the SAME value the loader received as `ctx.search`. SSR-correct: `compose` provides it from the URL server-side and from the identical client-mount derivation, so a value rendered from it doesn't flash on hydration. Read `search.value` …
 
 ### `@nifrajs/web-vue/svg`
 

@@ -11,8 +11,13 @@
   layout, so the array is already empty by then, and leaving it alone keeps that true if it ever moves.
 -->
 <script>
+  import { setContext } from "svelte"
   import Self from "./Chain.svelte"
   let { chain, props, layoutData } = $props()
+  // Provide the validated search as a getter (so `useSearch` reads the current value reactively) - the
+  // same value the server put in RenderProps.search, so a query-reading page hydrates with no drift. The
+  // key string is kept in sync with router.ts's `useSearch`.
+  setContext("@nifrajs/web-svelte:search", () => props.search ?? {})
 </script>
 
 {#if chain.length <= 1}

@@ -29,7 +29,7 @@ Preact render adapter for @nifrajs/web — streaming SSR + hydration (no build p
 - **useQuery** _(function)_ — `useQuery: <T>(key: unknown, fn: () => Promise<T>) => UseQueryResult<T>` · from `@nifrajs/web-preact/query`
 - **useQueryClient** _(function)_ — `useQueryClient: () => Pick<QueryClient, "invalidateQueries">` · from `@nifrajs/web-preact/query`
 
-_…and 14 more — see [`api-reference.md`](../../api-reference.md#nifrajswebpreact) for the complete list._
+_…and 16 more — see [`api-reference.md`](../../api-reference.md#nifrajswebpreact) for the complete list._
 
 ## Footguns
 

@@ -169,9 +169,11 @@ export default function Routing() {
       <CodeBlock code={SEARCH} lang="tsx" />
       <p>
         Without a <code>searchSchema</code>, <code>ctx.search</code> and <code>useSearch()</code> are
-        the raw parsed query (<code>{`Record<string, unknown>`}</code>). <code>useSearch</code> ships
-        for React today; the other adapters follow. For imperative reads and writes of the raw query,{" "}
-        <code>useSearchParams()</code> mirrors react-router's <code>[params, setParams]</code> tuple.
+        the raw parsed query (<code>{`Record<string, unknown>`}</code>). <code>useSearch</code> ships on
+        every adapter (React, Preact, Vue, Solid, Svelte), each in that framework's shape - a value on
+        React/Preact, a <code>Ref</code> on Vue, an accessor on Solid/Svelte. For imperative reads and
+        writes of the raw query, <code>useSearchParams()</code> mirrors react-router's{" "}
+        <code>[params, setParams]</code> tuple.
       </p>
 
       <h2>Guarding navigation</h2>

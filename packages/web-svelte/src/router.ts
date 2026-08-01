@@ -1,3 +1,4 @@
+import type { InferOutput, StandardSchemaV1 } from "@nifrajs/core/server"
 import {
   type Blocker,
   type BlockerFunction,
@@ -6,16 +7,47 @@ import {
   type NavigateOptions,
   registerBlocker,
 } from "@nifrajs/web"
+import { getContext } from "svelte"
 /**
  * `@nifrajs/web-svelte/router` - Svelte routing bindings over the agnostic `@nifrajs/web` history layer,
- * as plain `.ts` (Svelte stores, no runes/compiler needed): `useNavigate` (programmatic navigation) and
- * `useBlocker` (the unsaved-changes guard). Both go through `@nifrajs/web`'s DOM-free bridges
- * (`getBrowserNavigate` / `registerBlocker`, populated by `installHistory`), so this module imports only
- * `svelte/store`. Idle before hydration (native `<a>` navigation still works), so it is SSR-safe.
+ * as plain `.ts` (no runes/compiler needed): `useNavigate` (programmatic navigation), `useBlocker` (the
+ * unsaved-changes guard), and `useSearch` (the route's typed, validated search, as a reactive accessor).
+ * Navigation goes through `@nifrajs/web`'s DOM-free bridges (`getBrowserNavigate` / `registerBlocker`,
+ * populated by `installHistory`); `useSearch` reads the accessor `Chain.svelte` provides via Svelte
+ * context on SSR + client alike. Idle before hydration (native `<a>` navigation still works). SSR-safe.
  */
 import { type Readable, readable } from "svelte/store"
 
 export type { Blocker, BlockerFunction, BlockerState } from "@nifrajs/web"
+
+// Must match the string key `Chain.svelte` passes to `setContext` (a string avoids a `.svelte` → `.ts`
+// import that wouldn't resolve once the .svelte is copied to dist).
+const SEARCH_KEY = "@nifrajs/web-svelte:search"
+const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
+const EMPTY_SEARCH_ACCESSOR = (): Record<string, unknown> => EMPTY_SEARCH
+
+/**
+ * The route's typed, validated search params as a reactive accessor - the SAME value the loader received
+ * as `ctx.search`. SSR-correct: `Chain.svelte` provides it from the URL server-side and from the
+ * identical client derivation, so a value rendered from it doesn't flash on hydration. Call it (in a
+ * `$derived` or the template) to read the current search - it updates on navigation. Pass the route's
+ * `searchSchema` as the type argument for its output type.
+ *
+ * ```svelte
+ * <script>
+ *   const search = useSearch() // () => { page: number, ... }
+ * </script>
+ * <span>{search().page}</span>
+ * ```
+ */
+export function useSearch<
+  Schema extends StandardSchemaV1 | undefined = undefined,
+>(): () => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown> {
+  const get = getContext<(() => Record<string, unknown>) | undefined>(SEARCH_KEY)
+  return (get ?? EMPTY_SEARCH_ACCESSOR) as () => Schema extends StandardSchemaV1
+    ? InferOutput<Schema>
+    : Record<string, unknown>
+}
 
 /** A programmatic navigate: a string path (push, or replace via `{ replace: true }`) or a history delta
  * (`-1`/`1`). A no-op on the server / before hydration (use a `<a href>` there). */

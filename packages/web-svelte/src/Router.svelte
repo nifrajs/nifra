@@ -9,18 +9,25 @@
   reactive root is a component, not a function in `client.ts`.
 -->
 <script>
+  import { searchOfChain } from "@nifrajs/web"
   import Chain from "./Chain.svelte"
-  let { router, routes } = $props()
+  let { router, routes, searchSchemas } = $props()
 
   let snapshot = $state(router.snapshot())
   $effect(() => router.subscribe(() => { snapshot = router.snapshot() }))
 
   let chain = $derived(routes[snapshot.routeId] ?? [])
-  let props = $derived({
-    data: snapshot.data,
-    actionData: snapshot.actionData,
-    pending: snapshot.pending,
-    ...(snapshot.submission ? { submission: snapshot.submission } : {}),
+  let props = $derived.by(() => {
+    // This route's typed search from the URL + schema chain (the SAME searchOfChain the server ran), so
+    // useSearch stays reactive across navigation and matches the SSR value on hydration.
+    const q = snapshot.path.indexOf("?")
+    return {
+      data: snapshot.data,
+      actionData: snapshot.actionData,
+      pending: snapshot.pending,
+      search: searchOfChain(searchSchemas?.[snapshot.routeId] ?? [], q === -1 ? "" : snapshot.path.slice(q)),
+      ...(snapshot.submission ? { submission: snapshot.submission } : {}),
+    }
   })
 </script>
 

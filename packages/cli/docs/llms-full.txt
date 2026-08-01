@@ -375,9 +375,11 @@ export default function Reports({ data }: { data: LoaderData<typeof loader> }) {
 ```
 
 Without a `searchSchema`, `ctx.search` and `useSearch()` are
-the raw parsed query (`Record`). `useSearch` ships
-for React today; the other adapters follow. For imperative reads and writes of the raw query,
-`useSearchParams()` mirrors react-router's `[params, setParams]` tuple.
+the raw parsed query (`Record`). `useSearch` ships on
+every adapter (React, Preact, Vue, Solid, Svelte), each in that framework's shape - a value on
+React/Preact, a `Ref` on Vue, an accessor on Solid/Svelte. For imperative reads and
+writes of the raw query, `useSearchParams()` mirrors react-router's
+`[params, setParams]` tuple.
 
 ### Guarding navigation
 

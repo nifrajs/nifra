@@ -27,9 +27,9 @@ Vue render adapter for @nifrajs/web — streaming SSR + hydration, with a .vue S
 - **useNavigate** _(function)_ — `useNavigate: () => NavigateFunction` · from `@nifrajs/web-vue/router`
 - **useQuery** _(function)_ — `useQuery: <T>(key: unknown, fn: () => Promise<T>) => UseQueryResult<T>` · from `@nifrajs/web-vue/query`
 - **useQueryClient** _(function)_ — `useQueryClient: () => Pick<QueryClient, "invalidateQueries">` · from `@nifrajs/web-vue/query`
-- **useServerFn** _(function)_ — `useServerFn: <Input, Output>(fn: ServerFnReference<Input, Output>) => ServerFnHandle<Input, Output>` · from `@nifrajs/web-vue/fn`
+- **useSearch** _(function)_ — `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Readonly<Ref<Schema extends StandardSchemaV1 ? InferOutput<Schema…` · from `@nifrajs/web-vue/router`
 
-_…and 15 more — see [`api-reference.md`](../../api-reference.md#nifrajswebvue) for the complete list._
+_…and 17 more — see [`api-reference.md`](../../api-reference.md#nifrajswebvue) for the complete list._
 
 ## Footguns
 

@@ -1,6 +1,10 @@
 ---
 "@nifrajs/web": minor
 "@nifrajs/web-react": minor
+"@nifrajs/web-preact": minor
+"@nifrajs/web-vue": minor
+"@nifrajs/web-solid": minor
+"@nifrajs/web-svelte": minor
 "@nifrajs/client": minor
 ---
 
@@ -25,4 +29,4 @@ A `_layout` can declare its own `searchSchema` for keys shared across a section 
 
 A route can also list `searchClientKeys` - search keys that are purely client-side UI (`?tab`, a client-side `?sort`, `?modal`). When a client navigation changes only those keys, the URL updates (so `useSearch` re-renders) without re-running the loader; any other key change revalidates as before, so data is never stale.
 
-`useSearch` ships for React; the other adapters and a typed `navigate({ search })` follow in a later release.
+`useSearch` ships on every adapter - React (a value), Preact (a value), Vue (a `Ref`), Solid (an `Accessor`), and Svelte (an accessor), each in that framework's own shape. A typed `navigate({ search })` follows in a later release.
