@@ -1,5 +1,11 @@
 # create-nifra
 
+## 2.4.0
+
+### Patch Changes
+
+- 06f4aaa: Build on `prepack` so the published package always ships its `dist` output - including the `create-nifra/agent-files` entry that `nifra init-agents` imports under Node.
+
 ## 2.3.0
 
 ### Minor Changes

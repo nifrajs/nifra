@@ -1,5 +1,48 @@
 # @nifrajs/cli
 
+## 2.4.0
+
+### Minor Changes
+
+- 1c2bf5a: The self-hosted docs MCP (`nifra docs-mcp` / `handleMcpHttp`) now serves `nifra_examples_app`, an MCP Apps widget that renders the verified code examples as an interactive, filterable list in hosts that support it; text-only hosts still get the example names. It reads the same bundled examples corpus as `nifra_example`, so every self-host exposes it from one definition.
+- 335eb2a: A guided, ordered path to build a nifra app end to end.
+
+  `nifra_learn` (MCP) and `nifra learn` (CLI) walk the same sequence - create the app, add a page route, load data, add a typed API, call it through the typed client, protect a route, do background work, deploy. Each step names the tool that emits the correct artifact (`nifra_scaffold`, `nifra_example`, `nifra_run`) and how to verify it, so the path composes the existing tools instead of pasting code that can drift from the installed version. Random-access search stays `nifra_docs`/`nifra_example`; this is the sequence for building something new.
+
+- 795357f: DevTools' request-trace buffer is now queryable, not just streamable.
+
+  Alongside the live SSE overlay, the plugin serves a one-shot JSON snapshot at `/_nifra/devtools/state` - the recent request traces (method, path, status, duration, ISR status, response bytes), filterable by a `path` prefix and a `limit`, and guarded exactly like the stream (loopback-only unless `allowRemote`, origin-checked, optional `authorize` hook). A new `filterDevToolsEvents` export defines that query once, shared by the endpoint and its consumers.
+
+  `nifra_inspect` (MCP) reads that snapshot for a running dev server, so an agent can SEE what its requests actually did - which route answered, the status, how long, ISR hit or miss - instead of inferring it from the response alone. It needs the app to mount the `devtools()` plugin (which auto-enables in development).
+
+- 23e6eb1: Errors resolve to a structured diagnostic - one object a person reads in the overlay and an agent reads as JSON.
+
+  The dev error overlay now shows a source codeframe around the offending line and, for failures nifra recognises (a server-only module or a `node:` built-in reaching the client, a schema mismatch), a plain-language cause and fix with a docs anchor. A new `@nifrajs/web/diagnostic` export builds that `Diagnostic` - stable `code`, the top frame in your own source, the codeframe, and the cause/fix - from any thrown value, and the dev server serves the most recent one as JSON at `/__nifra/last-error`.
+
+  `nifra_explain` (MCP) turns an error - pasted from `nifra_run`/`nifra_test` output, or the dev server's last - into that same diagnostic, so an agent gets the code, the codeframe in your source, and the fix instead of eyeballing a stack trace.
+
+- 06f4aaa: `nifra upgrade` refuses to roll a dependency backward, and duplicate-install diagnostics name the type-inference symptom.
+
+  `nifra upgrade <version>` now fails closed when a target would set any pin below the installed version (for example running an older recipe on a newer install), listing each pin that would roll back and writing nothing; pass `--allow-downgrade` to apply it intentionally. `nifra doctor` and `nifra check` additionally call out that a second `@nifrajs/core` copy is the usual cause of `typeof backend` collapsing to `any` at `.merge()`.
+
+### Patch Changes
+
+- 1c2bf5a: Harden the dev-only diagnostics endpoint and the agent-facing reads of it. The dev server now binds to `127.0.0.1`, answers `/__nifra/last-error` with an identity header, and resolves source paths so the codeframe stays inside the project. The Vite dev server serves that endpoint at parity with the Bun one. `nifra_explain` and `nifra_inspect` validate the target port, time out, cap the response size, and only return a body from a verified nifra endpoint - so pointing them at an unrelated local service returns a clear error instead of that service's response.
+- 1c2bf5a: `nifra upgrade`'s downgrade guard now respects prerelease precedence, so a target of `2.3.0-beta` is correctly treated as older than an installed `2.3.0` and blocked without `--allow-downgrade`. Previously only the numeric core was compared, so a release-to-prerelease step slipped past the guard.
+- Updated dependencies [06f4aaa]
+- Updated dependencies [1c2bf5a]
+- Updated dependencies [138bfba]
+- Updated dependencies [23e6eb1]
+- Updated dependencies [06f4aaa]
+  - create-nifra@2.4.0
+  - @nifrajs/web@2.4.0
+  - @nifrajs/core@2.4.0
+  - @nifrajs/testing@2.4.0
+  - @nifrajs/client@2.4.0
+  - @nifrajs/schema@2.4.0
+  - @nifrajs/mcp@2.4.0
+  - @nifrajs/runner@2.4.0
+
 ## 2.3.0
 
 ### Minor Changes

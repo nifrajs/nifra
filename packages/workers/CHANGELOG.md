@@ -1,5 +1,12 @@
 # @nifrajs/workers
 
+## 2.4.0
+
+### Patch Changes
+
+- Updated dependencies [138bfba]
+  - @nifrajs/core@2.4.0
+
 ## 2.3.0
 
 ### Patch Changes
