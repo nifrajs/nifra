@@ -90,6 +90,11 @@
     "packages/web/test/islands.test.ts",
     "packages/web/test/apply-head.test.ts",
     "packages/web/test/client-browser.test.ts",
+    // Cross-adapter dev-SSR integration test: it statically imports @nifrajs/web-react (a frontend
+    // adapter, outside this DOM-free program) and resolves it at runtime via linkWorkspacePackages -
+    // the same reason build-vite-react-edge.test.ts references the adapter as a runtime string. Its
+    // correctness is proven end-to-end by `bun test`, not by this program.
+    "packages/web/test/vite-dev-search.test.ts",
     "packages/web-solid",
     "packages/web-react",
     "packages/web-vue",
