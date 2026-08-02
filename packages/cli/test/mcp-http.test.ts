@@ -14,7 +14,7 @@ describe("publicDocsTools", () => {
       publicDocsTools()
         .map((t) => t.name)
         .sort(),
-    ).toEqual(["nifra_docs", "nifra_example", "nifra_types"])
+    ).toEqual(["nifra_docs", "nifra_example", "nifra_learn", "nifra_types"])
   })
 })
 
@@ -37,7 +37,7 @@ describe("handleMcpHttp", () => {
     expect(body.result.protocolVersion).toBeTruthy()
   })
 
-  test("tools/list returns the two tools with schemas", async () => {
+  test("tools/list returns the project-independent tools with schemas", async () => {
     const res = await handleMcpHttp(post({ jsonrpc: "2.0", id: 2, method: "tools/list" }))
     const body = (await res.json()) as {
       result: { tools: Array<{ name: string; inputSchema: unknown }> }
@@ -45,6 +45,7 @@ describe("handleMcpHttp", () => {
     expect(body.result.tools.map((t) => t.name).sort()).toEqual([
       "nifra_docs",
       "nifra_example",
+      "nifra_learn",
       "nifra_types",
     ])
     expect(body.result.tools[0]?.inputSchema).toBeDefined()

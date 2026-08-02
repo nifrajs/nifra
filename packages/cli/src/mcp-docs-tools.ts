@@ -1,5 +1,5 @@
 /**
- * The two project-INDEPENDENT MCP tools - `nifra_docs` + `nifra_example` - as a single factory shared
+ * The project-INDEPENDENT MCP tools - `nifra_docs`, `nifra_example`, `nifra_types`, `nifra_learn` - as a single factory shared
  * by every transport: the project stdio server ({@link projectTools}), the CLI HTTP server
  * (`nifra docs-mcp`), and the site's Cloudflare-Pages worker (`/mcp`). The corpus source is injected as
  * loaders, so the SAME tool definitions work whether the corpus comes from disk (`Bun.file`, on the
@@ -9,6 +9,7 @@
 
 import { renderDocsResult } from "./docs-search.ts"
 import { type Example, renderExamplesResult } from "./examples.ts"
+import { renderLearnResult } from "./learn.ts"
 import type { McpTool } from "./mcp-protocol.ts"
 import { renderTypesResult, type TypeEntry } from "./types-search.ts"
 
@@ -112,6 +113,22 @@ export function docsTools(
         }
         return renderTypesResult(corpus, name, query, clamp(limit, 1, 8, 5), full === true)
       },
+    },
+    {
+      name: "nifra_learn",
+      description:
+        "Walk the guided path to build a nifra app end to end - an ORDERED sequence (create → page route → loader → typed API → typed client → auth → background jobs → deploy), not the random-access search of nifra_docs/nifra_example. Call with no args for the step index; pass `step: N` for that step's goal, how to do it (which tool emits the correct artifact), and how to verify it. Use it when scaffolding a new app or learning nifra's flow - each step composes the other nifra_* tools.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          step: {
+            type: "number",
+            description: "1-based step number to expand (omit for the index).",
+          },
+        },
+        additionalProperties: false,
+      },
+      handler: async (args) => renderLearnResult((args as { step?: number }).step),
     },
   ]
 }

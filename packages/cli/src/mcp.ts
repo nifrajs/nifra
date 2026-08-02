@@ -12,6 +12,8 @@
  *   - `nifra_docs`    - keyword-search the framework docs; returns only the matching sections.
  *   - `nifra_example` - a verified, copy-pasteable snippet for a task (typechecked against the live API,
  *     so it can't hallucinate a drifted nifra API).
+ *   - `nifra_learn`   - the guided, ordered path to build a nifra app end to end (create → deploy), each
+ *     step naming the tool that emits the correct artifact and how to verify it.
  *   - `nifra_scaffold`- map a URL path to the correct `routes/` file + a contract-correct page stub.
  *   - `nifra_check`   - the drift gate (typecheck + lints, each with a structured fix), for an agent to fix against.
  *   - `nifra_assure`  - route classification + enforcement-evidence gate.
