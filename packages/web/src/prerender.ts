@@ -52,9 +52,17 @@ export interface PrerenderResult {
   readonly fallbacks: Readonly<Record<string, "ssr" | "404">>
 }
 
+/** Strip trailing `/` runs by index scan - an unanchored-start `/\/+$/` replace backtracks
+ * quadratically on a long slash run, and route patterns are input here. */
+function trimTrailingSlashes(path: string): string {
+  let end = path.length
+  while (end > 0 && path.charCodeAt(end - 1) === 47 /* '/' */) end--
+  return path.slice(0, end)
+}
+
 /** Map a route path to its output file: `/` → `index.html`, `/a/b` → `a/b/index.html`. */
 export function htmlFileFor(pattern: string): string {
-  const trimmed = pattern.replace(/^\/+/, "").replace(/\/+$/, "")
+  const trimmed = trimTrailingSlashes(pattern.replace(/^\/+/, ""))
   return trimmed === "" ? "index.html" : `${trimmed}/index.html`
 }
 
@@ -203,7 +211,7 @@ export function cloudflarePagesRoutes(
   const exclude = [...(options.staticGlobs ?? ["/assets/*"])]
   for (const path of options.prerendered) {
     exclude.push(path) // the prerendered document
-    exclude.push(path === "/" ? "/_data.json" : `${path.replace(/\/+$/, "")}/_data.json`) // its data
+    exclude.push(path === "/" ? "/_data.json" : `${trimTrailingSlashes(path)}/_data.json`) // its data
   }
   return { version: 1, include: ["/*"], exclude }
 }

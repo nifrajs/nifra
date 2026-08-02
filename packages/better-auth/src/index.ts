@@ -56,8 +56,9 @@ const HANDLED_METHODS = ["GET", "POST"] as const
  * {@link getSession} / {@link requireSession}, which infer your better-auth types.
  */
 export function betterAuth(auth: BetterAuthLike, options: BetterAuthOptions = {}) {
-  const base = options.basePath ?? auth.options?.basePath ?? "/api/auth"
-  const pattern = `${base.replace(/\/+$/, "")}/*` // strip trailing slash(es), then wildcard the subtree
+  let base = options.basePath ?? auth.options?.basePath ?? "/api/auth"
+  while (base.endsWith("/")) base = base.slice(0, -1) // strip trailing slash(es) - endsWith loop, not a backtracking `/\/+$/`
+  const pattern = `${base}/*` // then wildcard the subtree
   // A type-IDENTITY plugin (see defineIdentityPlugin): mounting the auth handler must NOT change the
   // route registry's type. A plain `definePlugin((app) => app)` would infer `app: Server<any, any>`, so
   // `use`'s result - and the entire typed client derived from it - collapsed to `any`. This was the #1

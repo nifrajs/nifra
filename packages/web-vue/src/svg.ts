@@ -9,17 +9,13 @@
  * peer). Pass `"dom"` for the client bundle, preload `"ssr"` for the server; a plain
  * `import "./icon.svg"` (asset URL) is untouched - only `?component` matches.
  */
-import { SVG_COMPONENT_FILTER } from "@nifrajs/web/plugins/svg"
+import { SVG_COMPONENT_FILTER, stripSvgPreamble } from "@nifrajs/web/plugins/svg"
 import type { BunPlugin } from "bun"
 import { compileVue } from "./plugin.ts"
 
 /** Wrap raw SVG XML in a template-only Vue SFC (single root → Vue inherits attrs onto the `<svg>`). */
 export function svgToVueSfc(xml: string): string {
-  const cleaned = xml
-    .replace(/<\?xml[\s\S]*?\?>/g, "")
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/<!DOCTYPE[^>]*>/gi, "")
-    .trim()
+  const cleaned = stripSvgPreamble(xml)
   // An (empty) <script> is required by compileScript; the single-root <svg> inherits caller attrs.
   return `<script>export default {}</script>\n<template>${cleaned}</template>\n`
 }

@@ -322,10 +322,18 @@ const readResponseData = (res: Response, signal?: AbortSignal): Promise<unknown>
     ? parseNdjsonData(res.body, signal)
     : res.json()
 
+// Index scan, not `/\/+$/` - the unanchored-start trailing-run replace backtracks quadratically and
+// the pathname is caller-controlled.
+const trimTrailingSlashes = (path: string): string => {
+  let end = path.length
+  while (end > 0 && path.charCodeAt(end - 1) === 47 /* '/' */) end--
+  return path.slice(0, end)
+}
+
 // The static `_data.json` URL for a prerendered path: `/` → `/_data.json`, `/users/7` →
 // `/users/7/_data.json` (mirrors the build's `dataFileFor`).
 const dataUrlFor = (pathname: string): string =>
-  pathname === "/" ? "/_data.json" : `${pathname.replace(/\/+$/, "")}/_data.json`
+  pathname === "/" ? "/_data.json" : `${trimTrailingSlashes(pathname)}/_data.json`
 
 const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation) => {
   // SSG fast path: if this path was prerendered, its loader data is a static file - fetch that (no
@@ -333,7 +341,10 @@ const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation
   // or a stale set), so it's always safe. Non-SSG apps have no global → the dynamic path, unchanged.
   const prerendered = (globalThis as { [PRERENDERED_GLOBAL]?: unknown })[PRERENDERED_GLOBAL]
   if (Array.isArray(prerendered)) {
-    const pathname = path.replace(/[?#].*$/, "")
+    // `search` + `slice` rather than `replace(/[?#].*$/)`: the trailing `.*$` backtracks
+    // quadratically on adversarial input, and the URL is caller-controlled.
+    const cut = path.search(/[?#]/)
+    const pathname = cut === -1 ? path : path.slice(0, cut)
     if (prerendered.includes(pathname)) {
       const staticRes = await fetch(dataUrlFor(pathname), { signal: signal ?? null })
       if (staticRes.ok) return readResponseData(staticRes, signal)

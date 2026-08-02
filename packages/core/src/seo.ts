@@ -70,7 +70,9 @@ export function sitemap(entries: readonly SitemapEntry[], options: SitemapOption
       `sitemap: ${entries.length} entries exceeds the ${SITEMAP_MAX_URLS}-URL per-file limit - split into a sitemap index`,
     )
   }
-  const base = options.hostname?.replace(/\/+$/, "")
+  // endsWith loop, not `/\/+$/` - the unanchored trailing-run replace backtracks quadratically.
+  let base = options.hostname
+  while (base !== undefined && base.endsWith("/")) base = base.slice(0, -1)
   const urls = entries.map((entry) => {
     const parts = [`<loc>${escapeXml(resolveLoc(entry.url, base))}</loc>`]
     if (entry.lastmod !== undefined) {

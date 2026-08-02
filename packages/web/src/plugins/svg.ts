@@ -77,14 +77,46 @@ export interface SvgToJsxOptions {
   readonly classProp?: string
 }
 
+/**
+ * Strip the XML declaration, comments, and DOCTYPE from an SVG source by index scan. Shared by every
+ * adapter's SVG-component transform instead of chained regex `replace`s, for two reasons: the lazy
+ * `[\s\S]*?` scans backtrack quadratically on an unterminated marker, and sequential single-pass
+ * replaces can splice removed delimiters back together (`<<!---->!DOCTYPE …>` survives them). The
+ * scan removes each block in one forward pass, so neither failure mode exists. An unterminated
+ * marker swallows the rest of the input - the correct reading, matching an XML parser.
+ */
+export function stripSvgPreamble(xml: string): string {
+  const parts: string[] = []
+  let keepFrom = 0
+  let i = 0
+  while (i < xml.length) {
+    let skipEnd = -1
+    if (xml.startsWith("<?", i)) {
+      const close = xml.indexOf("?>", i + 2)
+      skipEnd = close === -1 ? xml.length : close + 2
+    } else if (xml.startsWith("<!--", i)) {
+      const close = xml.indexOf("-->", i + 4)
+      skipEnd = close === -1 ? xml.length : close + 3
+    } else if (xml.slice(i, i + 9).toLowerCase() === "<!doctype") {
+      const close = xml.indexOf(">", i + 9)
+      skipEnd = close === -1 ? xml.length : close + 1
+    }
+    if (skipEnd === -1) {
+      i++
+    } else {
+      parts.push(xml.slice(keepFrom, i))
+      i = skipEnd
+      keepFrom = skipEnd
+    }
+  }
+  parts.push(xml.slice(keepFrom))
+  return parts.join("").trim()
+}
+
 /** Convert an SVG XML string into a JSX-safe `<svg>…</svg>` element with `{...props}` spread on the root. */
 export function svgToJsx(xml: string, options: SvgToJsxOptions = {}): string {
   const classProp = options.classProp ?? "className"
-  let out = xml
-    .replace(/<\?xml[\s\S]*?\?>/g, "") // XML declaration
-    .replace(/<!--[\s\S]*?-->/g, "") // comments
-    .replace(/<!DOCTYPE[^>]*>/gi, "")
-    .trim()
+  let out = stripSvgPreamble(xml)
 
   // Namespaced attributes → camelCase (xlink:href → xlinkHref, xmlns:xlink → xmlnsXlink).
   out = out.replace(/\b([a-z]+):([a-z]+)=/gi, (_m, ns: string, name: string) => {

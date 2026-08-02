@@ -25,6 +25,7 @@ import {
 } from "./deferred.ts"
 import { isDraftEnabled } from "./draft.ts"
 import { trustedHeadAttributes } from "./internal/head-attributes.ts"
+import { jsStringLiteral } from "./internal/js-string.ts"
 import { EXECUTABLE_SCRIPT_TYPES, INERT_SCRIPT_TYPES } from "./internal/script-types.ts"
 import { ISR_REVALIDATE_HEADER } from "./isr.ts"
 import { generateLlmsTxt } from "./llms-txt.ts"
@@ -2309,7 +2310,7 @@ export function generateClientEntry(
   const errorRouteIds: string[] = []
   // Lazy loader returns the raw modules (for both the component chain + the page's `meta` export).
   const lazyLoader = (files: readonly string[]): string => {
-    const imports = files.map((f) => `import(${JSON.stringify(resolve(f))})`).join(", ")
+    const imports = files.map((f) => `import(${jsStringLiteral(resolve(f))})`).join(", ")
     return `() => Promise.all([${imports}])`
   }
   for (const route of manifest.routes) {
@@ -2577,7 +2578,7 @@ export function generateServerManifest(
     // code-splitting bundler, loaded on first request). The map keys are the route-relative paths
     // `buildManifest` expects; the importer it builds calls the per-file loader.
     const loaders = files.map(
-      (file) => `  ${JSON.stringify(file)}: () => import(${JSON.stringify(resolve(file))}),`,
+      (file) => `  ${jsStringLiteral(file)}: () => import(${jsStringLiteral(resolve(file))}),`,
     )
     return `${[
       ...header,

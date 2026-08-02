@@ -18,7 +18,9 @@ import { scanStaticRouteText, stripComments, walkSource } from "./check.ts"
 
 const EFFECT_IMPORT =
   /\bimport\s+(?!type\b)(?:[^'"();]*?\bfrom\s+)?["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)|\brequire\s*\(\s*["']([^"']+)["']\s*\)|\bexport\s+(?!type\b)[^'";]*?\bfrom\s*["']([^"']+)["']/g
-const TEMPLATE_EFFECT_IMPORT = /\b(?:import|require)\s*\(\s*`([^`$]*(?:\\.[^`$]*)*)`\s*\)/g
+// `\\` is excluded from both inner classes: letting the class also match a lone backslash makes the
+// `(A*(\\.A*)*)` shape ambiguous, which is exponential on a run of backslashes.
+const TEMPLATE_EFFECT_IMPORT = /\b(?:import|require)\s*\(\s*`([^`$\\]*(?:\\.[^`$\\]*)*)`\s*\)/g
 
 /** Value-bearing import edges relevant to effect provenance, in source order. */
 export function scanEffectImports(content: string): string[] {

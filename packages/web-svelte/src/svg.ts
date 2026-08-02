@@ -8,17 +8,13 @@
  * project's `svelte` compiler. Pass `"dom"` for the client bundle and preload `"ssr"` for the server;
  * a plain `import "./icon.svg"` (asset URL) is untouched - only `?component` matches.
  */
-import { SVG_COMPONENT_FILTER } from "@nifrajs/web/plugins/svg"
+import { SVG_COMPONENT_FILTER, stripSvgPreamble } from "@nifrajs/web/plugins/svg"
 import type { BunPlugin } from "bun"
 import { compile } from "svelte/compiler"
 
 /** Wrap raw SVG XML in a Svelte 5 component: strip XML noise, spread props onto the root `<svg>`. */
 export function svgToSvelte(xml: string): string {
-  const cleaned = xml
-    .replace(/<\?xml[\s\S]*?\?>/g, "")
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/<!DOCTYPE[^>]*>/gi, "")
-    .trim()
+  const cleaned = stripSvgPreamble(xml)
   // `$props()` opts the component into runes (Svelte 5); spread onto the root so user attrs win.
   const withSpread = cleaned.replace(/^(<svg\b[^>]*?)>/, "$1 {...props}>")
   return `<script>const props = $props()</script>\n${withSpread}\n`

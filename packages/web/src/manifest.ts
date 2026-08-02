@@ -320,7 +320,10 @@ const errorIdFor = (dir: string): string => (dir === "" ? "_error" : `${dir}/_er
  * the last segment.
  */
 /** Every `[…]` marker in a file segment, so a part-literal segment can be spliced into a pattern. */
-const FILE_MARKER = /\[([^\]]*)\]/g
+// `[` is excluded from the inner class as well as `]`: marker names are identifiers, and letting the
+// class swallow `[` makes a run of unclosed brackets backtrack quadratically (each start position
+// re-scans the rest of the segment before failing).
+const FILE_MARKER = /\[([^\][]*)\]/g
 const FILE_PARAM_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 /**

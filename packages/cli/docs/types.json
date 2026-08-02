@@ -9757,6 +9757,13 @@
     "signature": "export interface StripImageMetadataOptions {\n    /** Output format. Default: keep png/jpeg, else re-encode to webp. */\n    readonly format?: StripFormat;\n    /** Encode quality (1-100). Default 82. */\n    readonly quality?: number;\n}"
   },
   {
+    "name": "stripSvgPreamble",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function stripSvgPreamble(xml: string): string;",
+    "doc": "/**\n * Strip the XML declaration, comments, and DOCTYPE from an SVG source by index scan. Shared by every\n * adapter's SVG-component transform instead of chained regex `replace`s, for two reasons: the lazy\n * `[\\s\\S]*?` scans backtrack quadratically on an unterminated marker, and sequential single-pass\n * replaces can splice removed delimiters back together (`<<!---->!DOCTYPE …>` survives them). The\n * scan removes each block in one forward pass, so neither failure mode exists. An unterminated\n * marker swallows the rest of the input - the correct reading, matching an XML parser.\n */"
+  },
+  {
     "name": "StylesheetEmitter",
     "kind": "interface",
     "package": "@nifrajs/web",

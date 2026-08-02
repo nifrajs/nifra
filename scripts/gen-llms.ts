@@ -98,13 +98,15 @@ function extractCodeConsts(src: string): Map<string, string> {
 }
 
 function decodeEntities(s: string): string {
+  // `&amp;` decodes LAST: decoding it first turns `&amp;lt;` into `&lt;` which the next pass then
+  // wrongly decodes again (double-unescaping) - the text meant a literal "&lt;".
   return s
-    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
 }
 
 /** Resolve simple JSX expression containers in prose: {" "} → space, {"text"} → text, {`x`} → x. */
@@ -162,9 +164,13 @@ function jsxToMarkdown(src: string, consts: Map<string, string>): string {
     .replace(/<\/?(?:i|em)>/g, "_")
     .replace(/<code>([\s\S]*?)<\/code>/g, (_, t) => `\`${resolveExpressions(t)}\``)
   // 5. Resolve remaining JSX expressions, strip leftover tags, decode entities.
-  body = resolveExpressions(body)
-    .replace(/<[^>]+>/g, "")
-    .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+  body = resolveExpressions(body).replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+  // Strip leftover tags to a fixpoint: a single pass can splice removed delimiters into a new tag
+  // (`<<b>i>` survives one pass as `<i>`).
+  for (let prev = ""; prev !== body; ) {
+    prev = body
+    body = body.replace(/<[^>]+>/g, "")
+  }
   body = decodeEntities(body)
   // 6. Normalize whitespace WHILE fences are still placeholders, so trimming the JSX indentation off
   // prose lines (4-space lead would otherwise read as a markdown code block) never touches the code.

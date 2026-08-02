@@ -232,7 +232,7 @@ describe("loadGoogleFont()", () => {
     const fetchImpl = (async (input: Parameters<typeof fetch>[0]) => {
       const url = String(input)
       if (url.startsWith("https://fonts.googleapis.com/css2")) return new Response(evilCss)
-      if (url.includes("evil.example.com")) evilHit = true
+      if (new URL(url).hostname === "evil.example.com") evilHit = true
       return new Response(new TextEncoder().encode("x"))
     }) as typeof fetch
     const { writeFile } = memWriter()

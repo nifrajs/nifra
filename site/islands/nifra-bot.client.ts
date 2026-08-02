@@ -338,12 +338,13 @@ const byId = <T extends HTMLElement>(id: string): T | null =>
   document.getElementById(id) as T | null
 
 function cleanText(value: string): string {
+  // `&amp;` decodes LAST - decoding it before the others double-unescapes `&amp;lt;` into `<`.
   return value
     .replace(/&apos;/g, "'")
     .replace(/&quot;/g, '"')
-    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
     .replace(/<[^>]+>/g, " ")

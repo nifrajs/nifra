@@ -212,8 +212,23 @@ export function googleFontsCssUrl(options: GoogleFontOptions): string {
   return `${CSS2_ENDPOINT}?${params.join("&")}`
 }
 
-const FACE_RE = /(?:\/\*([^*]*)\*\/\s*)?@font-face\s*\{([^}]*)\}/g
-const SRC_RE = /url\(\s*(['"]?)([^'")]+)\1\s*\)(?:\s*format\(\s*(['"]?)([^'")]+)\3\s*\))?/g
+// The `/* subset */` label is recovered by index scan (see subsetLabelBefore) rather than as an
+// optional prefix group - `(?:\/\*…\*\/\s*)?@font-face` re-scans every stray comment at every start
+// position, which is quadratic on a crafted stylesheet. The url/format classes exclude whitespace so
+// they cannot overlap the adjacent `\s*` runs (that ambiguity backtracks the same way).
+const FACE_RE = /@font-face\s*\{([^}]*)\}/g
+const SRC_RE = /url\(\s*(['"]?)([^'")\s]+)\1\s*\)(?:\s*format\(\s*(['"]?)([^'")\s]+)\3\s*\))?/g
+
+/** The `/* subset *​/` label immediately preceding a `@font-face` block (only whitespace between),
+ * scanned by index in the gap since the previous block. */
+function subsetLabelBefore(css: string, faceStart: number, prevEnd: number): string | undefined {
+  const between = css.slice(prevEnd, faceStart)
+  const open = between.lastIndexOf("/*")
+  if (open === -1) return undefined
+  const close = between.indexOf("*/", open + 2)
+  if (close === -1 || between.slice(close + 2).trim() !== "") return undefined
+  return between.slice(open + 2, close)
+}
 
 function declOf(body: string, prop: string): string | undefined {
   const m = body.match(new RegExp(`${prop}\\s*:\\s*([^;]+);`, "i"))
@@ -224,9 +239,11 @@ function declOf(body: string, prop: string): string | undefined {
  * each `@font-face`. Pure - exported so callers can run their own download/write pipeline. */
 export function parseGoogleFontCss(css: string): ParsedFontFace[] {
   const faces: ParsedFontFace[] = []
+  let prevEnd = 0
   for (const match of css.matchAll(FACE_RE)) {
-    const subset = (match[1] ?? "").trim() || "default"
-    const body = match[2] ?? ""
+    const subset = (subsetLabelBefore(css, match.index, prevEnd) ?? "").trim() || "default"
+    prevEnd = match.index + match[0].length
+    const body = match[1] ?? ""
     const familyRaw = declOf(body, "font-family")
     if (familyRaw === undefined) continue
     const family = familyRaw.replace(/^['"]|['"]$/g, "")
@@ -316,7 +333,8 @@ export async function loadGoogleFont(
   const family = validateFamily(options.family)
   const fetchImpl = io.fetch ?? fetch
   const writeFile = io.writeFile ?? defaultWriteFile
-  const publicPath = (io.publicPath ?? "/fonts").replace(/\/+$/, "")
+  let publicPath = io.publicPath ?? "/fonts"
+  while (publicPath.endsWith("/")) publicPath = publicPath.slice(0, -1)
   const maxBytes = io.maxBytesPerFile ?? DEFAULT_MAX_FONT_BYTES
   const wantedSubsets = options.subsets?.map(validateSubset)
 
