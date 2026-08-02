@@ -28,8 +28,11 @@ export type { TypeEntry } from "./types-search.ts"
 // Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
 const VERSION = "2.3.0"
 const SERVER_INFO = { name: "nifra-docs", version: VERSION }
-const DOCS_HEALTH =
-  "nifra docs MCP - POST JSON-RPC 2.0 here (methods: initialize, tools/list, tools/call). Tools: nifra_docs, nifra_example."
+// Derive the GET/health tool list from the tools actually served, so the line can never drift from them.
+const docsHealth = (tools: McpTool[]): string =>
+  `nifra docs MCP - POST JSON-RPC 2.0 here (methods: initialize, tools/list, tools/call). Tools: ${tools
+    .map((tool) => tool.name)
+    .join(", ")}.`
 
 /** The two project-independent tools, reading the package's bundled corpus from disk (CLI use). */
 export function publicDocsTools(): McpTool[] {
@@ -46,7 +49,7 @@ export function respondMcpHttp(
   tools: McpTool[],
   options: McpHttpOptions = {},
 ): Promise<Response> {
-  return respondMcpHttpCore(request, tools, SERVER_INFO, { health: DOCS_HEALTH, ...options })
+  return respondMcpHttpCore(request, tools, SERVER_INFO, { health: docsHealth(tools), ...options })
 }
 
 /** The CLI HTTP handler: serves the disk-backed corpus tools. (`nifra docs-mcp` / `bun run` this file.) */
