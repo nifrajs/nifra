@@ -1,5 +1,24 @@
 # @nifrajs/cli
 
+## 2.6.0
+
+### Patch Changes
+
+- e6349e5: Security hardening across input parsing and code generation. Every regex that runs on caller-influenced input (URL paths, route patterns, stylesheet and SVG sources, manifest text) is now linear - no polynomial backtracking on adversarial input. SVG preamble stripping and tag removal can no longer splice removed delimiters into new markers. Static file serving rejects `..` traversal in the request form outright and confines the resolved path with a `relative()` containment check. Generated code embeds strings through an escaper that neutralizes `</script>` breakout and the U+2028/U+2029 line separators, and HTML entity decoding resolves `&amp;` last so double-encoded entities cannot double-unescape.
+- 10fb70c: `defineMcpTool` accepts `annotations` (the MCP tool safety hints - `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, `title`), surfaced in `tools/list` and `tools/describe`. Hosts use these to pick confirmation UX, and connector directory reviews expect every tool to declare them. The hosted docs tools (`nifra_docs`, `nifra_example`, `nifra_types`, `nifra_learn`, `nifra_examples_app`) now all declare themselves read-only and closed-world.
+- Updated dependencies [e6349e5]
+- Updated dependencies [08fe221]
+- Updated dependencies [8383063]
+- Updated dependencies [10fb70c]
+  - @nifrajs/web@2.6.0
+  - @nifrajs/core@2.6.0
+  - @nifrajs/mcp@2.6.0
+  - @nifrajs/client@2.6.0
+  - @nifrajs/schema@2.6.0
+  - @nifrajs/testing@2.6.0
+  - @nifrajs/runner@2.6.0
+  - create-nifra@2.6.0
+
 ## 2.5.0
 
 ### Minor Changes

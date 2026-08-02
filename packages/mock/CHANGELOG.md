@@ -1,5 +1,12 @@
 # @nifrajs/mock
 
+## 2.6.0
+
+### Patch Changes
+
+- Updated dependencies [e6349e5]
+  - @nifrajs/core@2.6.0
+
 ## 2.5.0
 
 ### Minor Changes

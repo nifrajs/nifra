@@ -11,15 +11,15 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@nifrajs/cache": "^2.5.0",
-    "@nifrajs/client": "^2.5.0",
-    "@nifrajs/core": "^2.5.0",
-    "@nifrajs/jobs": "^2.5.0",
-    "@nifrajs/schema": "^2.5.0",
-    "@nifrajs/storage": "^2.5.0"
+    "@nifrajs/cache": "^2.6.0",
+    "@nifrajs/client": "^2.6.0",
+    "@nifrajs/core": "^2.6.0",
+    "@nifrajs/jobs": "^2.6.0",
+    "@nifrajs/schema": "^2.6.0",
+    "@nifrajs/storage": "^2.6.0"
   },
   "devDependencies": {
-    "@nifrajs/cli": "^2.5.0",
+    "@nifrajs/cli": "^2.6.0",
     "@types/bun": "latest",
     "typescript": "^6.0.3"
   }

@@ -1,5 +1,18 @@
 # @nifrajs/web
 
+## 2.6.0
+
+### Minor Changes
+
+- 08fe221: Per-route document-assembly caching for SSR. `renderPageResult` accepts an `assemblyCache` slot (new `RenderAssemblyCache` type): the request-invariant document pieces - the head (title, meta tags, style links, module preloads, hydration head) and the tail statics - are built once per route and reused, while per-request values (loader data, params, deferred state, action and layout globals) are always assembled fresh. `createWebApp` wires a slot automatically for every route whose meta chain is static (a `meta(data)` function keeps that route on fresh assembly), invalidating on module identity change so dev HMR stays correct, and a per-request CSP nonce bypasses the cache entirely. Output is byte-identical; on a realistic page (meta set + stylesheets + route chunks + an island) the render+assembly step is ~21% faster, which measures as roughly 10-15% more requests per second on the Node SSR path.
+
+### Patch Changes
+
+- e6349e5: Security hardening across input parsing and code generation. Every regex that runs on caller-influenced input (URL paths, route patterns, stylesheet and SVG sources, manifest text) is now linear - no polynomial backtracking on adversarial input. SVG preamble stripping and tag removal can no longer splice removed delimiters into new markers. Static file serving rejects `..` traversal in the request form outright and confines the resolved path with a `relative()` containment check. Generated code embeds strings through an escaper that neutralizes `</script>` breakout and the U+2028/U+2029 line separators, and HTML entity decoding resolves `&amp;` last so double-encoded entities cannot double-unescape.
+- 8383063: The SSR render fast path does less work per request, with byte-identical output. The hydration-head nonce rewrite is skipped when no CSP nonce is set - it was a `.replace` over the whole (constant) hydration script that produced identical output on the common no-nonce path - and the combined deferred-list is reused instead of re-spread into a fresh array on the common page-only render (no layout loader, no action).
+- Updated dependencies [e6349e5]
+  - @nifrajs/core@2.6.0
+
 ## 2.5.0
 
 ### Patch Changes
