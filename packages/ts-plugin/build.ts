@@ -19,14 +19,23 @@ import { readdir, rm } from "node:fs/promises"
 const dir = import.meta.dir
 const dist = `${dir}/dist`
 // Import specifiers to leave as runtime `require(...)` rather than inline into the bundle.
-const external = ["typescript", "@nifrajs/core", "@nifrajs/core/pattern", "@nifrajs/web", "@nifrajs/web/fs"]
+const external = [
+  "typescript",
+  "@nifrajs/core",
+  "@nifrajs/core/pattern",
+  "@nifrajs/web",
+  "@nifrajs/web/fs",
+]
 
 await rm(dist, { recursive: true, force: true })
 
 // 1) Emit `.js` + `.d.ts` with tsc. `bun run <file>` leaves node_modules/.bin off PATH, so resolve the
 //    compiler entry explicitly. `--incremental false` is required: the repo shares one root `.tsbuildinfo`
 //    (tsconfig.base), so an incremental run would skip emit here since `rm dist` doesn't clear that cache.
-const tscEntry = Bun.fileURLToPath(import.meta.resolve("typescript")).replace(/typescript\.js$/, "tsc.js")
+const tscEntry = Bun.fileURLToPath(import.meta.resolve("typescript")).replace(
+  /typescript\.js$/,
+  "tsc.js",
+)
 const tsc = Bun.spawn(["node", tscEntry, "-p", "tsconfig.build.json", "--incremental", "false"], {
   cwd: dir,
   stdout: "inherit",
