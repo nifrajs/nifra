@@ -25,8 +25,8 @@ export default function Privacy() {
 
       <h2>What we collect</h2>
       <p>
-        <strong>Nothing that identifies you.</strong> There are no accounts, no sign-ups, no
-        cookies set by us, no advertising or analytics identifiers.
+        <strong>Nothing that identifies you.</strong> There are no accounts, no sign-ups, no cookies
+        set by us, no advertising or analytics identifiers.
       </p>
       <ul>
         <li>

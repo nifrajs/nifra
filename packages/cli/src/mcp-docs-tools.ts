@@ -52,7 +52,11 @@ export function docsTools(
     },
     {
       name: "nifra_example",
-      annotations: { title: "Get a verified nifra example", readOnlyHint: true, openWorldHint: false },
+      annotations: {
+        title: "Get a verified nifra example",
+        readOnlyHint: true,
+        openWorldHint: false,
+      },
       description:
         'Get a VERIFIED, copy-pasteable nifra code example for a task - auth route, file upload, ISR page, loader/action, typed client, SSE, deployment, etc. Every snippet is typechecked against the installed nifra version, so it compiles as-is. PREFER THIS over writing nifra code from memory (training data drifts). Call with no query for the grouped index; pass query (e.g. "protected route", "upload", "isr revalidate") for matching snippets.',
       inputSchema: {
@@ -121,7 +125,11 @@ export function docsTools(
     },
     {
       name: "nifra_learn",
-      annotations: { title: "Guided nifra learning path", readOnlyHint: true, openWorldHint: false },
+      annotations: {
+        title: "Guided nifra learning path",
+        readOnlyHint: true,
+        openWorldHint: false,
+      },
       description:
         "Walk the guided path to build a nifra app end to end - an ORDERED sequence (create → page route → loader → typed API → typed client → auth → background jobs → deploy), not the random-access search of nifra_docs/nifra_example. Call with no args for the step index; pass `step: N` for that step's goal, how to do it (which tool emits the correct artifact), and how to verify it. Use it when scaffolding a new app or learning nifra's flow - each step composes the other nifra_* tools.",
       inputSchema: {
