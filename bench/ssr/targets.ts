@@ -250,7 +250,7 @@ export const ALL_TABLE_SECTIONS: readonly {
   {
     label: "Solid - Table A (uncached SSR)",
     blurb:
-      "nifra+solid (Bun + Node) vs SolidStart + solid-ssr. Compare Node rows to Node rows only.",
+      "nifra+solid (Bun + Node) vs SolidStart. Compare Node rows to Node rows only. solid-ssr is a hand-rolled single-route server - an internal ceiling, not a comparator.",
     targets: SOLID_TABLE_A,
   },
   {
@@ -280,7 +280,8 @@ export const ALL_TABLE_SECTIONS: readonly {
   },
   {
     label: "Preact - Table A (uncached SSR)",
-    blurb: "nifra+preact (Bun + Node) vs preact-ssr. Compare Node rows to Node rows only.",
+    blurb:
+      "nifra+preact (Bun + Node). Compare Node rows to Node rows only. preact-ssr is a hand-rolled single-route server - an internal ceiling, not a comparator (no Preact meta-framework exists to bench).",
     targets: PREACT_TABLE_A,
   },
   {
