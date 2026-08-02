@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -7,6 +7,7 @@ import {
   applyDoctorAutoFix,
   collectDoctorResult,
   collectDuplicateInstalls,
+  collectStaleWorkspaceDists,
   packageOf,
   scanUndeclaredImports,
 } from "../src/doctor.ts"
@@ -492,6 +493,100 @@ describe("collectDuplicateInstalls - discovery anchored at the workspace root", 
       expect(await collectDuplicateInstalls(dir, pkg)).toEqual([])
     } finally {
       await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("collectStaleWorkspaceDists - a linked dep's dist lagging its src", () => {
+  // The trap: `"exports": { "bun": "./src/…", "default": "./dist/…" }` makes Bun read live source
+  // while Vite's SSR runner / node consumers read a build artifact nothing regenerates. Only a
+  // SYMLINKED (workspace) install can drift - a tarball under node_modules is immutable.
+  const scaffold = async (
+    dir: string,
+    opts: { readonly distMtime?: Date; readonly writeDist?: boolean; readonly link?: boolean },
+  ): Promise<Record<string, unknown>> => {
+    const lib = join(dir, "libs", "lib")
+    await mkdir(join(lib, "src"), { recursive: true })
+    await mkdir(join(lib, "dist"), { recursive: true })
+    await writeFile(
+      join(lib, "package.json"),
+      JSON.stringify({
+        name: "lib",
+        version: "1.0.0",
+        exports: {
+          ".": { bun: "./src/index.ts", types: "./dist/index.d.ts", default: "./dist/index.js" },
+        },
+      }),
+    )
+    await writeFile(join(lib, "src", "index.ts"), "export const x = 1\n")
+    if (opts.writeDist !== false) {
+      await writeFile(join(lib, "dist", "index.js"), "export const x = 1;\n")
+      if (opts.distMtime !== undefined)
+        await utimes(join(lib, "dist", "index.js"), opts.distMtime, opts.distMtime)
+    }
+    const app = join(dir, "app")
+    await mkdir(join(app, "node_modules"), { recursive: true })
+    await writeFile(
+      join(app, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { lib: "workspace:*" } }),
+    )
+    if (opts.link !== false) await symlink(lib, join(app, "node_modules", "lib"), "dir")
+    return JSON.parse(await readFile(join(app, "package.json"), "utf8")) as Record<string, unknown>
+  }
+
+  test("flags a dist older than the newest source file, with the lag", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-stale-dist-"))
+    try {
+      const appPkg = await scaffold(dir, { distMtime: new Date(Date.now() - 60_000) })
+      const findings = await collectStaleWorkspaceDists(join(dir, "app"), appPkg)
+      expect(findings).toHaveLength(1)
+      expect(findings[0]?.package).toBe("lib")
+      expect(findings[0]?.missing).toBe(false)
+      expect(findings[0]?.behindSeconds).toBeGreaterThanOrEqual(59)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("flags a dist that was never built at all", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-stale-dist-"))
+    try {
+      const appPkg = await scaffold(dir, { writeDist: false })
+      const findings = await collectStaleWorkspaceDists(join(dir, "app"), appPkg)
+      expect(findings).toHaveLength(1)
+      expect(findings[0]?.missing).toBe(true)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("a fresh dist and a real (non-symlink) install both report nothing", async () => {
+    const fresh = await mkdtemp(join(tmpdir(), "nifra-doctor-stale-dist-"))
+    const copied = await mkdtemp(join(tmpdir(), "nifra-doctor-stale-dist-"))
+    try {
+      // Fresh: dist written after src → not stale.
+      const freshPkg = await scaffold(fresh, {})
+      expect(await collectStaleWorkspaceDists(join(fresh, "app"), freshPkg)).toEqual([])
+      // Real install: same stale layout, but a physical dir under node_modules (immutable tarball).
+      const copiedPkg = await scaffold(copied, { link: false, distMtime: new Date(0) })
+      const target = join(copied, "app", "node_modules", "lib")
+      await mkdir(join(target, "src"), { recursive: true })
+      await mkdir(join(target, "dist"), { recursive: true })
+      await writeFile(
+        join(target, "package.json"),
+        JSON.stringify({
+          name: "lib",
+          version: "1.0.0",
+          exports: { ".": { bun: "./src/index.ts", default: "./dist/index.js" } },
+        }),
+      )
+      await writeFile(join(target, "src", "index.ts"), "export const x = 1\n")
+      await writeFile(join(target, "dist", "index.js"), "export const x = 1;\n")
+      await utimes(join(target, "dist", "index.js"), new Date(0), new Date(0))
+      expect(await collectStaleWorkspaceDists(join(copied, "app"), copiedPkg)).toEqual([])
+    } finally {
+      await rm(fresh, { recursive: true, force: true })
+      await rm(copied, { recursive: true, force: true })
     }
   })
 })

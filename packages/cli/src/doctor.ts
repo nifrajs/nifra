@@ -10,9 +10,10 @@
  * when a monorepo would hoist it. Relative paths, runtime builtins (node core, `node:`/`bun:`, `bun`),
  * the package's own name, and tsconfig `paths` aliases are excluded - none of them are npm deps.
  */
-import { realpath, stat } from "node:fs/promises"
+import type { Dirent } from "node:fs"
+import { readdir, realpath, stat } from "node:fs/promises"
 import { builtinModules } from "node:module"
-import { dirname, join, relative } from "node:path"
+import { dirname, join, relative, sep } from "node:path"
 import { codePositionMask, type SourceFinding, stripComments, walkSource } from "./check.ts"
 
 // Runtime-provided modules that are never an npm dependency: Node core (bare + `node:` form) and Bun's
@@ -124,6 +125,10 @@ export interface DoctorResult {
   readonly findings: readonly DoctorFinding[]
   /** Packages that resolve to more than one physical install across this workspace. */
   readonly duplicateInstalls: readonly DuplicateInstallFinding[]
+  /** Workspace-linked deps whose `default`-condition artifact lags their `bun`-condition source.
+   * Advisory (never folded into `ok`): while actively editing a linked package its dist is always
+   * momentarily behind - the finding matters when a dev server starts against it. */
+  readonly staleDists: readonly StaleDistFinding[]
   /** Dependencies written by `--auto-fix` / MCP `autoFix:true`. */
   readonly fixed?: readonly DoctorAppliedFix[]
   /** Findings that were safe to report but not safe to write automatically. */
@@ -460,6 +465,156 @@ export async function collectDuplicateInstalls(
   return findings
 }
 
+/** A workspace-linked dependency whose build artifact is older than its source. */
+export interface StaleDistFinding {
+  readonly package: string
+  /** The `default`-condition artifact (what Vite's SSR runner, vitest, and node consumers load),
+   * relative to the doctor root when possible. `missing: true` means it was never built at all. */
+  readonly distFile: string
+  readonly missing: boolean
+  /** The newest source file under the package's `bun`-condition tree - the proof of staleness. */
+  readonly sourceFile: string
+  /** How far the artifact lags the newest source, in whole seconds (0 when `missing`). */
+  readonly behindSeconds: number
+}
+
+/**
+ * Resolve one condition through an export-map entry: a string is terminal; an object takes the first
+ * key that is the wanted condition or `default` (insertion order, like the runtime), skipping `types`.
+ */
+function exportTarget(entry: unknown, condition: "bun" | "default"): string | undefined {
+  if (typeof entry === "string") return entry
+  if (!isRecord(entry)) return undefined
+  for (const [key, value] of Object.entries(entry)) {
+    if (key === "types") continue
+    if (key === condition || key === "default") return exportTarget(value, condition)
+  }
+  return undefined
+}
+
+// Bounded recursive walk for the newest file under a package's source tree. The cap is a runaway
+// guard, not a tuning knob - a real `src/` is a few hundred files.
+const MAX_SOURCE_FILES = 4_096
+async function newestFileUnder(
+  dir: string,
+): Promise<{ readonly file: string; readonly mtimeMs: number } | undefined> {
+  let newest: { file: string; mtimeMs: number } | undefined
+  let seen = 0
+  const walk = async (current: string): Promise<void> => {
+    const entries: Dirent[] = await readdir(current, { withFileTypes: true }).catch(
+      () => [] as Dirent[],
+    )
+    for (const entry of entries) {
+      if (seen >= MAX_SOURCE_FILES) return
+      const path = join(current, entry.name)
+      if (entry.isDirectory()) {
+        if (entry.name === "node_modules" || entry.name === "dist" || entry.name.startsWith("."))
+          continue
+        await walk(path)
+        continue
+      }
+      if (!entry.isFile()) continue
+      seen++
+      const s = await stat(path).catch(() => undefined)
+      if (s !== undefined && (newest === undefined || s.mtimeMs > newest.mtimeMs))
+        newest = { file: path, mtimeMs: s.mtimeMs }
+    }
+  }
+  await walk(dir)
+  return newest
+}
+
+/**
+ * Find workspace-linked dependencies whose `default`-condition artifact (`dist/…`) has fallen behind
+ * their `bun`-condition source (`src/…`).
+ *
+ * The split export map is what makes this a trap: Bun (the build, the tests, the prod binary) reads
+ * live source, while Vite's SSR runner and any node consumer read a build artifact nothing in the dev
+ * loop regenerates. `dist/` is gitignored, so the drift never shows in a diff - it surfaces as a 500
+ * INSIDE framework/shared-package code and reads like an upstream regression. npm-installed copies are
+ * immutable and skipped; only symlinked (workspace) installs can drift.
+ */
+export async function collectStaleWorkspaceDists(
+  cwd: string,
+  rootPackage: Record<string, unknown>,
+): Promise<StaleDistFinding[]> {
+  const findings: StaleDistFinding[] = []
+  const seen = new Set<string>()
+  for (const field of DEPENDENCY_FIELDS) {
+    for (const name of depNames(rootPackage, field)) {
+      if (seen.has(name)) continue
+      seen.add(name)
+      // Boundary "" - never matches a real dir, so the upward walk runs to the filesystem root and
+      // finds a hoisted copy wherever the install put it.
+      const copy = await resolvedInstalledCopy(cwd, "", name)
+      // A real (tarball) install lives under node_modules and cannot drift; only a symlink out of the
+      // tree - a workspace/link install whose realpath escapes node_modules - has a live `src`.
+      if (copy === undefined || copy.path.includes(`${sep}node_modules${sep}`)) continue
+      const meta = await readJson(join(copy.path, "package.json"))
+      const exportsMap = meta?.exports
+      if (!isRecord(exportsMap)) continue
+      // Every subpath with a bun→src / default→dist split; the root "." alone would miss the common
+      // "deep subpaths only" layout.
+      const pairs: Array<{ readonly bun: string; readonly dist: string }> = []
+      const entries = Object.keys(exportsMap).some((k) => k.startsWith("."))
+        ? Object.entries(exportsMap)
+        : ([[".", exportsMap]] as Array<[string, unknown]>)
+      for (const [, entry] of entries) {
+        const bun = exportTarget(entry, "bun")
+        const dist = exportTarget(entry, "default")
+        if (bun !== undefined && dist !== undefined && bun !== dist) pairs.push({ bun, dist })
+      }
+      if (pairs.length === 0) continue
+      // One newest-source probe per package: the bun targets share a source tree (its top directory).
+      const sourceDirs = new Set(
+        pairs
+          .map((p) => p.bun.replace(/^\.\//, "").split("/")[0])
+          .filter((d): d is string => d !== undefined && d.length > 0),
+      )
+      let newest: { file: string; mtimeMs: number } | undefined
+      for (const dir of sourceDirs) {
+        const candidate = await newestFileUnder(join(copy.path, dir))
+        if (candidate !== undefined && (newest === undefined || candidate.mtimeMs > newest.mtimeMs))
+          newest = candidate
+      }
+      if (newest === undefined) continue
+      // Report the package once, anchored on its stalest (or missing) artifact.
+      let worst: StaleDistFinding | undefined
+      for (const pair of pairs) {
+        const distPath = join(copy.path, pair.dist.replace(/^\.\//, ""))
+        const distStat = await stat(distPath).catch(() => undefined)
+        const finding: StaleDistFinding | undefined =
+          distStat === undefined
+            ? {
+                package: name,
+                distFile: displayPath(cwd, distPath),
+                missing: true,
+                sourceFile: displayPath(cwd, newest.file),
+                behindSeconds: 0,
+              }
+            : distStat.mtimeMs < newest.mtimeMs
+              ? {
+                  package: name,
+                  distFile: displayPath(cwd, distPath),
+                  missing: false,
+                  sourceFile: displayPath(cwd, newest.file),
+                  behindSeconds: Math.round((newest.mtimeMs - distStat.mtimeMs) / 1000),
+                }
+              : undefined
+        if (finding === undefined) continue
+        if (
+          worst === undefined ||
+          (finding.missing && !worst.missing) ||
+          finding.behindSeconds > worst.behindSeconds
+        )
+          worst = finding
+      }
+      if (worst !== undefined) findings.push(worst)
+    }
+  }
+  return findings.sort((a, b) => a.package.localeCompare(b.package))
+}
+
 function depRecord(
   pkg: Record<string, unknown>,
   field: string,
@@ -518,7 +673,8 @@ async function inferDependencyFix(
 /** Run doctor against the project at `cwd`: diff source imports vs declared deps. */
 export async function collectDoctorResult(cwd: string): Promise<DoctorResult> {
   const pkg = await readJson(join(cwd, "package.json"))
-  if (pkg === undefined) return { ok: true, ran: false, findings: [], duplicateInstalls: [] }
+  if (pkg === undefined)
+    return { ok: true, ran: false, findings: [], duplicateInstalls: [], staleDists: [] }
 
   const scopes = await doctorPackageScopes(cwd, pkg)
 
@@ -531,11 +687,14 @@ export async function collectDoctorResult(cwd: string): Promise<DoctorResult> {
   })
   findings.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)
   const duplicateInstalls = await collectDuplicateInstalls(cwd, pkg)
+  const staleDists = await collectStaleWorkspaceDists(cwd, pkg)
+  // `staleDists` is advisory (see DoctorResult): it never fails `ok`.
   return {
     ok: findings.length === 0 && duplicateInstalls.length === 0,
     ran: true,
     findings,
     duplicateInstalls,
+    staleDists,
   }
 }
 
@@ -636,6 +795,22 @@ export async function runDoctor(
     console.log("• not auto-fixed:")
     for (const f of result.skippedFixes) {
       console.log(`  ${f.package} - ${f.reason}; run \`${f.command.join(" ")}\``)
+    }
+    console.log("")
+  }
+  // Advisory, printed regardless of ok: a stale linked dist doesn't fail doctor, but silently eating
+  // it costs an hour of misdiagnosis when the dev server 500s inside the package.
+  if (result.staleDists.length > 0) {
+    console.log(
+      `⚠ ${result.staleDists.length} workspace-linked package(s) with a build artifact older than their source (Bun reads src, Vite SSR/node consumers read dist):\n`,
+    )
+    for (const f of result.staleDists) {
+      console.log(
+        f.missing
+          ? `  ${f.package} - ${f.distFile} was never built`
+          : `  ${f.package} - ${f.distFile} is ${f.behindSeconds}s behind ${f.sourceFile}`,
+      )
+      console.log(`      rebuild ${f.package}`)
     }
     console.log("")
   }
