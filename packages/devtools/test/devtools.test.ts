@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
 import { type NifraSpan, tracing } from "@nifrajs/otel"
-import { devtools, devtoolsClientScript } from "../src/index.ts"
+import {
+  type DevToolsEvent,
+  devtools,
+  devtoolsClientScript,
+  filterDevToolsEvents,
+} from "../src/index.ts"
 
 describe("devtools server middleware", () => {
   test("captures events and streams via SSE", async () => {
@@ -166,5 +171,87 @@ describe("devtoolsClientScript", () => {
     expect(devtoolsClientScript({ path: "/internal/events" })).toContain(
       'EventSource("/internal/events")',
     )
+  })
+})
+
+const fixture = (path: string, id: string): DevToolsEvent => ({
+  id,
+  traceId: id,
+  spanId: id,
+  timestamp: 0,
+  method: "GET",
+  path,
+  status: 200,
+  durationMs: 1,
+  bodyBytes: 0,
+})
+
+describe("filterDevToolsEvents", () => {
+  const events = [fixture("/api/a", "1"), fixture("/api/b", "2"), fixture("/api/a/x", "3")]
+
+  test("no query returns a copy of every event", () => {
+    const out = filterDevToolsEvents(events)
+    expect(out.map((e) => e.id)).toEqual(["1", "2", "3"])
+    expect(out).not.toBe(events) // a copy, never the live buffer
+  })
+
+  test("filters by path prefix", () => {
+    expect(filterDevToolsEvents(events, { path: "/api/a" }).map((e) => e.id)).toEqual(["1", "3"])
+    expect(filterDevToolsEvents(events, { path: "/nope" })).toEqual([])
+  })
+
+  test("limits to the most recent N, clamping 0 and over-large limits", () => {
+    expect(filterDevToolsEvents(events, { limit: 2 }).map((e) => e.id)).toEqual(["2", "3"])
+    expect(filterDevToolsEvents(events, { limit: 0 })).toEqual([]) // NOT the whole array
+    expect(filterDevToolsEvents(events, { limit: 99 }).map((e) => e.id)).toEqual(["1", "2", "3"])
+  })
+
+  test("applies the path filter before the limit", () => {
+    expect(filterDevToolsEvents(events, { path: "/api/a", limit: 1 }).map((e) => e.id)).toEqual([
+      "3",
+    ])
+  })
+})
+
+describe("devtools /state snapshot", () => {
+  test("serves recent traces as filtered JSON, guarded like the stream", async () => {
+    const app = server()
+      .use(devtools({ enabled: true }))
+      .get("/api/ping", () => "pong")
+      .get("/api/pong", () => "ping")
+    await app.fetch(new Request("http://localhost/api/ping"))
+    await app.fetch(new Request("http://localhost/api/pong"))
+    await app.fetch(new Request("http://localhost/api/ping"))
+
+    const snapshot = async (query = ""): Promise<{ events: DevToolsEvent[] }> => {
+      const res = await app.fetch(new Request(`http://localhost/_nifra/devtools/state${query}`))
+      return (await res.json()) as { events: DevToolsEvent[] }
+    }
+
+    const all = await snapshot()
+    expect(all.events.map((e) => e.path)).toEqual(["/api/ping", "/api/pong", "/api/ping"])
+    expect(
+      all.events.every((e) => typeof e.status === "number" && typeof e.durationMs === "number"),
+    ).toBe(true)
+
+    expect((await snapshot("?path=/api/ping")).events.map((e) => e.path)).toEqual([
+      "/api/ping",
+      "/api/ping",
+    ])
+    expect((await snapshot("?limit=1")).events).toHaveLength(1)
+
+    // Correct JSON content type + no-store, and NOT an event stream.
+    const res = await app.fetch(new Request("http://localhost/_nifra/devtools/state"))
+    expect(res.headers.get("content-type")).toContain("application/json")
+    expect(res.headers.get("cache-control")).toBe("no-store")
+    expect(res.headers.get("x-nifra-devtools")).toBe("true")
+
+    // The snapshot exposes the same data as the stream, so it shares the guard: a cross-origin read is refused.
+    const crossOrigin = await app.fetch(
+      new Request("http://localhost/_nifra/devtools/state", {
+        headers: { origin: "https://evil.example" },
+      }),
+    )
+    expect(crossOrigin.status).toBe(403)
   })
 })

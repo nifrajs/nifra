@@ -20,6 +20,8 @@
  *   - `nifra_doctor`  - package.json dependency drift detector, with safe local-version auto-fix.
  *   - `nifra_explain` - resolve an error (pasted, or the dev server's last) into a structured
  *     diagnostic: stable code, a codeframe in the user's source, and the recognised cause + fix.
+ *   - `nifra_inspect` - read the running dev server's recent request traces (method/path/status/
+ *     duration/ISR) from the DevTools plugin: what your requests ACTUALLY did, not a guess.
  *
  * Wire it into a client (e.g. Claude Desktop / Cursor) as: command `nifra`, args `["mcp"]`, run in the
  * project root. The protocol is hand-rolled (newline-delimited JSON-RPC 2.0 over stdio), including
@@ -745,6 +747,67 @@ export function projectTools(
           null,
           2,
         )
+      },
+    },
+    {
+      name: "nifra_inspect",
+      description:
+        "Observe what your requests ACTUALLY did on the running dev server - the recent request traces the DevTools plugin records: `{ method, path, status, durationMs, isrStatus, bodyBytes }` per request. The read no other tool gives you: after nifra_run or a real browser request, call this to SEE the outcome (which route answered, the status, how long, ISR hit/miss) instead of guessing. Pass `port` (the running dev server); narrow with `path` (a path prefix) or `limit` (most recent N). Requires the app to mount `@nifrajs/web`'s `devtools()` plugin (which auto-enables in development).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          port: { type: "number", description: "The running dev server's port." },
+          path: { type: "string", description: "Only traces whose path starts with this prefix." },
+          limit: { type: "number", description: "Return only the most recent N traces." },
+        },
+        required: ["port"],
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const { port, path, limit } = args as { port?: number; path?: string; limit?: number }
+        if (port === undefined) {
+          return JSON.stringify(
+            {
+              events: [],
+              note: "Pass `port` - the running dev server whose request traces to read.",
+            },
+            null,
+            2,
+          )
+        }
+        const url = new URL(`http://127.0.0.1:${port}/_nifra/devtools/state`)
+        if (path !== undefined) url.searchParams.set("path", path)
+        if (limit !== undefined) url.searchParams.set("limit", String(limit))
+        try {
+          const res = await fetch(url)
+          if (res.status === 404) {
+            return JSON.stringify(
+              {
+                events: [],
+                note: "No DevTools endpoint on that server. Mount `devtools()` from @nifrajs/web and run in development.",
+              },
+              null,
+              2,
+            )
+          }
+          if (!res.ok) {
+            return JSON.stringify(
+              { events: [], note: `DevTools state returned ${res.status}.` },
+              null,
+              2,
+            )
+          }
+          return await res.text()
+        } catch (cause) {
+          return JSON.stringify(
+            {
+              events: [],
+              note: `Could not reach a dev server at :${port} - ${cause instanceof Error ? cause.message : String(cause)}`,
+            },
+            null,
+            2,
+          )
+        }
       },
     },
     {

@@ -80,10 +80,38 @@ const encoder = new TextEncoder()
  * When configuring `tracing()` yourself, register it before this plugin so DevTools attaches to
  * that request owner.
  */
+/** Query for a DevTools state snapshot: an optional `path` prefix and a most-recent-`limit`. */
+export interface DevToolsQuery {
+  readonly path?: string | undefined
+  readonly limit?: number | undefined
+}
+
+/**
+ * Filter a DevTools event buffer for a snapshot query - by `path` prefix and/or the most recent
+ * `limit`. Pure, so the `/state` endpoint and its tests (and the `nifra_inspect` MCP tool that reads
+ * that endpoint) share ONE definition of what a query returns.
+ */
+export function filterDevToolsEvents(
+  events: readonly DevToolsEvent[],
+  query: DevToolsQuery = {},
+): DevToolsEvent[] {
+  const { path, limit } = query
+  const matched =
+    path !== undefined ? events.filter((event) => event.path.startsWith(path)) : [...events]
+  // `slice(Math.max(0, n - limit))`, not `slice(-limit)`: the latter returns the WHOLE array for
+  // limit 0 (`-0 === 0`) and mishandles a limit larger than the buffer. This clamps both.
+  return limit !== undefined && limit >= 0
+    ? matched.slice(Math.max(0, matched.length - limit))
+    : matched
+}
+
 export function devtools(options?: DevToolsOptions | undefined) {
   const maxEvents = options?.maxEvents ?? 200
   const maxConnections = Math.max(1, options?.maxConnections ?? 5)
   const endpoint = options?.path ?? "/_nifra/devtools"
+  // A one-shot JSON snapshot of the ring buffer, alongside the live SSE stream. The SSE path is for a
+  // human watching the overlay; this is for an agent that made a request and wants to READ what happened.
+  const statePath = `${endpoint}/state`
   const enabled = options?.enabled ?? process.env.NODE_ENV === "development"
   const allowRemote = options?.allowRemote ?? false
   const allowedOrigins = new Set(options?.allowedOrigins ?? [])
@@ -172,67 +200,88 @@ export function devtools(options?: DevToolsOptions | undefined) {
       name: "devtools-stream",
 
       async onRequest(request: Request): Promise<Response | undefined> {
-        // Handle the SSE endpoint
         const url = new URL(request.url)
-        if (url.pathname === endpoint) {
-          const loopback =
-            url.hostname === "localhost" ||
-            url.hostname === "127.0.0.1" ||
-            url.hostname === "[::1]" ||
-            url.hostname.endsWith(".localhost")
-          if (!allowRemote && !loopback) {
-            return new Response("Nifra DevTools is restricted to loopback hosts", { status: 403 })
-          }
-          const origin = request.headers.get("origin")
-          if (origin !== null && origin !== url.origin && !allowedOrigins.has(origin)) {
-            return new Response("Origin not allowed", { status: 403 })
-          }
-          if (options?.authorize !== undefined && !(await options.authorize(request))) {
-            return new Response("Unauthorized", { status: 401 })
-          }
-          if (controllers.size >= maxConnections) {
-            return new Response("Too many DevTools connections", {
-              status: 503,
-              headers: { "retry-after": "5" },
-            })
-          }
+        if (url.pathname !== endpoint && url.pathname !== statePath) return undefined
 
-          let activeController: ReadableStreamDefaultController | undefined
-          const stream = new ReadableStream({
-            start(controller) {
-              activeController = controller
-              controllers.add(controller)
-              startPing()
-              // Send buffered events as initial payload
-              for (const evt of buffer) {
-                try {
-                  controller.enqueue(encoder.encode(`data: ${JSON.stringify(evt)}\n\n`))
-                } catch {
-                  break
-                }
-              }
-            },
-            cancel() {
-              if (activeController !== undefined) dropController(activeController)
-            },
-          })
-
-          // Clean up dead controllers on cancel
-          const response = new Response(stream, {
-            headers: {
-              "content-type": "text/event-stream",
-              "cache-control": "no-store",
-              connection: "keep-alive",
-              "content-security-policy": "default-src 'none'",
-              "x-content-type-options": "nosniff",
-              "x-nifra-devtools": "true",
-            },
-          })
-
-          return response
+        // One access-control gate for BOTH the live stream and the one-shot snapshot: a read of the
+        // buffer exposes the same request data as watching it live, so it is guarded identically -
+        // loopback-only unless `allowRemote`, origin-checked, and an optional `authorize` hook.
+        const loopback =
+          url.hostname === "localhost" ||
+          url.hostname === "127.0.0.1" ||
+          url.hostname === "[::1]" ||
+          url.hostname.endsWith(".localhost")
+        if (!allowRemote && !loopback) {
+          return new Response("Nifra DevTools is restricted to loopback hosts", { status: 403 })
+        }
+        const origin = request.headers.get("origin")
+        if (origin !== null && origin !== url.origin && !allowedOrigins.has(origin)) {
+          return new Response("Origin not allowed", { status: 403 })
+        }
+        if (options?.authorize !== undefined && !(await options.authorize(request))) {
+          return new Response("Unauthorized", { status: 401 })
         }
 
-        return undefined
+        // The snapshot: recent request traces as JSON, filtered by ?path= / ?limit=. This is the agent's
+        // read of "what did my requests actually do" - the one thing the live SSE stream can't answer.
+        if (url.pathname === statePath) {
+          const limitRaw = url.searchParams.get("limit")
+          const limit =
+            limitRaw !== null && Number.isFinite(Number(limitRaw)) ? Number(limitRaw) : undefined
+          const events = filterDevToolsEvents(buffer, {
+            path: url.searchParams.get("path") ?? undefined,
+            limit,
+          })
+          return Response.json(
+            { events },
+            {
+              headers: {
+                "cache-control": "no-store",
+                "x-content-type-options": "nosniff",
+                "x-nifra-devtools": "true",
+              },
+            },
+          )
+        }
+
+        // The live SSE stream.
+        if (controllers.size >= maxConnections) {
+          return new Response("Too many DevTools connections", {
+            status: 503,
+            headers: { "retry-after": "5" },
+          })
+        }
+
+        let activeController: ReadableStreamDefaultController | undefined
+        const stream = new ReadableStream({
+          start(controller) {
+            activeController = controller
+            controllers.add(controller)
+            startPing()
+            // Send buffered events as the initial payload.
+            for (const evt of buffer) {
+              try {
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(evt)}\n\n`))
+              } catch {
+                break
+              }
+            }
+          },
+          cancel() {
+            if (activeController !== undefined) dropController(activeController)
+          },
+        })
+
+        return new Response(stream, {
+          headers: {
+            "content-type": "text/event-stream",
+            "cache-control": "no-store",
+            connection: "keep-alive",
+            "content-security-policy": "default-src 'none'",
+            "x-content-type-options": "nosniff",
+            "x-nifra-devtools": "true",
+          },
+        })
       },
 
       beforeHandle(context) {

@@ -1264,10 +1264,13 @@ Every public export of every package and documented subpath - name, kind, signat
 - **DevToolsClientOptions** _(interface)_ - `interface DevToolsClientOptions`
 - **DevToolsEvent** _(interface)_ - `interface DevToolsEvent`
 - **DevToolsOptions** _(interface)_ - `interface DevToolsOptions`
+- **DevToolsQuery** _(interface)_ - `interface DevToolsQuery`
+  Query for a DevTools state snapshot: an optional `path` prefix and a most-recent-`limit`.
 - **devtools** _(function)_ - `devtools: (options?: DevToolsOptions | undefined) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").AnyServer>`
-  DevTools plugin. Its observation adapter projects the single request span into a `DevToolsEvent`; its middleware only owns the secured SSE transport. When configuring `tracing()` yourself, register it before this plugin so DevTools attaches to that request owner.
 - **devtoolsClientScript** _(function)_ - `devtoolsClientScript: (options?: DevToolsClientOptions) => string`
   Returns a self-contained JavaScript string that creates a floating DevTools overlay in the browser. Inject via `<script>` tag in dev mode.
+- **filterDevToolsEvents** _(function)_ - `filterDevToolsEvents: (events: readonly DevToolsEvent[], query?: DevToolsQuery) => DevToolsEvent[]`
+  Filter a DevTools event buffer for a snapshot query - by `path` prefix and/or the most recent `limit`. Pure, so the `/state` endpoint and its tests (and the `nifra_inspect` MCP tool that reads that endpoint) share ONE definition of what a query returns.
 
 ### `@nifrajs/devtools/client`
 

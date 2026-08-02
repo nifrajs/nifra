@@ -16,9 +16,11 @@ Interactive DevTools overlay for nifra dev - loader traces, ISR status, route me
 
 - **devtools** _(function)_ - `devtools: (options?: DevToolsOptions | undefined) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifraj…` · from `@nifrajs/devtools`
 - **devtoolsClientScript** _(function)_ - `devtoolsClientScript: (options?: DevToolsClientOptions) => string` · from `@nifrajs/devtools`
+- **filterDevToolsEvents** _(function)_ - `filterDevToolsEvents: (events: readonly DevToolsEvent[], query?: DevToolsQuery) => DevToolsEvent[]` · from `@nifrajs/devtools`
 - **DevToolsClientOptions** _(interface)_ - `interface DevToolsClientOptions` · from `@nifrajs/devtools`
 - **DevToolsEvent** _(interface)_ - `interface DevToolsEvent` · from `@nifrajs/devtools`
 - **DevToolsOptions** _(interface)_ - `interface DevToolsOptions` · from `@nifrajs/devtools`
+- **DevToolsQuery** _(interface)_ - `interface DevToolsQuery` · from `@nifrajs/devtools`
 
 ## Footguns
 

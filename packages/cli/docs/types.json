@@ -2965,8 +2965,7 @@
     "name": "devtools",
     "kind": "function",
     "package": "@nifrajs/devtools",
-    "signature": "export declare function devtools(options?: DevToolsOptions | undefined): import(\"@nifrajs/core/server\").NifraPlugin<import(\"@nifrajs/core/server\").AnyServer, import(\"@nifrajs/core/server\").AnyServer>;",
-    "doc": "/**\n * DevTools plugin. Its observation adapter projects the single request span into a\n * `DevToolsEvent`; its middleware only owns the secured SSE transport.\n * When configuring `tracing()` yourself, register it before this plugin so DevTools attaches to\n * that request owner.\n */"
+    "signature": "export declare function devtools(options?: DevToolsOptions | undefined): import(\"@nifrajs/core/server\").NifraPlugin<import(\"@nifrajs/core/server\").AnyServer, import(\"@nifrajs/core/server\").AnyServer>;"
   },
   {
     "name": "DevToolsClientOptions",
@@ -2993,6 +2992,13 @@
     "kind": "interface",
     "package": "@nifrajs/devtools",
     "signature": "export interface DevToolsOptions {\n    /** Maximum events to retain in the ring buffer (default 200). */\n    readonly maxEvents?: number | undefined;\n    /** Maximum simultaneous SSE connections (default 5). */\n    readonly maxConnections?: number | undefined;\n    /** SSE path (default `/_nifra/devtools`). */\n    readonly path?: string | undefined;\n    /** Explicit enable switch. Defaults to true only when `NODE_ENV === \"development\"`. */\n    readonly enabled?: boolean | undefined;\n    /** Permit non-loopback URL hosts. Default false. */\n    readonly allowRemote?: boolean | undefined;\n    /** Additional origins permitted to open the stream. Same-origin requests are always allowed. */\n    readonly allowedOrigins?: readonly string[] | undefined;\n    /** Optional request authorization for the stream. */\n    readonly authorize?: ((request: Request) => boolean | Promise<boolean>) | undefined;\n    /**\n     * Interval for SSE keep-alive comment frames, in milliseconds (default 15000). Pings stop\n     * idle proxies/dev tunnels from dropping the stream and evict dead connections so they no\n     * longer count against `maxConnections`.\n     */\n    readonly pingIntervalMs?: number | undefined;\n}"
+  },
+  {
+    "name": "DevToolsQuery",
+    "kind": "interface",
+    "package": "@nifrajs/devtools",
+    "signature": "export interface DevToolsQuery {\n    readonly path?: string | undefined;\n    readonly limit?: number | undefined;\n}",
+    "doc": "/** Query for a DevTools state snapshot: an optional `path` prefix and a most-recent-`limit`. */"
   },
   {
     "name": "Diagnostic",
@@ -3786,6 +3792,13 @@
     "package": "@nifrajs/uploads",
     "signature": "export interface FileType {\n    /** Detected MIME type, e.g. `\"image/png\"`. */\n    readonly mime: string;\n    /** Canonical extension (no dot), e.g. `\"png\"`. */\n    readonly ext: string;\n}",
     "doc": "/**\n * Magic-byte file-type detection - trust the bytes, not the `Content-Type` header (which a client\n * sets freely). Reads only the leading bytes; dependency-free + edge-safe. Covers the common upload\n * types; returns `null` for anything unrecognized (incl. text formats like SVG/CSV that have no magic\n * number - handle those explicitly if you accept them).\n */"
+  },
+  {
+    "name": "filterDevToolsEvents",
+    "kind": "function",
+    "package": "@nifrajs/devtools",
+    "signature": "export declare function filterDevToolsEvents(events: readonly DevToolsEvent[], query?: DevToolsQuery): DevToolsEvent[];",
+    "doc": "/**\n * Filter a DevTools event buffer for a snapshot query - by `path` prefix and/or the most recent\n * `limit`. Pure, so the `/state` endpoint and its tests (and the `nifra_inspect` MCP tool that reads\n * that endpoint) share ONE definition of what a query returns.\n */"
   },
   {
     "name": "fixedBackoff",
