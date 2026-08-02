@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import type { PluginBuilder } from "../src/plugins/kit.ts"
 import {
   type SvgOptimizer,
+  stripSvgPreamble,
   svgComponentBunPlugin,
   svgComponentSource,
   svgToJsx,
@@ -21,6 +22,33 @@ function setupPlugin(svgo?: boolean | SvgOptimizer) {
   } as unknown as PluginBuilder)
   return load as LoadCb
 }
+
+describe("stripSvgPreamble", () => {
+  test("removes declaration, comments, and DOCTYPE in one pass", () => {
+    const out = stripSvgPreamble(
+      `<?xml version="1.0"?><!-- a --><!DOCTYPE svg PUBLIC "x"><svg><!-- b --><path/></svg>`,
+    )
+    expect(out).toBe("<svg><path/></svg>")
+  })
+
+  test("removed delimiters cannot splice into a new marker", () => {
+    // A sequential-replace pipeline turns this into `<!DOCTYPE …>` after the comment is removed;
+    // the scanner must not recombine the halves.
+    expect(stripSvgPreamble("<<!---->!DOCTYPE svg><svg/>")).toBe("<!DOCTYPE svg><svg/>")
+  })
+
+  test("an unterminated marker swallows the rest of the input (parser semantics)", () => {
+    expect(stripSvgPreamble("<svg/><?xml version")).toBe("<svg/>")
+    expect(stripSvgPreamble("<svg/><!-- open")).toBe("<svg/>")
+    expect(stripSvgPreamble("<svg/><!DOCTYPE svg")).toBe("<svg/>")
+  })
+
+  test("adversarial marker runs stay fast (linear scan, no backtracking)", () => {
+    const start = performance.now()
+    stripSvgPreamble(`${"<?".repeat(20_000)}<svg/>`)
+    expect(performance.now() - start).toBeLessThan(200)
+  })
+})
 
 describe("svgToJsx (transform)", () => {
   const jsx = svgToJsx(

@@ -105,11 +105,33 @@ export function viteServerOnlyReplacement(source: string): string {
 const DECLARATION = /^[\t ]*export\s+const\s+([A-Za-z_$][\w$]*)\s*=\s*serverFn\s*\(/gm
 /** Any mention of `serverFn(` as a call, used to prove nothing was missed. */
 const ANY_CALL = /\bserverFn\s*\(/g
-/** Line comments and block comments, stripped before scanning so prose cannot register as code.
- * The block-comment branch is the classic linear form (`[^*]*\*+` loops) rather than a lazy
- * `[\s\S]*?` - the lazy scan re-walks to the end of input for every unterminated open marker,
- * which is quadratic on adversarial source. */
-const COMMENTS = /\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\/|(^|[^:])\/\/.*$/gm
+/** Strip line and block comments by forward index scan, so prose cannot register as code. Not a
+ * regex: every regex shape for comment stripping either backtracks polynomially on adversarial
+ * source or is opaque enough that reviewers cannot tell. A `//` preceded by `:` is kept (URL in a
+ * string - the same heuristic the previous implementation used); an unterminated block comment
+ * swallows the rest of the source, matching a real parser. */
+function stripComments(source: string): string {
+  const parts: string[] = []
+  let keepFrom = 0
+  let i = 0
+  while (i < source.length) {
+    if (source.startsWith("/*", i)) {
+      const close = source.indexOf("*/", i + 2)
+      parts.push(source.slice(keepFrom, i))
+      i = close === -1 ? source.length : close + 2
+      keepFrom = i
+    } else if (source.startsWith("//", i) && source[i - 1] !== ":") {
+      const newline = source.indexOf("\n", i + 2)
+      parts.push(source.slice(keepFrom, i))
+      i = newline === -1 ? source.length : newline // keep the newline itself
+      keepFrom = i
+    } else {
+      i++
+    }
+  }
+  parts.push(source.slice(keepFrom))
+  return parts.join("")
+}
 
 /**
  * The namespace a `*.fn.ts` module is mounted under: its filename without the `.fn` suffix.
@@ -126,7 +148,7 @@ export function serverFnNamespace(filePath: string): string {
 
 /** The server functions a module declares, in source order. */
 export function scanServerFnExports(source: string): string[] {
-  const code = source.replaceAll(COMMENTS, "$1")
+  const code = stripComments(source)
   const names = [...code.matchAll(DECLARATION)].map((m) => m[1] as string)
   const calls = [...code.matchAll(ANY_CALL)].length
   if (calls > names.length) {
