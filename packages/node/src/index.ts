@@ -544,7 +544,10 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
   }
 
   return new Promise((resolve) => {
-    server.listen(options.port, options.hostname, () => {
+    // Do not pass an explicit `undefined` hostname. Node accepts it, but Bun's Node-compatible
+    // `http.Server.listen` can misinterpret that overload (especially with port 0) as a failed bind.
+    // Omitting the argument selects the same default host while keeping the overload unambiguous.
+    const onListening = (): void => {
       const address = server.address()
       const port = address !== null && typeof address === "object" ? address.port : options.port
       if (options.signals === true) {
@@ -552,7 +555,9 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
         process.once("SIGINT", onSignal)
       }
       resolve({ port, stop })
-    })
+    }
+    if (options.hostname === undefined) server.listen(options.port, onListening)
+    else server.listen(options.port, options.hostname, onListening)
   })
 }
 

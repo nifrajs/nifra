@@ -1,4 +1,5 @@
 import type { LoaderData } from "@nifrajs/client"
+import { h } from "vue"
 import { App } from "../../nifra-vue/app.ts"
 import { type CatalogPageData, catalogItems } from "../../shared/catalog.ts"
 
@@ -10,5 +11,7 @@ export function loader(): CatalogPageData {
 }
 
 export default function Index(props: { data: LoaderData<typeof loader> }) {
-  return <App data={props.data} />
+  // This is a Vue benchmark route. JSX without a Vue JSX runtime creates a framework-agnostic
+  // object, which Vue SSR serializes as `[object Object]` instead of rendering the component tree.
+  return h(App, { data: props.data })
 }
