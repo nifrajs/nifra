@@ -280,7 +280,8 @@ export function parseGoogleFontCss(css: string): ParsedFontFace[] {
   // late brace re-scans for that brace N times - the quadratic shape this parser exists to avoid.
   let openMemo = -1
   for (let at = css.indexOf("@font-face"); at !== -1; at = css.indexOf("@font-face", at + 1)) {
-    const open = openMemo >= at + 10 ? openMemo : (openMemo = css.indexOf("{", at + 10))
+    if (openMemo < at + 10) openMemo = css.indexOf("{", at + 10)
+    const open = openMemo
     if (open === -1) break
     if (css.slice(at + 10, open).trim() !== "") continue // not this at-rule's block
     const closeBrace = css.indexOf("}", open + 1)
