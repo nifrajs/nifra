@@ -4,7 +4,9 @@ import {
   defineMcpTool,
   defineMcpWidget,
   handleRpc,
+  MCP_ERROR,
   type McpTool,
+  MODERN_PROTOCOL_VERSION,
   PROTOCOL_VERSION,
   respondMcpHttp,
   type StandardSchemaV1,
@@ -320,7 +322,9 @@ describe("respondMcpHttp - transport hardening", () => {
   })
 
   test("GET probing the removed SSE stream is 405; a plain GET is the health page", async () => {
-    const sse = await serve(new Request("http://x/mcp", { headers: { accept: "text/event-stream" } }))
+    const sse = await serve(
+      new Request("http://x/mcp", { headers: { accept: "text/event-stream" } }),
+    )
     expect(sse.status).toBe(405)
     const health = await serve(new Request("http://x/mcp"))
     expect(health.status).toBe(200)
@@ -344,17 +348,194 @@ describe("respondMcpHttp - transport hardening", () => {
   test("initialize echoes a protocol version the server also speaks, else its default", async () => {
     const echoed = await (
       await serve(
-        post({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25" } }),
+        post({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: { protocolVersion: "2025-11-25" },
+        }),
       )
     ).json()
-    expect((echoed as { result: { protocolVersion: string } }).result.protocolVersion).toBe("2025-11-25")
+    expect((echoed as { result: { protocolVersion: string } }).result.protocolVersion).toBe(
+      "2025-11-25",
+    )
     const fallback = await (
       await serve(
-        post({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "1999-01-01" } }),
+        post({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: { protocolVersion: "1999-01-01" },
+        }),
       )
     ).json()
     expect((fallback as { result: { protocolVersion: string } }).result.protocolVersion).toBe(
       PROTOCOL_VERSION,
     )
+  })
+})
+
+describe("2026-07-28 modern transport (dual-era)", () => {
+  const MODERN = MODERN_PROTOCOL_VERSION
+  const VERSION_KEY = "io.modelcontextprotocol/protocolVersion"
+  const SERVER_INFO_KEY = "io.modelcontextprotocol/serverInfo"
+  const meta = (extra: Record<string, unknown> = {}): { _meta: Record<string, unknown> } => ({
+    _meta: { [VERSION_KEY]: MODERN, ...extra },
+  })
+  const features = {
+    resources: [widget.resource],
+    ui: { mimeTypes: [UI_MIME] },
+    instructions: "Use nifra.",
+  }
+  type ModernResult = {
+    resultType?: string
+    supportedVersions?: string[]
+    capabilities?: { tools?: unknown; resources?: unknown; extensions?: Record<string, unknown> }
+    instructions?: string
+    tools?: unknown[]
+    structuredContent?: { orders: unknown[] }
+    _meta?: Record<string, unknown>
+    ttlMs?: number
+    cacheScope?: string
+  }
+  type RpcOk = { result: ModernResult }
+  type RpcErr = { error: { code: number; data?: { supported?: string[]; requested?: string } } }
+
+  test("server/discover returns versions, capabilities, identity, and a cache envelope", async () => {
+    const res = await handleRpc(
+      { id: 1, method: "server/discover", params: meta() },
+      [ordersTool],
+      INFO,
+      features,
+    )
+    const result = (res as RpcOk).result
+    expect(result.resultType).toBe("complete")
+    expect(result.supportedVersions).toEqual([MODERN])
+    expect(result.capabilities?.tools).toEqual({})
+    expect(result.capabilities?.resources).toEqual({})
+    expect(result.capabilities?.extensions?.[UI_EXTENSION_KEY]).toEqual({ mimeTypes: [UI_MIME] })
+    expect(result.instructions).toBe("Use nifra.")
+    expect(result._meta?.[SERVER_INFO_KEY]).toEqual(INFO)
+    expect(result.ttlMs).toBeGreaterThan(0)
+    expect(result.cacheScope).toBe("public")
+  })
+
+  test("a modern request declaring an unsupported version is rejected with -32022 + supported list", async () => {
+    const res = await handleRpc(
+      { id: 2, method: "tools/list", params: { _meta: { [VERSION_KEY]: "1999-01-01" } } },
+      [ordersTool],
+      INFO,
+    )
+    const err = (res as RpcErr).error
+    expect(err.code).toBe(MCP_ERROR.UNSUPPORTED_VERSION)
+    expect(err.data?.supported).toEqual([MODERN])
+    expect(err.data?.requested).toBe("1999-01-01")
+  })
+
+  test("modern tools/list carries resultType + cache hints + serverInfo; legacy carries none", async () => {
+    const modern = (
+      (await handleRpc(
+        { id: 3, method: "tools/list", params: meta() },
+        [ordersTool],
+        INFO,
+      )) as RpcOk
+    ).result
+    expect(modern.resultType).toBe("complete")
+    expect(modern.ttlMs).toBeGreaterThan(0)
+    expect(modern.cacheScope).toBe("public")
+    expect(modern._meta?.[SERVER_INFO_KEY]).toEqual(INFO)
+    expect(modern.tools).toHaveLength(1)
+
+    const legacy = ((await handleRpc({ id: 4, method: "tools/list" }, [ordersTool], INFO)) as RpcOk)
+      .result
+    expect(legacy.resultType).toBeUndefined()
+    expect(legacy.ttlMs).toBeUndefined()
+    expect(legacy._meta).toBeUndefined()
+  })
+
+  test("modern tools/call keeps the ui _meta link and adds serverInfo + resultType", async () => {
+    const result = (
+      (await handleRpc(
+        { id: 5, method: "tools/call", params: { name: "list_orders", ...meta() } },
+        [ordersTool],
+        INFO,
+        features,
+      )) as RpcOk
+    ).result
+    expect(result.resultType).toBe("complete")
+    expect(result.structuredContent?.orders).toHaveLength(2)
+    expect((result._meta as { ui: { resourceUri: string } }).ui.resourceUri).toBe(
+      "ui://orders/table",
+    )
+    expect(result._meta?.[SERVER_INFO_KEY]).toEqual(INFO)
+  })
+
+  const modernPost = (
+    body: { id?: number; method: string; params?: Record<string, unknown> },
+    headers: Record<string, string>,
+  ): Promise<Response> =>
+    respondMcpHttp(
+      new Request("http://x/mcp", {
+        method: "POST",
+        headers: { "content-type": "application/json", "mcp-protocol-version": MODERN, ...headers },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          ...body,
+          params: { ...body.params, ...meta() },
+        }),
+      }),
+      [ordersTool],
+      INFO,
+      { features },
+    )
+
+  test("a fully-mirrored modern POST succeeds with 200 + enveloped result", async () => {
+    const res = await modernPost(
+      { id: 10, method: "tools/call", params: { name: "list_orders" } },
+      { "mcp-method": "tools/call", "mcp-name": "list_orders" },
+    )
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as RpcOk).result.resultType).toBe("complete")
+  })
+
+  test("a header/body mismatch is rejected 400 + HeaderMismatch before dispatch", async () => {
+    const res = await modernPost(
+      { id: 11, method: "tools/call", params: { name: "list_orders" } },
+      { "mcp-method": "tools/list", "mcp-name": "list_orders" }, // header method contradicts the body
+    )
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as RpcErr).error.code).toBe(MCP_ERROR.HEADER_MISMATCH)
+  })
+
+  test("a modern unknown method is 404 + -32601", async () => {
+    const res = await modernPost(
+      { id: 12, method: "does/notexist" },
+      { "mcp-method": "does/notexist" },
+    )
+    expect(res.status).toBe(404)
+    expect(((await res.json()) as RpcErr).error.code).toBe(-32601)
+  })
+
+  test("a modern unsupported version is 400 + -32022", async () => {
+    const res = await respondMcpHttp(
+      new Request("http://x/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "mcp-protocol-version": "1999-01-01",
+          "mcp-method": "tools/list",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 13,
+          method: "tools/list",
+          params: { _meta: { [VERSION_KEY]: "1999-01-01" } },
+        }),
+      }),
+      [ordersTool],
+      INFO,
+    )
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as RpcErr).error.code).toBe(MCP_ERROR.UNSUPPORTED_VERSION)
   })
 })

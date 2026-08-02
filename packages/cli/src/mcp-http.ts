@@ -63,7 +63,12 @@ export function respondMcpHttp(
  * resource so MCP Apps hosts can render `nifra_examples_app`. (`nifra docs-mcp` / `bun run` this file.) */
 export function handleMcpHttp(request: Request): Promise<Response> {
   return respondMcpHttp(request, publicDocsTools(), {
-    features: { resources: [examplesWidget.resource], ui: { mimeTypes: [UI_MIME] } },
+    features: {
+      resources: [examplesWidget.resource],
+      ui: { mimeTypes: [UI_MIME] },
+      instructions:
+        "nifra's own documentation, runnable examples, and API types - for building with the nifra framework. Call nifra_docs / nifra_example / nifra_types / nifra_learn to learn it without a local checkout.",
+    },
   })
 }
 

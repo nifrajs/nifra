@@ -10,8 +10,11 @@
 import {
   handleRpc,
   type JsonRpcRequest,
+  type JsonRpcResponse,
+  MCP_ERROR,
   type McpServerFeatures,
   type McpTool,
+  modernVersionOf,
   rpcError,
 } from "./protocol.ts"
 
@@ -119,10 +122,69 @@ async function readJsonBounded(
   }
 }
 
+const SENTINEL_PREFIX = "=?base64?"
+const SENTINEL_SUFFIX = "?="
+
+/** Decode the Streamable-HTTP `=?base64?...?=` header sentinel (used when a name/uri isn't header-safe).
+ * A plain value passes through; a malformed sentinel is returned as-is so validation still fails closed. */
+function decodeSentinel(value: string | null): string | null {
+  if (value === null) return null
+  if (!value.startsWith(SENTINEL_PREFIX) || !value.endsWith(SENTINEL_SUFFIX)) return value
+  const encoded = value.slice(SENTINEL_PREFIX.length, value.length - SENTINEL_SUFFIX.length)
+  try {
+    return TEXT_DECODER.decode(Uint8Array.from(atob(encoded), (ch) => ch.charCodeAt(0)))
+  } catch {
+    return value
+  }
+}
+
+/** Validate a modern (2026-07-28) request's mirrored headers against its body: `MCP-Protocol-Version`,
+ * `Mcp-Method`, and - for name-bearing methods - `Mcp-Name` MUST match, else a `HeaderMismatch` the caller
+ * returns as 400. Stops an intermediary from routing on a header while the server acts on a different body. */
+function modernHeaderMismatch(
+  request: Request,
+  message: JsonRpcRequest,
+  bodyVersion: string,
+): JsonRpcResponse | null {
+  const rid = message.id ?? null
+  const headerVersion = request.headers.get("mcp-protocol-version")
+  if (headerVersion === null || headerVersion !== bodyVersion) {
+    return rpcError(
+      rid,
+      MCP_ERROR.HEADER_MISMATCH,
+      "MCP-Protocol-Version header missing or mismatched",
+    )
+  }
+  const method = typeof message.method === "string" ? message.method : ""
+  const headerMethod = request.headers.get("mcp-method")
+  if (headerMethod === null || headerMethod !== method) {
+    return rpcError(rid, MCP_ERROR.HEADER_MISMATCH, "Mcp-Method header missing or mismatched")
+  }
+  if (method === "tools/call" || method === "resources/read" || method === "prompts/get") {
+    const bodyName = method === "resources/read" ? message.params?.uri : message.params?.name
+    const headerName = decodeSentinel(request.headers.get("mcp-name"))
+    if (headerName === null || typeof bodyName !== "string" || headerName !== bodyName) {
+      return rpcError(rid, MCP_ERROR.HEADER_MISMATCH, "Mcp-Name header missing or mismatched")
+    }
+  }
+  return null
+}
+
+/** HTTP status for a modern request's dispatch result: 400 for version/header errors, 404 for an unknown
+ * method, 200 otherwise (in-band tool errors are ordinary JSON-RPC results and stay 200). */
+function modernErrorStatus(response: JsonRpcResponse): number {
+  if (!("error" in response)) return 200
+  const { code } = response.error
+  if (code === MCP_ERROR.UNSUPPORTED_VERSION || code === MCP_ERROR.HEADER_MISMATCH) return 400
+  return code === -32601 ? 404 : 200
+}
+
 /**
  * Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → JSON-RPC
  * response; GET → a plain-text health page; OPTIONS → CORS preflight. Never throws - a bad body becomes a
- * JSON-RPC parse error. The dispatch is the shared, transport-agnostic {@link handleRpc}.
+ * JSON-RPC parse error. Dual-era: a modern (2026-07-28) POST that mirrors its method/name/version into
+ * headers is validated against the body before dispatch and gets spec HTTP statuses; legacy requests are
+ * served unchanged. The dispatch is the shared, transport-agnostic {@link handleRpc}.
  */
 export async function respondMcpHttp(
   request: Request,
@@ -170,14 +232,21 @@ export async function respondMcpHttp(
     return Response.json(rpcError(null, -32700, "parse error"), { status: 400, headers: cors })
   }
   const message = parsed.value as JsonRpcRequest
+  const bodyVersion = modernVersionOf(message.params)
+  // Mirror the protocol version back for intermediaries (SHOULD, 2025-06-18+); absent is fine.
+  const echoVersion = request.headers.get("mcp-protocol-version")
+  const headers = echoVersion !== null ? { ...cors, "mcp-protocol-version": echoVersion } : cors
+  if (bodyVersion !== undefined) {
+    // Modern request: header/body mirror MUST agree. Reject divergence with 400 before dispatch.
+    const headerError = modernHeaderMismatch(request, message, bodyVersion)
+    if (headerError !== null) return Response.json(headerError, { status: 400, headers })
+  }
   const response = await handleRpc(message, tools, serverInfo, options.features ?? {}, {
     signal: request.signal,
   })
-  // Mirror the negotiated protocol version back for intermediaries (SHOULD, 2025-06-18+); absent is fine.
-  const protocolVersion = request.headers.get("mcp-protocol-version")
-  const headers =
-    protocolVersion !== null ? { ...cors, "mcp-protocol-version": protocolVersion } : cors
   // A notification (no id) yields null - acknowledge with 202 Accepted and no body (Streamable-HTTP).
   if (response === null) return new Response(null, { status: 202, headers })
-  return Response.json(response, { headers })
+  // Modern requests carry spec HTTP statuses (400 version/header, 404 unknown method); legacy stays 200.
+  const status = bodyVersion !== undefined ? modernErrorStatus(response) : 200
+  return Response.json(response, { status, headers })
 }

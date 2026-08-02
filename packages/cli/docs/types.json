@@ -2350,7 +2350,7 @@
     "name": "CreateMcpServerOptions",
     "kind": "interface",
     "package": "@nifrajs/mcp",
-    "signature": "export interface CreateMcpServerOptions {\n    readonly name: string;\n    readonly version: string;\n    readonly tools?: readonly McpTool[];\n    /** MCP Apps widgets - their resources are registered and the UI capability is advertised. */\n    readonly widgets?: readonly McpWidget[];\n    /** Extra (non-widget) resources to expose. */\n    readonly resources?: readonly McpResource[];\n    readonly prompts?: readonly McpPrompt[];\n    /** GET health-page text. */\n    readonly health?: string;\n    /** Max JSON-RPC body size in bytes (default 1 MB). */\n    readonly maxBodyBytes?: number;\n}"
+    "signature": "export interface CreateMcpServerOptions {\n    readonly name: string;\n    readonly version: string;\n    readonly tools?: readonly McpTool[];\n    /** MCP Apps widgets - their resources are registered and the UI capability is advertised. */\n    readonly widgets?: readonly McpWidget[];\n    /** Extra (non-widget) resources to expose. */\n    readonly resources?: readonly McpResource[];\n    readonly prompts?: readonly McpPrompt[];\n    /** GET health-page text. */\n    readonly health?: string;\n    /** Max JSON-RPC body size in bytes (default 1 MB). */\n    readonly maxBodyBytes?: number;\n    /** Natural-language guidance for LLMs, surfaced in the modern `server/discover` result (2026-07-28). */\n    readonly instructions?: string;\n    /** Origin allowlist for the DNS-rebinding guard. Omit to allow any origin; set it to reject other\n     * browser origins with 403 (e.g. a hardened, non-public mount). */\n    readonly allowedOrigins?: readonly string[];\n}"
   },
   {
     "name": "createMemoryCausalityStore",
@@ -5033,7 +5033,7 @@
     "name": "JsonRpcResponse",
     "kind": "type",
     "package": "@nifrajs/mcp",
-    "signature": "export type JsonRpcResponse = {\n    jsonrpc: \"2.0\";\n    id: JsonRpcId;\n    result: unknown;\n} | {\n    jsonrpc: \"2.0\";\n    id: JsonRpcId;\n    error: {\n        code: number;\n        message: string;\n    };\n};"
+    "signature": "export type JsonRpcResponse = {\n    jsonrpc: \"2.0\";\n    id: JsonRpcId;\n    result: unknown;\n} | {\n    jsonrpc: \"2.0\";\n    id: JsonRpcId;\n    error: {\n        code: number;\n        message: string;\n        data?: unknown;\n    };\n};"
   },
   {
     "name": "JsonSchema",
@@ -5421,6 +5421,13 @@
     "doc": "/** The one canonical MCP config object both registries serialize - the anti-drift seam. */"
   },
   {
+    "name": "MCP_ERROR",
+    "kind": "const",
+    "package": "@nifrajs/mcp",
+    "signature": "export declare const MCP_ERROR: {\n    readonly HEADER_MISMATCH: -32020;\n    readonly UNSUPPORTED_VERSION: -32022;\n};",
+    "doc": "/** MCP-reserved JSON-RPC error codes (2026-07-28 error-code policy carves out -32020..-32099 for the spec). */"
+  },
+  {
     "name": "MCP_JSON_PATH",
     "kind": "const",
     "package": "create-nifra",
@@ -5478,13 +5485,13 @@
     "name": "McpHttpOptions",
     "kind": "interface",
     "package": "@nifrajs/cli",
-    "signature": "export interface McpHttpOptions {\n    /** Maximum JSON-RPC request body size in bytes. Default 1 MB. */\n    readonly maxBodyBytes?: number;\n    /** Resources / prompts / the MCP Apps UI extension served alongside the tools. */\n    readonly features?: McpServerFeatures;\n    /** Shown on the GET health page so each host can describe itself. */\n    readonly health?: string;\n}"
+    "signature": "export interface McpHttpOptions {\n    /** Maximum JSON-RPC request body size in bytes. Default 1 MB. */\n    readonly maxBodyBytes?: number;\n    /** Resources / prompts / the MCP Apps UI extension served alongside the tools. */\n    readonly features?: McpServerFeatures;\n    /** Shown on the GET health page so each host can describe itself. */\n    readonly health?: string;\n    /**\n     * Origin allowlist for the DNS-rebinding guard. Omit (the default) to allow any origin - the right\n     * choice for a public, unauthenticated docs server that can't enumerate its browser clients' origins.\n     * Set it (e.g. a localhost origin for a hardened local host) to reject any other browser origin with 403.\n     */\n    readonly allowedOrigins?: readonly string[];\n}"
   },
   {
     "name": "McpHttpOptions",
     "kind": "interface",
     "package": "@nifrajs/mcp",
-    "signature": "export interface McpHttpOptions {\n    /** Maximum JSON-RPC request body size in bytes. Default 1 MB. */\n    readonly maxBodyBytes?: number;\n    /** Resources / prompts / the MCP Apps UI extension served alongside the tools. */\n    readonly features?: McpServerFeatures;\n    /** Shown on the GET health page so each host can describe itself. */\n    readonly health?: string;\n}"
+    "signature": "export interface McpHttpOptions {\n    /** Maximum JSON-RPC request body size in bytes. Default 1 MB. */\n    readonly maxBodyBytes?: number;\n    /** Resources / prompts / the MCP Apps UI extension served alongside the tools. */\n    readonly features?: McpServerFeatures;\n    /** Shown on the GET health page so each host can describe itself. */\n    readonly health?: string;\n    /**\n     * Origin allowlist for the DNS-rebinding guard. Omit (the default) to allow any origin - the right\n     * choice for a public, unauthenticated docs server that can't enumerate its browser clients' origins.\n     * Set it (e.g. a localhost origin for a hardened local host) to reject any other browser origin with 403.\n     */\n    readonly allowedOrigins?: readonly string[];\n}"
   },
   {
     "name": "mcpJson",
@@ -5568,7 +5575,7 @@
     "name": "McpServerFeatures",
     "kind": "interface",
     "package": "@nifrajs/mcp",
-    "signature": "export interface McpServerFeatures {\n    readonly resources?: readonly McpResource[];\n    readonly prompts?: readonly McpPrompt[];\n    /** Advertise the MCP Apps UI extension in `initialize`. Present when the server serves `ui://` widgets;\n     * `mimeTypes` defaults to `[UI_MIME]`. */\n    readonly ui?: {\n        readonly mimeTypes?: readonly string[];\n    };\n}"
+    "signature": "export interface McpServerFeatures {\n    readonly resources?: readonly McpResource[];\n    readonly prompts?: readonly McpPrompt[];\n    /** Advertise the MCP Apps UI extension in `initialize`. Present when the server serves `ui://` widgets;\n     * `mimeTypes` defaults to `[UI_MIME]`. */\n    readonly ui?: {\n        readonly mimeTypes?: readonly string[];\n    };\n    /** Natural-language guidance for LLMs on how to use this server. Surfaced in the modern\n     * `server/discover` result (2026-07-28); legacy `initialize` does not carry it. */\n    readonly instructions?: string;\n}"
   },
   {
     "name": "McpTool",
@@ -5935,6 +5942,20 @@
     "kind": "interface",
     "package": "@nifrajs/mock",
     "signature": "export interface MockServerOptions {\n    /** Seed for deterministic mock generation. */\n    readonly seed?: number | undefined;\n    /** Log mock requests to console. */\n    readonly verbose?: boolean | undefined;\n    /**\n     * Derive a JSON Schema from a response validator that carries none (zod/valibot expose a Standard Schema\n     * validator but no `.jsonSchema`), so their routes mock real data instead of `{}`. Fail-safe: throwing or\n     * returning undefined falls back to `{}`, as today. Ready-made for zod: `@nifrajs/testing/zod`.\n     */\n    readonly reflectJsonSchema?: (schema: unknown) => JsonSchema | undefined;\n}"
+  },
+  {
+    "name": "MODERN_PROTOCOL_VERSION",
+    "kind": "const",
+    "package": "@nifrajs/mcp",
+    "signature": "export declare const MODERN_PROTOCOL_VERSION = \"2026-07-28\";",
+    "doc": "/** The stateless per-request revision (2026-07-28+). A request carrying its version in `_meta`\n * (`io.modelcontextprotocol/protocolVersion`) is served in modern mode; an `initialize` request stays\n * legacy. This server is dual-era: `handleRpc` answers both on the same dispatch, per request. */"
+  },
+  {
+    "name": "modernVersionOf",
+    "kind": "function",
+    "package": "@nifrajs/mcp",
+    "signature": "export declare function modernVersionOf(params: Record<string, unknown> | undefined): string | undefined;",
+    "doc": "/** The protocol version a modern (2026-07-28+) request declares in `_meta`, or `undefined` for a legacy\n * request. Its presence is what puts the dispatch in modern mode for that one request. */"
   },
   {
     "name": "mountIslands",
@@ -7028,8 +7049,8 @@
     "name": "PROTOCOL_VERSION",
     "kind": "const",
     "package": "@nifrajs/mcp",
-    "signature": "export declare const PROTOCOL_VERSION = \"2024-11-05\";",
-    "doc": "/**\n * The pure MCP (Model Context Protocol) JSON-RPC dispatch - no I/O, no `Bun.*`, no side effects, so it\n * unit-tests cleanly. A transport (stdio in `@nifrajs/cli`'s `mcp.ts`, Streamable-HTTP in {@link ./http.ts})\n * wires this to a byte stream; the tools/resources are injected, so the protocol logic is exercised\n * without spawning or reading streams.\n *\n * Beyond base MCP this also implements the server half of **MCP Apps (SEP-1865)** - interactive `ui://`\n * widgets: a tool links a UI resource via `_meta.ui.resourceUri`, `tools/call` returns `structuredContent`\n * for the widget to render, and `initialize` advertises the `io.modelcontextprotocol/ui` extension. All of\n * it is additive - a tool whose handler returns a plain `string` behaves exactly as before.\n */"
+    "signature": "export declare const PROTOCOL_VERSION = \"2025-06-18\";",
+    "doc": "/** The protocol revision this server advertises by default. A handshake-era version - the HTTP transport\n * still uses `initialize`; current clients reach it through their backward-compatibility fallback.\n * `initialize` echoes the client's own requested version instead when it's one this server also speaks\n * ({@link SUPPORTED_PROTOCOL_VERSIONS}). */"
   },
   {
     "name": "PublicDirCache",
@@ -7730,7 +7751,7 @@
     "kind": "function",
     "package": "@nifrajs/mcp",
     "signature": "export declare function respondMcpHttp(request: Request, tools: McpTool[], serverInfo: {\n    name: string;\n    version: string;\n}, options?: McpHttpOptions): Promise<Response>;",
-    "doc": "/**\n * Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → JSON-RPC\n * response; GET → a plain-text health page; OPTIONS → CORS preflight. Never throws - a bad body becomes a\n * JSON-RPC parse error. The dispatch is the shared, transport-agnostic {@link handleRpc}.\n */"
+    "doc": "/**\n * Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → JSON-RPC\n * response; GET → a plain-text health page; OPTIONS → CORS preflight. Never throws - a bad body becomes a\n * JSON-RPC parse error. Dual-era: a modern (2026-07-28) POST that mirrors its method/name/version into\n * headers is validated against the body before dispatch and gets spec HTTP statuses; legacy requests are\n * served unchanged. The dispatch is the shared, transport-agnostic {@link handleRpc}.\n */"
   },
   {
     "name": "responseCache",
@@ -8198,7 +8219,7 @@
     "name": "rpcError",
     "kind": "const",
     "package": "@nifrajs/mcp",
-    "signature": "export declare const rpcError: (id: JsonRpcId, code: number, message: string) => JsonRpcResponse;"
+    "signature": "export declare const rpcError: (id: JsonRpcId, code: number, message: string, data?: unknown) => JsonRpcResponse;"
   },
   {
     "name": "rpcResult",

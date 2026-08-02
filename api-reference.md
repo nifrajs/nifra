@@ -1513,7 +1513,11 @@ Every public export of every package and documented subpath - name, kind, signat
   The validated (post-transform) type of a Standard Schema.
 - **JsonRpcNotification** _(interface)_ - `interface JsonRpcNotification`
 - **JsonRpcRequest** _(interface)_ - `interface JsonRpcRequest`
-- **JsonRpcResponse** _(type)_ - `type JsonRpcResponse = | { jsonrpc: "2.0"; id: JsonRpcId; result: unknown } | { jsonrpc: "2.0"; id: JsonRpcId; error: { code: number; message: string } }`
+- **JsonRpcResponse** _(type)_ - `type JsonRpcResponse = | { jsonrpc: "2.0"; id: JsonRpcId; result: unknown } | { jsonrpc: "2.0"; id: JsonRpcId; error: { code: number; message: string; data?: unknown } }`
+- **MCP_ERROR** _(const)_ - `MCP_ERROR: { readonly HEADER_MISMATCH: -32020; readonly UNSUPPORTED_VERSION: -32022; }`
+  MCP-reserved JSON-RPC error codes (2026-07-28 error-code policy carves out -32020..-32099 for the spec).
+- **MODERN_PROTOCOL_VERSION** _(const)_ - `MODERN_PROTOCOL_VERSION: "2026-07-28"`
+  The stateless per-request revision (2026-07-28+). A request carrying its version in `_meta` (`io.modelcontextprotocol/protocolVersion`) is served in modern mode; an `initialize` request stays legacy. This server is dual-era: `handleRpc` answers both on the same dispatch, per request.
 - **McpAppBridge** _(interface)_ - `interface McpAppBridge`
   The author-facing global injected into a widget. Kept minimal and stable.
 - **McpContentBlock** _(interface)_ - `interface McpContentBlock`
@@ -1556,9 +1560,11 @@ Every public export of every package and documented subpath - name, kind, signat
 - **defineMcpWidget** _(function)_ - `defineMcpWidget: (opts: DefineMcpWidgetOptions) => McpWidget`
 - **handleRpc** _(function)_ - `handleRpc: (message: JsonRpcRequest, tools: readonly McpTool[], serverInfo: { name: string; version: string; }, features?: McpServerFeatures, options?: McpProtocolOptions) => Promise<JsonRpcResponse | null>`
   Dispatch one JSON-RPC message against the given tools. Returns the response, or `null` for a notification (no reply). Tool errors are reported in-band (`isError`) so the agent can react to them.
+- **modernVersionOf** _(function)_ - `modernVersionOf: (params: Record<string, unknown> | undefined) => string | undefined`
+  The protocol version a modern (2026-07-28+) request declares in `_meta`, or `undefined` for a legacy request. Its presence is what puts the dispatch in modern mode for that one request.
 - **respondMcpHttp** _(function)_ - `respondMcpHttp: (request: Request, tools: McpTool[], serverInfo: { name: string; version: string; }, options?: McpHttpOptions) => Promise<Response>`
-  Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → JSON-RPC response; GET → a plain-text health page; OPTIONS → CORS preflight. Never throws - a bad body becomes a JSON-RPC parse error. The dispatch is the shared, transport-agnostic {@link handleRpc}.
-- **rpcError** _(const)_ - `rpcError: (id: JsonRpcId, code: number, message: string) => JsonRpcResponse`
+  Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → JSON-RPC response; GET → a plain-text health page; OPTIONS → CORS preflight. Never throws - a bad body becomes a JSON-RPC parse error. Dual-era: a modern (2026-07-28) POST that mirrors its method/name/vers…
+- **rpcError** _(const)_ - `rpcError: (id: JsonRpcId, code: number, message: string, data?: unknown) => JsonRpcResponse`
 - **rpcResult** _(const)_ - `rpcResult: (id: JsonRpcId, value: unknown) => JsonRpcResponse`
 - **uiResourceMeta** _(function)_ - `uiResourceMeta: (uri: string) => Record<string, unknown>`
   The MCP Apps `_meta.ui.resourceUri` link.
@@ -1569,13 +1575,17 @@ Every public export of every package and documented subpath - name, kind, signat
 
 - **McpHttpOptions** _(interface)_ - `interface McpHttpOptions`
 - **respondMcpHttp** _(function)_ - `respondMcpHttp: (request: Request, tools: McpTool[], serverInfo: { name: string; version: string; }, options?: McpHttpOptions) => Promise<Response>`
-  Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → JSON-RPC response; GET → a plain-text health page; OPTIONS → CORS preflight. Never throws - a bad body becomes a JSON-RPC parse error. The dispatch is the shared, transport-agnostic {@link handleRpc}.
+  Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → JSON-RPC response; GET → a plain-text health page; OPTIONS → CORS preflight. Never throws - a bad body becomes a JSON-RPC parse error. Dual-era: a modern (2026-07-28) POST that mirrors its method/name/vers…
 
 ### `@nifrajs/mcp/protocol`
 
 - **JsonRpcNotification** _(interface)_ - `interface JsonRpcNotification`
 - **JsonRpcRequest** _(interface)_ - `interface JsonRpcRequest`
-- **JsonRpcResponse** _(type)_ - `type JsonRpcResponse = | { jsonrpc: "2.0"; id: JsonRpcId; result: unknown } | { jsonrpc: "2.0"; id: JsonRpcId; error: { code: number; message: string } }`
+- **JsonRpcResponse** _(type)_ - `type JsonRpcResponse = | { jsonrpc: "2.0"; id: JsonRpcId; result: unknown } | { jsonrpc: "2.0"; id: JsonRpcId; error: { code: number; message: string; data?: unknown } }`
+- **MCP_ERROR** _(const)_ - `MCP_ERROR: { readonly HEADER_MISMATCH: -32020; readonly UNSUPPORTED_VERSION: -32022; }`
+  MCP-reserved JSON-RPC error codes (2026-07-28 error-code policy carves out -32020..-32099 for the spec).
+- **MODERN_PROTOCOL_VERSION** _(const)_ - `MODERN_PROTOCOL_VERSION: "2026-07-28"`
+  The stateless per-request revision (2026-07-28+). A request carrying its version in `_meta` (`io.modelcontextprotocol/protocolVersion`) is served in modern mode; an `initialize` request stays legacy. This server is dual-era: `handleRpc` answers both on the same dispatch, per request.
 - **McpContentBlock** _(interface)_ - `interface McpContentBlock`
   A single content block in a tool result. Today only text - the model-facing representation.
 - **McpPrompt** _(interface)_ - `interface McpPrompt`
@@ -1599,7 +1609,9 @@ Every public export of every package and documented subpath - name, kind, signat
 - **createMcpProtocolState** _(function)_ - `createMcpProtocolState: () => McpProtocolState`
 - **handleRpc** _(function)_ - `handleRpc: (message: JsonRpcRequest, tools: readonly McpTool[], serverInfo: { name: string; version: string; }, features?: McpServerFeatures, options?: McpProtocolOptions) => Promise<JsonRpcResponse | null>`
   Dispatch one JSON-RPC message against the given tools. Returns the response, or `null` for a notification (no reply). Tool errors are reported in-band (`isError`) so the agent can react to them.
-- **rpcError** _(const)_ - `rpcError: (id: JsonRpcId, code: number, message: string) => JsonRpcResponse`
+- **modernVersionOf** _(function)_ - `modernVersionOf: (params: Record<string, unknown> | undefined) => string | undefined`
+  The protocol version a modern (2026-07-28+) request declares in `_meta`, or `undefined` for a legacy request. Its presence is what puts the dispatch in modern mode for that one request.
+- **rpcError** _(const)_ - `rpcError: (id: JsonRpcId, code: number, message: string, data?: unknown) => JsonRpcResponse`
 - **rpcResult** _(const)_ - `rpcResult: (id: JsonRpcId, value: unknown) => JsonRpcResponse`
 
 ### `@nifrajs/mcp/react`

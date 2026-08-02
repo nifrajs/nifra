@@ -17,7 +17,21 @@
 export const PROTOCOL_VERSION = "2025-06-18"
 /** The handshake-era revisions this server speaks. `initialize` echoes the client's requested
  * `protocolVersion` when it's in this set (the smoothest negotiation), else answers {@link PROTOCOL_VERSION}. */
-const SUPPORTED_PROTOCOL_VERSIONS = new Set(["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"])
+const SUPPORTED_PROTOCOL_VERSIONS = new Set([
+  "2024-11-05",
+  "2025-03-26",
+  "2025-06-18",
+  "2025-11-25",
+])
+
+/** The stateless per-request revision (2026-07-28+). A request carrying its version in `_meta`
+ * (`io.modelcontextprotocol/protocolVersion`) is served in modern mode; an `initialize` request stays
+ * legacy. This server is dual-era: `handleRpc` answers both on the same dispatch, per request. */
+export const MODERN_PROTOCOL_VERSION = "2026-07-28"
+/** MCP-reserved JSON-RPC error codes (2026-07-28 error-code policy carves out -32020..-32099 for the spec). */
+export const MCP_ERROR = { HEADER_MISMATCH: -32020, UNSUPPORTED_VERSION: -32022 } as const
+const META_PROTOCOL_VERSION = "io.modelcontextprotocol/protocolVersion"
+const META_SERVER_INFO = "io.modelcontextprotocol/serverInfo"
 
 /** The MIME type a UI resource MUST use so a host recognizes it as an MCP App widget (SEP-1865). */
 export const UI_MIME = "text/html;profile=mcp-app"
@@ -110,6 +124,9 @@ export interface McpServerFeatures {
   /** Advertise the MCP Apps UI extension in `initialize`. Present when the server serves `ui://` widgets;
    * `mimeTypes` defaults to `[UI_MIME]`. */
   readonly ui?: { readonly mimeTypes?: readonly string[] }
+  /** Natural-language guidance for LLMs on how to use this server. Surfaced in the modern
+   * `server/discover` result (2026-07-28); legacy `initialize` does not carry it. */
+  readonly instructions?: string
 }
 
 export interface JsonRpcRequest {
@@ -127,17 +144,22 @@ export interface JsonRpcNotification {
 
 export type JsonRpcResponse =
   | { jsonrpc: "2.0"; id: JsonRpcId; result: unknown }
-  | { jsonrpc: "2.0"; id: JsonRpcId; error: { code: number; message: string } }
+  | { jsonrpc: "2.0"; id: JsonRpcId; error: { code: number; message: string; data?: unknown } }
 
 export const rpcResult = (id: JsonRpcId, value: unknown): JsonRpcResponse => ({
   jsonrpc: "2.0",
   id,
   result: value,
 })
-export const rpcError = (id: JsonRpcId, code: number, message: string): JsonRpcResponse => ({
+export const rpcError = (
+  id: JsonRpcId,
+  code: number,
+  message: string,
+  data?: unknown,
+): JsonRpcResponse => ({
   jsonrpc: "2.0",
   id,
-  error: { code, message },
+  error: data !== undefined ? { code, message, data } : { code, message },
 })
 
 export interface McpProtocolState {
@@ -159,10 +181,24 @@ function requestKey(id: unknown): string | undefined {
   return typeof id === "number" && Number.isFinite(id) ? `n:${id}` : undefined
 }
 
-function progressTokenOf(params: Record<string, unknown> | undefined): ProgressToken | undefined {
+function metaObject(
+  params: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
   const meta = params?._meta
-  if (typeof meta !== "object" || meta === null || Array.isArray(meta)) return undefined
-  const token = (meta as Record<string, unknown>).progressToken
+  return typeof meta === "object" && meta !== null && !Array.isArray(meta)
+    ? (meta as Record<string, unknown>)
+    : undefined
+}
+
+/** The protocol version a modern (2026-07-28+) request declares in `_meta`, or `undefined` for a legacy
+ * request. Its presence is what puts the dispatch in modern mode for that one request. */
+export function modernVersionOf(params: Record<string, unknown> | undefined): string | undefined {
+  const version = metaObject(params)?.[META_PROTOCOL_VERSION]
+  return typeof version === "string" ? version : undefined
+}
+
+function progressTokenOf(params: Record<string, unknown> | undefined): ProgressToken | undefined {
+  const token = metaObject(params)?.progressToken
   return typeof token === "string" || (typeof token === "number" && Number.isFinite(token))
     ? token
     : undefined
@@ -196,6 +232,29 @@ function compactDescription(description: string): string {
   const sentence = sentenceEnd === -1 ? text : text.slice(0, sentenceEnd + 1)
   if (sentence.length <= 120) return sentence
   return `${sentence.slice(0, 117).trimEnd()}...`
+}
+
+/** Freshness hint for the static docs corpus - a modern client MAY cache list/read results this long. */
+const DEFAULT_CACHE_TTL_MS = 3_600_000
+
+/** Wrap a result in the 2026-07-28 completion envelope: `resultType`, a self-identifying `serverInfo`
+ * under `_meta`, and - for the cacheable list/read methods - a public freshness hint. Legacy results skip
+ * this entirely and keep their exact pre-2026-07-28 shape. */
+function withEnvelope(
+  value: Record<string, unknown>,
+  serverInfo: { name: string; version: string },
+  cacheable: boolean,
+): Record<string, unknown> {
+  const existingMeta =
+    typeof value._meta === "object" && value._meta !== null && !Array.isArray(value._meta)
+      ? (value._meta as Record<string, unknown>)
+      : undefined
+  return {
+    ...value,
+    resultType: "complete",
+    _meta: { ...(existingMeta ?? {}), [META_SERVER_INFO]: serverInfo },
+    ...(cacheable ? { ttlMs: DEFAULT_CACHE_TTL_MS, cacheScope: "public" } : {}),
+  }
 }
 
 /** Normalize a handler's return into the `tools/call` result object. A `string` becomes a single text
@@ -235,6 +294,21 @@ export async function handleRpc(
   const prompts = features.prompts ?? []
   const state = options.state ?? createMcpProtocolState()
 
+  // A request that declares its version in `_meta` is a modern (2026-07-28+) request. We speak exactly one
+  // modern revision; any other declared version is rejected so the client can retry with a supported one.
+  const requestedVersion = modernVersionOf(params)
+  const isModern = requestedVersion !== undefined
+  if (isModern && requestedVersion !== MODERN_PROTOCOL_VERSION) {
+    return rpcError(rid, MCP_ERROR.UNSUPPORTED_VERSION, "Unsupported protocol version", {
+      supported: [MODERN_PROTOCOL_VERSION],
+      requested: requestedVersion,
+    })
+  }
+  // Modern results carry the completion envelope; legacy results keep their exact prior shape. Every data
+  // case returns through `reply` so the one `isModern` decision drives the whole response shape.
+  const reply = (value: Record<string, unknown>, cacheable = false): JsonRpcResponse =>
+    rpcResult(rid, isModern ? withEnvelope(value, serverInfo, cacheable) : value)
+
   switch (method) {
     case "initialize": {
       // Handshake version negotiation: answer with the client's requested version when we speak it too,
@@ -261,6 +335,32 @@ export async function handleRpc(
         serverInfo,
       })
     }
+    case "server/discover":
+      // The modern capability/identity probe (replaces `initialize` for 2026-07-28 clients). Always
+      // enveloped and cacheable - it is a modern-only RPC.
+      return rpcResult(
+        rid,
+        withEnvelope(
+          {
+            supportedVersions: [MODERN_PROTOCOL_VERSION],
+            capabilities: {
+              tools: {},
+              ...(resources.length > 0 ? { resources: {} } : {}),
+              ...(prompts.length > 0 ? { prompts: {} } : {}),
+              ...(features.ui !== undefined
+                ? {
+                    extensions: {
+                      [UI_EXTENSION_KEY]: { mimeTypes: features.ui.mimeTypes ?? [UI_MIME] },
+                    },
+                  }
+                : {}),
+            },
+            ...(features.instructions !== undefined ? { instructions: features.instructions } : {}),
+          },
+          serverInfo,
+          true,
+        ),
+      )
     case "notifications/initialized":
       return null
     case "notifications/cancelled": {
@@ -271,8 +371,7 @@ export async function handleRpc(
     case "ping":
       return rpcResult(rid, {})
     case "tools/list":
-      return rpcResult(
-        rid,
+      return reply(
         params?.compact === true
           ? {
               tools: tools.map((t) => ({
@@ -289,12 +388,13 @@ export async function handleRpc(
                 ...(t._meta !== undefined ? { _meta: t._meta } : {}),
               })),
             },
+        true,
       )
     case "tools/describe": {
       const name = params?.name
       const tool = tools.find((t) => t.name === name)
       if (!tool) return rpcError(rid, -32602, `unknown tool: ${String(name)}`)
-      return rpcResult(rid, {
+      return reply({
         tool: {
           name: tool.name,
           description: tool.description,
@@ -346,16 +446,16 @@ export async function handleRpc(
         })
         if (controller.signal.aborted) throw new DOMException("cancelled", "AbortError")
         reportProgress(1, 1)
-        return rpcResult(rid, toolCallResult(result, tool))
+        return reply(toolCallResult(result, tool))
       } catch (err) {
         if (controller.signal.aborted) {
-          return rpcResult(rid, {
+          return reply({
             content: [{ type: "text", text: abortMessage(controller.signal) }],
             isError: true,
           })
         }
         const msg = err instanceof Error ? err.message : String(err)
-        return rpcResult(rid, { content: [{ type: "text", text: `Error: ${msg}` }], isError: true })
+        return reply({ content: [{ type: "text", text: `Error: ${msg}` }], isError: true })
       } finally {
         cleanupAbort()
         if (key !== undefined && state.activeRequests.get(key) === controller) {
@@ -364,51 +464,60 @@ export async function handleRpc(
       }
     }
     case "resources/list":
-      return rpcResult(rid, {
-        resources: resources.map((r) => ({
-          uri: r.uri,
-          name: r.name,
-          ...(r.description !== undefined ? { description: r.description } : {}),
-          ...(r.mimeType !== undefined ? { mimeType: r.mimeType } : {}),
-          ...(r._meta !== undefined ? { _meta: r._meta } : {}),
-        })),
-      })
+      return reply(
+        {
+          resources: resources.map((r) => ({
+            uri: r.uri,
+            name: r.name,
+            ...(r.description !== undefined ? { description: r.description } : {}),
+            ...(r.mimeType !== undefined ? { mimeType: r.mimeType } : {}),
+            ...(r._meta !== undefined ? { _meta: r._meta } : {}),
+          })),
+        },
+        true,
+      )
     case "resources/read": {
       const uri = params?.uri
       const resource = resources.find((r) => r.uri === uri)
       if (!resource) return rpcError(rid, -32602, `unknown resource: ${String(uri)}`)
       try {
         const content = await resource.read()
-        return rpcResult(rid, {
-          contents: [
-            {
-              uri: resource.uri,
-              mimeType: content.mimeType ?? resource.mimeType ?? "text/plain",
-              text: content.text,
-              ...(resource._meta !== undefined ? { _meta: resource._meta } : {}),
-            },
-          ],
-        })
+        return reply(
+          {
+            contents: [
+              {
+                uri: resource.uri,
+                mimeType: content.mimeType ?? resource.mimeType ?? "text/plain",
+                text: content.text,
+                ...(resource._meta !== undefined ? { _meta: resource._meta } : {}),
+              },
+            ],
+          },
+          true,
+        )
       } catch {
         // Don't surface the raw read error - it can leak a filesystem path. Return a generic message.
         return rpcError(rid, -32000, `failed to read resource: ${String(uri)}`)
       }
     }
     case "prompts/list":
-      return rpcResult(rid, {
-        prompts: prompts.map((p) => ({
-          name: p.name,
-          description: p.description,
-          ...(p.arguments !== undefined ? { arguments: p.arguments } : {}),
-        })),
-      })
+      return reply(
+        {
+          prompts: prompts.map((p) => ({
+            name: p.name,
+            description: p.description,
+            ...(p.arguments !== undefined ? { arguments: p.arguments } : {}),
+          })),
+        },
+        true,
+      )
     case "prompts/get": {
       const name = params?.name
       const prompt = prompts.find((p) => p.name === name)
       if (!prompt) return rpcError(rid, -32602, `unknown prompt: ${String(name)}`)
       const args = (params?.arguments as Record<string, unknown>) ?? {}
       try {
-        return rpcResult(rid, {
+        return reply({
           description: prompt.description,
           messages: await prompt.handler(args),
         })

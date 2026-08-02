@@ -20,16 +20,16 @@ Build MCP servers - and MCP Apps (interactive `ui://` widgets, SEP-1865) - for a
 - **defineMcpTool** _(function)_ - `defineMcpTool: <S extends StandardSchemaV1 = UntypedArgs>(opts: DefineMcpToolOptions<S>) => McpTool` · from `@nifrajs/mcp`
 - **defineMcpWidget** _(function)_ - `defineMcpWidget: (opts: DefineMcpWidgetOptions) => McpWidget` · from `@nifrajs/mcp`
 - **handleRpc** _(function)_ - `handleRpc: (message: JsonRpcRequest, tools: readonly McpTool[], serverInfo: { name: string; version: string; }, features?: McpServerFeature…` · from `@nifrajs/mcp`
+- **modernVersionOf** _(function)_ - `modernVersionOf: (params: Record<string, unknown> | undefined) => string | undefined` · from `@nifrajs/mcp`
 - **reactWidget** _(function)_ - `reactWidget: (opts: ReactWidgetOptions) => Promise<McpWidget>` · from `@nifrajs/mcp/react`
 - **respondMcpHttp** _(function)_ - `respondMcpHttp: (request: Request, tools: McpTool[], serverInfo: { name: string; version: string; }, options?: McpHttpOptions) => Promise<R…` · from `@nifrajs/mcp`
 - **uiResourceMeta** _(function)_ - `uiResourceMeta: (uri: string) => Record<string, unknown>` · from `@nifrajs/mcp`
 - **widgetDocument** _(function)_ - `widgetDocument: (opts: DefineMcpWidgetOptions) => string` · from `@nifrajs/mcp`
+- **MCP_ERROR** _(const)_ - `MCP_ERROR: { readonly HEADER_MISMATCH: -32020; readonly UNSUPPORTED_VERSION: -32022; }` · from `@nifrajs/mcp`
+- **MODERN_PROTOCOL_VERSION** _(const)_ - `MODERN_PROTOCOL_VERSION: "2026-07-28"` · from `@nifrajs/mcp`
 - **PROTOCOL_VERSION** _(const)_ - `PROTOCOL_VERSION: "2025-06-18"` · from `@nifrajs/mcp`
-- **rpcError** _(const)_ - `rpcError: (id: JsonRpcId, code: number, message: string) => JsonRpcResponse` · from `@nifrajs/mcp`
-- **rpcResult** _(const)_ - `rpcResult: (id: JsonRpcId, value: unknown) => JsonRpcResponse` · from `@nifrajs/mcp`
-- **UI_EXTENSION_KEY** _(const)_ - `UI_EXTENSION_KEY: "io.modelcontextprotocol/ui"` · from `@nifrajs/mcp`
 
-_…and 29 more - see [`api-reference.md`](../../api-reference.md#nifrajsmcp) for the complete list._
+_…and 32 more - see [`api-reference.md`](../../api-reference.md#nifrajsmcp) for the complete list._
 
 ## Footguns
 
