@@ -709,13 +709,14 @@ function writeBodyOutcome(
   outcome: Extract<NodeServeOutcome, { kind: "body" }>,
   nodeRes: ServerResponse,
 ): void {
-  const headers: Record<string, string | string[]> = {}
-  if (outcome.headers !== undefined) {
-    for (const [key, value] of Object.entries(outcome.headers)) {
-      headers[key] = typeof value === "string" ? value : [...value]
-    }
-  }
-  nodeRes.writeHead(outcome.status, headers)
+  // Body outcomes already carry response-normalized header names and values. Node consumes the same
+  // mutable runtime shapes (`string` / `string[]`); avoid cloning this record and every Set-Cookie
+  // array on the hot SSR path. The readonly type is an ownership guarantee from the producer, not a
+  // runtime value Node mutates.
+  nodeRes.writeHead(
+    outcome.status,
+    outcome.headers as Record<string, string | string[]> | undefined,
+  )
   nodeRes.end(outcome.body)
 }
 

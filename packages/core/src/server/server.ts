@@ -214,9 +214,23 @@ interface BunUpgradeServer {
 function bunPeerPlatform(
   server: { requestIP(request: Request): { readonly address: string } | null },
   req: Request,
-): Platform | undefined {
-  const address = server.requestIP(req)?.address
-  return address === undefined ? undefined : { clientIp: address }
+): Platform {
+  // Bun's requestIP() is surprisingly expensive (~20 us on the SSR benchmark machine). Keep the
+  // documented raw-peer c.clientIp behavior, but resolve it lazily: most routes never read c.clientIp,
+  // and paying for the socket lookup on every request erased Bun's native HTTP advantage. A getter also
+  // preserves middleware that inspects the platform argument directly and trust-mode routes, which
+  // resolve the value in deriveClientIp before the handler runs.
+  let resolved = false
+  let address: string | undefined
+  return {
+    get clientIp(): string | undefined {
+      if (!resolved) {
+        resolved = true
+        address = server.requestIP(req)?.address
+      }
+      return address
+    },
+  }
 }
 
 type BunNativeHandler = (request: Request) => MaybePromise<Response>
