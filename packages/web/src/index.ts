@@ -555,7 +555,12 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     actionData === undefined
       ? undefined
       : prepareDeferred(actionData, deferred.length + layoutDeferred.length)
-  const allDeferred = [...deferred, ...layoutDeferred, ...(actionSplit ? actionSplit.deferred : [])]
+  // On the common page-only path (no layout loader, no action) reuse `deferred` directly instead of
+  // allocating a fresh spread array every request.
+  const allDeferred =
+    layoutDeferred.length === 0 && actionSplit === undefined
+      ? deferred
+      : [...deferred, ...layoutDeferred, ...(actionSplit ? actionSplit.deferred : [])]
   // Omitted entirely when no layout has a loader - a page-only app emits exactly what it did before.
   const layoutTail =
     options.layoutData === undefined
@@ -615,9 +620,13 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // static attribute name with no value, so `rootId` never reaches the markup twice and there is
   // nothing here to escape. Omitted on the default so existing output is unchanged.
   const rootMarker = rootId === "root" ? "" : ` ${ROOT_ATTRIBUTE}`
-  const hydrationHead = adapter
-    .hydrationHead(nonce)
-    .replace(/<script(?![^>]*\bnonce=)(?=[\s>])/g, `<script${nonceAttr}`)
+  // The regex only injects the CSP nonce into the (constant) hydration head; with no nonce it's a
+  // no-op that still scans the whole script every request. Skip it on the common no-nonce path.
+  const rawHydrationHead = adapter.hydrationHead(nonce)
+  const hydrationHead =
+    nonce === undefined
+      ? rawHydrationHead
+      : rawHydrationHead.replace(/<script(?![^>]*\bnonce=)(?=[\s>])/g, `<script${nonceAttr}`)
   const shellHtml = `<!doctype html><html${htmlAttrs}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${hydrationGuard}<title>${escapeHtml(head?.title ?? title)}</title>${headTags(head)}${styleLinks}${hydrationLinks}${islandPreloads}${hydrationHead}</head><body><div id="${escapeAttr(rootId)}"${rootMarker}>`
   // Closes the hydration container; deferred resolve scripts go AFTER it (outside `#root`) so they
   // aren't part of the adapter's hydrated tree (an inline script inside it breaks hydration).
