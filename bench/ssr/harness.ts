@@ -3,11 +3,17 @@
  * Used by bench/ssr/run.ts (and kept aligned with prerender-ttfb.ts methodology).
  */
 
+// Shares the HTTP bench's env knobs so ONE preset speeds both: `BENCH_DURATION_S=2 BENCH_WARMUP_S=1
+// BENCH_RUNS=1 …`. Defaults are the credible-numbers set used for the published tables.
+const envInt = (name: string, dflt: number, min = 1): number => {
+  const n = Bun.env[name] === undefined ? Number.NaN : Number(Bun.env[name])
+  return Number.isInteger(n) && n >= min ? n : dflt
+}
 export const SSR_BENCH_HOST = "127.0.0.1"
-export const SSR_BENCH_CONNECTIONS = 50
-export const SSR_BENCH_DURATION_S = 5
-export const SSR_BENCH_WARMUP_S = 3
-export const SSR_BENCH_RUNS = 3
+export const SSR_BENCH_CONNECTIONS = envInt("BENCH_CONNS", 50)
+export const SSR_BENCH_DURATION_S = envInt("BENCH_DURATION_S", 5)
+export const SSR_BENCH_WARMUP_S = envInt("BENCH_WARMUP_S", 3, 0)
+export const SSR_BENCH_RUNS = envInt("BENCH_RUNS", 3)
 /** Extra requests before measuring ISR targets so oha hits a warm cache, not a cold render. */
 export const SSR_BENCH_ISR_WARMUP_REQUESTS = 500
 

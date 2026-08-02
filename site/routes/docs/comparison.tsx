@@ -76,8 +76,10 @@ export default function Comparison() {
           ~0&nbsp;KB-client vanilla adapter.
         </li>
         <li>
-          Loaders + actions + progressive-enhancement forms; <code>defer()</code> / <code>&lt;Await&gt;</code>{" "}
-          streaming data; query cache, optimistic UI, concurrent fetchers, revalidation.
+          Loaders + actions + <a href="/docs/server-functions">server functions</a> (typed{" "}
+          <code>serverFn</code> RPC, server code never shipped to the browser) + progressive-enhancement
+          forms; <code>defer()</code> / <code>&lt;Await&gt;</code> streaming data; query cache, optimistic
+          UI, concurrent fetchers, revalidation.
         </li>
         <li>Head/meta, hover/focus prefetch, scroll restoration.</li>
         <li>
@@ -100,6 +102,13 @@ export default function Comparison() {
         either - this is <i>Nifra vs. Next App Router specifically</i>.) Typed loaders, <code>defer()</code>,
         and route-level code-splitting cover the same problems by a different mechanism.
       </p>
+      <p>
+        <b>"No RSC" does not mean "no server code in components' reach."</b> Nifra ships typed{" "}
+        <a href="/docs/server-functions">server functions</a> - <code>serverFn</code> RPC whose body (DB
+        handles, secrets, imports) is <i>never</i> shipped to the browser, callable as a normal typed
+        function from any component - on all five UI libraries. What Nifra skips is React's specific RSC /{" "}
+        <code>"use server"</code> component model, not server-side mutations.
+      </p>
 
       <h2>Also a standalone backend (vs. Hono &amp; Elysia)</h2>
       <p>
@@ -110,10 +119,12 @@ export default function Comparison() {
         <li>
           <b>Throughput - the realistic case.</b> Router micro-benchmarks flatter Hono (a single compiled
           regex), but a router is <b>~1% of a real request</b> - the time goes to middleware, validation,
-          context, and serialization. In the bare Bun HTTP matrix, Nifra sits close to raw Bun and behind
-          Elysia on most GET rows; in the current realistic preview (security headers + CORS + bearer auth +
-          cookies + validated query/body + a ~3&nbsp;KB JSON response, measured with <code>oha</code>), it
-          edges Elysia. Treat benchmark rows as same-run evidence, not a permanent law of nature.
+          context, and serialization. On the bare Bun/Deno micro-GET rows Nifra runs within <b>~1-3% of
+          Elysia</b> - a statistical tie at the runtime ceiling; on <b>Node it's ahead of Elysia on every
+          workload</b>, and it leads on every POST/validated row across runtimes. In the realistic shape
+          (security headers + CORS + bearer auth + cookies + validated query/body + a ~2.4&nbsp;KB JSON
+          response, measured with <code>oha</code>) Nifra runs at <b>103% of Elysia on GET and 108% on
+          POST</b>. Treat benchmark rows as same-run evidence, not a permanent law of nature.
         </li>
         <li>
           <b>End-to-end types.</b> <code>client&lt;typeof app&gt;()</code> derives request inputs <i>and</i>{" "}
@@ -180,8 +191,9 @@ export default function Comparison() {
       </ul>
       <p>
         The one deliberate trade: Nifra is streaming SSR + islands, <b>not</b> React Server Components -
-        framework-agnostic by design. If your app is built specifically around RSC, that's the call
-        you're making.
+        framework-agnostic by design. You still get typed server-side mutations via{" "}
+        <a href="/docs/server-functions">server functions</a>; what you give up is specifically the RSC
+        component model. If your app is built specifically around RSC, that's the call you're making.
       </p>
     </div>
   )

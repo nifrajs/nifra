@@ -20,6 +20,16 @@ The rest is a fast, contract-first full-stack TypeScript stack: routing, validat
 bun create nifra my-app
 ```
 
+### Use nifra from your AI assistant
+
+nifra's own docs, runnable examples, and API types are a **live remote MCP server** - listed in the [official MCP registry](https://registry.modelcontextprotocol.io) - so Claude, Cursor, Codex, and any MCP client learn nifra from the source instead of guessing from stale training data:
+
+- **Claude Code:** `claude mcp add --transport http nifra-docs https://mcp.nifra.dev`
+- **Claude.ai / Desktop:** Settings → Connectors → Add custom connector → `https://mcp.nifra.dev`
+- **Cursor / VS Code / other MCP clients:** point them at `https://mcp.nifra.dev`
+
+Inside a project, `nifra mcp` additionally serves *your* app's live routes and schemas to the agent - so it writes against the code you have, not the code it remembers.
+
 ## The backend
 
 ```ts

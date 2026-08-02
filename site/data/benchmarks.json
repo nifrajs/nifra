@@ -119,22 +119,22 @@
   "http": [
     {
       "name": "Nifra",
-      "reqs": 77561,
+      "reqs": 70402,
       "you": true
     },
     {
       "name": "Fastify",
-      "reqs": 77091,
+      "reqs": 69799,
       "you": false
     },
     {
       "name": "Express",
-      "reqs": 50996,
+      "reqs": 43260,
       "you": false
     },
     {
       "name": "Hono",
-      "reqs": 50727,
+      "reqs": 43083,
       "you": false
     }
   ],

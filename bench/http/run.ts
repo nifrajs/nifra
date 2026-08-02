@@ -14,10 +14,16 @@
  *   bun run bench/http/run.ts bun        # one section only (bun | node | deno)
  */
 
-const CONNECTIONS = 50
-const DURATION_S = 4
-const WARMUP_S = 2
-const RUNS = 3
+// Duration/warmup/run knobs are env-overridable for a fast pass (noisier, but the same-run RATIO
+// holds): `BENCH_DURATION_S=2 BENCH_WARMUP_S=1 BENCH_RUNS=1 …`. Defaults are the credible-numbers set.
+const envInt = (name: string, dflt: number, min = 1): number => {
+  const n = Bun.env[name] === undefined ? Number.NaN : Number(Bun.env[name])
+  return Number.isInteger(n) && n >= min ? n : dflt
+}
+const CONNECTIONS = envInt("BENCH_CONNS", 50)
+const DURATION_S = envInt("BENCH_DURATION_S", 4)
+const WARMUP_S = envInt("BENCH_WARMUP_S", 2, 0)
+const RUNS = envInt("BENCH_RUNS", 3)
 const BASE_PORT = 3400
 
 interface Workload {
