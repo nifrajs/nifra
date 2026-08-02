@@ -405,8 +405,9 @@ function staticMatch(
   if (rel === "" || rel.endsWith("/")) return "pass" // a directory request → the app decides
   if (rel.includes("\0")) return { reject: new Response("Bad Request", { status: 400 }) }
   // Reject traversal in the REQUEST form before it ever reaches the filesystem path join: a `..`
-  // segment (or a backslash Windows would treat as one) has no legitimate use in an asset URL.
-  if (rel.includes("..") || rel.includes("\\")) {
+  // path segment (or a backslash Windows would treat as a separator) has no legitimate use in an
+  // asset URL. Segment-precise on purpose - a filename merely CONTAINING `..` (`logo..png`) is legal.
+  if (rel.split("/").includes("..") || rel.includes("\\")) {
     return { reject: new Response("Forbidden", { status: 403 }) }
   }
   const file = resolve(state.root, rel)
