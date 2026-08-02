@@ -300,3 +300,35 @@ describe("autoReflectJsonSchema - zod routes mock real data with no wiring", () 
     expect(await res.json()).toEqual({})
   })
 })
+
+describe("authored examples beat synthesis (pattern/refine escalation)", () => {
+  test("a pattern no candidate satisfies uses the schema's example instead of failing", () => {
+    const schema = {
+      type: "string",
+      pattern: "^[A-Z]{2}-\\d{4}$",
+      examples: ["AB-1234"],
+    }
+    expect(generateMockValue(schema)).toBe("AB-1234")
+    // Without the example the same pattern is uninvertible and fails closed, as before.
+    expect(() => generateMockValue({ type: "string", pattern: "^[A-Z]{2}-\\d{4}$" })).toThrow(
+      UnsupportedMockSchemaError,
+    )
+  })
+
+  test("`default` is used when no example is authored; `const` still wins over both", () => {
+    expect(generateMockValue({ type: "string", default: "fallback" })).toBe("fallback")
+    expect(generateMockValue({ const: "pinned", default: "fallback", examples: ["example"] })).toBe(
+      "pinned",
+    )
+    expect(generateMockValue({ default: "fallback", examples: ["example"] })).toBe("example")
+  })
+
+  test("an object-level example is returned wholesale", () => {
+    const schema = {
+      type: "object",
+      properties: { a: { type: "string" } },
+      examples: [{ a: "authored" }],
+    }
+    expect(generateMockValue(schema)).toEqual({ a: "authored" })
+  })
+})
