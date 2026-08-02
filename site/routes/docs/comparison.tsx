@@ -76,8 +76,10 @@ export default function Comparison() {
           ~0&nbsp;KB-client vanilla adapter.
         </li>
         <li>
-          Loaders + actions + progressive-enhancement forms; <code>defer()</code> / <code>&lt;Await&gt;</code>{" "}
-          streaming data; query cache, optimistic UI, concurrent fetchers, revalidation.
+          Loaders + actions + <a href="/docs/server-functions">server functions</a> (typed{" "}
+          <code>serverFn</code> RPC, server code never shipped to the browser) + progressive-enhancement
+          forms; <code>defer()</code> / <code>&lt;Await&gt;</code> streaming data; query cache, optimistic
+          UI, concurrent fetchers, revalidation.
         </li>
         <li>Head/meta, hover/focus prefetch, scroll restoration.</li>
         <li>
