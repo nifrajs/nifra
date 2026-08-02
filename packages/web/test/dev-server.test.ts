@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { CLIENT_ENTRY_PATH, createDevServer, type DevServer } from "../src/dev.ts"
+import { CLIENT_ENTRY_PATH, createDevServer, type DevServer, LAST_ERROR_PATH } from "../src/dev.ts"
 
 // Integration coverage for the Bun-pipeline dev server. The temp app lives INSIDE the workspace so the
 // generated entry's `@nifrajs/web/client` import resolves through node_modules hoisting, exactly as a real
@@ -165,6 +165,37 @@ test("a failing app render returns the dev error overlay, not a bare 500", async
   expect(res.status).toBe(500)
   expect(res.headers.get("content-type")).toContain("text/html")
   expect(await res.text()).toContain("loader exploded")
+})
+
+test("the last SSR failure is served as a structured diagnostic at /__nifra/last-error", async () => {
+  // The agent head of the dev overlay: the same failure, as queryable JSON.
+  server = await createDevServer({
+    routesDir,
+    outDir: join(projectRoot, "dist"),
+    clientModule,
+    port: 0,
+    guardLeaks: false,
+    createApp: () => ({
+      fetch: () => {
+        throw new Error("loader exploded")
+      },
+    }),
+  })
+  const origin = `http://127.0.0.1:${server.port}`
+  // Before any failure, the endpoint reports a benign shape - never a stale or fabricated error.
+  const before = (await (await fetch(`${origin}${LAST_ERROR_PATH}`)).json()) as { code: string }
+  expect(before.code).toBe("NIFRA_NONE")
+  // A page render fails, which captures the diagnostic for this server...
+  expect((await fetch(`${origin}/`)).status).toBe(500)
+  // ...and the endpoint now serves it: the same message and request an agent needs, plus a stable code.
+  const diag = (await (await fetch(`${origin}${LAST_ERROR_PATH}`)).json()) as {
+    code: string
+    message: string
+    request: { method: string; url: string }
+  }
+  expect(diag.message).toContain("loader exploded")
+  expect(diag.request).toEqual({ method: "GET", url: "/" })
+  expect(diag.code).toBe("NIFRA_UNHANDLED")
 })
 
 test("the dev leak guard reports a client leak instead of serving it silently", async () => {

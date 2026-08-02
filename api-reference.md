@@ -2609,6 +2609,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The stable URL every SSR'd page points its client entry at.
 - **DevServer** _(interface)_ - `interface DevServer`
 - **DevServerOptions** _(interface)_ - `interface DevServerOptions`
+- **LAST_ERROR_PATH** _(const)_ - `LAST_ERROR_PATH: "/__nifra/last-error"`
+  Dev-only endpoint serving the most recent SSR failure as a structured Diagnostic (JSON).
 - **createDevServer** _(function)_ - `createDevServer: (options: DevServerOptions) => Promise<DevServer>`
   Start the Bun dev server: generate → bundle → serve → watch → hot-reload on change.
 - **devHtml** _(function)_ - `devHtml: (entryHref: string) => string`
@@ -2619,6 +2621,30 @@ Every public export of every package and documented subpath - name, kind, signat
   `<link rel="stylesheet">` tags for Bun's extracted CSS, injected into each SSR'd page's `<head>`.
 - **writeDevFiles** _(function)_ - `writeDevFiles: (options: WriteDevFilesOptions) => void`
   Generate the client entry + the HTML route that carries it.
+
+### `@nifrajs/web/diagnostic`
+
+- **BuildDiagnosticOptions** _(interface)_ - `interface BuildDiagnosticOptions`
+- **Codeframe** _(interface)_ - `interface Codeframe`
+  A source window around the offending line. `caret` marks the exact line the top frame points at.
+- **DIAGNOSTIC_CATALOG** _(const)_ - `DIAGNOSTIC_CATALOG: readonly CatalogEntry[]`
+  The recognised-failure catalog. Seeded with the highest-signal nifra failures; extend it as new classes of error earn a stable code. Order matters only in that the first match wins.
+- **Diagnostic** _(interface)_ - `interface Diagnostic`
+  The structured failure. Serialisable as-is to JSON for the agent surfaces.
+- **DiagnosticFrame** _(interface)_ - `interface DiagnosticFrame`
+  One parsed stack frame. `file`/`line`/`column` are present only when the frame could be located.
+- **SourceReader** _(type)_ - `type SourceReader = (file: string) => string | undefined`
+  Reads a source file's text, or returns undefined if it cannot (missing, binary, permission).
+- **buildCodeframe** _(function)_ - `buildCodeframe: (file: string, line: number, column: number | undefined, read?: SourceReader, radius?: number) => Codeframe | undefined`
+  Build a source codeframe: `radius` lines either side of `line`, each tagged with its 1-based number and whether it is the offending line. Returns undefined if the source can't be read or the line is out of range - a diagnostic without a codeframe is still useful, so this never throws.
+- **buildDiagnostic** _(function)_ - `buildDiagnostic: (err: unknown, options?: BuildDiagnosticOptions) => Diagnostic`
+  Resolve any thrown value into a `Diagnostic`: parse the (already source-mapped) stack, locate the top user frame, attach a codeframe, and classify the failure for a cause/fix. The caller is responsible for running Vite's `ssrFixStacktrace` first so the frames point at real source.
+- **classify** _(function)_ - `classify: (name: string, message: string) => { code: string; cause?: string; fix?: string; docsAnchor?: string; }`
+  Classify an error name+message against the catalog; falls back to the generic unhandled code.
+- **parseFrames** _(function)_ - `parseFrames: (stack: string) => DiagnosticFrame[]`
+  Parse a V8/Node stack into structured frames. Handles the `at fn (path:line:col)`, bare `at path:line:col`, and `at async fn (...)` shapes; a frame that doesn't match keeps its raw text with no location (so nothing is silently dropped).
+- **topUserFrame** _(function)_ - `topUserFrame: (frames: readonly DiagnosticFrame[], root: string | undefined) => DiagnosticFrame | undefined`
+  The first frame that points at the user's own source - what the codeframe should show.
 
 ### `@nifrajs/web/fn`
 

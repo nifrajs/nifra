@@ -39,6 +39,11 @@
       "types": "./dist/client.d.ts",
       "default": "./dist/client.js"
     },
+    "./diagnostic": {
+      "bun": "./src/diagnostic.ts",
+      "types": "./dist/diagnostic.d.ts",
+      "default": "./dist/diagnostic.js"
+    },
     "./forms": {
       "bun": "./src/forms.ts",
       "types": "./dist/forms.d.ts",

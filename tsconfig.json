@@ -60,6 +60,7 @@
       "@nifrajs/devtools/client": ["./packages/devtools/src/client.ts"],
       "@nifrajs/test-utils": ["./internal/test-utils/src/index.ts"],
       "@nifrajs/web/fn": ["./packages/web/src/fn.ts"],
+      "@nifrajs/web/diagnostic": ["./packages/web/src/diagnostic.ts"],
       "create-nifra/agent-files": ["./packages/create-nifra/src/agent-files.ts"]
     }
   },

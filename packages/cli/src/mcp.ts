@@ -18,6 +18,8 @@
  *   - `nifra_levels`  - the cumulative verification ladder (L0 contract → L4 invariants): what the
  *     project actually proves, and why each level it misses does not hold.
  *   - `nifra_doctor`  - package.json dependency drift detector, with safe local-version auto-fix.
+ *   - `nifra_explain` - resolve an error (pasted, or the dev server's last) into a structured
+ *     diagnostic: stable code, a codeframe in the user's source, and the recognised cause + fix.
  *
  * Wire it into a client (e.g. Claude Desktop / Cursor) as: command `nifra`, args `["mcp"]`, run in the
  * project root. The protocol is hand-rolled (newline-delimited JSON-RPC 2.0 over stdio), including
@@ -666,6 +668,83 @@ export function projectTools(
       handler: async (args) => {
         const filter = args as { path?: string; kind?: "api" | "pages" }
         return describeProject(await loadAppCached(), filter)
+      },
+    },
+    {
+      name: "nifra_explain",
+      description:
+        "Turn a nifra error into a STRUCTURED diagnostic instead of eyeballing a stack trace: a stable `code`, the top frame in YOUR source, a codeframe around the offending line, and - when nifra recognises the failure - the plain-language `cause` + `fix` + docs anchor. Pass `error` (and `stack` if you have it, e.g. from nifra_run/nifra_test output or a failing build) to explain a specific failure; or pass `port` to fetch the running dev server's most recent SSR failure from `/__nifra/last-error`. Returns the same JSON the dev overlay renders.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          error: {
+            type: "string",
+            description:
+              "The error message to explain (copy it from nifra_run/nifra_test output or a failing build).",
+          },
+          stack: {
+            type: "string",
+            description:
+              "The error's stack trace, if you have it - enables the source codeframe and the top user frame.",
+          },
+          name: {
+            type: "string",
+            description:
+              "The error's class name (e.g. TypeError, SchemaError), if known - sharpens classification.",
+          },
+          port: {
+            type: "number",
+            description:
+              "Instead of a pasted error, fetch the running dev server's most recent SSR failure from this port.",
+          },
+        },
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const { error, stack, name, port } = args as {
+          error?: string
+          stack?: string
+          name?: string
+          port?: number
+        }
+        if (error !== undefined || stack !== undefined) {
+          const { buildDiagnostic } = await import("@nifrajs/web/diagnostic")
+          const e = new Error(error ?? "")
+          if (name !== undefined) e.name = name
+          if (stack !== undefined) e.stack = stack
+          return JSON.stringify(buildDiagnostic(e, { root: cwd }), null, 2)
+        }
+        if (port !== undefined) {
+          try {
+            const res = await fetch(`http://127.0.0.1:${port}/__nifra/last-error`)
+            if (!res.ok) {
+              return JSON.stringify(
+                { code: "NIFRA_NONE", message: `dev server at :${port} returned ${res.status}` },
+                null,
+                2,
+              )
+            }
+            return await res.text()
+          } catch (cause) {
+            return JSON.stringify(
+              {
+                code: "NIFRA_NONE",
+                message: `could not reach a nifra dev server at :${port} - ${cause instanceof Error ? cause.message : String(cause)}`,
+              },
+              null,
+              2,
+            )
+          }
+        }
+        return JSON.stringify(
+          {
+            code: "NIFRA_NONE",
+            message:
+              "Pass `error` (and `stack` if available) to explain a failure, or `port` to fetch the dev server's last error.",
+          },
+          null,
+          2,
+        )
       },
     },
     {

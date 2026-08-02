@@ -932,6 +932,26 @@
     "doc": "/** Options for {@link buildClientVite} - the Bun {@link BuildClientOptions} minus Bun-plugin specifics,\n * plus the Vite plugin list the app injects for its transforms. */"
   },
   {
+    "name": "buildCodeframe",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function buildCodeframe(file: string, line: number, column: number | undefined, read?: SourceReader, radius?: number): Codeframe | undefined;",
+    "doc": "/**\n * Build a source codeframe: `radius` lines either side of `line`, each tagged with its 1-based number\n * and whether it is the offending line. Returns undefined if the source can't be read or the line is\n * out of range - a diagnostic without a codeframe is still useful, so this never throws.\n */"
+  },
+  {
+    "name": "buildDiagnostic",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function buildDiagnostic(err: unknown, options?: BuildDiagnosticOptions): Diagnostic;",
+    "doc": "/**\n * Resolve any thrown value into a `Diagnostic`: parse the (already source-mapped) stack, locate the top\n * user frame, attach a codeframe, and classify the failure for a cause/fix. The caller is responsible\n * for running Vite's `ssrFixStacktrace` first so the frames point at real source.\n */"
+  },
+  {
+    "name": "BuildDiagnosticOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface BuildDiagnosticOptions {\n    readonly request?: {\n        readonly method: string;\n        readonly url: string;\n    };\n    /** Project root; frames outside it are treated as non-user. Defaults to `process.cwd()`. */\n    readonly root?: string;\n    /** Injectable source reader (tests pass a fake; production reads the filesystem). */\n    readonly read?: SourceReader;\n}"
+  },
+  {
     "name": "buildManifest",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -1719,6 +1739,13 @@
     "signature": "export type ClassifiedSchema<S extends object> = S & {\n    readonly [CLASSIFICATION]: DataClassification;\n};"
   },
   {
+    "name": "classify",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function classify(name: string, message: string): {\n    code: string;\n    cause?: string;\n    fix?: string;\n    docsAnchor?: string;\n};",
+    "doc": "/** Classify an error name+message against the catalog; falls back to the generic unhandled code. */"
+  },
+  {
     "name": "CLAUDE_MD_PATH",
     "kind": "const",
     "package": "create-nifra",
@@ -1822,6 +1849,13 @@
     "kind": "interface",
     "package": "@nifrajs/web",
     "signature": "export interface CloudflareRouteRules {\n    readonly include: readonly string[];\n    readonly exclude: readonly string[];\n    /** Public files the budget could not name, so the build can say so instead of capping silently. */\n    readonly omitted: readonly string[];\n}"
+  },
+  {
+    "name": "Codeframe",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface Codeframe {\n    readonly file: string;\n    readonly line: number;\n    readonly column?: number | undefined;\n    readonly lines: ReadonlyArray<{\n        readonly number: number;\n        readonly text: string;\n        readonly caret: boolean;\n    }>;\n}",
+    "doc": "/** A source window around the offending line. `caret` marks the exact line the top frame points at. */"
   },
   {
     "name": "Collection",
@@ -2959,6 +2993,27 @@
     "kind": "interface",
     "package": "@nifrajs/devtools",
     "signature": "export interface DevToolsOptions {\n    /** Maximum events to retain in the ring buffer (default 200). */\n    readonly maxEvents?: number | undefined;\n    /** Maximum simultaneous SSE connections (default 5). */\n    readonly maxConnections?: number | undefined;\n    /** SSE path (default `/_nifra/devtools`). */\n    readonly path?: string | undefined;\n    /** Explicit enable switch. Defaults to true only when `NODE_ENV === \"development\"`. */\n    readonly enabled?: boolean | undefined;\n    /** Permit non-loopback URL hosts. Default false. */\n    readonly allowRemote?: boolean | undefined;\n    /** Additional origins permitted to open the stream. Same-origin requests are always allowed. */\n    readonly allowedOrigins?: readonly string[] | undefined;\n    /** Optional request authorization for the stream. */\n    readonly authorize?: ((request: Request) => boolean | Promise<boolean>) | undefined;\n    /**\n     * Interval for SSE keep-alive comment frames, in milliseconds (default 15000). Pings stop\n     * idle proxies/dev tunnels from dropping the stream and evict dead connections so they no\n     * longer count against `maxConnections`.\n     */\n    readonly pingIntervalMs?: number | undefined;\n}"
+  },
+  {
+    "name": "Diagnostic",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface Diagnostic {\n    /** Stable, greppable identifier, e.g. `NIFRA_SERVER_ONLY_IN_CLIENT`. `NIFRA_UNHANDLED` when unrecognised. */\n    readonly code: string;\n    readonly name: string;\n    readonly message: string;\n    readonly request?: {\n        readonly method: string;\n        readonly url: string;\n    } | undefined;\n    readonly frames: readonly DiagnosticFrame[];\n    readonly codeframe?: Codeframe | undefined;\n    /** Plain-language \"why this happened\", when the failure is recognised. */\n    readonly cause?: string | undefined;\n    /** Plain-language \"do this\", when the failure is recognised. */\n    readonly fix?: string | undefined;\n    /** Docs section anchor for the code, e.g. `errors#server-only-in-client`. */\n    readonly docsAnchor?: string | undefined;\n}",
+    "doc": "/** The structured failure. Serialisable as-is to JSON for the agent surfaces. */"
+  },
+  {
+    "name": "DIAGNOSTIC_CATALOG",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const DIAGNOSTIC_CATALOG: readonly CatalogEntry[];",
+    "doc": "/**\n * The recognised-failure catalog. Seeded with the highest-signal nifra failures; extend it as new\n * classes of error earn a stable code. Order matters only in that the first match wins.\n */"
+  },
+  {
+    "name": "DiagnosticFrame",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DiagnosticFrame {\n    readonly raw: string;\n    readonly file?: string;\n    readonly line?: number;\n    readonly column?: number;\n}",
+    "doc": "/** One parsed stack frame. `file`/`line`/`column` are present only when the frame could be located. */"
   },
   {
     "name": "diffManifestRoutes",
@@ -5072,6 +5127,13 @@
     "signature": "export interface LanguageOptions<L extends readonly string[]> {\n    readonly supported: L;\n    readonly defaultLanguage: L[number];\n    /** Emit `Content-Language`. Default `true`. */\n    readonly header?: boolean;\n}"
   },
   {
+    "name": "LAST_ERROR_PATH",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const LAST_ERROR_PATH = \"/__nifra/last-error\";",
+    "doc": "/** Dev-only endpoint serving the most recent SSR failure as a structured Diagnostic (JSON). */"
+  },
+  {
     "name": "LAYOUT_DATA_GLOBAL",
     "kind": "const",
     "package": "@nifrajs/web",
@@ -6541,6 +6603,13 @@
     "kind": "interface",
     "package": "@nifrajs/content",
     "signature": "export interface ParseEntryOptions<S extends StandardSchemaV1> {\n    readonly raw: string;\n    readonly slug: string;\n    /** Standard Schema validating the frontmatter - a typo'd/missing field throws (a build-time failure,\n     * never a broken page). */\n    readonly schema: S;\n}"
+  },
+  {
+    "name": "parseFrames",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function parseFrames(stack: string): DiagnosticFrame[];",
+    "doc": "/**\n * Parse a V8/Node stack into structured frames. Handles the `at fn (path:line:col)`, bare\n * `at path:line:col`, and `at async fn (...)` shapes; a frame that doesn't match keeps its raw text\n * with no location (so nothing is silently dropped).\n */"
   },
   {
     "name": "parseFrontmatter",
@@ -9131,6 +9200,13 @@
     "doc": "/** The Solid SVG-component plugin. `generate` selects the Solid `\"dom\"`/`\"ssr\"` output, matching\n * `solidBunPlugin`. A plain `import \"./icon.svg\"` (asset URL) is untouched - only `?component` matches. */"
   },
   {
+    "name": "SourceReader",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type SourceReader = (file: string) => string | undefined;",
+    "doc": "/** Reads a source file's text, or returns undefined if it cannot (missing, binary, permission). */"
+  },
+  {
     "name": "SpanStatus",
     "kind": "type",
     "package": "@nifrajs/otel",
@@ -9854,6 +9930,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare class TopicRegistry {\n    private readonly topics;\n    private readonly memberships;\n    subscribe(topic: string, ws: NifraWebSocket): void;\n    unsubscribe(topic: string, ws: NifraWebSocket): void;\n    /** Drop every subscription for a connection - called on close so a registry never leaks dead sockets. */\n    unsubscribeAll(ws: NifraWebSocket): void;\n    /** Send `data` to every connection subscribed to `topic`. Per-socket send errors are isolated. */\n    publish(topic: string, data: string | ArrayBufferView | ArrayBuffer): void;\n}",
     "doc": "/**\n * In-process pub/sub for `ws.subscribe(topic)` + `app.publish(topic, data)`. **Single-instance only** -\n * topics live in this process's memory, so a multi-instance deploy (multiple servers behind a load\n * balancer) needs an external fan-out (Redis pub/sub, a Cloudflare Durable Object, NATS, …) bridged to\n * `app.publish`. The same registry instance is shared by an app's connections and its `publish`.\n */"
+  },
+  {
+    "name": "topUserFrame",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function topUserFrame(frames: readonly DiagnosticFrame[], root: string | undefined): DiagnosticFrame | undefined;",
+    "doc": "/** The first frame that points at the user's own source - what the codeframe should show. */"
   },
   {
     "name": "TraceContext",
