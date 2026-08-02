@@ -58,6 +58,17 @@ test("topUserFrame skips node_modules, node: builtins, and out-of-root files", (
   expect(topUserFrame(frames, undefined)?.file).toBe("/other/thing.ts")
 })
 
+test("topUserFrame enforces a real path boundary instead of a string prefix", () => {
+  const frames = parseFrames(
+    [
+      "    at sibling (/app-evil/secret.ts:1:1)",
+      "    at traversal (/app/routes/../secret.ts:2:2)",
+      "    at mine (/app/routes/index.tsx:3:3)",
+    ].join("\n"),
+  )
+  expect(topUserFrame(frames, "/app/routes")?.file).toBe("/app/routes/index.tsx")
+})
+
 test("topUserFrame returns undefined when every frame is dependency/runtime", () => {
   const frames = parseFrames("    at x (/app/node_modules/a/b.js:1:1)\n    at y (node:fs:2:2)")
   expect(topUserFrame(frames, "/app")).toBeUndefined()

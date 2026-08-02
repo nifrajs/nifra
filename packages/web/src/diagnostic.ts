@@ -11,7 +11,11 @@
  * Pure + DOM-free by construction (it only parses strings and reads source text through an injected
  * reader), so it lives in the root typecheck program and is unit-testable without a dev server or disk.
  */
-import { readFileSync } from "node:fs"
+import { readFileSync, realpathSync } from "node:fs"
+import { isAbsolute, relative, resolve } from "node:path"
+
+/** Shared endpoint name used by both dev pipelines and the agent-facing MCP tools. */
+export const LAST_ERROR_PATH = "/__nifra/last-error"
 
 /** One parsed stack frame. `file`/`line`/`column` are present only when the frame could be located. */
 export interface DiagnosticFrame {
@@ -107,8 +111,29 @@ export function parseFrames(stack: string): DiagnosticFrame[] {
 function isUserFrame(file: string, root: string | undefined): boolean {
   if (file.includes("/node_modules/") || file.includes("\\node_modules\\")) return false
   if (file.startsWith("node:")) return false
-  if (root !== undefined && !file.startsWith(root)) return false
+  if (root !== undefined) {
+    // A string prefix is not a path boundary (`/app-evil` starts with `/app`) and leaves `..` and
+    // symlink escapes unresolved. Resolve lexically first, then realpath existing paths so a codeframe
+    // can never read a source file outside the project root merely because a stack frame was crafted.
+    const rootPath = canonicalPath(root)
+    const framePath = canonicalPath(file)
+    const rel = relative(rootPath, framePath)
+    if (rel === ".." || rel.startsWith(`..${sepForPath(rel)}`) || isAbsolute(rel)) return false
+  }
   return true
+}
+
+function sepForPath(path: string): string {
+  return path.includes("\\") ? "\\" : "/"
+}
+
+function canonicalPath(path: string): string {
+  const lexical = resolve(path)
+  try {
+    return realpathSync.native(lexical)
+  } catch {
+    return lexical
+  }
 }
 
 /** The first frame that points at the user's own source - what the codeframe should show. */
@@ -232,7 +257,7 @@ export function buildDiagnostic(err: unknown, options: BuildDiagnosticOptions = 
   const top = topUserFrame(frames, root)
   const codeframe =
     top?.file !== undefined && top.line !== undefined
-      ? buildCodeframe(top.file, top.line, top.column, options.read)
+      ? buildCodeframe(canonicalPath(top.file), top.line, top.column, options.read)
       : undefined
   const { code, cause, fix, docsAnchor } = classify(error.name || "Error", message)
   return {

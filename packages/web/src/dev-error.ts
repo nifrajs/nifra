@@ -8,7 +8,7 @@
  * The overlay and the agent surfaces (`/__nifra/last-error`, `nifra_explain`) render from the SAME
  * `Diagnostic`, so a person and an agent see the identical failure, one as HTML and one as JSON.
  */
-import { buildDiagnostic, type Diagnostic } from "./diagnostic.ts"
+import type { Diagnostic } from "./diagnostic.ts"
 
 const esc = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
@@ -90,12 +90,4 @@ export function renderDiagnosticOverlay(diagnostic: Diagnostic): string {
   ${framesHtml}
   <footer>This overlay is shown only by the dev server. Its structured form is at <code>/__nifra/last-error</code> and via <code>nifra_explain</code>. In production this error maps to your <code>_error</code> route boundary.</footer>
 </main></body></html>`
-}
-
-/**
- * Render the dev error overlay for a thrown value. Back-compatible entry point: builds the Diagnostic
- * (source-mapping is the caller's responsibility, via Vite's `ssrFixStacktrace`) and renders it.
- */
-export function renderDevErrorOverlay(err: unknown, req: { method: string; url: string }): string {
-  return renderDiagnosticOverlay(buildDiagnostic(err, { request: req }))
 }

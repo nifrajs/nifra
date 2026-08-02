@@ -56,10 +56,12 @@ import { type BuildClientOptions, buildClient } from "./build.ts"
 import { type DevEntryMatch, resolveDevEntry } from "./bun-dev-entry.ts"
 import { renderDiagnosticOverlay } from "./dev-error.ts"
 import { explainBindFailure } from "./dev-port.ts"
-import { buildDiagnostic, type Diagnostic } from "./diagnostic.ts"
+import { buildDiagnostic, type Diagnostic, LAST_ERROR_PATH } from "./diagnostic.ts"
 import { discoverRoutes } from "./fs.ts"
 import { DEFAULT_DEV_PORT, generateClientEntry } from "./index.ts"
 import { servePublicDir } from "./public-dir.ts"
+
+export { LAST_ERROR_PATH } from "./diagnostic.ts"
 
 /** Minimal app surface the dev server needs - `createWebApp(...)` satisfies it. */
 interface FetchApp {
@@ -123,15 +125,14 @@ const PROBE_PATH = "/__nifra/dev-entry"
  */
 export const CLIENT_ENTRY_PATH = "/__nifra/client.js"
 
-/** Dev-only endpoint serving the most recent SSR failure as a structured Diagnostic (JSON). */
-export const LAST_ERROR_PATH = "/__nifra/last-error"
-
 /** Bun's `HTMLBundle` is opaque at the type level; it is only ever handed straight back to `Bun.serve`. */
 type HtmlBundle = unknown
 
 /** The `Bun.serve` surface this uses, typed structurally so the file builds without Bun's ambient types. */
 interface BunServeOptions {
   readonly port: number
+  /** Diagnostics contain source paths; keep the dev server private by default. */
+  readonly hostname: "127.0.0.1"
   readonly development: { readonly hmr: boolean }
   readonly routes: Record<string, HtmlBundle>
   fetch(request: Request): Promise<Response>
@@ -345,6 +346,7 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
   try {
     server = serve({
       port,
+      hostname: "127.0.0.1",
       development: { hmr: true },
       // The probe route is the ONLY path Bun owns; everything else falls through to nifra's SSR.
       routes: { [PROBE_PATH]: htmlModule.default },
@@ -368,7 +370,13 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
               code: "NIFRA_NONE",
               message: "No error captured since the dev server started.",
             },
-            { headers: { "cache-control": "no-store" } },
+            {
+              headers: {
+                "cache-control": "no-store",
+                "x-content-type-options": "nosniff",
+                "x-nifra-diagnostic": "true",
+              },
+            },
           )
         }
         // Static probe before routing; a miss returns undefined and falls through, so no route is
@@ -393,6 +401,7 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
           // serves, so the human and the agent see the identical failure.
           const diagnostic = buildDiagnostic(err, {
             request: { method: req.method, url: `${url.pathname}${url.search}` },
+            root,
           })
           lastDiagnostic = diagnostic
           return new Response(renderDiagnosticOverlay(diagnostic), {

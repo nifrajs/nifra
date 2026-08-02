@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { createViteDevServer, type ViteDevServer } from "../src/vite.ts"
+import { createViteDevServer, LAST_ERROR_PATH, type ViteDevServer } from "../src/vite.ts"
 
 /**
  * What the Vite dev server does with a REQUEST, as opposed to with a file change.
@@ -92,6 +92,22 @@ test("a throwing app renders the dev overlay, not a blank 500", async () => {
   expect(html).toContain("loader exploded in dev")
 })
 
+test("the Vite pipeline exposes the same structured last-error endpoint as Bun", async () => {
+  const origin = await start(() => {
+    throw new Error("vite loader exploded")
+  })
+  const before = await fetch(`${origin}${LAST_ERROR_PATH}`)
+  expect(before.headers.get("x-nifra-diagnostic")).toBe("true")
+  expect(((await before.json()) as { code: string }).code).toBe("NIFRA_NONE")
+
+  expect((await fetch(`${origin}/`)).status).toBe(500)
+  const after = await fetch(`${origin}${LAST_ERROR_PATH}`)
+  const diagnostic = (await after.json()) as { code: string; message: string; request: unknown }
+  expect(diagnostic.code).toBe("NIFRA_UNHANDLED")
+  expect(diagnostic.message).toContain("vite loader exploded")
+  expect(diagnostic.request).toEqual({ method: "GET", url: "/" })
+})
+
 test("a non-HTML response is streamed through untouched", async () => {
   // Only HTML gets Vite's client injected. Rewriting anything else would corrupt JSON and binary
   // responses served by the same app in dev.
@@ -118,7 +134,7 @@ test("a bind failure names the port and leaves nothing running", async () => {
   // keeps the event loop alive. Without tearing it down the process prints the diagnosis and then HANGS
   // on it, which reads as a dev server that is still starting. This test would hang, not fail, on a
   // regression, so it is bounded by the runner's own timeout rather than an assertion.
-  const held = Bun.serve({ port: 0, fetch: () => new Response("occupied") })
+  const held = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("occupied") })
   try {
     let raised: Error | undefined
     try {

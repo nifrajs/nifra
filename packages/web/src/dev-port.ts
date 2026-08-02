@@ -49,15 +49,27 @@ export interface ListenTarget {
  * Without an `error` listener attached, Node throws from deep inside `node:events`, the new process dies
  * in the background, and nothing connects that death to the stale page in front of you.
  */
-export function listenOrExplain(server: ListenTarget, port: number): Promise<void> {
+export function listenOrExplain(
+  server: ListenTarget,
+  port: number,
+  hostname?: string,
+): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const onError = (err: unknown): void => reject(explainBindFailure(err, port))
     server.once("error", onError)
-    server.listen(port, () => {
+    const onListening = (): void => {
       // Drop the guard once we're listening: leaving it attached would funnel a LATER server error into
       // an already-settled promise, silently swallowing it instead of surfacing it.
       server.removeListener("error", onError)
       resolve()
-    })
+    }
+    if (hostname === undefined) server.listen(port, onListening)
+    else {
+      ;(
+        server as ListenTarget & {
+          listen(port: number, hostname: string, cb: () => void): void
+        }
+      ).listen(port, hostname, onListening)
+    }
   })
 }
