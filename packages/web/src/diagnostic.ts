@@ -76,7 +76,9 @@ function cleanFramePath(path: string): string | undefined {
       return undefined
     }
   }
-  p = p.replace(/[?#].*$/, "")
+  // Strip the `?v=hash` / `#` suffix without a `.*` regex (ReDoS-safe): cut at the first `?` or `#`.
+  const cut = p.search(/[?#]/)
+  if (cut !== -1) p = p.slice(0, cut)
   const isAbsolute = p.startsWith("/") || /^[A-Za-z]:[\\/]/.test(p)
   return isAbsolute ? p : undefined
 }
@@ -92,8 +94,8 @@ export function parseFrames(stack: string): DiagnosticFrame[] {
     const raw = line.trim()
     if (!/^at\s/.test(raw)) continue
     // Prefer the parenthesised location; fall back to a trailing `path:line:col`.
-    const paren = raw.match(/\((.+):(\d+):(\d+)\)\s*$/)
-    const bare = raw.match(/at\s+(?:async\s+)?(.+):(\d+):(\d+)\s*$/)
+    const paren = raw.match(/\(([^()]+):(\d+):(\d+)\)\s*$/)
+    const bare = raw.match(/^at\s+(?:async\s+)?(\S.*):(\d+):(\d+)\s*$/)
     const m = paren ?? bare
     if (!m) {
       frames.push({ raw })
