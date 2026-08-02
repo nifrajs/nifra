@@ -102,6 +102,13 @@ export default function Comparison() {
         either - this is <i>Nifra vs. Next App Router specifically</i>.) Typed loaders, <code>defer()</code>,
         and route-level code-splitting cover the same problems by a different mechanism.
       </p>
+      <p>
+        <b>"No RSC" does not mean "no server code in components' reach."</b> Nifra ships typed{" "}
+        <a href="/docs/server-functions">server functions</a> - <code>serverFn</code> RPC whose body (DB
+        handles, secrets, imports) is <i>never</i> shipped to the browser, callable as a normal typed
+        function from any component - on all five UI libraries. What Nifra skips is React's specific RSC /{" "}
+        <code>"use server"</code> component model, not server-side mutations.
+      </p>
 
       <h2>Also a standalone backend (vs. Hono &amp; Elysia)</h2>
       <p>
@@ -182,8 +189,9 @@ export default function Comparison() {
       </ul>
       <p>
         The one deliberate trade: Nifra is streaming SSR + islands, <b>not</b> React Server Components -
-        framework-agnostic by design. If your app is built specifically around RSC, that's the call
-        you're making.
+        framework-agnostic by design. You still get typed server-side mutations via{" "}
+        <a href="/docs/server-functions">server functions</a>; what you give up is specifically the RSC
+        component model. If your app is built specifically around RSC, that's the call you're making.
       </p>
     </div>
   )
