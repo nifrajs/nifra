@@ -1,12 +1,12 @@
 /**
- * MCP Apps dogfood for nifra's own public docs MCP (the `/mcp` endpoint of nifra.dev). nifra ships a
- * docs MCP built with `@nifrajs/cli`; here it ALSO becomes an MCP App - `nifra_examples_app` returns the
- * verified code examples as `structuredContent`, rendered by the {@link examplesWidget} `ui://` widget in
- * MCP Apps hosts (ChatGPT Apps, MCPJam, Goose). Additive: the existing text tools are untouched, and
- * text-only hosts still get the example list as plain text.
+ * The `nifra_examples_app` MCP tool: nifra's verified code examples as an MCP Apps widget. It returns the
+ * examples as `structuredContent`, rendered by the {@link examplesWidget} `ui://` widget in MCP Apps hosts
+ * (ChatGPT Apps, MCPJam, Goose); text-only hosts still get the example names as plain text. Part of the
+ * public docs-MCP tool set (served by `handleMcpHttp`), so every self-host gets it from one definition.
+ * `loadExamples` is injected, so the same tool reads the corpus from disk (CLI) or a cached fetch (edge).
  */
-import type { Example } from "@nifrajs/cli/mcp"
 import { defineMcpTool, defineMcpWidget, type McpTool } from "@nifrajs/mcp"
+import type { Example } from "./examples.ts"
 
 /** The widget: renders `structuredContent.examples` as a filterable list of example cards. */
 export const examplesWidget = defineMcpWidget({

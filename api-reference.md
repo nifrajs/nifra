@@ -99,10 +99,14 @@ Every public export of every package and documented subpath - name, kind, signat
   Worker/edge + local entry. `export default { fetch }` is the universal server shape: Cloudflare / Vercel edge / Deno deploy use `fetch` (and ignore `port`); `bun run mcp-http.ts` auto-serves it on `port` (PORT env, default 8787) - Bun serves a module's default-exported server, so NO manual `Bun.ser…
 - **docsTools** _(function)_ - `docsTools: (loadDocs: () => Promise<string | undefined>, loadExamples: () => Promise<Example[] | undefined>, loadTypes: () => Promise<TypeEntry[] | undefined>) => McpTool[]`
   Build `nifra_docs` + `nifra_example` + `nifra_types` over injected corpus loaders.
+- **examplesAppTool** _(function)_ - `examplesAppTool: (loadExamples: () => Promise<Example[] | undefined>) => McpTool`
+  The widget-backed tool. `loadExamples` is injected (disk on the CLI, cached fetch on the edge).
+- **examplesWidget** _(const)_ - `examplesWidget: import("@nifrajs/mcp").McpWidget`
+  The widget: renders `structuredContent.examples` as a filterable list of example cards.
 - **handleMcpHttp** _(function)_ - `handleMcpHttp: (request: Request) => Promise<Response>`
-  The CLI HTTP handler: serves the disk-backed corpus tools. (`nifra docs-mcp` / `bun run` this file.)
+  The CLI HTTP handler: serves the disk-backed corpus tools + registers the examples widget's `ui://` resource so MCP Apps hosts can render `nifra_examples_app`. (`nifra docs-mcp` / `bun run` this file.)
 - **publicDocsTools** _(function)_ - `publicDocsTools: () => McpTool[]`
-  The two project-independent tools, reading the package's bundled corpus from disk (CLI use).
+  The project-independent tools, reading the package's bundled corpus from disk (CLI use): the text docs tools plus the `nifra_examples_app` MCP Apps widget tool.
 - **respondMcpHttp** _(function)_ - `respondMcpHttp: (request: Request, tools: McpTool[], options?: McpHttpOptions) => Promise<Response>`
   Handle one MCP request against the given `tools` with the docs server identity. A thin docs-flavored wrapper over the shared {@link respondMcpHttpCore} so the `@nifrajs/cli/mcp` self-host surface keeps its `(request, tools, options?)` shape (the site's edge worker calls it with two args).
 
