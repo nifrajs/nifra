@@ -2370,6 +2370,8 @@ Every public export of every package and documented subpath - name, kind, signat
   A failed invariant reported by {@link assertRenderAdapterConformance}.
 - **RenderAdapterConformanceFixture** _(interface)_ - `interface RenderAdapterConformanceFixture`
   Framework-specific values that let the shared conformance module exercise a render adapter.
+- **RenderAssemblyCache** _(interface)_ - `interface RenderAssemblyCache`
+  The mutable per-route slot {@link RenderPageOptions.assemblyCache} fills. Opaque - create as `{}`.
 - **RenderPageInput** _(type)_ - `type RenderPageInput = RenderPageOptions & ({ readonly hydrate?: true; readonly clientEntry: string } | { readonly hydrate: false })`
   `renderPage` input. A hydrating page (the default) must supply `clientEntry`, because the document loads it as a module script; a `hydrate: false` page may omit it, because nothing in the emitted document references it. Expressed as a union so the compiler enforces the pairing rather than the rende…
 - **RenderPageOptions** _(interface)_ - `interface RenderPageOptions`
