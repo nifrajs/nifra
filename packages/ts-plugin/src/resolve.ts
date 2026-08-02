@@ -5,9 +5,9 @@
  * it would at runtime - the plugin never re-derives the file-based routing rules.
  */
 import {
-  compareRoutePatternSpecificity,
   compileRoutePattern,
   matchRoutePattern,
+  sortRoutesBySpecificity,
 } from "@nifrajs/core/pattern"
 
 /** A route as the plugin needs it: its URL pattern and the source file that serves it. */
@@ -29,9 +29,9 @@ const compiledRouteCache = new WeakMap<readonly RouteLocation[], readonly Compil
 function compiledRoutes(routes: readonly RouteLocation[]): readonly CompiledRouteLocation[] {
   const cached = compiledRouteCache.get(routes)
   if (cached !== undefined) return cached
-  const compiled = routes
-    .map((route) => ({ route, pattern: compileRoutePattern(route.pattern) }))
-    .sort((left, right) => compareRoutePatternSpecificity(left.pattern, right.pattern))
+  const compiled = sortRoutesBySpecificity(
+    routes.map((route) => ({ route, pattern: compileRoutePattern(route.pattern) })),
+  )
   compiledRouteCache.set(routes, compiled)
   return compiled
 }

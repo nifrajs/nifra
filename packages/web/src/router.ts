@@ -5,9 +5,9 @@
  * unit-tests without a browser and is safe to import from the SSR core's main entry.
  */
 import {
-  compareRoutePatternSpecificity,
   compileRoutePattern,
   matchRoutePattern,
+  sortRoutesBySpecificity,
 } from "@nifrajs/core/pattern"
 import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import { parseNdjsonData } from "./deferred.ts"
@@ -156,9 +156,12 @@ export interface RoutePattern {
 export function createMatcher(
   patterns: readonly RoutePattern[],
 ): (path: string) => RouteMatch | null {
-  const compiled = patterns
-    .map((pattern) => ({ routeId: pattern.routeId, pattern: compileRoutePattern(pattern.pattern) }))
-    .sort((left, right) => compareRoutePatternSpecificity(left.pattern, right.pattern))
+  const compiled = sortRoutesBySpecificity(
+    patterns.map((pattern) => ({
+      routeId: pattern.routeId,
+      pattern: compileRoutePattern(pattern.pattern),
+    })),
+  )
   return (path) => {
     // Strip the query without allocating a `split("?")` array - matcher runs per match.
     const q = path.indexOf("?")

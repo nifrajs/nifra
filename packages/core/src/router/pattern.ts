@@ -312,6 +312,18 @@ export function compareRoutePatternSpecificity(
   return 0
 }
 
+/**
+ * Sort compiled routes most-specific-first - a static segment beats a dynamic one, the order the router
+ * resolves a path in. The single home for that precedence: the web router, the mock server, and the
+ * editor plugin all order routes through this one comparator, so which file a path resolves to can never
+ * diverge between runtime, client, and editor. Sorts in place and returns the same array.
+ */
+export function sortRoutesBySpecificity<T extends { readonly pattern: CompiledRoutePattern }>(
+  routes: T[],
+): T[] {
+  return routes.sort((left, right) => compareRoutePatternSpecificity(left.pattern, right.pattern))
+}
+
 /** Decode router captures under one rule. Plain values take the zero-allocation path; malformed
  * escapes return `null`, allowing HTTP to emit 400 while client navigation declines the match. */
 export function decodeRouteParams(raw: Record<string, string>): Record<string, string> | null {

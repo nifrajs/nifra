@@ -916,6 +916,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Match one compiled pattern and return decoded captures. The caller decides cross-pattern order.
 - **mixedSegmentSource** _(function)_ - `mixedSegmentSource: (parts: readonly MixedPart[]) => string`
   The regex source matching one segment's worth of a mixed pattern, with a capture per parameter.
+- **sortRoutesBySpecificity** _(function)_ - `sortRoutesBySpecificity: <T extends { readonly pattern: CompiledRoutePattern; }>(routes: T[]) => T[]`
+  Sort compiled routes most-specific-first - a static segment beats a dynamic one, the order the router resolves a path in. The single home for that precedence: the web router, the mock server, and the editor plugin all order routes through this one comparator, so which file a path resolves to can ne…
 
 ### `@nifrajs/core/reconciliation-worker`
 

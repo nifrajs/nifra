@@ -8,9 +8,9 @@
 
 import {
   type CompiledRoutePattern,
-  compareRoutePatternSpecificity,
   compileRoutePattern,
   matchRoutePattern,
+  sortRoutesBySpecificity,
 } from "@nifrajs/core/pattern"
 import { type JsonSchema, reflectRoutes, reflectSchema } from "@nifrajs/core/reflection"
 
@@ -352,7 +352,7 @@ export function createMockServer(
       value: mockValue,
     })
   }
-  compiledRoutes.sort((left, right) => compareRoutePatternSpecificity(left.pattern, right.pattern))
+  sortRoutesBySpecificity(compiledRoutes)
 
   return {
     mockRoutes,
