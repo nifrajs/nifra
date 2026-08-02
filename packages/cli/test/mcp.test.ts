@@ -89,7 +89,7 @@ describe("handleRpc (MCP protocol)", () => {
     expect(res).toMatchObject({
       jsonrpc: "2.0",
       id: 1,
-      result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: INFO },
+      result: { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: INFO },
     })
   })
 

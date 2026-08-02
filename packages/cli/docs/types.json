@@ -128,7 +128,7 @@
     "name": "AdversarialContractOptions",
     "kind": "interface",
     "package": "@nifrajs/testing",
-    "signature": "export interface AdversarialContractOptions {\n    /** Base origin for generated requests. Default `http://nifra.contract`. */\n    readonly origin?: string;\n    /** Replayable seed used for deterministic witness generation. */\n    readonly seed?: number;\n    /** Known-good request values keyed by `\"METHOD /path\"`. Required for opaque Standard Schemas. */\n    readonly witnesses?: Readonly<Record<string, ContractWitness>>;\n    /** Select a subset of reflected routes. */\n    readonly include?: (route: ReflectedRoute) => boolean;\n    /** Execute every case against these targets. Default: the supplied app, named `in-process`. */\n    readonly runtimes?: readonly ContractRuntime[];\n    /** Maximum validator-proven mutations per body/query schema. Default 32. */\n    readonly maxMutationsPerInput?: number;\n    /** Maximum serialized witness size. Default 256 KiB. */\n    readonly maxWitnessBytes?: number;\n    /** Statuses that prove an invalid input was rejected. Default `[422]`. */\n    readonly expectedValidationStatuses?: readonly number[];\n    /**\n     * Attach auth, tenant, or runtime-specific state. Return a new Request; the input Request is already\n     * fresh for this case and runtime.\n     */\n    readonly prepareRequest?: (request: Request, context: ContractCaseContext) => Request | Promise<Request>;\n    /** Override rejection semantics (for apps with a custom validation response). */\n    readonly isRejected?: (response: Response, context: ContractCaseContext) => boolean | Promise<boolean>;\n    /** Validate a real successful response for every declared response schema. Default true. */\n    readonly validateResponses?: boolean;\n    /** Fail the report when a contracted target cannot be exercised. Default true. */\n    readonly requireCoverage?: boolean;\n    /** Greedily minimize an invalid input that unexpectedly reaches the app. Default true. */\n    readonly shrinkFailures?: boolean;\n    /** Cap shrink probes for one failure. Default 12. */\n    readonly maxShrinkAttempts?: number;\n    /** Replay only these stable case IDs. Coverage gaps are advisory when this is set. */\n    readonly only?: string | readonly string[];\n    /**\n     * Derive an inspectable JSON Schema from a validator that carries none (zod/valibot/arktype expose a\n     * Standard Schema validator but no `.jsonSchema`). Called for any body/query schema whose `jsonSchema`\n     * is undefined; a non-undefined return turns on witness synthesis AND constraint-driven mutation\n     * generation for that route. Fail-safe: throwing or returning undefined leaves the schema opaque\n     * (NO_WITNESS, as today). Ready-made for zod: `import { zodJsonSchema } from \"@nifrajs/testing/zod\"`.\n     */\n    readonly reflectJsonSchema?: (schema: unknown) => JsonSchema | undefined;\n}"
+    "signature": "export interface AdversarialContractOptions {\n    /** Base origin for generated requests. Default `http://nifra.contract`. */\n    readonly origin?: string;\n    /** Replayable seed used for deterministic witness generation. */\n    readonly seed?: number;\n    /** Known-good request values keyed by `\"METHOD /path\"`. Required for opaque Standard Schemas. */\n    readonly witnesses?: Readonly<Record<string, ContractWitness>>;\n    /** Select a subset of reflected routes. */\n    readonly include?: (route: ReflectedRoute) => boolean;\n    /** Execute every case against these targets. Default: the supplied app, named `in-process`. */\n    readonly runtimes?: readonly ContractRuntime[];\n    /** Maximum validator-proven mutations per body/query schema. Default 32. */\n    readonly maxMutationsPerInput?: number;\n    /** Maximum serialized witness size. Default 256 KiB. */\n    readonly maxWitnessBytes?: number;\n    /** Statuses that prove an invalid input was rejected. Default `[422]`. */\n    readonly expectedValidationStatuses?: readonly number[];\n    /**\n     * Attach auth, tenant, or runtime-specific state. Return a new Request; the input Request is already\n     * fresh for this case and runtime.\n     */\n    readonly prepareRequest?: (request: Request, context: ContractCaseContext) => Request | Promise<Request>;\n    /** Override rejection semantics (for apps with a custom validation response). */\n    readonly isRejected?: (response: Response, context: ContractCaseContext) => boolean | Promise<boolean>;\n    /** Validate a real successful response for every declared response schema. Default true. */\n    readonly validateResponses?: boolean;\n    /** Fail the report when a contracted target cannot be exercised. Default true. */\n    readonly requireCoverage?: boolean;\n    /** Greedily minimize an invalid input that unexpectedly reaches the app. Default true. */\n    readonly shrinkFailures?: boolean;\n    /** Cap shrink probes for one failure. Default 12. */\n    readonly maxShrinkAttempts?: number;\n    /** Replay only these stable case IDs. Coverage gaps are advisory when this is set. */\n    readonly only?: string | readonly string[];\n    /**\n     * Derive an inspectable JSON Schema from a validator that carries none (zod/valibot/arktype expose a\n     * Standard Schema validator but no `.jsonSchema`). Called for any body/query schema whose `jsonSchema`\n     * is undefined; a non-undefined return turns on witness synthesis AND constraint-driven mutation\n     * generation for that route. Fail-safe: throwing or returning undefined leaves the schema opaque\n     * (NO_WITNESS, as today). Ready-made for zod: `import { zodJsonSchema } from \"@nifrajs/testing/zod\"`.\n     *\n     * Defaults to `@nifrajs/mock`'s `autoReflectJsonSchema`, which recognizes zod by its Standard Schema\n     * vendor tag and converts via `z.toJSONSchema` when zod is installed - so zod routes get witnesses and\n     * constraint-driven mutations with no wiring. Pass a hook to override, or `() => undefined` to force\n     * every opaque schema to stay opaque.\n     */\n    readonly reflectJsonSchema?: (schema: unknown) => JsonSchema | undefined;\n}"
   },
   {
     "name": "AdversarialContractReport",
@@ -522,6 +522,13 @@
     "package": "@nifrajs/middleware",
     "signature": "export type AuthPlugin<P> = NifraPlugin & {\n    /** The verified principal for this request, or `null` (no/invalid token in `optional` mode). */\n    principal(request: Request): P | null;\n    /** The verified principal, or **throws a `401` `Response`** when absent. */\n    requirePrincipal(request: Request): P;\n};",
     "doc": "/**\n * A token-auth plugin (`bearer` / `apiKey`). Apply it with `app.use(auth)` - it rejects unauthorized\n * requests to **routes defined after it** with `401` (unless `optional`). Read the verified principal\n * inside a handler/loader via {@link AuthPlugin.principal} (nullable) or\n * {@link AuthPlugin.requirePrincipal} (throws `401` when absent). The principal is verified once per\n * request and cached, so reading it is free.\n *\n * `beforeHandle` is **order-scoped**: place `app.use(auth)` before the routes it should guard. Hold the\n * returned instance to read the principal (mirrors `@nifrajs/auth`'s `sessions.get(c)` and\n * `@nifrajs/better-auth`'s `getSession(auth, req)`):\n *\n * ```ts\n * const auth = bearer({ verify: (t) => lookupUser(t) }) // P = User (inferred)\n * const app = server().use(auth).get(\"/me\", (c) => auth.requirePrincipal(c.req))\n * ```\n */"
+  },
+  {
+    "name": "autoReflectJsonSchema",
+    "kind": "function",
+    "package": "@nifrajs/mock",
+    "signature": "export declare function autoReflectJsonSchema(schema: unknown): JsonSchema | undefined;",
+    "doc": "/**\n * Derive a JSON Schema from a zod Standard Schema, or `undefined` for anything else (non-zod vendors,\n * zod not installed, unconvertible schemas). Safe as an always-on default: it can only ever turn an\n * opaque schema inspectable, never change one that already carries JSON Schema metadata.\n */"
   },
   {
     "name": "Await",
@@ -2350,7 +2357,7 @@
     "name": "CreateMcpServerOptions",
     "kind": "interface",
     "package": "@nifrajs/mcp",
-    "signature": "export interface CreateMcpServerOptions {\n    readonly name: string;\n    readonly version: string;\n    readonly tools?: readonly McpTool[];\n    /** MCP Apps widgets - their resources are registered and the UI capability is advertised. */\n    readonly widgets?: readonly McpWidget[];\n    /** Extra (non-widget) resources to expose. */\n    readonly resources?: readonly McpResource[];\n    readonly prompts?: readonly McpPrompt[];\n    /** GET health-page text. */\n    readonly health?: string;\n    /** Max JSON-RPC body size in bytes (default 1 MB). */\n    readonly maxBodyBytes?: number;\n}"
+    "signature": "export interface CreateMcpServerOptions {\n    readonly name: string;\n    readonly version: string;\n    readonly tools?: readonly McpTool[];\n    /** MCP Apps widgets - their resources are registered and the UI capability is advertised. */\n    readonly widgets?: readonly McpWidget[];\n    /** Extra (non-widget) resources to expose. */\n    readonly resources?: readonly McpResource[];\n    readonly prompts?: readonly McpPrompt[];\n    /** GET health-page text. */\n    readonly health?: string;\n    /** Max JSON-RPC body size in bytes (default 1 MB). */\n    readonly maxBodyBytes?: number;\n    /** Natural-language guidance for LLMs, surfaced in the modern `server/discover` result (2026-07-28). */\n    readonly instructions?: string;\n    /** Origin allowlist for the DNS-rebinding guard. Omit to allow any origin; set it to reject other\n     * browser origins with 403 (e.g. a hardened, non-public mount). */\n    readonly allowedOrigins?: readonly string[];\n}"
   },
   {
     "name": "createMemoryCausalityStore",
@@ -5033,7 +5040,7 @@
     "name": "JsonRpcResponse",
     "kind": "type",
     "package": "@nifrajs/mcp",
-    "signature": "export type JsonRpcResponse = {\n    jsonrpc: \"2.0\";\n    id: JsonRpcId;\n    result: unknown;\n} | {\n    jsonrpc: \"2.0\";\n    id: JsonRpcId;\n    error: {\n        code: number;\n        message: string;\n    };\n};"
+    "signature": "export type JsonRpcResponse = {\n    jsonrpc: \"2.0\";\n    id: JsonRpcId;\n    result: unknown;\n} | {\n    jsonrpc: \"2.0\";\n    id: JsonRpcId;\n    error: {\n        code: number;\n        message: string;\n        data?: unknown;\n    };\n};"
   },
   {
     "name": "JsonSchema",
@@ -5421,6 +5428,13 @@
     "doc": "/** The one canonical MCP config object both registries serialize - the anti-drift seam. */"
   },
   {
+    "name": "MCP_ERROR",
+    "kind": "const",
+    "package": "@nifrajs/mcp",
+    "signature": "export declare const MCP_ERROR: {\n    readonly HEADER_MISMATCH: -32020;\n    readonly UNSUPPORTED_VERSION: -32022;\n};",
+    "doc": "/** MCP-reserved JSON-RPC error codes (2026-07-28 error-code policy carves out -32020..-32099 for the spec). */"
+  },
+  {
     "name": "MCP_JSON_PATH",
     "kind": "const",
     "package": "create-nifra",
@@ -5478,13 +5492,13 @@
     "name": "McpHttpOptions",
     "kind": "interface",
     "package": "@nifrajs/cli",
-    "signature": "export interface McpHttpOptions {\n    /** Maximum JSON-RPC request body size in bytes. Default 1 MB. */\n    readonly maxBodyBytes?: number;\n    /** Resources / prompts / the MCP Apps UI extension served alongside the tools. */\n    readonly features?: McpServerFeatures;\n    /** Shown on the GET health page so each host can describe itself. */\n    readonly health?: string;\n}"
+    "signature": "export interface McpHttpOptions {\n    /** Maximum JSON-RPC request body size in bytes. Default 1 MB. */\n    readonly maxBodyBytes?: number;\n    /** Resources / prompts / the MCP Apps UI extension served alongside the tools. */\n    readonly features?: McpServerFeatures;\n    /** Shown on the GET health page so each host can describe itself. */\n    readonly health?: string;\n    /**\n     * Origin allowlist for the DNS-rebinding guard. Omit (the default) to allow any origin - the right\n     * choice for a public, unauthenticated docs server that can't enumerate its browser clients' origins.\n     * Set it (e.g. a localhost origin for a hardened local host) to reject any other browser origin with 403.\n     */\n    readonly allowedOrigins?: readonly string[];\n}"
   },
   {
     "name": "McpHttpOptions",
     "kind": "interface",
     "package": "@nifrajs/mcp",
-    "signature": "export interface McpHttpOptions {\n    /** Maximum JSON-RPC request body size in bytes. Default 1 MB. */\n    readonly maxBodyBytes?: number;\n    /** Resources / prompts / the MCP Apps UI extension served alongside the tools. */\n    readonly features?: McpServerFeatures;\n    /** Shown on the GET health page so each host can describe itself. */\n    readonly health?: string;\n}"
+    "signature": "export interface McpHttpOptions {\n    /** Maximum JSON-RPC request body size in bytes. Default 1 MB. */\n    readonly maxBodyBytes?: number;\n    /** Resources / prompts / the MCP Apps UI extension served alongside the tools. */\n    readonly features?: McpServerFeatures;\n    /** Shown on the GET health page so each host can describe itself. */\n    readonly health?: string;\n    /**\n     * Origin allowlist for the DNS-rebinding guard. Omit (the default) to allow any origin - the right\n     * choice for a public, unauthenticated docs server that can't enumerate its browser clients' origins.\n     * Set it (e.g. a localhost origin for a hardened local host) to reject any other browser origin with 403.\n     */\n    readonly allowedOrigins?: readonly string[];\n}"
   },
   {
     "name": "mcpJson",
@@ -5568,7 +5582,7 @@
     "name": "McpServerFeatures",
     "kind": "interface",
     "package": "@nifrajs/mcp",
-    "signature": "export interface McpServerFeatures {\n    readonly resources?: readonly McpResource[];\n    readonly prompts?: readonly McpPrompt[];\n    /** Advertise the MCP Apps UI extension in `initialize`. Present when the server serves `ui://` widgets;\n     * `mimeTypes` defaults to `[UI_MIME]`. */\n    readonly ui?: {\n        readonly mimeTypes?: readonly string[];\n    };\n}"
+    "signature": "export interface McpServerFeatures {\n    readonly resources?: readonly McpResource[];\n    readonly prompts?: readonly McpPrompt[];\n    /** Advertise the MCP Apps UI extension in `initialize`. Present when the server serves `ui://` widgets;\n     * `mimeTypes` defaults to `[UI_MIME]`. */\n    readonly ui?: {\n        readonly mimeTypes?: readonly string[];\n    };\n    /** Natural-language guidance for LLMs on how to use this server. Surfaced in the modern\n     * `server/discover` result (2026-07-28); legacy `initialize` does not carry it. */\n    readonly instructions?: string;\n}"
   },
   {
     "name": "McpTool",
@@ -5934,7 +5948,21 @@
     "name": "MockServerOptions",
     "kind": "interface",
     "package": "@nifrajs/mock",
-    "signature": "export interface MockServerOptions {\n    /** Seed for deterministic mock generation. */\n    readonly seed?: number | undefined;\n    /** Log mock requests to console. */\n    readonly verbose?: boolean | undefined;\n    /**\n     * Derive a JSON Schema from a response validator that carries none (zod/valibot expose a Standard Schema\n     * validator but no `.jsonSchema`), so their routes mock real data instead of `{}`. Fail-safe: throwing or\n     * returning undefined falls back to `{}`, as today. Ready-made for zod: `@nifrajs/testing/zod`.\n     */\n    readonly reflectJsonSchema?: (schema: unknown) => JsonSchema | undefined;\n}"
+    "signature": "export interface MockServerOptions {\n    /** Seed for deterministic mock generation. */\n    readonly seed?: number | undefined;\n    /** Log mock requests to console. */\n    readonly verbose?: boolean | undefined;\n    /**\n     * Derive a JSON Schema from a response validator that carries none (zod/valibot expose a Standard Schema\n     * validator but no `.jsonSchema`), so their routes mock real data instead of `{}`. Fail-safe: throwing or\n     * returning undefined falls back to `{}`, as today. Ready-made for zod: `@nifrajs/testing/zod`.\n     *\n     * Defaults to {@link autoReflectJsonSchema}, which recognizes zod by its Standard Schema vendor tag and\n     * converts via `z.toJSONSchema` when zod is installed - so zod routes mock real data with no wiring.\n     * Pass a hook to override, or `() => undefined` to force every opaque schema back to `{}`.\n     */\n    readonly reflectJsonSchema?: (schema: unknown) => JsonSchema | undefined;\n}"
+  },
+  {
+    "name": "MODERN_PROTOCOL_VERSION",
+    "kind": "const",
+    "package": "@nifrajs/mcp",
+    "signature": "export declare const MODERN_PROTOCOL_VERSION = \"2026-07-28\";",
+    "doc": "/** The stateless per-request revision (2026-07-28+). A request carrying its version in `_meta`\n * (`io.modelcontextprotocol/protocolVersion`) is served in modern mode; an `initialize` request stays\n * legacy. This server is dual-era: `handleRpc` answers both on the same dispatch, per request. */"
+  },
+  {
+    "name": "modernVersionOf",
+    "kind": "function",
+    "package": "@nifrajs/mcp",
+    "signature": "export declare function modernVersionOf(params: Record<string, unknown> | undefined): string | undefined;",
+    "doc": "/** The protocol version a modern (2026-07-28+) request declares in `_meta`, or `undefined` for a legacy\n * request. Its presence is what puts the dispatch in modern mode for that one request. */"
   },
   {
     "name": "mountIslands",
@@ -7028,8 +7056,8 @@
     "name": "PROTOCOL_VERSION",
     "kind": "const",
     "package": "@nifrajs/mcp",
-    "signature": "export declare const PROTOCOL_VERSION = \"2024-11-05\";",
-    "doc": "/**\n * The pure MCP (Model Context Protocol) JSON-RPC dispatch - no I/O, no `Bun.*`, no side effects, so it\n * unit-tests cleanly. A transport (stdio in `@nifrajs/cli`'s `mcp.ts`, Streamable-HTTP in {@link ./http.ts})\n * wires this to a byte stream; the tools/resources are injected, so the protocol logic is exercised\n * without spawning or reading streams.\n *\n * Beyond base MCP this also implements the server half of **MCP Apps (SEP-1865)** - interactive `ui://`\n * widgets: a tool links a UI resource via `_meta.ui.resourceUri`, `tools/call` returns `structuredContent`\n * for the widget to render, and `initialize` advertises the `io.modelcontextprotocol/ui` extension. All of\n * it is additive - a tool whose handler returns a plain `string` behaves exactly as before.\n */"
+    "signature": "export declare const PROTOCOL_VERSION = \"2025-06-18\";",
+    "doc": "/** The protocol revision this server advertises by default. A handshake-era version - the HTTP transport\n * still uses `initialize`; current clients reach it through their backward-compatibility fallback.\n * `initialize` echoes the client's own requested version instead when it's one this server also speaks\n * ({@link SUPPORTED_PROTOCOL_VERSIONS}). */"
   },
   {
     "name": "PublicDirCache",
@@ -7730,7 +7758,7 @@
     "kind": "function",
     "package": "@nifrajs/mcp",
     "signature": "export declare function respondMcpHttp(request: Request, tools: McpTool[], serverInfo: {\n    name: string;\n    version: string;\n}, options?: McpHttpOptions): Promise<Response>;",
-    "doc": "/**\n * Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → JSON-RPC\n * response; GET → a plain-text health page; OPTIONS → CORS preflight. Never throws - a bad body becomes a\n * JSON-RPC parse error. The dispatch is the shared, transport-agnostic {@link handleRpc}.\n */"
+    "doc": "/**\n * Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → JSON-RPC\n * response; GET → a plain-text health page; OPTIONS → CORS preflight. Never throws - a bad body becomes a\n * JSON-RPC parse error. Dual-era: a modern (2026-07-28) POST that mirrors its method/name/version into\n * headers is validated against the body before dispatch and gets spec HTTP statuses; legacy requests are\n * served unchanged. The dispatch is the shared, transport-agnostic {@link handleRpc}.\n */"
   },
   {
     "name": "responseCache",
@@ -8123,8 +8151,7 @@
     "name": "RouterContext",
     "kind": "const",
     "package": "@nifrajs/web-react",
-    "signature": "export declare const RouterContext: import(\"react\").Context<RouterContextValue>;",
-    "doc": "/** Router context. The default ({} params, \"\" path, {} search) is what a component sees when rendered\n * outside a nifra route tree (the hooks stay defined, no throw, so a stray `useParams` degrades\n * gracefully). */"
+    "signature": "export declare const RouterContext: import(\"react\").Context<RouterContextValue>;"
   },
   {
     "name": "RouterContextValue",
@@ -8198,7 +8225,7 @@
     "name": "rpcError",
     "kind": "const",
     "package": "@nifrajs/mcp",
-    "signature": "export declare const rpcError: (id: JsonRpcId, code: number, message: string) => JsonRpcResponse;"
+    "signature": "export declare const rpcError: (id: JsonRpcId, code: number, message: string, data?: unknown) => JsonRpcResponse;"
   },
   {
     "name": "rpcResult",
@@ -8498,15 +8525,13 @@
     "name": "SearchContext",
     "kind": "const",
     "package": "@nifrajs/web-preact",
-    "signature": "export declare const SearchContext: import(\"preact\").Context<Record<string, unknown>>;",
-    "doc": "/** The current route's validated search, provided by `compose` on SSR + client mount alike (derived from\n * the URL via the shared `searchOfChain`). `{}` outside a nifra route tree. Read via {@link useSearch}. */"
+    "signature": "export declare const SearchContext: import(\"preact\").Context<Record<string, unknown>>;"
   },
   {
     "name": "SearchContext",
     "kind": "const",
     "package": "@nifrajs/web-solid",
-    "signature": "export declare const SearchContext: import(\"solid-js\").Context<Accessor<Record<string, unknown>> | undefined>;",
-    "doc": "/** The current route's validated search accessor, provided by `compose` on SSR + client mount alike\n * (derived from the URL via the shared `searchOfChain`). Read via {@link useSearch}. */"
+    "signature": "export declare const SearchContext: Context<Accessor<Record<string, unknown>> | undefined>;"
   },
   {
     "name": "searchOf",

@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { createMockServer, generateMockValue, UnsupportedMockSchemaError } from "../src/index.ts"
+import {
+  autoReflectJsonSchema,
+  createMockServer,
+  generateMockValue,
+  UnsupportedMockSchemaError,
+} from "../src/index.ts"
 
 describe("generateMockValue", () => {
   test("generates string values", () => {
@@ -248,5 +253,82 @@ describe("createMockServer", () => {
       { method: "GET", path: "/a" },
       { method: "POST", path: "/b" },
     ])
+  })
+})
+
+describe("autoReflectJsonSchema - zod routes mock real data with no wiring", () => {
+  test("a zod response schema produces real mock data, not {}", async () => {
+    const { z } = await import("zod")
+    const fakeApp = {
+      routes: () => [
+        {
+          method: "GET",
+          path: "/profile",
+          schema: { response: z.object({ name: z.string(), age: z.number().int().min(0) }) },
+        },
+      ],
+    }
+    const mock = createMockServer(fakeApp, { seed: 42 })
+    const res = await mock.fetch(new Request("http://localhost/profile"))
+    const body = (await res.json()) as { name?: unknown; age?: unknown }
+    expect(typeof body.name).toBe("string")
+    expect(typeof body.age).toBe("number")
+  })
+
+  test("recognizes only the zod vendor; other opaque validators stay {} (fail-safe)", async () => {
+    const opaque = {
+      "~standard": { version: 1, vendor: "someone-else", validate: (v: unknown) => ({ value: v }) },
+    }
+    expect(autoReflectJsonSchema(opaque)).toBeUndefined()
+    expect(autoReflectJsonSchema(undefined)).toBeUndefined()
+    expect(autoReflectJsonSchema("nope")).toBeUndefined()
+    const fakeApp = { routes: () => [{ method: "GET", path: "/x", schema: { response: opaque } }] }
+    const mock = createMockServer(fakeApp, { seed: 42 })
+    const res = await mock.fetch(new Request("http://localhost/x"))
+    expect(await res.json()).toEqual({})
+  })
+
+  test("an explicit hook overrides the auto default", async () => {
+    const { z } = await import("zod")
+    const fakeApp = {
+      routes: () => [
+        { method: "GET", path: "/y", schema: { response: z.object({ n: z.number() }) } },
+      ],
+    }
+    const mock = createMockServer(fakeApp, { seed: 42, reflectJsonSchema: () => undefined })
+    const res = await mock.fetch(new Request("http://localhost/y"))
+    expect(await res.json()).toEqual({})
+  })
+})
+
+describe("authored examples beat synthesis (pattern/refine escalation)", () => {
+  test("a pattern no candidate satisfies uses the schema's example instead of failing", () => {
+    const schema = {
+      type: "string",
+      pattern: "^[A-Z]{2}-\\d{4}$",
+      examples: ["AB-1234"],
+    }
+    expect(generateMockValue(schema)).toBe("AB-1234")
+    // Without the example the same pattern is uninvertible and fails closed, as before.
+    expect(() => generateMockValue({ type: "string", pattern: "^[A-Z]{2}-\\d{4}$" })).toThrow(
+      UnsupportedMockSchemaError,
+    )
+  })
+
+  test("`default` is used when no example is authored; `const` still wins over both", () => {
+    expect(generateMockValue({ type: "string", default: "fallback" })).toBe("fallback")
+    expect(generateMockValue({ const: "pinned", default: "fallback", examples: ["example"] })).toBe(
+      "pinned",
+    )
+    expect(generateMockValue({ default: "fallback", examples: ["example"] })).toBe("example")
+  })
+
+  test("an object-level example is returned wholesale", () => {
+    const schema = {
+      type: "object",
+      properties: { a: { type: "string" } },
+      examples: [{ a: "authored" }],
+    }
+    expect(generateMockValue(schema)).toEqual({ a: "authored" })
   })
 })

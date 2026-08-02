@@ -1513,7 +1513,11 @@ Every public export of every package and documented subpath - name, kind, signat
   The validated (post-transform) type of a Standard Schema.
 - **JsonRpcNotification** _(interface)_ - `interface JsonRpcNotification`
 - **JsonRpcRequest** _(interface)_ - `interface JsonRpcRequest`
-- **JsonRpcResponse** _(type)_ - `type JsonRpcResponse = | { jsonrpc: "2.0"; id: JsonRpcId; result: unknown } | { jsonrpc: "2.0"; id: JsonRpcId; error: { code: number; message: string } }`
+- **JsonRpcResponse** _(type)_ - `type JsonRpcResponse = | { jsonrpc: "2.0"; id: JsonRpcId; result: unknown } | { jsonrpc: "2.0"; id: JsonRpcId; error: { code: number; message: string; data?: unknown } }`
+- **MCP_ERROR** _(const)_ - `MCP_ERROR: { readonly HEADER_MISMATCH: -32020; readonly UNSUPPORTED_VERSION: -32022; }`
+  MCP-reserved JSON-RPC error codes (2026-07-28 error-code policy carves out -32020..-32099 for the spec).
+- **MODERN_PROTOCOL_VERSION** _(const)_ - `MODERN_PROTOCOL_VERSION: "2026-07-28"`
+  The stateless per-request revision (2026-07-28+). A request carrying its version in `_meta` (`io.modelcontextprotocol/protocolVersion`) is served in modern mode; an `initialize` request stays legacy. This server is dual-era: `handleRpc` answers both on the same dispatch, per request.
 - **McpAppBridge** _(interface)_ - `interface McpAppBridge`
   The author-facing global injected into a widget. Kept minimal and stable.
 - **McpContentBlock** _(interface)_ - `interface McpContentBlock`
@@ -1538,8 +1542,8 @@ Every public export of every package and documented subpath - name, kind, signat
   A render-intent hint for GENERATIVE hosts: how to present the result's `structuredContent` when the host renders its OWN themed UI rather than an iframe widget. The host maps the intent to a component in its design system (a shadcn/Tailwind table, form, metric card, …). Open union - pick a known ta…
 - **McpWidget** _(interface)_ - `interface McpWidget`
   A widget: the resource to register on the server, its `ui://` URI, and the `_meta` link for its tool.
-- **PROTOCOL_VERSION** _(const)_ - `PROTOCOL_VERSION: "2024-11-05"`
-  The pure MCP (Model Context Protocol) JSON-RPC dispatch - no I/O, no `Bun.*`, no side effects, so it unit-tests cleanly. A transport (stdio in `@nifrajs/cli`'s `mcp.ts`, Streamable-HTTP in {@link ./http.ts}) wires this to a byte stream; the tools/resources are injected, so the protocol logic is exe…
+- **PROTOCOL_VERSION** _(const)_ - `PROTOCOL_VERSION: "2025-06-18"`
+  The protocol revision this server advertises by default. A handshake-era version - the HTTP transport still uses `initialize`; current clients reach it through their backward-compatibility fallback. `initialize` echoes the client's own requested version instead when it's one this server also speaks…
 - **StandardIssue** _(interface)_ - `interface StandardIssue`
 - **StandardResult** _(type)_ - `type StandardResult<Output> = | { readonly value: Output; readonly issues?: undefined } | { readonly issues: ReadonlyArray<StandardIssue> }`
 - **StandardSchemaV1** _(interface)_ - `interface StandardSchemaV1<Input = unknown, Output = Input>`
@@ -1556,9 +1560,11 @@ Every public export of every package and documented subpath - name, kind, signat
 - **defineMcpWidget** _(function)_ - `defineMcpWidget: (opts: DefineMcpWidgetOptions) => McpWidget`
 - **handleRpc** _(function)_ - `handleRpc: (message: JsonRpcRequest, tools: readonly McpTool[], serverInfo: { name: string; version: string; }, features?: McpServerFeatures, options?: McpProtocolOptions) => Promise<JsonRpcResponse | null>`
   Dispatch one JSON-RPC message against the given tools. Returns the response, or `null` for a notification (no reply). Tool errors are reported in-band (`isError`) so the agent can react to them.
+- **modernVersionOf** _(function)_ - `modernVersionOf: (params: Record<string, unknown> | undefined) => string | undefined`
+  The protocol version a modern (2026-07-28+) request declares in `_meta`, or `undefined` for a legacy request. Its presence is what puts the dispatch in modern mode for that one request.
 - **respondMcpHttp** _(function)_ - `respondMcpHttp: (request: Request, tools: McpTool[], serverInfo: { name: string; version: string; }, options?: McpHttpOptions) => Promise<Response>`
-  Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → JSON-RPC response; GET → a plain-text health page; OPTIONS → CORS preflight. Never throws - a bad body becomes a JSON-RPC parse error. The dispatch is the shared, transport-agnostic {@link handleRpc}.
-- **rpcError** _(const)_ - `rpcError: (id: JsonRpcId, code: number, message: string) => JsonRpcResponse`
+  Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → JSON-RPC response; GET → a plain-text health page; OPTIONS → CORS preflight. Never throws - a bad body becomes a JSON-RPC parse error. Dual-era: a modern (2026-07-28) POST that mirrors its method/name/vers…
+- **rpcError** _(const)_ - `rpcError: (id: JsonRpcId, code: number, message: string, data?: unknown) => JsonRpcResponse`
 - **rpcResult** _(const)_ - `rpcResult: (id: JsonRpcId, value: unknown) => JsonRpcResponse`
 - **uiResourceMeta** _(function)_ - `uiResourceMeta: (uri: string) => Record<string, unknown>`
   The MCP Apps `_meta.ui.resourceUri` link.
@@ -1569,13 +1575,17 @@ Every public export of every package and documented subpath - name, kind, signat
 
 - **McpHttpOptions** _(interface)_ - `interface McpHttpOptions`
 - **respondMcpHttp** _(function)_ - `respondMcpHttp: (request: Request, tools: McpTool[], serverInfo: { name: string; version: string; }, options?: McpHttpOptions) => Promise<Response>`
-  Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → JSON-RPC response; GET → a plain-text health page; OPTIONS → CORS preflight. Never throws - a bad body becomes a JSON-RPC parse error. The dispatch is the shared, transport-agnostic {@link handleRpc}.
+  Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → JSON-RPC response; GET → a plain-text health page; OPTIONS → CORS preflight. Never throws - a bad body becomes a JSON-RPC parse error. Dual-era: a modern (2026-07-28) POST that mirrors its method/name/vers…
 
 ### `@nifrajs/mcp/protocol`
 
 - **JsonRpcNotification** _(interface)_ - `interface JsonRpcNotification`
 - **JsonRpcRequest** _(interface)_ - `interface JsonRpcRequest`
-- **JsonRpcResponse** _(type)_ - `type JsonRpcResponse = | { jsonrpc: "2.0"; id: JsonRpcId; result: unknown } | { jsonrpc: "2.0"; id: JsonRpcId; error: { code: number; message: string } }`
+- **JsonRpcResponse** _(type)_ - `type JsonRpcResponse = | { jsonrpc: "2.0"; id: JsonRpcId; result: unknown } | { jsonrpc: "2.0"; id: JsonRpcId; error: { code: number; message: string; data?: unknown } }`
+- **MCP_ERROR** _(const)_ - `MCP_ERROR: { readonly HEADER_MISMATCH: -32020; readonly UNSUPPORTED_VERSION: -32022; }`
+  MCP-reserved JSON-RPC error codes (2026-07-28 error-code policy carves out -32020..-32099 for the spec).
+- **MODERN_PROTOCOL_VERSION** _(const)_ - `MODERN_PROTOCOL_VERSION: "2026-07-28"`
+  The stateless per-request revision (2026-07-28+). A request carrying its version in `_meta` (`io.modelcontextprotocol/protocolVersion`) is served in modern mode; an `initialize` request stays legacy. This server is dual-era: `handleRpc` answers both on the same dispatch, per request.
 - **McpContentBlock** _(interface)_ - `interface McpContentBlock`
   A single content block in a tool result. Today only text - the model-facing representation.
 - **McpPrompt** _(interface)_ - `interface McpPrompt`
@@ -1590,8 +1600,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **McpToolContext** _(interface)_ - `interface McpToolContext`
 - **McpToolResult** _(interface)_ - `interface McpToolResult`
   The rich result a tool handler may return instead of a bare string (MCP Apps). `content` is the model-facing text (also shown by text-only hosts); `structuredContent` is the data a linked `ui://` widget renders and is deliberately NOT added to the model's context; `_meta` carries the `ui.resourceUr…
-- **PROTOCOL_VERSION** _(const)_ - `PROTOCOL_VERSION: "2024-11-05"`
-  The pure MCP (Model Context Protocol) JSON-RPC dispatch - no I/O, no `Bun.*`, no side effects, so it unit-tests cleanly. A transport (stdio in `@nifrajs/cli`'s `mcp.ts`, Streamable-HTTP in {@link ./http.ts}) wires this to a byte stream; the tools/resources are injected, so the protocol logic is exe…
+- **PROTOCOL_VERSION** _(const)_ - `PROTOCOL_VERSION: "2025-06-18"`
+  The protocol revision this server advertises by default. A handshake-era version - the HTTP transport still uses `initialize`; current clients reach it through their backward-compatibility fallback. `initialize` echoes the client's own requested version instead when it's one this server also speaks…
 - **UI_EXTENSION_KEY** _(const)_ - `UI_EXTENSION_KEY: "io.modelcontextprotocol/ui"`
   The `capabilities.extensions` key advertising UI support in the `initialize` result (SEP-1865).
 - **UI_MIME** _(const)_ - `UI_MIME: "text/html;profile=mcp-app"`
@@ -1599,7 +1609,9 @@ Every public export of every package and documented subpath - name, kind, signat
 - **createMcpProtocolState** _(function)_ - `createMcpProtocolState: () => McpProtocolState`
 - **handleRpc** _(function)_ - `handleRpc: (message: JsonRpcRequest, tools: readonly McpTool[], serverInfo: { name: string; version: string; }, features?: McpServerFeatures, options?: McpProtocolOptions) => Promise<JsonRpcResponse | null>`
   Dispatch one JSON-RPC message against the given tools. Returns the response, or `null` for a notification (no reply). Tool errors are reported in-band (`isError`) so the agent can react to them.
-- **rpcError** _(const)_ - `rpcError: (id: JsonRpcId, code: number, message: string) => JsonRpcResponse`
+- **modernVersionOf** _(function)_ - `modernVersionOf: (params: Record<string, unknown> | undefined) => string | undefined`
+  The protocol version a modern (2026-07-28+) request declares in `_meta`, or `undefined` for a legacy request. Its presence is what puts the dispatch in modern mode for that one request.
+- **rpcError** _(const)_ - `rpcError: (id: JsonRpcId, code: number, message: string, data?: unknown) => JsonRpcResponse`
 - **rpcResult** _(const)_ - `rpcResult: (id: JsonRpcId, value: unknown) => JsonRpcResponse`
 
 ### `@nifrajs/mcp/react`
@@ -1803,6 +1815,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **MockableRoute** _(interface)_ - `interface MockableRoute`
   Minimal route shape returned by `app.routes()`.
 - **UnsupportedMockSchemaError** _(class)_ - `class UnsupportedMockSchemaError`
+- **autoReflectJsonSchema** _(function)_ - `autoReflectJsonSchema: (schema: unknown) => JsonSchema | undefined`
+  Derive a JSON Schema from a zod Standard Schema, or `undefined` for anything else (non-zod vendors, zod not installed, unconvertible schemas). Safe as an always-on default: it can only ever turn an opaque schema inspectable, never change one that already carries JSON Schema metadata.
 - **createMockServer** _(function)_ - `createMockServer: (app: MockableApp, options?: MockServerOptions | undefined) => MockServer`
   Create a mock server from a Nifra app's route definitions. For each route with a `schema.response`, generates a handler returning fake data that matches the response schema structure. Routes without response schemas return `{}`.
 - **generateMockValue** _(function)_ - `generateMockValue: (schema: unknown, fieldName?: string | undefined, rng?: (() => number) | undefined) => unknown`
@@ -2976,7 +2990,6 @@ _No named exports (side-effect entrypoint)._
 - **NavigateFunction** _(interface)_ - `interface NavigateFunction`
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
 - **SearchContext** _(const)_ - `SearchContext: import("preact").Context<Record<string, unknown>>`
-  The current route's validated search, provided by `compose` on SSR + client mount alike (derived from the URL via the shared `searchOfChain`). `{}` outside a nifra route tree. Read via {@link useSearch}.
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Blocker`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean (`useBlocker(isDirty)`) or a predicate `({ currentLocation, nextLocation }) => boolean`, and get back a {@link Blocker}. When a navigation (an anchor click, `u…
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
@@ -3106,7 +3119,6 @@ _No named exports (side-effect entrypoint)._
 - **Navigation** _(interface)_ - `interface Navigation`
   The current navigation state, mirroring the Remix `useNavigation()` shape for familiarity.
 - **RouterContext** _(const)_ - `RouterContext: import("react").Context<RouterContextValue>`
-  Router context. The default ({} params, "" path, {} search) is what a component sees when rendered outside a nifra route tree (the hooks stay defined, no throw, so a stray `useParams` degrades gracefully).
 - **RouterContextValue** _(interface)_ - `interface RouterContextValue`
   The current route the routing hooks read. Provided by `compose` on SSR + client mount alike.
 - **SearchParamsInit** _(type)_ - `type SearchParamsInit = URLSearchParams | Record<string, string | readonly string[]> | string`
@@ -3221,8 +3233,7 @@ _No named exports (side-effect entrypoint)._
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
 - **NavigateFunction** _(interface)_ - `interface NavigateFunction`
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
-- **SearchContext** _(const)_ - `SearchContext: import("solid-js").Context<Accessor<Record<string, unknown>> | undefined>`
-  The current route's validated search accessor, provided by `compose` on SSR + client mount alike (derived from the URL via the shared `searchOfChain`). Read via {@link useSearch}.
+- **SearchContext** _(const)_ - `SearchContext: Context<Accessor<Record<string, unknown>> | undefined>`
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Accessor<Blocker>`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a reactive {@link Blocker} accessor. When a navigation (an anchor click, `useNavi…
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`

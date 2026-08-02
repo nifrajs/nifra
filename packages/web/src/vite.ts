@@ -272,6 +272,22 @@ export function normalizeRolldownPlugins(
 }
 
 /**
+ * The npm package a bare module specifier belongs to (`@nifrajs/web-react/client` →
+ * `@nifrajs/web-react`, `some-adapter/client` → `some-adapter`), or `undefined` for a path-shaped
+ * specifier (relative/absolute), which names no package.
+ */
+function packageNameOf(specifier: string): string | undefined {
+  if (specifier.startsWith(".") || specifier.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(specifier))
+    return undefined
+  const parts = specifier.split("/")
+  return specifier.startsWith("@")
+    ? parts.length >= 2
+      ? `${parts[0]}/${parts[1]}`
+      : undefined
+    : parts[0]
+}
+
+/**
  * Start the Vite-backed dev server: Vite serves/HMRs the client; nifra SSRs each request and Vite
  * injects its HMR client + the framework refresh preamble via `transformIndexHtml`.
  */
@@ -349,6 +365,34 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
 
   // `conditions: ["bun"]` makes Vite resolve nifra's workspace packages (`@nifrajs/web-react/client`, …) to
   // their TS **source** - so the dev server needs no prior `dist` build of the adapter packages.
+  //
+  // That covers the CLIENT half only: Vite resolves SSR through `ssr.resolve.*`, which ignores
+  // `resolve.conditions`. Left at its defaults, SSR resolves a package's `default` export (`dist/…`)
+  // while the app's own imports of the same package run under Bun and resolve the `bun` export
+  // (`src/…`). Two consequences, both real bugs:
+  //   1. The adapter package loads TWICE - the app's Bun import (the adapter passed to `createWebApp`)
+  //      and the route modules' Vite-SSR import - so `createContext` runs twice and the routing hooks
+  //      (`useSearch`/`useParams`/`useLocation`) read a context the render never provided: they
+  //      SSR-render their EMPTY defaults in dev while the loader (same request!) sees the real values.
+  //   2. SSR reads `dist`, which nothing in the dev loop rebuilds - a stale `dist` then 500s inside
+  //      framework code and reads exactly like a framework regression.
+  // Fix, below: `ssr.resolve.{conditions,externalConditions}` mirror the client conditions (so SSR
+  // resolves the same files Bun does), and the adapter package + `@nifrajs/web` are `ssr.external`
+  // (so Bun's OWN module cache serves them to route modules - one instance, one `RouterContext`).
+  const resolveConditions = [
+    ...(options.conditions ?? []),
+    "bun",
+    "module",
+    "browser",
+    "development",
+  ]
+  // SSR must not pick `browser` builds; otherwise identical to the client list so both halves agree.
+  const ssrConditions = [...(options.conditions ?? []), "bun", "module", "node", "development"]
+  // The adapter package (from `clientModule`, e.g. `@nifrajs/web-react/client` → `@nifrajs/web-react`)
+  // - identity-sensitive (its `RouterContext` must be the ONE the Bun-imported adapter provides). A
+  // path-shaped `clientModule` (tests) names no package; there is then nothing to externalize.
+  const adapterPackage = packageNameOf(options.clientModule)
+  const ssrExternal = [...(adapterPackage !== undefined ? [adapterPackage] : []), "@nifrajs/web"]
   const usePolling = options.poll ?? process.env.CHOKIDAR_USEPOLLING === "1"
   // Never `import("vite")` directly here: the guard in `importVite` has to run first, and the dev
   // server importing vite unguarded is precisely what poisoned the module for the whole process.
@@ -376,13 +420,27 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
     // reads it, and the dev server is a client bundler like any other.
     plugins: [viteServerFnStub(), viteServerOnlyEmpty(), ...plugins],
     resolve: {
-      conditions: [...(options.conditions ?? []), "bun", "module", "browser", "development"],
+      conditions: resolveConditions,
       // Dedupe React to ONE copy. In a multi-root workspace a shared package can pull react/react-dom
       // from a SIBLING app's node_modules, so the dev server loads two React cores → a second hook
       // dispatcher → `resolveDispatcher().useState` null on any hook-using route (the error points at the
       // component, not the resolution - brutal to diagnose). Mirrors the build-time reactDedupePlugin so
       // dev matches prod. No-op for non-React apps (the package simply isn't present to dedupe).
       dedupe: ["react", "react-dom"],
+    },
+    ssr: {
+      // Explicit listing forces external even for workspace-LINKED packages (Vite's default keeps
+      // linked deps internal), so a monorepo dev run gets the same single-instance guarantee as an
+      // npm-installed one.
+      external: ssrExternal,
+      resolve: {
+        // Non-externalized deps (a linked `@platform/*`, say): Vite's runner evaluates them, but from
+        // the same files Bun would pick - `bun`-conditioned source, never a stale `dist`.
+        conditions: ssrConditions,
+        // Externalized deps: Vite resolves the specifier, Bun imports the result. `bun` first so the
+        // resolved file IS the one already in Bun's module cache (one evaluation, shared context).
+        externalConditions: ssrConditions,
+      },
     },
     ...(options.define ? { define: options.define } : {}),
   })

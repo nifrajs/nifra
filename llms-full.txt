@@ -3535,6 +3535,34 @@ to an agent than its own memory of the framework.
 `nifra_types` also follows each package's `exports` map rather than
 scanning the build output, so it will not offer a type that is real but unimportable.
 
+### From any assistant, hosted
+
+The teaching tools - `nifra_docs`, `nifra_example`,
+`nifra_types`, `nifra_learn` - are also served, project-independent, at
+`mcp.nifra.dev`. Add that one URL to any assistant and it learns Nifra from the same
+verified corpora, with no local checkout. It is read-only and needs no key. The project tools
+above still come from `nifra mcp` in your own repo, where they can see your routes.
+
+```ts
+# Claude Code
+claude mcp add --transport http nifra-docs https://mcp.nifra.dev
+
+# Claude.ai (web or desktop): Settings -> Connectors -> Add custom connector -> https://mcp.nifra.dev
+# ChatGPT (developer mode):   Settings -> Connectors -> add the same URL
+
+# Cursor - .cursor/mcp.json
+# { "mcpServers": { "nifra-docs": { "url": "https://mcp.nifra.dev" } } }
+
+# VS Code - .vscode/mcp.json
+# { "servers": { "nifra-docs": { "type": "http", "url": "https://mcp.nifra.dev" } } }
+```
+
+Cursor reads it in one click:
+[
+add Nifra docs to Cursor
+](cursor://anysphere.cursor-deeplink/mcp/install?name=nifra-docs&config=eyJ1cmwiOiJodHRwczovL21jcC5uaWZyYS5kZXYifQ==)
+.
+
 ### The gate to write against
 
 `nifra_check` is the one an agent should loop on. It returns structured
@@ -8520,7 +8548,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/mock
 
-`createMockServer`, `generateMockValue`, `MockableApp`, `MockableRoute`, `MockServer`, `MockServerOptions`, `UnsupportedMockSchemaError`
+`autoReflectJsonSchema`, `createMockServer`, `generateMockValue`, `MockableApp`, `MockableRoute`, `MockServer`, `MockServerOptions`, `UnsupportedMockSchemaError`
 
 ## @nifrajs/node
 

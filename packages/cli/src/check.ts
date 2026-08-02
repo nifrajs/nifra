@@ -1204,6 +1204,7 @@ export interface CheckDiagnostic {
     | "response-route"
     | "undeclared-dependency"
     | "duplicate-install"
+    | "stale-workspace-dist"
     | "server-manifest-drift"
     | "manifest-drift"
     | "capability-assurance"
@@ -1729,6 +1730,28 @@ export async function collectCheckResult(
         },
       })
     }
+    // Advisory (never fails the gate): while actively editing a linked package its dist is always
+    // momentarily behind. The finding earns its keep when a dev server is about to start against it -
+    // Bun reads live `src` while Vite's SSR runner reads the artifact, so a stale one 500s inside
+    // framework/shared-package code and reads exactly like an upstream regression.
+    for (const f of dr.staleDists) {
+      diagnostics.push({
+        rule: "stale-workspace-dist",
+        severity: "warning",
+        message: f.missing
+          ? `${f.package} was never built - ${f.distFile} is missing, but its export map serves it to Vite SSR/node consumers while Bun reads src - rebuild ${f.package}`
+          : `${f.package} has a stale build artifact - ${f.distFile} is ${f.behindSeconds}s older than ${f.sourceFile}, and Vite SSR/node consumers read the artifact while Bun reads src - rebuild ${f.package}`,
+        fix: `rebuild ${f.package}`,
+        suggestion: {
+          kind: "manual",
+          title: `Rebuild ${f.package}`,
+          steps: [
+            `Run the package's build (usually \`bun run build\` in its directory) so ${f.distFile} matches its source again.`,
+            "Only workspace-linked installs drift; npm tarballs are immutable and never flagged.",
+          ],
+        },
+      })
+    }
   }
   // #7: a committed server-manifest.ts that drifted from routes/ - name the exact missing/extra routes.
   for (const f of manifestDrift) {
@@ -1948,6 +1971,7 @@ export async function runCheck(
     ["response-route", "route returns a raw Response (typed client → data: never)"],
     ["undeclared-dependency", "undeclared dependency in package.json"],
     ["duplicate-install", "duplicate identity-sensitive dependency install"],
+    ["stale-workspace-dist", "workspace-linked dist older than its source"],
     ["server-manifest-drift", "server-manifest.ts drifted from routes/"],
     ["manifest-drift", "versioned trust manifest drift"],
     ["capability-assurance", "effect/capability assurance"],
@@ -1955,7 +1979,7 @@ export async function runCheck(
     ["check-config", "nifra.check.json"],
   ] as const) {
     const ds = counts(rule)
-    if (rule === "response-route") {
+    if (rule === "response-route" || rule === "stale-workspace-dist") {
       // Advisory: surfaced with ⚠, never folded into pass/fail.
       console.log(ds.length === 0 ? `✓ ${label}: none` : `⚠ ${label}: ${ds.length} (advisory)`)
     } else if (rule !== "typecheck") {

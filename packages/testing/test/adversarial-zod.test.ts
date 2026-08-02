@@ -32,11 +32,60 @@ describe("zod reflection bridge", () => {
     expect(report.results.every((result) => result.ok)).toBe(true)
   })
 
-  test("without the hook, the same zod route still reports NO_WITNESS (unchanged default)", async () => {
-    const app = server().post("/users", { body: z.object({ name: z.string() }) }, () => ({
+  test("with NO hook, a zod route lights up automatically (vendor-sniffed default)", async () => {
+    // zod is installed here, so the default `autoReflectJsonSchema` recognizes the `~standard.vendor`
+    // tag and converts - zero wiring, no NO_WITNESS. This is the out-of-the-box path.
+    const app = server().post("/users", { body: z.object({ name: z.string().min(2) }) }, () => ({
       ok: true,
     }))
     const report = await runAdversarialContract(app, { seed: 7 })
+    expect(report.gaps.filter((gap) => gap.code === "NO_WITNESS")).toHaveLength(0)
+    expect(report.results.some((result) => result.mutation?.includes("below-minLength"))).toBe(true)
+  })
+
+  test("an explicit `() => undefined` hook opts out back to opaque (NO_WITNESS)", async () => {
+    const app = server().post("/users", { body: z.object({ name: z.string() }) }, () => ({
+      ok: true,
+    }))
+    const report = await runAdversarialContract(app, {
+      seed: 7,
+      reflectJsonSchema: () => undefined,
+    })
     expect(report.gaps.some((gap) => gap.code === "NO_WITNESS")).toBe(true)
+  })
+})
+
+describe("pattern/refine escalation via authored examples", () => {
+  test("an uninvertible regex leaf: `.meta({ examples })` closes the NO_WITNESS gap, no wiring", async () => {
+    const app = server().post(
+      "/codes",
+      {
+        body: z.object({
+          code: z
+            .string()
+            .regex(/^[A-Z]{2}-\d{4}$/)
+            .meta({ examples: ["AB-1234"] }),
+        }),
+      },
+      () => ({ ok: true }),
+    )
+    const report = await runAdversarialContract(app, { seed: 7 })
+    expect(report.gaps).toHaveLength(0)
+    expect(report.results.every((result) => result.ok)).toBe(true)
+  })
+
+  test("a `.refine()` allowlist: field examples that satisfy it close the INVALID_WITNESS gap", async () => {
+    const app = server().post(
+      "/plans",
+      {
+        body: z
+          .object({ plan: z.string().meta({ examples: ["pro"] }) })
+          .refine((value) => ["free", "pro"].includes(value.plan)),
+      },
+      () => ({ ok: true }),
+    )
+    const report = await runAdversarialContract(app, { seed: 7 })
+    expect(report.gaps.filter((gap) => gap.code === "INVALID_WITNESS")).toHaveLength(0)
+    expect(report.gaps.filter((gap) => gap.code === "NO_WITNESS")).toHaveLength(0)
   })
 })

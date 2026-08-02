@@ -1,0 +1,18 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.nifrajs/nifra-docs",
+  "title": "Nifra docs",
+  "description": "Nifra's docs, runnable examples, and API types as an MCP server - learn the framework from any AI assistant, no local checkout.",
+  "version": "2.5.0",
+  "repository": {
+    "url": "https://github.com/nifrajs/nifra",
+    "source": "github"
+  },
+  "websiteUrl": "https://nifra.dev",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.nifra.dev"
+    }
+  ]
+}

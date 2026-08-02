@@ -46,6 +46,11 @@ export interface CreateMcpServerOptions {
   readonly health?: string
   /** Max JSON-RPC body size in bytes (default 1 MB). */
   readonly maxBodyBytes?: number
+  /** Natural-language guidance for LLMs, surfaced in the modern `server/discover` result (2026-07-28). */
+  readonly instructions?: string
+  /** Origin allowlist for the DNS-rebinding guard. Omit to allow any origin; set it to reject other
+   * browser origins with 403 (e.g. a hardened, non-public mount). */
+  readonly allowedOrigins?: readonly string[]
 }
 
 export interface McpServer {
@@ -69,6 +74,7 @@ export function createMcpServer(opts: CreateMcpServerOptions): McpServer {
     ...(resources.length > 0 ? { resources } : {}),
     ...(opts.prompts !== undefined ? { prompts: opts.prompts } : {}),
     ...(widgets.length > 0 ? { ui: { mimeTypes: [UI_MIME] } } : {}),
+    ...(opts.instructions !== undefined ? { instructions: opts.instructions } : {}),
   }
   return {
     tools,
@@ -79,6 +85,7 @@ export function createMcpServer(opts: CreateMcpServerOptions): McpServer {
         features,
         ...(opts.health !== undefined ? { health: opts.health } : {}),
         ...(opts.maxBodyBytes !== undefined ? { maxBodyBytes: opts.maxBodyBytes } : {}),
+        ...(opts.allowedOrigins !== undefined ? { allowedOrigins: opts.allowedOrigins } : {}),
       }),
     handle: (message) => handleRpc(message, tools, serverInfo, features),
   }

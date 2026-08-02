@@ -13,6 +13,9 @@ import {
   sortRoutesBySpecificity,
 } from "@nifrajs/core/pattern"
 import { type JsonSchema, reflectRoutes, reflectSchema } from "@nifrajs/core/reflection"
+import { autoReflectJsonSchema } from "./reflect-auto.ts"
+
+export { autoReflectJsonSchema } from "./reflect-auto.ts"
 
 // ---------------------------------------------------------------------------
 // Seeded PRNG (deterministic mocks)
@@ -121,6 +124,15 @@ export function generateMockValue(
   const raw = reflected
 
   if ("const" in raw) return raw.const
+  // An authored example beats synthesis - and it is the ONLY general answer for constraints a
+  // generator cannot invert: an arbitrary `pattern` regex, or a refinement that never reaches the
+  // JSON Schema at all (zod `.refine()`). Authors annotate once, next to the constraint
+  // (zod: `.meta({ examples: ["AB-1234"] })`; TypeBox/raw: the `examples`/`default` keywords), and
+  // every consumer - witness synthesis, the mock server - uses it. First example, deterministically:
+  // an example is a hand-picked known-good value, so rotating through them adds no coverage.
+  const examples = raw.examples as readonly unknown[] | undefined
+  if (Array.isArray(examples) && examples.length > 0) return examples[0]
+  if ("default" in raw && raw.default !== undefined) return raw.default
   if (raw.$ref !== undefined) {
     throw new UnsupportedMockSchemaError(
       "$ref",
@@ -288,6 +300,10 @@ export interface MockServerOptions {
    * Derive a JSON Schema from a response validator that carries none (zod/valibot expose a Standard Schema
    * validator but no `.jsonSchema`), so their routes mock real data instead of `{}`. Fail-safe: throwing or
    * returning undefined falls back to `{}`, as today. Ready-made for zod: `@nifrajs/testing/zod`.
+   *
+   * Defaults to {@link autoReflectJsonSchema}, which recognizes zod by its Standard Schema vendor tag and
+   * converts via `z.toJSONSchema` when zod is installed - so zod routes mock real data with no wiring.
+   * Pass a hook to override, or `() => undefined` to force every opaque schema back to `{}`.
    */
   readonly reflectJsonSchema?: (schema: unknown) => JsonSchema | undefined
 }
@@ -331,13 +347,10 @@ export function createMockServer(
     let responseSchema = response?.jsonSchema
     // Backfill an inspectable schema for an opaque validator (zod/valibot) so its routes mock real data
     // instead of `{}`. Fail-safe: a throwing hook falls back to `{}`, exactly as before the hook existed.
-    if (
-      responseSchema === undefined &&
-      options?.reflectJsonSchema &&
-      response?.standard !== undefined
-    ) {
+    const reflectJsonSchema = options?.reflectJsonSchema ?? autoReflectJsonSchema
+    if (responseSchema === undefined && response?.standard !== undefined) {
       try {
-        responseSchema = options.reflectJsonSchema(response.standard)
+        responseSchema = reflectJsonSchema(response.standard)
       } catch {
         responseSchema = undefined
       }

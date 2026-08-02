@@ -17,7 +17,14 @@ import {
  * DOM-free bridges (`getBrowserNavigate` / `registerBlocker`, populated by `installHistory`); `useSearch`
  * reads the accessor `compose` provides on SSR + client mount alike. Imports only `solid-js`. No JSX.
  */
-import { type Accessor, createContext, createSignal, onCleanup, useContext } from "solid-js"
+import {
+  type Accessor,
+  type Context,
+  createContext,
+  createSignal,
+  onCleanup,
+  useContext,
+} from "solid-js"
 
 export type { Blocker, BlockerFunction, BlockerState, NavigateFunction } from "@nifrajs/web"
 
@@ -26,8 +33,19 @@ const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
 const EMPTY_SEARCH_ACCESSOR: Accessor<Record<string, unknown>> = () => EMPTY_SEARCH
 
 /** The current route's validated search accessor, provided by `compose` on SSR + client mount alike
- * (derived from the URL via the shared `searchOfChain`). Read via {@link useSearch}. */
-export const SearchContext = createContext<Accessor<Record<string, unknown>>>()
+ * (derived from the URL via the shared `searchOfChain`). Read via {@link useSearch}.
+ *
+ * A `globalThis` singleton: in dev this module is evaluated twice in one process (the app's server
+ * code under Bun provides; route modules through Vite's SSR runner read), and Solid matches provider
+ * to reader by context object identity - two `createContext` results make `useSearch` SSR-render its
+ * empty default in dev. */
+const SEARCH_CONTEXT_SLOT = Symbol.for("nifra.web-solid.search-context")
+const searchContextSlot = globalThis as {
+  [SEARCH_CONTEXT_SLOT]?: Context<Accessor<Record<string, unknown>> | undefined>
+}
+export const SearchContext =
+  searchContextSlot[SEARCH_CONTEXT_SLOT] ?? createContext<Accessor<Record<string, unknown>>>()
+searchContextSlot[SEARCH_CONTEXT_SLOT] = SearchContext
 
 /**
  * The route's typed, validated search params as a reactive accessor - the SAME value the loader received
