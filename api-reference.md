@@ -2639,7 +2639,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **DevServer** _(interface)_ - `interface DevServer`
 - **DevServerOptions** _(interface)_ - `interface DevServerOptions`
 - **LAST_ERROR_PATH** _(const)_ - `LAST_ERROR_PATH: "/__nifra/last-error"`
-  Dev-only endpoint serving the most recent SSR failure as a structured Diagnostic (JSON).
+  Shared endpoint name used by both dev pipelines and the agent-facing MCP tools.
 - **createDevServer** _(function)_ - `createDevServer: (options: DevServerOptions) => Promise<DevServer>`
   Start the Bun dev server: generate → bundle → serve → watch → hot-reload on change.
 - **devHtml** _(function)_ - `devHtml: (entryHref: string) => string`
@@ -2662,6 +2662,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The structured failure. Serialisable as-is to JSON for the agent surfaces.
 - **DiagnosticFrame** _(interface)_ - `interface DiagnosticFrame`
   One parsed stack frame. `file`/`line`/`column` are present only when the frame could be located.
+- **LAST_ERROR_PATH** _(const)_ - `LAST_ERROR_PATH: "/__nifra/last-error"`
+  Shared endpoint name used by both dev pipelines and the agent-facing MCP tools.
 - **SourceReader** _(type)_ - `type SourceReader = (file: string) => string | undefined`
   Reads a source file's text, or returns undefined if it cannot (missing, binary, permission).
 - **buildCodeframe** _(function)_ - `buildCodeframe: (file: string, line: number, column: number | undefined, read?: SourceReader, radius?: number) => Codeframe | undefined`
@@ -2879,6 +2881,8 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web/vite`
 
+- **LAST_ERROR_PATH** _(const)_ - `LAST_ERROR_PATH: "/__nifra/last-error"`
+  Shared endpoint name used by both dev pipelines and the agent-facing MCP tools.
 - **ViteDevServer** _(interface)_ - `interface ViteDevServer`
 - **ViteDevServerOptions** _(interface)_ - `interface ViteDevServerOptions`
 - **applyResponseHeaders** _(function)_ - `applyResponseHeaders: (headers: Headers, res: NodeHeaderSink) => void`
