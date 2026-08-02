@@ -51,6 +51,7 @@ export const examplesWidget = defineMcpWidget({
 export function examplesAppTool(loadExamples: () => Promise<Example[] | undefined>): McpTool {
   return defineMcpTool({
     name: "nifra_examples_app",
+    annotations: { title: "Browse nifra examples", readOnlyHint: true, openWorldHint: false },
     description:
       "Browse nifra's verified code examples as an interactive, filterable list (MCP Apps widget). Pass query to pre-filter; the widget also filters client-side.",
     inputSchema: {

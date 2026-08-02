@@ -7,7 +7,13 @@
  * `tools/call` result, so the host knows to render the widget - see {@link ../protocol.ts}.
  */
 
-import type { McpContentBlock, McpTool, McpToolContext, McpToolResult } from "./protocol.ts"
+import type {
+  McpContentBlock,
+  McpTool,
+  McpToolAnnotations,
+  McpToolContext,
+  McpToolResult,
+} from "./protocol.ts"
 import type { InferOutput, StandardSchemaV1 } from "./standard.ts"
 import { formatIssues, jsonSchemaOf } from "./standard.ts"
 import type { McpWidget } from "./widget.ts"
@@ -61,6 +67,9 @@ export interface DefineMcpToolOptions<S extends StandardSchemaV1 = UntypedArgs> 
    * whose schemas carry no JSON Schema, so the agent still sees real parameter docs.
    */
   readonly inputSchema?: Record<string, unknown>
+  /** MCP tool safety hints (`readOnlyHint`/`destructiveHint`/…) surfaced in `tools/list`. Hosts use
+   * them to decide confirmation UX, and connector directory reviews expect every tool to carry them. */
+  readonly annotations?: McpToolAnnotations
   /** Link a widget so the tool's result renders as interactive UI in MCP Apps hosts (iframe). */
   readonly widget?: McpWidget
   /** Render-intent for generative hosts that build their own themed UI from `structuredContent`. Lands
@@ -115,6 +124,7 @@ export function defineMcpTool<S extends StandardSchemaV1 = UntypedArgs>(
       opts.inputSchema ??
       (input !== undefined ? jsonSchemaOf(input) : undefined) ??
       EMPTY_OBJECT_SCHEMA,
+    ...(opts.annotations !== undefined ? { annotations: opts.annotations } : {}),
     ...(meta !== undefined ? { _meta: meta } : {}),
     handler: async (args, context) => {
       let validated = args as InferOutput<S>

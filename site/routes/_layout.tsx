@@ -1941,6 +1941,7 @@ export default function Layout(props: { children?: ReactNode }) {
             <a href="https://www.npmjs.com/package/nifra" target="_blank" rel="noopener noreferrer">
               npm
             </a>
+            <a href="/privacy">Privacy</a>
             <span>MIT</span>
           </span>
         </div>
