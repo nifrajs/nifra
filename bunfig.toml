@@ -61,6 +61,13 @@ coveragePathIgnorePatterns = [
   # is only INCIDENTALLY imported by the cli tests (which exercise the protocol path ~90%). Exclude it from
   # the per-file gate so that incidental import doesn't drag a partially-covered module under threshold.
   "**/mcp/src/**",
+  # `@nifrajs/ts-plugin`'s index.ts is the TypeScript language-service GLUE (`init`/`create`, the
+  # language-service proxy, and `getDefinitionAndBoundSpan` wiring) - it only runs inside a real tsserver,
+  # which bun:test has no host for (same class as cli/src's stdio surface). The LOGIC it wires is pure and
+  # unit-tested: `resolve.ts` (route path → file, measured here) and the exported `findRoutePathLiteral`/
+  # `findRoutesDir` (tested against a real `ts.SourceFile`). So the glue is excluded from the per-file gate
+  # while its behavior is asserted; the plugin's editor activation is verified in an editor, not here.
+  "**/ts-plugin/src/index.ts",
   # `@nifrajs/web-react/query` (useQuery/useMutation/useInfiniteQuery/QueryClientProvider/
   # HydrationBoundary) is a thin `useSyncExternalStore` binding over the agnostic query engine. Its ONLY
   # untested line is the fetch-on-mount `useEffect` callback, which React runs on commit - something

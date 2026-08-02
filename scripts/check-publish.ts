@@ -120,6 +120,10 @@ const PUBLINT_ONLY = [
   // The unscoped `nifra` meta is a thin re-export of @nifrajs/core; publint validates its
   // package.json/exports (the real risk for a shim).
   { name: "nifra", dir: "packages/nifra" },
+  // `@nifrajs/ts-plugin` is a TypeScript language-service plugin: its entry is loaded by tsserver
+  // itself (`typescript` is a peer, provided by the consumer's editor), so attw's Node/bundler
+  // consumer-resolution model doesn't apply to it - publint validates its package.json/exports.
+  { name: "@nifrajs/ts-plugin", dir: "packages/ts-plugin" },
 ] as const
 
 // Workspace-privacy gate: publishing is deny-by-default. A new package must be deliberately added to

@@ -8480,6 +8480,10 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 `AdapterCertificationError`, `AdapterCertificationProfile`, `AdapterCertificationReport`, `AdversarialContractError`, `AdversarialContractOptions`, `AdversarialContractReport`, `AdversarialContractResult`, `AppLike`, `assertAdapterCertification`, `assertAdversarialContract`, `assertIncidentReplays`, `cacheStoreCertificationProfile`, `CapturedRequest`, `CapturedRequestInput`, `captureIncident`, `CaptureIncidentOptions`, `CertifiableCacheEntry`, `CertifiableCacheStore`, `CertifiableDomainEvent`, `CertifiableEventDeliveryAdapter`, `CertifiableEventRecord`, `CertifiableJobStore`, `CertifiableRuntimeAdapter`, `CertifiableRuntimeServer`, `CertifiableStorageAdapter`, `CertificationCapabilityEvidence`, `CertificationCheck`, `CertificationCheckEvidence`, `certifyAdapter`, `ContractCaseContext`, `ContractCaseKind`, `ContractCoverageGap`, `ContractCoverageGapCode`, `ContractReplay`, `ContractRuntime`, `ContractTarget`, `ContractTestApp`, `ContractWitness`, `cookieJar`, `CookieJar`, `createFailureLab`, `defineCertificationProfile`, `eventDeliveryCertificationProfile`, `FailureDirective`, `FailureEvidence`, `FailureInjectedError`, `FailureKind`, `FailureLab`, `FailureLabOptions`, `FailureReplay`, `FailureScenario`, `FailureScenarioReport`, `generateRegressionTest`, `GenerateRegressionTestOptions`, `IncidentCapsule`, `IncidentReplayError`, `IncidentReplayResult`, `jobStoreCertificationProfile`, `redactForEmission`, `replayIncident`, `ReplayIncidentOptions`, `runAdversarialContract`, `runFailureScenario`, `runtimeAdapterCertificationProfile`, `shapeOf`, `storageAdapterCertificationProfile`, `testSession`, `TestSession`, `TestSessionOptions`, `verifyAdapterCertification`
 
+## @nifrajs/ts-plugin
+
+`findRoutePathLiteral`, `findRoutesDir`
+
 ## @nifrajs/uploads
 
 `detectFileType`, `FileType`, `ImageReencoder`, `signDownloadUrl`, `SignDownloadUrlOptions`, `stripImageMetadata`, `StripImageMetadataOptions`, `UploadResult`, `validateUpload`, `ValidateUploadOptions`, `verifyDownloadUrl`

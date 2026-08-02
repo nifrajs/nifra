@@ -3801,6 +3801,20 @@
     "doc": "/**\n * Filter a DevTools event buffer for a snapshot query - by `path` prefix and/or the most recent\n * `limit`. Pure, so the `/state` endpoint and its tests (and the `nifra_inspect` MCP tool that reads\n * that endpoint) share ONE definition of what a query returns.\n */"
   },
   {
+    "name": "findRoutePathLiteral",
+    "kind": "function",
+    "package": "@nifrajs/ts-plugin",
+    "signature": "export declare function findRoutePathLiteral(tsm: typeof ts, source: ts.SourceFile, position: number): {\n    text: string;\n    span: ts.TextSpan;\n} | undefined;",
+    "doc": "/**\n * If `position` sits on a string-literal route path (`\"/...\"`), return its text and the span INSIDE the\n * quotes (so the editor highlights the path, not the quotes). Exported for unit testing against a\n * `SourceFile` built with `ts.createSourceFile`.\n */"
+  },
+  {
+    "name": "findRoutesDir",
+    "kind": "function",
+    "package": "@nifrajs/ts-plugin",
+    "signature": "export declare function findRoutesDir(fromFile: string, exists?: (p: string) => boolean): string | undefined;",
+    "doc": "/** Walk up from a source file to the nearest directory that has a `routes/` folder - the app root. */"
+  },
+  {
     "name": "fixedBackoff",
     "kind": "const",
     "package": "@nifrajs/jobs",
@@ -7684,6 +7698,13 @@
     "doc": "/**\n * Resolve a URL pathname to an absolute path **confined** to `root`, or `undefined` if it escapes.\n *\n * This is a user-path-to-filesystem sink, which makes it the one part of this feature with a security\n * consequence. Decode first (`%2e%2e%2f` is `../`), then normalize, then verify the result is still\n * under `root` by prefix - checking the *resolved* path rather than scanning the input for `..`,\n * because a blocklist over encodings is exactly the kind of check that gets bypassed.\n */"
   },
   {
+    "name": "resolveRouteFile",
+    "kind": "function",
+    "package": "@nifrajs/ts-plugin",
+    "signature": "export declare function resolveRouteFile(path: string, routes: readonly RouteLocation[]): string | undefined;",
+    "doc": "/**\n * Resolve a route path literal to the first route whose pattern matches it. Query/hash are ignored\n * (a link's `?tab=x` does not change which route file serves it). Returns the route's `file`, or\n * undefined when the value is not a path or matches no route.\n */"
+  },
+  {
     "name": "respondMcpHttp",
     "kind": "function",
     "package": "@nifrajs/cli",
@@ -8001,6 +8022,13 @@
     "package": "@nifrajs/middleware",
     "signature": "export interface RouteLike {\n    readonly method: string;\n    readonly path: string;\n    readonly schema?: {\n        readonly body?: unknown;\n        readonly query?: unknown;\n        readonly response?: unknown;\n    } | undefined;\n}",
     "doc": "/** A registered route as seen by {@link buildOpenApiDocument} - structurally a `@nifrajs/core`\n * `RouteDescriptor` (so `app.routes()` is passed straight through). */"
+  },
+  {
+    "name": "RouteLocation",
+    "kind": "interface",
+    "package": "@nifrajs/ts-plugin",
+    "signature": "export interface RouteLocation {\n    readonly pattern: string;\n    readonly file: string;\n}",
+    "doc": "/** A route as the plugin needs it: its URL pattern and the source file that serves it. */"
   },
   {
     "name": "RouteManifest",

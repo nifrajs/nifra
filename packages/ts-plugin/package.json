@@ -1,0 +1,59 @@
+{
+  "name": "@nifrajs/ts-plugin",
+  "version": "2.3.0",
+  "description": "TypeScript language-service plugin for nifra - go-to-definition from a route-path string literal to the routes/ file that serves it.",
+  "keywords": [
+    "bun",
+    "typescript",
+    "nifra",
+    "web-framework",
+    "full-stack",
+    "tsserver",
+    "language-service",
+    "editor"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./resolve": {
+      "bun": "./src/resolve.ts",
+      "types": "./dist/resolve.d.ts",
+      "default": "./dist/resolve.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "dependencies": {
+    "@nifrajs/core": "workspace:*",
+    "@nifrajs/web": "workspace:*"
+  },
+  "peerDependencies": {
+    "typescript": ">=5.5.0"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/ts-plugin"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}

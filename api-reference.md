@@ -2145,6 +2145,23 @@ Every public export of every package and documented subpath - name, kind, signat
 - **verifyAdapterCertification** _(function)_ - `verifyAdapterCertification: (report: AdapterCertificationReport) => Promise<boolean>`
   Recompute the portable evidence hash. Consumers should verify before trusting a stored report.
 
+## @nifrajs/ts-plugin
+
+### `@nifrajs/ts-plugin`
+
+- **default** _(function)_ - `default: (modules: { typescript: typeof ts; }) => ts.server.PluginModule`
+- **findRoutePathLiteral** _(function)_ - `findRoutePathLiteral: (tsm: typeof ts, source: ts.SourceFile, position: number) => { text: string; span: ts.TextSpan; } | undefined`
+  If `position` sits on a string-literal route path (`"/..."`), return its text and the span INSIDE the quotes (so the editor highlights the path, not the quotes). Exported for unit testing against a `SourceFile` built with `ts.createSourceFile`.
+- **findRoutesDir** _(function)_ - `findRoutesDir: (fromFile: string, exists?: (p: string) => boolean) => string | undefined`
+  Walk up from a source file to the nearest directory that has a `routes/` folder - the app root.
+
+### `@nifrajs/ts-plugin/resolve`
+
+- **RouteLocation** _(interface)_ - `interface RouteLocation`
+  A route as the plugin needs it: its URL pattern and the source file that serves it.
+- **resolveRouteFile** _(function)_ - `resolveRouteFile: (path: string, routes: readonly RouteLocation[]) => string | undefined`
+  Resolve a route path literal to the first route whose pattern matches it. Query/hash are ignored (a link's `?tab=x` does not change which route file serves it). Returns the route's `file`, or undefined when the value is not a path or matches no route.
+
 ## @nifrajs/uploads
 
 - **FileType** _(interface)_ - `interface FileType`
