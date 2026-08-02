@@ -13,14 +13,13 @@
     "editor"
   ],
   "type": "module",
-  "main": "./dist/index.js",
-  "module": "./dist/index.js",
+  "main": "./dist/index.cjs",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "bun": "./src/index.ts",
       "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+      "default": "./dist/index.cjs"
     },
     "./resolve": {
       "bun": "./src/resolve.ts",
@@ -34,7 +33,7 @@
   ],
   "sideEffects": false,
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+    "build": "bun run build.ts"
   },
   "dependencies": {
     "@nifrajs/core": "workspace:*",
