@@ -81,6 +81,67 @@ function childPath(name: "mcp-run" | "mcp-render" | "mcp-ws"): string {
  */
 const CHILD_TIMEOUT_MS = 30_000
 
+/** Local dev-tool reads are intentionally bounded: MCP runs in an agent process and must not hang on or
+ * buffer an unrelated loopback service just because a caller supplied its port. */
+export const LOCAL_TOOL_FETCH_TIMEOUT_MS = 2_000
+export const LOCAL_TOOL_MAX_RESPONSE_BYTES = 1_048_576
+
+/** Accept only a concrete TCP port. Port 0 (bind-any-free-port) is not a valid read target. */
+export function validateLocalPort(port: unknown): number | undefined {
+  return typeof port === "number" && Number.isInteger(port) && port >= 1 && port <= 65_535
+    ? port
+    : undefined
+}
+
+/** Read a dev-tool response without allowing an untrusted localhost service to allocate unbounded memory. */
+export async function readBoundedResponse(
+  response: Response,
+  maxBytes = LOCAL_TOOL_MAX_RESPONSE_BYTES,
+): Promise<string> {
+  const declared = response.headers.get("content-length")
+  if (declared !== null) {
+    const length = Number(declared)
+    if (Number.isFinite(length) && length > maxBytes)
+      throw new Error("response exceeded the size limit")
+  }
+  if (response.body === null) return ""
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value === undefined) continue
+      total += value.byteLength
+      if (total > maxBytes) {
+        await reader.cancel()
+        throw new Error("response exceeded the size limit")
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return new TextDecoder().decode(bytes)
+}
+
+const notNifraResponse = (service: string): string =>
+  JSON.stringify(
+    {
+      code: "NIFRA_NOT_DEV_SERVER",
+      message: `The service on this port is not a Nifra ${service} endpoint.`,
+    },
+    null,
+    2,
+  )
+
 const timeoutMessage = (label: string, ms: number): string =>
   `${label} timed out after ${ms / 1000}s and was terminated.\n` +
   `The app was loaded but the process did not finish. Most often this is a module-level side effect ` +
@@ -719,21 +780,37 @@ export function projectTools(
           return JSON.stringify(buildDiagnostic(e, { root: cwd }), null, 2)
         }
         if (port !== undefined) {
+          const validPort = validateLocalPort(port)
+          if (validPort === undefined) {
+            return JSON.stringify(
+              { code: "NIFRA_INVALID_PORT", message: "port must be an integer from 1 to 65535." },
+              null,
+              2,
+            )
+          }
+          const { LAST_ERROR_PATH } = await import("@nifrajs/web/diagnostic")
           try {
-            const res = await fetch(`http://127.0.0.1:${port}/__nifra/last-error`)
+            const res = await fetch(`http://127.0.0.1:${validPort}${LAST_ERROR_PATH}`, {
+              signal: AbortSignal.timeout(LOCAL_TOOL_FETCH_TIMEOUT_MS),
+            })
+            if (res.headers.get("x-nifra-diagnostic") !== "true")
+              return notNifraResponse("diagnostic")
             if (!res.ok) {
               return JSON.stringify(
-                { code: "NIFRA_NONE", message: `dev server at :${port} returned ${res.status}` },
+                {
+                  code: "NIFRA_NONE",
+                  message: `dev server at :${validPort} returned ${res.status}`,
+                },
                 null,
                 2,
               )
             }
-            return await res.text()
+            return await readBoundedResponse(res)
           } catch (cause) {
             return JSON.stringify(
               {
                 code: "NIFRA_NONE",
-                message: `could not reach a nifra dev server at :${port} - ${cause instanceof Error ? cause.message : String(cause)}`,
+                message: `could not reach a nifra dev server at :${validPort} - ${cause instanceof Error ? cause.message : String(cause)}`,
               },
               null,
               2,
@@ -777,11 +854,26 @@ export function projectTools(
             2,
           )
         }
-        const url = new URL(`http://127.0.0.1:${port}/_nifra/devtools/state`)
-        if (path !== undefined) url.searchParams.set("path", path)
-        if (limit !== undefined) url.searchParams.set("limit", String(limit))
         try {
-          const res = await fetch(url)
+          const validPort = validateLocalPort(port)
+          if (validPort === undefined) {
+            return JSON.stringify(
+              {
+                events: [],
+                code: "NIFRA_INVALID_PORT",
+                note: "port must be an integer from 1 to 65535.",
+              },
+              null,
+              2,
+            )
+          }
+          const url = new URL(`http://127.0.0.1:${validPort}/_nifra/devtools/state`)
+          if (path !== undefined) url.searchParams.set("path", path)
+          if (limit !== undefined) url.searchParams.set("limit", String(limit))
+          const res = await fetch(url, {
+            signal: AbortSignal.timeout(LOCAL_TOOL_FETCH_TIMEOUT_MS),
+          })
+          if (res.headers.get("x-nifra-devtools") !== "true") return notNifraResponse("DevTools")
           if (res.status === 404) {
             return JSON.stringify(
               {
@@ -799,12 +891,13 @@ export function projectTools(
               2,
             )
           }
-          return await res.text()
+          return await readBoundedResponse(res)
         } catch (cause) {
+          const validPort = validateLocalPort(port)
           return JSON.stringify(
             {
               events: [],
-              note: `Could not reach a dev server at :${port} - ${cause instanceof Error ? cause.message : String(cause)}`,
+              note: `Could not reach a dev server at :${validPort ?? String(port)} - ${cause instanceof Error ? cause.message : String(cause)}`,
             },
             null,
             2,

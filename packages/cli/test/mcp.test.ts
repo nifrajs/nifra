@@ -12,9 +12,12 @@ import {
   extractBackendPrompts,
   extractBackendResources,
   extractBackendTools,
+  LOCAL_TOOL_MAX_RESPONSE_BYTES,
   projectFeatures,
   projectTools,
+  readBoundedResponse,
   resolveProjectDir,
+  validateLocalPort,
   WarmWorker,
 } from "../src/mcp.ts"
 import {
@@ -62,6 +65,23 @@ const prompts: McpPrompt[] = [
     ],
   },
 ]
+
+test("local dev-tool reads validate ports and cap response bodies", async () => {
+  expect(validateLocalPort(1)).toBe(1)
+  expect(validateLocalPort(65_535)).toBe(65_535)
+  expect(validateLocalPort(0)).toBeUndefined()
+  expect(validateLocalPort(65_536)).toBeUndefined()
+  expect(validateLocalPort(1.5)).toBeUndefined()
+
+  expect(await readBoundedResponse(new Response("hello"))).toBe("hello")
+  await expect(
+    readBoundedResponse(
+      new Response("x", {
+        headers: { "content-length": String(LOCAL_TOOL_MAX_RESPONSE_BYTES + 1) },
+      }),
+    ),
+  ).rejects.toThrow("size limit")
+})
 
 describe("handleRpc (MCP protocol)", () => {
   test("initialize advertises protocol version, tools capability, server info", async () => {

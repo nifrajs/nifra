@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { getRecipe, listRecipeVersions, type UpgradeRecipe } from "../src/recipes/index.ts"
 import {
   applyImportMoves,
+  compareSemverSpec,
   computeUpgrade,
   moveDependenciesText,
   pinSweepText,
@@ -89,6 +90,12 @@ describe("rewriteVersionSpec", () => {
     expect(rewriteVersionSpec("npm:@scope/pkg@1.0.0", "1.8.0")).toBeNull()
     expect(rewriteVersionSpec("^1.8.0", "1.8.0")).toBeNull() // no-op
   })
+})
+
+test("semver downgrade protection includes prerelease precedence", () => {
+  expect(compareSemverSpec("2.3.0-beta", "2.3.0")).toBeLessThan(0)
+  expect(compareSemverSpec("2.3.0", "2.3.0-beta")).toBeGreaterThan(0)
+  expect(compareSemverSpec("2.3.0-beta.2", "2.3.0-beta.10")).toBeLessThan(0)
 })
 
 // ── pinSweepText (pure, format-preserving) ────────────────────────────────────

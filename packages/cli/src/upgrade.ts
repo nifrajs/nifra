@@ -82,7 +82,7 @@ const DEP_FIELDS = [
 // Only a bare semver spec is rewritten. Anything else - workspace:*, link:/file:, npm: aliases, git
 // urls, "*", "latest", or a multi-part range - is intentionally left untouched (skipped, not guessed).
 const SEMVER_SPEC =
-  /^([\^~]|>=|<=|>|<|=)?\s*(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
+  /^([\^~]|>=|<=|>|<|=)?\s*(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/
 
 /**
  * Rewrite a dependency version spec to `toVersion`, preserving the range operator (`^`, `~`, …).
@@ -103,12 +103,58 @@ export function specVersionTuple(spec: string): readonly [number, number, number
   return [Number(match[2]), Number(match[3]), Number(match[4])]
 }
 
+interface ParsedSpecVersion {
+  readonly core: readonly [number, number, number]
+  readonly prerelease: readonly (number | string)[]
+}
+
+function parseSpecVersion(spec: string): ParsedSpecVersion | null {
+  const match = SEMVER_SPEC.exec(spec.trim())
+  if (!match) return null
+  const prerelease = (match[5] ?? "").split(".")
+  return {
+    core: [Number(match[2]), Number(match[3]), Number(match[4])],
+    prerelease:
+      match[5] === undefined
+        ? []
+        : prerelease.map((part) => (/^\d+$/.test(part) ? Number(part) : part)),
+  }
+}
+
 /** Compare two semver cores: <0 when a<b, 0 equal, >0 when a>b. */
 export function compareSemverCore(
   a: readonly [number, number, number],
   b: readonly [number, number, number],
 ): number {
   return a[0] - b[0] || a[1] - b[1] || a[2] - b[2]
+}
+
+/** Compare full semver precedence, including prereleases (`2.3.0-beta` < `2.3.0`). */
+export function compareSemverSpec(a: string, b: string): number {
+  const left = parseSpecVersion(a)
+  const right = parseSpecVersion(b)
+  if (left === null || right === null) return 0
+  const core = compareSemverCore(left.core, right.core)
+  if (core !== 0) return core
+  if (left.prerelease.length === 0 || right.prerelease.length === 0) {
+    return left.prerelease.length === right.prerelease.length
+      ? 0
+      : left.prerelease.length === 0
+        ? 1
+        : -1
+  }
+  const length = Math.max(left.prerelease.length, right.prerelease.length)
+  for (let i = 0; i < length; i++) {
+    const x = left.prerelease[i]
+    const y = right.prerelease[i]
+    if (x === undefined || y === undefined) return x === undefined ? -1 : 1
+    if (typeof x === "number" && typeof y === "number") {
+      if (x !== y) return x - y
+    } else if (typeof x === "number") return -1
+    else if (typeof y === "number") return 1
+    else if (x !== y) return x < y ? -1 : 1
+  }
+  return 0
 }
 
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
@@ -155,7 +201,7 @@ export function pinSweepText(
         !allowDowngrade &&
         current !== null &&
         target !== null &&
-        compareSemverCore(current, target) > 0
+        compareSemverSpec(rawSpec, rule.to) > 0
       ) {
         downgrades.push({ field, name, from: rawSpec, to: next })
         continue
