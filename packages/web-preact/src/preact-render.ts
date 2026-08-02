@@ -41,6 +41,7 @@ const hasBunResolveSync = typeof bunResolver?.resolveSync === "function"
 
 // Cache the in-flight Promises (not the modules) so concurrent first renders share one import each.
 let cachedSync: Promise<PreactRenderToString> | undefined
+let loadedSync: PreactRenderToString | undefined
 let cachedStream: Promise<PreactRenderToStream> | undefined
 
 /**
@@ -54,9 +55,14 @@ function appRoot(): string {
 }
 
 /** Get `preact-render-to-string` bound to the consumer app's `preact`. Cached after the first call. */
-export function preactRenderToString(): Promise<PreactRenderToString> {
-  if (cachedSync !== undefined) return cachedSync
-  cachedSync = load<PreactRenderToString>("preact-render-to-string")
+export function preactRenderToString(): PreactRenderToString | Promise<PreactRenderToString> {
+  if (loadedSync !== undefined) return loadedSync
+  if (cachedSync === undefined) {
+    cachedSync = load<PreactRenderToString>("preact-render-to-string").then((loaded) => {
+      loadedSync = loaded
+      return loaded
+    })
+  }
   return cachedSync
 }
 

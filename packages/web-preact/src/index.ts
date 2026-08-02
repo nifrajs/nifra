@@ -14,11 +14,15 @@ export const preactAdapter: RenderAdapter = {
   // Synchronous one-pass render for non-deferred pages (renderPage's buffered fast path). The sync
   // `renderToString` emits the same markup as the stream renderer without the chunking machinery.
   //
-  // Async because the renderer module is resolved lazily (from the consumer app's node_modules under Bun
-  // runtime SSR - see ./preact-render). `RenderAdapter.renderToString` permits a Promise; renderPage awaits.
-  async renderToString(chain, props) {
-    const { renderToString } = await preactRenderToString()
-    return renderToString(compose(chain, props))
+  // The first render resolves the renderer lazily (from the consumer app's node_modules under Bun
+  // runtime SSR - see ./preact-render). Once loaded, return the string directly so renderPage can use
+  // its synchronous buffered fast path on every subsequent request.
+  renderToString(chain, props) {
+    const loaded = preactRenderToString()
+    if (loaded instanceof Promise) {
+      return loaded.then(({ renderToString }) => renderToString(compose(chain, props)))
+    }
+    return loaded.renderToString(compose(chain, props))
   },
   async renderToStream(chain, props) {
     // `renderToReadableStream` yields a Web ReadableStream<Uint8Array>; <Suspense> boundaries

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { unlinkSync } from "node:fs"
-import { assertRenderAdapterConformance } from "@nifrajs/web"
+import { assertRenderAdapterConformance, renderPageResult } from "@nifrajs/web"
 import { createComponent, createResource, Suspense } from "solid-js"
 import { solidAdapter, solidBunPlugin } from "../src/index.ts"
 
@@ -56,6 +56,19 @@ test("hydrationHead returns Solid's hydration bootstrap (the _$HY registry)", ()
   const head = solidAdapter.hydrationHead()
   expect(head.length).toBeGreaterThan(0)
   expect(head).toContain("_$HY")
+})
+
+test("hydrate:false omits Solid's hydration bootstrap from the document", async () => {
+  const Page = () => "STATIC"
+  const result = await renderPageResult({
+    adapter: solidAdapter,
+    chain: [Page],
+    data: null,
+    hydrate: false,
+  })
+  const html = result.toResponse ? await result.toResponse().text() : ""
+  expect(html).toContain("STATIC")
+  expect(html).not.toContain("_$HY")
 })
 
 test("solidBunPlugin compiles a .tsx through Solid's Babel transform", async () => {

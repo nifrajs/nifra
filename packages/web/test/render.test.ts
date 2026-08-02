@@ -904,6 +904,7 @@ test("renderPage loads islandScripts on a STATIC page (hydrate:false) with no fr
   expect(html.split("<body>")[0]).toContain('<link rel="modulepreload" href="/assets/island.js">')
   expect(html).not.toContain("/c.js") // no framework client entry on a static page
   expect(html).not.toContain("__NIFRA_DATA__") // no serialized loader data either
+  expect(html).not.toContain("<!--hydration-head-->") // static pages do not need the adapter bootstrap
 })
 
 test("renderPage escapes islandScripts URLs (no attribute breakout)", async () => {
