@@ -1815,6 +1815,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **MockableRoute** _(interface)_ - `interface MockableRoute`
   Minimal route shape returned by `app.routes()`.
 - **UnsupportedMockSchemaError** _(class)_ - `class UnsupportedMockSchemaError`
+- **autoReflectJsonSchema** _(function)_ - `autoReflectJsonSchema: (schema: unknown) => JsonSchema | undefined`
+  Derive a JSON Schema from a zod Standard Schema, or `undefined` for anything else (non-zod vendors, zod not installed, unconvertible schemas). Safe as an always-on default: it can only ever turn an opaque schema inspectable, never change one that already carries JSON Schema metadata.
 - **createMockServer** _(function)_ - `createMockServer: (app: MockableApp, options?: MockServerOptions | undefined) => MockServer`
   Create a mock server from a Nifra app's route definitions. For each route with a `schema.response`, generates a handler returning fake data that matches the response schema structure. Routes without response schemas return `{}`.
 - **generateMockValue** _(function)_ - `generateMockValue: (schema: unknown, fieldName?: string | undefined, rng?: (() => number) | undefined) => unknown`

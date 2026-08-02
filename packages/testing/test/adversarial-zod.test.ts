@@ -32,11 +32,25 @@ describe("zod reflection bridge", () => {
     expect(report.results.every((result) => result.ok)).toBe(true)
   })
 
-  test("without the hook, the same zod route still reports NO_WITNESS (unchanged default)", async () => {
-    const app = server().post("/users", { body: z.object({ name: z.string() }) }, () => ({
+  test("with NO hook, a zod route lights up automatically (vendor-sniffed default)", async () => {
+    // zod is installed here, so the default `autoReflectJsonSchema` recognizes the `~standard.vendor`
+    // tag and converts - zero wiring, no NO_WITNESS. This is the out-of-the-box path.
+    const app = server().post("/users", { body: z.object({ name: z.string().min(2) }) }, () => ({
       ok: true,
     }))
     const report = await runAdversarialContract(app, { seed: 7 })
+    expect(report.gaps.filter((gap) => gap.code === "NO_WITNESS")).toHaveLength(0)
+    expect(report.results.some((result) => result.mutation?.includes("below-minLength"))).toBe(true)
+  })
+
+  test("an explicit `() => undefined` hook opts out back to opaque (NO_WITNESS)", async () => {
+    const app = server().post("/users", { body: z.object({ name: z.string() }) }, () => ({
+      ok: true,
+    }))
+    const report = await runAdversarialContract(app, {
+      seed: 7,
+      reflectJsonSchema: () => undefined,
+    })
     expect(report.gaps.some((gap) => gap.code === "NO_WITNESS")).toBe(true)
   })
 })

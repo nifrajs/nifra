@@ -13,7 +13,7 @@ import {
   reflectRoutes,
   type SchemaReflection,
 } from "@nifrajs/core/reflection"
-import { generateMockValue } from "@nifrajs/mock"
+import { autoReflectJsonSchema, generateMockValue } from "@nifrajs/mock"
 
 const DEFAULT_ORIGIN = "http://nifra.contract"
 const DEFAULT_SEED = 0x4e_49_46_52
@@ -104,6 +104,11 @@ export interface AdversarialContractOptions {
    * is undefined; a non-undefined return turns on witness synthesis AND constraint-driven mutation
    * generation for that route. Fail-safe: throwing or returning undefined leaves the schema opaque
    * (NO_WITNESS, as today). Ready-made for zod: `import { zodJsonSchema } from "@nifrajs/testing/zod"`.
+   *
+   * Defaults to `@nifrajs/mock`'s `autoReflectJsonSchema`, which recognizes zod by its Standard Schema
+   * vendor tag and converts via `z.toJSONSchema` when zod is installed - so zod routes get witnesses and
+   * constraint-driven mutations with no wiring. Pass a hook to override, or `() => undefined` to force
+   * every opaque schema to stay opaque.
    */
   readonly reflectJsonSchema?: (schema: unknown) => JsonSchema | undefined
 }
@@ -835,7 +840,10 @@ async function buildLaboratories(
         const resolved = await resolveInput(
           routeKey,
           "body",
-          withReflectedJsonSchema(route.schema.body, options.reflectJsonSchema),
+          withReflectedJsonSchema(
+            route.schema.body,
+            options.reflectJsonSchema ?? autoReflectJsonSchema,
+          ),
           witness,
           seed,
           maxWitnessBytes,
@@ -849,7 +857,10 @@ async function buildLaboratories(
       const resolved = await resolveInput(
         routeKey,
         "query",
-        withReflectedJsonSchema(route.schema.query, options.reflectJsonSchema),
+        withReflectedJsonSchema(
+          route.schema.query,
+          options.reflectJsonSchema ?? autoReflectJsonSchema,
+        ),
         witness,
         seed,
         maxWitnessBytes,

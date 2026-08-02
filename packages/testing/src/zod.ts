@@ -1,8 +1,13 @@
 /**
  * `@nifrajs/testing/zod` - bridge a zod schema to the inspectable JSON Schema the adversarial laboratory
  * and `@nifrajs/mock` generate from. zod implements Standard Schema (nifra already VALIDATES with it) but
- * carries no `.jsonSchema`, so without this the laboratory reports NO_WITNESS for every zod route and emits
- * only generic type-confusion mutations, and the mock server returns `{}` for zod responses. Wire it in:
+ * carries no `.jsonSchema`, so without a bridge the laboratory reports NO_WITNESS for every zod route and
+ * emits only generic type-confusion mutations, and the mock server returns `{}` for zod responses.
+ *
+ * Since the vendor-sniffing default (`@nifrajs/mock`'s `autoReflectJsonSchema`), the laboratory and the
+ * mock server apply this bridge AUTOMATICALLY when zod is installed - no wiring. This module remains the
+ * EXPLICIT form: pass it when you want the conversion pinned regardless of the default's behavior, or as
+ * the base of a custom hook that handles more vendors:
  *
  *   import { zodJsonSchema } from "@nifrajs/testing/zod"
  *   await assertAdversarialContract(app, { reflectJsonSchema: zodJsonSchema })

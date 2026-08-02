@@ -10,6 +10,7 @@ Contract-based mock server - reads route schemas and generates fake responses.
 
 ## Key exports
 
+- **autoReflectJsonSchema** _(function)_ - `autoReflectJsonSchema: (schema: unknown) => JsonSchema | undefined`
 - **createMockServer** _(function)_ - `createMockServer: (app: MockableApp, options?: MockServerOptions | undefined) => MockServer`
 - **generateMockValue** _(function)_ - `generateMockValue: (schema: unknown, fieldName?: string | undefined, rng?: (() => number) | undefined) => unknown`
 - **UnsupportedMockSchemaError** _(class)_ - `class UnsupportedMockSchemaError`

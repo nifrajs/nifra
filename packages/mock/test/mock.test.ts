@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { createMockServer, generateMockValue, UnsupportedMockSchemaError } from "../src/index.ts"
+import {
+  autoReflectJsonSchema,
+  createMockServer,
+  generateMockValue,
+  UnsupportedMockSchemaError,
+} from "../src/index.ts"
 
 describe("generateMockValue", () => {
   test("generates string values", () => {
@@ -248,5 +253,50 @@ describe("createMockServer", () => {
       { method: "GET", path: "/a" },
       { method: "POST", path: "/b" },
     ])
+  })
+})
+
+describe("autoReflectJsonSchema - zod routes mock real data with no wiring", () => {
+  test("a zod response schema produces real mock data, not {}", async () => {
+    const { z } = await import("zod")
+    const fakeApp = {
+      routes: () => [
+        {
+          method: "GET",
+          path: "/profile",
+          schema: { response: z.object({ name: z.string(), age: z.number().int().min(0) }) },
+        },
+      ],
+    }
+    const mock = createMockServer(fakeApp, { seed: 42 })
+    const res = await mock.fetch(new Request("http://localhost/profile"))
+    const body = (await res.json()) as { name?: unknown; age?: unknown }
+    expect(typeof body.name).toBe("string")
+    expect(typeof body.age).toBe("number")
+  })
+
+  test("recognizes only the zod vendor; other opaque validators stay {} (fail-safe)", async () => {
+    const opaque = {
+      "~standard": { version: 1, vendor: "someone-else", validate: (v: unknown) => ({ value: v }) },
+    }
+    expect(autoReflectJsonSchema(opaque)).toBeUndefined()
+    expect(autoReflectJsonSchema(undefined)).toBeUndefined()
+    expect(autoReflectJsonSchema("nope")).toBeUndefined()
+    const fakeApp = { routes: () => [{ method: "GET", path: "/x", schema: { response: opaque } }] }
+    const mock = createMockServer(fakeApp, { seed: 42 })
+    const res = await mock.fetch(new Request("http://localhost/x"))
+    expect(await res.json()).toEqual({})
+  })
+
+  test("an explicit hook overrides the auto default", async () => {
+    const { z } = await import("zod")
+    const fakeApp = {
+      routes: () => [
+        { method: "GET", path: "/y", schema: { response: z.object({ n: z.number() }) } },
+      ],
+    }
+    const mock = createMockServer(fakeApp, { seed: 42, reflectJsonSchema: () => undefined })
+    const res = await mock.fetch(new Request("http://localhost/y"))
+    expect(await res.json()).toEqual({})
   })
 })

@@ -28,6 +28,14 @@
   "dependencies": {
     "@nifrajs/core": "workspace:*"
   },
+  "peerDependencies": {
+    "zod": ">=4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "zod": {
+      "optional": true
+    }
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/nifrajs/nifra.git",
