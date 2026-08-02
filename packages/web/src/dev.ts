@@ -54,9 +54,8 @@ import {
 import { dirname, relative, resolve } from "node:path"
 import { type BuildClientOptions, buildClient } from "./build.ts"
 import { type DevEntryMatch, resolveDevEntry } from "./bun-dev-entry.ts"
-import { renderDiagnosticOverlay } from "./dev-error.ts"
+import { createDevDiagnostics } from "./dev-diagnostics.ts"
 import { explainBindFailure } from "./dev-port.ts"
-import { buildDiagnostic, type Diagnostic, LAST_ERROR_PATH } from "./diagnostic.ts"
 import { discoverRoutes } from "./fs.ts"
 import { DEFAULT_DEV_PORT, generateClientEntry } from "./index.ts"
 import { servePublicDir } from "./public-dir.ts"
@@ -245,13 +244,13 @@ export function injectStyles(html: string, styles: readonly string[]): string {
 export async function createDevServer(options: DevServerOptions): Promise<DevServer> {
   const { createApp, port = DEFAULT_DEV_PORT, routesDir, clientModule } = options
   const serve = bunServe()
-  // The most recent SSR failure as a structured Diagnostic, scoped to THIS server. Served at
-  // LAST_ERROR_PATH so an agent driving the dev server reads the exact failure (code, codeframe, fix) as
-  // JSON instead of scraping the overlay. Dev-only: the endpoint exists solely on this dev server.
-  let lastDiagnostic: Diagnostic | undefined
   // The app root. `routesDir` is `<app>/routes` by convention, so its parent is the project - the one
   // place a generated entry can sit and still resolve the app's imports.
   const root = resolve(routesDir, "..")
+  // The most recent SSR failure as a structured Diagnostic, scoped to THIS server. Served at
+  // LAST_ERROR_PATH so an agent driving the dev server reads the exact failure (code, codeframe, fix) as
+  // JSON instead of scraping the overlay. Shared with the Vite adapter so the endpoint can't drift.
+  const devDiagnostics = createDevDiagnostics(root)
   const devDir = resolve(root, DEV_DIR)
   const entryPath = resolve(devDir, "entry.tsx")
   const htmlPath = resolve(devDir, "entry.html")
@@ -362,22 +361,10 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
           const entry = await currentEntry()
           return new Response(null, { status: 307, headers: { location: entry.src } })
         }
-        if (url.pathname === LAST_ERROR_PATH) {
-          // The structured form of the overlay, for an agent driving the dev server. No-store so a
-          // stale failure is never cached; a benign shape (not an error) when nothing has failed yet.
-          return Response.json(
-            lastDiagnostic ?? {
-              code: "NIFRA_NONE",
-              message: "No error captured since the dev server started.",
-            },
-            {
-              headers: {
-                "cache-control": "no-store",
-                "x-content-type-options": "nosniff",
-                "x-nifra-diagnostic": "true",
-              },
-            },
-          )
+        if (devDiagnostics.isLastErrorPath(url.pathname)) {
+          // The structured form of the overlay, for an agent driving the dev server (shared surface).
+          const { body, headers } = devDiagnostics.lastError()
+          return new Response(body, { headers })
         }
         // Static probe before routing; a miss returns undefined and falls through, so no route is
         // shadowed and a page render never pays a filesystem stat (extension-less paths skip it).
@@ -397,14 +384,12 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
             headers,
           })
         } catch (err) {
-          // Build the structured Diagnostic once: it renders the overlay AND is what LAST_ERROR_PATH
-          // serves, so the human and the agent see the identical failure.
-          const diagnostic = buildDiagnostic(err, {
-            request: { method: req.method, url: `${url.pathname}${url.search}` },
-            root,
+          // One Diagnostic drives both surfaces: the overlay returned here and the JSON at LAST_ERROR_PATH.
+          const html = devDiagnostics.capture(err, {
+            method: req.method,
+            url: `${url.pathname}${url.search}`,
           })
-          lastDiagnostic = diagnostic
-          return new Response(renderDiagnosticOverlay(diagnostic), {
+          return new Response(html, {
             status: 500,
             headers: { "content-type": "text/html; charset=utf-8" },
           })

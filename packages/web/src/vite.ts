@@ -17,9 +17,8 @@ import {
   type ServerResponse,
 } from "node:http"
 import { relative, resolve as resolvePath } from "node:path"
-import { renderDiagnosticOverlay } from "./dev-error.ts"
+import { createDevDiagnostics } from "./dev-diagnostics.ts"
 import { listenOrExplain } from "./dev-port.ts"
-import { buildDiagnostic, type Diagnostic, LAST_ERROR_PATH } from "./diagnostic.ts"
 import { discoverRoutes } from "./fs.ts"
 import { DEFAULT_DEV_PORT, generateClientEntry } from "./index.ts"
 import { vitePublicEnvPrefix } from "./internal/server-boundary.ts"
@@ -300,22 +299,16 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   // `vite`, which is assigned just below before the server starts listening.
   let vite!: ViteLike
   let app: FetchApp
-  let lastDiagnostic: Diagnostic | undefined
+  // The most recent SSR failure, served as JSON at LAST_ERROR_PATH. Shared with the Bun adapter so the
+  // endpoint and its headers can't drift between the two dev servers.
+  const devDiagnostics = createDevDiagnostics(root)
 
   const server: NodeHttpServer = createHttpServer((req, res) => {
     // Keep this before Vite's middleware: it is an agent endpoint owned by nifra, not a file or app route.
-    if ((req.url ?? "/").split("?", 1)[0] === LAST_ERROR_PATH) {
-      const body = JSON.stringify(
-        lastDiagnostic ?? {
-          code: "NIFRA_NONE",
-          message: "No error captured since the dev server started.",
-        },
-      )
+    if (devDiagnostics.isLastErrorPath((req.url ?? "/").split("?", 1)[0] ?? "/")) {
+      const { body, headers } = devDiagnostics.lastError()
       res.statusCode = 200
-      res.setHeader("content-type", "application/json; charset=utf-8")
-      res.setHeader("cache-control", "no-store")
-      res.setHeader("x-content-type-options", "nosniff")
-      res.setHeader("x-nifra-diagnostic", "true")
+      for (const [key, value] of Object.entries(headers)) res.setHeader(key, value)
       res.end(body)
       return
     }
@@ -342,14 +335,13 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
           // Source-map the stack first (Vite maps the bundled frames back to your `.ts`), then render
           // the readable dev overlay instead of a bare text dump. Dev-only - production maps to `_error`.
           if (err instanceof Error) vite.ssrFixStacktrace(err)
-          const diagnostic = buildDiagnostic(err, {
-            root,
-            request: { method: req.method ?? "GET", url: req.url ?? "/" },
+          const html = devDiagnostics.capture(err, {
+            method: req.method ?? "GET",
+            url: req.url ?? "/",
           })
-          lastDiagnostic = diagnostic
           res.statusCode = 500
           res.setHeader("content-type", "text/html; charset=utf-8")
-          res.end(renderDiagnosticOverlay(diagnostic))
+          res.end(html)
         }
       })()
     })
