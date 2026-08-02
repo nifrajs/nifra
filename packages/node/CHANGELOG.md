@@ -1,5 +1,12 @@
 # @nifrajs/node
 
+## 2.6.0
+
+### Patch Changes
+
+- e6349e5: Security hardening across input parsing and code generation. Every regex that runs on caller-influenced input (URL paths, route patterns, stylesheet and SVG sources, manifest text) is now linear - no polynomial backtracking on adversarial input. SVG preamble stripping and tag removal can no longer splice removed delimiters into new markers. Static file serving rejects `..` traversal in the request form outright and confines the resolved path with a `relative()` containment check. Generated code embeds strings through an escaper that neutralizes `</script>` breakout and the U+2028/U+2029 line separators, and HTML entity decoding resolves `&amp;` last so double-encoded entities cannot double-unescape.
+- 994a944: `serve` no longer passes an explicit `undefined` hostname to `http.Server.listen`. Node accepts that overload, but Bun's Node-compatible server can misinterpret it (especially with `port: 0`) as a failed bind; omitting the argument selects the same default host with an unambiguous overload.
+
 ## 2.5.0
 
 ## 2.4.0
