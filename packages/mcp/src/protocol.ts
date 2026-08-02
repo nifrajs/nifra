@@ -10,7 +10,14 @@
  * it is additive - a tool whose handler returns a plain `string` behaves exactly as before.
  */
 
-export const PROTOCOL_VERSION = "2024-11-05"
+/** The protocol revision this server advertises by default. A handshake-era version - the HTTP transport
+ * still uses `initialize`; current clients reach it through their backward-compatibility fallback.
+ * `initialize` echoes the client's own requested version instead when it's one this server also speaks
+ * ({@link SUPPORTED_PROTOCOL_VERSIONS}). */
+export const PROTOCOL_VERSION = "2025-06-18"
+/** The handshake-era revisions this server speaks. `initialize` echoes the client's requested
+ * `protocolVersion` when it's in this set (the smoothest negotiation), else answers {@link PROTOCOL_VERSION}. */
+const SUPPORTED_PROTOCOL_VERSIONS = new Set(["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"])
 
 /** The MIME type a UI resource MUST use so a host recognizes it as an MCP App widget (SEP-1865). */
 export const UI_MIME = "text/html;profile=mcp-app"
@@ -229,9 +236,16 @@ export async function handleRpc(
   const state = options.state ?? createMcpProtocolState()
 
   switch (method) {
-    case "initialize":
+    case "initialize": {
+      // Handshake version negotiation: answer with the client's requested version when we speak it too,
+      // otherwise our default. The client then decides whether our answer is acceptable.
+      const requested = params?.protocolVersion
+      const protocolVersion =
+        typeof requested === "string" && SUPPORTED_PROTOCOL_VERSIONS.has(requested)
+          ? requested
+          : PROTOCOL_VERSION
       return rpcResult(rid, {
-        protocolVersion: PROTOCOL_VERSION,
+        protocolVersion,
         capabilities: {
           tools: {},
           ...(resources.length > 0 ? { resources: {} } : {}),
@@ -246,6 +260,7 @@ export async function handleRpc(
         },
         serverInfo,
       })
+    }
     case "notifications/initialized":
       return null
     case "notifications/cancelled": {

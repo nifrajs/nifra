@@ -1538,8 +1538,8 @@ Every public export of every package and documented subpath - name, kind, signat
   A render-intent hint for GENERATIVE hosts: how to present the result's `structuredContent` when the host renders its OWN themed UI rather than an iframe widget. The host maps the intent to a component in its design system (a shadcn/Tailwind table, form, metric card, …). Open union - pick a known ta…
 - **McpWidget** _(interface)_ - `interface McpWidget`
   A widget: the resource to register on the server, its `ui://` URI, and the `_meta` link for its tool.
-- **PROTOCOL_VERSION** _(const)_ - `PROTOCOL_VERSION: "2024-11-05"`
-  The pure MCP (Model Context Protocol) JSON-RPC dispatch - no I/O, no `Bun.*`, no side effects, so it unit-tests cleanly. A transport (stdio in `@nifrajs/cli`'s `mcp.ts`, Streamable-HTTP in {@link ./http.ts}) wires this to a byte stream; the tools/resources are injected, so the protocol logic is exe…
+- **PROTOCOL_VERSION** _(const)_ - `PROTOCOL_VERSION: "2025-06-18"`
+  The protocol revision this server advertises by default. A handshake-era version - the HTTP transport still uses `initialize`; current clients reach it through their backward-compatibility fallback. `initialize` echoes the client's own requested version instead when it's one this server also speaks…
 - **StandardIssue** _(interface)_ - `interface StandardIssue`
 - **StandardResult** _(type)_ - `type StandardResult<Output> = | { readonly value: Output; readonly issues?: undefined } | { readonly issues: ReadonlyArray<StandardIssue> }`
 - **StandardSchemaV1** _(interface)_ - `interface StandardSchemaV1<Input = unknown, Output = Input>`
@@ -1590,8 +1590,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **McpToolContext** _(interface)_ - `interface McpToolContext`
 - **McpToolResult** _(interface)_ - `interface McpToolResult`
   The rich result a tool handler may return instead of a bare string (MCP Apps). `content` is the model-facing text (also shown by text-only hosts); `structuredContent` is the data a linked `ui://` widget renders and is deliberately NOT added to the model's context; `_meta` carries the `ui.resourceUr…
-- **PROTOCOL_VERSION** _(const)_ - `PROTOCOL_VERSION: "2024-11-05"`
-  The pure MCP (Model Context Protocol) JSON-RPC dispatch - no I/O, no `Bun.*`, no side effects, so it unit-tests cleanly. A transport (stdio in `@nifrajs/cli`'s `mcp.ts`, Streamable-HTTP in {@link ./http.ts}) wires this to a byte stream; the tools/resources are injected, so the protocol logic is exe…
+- **PROTOCOL_VERSION** _(const)_ - `PROTOCOL_VERSION: "2025-06-18"`
+  The protocol revision this server advertises by default. A handshake-era version - the HTTP transport still uses `initialize`; current clients reach it through their backward-compatibility fallback. `initialize` echoes the client's own requested version instead when it's one this server also speaks…
 - **UI_EXTENSION_KEY** _(const)_ - `UI_EXTENSION_KEY: "io.modelcontextprotocol/ui"`
   The `capabilities.extensions` key advertising UI support in the `initialize` result (SEP-1865).
 - **UI_MIME** _(const)_ - `UI_MIME: "text/html;profile=mcp-app"`

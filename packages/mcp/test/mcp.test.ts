@@ -5,6 +5,8 @@ import {
   defineMcpWidget,
   handleRpc,
   type McpTool,
+  PROTOCOL_VERSION,
+  respondMcpHttp,
   type StandardSchemaV1,
   UI_EXTENSION_KEY,
   UI_MIME,
@@ -289,5 +291,70 @@ describe("createMcpServer.fetch - end to end over HTTP", () => {
   test("handle() dispatches a single JSON-RPC message headlessly", async () => {
     const res = await mcp.handle({ id: 9, method: "tools/list" })
     expect((res as { result: { tools: unknown[] } }).result.tools).toHaveLength(1)
+  })
+})
+
+describe("respondMcpHttp - transport hardening", () => {
+  const serve = (request: Request, options = {}): Promise<Response> =>
+    respondMcpHttp(request, [ordersTool], INFO, options)
+  const post = (body: unknown, headers: Record<string, string> = {}): Request =>
+    new Request("http://x/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(body),
+    })
+
+  test("OPTIONS preflight allows the headers a browser MCP client sends", async () => {
+    const res = await serve(new Request("http://x/mcp", { method: "OPTIONS" }))
+    expect(res.status).toBe(204)
+    const allow = res.headers.get("access-control-allow-headers") ?? ""
+    for (const header of ["mcp-protocol-version", "mcp-method", "mcp-name", "authorization"]) {
+      expect(allow).toContain(header)
+    }
+  })
+
+  test("a notification (no id) is acknowledged with 202 and an empty body", async () => {
+    const res = await serve(post({ jsonrpc: "2.0", method: "notifications/initialized" }))
+    expect(res.status).toBe(202)
+    expect(await res.text()).toBe("")
+  })
+
+  test("GET probing the removed SSE stream is 405; a plain GET is the health page", async () => {
+    const sse = await serve(new Request("http://x/mcp", { headers: { accept: "text/event-stream" } }))
+    expect(sse.status).toBe(405)
+    const health = await serve(new Request("http://x/mcp"))
+    expect(health.status).toBe(200)
+  })
+
+  test("with an allowlist, a foreign Origin is rejected 403 before the body is read", async () => {
+    const options = { allowedOrigins: ["http://localhost:8787"] }
+    const bad = await serve(
+      post({ jsonrpc: "2.0", id: 1, method: "initialize" }, { origin: "http://evil.test" }),
+      options,
+    )
+    expect(bad.status).toBe(403)
+    const ok = await serve(
+      post({ jsonrpc: "2.0", id: 1, method: "initialize" }, { origin: "http://localhost:8787" }),
+      options,
+    )
+    expect(ok.status).toBe(200)
+    expect(ok.headers.get("access-control-allow-origin")).toBe("http://localhost:8787")
+  })
+
+  test("initialize echoes a protocol version the server also speaks, else its default", async () => {
+    const echoed = await (
+      await serve(
+        post({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25" } }),
+      )
+    ).json()
+    expect((echoed as { result: { protocolVersion: string } }).result.protocolVersion).toBe("2025-11-25")
+    const fallback = await (
+      await serve(
+        post({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "1999-01-01" } }),
+      )
+    ).json()
+    expect((fallback as { result: { protocolVersion: string } }).result.protocolVersion).toBe(
+      PROTOCOL_VERSION,
+    )
   })
 })

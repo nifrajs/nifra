@@ -24,7 +24,7 @@ Build MCP servers - and MCP Apps (interactive `ui://` widgets, SEP-1865) - for a
 - **respondMcpHttp** _(function)_ - `respondMcpHttp: (request: Request, tools: McpTool[], serverInfo: { name: string; version: string; }, options?: McpHttpOptions) => Promise<R…` · from `@nifrajs/mcp`
 - **uiResourceMeta** _(function)_ - `uiResourceMeta: (uri: string) => Record<string, unknown>` · from `@nifrajs/mcp`
 - **widgetDocument** _(function)_ - `widgetDocument: (opts: DefineMcpWidgetOptions) => string` · from `@nifrajs/mcp`
-- **PROTOCOL_VERSION** _(const)_ - `PROTOCOL_VERSION: "2024-11-05"` · from `@nifrajs/mcp`
+- **PROTOCOL_VERSION** _(const)_ - `PROTOCOL_VERSION: "2025-06-18"` · from `@nifrajs/mcp`
 - **rpcError** _(const)_ - `rpcError: (id: JsonRpcId, code: number, message: string) => JsonRpcResponse` · from `@nifrajs/mcp`
 - **rpcResult** _(const)_ - `rpcResult: (id: JsonRpcId, value: unknown) => JsonRpcResponse` · from `@nifrajs/mcp`
 - **UI_EXTENSION_KEY** _(const)_ - `UI_EXTENSION_KEY: "io.modelcontextprotocol/ui"` · from `@nifrajs/mcp`
