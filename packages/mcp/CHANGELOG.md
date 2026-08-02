@@ -1,5 +1,12 @@
 # @nifrajs/mcp
 
+## 2.5.0
+
+### Minor Changes
+
+- 3731c69: Add the 2026-07-28 modern MCP transport alongside the handshake, so a server speaks both eras on one endpoint. It implements `server/discover` (advertising supported versions, capabilities, and identity), per-request protocol-version negotiation (an `UnsupportedProtocolVersionError` for a version the server does not speak), the `resultType` completion envelope with cache hints on list/read results, and - over HTTP - validation of the mirrored `Mcp-Method`/`Mcp-Name`/`MCP-Protocol-Version` headers against the request body (a `HeaderMismatch` answered with 400) plus the spec's status codes (404 for an unknown method). Clients that still use the `initialize` handshake are served exactly as before. `createMcpServer` and the HTTP handler gain an `instructions` field surfaced in discovery.
+- 0740f77: Harden the Streamable HTTP transport so a hosted MCP server loads cleanly as a remote connector. The CORS preflight now allows the request headers browser-based clients send (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`, `Authorization`, `Accept`, `Last-Event-ID`) and exposes the protocol-version header. `initialize` negotiates the protocol version, echoing the client's requested revision when the server also speaks it. Notifications are acknowledged with `202 Accepted`; a `GET` that requests `text/event-stream` returns `405`; and `respondMcpHttp` gains an `allowedOrigins` option that rejects any other browser origin with `403` as a DNS-rebinding guard (omitted by default, so a public server stays open).
+
 ## 2.4.0
 
 ## 2.3.0
