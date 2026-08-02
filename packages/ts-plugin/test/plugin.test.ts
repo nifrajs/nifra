@@ -15,6 +15,14 @@ test("resolveRouteFile maps a concrete path to its route file via nifra's matche
   expect(resolveRouteFile("/users/42", ROUTES)).toBe("routes/users/[id].tsx")
 })
 
+test("resolveRouteFile applies runtime specificity instead of manifest order", () => {
+  const routes = [
+    { pattern: "/users/:id", file: "routes/users/[id].tsx" },
+    { pattern: "/users/new", file: "routes/users/new.tsx" },
+  ]
+  expect(resolveRouteFile("/users/new", routes)).toBe("routes/users/new.tsx")
+})
+
 test("resolveRouteFile ignores query/hash and rejects non-paths and non-matches", () => {
   expect(resolveRouteFile("/about?tab=x", ROUTES)).toBe("routes/about.tsx")
   expect(resolveRouteFile("/about#top", ROUTES)).toBe("routes/about.tsx")

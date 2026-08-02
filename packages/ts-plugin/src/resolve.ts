@@ -4,12 +4,36 @@
  * pattern using nifra's OWN router matcher (`@nifrajs/core/pattern`), so a path resolves here exactly as
  * it would at runtime - the plugin never re-derives the file-based routing rules.
  */
-import { compileRoutePattern, matchRoutePattern } from "@nifrajs/core/pattern"
+import {
+  compareRoutePatternSpecificity,
+  compileRoutePattern,
+  matchRoutePattern,
+} from "@nifrajs/core/pattern"
 
 /** A route as the plugin needs it: its URL pattern and the source file that serves it. */
 export interface RouteLocation {
   readonly pattern: string
   readonly file: string
+}
+
+type CompiledRouteLocation = {
+  readonly route: RouteLocation
+  readonly pattern: ReturnType<typeof compileRoutePattern>
+}
+
+// The language service asks for definitions repeatedly while the cursor moves. Cache the immutable
+// compilation/specificity sort by manifest identity so each query only performs route matching; a new
+// manifest array naturally gets a fresh entry when routes are added or removed.
+const compiledRouteCache = new WeakMap<readonly RouteLocation[], readonly CompiledRouteLocation[]>()
+
+function compiledRoutes(routes: readonly RouteLocation[]): readonly CompiledRouteLocation[] {
+  const cached = compiledRouteCache.get(routes)
+  if (cached !== undefined) return cached
+  const compiled = routes
+    .map((route) => ({ route, pattern: compileRoutePattern(route.pattern) }))
+    .sort((left, right) => compareRoutePatternSpecificity(left.pattern, right.pattern))
+  compiledRouteCache.set(routes, compiled)
+  return compiled
 }
 
 /**
@@ -23,8 +47,10 @@ export function resolveRouteFile(
 ): string | undefined {
   if (!path.startsWith("/")) return undefined
   const pathname = path.split(/[?#]/, 1)[0] ?? path
-  for (const route of routes) {
-    if (matchRoutePattern(compileRoutePattern(route.pattern), pathname).matched) return route.file
+  // Runtime/client routing sorts by specificity before matching, so a static route wins over a
+  // dynamic one regardless of manifest discovery order.
+  for (const { route, pattern } of compiledRoutes(routes)) {
+    if (matchRoutePattern(pattern, pathname).matched) return route.file
   }
   return undefined
 }

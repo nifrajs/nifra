@@ -54,6 +54,14 @@ for (const file of await readdir(dist, { recursive: true })) {
   if (rewritten !== source) await Bun.write(path, rewritten)
 }
 
+// TypeScript treats declarations under a `type: module` package as ESM even when the runtime export is
+// CommonJS. Give `require()` consumers a CJS declaration whose `export =` shape matches the factory
+// that tsserver actually receives; without this, attw warns that the package's types are ESM-only.
+await Bun.write(
+  `${dist}/index.d.cts`,
+  'import type * as ts from "typescript";\n\ndeclare function init(modules: { typescript: typeof ts }): ts.server.PluginModule;\n\nexport = init;\n',
+)
+
 // 3) Replace tsc's ESM `index.js` with a CommonJS factory: bundle `src/index.ts` to CJS, then force
 //    `module.exports === init` regardless of how the bundler shaped the default export (bare function, or
 //    a `{ default }` interop namespace). tsc's `resolve.js`/`.d.ts` (the ESM `./resolve` helper) stay.
