@@ -65,6 +65,18 @@ const OUTPUT = `{
   "diagnostics": []
 }`
 
+const HOSTED = `# Claude Code
+claude mcp add --transport http nifra-docs https://mcp.nifra.dev
+
+# Claude.ai (web or desktop): Settings -> Connectors -> Add custom connector -> https://mcp.nifra.dev
+# ChatGPT (developer mode):   Settings -> Connectors -> add the same URL
+
+# Cursor - .cursor/mcp.json
+# { "mcpServers": { "nifra-docs": { "url": "https://mcp.nifra.dev" } } }
+
+# VS Code - .vscode/mcp.json
+# { "servers": { "nifra-docs": { "type": "http", "url": "https://mcp.nifra.dev" } } }`
+
 export default function Agents() {
   return (
     <div className="prose">
@@ -97,6 +109,23 @@ export default function Agents() {
       <p>
         <code>nifra_types</code> also follows each package's <code>exports</code> map rather than
         scanning the build output, so it will not offer a type that is real but unimportable.
+      </p>
+
+      <h2>From any assistant, hosted</h2>
+      <p>
+        The teaching tools - <code>nifra_docs</code>, <code>nifra_example</code>,{" "}
+        <code>nifra_types</code>, <code>nifra_learn</code> - are also served, project-independent, at{" "}
+        <code>mcp.nifra.dev</code>. Add that one URL to any assistant and it learns Nifra from the same
+        verified corpora, with no local checkout. It is read-only and needs no key. The project tools
+        above still come from <code>nifra mcp</code> in your own repo, where they can see your routes.
+      </p>
+      <CodeBlock code={HOSTED} lang="bash" />
+      <p>
+        Cursor reads it in one click:{" "}
+        <a href="cursor://anysphere.cursor-deeplink/mcp/install?name=nifra-docs&config=eyJ1cmwiOiJodHRwczovL21jcC5uaWZyYS5kZXYifQ==">
+          add Nifra docs to Cursor
+        </a>
+        .
       </p>
 
       <h2>The gate to write against</h2>

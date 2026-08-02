@@ -111,6 +111,18 @@ nifra doctor           # undeclared imports + duplicate identity-sensitive insta
 nifra sync-manifest    # regenerate a web server-manifest.ts from routes/ without a full build
 ```
 
+**Learn nifra from any assistant.** The docs, example, and type tools are also hosted,
+project-independent, at `mcp.nifra.dev` - add that one URL to Claude, Cursor, VS Code, or ChatGPT and it
+learns nifra from the same verified corpora, no checkout. Read-only, no key.
+
+```sh
+claude mcp add --transport http nifra-docs https://mcp.nifra.dev
+# Cursor / VS Code: add { "url": "https://mcp.nifra.dev" } to .cursor/mcp.json or .vscode/mcp.json
+# Claude.ai / ChatGPT: Settings -> Connectors -> add the URL
+```
+
+See [Coding agents](https://nifra.dev/docs/agents) for per-client setup.
+
 Upgrading from 1.x? Run `nifra upgrade 2.0.0` as a dry-run, then follow the
 [Nifra 2.0 migration guide](https://nifra.dev/docs/migrate-2).
 
