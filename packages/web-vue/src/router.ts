@@ -35,7 +35,12 @@ export type { Blocker, BlockerFunction, BlockerState, NavigateFunction } from "@
 const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
 const EMPTY_SEARCH_REF: Ref<Record<string, unknown>> = shallowRef(EMPTY_SEARCH)
 
-const SEARCH_KEY: InjectionKey<Ref<Record<string, unknown>>> = Symbol("nifra-search")
+// `Symbol.for`, not `Symbol()`: in dev this module is evaluated twice in one process (the app's
+// server code under Bun provides; route modules through Vite's SSR runner inject), and `provide`/
+// `inject` match by key identity - a per-evaluation symbol makes `useSearch` SSR-render `{}` in dev.
+const SEARCH_KEY: InjectionKey<Ref<Record<string, unknown>>> = Symbol.for(
+  "nifra.web-vue.search",
+) as InjectionKey<Ref<Record<string, unknown>>>
 
 /**
  * The provider `compose` wraps the layout tree in. It `provide`s a `computed` view of its `value` prop,

@@ -2988,7 +2988,6 @@ _No named exports (side-effect entrypoint)._
 - **NavigateFunction** _(interface)_ - `interface NavigateFunction`
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
 - **SearchContext** _(const)_ - `SearchContext: import("preact").Context<Record<string, unknown>>`
-  The current route's validated search, provided by `compose` on SSR + client mount alike (derived from the URL via the shared `searchOfChain`). `{}` outside a nifra route tree. Read via {@link useSearch}.
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Blocker`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean (`useBlocker(isDirty)`) or a predicate `({ currentLocation, nextLocation }) => boolean`, and get back a {@link Blocker}. When a navigation (an anchor click, `u…
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
@@ -3118,7 +3117,6 @@ _No named exports (side-effect entrypoint)._
 - **Navigation** _(interface)_ - `interface Navigation`
   The current navigation state, mirroring the Remix `useNavigation()` shape for familiarity.
 - **RouterContext** _(const)_ - `RouterContext: import("react").Context<RouterContextValue>`
-  Router context. The default ({} params, "" path, {} search) is what a component sees when rendered outside a nifra route tree (the hooks stay defined, no throw, so a stray `useParams` degrades gracefully).
 - **RouterContextValue** _(interface)_ - `interface RouterContextValue`
   The current route the routing hooks read. Provided by `compose` on SSR + client mount alike.
 - **SearchParamsInit** _(type)_ - `type SearchParamsInit = URLSearchParams | Record<string, string | readonly string[]> | string`
@@ -3233,8 +3231,7 @@ _No named exports (side-effect entrypoint)._
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
 - **NavigateFunction** _(interface)_ - `interface NavigateFunction`
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
-- **SearchContext** _(const)_ - `SearchContext: import("solid-js").Context<Accessor<Record<string, unknown>> | undefined>`
-  The current route's validated search accessor, provided by `compose` on SSR + client mount alike (derived from the URL via the shared `searchOfChain`). Read via {@link useSearch}.
+- **SearchContext** _(const)_ - `SearchContext: Context<Accessor<Record<string, unknown>> | undefined>`
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Accessor<Blocker>`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a reactive {@link Blocker} accessor. When a navigation (an anchor click, `useNavi…
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`

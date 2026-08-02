@@ -26,8 +26,19 @@ export type { Blocker, BlockerFunction, BlockerState, NavigateFunction } from "@
 const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
 
 /** The current route's validated search, provided by `compose` on SSR + client mount alike (derived from
- * the URL via the shared `searchOfChain`). `{}` outside a nifra route tree. Read via {@link useSearch}. */
-export const SearchContext = createContext<Record<string, unknown>>(EMPTY_SEARCH)
+ * the URL via the shared `searchOfChain`). `{}` outside a nifra route tree. Read via {@link useSearch}.
+ *
+ * A `globalThis` singleton: in dev this module is evaluated twice in one process (the app's server
+ * code under Bun provides; route modules through Vite's SSR runner read), and Preact matches provider
+ * to reader by context object identity - two `createContext` results make `useSearch` SSR-render its
+ * empty default in dev. */
+const SEARCH_CONTEXT_SLOT = Symbol.for("nifra.web-preact.search-context")
+const searchContextSlot = globalThis as {
+  [SEARCH_CONTEXT_SLOT]?: ReturnType<typeof createContext<Record<string, unknown>>>
+}
+export const SearchContext =
+  searchContextSlot[SEARCH_CONTEXT_SLOT] ?? createContext<Record<string, unknown>>(EMPTY_SEARCH)
+searchContextSlot[SEARCH_CONTEXT_SLOT] = SearchContext
 
 /**
  * The route's typed, validated search params - the SAME value the loader received as `ctx.search`.

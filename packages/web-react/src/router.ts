@@ -66,13 +66,29 @@ const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
 
 /** Router context. The default ({} params, "" path, {} search) is what a component sees when rendered
  * outside a nifra route tree (the hooks stay defined, no throw, so a stray `useParams` degrades
- * gracefully). */
-export const RouterContext = createContext<RouterContextValue>({
-  params: EMPTY_PARAMS,
-  path: "",
-  search: EMPTY_SEARCH,
-  pending: false,
-})
+ * gracefully).
+ *
+ * A `globalThis` singleton (same registry idiom as `@nifrajs/web`'s `Symbol.for` signals), because in
+ * dev this module is evaluated TWICE in one process: the app's server code imports it under Bun (the
+ * adapter whose `compose` provides the context) while route modules import it through Vite's SSR
+ * runner (the components whose hooks read it). Two evaluations means two `createContext` results, and
+ * React matches providers to readers by object identity - so without the singleton, every routing hook
+ * SSR-renders its empty default in dev while the loader (same request!) sees the real values. React
+ * itself is deduped to one copy (`resolve.dedupe` in dev, `reactDedupePlugin` in builds), so the one
+ * shared context object is read by the one shared React. */
+const ROUTER_CONTEXT_SLOT = Symbol.for("nifra.web-react.router-context")
+const contextSlot = globalThis as {
+  [ROUTER_CONTEXT_SLOT]?: ReturnType<typeof createContext<RouterContextValue>>
+}
+export const RouterContext =
+  contextSlot[ROUTER_CONTEXT_SLOT] ??
+  createContext<RouterContextValue>({
+    params: EMPTY_PARAMS,
+    path: "",
+    search: EMPTY_SEARCH,
+    pending: false,
+  })
+contextSlot[ROUTER_CONTEXT_SLOT] = RouterContext
 
 /** Split a `pathname + search` into its parts. `search` keeps its leading `?` (like `location.search`);
  * an empty query yields `""`. */
