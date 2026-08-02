@@ -1,8 +1,9 @@
 /**
  * The PUBLIC nifra docs MCP - Streamable-HTTP transport exposing the project-INDEPENDENT tools
- * (`nifra_docs` + `nifra_example`) so any remote AI agent can learn nifra without a local checkout.
- * Both tools read the bundled corpus (llms-full.txt / examples.json shipped in this package) and ignore
- * `cwd`, so they reuse the exact definitions from {@link projectTools} - one source, no drift.
+ * (`nifra_docs`, `nifra_example`, `nifra_types`, `nifra_learn` + the `nifra_examples_app` MCP Apps widget)
+ * so any remote AI agent can learn nifra without a local checkout. They read the bundled corpus
+ * (llms-full.txt / examples.json / types.json shipped in this package) and ignore `cwd`, so they reuse the
+ * exact definitions from {@link projectTools} - one source, no drift.
  *
  * The transport itself (body cap, CORS, JSON-RPC dispatch) lives in `@nifrajs/mcp/http`; this module is
  * the docs-specific layer over it: it supplies the bundled corpus tools and the `nifra-docs` server info.
@@ -12,28 +13,37 @@
  */
 
 import { type McpHttpOptions, respondMcpHttp as respondMcpHttpCore } from "@nifrajs/mcp/http"
-import type { McpTool } from "@nifrajs/mcp/protocol"
+import { type McpTool, UI_MIME } from "@nifrajs/mcp/protocol"
 import { loadDocsCorpus } from "./docs-search.ts"
 import { loadExamplesCorpus } from "./examples.ts"
+import { examplesAppTool, examplesWidget } from "./mcp-app-tool.ts"
 import { docsTools } from "./mcp-docs-tools.ts"
 import { loadTypesCorpus } from "./types-search.ts"
 
 export type { McpHttpOptions } from "@nifrajs/mcp/http"
 export type { Example } from "./examples.ts"
-// Re-exported so a self-host (e.g. a Cloudflare-Pages `/mcp` worker route) gets the corpus-injectable
-// tool factory + the transport core from one entry: `import { respondMcpHttp, docsTools } from "@nifrajs/cli/mcp"`.
+// Re-exported so a self-host gets the corpus-injectable tool factories + the transport core from one
+// entry: `import { respondMcpHttp, docsTools, examplesAppTool } from "@nifrajs/cli/mcp"`.
+export { examplesAppTool, examplesWidget } from "./mcp-app-tool.ts"
 export { docsTools } from "./mcp-docs-tools.ts"
 export type { TypeEntry } from "./types-search.ts"
 
 // Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
 const VERSION = "2.3.0"
 const SERVER_INFO = { name: "nifra-docs", version: VERSION }
-const DOCS_HEALTH =
-  "nifra docs MCP - POST JSON-RPC 2.0 here (methods: initialize, tools/list, tools/call). Tools: nifra_docs, nifra_example."
+// Derive the GET/health tool list from the tools actually served, so the line can never drift from them.
+const docsHealth = (tools: McpTool[]): string =>
+  `nifra docs MCP - POST JSON-RPC 2.0 here (methods: initialize, tools/list, tools/call). Tools: ${tools
+    .map((tool) => tool.name)
+    .join(", ")}.`
 
-/** The two project-independent tools, reading the package's bundled corpus from disk (CLI use). */
+/** The project-independent tools, reading the package's bundled corpus from disk (CLI use): the text
+ * docs tools plus the `nifra_examples_app` MCP Apps widget tool. */
 export function publicDocsTools(): McpTool[] {
-  return docsTools(loadDocsCorpus, loadExamplesCorpus, loadTypesCorpus)
+  return [
+    ...docsTools(loadDocsCorpus, loadExamplesCorpus, loadTypesCorpus),
+    examplesAppTool(loadExamplesCorpus),
+  ]
 }
 
 /**
@@ -46,12 +56,15 @@ export function respondMcpHttp(
   tools: McpTool[],
   options: McpHttpOptions = {},
 ): Promise<Response> {
-  return respondMcpHttpCore(request, tools, SERVER_INFO, { health: DOCS_HEALTH, ...options })
+  return respondMcpHttpCore(request, tools, SERVER_INFO, { health: docsHealth(tools), ...options })
 }
 
-/** The CLI HTTP handler: serves the disk-backed corpus tools. (`nifra docs-mcp` / `bun run` this file.) */
+/** The CLI HTTP handler: serves the disk-backed corpus tools + registers the examples widget's `ui://`
+ * resource so MCP Apps hosts can render `nifra_examples_app`. (`nifra docs-mcp` / `bun run` this file.) */
 export function handleMcpHttp(request: Request): Promise<Response> {
-  return respondMcpHttp(request, publicDocsTools())
+  return respondMcpHttp(request, publicDocsTools(), {
+    features: { resources: [examplesWidget.resource], ui: { mimeTypes: [UI_MIME] } },
+  })
 }
 
 /**

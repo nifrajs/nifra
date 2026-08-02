@@ -33,6 +33,8 @@ export interface UpgradeOptions {
   readonly list?: boolean
   /** After `--write`, run `nifra check` and fail the command if it fails. Default true. */
   readonly verify?: boolean
+  /** Permit a target BELOW the installed version (a rollback). Default false → fail-closed. */
+  readonly allowDowngrade?: boolean
 }
 
 export interface PinChange {
@@ -65,6 +67,8 @@ export interface UpgradePlan {
   readonly pins: readonly PinChange[]
   readonly dependencyMoves: readonly DependencyMoveChange[]
   readonly importMoves: readonly ImportChange[]
+  /** Pins refused because the target is BELOW the installed version (a rollback). Empty when allowed. */
+  readonly downgrades: readonly PinChange[]
   readonly notes: readonly string[]
 }
 
@@ -78,7 +82,7 @@ const DEP_FIELDS = [
 // Only a bare semver spec is rewritten. Anything else - workspace:*, link:/file:, npm: aliases, git
 // urls, "*", "latest", or a multi-part range - is intentionally left untouched (skipped, not guessed).
 const SEMVER_SPEC =
-  /^([\^~]|>=|<=|>|<|=)?\s*(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
+  /^([\^~]|>=|<=|>|<|=)?\s*(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/
 
 /**
  * Rewrite a dependency version spec to `toVersion`, preserving the range operator (`^`, `~`, …).
@@ -92,6 +96,67 @@ export function rewriteVersionSpec(spec: string, toVersion: string): string | nu
   return next === spec ? null : next
 }
 
+/** Numeric core (major, minor, patch) of a semver spec, ignoring the range operator + prerelease/build. */
+export function specVersionTuple(spec: string): readonly [number, number, number] | null {
+  const match = SEMVER_SPEC.exec(spec.trim())
+  if (!match) return null
+  return [Number(match[2]), Number(match[3]), Number(match[4])]
+}
+
+interface ParsedSpecVersion {
+  readonly core: readonly [number, number, number]
+  readonly prerelease: readonly (number | string)[]
+}
+
+function parseSpecVersion(spec: string): ParsedSpecVersion | null {
+  const match = SEMVER_SPEC.exec(spec.trim())
+  if (!match) return null
+  const prerelease = (match[5] ?? "").split(".")
+  return {
+    core: [Number(match[2]), Number(match[3]), Number(match[4])],
+    prerelease:
+      match[5] === undefined
+        ? []
+        : prerelease.map((part) => (/^\d+$/.test(part) ? Number(part) : part)),
+  }
+}
+
+/** Compare two semver cores: <0 when a<b, 0 equal, >0 when a>b. */
+export function compareSemverCore(
+  a: readonly [number, number, number],
+  b: readonly [number, number, number],
+): number {
+  return a[0] - b[0] || a[1] - b[1] || a[2] - b[2]
+}
+
+/** Compare full semver precedence, including prereleases (`2.3.0-beta` < `2.3.0`). */
+export function compareSemverSpec(a: string, b: string): number {
+  const left = parseSpecVersion(a)
+  const right = parseSpecVersion(b)
+  if (left === null || right === null) return 0
+  const core = compareSemverCore(left.core, right.core)
+  if (core !== 0) return core
+  if (left.prerelease.length === 0 || right.prerelease.length === 0) {
+    return left.prerelease.length === right.prerelease.length
+      ? 0
+      : left.prerelease.length === 0
+        ? 1
+        : -1
+  }
+  const length = Math.max(left.prerelease.length, right.prerelease.length)
+  for (let i = 0; i < length; i++) {
+    const x = left.prerelease[i]
+    const y = right.prerelease[i]
+    if (x === undefined || y === undefined) return x === undefined ? -1 : 1
+    if (typeof x === "number" && typeof y === "number") {
+      if (x !== y) return x - y
+    } else if (typeof x === "number") return -1
+    else if (typeof y === "number") return 1
+    else if (x !== y) return x < y ? -1 : 1
+  }
+  return 0
+}
+
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
 /**
@@ -102,15 +167,21 @@ const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\
 export function pinSweepText(
   text: string,
   rules: readonly { match: string; to: string }[],
-): { text: string; changes: Array<Omit<PinChange, "file">> } {
+  allowDowngrade = false,
+): {
+  text: string
+  changes: Array<Omit<PinChange, "file">>
+  downgrades: Array<Omit<PinChange, "file">>
+} {
   let parsed: Record<string, unknown>
   try {
     parsed = JSON.parse(text) as Record<string, unknown>
   } catch {
-    return { text, changes: [] }
+    return { text, changes: [], downgrades: [] }
   }
   let out = text
   const changes: Array<Omit<PinChange, "file">> = []
+  const downgrades: Array<Omit<PinChange, "file">> = []
   for (const field of DEP_FIELDS) {
     const deps = parsed[field]
     if (typeof deps !== "object" || deps === null) continue
@@ -122,6 +193,19 @@ export function pinSweepText(
       if (!rule) continue
       const next = rewriteVersionSpec(rawSpec, rule.to)
       if (next === null) continue
+      // Refuse a rollback: `upgrade <version>` pins an exact target, so an OLD target on a newer install
+      // walks dependencies backward (e.g. ^2.3.0 → ^2.0.0) and can break a shared-package peer range.
+      const current = specVersionTuple(rawSpec)
+      const target = specVersionTuple(rule.to)
+      if (
+        !allowDowngrade &&
+        current !== null &&
+        target !== null &&
+        compareSemverSpec(rawSpec, rule.to) > 0
+      ) {
+        downgrades.push({ field, name, from: rawSpec, to: next })
+        continue
+      }
       // Replace exactly `"name"<ws>:<ws>"spec"`, preserving the surrounding whitespace.
       const pattern = new RegExp(`("${escapeRegExp(name)}"\\s*:\\s*")${escapeRegExp(rawSpec)}(")`)
       const replaced = out.replace(pattern, `$1${next}$2`)
@@ -131,7 +215,7 @@ export function pinSweepText(
       }
     }
   }
-  return { text: out, changes }
+  return { text: out, changes, downgrades }
 }
 
 function dependencyObjectRange(
@@ -289,10 +373,16 @@ function scan(cwd: string, pattern: string): string[] {
 }
 
 /** Compute the plan (and, when `write`, apply it) for a target recipe against `cwd`. */
-export function computeUpgrade(cwd: string, recipe: UpgradeRecipe, write: boolean): UpgradePlan {
+export function computeUpgrade(
+  cwd: string,
+  recipe: UpgradeRecipe,
+  write: boolean,
+  allowDowngrade = false,
+): UpgradePlan {
   const pins: PinChange[] = []
   const dependencyMoves: DependencyMoveChange[] = []
   const importMoves: ImportChange[] = []
+  const downgrades: PinChange[] = []
 
   if ((recipe.dependencyMoves?.length ?? 0) > 0 || recipe.pins.length > 0) {
     for (const rel of scan(cwd, "**/package.json")) {
@@ -300,8 +390,9 @@ export function computeUpgrade(cwd: string, recipe: UpgradeRecipe, write: boolea
       const original = readFileSync(abs, "utf8")
       const moved = moveDependenciesText(original, recipe.dependencyMoves ?? [])
       for (const change of moved.changes) dependencyMoves.push({ file: rel, ...change })
-      const pinned = pinSweepText(moved.text, recipe.pins)
+      const pinned = pinSweepText(moved.text, recipe.pins, allowDowngrade)
       for (const change of pinned.changes) pins.push({ file: rel, ...change })
+      for (const d of pinned.downgrades) downgrades.push({ file: rel, ...d })
       if (write && pinned.text !== original) writeFileSync(abs, pinned.text)
     }
   }
@@ -322,6 +413,7 @@ export function computeUpgrade(cwd: string, recipe: UpgradeRecipe, write: boolea
     pins,
     dependencyMoves,
     importMoves,
+    downgrades,
     notes: recipe.notes ?? [],
   }
 }
@@ -366,6 +458,19 @@ function renderPlan(plan: UpgradePlan, write: boolean): string {
   return lines.join("\n").trimEnd()
 }
 
+/** Explain a refused rollback: which pins would roll back, why it's blocked, and the escape hatch. */
+function renderDowngradeRefusal(version: string, downgrades: readonly PinChange[]): string {
+  return [
+    `nifra upgrade → ${version}: refusing to DOWNGRADE ${downgrades.length} pin(s) below what's installed.`,
+    "",
+    ...downgrades.map((d) => `  ${d.file}  ${d.name}: ${d.from} → ${d.to}  (would roll back)`),
+    "",
+    "`nifra upgrade <version>` sets each pin to exactly <version>; an older target on a newer install",
+    "rolls dependencies backward and can violate a shared-package peer range. Target a version >= the",
+    "installed one, or pass --allow-downgrade if the rollback is intended.",
+  ].join("\n")
+}
+
 /** CLI entry. Returns false (→ non-zero exit) on an unknown version, no project, or a failed verify. */
 export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<boolean> {
   if (options.list) {
@@ -399,7 +504,20 @@ export async function runUpgrade(cwd: string, options: UpgradeOptions): Promise<
   }
 
   const write = options.write === true
-  const plan = computeUpgrade(cwd, recipe, write)
+  const allowDowngrade = options.allowDowngrade === true
+
+  // Fail-closed on rollback: a dry pass writes nothing, so we can refuse before any package.json is touched.
+  const preview = computeUpgrade(cwd, recipe, false, allowDowngrade)
+  if (preview.downgrades.length > 0) {
+    if (options.json) {
+      console.log(JSON.stringify({ ...preview, write: false, refused: "downgrade" }, null, 2))
+    } else {
+      console.error(renderDowngradeRefusal(recipe.version, preview.downgrades))
+    }
+    return false
+  }
+
+  const plan = write ? computeUpgrade(cwd, recipe, true, allowDowngrade) : preview
 
   if (options.json) {
     console.log(JSON.stringify({ ...plan, write }, null, 2))

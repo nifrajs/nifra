@@ -10,7 +10,7 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 
 ## Public entrypoints
 
-`@nifrajs/web` · `@nifrajs/web/build` · `@nifrajs/web/build-vite` · `@nifrajs/web/client` · `@nifrajs/web/conformance` · `@nifrajs/web/dev` · `@nifrajs/web/fn` · `@nifrajs/web/fn-state` · `@nifrajs/web/fonts` · `@nifrajs/web/forms` · `@nifrajs/web/fs` · `@nifrajs/web/islands` · `@nifrajs/web/plugins/css-modules` · `@nifrajs/web/plugins/kit` · `@nifrajs/web/plugins/postcss` · `@nifrajs/web/plugins/scss` · `@nifrajs/web/plugins/svg` · `@nifrajs/web/plugins/vite-leak-guard` · `@nifrajs/web/plugins/vite-server-fn` · `@nifrajs/web/plugins/vite-server-only` · `@nifrajs/web/route-manifest` · `@nifrajs/web/server-only` · `@nifrajs/web/service-worker` · `@nifrajs/web/vite`
+`@nifrajs/web` · `@nifrajs/web/build` · `@nifrajs/web/build-vite` · `@nifrajs/web/client` · `@nifrajs/web/conformance` · `@nifrajs/web/dev` · `@nifrajs/web/diagnostic` · `@nifrajs/web/fn` · `@nifrajs/web/fn-state` · `@nifrajs/web/fonts` · `@nifrajs/web/forms` · `@nifrajs/web/fs` · `@nifrajs/web/islands` · `@nifrajs/web/plugins/css-modules` · `@nifrajs/web/plugins/kit` · `@nifrajs/web/plugins/postcss` · `@nifrajs/web/plugins/scss` · `@nifrajs/web/plugins/svg` · `@nifrajs/web/plugins/vite-leak-guard` · `@nifrajs/web/plugins/vite-server-fn` · `@nifrajs/web/plugins/vite-server-only` · `@nifrajs/web/route-manifest` · `@nifrajs/web/server-only` · `@nifrajs/web/service-worker` · `@nifrajs/web/vite`
 
 ## Key exports
 
@@ -21,15 +21,15 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 - **assertRenderAdapterConformance** _(function)_ - `assertRenderAdapterConformance: (adapter: RenderAdapter, fixture: RenderAdapterConformanceFixture) => Promise<void>` · from `@nifrajs/web`
 - **buildClient** _(function)_ - `buildClient: (options: BuildClientOptions) => Promise<BuildManifest>` · from `@nifrajs/web/build`
 - **buildClientVite** _(function)_ - `buildClientVite: (options: BuildClientViteOptions) => Promise<BuildManifest>` · from `@nifrajs/web/build-vite`
+- **buildCodeframe** _(function)_ - `buildCodeframe: (file: string, line: number, column: number | undefined, read?: SourceReader, radius?: number) => Codeframe | undefined` · from `@nifrajs/web/diagnostic`
+- **buildDiagnostic** _(function)_ - `buildDiagnostic: (err: unknown, options?: BuildDiagnosticOptions) => Diagnostic` · from `@nifrajs/web/diagnostic`
 - **buildManifest** _(function)_ - `buildManifest: (files: readonly string[], importer: (file: string) => () => Promise<RouteModule>) => Manifest` · from `@nifrajs/web`
 - **buildRouteManifest** _(function)_ - `buildRouteManifest: (manifest: Manifest, options?: { readonly target?: string; readonly prerendered?: Readonly<Record<string, readonly stri…` · from `@nifrajs/web/route-manifest`
 - **buildServer** _(function)_ - `buildServer: (options: BuildServerOptions) => Promise<ServerBuild>` · from `@nifrajs/web/build`
 - **buildServerVite** _(function)_ - `buildServerVite: (options: BuildServerViteOptions) => Promise<ServerBuild>` · from `@nifrajs/web/build-vite`
 - **buildTarget** _(function)_ - `buildTarget: (target: BuildTarget, options: BuildTargetOptions) => Promise<BuildTargetResult>` · from `@nifrajs/web/build`
-- **buildTargetVite** _(function)_ - `buildTargetVite: (target: BuildTarget, options: BuildTargetOptions) => Promise<BuildTargetResult>` · from `@nifrajs/web/build-vite`
-- **buildTargetWith** _(function)_ - `buildTargetWith: (target: BuildTarget, options: BuildTargetOptions, bundler: Bundler) => Promise<BuildTargetResult>` · from `@nifrajs/web/build`
 
-_…and 304 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 316 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 

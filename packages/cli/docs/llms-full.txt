@@ -7484,6 +7484,16 @@ The mock server matches reflected routes and synthesizes values from supported J
 Unsupported or unsatisfiable schemas fail explicitly instead of returning known-invalid data. Use a
 fixed seed when responses must be replayable across local development and CI.
 
+Routes whose response validator exposes no JSON Schema (zod, valibot, arktype) mock as `{}` by default.
+Pass `reflectJsonSchema` to derive a schema from such a validator so those routes mock real data; for zod,
+use the bridge shipped as `@nifrajs/testing/zod`:
+
+```ts
+import { zodJsonSchema } from "@nifrajs/testing/zod"
+
+const mock = createMockServer(app, { reflectJsonSchema: zodJsonSchema })
+```
+
 ## For AI agents
 
 Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports you call + its footguns),
@@ -7941,6 +7951,32 @@ const report = await assertAdversarialContract(app, {
 request for each declared response schema, so use an isolated test app/database-never point the
 laboratory at production.
 
+### Opaque validators (zod / valibot / arktype)
+
+A `t` schema exposes JSON Schema, so witnesses and constraint-driven mutations are synthesized
+automatically. A Standard Schema validator that carries no JSON Schema (zod, valibot, arktype) validates
+requests fine, but the laboratory can't inspect it - those routes report `NO_WITNESS` and get only
+type-confusion mutations. Pass `reflectJsonSchema` to convert such a validator; for zod, use the shipped
+bridge:
+
+```ts
+import { zodJsonSchema } from "@nifrajs/testing/zod"
+
+await assertAdversarialContract(app, { reflectJsonSchema: zodJsonSchema })
+```
+
+This turns on witness synthesis and constraint-driven mutations (min/max, length, pattern, enum, format)
+for zod routes. `createMockServer` from `@nifrajs/mock` accepts the same hook. `zod` is an optional peer -
+only projects that import `@nifrajs/testing/zod` need it installed.
+
+### Response conformance needs a declared contract
+
+Response conformance only runs for routes that declare a `response` schema. A response type inferred from a
+handler's return is a client-side contract the laboratory cannot see, so an app that declares none checks
+zero response targets even with `validateResponses` on - the report surfaces this in `advisories`. Declare
+`response:` on the routes you want verified. (Runtime response validation in the server itself is a
+separate opt-in, installed by the `responseContract()` plugin.)
+
 `nifra levels` L4 uses this same deep engine through the explicitly configured isolated executor;
 the older core invariant runner remains only as a compatibility export.
 
@@ -8047,6 +8083,40 @@ one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
 done-gate, or `nifra mcp` to give the agent live project tools.
+
+## @nifrajs/ts-plugin
+
+A TypeScript language-service plugin for [nifra](https://github.com/nifrajs/nifra). It adds go-to-definition on route-path string literals: put your cursor on `"/orders"` in `navigate({ to: "/orders" })`, `<Link to="/orders">`, or `href="/orders"`, and jump straight to the `routes/` file that serves it.
+
+The routing rules are nifra's own - it discovers routes with `@nifrajs/web` and matches them with `@nifrajs/core`'s pattern matcher - so a path resolves to exactly the file it would serve at runtime, dynamic segments included (`/users/42` → `routes/users/[id].tsx`).
+
+## Install
+
+```sh
+npm install -D @nifrajs/ts-plugin
+```
+
+## Enable
+
+Add it to your `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "plugins": [{ "name": "@nifrajs/ts-plugin" }]
+  }
+}
+```
+
+In VS Code, run "TypeScript: Select TypeScript Version" from the Command Palette and choose "Use Workspace Version" so the editor loads the plugin from your project.
+
+## For agents
+
+Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports it ships and how it wires in). [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus for the whole framework.
+
+## License
+
+MIT
 
 ## @nifrajs/uploads
 
@@ -8410,7 +8480,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/devtools
 
-`devtools`, `DevToolsClientOptions`, `devtoolsClientScript`, `DevToolsEvent`, `DevToolsOptions`
+`devtools`, `DevToolsClientOptions`, `devtoolsClientScript`, `DevToolsEvent`, `DevToolsOptions`, `DevToolsQuery`, `filterDevToolsEvents`
 
 ## @nifrajs/env
 
@@ -8479,6 +8549,10 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 ## @nifrajs/testing
 
 `AdapterCertificationError`, `AdapterCertificationProfile`, `AdapterCertificationReport`, `AdversarialContractError`, `AdversarialContractOptions`, `AdversarialContractReport`, `AdversarialContractResult`, `AppLike`, `assertAdapterCertification`, `assertAdversarialContract`, `assertIncidentReplays`, `cacheStoreCertificationProfile`, `CapturedRequest`, `CapturedRequestInput`, `captureIncident`, `CaptureIncidentOptions`, `CertifiableCacheEntry`, `CertifiableCacheStore`, `CertifiableDomainEvent`, `CertifiableEventDeliveryAdapter`, `CertifiableEventRecord`, `CertifiableJobStore`, `CertifiableRuntimeAdapter`, `CertifiableRuntimeServer`, `CertifiableStorageAdapter`, `CertificationCapabilityEvidence`, `CertificationCheck`, `CertificationCheckEvidence`, `certifyAdapter`, `ContractCaseContext`, `ContractCaseKind`, `ContractCoverageGap`, `ContractCoverageGapCode`, `ContractReplay`, `ContractRuntime`, `ContractTarget`, `ContractTestApp`, `ContractWitness`, `cookieJar`, `CookieJar`, `createFailureLab`, `defineCertificationProfile`, `eventDeliveryCertificationProfile`, `FailureDirective`, `FailureEvidence`, `FailureInjectedError`, `FailureKind`, `FailureLab`, `FailureLabOptions`, `FailureReplay`, `FailureScenario`, `FailureScenarioReport`, `generateRegressionTest`, `GenerateRegressionTestOptions`, `IncidentCapsule`, `IncidentReplayError`, `IncidentReplayResult`, `jobStoreCertificationProfile`, `redactForEmission`, `replayIncident`, `ReplayIncidentOptions`, `runAdversarialContract`, `runFailureScenario`, `runtimeAdapterCertificationProfile`, `shapeOf`, `storageAdapterCertificationProfile`, `testSession`, `TestSession`, `TestSessionOptions`, `verifyAdapterCertification`
+
+## @nifrajs/ts-plugin
+
+`findRoutePathLiteral`, `findRoutesDir`
 
 ## @nifrajs/uploads
 

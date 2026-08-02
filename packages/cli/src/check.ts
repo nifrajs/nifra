@@ -1709,10 +1709,14 @@ export async function collectCheckResult(
     }
     for (const finding of dr.duplicateInstalls) {
       const copies = finding.copies.map((copy) => `${copy.version} at ${copy.path}`).join("; ")
+      const identityHint =
+        finding.package === "@nifrajs/core"
+          ? " (a second @nifrajs/core collapses `typeof backend` to `any` at `.merge()` - usually that error's root cause)"
+          : ""
       diagnostics.push({
         rule: "duplicate-install",
         severity: "error",
-        message: `${finding.package} resolves to multiple physical copies (${copies}) - module identity is unsafe`,
+        message: `${finding.package} resolves to multiple physical copies (${copies}) - module identity is unsafe${identityHint}`,
         fix: "align dependency ranges and reinstall from the workspace root",
         suggestion: {
           kind: "manual",

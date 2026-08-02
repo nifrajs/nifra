@@ -17,7 +17,7 @@ import {
   type ServerResponse,
 } from "node:http"
 import { relative, resolve as resolvePath } from "node:path"
-import { renderDevErrorOverlay } from "./dev-error.ts"
+import { createDevDiagnostics } from "./dev-diagnostics.ts"
 import { listenOrExplain } from "./dev-port.ts"
 import { discoverRoutes } from "./fs.ts"
 import { DEFAULT_DEV_PORT, generateClientEntry } from "./index.ts"
@@ -102,6 +102,8 @@ export interface ViteDevServer {
   readonly port: number
   stop(): Promise<void>
 }
+
+export { LAST_ERROR_PATH } from "./diagnostic.ts"
 
 // The codegen'd client entry is written here (at the Vite root) so Vite serves + HMRs it.
 const DEV_ENTRY = ".nifra-vite-entry.tsx"
@@ -297,8 +299,19 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   // `vite`, which is assigned just below before the server starts listening.
   let vite!: ViteLike
   let app: FetchApp
+  // The most recent SSR failure, served as JSON at LAST_ERROR_PATH. Shared with the Bun adapter so the
+  // endpoint and its headers can't drift between the two dev servers.
+  const devDiagnostics = createDevDiagnostics(root)
 
   const server: NodeHttpServer = createHttpServer((req, res) => {
+    // Keep this before Vite's middleware: it is an agent endpoint owned by nifra, not a file or app route.
+    if (devDiagnostics.isLastErrorPath((req.url ?? "/").split("?", 1)[0] ?? "/")) {
+      const { body, headers } = devDiagnostics.lastError()
+      res.statusCode = 200
+      for (const [key, value] of Object.entries(headers)) res.setHeader(key, value)
+      res.end(body)
+      return
+    }
     vite.middlewares(req, res, () => {
       // Not a Vite asset → nifra SSR. (`next` runs after Vite declines, so the body is still readable.)
       void (async () => {
@@ -322,9 +335,13 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
           // Source-map the stack first (Vite maps the bundled frames back to your `.ts`), then render
           // the readable dev overlay instead of a bare text dump. Dev-only - production maps to `_error`.
           if (err instanceof Error) vite.ssrFixStacktrace(err)
+          const html = devDiagnostics.capture(err, {
+            method: req.method ?? "GET",
+            url: req.url ?? "/",
+          })
           res.statusCode = 500
           res.setHeader("content-type", "text/html; charset=utf-8")
-          res.end(renderDevErrorOverlay(err, { method: req.method ?? "GET", url: req.url ?? "/" }))
+          res.end(html)
         }
       })()
     })
@@ -395,7 +412,7 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   }
 
   try {
-    await listenOrExplain(server, port)
+    await listenOrExplain(server, port, "127.0.0.1")
   } catch (err) {
     // Nothing is listening, but Vite is fully up by now - watchers, the dep optimizer, its own sockets -
     // and every one of those keeps the event loop alive. Left open, the process prints the diagnosis and

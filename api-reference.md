@@ -99,10 +99,14 @@ Every public export of every package and documented subpath - name, kind, signat
   Worker/edge + local entry. `export default { fetch }` is the universal server shape: Cloudflare / Vercel edge / Deno deploy use `fetch` (and ignore `port`); `bun run mcp-http.ts` auto-serves it on `port` (PORT env, default 8787) - Bun serves a module's default-exported server, so NO manual `Bun.ser…
 - **docsTools** _(function)_ - `docsTools: (loadDocs: () => Promise<string | undefined>, loadExamples: () => Promise<Example[] | undefined>, loadTypes: () => Promise<TypeEntry[] | undefined>) => McpTool[]`
   Build `nifra_docs` + `nifra_example` + `nifra_types` over injected corpus loaders.
+- **examplesAppTool** _(function)_ - `examplesAppTool: (loadExamples: () => Promise<Example[] | undefined>) => McpTool`
+  The widget-backed tool. `loadExamples` is injected (disk on the CLI, cached fetch on the edge).
+- **examplesWidget** _(const)_ - `examplesWidget: import("@nifrajs/mcp").McpWidget`
+  The widget: renders `structuredContent.examples` as a filterable list of example cards.
 - **handleMcpHttp** _(function)_ - `handleMcpHttp: (request: Request) => Promise<Response>`
-  The CLI HTTP handler: serves the disk-backed corpus tools. (`nifra docs-mcp` / `bun run` this file.)
+  The CLI HTTP handler: serves the disk-backed corpus tools + registers the examples widget's `ui://` resource so MCP Apps hosts can render `nifra_examples_app`. (`nifra docs-mcp` / `bun run` this file.)
 - **publicDocsTools** _(function)_ - `publicDocsTools: () => McpTool[]`
-  The two project-independent tools, reading the package's bundled corpus from disk (CLI use).
+  The project-independent tools, reading the package's bundled corpus from disk (CLI use): the text docs tools plus the `nifra_examples_app` MCP Apps widget tool.
 - **respondMcpHttp** _(function)_ - `respondMcpHttp: (request: Request, tools: McpTool[], options?: McpHttpOptions) => Promise<Response>`
   Handle one MCP request against the given `tools` with the docs server identity. A thin docs-flavored wrapper over the shared {@link respondMcpHttpCore} so the `@nifrajs/cli/mcp` self-host surface keeps its `(request, tools, options?)` shape (the site's edge worker calls it with two args).
 
@@ -912,6 +916,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Match one compiled pattern and return decoded captures. The caller decides cross-pattern order.
 - **mixedSegmentSource** _(function)_ - `mixedSegmentSource: (parts: readonly MixedPart[]) => string`
   The regex source matching one segment's worth of a mixed pattern, with a capture per parameter.
+- **sortRoutesBySpecificity** _(function)_ - `sortRoutesBySpecificity: <T extends { readonly pattern: CompiledRoutePattern; }>(routes: T[]) => T[]`
+  Sort compiled routes most-specific-first - a static segment beats a dynamic one, the order the router resolves a path in. The single home for that precedence: the web router, the mock server, and the editor plugin all order routes through this one comparator, so which file a path resolves to can ne…
 
 ### `@nifrajs/core/reconciliation-worker`
 
@@ -1264,10 +1270,13 @@ Every public export of every package and documented subpath - name, kind, signat
 - **DevToolsClientOptions** _(interface)_ - `interface DevToolsClientOptions`
 - **DevToolsEvent** _(interface)_ - `interface DevToolsEvent`
 - **DevToolsOptions** _(interface)_ - `interface DevToolsOptions`
+- **DevToolsQuery** _(interface)_ - `interface DevToolsQuery`
+  Query for a DevTools state snapshot: an optional `path` prefix and a most-recent-`limit`.
 - **devtools** _(function)_ - `devtools: (options?: DevToolsOptions | undefined) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").AnyServer>`
-  DevTools plugin. Its observation adapter projects the single request span into a `DevToolsEvent`; its middleware only owns the secured SSE transport. When configuring `tracing()` yourself, register it before this plugin so DevTools attaches to that request owner.
 - **devtoolsClientScript** _(function)_ - `devtoolsClientScript: (options?: DevToolsClientOptions) => string`
   Returns a self-contained JavaScript string that creates a floating DevTools overlay in the browser. Inject via `<script>` tag in dev mode.
+- **filterDevToolsEvents** _(function)_ - `filterDevToolsEvents: (events: readonly DevToolsEvent[], query?: DevToolsQuery) => DevToolsEvent[]`
+  Filter a DevTools event buffer for a snapshot query - by `path` prefix and/or the most recent `limit`. Pure, so the `/state` endpoint and its tests (and the `nifra_inspect` MCP tool that reads that endpoint) share ONE definition of what a query returns.
 
 ### `@nifrajs/devtools/client`
 
@@ -2142,6 +2151,28 @@ Every public export of every package and documented subpath - name, kind, signat
 - **verifyAdapterCertification** _(function)_ - `verifyAdapterCertification: (report: AdapterCertificationReport) => Promise<boolean>`
   Recompute the portable evidence hash. Consumers should verify before trusting a stored report.
 
+### `@nifrajs/testing/zod`
+
+- **zodJsonSchema** _(function)_ - `zodJsonSchema: (schema: unknown) => JsonSchema | undefined`
+  Convert a zod schema to a JSON Schema the mock/mutation generators understand, or `undefined` when the value is not a convertible zod schema. Options chosen for this consumer: - target "draft-7" → the keyword set `@nifrajs/mock` + the laboratory's `candidateMutations` read - io "input" → the reques…
+
+## @nifrajs/ts-plugin
+
+### `@nifrajs/ts-plugin`
+
+- **default** _(function)_ - `default: (modules: { typescript: typeof ts; }) => ts.server.PluginModule`
+- **findRoutePathLiteral** _(function)_ - `findRoutePathLiteral: (tsm: typeof ts, source: ts.SourceFile, position: number) => { text: string; span: ts.TextSpan; } | undefined`
+  If `position` sits on a string-literal route path (`"/..."`), return its text and the span INSIDE the quotes (so the editor highlights the path, not the quotes). Exported for unit testing against a `SourceFile` built with `ts.createSourceFile`.
+- **findRoutesDir** _(function)_ - `findRoutesDir: (fromFile: string, exists?: (p: string) => boolean) => string | undefined`
+  Walk up from a source file to the nearest directory that has a `routes/` folder - the app root.
+
+### `@nifrajs/ts-plugin/resolve`
+
+- **RouteLocation** _(interface)_ - `interface RouteLocation`
+  A route as the plugin needs it: its URL pattern and the source file that serves it.
+- **resolveRouteFile** _(function)_ - `resolveRouteFile: (path: string, routes: readonly RouteLocation[]) => string | undefined`
+  Resolve a route path literal to the first route whose pattern matches it. Query/hash are ignored (a link's `?tab=x` does not change which route file serves it). Returns the route's `file`, or undefined when the value is not a path or matches no route.
+
 ## @nifrajs/uploads
 
 - **FileType** _(interface)_ - `interface FileType`
@@ -2609,6 +2640,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The stable URL every SSR'd page points its client entry at.
 - **DevServer** _(interface)_ - `interface DevServer`
 - **DevServerOptions** _(interface)_ - `interface DevServerOptions`
+- **LAST_ERROR_PATH** _(const)_ - `LAST_ERROR_PATH: "/__nifra/last-error"`
+  Shared endpoint name used by both dev pipelines and the agent-facing MCP tools.
 - **createDevServer** _(function)_ - `createDevServer: (options: DevServerOptions) => Promise<DevServer>`
   Start the Bun dev server: generate → bundle → serve → watch → hot-reload on change.
 - **devHtml** _(function)_ - `devHtml: (entryHref: string) => string`
@@ -2619,6 +2652,32 @@ Every public export of every package and documented subpath - name, kind, signat
   `<link rel="stylesheet">` tags for Bun's extracted CSS, injected into each SSR'd page's `<head>`.
 - **writeDevFiles** _(function)_ - `writeDevFiles: (options: WriteDevFilesOptions) => void`
   Generate the client entry + the HTML route that carries it.
+
+### `@nifrajs/web/diagnostic`
+
+- **BuildDiagnosticOptions** _(interface)_ - `interface BuildDiagnosticOptions`
+- **Codeframe** _(interface)_ - `interface Codeframe`
+  A source window around the offending line. `caret` marks the exact line the top frame points at.
+- **DIAGNOSTIC_CATALOG** _(const)_ - `DIAGNOSTIC_CATALOG: readonly CatalogEntry[]`
+  The recognised-failure catalog. Seeded with the highest-signal nifra failures; extend it as new classes of error earn a stable code. Order matters only in that the first match wins.
+- **Diagnostic** _(interface)_ - `interface Diagnostic`
+  The structured failure. Serialisable as-is to JSON for the agent surfaces.
+- **DiagnosticFrame** _(interface)_ - `interface DiagnosticFrame`
+  One parsed stack frame. `file`/`line`/`column` are present only when the frame could be located.
+- **LAST_ERROR_PATH** _(const)_ - `LAST_ERROR_PATH: "/__nifra/last-error"`
+  Shared endpoint name used by both dev pipelines and the agent-facing MCP tools.
+- **SourceReader** _(type)_ - `type SourceReader = (file: string) => string | undefined`
+  Reads a source file's text, or returns undefined if it cannot (missing, binary, permission).
+- **buildCodeframe** _(function)_ - `buildCodeframe: (file: string, line: number, column: number | undefined, read?: SourceReader, radius?: number) => Codeframe | undefined`
+  Build a source codeframe: `radius` lines either side of `line`, each tagged with its 1-based number and whether it is the offending line. Returns undefined if the source can't be read or the line is out of range - a diagnostic without a codeframe is still useful, so this never throws.
+- **buildDiagnostic** _(function)_ - `buildDiagnostic: (err: unknown, options?: BuildDiagnosticOptions) => Diagnostic`
+  Resolve any thrown value into a `Diagnostic`: parse the (already source-mapped) stack, locate the top user frame, attach a codeframe, and classify the failure for a cause/fix. The caller is responsible for running Vite's `ssrFixStacktrace` first so the frames point at real source.
+- **classify** _(function)_ - `classify: (name: string, message: string) => { code: string; cause?: string; fix?: string; docsAnchor?: string; }`
+  Classify an error name+message against the catalog; falls back to the generic unhandled code.
+- **parseFrames** _(function)_ - `parseFrames: (stack: string) => DiagnosticFrame[]`
+  Parse a V8/Node stack into structured frames. Handles the `at fn (path:line:col)`, bare `at path:line:col`, and `at async fn (...)` shapes; a frame that doesn't match keeps its raw text with no location (so nothing is silently dropped).
+- **topUserFrame** _(function)_ - `topUserFrame: (frames: readonly DiagnosticFrame[], root: string | undefined) => DiagnosticFrame | undefined`
+  The first frame that points at the user's own source - what the codeframe should show.
 
 ### `@nifrajs/web/fn`
 
@@ -2824,6 +2883,8 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web/vite`
 
+- **LAST_ERROR_PATH** _(const)_ - `LAST_ERROR_PATH: "/__nifra/last-error"`
+  Shared endpoint name used by both dev pipelines and the agent-facing MCP tools.
 - **ViteDevServer** _(interface)_ - `interface ViteDevServer`
 - **ViteDevServerOptions** _(interface)_ - `interface ViteDevServerOptions`
 - **applyResponseHeaders** _(function)_ - `applyResponseHeaders: (headers: Headers, res: NodeHeaderSink) => void`

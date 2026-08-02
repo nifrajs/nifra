@@ -40,7 +40,8 @@
   ],
   "sideEffects": false,
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist",
+    "prepack": "bun run build"
   },
   "license": "MIT",
   "publishConfig": {

@@ -98,6 +98,14 @@ export interface AdversarialContractOptions {
   readonly maxShrinkAttempts?: number
   /** Replay only these stable case IDs. Coverage gaps are advisory when this is set. */
   readonly only?: string | readonly string[]
+  /**
+   * Derive an inspectable JSON Schema from a validator that carries none (zod/valibot/arktype expose a
+   * Standard Schema validator but no `.jsonSchema`). Called for any body/query schema whose `jsonSchema`
+   * is undefined; a non-undefined return turns on witness synthesis AND constraint-driven mutation
+   * generation for that route. Fail-safe: throwing or returning undefined leaves the schema opaque
+   * (NO_WITNESS, as today). Ready-made for zod: `import { zodJsonSchema } from "@nifrajs/testing/zod"`.
+   */
+  readonly reflectJsonSchema?: (schema: unknown) => JsonSchema | undefined
 }
 
 export type ContractCoverageGapCode =
@@ -149,6 +157,8 @@ export interface AdversarialContractReport {
   readonly results: readonly AdversarialContractResult[]
   readonly failures: readonly AdversarialContractResult[]
   readonly gaps: readonly ContractCoverageGap[]
+  /** Non-fatal notes about coverage that is legitimately absent (does not affect `ok`). */
+  readonly advisories: readonly string[]
   readonly counts: {
     readonly passed: number
     readonly failed: number
@@ -491,6 +501,29 @@ const queryInput = (value: unknown): unknown | undefined => {
   return result
 }
 
+/** Return a reflection with `jsonSchema` backfilled from `reflect(standard)` when it is otherwise absent.
+ * No-op when the reflection already has a JSON Schema, has no validator, or no hook is supplied. A hook
+ * that throws is swallowed - the schema stays opaque, exactly as before the hook existed. This is what
+ * lets an opaque validator (zod/valibot) get witness synthesis + constraint-driven mutations. */
+const withReflectedJsonSchema = (
+  reflection: SchemaReflection,
+  reflect: AdversarialContractOptions["reflectJsonSchema"],
+): SchemaReflection => {
+  if (
+    reflect === undefined ||
+    reflection.jsonSchema !== undefined ||
+    reflection.standard === undefined
+  ) {
+    return reflection
+  }
+  try {
+    const jsonSchema = reflect(reflection.standard)
+    return jsonSchema === undefined ? reflection : { ...reflection, jsonSchema }
+  } catch {
+    return reflection
+  }
+}
+
 async function resolveInput(
   routeKey: string,
   target: InputTarget,
@@ -802,7 +835,7 @@ async function buildLaboratories(
         const resolved = await resolveInput(
           routeKey,
           "body",
-          route.schema.body,
+          withReflectedJsonSchema(route.schema.body, options.reflectJsonSchema),
           witness,
           seed,
           maxWitnessBytes,
@@ -816,7 +849,7 @@ async function buildLaboratories(
       const resolved = await resolveInput(
         routeKey,
         "query",
-        route.schema.query,
+        withReflectedJsonSchema(route.schema.query, options.reflectJsonSchema),
         witness,
         seed,
         maxWitnessBytes,
@@ -1102,6 +1135,21 @@ export async function runAdversarialContract(
     (gap) =>
       gap.code === "NO_RUNTIME" || gap.code === "INVALID_RUNTIME" || gap.code === "CASE_NOT_FOUND",
   )
+  // Non-fatal: surface the silent-zero-coverage trap. Response conformance needs a DECLARED `response`
+  // schema; a response type inferred from the handler return is a client-side contract the laboratory
+  // cannot see. Left as an advisory (not a gap) so an inference-only app's suite stays green.
+  const advisories: string[] = []
+  if (
+    options.validateResponses !== false &&
+    routes.length > 0 &&
+    !laboratories.some((laboratory) => laboratory.route.schema?.response !== undefined)
+  ) {
+    advisories.push(
+      "validateResponses is on, but no selected route declares a `response` schema, so response " +
+        "conformance checked 0 targets. Response types inferred from a handler's return are a client-side " +
+        "contract only - declare `response:` on the routes you want the laboratory to verify.",
+    )
+  }
   return {
     ok: failures.length === 0 && !fatalGap && (!coverageRequired || gaps.length === 0),
     seed,
@@ -1111,6 +1159,7 @@ export async function runAdversarialContract(
     results,
     failures,
     gaps,
+    advisories,
     counts: {
       passed: results.length - failures.length,
       failed: failures.length,

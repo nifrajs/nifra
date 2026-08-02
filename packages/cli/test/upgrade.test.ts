@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { getRecipe, listRecipeVersions, type UpgradeRecipe } from "../src/recipes/index.ts"
 import {
   applyImportMoves,
+  compareSemverSpec,
   computeUpgrade,
   moveDependenciesText,
   pinSweepText,
@@ -91,6 +92,12 @@ describe("rewriteVersionSpec", () => {
   })
 })
 
+test("semver downgrade protection includes prerelease precedence", () => {
+  expect(compareSemverSpec("2.3.0-beta", "2.3.0")).toBeLessThan(0)
+  expect(compareSemverSpec("2.3.0", "2.3.0-beta")).toBeGreaterThan(0)
+  expect(compareSemverSpec("2.3.0-beta.2", "2.3.0-beta.10")).toBeLessThan(0)
+})
+
 // ── pinSweepText (pure, format-preserving) ────────────────────────────────────
 
 describe("pinSweepText", () => {
@@ -124,6 +131,32 @@ describe("pinSweepText", () => {
     const { text, changes } = pinSweepText("{ not json", RECIPE.pins)
     expect(changes).toHaveLength(0)
     expect(text).toBe("{ not json")
+  })
+
+  test("refuses a rollback (older target on a newer install) but keeps forward pins", () => {
+    const pkg = JSON.stringify({ dependencies: { "@nifrajs/core": "^2.3.0" } }, null, 2)
+    const { text, changes, downgrades } = pinSweepText(pkg, [{ match: "@nifrajs/", to: "2.0.0" }])
+    expect(changes).toHaveLength(0)
+    expect(downgrades).toEqual([
+      { field: "dependencies", name: "@nifrajs/core", from: "^2.3.0", to: "^2.0.0" },
+    ])
+    expect(text).toBe(pkg) // untouched
+  })
+
+  test("applies a rollback only when explicitly allowed", () => {
+    const pkg = JSON.stringify({ dependencies: { "@nifrajs/core": "^2.3.0" } }, null, 2)
+    const { changes, downgrades } = pinSweepText(pkg, [{ match: "@nifrajs/", to: "2.0.0" }], true)
+    expect(downgrades).toHaveLength(0)
+    expect(changes).toEqual([
+      { field: "dependencies", name: "@nifrajs/core", from: "^2.3.0", to: "^2.0.0" },
+    ])
+  })
+
+  test("a forward upgrade is not treated as a downgrade", () => {
+    const pkg = JSON.stringify({ dependencies: { "@nifrajs/core": "^2.0.0" } }, null, 2)
+    const { changes, downgrades } = pinSweepText(pkg, [{ match: "@nifrajs/", to: "2.3.0" }])
+    expect(downgrades).toHaveLength(0)
+    expect(changes[0]?.to).toBe("^2.3.0")
   })
 })
 

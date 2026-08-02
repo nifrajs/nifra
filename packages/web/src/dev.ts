@@ -54,11 +54,13 @@ import {
 import { dirname, relative, resolve } from "node:path"
 import { type BuildClientOptions, buildClient } from "./build.ts"
 import { type DevEntryMatch, resolveDevEntry } from "./bun-dev-entry.ts"
-import { renderDevErrorOverlay } from "./dev-error.ts"
+import { createDevDiagnostics } from "./dev-diagnostics.ts"
 import { explainBindFailure } from "./dev-port.ts"
 import { discoverRoutes } from "./fs.ts"
 import { DEFAULT_DEV_PORT, generateClientEntry } from "./index.ts"
 import { servePublicDir } from "./public-dir.ts"
+
+export { LAST_ERROR_PATH } from "./diagnostic.ts"
 
 /** Minimal app surface the dev server needs - `createWebApp(...)` satisfies it. */
 interface FetchApp {
@@ -128,6 +130,8 @@ type HtmlBundle = unknown
 /** The `Bun.serve` surface this uses, typed structurally so the file builds without Bun's ambient types. */
 interface BunServeOptions {
   readonly port: number
+  /** Diagnostics contain source paths; keep the dev server private by default. */
+  readonly hostname: "127.0.0.1"
   readonly development: { readonly hmr: boolean }
   readonly routes: Record<string, HtmlBundle>
   fetch(request: Request): Promise<Response>
@@ -243,6 +247,10 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
   // The app root. `routesDir` is `<app>/routes` by convention, so its parent is the project - the one
   // place a generated entry can sit and still resolve the app's imports.
   const root = resolve(routesDir, "..")
+  // The most recent SSR failure as a structured Diagnostic, scoped to THIS server. Served at
+  // LAST_ERROR_PATH so an agent driving the dev server reads the exact failure (code, codeframe, fix) as
+  // JSON instead of scraping the overlay. Shared with the Vite adapter so the endpoint can't drift.
+  const devDiagnostics = createDevDiagnostics(root)
   const devDir = resolve(root, DEV_DIR)
   const entryPath = resolve(devDir, "entry.tsx")
   const htmlPath = resolve(devDir, "entry.html")
@@ -337,6 +345,7 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
   try {
     server = serve({
       port,
+      hostname: "127.0.0.1",
       development: { hmr: true },
       // The probe route is the ONLY path Bun owns; everything else falls through to nifra's SSR.
       routes: { [PROBE_PATH]: htmlModule.default },
@@ -351,6 +360,11 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
           // answer and the document and its script are guaranteed to describe one build.
           const entry = await currentEntry()
           return new Response(null, { status: 307, headers: { location: entry.src } })
+        }
+        if (devDiagnostics.isLastErrorPath(url.pathname)) {
+          // The structured form of the overlay, for an agent driving the dev server (shared surface).
+          const { body, headers } = devDiagnostics.lastError()
+          return new Response(body, { headers })
         }
         // Static probe before routing; a miss returns undefined and falls through, so no route is
         // shadowed and a page render never pays a filesystem stat (extension-less paths skip it).
@@ -370,13 +384,15 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
             headers,
           })
         } catch (err) {
-          return new Response(
-            renderDevErrorOverlay(err, {
-              method: req.method,
-              url: `${url.pathname}${url.search}`,
-            }),
-            { status: 500, headers: { "content-type": "text/html; charset=utf-8" } },
-          )
+          // One Diagnostic drives both surfaces: the overlay returned here and the JSON at LAST_ERROR_PATH.
+          const html = devDiagnostics.capture(err, {
+            method: req.method,
+            url: `${url.pathname}${url.search}`,
+          })
+          return new Response(html, {
+            status: 500,
+            headers: { "content-type": "text/html; charset=utf-8" },
+          })
         }
       },
     })

@@ -387,6 +387,17 @@
         "@nifrajs/mock": "workspace:*",
       },
     },
+    "packages/ts-plugin": {
+      "name": "@nifrajs/ts-plugin",
+      "version": "2.3.0",
+      "dependencies": {
+        "@nifrajs/core": "workspace:*",
+        "@nifrajs/web": "workspace:*",
+      },
+      "peerDependencies": {
+        "typescript": ">=5.5.0",
+      },
+    },
     "packages/uploads": {
       "name": "@nifrajs/uploads",
       "version": "2.3.0",
@@ -867,6 +878,8 @@
     "@nifrajs/test-utils": ["@nifrajs/test-utils@workspace:internal/test-utils"],
 
     "@nifrajs/testing": ["@nifrajs/testing@workspace:packages/testing"],
+
+    "@nifrajs/ts-plugin": ["@nifrajs/ts-plugin@workspace:packages/ts-plugin"],
 
     "@nifrajs/uploads": ["@nifrajs/uploads@workspace:packages/uploads"],
 

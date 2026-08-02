@@ -89,9 +89,12 @@ Usage:
                                          nifra_run (backend), nifra_render (SSR a page), nifra_docs,
                                          nifra_example (verified snippets), nifra_scaffold (route→file),
                                          nifra_check (drift gate + fixes), nifra_levels (verification
-                                         ladder), nifra_doctor (deps + duplicate installs).
+                                         ladder), nifra_doctor (deps), nifra_explain (structured errors),
+                                         nifra_inspect (request traces), nifra_learn (guided build path).
   nifra docs-mcp [--port <n>]            Serve the PUBLIC docs MCP over HTTP (nifra_docs + nifra_example) -
                                          self-host on a VPS so any remote agent can learn nifra. Default :8787.
+  nifra learn   [<step>]                 Print the guided build-an-app path (the human view of nifra_learn):
+                                         no arg for the step index, a number for one step's goal/do/verify.
   nifra check   [--json] [--lints-only]  Gate: typecheck + lints (hand-rolled fetch(), untyped client("…"),
                                          server-only imports in routes/). Run as "done"; --json for agents;
                                          --lints-only skips tsc for a near-instant inner-loop pass.
@@ -133,9 +136,10 @@ Usage:
   nifra upgrade <version>                Run the per-release upgrade recipe for <version>: sweep every
                 [--write] [--no-verify]  matching dependency pin (preserving ^/~/exact), move removed
                 [--list] [--json]        packages, apply exact imports, then verify with nifra check.
-                                         Dry-run by default; --write applies then verifies (--no-verify
+                [--allow-downgrade]      Dry-run by default; --write applies then verifies (--no-verify
                                          to skip). --list shows available targets. Fail-closed on an
-                                         unknown version. Deterministic + idempotent.
+                                         unknown version or a rollback (--allow-downgrade overrides).
+                                         Deterministic + idempotent.
   nifra port    [--target <t>] [--json]  Portability linter: print a feature × deploy-target capability
                 [--ci] [--strict]        matrix (in-memory stores, in-process cron/WebSocket, Bun/Deno
                                          globals, node: builtins) with file:line evidence. --target auto-
@@ -532,6 +536,18 @@ async function main(): Promise<void> {
     console.log(`nifra docs MCP (HTTP) → ${server.url}`)
     return
   }
+  // `learn` prints the guided build-an-app path (the human head of `nifra_learn`). Project-independent:
+  // the path is static, so no project needs to load. `nifra learn` for the index, `nifra learn 3` for a step.
+  if (command === "learn") {
+    const { renderLearnResult } = await import("./learn.ts")
+    const stepArg = argv[1]
+    console.log(
+      renderLearnResult(
+        stepArg !== undefined && /^\d+$/.test(stepArg) ? Number(stepArg) : undefined,
+      ),
+    )
+    return
+  }
   // `check` is a pure cwd-based gate (typecheck + lint) - it must run even when the project doesn't
   // load (API-only, not built yet), so it dispatches before the eager `loadApp` below.
   if (command === "check") {
@@ -768,6 +784,7 @@ async function main(): Promise<void> {
         json: argv.includes("--json"),
         list: argv.includes("--list"),
         verify: !argv.includes("--no-verify"),
+        allowDowngrade: argv.includes("--allow-downgrade"),
       })
       if (!ok) process.exitCode = 1
     } catch (err) {

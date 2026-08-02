@@ -14,7 +14,7 @@ describe("publicDocsTools", () => {
       publicDocsTools()
         .map((t) => t.name)
         .sort(),
-    ).toEqual(["nifra_docs", "nifra_example", "nifra_types"])
+    ).toEqual(["nifra_docs", "nifra_example", "nifra_examples_app", "nifra_learn", "nifra_types"])
   })
 })
 
@@ -37,7 +37,7 @@ describe("handleMcpHttp", () => {
     expect(body.result.protocolVersion).toBeTruthy()
   })
 
-  test("tools/list returns the two tools with schemas", async () => {
+  test("tools/list returns the project-independent tools with schemas", async () => {
     const res = await handleMcpHttp(post({ jsonrpc: "2.0", id: 2, method: "tools/list" }))
     const body = (await res.json()) as {
       result: { tools: Array<{ name: string; inputSchema: unknown }> }
@@ -45,6 +45,8 @@ describe("handleMcpHttp", () => {
     expect(body.result.tools.map((t) => t.name).sort()).toEqual([
       "nifra_docs",
       "nifra_example",
+      "nifra_examples_app",
+      "nifra_learn",
       "nifra_types",
     ])
     expect(body.result.tools[0]?.inputSchema).toBeDefined()
@@ -64,6 +66,41 @@ describe("handleMcpHttp", () => {
     }
     expect(body.result.content[0]?.type).toBe("text")
     expect(body.result.content[0]?.text).toContain("@nifrajs/") // a real, framework-importing snippet
+  })
+
+  test("nifra_examples_app returns structuredContent + serves its ui:// widget resource", async () => {
+    const call = await handleMcpHttp(
+      post({
+        jsonrpc: "2.0",
+        id: 5,
+        method: "tools/call",
+        params: { name: "nifra_examples_app", arguments: {} },
+      }),
+    )
+    const callBody = (await call.json()) as {
+      result: {
+        structuredContent?: { examples: unknown[] }
+        _meta?: { ui?: { resourceUri?: string } }
+      }
+    }
+    expect(callBody.result.structuredContent?.examples.length).toBeGreaterThan(0)
+    // The tool must link its widget so MCP Apps hosts know which resource renders it.
+    expect(callBody.result._meta?.ui?.resourceUri).toBe("ui://nifra/examples")
+
+    // ...and that resource must be readable, or the host has nothing to render.
+    const read = await handleMcpHttp(
+      post({
+        jsonrpc: "2.0",
+        id: 6,
+        method: "resources/read",
+        params: { uri: "ui://nifra/examples" },
+      }),
+    )
+    const readBody = (await read.json()) as {
+      result: { contents: Array<{ mimeType: string; text: string }> }
+    }
+    expect(readBody.result.contents[0]?.mimeType).toBe("text/html;profile=mcp-app")
+    expect(readBody.result.contents[0]?.text).toContain("nifra examples")
   })
 
   test("a malformed body → JSON-RPC parse error, not a crash", async () => {

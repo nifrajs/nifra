@@ -11,10 +11,12 @@ The nifra CLI - zero-config dev/build/start for a nifra app (`nifra dev`, `nifra
 ## Key exports
 
 - **docsTools** _(function)_ - `docsTools: (loadDocs: () => Promise<string | undefined>, loadExamples: () => Promise<Example[] | undefined>, loadTypes: () => Promise<TypeE…`
+- **examplesAppTool** _(function)_ - `examplesAppTool: (loadExamples: () => Promise<Example[] | undefined>) => McpTool`
 - **handleMcpHttp** _(function)_ - `handleMcpHttp: (request: Request) => Promise<Response>`
 - **publicDocsTools** _(function)_ - `publicDocsTools: () => McpTool[]`
 - **respondMcpHttp** _(function)_ - `respondMcpHttp: (request: Request, tools: McpTool[], options?: McpHttpOptions) => Promise<Response>`
 - **default** _(const)_ - `default: { port: number; fetch: (request: Request) => Promise<Response>; }`
+- **examplesWidget** _(const)_ - `examplesWidget: import("@nifrajs/mcp").McpWidget`
 - **Example** _(interface)_ - `interface Example`
 - **McpHttpOptions** _(interface)_ - `interface McpHttpOptions`
 - **TypeEntry** _(interface)_ - `interface TypeEntry`
