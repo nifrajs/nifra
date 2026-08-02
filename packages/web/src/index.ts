@@ -479,6 +479,34 @@ export interface RenderPageOptions {
   readonly islandScripts?: readonly string[]
   /** CSP nonce applied to every framework-owned executable script in this document. */
   readonly nonce?: string
+  /**
+   * Advanced: a per-route slot the renderer fills with the request-invariant document pieces (shell
+   * prefix/suffix, tail statics) on the first render and reuses afterwards, skipping their re-assembly.
+   *
+   * Only pass a cache when every shell-shaping input is IDENTICAL across the requests sharing it:
+   * same `head` content (a static meta chain - never a `meta(data)` function), `title`, `styles`,
+   * `preload`, `islandScripts`, `clientEntry`, `rootId`, `hydrate`, and `prerenderedPaths`. Per-request
+   * values (`data`, `params`, `search`, `actionData`, `layoutData`, deferred state) are always assembled
+   * fresh and safe. A per-request `nonce` disables the cache automatically. `createWebApp` wires this
+   * per route, gated on the route + layout metas being static.
+   */
+  readonly assemblyCache?: RenderAssemblyCache
+}
+
+/** The mutable per-route slot {@link RenderPageOptions.assemblyCache} fills. Opaque - create as `{}`. */
+export interface RenderAssemblyCache {
+  /** Shell up to (not including) the deferred-runtime insertion point. */
+  shellPre?: string
+  /** Shell from after the deferred-runtime insertion point through the open `#root` container. */
+  shellPost?: string
+  /** Tail opener: the inline script open tag + the route-id global (before the action global). */
+  tailPre?: string
+  /** Tail mid: the prerendered-paths global (between the action and layout-data globals). */
+  tailMid?: string
+  /** Tail data prefix: the `window.<data global>=` assignment head. */
+  tailData?: string
+  /** Tail from after the serialized data through `</html>`. */
+  tailPost?: string
 }
 
 /**
@@ -555,7 +583,12 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     actionData === undefined
       ? undefined
       : prepareDeferred(actionData, deferred.length + layoutDeferred.length)
-  const allDeferred = [...deferred, ...layoutDeferred, ...(actionSplit ? actionSplit.deferred : [])]
+  // On the common page-only path (no layout loader, no action) reuse `deferred` directly instead of
+  // allocating a fresh spread array every request.
+  const allDeferred =
+    layoutDeferred.length === 0 && actionSplit === undefined
+      ? deferred
+      : [...deferred, ...layoutDeferred, ...(actionSplit ? actionSplit.deferred : [])]
   // Omitted entirely when no layout has a loader - a page-only app emits exactly what it did before.
   const layoutTail =
     options.layoutData === undefined
@@ -569,71 +602,83 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
       : `window.${ACTION_GLOBAL}=${serializeData(actionSplit.forClient)};`
   const deferredRuntime =
     allDeferred.length > 0 ? `<script${nonceAttr}>${DEFERRED_RUNTIME}</script>` : ""
-  // Matched-route chunk preloads, concatenated directly (skip the `filter().map()`
-  // intermediate arrays - and the whole loop - on the common no-extra-preload render). De-duped
-  // against the entry, which is preloaded separately below.
-  let preloadLinks = ""
-  if (preload.length > 0) {
+  // The regex only injects the CSP nonce into the (constant) hydration head; with no nonce it's a
+  // no-op that still scans the whole script every request. Skip it on the common no-nonce path.
+  // The request-invariant document pieces. With a caller-supplied per-route cache (and no per-request
+  // nonce, which would bake into them) they're built once and reused; the per-request seams - the
+  // deferred runtime in the shell, the action/layout-data globals and the serialized loader data in
+  // the tail - are always assembled fresh. Byte-identical to building the whole document inline.
+  const slot: RenderAssemblyCache =
+    nonce === undefined && options.assemblyCache !== undefined ? options.assemblyCache : {}
+  if (slot.shellPre === undefined) {
+    // Matched-route chunk preloads, concatenated directly. De-duped against the entry, which is
+    // preloaded separately below.
+    let preloadLinks = ""
     for (const url of preload) {
       if (url !== clientEntry)
         preloadLinks += `<link rel="modulepreload" href="${escapeAttr(url)}">`
     }
+    // The matched route's stylesheets - `<link rel="stylesheet">` in `<head>` so CSS arrives with the
+    // first paint (no FOUC). Render-blocking by design, and emitted regardless of `hydrate` (a static
+    // or `_error` page still wants its styles). In dev (Vite) CSS is injected client-side instead.
+    let styleLinks = ""
+    for (const url of styles) styleLinks += `<link rel="stylesheet" href="${escapeAttr(url)}">`
+    // Island bundles are referenced only by a `<script type="module">` at the END of `<body>`, so the
+    // browser doesn't discover them until the whole page is parsed. `modulepreload` them in `<head>`
+    // so the fetch starts immediately, in parallel with parsing - regardless of `hydrate`.
+    let islandPreloads = ""
+    for (const src of islandScripts)
+      islandPreloads += `<link rel="modulepreload" href="${escapeAttr(src)}">`
+    // Runs in the first-paint→hydration window to swallow a JS-only form's broken native submit. Only
+    // on a hydrating page (a static/_error page has no client handlers, so no footgun).
+    const hydrationGuard = hydrate ? `<script${nonceAttr}>${PRE_HYDRATION_GUARD}</script>` : ""
+    // `<html>` attributes. `lang` defaults to `"en"`; `dir` is omitted entirely when unset, which IS
+    // HTML's `ltr` default. Both attribute-escaped. `client.ts`'s `applyHead` mirrors this exact
+    // defaulting on soft-nav, so a hard load and a client navigation produce the same `<html>`.
+    const htmlAttrs = ` lang="${escapeAttr(head?.lang ?? "en")}"${head?.dir === undefined ? "" : ` dir="${escapeAttr(head.dir)}"`}`
+    // Marks the container for the client entry when the id is not the one the entry falls back to.
+    const rootMarker = rootId === "root" ? "" : ` ${ROOT_ATTRIBUTE}`
+    const rawHydrationHead = adapter.hydrationHead(nonce)
+    const hydrationHead =
+      nonce === undefined
+        ? rawHydrationHead
+        : rawHydrationHead.replace(/<script(?![^>]*\bnonce=)(?=[\s>])/g, `<script${nonceAttr}`)
+    // Shell up to the deferred-runtime seam: on a hydrating page that seam sits after the entry +
+    // route-chunk preloads; a non-hydrating page has no runtime insertion at all.
+    const entryPreloads = hydrate
+      ? `<link rel="modulepreload" href="${escapeAttr(clientEntry ?? "")}">${preloadLinks}`
+      : ""
+    slot.shellPre = `<!doctype html><html${htmlAttrs}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${hydrationGuard}<title>${escapeHtml(head?.title ?? title)}</title>${headTags(head)}${styleLinks}${entryPreloads}`
+    slot.shellPost = `${islandPreloads}${hydrationHead}</head><body><div id="${escapeAttr(rootId)}"${rootMarker}>`
+    // Island bundles load regardless of `hydrate` - a static page (hydrate:false) ships no framework
+    // client but can still mount no-framework islands (`@nifrajs/web/islands`).
+    let islandTags = ""
+    for (const src of islandScripts)
+      islandTags += `<script type="module" src="${escapeAttr(src)}"${nonceAttr}></script>`
+    if (hydrate) {
+      slot.tailPre = `<script${nonceAttr}>${route}`
+      slot.tailMid = prerendered
+      slot.tailData = `window.${DATA_GLOBAL}=`
+      slot.tailPost = `</script><script type="module" src="${escapeAttr(clientEntry ?? "")}"${nonceAttr}></script>${islandTags}</body></html>`
+    } else {
+      slot.tailPre = ""
+      slot.tailMid = ""
+      slot.tailData = ""
+      slot.tailPost = `${islandTags}</body></html>`
+    }
   }
-  // The matched route's stylesheets - `<link rel="stylesheet">` in `<head>` so CSS arrives with the
-  // first paint (no FOUC). Render-blocking by design, and emitted regardless of `hydrate` (a static or
-  // `_error` page still wants its styles). In dev (Vite) CSS is injected client-side instead, so
-  // `styles` is empty there.
-  let styleLinks = ""
-  for (const url of styles) styleLinks += `<link rel="stylesheet" href="${escapeAttr(url)}">`
-  // Island bundles are referenced only by a `<script type="module">` at the END of `<body>` (below), so
-  // the browser doesn't discover them until the whole page is parsed. `modulepreload` them in `<head>`
-  // so the fetch starts immediately, in parallel with parsing - regardless of `hydrate` (an island page
-  // is typically hydrate:false). Without this, a heavy island bundle on a cold first load leaves its
-  // server-rendered placeholder visible until that late, un-prefetched fetch lands ("stuck loading").
-  let islandPreloads = ""
-  for (const src of islandScripts)
-    islandPreloads += `<link rel="modulepreload" href="${escapeAttr(src)}">`
-  // Shell - flushed before the app finishes rendering: `<head>` (title, meta, hydration head) + the
-  // open container. `modulepreload` of the client entry - plus the matched route's own chunks
-  // (`preloadLinks`) - lets the JS download while the body streams. One template literal (no
-  // intermediate array + `join`) - byte-identical to the prior output.
-  // A non-hydrated page (e.g. an `_error` boundary) omits the client-entry preload, route-chunk
-  // preloads, and deferred runtime - there's no client takeover to feed.
-  const hydrationLinks = hydrate
-    ? `<link rel="modulepreload" href="${escapeAttr(clientEntry ?? "")}">${preloadLinks}${deferredRuntime}`
-    : ""
-  // Runs in the first-paint→hydration window to swallow a JS-only form's broken native submit. Only on a
-  // hydrating page (a static/_error page has no client handlers, so no footgun).
-  const hydrationGuard = hydrate ? `<script${nonceAttr}>${PRE_HYDRATION_GUARD}</script>` : ""
-  // `<html>` attributes. `lang` defaults to `"en"` (so an app that never sets it is byte-identical to
-  // before); `dir` is omitted entirely when unset, which IS HTML's `ltr` default - emitting it
-  // unconditionally would change every existing app's output for no gain. Both attribute-escaped.
-  // `client.ts`'s `applyHead` mirrors this exact defaulting on soft-nav, so a hard load and a client
-  // navigation to the same URL produce the same `<html>` (no drift on a multilingual site).
-  const htmlAttrs = ` lang="${escapeAttr(head?.lang ?? "en")}"${head?.dir === undefined ? "" : ` dir="${escapeAttr(head.dir)}"`}`
-  // Marks the container for the client entry when the id is not the one the entry falls back to. A
-  // static attribute name with no value, so `rootId` never reaches the markup twice and there is
-  // nothing here to escape. Omitted on the default so existing output is unchanged.
-  const rootMarker = rootId === "root" ? "" : ` ${ROOT_ATTRIBUTE}`
-  const hydrationHead = adapter
-    .hydrationHead(nonce)
-    .replace(/<script(?![^>]*\bnonce=)(?=[\s>])/g, `<script${nonceAttr}`)
-  const shellHtml = `<!doctype html><html${htmlAttrs}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${hydrationGuard}<title>${escapeHtml(head?.title ?? title)}</title>${headTags(head)}${styleLinks}${hydrationLinks}${islandPreloads}${hydrationHead}</head><body><div id="${escapeAttr(rootId)}"${rootMarker}>`
+  // The deferred runtime rides only on a hydrating page (a static page has no client takeover), and
+  // only when something actually deferred - matching the pre-cache emission exactly.
+  const runtimeSeam = hydrate && allDeferred.length > 0 ? deferredRuntime : ""
+  const shellHtml = `${slot.shellPre}${runtimeSeam}${slot.shellPost}`
   // Closes the hydration container; deferred resolve scripts go AFTER it (outside `#root`) so they
   // aren't part of the adapter's hydrated tree (an inline script inside it breaks hydration).
   const closeRootHtml = "</div>"
   // Tail - the loader-data globals + the client module. Module scripts defer (run after parse), so
   // the data global + every streamed deferred resolution are set before the entry hydrates.
-  // Island bundles load regardless of `hydrate` - a static page (hydrate:false) ships no framework
-  // client but can still mount no-framework islands (`@nifrajs/web/islands`).
-  let islandTags = ""
-  for (const src of islandScripts)
-    islandTags += `<script type="module" src="${escapeAttr(src)}"${nonceAttr}></script>`
-  const tailHtml = `${
-    hydrate
-      ? `<script${nonceAttr}>${route}${action}${prerendered}${layoutTail}window.${DATA_GLOBAL}=${serializeData(forClient)}</script><script type="module" src="${escapeAttr(clientEntry ?? "")}"${nonceAttr}></script>`
-      : ""
-  }${islandTags}</body></html>`
+  const tailHtml = hydrate
+    ? `${slot.tailPre}${action}${slot.tailMid}${layoutTail}${slot.tailData}${serializeData(forClient)}${slot.tailPost}`
+    : (slot.tailPost as string)
   const headers: Record<string, string> = { "content-type": "text/html; charset=utf-8" }
   // Caller-supplied headers (a terminal status page's `cache-control`, say). Applied before the
   // framework's own below, so `content-type` and the ISR channel stay authoritative - a caller must
@@ -1988,6 +2033,30 @@ export function createWebApp<Env = unknown>(
     // A dynamic route whose `getStaticPaths` declared `fallback: "404"` - only its prerendered paths
     // exist; anything else 404s (computed once per route, not per request).
     const is404Fallback = options.staticFallbacks?.[route.pattern] === "404"
+    // Per-route document-assembly cache (see RenderAssemblyCache): filled on the first GET render and
+    // reused while the route + layout MODULE IDENTITIES are unchanged. Attached only when every meta
+    // in the chain is static - a `meta(data)` function makes the head per-request, so those routes
+    // always assemble fresh. A module reload (dev HMR) yields new module objects, dropping the slot.
+    let assemblySlot: RenderAssemblyCache | undefined
+    let assemblySlotMod: unknown
+    let assemblySlotLayouts: LoadedLayoutModules | undefined
+    const assemblyCacheFor = (
+      mod: RouteModule,
+      lms: LoadedLayoutModules,
+    ): { assemblyCache: RenderAssemblyCache } | Record<string, never> => {
+      if (typeof mod.meta === "function") return {}
+      for (const m of lms) if (typeof m.meta === "function") return {}
+      const layoutsUnchanged =
+        assemblySlotLayouts !== undefined &&
+        assemblySlotLayouts.length === lms.length &&
+        assemblySlotLayouts.every((m, i) => m === lms[i])
+      if (assemblySlotMod !== mod || !layoutsUnchanged) {
+        assemblySlot = {}
+        assemblySlotMod = mod
+        assemblySlotLayouts = lms
+      }
+      return { assemblyCache: assemblySlot as RenderAssemblyCache }
+    }
     app.register("GET", route.pattern, undefined, async (c: RouteContext) => {
       // Enforce `fallback: "404"` before any work: an unlisted path under this route doesn't exist.
       // Covers hard navigation directly; a client soft-nav's data fetch gets the 404, throws, and the
@@ -2096,15 +2165,12 @@ export function createWebApp<Env = unknown>(
           headers: { "content-type": "application/x-ndjson; charset=utf-8" },
         })
       }
-      const { chain, head } = resolveChainAndHead(
-        layoutModules ?? (await loadLayoutModules(route)),
-        mod,
-        {
-          data,
-          params: c.params,
-          origin: originOf(c.req),
-        },
-      )
+      const chainLayoutModules = layoutModules ?? (await loadLayoutModules(route))
+      const { chain, head } = resolveChainAndHead(chainLayoutModules, mod, {
+        data,
+        params: c.params,
+        origin: originOf(c.req),
+      })
       const hydrateRoute = mod.hydrate !== false
       try {
         // `await` so a shell-render throw (renderToStream rejects before any byte) is caught here and
@@ -2131,6 +2197,7 @@ export function createWebApp<Env = unknown>(
           ...(mod.revalidate !== undefined ? { revalidate: mod.revalidate } : {}),
           ...(mod.islandScripts !== undefined ? { islandScripts: mod.islandScripts } : {}),
           ...titleOption,
+          ...assemblyCacheFor(mod, chainLayoutModules),
         })
       } catch (err) {
         // Same precedence as the loader catch above - a `meta()` may signal too.
