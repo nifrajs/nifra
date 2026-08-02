@@ -13,6 +13,7 @@ beforeAll(async () => {
   await writeFile(join(dir, "app.js"), "console.log('hi')")
   await writeFile(join(dir, "style.css"), "body{}")
   await writeFile(join(dir, "large.txt"), "x".repeat(256 * 1024))
+  await writeFile(join(dir, "logo..png"), "dotdot")
 })
 afterEach(async () => {
   await running?.stop({ drainMs: 0 })
@@ -62,6 +63,20 @@ test("path traversal out of the served dir is rejected (403)", async () => {
   // `%2e%2e%2f` = `../` - survives URL normalization, decoded only after the prefix is stripped.
   const res = await fetch(`${base}/assets/%2e%2e%2fsecret.txt`)
   expect(res.status).toBe(403)
+})
+
+test("a `..` PATH SEGMENT is rejected, but a filename containing `..` is served", async () => {
+  const base = await startWithStatic()
+  // Segment forms of traversal that survive client-side URL normalization (an encoded slash keeps
+  // the `..` out of the URL parser's dot-segment collapsing) - all rejected before any filesystem
+  // access.
+  expect((await fetch(`${base}/assets/x%2f..%2fapp.js`)).status).toBe(403)
+  expect((await fetch(`${base}/assets/%5c..%5cx`)).status).toBe(403) // backslash separator
+  // A legal filename that merely CONTAINS consecutive dots must still serve - the guard is
+  // segment-precise, not a substring match.
+  const ok = await fetch(`${base}/assets/logo..png`)
+  expect(ok.status).toBe(200)
+  expect(await ok.text()).toBe("dotdot")
 })
 
 test("HEAD returns headers + content-length, no body", async () => {

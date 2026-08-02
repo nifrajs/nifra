@@ -393,7 +393,12 @@ test("renderPage propagates a CSP nonce to every framework-owned executable scri
       nonce: "page-nonce",
     })
   ).text()
-  const executable = [...html.matchAll(/<script\b[^>]*>/g)].map((match) => match[0])
+  // Index scan, not a tag regex - regex HTML matching mis-splits on `>` inside quoted attributes.
+  const executable: string[] = []
+  for (let i = html.indexOf("<script"); i !== -1; i = html.indexOf("<script", i + 1)) {
+    const close = html.indexOf(">", i)
+    if (close !== -1) executable.push(html.slice(i, close + 1))
+  }
   expect(executable.length).toBeGreaterThan(5)
   for (const open of executable) expect(open).toContain('nonce="page-nonce"')
   expect(() =>

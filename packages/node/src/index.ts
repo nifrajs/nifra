@@ -17,7 +17,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http"
-import { extname, resolve, sep } from "node:path"
+import { extname, isAbsolute, relative, resolve, sep } from "node:path"
 import { type Duplex, Readable } from "node:stream"
 import { fileURLToPath } from "node:url"
 
@@ -372,7 +372,12 @@ interface StaticState {
 function staticStateOf(options: ServeStaticOptions): StaticState {
   const root = resolve(typeof options.dir === "string" ? options.dir : fileURLToPath(options.dir))
   const raw = options.prefix ?? "/assets"
-  const prefix = raw === "/" ? "/" : `/${raw.replace(/^\/+|\/+$/g, "")}`
+  // Index scans, not `/^\/+|\/+$/g` - the trailing-run half backtracks quadratically.
+  let from = 0
+  while (from < raw.length && raw.charCodeAt(from) === 47 /* '/' */) from++
+  let to = raw.length
+  while (to > from && raw.charCodeAt(to - 1) === 47) to--
+  const prefix = raw === "/" ? "/" : `/${raw.slice(from, to)}`
   return { root, prefix, immutable: options.immutable !== false, headers: options.headers }
 }
 
@@ -399,9 +404,16 @@ function staticMatch(
   rel = rel.replace(/^\/+/, "")
   if (rel === "" || rel.endsWith("/")) return "pass" // a directory request → the app decides
   if (rel.includes("\0")) return { reject: new Response("Bad Request", { status: 400 }) }
+  // Reject traversal in the REQUEST form before it ever reaches the filesystem path join: a `..`
+  // path segment (or a backslash Windows would treat as a separator) has no legitimate use in an
+  // asset URL. Segment-precise on purpose - a filename merely CONTAINING `..` (`logo..png`) is legal.
+  if (rel.split("/").includes("..") || rel.includes("\\")) {
+    return { reject: new Response("Forbidden", { status: 403 }) }
+  }
   const file = resolve(state.root, rel)
-  // Confine to the served directory - block `..` from escaping root.
-  if (file !== state.root && !file.startsWith(state.root + sep)) {
+  // Confine to the served directory - the resolved path must sit at or below root.
+  const contained = relative(state.root, file)
+  if (contained.startsWith("..") || isAbsolute(contained)) {
     return { reject: new Response("Forbidden", { status: 403 }) }
   }
   return { file }

@@ -45,6 +45,8 @@ export interface ServiceWorkerOptions {
 const SW_URL = /^\/[\w\-./@%]*$/
 
 /** A precache URL has to be same-origin, rooted, and free of anything that could break out of a list. */
+import { jsStringLiteral } from "./internal/js-string.ts"
+
 function assertPrecachable(url: string, label: string): void {
   if (typeof url !== "string" || url === "") {
     throw new Error(`[nifra/service-worker] ${label} must be a non-empty string`)
@@ -161,5 +163,5 @@ self.addEventListener("fetch", (event) => {
  */
 export function serviceWorkerRegistration(scriptUrl = "/sw.js"): string {
   assertPrecachable(scriptUrl, "scriptUrl")
-  return `if("serviceWorker"in navigator){addEventListener("load",function(){navigator.serviceWorker.register(${JSON.stringify(scriptUrl)}).catch(function(){})})}`
+  return `if("serviceWorker"in navigator){addEventListener("load",function(){navigator.serviceWorker.register(${jsStringLiteral(scriptUrl)}).catch(function(){})})}`
 }

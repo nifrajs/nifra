@@ -787,7 +787,9 @@ export interface ManifestDrift {
 // The route-relative specifiers the generated manifest imports. Both shapes `generateServerManifest`
 // emits are matched: eager `import * as m0 from "./routes/x.tsx"` and lazy `() => import("./routes/x")`.
 // Captures the path inside the quotes; the caller strips the routes-dir prefix to compare with discovery.
-const MANIFEST_IMPORT = /(?:import\s+\*\s+as\s+\w+\s+from|import)\s*\(?\s*["']([^"']+)["']\)?/g
+// `\s*(?:\(\s*)?` rather than `\s*\(?\s*`: two adjacent unbounded whitespace runs with an optional
+// token between them are ambiguous, and that ambiguity backtracks quadratically on a long space run.
+const MANIFEST_IMPORT = /(?:import\s+\*\s+as\s+\w+\s+from|import)\s*(?:\(\s*)?["']([^"']+)["']\)?/g
 // The baked client-entry line: `export const clientEntry = "…"`.
 const MANIFEST_CLIENT_ENTRY = /export\s+const\s+clientEntry\s*=\s*["']([^"']+)["']/
 
@@ -814,12 +816,18 @@ export function parseManifestClientEntry(source: string): string | undefined {
 }
 
 // The baked asset lines `generateServerManifest` emits: `export const styles = […]` then
-// `export const routeStyles = {…}`, each a JSON literal followed by the next `export const`. The capture
-// is `[\s\S]*?` (multi-line, non-greedy up to the following `export const`) NOT `.+` - a committed
-// manifest carries no format-ignore pragma, so a formatter can wrap a long `routeStyles` map across lines;
-// a single-line regex would then miss it and silently DROP every baked stylesheet on re-sync.
-const MANIFEST_STYLES = /export const styles = ([\s\S]*?)\nexport const /
-const MANIFEST_ROUTE_STYLES = /export const routeStyles = ([\s\S]*?)\nexport const /
+// `export const routeStyles = {…}`, each a JSON literal running to the next `export const`. Extracted
+// with `indexOf` slicing rather than a lazy `[\s\S]*?` regex: the slice is multi-line by nature (a
+// formatter can wrap a long `routeStyles` map, and missing it would silently DROP every baked
+// stylesheet on re-sync), and a lazy scan re-walks the file per unterminated opener - quadratic.
+function bakedManifestLiteral(source: string, name: string): string | undefined {
+  const opener = `export const ${name} = `
+  const start = source.indexOf(opener)
+  if (start === -1) return undefined
+  const from = start + opener.length
+  const end = source.indexOf("\nexport const ", from)
+  return end === -1 ? undefined : source.slice(from, end)
+}
 
 /** Parse a baked JSON literal captured from a committed manifest, tolerating a formatter's TRAILING COMMAS
  * (biome/prettier add one when wrapping a multi-line array/object; strict `JSON.parse` would reject it).
@@ -830,7 +838,7 @@ function parseManifestLiteral(raw: string): unknown {
 
 /** The baked top-level `styles` array in a committed server-manifest (empty if absent/unparseable). Pure. */
 export function parseManifestStyles(source: string): string[] {
-  const raw = MANIFEST_STYLES.exec(source)?.[1]
+  const raw = bakedManifestLiteral(source, "styles")
   if (raw === undefined) return []
   try {
     const value = parseManifestLiteral(raw)
@@ -842,7 +850,7 @@ export function parseManifestStyles(source: string): string[] {
 
 /** The baked per-route `routeStyles` map in a committed server-manifest (empty if absent/unparseable). Pure. */
 export function parseManifestRouteStyles(source: string): Record<string, string[]> {
-  const raw = MANIFEST_ROUTE_STYLES.exec(source)?.[1]
+  const raw = bakedManifestLiteral(source, "routeStyles")
   if (raw === undefined) return {}
   try {
     const value = parseManifestLiteral(raw)

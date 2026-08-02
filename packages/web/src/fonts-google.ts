@@ -212,30 +212,87 @@ export function googleFontsCssUrl(options: GoogleFontOptions): string {
   return `${CSS2_ENDPOINT}?${params.join("&")}`
 }
 
-const FACE_RE = /(?:\/\*([^*]*)\*\/\s*)?@font-face\s*\{([^}]*)\}/g
-const SRC_RE = /url\(\s*(['"]?)([^'")]+)\1\s*\)(?:\s*format\(\s*(['"]?)([^'")]+)\3\s*\))?/g
+// The stylesheet is REMOTE input (Google's CDN, but still an upstream), so the whole parse is
+// forward index scans - no unanchored regex runs on it, and no shape can backtrack polynomially on
+// an adversarial response.
 
+/** The `/* subset *​/` label immediately preceding a `@font-face` block (only whitespace between),
+ * scanned by index in the gap since the previous block. */
+function subsetLabelBefore(css: string, faceStart: number, prevEnd: number): string | undefined {
+  const between = css.slice(prevEnd, faceStart)
+  const open = between.lastIndexOf("/*")
+  if (open === -1) return undefined
+  const close = between.indexOf("*/", open + 2)
+  if (close === -1 || between.slice(close + 2).trim() !== "") return undefined
+  return between.slice(open + 2, close)
+}
+
+/** The value of `prop: value;` inside a declaration body, by case-insensitive index scan. */
 function declOf(body: string, prop: string): string | undefined {
-  const m = body.match(new RegExp(`${prop}\\s*:\\s*([^;]+);`, "i"))
-  return m?.[1]?.trim()
+  const lower = body.toLowerCase()
+  const needle = prop.toLowerCase()
+  for (let at = lower.indexOf(needle); at !== -1; at = lower.indexOf(needle, at + 1)) {
+    let i = at + needle.length
+    while (i < body.length && (body[i] === " " || body[i] === "\t" || body[i] === "\n")) i++
+    if (body[i] !== ":") continue
+    i++
+    const end = body.indexOf(";", i)
+    if (end === -1) continue // unterminated declaration - same as the semicolon-requiring regex
+    return body.slice(i, end).trim()
+  }
+  return undefined
+}
+
+/** Strip one level of matching quotes. */
+function unquote(value: string): string {
+  const first = value[0]
+  return (first === '"' || first === "'") && value.endsWith(first) && value.length > 1
+    ? value.slice(1, -1)
+    : value
+}
+
+/** Every `url(…)` (with optional trailing `format(…)`) in a declaration body, by index scan. */
+function parseSrc(body: string): { url: string; format?: string }[] {
+  const src: { url: string; format?: string }[] = []
+  for (let at = body.indexOf("url("); at !== -1; at = body.indexOf("url(", at + 1)) {
+    const close = body.indexOf(")", at + 4)
+    if (close === -1) break
+    const url = unquote(body.slice(at + 4, close).trim())
+    if (url === "") continue
+    let cursor = close + 1
+    while (cursor < body.length && (body[cursor] === " " || body[cursor] === "\t")) cursor++
+    let format: string | undefined
+    if (body.startsWith("format(", cursor)) {
+      const formatClose = body.indexOf(")", cursor + 7)
+      if (formatClose !== -1) format = unquote(body.slice(cursor + 7, formatClose).trim())
+    }
+    src.push(format === undefined || format === "" ? { url } : { url, format })
+  }
+  return src
 }
 
 /** Parse Google's stylesheet into structured faces, capturing the `/* subset *​/` label that precedes
  * each `@font-face`. Pure - exported so callers can run their own download/write pipeline. */
 export function parseGoogleFontCss(css: string): ParsedFontFace[] {
   const faces: ParsedFontFace[] = []
-  for (const match of css.matchAll(FACE_RE)) {
-    const subset = (match[1] ?? "").trim() || "default"
-    const body = match[2] ?? ""
+  let prevEnd = 0
+  // The next-`{` position is memoized: without it, a crafted response of N at-rules ahead of one
+  // late brace re-scans for that brace N times - the quadratic shape this parser exists to avoid.
+  let openMemo = -1
+  for (let at = css.indexOf("@font-face"); at !== -1; at = css.indexOf("@font-face", at + 1)) {
+    if (openMemo < at + 10) openMemo = css.indexOf("{", at + 10)
+    const open = openMemo
+    if (open === -1) break
+    if (css.slice(at + 10, open).trim() !== "") continue // not this at-rule's block
+    const closeBrace = css.indexOf("}", open + 1)
+    if (closeBrace === -1) break
+    const subset = (subsetLabelBefore(css, at, prevEnd) ?? "").trim() || "default"
+    prevEnd = closeBrace + 1
+    const body = css.slice(open + 1, closeBrace)
     const familyRaw = declOf(body, "font-family")
     if (familyRaw === undefined) continue
-    const family = familyRaw.replace(/^['"]|['"]$/g, "")
-    const src: { url: string; format?: string }[] = []
-    for (const s of body.matchAll(SRC_RE)) {
-      const url = s[2]
-      if (url === undefined) continue
-      src.push(s[4] === undefined ? { url } : { url, format: s[4] })
-    }
+    const family = unquote(familyRaw)
+    const src = parseSrc(body)
     if (src.length === 0) continue
     const unicodeRange = declOf(body, "unicode-range")
     faces.push({
@@ -316,7 +373,8 @@ export async function loadGoogleFont(
   const family = validateFamily(options.family)
   const fetchImpl = io.fetch ?? fetch
   const writeFile = io.writeFile ?? defaultWriteFile
-  const publicPath = (io.publicPath ?? "/fonts").replace(/\/+$/, "")
+  let publicPath = io.publicPath ?? "/fonts"
+  while (publicPath.endsWith("/")) publicPath = publicPath.slice(0, -1)
   const maxBytes = io.maxBytesPerFile ?? DEFAULT_MAX_FONT_BYTES
   const wantedSubsets = options.subsets?.map(validateSubset)
 

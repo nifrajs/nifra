@@ -2828,6 +2828,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The subset of the `svgo` API this plugin uses (structural, so no hard dependency on its types).
 - **SvgPluginOptions** _(interface)_ - `interface SvgPluginOptions`
 - **SvgToJsxOptions** _(interface)_ - `interface SvgToJsxOptions`
+- **stripSvgPreamble** _(function)_ - `stripSvgPreamble: (xml: string) => string`
+  Strip the XML declaration, comments, and DOCTYPE from an SVG source by index scan. Shared by every adapter's SVG-component transform instead of chained regex `replace`s, for two reasons: the lazy `[\s\S]*?` scans backtrack quadratically on an unterminated marker, and sequential single-pass replaces…
 - **svgComponentBunPlugin** _(function)_ - `svgComponentBunPlugin: (_generate: "dom" | "ssr", options?: SvgPluginOptions) => BunPlugin`
   The SVG-as-component Bun plugin (React/Preact). `generate` is accepted for parity with the other plugin pairs; the emitted component is the same on `"dom"` and `"ssr"`.
 - **svgComponentSource** _(function)_ - `svgComponentSource: (xml: string, options?: SvgToJsxOptions) => string`

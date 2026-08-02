@@ -89,7 +89,25 @@ function parseQuotedLiteral(raw: string): string | undefined {
   } catch {
     if (!raw.startsWith("'") || !raw.endsWith("'")) return undefined
     try {
-      return JSON.parse(`"${raw.slice(1, -1).replace(/"/g, '\\"')}"`) as string
+      // Convert the single-quoted body to a JSON string body by scan, handling backslash pairs
+      // atomically: `\'` becomes `'`, other escapes pass through untouched, and a bare `"` is
+      // escaped. A quote-only `replace` mis-handles content with backslashes (double-escaping
+      // an already-escaped quote, or letting a trailing backslash swallow the added escape).
+      const inner = raw.slice(1, -1)
+      let body = ""
+      for (let i = 0; i < inner.length; i++) {
+        const ch = inner[i] as string
+        if (ch === "\\" && i + 1 < inner.length) {
+          const next = inner[i + 1] as string
+          body += next === "'" ? "'" : ch + next
+          i++
+        } else if (ch === '"') {
+          body += '\\"'
+        } else {
+          body += ch
+        }
+      }
+      return JSON.parse(`"${body}"`) as string
     } catch {
       return undefined
     }
