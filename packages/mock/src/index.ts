@@ -12,7 +12,7 @@ import {
   compileRoutePattern,
   matchRoutePattern,
 } from "@nifrajs/core/pattern"
-import { reflectRoutes, reflectSchema } from "@nifrajs/core/reflection"
+import { type JsonSchema, reflectRoutes, reflectSchema } from "@nifrajs/core/reflection"
 
 // ---------------------------------------------------------------------------
 // Seeded PRNG (deterministic mocks)
@@ -284,6 +284,12 @@ export interface MockServerOptions {
   readonly seed?: number | undefined
   /** Log mock requests to console. */
   readonly verbose?: boolean | undefined
+  /**
+   * Derive a JSON Schema from a response validator that carries none (zod/valibot expose a Standard Schema
+   * validator but no `.jsonSchema`), so their routes mock real data instead of `{}`. Fail-safe: throwing or
+   * returning undefined falls back to `{}`, as today. Ready-made for zod: `@nifrajs/testing/zod`.
+   */
+  readonly reflectJsonSchema?: (schema: unknown) => JsonSchema | undefined
 }
 
 export interface MockServer {
@@ -321,7 +327,21 @@ export function createMockServer(
   for (const route of routes) {
     const key = `${route.method.toUpperCase()} ${route.path}`
     const rng = seededRandom(seed)
-    const responseSchema = route.schema?.response?.jsonSchema
+    const response = route.schema?.response
+    let responseSchema = response?.jsonSchema
+    // Backfill an inspectable schema for an opaque validator (zod/valibot) so its routes mock real data
+    // instead of `{}`. Fail-safe: a throwing hook falls back to `{}`, exactly as before the hook existed.
+    if (
+      responseSchema === undefined &&
+      options?.reflectJsonSchema &&
+      response?.standard !== undefined
+    ) {
+      try {
+        responseSchema = options.reflectJsonSchema(response.standard)
+      } catch {
+        responseSchema = undefined
+      }
+    }
     const mockValue = responseSchema ? generateMockValue(responseSchema, undefined, rng) : {}
     mockMap.set(key, mockValue)
     mockRoutes.push({ method: route.method.toUpperCase(), path: route.path })

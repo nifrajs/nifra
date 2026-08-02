@@ -18,6 +18,16 @@ The mock server matches reflected routes and synthesizes values from supported J
 Unsupported or unsatisfiable schemas fail explicitly instead of returning known-invalid data. Use a
 fixed seed when responses must be replayable across local development and CI.
 
+Routes whose response validator exposes no JSON Schema (zod, valibot, arktype) mock as `{}` by default.
+Pass `reflectJsonSchema` to derive a schema from such a validator so those routes mock real data; for zod,
+use the bridge shipped as `@nifrajs/testing/zod`:
+
+```ts
+import { zodJsonSchema } from "@nifrajs/testing/zod"
+
+const mock = createMockServer(app, { reflectJsonSchema: zodJsonSchema })
+```
+
 ## For AI agents
 
 Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports you call + its footguns),

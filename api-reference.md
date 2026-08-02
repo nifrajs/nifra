@@ -2145,6 +2145,11 @@ Every public export of every package and documented subpath - name, kind, signat
 - **verifyAdapterCertification** _(function)_ - `verifyAdapterCertification: (report: AdapterCertificationReport) => Promise<boolean>`
   Recompute the portable evidence hash. Consumers should verify before trusting a stored report.
 
+### `@nifrajs/testing/zod`
+
+- **zodJsonSchema** _(function)_ - `zodJsonSchema: (schema: unknown) => JsonSchema | undefined`
+  Convert a zod schema to a JSON Schema the mock/mutation generators understand, or `undefined` when the value is not a convertible zod schema. Options chosen for this consumer: - target "draft-7" → the keyword set `@nifrajs/mock` + the laboratory's `candidateMutations` read - io "input" → the reques…
+
 ## @nifrajs/ts-plugin
 
 ### `@nifrajs/ts-plugin`

@@ -125,6 +125,32 @@ describe("pinSweepText", () => {
     expect(changes).toHaveLength(0)
     expect(text).toBe("{ not json")
   })
+
+  test("refuses a rollback (older target on a newer install) but keeps forward pins", () => {
+    const pkg = JSON.stringify({ dependencies: { "@nifrajs/core": "^2.3.0" } }, null, 2)
+    const { text, changes, downgrades } = pinSweepText(pkg, [{ match: "@nifrajs/", to: "2.0.0" }])
+    expect(changes).toHaveLength(0)
+    expect(downgrades).toEqual([
+      { field: "dependencies", name: "@nifrajs/core", from: "^2.3.0", to: "^2.0.0" },
+    ])
+    expect(text).toBe(pkg) // untouched
+  })
+
+  test("applies a rollback only when explicitly allowed", () => {
+    const pkg = JSON.stringify({ dependencies: { "@nifrajs/core": "^2.3.0" } }, null, 2)
+    const { changes, downgrades } = pinSweepText(pkg, [{ match: "@nifrajs/", to: "2.0.0" }], true)
+    expect(downgrades).toHaveLength(0)
+    expect(changes).toEqual([
+      { field: "dependencies", name: "@nifrajs/core", from: "^2.3.0", to: "^2.0.0" },
+    ])
+  })
+
+  test("a forward upgrade is not treated as a downgrade", () => {
+    const pkg = JSON.stringify({ dependencies: { "@nifrajs/core": "^2.0.0" } }, null, 2)
+    const { changes, downgrades } = pinSweepText(pkg, [{ match: "@nifrajs/", to: "2.3.0" }])
+    expect(downgrades).toHaveLength(0)
+    expect(changes[0]?.to).toBe("^2.3.0")
+  })
 })
 
 describe("moveDependenciesText", () => {

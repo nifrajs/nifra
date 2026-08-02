@@ -25,6 +25,11 @@
       "bun": "./src/certification.ts",
       "types": "./dist/certification.d.ts",
       "default": "./dist/certification.js"
+    },
+    "./zod": {
+      "bun": "./src/zod.ts",
+      "types": "./dist/zod.d.ts",
+      "default": "./dist/zod.js"
     }
   },
   "files": [
@@ -40,6 +45,14 @@
     "@nifrajs/client": "workspace:*",
     "@nifrajs/core": "workspace:*",
     "@nifrajs/mock": "workspace:*"
+  },
+  "peerDependencies": {
+    "zod": ">=4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "zod": {
+      "optional": true
+    }
   },
   "publishConfig": {
     "access": "public"

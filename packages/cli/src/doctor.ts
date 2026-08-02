@@ -668,6 +668,14 @@ export async function runDoctor(
       for (const copy of finding.copies) {
         console.log(`      ${copy.version} at ${copy.path} ← ${copy.importers.join(", ")}`)
       }
+      if (finding.package === "@nifrajs/core") {
+        console.log(
+          "      ↳ a second @nifrajs/core breaks module identity: `typeof backend` collapses to `any`",
+        )
+        console.log(
+          "        at `.merge()` and route-type inference silently degrades - usually that error's root cause.",
+        )
+      }
     }
     console.log(
       "\n  Align dependency ranges and reinstall from the workspace root; doctor never deletes installs.",

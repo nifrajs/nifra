@@ -68,6 +68,32 @@ const report = await assertAdversarialContract(app, {
 request for each declared response schema, so use an isolated test app/database-never point the
 laboratory at production.
 
+### Opaque validators (zod / valibot / arktype)
+
+A `t` schema exposes JSON Schema, so witnesses and constraint-driven mutations are synthesized
+automatically. A Standard Schema validator that carries no JSON Schema (zod, valibot, arktype) validates
+requests fine, but the laboratory can't inspect it - those routes report `NO_WITNESS` and get only
+type-confusion mutations. Pass `reflectJsonSchema` to convert such a validator; for zod, use the shipped
+bridge:
+
+```ts
+import { zodJsonSchema } from "@nifrajs/testing/zod"
+
+await assertAdversarialContract(app, { reflectJsonSchema: zodJsonSchema })
+```
+
+This turns on witness synthesis and constraint-driven mutations (min/max, length, pattern, enum, format)
+for zod routes. `createMockServer` from `@nifrajs/mock` accepts the same hook. `zod` is an optional peer -
+only projects that import `@nifrajs/testing/zod` need it installed.
+
+### Response conformance needs a declared contract
+
+Response conformance only runs for routes that declare a `response` schema. A response type inferred from a
+handler's return is a client-side contract the laboratory cannot see, so an app that declares none checks
+zero response targets even with `validateResponses` on - the report surfaces this in `advisories`. Declare
+`response:` on the routes you want verified. (Runtime response validation in the server itself is a
+separate opt-in, installed by the `responseContract()` plugin.)
+
 `nifra levels` L4 uses this same deep engine through the explicitly configured isolated executor;
 the older core invariant runner remains only as a compatibility export.
 

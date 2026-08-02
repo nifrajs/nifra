@@ -10,7 +10,7 @@ Contract-derived adversarial tests, runtime-matrix response conformance, and coo
 
 ## Public entrypoints
 
-`@nifrajs/testing` · `@nifrajs/testing/certification`
+`@nifrajs/testing` · `@nifrajs/testing/certification` · `@nifrajs/testing/zod`
 
 ## Key exports
 
@@ -29,7 +29,7 @@ Contract-derived adversarial tests, runtime-matrix response conformance, and coo
 - **redactForEmission** _(function)_ - `redactForEmission: (value: unknown, allow: ReadonlySet<string>, path?: string) => unknown` · from `@nifrajs/testing`
 - **replayIncident** _(function)_ - `replayIncident: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<IncidentReplayResult>` · from `@nifrajs/testing`
 
-_…and 59 more - see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
+_…and 60 more - see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
 
 ## Footguns
 

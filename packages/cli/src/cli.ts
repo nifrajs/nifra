@@ -136,9 +136,10 @@ Usage:
   nifra upgrade <version>                Run the per-release upgrade recipe for <version>: sweep every
                 [--write] [--no-verify]  matching dependency pin (preserving ^/~/exact), move removed
                 [--list] [--json]        packages, apply exact imports, then verify with nifra check.
-                                         Dry-run by default; --write applies then verifies (--no-verify
+                [--allow-downgrade]      Dry-run by default; --write applies then verifies (--no-verify
                                          to skip). --list shows available targets. Fail-closed on an
-                                         unknown version. Deterministic + idempotent.
+                                         unknown version or a rollback (--allow-downgrade overrides).
+                                         Deterministic + idempotent.
   nifra port    [--target <t>] [--json]  Portability linter: print a feature × deploy-target capability
                 [--ci] [--strict]        matrix (in-memory stores, in-process cron/WebSocket, Bun/Deno
                                          globals, node: builtins) with file:line evidence. --target auto-
@@ -783,6 +784,7 @@ async function main(): Promise<void> {
         json: argv.includes("--json"),
         list: argv.includes("--list"),
         verify: !argv.includes("--no-verify"),
+        allowDowngrade: argv.includes("--allow-downgrade"),
       })
       if (!ok) process.exitCode = 1
     } catch (err) {
