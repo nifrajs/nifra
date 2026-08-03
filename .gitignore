@@ -43,6 +43,7 @@ packages/web/test/.tmp-*
 /WEBSOCKETS*.md
 bench/**/*.md
 !bench/README.md
+!bench/techempower/README.md
 /plans
 
 # Local editor/agent tooling - machine-specific (absolute paths, local settings); never committed.
