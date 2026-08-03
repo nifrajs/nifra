@@ -10,6 +10,13 @@ export const meta = pageMeta(
 // One entry per post, newest first. Kept as data so the list stays trivial to extend.
 const POSTS: ReadonlyArray<{ slug: string; date: string; title: string; summary: string }> = [
   {
+    slug: "fullstack-bun-guide",
+    date: "2026-08-04",
+    title: "Building a full-stack TypeScript app on Bun",
+    summary:
+      "From scaffold to deploy: file-based routes, typed loaders, validation at the boundary, and why the same app runs unchanged on Node, Deno, or the edge.",
+  },
+  {
     slug: "docs-as-mcp",
     date: "2026-08-04",
     title: "Your framework's docs should be an MCP server",

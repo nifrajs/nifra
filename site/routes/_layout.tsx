@@ -1937,6 +1937,7 @@ export default function Layout(props: { children?: ReactNode }) {
           <span className="foot-links">
             <a href="/frameworks">5 Frameworks</a>
             <a href="/blog">Blog</a>
+            <a href="/compare">Compare</a>
             <a href="https://github.com/nifrajs/nifra" target="_blank" rel="noopener noreferrer">
               GitHub
             </a>
