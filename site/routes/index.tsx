@@ -14,6 +14,23 @@ export const meta = pageMeta(
 export const hydrate = false
 export const islandScripts = [HOME_COUNTER_ENTRY]
 
+// One honest row per shipped capability - the stack you'd otherwise assemble vs the package that
+// covers it. No overselling: rows only exist where the nifra package genuinely does that job.
+const REPLACES: ReadonlyArray<readonly [string, string]> = [
+  ["express / fastify / hono", "@nifrajs/core"],
+  ["tRPC / OpenAPI client codegen", "@nifrajs/client"],
+  ["helmet + cors + express-rate-limit", "@nifrajs/middleware"],
+  ["BullMQ", "@nifrajs/jobs"],
+  ["node-cron", "@nifrajs/cron"],
+  ["multer", "@nifrajs/uploads"],
+  ["dotenv + envalid", "@nifrajs/env"],
+  ["keyv / node-cache", "@nifrajs/cache"],
+  ["i18next", "@nifrajs/i18n"],
+  ["supertest", "@nifrajs/testing"],
+  ["swagger-jsdoc", "@nifrajs/schema/openapi"],
+  ["contentlayer", "@nifrajs/content"],
+]
+
 const BACKEND_CODE = `import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
@@ -603,6 +620,26 @@ export default function Home() {
               <CodeBlock code={f.code} lang="ts" chrome={false} />
             </article>
           ))}
+        </div>
+
+        <div style={{ textAlign: "center", maxWidth: "760px", margin: "56px auto 0" }}>
+          <h3 style={{ marginBottom: 8 }}>Dependencies you can skip</h3>
+          <p className="note" style={{ marginBottom: 20 }}>
+            Each row is a stack you would otherwise assemble and keep in sync yourself. All of it is
+            optional - nifra packages are modular, and anything below still works alongside them.
+          </p>
+          <table style={{ margin: "0 auto", textAlign: "left" }}>
+            <tbody>
+              {REPLACES.map(([instead, pkg]) => (
+                <tr key={pkg}>
+                  <td style={{ color: "var(--muted)", padding: "4px 18px 4px 0" }}>{instead}</td>
+                  <td>
+                    <code>{pkg}</code>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </section>
 
