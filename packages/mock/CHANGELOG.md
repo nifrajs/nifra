@@ -1,5 +1,13 @@
 # @nifrajs/mock
 
+## 2.8.1
+
+### Patch Changes
+
+- Updated dependencies [78d66a4]
+- Updated dependencies [93fdc89]
+  - @nifrajs/core@2.8.1
+
 ## 2.8.0
 
 ### Patch Changes

@@ -1,5 +1,21 @@
 # @nifrajs/cli
 
+## 2.8.1
+
+### Patch Changes
+
+- 93fdc89: `nifra doctor` now scans `*.test.ts`/`*.spec.ts` files for undeclared imports. Tests are part of the typechecked surface, so a package imported only by a test and declared nowhere still breaks a clean `bun install` build - doctor previously shared `nifra check`'s test exclusion and missed it. `nifra check`'s own scans still skip tests, which legitimately drive `fetch` and call routes directly.
+- Updated dependencies [78d66a4]
+- Updated dependencies [93fdc89]
+  - @nifrajs/core@2.8.1
+  - @nifrajs/client@2.8.1
+  - @nifrajs/schema@2.8.1
+  - @nifrajs/testing@2.8.1
+  - @nifrajs/web@2.8.1
+  - @nifrajs/mcp@2.8.1
+  - @nifrajs/runner@2.8.1
+  - create-nifra@2.8.1
+
 ## 2.8.0
 
 ### Minor Changes
