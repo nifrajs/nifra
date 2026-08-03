@@ -1095,6 +1095,27 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       this.beforeHandleHooks.length === 0 &&
       this.afterHandleHooks.length === 0 &&
       this.onErrorHooks.length === 0
+    // A route whose ONLY lifecycle step is a query schema can fuse too: the parse + validate +
+    // handler + respond collapse into one closure with no lifecycle promise on the sync path. The
+    // guards mirror the `query` lane below PLUS everything the fused dispatch skips: around hooks,
+    // the idempotency/ledger wrappers, and validation-error recovery (schema or server default) -
+    // the fused invalid path is exactly `validationError(issues)`, so any recovery semantics keep
+    // the generic lane.
+    const fusedQuery =
+      !bare &&
+      contracted === undefined &&
+      schema?.query !== undefined &&
+      schema.body === undefined &&
+      schema.params === undefined &&
+      schema.onValidationError === undefined &&
+      this.defaultOnValidationError === undefined &&
+      idempotent === undefined &&
+      ledgered === undefined &&
+      this.derives.length === 0 &&
+      this.beforeHandleHooks.length === 0 &&
+      this.afterHandleHooks.length === 0 &&
+      this.onErrorHooks.length === 0 &&
+      this.aroundHooks.length === 0
     const fusedWeb =
       bare && this.aroundHooks.length === 0
         ? this.buildFusedWeb(
@@ -1102,7 +1123,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
             hasDecorations ? routeDecorations : undefined,
             isContextlessNoArgArrow(handler),
           )
-        : undefined
+        : fusedQuery
+          ? this.buildFusedQueryWeb(
+              handler as unknown as InternalHandler,
+              hasDecorations ? routeDecorations : undefined,
+              schema.query as StandardSchemaV1,
+            )
+          : undefined
     const contextless = bare && this.aroundHooks.length === 0 && isContextlessNoArgArrow(handler)
     // The body and query lanes finalize the handler's result themselves, so a contracted route takes
     // the general lifecycle lane instead - one place owns the check rather than three.
@@ -1133,6 +1160,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       this.aroundHooks.length > 0,
       ledgered !== undefined,
       fusedWeb,
+      fusedWeb === undefined ? undefined : fusedQuery ? "query" : "bare",
     )
     const entry: RouteEntry = {
       // (context: never) => unknown -> InternalHandler: the framework invokes it
@@ -1208,6 +1236,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     hasAround: boolean,
     hasLedger: boolean,
     fusedWeb: FusedWebRunner | undefined,
+    fusedLane: "bare" | "query" | undefined,
   ): RouteExecutionPlan {
     if (contextless) {
       const run: RouteExecutionRunner = (
@@ -1233,7 +1262,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           finalize,
           wrapResponse,
         )
-      return Object.freeze({ run, fusedWeb })
+      return Object.freeze({ run, fusedWeb, fusedLane })
     }
 
     let inner: ContextRouteRunner
@@ -1305,7 +1334,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       }
       return outcome
     }
-    return Object.freeze({ run, fusedWeb })
+    return Object.freeze({ run, fusedWeb, fusedLane })
   }
 
   /** The idempotency lane's bridge back into the normal matched lanes, resolved to a concrete Response
@@ -1423,11 +1452,20 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private bindFusedRuntime(route: CatalogRoute): CatalogRoute {
     const { entry } = route
     if (entry.execution.fusedWeb === undefined) return route
-    const fusedWeb = this.buildFusedWeb(
-      entry.handler,
-      entry.hasDecorations ? entry.decorations : undefined,
-      isContextlessNoArgArrow(entry.handler),
-    )
+    // Rebuild with the SAME builder that produced the closure - rebinding a query-fused route as
+    // bare would silently drop its validation.
+    const fusedWeb =
+      entry.execution.fusedLane === "query"
+        ? this.buildFusedQueryWeb(
+            entry.handler,
+            entry.hasDecorations ? entry.decorations : undefined,
+            entry.schema?.query as StandardSchemaV1,
+          )
+        : this.buildFusedWeb(
+            entry.handler,
+            entry.hasDecorations ? entry.decorations : undefined,
+            isContextlessNoArgArrow(entry.handler),
+          )
     return {
       ...route,
       entry: {
@@ -2206,6 +2244,64 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         )
       }
       return fusedRespond(result, ctx)
+    }
+  }
+
+  /** The fused Web lane for a route whose only lifecycle step is a query schema: parse + validate +
+   * handler + respond in one closure, no lifecycle promise when the validator and handler are sync.
+   * Eligibility is decided at registration (see `fusedQuery` in {@link register}); the semantics here
+   * are exactly `runQueryOnly`'s for that eligible shape - invalid input returns
+   * `validationError(issues)` (recovery hooks disqualify the route from this lane), a thrown
+   * `Response` passes through, anything else logs and returns a flat 500, and an async validator
+   * falls to a then-chain with the same steps. */
+  private buildFusedQueryWeb(
+    handler: InternalHandler,
+    decorations: Record<PropertyKey, unknown> | undefined,
+    querySchema: StandardSchemaV1,
+  ): FusedWebRunner {
+    const logError = (err: unknown, ctx: RawContext): Response => {
+      if (err instanceof Response) return err
+      this.logRequestError(err, ctx)
+      return jsonError(500, "internal_error")
+    }
+    const runHandler = (ctx: RawContext, value: unknown): MaybePromise<Response> => {
+      ctx.query = value
+      let result: unknown
+      try {
+        result = handler(ctx)
+      } catch (err) {
+        return logError(err, ctx)
+      }
+      if (result instanceof Promise) {
+        return result.then(
+          (settled) => fusedRespond(settled, ctx),
+          (err) => logError(err, ctx),
+        )
+      }
+      return fusedRespond(result, ctx)
+    }
+    return (source, params, search, signal, budget, platform, nativeContext) => {
+      const ctx = nativeContext
+        ? RequestContext.native(source, params, this.maxBodyBytes)
+        : new RequestContext(source, params, search, signal, budget, platform, this.maxBodyBytes)
+      if (decorations !== undefined) Object.assign(ctx, decorations)
+      let validation: MaybePromise<StandardResult<unknown>>
+      try {
+        validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
+      } catch (err) {
+        return logError(err, ctx)
+      }
+      if (validation instanceof Promise) {
+        return validation.then(
+          (settled) =>
+            settled.issues !== undefined
+              ? validationError(settled.issues)
+              : runHandler(ctx, settled.value),
+          (err) => logError(err, ctx),
+        )
+      }
+      if (validation.issues !== undefined) return validationError(validation.issues)
+      return runHandler(ctx, validation.value)
     }
   }
 

@@ -62,6 +62,10 @@ export type ContextRouteRunner = <T, R extends Registry, Ctx>(
 export interface RouteExecutionPlan {
   readonly run: RouteExecutionRunner
   readonly fusedWeb: FusedWebRunner | undefined
+  /** Which builder produced {@link fusedWeb} - a merge rebinds the closure to the executing server
+   * and must rebuild it with the SAME semantics (a query-fused route rebuilt as bare would skip its
+   * validation). `undefined` iff `fusedWeb` is. */
+  readonly fusedLane: "bare" | "query" | undefined
 }
 
 export interface RouteEntry {
