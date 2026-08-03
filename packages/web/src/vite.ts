@@ -434,8 +434,8 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
       // npm-installed one.
       external: ssrExternal,
       resolve: {
-        // Non-externalized deps (a linked `@platform/*`, say): Vite's runner evaluates them, but from
-        // the same files Bun would pick - `bun`-conditioned source, never a stale `dist`.
+        // Non-externalized deps (a workspace-linked package, say): Vite's runner evaluates them, but
+        // from the same files Bun would pick - `bun`-conditioned source, never a stale `dist`.
         conditions: ssrConditions,
         // Externalized deps: Vite resolves the specifier, Bun imports the result. `bun` first so the
         // resolved file IS the one already in Bun's module cache (one evaluation, shared context).
