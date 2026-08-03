@@ -1,5 +1,28 @@
 # @nifrajs/cli
 
+## 2.8.0
+
+### Minor Changes
+
+- 118e4a5: `nifra dev --bun` now supports server functions and `*.server` modules. Bun's dev-server bundler accepts plugins only through bunfig's `[serve.static]` channel, so the CLI generates a config under `.nifra/dev-bun/` carrying the same production boundary plugins (server-fn RPC stubs, server-only emptying), merges the app's own bunfig `[serve.static] plugins` and `preload` entries, and re-launches itself once with `--config=` pointing at it - identical stubs across dev and build, and the old fail-closed refusal for those modules is gone. The relaunch is verified with a per-launch random token (matched against a file the parent just wrote, consumed on first read, constant-time compare), so no fixed environment value can make the server skip the boundary configuration; an unverifiable launch regenerates and re-launches instead of serving. The app's entire bunfig is carried into the generated config verbatim - jsx, defines, loaders, install settings - with path-bearing entries re-rooted; a bunfig field the generator cannot round-trip, or malformed TOML, fails loudly instead of being dropped. CSS Modules remain gated under `--bun`.
+
+  Also fixed in `@nifrajs/web`: `serverFn<Input, Output>(...)` with explicit type arguments is now recognized by the client-boundary scanner - it previously produced an exportless stub that failed the client build with a missing-export link error (a type argument containing parentheses still fails loudly with guidance, never silently). The dev loop's background leak guard now reports the underlying bundler errors instead of a bare "Bundle failed".
+
+- 9a6b0c3: The docs MCP's example-browsing widget tool is now `nifra_gallery` (was `nifra_examples_app`), keeping every tool on the single-word `nifra_<noun>` pattern. Its description and `nifra_example`'s now state the split explicitly: `nifra_example` returns one verified snippet as text, `nifra_gallery` opens the browsable widget. The exported `examplesAppTool` API is unchanged.
+- ca60337: `nifra check`'s interpolated-SQL rule now resolves same-file constants. A module-scope `const` interpolated into a query - the shared column-projection idiom (`const COLS = "id, name"` ... `` `SELECT ${COLS} FROM ...` ``), a `const LIMIT = 50`, a const built from other consts, or a ternary whose branches are both literal - is compile-time text and no longer flags, with zero suppression config. Resolution is pure syntax with a depth cap: imported names, `let`, parameters, call results, member accesses, and shadowed names (including a hoisted `var` anywhere in the enclosing function) stay flagged exactly as before, and a resolved const still feeds the SQL-keyword scan, so hostile statement text in a const alongside a dynamic span is still caught. The named escape hatches (`unsafe`, `$queryRawUnsafe`) keep flagging statement-from-variable regardless.
+
+### Patch Changes
+
+- Updated dependencies [118e4a5]
+  - @nifrajs/web@2.8.0
+  - @nifrajs/client@2.8.0
+  - @nifrajs/core@2.8.0
+  - @nifrajs/mcp@2.8.0
+  - @nifrajs/runner@2.8.0
+  - @nifrajs/schema@2.8.0
+  - @nifrajs/testing@2.8.0
+  - create-nifra@2.8.0
+
 ## 2.7.1
 
 ### Patch Changes

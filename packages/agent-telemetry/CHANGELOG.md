@@ -1,5 +1,11 @@
 # @nifrajs/agent-telemetry
 
+## 2.8.0
+
+### Patch Changes
+
+- @nifrajs/otel@2.8.0
+
 ## 2.7.1
 
 ### Patch Changes
