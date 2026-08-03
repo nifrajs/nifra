@@ -9,6 +9,12 @@
  * declared by the package that imports it (for `tsc` and for that package to install on its own) even
  * when a monorepo would hoist it. Relative paths, runtime builtins (node core, `node:`/`bun:`, `bun`),
  * the package's own name, and tsconfig `paths` aliases are excluded - none of them are npm deps.
+ *
+ * The diff is against DECLARED dependency sets only; what happens to be installed on disk is never
+ * consulted. That is the point: a package pulled in transitively by some other dependency resolves fine
+ * locally while no manifest declares it, so resolvability is not evidence of declaration. The scan
+ * therefore also covers `*.test.ts`/`*.spec.ts`, which `nifra check` skips - `tsc` compiles them, so an
+ * undeclared import there fails a clean `bun install --frozen-lockfile` build just the same.
  */
 import type { Dirent } from "node:fs"
 import { readdir, realpath, stat } from "node:fs/promises"
@@ -679,12 +685,19 @@ export async function collectDoctorResult(cwd: string): Promise<DoctorResult> {
   const scopes = await doctorPackageScopes(cwd, pkg)
 
   const findings: DoctorFinding[] = []
-  await walkSource(cwd, (rel, content) => {
-    const scope = scopeForFile(scopes, rel)
-    for (const f of scanUndeclaredImports(rel, content, scope.declared, scope.isAlias)) {
-      findings.push({ file: f.file, line: f.line, package: f.snippet })
-    }
-  })
+  // `includeTests`: tests are part of the typechecked surface, so an import they declare nowhere is a
+  // real break. Excluding them is what let an undeclared `zod` in a `*.test.ts` pass doctor, pass a
+  // hoisted local `tsc`, and then fail CI on a clean install with `TS2307: Cannot find module 'zod'`.
+  await walkSource(
+    cwd,
+    (rel, content) => {
+      const scope = scopeForFile(scopes, rel)
+      for (const f of scanUndeclaredImports(rel, content, scope.declared, scope.isAlias)) {
+        findings.push({ file: f.file, line: f.line, package: f.snippet })
+      }
+    },
+    { includeTests: true },
+  )
   findings.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)
   const duplicateInstalls = await collectDuplicateInstalls(cwd, pkg)
   const staleDists = await collectStaleWorkspaceDists(cwd, pkg)

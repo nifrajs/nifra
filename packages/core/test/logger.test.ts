@@ -149,7 +149,39 @@ describe("server error logging", () => {
     expect(res.status).toBe(500)
     expect(await res.json()).toEqual({ ok: false, error: "internal_error" })
     expect(logs).toHaveLength(1)
-    expect(logs[0]?.fields).toMatchObject({ method: "GET", path: "/boom", message: "kaboom" })
+    expect(logs[0]?.fields).toMatchObject({ method: "GET", path: "/boom", detail: "kaboom" })
+  })
+
+  // The test above inspects the fields as *passed*, which is exactly why the collision hid: a field
+  // named `message` looked right there and was overwritten on the way out. Assert on the record the
+  // sink actually receives, through the real `jsonLogger`, so the round trip is what's covered.
+  test("the thrown error's message reaches the emitted record (not clobbered by the log message)", async () => {
+    const lines: string[] = []
+    const app = server({ logger: jsonLogger((line) => lines.push(line)) }).get("/boom", () => {
+      throw new Error("kaboom")
+    })
+    expect((await app.fetch(new Request("http://x/boom"))).status).toBe(500)
+    expect(lines).toHaveLength(1)
+    const entry = JSON.parse(lines[0] ?? "")
+    expect(entry).toMatchObject({
+      level: "error",
+      message: "unhandled request error", // the logger's own first argument
+      method: "GET",
+      path: "/boom",
+      name: "Error",
+      detail: "kaboom", // the error's own message, under a field the logger does not own
+    })
+  })
+
+  test("a non-Error throw keeps its text, which has no `stack` to hide in", async () => {
+    const lines: string[] = []
+    const app = server({ logger: jsonLogger((line) => lines.push(line)) }).get("/boom", () => {
+      throw "just a string"
+    })
+    expect((await app.fetch(new Request("http://x/boom"))).status).toBe(500)
+    const entry = JSON.parse(lines[0] ?? "")
+    expect(entry.detail).toBe("just a string")
+    expect(entry.stack).toBeUndefined()
   })
 
   test("a handled error (onError returns a response) never reaches the logger", async () => {

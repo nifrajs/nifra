@@ -2887,7 +2887,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       method: ctx.req.method,
       path: pathnameOf(ctx.req.url),
       name: err instanceof Error ? err.name : "Error",
-      message: err instanceof Error ? err.message : String(err),
+      // `detail`, not `message`: the logger uses `message` for its own first argument, so a field of
+      // that name is silently overwritten and the thrown error's own text never reaches the sink. It
+      // survived only incidentally inside `stack`, and was lost outright for a non-Error throw.
+      detail: err instanceof Error ? err.message : String(err),
       stack: err instanceof Error ? err.stack : undefined,
     })
   }

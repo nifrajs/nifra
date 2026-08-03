@@ -295,6 +295,78 @@ describe("collectDoctorResult - project-level import vs declared-deps diff", () 
     await rm(dir, { recursive: true, force: true })
   })
 
+  test("flags a package that IS installed in node_modules but declared in no manifest", async () => {
+    // Resolvability is not evidence of declaration. `zod` sits in node_modules because some OTHER
+    // dependency pulled it in transitively, so the import resolves, `bun install` reports no changes,
+    // and a hoisted local `tsc` is green - while a clean `bun install --frozen-lockfile` produces a
+    // tree without it. doctor diffs against DECLARED deps only, never against what is on disk.
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-transitive-"))
+    try {
+      await mkdir(join(dir, "src"), { recursive: true })
+      await mkdir(join(dir, "node_modules", "zod"), { recursive: true })
+      await writeFile(join(dir, "package.json"), JSON.stringify({ name: "app" }))
+      await writeFile(
+        join(dir, "node_modules", "zod", "package.json"),
+        JSON.stringify({ name: "zod", version: "4.4.3" }),
+      )
+      await writeFile(join(dir, "src", "x.ts"), 'import * as z from "zod"')
+
+      const result = await collectDoctorResult(dir)
+      expect(result.ok).toBe(false)
+      expect(result.findings).toEqual([{ file: "src/x.ts", line: 1, package: "zod" }])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("scans test files - an undeclared import there breaks the same clean build", async () => {
+    // The gap that shipped: `nifra check` skips `*.test.ts` (tests legitimately drive `fetch`), and
+    // doctor inherited that surface. So an undeclared `zod` in a test passed doctor, passed a hoisted
+    // local `tsc`, then failed CI with `TS2307: Cannot find module 'zod'`. `tsc` compiles tests.
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-tests-"))
+    try {
+      await mkdir(join(dir, "test"), { recursive: true })
+      await mkdir(join(dir, "node_modules", "zod"), { recursive: true })
+      await writeFile(join(dir, "package.json"), JSON.stringify({ name: "app" }))
+      await writeFile(
+        join(dir, "node_modules", "zod", "package.json"),
+        JSON.stringify({ name: "zod", version: "4.4.3" }),
+      )
+      await writeFile(join(dir, "test", "contract.test.ts"), 'import * as z from "zod"')
+      await writeFile(join(dir, "test", "other.spec.tsx"), 'import "spec-only-pkg"')
+
+      const result = await collectDoctorResult(dir)
+      expect(result.ok).toBe(false)
+      expect(result.findings).toEqual([
+        { file: "test/contract.test.ts", line: 1, package: "zod" },
+        { file: "test/other.spec.tsx", line: 1, package: "spec-only-pkg" },
+      ])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("a test file whose imports are declared still passes", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-tests-clean-"))
+    try {
+      await mkdir(join(dir, "test"), { recursive: true })
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "app", devDependencies: { zod: "^4.4.3" } }),
+      )
+      await writeFile(
+        join(dir, "test", "contract.test.ts"),
+        ['import { test } from "bun:test"', 'import * as z from "zod"'].join("\n"),
+      )
+
+      const result = await collectDoctorResult(dir)
+      expect(result.ok).toBe(true)
+      expect(result.findings).toHaveLength(0)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   test("a package importing its own name is not flagged", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-"))
     await writeFile(join(dir, "package.json"), JSON.stringify({ name: "@nifrajs/web" }))

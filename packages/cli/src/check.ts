@@ -45,10 +45,15 @@ const FETCH_CALL = /(?<![.\w])fetch\s*\(/g
 const HTTP_VERBS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
 const SIMPLE_REWRITE_METHODS = new Set(["GET", "DELETE", "HEAD", "OPTIONS"])
 
-// Don't scan deps, build output, generated client entries, or tests (which legitimately drive `fetch`).
-// `dist(-<runtime>)?` also covers per-runtime output dirs (dist-bun/dist-node/dist-deno/dist-vercel).
-const IGNORED =
-  /(^|\/)(node_modules|dist(-[a-z0-9]+)?|build|\.nifra|\.git|\.wrangler|coverage)\/|\.(test|spec)\.[cm]?[jt]sx?$/
+// Don't scan deps, build output, or generated client entries. `dist(-<runtime>)?` also covers
+// per-runtime output dirs (dist-bun/dist-node/dist-deno/dist-vercel). Never source, for any scan.
+const IGNORED_DIR =
+  /(^|\/)(node_modules|dist(-[a-z0-9]+)?|build|\.nifra|\.git|\.wrangler|coverage)\//
+// A test/spec module. Excluded from `nifra check`'s scans, which are about what SHIPS - a test
+// legitimately drives `fetch`, hand-rolls a client, and calls a route directly. It is NOT excluded from
+// `nifra doctor`: tsc typechecks tests, so an import a test declares nowhere is a real broken build.
+const TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/
+const IGNORED = new RegExp(`${IGNORED_DIR.source}|${TEST_FILE.source}`)
 
 // A file under `routes/` - a page module bundled for the browser, where a server-only import is unsafe.
 const ROUTE_FILE = /(^|\/)routes\//
@@ -1190,8 +1195,12 @@ export function scanResponseRoutes(file: string, content: string): SourceFinding
 /** The opt-out pragma that suppresses the {@link scanResponseRoutes} advisory for an intentional raw Response. */
 const RAW_RESPONSE_PRAGMA = "nifra-expect raw-response"
 
-/** Walk the project's `.ts`/`.tsx` source (skipping deps/build/tests), calling `visit` per file.
- * Exported so `nifra doctor` ({@link ./doctor.ts}) scans the same source surface as `nifra check`. */
+/** Walk the project's `.ts`/`.tsx` source (skipping deps and build output), calling `visit` per file.
+ * Exported so `nifra doctor` ({@link ./doctor.ts}) scans the same source surface as `nifra check`.
+ *
+ * `includeTests` widens the surface to `*.test.ts`/`*.spec.ts`, which the default excludes. It exists
+ * for `nifra doctor`: `tsc` compiles tests, so a test importing a package no manifest declares is a
+ * build that a clean install cannot produce - the exact false confidence doctor is for. */
 /**
  * Paths git considers ignored under `cwd`, in ONE batched `git check-ignore` call - so `.gitignore`
  * (root + nested + the global excludesfile) is honoured, not just the built-in {@link IGNORED} list. This
@@ -1228,12 +1237,14 @@ async function gitIgnored(cwd: string, rels: readonly string[]): Promise<Set<str
 export async function walkSource(
   cwd: string,
   visit: (rel: string, content: string) => void,
+  opts: { readonly includeTests?: boolean } = {},
 ): Promise<void> {
+  const skip = opts.includeTests === true ? IGNORED_DIR : IGNORED
   // List candidates first (cheap - no reads), drop the built-in ignores, then exclude gitignored paths in
   // one batch before the (expensive) reads. So a gitignored generated/build tree is never read or scanned.
   const rels: string[] = []
   for await (const rel of new Glob("**/*.{ts,tsx,mts,cts}").scan({ cwd, dot: false })) {
-    if (!IGNORED.test(rel)) rels.push(rel)
+    if (!skip.test(rel)) rels.push(rel)
   }
   const ignored = await gitIgnored(cwd, rels)
   for (const rel of rels) {
