@@ -41,3 +41,15 @@ test("preactAdapter conforms to the executable RenderAdapter interface", async (
 test("hydrationHead is empty (Preact reconciles the DOM on hydrate; no bootstrap script)", () => {
   expect(preactAdapter.hydrationHead()).toBe("")
 })
+
+test("renderToString returns synchronously after the renderer is warmed", async () => {
+  const renderToString = preactAdapter.renderToString
+  if (renderToString === undefined) throw new Error("preactAdapter must provide renderToString")
+
+  await renderToString([Page], { data: { name: "warmup" } })
+
+  const rendered = renderToString([Page], { data: { name: "sync" } })
+
+  expect(rendered).not.toBeInstanceOf(Promise)
+  expect(rendered).toContain("hi sync")
+})

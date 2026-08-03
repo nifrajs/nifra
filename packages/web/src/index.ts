@@ -638,7 +638,10 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     const htmlAttrs = ` lang="${escapeAttr(head?.lang ?? "en")}"${head?.dir === undefined ? "" : ` dir="${escapeAttr(head.dir)}"`}`
     // Marks the container for the client entry when the id is not the one the entry falls back to.
     const rootMarker = rootId === "root" ? "" : ` ${ROOT_ATTRIBUTE}`
-    const rawHydrationHead = adapter.hydrationHead(nonce)
+    // A non-hydrated page omits the adapter's hydration bootstrap entirely (Solid's `_$HY` registry
+    // script, etc.) - there is no client takeover to feed, so it's dead bytes on a static document.
+    // The nonce rewrite only runs when a nonce is set; with none it was a whole-string no-op scan.
+    const rawHydrationHead = hydrate ? adapter.hydrationHead(nonce) : ""
     const hydrationHead =
       nonce === undefined
         ? rawHydrationHead
