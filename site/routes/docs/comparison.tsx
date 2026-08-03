@@ -119,12 +119,13 @@ export default function Comparison() {
         <li>
           <b>Throughput - the realistic case.</b> Router micro-benchmarks flatter Hono (a single compiled
           regex), but a router is <b>~1% of a real request</b> - the time goes to middleware, validation,
-          context, and serialization. On the bare Bun/Deno micro-GET rows Nifra runs within <b>~1-3% of
-          Elysia</b> - a statistical tie at the runtime ceiling; on <b>Node it's ahead of Elysia on every
-          workload</b>, and it leads on every POST/validated row across runtimes. In the realistic shape
-          (security headers + CORS + bearer auth + cookies + validated query/body + a ~2.4&nbsp;KB JSON
-          response, measured with <code>oha</code>) Nifra runs at <b>103% of Elysia on GET and 108% on
-          POST</b>. Treat benchmark rows as same-run evidence, not a permanent law of nature.
+          context, and serialization. In the current Bun matrix Nifra <b>matches or beats Elysia on three
+          of the four workloads</b> (medians 101%, 104%, 99%, 101%) and takes the top <code>GET /</code>{" "}
+          row outright; on <b>Node it leads the whole framework field - Elysia, Fastify, Hono, Express -
+          on every workload</b>. In the realistic shape (security headers + CORS + bearer auth + cookies +
+          validated query/body + a ~2.4&nbsp;KB JSON response, measured with <code>oha</code>) Nifra runs
+          at <b>103% of Elysia on GET and 108% on POST</b>. Treat benchmark rows as same-run evidence, not
+          a permanent law of nature.
         </li>
         <li>
           <b>End-to-end types.</b> <code>client&lt;typeof app&gt;()</code> derives request inputs <i>and</i>{" "}
