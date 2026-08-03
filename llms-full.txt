@@ -5984,7 +5984,7 @@ export async function loader({ params }) { return { post: await getPost(params.s
 app.
 
 -
-**Much faster SSR** - Nifra renders ~26× Next.js, ~9× Nuxt, ~4× SvelteKit/SolidStart on
+**Much faster SSR** - Nifra renders ~23× Next.js, ~8× Nuxt, ~3.5× SvelteKit/SolidStart on
 dynamic pages, with a fraction of the client JS. See [benchmarks](/benchmarks).
 
 -

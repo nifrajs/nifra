@@ -63,13 +63,13 @@ const expectedA = ALL_TABLE_SECTIONS.filter((s) => s.label.includes("Table A")).
   0,
 )
 if (tableARows.length === expectedA) {
+  // writeSiteBench logs the update itself.
   await writeSiteBench({
     heroSsr: heroSsrSlice(tableARows),
     frontend: frontendSlice(tableARows),
     multipliers: multipliersSlice(tableARows),
     ssrTables: ssrTablesSlice(tableARows),
   })
-  console.log("\nsite/data/benchmarks.json updated (heroSsr, frontend, multipliers, ssrTables)")
 } else {
   console.log(
     `\nsite/data/benchmarks.json NOT updated: ${tableARows.length}/${expectedA} Table A targets measured`,
