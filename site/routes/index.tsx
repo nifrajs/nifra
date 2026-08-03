@@ -627,6 +627,9 @@ export default function Home() {
           <p className="note" style={{ marginBottom: 20 }}>
             Each row is a stack you would otherwise assemble and keep in sync yourself. All of it is
             optional - nifra packages are modular, and anything below still works alongside them.
+            And everything NOT on this list needs no integration at all: handlers are plain
+            TypeScript, so Stripe, OpenAI, Drizzle, Prisma, and the rest of npm work as-is -{" "}
+            <a href="/docs/integrations">see integrations</a>.
           </p>
           <table style={{ margin: "0 auto", textAlign: "left" }}>
             <tbody>

@@ -193,8 +193,10 @@ regex), but a router is **~1% of a real request** - the time goes to middleware,
 context, and serialization. In the current matrix (median of 5 full runs) Nifra
 **tops the framework field on Bun** - level with Elysia on `GET /users/:id` at
 101% of the raw-runtime ceiling, 105% of Elysia on the validated `POST` - and
-**leads every framework on Deno** on both workloads. On **Node** it runs ahead of Elysia,
-Hono, and Express and within ~2% of Fastify. In the realistic shape (security headers + CORS +
+**leads every framework on Deno** on both workloads. On **Node** it
+**leads the framework field too** - ahead of Fastify by ~12% on the validated
+`POST` (96% of the raw-Node ceiling) and level-to-ahead on GET, with Elysia, Hono,
+and Express behind. In the realistic shape (security headers + CORS +
 bearer auth + cookies + validated query/body + a ~2.4 KB JSON response, measured with
 `oha`) Nifra runs at **103% of Elysia on GET and 108% on POST**. Treat benchmark
 rows as same-run evidence, not a permanent law of nature.
@@ -5685,6 +5687,102 @@ downloads the page may never use.
 stylesheet can't redirect the download elsewhere - an SSRF gate), and caps each download's size.
 Filenames are derived only from validated tokens plus a content hash, so there's no path
 traversal.
+
+## Nifra - Integrations (Stripe, and any npm library)
+
+> Third-party libraries work in nifra as-is - handlers are plain TypeScript. The Stripe recipe end-to-end: SDK calls in a route, constant-time webhook verification, and idempotent processing.
+
+The most important thing on this page: **you rarely need it**. A nifra handler
+is plain TypeScript running on Bun, Node, Deno, or the edge - the npm ecosystem works
+as-is. Stripe, OpenAI, Resend, Drizzle, Prisma, AWS SDKs: import them and call them, the
+way their own documentation shows.
+
+### When you need nothing at all
+
+If a library is called from your code - an SDK, a database client, a date library - there is
+no integration step. It does not know or care that nifra is serving the request. The one
+rule that still applies is nifra's own: anything crossing a trust boundary (a request body,
+a webhook payload, a third-party response you act on) goes through a schema first.
+
+### The Stripe recipe
+
+Three parts, each already covered by something the framework ships.
+
+#### 1. Calling the SDK
+
+```ts
+// doc-check: skip - fragment: `env` and your price ids are your application's.
+import { server } from "@nifrajs/core/server"
+import { t } from "@nifrajs/schema"
+import Stripe from "stripe"
+
+// The Stripe SDK, exactly as its own docs show it. No adapter, no wrapper, no plugin.
+const stripe = new Stripe(env.STRIPE_SECRET_KEY)
+
+export const billing = server().post(
+  "/api/checkout",
+  { body: t.object({ priceId: t.string({ minLength: 1 }) }) },
+  async (c) => {
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      line_items: [{ price: c.body.priceId, quantity: 1 }],
+      success_url: "https://app.example.com/billing?done=1",
+      cancel_url: "https://app.example.com/billing",
+    })
+    return { url: session.url }
+  },
+)
+```
+
+Ordinary route, ordinary SDK call. The body schema is doing real work: a checkout endpoint
+is a public POST, and `c.body.priceId` arrives validated and typed.
+
+#### 2. Receiving webhooks
+
+```ts
+// doc-check: skip - fragment: `app`, `env`, and `StripeEvent` are your application's.
+import { verifyWebhook } from "@nifrajs/core/webhook"
+
+app.post("/webhooks/stripe", async (c) => {
+  // Bounded raw-body read + constant-time HMAC check, BEFORE any parsing.
+  const r = await verifyWebhook(c.req, env.STRIPE_WEBHOOK_SECRET, { provider: "stripe" })
+  if (!r.ok) { c.set.status = 400; return { ok: false, error: r.reason } }
+
+  const event = StripeEvent.parse(JSON.parse(r.payload)) // validate at the trust boundary
+  // …fulfil the event…
+  return { ok: true }
+})
+```
+
+This is the part teams hand-roll incorrectly. `verifyWebhook` reads the raw body
+bounded (DoS guard), verifies the signature in constant time, checks the timestamp
+tolerance, and only then hands you the payload. Presets exist for Stripe and GitHub, and a
+generic header/encoding form covers any other provider - including key rotation via an
+array of secrets. Details in [security](/docs/security).
+
+#### 3. Processing exactly once
+
+```ts
+// doc-check: skip - fragment: `app` and `fulfil` are your application's.
+import { idempotency, MemoryIdempotencyStore } from "@nifrajs/middleware"
+
+// Stripe redelivers webhooks and clients retry checkouts. With the idempotency
+// middleware, a retried request with the same Idempotency-Key replays the FIRST
+// response - the side effect runs once. Use a shared store (Redis) in production.
+app.use(idempotency({ store: new MemoryIdempotencyStore() }))
+```
+
+Stripe redelivers; users double-click. The `idempotency` middleware replays the
+first response for a retried key instead of re-running the charge, and rejects a concurrent
+duplicate while the first is in flight.
+
+### When to write a plugin
+
+Reach for [a plugin](/docs/plugins) only when a library should participate in
+the framework itself: contribute typed context to every handler (`c.stripe`, a
+session, a tenant), mount routes of its own, or hook the request lifecycle. That is
+`definePlugin` - a few lines, typed end-to-end. For everything else, an import
+at the top of the file is the whole integration.
 
 ## Nifra 2.0 migration guide - upgrade from 1.x
 
