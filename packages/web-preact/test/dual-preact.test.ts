@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { load } from "../src/preact-render.ts"
 
 /**
@@ -23,12 +23,11 @@ import { load } from "../src/preact-render.ts"
  *     app's `preact` (copy B) → matches the component → renders cleanly.
  */
 
-const STORE = join(import.meta.dir, "../../../node_modules/.bun")
-const STORE_PREACT = join(STORE, "preact@10.29.2/node_modules/preact") // copy A (what the static import binds)
-const STORE_RTS = join(
-  STORE,
-  "preact-render-to-string@6.7.0+30fcf260fcd9e417/node_modules/preact-render-to-string",
-)
+// Resolve the installed copies instead of hardcoding bun-store paths: the store dir embeds the
+// version AND a peer-set hash (`preact-render-to-string@6.7.0+<hash>`), so any dependency bump
+// silently invalidates a literal path (this fixture broke exactly that way when preact moved).
+const STORE_PREACT = dirname(Bun.resolveSync("preact/package.json", import.meta.dir)) // copy A (what the static import binds)
+const STORE_RTS = dirname(Bun.resolveSync("preact-render-to-string/package.json", import.meta.dir))
 
 // `.tmp-nifra-*` is excluded from the per-file coverage gate (bunfig `**/.tmp-nifra-*/**`).
 const TMP_BASE = join(import.meta.dir, ".tmp-nifra-dual-preact-")
