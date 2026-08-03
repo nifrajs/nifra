@@ -51,11 +51,9 @@ describe("fused query lane", () => {
   })
 
   test("repeated keys promote to string[] before validation (t.array schema)", async () => {
-    const app = server().get(
-      "/tags",
-      { query: t.object({ tag: t.array(t.string()) }) },
-      (c) => ({ tags: c.query.tag }),
-    )
+    const app = server().get("/tags", { query: t.object({ tag: t.array(t.string()) }) }, (c) => ({
+      tags: c.query.tag,
+    }))
     expect(await (await app.fetch(req("/tags?tag=a&tag=b"))).json()).toEqual({ tags: ["a", "b"] })
   })
 

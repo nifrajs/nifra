@@ -1,42 +1,75 @@
 #!/usr/bin/env bash
 #
-# Keep the source-derived docs in lockstep with the code, so a stale `api-reference.md` or an
-# `LLM.md` card can never be committed - and then fail CI's `check:api` / `check:cards` after a push.
+# Pre-commit gates, in order:
+#   1. Source-derived docs (api-reference.md + LLM.md cards) regenerate + re-stage when package
+#      source is staged - so CI's check:api / check:cards can never fail on a stale artifact.
+#   2. Biome lint/format on every staged lintable file, auto-fixing what it can - so a formatting
+#      slip can never land on main and fail CI's lint step.
+#   3. llms-corpus tripwire: a staged docs page without the regenerated corpus is refused - the
+#      regeneration is NOT run here (types.json needs a full build; a stale dist would silently
+#      gut it), the hook just says exactly what to run.
 #
-# Both generators (`gen:api`, `gen:cards`) extract every public export from each `src/index.ts` with the
-# TypeScript compiler API - they read SOURCE, not `dist`, so this needs no build and runs in a few
-# seconds. It fires ONLY when package source (or a generator script) is staged; a commit that touches
-# only tests/docs/config skips it entirely and stays instant. When it does fire, it regenerates the docs
-# and re-stages the artifacts INTO this commit (they are pure generated output - never hand-edited).
-#
-# The llms corpora (`gen:llms` -> llms.txt, llms-full.txt, examples.json, types.json) are deliberately
-# NOT refreshed here: `types.json` is parsed from each package's built `dist/**/*.d.ts`, so keeping it
-# current needs a full build and this hook would stop being instant. CI gates them with `check:llms`
-# after its build step instead, so run `bun run build && bun run gen:llms` before pushing a change to a
-# package's public exports.
+# Both generators in (1) extract every public export from each `src/index.ts` with the TypeScript
+# compiler API - they read SOURCE, not `dist`, so they need no build and run in a few seconds.
 #
 # Activated via `core.hooksPath=.githooks` (set by the root `prepare` script on install; see package.json).
 set -euo pipefail
 
-# Any staged add/copy/modify/rename under a package's src, or to a doc generator, can change the
-# exported API surface the docs are built from.
-if ! git diff --cached --name-only --diff-filter=ACMR \
-  | grep -qE '^(packages/[^/]+/src/.*\.ts|scripts/gen-(api-reference|llm-cards)\.ts)$'; then
-  exit 0
-fi
-
 if ! command -v bun >/dev/null 2>&1; then
-  echo "pre-commit: 'bun' not found - cannot refresh docs. Install bun or run 'bun run gen:api && bun run gen:cards' + re-stage." >&2
+  echo "pre-commit: 'bun' not found - install bun to run the commit gates." >&2
   exit 1
 fi
 
-echo "pre-commit: package source staged - refreshing api-reference.md + LLM.md cards…"
-bun run gen:api >/dev/null
-bun run gen:cards >/dev/null
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
 
-# Stage only the generated artifacts (no-op when nothing changed). Never touches other files.
-git add -- api-reference.md packages/*/LLM.md
+# ---- 1. Source-derived docs --------------------------------------------------------------------
+# Any staged add/copy/modify/rename under a package's src, or to a doc generator, can change the
+# exported API surface the docs are built from.
+if grep -qE '^(packages/[^/]+/src/.*\.ts|scripts/gen-(api-reference|llm-cards)\.ts)$' <<< "$STAGED"; then
+  echo "pre-commit: package source staged - refreshing api-reference.md + LLM.md cards…"
+  bun run gen:api >/dev/null
+  bun run gen:cards >/dev/null
 
-if ! git diff --cached --quiet -- api-reference.md packages/*/LLM.md; then
-  echo "pre-commit: docs regenerated and staged into this commit."
+  # Stage only the generated artifacts (no-op when nothing changed). Never touches other files.
+  git add -- api-reference.md packages/*/LLM.md
+
+  if ! git diff --cached --quiet -- api-reference.md packages/*/LLM.md; then
+    echo "pre-commit: docs regenerated and staged into this commit."
+  fi
+fi
+
+# ---- 2. Lint/format gate -----------------------------------------------------------------------
+# Fully-staged files are auto-fixed and re-staged; a PARTIALLY staged file (staged + further
+# unstaged edits) is only checked, never auto-added - `git add` after a fix would silently sweep
+# the unstaged hunks into this commit.
+LINTABLE=$(grep -E '\.(ts|tsx|js|jsx|json|jsonc)$' <<< "$STAGED" || true)
+if [ -n "$LINTABLE" ]; then
+  FIXABLE=()
+  CHECK_ONLY=()
+  while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    if git diff --quiet -- "$f"; then FIXABLE+=("$f"); else CHECK_ONLY+=("$f"); fi
+  done <<< "$LINTABLE"
+  if [ ${#FIXABLE[@]} -gt 0 ]; then
+    bunx biome check --write "${FIXABLE[@]}" >/dev/null 2>&1 || true
+    git add -- "${FIXABLE[@]}"
+  fi
+  ALL_STAGED=()
+  [ ${#FIXABLE[@]} -gt 0 ] && ALL_STAGED+=("${FIXABLE[@]}")
+  [ ${#CHECK_ONLY[@]} -gt 0 ] && ALL_STAGED+=("${CHECK_ONLY[@]}")
+  if [ ${#ALL_STAGED[@]} -gt 0 ] && ! bunx biome check "${ALL_STAGED[@]}" >/dev/null 2>&1; then
+    echo "pre-commit: biome found problems it could not auto-fix (or a partially-staged file needs fixing):" >&2
+    bunx biome check "${ALL_STAGED[@]}" 2>&1 | tail -20 >&2
+    echo "pre-commit: fix (bunx biome check --write <file>), re-stage, and commit again." >&2
+    exit 1
+  fi
+fi
+
+# ---- 3. llms-corpus tripwire -------------------------------------------------------------------
+if grep -qE '^site/routes/docs/.*\.(tsx|mdx)$' <<< "$STAGED"; then
+  if ! git diff --cached --name-only | grep -q '^llms-full.txt$'; then
+    echo "pre-commit: a docs page is staged but llms-full.txt is not - the llms corpora are stale." >&2
+    echo "pre-commit: run 'bun run build && bun run gen:llms', stage the regenerated files, and commit again." >&2
+    exit 1
+  fi
 fi
