@@ -876,8 +876,130 @@ describe("scanInterpolatedSql", () => {
   })
 
   test("reports the line the call is on", () => {
-    const src = ["const x = 1", "", "db.query(`SELECT * FROM t WHERE id = ${x}`)"].join("\n")
+    // `let`, not `const`: a module `const` now resolves to static text and stays quiet.
+    const src = ["let x = 1", "", "db.query(`SELECT * FROM t WHERE id = ${x}`)"].join("\n")
     expect(scanInterpolatedSql("a.ts", src, ts)[0]).toMatchObject({ file: "a.ts", line: 3 })
+  })
+
+  describe("same-file const resolution - the shared-projection idiom stays quiet", () => {
+    test("a module-scope const string fragment interpolates without flagging", () => {
+      const src = [
+        'const COLS = "id, name, created_at"',
+        "db.query(`SELECT ${COLS} FROM users WHERE id = $1`, [id])",
+      ].join("\n")
+      expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(0)
+    })
+
+    test("a module-scope const number interpolates without flagging", () => {
+      const src = ["const LIMIT = 50", "db.query(`SELECT id FROM cities LIMIT ${LIMIT}`)"].join(
+        "\n",
+      )
+      expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(0)
+    })
+
+    test("consts chain: a const built from other consts resolves recursively", () => {
+      const src = [
+        'const BASE = "id, name"',
+        "const COLS = `${BASE}, created_at`",
+        "db.query(`SELECT ${COLS} FROM t WHERE id = $1`)",
+      ].join("\n")
+      expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(0)
+    })
+
+    test("a literal-branch ternary is static text", () => {
+      const src = [
+        "db.query(`UPDATE calls SET x = $1${ended ? \", status = 'ended'\" : ''} WHERE id = $2`)",
+      ].join("\n")
+      expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(0)
+    })
+
+    test("const + literal ternary + parameter placeholder mix stays quiet", () => {
+      const src = [
+        'const PAYOUT_COLS = "id, amount, status"',
+        'db.query(`SELECT ${PAYOUT_COLS} FROM payouts${setRef ? ", provider_ref = $3" : ""} WHERE id = $1`)',
+      ].join("\n")
+      expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(0)
+    })
+
+    test("concatenation with a module const stays quiet too", () => {
+      const src = [
+        'const COLS = "id, name"',
+        'db.query("SELECT " + COLS + " FROM t WHERE id = $1")',
+      ].join("\n")
+      expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(0)
+    })
+
+    test("an imported name still flags - it can be anything", () => {
+      const src = ['import { COLS } from "./cols.ts"', "db.query(`SELECT ${COLS} FROM t`)"].join(
+        "\n",
+      )
+      expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(1)
+    })
+
+    test("`let` still flags - it can be reassigned from request data", () => {
+      const src = ['let cols = "id"', "db.query(`SELECT ${cols} FROM t`)"].join("\n")
+      expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(1)
+    })
+
+    test("a parameter still flags, and so does a function-scope const from request data", () => {
+      const byParam = [
+        "function run(cols: string) {",
+        "  return db.query(`SELECT ${cols} FROM t`)",
+        "}",
+      ].join("\n")
+      expect(scanInterpolatedSql("a.ts", byParam, ts)).toHaveLength(1)
+      const byRequest = [
+        "app.get('/x', (c) => {",
+        "  const cols = c.query.cols",
+        "  return db.query(`SELECT ${cols} FROM t`)",
+        "})",
+      ].join("\n")
+      expect(scanInterpolatedSql("a.ts", byRequest, ts)).toHaveLength(1)
+    })
+
+    test("a shadowed name still flags - the module const is not what is read", () => {
+      const src = [
+        'const COLS = "id, name"',
+        "function run(COLS: string) {",
+        "  return db.query(`SELECT ${COLS} FROM t`)",
+        "}",
+      ].join("\n")
+      expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(1)
+    })
+
+    test("a hoisted var in a sibling block still refuses resolution", () => {
+      const src = [
+        'const COLS = "id, name"',
+        "function run(q: unknown) {",
+        "  { var COLS = String(q) }",
+        "  return db.query(`SELECT ${COLS} FROM t`)",
+        "}",
+      ].join("\n")
+      expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(1)
+    })
+
+    test("a const whose initializer is a call still flags", () => {
+      const src = ["const COLS = readCols()", "db.query(`SELECT ${COLS} FROM t`)"].join("\n")
+      expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(1)
+    })
+
+    test("a resolved const still feeds the keyword scan - hostile SQL in a const plus a dynamic span flags", () => {
+      const src = [
+        'const TAIL = "\'; DROP TABLE users; --"',
+        "cache.write(`${TAIL} ${req.query.q}`)",
+      ].join("\n")
+      // `cache.write` is not a SQL method; use a real sink to prove the keyword came from the const.
+      const sink = [
+        "const TAIL = 'UNION SELECT secret FROM keys'",
+        "db.run(`${TAIL} ${req.query.q}`)",
+      ].join("\n")
+      expect(scanInterpolatedSql("a.ts", sink, ts)).toHaveLength(1)
+    })
+
+    test("a const into a named escape hatch still flags - statement-from-variable is their whole warning", () => {
+      const src = ['const Q = "SELECT 1"', "sql.unsafe(Q)"].join("\n")
+      expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(1)
+    })
   })
 
   test("stays silent on a tagged template - that IS the bound form", () => {

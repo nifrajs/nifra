@@ -511,9 +511,145 @@ interface SqlExpressionShape {
   readonly parameterizedTag: boolean
 }
 
+/** Module-scope `const` initializers by name - the one binding form the SQL scanner resolves. */
+type ModuleConsts = ReadonlyMap<string, TSApi.Expression>
+
+/** Collect the file's top-level `const NAME = <initializer>` declarations. Destructured names, `let`,
+ * `var`, and anything nested stay out on purpose: a module-scope `const` is the only form that
+ * provably cannot carry request data. */
+function moduleConstsOf(ts: TypeScriptApi, source: TSApi.SourceFile): ModuleConsts {
+  const map = new Map<string, TSApi.Expression>()
+  for (const statement of source.statements) {
+    if (!ts.isVariableStatement(statement)) continue
+    if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) continue
+    for (const declaration of statement.declarationList.declarations) {
+      if (ts.isIdentifier(declaration.name) && declaration.initializer !== undefined) {
+        map.set(declaration.name.text, declaration.initializer)
+      }
+    }
+  }
+  return map
+}
+
+/** Whether `name`, read at `at`, might be re-declared by anything between the read and module scope.
+ * Conservative on purpose: the OUTERMOST enclosing function/block subtree is scanned for ANY binding
+ * of the name (parameter, `var`/`let`/`const`, catch, local function, destructuring element) - so a
+ * hoisted `var` in a sibling block, or a binding in a branch that never runs, still refuses
+ * resolution. Over-refusal flags a safe line (the pre-feature behavior); under-refusal would resolve
+ * the wrong binding, which is why the cheap-and-broad scan wins over scope simulation. A use with no
+ * enclosing function or block reads module scope directly and cannot be shadowed. */
+function isShadowedAt(ts: TypeScriptApi, at: TSApi.Node, name: string): boolean {
+  let scope: TSApi.Node | undefined
+  for (let node: TSApi.Node | undefined = at.parent; node !== undefined; node = node.parent) {
+    if (ts.isSourceFile(node)) break
+    if (ts.isFunctionLike(node) || ts.isBlock(node)) scope = node
+  }
+  if (scope === undefined) return false
+  const bindsName = (binding: TSApi.BindingName): boolean =>
+    ts.isIdentifier(binding)
+      ? binding.text === name
+      : binding.elements.some(
+          (element) =>
+            !ts.isOmittedExpression(element) &&
+            (ts.isIdentifier(element.name) ? element.name.text === name : bindsName(element.name)),
+        )
+  let found = false
+  const scan = (node: TSApi.Node): void => {
+    if (found) return
+    if (
+      (ts.isVariableDeclaration(node) || ts.isParameter(node)) &&
+      bindsName(node.name as TSApi.BindingName)
+    ) {
+      found = true
+      return
+    }
+    if (ts.isFunctionDeclaration(node) && node.name?.text === name) {
+      found = true
+      return
+    }
+    ts.forEachChild(node, scan)
+  }
+  scan(scope)
+  return found
+}
+
+const CONST_RESOLUTION_DEPTH = 5
+
+/**
+ * Resolve an interpolated expression to compile-time text, or `undefined` when it can carry runtime
+ * data. Pure syntax, no type checker - the same honest limit the rule already documents. What
+ * resolves: string/number literals, no-substitution templates, templates whose every span resolves,
+ * ternaries with both branches resolvable (BOTH branch texts are returned, so a hostile keyword in
+ * either still feeds the keyword scan), `as`/`satisfies` wrappers, and a same-file module-scope
+ * `const` whose initializer resolves (recursively, depth-capped). Everything else - an imported
+ * name, `let`, a parameter, a call, a member access, a shadowed name - stays unresolved and the
+ * interpolation is flagged exactly as before.
+ */
+function resolveStaticSqlText(
+  ts: TypeScriptApi,
+  node: TSApi.Expression,
+  consts: ModuleConsts,
+  depth: number,
+): string | undefined {
+  if (depth > CONST_RESOLUTION_DEPTH) return undefined
+  if (ts.isParenthesizedExpression(node)) {
+    return resolveStaticSqlText(ts, node.expression, consts, depth)
+  }
+  if (ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) {
+    return resolveStaticSqlText(ts, node.expression, consts, depth)
+  }
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text
+  if (ts.isNumericLiteral(node)) return node.text
+  if (ts.isTemplateExpression(node)) {
+    let text = node.head.text
+    for (const span of node.templateSpans) {
+      const part = resolveStaticSqlText(ts, span.expression, consts, depth + 1)
+      if (part === undefined) return undefined
+      text += part + span.literal.text
+    }
+    return text
+  }
+  if (ts.isConditionalExpression(node)) {
+    const whenTrue = resolveStaticSqlText(ts, node.whenTrue, consts, depth + 1)
+    const whenFalse = resolveStaticSqlText(ts, node.whenFalse, consts, depth + 1)
+    if (whenTrue === undefined || whenFalse === undefined) return undefined
+    return `${whenTrue} ${whenFalse}`
+  }
+  if (ts.isIdentifier(node)) {
+    const initializer = consts.get(node.text)
+    if (initializer === undefined) return undefined
+    if (isShadowedAt(ts, node, node.text)) return undefined
+    return resolveStaticSqlText(ts, initializer, consts, depth + 1)
+  }
+  return undefined
+}
+
+/** A template's contribution to the shape: resolved span texts fold into `staticText` (so the
+ * keyword scan still sees what a `const` carries); any unresolvable span keeps it `dynamic`. */
+function templateShape(
+  ts: TypeScriptApi,
+  template: TSApi.TemplateExpression,
+  consts: ModuleConsts | undefined,
+): { staticText: string; dynamic: boolean } {
+  let staticText = template.head.text
+  let dynamic = false
+  for (const span of template.templateSpans) {
+    const resolved =
+      consts === undefined ? undefined : resolveStaticSqlText(ts, span.expression, consts, 0)
+    if (resolved === undefined) dynamic = true
+    else staticText += resolved
+    staticText += span.literal.text
+  }
+  return { staticText, dynamic }
+}
+
 /** Describe only the first argument's syntax; comments/strings elsewhere cannot influence the result. */
-function sqlExpressionShape(ts: TypeScriptApi, node: TSApi.Expression): SqlExpressionShape {
-  if (ts.isParenthesizedExpression(node)) return sqlExpressionShape(ts, node.expression)
+function sqlExpressionShape(
+  ts: TypeScriptApi,
+  node: TSApi.Expression,
+  consts?: ModuleConsts,
+): SqlExpressionShape {
+  if (ts.isParenthesizedExpression(node)) return sqlExpressionShape(ts, node.expression, consts)
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
     return {
       staticText: node.text,
@@ -529,9 +665,10 @@ function sqlExpressionShape(ts: TypeScriptApi, node: TSApi.Expression): SqlExpre
       (ts.isIdentifier(tag) && tag.text === "sql") ||
       (ts.isPropertyAccessExpression(tag) && tag.getText() === "Prisma.sql")
     const template = node.template
-    const staticText = ts.isTemplateExpression(template)
-      ? [template.head.text, ...template.templateSpans.map((span) => span.literal.text)].join("")
-      : template.text
+    const templated = ts.isTemplateExpression(template)
+      ? templateShape(ts, template, parameterizedTag ? undefined : consts)
+      : { staticText: template.text, dynamic: false }
+    const staticText = templated.staticText
     // Only the ecosystem's binding tags are trusted, by NAME - which is the honest limit of a scanner
     // that reads syntax and runs no type checker. `sql` is what postgres.js, drizzle, slonik and Bun's
     // own driver all call theirs, and `Prisma.sql` is Prisma's; taking those at their word is a
@@ -547,30 +684,51 @@ function sqlExpressionShape(ts: TypeScriptApi, node: TSApi.Expression): SqlExpre
     // is treated as plain interpolation.
     return {
       staticText,
-      dynamic: ts.isTemplateExpression(template) && !parameterizedTag,
+      dynamic: templated.dynamic && !parameterizedTag,
       concatenated: false,
       literal: !ts.isTemplateExpression(template),
       parameterizedTag,
     }
   }
   if (ts.isTemplateExpression(node)) {
+    const templated = templateShape(ts, node, consts)
     return {
-      staticText: [node.head.text, ...node.templateSpans.map((span) => span.literal.text)].join(""),
-      dynamic: true,
+      staticText: templated.staticText,
+      dynamic: templated.dynamic,
       concatenated: false,
       literal: false,
       parameterizedTag: false,
     }
   }
   if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-    const left = sqlExpressionShape(ts, node.left)
-    const right = sqlExpressionShape(ts, node.right)
+    const left = sqlExpressionShape(ts, node.left, consts)
+    const right = sqlExpressionShape(ts, node.right, consts)
     return {
       staticText: left.staticText + right.staticText,
-      dynamic: left.dynamic || right.dynamic || !left.literal || !right.literal,
+      // A resolved const operand is static text, not a dynamic part - so the old `!literal` test
+      // narrows to what it always actually meant: an operand that carries runtime data (dynamic) or
+      // a binding tag being concatenated into plain text (which un-parameterizes it).
+      dynamic: left.dynamic || right.dynamic || left.parameterizedTag || right.parameterizedTag,
       concatenated: true,
       literal: left.literal && right.literal,
       parameterizedTag: false,
+    }
+  }
+  // A resolvable expression (a module-`const` name, a literal ternary) contributes its compile-time
+  // text and stays non-dynamic - this is what lets `"SELECT " + COLS + " FROM t"` and
+  // `db.query(`${COLS} FROM t WHERE id = $1`)` pass while an imported or mutable name still flags.
+  // `literal` stays false: the named escape hatches (`unsafe`, `$queryRawUnsafe`) keep flagging a
+  // resolved const, because taking statement text from ANY variable is what their rule warns about.
+  if (consts !== undefined) {
+    const resolved = resolveStaticSqlText(ts, node, consts, 0)
+    if (resolved !== undefined) {
+      return {
+        staticText: resolved,
+        dynamic: false,
+        concatenated: false,
+        literal: false,
+        parameterizedTag: false,
+      }
     }
   }
   return {
@@ -623,12 +781,16 @@ export function scanInterpolatedSql(
     source as TSApi.SourceFile & { readonly parseDiagnostics?: readonly TSApi.Diagnostic[] }
   ).parseDiagnostics
   if (parseDiagnostics !== undefined && parseDiagnostics.length > 0) return out
+  // Module-scope consts, resolved once per file: an interpolated same-file `const` cannot carry
+  // request data, so the shared-projection idiom (`const COLS = "id, name"` … `${COLS}`) stays quiet
+  // while imported, mutable, parameter, and shadowed names flag exactly as before.
+  const consts = moduleConstsOf(ts, source)
   const visit = (node: TSApi.Node): void => {
     if (ts.isCallExpression(node)) {
       const sink = sqlMethod(ts, node)
       const argument = node.arguments[0]
       if (sink !== undefined && argument !== undefined) {
-        const shape = sqlExpressionShape(ts, argument)
+        const shape = sqlExpressionShape(ts, argument, consts)
         const unsafeEscape =
           ALWAYS_UNSAFE.has(sink.method) && !shape.literal && !shape.parameterizedTag
         const assembledSql =
