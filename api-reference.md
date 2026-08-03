@@ -104,9 +104,9 @@ Every public export of every package and documented subpath - name, kind, signat
 - **examplesWidget** _(const)_ - `examplesWidget: import("@nifrajs/mcp").McpWidget`
   The widget: renders `structuredContent.examples` as a filterable list of example cards.
 - **handleMcpHttp** _(function)_ - `handleMcpHttp: (request: Request) => Promise<Response>`
-  The CLI HTTP handler: serves the disk-backed corpus tools + registers the examples widget's `ui://` resource so MCP Apps hosts can render `nifra_examples_app`. (`nifra docs-mcp` / `bun run` this file.)
+  The CLI HTTP handler: serves the disk-backed corpus tools + registers the examples widget's `ui://` resource so MCP Apps hosts can render `nifra_gallery`. (`nifra docs-mcp` / `bun run` this file.)
 - **publicDocsTools** _(function)_ - `publicDocsTools: () => McpTool[]`
-  The project-independent tools, reading the package's bundled corpus from disk (CLI use): the text docs tools plus the `nifra_examples_app` MCP Apps widget tool.
+  The project-independent tools, reading the package's bundled corpus from disk (CLI use): the text docs tools plus the `nifra_gallery` MCP Apps widget tool.
 - **respondMcpHttp** _(function)_ - `respondMcpHttp: (request: Request, tools: McpTool[], options?: McpHttpOptions) => Promise<Response>`
   Handle one MCP request against the given `tools` with the docs server identity. A thin docs-flavored wrapper over the shared {@link respondMcpHttpCore} so the `@nifrajs/cli/mcp` self-host surface keeps its `(request, tools, options?)` shape (the site's edge worker calls it with two args).
 

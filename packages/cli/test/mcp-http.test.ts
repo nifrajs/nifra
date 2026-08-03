@@ -14,7 +14,7 @@ describe("publicDocsTools", () => {
       publicDocsTools()
         .map((t) => t.name)
         .sort(),
-    ).toEqual(["nifra_docs", "nifra_example", "nifra_examples_app", "nifra_learn", "nifra_types"])
+    ).toEqual(["nifra_docs", "nifra_example", "nifra_gallery", "nifra_learn", "nifra_types"])
   })
 })
 
@@ -45,7 +45,7 @@ describe("handleMcpHttp", () => {
     expect(body.result.tools.map((t) => t.name).sort()).toEqual([
       "nifra_docs",
       "nifra_example",
-      "nifra_examples_app",
+      "nifra_gallery",
       "nifra_learn",
       "nifra_types",
     ])
@@ -68,13 +68,13 @@ describe("handleMcpHttp", () => {
     expect(body.result.content[0]?.text).toContain("@nifrajs/") // a real, framework-importing snippet
   })
 
-  test("nifra_examples_app returns structuredContent + serves its ui:// widget resource", async () => {
+  test("nifra_gallery returns structuredContent + serves its ui:// widget resource", async () => {
     const call = await handleMcpHttp(
       post({
         jsonrpc: "2.0",
         id: 5,
         method: "tools/call",
-        params: { name: "nifra_examples_app", arguments: {} },
+        params: { name: "nifra_gallery", arguments: {} },
       }),
     )
     const callBody = (await call.json()) as {

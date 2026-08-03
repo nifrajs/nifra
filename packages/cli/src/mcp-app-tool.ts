@@ -1,5 +1,5 @@
 /**
- * The `nifra_examples_app` MCP tool: nifra's verified code examples as an MCP Apps widget. It returns the
+ * The `nifra_gallery` MCP tool: nifra's verified code examples as an MCP Apps widget. It returns the
  * examples as `structuredContent`, rendered by the {@link examplesWidget} `ui://` widget in MCP Apps hosts
  * (ChatGPT Apps, MCPJam, Goose); text-only hosts still get the example names as plain text. Part of the
  * public docs-MCP tool set (served by `handleMcpHttp`), so every self-host gets it from one definition.
@@ -50,10 +50,14 @@ export const examplesWidget = defineMcpWidget({
 /** The widget-backed tool. `loadExamples` is injected (disk on the CLI, cached fetch on the edge). */
 export function examplesAppTool(loadExamples: () => Promise<Example[] | undefined>): McpTool {
   return defineMcpTool({
-    name: "nifra_examples_app",
-    annotations: { title: "Browse nifra examples", readOnlyHint: true, openWorldHint: false },
+    name: "nifra_gallery",
+    annotations: {
+      title: "Browse the nifra example gallery",
+      readOnlyHint: true,
+      openWorldHint: false,
+    },
     description:
-      "Browse nifra's verified code examples as an interactive, filterable list (MCP Apps widget). Pass query to pre-filter; the widget also filters client-side.",
+      "Open an interactive, filterable gallery of ALL of nifra's verified code examples (MCP Apps widget) - for browsing and discovering what exists. NOT for fetching one snippet as text: use nifra_example for that. Pass query to pre-filter; the widget also filters client-side.",
     inputSchema: {
       type: "object",
       properties: { query: { type: "string", description: "Pre-filter examples by keyword." } },

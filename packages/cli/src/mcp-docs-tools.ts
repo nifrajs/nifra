@@ -58,7 +58,7 @@ export function docsTools(
         openWorldHint: false,
       },
       description:
-        'Get a VERIFIED, copy-pasteable nifra code example for a task - auth route, file upload, ISR page, loader/action, typed client, SSE, deployment, etc. Every snippet is typechecked against the installed nifra version, so it compiles as-is. PREFER THIS over writing nifra code from memory (training data drifts). Call with no query for the grouped index; pass query (e.g. "protected route", "upload", "isr revalidate") for matching snippets.',
+        'Get a VERIFIED, copy-pasteable nifra code example for a task - auth route, file upload, ISR page, loader/action, typed client, SSE, deployment, etc. Every snippet is typechecked against the installed nifra version, so it compiles as-is. PREFER THIS over writing nifra code from memory (training data drifts). Returns code as TEXT for direct use; to visually browse the whole example set instead, use nifra_gallery. Call with no query for the grouped index; pass query (e.g. "protected route", "upload", "isr revalidate") for matching snippets.',
       inputSchema: {
         type: "object",
         properties: {

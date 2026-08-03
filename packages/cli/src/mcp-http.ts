@@ -1,6 +1,6 @@
 /**
  * The PUBLIC nifra docs MCP - Streamable-HTTP transport exposing the project-INDEPENDENT tools
- * (`nifra_docs`, `nifra_example`, `nifra_types`, `nifra_learn` + the `nifra_examples_app` MCP Apps widget)
+ * (`nifra_docs`, `nifra_example`, `nifra_types`, `nifra_learn` + the `nifra_gallery` MCP Apps widget)
  * so any remote AI agent can learn nifra without a local checkout. They read the bundled corpus
  * (llms-full.txt / examples.json / types.json shipped in this package) and ignore `cwd`, so they reuse the
  * exact definitions from {@link projectTools} - one source, no drift.
@@ -38,7 +38,7 @@ const docsHealth = (tools: McpTool[]): string =>
     .join(", ")}.`
 
 /** The project-independent tools, reading the package's bundled corpus from disk (CLI use): the text
- * docs tools plus the `nifra_examples_app` MCP Apps widget tool. */
+ * docs tools plus the `nifra_gallery` MCP Apps widget tool. */
 export function publicDocsTools(): McpTool[] {
   return [
     ...docsTools(loadDocsCorpus, loadExamplesCorpus, loadTypesCorpus),
@@ -60,7 +60,7 @@ export function respondMcpHttp(
 }
 
 /** The CLI HTTP handler: serves the disk-backed corpus tools + registers the examples widget's `ui://`
- * resource so MCP Apps hosts can render `nifra_examples_app`. (`nifra docs-mcp` / `bun run` this file.) */
+ * resource so MCP Apps hosts can render `nifra_gallery`. (`nifra docs-mcp` / `bun run` this file.) */
 export function handleMcpHttp(request: Request): Promise<Response> {
   return respondMcpHttp(request, publicDocsTools(), {
     features: {
