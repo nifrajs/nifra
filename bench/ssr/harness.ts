@@ -235,12 +235,17 @@ export async function warmupCacheHits(base: string, count: number): Promise<void
 
 export async function measureTarget(target: SsrBenchTarget): Promise<SsrBenchResult> {
   const base = `http://${SSR_BENCH_HOST}:${target.port}/`
+  // Capture build stderr and surface it only on failure: comparator builds emit cosmetic warnings
+  // (rollup treeshake notices, empty-chunk messages) that would otherwise interleave with the
+  // result tables, while a failing build still prints everything it said.
   const build = Bun.spawn([...target.build], {
     stdout: "ignore",
-    stderr: "inherit",
+    stderr: "pipe",
     ...(target.cwd !== undefined ? { cwd: target.cwd } : {}),
   })
+  const buildStderr = new Response(build.stderr).text()
   if ((await build.exited) !== 0) {
+    process.stderr.write(await buildStderr)
     throw new Error("build failed")
   }
 

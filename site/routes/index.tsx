@@ -615,7 +615,7 @@ export default function Home() {
           <span className="kicker">Performance &amp; Speed</span>
           <h2>Screamingly fast, frontend and backend.</h2>
           <p>
-            Nifra runs close to raw Bun/Node speed. Full-stack SSR renders 3.4× to 23× faster than
+            Nifra runs close to raw Bun/Node speed. Full-stack SSR renders 3.8× to 28× faster than
             standard meta-frameworks on Node, while the backend router matches the fastest Node
             frameworks - tens of thousands of requests per second on a single core.
           </p>
