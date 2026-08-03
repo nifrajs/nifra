@@ -40,6 +40,16 @@ for (const { file, re } of constants) {
   console.log(`✓ ${file} → ${version}`)
 }
 
+// The MCP registry manifest (root server.json) embeds the release version. A stale value makes the
+// next `mcp-publisher publish` fail with "cannot publish duplicate version" - it trailed by hand
+// twice before this sync existed.
+{
+  const file = "server.json"
+  const src = readFileSync(file, "utf8")
+  writeFileSync(file, src.replace(/("version":\s*")[^"]+(")/, `$1${version}$2`))
+  console.log(`✓ ${file} → ${version}`)
+}
+
 const CREATE_NIFRA = "packages/create-nifra"
 const CREATE_NIFRA_SRC = `${CREATE_NIFRA}/src`
 
