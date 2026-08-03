@@ -1,5 +1,7 @@
 # @nifrajs/mcp
 
+## 2.6.1
+
 ## 2.6.0
 
 ### Minor Changes

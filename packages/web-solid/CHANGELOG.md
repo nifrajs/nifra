@@ -1,5 +1,16 @@
 # @nifrajs/web-solid
 
+## 2.6.1
+
+### Patch Changes
+
+- Updated dependencies [5840c98]
+- Updated dependencies [80419f5]
+  - @nifrajs/core@2.6.1
+  - @nifrajs/web@2.6.1
+  - @nifrajs/i18n@2.6.1
+  - @nifrajs/image@2.6.1
+
 ## 2.6.0
 
 ### Patch Changes

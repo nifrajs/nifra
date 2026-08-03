@@ -1,5 +1,17 @@
 # @nifrajs/web-preact
 
+## 2.6.1
+
+### Patch Changes
+
+- 80419f5: Non-hydrated pages (`hydrate: false`) omit the adapter's hydration bootstrap from `<head>` - with no client takeover, scripts like Solid's hydration registry were dead bytes on a static document. The Preact adapter's `renderToString` also returns synchronously once its renderer module is loaded (first call still resolves it lazily), so buffered renders take the synchronous fast path on every subsequent request.
+- Updated dependencies [5840c98]
+- Updated dependencies [80419f5]
+  - @nifrajs/core@2.6.1
+  - @nifrajs/web@2.6.1
+  - @nifrajs/i18n@2.6.1
+  - @nifrajs/image@2.6.1
+
 ## 2.6.0
 
 ### Patch Changes
