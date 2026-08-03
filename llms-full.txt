@@ -3453,6 +3453,16 @@ my-app/
   backend.ts         # export const backend = server()...   (optional - the typed contract)
 ```
 
+These paths are **fixed**, not configurable: the CLI resolves all four from the
+project root, so `backend.ts` cannot move into `src/` or be renamed -
+if the file is not at the root, `nifra dev|build` simply run without a backend
+(it is optional, so nothing errors). Only the entry file is pinned; the feature modules it
+`.merge()`s can live in any directory. Keep `backend.ts` a pure
+composition root - merging modules, registering no routes of its own - so each route's
+capability reach stays its own module's (see
+[Backends & API](/docs/backends) and
+[Verification](/docs/verification)).
+
 ### framework.ts - naming the framework once
 
 Keep the render `adapter` in deploy-safe `framework.ts`. Put
@@ -8416,10 +8426,14 @@ bun create nifra my-app
 
 - **`api`** - a typed nifra server (`src/app.ts` + `src/index.ts`) with an example test and
   `dev`/`start`/`test`/`typecheck` scripts.
-- **`site`** - a nifra + React SSR site, one source deployable to Cloudflare Pages, Node, Deno, or
-  Vercel Edge.
+- **`site`** - the full-stack template: a nifra + React SSR site (file-routed frontend + typed
+  `backend.ts`), one source deployable to Cloudflare Pages, Node, Deno, or Vercel Edge. Pick the
+  frontend with `--framework react|preact|vue|solid|svelte`.
 - **`isr`** - a nifra + React app with **Incremental Static Regeneration** on Cloudflare Workers + KV
   (pages cached + served stale-while-revalidate; on-demand purge endpoint).
+- **`batteries`** - the `api` starter plus the batteries a real API needs: background jobs
+  (`@nifrajs/jobs`), a TTL cache (`@nifrajs/cache`), blob storage (`@nifrajs/storage`), and cursor
+  pagination (`@nifrajs/schema`).
 
 ```sh
 bun create nifra my-app --template isr
