@@ -94,15 +94,14 @@ export default function VsHono() {
       <h2>When to pick which</h2>
       <ul>
         <li>
-          <strong>Pick Hono</strong> for a small service or worker where a minimal router is the
-          whole job, when you need its enormous middleware ecosystem, or when the deploy target is
-          exotic and "runs literally everywhere" is the requirement.
-        </li>
-        <li>
           <strong>Pick nifra</strong> when the API and frontend are one product, when you want
           validation and typing to be the default rather than a discipline, or when AI agents write
           a meaningful share of the code and need docs and verification built for them - see{" "}
           <a href="/blog/docs-as-mcp">the agent-native thesis</a>.
+        </li>
+        <li>
+          <strong>Hono fits</strong> a small service or worker where a minimal router is the whole
+          job and its middleware ecosystem or an exotic deploy target is the requirement.
         </li>
       </ul>
       <p>

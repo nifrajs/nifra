@@ -100,23 +100,16 @@ export default function VsElysia() {
           </tr>
         </tbody>
       </table>
-      <p>
-        Where Elysia is strong: a mature plugin ecosystem, a large community, and years of Bun-first
-        production use. If you want a backend-only framework and you are all-in on Bun, Elysia is a
-        genuinely good choice - this page exists because people ask, not because the alternative is
-        bad.
-      </p>
-
       <h2>When to pick which</h2>
       <ul>
-        <li>
-          <strong>Pick Elysia</strong> if you want a Bun backend with a plugin ecosystem and you
-          have a separate frontend story you are happy with.
-        </li>
         <li>
           <strong>Pick nifra</strong> if you want the backend and frontend in one typed contract,
           the option to change UI framework or runtime later, and tooling built for AI-assisted
           development - at the same or better throughput.
+        </li>
+        <li>
+          <strong>Elysia holds up</strong> if you specifically want a backend-only Bun framework and
+          lean on its plugin ecosystem, with a separate frontend story you are happy with.
         </li>
       </ul>
       <p>

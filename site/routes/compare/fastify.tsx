@@ -81,22 +81,23 @@ export default function VsFastify() {
         </tbody>
       </table>
 
-      <h2>Where Fastify is the right choice</h2>
+      <h2>When to pick which</h2>
+      <ul>
+        <li>
+          <strong>Pick nifra</strong> for the speed lead <em>plus</em> everything above it: a typed
+          contract that reaches the frontend, runtime portability as insurance, validation as the
+          default rather than a setup step, and docs + verification built for the AI agents writing
+          an increasing share of the code.
+        </li>
+        <li>
+          <strong>Staying on Fastify is reasonable</strong> for a Node-committed team with deep
+          plugin investment and no frontend coupling - a benchmark alone is not a migration reason,
+          and its decade of production miles is real. Benchmark us again next year.
+        </li>
+      </ul>
       <p>
-        A Node-committed organization with existing Fastify plugins, operational knowledge, and no
-        frontend coupling has little reason to migrate over a benchmark. Fastify's plugin
-        encapsulation is excellent for large modular codebases, its JSON Schema validation is
-        battle-tested, and its decade of production miles is not something a young framework can
-        claim. If that is your shape, stay - and benchmark us again next year.
-      </p>
-
-      <h2>Where nifra wins</h2>
-      <p>
-        Choose nifra when you want Fastify-class speed <em>plus</em> a typed contract that reaches
-        the frontend, runtime portability as insurance, validation that is the default rather than a
-        setup step, and a framework whose docs and verification loop are built for the AI agents
-        writing an increasing share of the code. Capability-by-capability detail:{" "}
-        <a href="/docs/comparison">the comparison doc</a>.
+        Capability-by-capability detail: <a href="/docs/comparison">the comparison doc</a>.
+        Scaffold: <code>bunx create-nifra my-app</code>.
       </p>
     </article>
   )
