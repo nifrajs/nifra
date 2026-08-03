@@ -216,18 +216,18 @@ export const adapter = reactAdapter
     "check": "nifra check && nifra assure"
   },
   "dependencies": {
-    "@nifrajs/client": "^2.6.0",
-    "@nifrajs/core": "^2.6.0",
-    "@nifrajs/schema": "^2.6.0",
-    "@nifrajs/deno": "^2.6.0",
-    "@nifrajs/node": "^2.6.0",
-    "@nifrajs/web": "^2.6.0",
-    "@nifrajs/web-react": "^2.6.0",
+    "@nifrajs/client": "^2.6.1",
+    "@nifrajs/core": "^2.6.1",
+    "@nifrajs/schema": "^2.6.1",
+    "@nifrajs/deno": "^2.6.1",
+    "@nifrajs/node": "^2.6.1",
+    "@nifrajs/web": "^2.6.1",
+    "@nifrajs/web-react": "^2.6.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@nifrajs/cli": "^2.6.0",
+    "@nifrajs/cli": "^2.6.1",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",
@@ -504,17 +504,17 @@ export const adapter = preactAdapter
     "check": "nifra check && nifra assure"
   },
   "dependencies": {
-    "@nifrajs/client": "^2.6.0",
-    "@nifrajs/core": "^2.6.0",
-    "@nifrajs/schema": "^2.6.0",
-    "@nifrajs/deno": "^2.6.0",
-    "@nifrajs/node": "^2.6.0",
-    "@nifrajs/web": "^2.6.0",
-    "@nifrajs/web-preact": "^2.6.0",
+    "@nifrajs/client": "^2.6.1",
+    "@nifrajs/core": "^2.6.1",
+    "@nifrajs/schema": "^2.6.1",
+    "@nifrajs/deno": "^2.6.1",
+    "@nifrajs/node": "^2.6.1",
+    "@nifrajs/web": "^2.6.1",
+    "@nifrajs/web-preact": "^2.6.1",
     "preact": "^10.25.0"
   },
   "devDependencies": {
-    "@nifrajs/cli": "^2.6.0",
+    "@nifrajs/cli": "^2.6.1",
     "@preact/preset-vite": "^2.9.0",
     "typescript": "^6.0.3",
     "vite": "^8.0.0"
@@ -819,17 +819,17 @@ export const adapter = solidAdapter
     "check": "nifra check && nifra assure"
   },
   "dependencies": {
-    "@nifrajs/client": "^2.6.0",
-    "@nifrajs/core": "^2.6.0",
-    "@nifrajs/schema": "^2.6.0",
-    "@nifrajs/deno": "^2.6.0",
-    "@nifrajs/node": "^2.6.0",
-    "@nifrajs/web": "^2.6.0",
-    "@nifrajs/web-solid": "^2.6.0",
+    "@nifrajs/client": "^2.6.1",
+    "@nifrajs/core": "^2.6.1",
+    "@nifrajs/schema": "^2.6.1",
+    "@nifrajs/deno": "^2.6.1",
+    "@nifrajs/node": "^2.6.1",
+    "@nifrajs/web": "^2.6.1",
+    "@nifrajs/web-solid": "^2.6.1",
     "solid-js": "^1.9.0"
   },
   "devDependencies": {
-    "@nifrajs/cli": "^2.6.0",
+    "@nifrajs/cli": "^2.6.1",
     "vite-plugin-solid": "^2.10.0",
     "typescript": "^6.0.3",
     "vite": "^8.0.0"
@@ -1129,17 +1129,17 @@ export const adapter = svelteAdapter
     "check": "nifra check && nifra assure"
   },
   "dependencies": {
-    "@nifrajs/client": "^2.6.0",
-    "@nifrajs/core": "^2.6.0",
-    "@nifrajs/schema": "^2.6.0",
-    "@nifrajs/deno": "^2.6.0",
-    "@nifrajs/node": "^2.6.0",
-    "@nifrajs/web": "^2.6.0",
-    "@nifrajs/web-svelte": "^2.6.0",
+    "@nifrajs/client": "^2.6.1",
+    "@nifrajs/core": "^2.6.1",
+    "@nifrajs/schema": "^2.6.1",
+    "@nifrajs/deno": "^2.6.1",
+    "@nifrajs/node": "^2.6.1",
+    "@nifrajs/web": "^2.6.1",
+    "@nifrajs/web-svelte": "^2.6.1",
     "svelte": "^5.3.0"
   },
   "devDependencies": {
-    "@nifrajs/cli": "^2.6.0",
+    "@nifrajs/cli": "^2.6.1",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "typescript": "^6.0.3",
     "vite": "^8.0.0"
@@ -1468,17 +1468,17 @@ export const adapter = vueAdapter
     "check": "nifra check && nifra assure"
   },
   "dependencies": {
-    "@nifrajs/client": "^2.6.0",
-    "@nifrajs/core": "^2.6.0",
-    "@nifrajs/schema": "^2.6.0",
-    "@nifrajs/deno": "^2.6.0",
-    "@nifrajs/node": "^2.6.0",
-    "@nifrajs/web": "^2.6.0",
-    "@nifrajs/web-vue": "^2.6.0",
+    "@nifrajs/client": "^2.6.1",
+    "@nifrajs/core": "^2.6.1",
+    "@nifrajs/schema": "^2.6.1",
+    "@nifrajs/deno": "^2.6.1",
+    "@nifrajs/node": "^2.6.1",
+    "@nifrajs/web": "^2.6.1",
+    "@nifrajs/web-vue": "^2.6.1",
     "vue": "^3.5.0"
   },
   "devDependencies": {
-    "@nifrajs/cli": "^2.6.0",
+    "@nifrajs/cli": "^2.6.1",
     "@vitejs/plugin-vue": "^5.2.0",
     "@vue/compiler-sfc": "^3.5.0",
     "typescript": "^6.0.3",

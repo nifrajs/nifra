@@ -1,5 +1,7 @@
 # @nifrajs/better-auth
 
+## 2.6.1
+
 ## 2.6.0
 
 ### Patch Changes

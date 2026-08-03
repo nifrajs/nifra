@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/core",
-  "version": "2.6.0",
+  "version": "2.6.1",
   "description": "Bun-native, contract-first HTTP framework - the router, server, and route descriptor.",
   "keywords": [
     "bun",
