@@ -1,5 +1,30 @@
 # @nifrajs/examples
 
+## 2.7.0
+
+### Patch Changes
+
+- @nifrajs/cli@2.7.0
+- @nifrajs/auth@2.7.0
+- @nifrajs/client@2.7.0
+- @nifrajs/content@2.7.0
+- @nifrajs/core@2.7.0
+- @nifrajs/deno@2.7.0
+- @nifrajs/i18n@2.7.0
+- @nifrajs/image@2.7.0
+- @nifrajs/mcp@2.7.0
+- @nifrajs/middleware@2.7.0
+- @nifrajs/node@2.7.0
+- @nifrajs/schema@2.7.0
+- @nifrajs/web@2.7.0
+- @nifrajs/web-preact@2.7.0
+- @nifrajs/web-react@2.7.0
+- @nifrajs/web-solid@2.7.0
+- @nifrajs/web-svelte@2.7.0
+- @nifrajs/web-vanilla@2.7.0
+- @nifrajs/web-vue@2.7.0
+- @nifrajs/workers@2.7.0
+
 ## 2.6.1
 
 ### Patch Changes

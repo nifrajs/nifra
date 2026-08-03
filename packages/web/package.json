@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/web",
-  "version": "2.6.1",
+  "version": "2.7.0",
   "description": "Framework-agnostic SSR core for nifra - the render seam + HTML document orchestration.",
   "keywords": [
     "bun",
