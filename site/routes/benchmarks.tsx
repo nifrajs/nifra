@@ -22,7 +22,8 @@ type HttpRow = {
 }
 type RuntimeTable = { title: string; rows: ReadonlyArray<HttpRow> }
 
-// Median of 5 full-matrix runs · Bun 1.3.14 · Node 26 · Deno 2.8 · oha @ 50 conns. Read same-run
+// Bun/Deno: median of 5 full-matrix runs; Node: median-of-3 section run of 2026-08-04 (after the
+// Node serving optimizations). Bun 1.3.14 · Node 26 · Deno 2.8 · oha @ 50 conns. Read same-run
 // ratios, not absolutes. `bun-native`/`node-raw`/`deno-raw` are the runtime ceilings (no framework)
 // the framework rows chase - one ceiling row per runtime.
 const HTTP: ReadonlyArray<RuntimeTable> = [
@@ -38,12 +39,12 @@ const HTTP: ReadonlyArray<RuntimeTable> = [
   {
     title: "Node",
     rows: [
-      { name: "node-raw", getUsers: "75,930", postUsers: "65,181" },
-      { name: "Fastify", getUsers: "74,882", postUsers: "54,368" },
-      { name: "Nifra", getUsers: "73,183", postUsers: "53,828", nifra: true },
-      { name: "Elysia", getUsers: "69,261", postUsers: "43,617" },
-      { name: "Express", getUsers: "43,981", postUsers: "37,185" },
-      { name: "Hono", getUsers: "44,787", postUsers: "32,338" },
+      { name: "Nifra", getUsers: "74,544", postUsers: "59,764", nifra: true },
+      { name: "node-raw", getUsers: "71,228", postUsers: "62,479" },
+      { name: "Fastify", getUsers: "73,663", postUsers: "53,442" },
+      { name: "Elysia", getUsers: "67,525", postUsers: "44,130" },
+      { name: "Express", getUsers: "44,176", postUsers: "37,883" },
+      { name: "Hono", getUsers: "42,227", postUsers: "32,332" },
     ],
   },
   {

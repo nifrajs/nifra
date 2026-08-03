@@ -4,7 +4,7 @@ export const hydrate = false
 
 export const meta = pageMeta(
   "Nifra vs Fastify - Node's speed king vs a typed full-stack",
-  "Nifra vs Fastify compared honestly: within ~2% on Node in our published benchmark, what each gives you beyond raw throughput, and why the same nifra app runs unchanged - and much faster - on Bun.",
+  "Nifra vs Fastify compared honestly: ahead on Node in our published benchmark (~12% on the validated POST, level on GET), what each gives you beyond raw throughput, and why the same nifra app runs unchanged - and much faster - on Bun.",
 )
 
 export default function VsFastify() {
@@ -14,18 +14,19 @@ export default function VsFastify() {
       <p className="lead">
         Fastify is the Node.js performance benchmark for a reason: a decade of optimization, a
         serious plugin architecture, and honest engineering culture. Nifra respects it enough to
-        publish the number plainly: on Node, nifra runs within ~2% of Fastify in our benchmark. The
-        real comparison is what you get at that speed - and what happens when you leave Node.
+        publish the numbers plainly: in our current benchmark nifra runs ahead of Fastify on Node -
+        clearly on the validated write, within noise on the read. The real comparison is what you
+        get at that speed - and what happens when you leave Node.
       </p>
 
       <h2>The Node numbers</h2>
       <p>
-        On identical workloads (path-param <code>GET</code>, schema-validated <code>POST</code>,
-        with and without a realistic middleware stack), Fastify remains the fastest framework-shaped
-        thing on Node we measure, with nifra within ~2% - close enough that neither will ever be
-        your bottleneck. Among the rest of the field on Node, nifra runs ahead of Hono, Elysia, and
-        Express. All rows, methodology, and the harness itself are public on the{" "}
-        <a href="/benchmarks">benchmarks page</a>.
+        On identical workloads, nifra leads the framework field on Node. On the schema-validated{" "}
+        <code>POST</code> it runs ~12% ahead of Fastify, at 96% of a raw <code>node:http</code>{" "}
+        baseline - validation included. On the path-param <code>GET</code> the two are level,
+        trading places run to run; treat that one as a tie. Behind them: Elysia, Express, Hono.
+        Every row, the methodology, and the harness itself are public on the{" "}
+        <a href="/benchmarks">benchmarks page</a> - rerun it and check us.
       </p>
 
       <h2>The part Fastify cannot do: leave Node</h2>
@@ -83,10 +84,10 @@ export default function VsFastify() {
       <h2>Where Fastify is the right choice</h2>
       <p>
         A Node-committed organization with existing Fastify plugins, operational knowledge, and no
-        frontend coupling has little reason to move for ~2%. Fastify's plugin encapsulation is
-        excellent for large modular codebases, its JSON Schema validation is battle-tested, and its
-        decade of production miles is not something a young framework can claim. If that is your
-        shape, stay - and benchmark us again next year.
+        frontend coupling has little reason to migrate over a benchmark. Fastify's plugin
+        encapsulation is excellent for large modular codebases, its JSON Schema validation is
+        battle-tested, and its decade of production miles is not something a young framework can
+        claim. If that is your shape, stay - and benchmark us again next year.
       </p>
 
       <h2>Where nifra wins</h2>

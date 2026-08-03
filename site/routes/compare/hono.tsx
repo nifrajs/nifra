@@ -24,8 +24,8 @@ export default function VsHono() {
         that returns a constant. Real services validate bodies, stack middleware, and serialize real
         payloads. Our published benchmark measures that shape - identical workloads per framework,
         including a schema-validated <code>POST</code> and a realistic middleware stack (security
-        headers + CORS + request-id). In that shape, on Node, nifra runs ahead of Hono, Elysia, and
-        Express, and within ~2% of Fastify; on Bun and Deno it tops the measured framework field.
+        headers + CORS + request-id). In that shape nifra tops the measured framework field on Bun,
+        Deno, and Node alike - on Node that includes Fastify, with Hono, Elysia, and Express behind.
         Every number is reproducible from the repo - the <a href="/benchmarks">benchmarks page</a>{" "}
         publishes the losses too.
       </p>

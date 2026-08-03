@@ -30,7 +30,7 @@ const PAGES: ReadonlyArray<{ slug: string; title: string; summary: string }> = [
     slug: "fastify",
     title: "Nifra vs Fastify",
     summary:
-      "Within ~2% on Node - and the same app unchanged on Bun runs several times faster. What each framework gives you beyond raw speed.",
+      "Ahead on Node in the current run - ~12% on the validated POST - and the same app unchanged on Bun runs several times faster. What each framework gives you beyond raw speed.",
   },
 ]
 
