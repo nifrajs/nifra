@@ -52,7 +52,7 @@ import type {
 import { parseContentLength } from "./body.ts"
 import { type ClientIpTrust, resolveClientIp } from "./client-ip.ts"
 import type { Context, Platform, ResponseControls, RouteSchema } from "./context.ts"
-import { jsonError, pathnameOf, urlPartsOf } from "./http.ts"
+import { jsonError, pathnameOf, type UrlParts, urlPartsOf } from "./http.ts"
 import type { NodeServeOutcome } from "./node-outcome.ts"
 import type { NodeOutcomeRuntime } from "./node-outcome-hook.ts"
 import {
@@ -143,6 +143,9 @@ export interface RequestSource {
   readonly url: string
   readonly headers: Headers
   header?(name: string): string | null
+  /** Pre-split pathname/search, when the source already had the origin-form target (the Node lazy
+   * sources do) - saves synthesizing an absolute URL only to scan it apart again. */
+  readonly urlParts?: UrlParts
   readonly body: ReadableStream<Uint8Array> | null
   arrayBuffer(): Promise<ArrayBuffer>
   json(): Promise<unknown>
@@ -1892,7 +1895,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     onTimeout: () => T,
     webFast: boolean,
   ): MaybePromise<T> {
-    const url = urlPartsOf(source.url)
+    const url = source.urlParts ?? urlPartsOf(source.url)
     const match = this.catalog.find(source.method, url.pathname)
     if (!match.found) {
       if (match.reason === "method-not-allowed") {

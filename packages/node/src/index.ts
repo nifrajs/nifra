@@ -132,6 +132,8 @@ type NodeServeOutcome =
 interface NodeRequestSource {
   readonly method: string
   readonly url: string
+  /** Pre-split origin-form target - core routes from this without building the absolute URL. */
+  readonly urlParts: { readonly pathname: string; readonly search: string }
   readonly headers: Headers
   header(name: string): string | null
   readonly body: ReadableStream<Uint8Array> | null
@@ -578,10 +580,17 @@ function handle(
 
   // The TCP socket peer (the one address a client can't forge) → `c.clientIp`, unless the app's
   // `clientIp` trust declaration derives it from the forwarding chain instead. `undefined` for an
-  // already-closed socket.
-  const peerAddress = nodeReq.socket?.remoteAddress
-  const platform: NodePlatform | undefined =
-    peerAddress === undefined ? undefined : { clientIp: peerAddress }
+  // already-closed socket. The peer is constant for a socket's lifetime, so the platform object is
+  // built once per CONNECTION and reused across every keep-alive request on it.
+  const socket = nodeReq.socket as (typeof nodeReq.socket & { [PLATFORM]?: NodePlatform }) | null
+  let platform = socket?.[PLATFORM]
+  if (platform === undefined) {
+    const peerAddress = socket?.remoteAddress
+    if (peerAddress !== undefined && socket !== null) {
+      platform = { clientIp: peerAddress }
+      socket[PLATFORM] = platform
+    }
+  }
 
   // Static files first (GET/HEAD). The match is synchronous, so a non-asset request never leaves the
   // app's sync fast path below; only a prefix hit reads from disk (and async-writes the file).
@@ -690,8 +699,13 @@ function writeJsonOutcome(
     for (const [key, value] of Object.entries(outcome.headers)) headers[key.toLowerCase()] = value
   }
   // A `null` body is a 204/no-content render - `new Response(null)` carries no Content-Type, so we add
-  // none either; a non-null body is JSON, matching `Response.json`'s Content-Type.
-  if (outcome.body !== null) headers["content-type"] = JSON_CONTENT_TYPE
+  // none either; a non-null body is JSON, matching `Response.json`'s Content-Type. The length is known,
+  // so declare it - without it Node falls back to chunked framing, which costs extra wire bytes and
+  // client parsing on every response (and no other runtime chunks a buffered JSON body).
+  if (outcome.body !== null) {
+    headers["content-type"] = JSON_CONTENT_TYPE
+    headers["content-length"] = String(Buffer.byteLength(outcome.body))
+  }
   if (outcome.cookies !== undefined && outcome.cookies.length > 0) {
     headers["set-cookie"] = [...outcome.cookies]
   }
@@ -713,12 +727,26 @@ function writeBodyOutcome(
   // mutable runtime shapes (`string` / `string[]`); avoid cloning this record and every Set-Cookie
   // array on the hot SSR path. The readonly type is an ownership guarantee from the producer, not a
   // runtime value Node mutates.
-  nodeRes.writeHead(
-    outcome.status,
-    outcome.headers as Record<string, string | string[]> | undefined,
-  )
+  const headers = outcome.headers as Record<string, string | string[]> | undefined
+  // The body is buffered, so its length is known - declare it unless the producer already did.
+  // Without a length Node falls back to chunked framing (extra wire bytes on every SSR response).
+  if (headers === undefined) {
+    nodeRes.setHeader("content-length", byteLengthOf(outcome.body))
+    nodeRes.writeHead(outcome.status)
+  } else {
+    if (headers["content-length"] === undefined) {
+      headers["content-length"] = String(byteLengthOf(outcome.body))
+    }
+    nodeRes.writeHead(outcome.status, headers)
+  }
   nodeRes.end(outcome.body)
 }
+
+const byteLengthOf = (body: string | Uint8Array): number =>
+  typeof body === "string" ? Buffer.byteLength(body) : body.byteLength
+
+/** Per-connection cache slot for the socket-peer platform object (see `handle`). */
+const PLATFORM = Symbol("nifra.node.platform")
 
 function protocolResolver(option: RequestProtocolOption | undefined): RequestProtocolResolver {
   if (option === undefined) return () => "http"
@@ -743,11 +771,35 @@ function toWebRequest(req: IncomingMessage, protocol: RequestProtocol): Request 
 
 function toNodeRequestSource(req: IncomingMessage, protocol: RequestProtocol): NodeRequestSource {
   const method = req.method ?? "GET"
-  const host = req.headers.host ?? "localhost"
-  const url = `${protocol}://${host}${req.url ?? "/"}`
   return method === "GET" || method === "HEAD"
-    ? new LeanNodeGetSource(req, method, url)
-    : new LazyNodeRequestSource(req, method, url)
+    ? new LeanNodeGetSource(req, method, protocol)
+    : new LazyNodeRequestSource(req, method, protocol)
+}
+
+/**
+ * Split an origin-form request target ("/path?q#frag") into pathname + search without synthesizing
+ * an absolute URL first. Mirrors `@nifrajs/core`'s `urlPartsOf` for the origin-form case (kept in
+ * lockstep by the serve integration test).
+ */
+function originUrlParts(target: string): { pathname: string; search: string } {
+  let pathEnd = target.length
+  let searchStart = -1
+  let searchEnd = target.length
+  for (let i = 0; i < target.length; i++) {
+    const c = target.charCodeAt(i)
+    if (c === 63 /* ? */ && searchStart === -1) {
+      pathEnd = i
+      searchStart = i
+    } else if (c === 35 /* # */) {
+      if (searchStart === -1) pathEnd = i
+      searchEnd = i
+      break
+    }
+  }
+  return {
+    pathname: pathEnd === 0 ? "/" : target.slice(0, pathEnd),
+    search: searchStart === -1 ? "" : target.slice(searchStart, searchEnd),
+  }
 }
 
 /**
@@ -758,19 +810,30 @@ function toNodeRequestSource(req: IncomingMessage, protocol: RequestProtocol): N
  */
 class LazyNodeRequestSource implements NodeRequestSource {
   readonly method: string
-  readonly url: string
 
   private headersValue: Headers | undefined
   private bodyValue: ReadableStream<Uint8Array> | null | undefined
   private requestValue: Request | undefined
   private consumedBody: Buffer | undefined
   private readBodyPromise: Promise<Buffer> | undefined
+  private urlValue: string | undefined
   private readonly nodeReq: IncomingMessage
+  private readonly protocol: RequestProtocol
 
-  constructor(nodeReq: IncomingMessage, method: string, url: string) {
+  constructor(nodeReq: IncomingMessage, method: string, protocol: RequestProtocol) {
     this.nodeReq = nodeReq
     this.method = method
-    this.url = url
+    this.protocol = protocol
+  }
+
+  /** The absolute URL, built only when something reads it - routing uses `urlParts` instead. */
+  get url(): string {
+    this.urlValue ??= `${this.protocol}://${this.nodeReq.headers.host ?? "localhost"}${this.nodeReq.url ?? "/"}`
+    return this.urlValue
+  }
+
+  get urlParts(): { pathname: string; search: string } {
+    return originUrlParts(this.nodeReq.url ?? "/")
   }
 
   get headers(): Headers {
@@ -885,16 +948,27 @@ class LazyNodeRequestSource implements NodeRequestSource {
  */
 class LeanNodeGetSource implements NodeRequestSource {
   readonly method: string
-  readonly url: string
 
   private headersValue: Headers | undefined
   private requestValue: Request | undefined
+  private urlValue: string | undefined
   private readonly nodeReq: IncomingMessage
+  private readonly protocol: RequestProtocol
 
-  constructor(nodeReq: IncomingMessage, method: string, url: string) {
+  constructor(nodeReq: IncomingMessage, method: string, protocol: RequestProtocol) {
     this.nodeReq = nodeReq
     this.method = method
-    this.url = url
+    this.protocol = protocol
+  }
+
+  /** The absolute URL, built only when something reads it - routing uses `urlParts` instead. */
+  get url(): string {
+    this.urlValue ??= `${this.protocol}://${this.nodeReq.headers.host ?? "localhost"}${this.nodeReq.url ?? "/"}`
+    return this.urlValue
+  }
+
+  get urlParts(): { pathname: string; search: string } {
+    return originUrlParts(this.nodeReq.url ?? "/")
   }
 
   get headers(): Headers {
