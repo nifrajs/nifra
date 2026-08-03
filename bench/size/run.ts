@@ -140,15 +140,17 @@ export default server().post("/users", { body }, (c) => ({ name: c.body.name }))
 // Measured before and after, and squeezed first - a rank lookup table cost ~50 B because the table is
 // a shipped object, so the comparison is written out instead. Only `nifra-mcp` and `nifra-valibot`
 // moved a ceiling; both were sitting within 40 B of theirs, which is the gate working as designed.
+// The fused query lane (registration-compiled parse+validate+handler closure for query-only
+// routes) costs ~0.2 KB gzip in the kernel, so every core-based row moved together.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
-  "nifra-bare": 16.3,
+  "nifra-bare": 16.6,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  "nifra-idempotency": 19.3,
-  "nifra-effect-ledger": 18.1,
-  "nifra-mcp": 16.5,
-  "nifra-sse": 17,
-  "nifra-valibot": 17.3,
-  "nifra-typebox-t": 46,
+  "nifra-idempotency": 19.6,
+  "nifra-effect-ledger": 18.4,
+  "nifra-mcp": 16.8,
+  "nifra-sse": 17.3,
+  "nifra-valibot": 17.6,
+  "nifra-typebox-t": 46.3,
 }
 
 const main = async (): Promise<void> => {
