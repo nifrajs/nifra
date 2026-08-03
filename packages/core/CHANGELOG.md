@@ -1,5 +1,51 @@
 # @nifrajs/core
 
+## 2.8.1
+
+### Patch Changes
+
+- 78d66a4: Node serving got measurably faster - ahead of Fastify on every workload in our benchmark, where it previously trailed by ~2%. Three changes, all behavior-preserving:
+
+  - Buffered responses (node-direct JSON and SSR body outcomes) now declare `Content-Length` instead of falling back to `Transfer-Encoding: chunked` - a known-length body never needed chunked framing, which cost extra wire bytes and client parsing on every response, and no other runtime chunked these.
+  - The socket-peer platform object is built once per connection and reused across keep-alive requests (the peer address cannot change mid-socket).
+  - Routing on Node now splits pathname/search straight from the origin-form request target; the absolute URL is only synthesized if something actually reads `c.req.url`. `RequestSource` gained an optional `urlParts` field for sources that already hold the split target.
+  - An absent-header probe no longer falls through to the source's `Headers` object: a source-implemented `header()` returning `null` is authoritative. The fallthrough was materializing a full `Headers` on every POST (the body lane's `transfer-encoding` check), measured at ~4% of request CPU - the POST lane on Node is ~9% faster without it.
+
+- 93fdc89: Fix the unhandled-request-error log so it carries the error's own message.
+
+  The record is built by spreading the caller's fields and then setting the framework's own keys, so
+  `level`, `message`, and `time` always win. The error log passed the thrown error's text as `message`,
+  which meant it was overwritten by the log message itself and never reached the sink:
+
+  ```json
+  {
+    "method": "GET",
+    "path": "/boom",
+    "name": "Error",
+    "message": "unhandled request error",
+    "stack": "Error: kaboom\n at ..."
+  }
+  ```
+
+  The real text survived only incidentally inside `stack`, and was lost outright for a non-`Error`
+  throw, which has no stack to hide in. It is now emitted as `detail`, matching the response-contract
+  logs:
+
+  ```json
+  {
+    "method": "GET",
+    "path": "/boom",
+    "name": "Error",
+    "detail": "kaboom",
+    "stack": "Error: kaboom\n at ..."
+  }
+  ```
+
+  This is a shape change for anything parsing these lines. A consumer reading `message` on an error
+  record now gets the constant `"unhandled request error"` in every case rather than sometimes-there
+  diagnostic text - it was already that constant, so nothing loses information, but a dashboard or
+  alert grouping on that field should move to `detail`.
+
 ## 2.8.0
 
 ## 2.7.1
