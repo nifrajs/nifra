@@ -29,10 +29,12 @@
  * A `*.fn.ts` module is never bundled for the browser. The client build replaces it with one stub per
  * export, each POSTing to the route below, so the bodies and everything they import stay on the server.
  *
- * One pipeline cannot do this: `nifra dev --bun`. Bun's dev-server bundler accepts no plugins - a
- * runtime `Bun.plugin` onLoad does not reach it, which was measured rather than assumed - so a `*.fn`
- * module there would ship WHOLE, secrets included. That command refuses to start on an app containing
- * one, the same way it already refuses CSS Modules. `nifra build` and `nifra dev` (Vite) are unaffected.
+ * Every pipeline applies this - `nifra dev --bun` included. Bun's dev-server bundler accepts plugins
+ * only through bunfig `[serve.static]` (a runtime `Bun.plugin` onLoad does not reach it, measured
+ * rather than assumed), so that command generates a config under `.nifra/dev-bun/` carrying this
+ * same stub plugin and relaunches itself with `--config=` pointing at it; the launch is verified
+ * with a per-run token and refuses to serve if the boundary cannot be proven active. Identical
+ * stubs across `nifra build`, `nifra dev` (Vite), and `nifra dev --bun`.
  *
  * ## Why this is not a new lane
  *

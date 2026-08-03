@@ -984,11 +984,8 @@ describe("scanInterpolatedSql", () => {
     })
 
     test("a resolved const still feeds the keyword scan - hostile SQL in a const plus a dynamic span flags", () => {
-      const src = [
-        'const TAIL = "\'; DROP TABLE users; --"',
-        "cache.write(`${TAIL} ${req.query.q}`)",
-      ].join("\n")
-      // `cache.write` is not a SQL method; use a real sink to prove the keyword came from the const.
+      // The keyword lives ONLY in the const; the dynamic span alone carries none - so a flag here
+      // proves the resolved const text reached the keyword scan.
       const sink = [
         "const TAIL = 'UNION SELECT secret FROM keys'",
         "db.run(`${TAIL} ${req.query.q}`)",

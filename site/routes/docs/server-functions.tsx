@@ -196,10 +196,11 @@ export default function ServerFunctions() {
         held to byte-identical output by a parity test.
       </p>
       <p>
-        One pipeline cannot: <code>nifra dev --bun</code>. Bun's dev-server bundler accepts no plugins,
-        so a <code>*.fn</code> module there would ship whole, secrets included. That command refuses to
-        start on an app containing one rather than shipping it. <code>nifra build</code> and{" "}
-        <code>nifra dev</code> (Vite) are unaffected.
+        <code>nifra dev --bun</code> applies it too. Bun's dev-server bundler accepts plugins only
+        through bunfig's <code>[serve.static]</code> channel, so that command generates a config
+        under <code>.nifra/dev-bun/</code> carrying the same stub plugin and relaunches itself with{" "}
+        <code>--config=</code> pointing at it - verified per launch, refusing to serve if the
+        boundary cannot be proven active. Identical stubs across all three pipelines.
       </p>
 
       <h2>It is a route, so assurance applies</h2>

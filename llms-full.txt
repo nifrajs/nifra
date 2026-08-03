@@ -842,10 +842,11 @@ one stub per export, so the bodies - and every module they import, including you
 stay on the server. Both pipelines do this identically, and the Bun and Vite transforms are
 held to byte-identical output by a parity test.
 
-One pipeline cannot: `nifra dev --bun`. Bun's dev-server bundler accepts no plugins,
-so a `*.fn` module there would ship whole, secrets included. That command refuses to
-start on an app containing one rather than shipping it. `nifra build` and
-`nifra dev` (Vite) are unaffected.
+`nifra dev --bun` applies it too. Bun's dev-server bundler accepts plugins only
+through bunfig's `[serve.static]` channel, so that command generates a config
+under `.nifra/dev-bun/` carrying the same stub plugin and relaunches itself with
+`--config=` pointing at it - verified per launch, refusing to serve if the
+boundary cannot be proven active. Identical stubs across all three pipelines.
 
 ### It is a route, so assurance applies
 

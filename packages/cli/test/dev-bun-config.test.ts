@@ -2,44 +2,64 @@ import { expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import {
+  consumeLaunchToken,
+  parseUserBunfig,
   renderBoundaryPluginModule,
   renderDevBunfig,
-  userBunfigSlice,
+  serializeBunfig,
   writeBunDevConfig,
 } from "../src/dev-bun-config.ts"
 
 /**
  * The `nifra dev --bun` boundary-plugin channel: a generated bunfig delivers the production
  * client-boundary plugins to Bun's dev-server bundler via `[serve.static] plugins` - the only
- * channel that bundler accepts plugins through. These tests pin the config generation (merge
- * semantics, path resolution) and then prove the whole mechanism END TO END: a real `Bun.serve`
- * HTML-import dev server started with the generated config must serve the server-function STUB,
- * never the module body - the leak the old refusal guarded against.
+ * channel that bundler accepts plugins through. These tests pin the config carry-over (the WHOLE
+ * user bunfig round-trips), the merge semantics, the per-launch token that makes the child
+ * detection unforgeable, and then prove the mechanism END TO END: a real `Bun.serve` HTML-import
+ * dev server started with the generated config must serve the server-function STUB, never the
+ * module body - the leak the old refusal guarded against.
  */
 
-test("userBunfigSlice: absent, malformed, and populated bunfigs", () => {
-  expect(userBunfigSlice(undefined)).toEqual({ preload: [], serveStaticPlugins: [] })
-  expect(userBunfigSlice("not [ valid toml")).toEqual({ preload: [], serveStaticPlugins: [] })
-  const slice = userBunfigSlice(
-    ['preload = ["./setup.ts"]', "[serve.static]", 'plugins = ["bun-plugin-tailwind"]'].join("\n"),
-  )
-  expect(slice).toEqual({ preload: ["./setup.ts"], serveStaticPlugins: ["bun-plugin-tailwind"] })
-  // The string (non-array) preload form bunfig accepts.
-  expect(userBunfigSlice('preload = "./one.ts"').preload).toEqual(["./one.ts"])
+test("parseUserBunfig: absent is empty, malformed fails loudly", () => {
+  expect(parseUserBunfig(undefined)).toEqual({})
+  expect(() => parseUserBunfig("not [ valid toml")).toThrow(/bunfig\.toml does not parse/)
 })
 
-test("renderDevBunfig: boundary plugin first, user entries carried and resolved", () => {
-  const toml = renderDevBunfig(
-    "/app/.nifra/dev-bun/boundary-plugin.ts",
-    { preload: ["./setup.ts"], serveStaticPlugins: ["bun-plugin-tailwind", "./local-plugin.ts"] },
-    "/app",
+test("the user's ENTIRE bunfig round-trips - not just the two fields the merge touches", () => {
+  const user = parseUserBunfig(
+    [
+      'preload = ["./setup.ts"]',
+      "[jsx]",
+      'factory = "h"',
+      "[define]",
+      '"process.env.FLAG" = "true"',
+      "[install]",
+      'registry = "https://registry.example.com"',
+      "[serve.static]",
+      'plugins = ["bun-plugin-tailwind"]',
+    ].join("\n"),
   )
-  // Ours first, package specifiers untouched, relative user entries re-rooted at the APP (bunfig
-  // resolves relative entries against the config file's own directory, which is .nifra/dev-bun/).
-  expect(toml).toContain(
-    'plugins = ["/app/.nifra/dev-bun/boundary-plugin.ts", "bun-plugin-tailwind", "/app/local-plugin.ts"]',
-  )
+  const toml = renderDevBunfig("/app/.nifra/dev-bun/boundary-plugin.ts", user, "/app")
+  // Every original setting survives; dropping one would run dev on different Bun settings.
+  expect(toml).toContain('factory = "h"')
+  expect(toml).toContain('"process.env.FLAG" = "true"')
+  expect(toml).toContain('registry = "https://registry.example.com"')
   expect(toml).toContain('preload = ["/app/setup.ts"]')
+  expect(toml).toContain(
+    'plugins = ["/app/.nifra/dev-bun/boundary-plugin.ts", "bun-plugin-tailwind"]',
+  )
+  // And the emitted TOML parses back to the same data (plus the plugin merge).
+  const reparsed = parseUserBunfig(toml)
+  expect((reparsed.jsx as Record<string, unknown>).factory).toBe("h")
+})
+
+test("serializeBunfig refuses a shape it cannot round-trip instead of dropping it", () => {
+  expect(() => serializeBunfig({ weird: [{ nested: true }] })).toThrow(/cannot re-serialize/)
+})
+
+test("renderDevBunfig without a user bunfig still emits the boundary plugin", () => {
+  const toml = renderDevBunfig("/app/.nifra/dev-bun/boundary-plugin.ts", {}, "/app")
+  expect(toml).toContain('plugins = ["/app/.nifra/dev-bun/boundary-plugin.ts"]')
 })
 
 test("the generated plugin module composes the PRODUCTION boundary plugins, not a re-implementation", () => {
@@ -47,6 +67,23 @@ test("the generated plugin module composes the PRODUCTION boundary plugins, not 
   expect(source).toContain('from "@nifrajs/web/build"')
   expect(source).toContain("serverFnStubPlugin")
   expect(source).toContain("serverOnlyEmptyPlugin")
+})
+
+test("launch token: only the fresh parent-minted value verifies, exactly once", async () => {
+  const root = mkdtempSync(join(import.meta.dir, ".tmp-nifra-devbun-token-"))
+  try {
+    const { launchToken } = await writeBunDevConfig(root)
+    // A fixed/guessed value - the S-02 bypass shape - must NOT verify (and consumes the file).
+    expect(consumeLaunchToken(root, "1")).toBe(false)
+    expect(consumeLaunchToken(root, launchToken)).toBe(false) // already consumed - fail closed
+    const second = await writeBunDevConfig(root)
+    expect(consumeLaunchToken(root, second.launchToken)).toBe(true)
+    // One-shot: the same real token cannot verify twice (stale env vars die here).
+    expect(consumeLaunchToken(root, second.launchToken)).toBe(false)
+    expect(consumeLaunchToken(root, undefined)).toBe(false)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 /**

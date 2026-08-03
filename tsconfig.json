@@ -81,6 +81,9 @@
   "exclude": [
     "node_modules",
     "dist",
+    // A standalone Remotion project with its own toolchain/tsconfig; the root project's compiler
+    // options (no JSX) do not apply to it.
+    "examples/launch-video",
     "bench/ssr",
     "bench/http/serve-deno.ts",
     "site",

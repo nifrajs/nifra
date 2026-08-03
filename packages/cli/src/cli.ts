@@ -238,16 +238,33 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
     await assertBunDevSupportsApp(app)
     // Bun's dev-server bundler takes plugins only via bunfig `[serve.static]`, read at process
     // start - so the boundary plugins (server-fn stubs, server-only emptying) are delivered by
-    // generating a config and re-execing this same command once with `--config=`. The marker env
-    // stops the recursion; everything after this block runs identically in the child.
-    if (process.env.NIFRA_BUN_DEV_CONFIGURED !== "1") {
-      const { writeBunDevConfig } = await import("./dev-bun-config.ts")
-      const { bunfigPath } = await writeBunDevConfig(app.cwd)
+    // generating a config and re-execing this same command once with `--config=`. The child proves
+    // it IS the configured child with a per-launch random token (matched against the file the
+    // parent just wrote, consumed on first read). A fixed sentinel here would be a secret-leak
+    // switch: any inherited environment could set it, skip the generation, and serve the app with
+    // no boundary plugins at all. An unprovable token acts as a parent - fail closed.
+    const { consumeLaunchToken, writeBunDevConfig } = await import("./dev-bun-config.ts")
+    if (!consumeLaunchToken(app.cwd, process.env.NIFRA_BUN_DEV_TOKEN)) {
+      // Re-exec depth backstop: token verification makes recursion terminate (the direct child
+      // always verifies), so hitting this means filesystem/env sabotage - refuse over fork-looping.
+      const depth = Number(process.env.NIFRA_BUN_DEV_DEPTH ?? "0")
+      if (depth >= 3) {
+        throw new Error(
+          "[nifra] `nifra dev --bun` could not verify its generated dev config after several " +
+            "relaunches. Something is rewriting `.nifra/dev-bun/` or the environment between " +
+            "launches; refusing to serve without the client-boundary plugins.",
+        )
+      }
+      const { bunfigPath, launchToken } = await writeBunDevConfig(app.cwd)
       const child = Bun.spawn(
         [process.execPath, `--config=${bunfigPath}`, ...process.argv.slice(1)],
         {
           stdio: ["inherit", "inherit", "inherit"],
-          env: { ...process.env, NIFRA_BUN_DEV_CONFIGURED: "1" },
+          env: {
+            ...process.env,
+            NIFRA_BUN_DEV_TOKEN: launchToken,
+            NIFRA_BUN_DEV_DEPTH: String(depth + 1),
+          },
         },
       )
       const forward = (): void => child.kill("SIGINT")
