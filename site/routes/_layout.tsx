@@ -1870,6 +1870,7 @@ export default function Layout(props: { children?: ReactNode }) {
             <a href="/play">Playground</a>
             <a href="/frameworks">5 Frameworks</a>
             <a href="/benchmarks">Benchmarks</a>
+            <a href="/blog">Blog</a>
             <a href="/docs/security">Security</a>
             <a
               className="icon-link"
@@ -1935,6 +1936,7 @@ export default function Layout(props: { children?: ReactNode }) {
           <span>Proudly built with Nifra - server-rendered on Cloudflare Pages.</span>
           <span className="foot-links">
             <a href="/frameworks">5 Frameworks</a>
+            <a href="/blog">Blog</a>
             <a href="https://github.com/nifrajs/nifra" target="_blank" rel="noopener noreferrer">
               GitHub
             </a>
