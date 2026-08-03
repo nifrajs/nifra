@@ -2658,6 +2658,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **DevServerOptions** _(interface)_ - `interface DevServerOptions`
 - **LAST_ERROR_PATH** _(const)_ - `LAST_ERROR_PATH: "/__nifra/last-error"`
   Shared endpoint name used by both dev pipelines and the agent-facing MCP tools.
+- **buildFailureDetail** _(function)_ - `buildFailureDetail: (err: unknown) => string`
+  Format a client-build rejection for the guard's report. Bun.build rejects with an AggregateError whose message is just "Bundle failed" - the actionable part (which file, which import) lives in `.errors`. Surface it, or the guard reports a failure while hiding the reason.
 - **createDevServer** _(function)_ - `createDevServer: (options: DevServerOptions) => Promise<DevServer>`
   Start the Bun dev server: generate → bundle → serve → watch → hot-reload on change.
 - **devHtml** _(function)_ - `devHtml: (entryHref: string) => string`

@@ -23,13 +23,13 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 - **buildClientVite** _(function)_ - `buildClientVite: (options: BuildClientViteOptions) => Promise<BuildManifest>` · from `@nifrajs/web/build-vite`
 - **buildCodeframe** _(function)_ - `buildCodeframe: (file: string, line: number, column: number | undefined, read?: SourceReader, radius?: number) => Codeframe | undefined` · from `@nifrajs/web/diagnostic`
 - **buildDiagnostic** _(function)_ - `buildDiagnostic: (err: unknown, options?: BuildDiagnosticOptions) => Diagnostic` · from `@nifrajs/web/diagnostic`
+- **buildFailureDetail** _(function)_ - `buildFailureDetail: (err: unknown) => string` · from `@nifrajs/web/dev`
 - **buildManifest** _(function)_ - `buildManifest: (files: readonly string[], importer: (file: string) => () => Promise<RouteModule>) => Manifest` · from `@nifrajs/web`
 - **buildRouteManifest** _(function)_ - `buildRouteManifest: (manifest: Manifest, options?: { readonly target?: string; readonly prerendered?: Readonly<Record<string, readonly stri…` · from `@nifrajs/web/route-manifest`
 - **buildServer** _(function)_ - `buildServer: (options: BuildServerOptions) => Promise<ServerBuild>` · from `@nifrajs/web/build`
 - **buildServerVite** _(function)_ - `buildServerVite: (options: BuildServerViteOptions) => Promise<ServerBuild>` · from `@nifrajs/web/build-vite`
-- **buildTarget** _(function)_ - `buildTarget: (target: BuildTarget, options: BuildTargetOptions) => Promise<BuildTargetResult>` · from `@nifrajs/web/build`
 
-_…and 318 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 319 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 

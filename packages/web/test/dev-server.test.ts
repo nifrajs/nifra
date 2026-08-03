@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { CLIENT_ENTRY_PATH, createDevServer, type DevServer, LAST_ERROR_PATH } from "../src/dev.ts"
+import {
+  buildFailureDetail,
+  CLIENT_ENTRY_PATH,
+  createDevServer,
+  type DevServer,
+  LAST_ERROR_PATH,
+} from "../src/dev.ts"
 
 // Integration coverage for the Bun-pipeline dev server. The temp app lives INSIDE the workspace so the
 // generated entry's `@nifrajs/web/client` import resolves through node_modules hoisting, exactly as a real
@@ -226,3 +232,20 @@ test("the dev leak guard reports a client leak instead of serving it silently", 
     console.error = original
   }
 }, 40_000)
+
+test("buildFailureDetail surfaces AggregateError members, not Bun's bare 'Bundle failed'", () => {
+  // Bun.build rejects with an AggregateError whose own message says nothing; the actionable part
+  // (which file, which import) lives in `.errors` and must reach the report.
+  const agg = new AggregateError(
+    [new Error('Could not resolve: "fs". Imported from routes/index.tsx'), "a plain string cause"],
+    "Bundle failed",
+  )
+  const detail = buildFailureDetail(agg)
+  expect(detail).toContain('Could not resolve: "fs"')
+  expect(detail).toContain("a plain string cause")
+  expect(detail).not.toBe("  Bundle failed")
+  // An empty AggregateError has nothing better than its message; plain errors pass through.
+  expect(buildFailureDetail(new AggregateError([], "Bundle failed"))).toBe("  Bundle failed")
+  expect(buildFailureDetail(new Error("boom"))).toBe("  boom")
+  expect(buildFailureDetail("not an error")).toBe("  not an error")
+})

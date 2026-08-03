@@ -499,6 +499,17 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
  * Overlapping runs are collapsed - a save during a bundle queues exactly one re-run, so a burst of edits
  * cannot pile up builds behind each other.
  */
+/**
+ * Format a client-build rejection for the guard's report. Bun.build rejects with an AggregateError
+ * whose message is just "Bundle failed" - the actionable part (which file, which import) lives in
+ * `.errors`. Surface it, or the guard reports a failure while hiding the reason.
+ */
+export function buildFailureDetail(err: unknown): string {
+  return err instanceof AggregateError && err.errors.length > 0
+    ? err.errors.map((e) => `  ${e instanceof Error ? e.message : String(e)}`).join("\n")
+    : `  ${err instanceof Error ? err.message : String(err)}`
+}
+
 function leakGuard(options: DevServerOptions): () => void {
   let running = false
   let queued = false
@@ -510,15 +521,8 @@ function leakGuard(options: DevServerOptions): () => void {
     running = true
     buildClient({ ...options, minify: false })
       .catch((err: unknown) => {
-        // Bun.build rejects with an AggregateError whose message is just "Bundle failed" - the
-        // actionable part (which file, which import) lives in `.errors`. Surface it, or the guard
-        // reports a failure while hiding the reason.
-        const detail =
-          err instanceof AggregateError && err.errors.length > 0
-            ? err.errors.map((e) => `  ${e instanceof Error ? e.message : String(e)}`).join("\n")
-            : `  ${err instanceof Error ? err.message : String(err)}`
         console.error(
-          `\n[nifra/web/dev] client-leak guard failed:\n${detail}\n` +
+          `\n[nifra/web/dev] client-leak guard failed:\n${buildFailureDetail(err)}\n` +
             "  The dev server is still running. This will fail `nifra build`.\n",
         )
       })
