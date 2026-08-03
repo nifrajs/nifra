@@ -1,5 +1,7 @@
 {
   "$schema": "https://context7.com/schema/context7.json",
+  "url": "https://context7.com/nifrajs/nifra",
+  "public_key": "pk_rbNPsoeBYM1G6fB0K8GVq",
   "projectTitle": "nifra",
   "description": "Full-stack TypeScript framework built for AI agents: typed server-to-client with zero codegen, SSR for React/Vue/Svelte/Solid/Preact, on Bun/Node/Deno/edge.",
   "folders": [],
