@@ -1,5 +1,11 @@
 const define = { "process.env.NODE_ENV": '"production"' }
 
+// What `nifra build`'s buildServer stamps into every server bundle: tells the react adapter the output
+// is bundled (react-dom already inlined + deduped), so its runtime re-root of `react-dom/server` must
+// not fire. Without it the bundle re-imports react-dom from disk, whose dev/prod switch reads the
+// RUNTIME NODE_ENV - the harness sets none, so the row silently measured development React.
+const serverDefine = { ...define, "process.env.NIFRA_SSR_BUNDLED": '"1"' }
+
 // Build the client hydration bundle (the JS payload the SSR page ships) with Bun.build.
 // React's JSX is Bun-native - no plugin. NODE_ENV=production so React ships its prod build.
 const client = await Bun.build({
@@ -21,7 +27,7 @@ const server = await Bun.build({
   conditions: ["bun"],
   naming: "server-bun.js",
   minify: true,
-  define,
+  define: serverDefine,
 })
 
 for (const result of [client, server]) {

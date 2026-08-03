@@ -5,6 +5,7 @@ import {
   assertSingleReactCore,
   bunResolverFn,
   loadReactDomServer,
+  moduleLooksBundled,
 } from "../src/react-dom-server.ts"
 
 /**
@@ -236,4 +237,20 @@ test("NIFRA_SSR_BUNDLED marker disables re-root even when Bun.resolveSync exists
     delete process.env.NIFRA_SSR_BUNDLED // never leak the marker into sibling tests
   }
   expect(typeof bunResolverFn()).toBe("function") // restored
+})
+
+test("moduleLooksBundled backstops a marker-free bundle (hand-rolled `bun build`)", () => {
+  // A server bundled WITHOUT buildServer never defines NIFRA_SSR_BUNDLED, but bundling rewrites
+  // `import.meta.url` to the OUTPUT file - so the basename stops being `react-dom-server.*`. Re-rooting
+  // inside such a bundle re-imports react-dom from disk: the dual-core crash with hooks, or (dev/prod
+  // switched by RUNTIME NODE_ENV) a silent development-React SSR slowdown without them - which is how the
+  // bench's Bun row measured dev React while its bundle carried an inlined production react-dom.
+  expect(moduleLooksBundled("file:///app/server-bun.js")).toBe(true)
+  expect(moduleLooksBundled("file:///app/dist/server.mjs")).toBe(true)
+  // Unbundled shapes: the Bun workspace runtime loads the .ts source; the published dist ships .js.
+  expect(moduleLooksBundled("file:///pkg/src/react-dom-server.ts")).toBe(false)
+  expect(moduleLooksBundled("file:///pkg/dist/react-dom-server.js")).toBe(false)
+  expect(moduleLooksBundled("C:\\pkg\\dist\\react-dom-server.js")).toBe(false) // windows separators
+  // This test file runs unbundled, so the runtime default must keep the re-root alive.
+  expect(moduleLooksBundled()).toBe(false)
 })

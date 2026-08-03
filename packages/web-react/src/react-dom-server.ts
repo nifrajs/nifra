@@ -173,6 +173,20 @@ export async function loadReactDomServer(
 }
 
 /**
+ * Whether this module is executing from inside a bundle rather than as its own file. Bundling rewrites
+ * `import.meta.url` to the OUTPUT file (`server-bun.js`, `server.mjs`, …), so when the basename is no
+ * longer `react-dom-server.*` (the `.ts` source under the Bun workspace runtime, the `.js` in the
+ * published dist), this module has been concatenated into a bundle. The second, marker-free layer of
+ * bundle detection: it catches a server bundled by hand (`bun build --target bun` without `buildServer`),
+ * which keeps `Bun.resolveSync` but never defines `NIFRA_SSR_BUNDLED`. `url` is injectable for tests;
+ * runtime callers pass nothing.
+ */
+export function moduleLooksBundled(url: string = import.meta.url): boolean {
+  const base = url.split(/[/\\]/).pop() ?? ""
+  return !base.startsWith("react-dom-server.")
+}
+
+/**
  * The resolver `loadReactDomServer` uses by default, or `undefined` when re-rooting must NOT happen - a
  * non-Bun host (no `Bun.resolveSync`; the static import is the only path) OR a BUNDLED SSR output.
  * `buildServer` defines `process.env.NIFRA_SSR_BUNDLED` to `"1"` in every bundle, where react-dom is
@@ -180,9 +194,16 @@ export async function loadReactDomServer(
  * a SECOND react-dom from disk (a `target:"bun"` bundle still has `Bun.resolveSync`), giving the bundled
  * components a foreign/null hook dispatcher → the `…H.useRef of null` crash. The marker is read here (per
  * call, not at module load) so it stays driveable from a test. Unbundled Bun runtimes don't set it, so
- * dev/start still re-root. Exported for unit testing the gate. */
+ * dev/start still re-root. Exported for unit testing the gate.
+ *
+ * A bundle produced WITHOUT `buildServer` has no marker, so `moduleLooksBundled` backstops it: re-rooting
+ * inside such a bundle re-imports react-dom from disk, where the dev/prod switch reads the RUNTIME
+ * `NODE_ENV` - with hooks that is the dual-core crash, without hooks it silently renders with development
+ * React (a large SSR slowdown that looks like a runtime regression). Bundled output takes the static
+ * import, whose react-dom the bundle already inlined and deduped. */
 export function bunResolverFn(): ResolveSync | undefined {
   if (process.env.NIFRA_SSR_BUNDLED === "1") return undefined
+  if (moduleLooksBundled()) return undefined
   return hasBunResolveSync && bunResolver?.resolveSync !== undefined
     ? bunResolver.resolveSync.bind(bunResolver)
     : undefined
