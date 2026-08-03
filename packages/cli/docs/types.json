@@ -959,6 +959,13 @@
     "signature": "export interface BuildDiagnosticOptions {\n    readonly request?: {\n        readonly method: string;\n        readonly url: string;\n    };\n    /** Project root; frames outside it are treated as non-user. Defaults to `process.cwd()`. */\n    readonly root?: string;\n    /** Injectable source reader (tests pass a fake; production reads the filesystem). */\n    readonly read?: SourceReader;\n}"
   },
   {
+    "name": "buildFailureDetail",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function buildFailureDetail(err: unknown): string;",
+    "doc": "/**\n * Format a client-build rejection for the guard's report. Bun.build rejects with an AggregateError\n * whose message is just \"Bundle failed\" - the actionable part (which file, which import) lives in\n * `.errors`. Surface it, or the guard reports a failure while hiding the reason.\n */"
+  },
+  {
     "name": "buildManifest",
     "kind": "function",
     "package": "@nifrajs/web",
