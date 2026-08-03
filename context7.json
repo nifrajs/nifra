@@ -1,0 +1,23 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "nifra",
+  "description": "Full-stack TypeScript framework built for AI agents: typed server-to-client with zero codegen, SSR for React/Vue/Svelte/Solid/Preact, on Bun/Node/Deno/edge.",
+  "folders": [],
+  "excludeFolders": [
+    ".changeset",
+    ".claude",
+    ".github",
+    "bench",
+    "internal",
+    "node_modules",
+    "dist"
+  ],
+  "excludeFiles": ["CHANGELOG.md", "security_best_practices_report.md", "SSR-BENCHMARKS.md"],
+  "rules": [
+    "Every route that accepts input declares a schema (any Standard Schema library); never read an unvalidated body",
+    "Call the API through the typed client inferred from the server type; never hand-write fetch calls against internal routes",
+    "Server-only code lives in *.server.ts modules and server functions in *.fn.ts modules; the client build strips both",
+    "Run `nifra check` after generating or changing code and fix what it reports",
+    "Prefer the verified examples from the docs MCP (https://mcp.nifra.dev) or `nifra_example` over writing nifra code from memory"
+  ]
+}
