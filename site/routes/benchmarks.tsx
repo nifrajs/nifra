@@ -233,8 +233,8 @@ export default function Benchmarks() {
       <div className="caveat">
         Meta-frameworks are Node-only in this matrix; compare them against Nifra's <b>Node</b> row
         (the headline multipliers above do exactly that). Preact has no maintained meta-framework,
-        so its section is Nifra-only - Bun vs Node on the same app. A client-JS of{" "}
-        <code>n/a</code> means the run couldn't account that framework's payload from the SSR HTML.
+        so its section is Nifra-only - Bun vs Node on the same app. A client-JS of <code>n/a</code>{" "}
+        means the run couldn't account that framework's payload from the SSR HTML.
       </div>
 
       {/* ---- Backend: HTTP throughput across runtimes ---- */}

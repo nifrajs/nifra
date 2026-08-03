@@ -20,9 +20,7 @@ const framework = process.argv[2]
 const port = Number(process.argv[3])
 
 if (!Number.isInteger(port)) {
-  throw new Error(
-    "usage: bun run bench/http/serve.ts <nifra|hono|elysia|bun-native> <port>",
-  )
+  throw new Error("usage: bun run bench/http/serve.ts <nifra|hono|elysia|bun-native> <port>")
 }
 
 /**
@@ -52,7 +50,6 @@ function isSearch(v: unknown): v is { q: string; limit: string } {
     typeof v.limit === "string"
   )
 }
-
 
 if (framework === "nifra") {
   // Shared with the Node nifra row (serve-node-nifra.ts) so both sections measure the
