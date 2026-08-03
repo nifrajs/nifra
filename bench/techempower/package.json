@@ -1,0 +1,8 @@
+{
+  "name": "nifra-techempower",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@nifrajs/core": "2.7.1"
+  }
+}
