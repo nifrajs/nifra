@@ -36,6 +36,22 @@ if grep -qE '^(packages/[^/]+/src/.*\.ts|scripts/gen-(api-reference|llm-cards)\.
   if ! git diff --cached --quiet -- api-reference.md packages/*/LLM.md; then
     echo "pre-commit: docs regenerated and staged into this commit."
   fi
+  # A changed api-reference means the public surface moved - types.json is built from the same
+  # exports (including doc/description text), so it is almost certainly stale too. It cannot be
+  # regenerated here: it needs a fresh `bun run build` first (a stale dist silently guts it).
+  if ! git diff --cached --quiet -- api-reference.md; then
+    API_SURFACE_CHANGED=1
+  fi
+fi
+
+# ---- 1b. types-corpus tripwire -----------------------------------------------------------------
+# CI's check:llms rebuilds from scratch and diffs types.json; catching it here saves the red run.
+if [ "${API_SURFACE_CHANGED:-0}" = 1 ] && [ "${NIFRA_LLMS_OK:-0}" != 1 ] \
+  && ! git diff --cached --name-only | grep -q '^packages/cli/docs/types.json$'; then
+  echo "pre-commit: the public API surface changed (api-reference.md moved) but packages/cli/docs/types.json is not staged." >&2
+  echo "pre-commit: run 'bun run build && bun run gen:llms', stage the regenerated files, and commit again." >&2
+  echo "pre-commit: if that provably changes nothing, re-run the commit with NIFRA_LLMS_OK=1." >&2
+  exit 1
 fi
 
 # ---- 2. Lint/format gate -----------------------------------------------------------------------

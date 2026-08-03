@@ -4164,7 +4164,7 @@
     "kind": "function",
     "package": "@nifrajs/cli",
     "signature": "export declare function handleMcpHttp(request: Request): Promise<Response>;",
-    "doc": "/** The CLI HTTP handler: serves the disk-backed corpus tools + registers the examples widget's `ui://`\n * resource so MCP Apps hosts can render `nifra_examples_app`. (`nifra docs-mcp` / `bun run` this file.) */"
+    "doc": "/** The CLI HTTP handler: serves the disk-backed corpus tools + registers the examples widget's `ui://`\n * resource so MCP Apps hosts can render `nifra_gallery`. (`nifra docs-mcp` / `bun run` this file.) */"
   },
   {
     "name": "Handler",
@@ -7078,7 +7078,7 @@
     "kind": "function",
     "package": "@nifrajs/cli",
     "signature": "export declare function publicDocsTools(): McpTool[];",
-    "doc": "/** The project-independent tools, reading the package's bundled corpus from disk (CLI use): the text\n * docs tools plus the `nifra_examples_app` MCP Apps widget tool. */"
+    "doc": "/** The project-independent tools, reading the package's bundled corpus from disk (CLI use): the text\n * docs tools plus the `nifra_gallery` MCP Apps widget tool. */"
   },
   {
     "name": "publicEnvDefines",
