@@ -26,7 +26,7 @@ const DIR = import.meta.dir
 // + its Node adapter and Web-Standard adapter on Deno), so it's benched in every section.
 const SETS = {
   node: ["nifra", "hono", "fastify", "express", "elysia", "node-raw"],
-  bun: ["nifra", "hono", "elysia", "bun-raw", "bun-native"],
+  bun: ["nifra", "hono", "elysia", "bun-native"],
   deno: ["nifra", "hono", "elysia", "deno-raw"],
 } as const
 type RuntimeKey = keyof typeof SETS

@@ -25,7 +25,8 @@ type HttpRow = {
 type RuntimeTable = { title: string; rows: ReadonlyArray<HttpRow> }
 
 // Median of 3 full-matrix runs · Bun 1.3.14 · Node 26 · Deno 2.8 · oha @ 50 conns. Read same-run
-// ratios, not absolutes. `bun-native`/`*-raw` are the runtime ceilings the framework rows chase.
+// ratios, not absolutes. `bun-native`/`node-raw`/`deno-raw` are the runtime ceilings (no framework)
+// the framework rows chase - one ceiling row per runtime.
 const HTTP: ReadonlyArray<RuntimeTable> = [
   {
     title: "Bun",
@@ -51,13 +52,6 @@ const HTTP: ReadonlyArray<RuntimeTable> = [
         getUsers: "132,913",
         getSearch: "125,707",
         postUsers: "105,706",
-      },
-      {
-        name: "bun-raw",
-        getRoot: "135,590",
-        getUsers: "133,114",
-        getSearch: "112,745",
-        postUsers: "113,874",
       },
       {
         name: "Hono",

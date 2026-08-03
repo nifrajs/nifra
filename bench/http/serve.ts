@@ -14,14 +14,14 @@
  * type guard. So that row measures real-world body-parse + validation cost, not
  * pure routing. (Reported as such in BENCHMARKS.md.)
  *
- *   bun run bench/http/serve.ts <nifra|hono|elysia|bun-native|bun-raw> <port>
+ *   bun run bench/http/serve.ts <nifra|hono|elysia|bun-native> <port>
  */
 const framework = process.argv[2]
 const port = Number(process.argv[3])
 
 if (!Number.isInteger(port)) {
   throw new Error(
-    "usage: bun run bench/http/serve.ts <nifra|hono|elysia|bun-native|bun-raw> <port>",
+    "usage: bun run bench/http/serve.ts <nifra|hono|elysia|bun-native> <port>",
   )
 }
 
@@ -53,22 +53,6 @@ function isSearch(v: unknown): v is { q: string; limit: string } {
   )
 }
 
-// Manual pathname scan - the same trick nifra (urlPartsOf) and deno-raw use, so the raw ceiling
-// isn't handicapped by a full `new URL()` parse on every request. (Kept in sync with serve-deno.ts.)
-function pathnameOf(url: string): string {
-  const schemeEnd = url.indexOf("://")
-  const start = schemeEnd === -1 ? url.indexOf("/") : url.indexOf("/", schemeEnd + 3)
-  if (start === -1) return "/"
-  let end = url.length
-  for (let i = start; i < end; i++) {
-    const c = url.charCodeAt(i)
-    if (c === 63 /* ? */ || c === 35 /* # */) {
-      end = i
-      break
-    }
-  }
-  return url.slice(start, end)
-}
 
 if (framework === "nifra") {
   // Shared with the Node nifra row (serve-node-nifra.ts) so both sections measure the
@@ -109,8 +93,8 @@ if (framework === "nifra") {
     })
     .listen(port)
 } else if (framework === "bun-native") {
-  // The real Bun routing ceiling. `bun-raw` below is a useful fetch-dispatch baseline, but Bun's
-  // compiled `routes` table is the platform primitive used by optimized Bun frameworks.
+  // The Bun routing ceiling: the compiled `routes` table is the platform primitive optimized
+  // Bun frameworks build on.
   Bun.serve({
     port,
     routes: {
@@ -138,33 +122,6 @@ if (framework === "nifra") {
       },
     },
     fetch: () => new Response("not found", { status: 404 }),
-  })
-} else if (framework === "bun-raw") {
-  // Hand-routed fetch baseline: useful for quantifying route-table wins, but not Bun's ceiling.
-  const usersPrefix = "/users/"
-  Bun.serve({
-    port,
-    async fetch(req) {
-      const pathname = pathnameOf(req.url)
-      if (req.method === "GET") {
-        if (pathname === "/") return Response.json({ hello: "world" })
-        if (pathname.startsWith(usersPrefix)) {
-          return Response.json({ id: pathname.slice(usersPrefix.length) })
-        }
-        if (pathname === "/search") {
-          const url = new URL(req.url)
-          const q = url.searchParams.get("q")
-          const limit = url.searchParams.get("limit")
-          if (q !== null && limit !== null) return Response.json({ q, limit })
-          return new Response("invalid", { status: 400 })
-        }
-      } else if (req.method === "POST" && pathname === "/users") {
-        const body: unknown = await req.json().catch(() => undefined)
-        if (isUser(body)) return Response.json({ id: "1", name: body.name })
-        return new Response("invalid", { status: 400 })
-      }
-      return new Response("not found", { status: 404 })
-    },
   })
 } else {
   throw new Error(`unknown framework: ${framework ?? "(none)"}`)

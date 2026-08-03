@@ -93,21 +93,25 @@ export default function Comparison() {
         of one.
       </p>
 
-      <h2>The line Nifra draws: no React Server Components</h2>
+      <h2>Server code on every page - RSC is the one protocol Nifra trades away</h2>
       <p>
-        Nifra is classic <b>SSR + hydration</b> with streaming and islands - not RSC. No{" "}
-        <code>"use server"</code> / <code>"use client"</code>, no server-only component tree. That is the one
-        thing <b>Next.js App Router</b> has that Nifra doesn't, and it's deliberate: RSC is React-specific and
-        would break a core that also serves Vue, Solid, and Svelte. (Nuxt, SvelteKit, and Remix don't ship RSC
-        either - this is <i>Nifra vs. Next App Router specifically</i>.) Typed loaders, <code>defer()</code>,
-        and route-level code-splitting cover the same problems by a different mechanism.
-      </p>
-      <p>
-        <b>"No RSC" does not mean "no server code in components' reach."</b> Nifra ships typed{" "}
+        Nifra covers the full server side: typed <b>loaders and actions</b>, <b>streaming SSR</b> with
+        out-of-order Suspense, <b>islands</b>, and typed{" "}
         <a href="/docs/server-functions">server functions</a> - <code>serverFn</code> RPC whose body (DB
         handles, secrets, imports) is <i>never</i> shipped to the browser, callable as a normal typed
-        function from any component - on all five UI libraries. What Nifra skips is React's specific RSC /{" "}
-        <code>"use server"</code> component model, not server-side mutations.
+        function from any component, on all five UI libraries. Data on the server, mutations on the
+        server, minimal client JS: all there, by a framework-agnostic mechanism instead of a
+        React-only one.
+      </p>
+      <p>
+        What Nifra deliberately does not adopt is <b>React Server Components as a component
+        protocol</b> - <code>"use server"</code> / <code>"use client"</code> directives and the
+        server-only component tree. RSC is React-specific; a core that also serves Vue, Solid,
+        Svelte, and Preact can't be built on it. (Nuxt, SvelteKit, and Remix don't ship RSC either -
+        this is <i>Nifra vs. Next App Router specifically</i>.) So the call is simple: if your app is
+        architected around RSC itself, <b>Next.js App Router is the right tool</b>. For everything RSC
+        is usually reached for - server-side data, secrets off the client, less JS - loaders,{" "}
+        <code>defer()</code>, islands, and server functions cover it here.
       </p>
 
       <h2>Also a standalone backend (vs. Hono &amp; Elysia)</h2>
@@ -191,10 +195,10 @@ export default function Comparison() {
         </li>
       </ul>
       <p>
-        The one deliberate trade: Nifra is streaming SSR + islands, <b>not</b> React Server Components -
-        framework-agnostic by design. You still get typed server-side mutations via{" "}
-        <a href="/docs/server-functions">server functions</a>; what you give up is specifically the RSC
-        component model. If your app is built specifically around RSC, that's the call you're making.
+        The one deliberate trade: Nifra is streaming SSR + islands + typed{" "}
+        <a href="/docs/server-functions">server functions</a>, <b>not</b> the RSC component protocol -
+        framework-agnostic by design. Apps architected around RSC itself belong on Next App Router;
+        everyone else gives up nothing server-side here.
       </p>
     </div>
   )

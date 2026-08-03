@@ -33,7 +33,9 @@ export interface SsrBenchTarget {
 }
 
 export interface SsrHtmlValidation {
-  readonly rootId: string
+  /** Hydration root div to scope the checks to. Omit for frameworks without a fixed root id
+   * (Next/Remix/Nuxt/SvelteKit/SolidStart) - the whole document is checked instead. */
+  readonly rootId?: string
   readonly text: string
   readonly liCount: number
 }
@@ -172,20 +174,35 @@ function renderedRoot(html: string, rootId: string): string {
 export function validateSsrHtml(html: string, target: SsrBenchTarget): void {
   const spec = target.validate
   if (spec === undefined) return
-  const root = renderedRoot(html, spec.rootId)
-  const trimmed = root.trim()
-  if (trimmed === "" || trimmed === "undefined" || trimmed === "null") {
-    throw new Error(`html validation failed: #${spec.rootId} rendered ${JSON.stringify(trimmed)}`)
+  if (spec.rootId !== undefined) {
+    const root = renderedRoot(html, spec.rootId)
+    const trimmed = root.trim()
+    if (trimmed === "" || trimmed === "undefined" || trimmed === "null") {
+      throw new Error(`html validation failed: #${spec.rootId} rendered ${JSON.stringify(trimmed)}`)
+    }
+    if (!root.includes(spec.text)) {
+      throw new Error(
+        `html validation failed: #${spec.rootId} is missing ${JSON.stringify(spec.text)}`,
+      )
+    }
+    const liCount = root.match(/<li\b/g)?.length ?? 0
+    if (liCount !== spec.liCount) {
+      throw new Error(
+        `html validation failed: #${spec.rootId} has ${liCount} <li> nodes, expected ${spec.liCount}`,
+      )
+    }
+    return
   }
-  if (!root.includes(spec.text)) {
-    throw new Error(
-      `html validation failed: #${spec.rootId} is missing ${JSON.stringify(spec.text)}`,
-    )
+  // Root-less document check: every comparator must prove it server-rendered the same catalog, not
+  // an empty shell. `>=` rather than `===` because meta-frameworks also serialize the items into
+  // their hydration payload, which can repeat `<li` outside the rendered markup.
+  if (!html.includes(spec.text)) {
+    throw new Error(`html validation failed: document is missing ${JSON.stringify(spec.text)}`)
   }
-  const liCount = root.match(/<li\b/g)?.length ?? 0
-  if (liCount !== spec.liCount) {
+  const liCount = html.match(/<li\b/g)?.length ?? 0
+  if (liCount < spec.liCount) {
     throw new Error(
-      `html validation failed: #${spec.rootId} has ${liCount} <li> nodes, expected ${spec.liCount}`,
+      `html validation failed: document has ${liCount} <li> nodes, expected at least ${spec.liCount}`,
     )
   }
 }

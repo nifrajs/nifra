@@ -10,6 +10,9 @@ const INSTALL = "(test -d node_modules || bun install --silent)"
 const NEXT_STANDALONE_BUILD = `${INSTALL} && bunx next build && rm -rf .next/standalone/.next/static && cp -r .next/static .next/standalone/.next/static`
 const NODE_HOST = { HOST: "127.0.0.1", NITRO_HOST: "127.0.0.1" } as const
 const CATALOG_HTML = { rootId: "root", text: "Item 50", liCount: 50 } as const
+// Comparators have no fixed hydration-root id; the harness checks the whole document instead, so
+// every row - nifra and meta-framework alike - proves it server-rendered the same 50-item catalog.
+const CATALOG_DOC = { text: "Item 50", liCount: 50 } as const
 
 const staticServe = (dist: string, port: number): SsrBenchTarget => ({
   name: "",
@@ -73,6 +76,7 @@ export const REACT_TABLE_A: readonly SsrBenchTarget[] = [
     build: ["sh", "-c", NEXT_STANDALONE_BUILD],
     serve: ["node", ".next/standalone/server.js"],
     port: 4301,
+    validate: CATALOG_DOC,
     serveEnv: NODE_HOST,
   },
   {
@@ -82,6 +86,7 @@ export const REACT_TABLE_A: readonly SsrBenchTarget[] = [
     build: ["sh", "-c", `${INSTALL} && bunx react-router build`],
     serve: ["./node_modules/.bin/react-router-serve", "./build/server/index.js"],
     port: 4302,
+    validate: CATALOG_DOC,
     serveEnv: NODE_HOST,
   },
 ]
@@ -95,6 +100,7 @@ export const REACT_TABLE_B: readonly SsrBenchTarget[] = [
     build: ["sh", "-c", NEXT_STANDALONE_BUILD],
     serve: ["node", ".next/standalone/server.js"],
     port: 4311,
+    validate: CATALOG_DOC,
     serveEnv: NODE_HOST,
   },
   {
@@ -113,6 +119,7 @@ export const REACT_TABLE_B: readonly SsrBenchTarget[] = [
     build: ["sh", "-c", NEXT_STANDALONE_BUILD],
     serve: ["node", ".next/standalone/server.js"],
     port: 4312,
+    validate: CATALOG_DOC,
     serveEnv: NODE_HOST,
     warmupCache: true,
   },
@@ -129,6 +136,7 @@ export const SOLID_TABLE_A: readonly SsrBenchTarget[] = [
     build: ["sh", "-c", `${INSTALL} && bunx vinxi build`],
     serve: ["node", ".output/server/index.mjs"],
     port: 4344,
+    validate: CATALOG_DOC,
     serveEnv: NODE_HOST,
   },
 ]
@@ -142,6 +150,7 @@ export const SOLID_TABLE_B: readonly SsrBenchTarget[] = [
     build: ["sh", "-c", `${INSTALL} && bunx vinxi build`],
     serve: ["node", ".output/server/index.mjs"],
     port: 4334,
+    validate: CATALOG_DOC,
     serveEnv: NODE_HOST,
   },
 ]
@@ -157,6 +166,7 @@ export const VUE_TABLE_A: readonly SsrBenchTarget[] = [
     build: ["sh", "-c", `${INSTALL} && bunx nuxt build`],
     serve: ["node", ".output/server/index.mjs"],
     port: 4325,
+    validate: CATALOG_DOC,
     serveEnv: NODE_HOST,
   },
 ]
@@ -170,6 +180,7 @@ export const VUE_TABLE_B: readonly SsrBenchTarget[] = [
     build: ["sh", "-c", `${INSTALL} && bunx nuxt build`],
     serve: ["node", ".output/server/index.mjs"],
     port: 4335,
+    validate: CATALOG_DOC,
     serveEnv: NODE_HOST,
   },
 ]
@@ -185,6 +196,7 @@ export const SVELTE_TABLE_A: readonly SsrBenchTarget[] = [
     build: ["sh", "-c", `${INSTALL} && bunx vite build`],
     serve: ["node", "build/index.js"],
     port: 4326,
+    validate: CATALOG_DOC,
     serveEnv: NODE_HOST,
   },
 ]
@@ -198,6 +210,7 @@ export const SVELTE_TABLE_B: readonly SsrBenchTarget[] = [
     build: ["sh", "-c", `${INSTALL} && bunx vite build`],
     serve: ["node", "build/index.js"],
     port: 4336,
+    validate: CATALOG_DOC,
     serveEnv: NODE_HOST,
   },
 ]

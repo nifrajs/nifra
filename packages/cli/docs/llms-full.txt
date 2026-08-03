@@ -163,20 +163,24 @@ The data model (loaders, actions, `defer`, progressive enhancement, fetchers,
 revalidation) is closest to **Remix / React Router** - delivered across five UI libraries instead
 of one.
 
-### The line Nifra draws: no React Server Components
+### Server code on every page - RSC is the one protocol Nifra trades away
 
-Nifra is classic **SSR + hydration** with streaming and islands - not RSC. No
-`"use server"` / `"use client"`, no server-only component tree. That is the one
-thing **Next.js App Router** has that Nifra doesn't, and it's deliberate: RSC is React-specific and
-would break a core that also serves Vue, Solid, and Svelte. (Nuxt, SvelteKit, and Remix don't ship RSC
-either - this is _Nifra vs. Next App Router specifically_.) Typed loaders, `defer()`,
-and route-level code-splitting cover the same problems by a different mechanism.
-
-**"No RSC" does not mean "no server code in components' reach."** Nifra ships typed
+Nifra covers the full server side: typed **loaders and actions**, **streaming SSR** with
+out-of-order Suspense, **islands**, and typed
 [server functions](/docs/server-functions) - `serverFn` RPC whose body (DB
 handles, secrets, imports) is _never_ shipped to the browser, callable as a normal typed
-function from any component - on all five UI libraries. What Nifra skips is React's specific RSC /
-`"use server"` component model, not server-side mutations.
+function from any component, on all five UI libraries. Data on the server, mutations on the
+server, minimal client JS: all there, by a framework-agnostic mechanism instead of a
+React-only one.
+
+What Nifra deliberately does not adopt is **React Server Components as a component
+protocol** - `"use server"` / `"use client"` directives and the
+server-only component tree. RSC is React-specific; a core that also serves Vue, Solid,
+Svelte, and Preact can't be built on it. (Nuxt, SvelteKit, and Remix don't ship RSC either -
+this is _Nifra vs. Next App Router specifically_.) So the call is simple: if your app is
+architected around RSC itself, **Next.js App Router is the right tool**. For everything RSC
+is usually reached for - server-side data, secrets off the client, less JS - loaders,
+`defer()`, islands, and server functions cover it here.
 
 ### Also a standalone backend (vs. Hono & Elysia)
 
@@ -251,10 +255,10 @@ version-checked examples, which no other framework ships.
 **To start lean and grow** - begin as a typed API, graduate to full-stack on the same core,
 no rewrite.
 
-The one deliberate trade: Nifra is streaming SSR + islands, **not** React Server Components -
-framework-agnostic by design. You still get typed server-side mutations via
-[server functions](/docs/server-functions); what you give up is specifically the RSC
-component model. If your app is built specifically around RSC, that's the call you're making.
+The one deliberate trade: Nifra is streaming SSR + islands + typed
+[server functions](/docs/server-functions), **not** the RSC component protocol -
+framework-agnostic by design. Apps architected around RSC itself belong on Next App Router;
+everyone else gives up nothing server-side here.
 
 ## Nifra - Routing
 

@@ -119,7 +119,6 @@ const SECTIONS: readonly Section[] = [
       bunTarget("nifra"),
       bunTarget("elysia"),
       bunTarget("hono"),
-      bunTarget("bun-raw"),
       { ...bunTarget("bun-native"), isCeiling: true },
     ],
   },
