@@ -3861,20 +3861,19 @@ One gap: **CSS Modules**. Bun's dev-server bundler has no
 refuses `--bun` for a CSS-Modules app rather than serving a broken client. Plain CSS
 and Tailwind work normally.
 
-A harder gate, and the reason Vite stays the _default_ dev loop:
 **
-server functions and `*.server` modules
+Server functions and `*.server` modules work under `--bun`
 **
-. The client build strips them - a `*.fn` module is replaced with an RPC stub and a
-`*.server` module is emptied, so their bodies (DB handles, secrets, imports) never
-reach a browser. Bun's dev-server bundling takes plugins only through
-`bunfig.toml` (`[serve.static] plugins`), not programmatically - and a
-runtime `Bun.plugin` never reaches it - so under `--bun` today those
-modules would ship _whole_. The CLI refuses that app with an exact file list instead of
-leaking it - the same fail-closed rule as everywhere else in Nifra. Delivering the stripping
-plugins through that config channel is on the roadmap; once it lands, this gate lifts and the
-Bun loop becomes the natural default. Until then, `--bun` is the right choice for
-apps that don't use server functions, `*.server` modules, or CSS Modules.
+- and the plumbing is worth knowing. The client build strips them: a `*.fn` module
+is replaced with an RPC stub and a `*.server` module is emptied, so their bodies
+(DB handles, secrets, imports) never reach a browser. Bun's dev-server bundling accepts
+plugins only through `bunfig.toml` (`[serve.static] plugins`) - not
+programmatically, and a runtime `Bun.plugin` never reaches it (upstream ask:
+oven-sh/bun#36830). So `nifra dev --bun` generates a config under
+`.nifra/dev-bun/` carrying the _same_ production boundary plugins, merges
+your own bunfig's `[serve.static] plugins` and `preload` entries, and
+re-launches itself once with `--config=` pointing at it. Same stubs as
+`nifra build`, byte for byte - one implementation, three pipelines.
 
 Two pipelines, one contract: what keeps them honest is not hope but guards. Both loops serve
 `public/` through the same handler production uses, the build dedupes the UI

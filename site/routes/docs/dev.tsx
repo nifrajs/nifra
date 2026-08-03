@@ -270,20 +270,19 @@ export default function Dev() {
         and Tailwind work normally.
       </p>
       <p>
-        A harder gate, and the reason Vite stays the <em>default</em> dev loop:{" "}
         <strong>
-          server functions and <code>*.server</code> modules
-        </strong>
-        . The client build strips them - a <code>*.fn</code> module is replaced with an RPC stub and a{" "}
-        <code>*.server</code> module is emptied, so their bodies (DB handles, secrets, imports) never
-        reach a browser. Bun's dev-server bundling takes plugins only through{" "}
-        <code>bunfig.toml</code> (<code>[serve.static] plugins</code>), not programmatically - and a
-        runtime <code>Bun.plugin</code> never reaches it - so under <code>--bun</code> today those
-        modules would ship <em>whole</em>. The CLI refuses that app with an exact file list instead of
-        leaking it - the same fail-closed rule as everywhere else in Nifra. Delivering the stripping
-        plugins through that config channel is on the roadmap; once it lands, this gate lifts and the
-        Bun loop becomes the natural default. Until then, <code>--bun</code> is the right choice for
-        apps that don't use server functions, <code>*.server</code> modules, or CSS Modules.
+          Server functions and <code>*.server</code> modules work under <code>--bun</code>
+        </strong>{" "}
+        - and the plumbing is worth knowing. The client build strips them: a <code>*.fn</code> module
+        is replaced with an RPC stub and a <code>*.server</code> module is emptied, so their bodies
+        (DB handles, secrets, imports) never reach a browser. Bun's dev-server bundling accepts
+        plugins only through <code>bunfig.toml</code> (<code>[serve.static] plugins</code>) - not
+        programmatically, and a runtime <code>Bun.plugin</code> never reaches it (upstream ask:
+        oven-sh/bun#36830). So <code>nifra dev --bun</code> generates a config under{" "}
+        <code>.nifra/dev-bun/</code> carrying the <em>same</em> production boundary plugins, merges
+        your own bunfig's <code>[serve.static] plugins</code> and <code>preload</code> entries, and
+        re-launches itself once with <code>--config=</code> pointing at it. Same stubs as{" "}
+        <code>nifra build</code>, byte for byte - one implementation, three pipelines.
       </p>
       <p>
         Two pipelines, one contract: what keeps them honest is not hope but guards. Both loops serve{" "}

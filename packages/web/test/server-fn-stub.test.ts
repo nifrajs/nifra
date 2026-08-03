@@ -53,6 +53,24 @@ describe("scanServerFnExports", () => {
     const commented = `// export const ghost = serverFn({}, () => ({}))\nexport const real = serverFn({}, () => ({}))\n`
     expect(scanServerFnExports(commented)).toEqual(["real"])
   })
+
+  test("explicit type arguments are part of the declaration form", () => {
+    // `serverFn<Input, Output>(...)` is idiomatic TypeScript; the scanner used to see neither a
+    // declaration NOR a call in it, emitting an exportless stub that failed the build with a
+    // missing-export link error far from the cause.
+    const typed = [
+      `export const greet = serverFn<{ name: string }, string>({}, async ({ name }) => name)`,
+      `export const count = serverFn<void, number>({}, async () => 1)`,
+    ].join("\n")
+    expect(scanServerFnExports(typed)).toEqual(["greet", "count"])
+  })
+
+  test("a type argument the scanner cannot read fails loudly, never an exportless stub", () => {
+    // Function types carry parentheses, which a scan cannot bracket-match. That shape must trip the
+    // calls>names refusal (it still LOOKS like a call), not silently drop the export.
+    const exotic = `export const run = serverFn<(x: number) => void, string>({}, async () => "" )\n`
+    expect(() => scanServerFnExports(exotic)).toThrow(/cannot read/)
+  })
 })
 
 describe("generateServerFnStub", () => {

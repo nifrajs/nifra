@@ -12,13 +12,7 @@
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
 import { inProcessClient } from "@nifrajs/client"
-import {
-  createWebApp,
-  DEFAULT_DEV_PORT,
-  type RenderAdapter,
-  SERVER_FN_MODULE,
-  SERVER_ONLY_MODULE,
-} from "@nifrajs/web"
+import { createWebApp, DEFAULT_DEV_PORT, type RenderAdapter } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import type { BunPlugin } from "bun"
 import { describeProject, describeRoutes } from "./introspect.ts"
@@ -210,64 +204,21 @@ export function formatCliError(err: unknown): string {
  * an app without CSS Modules still gets the Bun dev loop.
  */
 export async function assertBunDevSupportsApp(app: LoadedApp): Promise<void> {
+  // Server functions and `*.server` modules are handled: the generated bunfig (dev-bun-config.ts)
+  // delivers the SAME serverFnStubPlugin/serverOnlyEmptyPlugin the production build uses to Bun's
+  // dev-server bundler via `[serve.static] plugins` - the one channel that bundler accepts plugins
+  // through (a runtime `Bun.plugin` never reaches it; programmatic ask: oven-sh/bun#36830). The old
+  // fail-closed refusal for those modules is gone because the leak it guarded is gone.
+  //
+  // CSS Modules remain gated: the `*.module.css` plugin rests on an `onResolve` virtual-module
+  // stylesheet emitter that is not yet verified under `[serve.static]`, and its failure mode is a
+  // broken client rather than a leak - refuse loudly until it is proven there.
   const { Glob } = await import("bun")
   const offenders: string[] = []
   for await (const file of new Glob("**/*.module.css").scan({ cwd: app.cwd, dot: false })) {
     if (/(^|\/)(node_modules|dist|\.nifra|\.git)\//.test(file)) continue
     offenders.push(file)
     if (offenders.length >= 5) break
-  }
-  // Server functions are the same trade with a worse consequence. The client build replaces a `*.fn`
-  // module with stubs so its body never reaches a browser; Bun's dev-server bundler takes no plugins, so
-  // there it would be bundled WHOLE - the function bodies and every secret they import. Measured, not
-  // assumed: a runtime `Bun.plugin` onLoad does not reach `HTMLBundle`, so the module ships raw.
-  //
-  // `*.server` modules are the same trade again: the client build EMPTIES them, and with no plugins
-  // here they ship whole.
-  //
-  // Both are matched with the SAME regexes the transforms use, imported rather than re-encoded. A
-  // hand-written glob here is how these two gates drifted from the pipelines they guard: the old
-  // `**/*.fn.{ts,tsx,js,jsx}` missed `.fn.mts`, `.fn.cts`, `.fn.mjs` and `.fn.cjs`, every one of which
-  // both build pipelines stub - so a module the framework calls a server function was waved straight
-  // into the browser by the check that exists to stop exactly that. A gate written in a second dialect
-  // is a gate that eventually disagrees with the thing it guards.
-  const leaking: string[] = []
-  const serverOnly: string[] = []
-  for await (const file of new Glob("**/*.{server,fn,ts,tsx,js,jsx,mts,cts,mjs,cjs}").scan({
-    cwd: app.cwd,
-    dot: false,
-  })) {
-    if (/(^|\/)(node_modules|dist|\.nifra|\.git)\//.test(file)) continue
-    // Strip the source extension once so the conventions' regexes see `src/todos.fn` / `src/db.server`,
-    // which is the shape they match. The glob also includes the extensionless `.fn` / `.server` forms;
-    // those already have the matcher-ready shape and pass through unchanged.
-    const stem = file.replace(/\.[cm]?[jt]sx?$/, "")
-    if (SERVER_FN_MODULE.test(stem)) {
-      if (leaking.length < 5) leaking.push(file)
-    } else if (SERVER_ONLY_MODULE.test(stem)) {
-      if (serverOnly.length < 5) serverOnly.push(file)
-    }
-    if (leaking.length >= 5 && serverOnly.length >= 5) break
-  }
-  if (serverOnly.length > 0) {
-    throw new Error(
-      "[nifra] `nifra dev --bun` can't empty `*.server` modules: Bun's DEV-server bundler takes no " +
-        "plugins, so a server-only module would be bundled WHOLE into the browser - along with whatever " +
-        "it imports and any secret it holds. `nifra build` and `nifra dev` (Vite) both replace it with " +
-        "an empty module, so only this pipeline is affected.\n" +
-        `  Server-only modules found: ${serverOnly.join(", ")}\n` +
-        "  Use `nifra dev` (the Vite pipeline), or reach these from a route/loader for the Bun dev loop.",
-    )
-  }
-  if (leaking.length > 0) {
-    throw new Error(
-      "[nifra] `nifra dev --bun` can't transform server functions: Bun's DEV-server bundler takes no " +
-        "plugins, so a `*.fn` module would be bundled WHOLE into the browser - its function bodies and " +
-        "anything they import, secrets included. `nifra build` and `nifra dev` (Vite) both replace it " +
-        "with client stubs, so only this pipeline is affected.\n" +
-        `  Server-function modules found: ${leaking.join(", ")}\n` +
-        "  Use `nifra dev` (the Vite pipeline), or move these calls behind a route for the Bun dev loop.",
-    )
   }
   if (offenders.length === 0) return
   throw new Error(
@@ -285,6 +236,25 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
   // each pipeline is selectable in BOTH phases, and neither ever runs inside the other.
   if (flags.bun) {
     await assertBunDevSupportsApp(app)
+    // Bun's dev-server bundler takes plugins only via bunfig `[serve.static]`, read at process
+    // start - so the boundary plugins (server-fn stubs, server-only emptying) are delivered by
+    // generating a config and re-execing this same command once with `--config=`. The marker env
+    // stops the recursion; everything after this block runs identically in the child.
+    if (process.env.NIFRA_BUN_DEV_CONFIGURED !== "1") {
+      const { writeBunDevConfig } = await import("./dev-bun-config.ts")
+      const { bunfigPath } = await writeBunDevConfig(app.cwd)
+      const child = Bun.spawn(
+        [process.execPath, `--config=${bunfigPath}`, ...process.argv.slice(1)],
+        {
+          stdio: ["inherit", "inherit", "inherit"],
+          env: { ...process.env, NIFRA_BUN_DEV_CONFIGURED: "1" },
+        },
+      )
+      const forward = (): void => child.kill("SIGINT")
+      process.on("SIGINT", forward)
+      process.on("SIGTERM", forward)
+      process.exit(await child.exited)
+    }
     const { createDevServer } = await import("@nifrajs/web/dev")
     const { framework: fw, routesDir, outDir, backend } = app
     const server = await createDevServer({

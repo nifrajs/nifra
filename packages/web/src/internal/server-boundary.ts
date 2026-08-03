@@ -101,10 +101,17 @@ export function viteServerOnlyReplacement(source: string): string {
  * from the client and fail as `addTodo is not a function` at runtime, far from the cause.
  */
 
-/** `export const NAME = serverFn(` at the start of a line - the one declaration form. */
-const DECLARATION = /^[\t ]*export\s+const\s+([A-Za-z_$][\w$]*)\s*=\s*serverFn\s*\(/gm
-/** Any mention of `serverFn(` as a call, used to prove nothing was missed. */
-const ANY_CALL = /\bserverFn\s*\(/g
+/** `export const NAME = serverFn(` at the start of a line - the one declaration form. Explicit type
+ * arguments (`serverFn<Input, Output>(...)`) are part of that form; the optional group accepts any
+ * argument list without parentheses (object/tuple/union types included). A type argument that itself
+ * contains parentheses (a function type) is beyond a scan - it still COUNTS as a call below, so it
+ * fails loudly with the guidance error instead of silently emitting an exportless stub. */
+const DECLARATION =
+  /^[\t ]*export\s+const\s+([A-Za-z_$][\w$]*)\s*=\s*serverFn\s*(?:<[^()]*>)?\s*\(/gm
+/** Any mention of `serverFn` being called - with or without type arguments - used to prove nothing
+ * was missed. Broader than {@link DECLARATION} on purpose: `serverFn<` also counts, so an exotic
+ * type-argument shape the declaration regex cannot read trips the calls>names refusal. */
+const ANY_CALL = /\bserverFn\s*[<(]/g
 /** Strip line and block comments by forward index scan, so prose cannot register as code. Not a
  * regex: every regex shape for comment stripping either backtracks polynomially on adversarial
  * source or is opaque enough that reviewers cannot tell. A `//` preceded by `:` is kept (URL in a
