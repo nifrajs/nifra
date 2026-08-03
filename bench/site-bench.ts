@@ -35,11 +35,29 @@ export interface HttpRuntimeRow {
   readonly you?: boolean
 }
 
+/** A /benchmarks SSR table row (display-ready; `jsGzKb` = gzipped client JS in KB). */
+export interface SsrSiteRow {
+  readonly name: string
+  readonly runtime: "bun" | "node"
+  readonly rps: number
+  readonly p50ms: number
+  readonly p99ms: number
+  readonly jsGzKb: number
+  readonly nifra?: boolean
+}
+
+/** A per-framework SSR group on /benchmarks. */
+export interface SsrSiteTable {
+  readonly framework: string
+  readonly rows: readonly SsrSiteRow[]
+}
+
 export interface SiteBench {
   readonly _note?: string
   readonly heroSsr: readonly BenchRow[]
   readonly frontend: readonly BenchRow[]
   readonly multipliers: readonly Multiplier[]
+  readonly ssrTables?: readonly SsrSiteTable[]
   readonly httpRuntime?: readonly HttpRuntimeRow[]
   readonly http: readonly BenchRow[]
   readonly bundle: readonly BundleRow[]

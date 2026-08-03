@@ -131,16 +131,6 @@ export const SOLID_TABLE_A: readonly SsrBenchTarget[] = [
     port: 4344,
     serveEnv: NODE_HOST,
   },
-  {
-    name: "solid-ssr",
-    runtime: "node",
-    cwd: `${BENCH_DIR}/solid-ssr`,
-    build: ["bun", "run", "build.ts"],
-    serve: ["node", "dist/server.js"],
-    port: 4328,
-    serveEnv: NODE_HOST,
-    validate: CATALOG_HTML,
-  },
 ]
 
 export const SOLID_TABLE_B: readonly SsrBenchTarget[] = [
@@ -212,20 +202,10 @@ export const SVELTE_TABLE_B: readonly SsrBenchTarget[] = [
   },
 ]
 
-/** Preact - nifra vs minimal Preact SSR (no maintained meta-framework). */
+/** Preact - nifra only (no maintained Preact meta-framework exists to bench). */
 export const PREACT_TABLE_A: readonly SsrBenchTarget[] = [
   nifraBun("nifra+preact", "nifra-preact", 4323),
   nifraNode("nifra+preact (node)", "nifra-preact", 4353),
-  {
-    name: "preact-ssr",
-    runtime: "node",
-    cwd: `${BENCH_DIR}/preact-ssr`,
-    build: ["bun", "run", "build.ts"],
-    serve: ["node", "dist/server.js"],
-    port: 4327,
-    serveEnv: NODE_HOST,
-    validate: CATALOG_HTML,
-  },
 ]
 
 export const PREACT_TABLE_B: readonly SsrBenchTarget[] = [
@@ -249,8 +229,7 @@ export const ALL_TABLE_SECTIONS: readonly {
   },
   {
     label: "Solid - Table A (uncached SSR)",
-    blurb:
-      "nifra+solid (Bun + Node) vs SolidStart. Compare Node rows to Node rows only. solid-ssr is a hand-rolled single-route server - an internal ceiling, not a comparator.",
+    blurb: "nifra+solid (Bun + Node) vs SolidStart. Compare Node rows to Node rows only.",
     targets: SOLID_TABLE_A,
   },
   {
@@ -281,7 +260,7 @@ export const ALL_TABLE_SECTIONS: readonly {
   {
     label: "Preact - Table A (uncached SSR)",
     blurb:
-      "nifra+preact (Bun + Node). Compare Node rows to Node rows only. preact-ssr is a hand-rolled single-route server - an internal ceiling, not a comparator (no Preact meta-framework exists to bench).",
+      "nifra+preact (Bun + Node) - Bun vs Node on the same app; no Preact meta-framework exists to bench against.",
     targets: PREACT_TABLE_A,
   },
   {

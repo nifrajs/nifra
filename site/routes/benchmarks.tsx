@@ -1,3 +1,4 @@
+import { MULTIPLIERS, SSR_TABLES, type SsrTableRow } from "../data/benchmarks"
 import { pageMeta } from "../meta"
 
 export const meta = pageMeta(
@@ -6,158 +7,10 @@ export const meta = pageMeta(
 )
 
 // ---- Frontend: full-stack SSR, Nifra vs each framework's own meta-framework ----
-// Dynamic per-request render of a data-loaded page. Meta-frameworks run on Node through their
-// production server; Nifra rows show Bun, Node, and Deno (@nifrajs/bun · @nifrajs/node · @nifrajs/deno).
-// oha median-of-3 × 5s @ 50 conns. `js` = gzipped client JS.
-type SsrRow = {
-  name: string
-  rps: string
-  p50: string
-  p99: string
-  js: string
-  nifra?: boolean
-}
-
-const SSR_DYNAMIC: ReadonlyArray<SsrRow> = [
-  // React
-  {
-    name: "Nifra + React (Bun)",
-    rps: "31,800",
-    p50: "1.50 ms",
-    p99: "3.10 ms",
-    js: "58.9 KB",
-    nifra: true,
-  },
-  {
-    name: "Nifra + React (Node)",
-    rps: "22,714",
-    p50: "2.10 ms",
-    p99: "4.31 ms",
-    js: "58.9 KB",
-    nifra: true,
-  },
-  {
-    name: "Nifra + React (Deno)",
-    rps: "28,400",
-    p50: "1.68 ms",
-    p99: "3.45 ms",
-    js: "58.9 KB",
-    nifra: true,
-  },
-  { name: "Next.js (Node)", rps: "1,038", p50: "47.3 ms", p99: "60.3 ms", js: "182.4 KB" },
-  { name: "Remix (Node)", rps: "1,532", p50: "32.3 ms", p99: "45.4 ms", js: "99.2 KB" },
-  // Solid
-  {
-    name: "Nifra + Solid (Bun)",
-    rps: "30,400",
-    p50: "1.55 ms",
-    p99: "3.15 ms",
-    js: "6.0 KB",
-    nifra: true,
-  },
-  {
-    name: "Nifra + Solid (Node)",
-    rps: "21,712",
-    p50: "2.18 ms",
-    p99: "4.47 ms",
-    js: "6.0 KB",
-    nifra: true,
-  },
-  {
-    name: "Nifra + Solid (Deno)",
-    rps: "27,100",
-    p50: "1.75 ms",
-    p99: "3.58 ms",
-    js: "6.0 KB",
-    nifra: true,
-  },
-  { name: "SolidStart (Node)", rps: "6,430", p50: "6.76 ms", p99: "20.2 ms", js: "18.3 KB" },
-  // Svelte
-  {
-    name: "Nifra + Svelte (Bun)",
-    rps: "27,200",
-    p50: "1.65 ms",
-    p99: "3.90 ms",
-    js: "20.7 KB",
-    nifra: true,
-  },
-  {
-    name: "Nifra + Svelte (Node)",
-    rps: "19,418",
-    p50: "2.33 ms",
-    p99: "5.52 ms",
-    js: "20.7 KB",
-    nifra: true,
-  },
-  {
-    name: "Nifra + Svelte (Deno)",
-    rps: "24,300",
-    p50: "1.86 ms",
-    p99: "4.35 ms",
-    js: "20.7 KB",
-    nifra: true,
-  },
-  { name: "SvelteKit (Node)", rps: "6,014", p50: "7.67 ms", p99: "15.9 ms", js: "n/a" },
-  // Vue
-  {
-    name: "Nifra + Vue (Bun)",
-    rps: "21,000",
-    p50: "2.18 ms",
-    p99: "4.75 ms",
-    js: "26.5 KB",
-    nifra: true,
-  },
-  {
-    name: "Nifra + Vue (Node)",
-    rps: "15,017",
-    p50: "3.06 ms",
-    p99: "6.76 ms",
-    js: "26.5 KB",
-    nifra: true,
-  },
-  {
-    name: "Nifra + Vue (Deno)",
-    rps: "18,800",
-    p50: "2.45 ms",
-    p99: "5.40 ms",
-    js: "26.5 KB",
-    nifra: true,
-  },
-  { name: "Nuxt (Node)", rps: "2,090", p50: "20.5 ms", p99: "83.7 ms", js: "67.6 KB" },
-  // Preact
-  {
-    name: "Nifra + Preact (Bun)",
-    rps: "30,100",
-    p50: "1.58 ms",
-    p99: "3.20 ms",
-    js: "7.4 KB",
-    nifra: true,
-  },
-  {
-    name: "Nifra + Preact (Node)",
-    rps: "21,476",
-    p50: "2.23 ms",
-    p99: "4.53 ms",
-    js: "7.4 KB",
-    nifra: true,
-  },
-  {
-    name: "Nifra + Preact (Deno)",
-    rps: "26,800",
-    p50: "1.78 ms",
-    p99: "3.62 ms",
-    js: "7.4 KB",
-    nifra: true,
-  },
-  { name: "preact-ssr (Node)", rps: "31,924", p50: "1.46 ms", p99: "3.28 ms", js: "4.6 KB" },
-]
-
-const MULTIPLIERS = [
-  { mult: "22×", label: "Nifra + React vs Next.js (Node)" },
-  { mult: "7×", label: "Nifra + Vue vs Nuxt (Node)" },
-  { mult: "3.4×", label: "Nifra + Solid vs SolidStart (Node)" },
-  { mult: "3.2×", label: "Nifra + Svelte vs SvelteKit (Node)" },
-]
+// Data + grouping come from site/data/benchmarks.json, which `bun run bench:ssr` refreshes on every
+// complete run - the page can't drift from the last measured numbers.
+const fmtMs = (ms: number): string => `${ms.toFixed(2)} ms`
+const fmtJs = (row: SsrTableRow): string => (row.jsGzKb > 0 ? `${row.jsGzKb} KB` : "n/a")
 
 // ---- Backend: raw HTTP throughput across runtimes ----
 // Four identical workloads per framework - see BENCHMARKS.md.
@@ -343,47 +196,51 @@ export default function Benchmarks() {
       {/* ---- Frontend: full-stack SSR vs the meta-frameworks ---- */}
       <h2 style={{ marginTop: 40 }}>Full-stack SSR - Nifra vs the meta-frameworks</h2>
       <p className="lead">
-        A data-loaded HTML page rendered on <b>every request</b> (no caching). Meta-frameworks run
-        on Node through their own production server. Nifra runs on <b>Bun</b>, <b>Node</b>, and{" "}
-        <b>Deno</b> - three rows per UI library - so you can see Nifra at its best (Bun) and compare
-        apples-to-apples on Node.
+        A data-loaded HTML page rendered on <b>every request</b> (no caching), one section per UI
+        framework. Meta-frameworks run on Node through their own production server. Nifra shows two
+        rows per framework - <b>Bun</b> (its fastest path) and <b>Node</b> via{" "}
+        <code>@nifrajs/node</code> - so the Node rows compare apples-to-apples.
       </p>
       <div className="mult-grid" style={{ margin: "20px 0 8px" }}>
         {MULTIPLIERS.map((m) => (
-          <div className="mult-item" key={m.label}>
+          <div className="mult-item" key={m.fw}>
             <strong>{m.mult}</strong>
-            <span>{m.label}</span>
+            <span>{`Nifra + ${m.fw} vs ${m.rival} (Node)`}</span>
           </div>
         ))}
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Target</th>
-            <th className="num">req/s</th>
-            <th className="num">p50</th>
-            <th className="num">p99</th>
-            <th className="num">client JS (gz)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {SSR_DYNAMIC.map((row) => (
-            <tr key={row.name} className={row.nifra ? "hl" : undefined}>
-              <td>{row.name}</td>
-              <td className="num">{row.rps}</td>
-              <td className="num">{row.p50}</td>
-              <td className="num">{row.p99}</td>
-              <td className="num">{row.js}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {SSR_TABLES.map((table) => (
+        <div key={table.framework}>
+          <h3 style={{ marginTop: 28 }}>{table.framework}</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Target</th>
+                <th className="num">req/s</th>
+                <th className="num">p50</th>
+                <th className="num">p99</th>
+                <th className="num">client JS (gz)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {table.rows.map((row) => (
+                <tr key={row.name} className={row.nifra ? "hl" : undefined}>
+                  <td>{row.name}</td>
+                  <td className="num">{row.rps.toLocaleString()}</td>
+                  <td className="num">{fmtMs(row.p50ms)}</td>
+                  <td className="num">{fmtMs(row.p99ms)}</td>
+                  <td className="num">{fmtJs(row)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
       <div className="caveat">
-        Meta-frameworks are Node-only in this matrix. Nifra's <b>Bun</b> rows are its fastest path
-        (e.g. Nifra + React ≈ 32k req/s vs Next.js at 1k on Node). <b>Node</b> and <b>Deno</b> rows
-        use the same app through <code>@nifrajs/node</code> and <code>@nifrajs/deno</code>.{" "}
-        <code>preact-ssr</code> is a hand-written template with no framework, included as a floor.
-        SvelteKit's client-JS number didn't report cleanly in this run (shown <code>n/a</code>).
+        Meta-frameworks are Node-only in this matrix; compare them against Nifra's <b>Node</b> row
+        (the headline multipliers above do exactly that). Preact has no maintained meta-framework,
+        so its section is Nifra-only - Bun vs Node on the same app. A client-JS of{" "}
+        <code>n/a</code> means the run couldn't account that framework's payload from the SSR HTML.
       </div>
 
       {/* ---- Backend: HTTP throughput across runtimes ---- */}

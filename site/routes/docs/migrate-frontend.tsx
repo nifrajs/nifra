@@ -131,7 +131,7 @@ export default function MigrateFrontend() {
           app.
         </li>
         <li>
-          <b>Much faster SSR</b> - Nifra renders ~22× Next.js, ~7× Nuxt, ~3× SvelteKit/SolidStart on
+          <b>Much faster SSR</b> - Nifra renders ~26× Next.js, ~9× Nuxt, ~4× SvelteKit/SolidStart on
           dynamic pages, with a fraction of the client JS. See <a href="/benchmarks">benchmarks</a>.
         </li>
         <li>

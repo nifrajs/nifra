@@ -42,7 +42,25 @@ export interface ProofStat {
   readonly label: string
 }
 
+/** A /benchmarks SSR table row (display-ready; `jsGzKb` = gzipped client JS in KB). */
+export interface SsrTableRow {
+  readonly name: string
+  readonly runtime: "bun" | "node"
+  readonly rps: number
+  readonly p50ms: number
+  readonly p99ms: number
+  readonly jsGzKb: number
+  readonly nifra?: boolean
+}
+
+/** A per-framework SSR group - one table section per UI framework on /benchmarks. */
+export interface SsrTable {
+  readonly framework: string
+  readonly rows: readonly SsrTableRow[]
+}
+
 export const HERO_SSR = data.heroSsr as readonly BenchRow[]
+export const SSR_TABLES = data.ssrTables as readonly SsrTable[]
 export const FRONTEND = data.frontend as readonly BenchRow[]
 export const MULTIPLIERS = data.multipliers as readonly Multiplier[]
 export const HTTP_RUNTIME = data.httpRuntime as readonly HttpRuntimeRow[]

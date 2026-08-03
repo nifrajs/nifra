@@ -1,4 +1,4 @@
-import { FRONTEND, HTTP_BENCH, PROOF } from "../data/benchmarks"
+import { HERO_SSR, HTTP_BENCH, PROOF } from "../data/benchmarks"
 import { CodeBlock } from "../highlight"
 import { HOME_COUNTER_ENTRY } from "../islands/entries"
 import { pageMeta } from "../meta"
@@ -387,7 +387,7 @@ function FrameworkSwitcher() {
 }
 
 export default function Home() {
-  const frontendMax = max(FRONTEND, "reqs")
+  const frontendMax = max(HERO_SSR, "reqs")
   const httpMax = max(HTTP_BENCH, "reqs")
   return (
     <>
@@ -615,7 +615,7 @@ export default function Home() {
           <span className="kicker">Performance &amp; Speed</span>
           <h2>Screamingly fast, frontend and backend.</h2>
           <p>
-            Nifra runs close to raw Bun/Node speed. Full-stack SSR renders 3× to 22× faster than
+            Nifra runs close to raw Bun/Node speed. Full-stack SSR renders 4× to 26× faster than
             standard meta-frameworks on Node, while the backend router matches the fastest Node
             frameworks - tens of thousands of requests per second on a single core.
           </p>
@@ -626,11 +626,11 @@ export default function Home() {
             <figcaption>
               <span className="bench-kicker">Full-stack SSR · req/s</span>
               <span className="bench-sub">
-                Dynamic SSR rendering (Nifra on Node vs Meta-frameworks)
+                React, rendered per request - Nifra (Bun + Node) vs Next.js + Remix
               </span>
             </figcaption>
             <div className="bars">
-              {FRONTEND.slice(0, 6).map((r) => (
+              {HERO_SSR.map((r) => (
                 <Bar
                   key={r.name}
                   name={r.name}

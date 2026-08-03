@@ -3,96 +3,114 @@
   "heroSsr": [
     {
       "name": "Nifra + React (Bun)",
-      "reqs": 31800,
+      "reqs": 33087,
       "you": true
     },
     {
       "name": "Nifra + React (Node)",
-      "reqs": 22714,
+      "reqs": 26672,
       "you": true
     },
     {
-      "name": "Next.js",
-      "reqs": 1038
+      "name": "Next.js (Node)",
+      "reqs": 1015
+    },
+    {
+      "name": "Remix (Node)",
+      "reqs": 1915
     }
   ],
   "frontend": [
     {
       "name": "Nifra + React (Bun)",
-      "reqs": 31800,
+      "reqs": 33087,
       "you": true
     },
     {
       "name": "Nifra + React (Node)",
-      "reqs": 22714,
+      "reqs": 26672,
       "you": true
     },
     {
-      "name": "Next.js",
-      "reqs": 1038
+      "name": "Next.js (Node)",
+      "reqs": 1015
+    },
+    {
+      "name": "Remix (Node)",
+      "reqs": 1915
     },
     {
       "name": "Nifra + Solid (Bun)",
-      "reqs": 30400,
+      "reqs": 34768,
       "you": true
     },
     {
       "name": "Nifra + Solid (Node)",
-      "reqs": 21712,
+      "reqs": 27927,
       "you": true
     },
     {
-      "name": "SolidStart",
-      "reqs": 6430
-    },
-    {
-      "name": "Nifra + Svelte (Bun)",
-      "reqs": 27200,
-      "you": true
-    },
-    {
-      "name": "Nifra + Svelte (Node)",
-      "reqs": 19418,
-      "you": true
-    },
-    {
-      "name": "SvelteKit",
-      "reqs": 6014
+      "name": "SolidStart (Node)",
+      "reqs": 6966
     },
     {
       "name": "Nifra + Vue (Bun)",
-      "reqs": 21000,
+      "reqs": 28156,
       "you": true
     },
     {
       "name": "Nifra + Vue (Node)",
-      "reqs": 15017,
+      "reqs": 18806,
       "you": true
     },
     {
-      "name": "Nuxt",
-      "reqs": 2090
+      "name": "Nuxt (Node)",
+      "reqs": 2086
+    },
+    {
+      "name": "Nifra + Svelte (Bun)",
+      "reqs": 45247,
+      "you": true
+    },
+    {
+      "name": "Nifra + Svelte (Node)",
+      "reqs": 29363,
+      "you": true
+    },
+    {
+      "name": "SvelteKit (Node)",
+      "reqs": 7711
+    },
+    {
+      "name": "Nifra + Preact (Bun)",
+      "reqs": 33758,
+      "you": true
+    },
+    {
+      "name": "Nifra + Preact (Node)",
+      "reqs": 28377,
+      "you": true
     }
   ],
   "multipliers": [
     {
       "fw": "React",
-      "mult": "22×",
+      "mult": "26×",
       "rival": "Next.js"
     },
     {
       "fw": "Vue",
-      "mult": "7×",
+      "mult": "9×",
       "rival": "Nuxt"
     },
     {
       "fw": "Solid",
-      "mult": "3.4×",
+      "mult": "4×",
       "rival": "SolidStart"
     },
     {
       "fw": "Svelte",
-      "mult": "3.2×",
+      "mult": "3.8×",
       "rival": "SvelteKit"
     }
   ],
@@ -155,12 +173,12 @@
   ],
   "proof": [
     {
-      "value": "22×",
+      "value": "26×",
       "label": "full-stack SSR vs Next.js (Node, dynamic, same machine)"
     },
     {
-      "value": "120k",
-      "label": "req/s on Bun - 103% of raw, ahead of Hono & 95% of Elysia"
+      "value": "139k",
+      "label": "req/s on Bun - level with Elysia, ahead of Hono"
     },
     {
       "value": "5 + 4",
@@ -169,6 +187,163 @@
     {
       "value": "15 KB",
       "label": "a typed full-stack base - MCP, WS, SSE, typed client - not just a router"
+    }
+  ],
+  "ssrTables": [
+    {
+      "framework": "React",
+      "rows": [
+        {
+          "name": "Nifra + React (Bun)",
+          "runtime": "bun",
+          "rps": 33087,
+          "p50ms": 1.43,
+          "p99ms": 2.85,
+          "jsGzKb": 59.8,
+          "nifra": true
+        },
+        {
+          "name": "Nifra + React (Node)",
+          "runtime": "node",
+          "rps": 26672,
+          "p50ms": 1.79,
+          "p99ms": 3.67,
+          "jsGzKb": 59.8,
+          "nifra": true
+        },
+        {
+          "name": "Next.js (Node)",
+          "runtime": "node",
+          "rps": 1015,
+          "p50ms": 49.3,
+          "p99ms": 60.95,
+          "jsGzKb": 182.4
+        },
+        {
+          "name": "Remix (Node)",
+          "runtime": "node",
+          "rps": 1915,
+          "p50ms": 25.77,
+          "p99ms": 34.07,
+          "jsGzKb": 99.2
+        }
+      ]
+    },
+    {
+      "framework": "Solid",
+      "rows": [
+        {
+          "name": "Nifra + Solid (Bun)",
+          "runtime": "bun",
+          "rps": 34768,
+          "p50ms": 1.35,
+          "p99ms": 2.59,
+          "jsGzKb": 6.3,
+          "nifra": true
+        },
+        {
+          "name": "Nifra + Solid (Node)",
+          "runtime": "node",
+          "rps": 27927,
+          "p50ms": 1.7,
+          "p99ms": 3.36,
+          "jsGzKb": 6.3,
+          "nifra": true
+        },
+        {
+          "name": "SolidStart (Node)",
+          "runtime": "node",
+          "rps": 6966,
+          "p50ms": 6.01,
+          "p99ms": 16.72,
+          "jsGzKb": 18.3
+        }
+      ]
+    },
+    {
+      "framework": "Vue",
+      "rows": [
+        {
+          "name": "Nifra + Vue (Bun)",
+          "runtime": "bun",
+          "rps": 28156,
+          "p50ms": 1.67,
+          "p99ms": 3.3,
+          "jsGzKb": 26.8,
+          "nifra": true
+        },
+        {
+          "name": "Nifra + Vue (Node)",
+          "runtime": "node",
+          "rps": 18806,
+          "p50ms": 2.42,
+          "p99ms": 4.9,
+          "jsGzKb": 26.8,
+          "nifra": true
+        },
+        {
+          "name": "Nuxt (Node)",
+          "runtime": "node",
+          "rps": 2086,
+          "p50ms": 21.6,
+          "p99ms": 86.59,
+          "jsGzKb": 67.6
+        }
+      ]
+    },
+    {
+      "framework": "Svelte",
+      "rows": [
+        {
+          "name": "Nifra + Svelte (Bun)",
+          "runtime": "bun",
+          "rps": 45247,
+          "p50ms": 1.05,
+          "p99ms": 2.09,
+          "jsGzKb": 21.1,
+          "nifra": true
+        },
+        {
+          "name": "Nifra + Svelte (Node)",
+          "runtime": "node",
+          "rps": 29363,
+          "p50ms": 1.53,
+          "p99ms": 3.46,
+          "jsGzKb": 21.1,
+          "nifra": true
+        },
+        {
+          "name": "SvelteKit (Node)",
+          "runtime": "node",
+          "rps": 7711,
+          "p50ms": 6.04,
+          "p99ms": 12.33,
+          "jsGzKb": 0.0
+        }
+      ]
+    },
+    {
+      "framework": "Preact",
+      "rows": [
+        {
+          "name": "Nifra + Preact (Bun)",
+          "runtime": "bun",
+          "rps": 33758,
+          "p50ms": 1.4,
+          "p99ms": 2.79,
+          "jsGzKb": 7.7,
+          "nifra": true
+        },
+        {
+          "name": "Nifra + Preact (Node)",
+          "runtime": "node",
+          "rps": 28377,
+          "p50ms": 1.7,
+          "p99ms": 3.39,
+          "jsGzKb": 7.7,
+          "nifra": true
+        }
+      ]
     }
   ]
 }
