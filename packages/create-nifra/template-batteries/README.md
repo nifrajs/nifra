@@ -1,7 +1,8 @@
 # nifra-app
 
-A full-stack [nifra](https://github.com/nifra) starter, scaffolded with `create-nifra --template fullstack`.
-It wires the batteries a real app needs on top of the core framework:
+A batteries-included [nifra](https://github.com/nifrajs/nifra) backend starter, scaffolded with
+`create-nifra --template batteries` (for a frontend + backend app, use `--template site` instead).
+It wires the batteries a real API needs on top of the core framework:
 
 | Package | Used for | Where |
 |---|---|---|

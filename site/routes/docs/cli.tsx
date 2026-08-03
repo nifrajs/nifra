@@ -62,6 +62,17 @@ export default function Cli() {
         chunks preloaded and route CSS linked in each <code>&lt;head&gt;</code>.
       </p>
       <CodeBlock code={STRUCTURE} />
+      <p>
+        These paths are <strong>fixed</strong>, not configurable: the CLI resolves all four from the
+        project root, so <code>backend.ts</code> cannot move into <code>src/</code> or be renamed -
+        if the file is not at the root, <code>nifra dev|build</code> simply run without a backend
+        (it is optional, so nothing errors). Only the entry file is pinned; the feature modules it{" "}
+        <code>.merge()</code>s can live in any directory. Keep <code>backend.ts</code> a pure
+        composition root - merging modules, registering no routes of its own - so each route's
+        capability reach stays its own module's (see{" "}
+        <a href="/docs/backends">Backends &amp; API</a> and{" "}
+        <a href="/docs/verification">Verification</a>).
+      </p>
 
       <h2>framework.ts - naming the framework once</h2>
       <p>

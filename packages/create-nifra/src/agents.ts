@@ -263,7 +263,7 @@ const COMMANDS: Readonly<Record<TemplateName, string>> = {
 
   For a local production run use \`nifra build && nifra start\`. NOTE: the bare \`bun run build\` script targets
   **Cloudflare Pages for DEPLOY** (\`dist/\`) and does NOT pair with \`nifra start\` - don't mix the two.`,
-  fullstack: `- \`bun install\` - install dependencies
+  batteries: `- \`bun install\` - install dependencies
 - \`bun run dev\` - run the API (watch mode); \`src/index.ts\` also starts the job worker (\`queue.start()\`)
 - \`bun test\` - drives \`app.fetch\` directly (pagination, jobs via \`queue.drain()\`, cache, storage); no server required
 - \`bun run typecheck\` - run before you call work done

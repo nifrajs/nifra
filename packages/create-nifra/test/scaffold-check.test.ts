@@ -138,13 +138,13 @@ describe.if(SMOKE)(
 )
 
 /**
- * The api and fullstack templates keep their app in `src/app.ts`, and it has to stay a composition for
+ * The api and batteries templates keep their app in `src/app.ts`, and it has to stay a composition for
  * the same reason: `provenance.imports` is armed in every template, so a root that registers routes
  * would taint them with the reach of everything it merges - including, the moment a database arrives,
  * a domain write that its GET routes cannot legally declare.
  */
 describe("templates: the app root composes rather than registers", () => {
-  for (const dir of ["template", "template-fullstack"]) {
+  for (const dir of ["template", "template-batteries"]) {
     test(`${dir}/src/app.ts registers no routes of its own`, async () => {
       const src = await readFile(join(TEMPLATES_DIR, dir, "src/app.ts"), "utf8")
       expect(src).toContain(".merge(")

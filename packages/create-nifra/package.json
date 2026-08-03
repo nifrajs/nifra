@@ -36,7 +36,8 @@
     "template-site-preact",
     "template-site-solid",
     "template-site-svelte",
-    "template-isr"
+    "template-isr",
+    "template-batteries"
   ],
   "sideEffects": false,
   "scripts": {

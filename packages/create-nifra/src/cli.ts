@@ -4,7 +4,7 @@
  *
  *   bun create nifra my-app                      # api backend (default)
  *   bun create nifra my-app --template site      # multi-target SSR site
- *   bun create nifra my-app --template fullstack # api + jobs + cache + storage + cursor pagination
+ *   bun create nifra my-app --template batteries # api + jobs + cache + storage + cursor pagination
  *   bun create nifra my-app --deploy vercel      # site, with Vercel as the default deploy target
  *
  * Copies the bundled template, restores `.gitignore` (npm strips a literal one from packages), sets the
@@ -38,7 +38,7 @@ const TEMPLATES = {
   api: "../template",
   site: "../template-site",
   isr: "../template-isr",
-  fullstack: "../template-fullstack",
+  batteries: "../template-batteries",
 } as const
 export type TemplateName = keyof typeof TEMPLATES
 
@@ -250,6 +250,12 @@ export interface ScaffoldResult {
 export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
   const template = opts.template ?? "api"
   if (TEMPLATES[template] === undefined) {
+    // "fullstack" is the one name people guess that means two different things - steer both readings.
+    if ((template as string) === "fullstack") {
+      throw new Error(
+        'no "fullstack" template. For a frontend + backend app use --template site; for the batteries API starter (jobs + cache + storage + pagination) use --template batteries.',
+      )
+    }
     throw new Error(`unknown template "${template}". options: ${Object.keys(TEMPLATES).join(", ")}`)
   }
   // Framework picker (site only): non-React frameworks live in `template-site-<framework>`.
@@ -510,7 +516,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   }
 }
 
-const USAGE = `usage: bun create nifra <directory> [--template api|site|isr|fullstack] [--framework react|preact|vue|solid|svelte] [--deploy bun|node|deno|cf-pages|vercel] [--ci github] [--db ${DB_CHOICES.join("|")}] [--auth ${AUTH_CHOICES.join("|")}] [--force] [--link <path-to-nifra-repo>]`
+const USAGE = `usage: bun create nifra <directory> [--template api|site|isr|batteries] [--framework react|preact|vue|solid|svelte] [--deploy bun|node|deno|cf-pages|vercel] [--ci github] [--db ${DB_CHOICES.join("|")}] [--auth ${AUTH_CHOICES.join("|")}] [--force] [--link <path-to-nifra-repo>]`
 
 /**
  * Run the CLI for `argv` and return the exit code + the message to print - no `process.exit`, `console`,

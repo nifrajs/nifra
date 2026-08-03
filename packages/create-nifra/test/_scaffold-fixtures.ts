@@ -15,7 +15,7 @@ import { materializeSite } from "../src/scaffold/site.ts"
 const PKG_ROOT = join(import.meta.dir, "..")
 
 /** Templates that are still a plain directory copy - they have no framework axis to collapse. */
-export const COPIED_TEMPLATES = ["template", "template-isr", "template-fullstack"] as const
+export const COPIED_TEMPLATES = ["template", "template-isr", "template-batteries"] as const
 
 export interface Scaffold {
   /** How the test names it, e.g. `site-vue` or `template-isr`. */

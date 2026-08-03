@@ -13,10 +13,14 @@ bun create nifra my-app
 
 - **`api`** - a typed nifra server (`src/app.ts` + `src/index.ts`) with an example test and
   `dev`/`start`/`test`/`typecheck` scripts.
-- **`site`** - a nifra + React SSR site, one source deployable to Cloudflare Pages, Node, Deno, or
-  Vercel Edge.
+- **`site`** - the full-stack template: a nifra + React SSR site (file-routed frontend + typed
+  `backend.ts`), one source deployable to Cloudflare Pages, Node, Deno, or Vercel Edge. Pick the
+  frontend with `--framework react|preact|vue|solid|svelte`.
 - **`isr`** - a nifra + React app with **Incremental Static Regeneration** on Cloudflare Workers + KV
   (pages cached + served stale-while-revalidate; on-demand purge endpoint).
+- **`batteries`** - the `api` starter plus the batteries a real API needs: background jobs
+  (`@nifrajs/jobs`), a TTL cache (`@nifrajs/cache`), blob storage (`@nifrajs/storage`), and cursor
+  pagination (`@nifrajs/schema`).
 
 ```sh
 bun create nifra my-app --template isr
