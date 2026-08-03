@@ -23,15 +23,20 @@ By participating in this project, you agree to abide by our Code of Conduct and 
 
 ## Monorepo Overview
 
-Nifra is developed as a monorepo using Bun workspaces. Here is a map of the primary packages located under `packages/` and `internal/`:
+Nifra is developed as a monorepo using Bun workspaces. A map of the primary directories:
 
 - **`packages/core`**: The core HTTP router, server runtime, and WebSocket adapter.
 - **`packages/client`**: The zero-codegen, type-safe client that infers types from the server.
 - **`packages/schema`**: The type builder (`t`) and OpenAPI generators.
-- **`packages/middleware`**: Curated, zero-dependency middleware (CORS, Rate Limiting, Security Headers, etc.).
-- **`packages/cli`**: The CLI utility and Model Context Protocol (MCP) server.
-- **`docs`**: The Astro-based Starlight documentation site.
-- **`examples`**: Scaffolding templates and demo projects.
+- **`packages/middleware`**: Curated, zero-dependency middleware (CORS, rate limiting, security headers, etc.).
+- **`packages/web`** + **`packages/web-react|vue|solid|svelte|preact|vanilla`**: The full-stack layer (SSR, routing, server functions, islands) and its per-framework adapters.
+- **`packages/cli`**: The `nifra` CLI (`dev`, `build`, `check`, `assure`, `doctor`) and the Model Context Protocol (MCP) server.
+- **`packages/create-nifra`**: Project scaffolding and its templates.
+- **`packages/node`** / **`packages/deno`** / **`packages/workers`**: Runtime adapters.
+- **`site/`**: The nifra.dev docs site - built with nifra itself.
+- **`bench/`**: The benchmark harnesses behind every published number.
+- **`examples/`**: Runnable demo projects.
+- **`internal/test-utils`**: Shared test helpers (not published).
 
 ---
 
@@ -41,7 +46,7 @@ Nifra is built for **Bun** and is **ESM-only**.
 
 ### 1. Prerequisites
 
-Ensure you have Bun installed (version `>=1.2.0` is required):
+Ensure you have Bun installed (version `>=1.3.0` is required):
 
 ```bash
 curl -fsSL https://bun.sh/install | bash
@@ -86,6 +91,12 @@ bun run check
 ```
 
 This runs lint checks, TypeScript checks across all tsconfigs, test suites, and documentation/API schema verifications.
+
+Note: `api-reference.md`, per-package `LLM.md` cards, and the `llms.txt`/`llms-full.txt` corpora are generated. Do not edit them by hand - change the source and run `bun run gen:api && bun run gen:cards` (or `bun run build && bun run gen:llms` when exported types changed); CI rejects stale copies.
+
+### 3. Where to Start
+
+Issues labeled [`good first issue`](https://github.com/nifrajs/nifra/labels/good%20first%20issue) are scoped to be approachable without deep framework knowledge, and issues labeled [`help wanted`](https://github.com/nifrajs/nifra/labels/help%20wanted) are larger pieces we would love a hand with. Commenting on an issue before starting saves duplicated work.
 
 ---
 
