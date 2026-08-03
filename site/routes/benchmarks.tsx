@@ -146,7 +146,17 @@ const HTTP: ReadonlyArray<RuntimeTable> = [
   },
 ]
 
+/** Rank rows by geometric mean across the four workloads - a single strong column (or a single
+ * weak one) can't decide the order the way sorting by `GET /` alone did. */
+function geoMean(row: HttpRow): number {
+  const values = [row.getRoot, row.getUsers, row.getSearch, row.postUsers].map((v) =>
+    Number(v.replaceAll(",", "")),
+  )
+  return Math.exp(values.reduce((sum, v) => sum + Math.log(v), 0) / values.length)
+}
+
 function HttpTable({ table }: { table: RuntimeTable }) {
+  const ranked = [...table.rows].sort((a, b) => geoMean(b) - geoMean(a))
   return (
     <section className="bench-block">
       <h2>{table.title}</h2>
@@ -161,7 +171,7 @@ function HttpTable({ table }: { table: RuntimeTable }) {
           </tr>
         </thead>
         <tbody>
-          {table.rows.map((row) => (
+          {ranked.map((row) => (
             <tr key={row.name} className={row.nifra ? "hl" : undefined}>
               <td>{row.name}</td>
               <td className="num">{row.getRoot}</td>
@@ -242,7 +252,8 @@ export default function Benchmarks() {
       <p className="lead">
         Nifra is also a standalone API framework. Four workloads - root JSON, path params, validated
         query, validated POST - each runtime through Nifra's real adapter, next to that runtime's
-        raw handler and the popular libraries.
+        raw handler and the popular libraries. Rows are ordered by the geometric mean of the four
+        workloads, so no single column decides the ranking.
       </p>
       <div className="bench-grid">
         {HTTP.map((table) => (
