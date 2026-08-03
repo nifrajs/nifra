@@ -269,6 +269,30 @@ export default function Dev() {
         refuses <code>--bun</code> for a CSS-Modules app rather than serving a broken client. Plain CSS
         and Tailwind work normally.
       </p>
+      <p>
+        A harder gate, and the reason Vite stays the <em>default</em> dev loop:{" "}
+        <strong>
+          server functions and <code>*.server</code> modules
+        </strong>
+        . The client build strips them - a <code>*.fn</code> module is replaced with an RPC stub and a{" "}
+        <code>*.server</code> module is emptied, so their bodies (DB handles, secrets, imports) never
+        reach a browser. Bun's dev-server bundling takes plugins only through{" "}
+        <code>bunfig.toml</code> (<code>[serve.static] plugins</code>), not programmatically - and a
+        runtime <code>Bun.plugin</code> never reaches it - so under <code>--bun</code> today those
+        modules would ship <em>whole</em>. The CLI refuses that app with an exact file list instead of
+        leaking it - the same fail-closed rule as everywhere else in Nifra. Delivering the stripping
+        plugins through that config channel is on the roadmap; once it lands, this gate lifts and the
+        Bun loop becomes the natural default. Until then, <code>--bun</code> is the right choice for
+        apps that don't use server functions, <code>*.server</code> modules, or CSS Modules.
+      </p>
+      <p>
+        Two pipelines, one contract: what keeps them honest is not hope but guards. Both loops serve{" "}
+        <code>public/</code> through the same handler production uses, the build dedupes the UI
+        framework to one physical copy on both paths, SSR verifies at render time that the renderer
+        and your components share one core (naming both directories if not), and{" "}
+        <code>nifra doctor</code> flags a stale workspace <code>dist</code> before it can shadow
+        source. A divergence between the loops is treated as a bug, not a caveat.
+      </p>
       <CodeBlock code={BUN_DEV} />
 
       <h2>Production is Bun - with a Vite escape hatch</h2>

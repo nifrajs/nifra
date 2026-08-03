@@ -51,15 +51,15 @@ if [ -n "$LINTABLE" ]; then
     if git diff --quiet -- "$f"; then FIXABLE+=("$f"); else CHECK_ONLY+=("$f"); fi
   done <<< "$LINTABLE"
   if [ ${#FIXABLE[@]} -gt 0 ]; then
-    bunx biome check --write "${FIXABLE[@]}" >/dev/null 2>&1 || true
+    bunx biome check --write --no-errors-on-unmatched "${FIXABLE[@]}" >/dev/null 2>&1 || true
     git add -- "${FIXABLE[@]}"
   fi
   ALL_STAGED=()
   [ ${#FIXABLE[@]} -gt 0 ] && ALL_STAGED+=("${FIXABLE[@]}")
   [ ${#CHECK_ONLY[@]} -gt 0 ] && ALL_STAGED+=("${CHECK_ONLY[@]}")
-  if [ ${#ALL_STAGED[@]} -gt 0 ] && ! bunx biome check "${ALL_STAGED[@]}" >/dev/null 2>&1; then
+  if [ ${#ALL_STAGED[@]} -gt 0 ] && ! bunx biome check --no-errors-on-unmatched "${ALL_STAGED[@]}" >/dev/null 2>&1; then
     echo "pre-commit: biome found problems it could not auto-fix (or a partially-staged file needs fixing):" >&2
-    bunx biome check "${ALL_STAGED[@]}" 2>&1 | tail -20 >&2
+    bunx biome check --no-errors-on-unmatched "${ALL_STAGED[@]}" 2>&1 | tail -20 >&2
     echo "pre-commit: fix (bunx biome check --write <file>), re-stage, and commit again." >&2
     exit 1
   fi
