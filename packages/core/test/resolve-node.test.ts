@@ -350,3 +350,38 @@ describe("resolveNode - fallback to a Response", () => {
     expect(await outcome.response.json()).toEqual({ ok: true })
   })
 })
+
+describe("resolveNodeSource - lazy sources stay lazy", () => {
+  test("a plain POST never materializes the source's Headers object", async () => {
+    // `header()` is authoritative when a source implements it: its `null` means the header is
+    // ABSENT, not "consult `headers` instead". The distinction is load-bearing - the Node adapter's
+    // lazy sources build a full undici `Headers` only when `.headers` is read, and the body lane
+    // probes `transfer-encoding` (absent on framed requests) on every POST.
+    let materialized = false
+    const body = JSON.stringify({ name: "Ada" })
+    const source = {
+      method: "POST",
+      url: "http://localhost/users",
+      get headers(): Headers {
+        materialized = true
+        return new Headers({ "content-type": "application/json" })
+      },
+      header(name: string): string | null {
+        if (name === "content-type") return "application/json"
+        if (name === "content-length") return String(body.length)
+        return null
+      },
+      body: null,
+      arrayBuffer: () => Promise.resolve(new TextEncoder().encode(body).buffer as ArrayBuffer),
+      json: () => Promise.resolve(JSON.parse(body) as unknown),
+    }
+    const app = server()
+      .use(nodeDirect())
+      .post("/users", { body: nameBody }, (c) => ({ hi: c.body.name }))
+    const outcome = await app.resolveNodeSource(source)
+    expect(outcome.kind).toBe("json")
+    if (outcome.kind !== "json") throw new Error("unreachable")
+    expect(outcome.body).toBe(JSON.stringify({ hi: "Ada" }))
+    expect(materialized).toBe(false)
+  })
+})

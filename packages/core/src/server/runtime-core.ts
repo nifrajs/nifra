@@ -40,8 +40,12 @@ export function requestOf(source: RequestSource): Request {
   return source.request ?? (source as unknown as Request)
 }
 
+/** Read one request header. `header()` answers authoritatively when the source implements it - its
+ * `null` means ABSENT, not "ask `headers` instead". Falling through on `null` would materialize the
+ * lazy sources' full `Headers` object on every absent-header probe (measured at ~4% of request CPU
+ * on the Node POST lane, which checks `transfer-encoding` on every request). */
 export function headerOf(source: RequestSource, name: string): string | null {
-  return source.header?.(name) ?? source.headers.get(name)
+  return source.header !== undefined ? source.header(name) : source.headers.get(name)
 }
 
 /** Off-edge `waitUntil`: run the background work fire-and-forget, never leaking an unhandled
