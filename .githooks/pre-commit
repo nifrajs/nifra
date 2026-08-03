@@ -73,3 +73,9 @@ if grep -qE '^site/routes/docs/.*\.(tsx|mdx)$' <<< "$STAGED"; then
     exit 1
   fi
 fi
+
+# ---- Local extension point ---------------------------------------------------------------------
+# An untracked, machine-local hook may add extra gates (it lives in .git/hooks/, never committed).
+if [ -x .git/hooks/pre-commit-local ]; then
+  .git/hooks/pre-commit-local
+fi
