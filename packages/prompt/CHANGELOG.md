@@ -1,5 +1,12 @@
 # @nifrajs/prompt
 
+## 2.6.1
+
+### Patch Changes
+
+- Updated dependencies [5840c98]
+  - @nifrajs/core@2.6.1
+
 ## 2.6.0
 
 ### Patch Changes
