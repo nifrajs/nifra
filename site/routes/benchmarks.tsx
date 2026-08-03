@@ -13,145 +13,54 @@ const fmtMs = (ms: number): string => `${ms.toFixed(2)} ms`
 const fmtJs = (row: SsrTableRow): string => (row.jsGzKb > 0 ? `${row.jsGzKb} KB` : "n/a")
 
 // ---- Backend: raw HTTP throughput across runtimes ----
-// Four identical workloads per framework - see BENCHMARKS.md.
+// Two core workloads per framework (path-param GET, validated POST) - see BENCHMARKS.md.
 type HttpRow = {
   name: string
-  getRoot: string
   getUsers: string
-  getSearch: string
   postUsers: string
   nifra?: boolean
 }
 type RuntimeTable = { title: string; rows: ReadonlyArray<HttpRow> }
 
-// Median of 3 full-matrix runs · Bun 1.3.14 · Node 26 · Deno 2.8 · oha @ 50 conns. Read same-run
+// Median of 5 full-matrix runs · Bun 1.3.14 · Node 26 · Deno 2.8 · oha @ 50 conns. Read same-run
 // ratios, not absolutes. `bun-native`/`node-raw`/`deno-raw` are the runtime ceilings (no framework)
 // the framework rows chase - one ceiling row per runtime.
 const HTTP: ReadonlyArray<RuntimeTable> = [
   {
     title: "Bun",
     rows: [
-      {
-        name: "Nifra",
-        getRoot: "139,844",
-        getUsers: "138,511",
-        getSearch: "123,893",
-        postUsers: "106,734",
-        nifra: true,
-      },
-      {
-        name: "bun-native",
-        getRoot: "139,520",
-        getUsers: "142,178",
-        getSearch: "115,621",
-        postUsers: "119,128",
-      },
-      {
-        name: "Elysia",
-        getRoot: "139,034",
-        getUsers: "132,913",
-        getSearch: "125,707",
-        postUsers: "105,706",
-      },
-      {
-        name: "Hono",
-        getRoot: "116,702",
-        getUsers: "107,738",
-        getSearch: "86,604",
-        postUsers: "83,997",
-      },
+      { name: "Nifra", getUsers: "130,866", postUsers: "98,427", nifra: true },
+      { name: "Elysia", getUsers: "130,219", postUsers: "93,818" },
+      { name: "bun-native", getUsers: "129,590", postUsers: "104,388" },
+      { name: "Hono", getUsers: "97,628", postUsers: "74,616" },
     ],
   },
   {
     title: "Node",
     rows: [
-      {
-        name: "node-raw",
-        getRoot: "88,775",
-        getUsers: "89,051",
-        getSearch: "78,394",
-        postUsers: "77,388",
-      },
-      {
-        name: "Nifra",
-        getRoot: "84,390",
-        getUsers: "84,349",
-        getSearch: "82,776",
-        postUsers: "62,883",
-        nifra: true,
-      },
-      {
-        name: "Fastify",
-        getRoot: "81,957",
-        getUsers: "83,047",
-        getSearch: "82,520",
-        postUsers: "61,332",
-      },
-      {
-        name: "Elysia",
-        getRoot: "77,512",
-        getUsers: "77,313",
-        getSearch: "75,236",
-        postUsers: "52,340",
-      },
-      {
-        name: "Express",
-        getRoot: "53,479",
-        getUsers: "52,738",
-        getSearch: "52,457",
-        postUsers: "44,588",
-      },
-      {
-        name: "Hono",
-        getRoot: "52,305",
-        getUsers: "51,805",
-        getSearch: "48,926",
-        postUsers: "37,654",
-      },
+      { name: "node-raw", getUsers: "75,930", postUsers: "65,181" },
+      { name: "Fastify", getUsers: "74,882", postUsers: "54,368" },
+      { name: "Nifra", getUsers: "73,183", postUsers: "53,828", nifra: true },
+      { name: "Elysia", getUsers: "69,261", postUsers: "43,617" },
+      { name: "Express", getUsers: "43,981", postUsers: "37,185" },
+      { name: "Hono", getUsers: "44,787", postUsers: "32,338" },
     ],
   },
   {
     title: "Deno",
     rows: [
-      {
-        name: "deno-raw",
-        getRoot: "123,251",
-        getUsers: "123,099",
-        getSearch: "108,010",
-        postUsers: "102,906",
-      },
-      {
-        name: "Elysia",
-        getRoot: "122,532",
-        getUsers: "121,774",
-        getSearch: "111,815",
-        postUsers: "81,372",
-      },
-      {
-        name: "Nifra",
-        getRoot: "120,548",
-        getUsers: "118,821",
-        getSearch: "104,283",
-        postUsers: "83,705",
-        nifra: true,
-      },
-      {
-        name: "Hono",
-        getRoot: "102,890",
-        getUsers: "98,236",
-        getSearch: "86,650",
-        postUsers: "76,925",
-      },
+      { name: "deno-raw", getUsers: "120,085", postUsers: "97,533" },
+      { name: "Nifra", getUsers: "109,393", postUsers: "74,239", nifra: true },
+      { name: "Elysia", getUsers: "106,958", postUsers: "73,971" },
+      { name: "Hono", getUsers: "86,646", postUsers: "67,145" },
     ],
   },
 ]
 
-/** Rank rows by geometric mean across the four workloads - a single strong column (or a single
- * weak one) can't decide the order the way sorting by `GET /` alone did. */
+/** Rank rows by geometric mean across the workloads - a single strong column (or a single weak
+ * one) can't decide the order the way sorting by one workload alone would. */
 function geoMean(row: HttpRow): number {
-  const values = [row.getRoot, row.getUsers, row.getSearch, row.postUsers].map((v) =>
-    Number(v.replaceAll(",", "")),
-  )
+  const values = [row.getUsers, row.postUsers].map((v) => Number(v.replaceAll(",", "")))
   return Math.exp(values.reduce((sum, v) => sum + Math.log(v), 0) / values.length)
 }
 
@@ -164,9 +73,7 @@ function HttpTable({ table }: { table: RuntimeTable }) {
         <thead>
           <tr>
             <th>Framework</th>
-            <th className="num">GET /</th>
             <th className="num">GET /users/:id</th>
-            <th className="num">GET /search</th>
             <th className="num">POST /users</th>
           </tr>
         </thead>
@@ -174,9 +81,7 @@ function HttpTable({ table }: { table: RuntimeTable }) {
           {ranked.map((row) => (
             <tr key={row.name} className={row.nifra ? "hl" : undefined}>
               <td>{row.name}</td>
-              <td className="num">{row.getRoot}</td>
               <td className="num">{row.getUsers}</td>
-              <td className="num">{row.getSearch}</td>
               <td className="num">{row.postUsers}</td>
             </tr>
           ))}
@@ -250,10 +155,10 @@ export default function Benchmarks() {
       {/* ---- Backend: HTTP throughput across runtimes ---- */}
       <h2 style={{ marginTop: 48 }}>Backend - HTTP throughput across runtimes</h2>
       <p className="lead">
-        Nifra is also a standalone API framework. Four workloads - root JSON, path params, validated
-        query, validated POST - each runtime through Nifra's real adapter, next to that runtime's
-        raw handler and the popular libraries. Rows are ordered by the geometric mean of the four
-        workloads, so no single column decides the ranking.
+        Nifra is also a standalone API framework. Two core workloads - a path-param GET and a
+        validated POST - each runtime through Nifra's real adapter, next to that runtime's raw
+        handler and the popular libraries. Rows are ordered by the geometric mean of the workloads,
+        so no single column decides the ranking.
       </p>
       <div className="bench-grid">
         {HTTP.map((table) => (

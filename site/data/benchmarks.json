@@ -136,23 +136,23 @@
   ],
   "http": [
     {
+      "name": "Fastify",
+      "reqs": 74882,
+      "you": false
+    },
+    {
       "name": "Nifra",
-      "reqs": 84349,
+      "reqs": 73183,
       "you": true
     },
     {
-      "name": "Fastify",
-      "reqs": 83047,
+      "name": "Hono",
+      "reqs": 44787,
       "you": false
     },
     {
       "name": "Express",
-      "reqs": 52738,
-      "you": false
-    },
-    {
-      "name": "Hono",
-      "reqs": 51805,
+      "reqs": 43981,
       "you": false
     }
   ],
@@ -177,8 +177,8 @@
       "label": "full-stack SSR vs Next.js (Node, dynamic, same machine)"
     },
     {
-      "value": "139k",
-      "label": "req/s on Bun - level with Elysia, ahead of Hono"
+      "value": "131k",
+      "label": "req/s on Bun - 101% of the raw-runtime ceiling, ahead of Elysia"
     },
     {
       "value": "5 + 4",
