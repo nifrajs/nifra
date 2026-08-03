@@ -1,5 +1,13 @@
 # @nifrajs/ts-plugin
 
+## 2.7.1
+
+### Patch Changes
+
+- Updated dependencies [52c89e0]
+  - @nifrajs/core@2.7.1
+  - @nifrajs/web@2.7.1
+
 ## 2.7.0
 
 ### Patch Changes
