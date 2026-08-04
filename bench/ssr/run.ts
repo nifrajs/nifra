@@ -48,30 +48,36 @@ console.log(
   `SSR benchmarks - Bun ${Bun.version} · Node ${nodeVersion()} · oha median-of-${SSR_BENCH_RUNS} × ${SSR_BENCH_DURATION_S}s @ ${SSR_BENCH_CONNECTIONS} conns`,
 )
 
-// Table A (uncached SSR) rows feed the website slices; Table B (SSG/ISR) is a different workload
-// and stays out of the site's per-request comparison (see SSR-BENCHMARKS.md).
+// Table A (uncached SSR) feeds the landing chart + multipliers + the per-request tables; Table B
+// (SSG/ISR) feeds its own separately-labelled tables. The two are never blended (SSR-BENCHMARKS.md).
 const tableARows: SsrRunRow[] = []
+const tableBRows: SsrRunRow[] = []
 for (const section of ALL_TABLE_SECTIONS) {
   const rows = await runTable(section.label, section.blurb, section.targets)
   if (section.label.includes("Table A")) tableARows.push(...rows)
+  if (section.label.includes("Table B")) tableBRows.push(...rows)
 }
 
-// Refresh the website's numbers only from a run where every Table A target measured - a partial run
-// (a framework build failing on this machine) must not overwrite good published numbers.
-const expectedA = ALL_TABLE_SECTIONS.filter((s) => s.label.includes("Table A")).reduce(
-  (n, s) => n + s.targets.length,
-  0,
-)
-if (tableARows.length === expectedA) {
+// Refresh the website's numbers only from a run where every target of that table measured - a
+// partial run (a framework build failing on this machine) must not overwrite good published numbers.
+const expected = (table: string): number =>
+  ALL_TABLE_SECTIONS.filter((s) => s.label.includes(table)).reduce(
+    (n, s) => n + s.targets.length,
+    0,
+  )
+const expectedA = expected("Table A")
+const expectedB = expected("Table B")
+if (tableARows.length === expectedA && tableBRows.length === expectedB) {
   // writeSiteBench logs the update itself.
   await writeSiteBench({
     heroSsr: heroSsrSlice(tableARows),
     frontend: frontendSlice(tableARows),
     multipliers: multipliersSlice(tableARows),
     ssrTables: ssrTablesSlice(tableARows),
+    ssrTablesB: ssrTablesSlice(tableBRows),
   })
 } else {
   console.log(
-    `\nsite/data/benchmarks.json NOT updated: ${tableARows.length}/${expectedA} Table A targets measured`,
+    `\nsite/data/benchmarks.json NOT updated: A ${tableARows.length}/${expectedA}, B ${tableBRows.length}/${expectedB} targets measured`,
   )
 }

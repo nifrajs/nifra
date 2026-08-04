@@ -4,7 +4,7 @@ export const hydrate = false
 
 export const meta = pageMeta(
   "Nifra vs Next.js - a faster, typed, multi-runtime alternative",
-  "Nifra vs Next.js compared honestly: server rendering throughput (28x in reproducible benchmarks), end-to-end types without codegen, five UI frameworks instead of one, and where Next.js is still the right choice.",
+  "Nifra vs Next.js compared honestly: server rendering throughput (25x in reproducible benchmarks), end-to-end types without codegen, five UI frameworks instead of one, and where Next.js is still the right choice.",
   "/compare/nextjs",
 )
 
@@ -36,7 +36,7 @@ export default function VsNextjs() {
           </tr>
           <tr>
             <td>Server rendering</td>
-            <td>28x throughput in our published benchmark</td>
+            <td>25x throughput in our published benchmark</td>
             <td>Baseline (see methodology below)</td>
           </tr>
           <tr>
@@ -62,10 +62,10 @@ export default function VsNextjs() {
         </tbody>
       </table>
 
-      <h2>The 28x number, honestly</h2>
+      <h2>The 25x number, honestly</h2>
       <p>
         In our reproducible SSR benchmark - the same dynamic page, server-rendered by each
-        framework's production build on its default runtime - Nifra with React serves roughly 28x
+        framework's production build on its default runtime - Nifra with React serves roughly 25x
         the requests per second of Next.js. The harness lives in the Nifra repo, publishes its
         methodology, and includes rows Nifra does not win. That gap is not React being slow: it is
         the cost of the meta-framework layer around the render. Full tables and per-framework

@@ -1,3 +1,4 @@
+import { HTTP_WORKLOADS } from "../../data/benchmarks"
 import { pageMeta } from "../../meta"
 
 export const hydrate = false
@@ -7,6 +8,14 @@ export const meta = pageMeta(
   "An honest guide to Node.js web frameworks in 2026 - Fastify, Express, NestJS, Hono, and Nifra - with published throughput numbers, typing stories, and a disclosed bias: we build nifra.",
   "/blog/best-nodejs-frameworks-2026",
 )
+
+function httpValue(runtime: string, name: string, workload: "getUsers" | "postUsers"): string {
+  return (
+    HTTP_WORKLOADS.find((table) => table.title === runtime)?.rows.find(
+      (row) => row.name === name,
+    )?.[workload] ?? "n/a"
+  )
+}
 
 export default function BestNodeFrameworks() {
   return (
@@ -43,28 +52,28 @@ export default function BestNodeFrameworks() {
         <tbody>
           <tr>
             <td>Nifra</td>
-            <td>74,544 req/s</td>
-            <td>59,764 req/s</td>
+            <td>{httpValue("Node", "Nifra", "getUsers")} req/s</td>
+            <td>{httpValue("Node", "Nifra", "postUsers")} req/s</td>
           </tr>
           <tr>
             <td>Fastify</td>
-            <td>73,663 req/s</td>
-            <td>53,442 req/s</td>
+            <td>{httpValue("Node", "Fastify", "getUsers")} req/s</td>
+            <td>{httpValue("Node", "Fastify", "postUsers")} req/s</td>
           </tr>
           <tr>
             <td>Elysia (on Node)</td>
-            <td>67,525 req/s</td>
-            <td>44,130 req/s</td>
+            <td>{httpValue("Node", "Elysia", "getUsers")} req/s</td>
+            <td>{httpValue("Node", "Elysia", "postUsers")} req/s</td>
           </tr>
           <tr>
             <td>Express</td>
-            <td>44,176 req/s</td>
-            <td>37,883 req/s</td>
+            <td>{httpValue("Node", "Express", "getUsers")} req/s</td>
+            <td>{httpValue("Node", "Express", "postUsers")} req/s</td>
           </tr>
           <tr>
             <td>Hono (on Node)</td>
-            <td>42,227 req/s</td>
-            <td>32,332 req/s</td>
+            <td>{httpValue("Node", "Hono", "getUsers")} req/s</td>
+            <td>{httpValue("Node", "Hono", "postUsers")} req/s</td>
           </tr>
         </tbody>
       </table>

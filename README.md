@@ -63,7 +63,7 @@ import type { app } from "./server"
 const api = client<typeof app>("http://localhost:3000")
 
 const res = await api.users({ id: "42" }).get()
-if (res.ok) res.data.name   // typed from the route - tsc fails the moment the route changes
+if (res.ok) res.data.id     // typed from the route - tsc fails the moment the route changes
 else res.error              // failures are returned, never thrown
 ```
 
@@ -115,7 +115,7 @@ Measured, published, reproducible ([methodology + every row, including the ones 
 
 - **Bun:** ~131k req/s - 101% of the raw-runtime ceiling, level-to-ahead of Elysia
 - **Node:** ahead of Fastify by ~12% on the validated POST (96% of the raw-Node ceiling), tie on GET
-- **SSR:** React rendered per-request at ~28x Next.js throughput on the same machine
+- **SSR:** React rendered per-request at ~25x Next.js throughput on the same machine
 
 Run it yourself: `bun run bench:http` · `bun run bench:ssr`
 

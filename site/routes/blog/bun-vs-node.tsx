@@ -1,3 +1,4 @@
+import { HTTP_WORKLOADS } from "../../data/benchmarks"
 import { pageMeta } from "../../meta"
 
 export const hydrate = false
@@ -7,6 +8,14 @@ export const meta = pageMeta(
   "Bun vs Node.js compared with a control most benchmarks lack: the identical application, same framework, same routes, benchmarked on both runtimes. Where Bun's ~2x holds, where it shrinks, and when Node is still the right call.",
   "/blog/bun-vs-node",
 )
+
+function httpValue(runtime: string, name: string, workload: "getUsers" | "postUsers"): string {
+  return (
+    HTTP_WORKLOADS.find((table) => table.title === runtime)?.rows.find(
+      (row) => row.name === name,
+    )?.[workload] ?? "n/a"
+  )
+}
 
 export default function BunVsNode() {
   return (
@@ -38,20 +47,20 @@ export default function BunVsNode() {
         <tbody>
           <tr>
             <td>GET /users/:id</td>
-            <td>74,544 req/s</td>
-            <td>130,866 req/s</td>
+            <td>{httpValue("Node", "Nifra", "getUsers")} req/s</td>
+            <td>{httpValue("Bun", "Nifra", "getUsers")} req/s</td>
             <td>~1.8x</td>
           </tr>
           <tr>
             <td>POST /users (validated)</td>
-            <td>59,764 req/s</td>
-            <td>98,427 req/s</td>
+            <td>{httpValue("Node", "Nifra", "postUsers")} req/s</td>
+            <td>{httpValue("Bun", "Nifra", "postUsers")} req/s</td>
             <td>~1.6x</td>
           </tr>
           <tr>
             <td>SSR (React page, per request)</td>
-            <td>27,144 req/s</td>
-            <td>33,729 req/s</td>
+            <td>27,186 req/s</td>
+            <td>33,217 req/s</td>
             <td>~1.2x</td>
           </tr>
         </tbody>

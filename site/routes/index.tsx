@@ -91,20 +91,20 @@ const api = client<typeof app>("https://api.example.com")
 const res = await api.users({ id: "42" }).get()
 
 if (res.ok) {
-  res.data.name      // typed from the route return or response schema
+  res.data.id        // typed from the route return or response schema
 } else {
   res.error          // client-call failures are returned, never thrown
 }`
 
 const AGENT_CODE = `$ nifra context        # the project's live API surface - pipe into any agent prompt
-  GET  /users/:id   → response { id: string, name: string }
+  GET  /users/:id   → response { id: string }
   POST /users       body { name: string } → response { id: string, name: string }
 
 $ nifra mcp            # same data as an MCP server - Claude Code & Cursor read it automatically
 
 # The typed client is the safety lock - an agent physically can't call a route that changed:
 const res = await api.users({ id: "42" }).get()
-if (res.ok) res.data.name
+if (res.ok) res.data.id
 //              ^ tsc error here the moment the route or response shape changes
 
 $ nifra check          # CI gate: typecheck + typed-client lint - drift fails the build`
@@ -756,7 +756,7 @@ export default function Home() {
           <span className="kicker">Performance &amp; Speed</span>
           <h2>Screamingly fast, frontend and backend.</h2>
           <p>
-            Nifra runs close to raw Bun/Node speed. Full-stack SSR renders 3.8× to 28× faster than
+            Nifra runs close to raw Bun/Node speed. Full-stack SSR renders 3.9× to 25× faster than
             standard meta-frameworks on Node, while the backend router matches the fastest Node
             frameworks - tens of thousands of requests per second on a single core.
           </p>

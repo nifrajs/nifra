@@ -219,6 +219,17 @@ export const SVELTE_TABLE_B: readonly SsrBenchTarget[] = [
 export const PREACT_TABLE_A: readonly SsrBenchTarget[] = [
   nifraBun("nifra+preact", "nifra-preact", 4323),
   nifraNode("nifra+preact (node)", "nifra-preact", 4353),
+  {
+    // The renderer ceiling: preact-render-to-string on a bare node server - no framework.
+    name: "preact-ssr",
+    runtime: "node",
+    cwd: `${BENCH_DIR}/preact-ssr`,
+    build: ["sh", "-c", `${INSTALL} && bun run build.ts`],
+    serve: ["node", "dist/server.js"],
+    port: 4327,
+    serveEnv: NODE_HOST,
+    validate: CATALOG_HTML,
+  },
 ]
 
 export const PREACT_TABLE_B: readonly SsrBenchTarget[] = [
@@ -273,7 +284,7 @@ export const ALL_TABLE_SECTIONS: readonly {
   {
     label: "Preact - Table A (uncached SSR)",
     blurb:
-      "nifra+preact (Bun + Node) - Bun vs Node on the same app; no Preact meta-framework exists to bench against.",
+      "nifra+preact (Bun + Node) - Bun vs Node on the same app; no Preact meta-framework exists to bench against. preact-ssr is the raw render-to-string ceiling (no framework).",
     targets: PREACT_TABLE_A,
   },
   {

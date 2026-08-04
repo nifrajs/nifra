@@ -1,4 +1,11 @@
-import { MULTIPLIERS, SSR_TABLES, type SsrTableRow } from "../data/benchmarks"
+import {
+  HTTP_WORKLOADS,
+  type HttpWorkloadTable,
+  MULTIPLIERS,
+  SSR_TABLES,
+  SSR_TABLES_B,
+  type SsrTableRow,
+} from "../data/benchmarks"
 import { pageMeta } from "../meta"
 
 export const meta = pageMeta(
@@ -13,51 +20,43 @@ export const meta = pageMeta(
 const fmtMs = (ms: number): string => `${ms.toFixed(2)} ms`
 const fmtJs = (row: SsrTableRow): string => (row.jsGzKb > 0 ? `${row.jsGzKb} KB` : "n/a")
 
+function SsrRows({ rows }: { rows: readonly SsrTableRow[] }) {
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th>Target</th>
+          <th className="num">req/s</th>
+          <th className="num">p50</th>
+          <th className="num">p99</th>
+          <th className="num">client JS (gz)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={row.name} className={row.nifra ? "hl" : undefined}>
+            <td>{row.name}</td>
+            <td className="num">{row.rps.toLocaleString()}</td>
+            <td className="num">{fmtMs(row.p50ms)}</td>
+            <td className="num">{fmtMs(row.p99ms)}</td>
+            <td className="num">{fmtJs(row)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
 // ---- Backend: raw HTTP throughput across runtimes ----
 // Two core workloads per framework (path-param GET, validated POST) - see BENCHMARKS.md.
-type HttpRow = {
-  name: string
-  getUsers: string
-  postUsers: string
-  nifra?: boolean
-}
-type RuntimeTable = { title: string; rows: ReadonlyArray<HttpRow> }
+type HttpRow = HttpWorkloadTable["rows"][number]
+type RuntimeTable = HttpWorkloadTable
 
 // Bun/Deno: median of 5 full-matrix runs; Node: median-of-3 section run of 2026-08-04 (after the
 // Node serving optimizations). Bun 1.3.14 · Node 26 · Deno 2.8 · oha @ 50 conns. Read same-run
 // ratios, not absolutes. `bun-native`/`node-raw`/`deno-raw` are the runtime ceilings (no framework)
 // the framework rows chase - one ceiling row per runtime.
-const HTTP: ReadonlyArray<RuntimeTable> = [
-  {
-    title: "Bun",
-    rows: [
-      { name: "Nifra", getUsers: "130,866", postUsers: "98,427", nifra: true },
-      { name: "Elysia", getUsers: "130,219", postUsers: "93,818" },
-      { name: "bun-native", getUsers: "129,590", postUsers: "104,388" },
-      { name: "Hono", getUsers: "97,628", postUsers: "74,616" },
-    ],
-  },
-  {
-    title: "Node",
-    rows: [
-      { name: "Nifra", getUsers: "74,544", postUsers: "59,764", nifra: true },
-      { name: "node-raw", getUsers: "71,228", postUsers: "62,479" },
-      { name: "Fastify", getUsers: "73,663", postUsers: "53,442" },
-      { name: "Elysia", getUsers: "67,525", postUsers: "44,130" },
-      { name: "Express", getUsers: "44,176", postUsers: "37,883" },
-      { name: "Hono", getUsers: "42,227", postUsers: "32,332" },
-    ],
-  },
-  {
-    title: "Deno",
-    rows: [
-      { name: "deno-raw", getUsers: "120,085", postUsers: "97,533" },
-      { name: "Nifra", getUsers: "109,393", postUsers: "74,239", nifra: true },
-      { name: "Elysia", getUsers: "106,958", postUsers: "73,971" },
-      { name: "Hono", getUsers: "86,646", postUsers: "67,145" },
-    ],
-  },
-]
+const HTTP: ReadonlyArray<RuntimeTable> = HTTP_WORKLOADS
 
 /** Rank rows by geometric mean across the workloads - a single strong column (or a single weak
  * one) can't decide the order the way sorting by one workload alone would. */
@@ -107,10 +106,12 @@ export default function Benchmarks() {
       {/* ---- Frontend: full-stack SSR vs the meta-frameworks ---- */}
       <h2 style={{ marginTop: 40 }}>Full-stack SSR - Nifra vs the meta-frameworks</h2>
       <p className="lead">
-        A data-loaded HTML page rendered on <b>every request</b> (no caching), one section per UI
-        framework. Meta-frameworks run on Node through their own production server. Nifra shows two
-        rows per framework - <b>Bun</b> (its fastest path) and <b>Node</b> via{" "}
-        <code>@nifrajs/node</code> - so the Node rows compare apples-to-apples.
+        One section per UI framework, each with two explicitly-labelled tables:{" "}
+        <b>A - dynamic SSR</b> (the page rendered on every request, no caching) and{" "}
+        <b>B - cacheable</b> (the same page from each framework's SSG/ISR mode). Meta-frameworks run
+        on Node through their own production server. Nifra shows <b>Bun</b> and <b>Node</b> rows (
+        <code>@nifrajs/node</code>) so the Node rows compare apples-to-apples. The headline
+        multipliers below are Table A only.
       </p>
       <div className="mult-grid" style={{ margin: "20px 0 8px" }}>
         {MULTIPLIERS.map((m) => (
@@ -120,33 +121,29 @@ export default function Benchmarks() {
           </div>
         ))}
       </div>
-      {SSR_TABLES.map((table) => (
-        <div key={table.framework}>
-          <h3 style={{ marginTop: 28 }}>{table.framework}</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Target</th>
-                <th className="num">req/s</th>
-                <th className="num">p50</th>
-                <th className="num">p99</th>
-                <th className="num">client JS (gz)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {table.rows.map((row) => (
-                <tr key={row.name} className={row.nifra ? "hl" : undefined}>
-                  <td>{row.name}</td>
-                  <td className="num">{row.rps.toLocaleString()}</td>
-                  <td className="num">{fmtMs(row.p50ms)}</td>
-                  <td className="num">{fmtMs(row.p99ms)}</td>
-                  <td className="num">{fmtJs(row)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ))}
+      {SSR_TABLES.map((table) => {
+        const tableB = SSR_TABLES_B.find((b) => b.framework === table.framework)
+        return (
+          <div key={table.framework}>
+            <h3 style={{ marginTop: 28 }}>{table.framework}</h3>
+            <p className="note" style={{ margin: "6px 0 8px" }}>
+              <b>A - Dynamic SSR.</b> The page is rendered on <b>every request</b>, no caching: the
+              per-request cost, the number that matters for pages that can't be cached.
+            </p>
+            <SsrRows rows={table.rows} />
+            {tableB !== undefined && (
+              <>
+                <p className="note" style={{ margin: "14px 0 8px" }}>
+                  <b>B - Cacheable.</b> The same page served from each framework's cached mode -
+                  SSG, and ISR where supported (cache warmed before measuring). A cached row is not
+                  an SSR row: compare within this table only.
+                </p>
+                <SsrRows rows={tableB.rows} />
+              </>
+            )}
+          </div>
+        )
+      })}
       <div className="caveat">
         Meta-frameworks are Node-only in this matrix; compare them against Nifra's <b>Node</b> row
         (the headline multipliers above do exactly that). Preact has no maintained meta-framework,

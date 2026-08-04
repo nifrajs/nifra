@@ -29,6 +29,20 @@ export interface HttpRuntimeRow {
   readonly you?: boolean
 }
 
+/** One measured HTTP workload row, shared by the benchmarks page and comparison articles. */
+export interface HttpWorkloadRow {
+  readonly name: string
+  readonly getUsers: string
+  readonly postUsers: string
+  readonly nifra?: boolean
+}
+
+/** Per-runtime HTTP workload table from the canonical benchmark dataset. */
+export interface HttpWorkloadTable {
+  readonly title: string
+  readonly rows: readonly HttpWorkloadRow[]
+}
+
 /** A gzipped server-bundle size row (lower is better). */
 export interface BundleRow {
   readonly name: string
@@ -61,9 +75,13 @@ export interface SsrTable {
 
 export const HERO_SSR = data.heroSsr as readonly BenchRow[]
 export const SSR_TABLES = data.ssrTables as readonly SsrTable[]
+// Table B (cacheable: SSG/ISR) - rendered as separately-labelled tables, never blended with Table A.
+export const SSR_TABLES_B = ((data as { ssrTablesB?: readonly SsrTable[] }).ssrTablesB ??
+  []) as readonly SsrTable[]
 export const FRONTEND = data.frontend as readonly BenchRow[]
 export const MULTIPLIERS = data.multipliers as readonly Multiplier[]
 export const HTTP_RUNTIME = data.httpRuntime as readonly HttpRuntimeRow[]
 export const HTTP_BENCH = data.http as readonly BenchRow[]
+export const HTTP_WORKLOADS = data.httpWorkloads as readonly HttpWorkloadTable[]
 export const BUNDLE = data.bundle as readonly BundleRow[]
 export const PROOF = data.proof as readonly ProofStat[]

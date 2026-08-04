@@ -1,9 +1,9 @@
 /**
- * Turn a finished SSR run into the website's benchmark slices. `run.ts` collects each Table A
- * (uncached SSR) result and hands them here; the builders are pure so they can be unit-tested
- * without running oha. Table B (SSG/ISR) stays out of the site slices - the landing and
- * /benchmarks compare per-request SSR, and blending cached rows into that table is exactly the
- * apples-to-oranges read SSR-BENCHMARKS.md warns against.
+ * Turn a finished SSR run into the website's benchmark slices. `run.ts` collects each table's
+ * results and hands them here; the builders are pure so they can be unit-tested without running
+ * oha. Table A (uncached SSR) and Table B (SSG/ISR) are emitted as SEPARATE slices and rendered
+ * as separately-labelled tables - never blended into one, which is exactly the apples-to-oranges
+ * read SSR-BENCHMARKS.md warns against. The landing bar chart and multipliers stay Table A only.
  */
 import type { BenchRow, Multiplier } from "../site-bench.ts"
 import type { SsrBenchResult, SsrBenchTarget } from "./harness.ts"
@@ -40,7 +40,19 @@ const DISPLAY: Record<string, string> = {
   solidstart: "SolidStart (Node)",
   nuxt: "Nuxt (Node)",
   sveltekit: "SvelteKit (Node)",
+  // Table B - cacheable modes, labelled explicitly so a cached row can never read as SSR.
+  "next (static)": "Next.js static (Node)",
+  "next (ISR)": "Next.js ISR (Node)",
+  "solidstart (static)": "SolidStart static (Node)",
+  "nuxt (static)": "Nuxt static (Node)",
+  "sveltekit (static)": "SvelteKit static (Node)",
+  // Renderer ceiling - a hand-rolled single-route server, no framework. Labelled so a reader can
+  // see how close the framework rows run to the physical limit of the renderer itself.
+  "preact-ssr": "Raw Preact render (Node, ceiling)",
 }
+
+/** nifra Table B rows carry their mode in the bench name ("nifra+react (SSG)" / "(ISR)"). */
+const NIFRA_MODE = /\((SSG|ISR)\)$/
 
 /** The rival each framework's multiplier compares nifra's NODE row against (same-runtime, fair). */
 const RIVAL: Record<string, { target: string; label: string }> = {
@@ -53,8 +65,15 @@ const RIVAL: Record<string, { target: string; label: string }> = {
 function displayName(row: SsrRunRow): string {
   const mapped = DISPLAY[row.target.name]
   if (mapped !== undefined) return mapped
-  // nifra rows: "nifra+react" → "Nifra + React (Bun)", "nifra+react (node)" → "Nifra + React (Node)"
   const fw = row.framework
+  // nifra Table B rows: "nifra+react (SSG)" → "Nifra + React SSG (Bun)"
+  const mode = NIFRA_MODE.exec(row.target.name)
+  if (mode !== null) {
+    return row.target.runtime === "node"
+      ? `Nifra + ${fw} ${mode[1]} (Node)`
+      : `Nifra + ${fw} ${mode[1]} (Bun)`
+  }
+  // nifra rows: "nifra+react" → "Nifra + React (Bun)", "nifra+react (node)" → "Nifra + React (Node)"
   return row.target.runtime === "node" ? `Nifra + ${fw} (Node)` : `Nifra + ${fw} (Bun)`
 }
 

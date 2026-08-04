@@ -14,7 +14,7 @@
  */
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { httpSliceFromNode, writeSiteBench } from "../site-bench.ts"
+import { httpSliceFromNode, httpWorkloadsFromResults, writeSiteBench } from "../site-bench.ts"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const RUN = join(HERE, "run.ts")
@@ -223,4 +223,11 @@ process.stderr.write(`updated ${BENCHMARKS}\n`)
 // published bars never drift from the latest run. Skipped when this run had no Node section - so a
 // `bench:http bun` run leaves the site's Node slice intact rather than wiping it.
 const httpSlice = httpSliceFromNode(merged.node as never)
-if (httpSlice.length > 0) await writeSiteBench({ http: httpSlice })
+const httpWorkloads = httpWorkloadsFromResults(merged)
+if (httpSlice.length > 0) {
+  await writeSiteBench({
+    http: httpSlice,
+    // A single-runtime run must not erase the other runtime tables in the canonical dataset.
+    ...(runtimes.length === 3 && httpWorkloads.length === 3 ? { httpWorkloads } : {}),
+  })
+}

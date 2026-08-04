@@ -1,3 +1,4 @@
+import { HTTP_WORKLOADS } from "../../data/benchmarks"
 import { pageMeta } from "../../meta"
 
 export const hydrate = false
@@ -7,6 +8,14 @@ export const meta = pageMeta(
   "What 'TypeScript framework' actually means - typed handlers vs inferred clients vs runtime validation - and how Nifra, tRPC, Elysia, Hono, Fastify, and NestJS compare on each level, with measured throughput.",
   "/blog/typescript-api-framework",
 )
+
+function httpValue(runtime: string, name: string, workload: "getUsers" | "postUsers"): string {
+  return (
+    HTTP_WORKLOADS.find((table) => table.title === runtime)?.rows.find(
+      (row) => row.name === name,
+    )?.[workload] ?? "n/a"
+  )
+}
 
 export default function TypescriptApiFramework() {
   return (
@@ -71,21 +80,21 @@ export default function TypescriptApiFramework() {
             <td>Inferred, REST-shaped</td>
             <td>No</td>
             <td>Default (Standard Schema)</td>
-            <td>59,764</td>
+            <td>{httpValue("Node", "Nifra", "postUsers")}</td>
           </tr>
           <tr>
             <td>Fastify</td>
             <td>No (add OpenAPI + generator)</td>
             <td>Yes, for a client</td>
             <td>Default (JSON Schema)</td>
-            <td>53,442</td>
+            <td>{httpValue("Node", "Fastify", "postUsers")}</td>
           </tr>
           <tr>
             <td>Elysia</td>
             <td>Inferred (Eden)</td>
             <td>No</td>
             <td>Default (TypeBox)</td>
-            <td>44,130 (on Node; stronger on Bun)</td>
+            <td>{httpValue("Node", "Elysia", "postUsers")} (on Node; stronger on Bun)</td>
           </tr>
           <tr>
             <td>tRPC</td>

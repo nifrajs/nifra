@@ -35,6 +35,18 @@ export interface HttpRuntimeRow {
   readonly you?: boolean
 }
 
+export interface HttpWorkloadRow {
+  readonly name: string
+  readonly getUsers: string
+  readonly postUsers: string
+  readonly nifra?: boolean
+}
+
+export interface HttpWorkloadTable {
+  readonly title: string
+  readonly rows: readonly HttpWorkloadRow[]
+}
+
 /** A /benchmarks SSR table row (display-ready; `jsGzKb` = gzipped client JS in KB). */
 export interface SsrSiteRow {
   readonly name: string
@@ -58,8 +70,12 @@ export interface SiteBench {
   readonly frontend: readonly BenchRow[]
   readonly multipliers: readonly Multiplier[]
   readonly ssrTables?: readonly SsrSiteTable[]
+  /** Table B - cacheable modes (SSG/ISR), rendered as separately-labelled tables, never blended into ssrTables. */
+  readonly ssrTablesB?: readonly SsrSiteTable[]
   readonly httpRuntime?: readonly HttpRuntimeRow[]
   readonly http: readonly BenchRow[]
+  /** Core GET/POST workload comparison used by the benchmarks page and articles. */
+  readonly httpWorkloads?: readonly HttpWorkloadTable[]
   readonly bundle: readonly BundleRow[]
   readonly proof: readonly ProofStat[]
 }
@@ -91,6 +107,67 @@ export function httpSliceFromNode(
       rows.push({ name: label, reqs: Math.round(rps), you: key === "nifra" })
   }
   return rows.sort((a, b) => b.reqs - a.reqs)
+}
+
+/** Convert the complete core GET/POST matrix to the canonical article/page slice. A partial runtime
+ * result omits its table; the aggregate writer only publishes this slice when all runtimes ran. */
+export function httpWorkloadsFromResults(
+  results: Record<
+    string,
+    Record<string, Record<string, { readonly rps: number } | undefined> | undefined> | undefined
+  >,
+): readonly HttpWorkloadTable[] {
+  const runtimeConfig: ReadonlyArray<{
+    key: string
+    title: string
+    frameworks: readonly string[]
+  }> = [
+    { key: "bun", title: "Bun", frameworks: ["nifra", "elysia", "bun-native", "hono"] },
+    {
+      key: "node",
+      title: "Node",
+      frameworks: ["nifra", "node-raw", "fastify", "elysia", "express", "hono"],
+    },
+    { key: "deno", title: "Deno", frameworks: ["deno-raw", "nifra", "elysia", "hono"] },
+  ]
+  const display: Record<string, string> = {
+    nifra: "Nifra",
+    elysia: "Elysia",
+    "bun-native": "bun-native",
+    "node-raw": "node-raw",
+    "deno-raw": "deno-raw",
+    fastify: "Fastify",
+    express: "Express",
+    hono: "Hono",
+  }
+  const format = (rps: number): string => Math.round(rps).toLocaleString("en-US")
+  const tables: HttpWorkloadTable[] = []
+  for (const runtime of runtimeConfig) {
+    const source = results[runtime.key]
+    if (source === undefined) continue
+    const rows: HttpWorkloadRow[] = []
+    for (const framework of runtime.frameworks) {
+      const get = source[framework]?.["GET /users/:id"]?.rps
+      const post = source[framework]?.["POST /users"]?.rps
+      if (
+        get === undefined ||
+        post === undefined ||
+        !Number.isFinite(get) ||
+        !Number.isFinite(post) ||
+        get < 0 ||
+        post < 0
+      )
+        continue
+      rows.push({
+        name: display[framework] ?? framework,
+        getUsers: format(get),
+        postUsers: format(post),
+        ...(framework === "nifra" ? { nifra: true } : {}),
+      })
+    }
+    if (rows.length > 0) tables.push({ title: runtime.title, rows })
+  }
+  return tables
 }
 
 /** Read the site data, merge the slice, write it back (stable 2-space JSON). No-ops on an empty slice. */

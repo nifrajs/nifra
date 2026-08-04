@@ -13,7 +13,7 @@ const PAGES: ReadonlyArray<{ slug: string; title: string; summary: string }> = [
     slug: "nextjs",
     title: "Nifra vs Next.js",
     summary:
-      "28x SSR throughput in reproducible benchmarks, five UI frameworks instead of one, typed end-to-end without codegen - and why RSC-first apps should still pick Next.",
+      "25x SSR throughput in reproducible benchmarks, five UI frameworks instead of one, typed end-to-end without codegen - and why RSC-first apps should still pick Next.",
   },
   {
     slug: "elysia",
