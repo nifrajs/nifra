@@ -4,7 +4,7 @@ export const hydrate = false
 
 export const meta = pageMeta(
   "Next.js alternatives in 2026 - what to use and when · Nifra",
-  "An honest guide to Next.js alternatives in 2026: Remix, SvelteKit, Nuxt, SolidStart, Astro, and nifra - who each is for, measured SSR throughput, and the cases where staying on Next.js is right.",
+  "An honest guide to Next.js alternatives in 2026: Remix, SvelteKit, Nuxt, SolidStart, Astro, and Nifra - who each is for, measured SSR throughput, and the cases where staying on Next.js is right.",
   "/blog/nextjs-alternatives-2026",
 )
 
@@ -14,7 +14,7 @@ export default function NextjsAlternatives() {
       <h1>Next.js alternatives in 2026</h1>
       <p>
         <em>
-          Updated 2026-08-04 · Disclosure: we build nifra, one of the options below. SSR numbers are
+          Updated 2026-08-04 · Disclosure: we build Nifra, one of the options below. SSR numbers are
           from our published, reproducible harness - including the rows we lose.
         </em>
       </p>
@@ -41,7 +41,7 @@ export default function NextjsAlternatives() {
         </thead>
         <tbody>
           <tr>
-            <td>nifra (ours)</td>
+            <td>Nifra (ours)</td>
             <td>27,144 (React) - 28,359 (Solid)</td>
             <td>React, Vue, Svelte, Solid, Preact</td>
             <td>Typed end-to-end, zero codegen, runtime-portable</td>
@@ -88,7 +88,7 @@ export default function NextjsAlternatives() {
       <h2>Match the alternative to your reason</h2>
       <ul>
         <li>
-          <strong>"RSC complexity is killing us, keeping React":</strong> nifra (streaming SSR +
+          <strong>"RSC complexity is killing us, keeping React":</strong> Nifra (streaming SSR +
           islands, no RSC, typed loaders/actions) or Remix/React Router. If your app is architected
           AROUND RSC, stay on Next.js - porting that model is a rewrite.
         </li>
@@ -98,12 +98,12 @@ export default function NextjsAlternatives() {
           overhead, not React itself (<a href="/compare/nextjs">the breakdown</a>).
         </li>
         <li>
-          <strong>"Vercel coupling":</strong> SvelteKit, Nuxt, and nifra all deploy anywhere; nifra
+          <strong>"Vercel coupling":</strong> SvelteKit, Nuxt, and Nifra all deploy anywhere; Nifra
           additionally treats the runtime itself (Bun/Node/Deno/edge) as an adapter.
         </li>
         <li>
           <strong>"We want a different UI library":</strong> SvelteKit for Svelte, Nuxt for Vue,
-          SolidStart for Solid - or nifra if you want the freedom to change that decision later
+          SolidStart for Solid - or Nifra if you want the freedom to change that decision later
           without a backend rewrite (same routes and loaders across all five libraries).
         </li>
         <li>
@@ -112,9 +112,9 @@ export default function NextjsAlternatives() {
         </li>
       </ul>
 
-      <h2>Where nifra fits (and where it doesn't)</h2>
+      <h2>Where Nifra fits (and where it doesn't)</h2>
       <p>
-        nifra is the pick when the API and frontend are one typed product: the client and loaders
+        Nifra is the pick when the API and frontend are one typed product: the client and loaders
         are inferred from the server's TypeScript (zero codegen), validation is on by default, SSR
         runs ~28x Next.js in our harness, and the docs/types are a{" "}
         <a href="/blog/docs-as-mcp">live MCP server</a> so AI agents build against the real API. It

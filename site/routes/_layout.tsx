@@ -271,24 +271,26 @@ const css = `
     width: 8px; height: 8px; border-radius: 50%; background: var(--agent-accent);
     box-shadow: 0 0 0 4px color-mix(in srgb, var(--agent-accent) 18%, transparent);
   }
-  .agent-board-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--agent-grid-bg); }
+  .agent-board-grid { display: grid; grid-template-columns: 1fr; gap: 1px; background: var(--agent-grid-bg); }
   .agent-step {
-    display: grid; grid-template-columns: 34px 1fr; gap: 12px; padding: 18px 16px;
+    display: grid; grid-template-columns: 30px 1fr; gap: 12px; padding: 13px 16px 14px;
     background: var(--agent-step-bg);
   }
   .agent-step-no {
     font-family: ${MONO}; font-size: 12px; font-weight: 800; color: var(--agent-accent);
+    padding-top: 3px;
   }
+  .agent-step-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .agent-step code {
-    display: inline-block; margin: 0 0 8px; color: var(--agent-code-fg);
+    display: inline-block; margin: 0; color: var(--agent-code-fg);
     font-family: ${MONO}; font-size: 12px; background: var(--agent-code-bg);
     border: 1px solid var(--agent-code-border); border-radius: 5px; padding: 1px 7px;
   }
   .agent-step h2 {
-    margin: 0; color: var(--agent-fg); font-size: 17px; line-height: 1.22; letter-spacing: 0;
+    margin: 0; color: var(--agent-fg); font-size: 15px; line-height: 1.25; letter-spacing: 0;
   }
   .agent-step p {
-    margin: 7px 0 0; color: var(--agent-muted); font-size: 13px; line-height: 1.45;
+    margin: 5px 0 0; color: var(--agent-muted); font-size: 12.5px; line-height: 1.45;
   }
 
   /* ---- benchmark bars ---- */
@@ -1082,7 +1084,7 @@ const css = `
     .fw-panels { grid-template-columns: 1fr; }
   }
 
-  /* ---- nifra bot island ---- */
+  /* ---- Nifra bot island ---- */
   .nifra-bot-container {
     position: fixed;
     z-index: 10000;
@@ -1445,6 +1447,41 @@ const css = `
     font-size: 11.5px;
     font-weight: 700;
     color: var(--green-2);
+  }
+  /* "Dependencies Nifra replaces" - swap rows: old stack → Nifra package */
+  .replace-groups {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px;
+    max-width: 1100px; margin: 28px auto 0; text-align: left; align-items: start;
+  }
+  @media (max-width: 1020px) { .replace-groups { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 680px) { .replace-groups { grid-template-columns: 1fr; } }
+  .replace-cat {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 4px 16px 6px;
+    transition: border-color .15s ease, transform .15s ease;
+  }
+  .replace-cat:hover { border-color: var(--green); transform: translateY(-1px); }
+  .replace-cat-head {
+    font-family: ${MONO}; font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--muted);
+    padding: 11px 0 8px; border-bottom: 1px solid var(--line);
+  }
+  .replace-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 11px 0; min-width: 0;
+    border-bottom: 1px dashed var(--line);
+  }
+  .replace-row:last-child { border-bottom: 0; }
+  .replace-old {
+    color: var(--muted); font-size: 13px; font-weight: 500; min-width: 0; line-height: 1.35;
+  }
+  .replace-arrow { color: var(--line-2); flex: none; font-size: 13px; }
+  .replace-cat:hover .replace-arrow { color: var(--green); }
+  .replace-pkg {
+    font-family: 'JetBrains Mono', ${MONO}; font-size: 12px; font-weight: 700;
+    color: var(--green-2); background: var(--green-soft);
+    border: 1px solid var(--line); border-radius: 7px; padding: 4px 10px;
+    flex: none; white-space: nowrap;
   }
   .ecosystem-badge {
     font-size: 9px;

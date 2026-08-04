@@ -71,9 +71,9 @@ bun create nifra my-app --framework solid      # or react · preact · vue · sv
 # Composes with the deploy preset - pick a framework AND a default deploy target:
 bun create nifra my-app --framework svelte --deploy vercel`
 
-const VUE_SFC = `<!-- routes/index.vue - a nifra route authored as a Vue Single-File Component -->
+const VUE_SFC = `<!-- routes/index.vue - a Nifra route authored as a Vue Single-File Component -->
 <script lang="ts">
-// The plain <script> carries nifra's route convention (server-only named exports):
+// The plain <script> carries Nifra's route convention (server-only named exports):
 export const meta = { title: "Home" }
 export async function loader({ api }) {
   const res = await api.count.get()
@@ -82,7 +82,7 @@ export async function loader({ api }) {
 </script>
 
 <script setup lang="ts">
-defineProps(["data"])          // nifra passes the loader data in as \`data\`
+defineProps(["data"])          // Nifra passes the loader data in as \`data\`
 </script>
 
 <template>

@@ -6,7 +6,7 @@ export const hydrate = false
 
 export const meta = pageMeta(
   "Nifra - Hydration & pre-hydration forms",
-  "SSR pages become interactive after hydration. nifra keeps that gap safe: progressive-enhancement forms and links work before it, and a JS-only form's broken native submit is guarded automatically.",
+  "SSR pages become interactive after hydration. Nifra keeps that gap safe: progressive-enhancement forms and links work before it, and a JS-only form's broken native submit is guarded automatically.",
   "/docs/hydration",
 )
 
@@ -23,7 +23,7 @@ async function onSubmit(e: FormEvent) {
 }
 return <form onSubmit={onSubmit}>…</form>`
 
-const OPT_OUT = `<form data-native>…</form>   {/* nifra won't guard it - native submit is intended */}`
+const OPT_OUT = `<form data-native>…</form>   {/* Nifra won't guard it - native submit is intended */}`
 
 const GATE_CSS = `html:not([data-nifra-hydrated]) [data-needs-js] { opacity: 0.6; pointer-events: none; }`
 
@@ -41,7 +41,7 @@ export default function Hydration() {
     <div className="prose">
       <h1 className="page">Hydration &amp; pre-hydration forms</h1>
       <p className="lead">
-        An SSR page is visible at once but interactive only after its island hydrates. nifra keeps
+        An SSR page is visible at once but interactive only after its island hydrates. Nifra keeps
         that gap safe for you - you rarely have to think about it.
       </p>
 
@@ -61,7 +61,7 @@ export default function Hydration() {
       </p>
       <CodeBlock code={JS_FORM} />
       <p>
-        nifra blocks that native submit until hydration commits, so the worst case is a no-op click -
+        Nifra blocks that native submit until hydration commits, so the worst case is a no-op click -
         never a broken navigation. It never touches a <code>method="post"</code> form or a GET form
         with a real action. Opt a form out with <code>data-native</code>:
       </p>

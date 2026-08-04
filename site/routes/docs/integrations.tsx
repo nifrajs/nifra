@@ -5,7 +5,7 @@ export const hydrate = false
 
 export const meta = pageMeta(
   "Nifra - Integrations (Stripe, and any npm library)",
-  "Third-party libraries work in nifra as-is - handlers are plain TypeScript. The Stripe recipe end-to-end: SDK calls in a route, constant-time webhook verification, and idempotent processing.",
+  "Third-party libraries work in Nifra as-is - handlers are plain TypeScript. The Stripe recipe end-to-end: SDK calls in a route, constant-time webhook verification, and idempotent processing.",
   "/docs/integrations",
 )
 
@@ -57,7 +57,7 @@ export default function Integrations() {
     <div className="prose">
       <h1 className="page">Integrations</h1>
       <p className="lead">
-        The most important thing on this page: <strong>you rarely need it</strong>. A nifra handler
+        The most important thing on this page: <strong>you rarely need it</strong>. A Nifra handler
         is plain TypeScript running on Bun, Node, Deno, or the edge - the npm ecosystem works
         as-is. Stripe, OpenAI, Resend, Drizzle, Prisma, AWS SDKs: import them and call them, the
         way their own documentation shows.
@@ -66,8 +66,8 @@ export default function Integrations() {
       <h2>When you need nothing at all</h2>
       <p>
         If a library is called from your code - an SDK, a database client, a date library - there is
-        no integration step. It does not know or care that nifra is serving the request. The one
-        rule that still applies is nifra's own: anything crossing a trust boundary (a request body,
+        no integration step. It does not know or care that Nifra is serving the request. The one
+        rule that still applies is Nifra's own: anything crossing a trust boundary (a request body,
         a webhook payload, a third-party response you act on) goes through a schema first.
       </p>
 

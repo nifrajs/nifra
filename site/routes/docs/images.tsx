@@ -15,7 +15,7 @@ const BACKENDS = `// doc-check: skip - illustrates third-party codecs (sharp, @j
 import { createImageHandler } from "@nifrajs/image/server"
 import { sharpImageBackend, wasmImageBackend } from "@nifrajs/image/backends"
 
-// Node - libvips via sharp. Pass your own import (nifra never depends on it):
+// Node - libvips via sharp. Pass your own import (Nifra never depends on it):
 import sharp from "sharp"
 createImageHandler({ backend: sharpImageBackend(sharp), root: "./public" })
 
@@ -150,11 +150,11 @@ export default function Images() {
       </p>
       <CodeBlock code={LOADERS} />
 
-      <h2>Self-hosting - nifra's own resize endpoint</h2>
+      <h2>Self-hosting - Nifra's own resize endpoint</h2>
       <p>
         No CDN? <code>@nifrajs/image/server</code>'s <code>createImageHandler</code> is a self-hosted resize
         endpoint backed by <code>Bun.Image</code> (libjpeg-turbo / libspng / libwebp, decoded off-thread).
-        Pair it with <code>selfHostedLoader</code> and nifra resizes your own images - no third party in the
+        Pair it with <code>selfHostedLoader</code> and Nifra resizes your own images - no third party in the
         path.
       </p>
       <CodeBlock code={SELFHOST} />
@@ -197,7 +197,7 @@ export default function Images() {
         </li>
         <li>
           <code>sharpImageBackend(sharp)</code> - libvips for Node. You pass your <code>sharp</code> import
-          (nifra keeps zero dependency on it, and you pin the version).
+          (Nifra keeps zero dependency on it, and you pin the version).
         </li>
         <li>
           <code>wasmImageBackend(codecs)</code> - pure-WASM decode/resize/encode you wire up (jSquash is

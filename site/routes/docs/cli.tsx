@@ -11,7 +11,7 @@ export const meta = pageMeta(
   "/docs/cli",
 )
 
-const COMMANDS = `nifra dev      # true-HMR dev server (Vite middleware + nifra SSR) - http://localhost:4321
+const COMMANDS = `nifra dev      # true-HMR dev server (Vite middleware + Nifra SSR) - http://localhost:4321
 nifra build    # full Bun deploy → dist/server.js + content-hashed dist/assets/ (default target: bun)
 nifra start    # run dist/server.js on Bun
 nifra build --target cf-pages  # also: node | deno | vercel | static; add --report for chunk sizes

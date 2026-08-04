@@ -69,7 +69,7 @@ export default function FullstackBunGuide() {
       <p className="lead">
         Bun made the runtime fast and the tooling unified. What it does not give you is an
         application architecture: routing, rendering, validation, and a typed line between your
-        server and your frontend. This is the practical walkthrough of that layer with nifra - a
+        server and your frontend. This is the practical walkthrough of that layer with Nifra - a
         full-stack TypeScript framework built Bun-first - from scaffold to a deployable app.
       </p>
 
@@ -115,7 +115,7 @@ export default function FullstackBunGuide() {
         <code>bun run dev</code> gives you HMR and SSR. The part most frameworks do not have:{" "}
         <code>nifra check</code> verifies your app - schema coverage, route hygiene, drift between
         contract and code - and returns structured output. If an AI agent writes part of your app
-        (increasingly, it does), it reads those failures and fixes its own mistakes. nifra's docs,
+        (increasingly, it does), it reads those failures and fixes its own mistakes. Nifra's docs,
         examples, and API types are also a <a href="/blog/docs-as-mcp">live MCP server</a> your
         assistant can query mid-task.
       </p>
@@ -135,7 +135,7 @@ export default function FullstackBunGuide() {
           <a href="/docs">The docs</a> - routing, loaders, mutations, ISR, jobs, caching, auth.
         </li>
         <li>
-          <a href="/compare">How nifra compares</a> to Next.js, Elysia, Hono, and Fastify.
+          <a href="/compare">How Nifra compares</a> to Next.js, Elysia, Hono, and Fastify.
         </li>
         <li>
           <a href="/docs/agents">Agent setup</a> - connect your AI assistant to the live docs

@@ -97,7 +97,7 @@ export default function Migrate2() {
       <h2>1. Run the executable upgrade</h2>
       <CodeBlock code={COMMANDS} lang="sh" />
       <p>
-        The command updates existing <code>@nifrajs/*</code>, <code>nifra</code>, and{" "}
+        The command updates existing <code>@nifrajs/*</code>, <code>Nifra</code>, and{" "}
         <code>create-nifra</code> dependency ranges to <code>2.0.0</code> while preserving
         caret/tilde/exact style. It also replaces the removed <code>@nifrajs/budget</code> dependency
         with <code>@nifrajs/core</code> and moves its imports to{" "}
@@ -120,7 +120,7 @@ export default function Migrate2() {
 
       <h2>3. Use the lean package entry points</h2>
       <p>
-        The <code>@nifrajs/core</code> and <code>nifra</code> roots now expose the lean HTTP server
+        The <code>@nifrajs/core</code> and <code>Nifra</code> roots now expose the lean HTTP server
         surface. Prefer <code>@nifrajs/core/server</code> for <code>server()</code>, and import
         contracts, assurance, capabilities, budgets, manifests, reflection, SSE, WebSockets, and
         other optional systems from their documented subpaths.

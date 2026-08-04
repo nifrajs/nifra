@@ -16,26 +16,63 @@ export const hydrate = false
 export const islandScripts = [HOME_COUNTER_ENTRY]
 
 // One honest row per shipped capability - the stack you'd otherwise assemble vs the package that
-// covers it. No overselling: rows only exist where the nifra package genuinely does that job.
-const REPLACES: ReadonlyArray<readonly [string, string]> = [
-  ["express / fastify / hono", "@nifrajs/core"],
-  ["tRPC / OpenAPI client codegen", "@nifrajs/client"],
-  ["helmet + cors + express-rate-limit", "@nifrajs/middleware"],
-  ["BullMQ", "@nifrajs/jobs"],
-  ["node-cron", "@nifrajs/cron"],
-  ["multer", "@nifrajs/uploads"],
-  ["dotenv + envalid", "@nifrajs/env"],
-  ["keyv / node-cache", "@nifrajs/cache"],
-  ["i18next", "@nifrajs/i18n"],
-  ["supertest", "@nifrajs/testing"],
-  ["swagger-jsdoc", "@nifrajs/schema/openapi"],
-  ["contentlayer", "@nifrajs/content"],
+// covers it. No overselling: rows only exist where the Nifra package genuinely does that job.
+const REPLACE_GROUPS: ReadonlyArray<{
+  title: string
+  rows: ReadonlyArray<readonly [string, string]>
+}> = [
+  {
+    title: "API & server",
+    rows: [
+      ["express / fastify / hono", "@nifrajs/core"],
+      ["helmet + cors + express-rate-limit", "@nifrajs/middleware"],
+      ["swagger-jsdoc", "@nifrajs/schema/openapi"],
+    ],
+  },
+  {
+    title: "Typed client & data",
+    rows: [
+      ["tRPC / OpenAPI client codegen", "@nifrajs/client"],
+      ["TanStack Query (loader cache + mutations)", "@nifrajs/web"],
+    ],
+  },
+  {
+    title: "Background work",
+    rows: [
+      ["BullMQ (single-node jobs)", "@nifrajs/jobs"],
+      ["node-cron", "@nifrajs/cron"],
+    ],
+  },
+  {
+    title: "Files & media",
+    rows: [
+      ["multer", "@nifrajs/uploads"],
+      ["flydrive (fs + R2 blob storage)", "@nifrajs/storage"],
+      ["sharp + srcset glue (responsive images)", "@nifrajs/image"],
+    ],
+  },
+  {
+    title: "App services",
+    rows: [
+      ["dotenv + envalid", "@nifrajs/env"],
+      ["keyv / node-cache", "@nifrajs/cache"],
+      ["i18next (locale + ICU formatting)", "@nifrajs/i18n"],
+      ["contentlayer", "@nifrajs/content"],
+    ],
+  },
+  {
+    title: "Testing & mocks",
+    rows: [
+      ["supertest", "@nifrajs/testing"],
+      ["json-server (contract mocks)", "@nifrajs/mock"],
+    ],
+  },
 ]
 
 const BACKEND_CODE = `import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
-// A typed API - no frontend required. Use nifra like Hono or Elysia.
+// A typed API - no frontend required. Use Nifra like Hono or Elysia.
 export const app = server()
   .get("/users/:id", (c) => ({ id: c.params.id }))
   .post("/users", { body: t.object({ name: t.string() }) }, (c) => {
@@ -86,6 +123,36 @@ export default toFetchHandler(app)`
 
 // The five UI adapters, shown as a CSS-only switcher: the SAME routes/loaders/actions/islands -
 // only the adapter import changes. Real packages (@nifrajs/web-<fw>), so the swap is truthful.
+const ASSURE_CODE = `// nifra.assurance.ts - security posture as policy, not convention
+import { defineAssuranceConfig, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
+import { app } from "./src/app"
+
+export default defineAssuranceConfig({
+  source: app,
+  capabilities: {
+    definitions: [{ id: "db.write", zone: "domain", access: "write" }],
+    provenance: {
+      // Keep the example complete: assurance classification needs both a capability definition
+      // and static provenance coverage for the effect it is meant to protect.
+      imports: [{ specifier: "./db/write.ts", capabilities: ["db.write"] }],
+      forbiddenImports: [],
+    },
+  },
+  policy: {
+    rules: [
+      {
+        // Every domain write must prove authentication - no exceptions, no drift.
+        name: "authenticated-write",
+        match: { access: "write", zone: "domain" },
+        require: [NIFRA_ASSURANCE.AUTHENTICATED],
+      },
+    ],
+  },
+})
+
+// $ nifra assure
+// ✖ POST /notes (authenticated-write) is missing nifra.authenticated`
+
 const FW_TABS = [
   {
     key: "react",
@@ -170,7 +237,7 @@ const AGENT_LOOP = [
     step: "01",
     command: "nifra_context",
     title: "Read the live app",
-    body: "Routes, schemas, middleware, package versions, and project conventions in a compact payload.",
+    body: "Routes, schemas, middleware, and conventions - the real API surface, not stale docs.",
   },
   {
     step: "02",
@@ -182,13 +249,19 @@ const AGENT_LOOP = [
     step: "03",
     command: "nifra_run",
     title: "Verify the behavior",
-    body: "HTTP, SSR, WebSocket, and subprocess checks run against the current workspace.",
+    body: "HTTP, SSR, and WebSocket checks run against the current workspace.",
   },
   {
     step: "04",
     command: "nifra_check",
     title: "Block drift",
-    body: "Typecheck, route-contract checks, and conservative fix suggestions before CI goes green.",
+    body: "Typecheck and route-contract checks, with the fix suggested, before CI goes green.",
+  },
+  {
+    step: "05",
+    command: "nifra_assure",
+    title: "Prove the security posture",
+    body: "Policy classifies every route - an unauthenticated write fails the build, named.",
   },
 ] as const
 
@@ -254,7 +327,7 @@ $ claude mcp add nifra -- bunx nifra mcp
     step: "05",
     pkg: "nifra check",
     title: "Enforce Seams in CI",
-    body: "Block breaking changes from merging. The nifra linter analyzes client-server bindings and flags frontend-backend drift in a single command, keeping your pipeline green.",
+    body: "Block breaking changes from merging. The Nifra linter analyzes client-server bindings and flags frontend-backend drift in a single command, keeping your pipeline green.",
     code: `# Run linter and typecheck in your GitHub actions
 $ nifra check
 
@@ -413,16 +486,17 @@ export default function Home() {
         <div className="hero-copy">
           <div className="hero-badge">
             <span className="badge-dot" />
-            Agent-native framework · typed APIs · verified edits
+            Agent-native framework · typed APIs · provable security
           </div>
           <h1>
             The <em>AI-Native</em> TypeScript Framework.
           </h1>
           <p className="tagline">
-            Nifra gives agents the live map they need: MCP context, route-aware scaffolds,
-            self-verifying tools, and a <strong>no-codegen typed client</strong>. Start with a fast
-            API, grow into SSR across React, Solid, Vue, Preact, or Svelte, and deploy on Bun, Node,
-            Deno, or the edge.
+            Nifra gives agents the live map they need - MCP context, route-aware scaffolds,
+            self-verifying tools, a <strong>no-codegen typed client</strong> - and a{" "}
+            <strong>route-assurance gate</strong> so nothing they write ships an unproven route.
+            Start with a fast API, grow into SSR across React, Solid, Vue, Preact, or Svelte, and
+            deploy on Bun, Node, Deno, or the edge.
           </p>
           <div className="hero-actions">
             <InstallWidget />
@@ -434,7 +508,7 @@ export default function Home() {
             </a>
           </div>
           <p className="hero-fineprint">
-            No generated SDK. No stale route docs. No framework lock-in.
+            No generated SDK. No stale route docs. No unproven routes. No lock-in.
           </p>
         </div>
         <div className="agent-board">
@@ -447,8 +521,10 @@ export default function Home() {
               <article className="agent-step" key={item.command}>
                 <span className="agent-step-no">{item.step}</span>
                 <div>
-                  <code>{item.command}</code>
-                  <h2>{item.title}</h2>
+                  <div className="agent-step-head">
+                    <code>{item.command}</code>
+                    <h2>{item.title}</h2>
+                  </div>
                   <p>{item.body}</p>
                 </div>
               </article>
@@ -460,10 +536,10 @@ export default function Home() {
       {/* VALUE ROW - lead with the why */}
       <section className="value-row">
         <div className="value-item">
-          <strong>Agents read your live API</strong>
+          <strong>Agents read your live API - and can't ship an unproven route</strong>
           <span>
-            An MCP server exposes your real routes and schemas to coding agents; a typed client lets
-            them call those routes with full autocomplete.
+            An MCP server exposes your real routes and schemas to coding agents, and the assurance
+            gate fails the build if anything they write skips auth or validation.
           </span>
         </div>
         <div className="value-item">
@@ -500,9 +576,11 @@ export default function Home() {
           <p>
             Run <code>nifra mcp</code> and point Claude Code or Cursor at it: an integrated MCP
             server plus a conventions file expose your project's live routes, schemas, examples, and
-            drift checks, so the agent reads the real API surface directly.
+            drift checks, so the agent reads the real API surface directly. It runs on your machine
+            - your code never leaves it. The docs tools are also hosted at{" "}
+            <code>mcp.nifra.dev</code> for agents outside a checkout.
           </p>
-          <a href="/docs/cli" className="perf-link">
+          <a href="/docs/agents" className="perf-link">
             Read about Agent MCP →
           </a>
         </div>
@@ -590,6 +668,25 @@ export default function Home() {
         <CodeBlock code={BACKEND_CODE} lang="ts" />
       </section>
 
+      {/* FEATURE 6: ROUTE ASSURANCE */}
+      <section id="sec-assure" className="feature-showcase reverse">
+        <div className="feature-info">
+          <span className="kicker">06 · Route Assurance</span>
+          <h2>Every route proves its security posture - or the build fails.</h2>
+          <p>
+            <code>nifra assure</code> classifies every real route against a policy file and fails CI
+            naming exactly what evidence is missing - an unauthenticated write, an unvalidated body,
+            an undeclared database effect. Linters pattern-match source and spec linters check a
+            document that can lie; this gate reads the live route graph. No other framework ships
+            it.
+          </p>
+          <a href="/docs/capabilities" className="perf-link">
+            Read about Assurance →
+          </a>
+        </div>
+        <CodeBlock code={ASSURE_CODE} lang="ts" />
+      </section>
+
       {/* FEATURES ECOSYSTEM GRID SECTION */}
       <section id="sec-ecosystem" className="section">
         <div
@@ -623,27 +720,30 @@ export default function Home() {
           ))}
         </div>
 
-        <div style={{ textAlign: "center", maxWidth: "760px", margin: "56px auto 0" }}>
-          <h3 style={{ marginBottom: 8 }}>Dependencies you can skip</h3>
-          <p className="note" style={{ marginBottom: 20 }}>
-            Each row is a stack you would otherwise assemble and keep in sync yourself. All of it is
-            optional - nifra packages are modular, and anything below still works alongside them.
-            And everything NOT on this list needs no integration at all: handlers are plain
-            TypeScript, so Stripe, OpenAI, Drizzle, Prisma, and the rest of npm work as-is -{" "}
-            <a href="/docs/integrations">see integrations</a>.
+        <div style={{ textAlign: "center", margin: "64px auto 0" }}>
+          <h3 style={{ fontSize: 26, marginBottom: 10 }}>Dependencies Nifra replaces</h3>
+          <p className="note" style={{ maxWidth: 720, margin: "0 auto" }}>
+            Each stack on the left is one you would otherwise assemble and keep in sync yourself.
+            Everything else on npm - Stripe, OpenAI, Drizzle, Prisma - needs no integration at all:
+            handlers are plain TypeScript, so it works as-is (
+            <a href="/docs/integrations">see integrations</a>).
           </p>
-          <table style={{ margin: "0 auto", textAlign: "left" }}>
-            <tbody>
-              {REPLACES.map(([instead, pkg]) => (
-                <tr key={pkg}>
-                  <td style={{ color: "var(--muted)", padding: "4px 18px 4px 0" }}>{instead}</td>
-                  <td>
-                    <code>{pkg}</code>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="replace-groups">
+            {REPLACE_GROUPS.map((group) => (
+              <div className="replace-cat" key={group.title}>
+                <div className="replace-cat-head">{group.title}</div>
+                {group.rows.map(([instead, pkg]) => (
+                  <div className="replace-row" key={pkg + instead}>
+                    <span className="replace-old">{instead}</span>
+                    <span className="replace-arrow" aria-hidden="true">
+                      →
+                    </span>
+                    <code className="replace-pkg">{pkg}</code>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 

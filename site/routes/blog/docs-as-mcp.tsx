@@ -79,9 +79,9 @@ export default function DocsAsMcp() {
         which means clients that browse the registry can discover it without any of this setup.
       </p>
       <p>
-        There is a second, more interesting endpoint: every nifra project is itself an MCP surface.{" "}
+        There is a second, more interesting endpoint: every Nifra project is itself an MCP surface.{" "}
         <code>nifra mcp</code> exposes the app's real routes, schemas, and verification commands to
-        the assistant working on it - not what the docs say a nifra app looks like, but what{" "}
+        the assistant working on it - not what the docs say a Nifra app looks like, but what{" "}
         <em>this</em> app's contract actually is. The generic docs server answers "how does the
         framework work"; the project server answers "what did we build".
       </p>
@@ -90,7 +90,7 @@ export default function DocsAsMcp() {
       <p>
         The failure mode of every machine-readable corpus is staleness. If the corpus is maintained
         by hand, it drifts from the code within weeks, and now the agent is confidently wrong with
-        citations. So the rule in nifra's repo is that no machine-facing doc is hand-written:
+        citations. So the rule in Nifra's repo is that no machine-facing doc is hand-written:
       </p>
       <ul>
         <li>
@@ -142,7 +142,7 @@ export default function DocsAsMcp() {
       <h2>Try it</h2>
       <p>
         Add <code>https://mcp.nifra.dev</code> to your MCP client and ask it something specific
-        about nifra - then scaffold an app with <code>bunx create-nifra</code> and watch the
+        about Nifra - then scaffold an app with <code>bunx create-nifra</code> and watch the
         verification loop run. Setup for each client is on the{" "}
         <a href="/docs/agents">agents page</a>. If you maintain a framework and want to compare
         notes on any of this, the <a href="https://github.com/nifrajs/nifra">repo</a> is open.

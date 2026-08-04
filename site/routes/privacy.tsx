@@ -21,7 +21,7 @@ export default function Privacy() {
       <p>
         This policy covers the <strong>nifra.dev</strong> website and the hosted{" "}
         <strong>nifra docs MCP server</strong> at <code>mcp.nifra.dev</code> - the endpoint AI
-        assistants connect to for nifra's documentation, examples, and API types.
+        assistants connect to for Nifra's documentation, examples, and API types.
       </p>
 
       <h2>What we collect</h2>

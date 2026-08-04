@@ -134,7 +134,7 @@ export default function Capabilities() {
       <p>
         On its own that is an assertion. What makes it load-bearing is the other half:{" "}
         <code>provenance.imports</code> maps a module specifier to the capabilities that reaching it
-        implies, so nifra can compare what a route <em>says</em> against what it <em>can do</em>.
+        implies, so Nifra can compare what a route <em>says</em> against what it <em>can do</em>.
       </p>
       <CodeBlock code={POLICY} lang="ts" />
       <p>

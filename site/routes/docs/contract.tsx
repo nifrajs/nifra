@@ -94,7 +94,7 @@ const DUAL_API = `// TWO ways to handle a request - pick by who is calling.
 import type { LoaderContext } from "@nifrajs/web"
 
 // (1) A page's own data + mutations → route exports. A PUBLIC POST is a route ACTION
-//     (routes/contact.tsx) - the browser POSTs the route's own URL, nifra runs \`action\`:
+//     (routes/contact.tsx) - the browser POSTs the route's own URL, Nifra runs \`action\`:
 export async function action(ctx: LoaderContext) {
   const form = await ctx.request.formData()        // the browser POSTed this route
   return { ok: true, body: String(form.get("body")) } // → props.actionData on re-render

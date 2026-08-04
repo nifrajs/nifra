@@ -14,14 +14,14 @@ export default function BunVsNode() {
       <h1>Bun vs Node.js in 2026: same app, both runtimes</h1>
       <p>
         <em>
-          Updated 2026-08-04 · We build <a href="/">nifra</a>, a framework that runs unchanged on
+          Updated 2026-08-04 · We build <a href="/">Nifra</a>, a framework that runs unchanged on
           both runtimes - which is exactly what makes this comparison clean.
         </em>
       </p>
 
       <p className="lead">
         Most Bun-vs-Node comparisons benchmark different frameworks on each runtime and call it a
-        runtime difference. Ours holds the application constant: the same nifra app, same routes,
+        runtime difference. Ours holds the application constant: the same Nifra app, same routes,
         same validation, benchmarked on both. That isolates what the runtime is actually worth.
       </p>
 
@@ -79,10 +79,10 @@ export default function BunVsNode() {
 
       <h2>The part people miss: it doesn't have to be a decision</h2>
       <p>
-        The runtime only locks you in if your framework does. A nifra app treats the runtime as an
+        The runtime only locks you in if your framework does. A Nifra app treats the runtime as an
         adapter: develop and deploy on Node today, move the identical code to Bun when the
         throughput matters (or Deno, or edge workers). The numbers above are that story measured -
-        nobody rewrote anything between the two columns. On Node, nifra runs level-to-ahead of
+        nobody rewrote anything between the two columns. On Node, Nifra runs level-to-ahead of
         Fastify (<a href="/compare/fastify">details</a>); on Bun it serves at 101% of a hand-rolled{" "}
         <code>Bun.serve</code> baseline - so you are not paying a framework tax on either side.
       </p>

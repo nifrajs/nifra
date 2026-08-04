@@ -166,11 +166,21 @@ export default function Comparison() {
           surface), <code>nifra_example</code> (snippets typechecked against the installed version - no
           hallucinated APIs), <code>nifra_scaffold</code> (URL → correct <code>routes/</code> file),{" "}
           <code>nifra_run</code> (verify via HTTP), and <code>nifra_check</code> (a drift gate that returns the
-          fix).
+          fix). One MCP, two transports: the docs tools are also hosted at <code>mcp.nifra.dev</code>{" "}
+          (no checkout needed), while the project tools run only on your machine - your code never
+          leaves it.
         </li>
         <li>
           <code>llms.txt</code> + <code>llms-full.txt</code> served at the site root, an <code>AGENTS.md</code>{" "}
           in every scaffold, and a docs corpus that can't drift from the code.
+        </li>
+        <li>
+          <code>nifra assure</code> + <code>nifra levels</code> - a route-assurance gate: a policy file
+          classifies every reflected route and CI fails naming exactly which evidence is missing
+          (authentication on writes, validation, declared effects). Spectral lints the OpenAPI{" "}
+          <i>document</i> and Semgrep pattern-matches source text; neither sees the real route graph.
+          This is what makes agent-written routes safe to merge - an agent (or a human) cannot ship an
+          unauthenticated write past it.
         </li>
       </ul>
 

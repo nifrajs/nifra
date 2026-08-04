@@ -74,7 +74,7 @@ export default function WebSockets() {
       <p className="lead">
         <code>app.ws(path, handler)</code> registers a WebSocket route. It mirrors{" "}
         <code>.get()</code>/<code>.post()</code> - chainable, with per-connection state typed
-        through a generic - and runs on every runtime nifra serves: Bun, Deno, Node, and Cloudflare
+        through a generic - and runs on every runtime Nifra serves: Bun, Deno, Node, and Cloudflare
         Workers.
       </p>
       <p>
@@ -156,7 +156,7 @@ export default function WebSockets() {
         Inbound frames arrive raw (<code>string | Uint8Array</code>) by default. Add a{" "}
         <code>messageSchema</code> - any{" "}
         <a href="https://standardschema.dev">Standard Schema</a> (<code>t</code>, zod, valibot) - and
-        nifra parses each frame as JSON, validates it, and hands <code>message</code> the typed
+        Nifra parses each frame as JSON, validates it, and hands <code>message</code> the typed
         value; anything that fails goes to <code>onInvalidMessage</code> instead (so a malformed
         frame can never reach your handler).
       </p>
@@ -173,7 +173,7 @@ export default function WebSockets() {
         Across a load balancer, <code>app.publish</code> only reaches sockets on the same instance -
         bridge an external fan-out (Redis pub/sub, NATS, a queue) to broadcast across all of them. On{" "}
         <strong>Cloudflare Workers</strong>, a stateless isolate can’t broadcast across connections,
-        so nifra ships a Durable Object hub: <code>createWebSocketHub(app)</code> holds the
+        so Nifra ships a Durable Object hub: <code>createWebSocketHub(app)</code> holds the
         connections, and <code>toFetchHandler(app, {"{ webSocketHub }"})</code> routes upgrades to it
         - then <code>ws.subscribe</code> / <code>app.publish</code> behave exactly as on Bun.
       </p>

@@ -228,11 +228,21 @@ accurately:
 surface), `nifra_example` (snippets typechecked against the installed version - no
 hallucinated APIs), `nifra_scaffold` (URL → correct `routes/` file),
 `nifra_run` (verify via HTTP), and `nifra_check` (a drift gate that returns the
-fix).
+fix). One MCP, two transports: the docs tools are also hosted at `mcp.nifra.dev`
+(no checkout needed), while the project tools run only on your machine - your code never
+leaves it.
 
 -
 `llms.txt` + `llms-full.txt` served at the site root, an `AGENTS.md`
 in every scaffold, and a docs corpus that can't drift from the code.
+
+-
+`nifra assure` + `nifra levels` - a route-assurance gate: a policy file
+classifies every reflected route and CI fails naming exactly which evidence is missing
+(authentication on writes, validation, declared effects). Spectral lints the OpenAPI
+_document_ and Semgrep pattern-matches source text; neither sees the real route graph.
+This is what makes agent-written routes safe to merge - an agent (or a human) cannot ship an
+unauthenticated write past it.
 
 ### Where Nifra fits
 
@@ -750,7 +760,7 @@ export const addTodo = serverFn(
 )
 ```
 
-The second argument receives the validated input and the ordinary nifra `Context`:
+The second argument receives the validated input and the ordinary Nifra `Context`:
 `c.env`, `c.clientIp`, `c.budget`, cookies and the capability
 guard are all there, because this is a route.
 
@@ -1019,7 +1029,7 @@ const isr = withISR(app, { store, revalidate: 60, now: () => Date.now() })
 Bun.serve({ fetch: (req) => isr(req) })
 ```
 
-Set a route's freshness with `export const revalidate` (seconds) - nifra emits it as
+Set a route's freshness with `export const revalidate` (seconds) - Nifra emits it as
 the `x-nifra-isr-revalidate` header, which the wrapper reads to set that page's TTL.
 
 ```ts
@@ -1135,9 +1145,9 @@ route.
 
 ## Nifra - Hydration & pre-hydration forms
 
-> SSR pages become interactive after hydration. nifra keeps that gap safe: progressive-enhancement forms and links work before it, and a JS-only form's broken native submit is guarded automatically.
+> SSR pages become interactive after hydration. Nifra keeps that gap safe: progressive-enhancement forms and links work before it, and a JS-only form's broken native submit is guarded automatically.
 
-An SSR page is visible at once but interactive only after its island hydrates. nifra keeps
+An SSR page is visible at once but interactive only after its island hydrates. Nifra keeps
 that gap safe for you - you rarely have to think about it.
 
 ### Forms and links - nothing to do
@@ -1169,12 +1179,12 @@ async function onSubmit(e: FormEvent) {
 return <form onSubmit={onSubmit}>…</form>
 ```
 
-nifra blocks that native submit until hydration commits, so the worst case is a no-op click -
+Nifra blocks that native submit until hydration commits, so the worst case is a no-op click -
 never a broken navigation. It never touches a `method="post"` form or a GET form
 with a real action. Opt a form out with `data-native`:
 
 ```ts
-<form data-native>…</form>   {/* nifra won't guard it - native submit is intended */}
+<form data-native>…</form>   {/* Nifra won't guard it - native submit is intended */}
 ```
 
 ### Gate other JS on the signal
@@ -1387,9 +1397,9 @@ but the compiled frameworks use their native single-file format - **Svelte**
 package's Bun plugin (`@nifrajs/web-vue/plugin`, `@nifrajs/web-svelte/plugin`).
 
 ```ts
-<!-- routes/index.vue - a nifra route authored as a Vue Single-File Component -->
+<!-- routes/index.vue - a Nifra route authored as a Vue Single-File Component -->
 <script lang="ts">
-// The plain <script> carries nifra's route convention (server-only named exports):
+// The plain <script> carries Nifra's route convention (server-only named exports):
 export const meta = { title: "Home" }
 export async function loader({ api }) {
   const res = await api.count.get()
@@ -1398,7 +1408,7 @@ export async function loader({ api }) {
 </script>
 
 <script setup lang="ts">
-defineProps(["data"])          // nifra passes the loader data in as `data`
+defineProps(["data"])          // Nifra passes the loader data in as `data`
 </script>
 
 <template>
@@ -1759,7 +1769,7 @@ const app = server()
   .use(trimTrailingSlash())  // canonicalize URLs: 308 redirect (or rewrite), same-origin only, conservative methods
   .use(language({ supported: ["en", "fr"], defaultLanguage: "en" }))  // Accept-Language → c.language + Content-Language
   .use(timing())             // Server-Timing header + typed c.timing marks/measures
-// poweredBy() is opt-in (nifra emits no X-Powered-By by default). combine(a, b, c) bundles several into one plugin.
+// poweredBy() is opt-in (Nifra emits no X-Powered-By by default). combine(a, b, c) bundles several into one plugin.
 ```
 
 ### Security middleware
@@ -2246,7 +2256,7 @@ server function:
 
 On its own that is an assertion. What makes it load-bearing is the other half:
 `provenance.imports` maps a module specifier to the capabilities that reaching it
-implies, so nifra can compare what a route _says_ against what it _can do_.
+implies, so Nifra can compare what a route _says_ against what it _can do_.
 
 ```ts
 import { server } from "@nifrajs/core/server"
@@ -2493,7 +2503,7 @@ yourself. Nifra owns the _session_; you bring (or mount) the _who_.
 `@nifrajs/better-auth` bridges [Better Auth](https://better-auth.com) into
 nifra: `betterAuth(auth)` mounts its handler at `/api/auth/*` (GET + POST),
 so every endpoint - sign-in/up/out, OAuth callbacks, session, 2FA, magic links - is served by
-your nifra server. Read the session with `getSession(auth, request)` (typed
+your Nifra server. Read the session with `getSession(auth, request)` (typed
 `{ user, session } | null`) or guard a route with
 `requireSession(auth, request, options?)` (returns it, or throws a 401/redirect
 `Response`). It's declared **structurally** - no hard dependency on Better Auth, so
@@ -2574,7 +2584,7 @@ createWebApp({ /* … */ api: sessions })                  // inject the manager
 ### Guard a route
 
 `requireSession` / `requireUser` throw a `Response` (a 302 to
-`redirectTo`, or a 401) when the session is missing - nifra returns a thrown Response
+`redirectTo`, or a 401) when the session is missing - Nifra returns a thrown Response
 as-is, so the guard short-circuits the loader.
 
 ```ts
@@ -2585,7 +2595,7 @@ import { requireUser } from "@nifrajs/auth"   // browser-safe; OK to import in a
 export async function loader({ request, api }) {
   const sessions = api                       // the manager injected via createWebApp's `api`
   const session = await sessions.read(request)
-  // requireUser throws a 302 to /login when there's no session; nifra returns the thrown Response.
+  // requireUser throws a 302 to /login when there's no session; Nifra returns the thrown Response.
   const userId = requireUser(session, "userId", { redirectTo: "/login" })
   return { userId }
 }
@@ -2715,11 +2725,11 @@ const imgix: ImageLoader = ({ src, width, quality }) =>
   `https://my.imgix.net${src}?w=${width}&auto=format${quality ? `&q=${quality}` : ""}`
 ```
 
-### Self-hosting - nifra's own resize endpoint
+### Self-hosting - Nifra's own resize endpoint
 
 No CDN? `@nifrajs/image/server`'s `createImageHandler` is a self-hosted resize
 endpoint backed by `Bun.Image` (libjpeg-turbo / libspng / libwebp, decoded off-thread).
-Pair it with `selfHostedLoader` and nifra resizes your own images - no third party in the
+Pair it with `selfHostedLoader` and Nifra resizes your own images - no third party in the
 path.
 
 ```ts
@@ -2775,7 +2785,7 @@ decodes/resizes/encodes. Three official backends, all from `@nifrajs/image/backe
 
 -
 `sharpImageBackend(sharp)` - libvips for Node. You pass your `sharp` import
-(nifra keeps zero dependency on it, and you pin the version).
+(Nifra keeps zero dependency on it, and you pin the version).
 
 -
 `wasmImageBackend(codecs)` - pure-WASM decode/resize/encode you wire up (jSquash is
@@ -2789,7 +2799,7 @@ built in (it never decodes just to read dimensions).
 import { createImageHandler } from "@nifrajs/image/server"
 import { sharpImageBackend, wasmImageBackend } from "@nifrajs/image/backends"
 
-// Node - libvips via sharp. Pass your own import (nifra never depends on it):
+// Node - libvips via sharp. Pass your own import (Nifra never depends on it):
 import sharp from "sharp"
 createImageHandler({ backend: sharpImageBackend(sharp), root: "./public" })
 
@@ -3057,7 +3067,7 @@ export default toFetchHandler(app, {
 
 `app.ws(path, handler)` registers a WebSocket route. It mirrors
 `.get()`/`.post()` - chainable, with per-connection state typed
-through a generic - and runs on every runtime nifra serves: Bun, Deno, Node, and Cloudflare
+through a generic - and runs on every runtime Nifra serves: Bun, Deno, Node, and Cloudflare
 Workers.
 
 The WebSocket runtime ships as an opt-in plugin, so apps that never use it don’t bundle it.
@@ -3143,7 +3153,7 @@ escape hatch to the native socket
 Inbound frames arrive raw (`string | Uint8Array`) by default. Add a
 `messageSchema` - any
 [Standard Schema](https://standardschema.dev) (`t`, zod, valibot) - and
-nifra parses each frame as JSON, validates it, and hands `message` the typed
+Nifra parses each frame as JSON, validates it, and hands `message` the typed
 value; anything that fails goes to `onInvalidMessage` instead (so a malformed
 frame can never reach your handler).
 
@@ -3180,7 +3190,7 @@ Bun, Deno, and Node are long-lived processes, so this works directly on a single
 Across a load balancer, `app.publish` only reaches sockets on the same instance -
 bridge an external fan-out (Redis pub/sub, NATS, a queue) to broadcast across all of them. On
 **Cloudflare Workers**, a stateless isolate can’t broadcast across connections,
-so nifra ships a Durable Object hub: `createWebSocketHub(app)` holds the
+so Nifra ships a Durable Object hub: `createWebSocketHub(app)` holds the
 connections, and `toFetchHandler(app, { webSocketHub })` routes upgrades to it
 - then `ws.subscribe` / `app.publish` behave exactly as on Bun.
 
@@ -3436,7 +3446,7 @@ Deploy: `wrangler pages deploy dist` (Pages) or `wrangler deploy`
 `server.ts` to hand-write. (`create-nifra` scaffolds the conventions.)
 
 ```ts
-nifra dev      # true-HMR dev server (Vite middleware + nifra SSR) - http://localhost:4321
+nifra dev      # true-HMR dev server (Vite middleware + Nifra SSR) - http://localhost:4321
 nifra build    # full Bun deploy → dist/server.js + content-hashed dist/assets/ (default target: bun)
 nifra start    # run dist/server.js on Bun
 nifra build --target cf-pages  # also: node | deno | vercel | static; add --report for chunk sizes
@@ -3511,6 +3521,50 @@ the command printed by the build.
 Nifra ships an MCP server. It is not a documentation lookup bolted onto a framework: an agent
 can read the project, learn the real API, run actual requests against the backend it just
 edited, and finish with a report of what the change proved.
+
+### One MCP, two ways to connect
+
+There is one Nifra MCP. It reaches your agent over the two standard MCP transports, and which
+one you use is decided by a single question: **is the agent working inside a Nifra repo?**
+
+Local - `nifra mcp`
+
+Hosted - `mcp.nifra.dev`
+
+Transport
+stdio - the agent spawns it as a process
+HTTP - add one URL, nothing to install
+
+Runs
+on your machine, in your project
+on our infrastructure
+
+Sees
+your routes, schemas, and files - locally only, nothing leaves the machine
+only Nifra's published docs corpus - never your code
+
+Tools
+
+everything: project tools (`nifra_context`, `nifra_run`,
+`nifra_assure`, …) **plus** the docs tools
+
+docs tools only (`nifra_docs`, `nifra_example`,
+`nifra_types`, `nifra_learn`)
+
+Use when
+building or editing a Nifra app
+learning Nifra, or the client can't spawn processes (Claude.ai, ChatGPT)
+
+The project tools _must_ run where your code is - hosting them would mean uploading
+your source, which is exactly what this design refuses to do. And the local server does not
+proxy the hosted one for docs: the docs corpus ships inside the npm package, so the answers
+match **the Nifra version installed in your project**, work offline, and send nothing
+anywhere. This hosted-plus-local pairing is the same shape Supabase, Stripe, Sentry, and
+GitHub ship their MCP servers in, for the same reason: public knowledge can be hosted; tools
+that touch your own code and data run where that code lives.
+
+So: inside a Nifra repo, register the local server (it includes the docs tools - you never
+need both). Anywhere else, add the URL.
 
 ### Setup
 
@@ -3738,7 +3792,7 @@ const server = await createViteDevServer({
   routesDir,
   clientModule: "@nifrajs/web-react/client",
   plugins: [react()],                                // Vue: @vitejs/plugin-vue, Svelte: …, etc.
-  port: Number(Bun.env.PORT ?? 4321),                // nifra's default; --port / PORT override it
+  port: Number(Bun.env.PORT ?? 4321),                // Nifra's default; --port / PORT override it
   createApp: (clientEntry, importQuery) =>
     createWebApp({
       adapter: reactAdapter,
@@ -3908,13 +3962,13 @@ so `node:` builtins and `server-only` modules fail the build either way.
 
 ```ts
 // vite.config.ts - a Vite/Rollup PRODUCTION client build (the escape hatch, not the default).
-// Only reach for this when an app needs a Vite-only transform with no Bun equivalent; nifra's default
+// Only reach for this when an app needs a Vite-only transform with no Bun equivalent; Nifra's default
 // production bundler stays Bun (buildClient), which is faster and Bun-native.
 import { viteLeakGuard } from "@nifrajs/web/plugins/vite-leak-guard"
 
 export default {
   build: {
-    // The SAME two client-leak guards nifra's Bun build runs - server-only code or a node: builtin
+    // The SAME two client-leak guards Nifra's Bun build runs - server-only code or a node: builtin
     // reaching the browser fails the build, with the identical error message. A second production
     // pipeline must not ship without them.
     rollupOptions: { plugins: [viteLeakGuard()] },
@@ -4843,7 +4897,7 @@ call.
 import type { LoaderContext } from "@nifrajs/web"
 
 // (1) A page's own data + mutations → route exports. A PUBLIC POST is a route ACTION
-//     (routes/contact.tsx) - the browser POSTs the route's own URL, nifra runs `action`:
+//     (routes/contact.tsx) - the browser POSTs the route's own URL, Nifra runs `action`:
 export async function action(ctx: LoaderContext) {
   const form = await ctx.request.formData()        // the browser POSTed this route
   return { ok: true, body: String(form.get("body")) } // → props.actionData on re-render
@@ -5619,7 +5673,7 @@ await Bun.write("app/fonts.preloads.json", JSON.stringify(inter.preloads))
 Then wire the two outputs into your app:
 
 ```ts
-// app entry - bundled + content-hashed by nifra's CSS pipeline
+// app entry - bundled + content-hashed by Nifra's CSS pipeline
 import "./fonts.css"
 
 // root layout - preload the primary file (one less render-blocking round trip)
@@ -5690,9 +5744,9 @@ traversal.
 
 ## Nifra - Integrations (Stripe, and any npm library)
 
-> Third-party libraries work in nifra as-is - handlers are plain TypeScript. The Stripe recipe end-to-end: SDK calls in a route, constant-time webhook verification, and idempotent processing.
+> Third-party libraries work in Nifra as-is - handlers are plain TypeScript. The Stripe recipe end-to-end: SDK calls in a route, constant-time webhook verification, and idempotent processing.
 
-The most important thing on this page: **you rarely need it**. A nifra handler
+The most important thing on this page: **you rarely need it**. A Nifra handler
 is plain TypeScript running on Bun, Node, Deno, or the edge - the npm ecosystem works
 as-is. Stripe, OpenAI, Resend, Drizzle, Prisma, AWS SDKs: import them and call them, the
 way their own documentation shows.
@@ -5700,8 +5754,8 @@ way their own documentation shows.
 ### When you need nothing at all
 
 If a library is called from your code - an SDK, a database client, a date library - there is
-no integration step. It does not know or care that nifra is serving the request. The one
-rule that still applies is nifra's own: anything crossing a trust boundary (a request body,
+no integration step. It does not know or care that Nifra is serving the request. The one
+rule that still applies is Nifra's own: anything crossing a trust boundary (a request body,
 a webhook payload, a third-party response you act on) goes through a schema first.
 
 ### The Stripe recipe
@@ -5798,7 +5852,7 @@ and import edits; this guide covers the structural changes it deliberately canno
 
 ```
 
-The command updates existing `@nifrajs/*`, `nifra`, and
+The command updates existing `@nifrajs/*`, `Nifra`, and
 `create-nifra` dependency ranges to `2.0.0` while preserving
 caret/tilde/exact style. It also replaces the removed `@nifrajs/budget` dependency
 with `@nifrajs/core` and moves its imports to
@@ -5821,7 +5875,7 @@ Only applications calling `app.resolveNode()` directly need to install it.
 
 ### 3. Use the lean package entry points
 
-The `@nifrajs/core` and `nifra` roots now expose the lean HTTP server
+The `@nifrajs/core` and `Nifra` roots now expose the lean HTTP server
 surface. Prefer `@nifrajs/core/server` for `server()`, and import
 contracts, assurance, capabilities, budgets, manifests, reflection, SSE, WebSockets, and
 other optional systems from their documented subpaths.
@@ -5975,7 +6029,7 @@ onto the route. The client then infers all of this for free.
 app.get("/users/:id", (req, res) => res.json({ id: req.params.id }))
 app.post("/users", express.json(), (req, res) => res.status(201).json(create(req.body)))
 
-// nifra - return the value (or a Response); c is Web-standard; the body is parsed + validated
+// Nifra - return the value (or a Response); c is Web-standard; the body is parsed + validated
 server()
   .get("/users/:id", (c) => ({ id: c.params.id }))
   .post("/users", { body: t.object({ name: t.string() }) }, (c) => create(c.body))
@@ -5991,7 +6045,7 @@ adds the typed client, schema validation, multi-runtime deploy, and (if you want
 // Hono
 app.get("/users/:id", (c) => c.json({ id: c.req.param("id") }))
 
-// nifra - nearly identical; params are a typed object, you return the value
+// Nifra - nearly identical; params are a typed object, you return the value
 server().get("/users/:id", (c) => ({ id: c.params.id }))
 ```
 
@@ -6073,7 +6127,7 @@ export default async function Page({ params }) {
   return <h1>{user.name}</h1>
 }
 
-// nifra - routes/users/[id].tsx
+// Nifra - routes/users/[id].tsx
 export async function loader({ params, api }: LoaderArgs<typeof backend>) {
   const res = await api.users({ id: params.id }).get()   // typed, in-process during SSR
   return { user: res.data }
@@ -6094,7 +6148,7 @@ example:
 // SvelteKit - +page.server.ts + +page.svelte
 export async function load({ params }) { return { post: await getPost(params.slug) } }
 
-// nifra - routes/blog/[slug].svelte (loader is a module export, page is the .svelte)
+// Nifra - routes/blog/[slug].svelte (loader is a module export, page is the .svelte)
 export async function loader({ params }) { return { post: await getPost(params.slug) } }
 ```
 
@@ -6483,7 +6537,7 @@ export default defineAssuranceConfig({
 ```
 
 L4 requires an **explicit** executor. Invariant runs send deliberately hostile
-input, so nifra will not guess which app to point them at; a level that fuzzed your live
+input, so Nifra will not guess which app to point them at; a level that fuzzed your live
 server by default would be a footgun, and a skipped route is reported rather than passed over
 in silence.
 

@@ -18,7 +18,7 @@ export default async function Page({ params }) {
   return <h1>{user.name}</h1>
 }
 
-// nifra - routes/users/[id].tsx
+// Nifra - routes/users/[id].tsx
 export async function loader({ params, api }: LoaderArgs<typeof backend>) {
   const res = await api.users({ id: params.id }).get()   // typed, in-process during SSR
   return { user: res.data }
@@ -30,7 +30,7 @@ export default function User({ data }: { data: LoaderData<typeof loader> }) {
 const SVELTEKIT = `// SvelteKit - +page.server.ts + +page.svelte
 export async function load({ params }) { return { post: await getPost(params.slug) } }
 
-// nifra - routes/blog/[slug].svelte (loader is a module export, page is the .svelte)
+// Nifra - routes/blog/[slug].svelte (loader is a module export, page is the .svelte)
 export async function loader({ params }) { return { post: await getPost(params.slug) } }`
 
 export default function MigrateFrontend() {

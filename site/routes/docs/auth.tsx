@@ -68,7 +68,7 @@ import { requireUser } from "@nifrajs/auth"   // browser-safe; OK to import in a
 export async function loader({ request, api }) {
   const sessions = api                       // the manager injected via createWebApp's \`api\`
   const session = await sessions.read(request)
-  // requireUser throws a 302 to /login when there's no session; nifra returns the thrown Response.
+  // requireUser throws a 302 to /login when there's no session; Nifra returns the thrown Response.
   const userId = requireUser(session, "userId", { redirectTo: "/login" })
   return { userId }
 }`
@@ -90,7 +90,7 @@ export default function Auth() {
         <code>@nifrajs/better-auth</code> bridges <a href="https://better-auth.com">Better Auth</a> into
         nifra: <code>betterAuth(auth)</code> mounts its handler at <code>/api/auth/*</code> (GET + POST),
         so every endpoint - sign-in/up/out, OAuth callbacks, session, 2FA, magic links - is served by
-        your nifra server. Read the session with <code>getSession(auth, request)</code> (typed{" "}
+        your Nifra server. Read the session with <code>getSession(auth, request)</code> (typed{" "}
         <code>{`{ user, session } | null`}</code>) or guard a route with{" "}
         <code>requireSession(auth, request, options?)</code> (returns it, or throws a 401/redirect{" "}
         <code>Response</code>). It's declared <b>structurally</b> - no hard dependency on Better Auth, so
@@ -122,7 +122,7 @@ export default function Auth() {
       <h2>Guard a route</h2>
       <p>
         <code>requireSession</code> / <code>requireUser</code> throw a <code>Response</code> (a 302 to{" "}
-        <code>redirectTo</code>, or a 401) when the session is missing - nifra returns a thrown Response
+        <code>redirectTo</code>, or a 401) when the session is missing - Nifra returns a thrown Response
         as-is, so the guard short-circuits the loader.
       </p>
       <CodeBlock code={GUARD} />

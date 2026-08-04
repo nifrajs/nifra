@@ -22,7 +22,7 @@ const inter = await loadGoogleFont(
 await Bun.write("app/fonts.css", inter.css)                  // the @font-face stylesheet
 await Bun.write("app/fonts.preloads.json", JSON.stringify(inter.preloads))`
 
-const AUTOMATED_USE = `// app entry - bundled + content-hashed by nifra's CSS pipeline
+const AUTOMATED_USE = `// app entry - bundled + content-hashed by Nifra's CSS pipeline
 import "./fonts.css"
 
 // root layout - preload the primary file (one less render-blocking round trip)

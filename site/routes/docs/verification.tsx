@@ -99,7 +99,7 @@ export default function Verification() {
       <CodeBlock code={CONFIG} lang="ts" />
       <p>
         L4 requires an <strong>explicit</strong> executor. Invariant runs send deliberately hostile
-        input, so nifra will not guess which app to point them at; a level that fuzzed your live
+        input, so Nifra will not guess which app to point them at; a level that fuzzed your live
         server by default would be a footgun, and a skipped route is reported rather than passed over
         in silence.
       </p>

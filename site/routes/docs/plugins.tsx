@@ -118,7 +118,7 @@ const app = server()
   .use(trimTrailingSlash())  // canonicalize URLs: 308 redirect (or rewrite), same-origin only, conservative methods
   .use(language({ supported: ["en", "fr"], defaultLanguage: "en" }))  // Accept-Language → c.language + Content-Language
   .use(timing())             // Server-Timing header + typed c.timing marks/measures
-// poweredBy() is opt-in (nifra emits no X-Powered-By by default). combine(a, b, c) bundles several into one plugin.`
+// poweredBy() is opt-in (Nifra emits no X-Powered-By by default). combine(a, b, c) bundles several into one plugin.`
 
 const REPORT = `// @nifrajs/web: observe loader/action failures for error reporting (Sentry-style).
 createWebApp({

@@ -13,10 +13,10 @@ export default function VsElysia() {
     <article className="prose">
       <h1>Nifra vs Elysia</h1>
       <p className="lead">
-        Elysia is the best-known Bun-first backend framework, and it set the bar nifra measures
-        itself against. The short version: on identical benchmarked workloads nifra is level to
+        Elysia is the best-known Bun-first backend framework, and it set the bar Nifra measures
+        itself against. The short version: on identical benchmarked workloads Nifra is level to
         ahead of Elysia on Bun and ahead on Deno, and the larger difference is scope - Elysia is a
-        backend framework, nifra is a full-stack one.
+        backend framework, Nifra is a full-stack one.
       </p>
 
       <h2>Throughput, on identical workloads</h2>
@@ -28,30 +28,30 @@ export default function VsElysia() {
       </p>
       <ul>
         <li>
-          On <strong>Bun</strong>, nifra runs level with Elysia on <code>GET /users/:id</code> at
+          On <strong>Bun</strong>, Nifra runs level with Elysia on <code>GET /users/:id</code> at
           101% of a hand-rolled <code>Bun.serve</code> baseline - the framework layer costs nothing
           measurable - and 105% of Elysia on the validated <code>POST</code>.
         </li>
         <li>
           In the <strong>realistic middleware shape</strong> (security headers + CORS + request-id
-          on every request), nifra runs at 103% of Elysia on GET and 108% on POST.
+          on every request), Nifra runs at 103% of Elysia on GET and 108% on POST.
         </li>
         <li>
-          On <strong>Deno</strong>, nifra leads every measured framework, Elysia included, on both
+          On <strong>Deno</strong>, Nifra leads every measured framework, Elysia included, on both
           workloads.
         </li>
       </ul>
       <p>
         Single-digit percentages, honestly labeled: treat them as "the same speed class, with the
-        edge to nifra as middleware stacks up". The harness and methodology are public - the{" "}
-        <a href="/benchmarks">benchmarks page</a> has every row, including the ones nifra loses.
+        edge to Nifra as middleware stacks up". The harness and methodology are public - the{" "}
+        <a href="/benchmarks">benchmarks page</a> has every row, including the ones Nifra loses.
       </p>
 
       <h2>Typed clients: Eden vs inferred</h2>
       <p>
         Both frameworks solve typed API access. Elysia's Eden gives you a typed treaty client from
-        your server type; nifra's client infers request and response types from route declarations
-        the same way. The difference is what sits above it: nifra's typed contract extends through
+        your server type; Nifra's client infers request and response types from route declarations
+        the same way. The difference is what sits above it: Nifra's typed contract extends through
         loaders, pages, and server functions, because the frontend is part of the framework rather
         than a separate project consuming the API.
       </p>
@@ -104,7 +104,7 @@ export default function VsElysia() {
       <h2>When to pick which</h2>
       <ul>
         <li>
-          <strong>Pick nifra</strong> if you want the backend and frontend in one typed contract,
+          <strong>Pick Nifra</strong> if you want the backend and frontend in one typed contract,
           the option to change UI framework or runtime later, and tooling built for AI-assisted
           development - at the same or better throughput.
         </li>

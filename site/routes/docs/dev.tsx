@@ -34,7 +34,7 @@ const server = await createViteDevServer({
   routesDir,
   clientModule: "@nifrajs/web-react/client",
   plugins: [react()],                                // Vue: @vitejs/plugin-vue, Svelte: …, etc.
-  port: Number(Bun.env.PORT ?? 4321),                // nifra's default; --port / PORT override it
+  port: Number(Bun.env.PORT ?? 4321),                // Nifra's default; --port / PORT override it
   createApp: (clientEntry, importQuery) =>
     createWebApp({
       adapter: reactAdapter,
@@ -76,13 +76,13 @@ export const app = createWebApp({
 // → <link rel="stylesheet"> for just the matched route's CSS in <head>. Serve .css as text/css.`
 
 const VITE_PROD = `// vite.config.ts - a Vite/Rollup PRODUCTION client build (the escape hatch, not the default).
-// Only reach for this when an app needs a Vite-only transform with no Bun equivalent; nifra's default
+// Only reach for this when an app needs a Vite-only transform with no Bun equivalent; Nifra's default
 // production bundler stays Bun (buildClient), which is faster and Bun-native.
 import { viteLeakGuard } from "@nifrajs/web/plugins/vite-leak-guard"
 
 export default {
   build: {
-    // The SAME two client-leak guards nifra's Bun build runs - server-only code or a node: builtin
+    // The SAME two client-leak guards Nifra's Bun build runs - server-only code or a node: builtin
     // reaching the browser fails the build, with the identical error message. A second production
     // pipeline must not ship without them.
     rollupOptions: { plugins: [viteLeakGuard()] },

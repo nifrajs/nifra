@@ -15,7 +15,7 @@ const EXPRESS = `// Express
 app.get("/users/:id", (req, res) => res.json({ id: req.params.id }))
 app.post("/users", express.json(), (req, res) => res.status(201).json(create(req.body)))
 
-// nifra - return the value (or a Response); c is Web-standard; the body is parsed + validated
+// Nifra - return the value (or a Response); c is Web-standard; the body is parsed + validated
 server()
   .get("/users/:id", (c) => ({ id: c.params.id }))
   .post("/users", { body: t.object({ name: t.string() }) }, (c) => create(c.body))`
@@ -23,7 +23,7 @@ server()
 const HONO = `// Hono
 app.get("/users/:id", (c) => c.json({ id: c.req.param("id") }))
 
-// nifra - nearly identical; params are a typed object, you return the value
+// Nifra - nearly identical; params are a typed object, you return the value
 server().get("/users/:id", (c) => ({ id: c.params.id }))`
 
 export default function MigrateBackend() {

@@ -4,7 +4,7 @@ export const hydrate = false
 
 export const meta = pageMeta(
   "Choosing a TypeScript API framework in 2026 · Nifra",
-  "What 'TypeScript framework' actually means - typed handlers vs inferred clients vs runtime validation - and how nifra, tRPC, Elysia, Hono, Fastify, and NestJS compare on each level, with measured throughput.",
+  "What 'TypeScript framework' actually means - typed handlers vs inferred clients vs runtime validation - and how Nifra, tRPC, Elysia, Hono, Fastify, and NestJS compare on each level, with measured throughput.",
   "/blog/typescript-api-framework",
 )
 
@@ -14,7 +14,7 @@ export default function TypescriptApiFramework() {
       <h1>Choosing a TypeScript API framework in 2026</h1>
       <p>
         <em>
-          Updated 2026-08-04 · Disclosure: we build nifra, one of the options below. The
+          Updated 2026-08-04 · Disclosure: we build Nifra, one of the options below. The
           framework-agnostic part - the three levels of "typed" - applies no matter what you pick.
         </em>
       </p>
@@ -36,7 +36,7 @@ export default function TypescriptApiFramework() {
         </li>
         <li>
           <strong>Level 2 - inferred contract.</strong> The client's request and response types
-          derive from the server's types: tRPC, Elysia's Eden, Hono's <code>hc</code>, nifra's{" "}
+          derive from the server's types: tRPC, Elysia's Eden, Hono's <code>hc</code>, Nifra's{" "}
           <code>client&lt;typeof app&gt;()</code>, ts-rest. A renamed field breaks the frontend
           build instead of production. The differentiators inside this level: does it need codegen
           (ts-rest and OpenAPI generators do; tRPC/Eden/hc/nifra don't), and does it survive
@@ -47,7 +47,7 @@ export default function TypescriptApiFramework() {
           <strong>Level 3 - runtime validation.</strong> Types are erased at runtime; a public
           endpoint typed <code>{`{ age: number }`}</code> still receives{" "}
           <code>{`{ age: "99; DROP TABLE" }`}</code> unless something checks. Fastify (JSON Schema),
-          Elysia (TypeBox), NestJS (class-validator), and nifra (Standard Schema - Zod, Valibot,
+          Elysia (TypeBox), NestJS (class-validator), and Nifra (Standard Schema - Zod, Valibot,
           ArkType, or hand-rolled) validate declared schemas at the boundary. tRPC validates if you
           attach a schema per procedure; Hono via middleware. The question to ask: is validation the
           default path or a discipline?
@@ -67,7 +67,7 @@ export default function TypescriptApiFramework() {
         </thead>
         <tbody>
           <tr>
-            <td>nifra</td>
+            <td>Nifra</td>
             <td>Inferred, REST-shaped</td>
             <td>No</td>
             <td>Default (Standard Schema)</td>
@@ -133,7 +133,7 @@ export default function TypescriptApiFramework() {
           Hono. (<a href="/blog/elysia-vs-hono">head-to-head</a>.)
         </li>
         <li>
-          <strong>All three levels, REST-shaped, plus a frontend:</strong> nifra - the inferred
+          <strong>All three levels, REST-shaped, plus a frontend:</strong> Nifra - the inferred
           client extends beyond fetch calls into SSR loaders, pages, and server functions for
           React/Vue/Svelte/Solid/Preact, validation is the default, and the API surface ships as a{" "}
           <a href="/blog/docs-as-mcp">live MCP server</a> so AI agents write against your real

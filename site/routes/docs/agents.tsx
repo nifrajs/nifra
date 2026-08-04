@@ -88,6 +88,71 @@ export default function Agents() {
         edited, and finish with a report of what the change proved.
       </p>
 
+      <h2>One MCP, two ways to connect</h2>
+      <p>
+        There is one Nifra MCP. It reaches your agent over the two standard MCP transports, and which
+        one you use is decided by a single question: <b>is the agent working inside a Nifra repo?</b>
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th></th>
+            <th>
+              Local - <code>nifra mcp</code>
+            </th>
+            <th>
+              Hosted - <code>mcp.nifra.dev</code>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Transport</td>
+            <td>stdio - the agent spawns it as a process</td>
+            <td>HTTP - add one URL, nothing to install</td>
+          </tr>
+          <tr>
+            <td>Runs</td>
+            <td>on your machine, in your project</td>
+            <td>on our infrastructure</td>
+          </tr>
+          <tr>
+            <td>Sees</td>
+            <td>your routes, schemas, and files - locally only, nothing leaves the machine</td>
+            <td>only Nifra's published docs corpus - never your code</td>
+          </tr>
+          <tr>
+            <td>Tools</td>
+            <td>
+              everything: project tools (<code>nifra_context</code>, <code>nifra_run</code>,{" "}
+              <code>nifra_assure</code>, …) <b>plus</b> the docs tools
+            </td>
+            <td>
+              docs tools only (<code>nifra_docs</code>, <code>nifra_example</code>,{" "}
+              <code>nifra_types</code>, <code>nifra_learn</code>)
+            </td>
+          </tr>
+          <tr>
+            <td>Use when</td>
+            <td>building or editing a Nifra app</td>
+            <td>learning Nifra, or the client can't spawn processes (Claude.ai, ChatGPT)</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        The project tools <em>must</em> run where your code is - hosting them would mean uploading
+        your source, which is exactly what this design refuses to do. And the local server does not
+        proxy the hosted one for docs: the docs corpus ships inside the npm package, so the answers
+        match <b>the Nifra version installed in your project</b>, work offline, and send nothing
+        anywhere. This hosted-plus-local pairing is the same shape Supabase, Stripe, Sentry, and
+        GitHub ship their MCP servers in, for the same reason: public knowledge can be hosted; tools
+        that touch your own code and data run where that code lives.
+      </p>
+      <p>
+        So: inside a Nifra repo, register the local server (it includes the docs tools - you never
+        need both). Anywhere else, add the URL.
+      </p>
+
       <h2>Setup</h2>
       <CodeBlock code={SETUP} lang="bash" />
       <p>

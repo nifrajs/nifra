@@ -4,7 +4,7 @@ export const hydrate = false
 
 export const meta = pageMeta(
   "The best Node.js frameworks in 2026 · Nifra",
-  "An honest guide to Node.js web frameworks in 2026 - Fastify, Express, NestJS, Hono, and nifra - with published throughput numbers, typing stories, and a disclosed bias: we build nifra.",
+  "An honest guide to Node.js web frameworks in 2026 - Fastify, Express, NestJS, Hono, and Nifra - with published throughput numbers, typing stories, and a disclosed bias: we build nifra.",
   "/blog/best-nodejs-frameworks-2026",
 )
 
@@ -23,7 +23,7 @@ export default function BestNodeFrameworks() {
         Node in 2026 is a mature platform with one incumbent per niche: <strong>Express</strong>{" "}
         (the default), <strong>Fastify</strong> (the fast one), <strong>NestJS</strong> (the
         enterprise structure), <strong>Hono</strong> (the portable minimalist), and{" "}
-        <strong>nifra</strong> (the typed full-stack, ours). The right pick depends on what you are
+        <strong>Nifra</strong> (the typed full-stack, ours). The right pick depends on what you are
         actually building.
       </p>
 
@@ -42,7 +42,7 @@ export default function BestNodeFrameworks() {
         </thead>
         <tbody>
           <tr>
-            <td>nifra</td>
+            <td>Nifra</td>
             <td>74,544 req/s</td>
             <td>59,764 req/s</td>
           </tr>
@@ -69,8 +69,8 @@ export default function BestNodeFrameworks() {
         </tbody>
       </table>
       <p>
-        Read it honestly: nifra and Fastify are the speed class - level on the GET (treat it as a
-        tie), nifra ~12% ahead on the validated POST. Express costs you roughly 40% of your ceiling
+        Read it honestly: Nifra and Fastify are the speed class - level on the GET (treat it as a
+        tie), Nifra ~12% ahead on the validated POST. Express costs you roughly 40% of your ceiling
         and nobody migrates off it for speed alone. Full tables:{" "}
         <a href="/benchmarks">benchmarks</a>.
       </p>
@@ -106,9 +106,9 @@ export default function BestNodeFrameworks() {
         speed.
       </p>
 
-      <h2>nifra - typed full-stack (ours)</h2>
+      <h2>Nifra - typed full-stack (ours)</h2>
       <p>
-        nifra runs Fastify-class-or-better speed on Node while being a different kind of thing: a
+        Nifra runs Fastify-class-or-better speed on Node while being a different kind of thing: a
         full-stack framework where <code>client&lt;typeof app&gt;()</code> infers the entire API
         contract with zero codegen, SSR serves React/Vue/Svelte/Solid/Preact, validation is the
         default at every boundary, and the docs/types ship as a{" "}
@@ -134,13 +134,13 @@ export default function BestNodeFrameworks() {
           Same code on Workers/everywhere → <strong>Hono</strong>
         </li>
         <li>
-          Typed full-stack, fastest in our matrix, agent-native → <strong>nifra</strong> (
+          Typed full-stack, fastest in our matrix, agent-native → <strong>Nifra</strong> (
           <code>bunx create-nifra my-app</code>)
         </li>
       </ul>
       <p>
-        Head-to-head: <a href="/compare/fastify">nifra vs Fastify</a> ·{" "}
-        <a href="/compare/hono">nifra vs Hono</a>.
+        Head-to-head: <a href="/compare/fastify">Nifra vs Fastify</a> ·{" "}
+        <a href="/compare/hono">Nifra vs Hono</a>.
       </p>
     </article>
   )

@@ -112,7 +112,7 @@ export default function ServerFunctions() {
       <h2>Declaring one</h2>
       <CodeBlock code={DECLARE} lang="ts" />
       <p>
-        The second argument receives the validated input and the ordinary nifra <code>Context</code>:{" "}
+        The second argument receives the validated input and the ordinary Nifra <code>Context</code>:{" "}
         <code>c.env</code>, <code>c.clientIp</code>, <code>c.budget</code>, cookies and the capability
         guard are all there, because this is a route.
       </p>

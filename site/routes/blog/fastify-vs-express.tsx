@@ -14,7 +14,7 @@ export default function FastifyVsExpress() {
       <h1>Fastify vs Express in 2026</h1>
       <p>
         <em>
-          Updated 2026-08-04 · Disclosure: we build <a href="/">nifra</a>, a third option measured
+          Updated 2026-08-04 · Disclosure: we build <a href="/">Nifra</a>, a third option measured
           in the same runs. The Fastify-vs-Express verdict below stands on its own.
         </em>
       </p>
@@ -86,7 +86,7 @@ export default function FastifyVsExpress() {
       <h2>When neither is the answer</h2>
       <p>
         Both are backend-only. If the API and a frontend are one product, a typed contract that
-        crosses that boundary saves more engineering time than any req/s number: nifra infers the
+        crosses that boundary saves more engineering time than any req/s number: Nifra infers the
         entire client from the server's TypeScript type (zero codegen), serves SSR for five UI
         frameworks, validates by default, and in the same benchmark runs level-to-ahead of Fastify
         on Node (<a href="/compare/fastify">the honest head-to-head</a>) while moving to Bun

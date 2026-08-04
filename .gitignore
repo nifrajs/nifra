@@ -62,3 +62,4 @@ site/.tmp-doc-check
 
 # Local Vite-prod build output dirs from manual --vite verification
 dv-*/
+/examples/launch-video

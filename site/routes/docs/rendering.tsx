@@ -158,7 +158,7 @@ export default function Rendering() {
       </p>
       <CodeBlock code={ISR} />
       <p>
-        Set a route's freshness with <code>export const revalidate</code> (seconds) - nifra emits it as
+        Set a route's freshness with <code>export const revalidate</code> (seconds) - Nifra emits it as
         the <code>x-nifra-isr-revalidate</code> header, which the wrapper reads to set that page's TTL.
       </p>
       <CodeBlock code={REVALIDATE} />

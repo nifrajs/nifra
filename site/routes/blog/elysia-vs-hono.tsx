@@ -4,7 +4,7 @@ export const hydrate = false
 
 export const meta = pageMeta(
   "Elysia vs Hono in 2026: which Bun framework fits · Nifra",
-  "Elysia vs Hono compared honestly - throughput on identical workloads, typed clients (Eden vs hc), validation, portability - with measured numbers and a disclosed bias: we build nifra, a third option.",
+  "Elysia vs Hono compared honestly - throughput on identical workloads, typed clients (Eden vs hc), validation, portability - with measured numbers and a disclosed bias: we build Nifra, a third option.",
   "/blog/elysia-vs-hono",
 )
 
@@ -14,7 +14,7 @@ export default function ElysiaVsHono() {
       <h1>Elysia vs Hono in 2026</h1>
       <p>
         <em>
-          Updated 2026-08-04 · Disclosure: we build <a href="/">nifra</a> and measure all three in
+          Updated 2026-08-04 · Disclosure: we build <a href="/">Nifra</a> and measure all three in
           one harness. The Elysia-vs-Hono verdict below is straight from the data.
         </em>
       </p>
@@ -93,7 +93,7 @@ export default function ElysiaVsHono() {
 
       <h2>The third option</h2>
       <p>
-        Both stop at the API boundary. If you also own the frontend, nifra extends the typed
+        Both stop at the API boundary. If you also own the frontend, Nifra extends the typed
         contract through SSR loaders, pages, and server functions (React/Vue/Svelte/Solid/Preact),
         matches or beats Elysia's throughput in our published Bun runs (101% of the raw{" "}
         <code>Bun.serve</code> ceiling on GET, 105% of Elysia on validated POST), runs on all the

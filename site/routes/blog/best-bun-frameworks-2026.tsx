@@ -4,7 +4,7 @@ export const hydrate = false
 
 export const meta = pageMeta(
   "The best Bun frameworks in 2026 · Nifra",
-  "An honest guide to Bun web frameworks in 2026 - Elysia, Hono, and nifra compared on speed, typing, scope, and ecosystem, with published benchmarks and a clear disclosure: we build one of them.",
+  "An honest guide to Bun web frameworks in 2026 - Elysia, Hono, and Nifra compared on speed, typing, scope, and ecosystem, with published benchmarks and a clear disclosure: we build one of them.",
   "/blog/best-bun-frameworks-2026",
 )
 
@@ -23,7 +23,7 @@ export default function BestBunFrameworks() {
         Bun made server-side JavaScript fast by default; the framework question is what you put on
         top. Three serious options dominate in 2026: <strong>Elysia</strong> (the Bun-first backend
         framework), <strong>Hono</strong> (the run-anywhere minimal router), and{" "}
-        <strong>nifra</strong> (the full-stack, agent-native one - ours). Here is how to choose.
+        <strong>Nifra</strong> (the full-stack, agent-native one - ours). Here is how to choose.
       </p>
 
       <h2>The short version</h2>
@@ -39,7 +39,7 @@ export default function BestBunFrameworks() {
         </thead>
         <tbody>
           <tr>
-            <td>nifra</td>
+            <td>Nifra</td>
             <td>Full-stack: API + SSR for React/Vue/Svelte/Solid/Preact</td>
             <td>Inferred from server, zero codegen, reaches loaders/pages</td>
             <td>101% of a raw Bun.serve baseline on GET; 105% of Elysia on validated POST</td>
@@ -49,7 +49,7 @@ export default function BestBunFrameworks() {
             <td>Elysia</td>
             <td>Backend framework</td>
             <td>Eden treaty, typed end-to-end (backend only)</td>
-            <td>Level with nifra on GET; behind on validated POST</td>
+            <td>Level with Nifra on GET; behind on validated POST</td>
             <td>Backend-only on Bun with a mature plugin ecosystem</td>
           </tr>
           <tr>
@@ -81,14 +81,14 @@ export default function BestBunFrameworks() {
       <p>
         Hono runs on everything - Bun, Node, Deno, Cloudflare Workers, Lambda - with one tiny API,
         and its middleware ecosystem is the largest in the class. On Bun specifically it gives up
-        measurable throughput to Elysia and nifra in our runs, and like Elysia it is backend-only.
+        measurable throughput to Elysia and Nifra in our runs, and like Elysia it is backend-only.
         Choose it when "runs literally anywhere" is the requirement or the service is small enough
         that a router is the whole job.
       </p>
 
-      <h2>nifra - full-stack and agent-native (ours)</h2>
+      <h2>Nifra - full-stack and agent-native (ours)</h2>
       <p>
-        nifra's bet is different: the API and the frontend are one typed contract.{" "}
+        Nifra's bet is different: the API and the frontend are one typed contract.{" "}
         <code>client&lt;typeof app&gt;()</code> infers every path, param, body, and response from
         the server type - zero codegen - and the same contract extends through SSR loaders, pages,
         and server functions for React, Vue, Svelte, Solid, or Preact. The docs, examples, and exact
@@ -108,13 +108,13 @@ export default function BestBunFrameworks() {
           Tiny service or exotic runtime target → <strong>Hono</strong>
         </li>
         <li>
-          Full-stack product, typed end-to-end, AI-assisted development → <strong>nifra</strong> (
+          Full-stack product, typed end-to-end, AI-assisted development → <strong>Nifra</strong> (
           <code>bunx create-nifra my-app</code>)
         </li>
       </ul>
       <p>
-        Deeper head-to-heads: <a href="/compare/elysia">nifra vs Elysia</a> ·{" "}
-        <a href="/compare/hono">nifra vs Hono</a> · full tables on{" "}
+        Deeper head-to-heads: <a href="/compare/elysia">Nifra vs Elysia</a> ·{" "}
+        <a href="/compare/hono">Nifra vs Hono</a> · full tables on{" "}
         <a href="/benchmarks">benchmarks</a>.
       </p>
     </article>

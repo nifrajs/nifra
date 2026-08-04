@@ -25,7 +25,7 @@ export default function VsHono() {
         that returns a constant. Real services validate bodies, stack middleware, and serialize real
         payloads. Our published benchmark measures that shape - identical workloads per framework,
         including a schema-validated <code>POST</code> and a realistic middleware stack (security
-        headers + CORS + request-id). In that shape nifra tops the measured framework field on Bun,
+        headers + CORS + request-id). In that shape Nifra tops the measured framework field on Bun,
         Deno, and Node alike - on Node that includes Fastify, with Hono, Elysia, and Express behind.
         Every number is reproducible from the repo - the <a href="/benchmarks">benchmarks page</a>{" "}
         publishes the losses too.
@@ -37,7 +37,7 @@ export default function VsHono() {
         Cloudflare Workers, and more. Nifra ships the same property as runtime adapters - Bun, Node,
         Deno, edge workers - but carries the whole application across: routes, validation, SSR,
         server functions, the typed client. With Hono, the router is portable and the rest of the
-        stack is your assembly; with nifra, the stack is the framework.
+        stack is your assembly; with Nifra, the stack is the framework.
       </p>
 
       <h2>Typed clients: hc vs inferred contract</h2>
@@ -95,7 +95,7 @@ export default function VsHono() {
       <h2>When to pick which</h2>
       <ul>
         <li>
-          <strong>Pick nifra</strong> when the API and frontend are one product, when you want
+          <strong>Pick Nifra</strong> when the API and frontend are one product, when you want
           validation and typing to be the default rather than a discipline, or when AI agents write
           a meaningful share of the code and need docs and verification built for them - see{" "}
           <a href="/blog/docs-as-mcp">the agent-native thesis</a>.

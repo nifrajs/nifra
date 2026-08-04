@@ -15,21 +15,21 @@ const POSTS: ReadonlyArray<{ slug: string; date: string; title: string; summary:
     date: "2026-08-04",
     title: "Choosing a TypeScript API framework in 2026",
     summary:
-      "The three levels of 'typed' - handlers, inferred clients, runtime validation - and how nifra, tRPC, Elysia, Hono, Fastify, and NestJS score on each, with a ten-minute test that beats any comparison table.",
+      "The three levels of 'typed' - handlers, inferred clients, runtime validation - and how Nifra, tRPC, Elysia, Hono, Fastify, and NestJS score on each, with a ten-minute test that beats any comparison table.",
   },
   {
     slug: "best-bun-frameworks-2026",
     date: "2026-08-04",
     title: "The best Bun frameworks in 2026",
     summary:
-      "Elysia, Hono, and nifra compared on speed, typing, scope, and ecosystem - with published benchmarks and our bias disclosed.",
+      "Elysia, Hono, and Nifra compared on speed, typing, scope, and ecosystem - with published benchmarks and our bias disclosed.",
   },
   {
     slug: "best-nodejs-frameworks-2026",
     date: "2026-08-04",
     title: "The best Node.js frameworks in 2026",
     summary:
-      "Fastify, Express, NestJS, Hono, and nifra - measured throughput, typing stories, and a one-minute decision guide.",
+      "Fastify, Express, NestJS, Hono, and Nifra - measured throughput, typing stories, and a one-minute decision guide.",
   },
   {
     slug: "bun-vs-node",
@@ -56,7 +56,7 @@ const POSTS: ReadonlyArray<{ slug: string; date: string; title: string; summary:
     date: "2026-08-04",
     title: "Next.js alternatives in 2026 - what to use and when",
     summary:
-      "Remix, SvelteKit, Nuxt, SolidStart, Astro, and nifra matched to the three reasons people actually leave - including when staying is right.",
+      "Remix, SvelteKit, Nuxt, SolidStart, Astro, and Nifra matched to the three reasons people actually leave - including when staying is right.",
   },
   {
     slug: "fullstack-bun-guide",
@@ -70,7 +70,7 @@ const POSTS: ReadonlyArray<{ slug: string; date: string; title: string; summary:
     date: "2026-08-04",
     title: "Your framework's docs should be an MCP server",
     summary:
-      "Most code is now written by an AI agent reading your docs. Why nifra ships its documentation, examples, and exact API types as a live MCP endpoint, and how CI keeps a machine-readable corpus from lying.",
+      "Most code is now written by an AI agent reading your docs. Why Nifra ships its documentation, examples, and exact API types as a live MCP endpoint, and how CI keeps a machine-readable corpus from lying.",
   },
 ]
 

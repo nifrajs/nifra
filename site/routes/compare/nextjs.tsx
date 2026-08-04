@@ -65,9 +65,9 @@ export default function VsNextjs() {
       <h2>The 28x number, honestly</h2>
       <p>
         In our reproducible SSR benchmark - the same dynamic page, server-rendered by each
-        framework's production build on its default runtime - nifra with React serves roughly 28x
-        the requests per second of Next.js. The harness lives in the nifra repo, publishes its
-        methodology, and includes rows nifra does not win. That gap is not React being slow: it is
+        framework's production build on its default runtime - Nifra with React serves roughly 28x
+        the requests per second of Next.js. The harness lives in the Nifra repo, publishes its
+        methodology, and includes rows Nifra does not win. That gap is not React being slow: it is
         the cost of the meta-framework layer around the render. Full tables and per-framework
         results are on the <a href="/benchmarks">benchmarks page</a>.
       </p>
@@ -78,12 +78,12 @@ export default function VsNextjs() {
         React-only architecture, and a framework core that five UI frameworks share cannot be built
         on it. If your application is architected around RSC itself - streaming component payloads,
         server-only component trees as the organizing idea -{" "}
-        <strong>Next.js App Router is the right tool</strong>, and nifra will not pretend otherwise.
+        <strong>Next.js App Router is the right tool</strong>, and Nifra will not pretend otherwise.
         Next.js also brings the largest React ecosystem, years of production hardening at every
         scale, and first-party Vercel integration.
       </p>
 
-      <h2>Where nifra wins</h2>
+      <h2>Where Nifra wins</h2>
       <ul>
         <li>
           <strong>End-to-end types without codegen.</strong> The client infers request and response

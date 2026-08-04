@@ -4,7 +4,7 @@ export const hydrate = false
 
 export const meta = pageMeta(
   "Nifra vs Fastify - Node's speed king vs a typed full-stack",
-  "Nifra vs Fastify compared honestly: ahead on Node in our published benchmark (~12% on the validated POST, level on GET), what each gives you beyond raw throughput, and why the same nifra app runs unchanged - and much faster - on Bun.",
+  "Nifra vs Fastify compared honestly: ahead on Node in our published benchmark (~12% on the validated POST, level on GET), what each gives you beyond raw throughput, and why the same Nifra app runs unchanged - and much faster - on Bun.",
   "/compare/fastify",
 )
 
@@ -15,14 +15,14 @@ export default function VsFastify() {
       <p className="lead">
         Fastify is the Node.js performance benchmark for a reason: a decade of optimization, a
         serious plugin architecture, and honest engineering culture. Nifra respects it enough to
-        publish the numbers plainly: in our current benchmark nifra runs ahead of Fastify on Node -
+        publish the numbers plainly: in our current benchmark Nifra runs ahead of Fastify on Node -
         clearly on the validated write, within noise on the read. The real comparison is what you
         get at that speed - and what happens when you leave Node.
       </p>
 
       <h2>The Node numbers</h2>
       <p>
-        On identical workloads, nifra leads the framework field on Node. On the schema-validated{" "}
+        On identical workloads, Nifra leads the framework field on Node. On the schema-validated{" "}
         <code>POST</code> it runs ~12% ahead of Fastify, at 96% of a raw <code>node:http</code>{" "}
         baseline - validation included. On the path-param <code>GET</code> the two are level,
         trading places run to run; treat that one as a tie. Behind them: Elysia, Express, Hono.
@@ -32,7 +32,7 @@ export default function VsFastify() {
 
       <h2>The part Fastify cannot do: leave Node</h2>
       <p>
-        A nifra app is runtime-portable: the identical code deploys to Node, Bun, Deno, or edge
+        A Nifra app is runtime-portable: the identical code deploys to Node, Bun, Deno, or edge
         workers through adapters. The same benchmarked app on Bun serves several times the Node
         throughput, at 101% of a hand-rolled <code>Bun.serve</code> baseline - the framework layer
         measurably costs nothing there. If your Node service is CPU-bound on request handling, the
@@ -85,7 +85,7 @@ export default function VsFastify() {
       <h2>When to pick which</h2>
       <ul>
         <li>
-          <strong>Pick nifra</strong> for the speed lead <em>plus</em> everything above it: a typed
+          <strong>Pick Nifra</strong> for the speed lead <em>plus</em> everything above it: a typed
           contract that reaches the frontend, runtime portability as insurance, validation as the
           default rather than a setup step, and docs + verification built for the AI agents writing
           an increasing share of the code.

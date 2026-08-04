@@ -28,7 +28,7 @@ nifra's own docs, runnable examples, and API types are a **live remote MCP serve
 - **Claude.ai / Desktop:** Settings → Connectors → Add custom connector → `https://mcp.nifra.dev`
 - **Cursor / VS Code / other MCP clients:** point them at `https://mcp.nifra.dev`
 
-Inside a project, `nifra mcp` additionally serves *your* app's live routes and schemas to the agent - so it writes against the code you have, not the code it remembers.
+Inside a project, register the **local** server instead - `claude mcp add nifra -- bunx nifra mcp`. It is the same MCP with the same docs tools built in (version-matched to your installed nifra), plus the project tools that read *your* app's live routes and schemas - so the agent writes against the code you have, not the code it remembers. Project tools run only on your machine over stdio; your code never reaches `mcp.nifra.dev`. One MCP, two transports - the same hosted-plus-local pairing Supabase, Stripe, and GitHub use, and you never need both: local includes everything hosted has.
 
 ## The backend
 
