@@ -335,17 +335,31 @@ const trimTrailingSlashes = (path: string): string => {
 const dataUrlFor = (pathname: string): string =>
   pathname === "/" ? "/_data.json" : `${trimTrailingSlashes(pathname)}/_data.json`
 
+// The generated prerender list is immutable for the lifetime of a client entry. Cache its Set by
+// array identity so a large SSG site pays the O(n) build once, while repeated navigations stay O(1).
+// A WeakMap avoids retaining a list after its router/test instance is gone.
+const PRERENDERED_SET_CACHE = new WeakMap<object, ReadonlySet<unknown>>()
+const prerenderedSetOf = (paths: object): ReadonlySet<unknown> => {
+  const cached = PRERENDERED_SET_CACHE.get(paths)
+  if (cached !== undefined) return cached
+  const set = new Set(paths as Iterable<unknown>)
+  PRERENDERED_SET_CACHE.set(paths, set)
+  return set
+}
+
 const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation) => {
   // SSG fast path: if this path was prerendered, its loader data is a static file - fetch that (no
   // worker). Falls through to the dynamic header-GET on any miss (file absent, e.g. a deferred route,
   // or a stale set), so it's always safe. Non-SSG apps have no global → the dynamic path, unchanged.
   const prerendered = (globalThis as { [PRERENDERED_GLOBAL]?: unknown })[PRERENDERED_GLOBAL]
   if (Array.isArray(prerendered)) {
-    // `search` + `slice` rather than `replace(/[?#].*$/)`: the trailing `.*$` backtracks
-    // quadratically on adversarial input, and the URL is caller-controlled.
-    const cut = path.search(/[?#]/)
+    const query = path.indexOf("?")
+    const hash = path.indexOf("#")
+    // `indexOf` rather than `replace(/[?#].*$/)`: no regex allocation or backtracking on a
+    // caller-controlled navigation path.
+    const cut = query === -1 ? hash : hash === -1 ? query : Math.min(query, hash)
     const pathname = cut === -1 ? path : path.slice(0, cut)
-    if (prerendered.includes(pathname)) {
+    if (prerenderedSetOf(prerendered).has(pathname)) {
       const staticRes = await fetch(dataUrlFor(pathname), { signal: signal ?? null })
       if (staticRes.ok) return readResponseData(staticRes, signal)
     }

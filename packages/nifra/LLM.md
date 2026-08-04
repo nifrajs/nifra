@@ -16,16 +16,16 @@ The nifra full-stack framework - unscoped meta-entry that re-exports @nifrajs/co
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: Request) => boolean`
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
 - **parseCookies** _(function)_ - `parseCookies: (header: string | null | undefined) => Record<string, string>`
+- **pathnameOf** _(function)_ - `pathnameOf: (url: string) => string`
 - **redactLogFields** _(function)_ - `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
 - **signValue** _(function)_ - `signValue: (value: string, secret: string) => Promise<string>`
 - **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(…`
 - **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: string) => Promise<string | null>`
+- **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`
 - **FrameworkError** _(class)_ - `class FrameworkError`
-- **RouteConfigError** _(class)_ - `class RouteConfigError`
-- **Router** _(class)_ - `class Router<T>`
 
-_…and 64 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
+_…and 67 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
 
 ## Footguns
 

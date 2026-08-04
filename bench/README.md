@@ -20,6 +20,13 @@ bun run bench:size              # server bundle size
 bun run bench:coldboot          # cold-start time
 ```
 
+`bench:p99`, `bench:soak`, and `bench:coldboot` accept `NIFRA_PERF_GATE=1` to fail closed against
+fixed release floors (tail latency, memory drift, boot time) instead of only printing numbers:
+
+```sh
+NIFRA_PERF_GATE=1 bun run bench:p99
+```
+
 `bench:http:update` writes a local `BENCHMARKS.md` at the repo root (git-ignored). Read the
 same-run ratios (nifra vs the field, % of the raw server) - not the absolute numbers.
 

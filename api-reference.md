@@ -299,6 +299,7 @@ Every public export of every package and documented subpath - name, kind, signat
   MCP tool safety hints, surfaced in `tools/list`, that tell an agent how risky a `.tool()` call is - so it can decide whether to auto-invoke or confirm first. All optional; an omitted hint means "unknown". Mirrors the MCP spec's tool `annotations`.
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
+- **UrlParts** _(interface)_ - `interface UrlParts`
 - **VERSION** _(const)_ - `VERSION: "2.8.2"`
   Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version.
 - **ValidationOutcome** _(type)_ - `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
@@ -325,6 +326,7 @@ Every public export of every package and documented subpath - name, kind, signat
   The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction - pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
 - **parseCookies** _(function)_ - `parseCookies: (header: string | null | undefined) => Record<string, string>`
   Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are skipped rather than throwing - a junk `Cookie` header shouldn't fail the request.
+- **pathnameOf** _(function)_ - `pathnameOf: (url: string) => string`
 - **redactLogFields** _(function)_ - `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
@@ -339,6 +341,7 @@ Every public export of every package and documented subpath - name, kind, signat
   Adapt a nifra app to an edge "ExportedHandler" - use it as a Cloudflare Workers (or any `fetch(request, env, ctx)` runtime) default export. It threads `env` + `ctx.waitUntil` into the nifra Context, so handlers read `c.env` and schedule background work via `c.waitUntil`:
 - **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: string) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
+- **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`
 
 ### `@nifrajs/core/assurance`
 
@@ -1102,6 +1105,7 @@ Every public export of every package and documented subpath - name, kind, signat
   MCP tool safety hints, surfaced in `tools/list`, that tell an agent how risky a `.tool()` call is - so it can decide whether to auto-invoke or confirm first. All optional; an omitted hint means "unknown". Mirrors the MCP spec's tool `annotations`.
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
+- **UrlParts** _(interface)_ - `interface UrlParts`
 - **ValidationOutcome** _(type)_ - `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
 - **WebSocketContext** _(interface)_ - `interface WebSocketContext<Env = unknown>`
   The request-context subset the `upgrade()` guard sees - the same lazy accessors a route handler's `c` has (cookies/headers/env are read straight off the upgrade request). Structurally a slice of the core `RawContext`, so the real context object satisfies it.
@@ -1125,6 +1129,7 @@ Every public export of every package and documented subpath - name, kind, signat
   The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction - pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
 - **parseCookies** _(function)_ - `parseCookies: (header: string | null | undefined) => Record<string, string>`
   Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are skipped rather than throwing - a junk `Cookie` header shouldn't fail the request.
+- **pathnameOf** _(function)_ - `pathnameOf: (url: string) => string`
 - **redactLogFields** _(function)_ - `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
@@ -1139,6 +1144,7 @@ Every public export of every package and documented subpath - name, kind, signat
   Adapt a nifra app to an edge "ExportedHandler" - use it as a Cloudflare Workers (or any `fetch(request, env, ctx)` runtime) default export. It threads `env` + `ctx.waitUntil` into the nifra Context, so handlers read `c.env` and schedule background work via `c.waitUntil`:
 - **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: string) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
+- **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`
 
 ### `@nifrajs/core/sse`
 
@@ -3594,6 +3600,7 @@ _No named exports (side-effect entrypoint)._
   MCP tool safety hints, surfaced in `tools/list`, that tell an agent how risky a `.tool()` call is - so it can decide whether to auto-invoke or confirm first. All optional; an omitted hint means "unknown". Mirrors the MCP spec's tool `annotations`.
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
+- **UrlParts** _(interface)_ - `interface UrlParts`
 - **VERSION** _(const)_ - `VERSION: "2.8.2"`
   Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version.
 - **ValidationOutcome** _(type)_ - `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
@@ -3620,6 +3627,7 @@ _No named exports (side-effect entrypoint)._
   The default logger: one redacted JSON object per line. `write` is injectable for tests or alternative sinks (defaults to stderr). `options` tunes redaction - pass `valuePatterns` (e.g. {@link commonSecretPatterns}) to also scrub secrets embedded in values + the message. Framework keys (`level`, `me…
 - **parseCookies** _(function)_ - `parseCookies: (header: string | null | undefined) => Record<string, string>`
   Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are skipped rather than throwing - a junk `Cookie` header shouldn't fail the request.
+- **pathnameOf** _(function)_ - `pathnameOf: (url: string) => string`
 - **redactLogFields** _(function)_ - `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
@@ -3634,3 +3642,4 @@ _No named exports (side-effect entrypoint)._
   Adapt a nifra app to an edge "ExportedHandler" - use it as a Cloudflare Workers (or any `fetch(request, env, ctx)` runtime) default export. It threads `env` + `ctx.waitUntil` into the nifra Context, so handlers read `c.env` and schedule background work via `c.waitUntil`:
 - **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: string) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
+- **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`

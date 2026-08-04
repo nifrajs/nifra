@@ -6751,6 +6751,18 @@
     "doc": "/**\n * Parse a `traceparent` header, or `null` if it's absent/malformed/version-unknown - per the spec,\n * a bad header means \"start a fresh trace\", never an error. Only version `00` is accepted.\n */"
   },
   {
+    "name": "pathnameOf",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function pathnameOf(url: string): string;"
+  },
+  {
+    "name": "pathnameOf",
+    "kind": "function",
+    "package": "nifra",
+    "signature": "export declare function pathnameOf(url: string): string;"
+  },
+  {
     "name": "pickLanguage",
     "kind": "function",
     "package": "@nifrajs/middleware",
@@ -10254,6 +10266,30 @@
     "package": "@nifrajs/env",
     "signature": "export declare function url(opts?: Base<string> & Optional): StandardSchemaV1<string | undefined>;",
     "doc": "/** A valid absolute URL (parses with the WHATWG `URL`). Returns the normalized href string. */"
+  },
+  {
+    "name": "UrlParts",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface UrlParts {\n    readonly pathname: string;\n    readonly search: string;\n}"
+  },
+  {
+    "name": "UrlParts",
+    "kind": "interface",
+    "package": "nifra",
+    "signature": "export interface UrlParts {\n    readonly pathname: string;\n    readonly search: string;\n}"
+  },
+  {
+    "name": "urlPartsOf",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function urlPartsOf(url: string): UrlParts;"
+  },
+  {
+    "name": "urlPartsOf",
+    "kind": "function",
+    "package": "nifra",
+    "signature": "export declare function urlPartsOf(url: string): UrlParts;"
   },
   {
     "name": "useBlocker",

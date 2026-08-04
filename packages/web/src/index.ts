@@ -13,7 +13,7 @@ import {
   type BackendMountHandler,
   NIFRA_BACKEND_MOUNT,
 } from "@nifrajs/core/mount"
-import { server } from "@nifrajs/core/server"
+import { server, type UrlParts, urlPartsOf } from "@nifrajs/core/server"
 import {
   DEFERRED_ERROR_CODE,
   DEFERRED_RUNTIME,
@@ -1552,6 +1552,18 @@ function backendMountOf(api: unknown): BackendMountHandler | undefined {
   return (request, platform) => explicit.call(api, request, platform)
 }
 
+// `createWebApp` reaches the same Request object through the mount hook and the page route. Cache the
+// allocation-light core split once so API mounting, path hydration, search parsing, and SSG fallback
+// checks do not each rescan the absolute URL. WeakMap keeps this bounded to requests that are alive.
+const REQUEST_URL_PARTS = new WeakMap<Request, UrlParts>()
+const urlPartsFor = (request: Request): UrlParts => {
+  const cached = REQUEST_URL_PARTS.get(request)
+  if (cached !== undefined) return cached
+  const parts = urlPartsOf(request.url)
+  REQUEST_URL_PARTS.set(request, parts)
+  return parts
+}
+
 /**
  * Build a nifra app from a route manifest: every route SSRs its layout chain via `renderPage`,
  * and a wildcard catch-all renders `_404` (or a plain 404). Reuses @nifrajs/core's router +
@@ -1613,7 +1625,7 @@ export function createWebApp<Env = unknown>(
 
   if (mounts.length > 0 || (apiPrefix !== "" && mountedApi !== undefined)) {
     app.onRequest((req, platform) => {
-      const { pathname } = new URL(req.url)
+      const { pathname } = urlPartsFor(req)
       // Sub-app mounts win over the backend prefix: they are the more specific declaration, and an
       // auth handler mounted at `/api/auth` must not be swallowed by the backend mounted at `/api`.
       for (const mount of mounts) {
@@ -1743,7 +1755,7 @@ export function createWebApp<Env = unknown>(
   // The validated (or raw-parsed) search a route's loader context receives; `searchOf` fails closed to
   // the schema's defaults on hostile input, so this never throws on an attacker-picked query.
   const loaderSearch = (searchSchema: RouteModule["searchSchema"], request: Request) =>
-    searchOf(searchSchema, new URL(request.url).search)
+    searchOf(searchSchema, urlPartsFor(request).search)
 
   // The route's EFFECTIVE search once its layout chain is loaded: the layout schemas merged with the
   // page's (page-wins), the same chain the client mount builds for `useSearch`. Used for the page loader's
@@ -1755,7 +1767,7 @@ export function createWebApp<Env = unknown>(
   ): Record<string, unknown> =>
     searchOfChain(
       [...layoutMods.map((m) => m.searchSchema), mod.searchSchema],
-      new URL(request.url).search,
+      urlPartsFor(request).search,
     )
 
   const runLayoutChain = async (
@@ -1900,8 +1912,8 @@ export function createWebApp<Env = unknown>(
   // the server. A malformed `req.url` degrades to "/" rather than throwing during render.
   const pathOf = (req: Request): string => {
     try {
-      const u = new URL(req.url)
-      return u.pathname + u.search
+      const parts = urlPartsFor(req)
+      return parts.pathname + parts.search
     } catch {
       return "/"
     }
@@ -2064,7 +2076,7 @@ export function createWebApp<Env = unknown>(
       // Enforce `fallback: "404"` before any work: an unlisted path under this route doesn't exist.
       // Covers hard navigation directly; a client soft-nav's data fetch gets the 404, throws, and the
       // history layer falls back to a full-page navigation (which lands here again, as a document).
-      if (is404Fallback && !prerenderedSet.has(new URL(c.req.url).pathname)) {
+      if (is404Fallback && !prerenderedSet.has(urlPartsFor(c.req).pathname)) {
         return renderNotFound(pathOf(c.req))
       }
       const mod = await route.load()

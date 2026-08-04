@@ -58,9 +58,21 @@ const runs: number[] = []
 for (let i = 0; i < RUNS; i++) runs.push(await bootOnce())
 runs.sort((a, b) => a - b)
 const ms = (n: number): string => `${n.toFixed(1)} ms`
+const median = runs[Math.floor(runs.length / 2)] as number
+const max = runs[runs.length - 1] as number
 console.log(
   `\nCold boot - spawn → first 200, ${RUNS} runs (local process boot, not edge cold start)`,
 )
 console.log(`  min     ${ms(runs[0] as number)}`)
-console.log(`  median  ${ms(runs[Math.floor(runs.length / 2)] as number)}`)
-console.log(`  max     ${ms(runs[runs.length - 1] as number)}`)
+console.log(`  median  ${ms(median)}`)
+console.log(`  max     ${ms(max)}`)
+
+if (Bun.env.NIFRA_PERF_GATE === "1") {
+  const failures = [
+    ...(median <= 100 ? [] : [`median ${ms(median)} > 100 ms`]),
+    ...(max <= 250 ? [] : [`max ${ms(max)} > 250 ms`]),
+  ]
+  if (failures.length > 0)
+    throw new Error(`performance standard failed:\n  ${failures.join("\n  ")}`)
+  console.log("  standard  PASS (NIFRA_PERF_GATE=1)")
+}

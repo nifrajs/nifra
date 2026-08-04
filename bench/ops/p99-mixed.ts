@@ -34,6 +34,8 @@ const SHOTS: Shot[] = [
 const latencies: number[] = []
 let errors = 0
 const deadline = Bun.nanoseconds() + DURATION_S * 1e9
+const percentile = (p: number): number =>
+  latencies[Math.min(latencies.length - 1, Math.floor((latencies.length * p) / 100))] as number
 
 async function worker(seed: number): Promise<void> {
   let i = seed
@@ -55,18 +57,30 @@ await Promise.all(Array.from({ length: CONCURRENCY }, (_, i) => worker(i)))
 kill()
 
 latencies.sort((a, b) => a - b)
-const pct = (p: number): string => {
-  const v = latencies[Math.min(latencies.length - 1, Math.floor((latencies.length * p) / 100))]
-  return `${(v as number).toFixed(2)} ms`
-}
 const total = latencies.length
+const p50 = percentile(50)
+const p90 = percentile(90)
+const p99 = percentile(99)
+const p999 = percentile(99.9)
+const max = latencies[total - 1] as number
 console.log(`\nMixed workload - 4 route shapes, ${CONCURRENCY} conns, ${DURATION_S}s, same machine`)
 console.log(
   `  requests   ${total.toLocaleString()}  (${Math.round(total / DURATION_S).toLocaleString()} req/s incl. client overhead)`,
 )
 console.log(`  errors     ${errors}`)
-console.log(`  p50        ${pct(50)}`)
-console.log(`  p90        ${pct(90)}`)
-console.log(`  p99        ${pct(99)}`)
-console.log(`  p99.9      ${pct(99.9)}`)
-console.log(`  max        ${(latencies[total - 1] as number).toFixed(2)} ms`)
+console.log(`  p50        ${p50.toFixed(2)} ms`)
+console.log(`  p90        ${p90.toFixed(2)} ms`)
+console.log(`  p99        ${p99.toFixed(2)} ms`)
+console.log(`  p99.9      ${p999.toFixed(2)} ms`)
+console.log(`  max        ${max.toFixed(2)} ms`)
+
+if (Bun.env.NIFRA_PERF_GATE === "1") {
+  const failures = [
+    ...(errors === 0 ? [] : [`${errors} request error(s)`]),
+    ...(p99 <= 2 ? [] : [`p99 ${p99.toFixed(2)} ms > 2 ms`]),
+    ...(p999 <= 4 ? [] : [`p99.9 ${p999.toFixed(2)} ms > 4 ms`]),
+  ]
+  if (failures.length > 0)
+    throw new Error(`performance standard failed:\n  ${failures.join("\n  ")}`)
+  console.log("  standard  PASS (NIFRA_PERF_GATE=1)")
+}

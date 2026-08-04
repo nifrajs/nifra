@@ -59,12 +59,23 @@ const last = samples[samples.length - 1] as number
 // Steady-state growth: compare the post-warmup sample (1/3 in) to the end - startup allocation
 // (JIT, route compile, first-GC high-water) isn't leak signal.
 const steady = samples[Math.floor(samples.length / 3)] as number
+const drift = last - steady
 console.log(`\nMemory soak - ${requests.toLocaleString()} requests over ${SOAK_S}s`)
 console.log(`  rss first sample   ${mb(first)}`)
 console.log(`  rss post-warmup    ${mb(steady)}`)
 console.log(`  rss last sample    ${mb(last)}`)
 console.log(`  rss max            ${mb(Math.max(...samples))}`)
-console.log(`  steady-state drift ${mb(last - steady)} over the final two-thirds`)
+console.log(`  steady-state drift ${mb(drift)} over the final two-thirds`)
 console.log(
   samples.length >= 5 ? `  samples: ${samples.map((s) => s.toFixed(0)).join(" → ")} MB` : "",
 )
+
+if (Bun.env.NIFRA_PERF_GATE === "1") {
+  const limit = steady * 0.05
+  if (drift > limit) {
+    throw new Error(
+      `performance standard failed:\n  RSS drift ${mb(drift)} > 5% of post-warmup ${mb(steady)}`,
+    )
+  }
+  console.log("  standard  PASS (NIFRA_PERF_GATE=1)")
+}

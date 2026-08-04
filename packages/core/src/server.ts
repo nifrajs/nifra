@@ -43,6 +43,7 @@ export {
   type ScheduledHandler,
   toFetchHandler,
 } from "./server/edge.ts"
+export { pathnameOf, type UrlParts, urlPartsOf } from "./server/http.ts"
 export {
   commonSecretPatterns,
   jsonLogger,

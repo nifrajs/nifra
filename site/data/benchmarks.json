@@ -253,16 +253,16 @@
   "bundle": [
     {
       "name": "Hono",
-      "kb": 8
+      "kb": 8.1
     },
     {
       "name": "Nifra",
-      "kb": 16.2,
+      "kb": 16.5,
       "you": true
     },
     {
       "name": "Elysia",
-      "kb": 104
+      "kb": 104.1
     }
   ],
   "proof": [
