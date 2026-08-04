@@ -10,16 +10,16 @@
     "check": "nifra check && nifra assure"
   },
   "dependencies": {
-    "@nifrajs/client": "^2.8.1",
-    "@nifrajs/core": "^2.8.1",
-    "@nifrajs/schema": "^2.8.1",
-    "@nifrajs/web": "^2.8.1",
-    "@nifrajs/web-react": "^2.8.1",
+    "@nifrajs/client": "^2.8.2",
+    "@nifrajs/core": "^2.8.2",
+    "@nifrajs/schema": "^2.8.2",
+    "@nifrajs/web": "^2.8.2",
+    "@nifrajs/web-react": "^2.8.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@nifrajs/cli": "^2.8.1",
+    "@nifrajs/cli": "^2.8.2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "typescript": "^6.0.3"
