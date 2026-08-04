@@ -144,10 +144,36 @@ describe("Router.find - 404 vs 405", () => {
     const m = r.find("POST", "/res")
     expect(m.found).toBe(false)
     if (m.found === false && m.reason === "method-not-allowed") {
-      expect(m.allowed.sort()).toEqual(["GET", "PUT"])
+      // HEAD is implicitly served by the GET registration, so the allowed list advertises it.
+      expect(m.allowed.sort()).toEqual(["GET", "HEAD", "PUT"])
     } else {
       throw new Error("expected method-not-allowed")
     }
+  })
+
+  test("HEAD falls back to the GET handler when no HEAD route is registered", () => {
+    const r = router()
+    r.add("GET", "/res", "get")
+    expect(r.find("HEAD", "/res")).toMatchObject({ found: true, payload: "get" })
+    r.add("GET", "/u/:id", "param-get")
+    expect(r.find("HEAD", "/u/7")).toMatchObject({ found: true, payload: "param-get" })
+  })
+
+  test("an explicit HEAD registration takes precedence over the GET fallback", () => {
+    const r = router()
+    r.add("GET", "/res", "get")
+    r.add("HEAD", "/res", "head")
+    expect(r.find("HEAD", "/res")).toMatchObject({ found: true, payload: "head" })
+  })
+
+  test("HEAD without a GET sibling stays method-not-allowed", () => {
+    const r = router()
+    r.add("POST", "/res", "post")
+    expect(r.find("HEAD", "/res")).toEqual({
+      found: false,
+      reason: "method-not-allowed",
+      allowed: ["POST"],
+    })
   })
 
   test("a wildcard that captures zero remaining segments does not match", () => {
@@ -180,7 +206,7 @@ describe("Router.find - tolerance", () => {
     r.add("GET", "/x", "x")
     const first = r.find("X-RANDOM-1", "/x")
     const second = r.find("X-RANDOM-1", "/x")
-    expect(first).toEqual({ found: false, reason: "method-not-allowed", allowed: ["GET"] })
+    expect(first).toEqual({ found: false, reason: "method-not-allowed", allowed: ["GET", "HEAD"] })
     expect(second).toEqual(first)
     expect(second).not.toBe(first)
   })
