@@ -1,14 +1,14 @@
-# nifra
+# Nifra
 
 **The full-stack TypeScript framework built for AI agents - and for the humans who work alongside them.**
 
-Coding agents drift. They call an endpoint that moved, expect a response shape that changed, or hand-roll `fetch` with ad-hoc types that fall out of sync the moment a route changes. nifra removes that class of bug at the framework level:
+Coding agents drift. They call an endpoint that moved, expect a response shape that changed, or hand-roll `fetch` with ad-hoc types that fall out of sync the moment a route changes. Nifra removes that class of bug at the framework level:
 
 | | |
 |---|---|
 | **Typed client** | `client<typeof app>` infers every path, param, body, and response from your server's TypeScript type. Any mismatch is a compile error. |
 | **`nifra check`** | Runs typecheck + typed-client lint in one command. Add it to CI - it fails the moment the frontend and backend drift. |
-| **AGENTS.md** | Every scaffold ships a conventions file. Agents (Claude Code, Cursor, Copilot) read it and follow nifra's rules from the first prompt. |
+| **AGENTS.md** | Every scaffold ships a conventions file. Agents (Claude Code, Cursor, Copilot) read it and follow Nifra's rules from the first prompt. |
 | **`nifra context`** | Prints this project's real API surface - routes + schemas - as Markdown. Paste into any agent prompt, or let `nifra mcp` deliver it automatically. |
 | **`nifra mcp`** | An MCP server that feeds Claude Code, Cursor, and Copilot Chat this project's live route and schema data. |
 | **Versioned transports** | One bounded codec registry for plain JSON or rich values across HTTP, loaders, and WebSocket frames. |
@@ -20,15 +20,15 @@ The rest is a fast, contract-first full-stack TypeScript stack: routing, validat
 bun create nifra my-app
 ```
 
-### Use nifra from your AI assistant
+### Use Nifra from your AI assistant
 
-nifra's own docs, runnable examples, and API types are a **live remote MCP server** - listed in the [official MCP registry](https://registry.modelcontextprotocol.io) - so Claude, Cursor, Codex, and any MCP client learn nifra from the source instead of guessing from stale training data:
+Nifra's own docs, runnable examples, and API types are a **live remote MCP server** - listed in the [official MCP registry](https://registry.modelcontextprotocol.io) - so Claude, Cursor, Codex, and any MCP client learn Nifra from the source instead of guessing from stale training data:
 
 - **Claude Code:** `claude mcp add --transport http nifra-docs https://mcp.nifra.dev`
 - **Claude.ai / Desktop:** Settings → Connectors → Add custom connector → `https://mcp.nifra.dev`
 - **Cursor / VS Code / other MCP clients:** point them at `https://mcp.nifra.dev`
 
-Inside a project, register the **local** server instead - `claude mcp add nifra -- bunx nifra mcp`. It is the same MCP with the same docs tools built in (version-matched to your installed nifra), plus the project tools that read *your* app's live routes and schemas - so the agent writes against the code you have, not the code it remembers. Project tools run only on your machine over stdio; your code never reaches `mcp.nifra.dev`. One MCP, two transports - the same hosted-plus-local pairing Supabase, Stripe, and GitHub use, and you never need both: local includes everything hosted has.
+Inside a project, register the **local** server instead - `claude mcp add nifra -- bunx nifra mcp`. It is the same MCP with the same docs tools built in (version-matched to your installed Nifra), plus the project tools that read *your* app's live routes and schemas - so the agent writes against the code you have, not the code it remembers. Project tools run only on your machine over stdio; your code never reaches `mcp.nifra.dev`. One MCP, two transports - the same hosted-plus-local pairing Supabase, Stripe, and GitHub use, and you never need both: local includes everything hosted has.
 
 ## The backend
 
@@ -65,14 +65,14 @@ The client **never throws** - every call returns `{ ok, status, data, error }`, 
 
 ## Agent tooling
 
-nifra ships a purpose-built toolchain so coding agents stay correct as the codebase evolves.
+Nifra ships a purpose-built toolchain so coding agents stay correct as the codebase evolves.
 
-**AGENTS.md** - generated per scaffold, teaches the agent nifra's non-obvious rules:
+**AGENTS.md** - generated per scaffold, teaches the agent Nifra's non-obvious rules:
 - validate every input at the boundary with `t` or any Standard Schema
 - always call this app's own API through `client<typeof app>` - never hand-roll `fetch`
 - never top-level-import server-only code into a route module
 
-**Adding nifra to an existing app? Run `nifra init-agents`.** It writes the agent-discovery files for you - `.mcp.json` + `.cursor/mcp.json` (registering this project's nifra MCP), a CLAUDE.md MCP-first preamble, and an AGENTS.md section - no-clobber, so it never overwrites a file you've customized. (`nifra check` also nudges you when a project has no `.mcp.json`.)
+**Adding Nifra to an existing app? Run `nifra init-agents`.** It writes the agent-discovery files for you - `.mcp.json` + `.cursor/mcp.json` (registering this project's Nifra MCP), a CLAUDE.md MCP-first preamble, and an AGENTS.md section - no-clobber, so it never overwrites a file you've customized. (`nifra check` also nudges you when a project has no `.mcp.json`.)
 
 ```sh
 nifra init-agents          # wire .mcp.json + .cursor/mcp.json + CLAUDE.md into an existing app (no-clobber)
@@ -121,9 +121,9 @@ nifra doctor           # undeclared imports + duplicate identity-sensitive insta
 nifra sync-manifest    # regenerate a web server-manifest.ts from routes/ without a full build
 ```
 
-**Learn nifra from any assistant.** The docs, example, and type tools are also hosted,
+**Learn Nifra from any assistant.** The docs, example, and type tools are also hosted,
 project-independent, at `mcp.nifra.dev` - add that one URL to Claude, Cursor, VS Code, or ChatGPT and it
-learns nifra from the same verified corpora, no checkout. Read-only, no key.
+learns Nifra from the same verified corpora, no checkout. Read-only, no key.
 
 ```sh
 claude mcp add --transport http nifra-docs https://mcp.nifra.dev
@@ -145,7 +145,7 @@ bun add @nifrajs/schema          # the `t` schema builder + OpenAPI (optional)
 bun add @nifrajs/middleware      # CORS, security headers, rate limiting (optional)
 ```
 
-nifra is **ESM-only** and **Bun-native** (it uses `Bun.serve`). It runs on Bun; the client is environment-agnostic.
+Nifra is **ESM-only** and **Bun-native** (it uses `Bun.serve`). It runs on Bun; the client is environment-agnostic.
 
 Use `@nifrajs/core` (or `@nifrajs/core/server`) for the ordinary HTTP runtime. Nifra keeps the package
 root deliberately lean and splits everything else across documented subpaths - most apps only ever touch
@@ -219,36 +219,20 @@ const app = server()
 server({ requestTimeoutMs: 5_000, gracefulSignals: true })
 ```
 
-Official hardening modules also publish route evidence. Add a `nifra.assurance.ts` policy and run
-`nifra assure` in CI to fail when a new route is unclassified or misses required authentication, CSRF,
-rate-limit, body-limit, idempotency, IP, or security-header enforcement. The proof is built from route
-reflection, so it adds no request-path work. See [Security & hardening](site/routes/docs/security.tsx).
+Middleware is table stakes. What's different here: three CI gates that turn security posture into build failures.
 
-Routes may also declare effect tokens (`{ capabilities: ["db.read"] }`). Add capability definitions and
-approved/forbidden import provenance to the same `nifra.assurance.ts`: `nifra check` then blocks raw
-effect imports and declaration/evidence drift, while `nifra capabilities check` also compares the
-deterministic `capabilities.lock.json`. `GET`/`HEAD` domain writes fail unconditionally; mutating effects
-must carry the request-idempotency or durable-command evidence required by their definition. Disabled
-apps retain the existing request hot path; enabled routes pay only when they call `useCapability`.
-For owned effects, prefer `executeCapability(c, id, metadata, run)`: it assigns an `effectId`, records
-intent plus exactly one automatic terminal outcome, forwards `c.signal`, and supports token-only async
-`aroundCapability()` admission policies with fail-closed denial, timeout, and abort behavior. The original
-synchronous beacon remains available for adapter hot paths.
-For long-running or crash-sensitive effects, `@nifrajs/core/durable-execution` adds a signed,
-single-use approval coordinator (tenant/principal/operation bound), a durable effect journal,
-reconciliation reports, and a typed saga engine with reverse compensation and persisted retry state.
-Crash-ambiguous executions and compensations stop in manual review; an operator can apply a
-provider-confirmed outcome with `resolveAmbiguity()` (bound to the exact stored effect ID), then call
-`resume()` or `compensate()` without replaying an unknown effect.
-These require an explicitly durable store in production; the saga store owns encrypted business input
-and compensation arguments, while the sealed ledger and `@nifrajs/otel/effects` remain token-only.
-An approved provenance import is the explicit trust boundary: its provider internals are not scanned,
-while every unapproved local wrapper remains transitively scanned for raw-effect bypasses.
+**`nifra assure` - every route proves its policy.** A `nifra.assurance.ts` file classifies every route by reflection (no request-path cost) and fails CI naming exactly what evidence is missing - authentication on a write, a rate limit, CSRF, a body cap:
 
-For deployment promotion, `nifra manifest emit` combines those schemas and proofs with field-level
-response sensitivity (`classified(schema, "pii")`) in one deterministic, hash-verified artifact.
-Operator code may sign it with Ed25519 through a KMS/HSM callback; `nifra manifest diff` fails closed on
-breaking contracts, lost assurance, expanded effects, or increased response sensitivity.
+```sh
+$ nifra assure
+✖ POST /notes (authenticated-write) is missing nifra.authenticated
+```
+
+**`nifra capabilities check` - routes can't reach effects they didn't declare.** Routes declare effect tokens (`{ capabilities: ["db.write"] }`); the check compares what a route *says* against what its module graph can actually *reach*, and pins the result in a deterministic `capabilities.lock.json`. A `GET` that can reach a domain write is an error, unconditionally. Crash-sensitive effects graduate to durable execution - journaled intent/outcome, typed sagas with compensation, and operator-resolved ambiguity instead of ever replaying an unknown effect.
+
+**`nifra manifest diff` - a deploy can't silently widen the surface.** `nifra manifest emit` folds contracts, assurance, effects, and field-level response sensitivity (`classified(schema, "pii")`) into one deterministic, hash-verified artifact; the diff fails closed on breaking contracts, lost assurance, expanded effects, or newly exposed sensitive fields. Sign it with Ed25519 via your KMS if you promote artifacts between environments.
+
+Full detail: [Security & hardening](site/routes/docs/security.tsx) · [Effect provenance](site/routes/docs/capabilities.tsx) · [Verification ladder](site/routes/docs/verification.tsx)
 
 ## Runs on the edge, too
 
@@ -270,7 +254,7 @@ Bun is the first-class runtime (`app.listen()`), but the whole lifecycle is `app
 | [`@nifrajs/schema`](packages/schema) | TypeBox-backed `t` builder + `toOpenAPI` |
 | [`@nifrajs/middleware`](packages/middleware) | CORS, security headers, rate limiting |
 | [`@nifrajs/testing`](packages/testing) | Contract-derived hostile inputs, response conformance, runtime matrices, test sessions |
-| [`@nifrajs/node`](packages/node) | Run a nifra app on Node's `http` server (opt-in) |
+| [`@nifrajs/node`](packages/node) | Run a Nifra app on Node's `http` server (opt-in) |
 | [`@nifrajs/cli`](packages/cli) | `nifra check`, `nifra context`, `nifra mcp` - the agent toolchain |
 
 ## Examples
