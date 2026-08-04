@@ -4,11 +4,8 @@
  * browser-only `installHistory` (history + link interception) wires on top. Kept DOM-free so it
  * unit-tests without a browser and is safe to import from the SSR core's main entry.
  */
-import {
-  compileRoutePattern,
-  matchRoutePattern,
-  sortRoutesBySpecificity,
-} from "@nifrajs/core/pattern"
+import { decodeRouteParams } from "@nifrajs/core/pattern"
+import { Router as CoreRouter } from "@nifrajs/core/router"
 import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import { parseNdjsonData } from "./deferred.ts"
 import { isClientOnlySearchChange } from "./search.ts"
@@ -156,25 +153,27 @@ export interface RoutePattern {
 export function createMatcher(
   patterns: readonly RoutePattern[],
 ): (path: string) => RouteMatch | null {
-  const compiled = sortRoutesBySpecificity(
-    patterns.map((pattern) => ({
-      routeId: pattern.routeId,
-      pattern: compileRoutePattern(pattern.pattern),
-    })),
-  )
+  // Reuse the core's radix-style segment index instead of scanning every manifest route on each
+  // navigation. The old sorted array was fine for tiny apps, but made client matching O(routes) and
+  // forced every navigation through every unrelated pattern. The core Router owns the same
+  // static/param/mixed/wildcard precedence as the server, so the two sides cannot drift.
+  const routeIndex = new CoreRouter<string>()
+  for (const pattern of patterns) {
+    // Pass the literal to the public router seam: package type resolution may point the two core
+    // subpaths at different source/dist declarations, while registration-time compilation is cheap.
+    routeIndex.add("GET", pattern.pattern, pattern.routeId)
+  }
   return (path) => {
     // Strip the query without allocating a `split("?")` array - matcher runs per match.
     const q = path.indexOf("?")
     const clean = q === -1 ? path : path.slice(0, q)
-    for (const c of compiled) {
-      const match = matchRoutePattern(c.pattern, clean)
-      if (!match.matched) {
-        if (match.reason === "malformed") return null
-        continue
-      }
-      return { routeId: c.routeId, params: match.params }
-    }
-    return null
+    // Core's server router tolerates a missing leading slash; browser navigation paths do not. Keep
+    // the client contract strict so this index is a drop-in replacement for matchRoutePattern.
+    if (clean.charCodeAt(0) !== 47 /* / */) return null
+    const match = routeIndex.find("GET", clean)
+    if (!match.found) return null
+    const params = decodeRouteParams(match.params)
+    return params === null ? null : { routeId: match.payload, params }
   }
 }
 

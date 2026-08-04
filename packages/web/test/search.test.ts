@@ -87,6 +87,14 @@ test("parseSearch caps the number of keys", () => {
   expect(parseSearch("?a=1&b=2&c=3&d=4", undefined, limited)).toEqual({ a: 1, b: 2 })
 })
 
+test("parseSearch keeps ALL values of an admitted repeated key even when a later, interleaved key trips maxKeys", () => {
+  // Key admission is decided in first-occurrence order, independent of where each key's individual
+  // values fall in the string - `a`'s second occurrence (after `b`) must not be dropped just because
+  // `b` is the key that hits the cutoff.
+  const limited: SearchLimits = { maxLength: 4096, maxKeys: 1, maxDepth: 6 }
+  expect(parseSearch("?a=1&b=1&a=2", undefined, limited)).toEqual({ a: [1, 2] })
+})
+
 test("validateSearch returns the typed value on success", () => {
   const schema = makeSchema<{ page: number }>((input) => ({ value: input as { page: number } }))
   expect(validateSearch(schema, { page: 7 })).toEqual({ page: 7 })

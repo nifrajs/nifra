@@ -65,7 +65,7 @@ export interface RouteExecutionPlan {
   /** Which builder produced {@link fusedWeb} - a merge rebinds the closure to the executing server
    * and must rebuild it with the SAME semantics (a query-fused route rebuilt as bare would skip its
    * validation). `undefined` iff `fusedWeb` is. */
-  readonly fusedLane: "bare" | "query" | undefined
+  readonly fusedLane: "bare" | "body" | "query" | undefined
 }
 
 export interface RouteEntry {

@@ -376,6 +376,7 @@ type MaybePromise<T> = T | Promise<T>
 // the prior four sequential `replaceAll` full-string passes.
 const LINE_SEP = String.fromCharCode(0x2028)
 const PARA_SEP = String.fromCharCode(0x2029)
+const SCRIPT_ESCAPE_TEST = new RegExp(`[<>${LINE_SEP}${PARA_SEP}]`)
 const SCRIPT_ESCAPE = new RegExp(`[<>${LINE_SEP}${PARA_SEP}]`, "g")
 const SCRIPT_ESCAPE_MAP: Readonly<Record<string, string>> = {
   "<": "\\u003c",
@@ -1154,7 +1155,13 @@ export function revalidate<T>(paths: readonly string[], data: T): RevalidateResu
  * separators.
  */
 export function serializeData(data: unknown): string {
-  return JSON.stringify(data ?? null).replace(SCRIPT_ESCAPE, (ch) => SCRIPT_ESCAPE_MAP[ch] ?? ch)
+  const serialized = JSON.stringify(data ?? null)
+  // Most loader payloads contain no script-sensitive characters. Avoid the replacement callback and
+  // second output-string pass in that case; the exact same escaping still runs for every dangerous
+  // character, so this is only a fast path, never a security relaxation.
+  return SCRIPT_ESCAPE_TEST.test(serialized)
+    ? serialized.replace(SCRIPT_ESCAPE, (ch) => SCRIPT_ESCAPE_MAP[ch] ?? ch)
+    : serialized
 }
 
 function escapeHtml(value: string): string {

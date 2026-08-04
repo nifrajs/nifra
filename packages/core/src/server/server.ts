@@ -1123,6 +1123,27 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       this.afterHandleHooks.length === 0 &&
       this.onErrorHooks.length === 0 &&
       this.aroundHooks.length === 0
+    const bodyOnly =
+      contracted === undefined &&
+      schema?.body !== undefined &&
+      schema.query === undefined &&
+      schema.params === undefined &&
+      this.derives.length === 0 &&
+      this.beforeHandleHooks.length === 0 &&
+      this.afterHandleHooks.length === 0 &&
+      this.onErrorHooks.length === 0
+    const fusedBody =
+      !bare &&
+      bodyOnly &&
+      schema.onValidationError === undefined &&
+      this.defaultOnValidationError === undefined &&
+      idempotent === undefined &&
+      ledgered === undefined &&
+      this.aroundHooks.length === 0
+    // Body-only routes still need an async body read, but they can use the same fused responder as
+    // bare/query routes once validation succeeds. This keeps the body cap + framing checks in the
+    // established runBodyOnly lane while avoiding the slower generic JSON response path on Bun/Deno.
+    let registeredEntry!: RouteEntry
     const fusedWeb =
       bare && this.aroundHooks.length === 0
         ? this.buildFusedWeb(
@@ -1136,20 +1157,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
               hasDecorations ? routeDecorations : undefined,
               schema.query as StandardSchemaV1,
             )
-          : undefined
+          : fusedBody
+            ? this.buildFusedBodyWeb(() => registeredEntry)
+            : undefined
     const contextless = bare && this.aroundHooks.length === 0 && isContextlessNoArgArrow(handler)
     // The body and query lanes finalize the handler's result themselves, so a contracted route takes
     // the general lifecycle lane instead - one place owns the check rather than three.
     const lane = bare
       ? "bare"
-      : contracted === undefined &&
-          schema?.body !== undefined &&
-          schema.query === undefined &&
-          schema.params === undefined &&
-          this.derives.length === 0 &&
-          this.beforeHandleHooks.length === 0 &&
-          this.afterHandleHooks.length === 0 &&
-          this.onErrorHooks.length === 0
+      : bodyOnly
         ? "body"
         : contracted === undefined &&
             schema?.body === undefined &&
@@ -1167,9 +1183,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       this.aroundHooks.length > 0,
       ledgered !== undefined,
       fusedWeb,
-      fusedWeb === undefined ? undefined : fusedQuery ? "query" : "bare",
+      fusedWeb === undefined ? undefined : fusedQuery ? "query" : fusedBody ? "body" : "bare",
     )
-    const entry: RouteEntry = {
+    registeredEntry = {
       // (context: never) => unknown -> InternalHandler: the framework invokes it
       // with the concrete RawContext the typed handler expects, so this is sound.
       handler: handler as unknown as InternalHandler,
@@ -1229,7 +1245,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       method,
       path,
       pattern,
-      entry,
+      entry: registeredEntry,
       descriptor,
       assurance: Object.freeze(routeAssurance),
     }
@@ -1243,7 +1259,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     hasAround: boolean,
     hasLedger: boolean,
     fusedWeb: FusedWebRunner | undefined,
-    fusedLane: "bare" | "query" | undefined,
+    fusedLane: "bare" | "body" | "query" | undefined,
   ): RouteExecutionPlan {
     if (contextless) {
       const run: RouteExecutionRunner = (
@@ -1462,17 +1478,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // Rebuild with the SAME builder that produced the closure - rebinding a query-fused route as
     // bare would silently drop its validation.
     const fusedWeb =
-      entry.execution.fusedLane === "query"
-        ? this.buildFusedQueryWeb(
-            entry.handler,
-            entry.hasDecorations ? entry.decorations : undefined,
-            entry.schema?.query as StandardSchemaV1,
-          )
-        : this.buildFusedWeb(
-            entry.handler,
-            entry.hasDecorations ? entry.decorations : undefined,
-            isContextlessNoArgArrow(entry.handler),
-          )
+      entry.execution.fusedLane === "body"
+        ? this.buildFusedBodyWeb(() => entry)
+        : entry.execution.fusedLane === "query"
+          ? this.buildFusedQueryWeb(
+              entry.handler,
+              entry.hasDecorations ? entry.decorations : undefined,
+              entry.schema?.query as StandardSchemaV1,
+            )
+          : this.buildFusedWeb(
+              entry.handler,
+              entry.hasDecorations ? entry.decorations : undefined,
+              isContextlessNoArgArrow(entry.handler),
+            )
     return {
       ...route,
       entry: {
@@ -2251,6 +2269,25 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         )
       }
       return fusedRespond(result, ctx)
+    }
+  }
+
+  /** The fused Web body lane keeps bounded parsing + Standard Schema validation in the established
+   * body-only implementation, but finalizes successful handler values with the native fused
+   * responder. Node-direct deliberately does not use this lane; it has its own socket serializer. */
+  private buildFusedBodyWeb(entryOf: () => RouteEntry): FusedWebRunner {
+    return (source, params, search, signal, budget, platform, nativeContext) => {
+      const ctx = nativeContext
+        ? RequestContext.native(source, params, this.maxBodyBytes)
+        : new RequestContext(source, params, search, signal, budget, platform, this.maxBodyBytes)
+      const entry = entryOf()
+      return this.runBodyOnly(
+        entry,
+        source,
+        ctx,
+        (result) => fusedRespond(result, ctx),
+        IDENTITY_RESPONSE,
+      )
     }
   }
 

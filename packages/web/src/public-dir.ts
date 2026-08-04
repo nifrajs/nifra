@@ -14,6 +14,7 @@
  */
 import { realpath } from "node:fs/promises"
 import { normalize, resolve, sep } from "node:path"
+import { pathnameOf } from "@nifrajs/core/server"
 
 /** How long each subtree may be cached. Content-hashed bundle output can be immutable; a
  * user-authored file keeps its name across deploys, so it gets a day and a revalidation. */
@@ -79,7 +80,10 @@ export function servePublicDir(
 
   return async (request: Request): Promise<Response | undefined> => {
     if (request.method !== "GET" && request.method !== "HEAD") return undefined
-    const { pathname } = new URL(request.url)
+    // Request URLs are absolute and already normalized by the host runtime. The lightweight splitter
+    // avoids a WHATWG URL allocation on every asset hit; resolvePublicPath below still performs the
+    // decode, NUL, normalization, confinement, and realpath checks that protect this filesystem sink.
+    const pathname = pathnameOf(request.url)
     // A production manifest can reject page routes without touching the filesystem.
     if (options.files !== undefined && !options.files.has(pathname)) return undefined
     const abs = resolvePublicPath(root, pathname)

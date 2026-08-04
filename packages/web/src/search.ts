@@ -108,12 +108,33 @@ function encodeValue(value: unknown): string {
 const jsonCodec: SearchCodec = {
   parse(raw, limits) {
     const usp = new URLSearchParams(raw.startsWith("?") ? raw.slice(1) : raw)
+    // Two passes instead of the old `Set(keys) + getAll(key)` shape, which rescanned the complete
+    // URLSearchParams list once per distinct key (O(keys²)). Admission must be decided BEFORE any
+    // value is grouped: a single grouping pass that also applies the maxKeys cutoff drops the later
+    // occurrences of an already-admitted repeated key the moment some interleaved OTHER key trips the
+    // cutoff (e.g. `?a=1&b=1&a=2` with maxKeys=1 would wrongly yield `{ a: "1" }` instead of
+    // `{ a: ["1", "2"] }`). Deciding the admitted key set first, then grouping only admitted keys,
+    // keeps insertion order, repeated-key semantics, and the maxKeys cutoff byte-identical to the old
+    // code while still making the common bounded query O(entries).
+    const admitted = new Set<string>()
+    for (const key of usp.keys()) {
+      if (admitted.has(key) || FORBIDDEN_KEYS.has(key)) continue
+      if (admitted.size + 1 > limits.maxKeys) break
+      admitted.add(key)
+    }
+    const rawValues = new Map<string, string[]>()
+    for (const [key, value] of usp) {
+      if (!admitted.has(key)) continue
+      let values = rawValues.get(key)
+      if (values === undefined) {
+        values = []
+        rawValues.set(key, values)
+      }
+      values.push(value)
+    }
     const out: Record<string, unknown> = {}
-    let kept = 0
-    for (const key of new Set(usp.keys())) {
-      if (FORBIDDEN_KEYS.has(key)) continue
-      if (++kept > limits.maxKeys) break
-      const decoded = usp.getAll(key).map((value) => decodeValue(value, limits))
+    for (const [key, values] of rawValues) {
+      const decoded = values.map((value) => decodeValue(value, limits))
       out[key] = decoded.length > 1 ? decoded : decoded[0]
     }
     return out

@@ -142,14 +142,17 @@ export default server().post("/users", { body }, (c) => ({ name: c.body.name }))
 // moved a ceiling; both were sitting within 40 B of theirs, which is the gate working as designed.
 // The fused query lane (registration-compiled parse+validate+handler closure for query-only
 // routes) costs ~0.2 KB gzip in the kernel, so every core-based row moved together.
+// The validated POST Web lane is also part of the core registration kernel and costs ~0.1 KB gzip
+// across the matrix; its body parser, framing checks, and native responder are intentionally budgeted
+// here because they are the price of making the safe fast path available by default.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
-  "nifra-bare": 16.6,
+  "nifra-bare": 16.7,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  "nifra-idempotency": 19.6,
-  "nifra-effect-ledger": 18.4,
-  "nifra-mcp": 16.8,
-  "nifra-sse": 17.3,
-  "nifra-valibot": 17.6,
+  "nifra-idempotency": 19.7,
+  "nifra-effect-ledger": 18.5,
+  "nifra-mcp": 16.9,
+  "nifra-sse": 17.4,
+  "nifra-valibot": 17.7,
   "nifra-typebox-t": 46.3,
 }
 
