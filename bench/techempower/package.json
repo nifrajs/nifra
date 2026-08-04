@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@nifrajs/core": "2.7.1"
+    "@nifrajs/core": "2.8.2"
   }
 }
