@@ -5,8 +5,9 @@ import { pageMeta } from "../../meta"
 export const hydrate = false
 
 export const meta = pageMeta(
-  "Nifra vs. other frameworks",
+  "Nifra vs. other frameworks - the honest comparison",
   "How Nifra compares to the full-stack frameworks (Next.js, Nuxt, SvelteKit, Remix, TanStack Start) - and, as a standalone backend, to Hono and Elysia. Five UI frameworks, five runtimes, end-to-end types, and an AI-agent toolchain no competitor ships.",
+  "/docs/comparison",
 )
 
 export default function Comparison() {

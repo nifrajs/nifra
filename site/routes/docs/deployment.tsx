@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Deployment",
   "One Nifra app, one command per target - Bun, Node (Docker), Deno Deploy, Cloudflare Pages, Vercel Edge.",
+  "/docs/deployment",
 )
 
 const SCAFFOLD = `# Scaffold the multi-target site with a chosen default deploy target:

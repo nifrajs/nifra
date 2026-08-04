@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Loaders & actions",
   "Typed loaders and actions in Nifra: data on the server, mutations, revalidation.",
+  "/docs/data",
 )
 
 const LOADER = `// A loader runs on the server - in-process during SSR (no network round-trip),

@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Troubleshooting",
   "Fixes keyed on the literal error strings Nifra prints: `reached the client bundle` (a node:/native import in the browser bundle), `server-only module reached the client bundle` (the server-only marker), and `resolveDispatcher` / `Invalid hook call` (duplicate React).",
+  "/docs/troubleshooting",
 )
 
 // The server-only marker - the new opt-in client-leak guard. A pure-server module with no `node:`

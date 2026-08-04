@@ -7,6 +7,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Effect provenance",
   "A route declares the effects it performs, and `nifra check` fails it for being able to reach further than it declared. How reach is computed, why that shapes your modules, and how the declaration turns into an enforced policy.",
+  "/docs/capabilities",
 )
 
 const POLICY = `import { server } from "@nifrajs/core/server"

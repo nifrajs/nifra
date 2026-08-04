@@ -6,6 +6,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Request budgets",
   "Propagate one absolute deadline through Nifra requests and downstream adapters without resetting time at each hop.",
+  "/docs/budgets",
 )
 
 const SERVER = `import { server } from "@nifrajs/core/server"

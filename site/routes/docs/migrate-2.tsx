@@ -6,6 +6,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra 2.0 migration guide - upgrade from 1.x",
   "Upgrade a Nifra 1.x application to 2.0: automated package and import moves, opt-in runtime plugins, client and web changes, external auth mounts, and release verification.",
+  "/docs/migrate-2",
 )
 
 const COMMANDS = [

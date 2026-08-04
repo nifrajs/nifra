@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Fonts",
   "Self-host web fonts with zero layout shift: a build-time Google Fonts downloader (the next/font equivalent) plus CLS-safe @font-face + preload primitives.",
+  "/docs/fonts",
 )
 
 const AUTOMATED = `// fonts.build.ts - run once at build time (a prebuild step). It hits the network.

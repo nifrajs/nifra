@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Backends & API (dev and prod)",
   "How a Nifra backend reaches your app: inProcessClient feeds ctx.api to loaders, and createWebApp auto-mounts the backend over HTTP at /api/* - in `nifra dev` and production alike, no hand-dispatch.",
+  "/docs/backends",
 )
 
 // The backend: an @nifrajs/core server defining its routes at the FULL /api/... path (the mount does

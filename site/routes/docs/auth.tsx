@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Auth & sessions",
   "Turnkey auth with @nifrajs/better-auth (OAuth, magic links, 2FA), or signed-cookie + server-store sessions, route guards, and CSRF with @nifrajs/auth.",
+  "/docs/auth",
 )
 
 const BETTERAUTH = `// doc-check: skip - needs the third-party \`better-auth\` package + your \`db\`; install it to run this.

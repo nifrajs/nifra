@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Migrating from Next.js, Nuxt, SvelteKit & SolidStart",
   "Move from a meta-framework to Nifra: file routes, data loading, API routes, layouts, and SSG/ISR map across React (Next), Vue (Nuxt), Svelte (SvelteKit), and Solid (SolidStart).",
+  "/docs/migrate-frontend",
 )
 
 const NEXT = `// Next.js - app/users/[id]/page.tsx

@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Streaming",
   "Streaming SSR, Suspense, and defer() in Nifra - on every runtime including the edge.",
+  "/docs/streaming",
 )
 
 const DEFER = `// Send the page shell immediately; stream the slow part in when it resolves.

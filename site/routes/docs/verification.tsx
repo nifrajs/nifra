@@ -6,6 +6,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Verification ladder",
   "Five cumulative levels, from a typed contract to contract-derived invariant tests, that say what a Nifra project actually proves.",
+  "/docs/verification",
 )
 
 const LEVELS = `# What does this project prove right now?

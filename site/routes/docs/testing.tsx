@@ -6,6 +6,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Contract-derived adversarial testing",
   "Turn route schemas into hostile input, response-conformance, replay, shrinking, and runtime-matrix tests with @nifrajs/testing.",
+  "/docs/testing",
 )
 
 const VALIDATE_RESPONSES = `import { testClient } from "@nifrajs/client"

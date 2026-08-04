@@ -4,6 +4,7 @@ import { pageMeta } from "../meta"
 export const meta = pageMeta(
   "Nifra - AI Agent Onboarding",
   "Generate customized rules and instructions for Cursor, Claude Code, and other AI coding agents in your Nifra workspace.",
+  "/onboard",
 )
 
 export default function Onboard() {

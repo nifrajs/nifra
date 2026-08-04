@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - API & typed client",
   "Build a typed JSON API with server()/defineContract + validate inputs with any Standard Schema, then consume it from a zero-codegen, never-throwing typed client.",
+  "/docs/api",
 )
 
 const INLINE = `// doc-check: skip - uses the third-party \`zod\` schema lib (any Standard Schema works); install it to run this.

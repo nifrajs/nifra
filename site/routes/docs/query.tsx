@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Query cache",
   "Nifra's keyed query cache: useQuery / createQuery, dedup, staleness, invalidation.",
+  "/docs/query",
 )
 
 const USE_QUERY = `import { useQuery, useQueryClient } from "@nifrajs/web-react/query"

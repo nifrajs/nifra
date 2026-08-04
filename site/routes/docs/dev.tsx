@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Dev & HMR",
   "Use `nifra dev` for a Vite-backed state-preserving HMR loop, or `@nifrajs/web/dev` for a Bun-native HMR loop with no Vite dependency. Production builds use Bun.",
+  "/docs/dev",
 )
 
 const BUN_DEV = `// doc-check: skip - fragment: routesDir/outDir/clientModule/createApp are your app's dev config.

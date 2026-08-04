@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Types-first architecture",
   "One schema is the single source of truth: it drives runtime validation, inferred TypeScript types, the no-codegen typed client, an OpenAPI document, and the MCP contract your agents read.",
+  "/docs/types-first",
 )
 
 const SCHEMA = `import { t } from "@nifrajs/schema"

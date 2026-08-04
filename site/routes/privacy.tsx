@@ -3,6 +3,7 @@ import { pageMeta } from "../meta"
 export const meta = pageMeta(
   "Nifra - Privacy",
   "Privacy policy for nifra.dev and the hosted nifra docs MCP server.",
+  "/privacy",
 )
 
 // Kept deliberately honest and short: the site and the docs MCP are stateless documentation

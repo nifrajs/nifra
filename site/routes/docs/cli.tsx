@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - CLI",
   "The zero-config Nifra CLI (`nifra dev`, `nifra build`, `nifra start`): true HMR and complete target-specific deploy builds.",
+  "/docs/cli",
 )
 
 const COMMANDS = `nifra dev      # true-HMR dev server (Vite middleware + nifra SSR) - http://localhost:4321

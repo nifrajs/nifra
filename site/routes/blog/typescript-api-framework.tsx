@@ -3,8 +3,9 @@ import { pageMeta } from "../../meta"
 export const hydrate = false
 
 export const meta = pageMeta(
-  "Choosing a TypeScript API framework in 2026",
+  "Choosing a TypeScript API framework in 2026 · Nifra",
   "What 'TypeScript framework' actually means - typed handlers vs inferred clients vs runtime validation - and how nifra, tRPC, Elysia, Hono, Fastify, and NestJS compare on each level, with measured throughput.",
+  "/blog/typescript-api-framework",
 )
 
 export default function TypescriptApiFramework() {

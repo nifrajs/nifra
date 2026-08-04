@@ -7,7 +7,7 @@ import type { Meta } from "@nifrajs/web"
 
 // Brand assets in public/ → /assets/* at deploy: the no-text ice-wolf mark is favicon (tab),
 // apple-touch-icon (iOS), and logo-mark (header); og.jpg is the wordmark logo for social cards.
-export function pageMeta(title: string, description: string): Meta {
+export function pageMeta(title: string, description: string, canonicalPath?: string): Meta {
   return {
     title,
     meta: [
@@ -24,6 +24,11 @@ export function pageMeta(title: string, description: string): Meta {
       { name: "twitter:card", content: "summary_large_image" },
     ],
     link: [
+      // The canonical collapses host duplicates (www, *.pages.dev previews) onto the apex for
+      // crawlers - every route passes its own path.
+      ...(canonicalPath !== undefined
+        ? [{ rel: "canonical", href: `https://nifra.dev${canonicalPath}` }]
+        : []),
       { rel: "icon", type: "image/png", sizes: "64x64", href: "/assets/favicon.png" },
       { rel: "apple-touch-icon", href: "/assets/apple-touch-icon.png" },
     ],

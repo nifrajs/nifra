@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - images",
   "A CLS-safe responsive <Image> with pluggable loaders - a CDN, or Nifra's self-hosted resize endpoint (Bun.Image, sharp, or WASM on the edge) with optional signed URLs.",
+  "/docs/images",
 )
 
 const BACKENDS = `// doc-check: skip - illustrates third-party codecs (sharp, @jsquash/*); install them to run it.

@@ -10,6 +10,7 @@ import { pageMeta } from "../meta"
 export const meta = pageMeta(
   "Nifra - Same app, five frameworks",
   "One Nifra app, one data loader, rendered through React, Preact, Vue, Solid, and Svelte - with each framework's real, measured hydration-JS gzip size side by side.",
+  "/frameworks",
 )
 
 // Static showcase: the host route ships NO framework runtime of its own (`hydrate: false`). Each of the

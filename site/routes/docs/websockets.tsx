@@ -7,6 +7,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - WebSockets",
   "app.ws(path, handler) registers a typed WebSocket route - an upgrade guard, a portable socket, contract-validated messages, and topic pub/sub - served on Bun, Deno, Node, and Cloudflare Workers.",
+  "/docs/websockets",
 )
 
 const BASIC = `import { server } from "@nifrajs/core/server"

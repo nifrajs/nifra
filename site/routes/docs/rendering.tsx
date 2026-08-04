@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Rendering: SSG & ISR",
   "Prerender static routes, enumerate dynamic ones, and cache rendered pages with stale-while-revalidate - on every runtime including the edge.",
+  "/docs/rendering",
 )
 
 const PRERENDER = `// A static route: render it to a static index.html at build time.

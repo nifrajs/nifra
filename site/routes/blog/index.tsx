@@ -5,6 +5,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Blog",
   "Engineering notes from building nifra: agent-native framework design, SSR performance, and honest benchmarking.",
+  "/blog",
 )
 
 // One entry per post, newest first. Kept as data so the list stays trivial to extend.

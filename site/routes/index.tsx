@@ -6,6 +6,7 @@ import { pageMeta } from "../meta"
 export const meta = pageMeta(
   "Nifra - the TypeScript framework for AI-edited codebases",
   "Build typed APIs and full-stack apps that humans and coding agents can change safely. Nifra combines live MCP project context, verified scaffolds, a no-codegen typed client, multi-framework SSR, and one app across Bun, Node, Deno, and the edge.",
+  "/",
 )
 
 // Static page - ships zero framework JS. The only client code is a tiny enhancer (the install

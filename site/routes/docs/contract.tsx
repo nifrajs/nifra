@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Framework contract",
   "The one-page contract: LoaderContext shape, loader/action/meta/head signatures, the client↔server boundary, and the build-output contract - every signature verified against the source.",
+  "/docs/contract",
 )
 
 const LOADER_CTX = `// The single context object passed to every loader AND action (@nifrajs/web).

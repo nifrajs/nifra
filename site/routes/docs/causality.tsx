@@ -6,6 +6,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Execution causality",
   "Carry one bounded, payload-free lineage across the durable seams a trace cannot span: commands, events, workflows, projections, and repairs.",
+  "/docs/causality",
 )
 
 const START = `import { createMemoryCausalityStore, startCausality } from "@nifrajs/core/causality"

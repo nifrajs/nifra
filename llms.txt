@@ -7,7 +7,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 ## Docs
 
 - [Nifra - Getting started](/docs): Get started with Nifra: install, server, typed client, loaders, deploy.
-- [Nifra vs. other frameworks](/docs/comparison): How Nifra compares to the full-stack frameworks (Next.js, Nuxt, SvelteKit, Remix, TanStack Start) - and, as a standalone backend, to Hono and Elysia. Five UI frameworks, five runtimes, end-to-end types, and an AI-agent toolchain no competitor ships.
+- [Nifra vs. other frameworks - the honest comparison](/docs/comparison): How Nifra compares to the full-stack frameworks (Next.js, Nuxt, SvelteKit, Remix, TanStack Start) - and, as a standalone backend, to Hono and Elysia. Five UI frameworks, five runtimes, end-to-end types, and an AI-agent toolchain no competitor ships.
 - [Nifra - Routing](/docs/routing): File-based routing in Nifra: conventions, params, nested layouts.
 - [Nifra - API & typed client](/docs/api): Build a typed JSON API with server()/defineContract + validate inputs with any Standard Schema, then consume it from a zero-codegen, never-throwing typed client.
 - [Nifra - Loaders & actions](/docs/data): Typed loaders and actions in Nifra: data on the server, mutations, revalidation.

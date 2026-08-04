@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Getting started",
   "Get started with Nifra: install, server, typed client, loaders, deploy.",
+  "/docs",
 )
 
 const HELLO = `import { server } from "@nifrajs/core/server"

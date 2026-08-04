@@ -3,8 +3,9 @@ import { pageMeta } from "../../meta"
 export const hydrate = false
 
 export const meta = pageMeta(
-  "Next.js alternatives in 2026 - what to use and when",
+  "Next.js alternatives in 2026 - what to use and when · Nifra",
   "An honest guide to Next.js alternatives in 2026: Remix, SvelteKit, Nuxt, SolidStart, Astro, and nifra - who each is for, measured SSR throughput, and the cases where staying on Next.js is right.",
+  "/blog/nextjs-alternatives-2026",
 )
 
 export default function NextjsAlternatives() {

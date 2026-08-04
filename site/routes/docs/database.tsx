@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Databases",
   "Nifra is database-agnostic: use SQLite, Postgres, or any ORM (Drizzle, Prisma, Kysely) from your handlers and loaders, on Bun, Node, Deno, and the edge.",
+  "/docs/database",
 )
 
 const SQLITE = `import { server } from "@nifrajs/core/server"

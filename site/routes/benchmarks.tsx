@@ -4,6 +4,7 @@ import { pageMeta } from "../meta"
 export const meta = pageMeta(
   "Nifra - Benchmarks",
   "Nifra vs Next.js, Nuxt, SvelteKit, SolidStart, and Remix on full-stack SSR, plus HTTP throughput vs Elysia, Hono, Fastify, and Express across Bun, Node, and Deno.",
+  "/benchmarks",
 )
 
 // ---- Frontend: full-stack SSR, Nifra vs each framework's own meta-framework ----

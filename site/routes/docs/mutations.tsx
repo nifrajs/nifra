@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Optimistic UI & fetchers",
   "Optimistic updates and concurrent fetchers in Nifra: instant feedback, row-level mutations.",
+  "/docs/mutations",
 )
 
 const OPTIMISTIC = `// doc-check: skip - component-body fragment: \`id\` and \`todo\` are the row's props.

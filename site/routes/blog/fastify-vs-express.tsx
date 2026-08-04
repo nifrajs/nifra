@@ -3,8 +3,9 @@ import { pageMeta } from "../../meta"
 export const hydrate = false
 
 export const meta = pageMeta(
-  "Fastify vs Express in 2026: measured, not vibes",
+  "Fastify vs Express in 2026: measured, not vibes · Nifra",
   "Fastify vs Express compared with fresh benchmark numbers - throughput, validation, typing, ecosystem - plus when neither is the right answer. Includes our disclosed bias: we build nifra.",
+  "/blog/fastify-vs-express",
 )
 
 export default function FastifyVsExpress() {

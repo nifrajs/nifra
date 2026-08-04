@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - i18n",
   "Locale negotiation + a tiny ICU message formatter on the platform Intl, framework-agnostic.",
+  "/docs/i18n",
 )
 
 const NEGOTIATE = `// In a loader: resolve the locale + return only that catalog's messages.

@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - security & hardening",
   "Bounded request bodies, magic-byte file-upload validation, constant-time webhook verification, and idempotency-key replay - the hardening primitives every production app needs, built in.",
+  "/docs/security",
 )
 
 const RESPONSE_CONTRACT = `import { server } from "@nifrajs/core/server"

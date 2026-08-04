@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Routing",
   "File-based routing in Nifra: conventions, params, nested layouts.",
+  "/docs/routing",
 )
 
 const TREE = `routes/

@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Edge & bindings",
   "Typed platform bindings in Nifra: c.env, Platform<Env>, c.waitUntil, KV/D1 on the edge.",
+  "/docs/edge",
 )
 
 const ENV = `// server<Env>() types the platform env end-to-end - c.env is your Env in every

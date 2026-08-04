@@ -8,6 +8,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Frameworks",
   "One agnostic core, five UI frameworks: React, Solid, Vue, Preact, and Svelte - same loaders, streaming, islands, and routing, unchanged.",
+  "/docs/frameworks",
 )
 
 // Same minimal counter app (a layout + a $state/useState counter), each bundled minified for the

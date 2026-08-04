@@ -5,6 +5,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra vs Fastify - Node's speed king vs a typed full-stack",
   "Nifra vs Fastify compared honestly: ahead on Node in our published benchmark (~12% on the validated POST, level on GET), what each gives you beyond raw throughput, and why the same nifra app runs unchanged - and much faster - on Bun.",
+  "/compare/fastify",
 )
 
 export default function VsFastify() {

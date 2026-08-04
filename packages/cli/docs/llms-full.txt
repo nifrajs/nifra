@@ -95,7 +95,7 @@ export default function Page(props: { data: LoaderData<typeof loader> }) {
 
 See the [benchmarks](/benchmarks) for how it performs.
 
-## Nifra vs. other frameworks
+## Nifra vs. other frameworks - the honest comparison
 
 > How Nifra compares to the full-stack frameworks (Next.js, Nuxt, SvelteKit, Remix, TanStack Start) - and, as a standalone backend, to Hono and Elysia. Five UI frameworks, five runtimes, end-to-end types, and an AI-agent toolchain no competitor ships.
 

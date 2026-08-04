@@ -5,6 +5,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra vs Elysia - Bun frameworks compared",
   "Nifra vs Elysia compared honestly: measured throughput on identical workloads (level to ahead on Bun, ahead on Deno), typed clients, and the difference between a backend framework and a full-stack one.",
+  "/compare/elysia",
 )
 
 export default function VsElysia() {

@@ -5,6 +5,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra compared - vs Next.js, Elysia, Hono, Fastify",
   "Honest, benchmark-backed comparisons of nifra against Next.js, Elysia, Hono, and Fastify - including where each alternative is the right choice.",
+  "/compare",
 )
 
 const PAGES: ReadonlyArray<{ slug: string; title: string; summary: string }> = [

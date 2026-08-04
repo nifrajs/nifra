@@ -6,6 +6,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Failure laboratory",
   "Replayable durable-failure schedules on virtual time: crash after commit, duplicate delivery, reordering, budget expiry, and checkpoint contention.",
+  "/docs/failure-lab",
 )
 
 const LAB = `import { createFailureLab } from "@nifrajs/testing"

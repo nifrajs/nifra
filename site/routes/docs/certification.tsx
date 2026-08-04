@@ -6,6 +6,7 @@ export const hydrate = false
 export const meta = pageMeta(
   "Nifra - Adapter certification",
   "Prove a storage, cache, job, runtime, or event adapter against its interface and emit a hash-verifiable capability matrix.",
+  "/docs/certification",
 )
 
 const CERTIFY = `// doc-check: skip - createRedisCache stands in for the adapter under test

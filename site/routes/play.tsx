@@ -8,6 +8,7 @@ import { pageMeta } from "../meta"
 export const meta = pageMeta(
   "Nifra - Playground",
   "Run a real Nifra server() app in your browser - define routes, validate with t, fire requests through app.fetch, see the responses. No backend; the same @nifrajs/core that runs on the server.",
+  "/play",
 )
 
 // Static page (no React client entry) - the interactive logic ships as a vanilla-JS island that
