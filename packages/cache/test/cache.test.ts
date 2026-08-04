@@ -10,6 +10,13 @@ function makeClock(start = 1_000_000): { now: () => number; advance: (ms: number
 const flush = (): Promise<void> => Bun.sleep(2)
 
 describe("createCache - wrap (cache-aside)", () => {
+  test("rejects non-finite TTL configuration", async () => {
+    expect(() => createCache({ defaultTtlMs: Number.NaN })).toThrow(/defaultTtlMs/)
+    const cache = createCache()
+    await expect(cache.set("bad", "v", { ttlMs: Number.NaN })).rejects.toThrow(/ttlMs/)
+    await expect(cache.set("bad-swr", "v", { swrMs: Number.NaN })).rejects.toThrow(/swrMs/)
+  })
+
   test("a miss loads + caches; a fresh hit does not call the loader", async () => {
     const clock = makeClock()
     const cache = createCache({ now: clock.now, defaultTtlMs: 1000 })

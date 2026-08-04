@@ -49,7 +49,7 @@ import type {
   StandardResult,
   StandardSchemaV1,
 } from "../schema/standard.ts"
-import { parseContentLength } from "./body.ts"
+import { assertByteLimit, parseContentLength } from "./body.ts"
 import { type ClientIpTrust, resolveClientIp } from "./client-ip.ts"
 import type { Context, Platform, ResponseControls, RouteSchema } from "./context.ts"
 import { jsonError, pathnameOf, type UrlParts, urlPartsOf } from "./http.ts"
@@ -456,8 +456,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.wsRouter = new Router<WsEntry>()
     this.wsRouteCount = 0
     this.topics = undefined
-    this.maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
-    this.wsMaxPayloadBytes = options.wsMaxPayloadBytes ?? this.maxBodyBytes
+    const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
+    assertByteLimit(maxBodyBytes, "maxBodyBytes")
+    const wsMaxPayloadBytes = options.wsMaxPayloadBytes ?? maxBodyBytes
+    assertByteLimit(wsMaxPayloadBytes, "wsMaxPayloadBytes")
+    this.maxBodyBytes = maxBodyBytes
+    this.wsMaxPayloadBytes = wsMaxPayloadBytes
     this.requestTimeoutMs = options.requestTimeoutMs ?? 0
     this.clientIpTrust = options.clientIp
     this.acceptInboundDeadlines = options.acceptInboundDeadlines ?? false

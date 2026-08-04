@@ -67,6 +67,7 @@ export class MemoryIdempotencyStore implements IdempotencyStore {
   }
 
   begin(key: string, lockTtlMs: number): Promise<IdempotencyClaim> {
+    assertPositiveTtl(lockTtlMs, "lockTtlMs")
     const now = Date.now()
     const entry = this.entries.get(key)
     if (entry !== undefined && entry.expiresAt > now) {
@@ -82,6 +83,7 @@ export class MemoryIdempotencyStore implements IdempotencyStore {
   }
 
   complete(key: string, record: IdempotencyRecord, ttlMs: number): Promise<void> {
+    assertPositiveTtl(ttlMs, "ttlMs")
     this.entries.set(key, { kind: "record", record, expiresAt: Date.now() + ttlMs })
     return Promise.resolve()
   }
@@ -119,6 +121,12 @@ export interface IdempotencyOptions {
 
 const DEFAULT_METHODS = ["POST", "PUT", "PATCH", "DELETE"] as const
 const DAY_MS = 24 * 60 * 60 * 1000
+
+function assertPositiveTtl(value: number, name: string): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new RangeError(`idempotency: ${name} must be a finite positive safe integer`)
+  }
+}
 
 const toBase64 = (bytes: Uint8Array): string => {
   let bin = ""
@@ -274,7 +282,9 @@ export function idempotency(options: IdempotencyOptions): Middleware {
   const ttlMs = options.ttlMs ?? DAY_MS
   const lockTtlMs = options.lockTtlMs ?? 60_000
   const maxBytes = options.maxBytes ?? 1024 * 1024
-  if (!Number.isInteger(maxBytes) || maxBytes < 0) {
+  assertPositiveTtl(ttlMs, "ttlMs")
+  assertPositiveTtl(lockTtlMs, "lockTtlMs")
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
     throw new Error("idempotency: maxBytes must be a non-negative integer")
   }
   const shouldCache = options.shouldCache ?? ((res: Response) => res.status < 500)

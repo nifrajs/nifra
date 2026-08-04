@@ -36,6 +36,10 @@ test("a short secret is rejected", () => {
   expect(() => createSessions({ secret: "tooshort" })).toThrow(/at least 32 bytes/)
 })
 
+test("a non-finite maxAge is rejected at construction", () => {
+  expect(() => createSessions({ secret: SECRET, maxAge: Number.NaN })).toThrow(/maxAge/)
+})
+
 describe("session - store mode", () => {
   const make = (now: () => number = () => 1000): SessionManager<Data> =>
     createSessions<Data>({ secret: SECRET, store: new MemorySessionStore(), now, maxAge: 3600 })

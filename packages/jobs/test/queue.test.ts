@@ -28,6 +28,13 @@ const deferred = (): { promise: Promise<void>; resolve: () => void } => {
 }
 
 describe("createQueue - define + enqueue + run", () => {
+  test("rejects invalid worker limits", () => {
+    const q = createQueue()
+    expect(() => q.start({ concurrency: Number.NaN })).toThrow(/concurrency/)
+    expect(() => q.start({ pollIntervalMs: Number.NaN })).toThrow(/pollIntervalMs/)
+    expect(() => q.start({ leaseMs: Number.POSITIVE_INFINITY })).toThrow(/leaseMs/)
+  })
+
   test("drain runs the typed handler with payload + ctx", async () => {
     const clock = makeClock()
     const q = createQueue({ now: clock.now })

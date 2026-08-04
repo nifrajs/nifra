@@ -61,6 +61,18 @@ async function rsaToken(claims: JwtClaims, kid = "rsa-1"): Promise<{ token: stri
 }
 
 describe("jwt() / verifyJwt()", () => {
+  test("required claims must be own claims, not inherited Object properties", async () => {
+    const token = await hmacToken({ sub: "u1", exp: 2_000_000_000 })
+    await expect(
+      verifyJwt(token, {
+        key: SECRET,
+        algorithms: ["HS256"],
+        requiredClaims: ["toString"],
+        now: () => 1_900_000_000,
+      }),
+    ).rejects.toThrow(/toString/)
+  })
+
   test("authorizes an HS256 token and exposes typed claims", async () => {
     interface Claims extends JwtClaims {
       readonly sub: string

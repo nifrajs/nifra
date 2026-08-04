@@ -8,6 +8,10 @@ const entry = (value: unknown, expiresAt: number, staleAt = expiresAt) => ({
 })
 
 describe("MemoryCache", () => {
+  test("rejects a non-finite entry cap", () => {
+    expect(() => new MemoryCache({ maxEntries: Number.NaN })).toThrow(/maxEntries/)
+  })
+
   test("set → get returns the live entry; expired → undefined + evicted", () => {
     const clock = { ms: 0 }
     const c = new MemoryCache({ now: () => clock.ms })

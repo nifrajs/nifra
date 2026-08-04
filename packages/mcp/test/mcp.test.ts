@@ -315,6 +315,14 @@ describe("respondMcpHttp - transport hardening", () => {
     }
   })
 
+  test("rejects a non-finite body cap before reading the request", async () => {
+    await expect(
+      serve(post({ jsonrpc: "2.0", id: 1, method: "initialize" }), {
+        maxBodyBytes: Number.NaN,
+      }),
+    ).rejects.toThrow(/maxBodyBytes/)
+  })
+
   test("a notification (no id) is acknowledged with 202 and an empty body", async () => {
     const res = await serve(post({ jsonrpc: "2.0", method: "notifications/initialized" }))
     expect(res.status).toBe(202)

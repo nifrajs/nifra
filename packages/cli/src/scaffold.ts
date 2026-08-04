@@ -9,7 +9,7 @@
  * `nifra_example` for the body, rather than hand-writing an SFC we can't typecheck here.
  */
 
-import { mkdir, writeFile } from "node:fs/promises"
+import { lstat, mkdir, realpath, writeFile } from "node:fs/promises"
 import { dirname, resolve, sep } from "node:path"
 
 export type Framework = "react" | "preact" | "solid" | "vue" | "svelte" | "vanilla"
@@ -122,6 +122,37 @@ function resolveInsideCwd(cwd: string, relativeFile: string): string {
   return target
 }
 
+/** Lexical containment is not enough when an existing route directory is a symlink. Check every
+ * existing ancestor and its real path before scaffolding so an agent cannot redirect a write outside
+ * the selected project. The target itself is created with `wx`, so an existing target symlink is also
+ * never followed/overwritten. */
+async function assertNoSymlinkedAncestors(root: string, target: string): Promise<void> {
+  const rootPath = resolve(root)
+  const realRoot = await realpath(rootPath)
+  let current = dirname(target)
+  while (current !== rootPath) {
+    if (!current.startsWith(`${rootPath}${sep}`)) {
+      throw new Error(`refusing to write outside project root: ${target}`)
+    }
+    try {
+      if ((await lstat(current)).isSymbolicLink()) {
+        throw new Error(`refusing to write through symlinked directory: ${current}`)
+      }
+      const actual = await realpath(current)
+      if (actual !== realRoot && !actual.startsWith(`${realRoot}${sep}`)) {
+        throw new Error(`refusing to write outside project root through: ${current}`)
+      }
+    } catch (err) {
+      if (err && typeof err === "object" && (err as { code?: string }).code === "ENOENT") {
+        current = dirname(current)
+        continue
+      }
+      throw err
+    }
+    current = dirname(current)
+  }
+}
+
 /** Write a scaffolded route stub when the framework has a verified ready-to-write body. The write is
  * intentionally conservative: it refuses non-JSX stubs (where we only return contract guidance) and
  * uses `wx`, so an agent cannot overwrite user work by accident. */
@@ -139,7 +170,9 @@ export async function writeScaffoldRoute(
     }
   }
   const target = resolveInsideCwd(cwd, result.file)
+  await assertNoSymlinkedAncestors(cwd, target)
   await mkdir(dirname(target), { recursive: true })
+  await assertNoSymlinkedAncestors(cwd, target)
   try {
     await writeFile(target, result.content, { flag: "wx" })
   } catch (err) {

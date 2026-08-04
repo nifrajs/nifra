@@ -69,6 +69,21 @@ describe("verifyWebhook - Stripe preset", () => {
     expect(r).toEqual({ ok: false, reason: "invalid_signature" })
   })
 
+  test("rejects invalid body and replay-window limits", async () => {
+    await expect(
+      verifyWebhook(webhookRequest(payload, {}), secret, {
+        provider: "stripe",
+        maxBytes: Number.NaN,
+      }),
+    ).rejects.toThrow(/maxBytes/)
+    await expect(
+      verifyWebhook(webhookRequest(payload, {}), secret, {
+        provider: "stripe",
+        toleranceSeconds: Number.NaN,
+      }),
+    ).rejects.toThrow(/toleranceSeconds/)
+  })
+
   test("accepts either secret during a rotation (array of secrets)", async () => {
     // Signed with the OLD secret; the app now lists [new, old].
     const req = webhookRequest(payload, { "stripe-signature": await stripeHeader(1000, payload) })

@@ -133,6 +133,14 @@ afterAll(async () => {
 // --- method + query validation -------------------------------------------
 
 describe("request validation", () => {
+  test("rejects invalid defensive limits at construction", () => {
+    expect(() => createImageHandler({ maxSourceBytes: Number.NaN })).toThrow(/maxSourceBytes/)
+    expect(() => createImageHandler({ maxSourcePixels: Number.POSITIVE_INFINITY })).toThrow(
+      /maxSourcePixels/,
+    )
+    expect(() => createImageHandler({ concurrency: Number.NaN })).toThrow(/concurrency/)
+  })
+
   test("non-GET/HEAD → 405 with Allow", async () => {
     const h = createImageHandler({ backend: makeStub().backend, root: "/tmp" })
     const res = await h(new Request("http://localhost/_image?src=/a.png&w=10", { method: "POST" }))

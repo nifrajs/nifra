@@ -12,6 +12,10 @@ const rec = (data: Record<string, unknown>, expiresAt = 60_000): SessionRecord =
 })
 
 describe("MemorySessionStore", () => {
+  test("rejects a non-finite entry cap", () => {
+    expect(() => new MemorySessionStore({ max: Number.NaN })).toThrow(/max must be/)
+  })
+
   test("get/set/delete round-trip", async () => {
     const store = new MemorySessionStore()
     expect(await store.get("a")).toBeUndefined()

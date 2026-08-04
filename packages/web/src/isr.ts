@@ -65,6 +65,9 @@ export class MemoryCacheStore implements CacheStore {
       )
     }
     this.max = options.max ?? 500
+    if (!Number.isSafeInteger(this.max) || this.max <= 0) {
+      throw new RangeError("[nifra/web] MemoryCacheStore max must be a positive safe integer")
+    }
   }
 
   get(key: string): Promise<CachedResponse | undefined> {
@@ -237,6 +240,12 @@ const defaultKey = (req: Request): string => {
   return url.origin + url.pathname + url.search
 }
 
+function assertRevalidate(value: number, name: string): void {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new RangeError(`[nifra/web] ${name} must be a finite non-negative number`)
+  }
+}
+
 /** ISR caches a full-document SSR response: a `GET` (not a data-mode soft-nav fetch), `200`, `text/html`.
  * Assets, data-mode GETs, redirects, and errors pass through uncached. */
 const cacheControlHas = (headers: Headers, names: readonly string[]): boolean => {
@@ -319,6 +328,7 @@ export function withISR(
   options: ISROptions,
 ): (req: Request, platform?: ISRPlatform) => Promise<Response> {
   const { store, now } = options
+  assertRevalidate(options.revalidate, "revalidate")
   const keyOf = options.key ?? defaultKey
   const draftSecret = options.draftSecret
   const regenerating = new Set<string>()
@@ -327,7 +337,8 @@ export function withISR(
   const ttlMs = (res: Response): number => {
     const header = res.headers.get(ISR_REVALIDATE_HEADER)
     const seconds = header === null ? options.revalidate : Number(header)
-    return (Number.isFinite(seconds) ? seconds : options.revalidate) * 1000
+    const safeSeconds = Number.isFinite(seconds) && seconds >= 0 ? seconds : options.revalidate
+    return safeSeconds * 1000
   }
 
   const render = async (

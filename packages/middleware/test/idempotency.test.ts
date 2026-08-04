@@ -207,6 +207,12 @@ describe("idempotency middleware", () => {
     expect(() => idempotency({ store: new MemoryIdempotencyStore(), maxBytes: -1 })).toThrow(
       /maxBytes/,
     )
+    expect(() => idempotency({ store: new MemoryIdempotencyStore(), ttlMs: Number.NaN })).toThrow(
+      /ttlMs/,
+    )
+    expect(() =>
+      idempotency({ store: new MemoryIdempotencyStore(), lockTtlMs: Number.POSITIVE_INFINITY }),
+    ).toThrow(/lockTtlMs/)
   })
 })
 
@@ -229,6 +235,14 @@ describe("MemoryIdempotencyStore", () => {
     await store.begin("k2", 60_000)
     await store.release("k2")
     expect(await store.begin("k2", 60_000)).toEqual({ state: "new" }) // released ⇒ free again
+  })
+
+  test("rejects non-finite TTLs instead of creating immediately-expired entries", async () => {
+    const store = new MemoryIdempotencyStore()
+    expect(() => store.begin("bad", Number.NaN)).toThrow(/lockTtlMs/)
+    expect(() => store.complete("bad", { status: 200, headers: [], body: "" }, Number.NaN)).toThrow(
+      /ttlMs/,
+    )
   })
 
   test("an expired lock frees the key (a crashed handler can't wedge it forever)", async () => {

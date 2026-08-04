@@ -5,6 +5,15 @@ function request(method: string, path: string, init?: RequestInit): Request {
   return new Request(`http://localhost${path}`, { method, ...init })
 }
 
+describe("Server configuration limits", () => {
+  test("rejects non-finite or fractional body and WebSocket caps", () => {
+    expect(() => server({ maxBodyBytes: Number.NaN })).toThrow(/maxBodyBytes/)
+    expect(() => server({ maxBodyBytes: Number.POSITIVE_INFINITY })).toThrow(/maxBodyBytes/)
+    expect(() => server({ maxBodyBytes: 1.5 })).toThrow(/maxBodyBytes/)
+    expect(() => server({ wsMaxPayloadBytes: Number.NaN })).toThrow(/wsMaxPayloadBytes/)
+  })
+})
+
 describe("Server.fetch - responses", () => {
   test("serializes a returned value to JSON with 200", async () => {
     const app = server().get("/health", () => ({ ok: true }))

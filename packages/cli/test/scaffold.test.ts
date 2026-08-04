@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm, symlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -89,6 +89,21 @@ describe("writeScaffoldRoute", () => {
       expect(result.reason).toContain("no verified")
     } finally {
       await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("refuses to write through a route-directory symlink", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-scaffold-"))
+    const outside = await mkdtemp(join(tmpdir(), "nifra-scaffold-outside-"))
+    try {
+      await symlink(outside, join(dir, "routes"))
+      await expect(writeScaffoldRoute(dir, "/escape", "react")).rejects.toThrow(
+        /symlinked directory/,
+      )
+      expect(await readFile(join(outside, "escape.tsx")).catch(() => null)).toBeNull()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+      await rm(outside, { recursive: true, force: true })
     }
   })
 })

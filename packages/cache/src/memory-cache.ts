@@ -28,6 +28,9 @@ export class MemoryCache implements CacheStore {
 
   constructor(options: MemoryCacheOptions = {}) {
     this.maxEntries = options.maxEntries ?? 0
+    if (!Number.isSafeInteger(this.maxEntries) || this.maxEntries < 0) {
+      throw new RangeError("MemoryCache: maxEntries must be a non-negative safe integer")
+    }
     this.now = options.now ?? (() => Date.now())
   }
 

@@ -53,6 +53,9 @@ export class MemorySessionStore implements SessionStore {
       )
     }
     this.max = options.max ?? 10_000
+    if (!Number.isSafeInteger(this.max) || this.max <= 0) {
+      throw new RangeError("[nifra/auth] MemorySessionStore max must be a positive safe integer")
+    }
   }
 
   get(id: string): Promise<SessionRecord | undefined> {

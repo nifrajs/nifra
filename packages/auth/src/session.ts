@@ -119,6 +119,9 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
   }
   const cookieName = options.cookieName ?? "nifra_session"
   const maxAge = options.maxAge ?? 7 * DAY_SECONDS
+  if (!Number.isSafeInteger(maxAge) || maxAge < 0) {
+    throw new RangeError("[nifra/auth] session maxAge must be a finite non-negative safe integer")
+  }
   const rolling = options.rolling ?? true
   const now = options.now ?? (() => Date.now())
   // Annotated (not just `?? {}`) so `cookieOpts.path`/`.domain` stay typed - `?? {}` alone widens the

@@ -13,9 +13,16 @@
 import { MemoryCache } from "./memory-cache.ts"
 import type { Cache, CacheOptions, CacheStore, SetOptions, WrapOptions } from "./types.ts"
 
+function assertDuration(value: number, name: string): void {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new RangeError(`[nifra/cache] ${name} must be a finite non-negative number`)
+  }
+}
+
 /** Create a cache over the given (or a fresh in-memory) store. */
 export function createCache(options: CacheOptions = {}): Cache {
   const defaultTtlMs = options.defaultTtlMs ?? 60_000
+  assertDuration(defaultTtlMs, "defaultTtlMs")
   const now = options.now ?? (() => Date.now())
   // The default store must share the facade's clock, or test-injected timestamps look instantly expired.
   const store: CacheStore = options.store ?? new MemoryCache({ now })
@@ -38,7 +45,9 @@ export function createCache(options: CacheOptions = {}): Cache {
 
   async function set<T>(key: string, value: T, opts: SetOptions = {}): Promise<void> {
     const ttlMs = opts.ttlMs ?? defaultTtlMs
-    const swrMs = Math.max(0, opts.swrMs ?? 0)
+    const swrMs = opts.swrMs ?? 0
+    assertDuration(ttlMs, "ttlMs")
+    assertDuration(swrMs, "swrMs")
     const t = now()
     await store.set(
       key,

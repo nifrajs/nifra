@@ -12,7 +12,7 @@
  * takes an explicit header + encoding for any other provider.
  */
 import { requireSecretBytes } from "../internal/secret.ts"
-import { readBoundedBytes } from "./body.ts"
+import { assertByteLimit, readBoundedBytes } from "./body.ts"
 
 const TEXT = new TextEncoder()
 const DEFAULT_MAX_BYTES = 1024 * 1024 // 1 MiB - webhook payloads are small; cap the raw read.
@@ -153,6 +153,17 @@ export async function verifyWebhook(
   options: VerifyWebhookOptions = {},
 ): Promise<WebhookResult> {
   const provider = options.provider ?? "generic"
+  const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES
+  assertByteLimit(maxBytes)
+  if (
+    options.toleranceSeconds !== undefined &&
+    (!Number.isFinite(options.toleranceSeconds) || options.toleranceSeconds < 0)
+  ) {
+    throw new RangeError("verifyWebhook: toleranceSeconds must be a finite non-negative number")
+  }
+  if (options.now !== undefined && !Number.isFinite(options.now)) {
+    throw new RangeError("verifyWebhook: now must be finite")
+  }
   const preset = PRESETS[provider]
   const headerName = (options.header ?? preset.header).toLowerCase()
   if (headerName === "") {
@@ -161,7 +172,7 @@ export async function verifyWebhook(
   const encoding = options.encoding ?? preset.encoding
   const prefix = options.prefix ?? preset.prefix
 
-  const read = await readBoundedBytes(req, options.maxBytes ?? DEFAULT_MAX_BYTES)
+  const read = await readBoundedBytes(req, maxBytes)
   if (!read.ok) {
     return {
       ok: false,

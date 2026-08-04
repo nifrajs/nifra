@@ -104,15 +104,115 @@ const stripSqlNoise = (sql: string): string =>
     .replace(/--[^\n]*/g, " ")
     .replace(/\/\*[\s\S]*?\*\//g, " ")
 
-/** Reject multi-statement input: any `;` outside literals/comments except one trailing. */
+/** Reject multi-statement input: allow one terminator only when it is the final character. */
 const isSingleStatement = (sql: string): boolean => {
-  const noise = stripSqlNoise(sql).trim().replace(/;$/, "")
-  return !noise.includes(";")
+  let quote: "'" | '"' | null = null
+  let lineComment = false
+  let blockComment = false
+  for (let i = 0; i < sql.length; i++) {
+    const char = sql[i]
+    const next = sql[i + 1]
+    if (lineComment) {
+      if (char === "\n") lineComment = false
+      continue
+    }
+    if (blockComment) {
+      if (char === "*" && next === "/") {
+        blockComment = false
+        i++
+      }
+      continue
+    }
+    if (quote !== null) {
+      if (char === quote) {
+        if (next === quote) i++
+        else quote = null
+      }
+      continue
+    }
+    if (char === "'" || char === '"') {
+      quote = char
+      continue
+    }
+    if (char === "-" && next === "-") {
+      lineComment = true
+      i++
+      continue
+    }
+    if (char === "/" && next === "*") {
+      blockComment = true
+      i++
+      continue
+    }
+    if (char === ";") {
+      return sql.slice(i + 1).trim() === ""
+    }
+  }
+  return true
 }
 
 const isReadStatement = (sql: string): boolean => {
   const head = stripSqlNoise(sql).trim().toLowerCase()
   return head.startsWith("select") || head.startsWith("with")
+}
+
+/** Remove one trailing statement terminator (and anything after it) while preserving literals and
+ * identifiers. Wrapping the query in a bounded subquery must not let a trailing comment consume the
+ * wrapper's closing parenthesis. */
+function executableSql(sql: string): string {
+  let quote: "'" | '"' | null = null
+  let lineComment = false
+  let lineCommentStart = -1
+  let blockComment = false
+  for (let i = 0; i < sql.length; i++) {
+    const char = sql[i]
+    const next = sql[i + 1]
+    if (lineComment) {
+      if (char === "\n") {
+        lineComment = false
+        lineCommentStart = -1
+      }
+      continue
+    }
+    if (blockComment) {
+      if (char === "*" && next === "/") {
+        blockComment = false
+        i++
+      }
+      continue
+    }
+    if (quote !== null) {
+      if (char === quote) {
+        if (next === quote) i++
+        else quote = null
+      }
+      continue
+    }
+    if (char === "'" || char === '"') {
+      quote = char
+      continue
+    }
+    if (char === "-" && next === "-") {
+      lineComment = true
+      lineCommentStart = i
+      i++
+      continue
+    }
+    if (char === "/" && next === "*") {
+      blockComment = true
+      i++
+      continue
+    }
+    if (char === ";") return sql.slice(0, i).trim()
+  }
+  if (lineComment && lineCommentStart >= 0) return sql.slice(0, lineCommentStart).trim()
+  return sql.trim()
+}
+
+function assertResultLimit(value: number, name: string): void {
+  if (!Number.isSafeInteger(value) || value <= 0 || value >= Number.MAX_SAFE_INTEGER) {
+    throw new McpDbConfigError(`${name} must be a finite positive safe integer`)
+  }
 }
 
 /**
@@ -150,6 +250,8 @@ export function serveDatabaseAsMcp(
 
   const maxRows = options.runQuery?.maxRows ?? 100
   const maxResultBytes = options.runQuery?.maxResultBytes ?? 100 * 1024
+  assertResultLimit(maxRows, "maxRows")
+  assertResultLimit(maxResultBytes, "maxResultBytes")
 
   const listTables = defineMcpTool({
     name: "list_tables",
@@ -214,14 +316,24 @@ export function serveDatabaseAsMcp(
 
         // Verify via the query plan that only allowlisted tables are touched. SQLite names every
         // scanned/searched relation in EXPLAIN QUERY PLAN detail rows.
+        const query = executableSql(sql)
         let planRows: Array<{ detail?: unknown }>
         try {
-          planRows = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all() as Array<{ detail?: unknown }>
+          planRows = db.prepare(`EXPLAIN QUERY PLAN ${query}`).all() as Array<{ detail?: unknown }>
         } catch (error) {
           return { isError: true, text: `query failed to plan: ${String(error)}` }
         }
         for (const row of planRows) {
           const detail = typeof row.detail === "string" ? row.detail : ""
+          // SQLite also emits non-table nodes such as `SCAN CONSTANT ROW` for a
+          // constant-only SELECT. Only treat a scan/search target as a relation
+          // when it is not one of those planner pseudo-nodes.
+          if (
+            /^SCAN\s+CONSTANT\s+ROW$/i.test(detail.trim()) ||
+            /^SCAN\s+SUBQUERY\s+\d+$/i.test(detail.trim())
+          ) {
+            continue
+          }
           const match = /(?:SCAN|SEARCH)\s+(?:TABLE\s+)?([A-Za-z_][A-Za-z0-9_]*)/i.exec(detail)
           if (match !== null) {
             const relation = match[1]?.toLowerCase() ?? ""
@@ -234,20 +346,39 @@ export function serveDatabaseAsMcp(
           }
         }
 
-        let rows: unknown[]
+        let limitedRows: unknown[]
         try {
-          rows = db.prepare(sql).all()
+          // Fetch at most one row beyond the advertised cap. This keeps the database driver's
+          // materialization bounded even when the caller submits `SELECT * FROM a_huge_table`.
+          limitedRows = db
+            .prepare(`SELECT * FROM (${query}) AS "__nifra_result" LIMIT ${maxRows + 1}`)
+            .all()
         } catch (error) {
           return { isError: true, text: `query failed: ${String(error)}` }
         }
 
-        const total = rows.length
-        let shown = Math.min(total, maxRows)
-        let payload = rows.slice(0, shown)
+        const wasLimited = limitedRows.length > maxRows
+        let total = limitedRows.length
+        if (wasLimited) {
+          try {
+            const countRows = db
+              .prepare(`SELECT count(*) AS "__nifra_total" FROM (${query}) AS "__nifra_count"`)
+              .all() as Array<{ __nifra_total?: unknown }>
+            const count = countRows[0]?.__nifra_total
+            if (typeof count !== "number" || !Number.isSafeInteger(count) || count < maxRows) {
+              return { isError: true, text: "query failed: invalid row count" }
+            }
+            total = count
+          } catch (error) {
+            return { isError: true, text: `query failed to count results: ${String(error)}` }
+          }
+        }
+        let shown = Math.min(limitedRows.length, maxRows)
+        let payload = limitedRows.slice(0, shown)
         let serialized = JSON.stringify(payload)
         while (serialized.length > maxResultBytes && shown > 0) {
           shown = Math.max(0, Math.floor(shown / 2))
-          payload = rows.slice(0, shown)
+          payload = limitedRows.slice(0, shown)
           serialized = JSON.stringify(payload)
         }
         const truncated = shown < total

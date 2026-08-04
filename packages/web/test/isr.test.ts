@@ -10,6 +10,10 @@ const entry = (body: string): CachedResponse => ({
 })
 
 describe("MemoryCacheStore", () => {
+  test("rejects a non-finite entry cap", () => {
+    expect(() => new MemoryCacheStore({ max: Number.NaN })).toThrow(/max must be/)
+  })
+
   test("get/set/delete round-trip", async () => {
     const store = new MemoryCacheStore()
     expect(await store.get("/a")).toBeUndefined()
@@ -99,6 +103,13 @@ const collectWaitUntil = (): ISRPlatform & { settle: () => Promise<unknown> } =>
 }
 
 describe("withISR", () => {
+  test("rejects a non-finite default revalidation window", () => {
+    const store = new MemoryCacheStore()
+    expect(() =>
+      withISR({ fetch: async () => html("x") }, { store, revalidate: Number.NaN, now: () => 0 }),
+    ).toThrow(/revalidate/)
+  })
+
   test("miss renders + stores + serves (x-nifra-isr: miss)", async () => {
     const store = new MemoryCacheStore()
     const { app, calls } = trackApp(() => html("v1"))

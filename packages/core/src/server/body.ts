@@ -12,6 +12,14 @@ interface BodySource {
   arrayBuffer(): Promise<ArrayBuffer>
 }
 
+/** Security/resource limits must be finite byte counts. Invalid values otherwise make `> maxBytes`
+ * comparisons fail open (notably for `NaN`) and can re-enable unbounded buffering. */
+export function assertByteLimit(value: number, name = "maxBytes"): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError(`${name} must be a non-negative safe integer`)
+  }
+}
+
 export function parseContentLength(value: string): number | undefined {
   if (value.length === 0) return undefined
   let length = 0
@@ -31,6 +39,7 @@ export async function drainCapped(
   body: ReadableStream<Uint8Array>,
   maxBytes: number,
 ): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; status: 413 }> {
+  assertByteLimit(maxBytes)
   const reader = body.getReader()
   let first: Uint8Array | undefined
   let rest: Uint8Array[] | undefined
@@ -72,6 +81,7 @@ export async function readBoundedBytes(
   req: BodySource,
   maxBytes: number,
 ): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; status: 400 | 413 }> {
+  assertByteLimit(maxBytes)
   const declared = req.headers.get("content-length")
   if (declared !== null) {
     // A present Content-Length must be a non-negative integer (HTTP grammar: `1*DIGIT`). A non-numeric

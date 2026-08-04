@@ -54,6 +54,14 @@ function corsFor(
 const DEFAULT_MAX_BODY_BYTES = 1_000_000
 const TEXT_DECODER = new TextDecoder()
 
+/** Invalid byte caps make `total > maxBytes` fail open (especially for `NaN`). Reject configuration
+ * before any request body is read so MCP cannot silently lose its memory bound. */
+function assertByteLimit(value: number): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError("MCP maxBodyBytes must be a non-negative safe integer")
+  }
+}
+
 export interface McpHttpOptions {
   /** Maximum JSON-RPC request body size in bytes. Default 1 MB. */
   readonly maxBodyBytes?: number
@@ -192,6 +200,8 @@ export async function respondMcpHttp(
   serverInfo: { name: string; version: string },
   options: McpHttpOptions = {},
 ): Promise<Response> {
+  const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
+  assertByteLimit(maxBodyBytes)
   const cors = corsFor(request, options.allowedOrigins)
   if (cors === null) {
     // Origin present but not allowlisted: reject before the body is ever read (DNS-rebinding guard). No
@@ -221,7 +231,7 @@ export async function respondMcpHttp(
       headers: { allow: "POST, GET", ...cors },
     })
   }
-  const parsed = await readJsonBounded(request, options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES)
+  const parsed = await readJsonBounded(request, maxBodyBytes)
   if (!parsed.ok) {
     if (parsed.status === 413) {
       return Response.json(rpcError(null, -32000, "payload too large"), {

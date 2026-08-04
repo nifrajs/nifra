@@ -7,6 +7,7 @@ function seededDb(): Database {
   db.run("CREATE TABLE habits (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
   db.run("CREATE TABLE entries (id INTEGER PRIMARY KEY, habit_id INTEGER, day TEXT)")
   db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT)") // deliberately NOT exposed
+  db.run("CREATE TABLE constant (id INTEGER PRIMARY KEY)") // deliberately NOT exposed
   db.run("INSERT INTO habits (name) VALUES ('read'), ('run')")
   db.run("INSERT INTO users (email) VALUES ('secret@example.com')")
   return db
@@ -56,6 +57,21 @@ describe("construction fails closed", () => {
     const db = seededDb()
     serveDatabaseAsMcp(db, { tables: ["habits"] })
     expect(() => db.run("INSERT INTO habits (name) VALUES ('x')")).toThrow()
+  })
+
+  test("rejects invalid result limits at boot", () => {
+    expect(() =>
+      serveDatabaseAsMcp(seededDb(), {
+        tables: ["habits"],
+        runQuery: { authorize: () => true, maxRows: Number.NaN },
+      }),
+    ).toThrow(/maxRows/)
+    expect(() =>
+      serveDatabaseAsMcp(seededDb(), {
+        tables: ["habits"],
+        runQuery: { authorize: () => true, maxResultBytes: Number.POSITIVE_INFINITY },
+      }),
+    ).toThrow(/maxResultBytes/)
   })
 })
 
@@ -136,11 +152,14 @@ describe("run_query (opt-in)", () => {
     // A literal ';' inside a string with a single statement is fine.
     const ok = await call(server, "run_query", { sql: "SELECT ';' AS s FROM habits" }, auth)
     expect(ok.isError).toBe(false)
+    const comment = await call(server, "run_query", { sql: "SELECT 1 -- trailing comment" }, auth)
+    expect(comment.isError).toBe(false)
   })
 
   test("a SELECT that touches an unexposed table is rejected by plan verification", async () => {
     for (const sql of [
       "SELECT * FROM users",
+      "SELECT * FROM constant",
       "SELECT h.name FROM habits h JOIN users u ON u.id = h.id",
       "SELECT (SELECT email FROM users LIMIT 1) FROM habits",
     ]) {
@@ -189,5 +208,31 @@ describe("run_query (opt-in)", () => {
     expect(result.rows.length).toBeLessThanOrEqual(2)
     expect(result.truncated?.total).toBe(20)
     expect(text.length).toBeLessThanOrEqual(3000)
+  })
+
+  test("bounds database materialization before applying the row cap", async () => {
+    let materialized = 0
+    const fakeDb = {
+      run() {},
+      prepare(sql: string) {
+        return {
+          all() {
+            if (sql.startsWith("EXPLAIN QUERY PLAN")) return [{ detail: "SCAN TABLE habits" }]
+            if (sql.includes("__nifra_total")) return [{ __nifra_total: 100_000 }]
+            const limit = Number(/LIMIT (\d+)$/.exec(sql)?.[1] ?? 100_000)
+            materialized = Math.max(materialized, limit)
+            return Array.from({ length: limit }, (_, id) => ({ id }))
+          },
+        }
+      },
+    }
+    const bounded = serveDatabaseAsMcp(fakeDb, {
+      tables: ["habits"],
+      runQuery: { authorize: () => true, maxRows: 2 },
+    })
+    const result = await call(bounded, "run_query", { sql: "SELECT * FROM habits" })
+    expect(result.isError).toBe(false)
+    expect(materialized).toBe(3) // maxRows + one sentinel row, never the full 100k result
+    expect(JSON.parse(result.text).truncated).toEqual({ shown: 2, total: 100_000 })
   })
 })

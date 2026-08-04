@@ -62,6 +62,18 @@ export interface ImageHandlerOptions {
 
 const MAX_SRC_LEN = 2048
 
+function assertNonNegativeSafeInteger(value: number, name: string): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError(`image: ${name} must be a non-negative safe integer`)
+  }
+}
+
+function assertPositiveSafeInteger(value: number, name: string): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new RangeError(`image: ${name} must be a finite positive safe integer`)
+  }
+}
+
 interface ResolvedConfig {
   readonly backend: ImageBackend
   readonly root: string | null
@@ -94,14 +106,19 @@ export function createImageHandler(
 }
 
 function resolveConfig(options: ImageHandlerOptions): ResolvedConfig {
-  const concurrency = Math.max(1, options.concurrency ?? 4)
+  const maxSourceBytes = options.maxSourceBytes ?? 20 * 1024 * 1024
+  const maxSourcePixels = options.maxSourcePixels ?? 40_000_000
+  const concurrency = options.concurrency ?? 4
+  assertNonNegativeSafeInteger(maxSourceBytes, "maxSourceBytes")
+  assertPositiveSafeInteger(maxSourcePixels, "maxSourcePixels")
+  assertPositiveSafeInteger(concurrency, "concurrency")
   const sem = createSemaphore(concurrency)
   return {
     backend: options.backend ?? bunImageBackend(),
     root: options.root !== undefined ? resolvePath(options.root) : null,
     allowedOrigins: new Set(options.allowedOrigins ?? []),
-    maxSourceBytes: options.maxSourceBytes ?? 20 * 1024 * 1024,
-    maxSourcePixels: options.maxSourcePixels ?? 40_000_000,
+    maxSourceBytes,
+    maxSourcePixels,
     maxWidth: options.maxWidth ?? 3840,
     cacheMaxAge: options.cacheMaxAge ?? 31_536_000,
     defaultQuality: options.defaultQuality ?? 75,

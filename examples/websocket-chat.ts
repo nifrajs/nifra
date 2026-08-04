@@ -21,8 +21,21 @@ const PAGE = /* html */ `<!doctype html><meta charset=utf-8><title>nifra chat</t
 const name = prompt("your name") || "anon"
 const ws = new WebSocket(\`ws://\${location.host}/chat?name=\${encodeURIComponent(name)}\`)
 const log = document.getElementById("log")
-const add = (html) => { log.insertAdjacentHTML("beforeend", html + "<br>"); log.scrollTop = log.scrollHeight }
-ws.onmessage = (e) => { const m = JSON.parse(e.data); add(m.system ? \`<i>\${m.system}</i>\` : \`<b>\${m.from}:</b> \${m.text}\`) }
+const add = (message) => {
+  const row = document.createElement("div")
+  if (message.system) {
+    const system = document.createElement("i")
+    system.textContent = message.system
+    row.append(system)
+  } else {
+    const from = document.createElement("b")
+    from.textContent = message.from + ":"
+    row.append(from, document.createTextNode(" " + message.text))
+  }
+  log.append(row, document.createElement("br"))
+  log.scrollTop = log.scrollHeight
+}
+ws.onmessage = (e) => { add(JSON.parse(e.data)) }
 document.getElementById("f").onsubmit = (e) => { e.preventDefault(); const i = document.getElementById("m"); if (i.value) ws.send(i.value); i.value = "" }
 </script>`
 

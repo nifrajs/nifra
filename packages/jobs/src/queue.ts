@@ -92,6 +92,27 @@ export interface Worker {
   readonly running: boolean
 }
 
+function assertWorkerOptions(options: WorkerOptions): void {
+  if (
+    options.concurrency !== undefined &&
+    (!Number.isSafeInteger(options.concurrency) || options.concurrency <= 0)
+  ) {
+    throw new RangeError("jobs: concurrency must be a finite positive safe integer")
+  }
+  if (
+    options.pollIntervalMs !== undefined &&
+    (!Number.isFinite(options.pollIntervalMs) || options.pollIntervalMs < 0)
+  ) {
+    throw new RangeError("jobs: pollIntervalMs must be a finite non-negative number")
+  }
+  if (
+    options.leaseMs !== undefined &&
+    (!Number.isFinite(options.leaseMs) || options.leaseMs <= 0)
+  ) {
+    throw new RangeError("jobs: leaseMs must be a finite positive number")
+  }
+}
+
 export interface Queue {
   /** Register a typed job. Throws now (not at run time) on a duplicate name. */
   define<Payload>(name: string, definition: JobDefinition<Payload>): JobHandle<Payload>
@@ -263,7 +284,8 @@ export function createQueue(options: QueueOptions = {}): Queue {
   }
 
   function start(opts: WorkerOptions = {}): Worker {
-    concurrency = Math.max(1, opts.concurrency ?? 1)
+    assertWorkerOptions(opts)
+    concurrency = opts.concurrency ?? 1
     leaseMs = opts.leaseMs ?? 30_000
     const intervalMs = opts.pollIntervalMs ?? 250
     if (timer === undefined) timer = setInterval(() => void process(), intervalMs)

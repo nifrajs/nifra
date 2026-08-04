@@ -225,7 +225,7 @@ function validateClaims(claims: JwtClaims, options: VerifyJwtOptions): void {
     if (!gotList.some((aud) => expected.includes(aud))) throw jwtError("audience mismatch")
   }
   for (const claim of options.requiredClaims ?? []) {
-    if (!(claim in claims)) throw jwtError(`claim ${claim} is required`)
+    if (!Object.hasOwn(claims, claim)) throw jwtError(`claim ${claim} is required`)
   }
 }
 
