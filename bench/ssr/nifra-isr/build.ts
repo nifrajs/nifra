@@ -15,8 +15,8 @@ const manifest = await buildClient({
 const server = await Bun.build({
   entrypoints: [`${dir}/server.ts`],
   outdir: dir,
-  target: "bun",
-  conditions: ["bun"],
+  target: "node",
+  conditions: ["node"],
   naming: "server-bun.js",
   minify: true,
   define,

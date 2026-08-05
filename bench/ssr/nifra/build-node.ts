@@ -13,7 +13,7 @@ rmSync(dist, { recursive: true, force: true })
 mkdirSync(dist, { recursive: true })
 
 const define = { "process.env.NODE_ENV": '"production"' }
-const nodeSourceConditions = ["bun", "node"]
+const nodeSourceConditions = ["node"]
 
 // Client hydration bundle (browser) - served by the app at /client.js.
 const client = await Bun.build({

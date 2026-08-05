@@ -12,7 +12,7 @@ rmSync(dist, { recursive: true, force: true })
 mkdirSync(dist, { recursive: true })
 
 const define = { "process.env.NODE_ENV": '"production"' }
-const nodeSourceConditions = ["bun", "svelte", "node"]
+const nodeSourceConditions = ["svelte", "node"]
 
 const client = await Bun.build({
   entrypoints: [`${dir}/client.ts`],

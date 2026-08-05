@@ -16,7 +16,7 @@ const define = {
   __VUE_PROD_DEVTOOLS__: "false",
   __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: "false",
 }
-const nodeSourceConditions = ["bun", "node"]
+const nodeSourceConditions = ["node"]
 
 const client = await Bun.build({
   entrypoints: [`${dir}/client.ts`],

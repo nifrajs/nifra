@@ -16,7 +16,7 @@ const client = await Bun.build({
 const server = await Bun.build({
   entrypoints: [`${import.meta.dir}/server.ts`],
   outdir: import.meta.dir,
-  target: "bun",
+  target: "node",
   conditions: ["bun", "solid"],
   plugins: [solidBunPlugin("ssr")],
   naming: "server-bun.js",

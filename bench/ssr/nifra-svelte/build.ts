@@ -16,8 +16,8 @@ const client = await Bun.build({
 const server = await Bun.build({
   entrypoints: [`${import.meta.dir}/server.ts`],
   outdir: import.meta.dir,
-  target: "bun",
-  conditions: ["bun", "svelte"],
+  target: "node",
+  conditions: ["node", "svelte"],
   plugins: [svelteBunPlugin("ssr")],
   naming: "server-bun.js",
   minify: true,

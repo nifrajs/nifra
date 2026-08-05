@@ -18,8 +18,8 @@ const client = await Bun.build({
 const server = await Bun.build({
   entrypoints: [`${import.meta.dir}/server.ts`],
   outdir: import.meta.dir,
-  target: "bun",
-  conditions: ["bun"],
+  target: "node",
+  conditions: ["node"],
   naming: "server-bun.js",
   minify: true,
   define,
