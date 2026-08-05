@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test"
 import { server, silentLogger } from "@nifrajs/core"
-import type { NodeResponseContext } from "@nifrajs/core/server"
 import { cors } from "../src/index.ts"
 
 const origin = (value: string) => ({ headers: { origin: value } })

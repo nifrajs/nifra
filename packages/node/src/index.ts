@@ -948,26 +948,27 @@ class LazyNodeRequestSource implements NodeRequestSource {
   }
 
   get request(): Request {
-    if (this.requestValue !== undefined) return this.requestValue
-    if (this.consumedBody !== undefined) {
-      this.requestValue = makeWebRequest(
-        this.nodeReq,
-        this.method,
-        this.url,
-        this.headersValue ?? headerRecordFromNode(this.nodeReq.headers),
-        this.consumedBody,
-      )
-      // Preserve one-shot body semantics if user code asks for `c.req` after nifra already consumed it.
-      void this.requestValue.arrayBuffer().catch(() => {})
-      return this.requestValue
-    }
-    this.requestValue = makeWebRequest(
-      this.nodeReq,
+    this.requestValue ??= new LazyWebRequest(
       this.method,
       this.url,
-      this.headersValue ?? headerRecordFromNode(this.nodeReq.headers),
-      this.body,
-    )
+      () => this.headersValue ?? headerRecordFromNode(this.nodeReq.headers),
+      (headers) => {
+        if (this.consumedBody !== undefined) {
+          const real = makeWebRequest(
+            this.nodeReq,
+            this.method,
+            this.url,
+            headers,
+            this.consumedBody,
+          )
+          // Preserve one-shot body semantics if user code asks for `c.req` after nifra already
+          // consumed it.
+          void real.arrayBuffer().catch(() => {})
+          return real
+        }
+        return makeWebRequest(this.nodeReq, this.method, this.url, headers, this.body)
+      },
+    ) as unknown as Request
     return this.requestValue
   }
 
@@ -1076,13 +1077,12 @@ class LeanNodeGetSource implements NodeRequestSource {
   }
 
   get request(): Request {
-    this.requestValue ??= makeWebRequest(
-      this.nodeReq,
+    this.requestValue ??= new LazyWebRequest(
       this.method,
       this.url,
-      this.headersValue ?? headerRecordFromNode(this.nodeReq.headers),
-      null,
-    )
+      () => this.headersValue ?? headerRecordFromNode(this.nodeReq.headers),
+      (headers) => makeWebRequest(this.nodeReq, this.method, this.url, headers, null),
+    ) as unknown as Request
     return this.requestValue
   }
 }
@@ -1122,6 +1122,108 @@ function makeWebRequest(
   }
   return new Request(url, init)
 }
+
+/**
+ * A LAZY Web `Request` over a Node request. Constructing an undici `Request` costs ~2μs per call -
+ * its internal URL parse alone showed at ~2.4% of a realistic request - yet most consumers of
+ * `c.req` (and of the `req` argument Web hooks receive) only ever read `method`, `url`, or a
+ * header. This class serves those three from what the adapter already has, materializes one real
+ * `Headers` on first `headers` access, and defers the full undici `Request` until something
+ * actually needs the rest of the surface (body readers, `signal`, `clone`, ...), forwarding to it
+ * from then on. The prototype chains to the native `Request`, so `instanceof Request` holds and
+ * every forwarded member runs with a genuine receiver. The `url` is ALWAYS the adapter's own
+ * derivation (the declared protocol trust) - never re-derived here.
+ */
+const LazyWebRequest = /* @__PURE__ */ (() => {
+  const NativeRequest = globalThis.Request
+  class LazyWebRequest {
+    #method: string
+    #url: string
+    #headersInit: (() => Headers | Record<string, string>) | undefined
+    #materialize: ((headers: Headers | Record<string, string>) => Request) | undefined
+    #headers: Headers | undefined
+    #real: Request | undefined
+
+    constructor(
+      method: string,
+      url: string,
+      headersInit: () => Headers | Record<string, string>,
+      materialize: (headers: Headers | Record<string, string>) => Request,
+    ) {
+      this.#method = method
+      this.#url = url
+      this.#headersInit = headersInit
+      this.#materialize = materialize
+    }
+
+    get method(): string {
+      return this.#method
+    }
+
+    get url(): string {
+      return this.#url
+    }
+
+    get headers(): Headers {
+      if (this.#headers !== undefined) return this.#headers
+      if (this.#real !== undefined) {
+        this.#headers = this.#real.headers
+        return this.#headers
+      }
+      const init = (this.#headersInit as () => Headers | Record<string, string>)()
+      this.#headers = init instanceof Headers ? init : new Headers(init)
+      return this.#headers
+    }
+
+    /** The real undici Request, built on first demand. Named for the forwarding descriptors below. */
+    get _real(): Request {
+      if (this.#real === undefined) {
+        const materialize = this.#materialize as (h: Headers | Record<string, string>) => Request
+        // Hand the materializer the SAME Headers a hook may already have observed (and mutated),
+        // so the real request reflects it; otherwise let it build from its own cheap record.
+        this.#real = materialize(
+          this.#headers ?? (this.#headersInit as () => Headers | Record<string, string>)(),
+        )
+        this.#headersInit = undefined
+        this.#materialize = undefined
+      }
+      return this.#real
+    }
+  }
+
+  // Forward every other Request member to the lazily materialized real request. Data properties
+  // (e.g. Symbol.toStringTag) are reachable through the chained prototype without a brand check,
+  // so only accessors and methods need explicit forwarding.
+  const own = new Set<string | symbol>(["constructor", "method", "url", "headers"])
+  const keys: Array<string | symbol> = [
+    ...Object.getOwnPropertyNames(NativeRequest.prototype),
+    ...Object.getOwnPropertySymbols(NativeRequest.prototype),
+  ]
+  for (const key of keys) {
+    if (own.has(key)) continue
+    const descriptor = Object.getOwnPropertyDescriptor(NativeRequest.prototype, key)
+    if (descriptor === undefined) continue
+    if (typeof descriptor.value === "function") {
+      Object.defineProperty(LazyWebRequest.prototype, key, {
+        configurable: true,
+        writable: true,
+        value: function (this: InstanceType<typeof LazyWebRequest>, ...args: unknown[]) {
+          const real = this._real as unknown as Record<string | symbol, unknown>
+          return (real[key] as (...a: unknown[]) => unknown).apply(real, args)
+        },
+      })
+    } else if (descriptor.get !== undefined) {
+      Object.defineProperty(LazyWebRequest.prototype, key, {
+        configurable: true,
+        get(this: InstanceType<typeof LazyWebRequest>) {
+          return (this._real as unknown as Record<string | symbol, unknown>)[key]
+        },
+      })
+    }
+  }
+  Object.setPrototypeOf(LazyWebRequest.prototype, NativeRequest.prototype)
+  return LazyWebRequest
+})()
 
 function waitForDrain(nodeRes: ServerResponse): Promise<boolean> {
   if (nodeRes.destroyed || nodeRes.writableEnded || !nodeRes.writable) {
