@@ -713,6 +713,18 @@ function writeInternalError(nodeRes: ServerResponse): void {
   nodeRes.end(INTERNAL_ERROR_BODY)
 }
 
+/** True when every header name in the record is already free of ASCII uppercase - the gate for
+ * skipping the per-request lowercase normalization copy in {@link writeJsonOutcome}. */
+function allHeaderKeysLowercase(record: Readonly<Record<string, unknown>>): boolean {
+  for (const key in record) {
+    for (let i = 0; i < key.length; i++) {
+      const c = key.charCodeAt(i)
+      if (c >= 65 && c <= 90) return false
+    }
+  }
+  return true
+}
+
 /**
  * Serialize a node-direct JSON outcome straight to the socket - no undici `Response`, no stream drain.
  * Mirrors `Response.json(data, { status, headers })` byte-for-byte: user headers are lowercased to
@@ -723,9 +735,23 @@ function writeJsonOutcome(
   outcome: Extract<NodeServeOutcome, { kind: "json" }>,
   nodeRes: ServerResponse,
 ): void {
-  const headers: Record<string, string | string[]> = {}
-  if (outcome.headers !== undefined) {
-    for (const [key, value] of Object.entries(outcome.headers)) headers[key.toLowerCase()] = value
+  // The outcome's record is the request's own (`c.set.headers`, already mutated by any native
+  // response hooks), and its writers - middleware twins and the framework's own additions - emit
+  // lowercase names. When a key scan confirms that, the record is used as-is and the additions
+  // below mutate it in place; nothing reads it after the write. Only a mixed-case key (a user's
+  // hand-set `X-Foo`) pays the normalization copy, keeping the wire byte-identical to undici's
+  // `Headers` lowercasing on every other runtime.
+  let headers: Record<string, string | string[]>
+  const source = outcome.headers
+  if (source === undefined) {
+    headers = {}
+  } else if (allHeaderKeysLowercase(source)) {
+    headers = source as Record<string, string | string[]>
+  } else {
+    headers = {}
+    for (const [key, value] of Object.entries(source)) {
+      headers[key.toLowerCase()] = value as string | string[]
+    }
   }
   // A `null` body is a 204/no-content render - `new Response(null)` carries no Content-Type, so we add
   // none either; a non-null body is JSON, matching `Response.json`'s Content-Type (a hook-supplied

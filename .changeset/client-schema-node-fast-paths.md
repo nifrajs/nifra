@@ -21,5 +21,6 @@ Faster typed client, validation, and Node serving without touching any contract:
   materializing Web request/response objects; the cookie parser is shared with core.
 - `@nifrajs/node`: response headers are written with a single native `setHeaders` call (repeated
   `Set-Cookie` values stay un-joined), a hook-supplied `Content-Type` is preserved on buffered JSON
-  writes, and `Content-Length` is always declared for buffered bodies so responses never fall back
-  to chunked framing.
+  writes, `Content-Length` is always declared for buffered bodies so responses never fall back to
+  chunked framing, and the per-response header normalization copy is skipped when every name is
+  already lowercase (the common case - wire output is unchanged).
