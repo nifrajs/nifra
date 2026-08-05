@@ -39,3 +39,13 @@ bounded cache - V8 pays ~13x to store a freshly-sliced string key on the null-pr
 parsers build, so handing back the first-seen key makes the store take the fast path. High-cardinality
 or oversized keys bypass the cache and behave exactly as before, and JSC (Bun) skips the scheme
 entirely (it has no such cost).
+When any route registers `onResponseBody`, every JSON response with caller-set headers (the common
+shape once a route has middleware) stopped pre-building a throwaway `Headers` instance just to
+check for an existing `content-type` - that instance was immediately handed to `new Response()`,
+which does its own header ingestion regardless, so the pre-build was pure waste. The check now runs
+against whatever shape the headers already are (a plain record gets a shallow copy only when
+`content-type` is absent; an already-built `Headers` is mutated in place, as before) and that result
+goes straight into the `Response` constructor. Deno/V8 charged far more for the discarded `Headers`
+instance than Bun/JSC did - measured previously as the entire gap between the payload tier's Deno
+row and its own raw ceiling on the realistic-shape benchmark; that row now leads every peer
+framework and sits within a few percent of raw `Deno.serve` again.
