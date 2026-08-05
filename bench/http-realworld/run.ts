@@ -11,6 +11,9 @@
  * the SAME framework's ratio across them to see the fused-lane premium directly, rather than taking
  * the bare-route number as if it generalizes.
  *
+ * A third workload adds ONE body-observing middleware to the same GET (the `*-body` targets), each
+ * framework through its own idiomatic body tier - the cost a header-only comparison can't show.
+ *
  *   bun run bench/http-realworld/run.ts            # every section this build knows
  *   bun run bench/http-realworld/run.ts bun        # one section only (bun | node | deno)
  */
@@ -57,14 +60,28 @@ const POST_ORDERS: Workload = {
     body: JSON.stringify({ sku: "SKU-1", qty: 2, note: "gift wrap" }),
   },
 }
+// Same GET, but served by the `*-body` targets: the realistic route PLUS one body-observing
+// middleware (an x-body-hash header over the final serialized body), each framework through its own
+// idiomatic mechanism - nifra's onResponseBody payload tier, Fastify's onSend, Elysia's mapResponse,
+// Hono's drain-and-rebuild, Express's res.json wrap, inline for the raw ceilings. This is the
+// workload header-only comparisons can't show: what a framework charges middleware to SEE the body.
+const GET_ORDERS_BODY: Workload = {
+  name: "GET /api/orders (auth + middleware + body-hash)",
+  path: "/api/orders?limit=10",
+  headers: AUTH_HEADERS,
+}
 
 const WORKLOADS: readonly Workload[] = [GET_ORDERS, POST_ORDERS]
+const BODY_WORKLOADS: readonly Workload[] = [GET_ORDERS_BODY]
+const ALL_WORKLOADS: readonly Workload[] = [...WORKLOADS, ...BODY_WORKLOADS]
 
 interface Target {
   readonly framework: string
   readonly spawn: (port: number) => readonly string[]
   readonly prepare?: () => Promise<void>
   readonly isCeiling?: boolean
+  /** Workloads this target serves; defaults to the plain GET/POST pair. */
+  readonly workloads?: readonly Workload[]
 }
 
 interface Section {
@@ -97,20 +114,29 @@ const denoTarget = (framework: string): Target => ({
 })
 
 const NIFRA_NODE_BUNDLE = `${import.meta.dir}/dist/serve-node-nifra.js`
+const buildNifraNodeBundle = async (): Promise<void> => {
+  const result = await Bun.build({
+    entrypoints: [`${import.meta.dir}/serve-node-nifra.ts`],
+    target: "node",
+    outdir: `${import.meta.dir}/dist`,
+  })
+  if (!result.success) {
+    throw new Error(`nifra-node bundle failed: ${result.logs.map(String).join("; ")}`)
+  }
+}
 const nifraNodeTarget: Target = {
   framework: "nifra",
-  prepare: async () => {
-    const result = await Bun.build({
-      entrypoints: [`${import.meta.dir}/serve-node-nifra.ts`],
-      target: "node",
-      outdir: `${import.meta.dir}/dist`,
-    })
-    if (!result.success) {
-      throw new Error(`nifra-node bundle failed: ${result.logs.map(String).join("; ")}`)
-    }
-  },
+  prepare: buildNifraNodeBundle,
   spawn: (port) => ["node", NIFRA_NODE_BUNDLE, String(port)],
 }
+const nifraNodeBodyTarget: Target = {
+  framework: "nifra-body",
+  prepare: buildNifraNodeBundle,
+  spawn: (port) => ["node", NIFRA_NODE_BUNDLE, String(port), "body"],
+  workloads: BODY_WORKLOADS,
+}
+
+const bodyTarget = (t: Target): Target => ({ ...t, workloads: BODY_WORKLOADS })
 
 const SECTIONS: readonly Section[] = [
   {
@@ -120,6 +146,10 @@ const SECTIONS: readonly Section[] = [
       bunTarget("elysia"),
       bunTarget("hono"),
       { ...bunTarget("bun-native"), isCeiling: true },
+      bodyTarget(bunTarget("nifra-body")),
+      bodyTarget(bunTarget("elysia-body")),
+      bodyTarget(bunTarget("hono-body")),
+      { ...bodyTarget(bunTarget("bun-native-body")), isCeiling: true },
     ],
   },
   {
@@ -131,6 +161,12 @@ const SECTIONS: readonly Section[] = [
       nodeTarget("express"),
       nodeTarget("elysia"),
       { ...nodeTarget("node-raw"), isCeiling: true },
+      nifraNodeBodyTarget,
+      bodyTarget(nodeTarget("hono-body")),
+      bodyTarget(nodeTarget("fastify-body")),
+      bodyTarget(nodeTarget("express-body")),
+      bodyTarget(nodeTarget("elysia-body")),
+      { ...bodyTarget(nodeTarget("node-raw-body")), isCeiling: true },
     ],
   },
   {
@@ -140,6 +176,10 @@ const SECTIONS: readonly Section[] = [
       denoTarget("hono"),
       denoTarget("elysia"),
       { ...denoTarget("deno-raw"), isCeiling: true },
+      bodyTarget(denoTarget("nifra-body")),
+      bodyTarget(denoTarget("hono-body")),
+      bodyTarget(denoTarget("elysia-body")),
+      { ...bodyTarget(denoTarget("deno-raw-body")), isCeiling: true },
     ],
   },
 ]
@@ -262,8 +302,9 @@ for (const section of sections) {
       if (target.prepare) await target.prepare()
       proc = Bun.spawn([...target.spawn(port)], { stdout: "ignore", stderr: "inherit" })
       await waitReady(base, 8000)
-      for (const w of WORKLOADS) {
-        await runOha(`${base}${w.path}`, w, WARMUP_S)
+      for (const w of target.workloads ?? WORKLOADS) {
+        // oha with `-z 0s` exits before collecting percentiles - a zero warmup means "no warmup".
+        if (WARMUP_S > 0) await runOha(`${base}${w.path}`, w, WARMUP_S)
         const { median } = await sample(`${base}${w.path}`, w)
         fwResults[w.name] = median
       }
@@ -317,11 +358,15 @@ console.log(
 
 for (const section of sections) {
   const got = results[section.runtime] ?? {}
-  const ceiling = section.targets.find((t) => t.isCeiling)?.framework
   console.log(`## ${section.runtime}\n`)
-  for (const w of WORKLOADS) {
+  for (const w of ALL_WORKLOADS) {
+    // Each workload is served by the targets that declare it (plain rows vs the *-body rows), and
+    // each group carries its own raw ceiling.
+    const group = section.targets.filter((t) => (t.workloads ?? WORKLOADS).includes(w))
+    if (group.length === 0) continue
     console.log(`  ${w.name}`)
-    const rows = section.targets.map((t) => ({
+    const ceiling = group.find((t) => t.isCeiling)?.framework
+    const rows = group.map((t) => ({
       f: t.framework,
       m: got[t.framework]?.[w.name] ?? ZERO,
     }))
@@ -332,13 +377,13 @@ for (const section of sections) {
       const ofCeil =
         ceil > 0 ? `${pad(String(Math.round((m.rps / ceil) * 100)), 3)}% of ceiling` : ""
       console.log(
-        `    ${f.padEnd(9)} ${pad(m.rps.toLocaleString(), 9)} req/s   ` +
+        `    ${f.padEnd(15)} ${pad(m.rps.toLocaleString(), 9)} req/s   ` +
           `p50 ${pad(m.p50ms.toFixed(2), 6)}ms   p99 ${pad(m.p99ms.toFixed(2), 7)}ms   ` +
           `${pad(String(ofTop), 3)}% of top   ${ofCeil}`,
       )
     }
-    const nifra = got.nifra?.[w.name]?.rps ?? 0
-    const elysia = got.elysia?.[w.name]?.rps ?? 0
+    const nifra = rows.find((r) => r.f.startsWith("nifra"))?.m.rps ?? 0
+    const elysia = rows.find((r) => r.f.startsWith("elysia"))?.m.rps ?? 0
     if (nifra > 0 && elysia > 0) {
       console.log(`    → nifra is ${Math.round((nifra / elysia) * 100)}% of Elysia`)
     }

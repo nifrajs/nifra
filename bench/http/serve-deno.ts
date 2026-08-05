@@ -14,12 +14,16 @@
  */
 import { Hono } from "hono"
 import { validator } from "hono/validator"
+// Core's VALUE import points at built dist: Deno's npm condition set has no "bun" condition, so a
+// real `npm:@nifrajs/core` install resolves the "default" export to `dist/*.js` - importing src
+// here would benchmark an artifact no Deno user runs. `@nifrajs/deno` itself SHIPS `src/` (its
+// exports point there), so the adapter import already matches the published artifact.
+import { server } from "../../packages/core/dist/index.js"
 import type {
   StandardResult,
   StandardSchemaV1,
   StandardTypes,
 } from "../../packages/core/src/index.ts"
-import { server } from "../../packages/core/src/index.ts"
 import { serve } from "../../packages/deno/src/index.ts"
 
 const framework = Deno.args[0]
