@@ -6,6 +6,7 @@
  */
 
 import { requireSecretBytes } from "../internal/secret.ts"
+import { internParseKey } from "./query.ts"
 
 /** Attributes for a `Set-Cookie`. `expires` is a `Date`; `maxAge` is in **seconds**. */
 export interface CookieOptions {
@@ -88,7 +89,9 @@ export function parseCookies(header: string | null | undefined): Record<string, 
         } else {
           value = header.slice(valueStart, stop)
         }
-        out[name] = safeDecode(value)
+        // Interned: cookie names repeat across requests, and V8 pays ~300ns to internalize a
+        // fresh sliced key on a null-proto store (see internParseKey).
+        out[internParseKey(name)] = safeDecode(value)
       }
     }
     pos = end + 1

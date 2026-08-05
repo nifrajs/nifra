@@ -37,6 +37,25 @@ const app = server()
   // MemoryStore is dev/single-instance only - use a shared store (Redis, etc.) in production.
   .use(rateLimit({ store: new MemoryStore(), max: 100, windowMs: 60_000 }))`
 
+const NODE_TWIN = `import type { Middleware } from "@nifrajs/core/server"
+
+// A header-only middleware, portable everywhere - with a Node twin so the Node
+// adapter can apply it without building Web Request/Response objects.
+export function serverName(value: string): Middleware {
+  return {
+    onResponse(res) {
+      res.headers.set("server", value)
+      return res
+    },
+    // Same header semantics against the plain outcome record. Used only on Node,
+    // and only when EVERY response hook in the app ships a twin.
+    onNodeResponse(res) {
+      res.headers ??= {}
+      res.headers.server = value
+    },
+  }
+}`
+
 const OFFICIAL = `import { server } from "@nifrajs/core/server"
 import { requestId, logger, etag } from "@nifrajs/middleware"
 
@@ -191,6 +210,47 @@ export default function Plugins() {
         error, 404). Hardening middleware uses the same hook model:
       </p>
       <CodeBlock code={MIDDLEWARE} />
+
+      <h2>Node twins: keep header middleware on the direct writer</h2>
+      <p>
+        On Bun and Deno, <code>Request</code>/<code>Response</code> are the runtime's native objects,
+        so Web hooks are free. On Node, running a Web hook means <b>materializing those objects per
+        request</b> just so the hook can call <code>.headers.get()</code>. A middleware whose hook only
+        reads or writes <b>headers</b> can ship a paired <i>Node twin</i> -{" "}
+        <code>onNodeRequest</code> / <code>onNodeResponse</code> - that runs against the raw request
+        and the plain outcome record instead, keeping the Node adapter on its direct socket writer:
+      </p>
+      <CodeBlock code={NODE_TWIN} />
+      <ul>
+        <li>
+          <b>The Web hook stays the source of truth.</b> A twin is only valid <i>paired</i> with its
+          Web hook (registering one alone throws), Bun/Deno/tests always run the Web version, and the
+          two must be semantically identical - the twin is an optimization, never a fork.
+        </li>
+        <li>
+          <code>onNodeRequest(req)</code> sees <code>{`{ method, header(name) }`}</code>. It may
+          short-circuit with a <code>Response</code> (e.g. a CORS preflight <code>204</code>) but
+          cannot rewrite the request.
+        </li>
+        <li>
+          <code>onNodeResponse(res, req)</code> sees <code>{`{ status, headers, cookies }`}</code> and
+          may only add or change <b>headers</b> (write lowercase names). Body or status transforms
+          belong on the Web hook - a middleware that needs them simply ships no twin.
+        </li>
+        <li>
+          <b>All-or-nothing per app:</b> Node uses the twins only when <i>every</i>{" "}
+          <code>onResponse</code> hook in the app carries one. One twin-less hook and the whole app
+          takes the Web materialization path - on the realistic Node benchmark that is the difference
+          between ~95% and ~60% of a raw <code>node:http</code> server's throughput, so if your app is
+          Node-hot, give your custom header middleware a twin.
+        </li>
+        <li>
+          Built-ins shipping twins today: <code>cors</code>, <code>securityHeaders</code>,{" "}
+          <code>poweredBy</code>, and <code>cacheControl</code> (with a static directive).
+          Body-transforming middleware (<code>etag</code>, <code>compression</code>,{" "}
+          <code>prettyJson</code>, <code>cache</code>) cannot twin by design.
+        </li>
+      </ul>
 
       <h2>Official plugins</h2>
       <p>

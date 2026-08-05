@@ -276,6 +276,12 @@
     "code": "import { server } from \"@nifrajs/core/server\"\nimport { cors, rateLimit, securityHeaders, MemoryStore } from \"@nifrajs/middleware\"\n\n// Hardening middleware is a hook bundle (context-agnostic) - same app.use():\nconst app = server()\n  .use(securityHeaders())\n  .use(cors({ origin: [\"https://app.example\"] }))\n  // MemoryStore is dev/single-instance only - use a shared store (Redis, etc.) in production.\n  .use(rateLimit({ store: new MemoryStore(), max: 100, windowMs: 60_000 }))"
   },
   {
+    "name": "NODE_TWIN",
+    "topic": "Nifra - Plugins & middleware",
+    "slug": "plugins",
+    "code": "import type { Middleware } from \"@nifrajs/core/server\"\n\n// A header-only middleware, portable everywhere - with a Node twin so the Node\n// adapter can apply it without building Web Request/Response objects.\nexport function serverName(value: string): Middleware {\n  return {\n    onResponse(res) {\n      res.headers.set(\"server\", value)\n      return res\n    },\n    // Same header semantics against the plain outcome record. Used only on Node,\n    // and only when EVERY response hook in the app ships a twin.\n    onNodeResponse(res) {\n      res.headers ??= {}\n      res.headers.server = value\n    },\n  }\n}"
+  },
+  {
     "name": "OFFICIAL",
     "topic": "Nifra - Plugins & middleware",
     "slug": "plugins",

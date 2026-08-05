@@ -13,3 +13,8 @@ Node serving now keeps synchronous Web request middleware on the direct renderer
 response middleware back to direct buffered writes, and avoids redundant params/body lifecycle stages
 for common validated reads. Header-only built-ins (`cache-control`, `powered-by`, and related response
 mutators) no longer clone buffered responses on Node.
+Query and cookie parsing intern repeated key names on V8-based runtimes (Node, Deno) through a small
+bounded cache - V8 pays ~13x to store a freshly-sliced string key on the null-prototype records the
+parsers build, so handing back the first-seen key makes the store take the fast path. High-cardinality
+or oversized keys bypass the cache and behave exactly as before, and JSC (Bun) skips the scheme
+entirely (it has no such cost).

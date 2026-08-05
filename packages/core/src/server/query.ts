@@ -22,11 +22,36 @@ export function searchOf(url: string): string {
  * (an explicit 400 beats silently picking one). */
 export type QueryValue = string | string[]
 
+// V8 stores a FRESHLY-SLICED string key on a dictionary-mode (null-prototype) record ~13x slower
+// than an already-internalized one - the store internalizes the fresh string every time (measured
+// ~300ns vs ~22ns for a literal key; it was the single largest slice of query parsing on Node).
+// JSC has no such cliff (~2.5ns either way), so the whole scheme is bypassed there. Interning
+// repeated keys through a small bounded map hands every later request the SAME first-seen (and by
+// then internalized) string, so the store takes the fast path. Query/cookie key sets in a real app
+// are tiny and stable; a hostile high-cardinality caller stops being cached at the cap and an
+// oversized key never enters, so both degrade to exactly today's uncached behavior - the returned
+// key is always value-equal to the input, cached or not.
+const FRESH_KEY_STORE_IS_CHEAP = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined"
+const PARSE_KEY_INTERN = new Map<string, string>()
+const PARSE_KEY_INTERN_CAP = 2048
+const PARSE_KEY_MAX_LENGTH = 64
+
+/** Return a value-equal, likely-internalized copy of a parsed record key. See the note above. */
+export function internParseKey(key: string): string {
+  if (FRESH_KEY_STORE_IS_CHEAP) return key
+  const hit = PARSE_KEY_INTERN.get(key)
+  if (hit !== undefined) return hit
+  if (key.length > PARSE_KEY_MAX_LENGTH || PARSE_KEY_INTERN.size >= PARSE_KEY_INTERN_CAP) return key
+  PARSE_KEY_INTERN.set(key, key)
+  return key
+}
+
 /** Accumulate into a NULL-PROTOTYPE record (every call site below creates one): with no inherited
  * `constructor`/`toString`/`__proto__` accessors, a hostile key is just an own data key - the
  * promotion logic can't collide with `Object.prototype` members, and `__proto__` needs no special
  * case (direct assignment on a null-proto object creates an own property). */
-function setQueryValue(out: Record<string, QueryValue>, key: string, value: string): void {
+function setQueryValue(out: Record<string, QueryValue>, rawKey: string, value: string): void {
+  const key = internParseKey(rawKey)
   const existing = out[key]
   if (existing === undefined) {
     out[key] = value
