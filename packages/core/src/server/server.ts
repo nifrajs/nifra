@@ -62,6 +62,7 @@ import {
   type NodeResponseContext,
   type NodeResponseHook,
   type ResponseBodyHook,
+  type ResponseBodyReplacement,
   type ResponseHeadersHook,
   type ResponseHeadersView,
   recordHeadersView,
@@ -104,24 +105,53 @@ export type {
   NodeResponseHook,
   NodeServeOutcome,
   ResponseBodyHook,
+  ResponseBodyReplacement,
   ResponseHeadersHook,
   ResponseHeadersView,
 }
 
 const RESPONSE_BODY_TAG = Symbol.for("nifra.response.body")
 
+/** Apply a body hook's return to the native response context (bytes, or a structured replacement). */
+function applyBodyReplacement(
+  response: NodeResponseContext,
+  replaced: string | Uint8Array | ResponseBodyReplacement | undefined,
+): void {
+  if (replaced === undefined) return
+  if (typeof replaced === "string" || replaced instanceof Uint8Array) {
+    response.body = replaced
+    return
+  }
+  if (replaced.body !== undefined) response.body = replaced.body
+  if (replaced.status !== undefined) response.status = replaced.status
+}
+
 /** Swap a tagged Response's body for a hook's replacement, re-tagging so later body hooks (and the
  * Node fallback's direct writer) see the new bytes; explicit lengths are dropped so framing is
  * re-derived from what actually ships. */
-function withReplacedBody(response: Response, replaced: string | Uint8Array | undefined): Response {
+function withReplacedBody(
+  response: Response,
+  replaced: string | Uint8Array | ResponseBodyReplacement | undefined,
+): Response {
   if (replaced === undefined) return response
+  let body: string | Uint8Array | null
+  let status = response.status
+  if (typeof replaced === "string" || replaced instanceof Uint8Array) {
+    body = replaced
+  } else {
+    body = replaced.body !== undefined ? replaced.body : (taggedResponseBody(response) ?? null)
+    if (replaced.status !== undefined) status = replaced.status
+    if (body === (taggedResponseBody(response) ?? null) && status === response.status) {
+      return response
+    }
+  }
   const headers = new Headers(response.headers)
   headers.delete("content-length")
-  const next = new Response(replaced as ConstructorParameters<typeof Response>[0], {
-    status: response.status,
+  const next = new Response(body as ConstructorParameters<typeof Response>[0], {
+    status,
     headers,
   })
-  Object.defineProperty(next, RESPONSE_BODY_TAG, { value: replaced })
+  if (body !== null) Object.defineProperty(next, RESPONSE_BODY_TAG, { value: body })
   return next
 }
 
@@ -752,12 +782,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       const body = response.body
       if (body === null) return undefined
       const out = fn(body, recordHeadersView(response), req, response.status)
-      if (out instanceof Promise) {
-        return out.then((replaced) => {
-          if (replaced !== undefined) response.body = replaced
-        })
-      }
-      if (out !== undefined) response.body = out
+      if (out instanceof Promise)
+        return out.then((replaced) => applyBodyReplacement(response, replaced))
+      applyBodyReplacement(response, out)
       return undefined
     })
     return this
@@ -1921,9 +1948,24 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         : runtime.fromResponse(transformed)
     }
 
+    let headers = outcome.headers as Record<string, string | readonly string[]> | undefined
+    if (outcome.kind === "json" && outcome.body !== null) {
+      // The json render adds its Content-Type at WRITE time, so a body hook checking content types
+      // would see nothing. Materialize the writer's own value into the hook-visible record - same
+      // string the writer would emit, so the wire is unchanged.
+      const hasType =
+        headers !== undefined &&
+        Object.keys(headers).some((key) => key.toLowerCase() === "content-type")
+      if (!hasType) {
+        headers = {
+          ...headers,
+          "content-type": runtime.jsonContentType ?? "application/json;charset=utf-8",
+        }
+      }
+    }
     const context: NodeResponseContext = {
       status: outcome.status,
-      headers: outcome.headers as Record<string, string | readonly string[]> | undefined,
+      headers,
       cookies: outcome.kind === "json" ? outcome.cookies : undefined,
       body: outcome.body,
     }
@@ -1940,7 +1982,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   ): NodeServeOutcome {
     const outcomeCookies = outcome.kind === "json" ? outcome.cookies : undefined
     const bodyChanged = context.body !== outcome.body
-    if (context.headers === outcome.headers && context.cookies === outcomeCookies && !bodyChanged) {
+    const statusChanged = context.status !== outcome.status
+    if (
+      context.headers === outcome.headers &&
+      context.cookies === outcomeCookies &&
+      !bodyChanged &&
+      !statusChanged
+    ) {
       return outcome
     }
     let headers = context.headers
@@ -1961,10 +2009,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         if (context.cookies !== undefined && context.cookies.length > 0) {
           record["set-cookie"] = [...context.cookies]
         }
-        return { kind: "body", status: outcome.status, headers: record, body: context.body }
+        return { kind: "body", status: context.status, headers: record, body: context.body }
       }
       return {
         ...outcome,
+        status: context.status,
         headers: headers as Readonly<Record<string, string>> | undefined,
         cookies: context.cookies,
         body: bodyChanged ? (context.body as string | null) : outcome.body,
@@ -1972,6 +2021,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
     return {
       ...outcome,
+      status: context.status,
       headers,
       body: bodyChanged ? ((context.body ?? "") as string | Uint8Array) : outcome.body,
     }

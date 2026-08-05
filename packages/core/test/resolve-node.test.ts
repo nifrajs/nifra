@@ -599,3 +599,45 @@ describe("resolveNode - portable onResponseBody", () => {
     expect(called).toBe(0)
   })
 })
+
+describe("resolveNode - migrated body-tier middleware stay native", () => {
+  test("etag hashes the direct render and serves a native 304 on If-None-Match", async () => {
+    const { etag } = await import("@nifrajs/middleware")
+    const app = server({ logger: silentLogger })
+      .use(nodeDirect())
+      .use(etag())
+      .get("/doc", () => ({ v: 1 }))
+
+    const first = await app.resolveNode(req("/doc"))
+    if (first.kind === "response") throw new Error("expected a buffered outcome")
+    const tag = first.headers?.etag as string
+    expect(tag?.startsWith('W/"')).toBe(true)
+    expect(first.body).toBe(JSON.stringify({ v: 1 }))
+
+    const revalidated = await app.resolveNode(req("/doc", { headers: { "if-none-match": tag } }))
+    if (revalidated.kind === "response") throw new Error("expected a buffered outcome")
+    expect(revalidated.status).toBe(304)
+    expect(revalidated.body).toBeNull()
+    expect(revalidated.headers?.["content-type"]).toBeUndefined()
+  })
+
+  test("compression gzips the direct render natively with known length semantics", async () => {
+    const { compression } = await import("@nifrajs/middleware")
+    const big = "y".repeat(3000)
+    const app = server({ logger: silentLogger })
+      .use(nodeDirect())
+      .use(compression())
+      .get("/big", () => ({ data: big }))
+
+    const outcome = await app.resolveNode(
+      req("/big", { headers: { "accept-encoding": "gzip, br" } }),
+    )
+    if (outcome.kind === "response") throw new Error("expected a buffered outcome")
+    expect(outcome.headers?.["content-encoding"]).toBe("gzip")
+    expect(outcome.body).toBeInstanceOf(Uint8Array)
+    const text = await new Response(
+      new Response(outcome.body as Uint8Array).body?.pipeThrough(new DecompressionStream("gzip")),
+    ).text()
+    expect(JSON.parse(text)).toEqual({ data: big })
+  })
+})

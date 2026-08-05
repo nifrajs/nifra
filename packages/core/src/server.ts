@@ -76,6 +76,7 @@ export {
   type PromptArgument,
   type PromptMessage,
   type ResponseBodyHook,
+  type ResponseBodyReplacement,
   type ResponseFinalization,
   type ResponseHeadersHook,
   type ResponseHeadersView,

@@ -1,11 +1,11 @@
 ---
 "@nifrajs/client": patch
 "@nifrajs/schema": patch
-"@nifrajs/middleware": patch
-"@nifrajs/node": patch
+"@nifrajs/middleware": minor
+"@nifrajs/node": minor
 ---
 
-Faster typed client, validation, and Node serving without touching any contract:
+Faster typed client, validation, and Node serving:
 
 - `@nifrajs/client`: in-process clients (`inProcessClient`/`testClient`) read same-process response
   bodies through the native path while still enforcing the same byte cap (identical error), reuse
@@ -23,7 +23,13 @@ Faster typed client, validation, and Node serving without touching any contract:
   derivation) and `logger` ship full native twins instead, carrying per-request state on the native
   context's stable identity; the cookie parser is shared with core. `language` now derives its
   match from the request header on every path, so its `Content-Language` also covers unrouted
-  responses.
+  responses. `etag`, `prettyJson`, and `compression` move to the portable `onResponseBody` payload
+  tier: they receive the final framework-serialized bytes on every runtime (nothing drained, the
+  Node direct writer stays engaged, and compressed responses now carry a known `Content-Length`).
+  Behavior notes: these three now apply to framework-serialized responses only - a handler-returned
+  raw `Response` (a stream, a proxied fetch) passes through untouched - and `prettyJson`'s
+  `enabled` predicate now receives the portable request view (`{ method, url, header(name) }`)
+  instead of a `Request`.
 - `@nifrajs/node`: response headers are written with a single native `setHeaders` call (repeated
   `Set-Cookie` values stay un-joined), a hook-supplied `Content-Type` is preserved on buffered JSON
   writes, `Content-Length` is always declared for buffered bodies so responses never fall back to

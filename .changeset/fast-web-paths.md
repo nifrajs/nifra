@@ -1,5 +1,5 @@
 ---
-"@nifrajs/core": patch
+"@nifrajs/core": minor
 "@nifrajs/web": patch
 ---
 
@@ -18,7 +18,8 @@ payload tier. The hook receives the FINAL framework-serialized bytes plus the mu
 and may return replacement bytes. On the Node direct writer the bytes come straight off the outcome
 record; on the Web serving paths they ride the framework-built Response as an inert tag (attached
 only once a body hook is registered), so no body stream is ever drained on any runtime. A
-handler-returned raw `Response` (a proxied fetch, SSE, a streamed page) is skipped by contract -
+handler-returned raw `Response` (a proxied fetch, SSE, a streamed page) is skipped by contract, a
+structured return (`{ body, status }`) can drop the body or change the status (an ETag `304`), and
 transforming those remains `onResponse`'s job. A body-observing middleware written this way
 measures at ~92% of a raw `node:http` server on the realistic route, vs ~50% through the full
 `onResponse` contract.

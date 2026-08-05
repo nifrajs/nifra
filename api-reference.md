@@ -243,7 +243,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **NodeRequestHook** _(type)_ - `type NodeRequestHook = ( request: NodeRequestContext, platform?: Platform, ) => MaybePromise<Response | undefined>`
   Native equivalent of a paired `onRequest` hook. It may short-circuit, but cannot rewrite a request.
 - **NodeResponseContext** _(interface)_ - `interface NodeResponseContext`
-  Response view used by Node-direct middleware. Header hooks mutate `headers`; a BODY hook (adapted from the portable `onResponseBody`) may replace `body` - the already-serialized bytes the direct writer is about to send. `status` stays read-only: status transformations keep the full Web Response pat…
+  Response view used by Node-direct middleware. Header hooks mutate `headers`; a BODY hook (adapted from the portable `onResponseBody`) may replace `body` - the already-serialized bytes the direct writer is about to send - and, through its structured replacement, the status (an ETag 304 being the can…
 - **NodeResponseHook** _(type)_ - `type NodeResponseHook = ( response: NodeResponseContext, req: NodeRequestContext, ) => MaybePromise<void>`
   Native equivalent of a paired `onResponse` hook. It must preserve the Web hook's header semantics.
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
@@ -262,8 +262,10 @@ Every public export of every package and documented subpath - name, kind, signat
   Tunes redaction. Key-name redaction always runs; the rest is **opt-in**: - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the…
 - **Registry** _(type)_ - `type Registry = Record<string, Record<string, RouteInfo>>`
   The accumulated, type-level map of every route on a Server: path → method → RouteInfo.
-- **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | undefined>`
+- **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
   A portable post-serialization body hook - the Fastify-`onSend`-shaped tier. The hook receives the FINAL framework-serialized bytes plus the header view, and may return replacement bytes (`undefined` keeps the body unchanged). It runs at the framework's cheapest point on every runtime: the bytes are…
+- **ResponseBodyReplacement** _(interface)_ - `interface ResponseBodyReplacement`
+  A body hook's structured replacement: new bytes (or `null` to drop the body) and/or a status.
 - **ResponseControls** _(interface)_ - `interface ResponseControls`
   Mutable response controls a handler may write to before returning.
 - **ResponseFinalization** _(interface)_ - `interface ResponseFinalization`
@@ -1063,7 +1065,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **NodeRequestHook** _(type)_ - `type NodeRequestHook = ( request: NodeRequestContext, platform?: Platform, ) => MaybePromise<Response | undefined>`
   Native equivalent of a paired `onRequest` hook. It may short-circuit, but cannot rewrite a request.
 - **NodeResponseContext** _(interface)_ - `interface NodeResponseContext`
-  Response view used by Node-direct middleware. Header hooks mutate `headers`; a BODY hook (adapted from the portable `onResponseBody`) may replace `body` - the already-serialized bytes the direct writer is about to send. `status` stays read-only: status transformations keep the full Web Response pat…
+  Response view used by Node-direct middleware. Header hooks mutate `headers`; a BODY hook (adapted from the portable `onResponseBody`) may replace `body` - the already-serialized bytes the direct writer is about to send - and, through its structured replacement, the status (an ETag 304 being the can…
 - **NodeResponseHook** _(type)_ - `type NodeResponseHook = ( response: NodeResponseContext, req: NodeRequestContext, ) => MaybePromise<void>`
   Native equivalent of a paired `onResponse` hook. It must preserve the Web hook's header semantics.
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
@@ -1082,8 +1084,10 @@ Every public export of every package and documented subpath - name, kind, signat
   Tunes redaction. Key-name redaction always runs; the rest is **opt-in**: - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the…
 - **Registry** _(type)_ - `type Registry = Record<string, Record<string, RouteInfo>>`
   The accumulated, type-level map of every route on a Server: path → method → RouteInfo.
-- **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | undefined>`
+- **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
   A portable post-serialization body hook - the Fastify-`onSend`-shaped tier. The hook receives the FINAL framework-serialized bytes plus the header view, and may return replacement bytes (`undefined` keeps the body unchanged). It runs at the framework's cheapest point on every runtime: the bytes are…
+- **ResponseBodyReplacement** _(interface)_ - `interface ResponseBodyReplacement`
+  A body hook's structured replacement: new bytes (or `null` to drop the body) and/or a status.
 - **ResponseControls** _(interface)_ - `interface ResponseControls`
   Mutable response controls a handler may write to before returning.
 - **ResponseFinalization** _(interface)_ - `interface ResponseFinalization`
@@ -1782,7 +1786,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **combine** _(function)_ - `combine: (...items: readonly Composable[]) => NifraPlugin`
   Compose middleware/plugins into one reusable bundle. Individual named plugins still dedupe.
 - **compression** _(function)_ - `compression: (options?: CompressionOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").AnyServer>`
-  Transparently **gzip** responses when the client sends `Accept-Encoding: gzip` and the body is a compressible type larger than `threshold`. Uses the Web-standard `CompressionStream` (streaming, no full-body buffering), so it runs on every nifra runtime including the edge. gzip is the one encoding `…
+  Transparently **gzip** responses when the client sends `Accept-Encoding: gzip` and the body is a compressible type larger than `threshold`. Uses the Web-standard `CompressionStream`, so it runs on every nifra runtime including the edge; gzip is the one encoding `CompressionStream` guarantees everyw…
 - **cors** _(function)_ - `cors: (options?: CorsOptions) => Middleware`
   CORS as a {@link Middleware}. Preflight (`OPTIONS` + `Access-Control-Request-Method`) short-circuits to `204` via `onRequest`; the origin/credentials headers are added in `onResponse`, so they also land on errors, 404s, and the preflight itself.
 - **createAdmissionController** _(function)_ - `createAdmissionController: (options: AdmissionOptions) => AdmissionControllerHandle`
@@ -1795,7 +1799,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **durableCommand** _(function)_ - `durableCommand: (options: DurableCommandOptions) => NifraPlugin`
   Journal every capability effect on the routes below it, and declare the evidence that says so.
 - **etag** _(function)_ - `etag: (options?: ETagOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").AnyServer>`
-  A {@link definePlugin} plugin that adds a content-hash `ETag` to `GET` `200` responses and returns **`304 Not Modified`** when the client's `If-None-Match` matches - saving bandwidth on unchanged responses. It reads and rebuilds small bodies only; larger responses pass through unchanged. Idempotent.
+  A {@link definePlugin} plugin that adds a content-hash `ETag` to `GET` `200` responses and returns **`304 Not Modified`** when the client's `If-None-Match` matches - saving bandwidth on unchanged responses. Built on the portable `onResponseBody` tier: the hook receives the final framework-serialize…
 - **healthcheck** _(function)_ - `healthcheck: (options?: HealthcheckOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").AnyServer>`
   Register **liveness** (`/health`) and **readiness** (`/ready`) endpoints. Liveness is a flat `200` (the process is serving). Readiness runs each `check` and returns `200 { status: "ok", checks }` when all pass, or `503 { status: "error", checks }` when any fail (a thrown check counts as failed). Bo…
 - **idempotency** _(function)_ - `idempotency: (options: IdempotencyOptions) => Middleware`
@@ -3576,7 +3580,7 @@ _No named exports (side-effect entrypoint)._
 - **NodeRequestHook** _(type)_ - `type NodeRequestHook = ( request: NodeRequestContext, platform?: Platform, ) => MaybePromise<Response | undefined>`
   Native equivalent of a paired `onRequest` hook. It may short-circuit, but cannot rewrite a request.
 - **NodeResponseContext** _(interface)_ - `interface NodeResponseContext`
-  Response view used by Node-direct middleware. Header hooks mutate `headers`; a BODY hook (adapted from the portable `onResponseBody`) may replace `body` - the already-serialized bytes the direct writer is about to send. `status` stays read-only: status transformations keep the full Web Response pat…
+  Response view used by Node-direct middleware. Header hooks mutate `headers`; a BODY hook (adapted from the portable `onResponseBody`) may replace `body` - the already-serialized bytes the direct writer is about to send - and, through its structured replacement, the status (an ETag 304 being the can…
 - **NodeResponseHook** _(type)_ - `type NodeResponseHook = ( response: NodeResponseContext, req: NodeRequestContext, ) => MaybePromise<void>`
   Native equivalent of a paired `onResponse` hook. It must preserve the Web hook's header semantics.
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
@@ -3595,8 +3599,10 @@ _No named exports (side-effect entrypoint)._
   Tunes redaction. Key-name redaction always runs; the rest is **opt-in**: - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the…
 - **Registry** _(type)_ - `type Registry = Record<string, Record<string, RouteInfo>>`
   The accumulated, type-level map of every route on a Server: path → method → RouteInfo.
-- **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | undefined>`
+- **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
   A portable post-serialization body hook - the Fastify-`onSend`-shaped tier. The hook receives the FINAL framework-serialized bytes plus the header view, and may return replacement bytes (`undefined` keeps the body unchanged). It runs at the framework's cheapest point on every runtime: the bytes are…
+- **ResponseBodyReplacement** _(interface)_ - `interface ResponseBodyReplacement`
+  A body hook's structured replacement: new bytes (or `null` to drop the body) and/or a status.
 - **ResponseControls** _(interface)_ - `interface ResponseControls`
   Mutable response controls a handler may write to before returning.
 - **ResponseFinalization** _(interface)_ - `interface ResponseFinalization`

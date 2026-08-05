@@ -17,11 +17,15 @@ export interface ETagOptions {
   readonly maxBytes?: number
 }
 
+const ETAG_ENCODER = new TextEncoder()
+
 /**
  * A {@link definePlugin} plugin that adds a content-hash `ETag` to `GET` `200` responses and returns
  * **`304 Not Modified`** when the client's `If-None-Match` matches - saving bandwidth on unchanged
- * responses. It reads and rebuilds small bodies only; larger responses pass through unchanged.
- * Idempotent.
+ * responses. Built on the portable `onResponseBody` tier: the hook receives the final
+ * framework-serialized bytes on every runtime with nothing drained, so the middleware stays on
+ * Node's direct writer. Handler-returned raw `Response`s (streams, proxied fetches) pass through
+ * untagged, and bodies past `maxBytes` are left unchanged. Idempotent.
  */
 export function etag(options: ETagOptions = {}) {
   const prefix = (options.weak ?? true) ? "W/" : ""
@@ -30,23 +34,22 @@ export function etag(options: ETagOptions = {}) {
     throw new Error("etag: maxBytes must be a non-negative integer")
   }
   return definePlugin("etag", (app) =>
-    app.onResponse(async (res, req) => {
-      if (req.method !== "GET" || res.status !== 200 || res.body === null) return res
-      const declared = parseLength(res.headers.get("content-length"))
-      if (declared !== undefined && declared > maxBytes) return res
-      const body = await readBytesCapped(res, maxBytes)
-      if (body === null) return res
-      const tag = `${prefix}"${fnv1a(body)}"`
-      const headers = new Headers(res.headers)
-      headers.set("ETag", tag)
-      if (matchesIfNoneMatch(req.headers.get("if-none-match"), tag)) {
-        // A 304 carries no body - drop the body-describing headers so strict intermediaries don't see a
-        // null body with a non-zero Content-Length.
-        headers.delete("content-length")
-        headers.delete("content-type")
-        return new Response(null, { status: 304, headers })
-      }
-      return new Response(body, { status: res.status, statusText: res.statusText, headers })
+    app.use({
+      onResponseBody(body, headers, req, status) {
+        if (req.method !== "GET" || status !== 200) return undefined
+        const bytes = typeof body === "string" ? ETAG_ENCODER.encode(body) : body
+        if (bytes.byteLength > maxBytes) return undefined
+        const tag = `${prefix}"${fnv1a(bytes)}"`
+        headers.set("etag", tag)
+        if (matchesIfNoneMatch(req.header("if-none-match"), tag)) {
+          // A 304 carries no body - drop the body-describing headers so strict intermediaries
+          // don't see a null body with a non-zero Content-Length.
+          headers.delete("content-length")
+          headers.delete("content-type")
+          return { body: null, status: 304 }
+        }
+        return undefined
+      },
     }),
   )
 }
@@ -64,40 +67,4 @@ function matchesIfNoneMatch(value: string | null, tag: string): boolean {
 
 function weakComparableTag(tag: string): string {
   return tag.startsWith("W/") ? tag.slice(2) : tag
-}
-
-function parseLength(value: string | null): number | undefined {
-  if (value === null) return undefined
-  if (!/^(?:0|[1-9]\d*)$/.test(value)) return undefined
-  return Number(value)
-}
-
-async function readBytesCapped(res: Response, maxBytes: number): Promise<Uint8Array | null> {
-  const body = res.clone().body
-  if (body === null) return new Uint8Array()
-  const reader = body.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
-  try {
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) {
-        const out = new Uint8Array(total)
-        let offset = 0
-        for (const chunk of chunks) {
-          out.set(chunk, offset)
-          offset += chunk.byteLength
-        }
-        return out
-      }
-      total += value.byteLength
-      if (total > maxBytes) {
-        await reader.cancel()
-        return null
-      }
-      chunks.push(value)
-    }
-  } catch {
-    return null
-  }
 }

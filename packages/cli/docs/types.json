@@ -1979,7 +1979,7 @@
     "kind": "function",
     "package": "@nifrajs/middleware",
     "signature": "export declare function compression(options?: CompressionOptions): import(\"@nifrajs/core/server\").NifraPlugin<import(\"@nifrajs/core/server\").AnyServer, import(\"@nifrajs/core/server\").AnyServer>;",
-    "doc": "/**\n * Transparently **gzip** responses when the client sends `Accept-Encoding: gzip` and the body is a\n * compressible type larger than `threshold`. Uses the Web-standard `CompressionStream` (streaming, no\n * full-body buffering), so it runs on every nifra runtime including the edge. gzip is the one encoding\n * `CompressionStream` guarantees everywhere; brotli isn't part of the standard, so it's not offered.\n *\n * The body is **peeked** up to `threshold` bytes to enforce the size floor: a response that ends below\n * the threshold is sent uncompressed (gzip's ~20-byte overhead would enlarge it), and only larger\n * bodies are compressed - the buffered prefix is replayed and the remainder streamed. (Runtimes rarely\n * set `Content-Length` on a constructed `Response`, so the header alone can't gate this.)\n *\n * Skips: clients that don't accept gzip, already-encoded responses, bodyless responses (204/304/HEAD),\n * `Range` responses (206 / `Content-Range`), `Cache-Control: no-transform`, and non-compressible types.\n * Adds `Vary: Accept-Encoding`.\n *\n * ```ts\n * app.use(compression())\n * ```\n */"
+    "doc": "/**\n * Transparently **gzip** responses when the client sends `Accept-Encoding: gzip` and the body is a\n * compressible type larger than `threshold`. Uses the Web-standard `CompressionStream`, so it runs\n * on every nifra runtime including the edge; gzip is the one encoding `CompressionStream`\n * guarantees everywhere, so brotli isn't offered.\n *\n * Built on the portable `onResponseBody` tier: the hook receives the final framework-serialized\n * bytes on every runtime - nothing is drained, the middleware stays on Node's direct writer, and\n * the compressed length is known up front (`Content-Length` framing instead of chunked). A\n * handler-returned raw `Response` (a stream, a proxied fetch) passes through UNcompressed by\n * contract - streamed compression belongs to a dedicated `onResponse` middleware if an app needs\n * it.\n *\n * Skips: clients that don't accept gzip, already-encoded responses, bodyless responses,\n * `Range` responses (206 / `Content-Range`), `Cache-Control: no-transform`, non-compressible\n * types, and bodies below `threshold` (gzip's ~20-byte overhead would enlarge them). Adds\n * `Vary: Accept-Encoding`.\n *\n * ```ts\n * app.use(compression())\n * ```\n */"
   },
   {
     "name": "CompressionOptions",
@@ -3548,7 +3548,7 @@
     "kind": "function",
     "package": "@nifrajs/middleware",
     "signature": "export declare function etag(options?: ETagOptions): import(\"@nifrajs/core/server\").NifraPlugin<import(\"@nifrajs/core/server\").AnyServer, import(\"@nifrajs/core/server\").AnyServer>;",
-    "doc": "/**\n * A {@link definePlugin} plugin that adds a content-hash `ETag` to `GET` `200` responses and returns\n * **`304 Not Modified`** when the client's `If-None-Match` matches - saving bandwidth on unchanged\n * responses. It reads and rebuilds small bodies only; larger responses pass through unchanged.\n * Idempotent.\n */"
+    "doc": "/**\n * A {@link definePlugin} plugin that adds a content-hash `ETag` to `GET` `200` responses and returns\n * **`304 Not Modified`** when the client's `If-None-Match` matches - saving bandwidth on unchanged\n * responses. Built on the portable `onResponseBody` tier: the hook receives the final\n * framework-serialized bytes on every runtime with nothing drained, so the middleware stays on\n * Node's direct writer. Handler-returned raw `Response`s (streams, proxied fetches) pass through\n * untagged, and bodies past `maxBytes` are left unchanged. Idempotent.\n */"
   },
   {
     "name": "ETagOptions",
@@ -6386,15 +6386,15 @@
     "name": "NodeResponseContext",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface NodeResponseContext {\n    readonly status: number;\n    headers: Record<string, string | readonly string[]> | undefined;\n    readonly cookies: readonly string[] | undefined;\n    /** The framework-serialized body bytes (`null` for a bodiless render). Replaceable by body hooks. */\n    body: string | Uint8Array | null;\n}",
-    "doc": "/**\n * Response view used by Node-direct middleware. Header hooks mutate `headers`; a BODY hook\n * (adapted from the portable `onResponseBody`) may replace `body` - the already-serialized bytes\n * the direct writer is about to send. `status` stays read-only: status transformations keep the\n * full Web Response path where their semantics are completely observable.\n */"
+    "signature": "export interface NodeResponseContext {\n    /** Mutable ONLY through a body hook's replacement object (e.g. an ETag 304); header hooks read. */\n    status: number;\n    headers: Record<string, string | readonly string[]> | undefined;\n    readonly cookies: readonly string[] | undefined;\n    /** The framework-serialized body bytes (`null` for a bodiless render). Replaceable by body hooks. */\n    body: string | Uint8Array | null;\n}",
+    "doc": "/**\n * Response view used by Node-direct middleware. Header hooks mutate `headers`; a BODY hook\n * (adapted from the portable `onResponseBody`) may replace `body` - the already-serialized bytes\n * the direct writer is about to send - and, through its structured replacement, the status\n * (an ETag 304 being the canonical case).\n */"
   },
   {
     "name": "NodeResponseContext",
     "kind": "interface",
     "package": "nifra",
-    "signature": "export interface NodeResponseContext {\n    readonly status: number;\n    headers: Record<string, string | readonly string[]> | undefined;\n    readonly cookies: readonly string[] | undefined;\n    /** The framework-serialized body bytes (`null` for a bodiless render). Replaceable by body hooks. */\n    body: string | Uint8Array | null;\n}",
-    "doc": "/**\n * Response view used by Node-direct middleware. Header hooks mutate `headers`; a BODY hook\n * (adapted from the portable `onResponseBody`) may replace `body` - the already-serialized bytes\n * the direct writer is about to send. `status` stays read-only: status transformations keep the\n * full Web Response path where their semantics are completely observable.\n */"
+    "signature": "export interface NodeResponseContext {\n    /** Mutable ONLY through a body hook's replacement object (e.g. an ETag 304); header hooks read. */\n    status: number;\n    headers: Record<string, string | readonly string[]> | undefined;\n    readonly cookies: readonly string[] | undefined;\n    /** The framework-serialized body bytes (`null` for a bodiless render). Replaceable by body hooks. */\n    body: string | Uint8Array | null;\n}",
+    "doc": "/**\n * Response view used by Node-direct middleware. Header hooks mutate `headers`; a BODY hook\n * (adapted from the portable `onResponseBody`) may replace `body` - the already-serialized bytes\n * the direct writer is about to send - and, through its structured replacement, the status\n * (an ETag 304 being the canonical case).\n */"
   },
   {
     "name": "NodeResponseHook",
@@ -7035,7 +7035,7 @@
     "name": "PrettyJsonOptions",
     "kind": "interface",
     "package": "@nifrajs/middleware",
-    "signature": "export interface PrettyJsonOptions {\n    /** JSON indentation spaces. Default `2`. */\n    readonly spaces?: number;\n    /** Maximum response bytes to inspect. Default `1_000_000`; larger responses pass through. */\n    readonly maxBytes?: number;\n    /** Append a final newline. Default `true`. */\n    readonly newline?: boolean;\n    /** Optional query toggle. When set, pretty printing runs only when the parameter is present. */\n    readonly query?: string | false;\n    /** Only pretty-print matching requests. Default `true`. */\n    readonly enabled?: boolean | ((request: Request) => boolean);\n}"
+    "signature": "export interface PrettyJsonOptions {\n    /** JSON indentation spaces. Default `2`. */\n    readonly spaces?: number;\n    /** Maximum response bytes to inspect. Default `1_000_000`; larger responses pass through. */\n    readonly maxBytes?: number;\n    /** Append a final newline. Default `true`. */\n    readonly newline?: boolean;\n    /** Optional query toggle. When set, pretty printing runs only when the parameter is present. */\n    readonly query?: string | false;\n    /** Only pretty-print matching requests (the predicate receives the portable request view -\n     * `{ method, url, header(name) }` - so the check runs without materializing a `Request`).\n     * Default `true`. */\n    readonly enabled?: boolean | ((request: NodeRequestContext) => boolean);\n}"
   },
   {
     "name": "previewEndpoint",
@@ -7860,15 +7860,29 @@
     "name": "ResponseBodyHook",
     "kind": "type",
     "package": "@nifrajs/core",
-    "signature": "export type ResponseBodyHook = (body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number) => MaybePromise<string | Uint8Array | undefined>;",
+    "signature": "export type ResponseBodyHook = (body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>;",
     "doc": "/**\n * A portable post-serialization body hook - the Fastify-`onSend`-shaped tier. The hook receives\n * the FINAL framework-serialized bytes plus the header view, and may return replacement bytes\n * (`undefined` keeps the body unchanged). It runs at the framework's cheapest point on every\n * runtime: the bytes are already resident before any Web `Response` exists, so no body stream is\n * ever drained. A handler-returned raw `Response` (a proxied fetch, SSE, streamed SSR) is SKIPPED\n * by definition - transforming those is exactly what the full `onResponse` contract is for.\n */"
   },
   {
     "name": "ResponseBodyHook",
     "kind": "type",
     "package": "nifra",
-    "signature": "export type ResponseBodyHook = (body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number) => MaybePromise<string | Uint8Array | undefined>;",
+    "signature": "export type ResponseBodyHook = (body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>;",
     "doc": "/**\n * A portable post-serialization body hook - the Fastify-`onSend`-shaped tier. The hook receives\n * the FINAL framework-serialized bytes plus the header view, and may return replacement bytes\n * (`undefined` keeps the body unchanged). It runs at the framework's cheapest point on every\n * runtime: the bytes are already resident before any Web `Response` exists, so no body stream is\n * ever drained. A handler-returned raw `Response` (a proxied fetch, SSE, streamed SSR) is SKIPPED\n * by definition - transforming those is exactly what the full `onResponse` contract is for.\n */"
+  },
+  {
+    "name": "ResponseBodyReplacement",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ResponseBodyReplacement {\n    readonly body?: string | Uint8Array | null;\n    readonly status?: number;\n}",
+    "doc": "/** A body hook's structured replacement: new bytes (or `null` to drop the body) and/or a status. */"
+  },
+  {
+    "name": "ResponseBodyReplacement",
+    "kind": "interface",
+    "package": "nifra",
+    "signature": "export interface ResponseBodyReplacement {\n    readonly body?: string | Uint8Array | null;\n    readonly status?: number;\n}",
+    "doc": "/** A body hook's structured replacement: new bytes (or `null` to drop the body) and/or a status. */"
   },
   {
     "name": "responseCache",

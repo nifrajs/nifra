@@ -19,6 +19,7 @@ const NODE_OUTCOME_RUNTIME: NodeOutcomeRuntime = {
   toOutcome: toNodeOutcome,
   toResponse: nodeOutcomeToResponse,
   fromResponse: nodeOutcomeFromResponse,
+  jsonContentType: "application/json;charset=utf-8",
   timeout: () => ({
     kind: "response",
     response: Response.json({ ok: false, error: "request_timeout" }, { status: 503 }),

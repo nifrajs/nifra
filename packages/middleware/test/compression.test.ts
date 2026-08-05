@@ -19,24 +19,23 @@ const streamOf = (text: string): ReadableStream<Uint8Array> =>
   })
 
 describe("compression()", () => {
-  test("gzips a compressible body when the client accepts gzip (round-trips)", async () => {
+  test("gzips a framework-serialized body when the client accepts gzip (round-trips)", async () => {
     const app = server()
       .use(compression())
-      .get("/", () => new Response(big, { headers: { "content-type": "text/plain" } }))
+      .get("/", () => ({ data: big }))
     const res = await app.fetch(new Request("http://x/", { headers: GZIP }))
     expect(res.headers.get("content-encoding")).toBe("gzip")
-    expect(res.headers.get("content-length")).toBeNull() // unknown up front → chunked
     expect(res.headers.get("vary")?.toLowerCase()).toContain("accept-encoding")
-    expect(await gunzip(res)).toBe(big) // decompresses back to the original
+    expect(JSON.parse(await gunzip(res))).toEqual({ data: big }) // decompresses to the original
   })
 
-  test("compresses a streamed body with no Content-Length (the large case)", async () => {
+  test("a handler-returned raw Response (a stream) passes through UNcompressed by contract", async () => {
     const app = server()
       .use(compression())
       .get("/", () => new Response(streamOf(big), { headers: { "content-type": "text/html" } }))
     const res = await app.fetch(new Request("http://x/", { headers: GZIP }))
-    expect(res.headers.get("content-encoding")).toBe("gzip")
-    expect(await gunzip(res)).toBe(big)
+    expect(res.headers.get("content-encoding")).toBeNull()
+    expect(await res.text()).toBe(big)
   })
 
   test("skips when the client does not accept gzip", async () => {
@@ -131,11 +130,10 @@ describe("compression()", () => {
   test("preserves an existing Vary header (merges, no duplicate)", async () => {
     const app = server()
       .use(compression())
-      .get(
-        "/",
-        () =>
-          new Response(big, { headers: { "content-type": "text/plain", vary: "Accept-Language" } }),
-      )
+      .get("/", (c) => {
+        c.set.headers.vary = "Accept-Language"
+        return { data: big }
+      })
     const res = await app.fetch(new Request("http://x/", { headers: GZIP }))
     const vary = res.headers.get("vary")?.toLowerCase() ?? ""
     expect(vary).toContain("accept-language")
@@ -165,8 +163,11 @@ describe("compression()", () => {
 
   test("honors a custom compressible predicate", async () => {
     const app = server()
-      .use(compression({ compressible: (t) => t === "application/x-custom" }))
-      .get("/", () => new Response(big, { headers: { "content-type": "application/x-custom" } }))
+      .use(compression({ compressible: (t) => t.startsWith("application/x-custom") }))
+      .get("/", (c) => {
+        c.set.headers["content-type"] = "application/x-custom"
+        return { data: big }
+      })
     const res = await app.fetch(new Request("http://x/", { headers: GZIP }))
     expect(res.headers.get("content-encoding")).toBe("gzip")
   })

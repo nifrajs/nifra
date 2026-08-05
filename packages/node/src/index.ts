@@ -155,6 +155,8 @@ interface NodeOutcomeRuntime {
   toResponse(outcome: NodeServeOutcome): Response
   fromResponse(response: Response): NodeServeOutcome
   timeout(): NodeServeOutcome
+  /** The Content-Type the json render writes implicitly - surfaced to core's native hook walk. */
+  readonly jsonContentType?: string
 }
 
 /** A `FetchHandler` that *also* exposes the node-direct fast path (every nifra app does). May resolve
@@ -214,6 +216,7 @@ const NODE_OUTCOME_RUNTIME: NodeOutcomeRuntime = {
     kind: "response",
     response: Response.json({ ok: false, error: "request_timeout" }, { status: 503 }),
   }),
+  jsonContentType: JSON_CONTENT_TYPE,
 }
 
 interface NodeResponseResult {

@@ -29,7 +29,7 @@ Bun-native, contract-first HTTP framework - the router, server, and route descri
 - **attachWebSocket** _(function)_ - `attachWebSocket: (socket: StandardWebSocket, handler: WebSocketHandler, data: unknown, options: { openNow: boolean; pubsub: TopicRegistry; …` · from `@nifrajs/core/ws`
 - **buildNifraManifest** _(function)_ - `buildNifraManifest: (input: BuildNifraManifestInput) => Promise<NifraManifest>` · from `@nifrajs/core/manifest`
 
-_…and 466 more - see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
+_…and 467 more - see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 
 ## Footguns
 
