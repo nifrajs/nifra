@@ -16,9 +16,13 @@ Faster typed client, validation, and Node serving without touching any contract:
   with property-test-pinned parity. Also fixes a correctness bug: a schema carrying a backslash in
   a property key or string literal now validates correctly (such schemas take the eval-free
   checker, where previously the compiled checker could silently reject valid input).
-- `@nifrajs/middleware`: `cors`, `securityHeaders`, `poweredBy`, and static `cacheControl` now ship
-  header-only native hooks so Node serving can apply them on the direct writer without
-  materializing Web request/response objects; the cookie parser is shared with core.
+- `@nifrajs/middleware`: `cors`, `securityHeaders`, `poweredBy`, static `cacheControl`,
+  `rateLimit` (with the built-in key derivation), `logger`, and `language` now ship header-only
+  native hooks so Node serving can apply them on the direct writer without materializing Web
+  request/response objects; the cookie parser is shared with core. Stateful pairs (`rateLimit`,
+  `logger`) carry per-request state on the native context's stable identity, and `language`
+  recomputes its match from the request header on both paths (its `Content-Language` now also
+  covers unrouted responses).
 - `@nifrajs/node`: response headers are written with a single native `setHeaders` call (repeated
   `Set-Cookie` values stay un-joined), a hook-supplied `Content-Type` is preserved on buffered JSON
   writes, `Content-Length` is always declared for buffered bodies so responses never fall back to

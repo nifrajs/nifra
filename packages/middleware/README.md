@@ -73,11 +73,13 @@ const app = server()
 
 A middleware whose hook only reads/writes **headers** can pair its Web hook with a Node twin, letting
 the Node adapter apply it on the direct socket writer instead of materializing Web
-`Request`/`Response` objects per request. `cors`, `securityHeaders`, `poweredBy`, and static
-`cacheControl` ship twins; body-transforming middleware (`etag`, `compression`, `prettyJson`,
-`cache`) cannot by design. Twins are all-or-nothing per app on Node - one twin-less `onResponse`
-hook and every response takes the Web path - so if your app is Node-hot, give custom header
-middleware a twin too (see the [plugins guide](https://nifra.dev/docs/plugins) for the contract).
+`Request`/`Response` objects per request. `cors`, `securityHeaders`, `poweredBy`, static
+`cacheControl`, `rateLimit` (built-in key derivation), `logger`, and `language` ship twins;
+body-transforming middleware (`etag`, `compression`, `prettyJson`, `cache`) cannot by design, and
+`timing` stays Web-only for now. Twins are all-or-nothing per app on Node - one twin-less
+`onResponse` hook and every response takes the Web path - so if your app is Node-hot, give custom
+header middleware a twin too (see the [plugins guide](https://nifra.dev/docs/plugins) for the
+contract, including the per-request state pattern the same-context identity enables).
 
 Request timeouts are configured at the core server boundary so they can abort `c.signal` and race the
 whole lifecycle:

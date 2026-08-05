@@ -1,4 +1,4 @@
-import { definePlugin } from "@nifrajs/core/server"
+import { definePlugin, pathnameOf } from "@nifrajs/core/server"
 
 /** Structured fields logged per request. */
 export interface RequestLogFields {
@@ -23,13 +23,20 @@ export function logger(options: LoggerOptions = {}) {
   // A request logger's whole job is to log; the default writes JSON to stdout, routable via `log`.
   const sink = options.log ?? ((fields: RequestLogFields) => console.log(JSON.stringify(fields)))
   const starts = new WeakMap<Request, number>()
+  // Twin-side starts, keyed by the NodeRequestContext identity (the same object reaches the request
+  // and response twins), so Node logging never has to materialize a Web `Request`.
+  const nativeStarts = new WeakMap<object, number>()
   return definePlugin("logger", (app) =>
-    app
-      .onRequest((req) => {
+    app.use({
+      onRequest(req) {
         starts.set(req, performance.now())
         return undefined
-      })
-      .onResponse((res, req) => {
+      },
+      onNodeRequest(req) {
+        nativeStarts.set(req, performance.now())
+        return undefined
+      },
+      onResponse(res, req) {
         const start = starts.get(req)
         starts.delete(req)
         sink({
@@ -39,6 +46,17 @@ export function logger(options: LoggerOptions = {}) {
           ms: start === undefined ? 0 : Math.round(performance.now() - start),
         })
         return res
-      }),
+      },
+      onNodeResponse(res, req) {
+        const start = nativeStarts.get(req)
+        nativeStarts.delete(req)
+        sink({
+          method: req.method,
+          path: pathnameOf(req.url),
+          status: res.status,
+          ms: start === undefined ? 0 : Math.round(performance.now() - start),
+        })
+      },
+    }),
   )
 }

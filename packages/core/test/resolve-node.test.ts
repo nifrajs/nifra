@@ -190,7 +190,12 @@ describe("resolveNode - JSON-data fast path", () => {
     expect(outcome.body).toBe(JSON.stringify({ ok: true }))
   })
 
-  test("a native response hook sees a Web onRequest method rewrite", async () => {
+  test("a Web onRequest rewrite routes response middleware through the Web path, headers intact", async () => {
+    // The native lanes engage TOGETHER: a web-only onRequest hook (here a method rewrite, which a
+    // native request twin is forbidden to do) turns the response side over to the Web hook walk as
+    // well. That coupling is what guarantees a response twin always receives the exact object its
+    // request twin saw (the WeakMap identity contract stateful twins key on). The middleware still
+    // applies - via its Web hook - and the rewritten method is what it observes.
     const app = server()
       .use(nodeDirect())
       .onRequest((request) => new Request(request, { method: "PUT" }))
@@ -198,8 +203,7 @@ describe("resolveNode - JSON-data fast path", () => {
       .put("/data", () => ({ ok: true }))
 
     const outcome = await app.resolveNode(req("/data", { method: "POST" }))
-    expect(outcome.kind).toBe("json")
-    if (outcome.kind !== "json") throw new Error("unreachable")
+    if (outcome.kind === "response") throw new Error("expected a buffered outcome")
     expect(outcome.headers?.["cache-control"]).toBe("private")
   })
 })
@@ -462,5 +466,63 @@ describe("resolveNodeSource - lazy sources stay lazy", () => {
     if (outcome.kind !== "json") throw new Error("unreachable")
     expect(outcome.body).toBe(JSON.stringify({ hi: "Ada" }))
     expect(materialized).toBe(false)
+  })
+})
+
+describe("resolveNode - stateful native middleware twins", () => {
+  test("rateLimit twins carry quota from the request twin to the response twin natively", async () => {
+    const { MemoryStore, rateLimit } = await import("@nifrajs/middleware")
+    const app = server({ logger: silentLogger })
+      .use(nodeDirect())
+      .use(rateLimit({ store: new MemoryStore(), max: 2, windowMs: 60_000, header: "x-real-ip" }))
+      .get("/data", () => ({ ok: true }))
+
+    const first = await app.resolveNode(req("/data", { headers: { "x-real-ip": "10.0.0.9" } }))
+    // kind "json" proves the native lanes engaged end to end - the Web hook path would come back
+    // as a marked "body"/"response" outcome instead.
+    expect(first.kind).toBe("json")
+    if (first.kind !== "json") throw new Error("unreachable")
+    expect(first.headers?.["ratelimit-limit"]).toBe("2")
+    expect(first.headers?.["ratelimit-remaining"]).toBe("1")
+    expect(Number(first.headers?.["ratelimit-reset"])).toBeGreaterThanOrEqual(0)
+
+    // Third hit in the window: the request twin short-circuits with the 429.
+    await app.resolveNode(req("/data", { headers: { "x-real-ip": "10.0.0.9" } }))
+    const limited = await app.resolveNode(req("/data", { headers: { "x-real-ip": "10.0.0.9" } }))
+    expect(limited.kind).toBe("response")
+    if (limited.kind !== "response") throw new Error("unreachable")
+    expect(limited.response.status).toBe(429)
+    expect(limited.response.headers.get("retry-after")).not.toBeNull()
+  })
+
+  test("logger twins log method/path/status with a real duration natively", async () => {
+    const { logger } = await import("@nifrajs/middleware")
+    const lines: Array<{ method: string; path: string; status: number; ms: number }> = []
+    const app = server({ logger: silentLogger })
+      .use(nodeDirect())
+      .use(logger({ log: (fields) => lines.push(fields) }))
+      .get("/things/:id", (c) => ({ id: c.params.id }))
+
+    const outcome = await app.resolveNode(req("/things/42?x=1"))
+    expect(outcome.kind).toBe("json")
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toMatchObject({ method: "GET", path: "/things/42", status: 200 })
+    expect(lines[0]?.ms).toBeGreaterThanOrEqual(0)
+  })
+
+  test("language twin negotiates content-language natively and derive still types c.language", async () => {
+    const { language } = await import("@nifrajs/middleware")
+    const app = server({ logger: silentLogger })
+      .use(nodeDirect())
+      .use(language({ supported: ["en", "hi"], defaultLanguage: "en" }))
+      .get("/greet", (c) => ({ lang: c.language }))
+
+    const outcome = await app.resolveNode(
+      req("/greet", { headers: { "accept-language": "hi-IN, hi;q=0.9" } }),
+    )
+    expect(outcome.kind).toBe("json")
+    if (outcome.kind !== "json") throw new Error("unreachable")
+    expect(outcome.headers?.["content-language"]).toBe("hi")
+    expect(outcome.body).toBe(JSON.stringify({ lang: "hi" }))
   })
 })

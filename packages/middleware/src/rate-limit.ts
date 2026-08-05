@@ -1,6 +1,6 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
-import type { Middleware } from "@nifrajs/core/server"
-import { withHeaders } from "./_utils.ts"
+import type { Middleware, NodeRequestContext, NodeResponseContext } from "@nifrajs/core/server"
+import { withHeaders, withNodeHeaders } from "./_utils.ts"
 
 export interface RateLimitResult {
   /** Hits recorded in the current window, including this one. */
@@ -185,6 +185,28 @@ function defaultKey(
   return allowGlobalKey ? "global" : null
 }
 
+/** {@link defaultKey} against the allocation-light native request view - same logic, same order. */
+function nativeKey(
+  req: NodeRequestContext,
+  trustedProxies: number,
+  header: string | undefined,
+  allowGlobalKey: boolean,
+): string | null {
+  if (header !== undefined) {
+    const ip = req.header(header)
+    if (ip !== null && ip.trim() !== "") return ip.trim()
+  }
+  if (trustedProxies > 0) {
+    const xff = req.header("x-forwarded-for")
+    if (xff !== null) {
+      const parts = xff.split(",")
+      const ip = parts[parts.length - trustedProxies]?.trim()
+      if (ip !== undefined && ip !== "") return ip
+    }
+  }
+  return allowGlobalKey ? "global" : null
+}
+
 /**
  * Rate limiting as a {@link Middleware}. Runs in `onRequest` (before routing, so it
  * also covers 404s); over the limit → `429` + `Retry-After`. Every response carries
@@ -217,24 +239,43 @@ export function rateLimit(options: RateLimitOptions): Middleware {
   const keyOf =
     options.key ?? ((req: Request) => defaultKey(req, trustedProxies, header, allowGlobalKey))
   const quota = new WeakMap<Request, { remaining: number; resetSeconds: number }>()
+  // State for the Node twins, keyed by the NodeRequestContext identity (the same object is passed
+  // to the request and response twins - the core identity contract that replaces `Request` keying).
+  const nativeQuota = new WeakMap<object, { remaining: number; resetSeconds: number }>()
+
+  interface QuotaInfo {
+    readonly remaining: number
+    readonly resetSeconds: number
+  }
+
+  const hitStore = async (
+    key: string | null,
+  ): Promise<{ info: QuotaInfo; reject: Response | undefined } | Response> => {
+    if (typeof key !== "string" || key.trim() === "") {
+      return Response.json({ ok: false, error: "rate_limit_key_unavailable" }, { status: 500 })
+    }
+    const { count, resetAt } = await store.hit(key, windowMs)
+    const resetSeconds = Math.max(0, Math.ceil((resetAt - Date.now()) / 1000))
+    const info = { remaining: Math.max(0, max - count), resetSeconds }
+    if (count > max) {
+      return {
+        info,
+        reject: new Response(JSON.stringify({ ok: false, error: "rate_limited" }), {
+          status: 429,
+          headers: { "content-type": "application/json", "retry-after": String(resetSeconds) },
+        }),
+      }
+    }
+    return { info, reject: undefined }
+  }
 
   const middleware: Middleware = {
     name: "rate-limit",
     async onRequest(req) {
-      const key = keyOf(req)
-      if (typeof key !== "string" || key.trim() === "") {
-        return Response.json({ ok: false, error: "rate_limit_key_unavailable" }, { status: 500 })
-      }
-      const { count, resetAt } = await store.hit(key, windowMs)
-      const resetSeconds = Math.max(0, Math.ceil((resetAt - Date.now()) / 1000))
-      quota.set(req, { remaining: Math.max(0, max - count), resetSeconds })
-      if (count > max) {
-        return new Response(JSON.stringify({ ok: false, error: "rate_limited" }), {
-          status: 429,
-          headers: { "content-type": "application/json", "retry-after": String(resetSeconds) },
-        })
-      }
-      return undefined
+      const outcome = await hitStore(keyOf(req))
+      if (outcome instanceof Response) return outcome
+      quota.set(req, outcome.info)
+      return outcome.reject
     },
     onResponse(res, req) {
       const info = quota.get(req)
@@ -246,6 +287,30 @@ export function rateLimit(options: RateLimitOptions): Middleware {
         headers.set("RateLimit-Reset", String(info.resetSeconds))
       })
     },
+    // Node twins exist only for the built-in header/XFF key derivation - a custom `key` callback
+    // takes a real `Request`, which is exactly the object the native lane avoids building.
+    ...(options.key === undefined
+      ? {
+          onNodeRequest: async (req: NodeRequestContext) => {
+            const outcome = await hitStore(nativeKey(req, trustedProxies, header, allowGlobalKey))
+            if (outcome instanceof Response) return outcome
+            nativeQuota.set(req, outcome.info)
+            return outcome.reject
+          },
+          onNodeResponse: (res: NodeResponseContext, req: NodeRequestContext) => {
+            const info = nativeQuota.get(req)
+            if (info === undefined) return
+            nativeQuota.delete(req)
+            withNodeHeaders(res, (headers) => {
+              // Lowercase on purpose: the Web path's `Headers` lowercases names on the wire, so
+              // this is byte-identical output.
+              headers["ratelimit-limit"] = String(max)
+              headers["ratelimit-remaining"] = String(info.remaining)
+              headers["ratelimit-reset"] = String(info.resetSeconds)
+            })
+          },
+        }
+      : {}),
   }
   return withRouteAssurance(middleware, {
     id: NIFRA_ASSURANCE.RATE_LIMITED,

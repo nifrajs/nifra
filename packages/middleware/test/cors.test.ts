@@ -124,6 +124,7 @@ describe("cors", () => {
     const middleware = cors({ origin: "https://app.com", credentials: true, maxAge: 60 })
     const request = {
       method: "OPTIONS",
+      url: "http://t/resource",
       header: (name: string) =>
         ({
           origin: "https://app.com",

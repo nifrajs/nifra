@@ -1,5 +1,5 @@
 import { definePlugin } from "@nifrajs/core/server"
-import { withHeaders } from "./_utils.ts"
+import { hasNodeHeader, withHeaders, withNodeHeaders } from "./_utils.ts"
 
 export interface LanguageMatch {
   readonly language: string
@@ -87,22 +87,31 @@ export function language<const L extends readonly string[]>(options: LanguageOpt
     throw new Error("language: defaultLanguage must be in supported")
   }
   const emitHeader = options.header !== false
-  const matches = new WeakMap<Request, LanguageMatch>()
-
+  // The match is a pure function of the Accept-Language header, so the response hooks recompute it
+  // instead of pairing state through a WeakMap - that is what lets the Node twin exist at all (it
+  // has no `Request` identity to key on), keeps both hooks trivially identical, and lets the derive
+  // read the header without materializing a Web `Request` on the Node adapter.
   return definePlugin("language", (app) =>
     app
       .derive((c) => {
-        const match = pickLanguage(c.req.headers.get("accept-language"), supported, defaultLanguage)
-        matches.set(c.req, match)
+        const match = pickLanguage(c.header("accept-language"), supported, defaultLanguage)
         return { language: match.language, languageMatch: match }
       })
-      .onResponse((res, req) => {
-        if (!emitHeader) return res
-        const match = matches.get(req)
-        if (match === undefined) return res
-        matches.delete(req)
-        if (res.headers.has("content-language")) return res
-        return withHeaders(res, (headers) => headers.set("content-language", match.language))
+      .use({
+        onResponse(res, req) {
+          if (!emitHeader) return res
+          if (res.headers.has("content-language")) return res
+          const match = pickLanguage(req.headers.get("accept-language"), supported, defaultLanguage)
+          return withHeaders(res, (headers) => headers.set("content-language", match.language))
+        },
+        onNodeResponse(res, req) {
+          if (!emitHeader) return
+          if (hasNodeHeader(res.headers, "content-language")) return
+          const match = pickLanguage(req.header("accept-language"), supported, defaultLanguage)
+          withNodeHeaders(res, (headers) => {
+            headers["content-language"] = match.language
+          })
+        },
       }),
   )
 }

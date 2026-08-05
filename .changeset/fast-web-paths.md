@@ -13,6 +13,11 @@ Node serving now keeps synchronous Web request middleware on the direct renderer
 response middleware back to direct buffered writes, and avoids redundant params/body lifecycle stages
 for common validated reads. Header-only built-ins (`cache-control`, `powered-by`, and related response
 mutators) no longer clone buffered responses on Node.
+Native Node hook lanes now engage as a unit - the response-side native hooks run only when the
+request side is native too - which makes the native request context's identity stable across a
+request; the context also carries `url`, and both are documented so middleware twins can key
+per-request state on it. Building a Web `Request` from a Node request fills its header list once
+from a plain record instead of copying a prebuilt `Headers` a second time.
 Query and cookie parsing intern repeated key names on V8-based runtimes (Node, Deno) through a small
 bounded cache - V8 pays ~13x to store a freshly-sliced string key on the null-prototype records the
 parsers build, so handing back the first-seen key makes the store take the fast path. High-cardinality

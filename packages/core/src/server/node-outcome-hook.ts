@@ -4,9 +4,17 @@ import type { Platform } from "./context.ts"
 import type { NodeServeOutcome } from "./node-outcome.ts"
 import type { CtxSet, MaybePromise } from "./server.ts"
 
-/** Allocation-light request view used by Node-native header middleware. */
+/**
+ * Allocation-light request view used by Node-native header middleware.
+ *
+ * Identity contract: within one request, the SAME object is passed to every `onNodeRequest` hook
+ * and every `onNodeResponse` hook (the native lanes engage together - see the server's gate), so a
+ * middleware may use it as a `WeakMap` key to carry per-request state from its request twin to its
+ * response twin.
+ */
 export interface NodeRequestContext {
   readonly method: string
+  readonly url: string
   readonly header: (name: string) => string | null
 }
 

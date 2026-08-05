@@ -245,10 +245,19 @@ export default function Plugins() {
           Node-hot, give your custom header middleware a twin.
         </li>
         <li>
+          <b>Per-request state:</b> the same context object is passed to a middleware's request twin
+          and its response twin, so twins carry state across the request with a{" "}
+          <code>WeakMap</code> keyed on it - that is how <code>rateLimit</code> hands its quota from
+          the request side to the response headers.
+        </li>
+        <li>
           Built-ins shipping twins today: <code>cors</code>, <code>securityHeaders</code>,{" "}
-          <code>poweredBy</code>, and <code>cacheControl</code> (with a static directive).
-          Body-transforming middleware (<code>etag</code>, <code>compression</code>,{" "}
-          <code>prettyJson</code>, <code>cache</code>) cannot twin by design.
+          <code>poweredBy</code>, <code>cacheControl</code> (static directive), <code>rateLimit</code>{" "}
+          (built-in key derivation; a custom <code>key</code> callback needs a real{" "}
+          <code>Request</code>), <code>logger</code>, and <code>language</code>. Body-transforming
+          middleware (<code>etag</code>, <code>compression</code>, <code>prettyJson</code>,{" "}
+          <code>cache</code>) cannot twin by design, and <code>timing</code> stays Web-only for now
+          (its <code>c.timing</code> metric channel crosses the handler lifecycle).
         </li>
       </ul>
 

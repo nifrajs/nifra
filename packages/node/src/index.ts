@@ -253,7 +253,9 @@ function nodeOutcomeFromResponse(response: Response): NodeServeOutcome {
   return { kind: "response", response }
 }
 
-/** Materialize only for a Web response hook; preserve the buffered marker for in-place transforms. */
+/** Materialize only for a Web response hook; preserve the buffered marker for in-place transforms.
+ * A prebuilt `Headers` on purpose: undici's Response constructor clones a `Headers` instance faster
+ * than it fills a pairs list (pairs pay a webidl sequence conversion per entry - measured). */
 function nodeOutcomeToResponse(outcome: NodeServeOutcome): Response {
   if (outcome.kind === "response") return outcome.response
   const headers = new Headers()
@@ -822,7 +824,7 @@ function toWebRequest(req: IncomingMessage, protocol: RequestProtocol): Request 
   const host = req.headers.host ?? "localhost"
   const url = `${protocol}://${host}${req.url ?? "/"}`
   const method = req.method ?? "GET"
-  return makeWebRequest(req, method, url, headersFromNode(req.headers))
+  return makeWebRequest(req, method, url, headerRecordFromNode(req.headers))
 }
 
 function toNodeRequestSource(req: IncomingMessage, protocol: RequestProtocol): NodeRequestSource {
@@ -935,14 +937,20 @@ class LazyNodeRequestSource implements NodeRequestSource {
         this.nodeReq,
         this.method,
         this.url,
-        this.headers,
+        this.headersValue ?? headerRecordFromNode(this.nodeReq.headers),
         this.consumedBody,
       )
       // Preserve one-shot body semantics if user code asks for `c.req` after nifra already consumed it.
       void this.requestValue.arrayBuffer().catch(() => {})
       return this.requestValue
     }
-    this.requestValue = makeWebRequest(this.nodeReq, this.method, this.url, this.headers, this.body)
+    this.requestValue = makeWebRequest(
+      this.nodeReq,
+      this.method,
+      this.url,
+      this.headersValue ?? headerRecordFromNode(this.nodeReq.headers),
+      this.body,
+    )
     return this.requestValue
   }
 
@@ -1051,25 +1059,42 @@ class LeanNodeGetSource implements NodeRequestSource {
   }
 
   get request(): Request {
-    this.requestValue ??= makeWebRequest(this.nodeReq, this.method, this.url, this.headers, null)
+    this.requestValue ??= makeWebRequest(
+      this.nodeReq,
+      this.method,
+      this.url,
+      this.headersValue ?? headerRecordFromNode(this.nodeReq.headers),
+      null,
+    )
     return this.requestValue
   }
 }
 
 function headersFromNode(input: IncomingHttpHeaders): Headers {
-  const headers = new Headers()
+  return new Headers(headerRecordFromNode(input))
+}
+
+/**
+ * Node's already-lowercased header bag as a plain record (multi-values comma-joined, matching the
+ * Web `Headers` view of the same request). Used as a `HeadersInit` so building a Web `Request`
+ * costs ONE undici header-list fill - `new Request(url, { headers: someHeaders })` would build a
+ * `Headers` (validating every name/value) and then copy it into the request's own list, validating
+ * everything a second time.
+ */
+function headerRecordFromNode(input: IncomingHttpHeaders): Record<string, string> {
+  const record: Record<string, string> = {}
   for (const [key, value] of Object.entries(input)) {
     if (value === undefined) continue
-    headers.set(key, Array.isArray(value) ? value.join(", ") : value)
+    record[key] = Array.isArray(value) ? value.join(", ") : value
   }
-  return headers
+  return record
 }
 
 function makeWebRequest(
   req: IncomingMessage,
   method: string,
   url: string,
-  headers: Headers,
+  headers: Headers | Record<string, string>,
   body?: ReadableStream<Uint8Array> | Uint8Array | null,
 ): Request {
   const init: RequestInit & { duplex?: "half" } = { method, headers }

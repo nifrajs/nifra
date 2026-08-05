@@ -77,6 +77,9 @@ const NODE_RESPONSE_BODY = Symbol.for("nifra.response.body")
  */
 export function nodeOutcomeToResponse(outcome: NodeServeOutcome): Response {
   if (outcome.kind === "response") return outcome.response
+  // A prebuilt `Headers` on purpose: undici's Response constructor takes a fast clone path for a
+  // `Headers` instance, which measured cheaper than handing it a pairs list to fill (pairs pay a
+  // webidl sequence conversion per entry).
   const headers = new Headers()
   if (outcome.headers !== undefined) {
     for (const [name, value] of Object.entries(outcome.headers)) {

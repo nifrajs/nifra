@@ -459,6 +459,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private readonly responseRequests: WeakMap<Request, Request>
   /** Original source → request observed by generic request hooks, including in-place mutations. */
   private readonly responseSources: WeakMap<object, Request>
+  /** Memoized NodeRequestContext per plain-`Request` source - see {@link nodeRequestContextOf}. */
+  private readonly nodeContexts: WeakMap<object, NodeRequestContext>
   /** Names of plugins/middleware already applied via `use` - for idempotent dedupe. */
   private readonly appliedPlugins: Set<string>
   /** Order-scoped evidence captured by routes registered after an assured plugin. */
@@ -522,6 +524,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.onResponseFinalizedHooks = []
     this.responseRequests = new WeakMap()
     this.responseSources = new WeakMap()
+    this.nodeContexts = new WeakMap()
     this.appliedPlugins = new Set()
     this.activeAssurance = []
     this.globalAssurance = []
@@ -1712,7 +1715,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // responses. Arbitrary onResponse transforms need a real Web Response, but a buffered outcome can
     // be materialized with a direct-write marker and return to the socket path when the hook mutates
     // it in place. Finalization observers and the capacity gate still wrap the complete Web path.
-    const nativeResponseHooks = this.canUseNodeResponseHooks()
+    // The native response lane engages only when the REQUEST side is native too (or there are no
+    // request hooks at all). This is what makes the NodeRequestContext identity contract hold: a
+    // web request-hook walk can rewrite the request, so its response-side view is a synthetic
+    // wrapper - a different object - and any middleware carrying per-request state from its request
+    // twin to its response twin through a WeakMap would silently miss. Coupling the gates means a
+    // response twin always sees the exact object its request twin saw.
+    const nativeResponseHooks =
+      this.canUseNodeResponseHooks() &&
+      (this.onRequestHooks.length === 0 || this.canUseNodeRequestHooks())
     const webResponseHooks = this.onResponseHooks.length > 0 && !nativeResponseHooks
     if (this.onResponseFinalizedHooks.length > 0 || this.capacityGate !== undefined) {
       const response = this.fetchSource(source, platform)
@@ -1983,7 +1994,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     onTimeout: () => T,
   ): MaybePromise<T> {
     const hooks = this.onNodeRequestHooks
-    const request = source as unknown as NodeRequestContext
+    const request = this.nodeRequestContextOf(source)
     for (let i = 0; i < hooks.length; i++) {
       const hook = hooks[i] as NodeRequestHook
       const outcome = hook(request, platform)
@@ -2130,6 +2141,28 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return rewritten
   }
 
+  /**
+   * The NodeRequestContext for a source, MEMOIZED per source so the request twins and the response
+   * twins receive the exact same object within one request - that identity is the documented
+   * contract stateful twins key their WeakMaps on. An adapter source (which already speaks the
+   * interface) is returned as-is; a plain `Request` source (a direct `resolveNode` caller) gets one
+   * cached wrapper.
+   */
+  private nodeRequestContextOf(source: RequestSource): NodeRequestContext {
+    if (source.header !== undefined) return source as unknown as NodeRequestContext
+    let context = this.nodeContexts.get(source as object)
+    if (context === undefined) {
+      const request = requestOf(source)
+      context = {
+        method: request.method,
+        url: request.url,
+        header: (name) => request.headers.get(name),
+      }
+      this.nodeContexts.set(source as object, context)
+    }
+    return context
+  }
+
   /** Preserve the request visible to generic onRequest hooks for paired native response hooks. */
   private takeNodeResponseRequest(source: RequestSource): NodeRequestContext {
     const tracked = this.responseSources.get(source as object)
@@ -2138,13 +2171,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       const rewritten = this.responseRequests.get(tracked)
       if (rewritten !== undefined) {
         this.responseRequests.delete(tracked)
-        return { method: rewritten.method, header: (name) => rewritten.headers.get(name) }
+        return {
+          method: rewritten.method,
+          url: rewritten.url,
+          header: (name) => rewritten.headers.get(name),
+        }
       }
-      return { method: tracked.method, header: (name) => tracked.headers.get(name) }
+      return {
+        method: tracked.method,
+        url: tracked.url,
+        header: (name) => tracked.headers.get(name),
+      }
     }
-    if (source.header !== undefined) return source as unknown as NodeRequestContext
-    const request = requestOf(source)
-    return { method: request.method, header: (name) => request.headers.get(name) }
+    return this.nodeRequestContextOf(source)
   }
 
   /**
