@@ -61,6 +61,7 @@ import {
   type NodeRequestHook,
   type NodeResponseContext,
   type NodeResponseHook,
+  type ResponseBodyHook,
   type ResponseHeadersHook,
   type ResponseHeadersView,
   recordHeadersView,
@@ -73,7 +74,13 @@ import {
   searchOf,
 } from "./query.ts"
 import { RequestContext, readBoundedJsonSource } from "./request-context.ts"
-import { fusedRespond, fusedRespondNoSet, toResponse } from "./respond.ts"
+import {
+  enableResponseBodyTagging,
+  fusedRespond,
+  fusedRespondNoSet,
+  taggedResponseBody,
+  toResponse,
+} from "./respond.ts"
 // Type-only: erased, so the kernel never pulls the lane's implementation into a bundle that does not
 // install the plugin. The value side arrives through the symbol-keyed install seam.
 import type { ResponseContractRuntime } from "./response-contract-lane.ts"
@@ -96,8 +103,41 @@ export type {
   NodeResponseContext,
   NodeResponseHook,
   NodeServeOutcome,
+  ResponseBodyHook,
   ResponseHeadersHook,
   ResponseHeadersView,
+}
+
+const RESPONSE_BODY_TAG = Symbol.for("nifra.response.body")
+
+/** Swap a tagged Response's body for a hook's replacement, re-tagging so later body hooks (and the
+ * Node fallback's direct writer) see the new bytes; explicit lengths are dropped so framing is
+ * re-derived from what actually ships. */
+function withReplacedBody(response: Response, replaced: string | Uint8Array | undefined): Response {
+  if (replaced === undefined) return response
+  const headers = new Headers(response.headers)
+  headers.delete("content-length")
+  const next = new Response(replaced as ConstructorParameters<typeof Response>[0], {
+    status: response.status,
+    headers,
+  })
+  Object.defineProperty(next, RESPONSE_BODY_TAG, { value: replaced })
+  return next
+}
+
+/** Adapt a portable {@link ResponseBodyHook} into the Web `onResponse` walk. Only a Response
+ * carrying the framework-buffered body tag participates - a raw or streamed Response is skipped by
+ * contract, never drained. */
+function webResponseBodyHook(
+  fn: ResponseBodyHook,
+): (response: Response, req: Request) => MaybePromise<Response> {
+  return (response, req) => {
+    const body = taggedResponseBody(response)
+    if (body === undefined) return response
+    const out = fn(body, response.headers, webRequestView(req), response.status)
+    if (out instanceof Promise) return out.then((replaced) => withReplacedBody(response, replaced))
+    return withReplacedBody(response, out)
+  }
 }
 
 /** Minimal request view over a Web `Request` for portable header hooks on the Web serving paths. */
@@ -695,6 +735,34 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return this
   }
 
+  /**
+   * Register a PORTABLE post-serialization body hook - the payload tier. The hook receives the
+   * FINAL framework-serialized bytes (plus the mutable header view and status) and may return
+   * replacement bytes; `undefined` keeps the body. On the Node direct writer the bytes come
+   * straight off the outcome record; on the Web serving paths they ride the framework-built
+   * Response as a tag, so no body stream is ever drained on any runtime. A handler-returned raw
+   * `Response` (proxied fetch, SSE, streamed SSR) is skipped by contract - transforming those is
+   * what the full `onResponse` hook is for.
+   */
+  onResponseBody(fn: ResponseBodyHook): this {
+    this.assertConfigurable("onResponseBody()")
+    enableResponseBodyTagging()
+    this.onResponseHooks.push(webResponseBodyHook(fn))
+    this.onNodeResponseHooks.push((response, req) => {
+      const body = response.body
+      if (body === null) return undefined
+      const out = fn(body, recordHeadersView(response), req, response.status)
+      if (out instanceof Promise) {
+        return out.then((replaced) => {
+          if (replaced !== undefined) response.body = replaced
+        })
+      }
+      if (out !== undefined) response.body = out
+      return undefined
+    })
+    return this
+  }
+
   /** Observe the terminal response after all transformations. Observers are ordered and fail-open. */
   onResponseFinalized(
     fn: (outcome: ResponseFinalization, req: Request) => MaybePromise<void>,
@@ -778,6 +846,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       throw new TypeError("onNodeResponse() requires a paired onResponse() hook")
     }
     if (arg.onResponseHeaders !== undefined) this.onResponseHeaders(arg.onResponseHeaders)
+    if (arg.onResponseBody !== undefined) this.onResponseBody(arg.onResponseBody)
     if (arg.onResponseFinalized !== undefined) this.onResponseFinalized(arg.onResponseFinalized)
     if (arg.onError !== undefined) this.onError(arg.onError)
     return this
@@ -1856,6 +1925,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       status: outcome.status,
       headers: outcome.headers as Record<string, string | readonly string[]> | undefined,
       cookies: outcome.kind === "json" ? outcome.cookies : undefined,
+      body: outcome.body,
     }
     const applied = this.applyNodeResponseHooks(context, this.takeNodeResponseRequest(source))
     if (applied instanceof Promise) {
@@ -1869,15 +1939,42 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     context: NodeResponseContext,
   ): NodeServeOutcome {
     const outcomeCookies = outcome.kind === "json" ? outcome.cookies : undefined
-    if (context.headers === outcome.headers && context.cookies === outcomeCookies) return outcome
-    if (outcome.kind === "json") {
-      return {
-        ...outcome,
-        headers: context.headers as Readonly<Record<string, string>> | undefined,
-        cookies: context.cookies,
+    const bodyChanged = context.body !== outcome.body
+    if (context.headers === outcome.headers && context.cookies === outcomeCookies && !bodyChanged) {
+      return outcome
+    }
+    let headers = context.headers
+    if (bodyChanged && headers !== undefined) {
+      // A replaced body invalidates any explicitly carried length; the writers re-derive framing
+      // from the final bytes.
+      const stale = Object.keys(headers).find((key) => key.toLowerCase() === "content-length")
+      if (stale !== undefined) {
+        headers = { ...headers }
+        delete headers[stale]
       }
     }
-    return { ...outcome, headers: context.headers }
+    if (outcome.kind === "json") {
+      if (bodyChanged && context.body !== null && typeof context.body !== "string") {
+        // A binary replacement can't ride the json render - switch to the buffered-body render,
+        // folding queued cookies into explicit set-cookie lines so nothing is dropped.
+        const record = { ...(headers ?? {}) } as Record<string, string | readonly string[]>
+        if (context.cookies !== undefined && context.cookies.length > 0) {
+          record["set-cookie"] = [...context.cookies]
+        }
+        return { kind: "body", status: outcome.status, headers: record, body: context.body }
+      }
+      return {
+        ...outcome,
+        headers: headers as Readonly<Record<string, string>> | undefined,
+        cookies: context.cookies,
+        body: bodyChanged ? (context.body as string | null) : outcome.body,
+      }
+    }
+    return {
+      ...outcome,
+      headers,
+      body: bodyChanged ? ((context.body ?? "") as string | Uint8Array) : outcome.body,
+    }
   }
 
   /** Synchronous until a native response hook actually returns a Promise. */

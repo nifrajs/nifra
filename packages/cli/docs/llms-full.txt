@@ -1613,10 +1613,20 @@ pays that: the built-ins that use it (`cors`, `securityHeaders`,
 direct writer at full speed.
 
 -
-**It cannot replace the response or touch the body.** Middleware that must (an ETag
-hash, compression, a body rewrite) keeps the full `onResponse` contract and its
-cost - on Node, such a response is bridged through a lazy spec-shaped Response that
-materializes headers and body machinery only when the hook actually touches them.
+**Body middleware gets its own portable tier: `onResponseBody`.** It
+receives the FINAL framework-serialized bytes (plus the same header view and status) and
+may return replacement bytes - on every runtime the bytes are already resident before any
+Web `Response` exists, so nothing is drained. A body-hashing middleware
+benchmarks at ~92% of a raw `node:http` server this way - Fastify-class - vs
+~50% through the full `onResponse` contract. Handler-returned raw
+`Response`s (proxied fetch, SSE, streamed SSR) are skipped by contract.
+
+-
+**The full `onResponse(res: Response)` stays for what only it can do:**
+wrapping streams, capturing complete responses (caching, idempotency replay), and
+intercepting raw `Response`s uniformly. On Node such a response is bridged
+through a lazy spec-shaped Response that materializes headers and body machinery only when
+the hook actually touches them - powerful, and priced accordingly.
 
 -
 **Advanced - native twins:** a middleware that needs per-request state or a native
@@ -7736,8 +7746,10 @@ A middleware whose response hook only reads/writes **headers** should use the po
 `Headers` on Bun/Deno and the outcome record on Node's direct socket writer, never materializing Web
 `Request`/`Response` objects. `cors`, `securityHeaders`, `poweredBy`, static `cacheControl`, and
 `language` are built on it. Stateful middleware (`rateLimit` with the built-in key derivation,
-`logger`) pairs full native twins (`onNodeRequest`/`onNodeResponse`) instead; body-transforming
-middleware (`etag`, `compression`, `prettyJson`, `cache`) keeps the full `onResponse` contract, and
+`logger`) pairs full native twins (`onNodeRequest`/`onNodeResponse`) instead. Body-transforming
+middleware has its own portable tier, `onResponseBody` - the hook receives the final
+framework-serialized bytes on every runtime with no stream drained (raw handler `Response`s are
+skipped by contract); full-response capture and stream wrapping keep the `onResponse` contract.
 `timing` stays Web-only for now. See the [plugins guide](https://nifra.dev/docs/plugins) for the
 contracts.
 

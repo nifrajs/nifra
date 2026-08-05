@@ -55,15 +55,33 @@ export type NodeRequestHook = (
 ) => MaybePromise<Response | undefined>
 
 /**
- * Header-only response view used by Node-direct middleware. It intentionally has no body or status
- * mutator: a native hook may add/replace transport headers, but body/status transformations must stay
- * on the Web Response path where their semantics are fully observable.
+ * Response view used by Node-direct middleware. Header hooks mutate `headers`; a BODY hook
+ * (adapted from the portable `onResponseBody`) may replace `body` - the already-serialized bytes
+ * the direct writer is about to send. `status` stays read-only: status transformations keep the
+ * full Web Response path where their semantics are completely observable.
  */
 export interface NodeResponseContext {
   readonly status: number
   headers: Record<string, string | readonly string[]> | undefined
   readonly cookies: readonly string[] | undefined
+  /** The framework-serialized body bytes (`null` for a bodiless render). Replaceable by body hooks. */
+  body: string | Uint8Array | null
 }
+
+/**
+ * A portable post-serialization body hook - the Fastify-`onSend`-shaped tier. The hook receives
+ * the FINAL framework-serialized bytes plus the header view, and may return replacement bytes
+ * (`undefined` keeps the body unchanged). It runs at the framework's cheapest point on every
+ * runtime: the bytes are already resident before any Web `Response` exists, so no body stream is
+ * ever drained. A handler-returned raw `Response` (a proxied fetch, SSE, streamed SSR) is SKIPPED
+ * by definition - transforming those is exactly what the full `onResponse` contract is for.
+ */
+export type ResponseBodyHook = (
+  body: string | Uint8Array,
+  headers: ResponseHeadersView,
+  req: NodeRequestContext,
+  status: number,
+) => MaybePromise<string | Uint8Array | undefined>
 
 /** Native equivalent of a paired `onResponse` hook. It must preserve the Web hook's header semantics. */
 export type NodeResponseHook = (

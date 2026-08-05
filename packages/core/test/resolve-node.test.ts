@@ -555,3 +555,47 @@ describe("resolveNode - portable onResponseHeaders", () => {
     expect(viaFetch.headers.get("x-mixed-case")).toBe("kept")
   })
 })
+
+describe("resolveNode - portable onResponseBody", () => {
+  test("one body hook runs on the native lane AND the Web walk, from final bytes on both", async () => {
+    const seen: string[] = []
+    const app = server({ logger: silentLogger })
+      .use(nodeDirect())
+      .onResponseBody((body, headers, req, status) => {
+        const text = typeof body === "string" ? body : new TextDecoder().decode(body)
+        seen.push(`${req.method}:${status}`)
+        headers.set("x-body-len", String(text.length))
+        return text.replace("plain", "transformed")
+      })
+      .get("/data", () => ({ mode: "plain" }))
+
+    // Native lane: the hook self-pairs, so the outcome stays a direct render with replaced bytes.
+    const outcome = await app.resolveNode(req("/data"))
+    if (outcome.kind === "response") throw new Error("expected a buffered outcome")
+    expect(outcome.body).toBe(JSON.stringify({ mode: "transformed" }))
+    expect(outcome.headers?.["x-body-len"]).toBe(String(JSON.stringify({ mode: "plain" }).length))
+
+    // Web walk: the framework-built Response carries its bytes as a tag - no stream drain.
+    const viaFetch = await app.fetch(req("/data"))
+    expect(await viaFetch.json()).toEqual({ mode: "transformed" })
+    expect(viaFetch.headers.get("x-body-len")).toBe(
+      String(JSON.stringify({ mode: "plain" }).length),
+    )
+    expect(seen).toEqual(["GET:200", "GET:200"])
+  })
+
+  test("a handler-returned raw Response is skipped by contract (streams never drained)", async () => {
+    let called = 0
+    const app = server({ logger: silentLogger })
+      .use(nodeDirect())
+      .onResponseBody((body) => {
+        called++
+        return body
+      })
+      .get("/raw", () => new Response("raw-bytes", { headers: { "content-type": "text/plain" } }))
+
+    const viaFetch = await app.fetch(req("/raw"))
+    expect(await viaFetch.text()).toBe("raw-bytes")
+    expect(called).toBe(0)
+  })
+})

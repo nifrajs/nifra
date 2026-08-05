@@ -76,8 +76,10 @@ A middleware whose response hook only reads/writes **headers** should use the po
 `Headers` on Bun/Deno and the outcome record on Node's direct socket writer, never materializing Web
 `Request`/`Response` objects. `cors`, `securityHeaders`, `poweredBy`, static `cacheControl`, and
 `language` are built on it. Stateful middleware (`rateLimit` with the built-in key derivation,
-`logger`) pairs full native twins (`onNodeRequest`/`onNodeResponse`) instead; body-transforming
-middleware (`etag`, `compression`, `prettyJson`, `cache`) keeps the full `onResponse` contract, and
+`logger`) pairs full native twins (`onNodeRequest`/`onNodeResponse`) instead. Body-transforming
+middleware has its own portable tier, `onResponseBody` - the hook receives the final
+framework-serialized bytes on every runtime with no stream drained (raw handler `Response`s are
+skipped by contract); full-response capture and stream wrapping keep the `onResponse` contract.
 `timing` stays Web-only for now. See the [plugins guide](https://nifra.dev/docs/plugins) for the
 contracts.
 

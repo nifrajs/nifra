@@ -9,7 +9,12 @@ import type { Method } from "../router/router.ts"
 import type { ClientIpTrust } from "./client-ip.ts"
 import type { Context, Platform, RouteSchema } from "./context.ts"
 import type { Logger } from "./logger.ts"
-import type { NodeRequestHook, NodeResponseHook, ResponseHeadersHook } from "./node-outcome-hook.ts"
+import type {
+  NodeRequestHook,
+  NodeResponseHook,
+  ResponseBodyHook,
+  ResponseHeadersHook,
+} from "./node-outcome-hook.ts"
 import type { MaybePromise, OnRequestResult } from "./server.ts"
 
 /**
@@ -208,6 +213,13 @@ export interface Middleware {
    * an optional `onNodeResponse` twin only when the hook must see a real `Response`.
    */
   readonly onResponseHeaders?: ResponseHeadersHook
+  /**
+   * PORTABLE post-serialization body hook - the payload tier. Receives the final
+   * framework-serialized bytes (already resident on every runtime; no stream is drained) plus the
+   * header view and status, and may return replacement bytes. Raw handler-returned `Response`s
+   * (proxies, SSE, streamed SSR) are skipped by contract - transforming those needs `onResponse`.
+   */
+  readonly onResponseBody?: ResponseBodyHook
   readonly onResponseFinalized?: (outcome: ResponseFinalization, req: Request) => MaybePromise<void>
   readonly onError?: (error: unknown, context: Context) => MaybePromise<unknown>
 }

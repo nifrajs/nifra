@@ -31,6 +31,29 @@ const JSON_CT_HEADERS = new Headers({
 })
 const JSON_INIT_200: ResponseInit = { status: 200, headers: JSON_CT_HEADERS }
 
+// The framework-buffered-body marker shared with the Node adapter: a Response carrying it exposes
+// its already-serialized bytes without draining. On the Web serving paths it exists ONLY when a
+// registered `onResponseBody` hook needs it (the flag below), so hook-less apps pay nothing.
+const RESPONSE_BODY = Symbol.for("nifra.response.body")
+let tagResponseBodies = false
+
+/** Called once when the first `onResponseBody` hook registers (process-wide; the tag is inert). */
+export function enableResponseBodyTagging(): void {
+  tagResponseBodies = true
+}
+
+/** The framework-serialized bytes riding a tagged Response, or `undefined` for raw/streamed ones. */
+export function taggedResponseBody(response: Response): string | Uint8Array | undefined {
+  return (response as { [RESPONSE_BODY]?: string | Uint8Array })[RESPONSE_BODY]
+}
+
+function tagged(response: Response, body: string): Response {
+  if (tagResponseBodies) {
+    Object.defineProperty(response, RESPONSE_BODY, { value: body })
+  }
+  return response
+}
+
 /** Fused-lane respond when `c.set` is untouched. Bun 1.3's native `Response.json` now beats the
  * older hand-inlined stringify + Response construction on this lane while preserving the exact
  * body/content-type contract; keep the generic fallback for non-JSON values. */
@@ -42,6 +65,10 @@ export function fusedRespondNoSet(result: unknown): Response {
     result !== null &&
     !isResponseResult(result)
   ) {
+    if (tagResponseBodies) {
+      const body = JSON.stringify(result) as string | undefined
+      if (body !== undefined) return tagged(new Response(body, JSON_INIT_200), body)
+    }
     return Response.json(result)
   }
   return toResponse(result as HandlerResult, EMPTY_RESPONSE_CONTROLS)
@@ -71,14 +98,24 @@ export function toResponse(result: HandlerResult, set: CtxSet): Response {
     // result) delegates to Response.json so its TypeError contract stays the single source.
     const body = JSON.stringify(result) as string | undefined
     if (body !== undefined) {
-      return new Response(
+      return tagged(
+        new Response(body, status === 200 ? JSON_INIT_200 : { status, headers: JSON_CT_HEADERS }),
         body,
-        status === 200 ? JSON_INIT_200 : { status, headers: JSON_CT_HEADERS },
       )
     }
   }
   const init: ResponseInit = headers === undefined ? { status } : { status, headers }
-  return result === undefined ? new Response(null, init) : Response.json(result, init)
+  if (result === undefined) return new Response(null, init)
+  if (tagResponseBodies) {
+    const body = JSON.stringify(result) as string | undefined
+    if (body !== undefined) {
+      const withType = new Headers(init.headers as ConstructorParameters<typeof Headers>[0])
+      if (!withType.has("content-type"))
+        withType.set("content-type", "application/json;charset=utf-8")
+      return tagged(new Response(body, { status, headers: withType }), body)
+    }
+  }
+  return Response.json(result, init)
 }
 
 export function appendCookiesToResponse(response: Response, set: CtxSet): Response {

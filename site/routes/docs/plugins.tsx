@@ -228,10 +228,20 @@ export default function Plugins() {
       </p>
       <ul>
         <li>
-          <b>It cannot replace the response or touch the body.</b> Middleware that must (an ETag
-          hash, compression, a body rewrite) keeps the full <code>onResponse</code> contract and its
-          cost - on Node, such a response is bridged through a lazy spec-shaped Response that
-          materializes headers and body machinery only when the hook actually touches them.
+          <b>Body middleware gets its own portable tier: <code>onResponseBody</code>.</b> It
+          receives the FINAL framework-serialized bytes (plus the same header view and status) and
+          may return replacement bytes - on every runtime the bytes are already resident before any
+          Web <code>Response</code> exists, so nothing is drained. A body-hashing middleware
+          benchmarks at ~92% of a raw <code>node:http</code> server this way - Fastify-class - vs
+          ~50% through the full <code>onResponse</code> contract. Handler-returned raw{" "}
+          <code>Response</code>s (proxied fetch, SSE, streamed SSR) are skipped by contract.
+        </li>
+        <li>
+          <b>The full <code>onResponse(res: Response)</code> stays for what only it can do:</b>{" "}
+          wrapping streams, capturing complete responses (caching, idempotency replay), and
+          intercepting raw <code>Response</code>s uniformly. On Node such a response is bridged
+          through a lazy spec-shaped Response that materializes headers and body machinery only when
+          the hook actually touches them - powerful, and priced accordingly.
         </li>
         <li>
           <b>Advanced - native twins:</b> a middleware that needs per-request state or a native

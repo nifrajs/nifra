@@ -13,6 +13,15 @@ Node serving now keeps synchronous Web request middleware on the direct renderer
 response middleware back to direct buffered writes, and avoids redundant params/body lifecycle stages
 for common validated reads. Header-only built-ins (`cache-control`, `powered-by`, and related response
 mutators) no longer clone buffered responses on Node.
+New portable middleware hook: `onResponseBody(body, headers, req, status)` - the post-serialization
+payload tier. The hook receives the FINAL framework-serialized bytes plus the mutable header view,
+and may return replacement bytes. On the Node direct writer the bytes come straight off the outcome
+record; on the Web serving paths they ride the framework-built Response as an inert tag (attached
+only once a body hook is registered), so no body stream is ever drained on any runtime. A
+handler-returned raw `Response` (a proxied fetch, SSE, a streamed page) is skipped by contract -
+transforming those remains `onResponse`'s job. A body-observing middleware written this way
+measures at ~92% of a raw `node:http` server on the realistic route, vs ~50% through the full
+`onResponse` contract.
 New portable middleware hook: `onResponseHeaders(headers, req, status)` - the recommended shape for
 response middleware that only reads or writes headers. One implementation runs on every runtime: on
 the Web serving paths it mutates the response's own `Headers` inside the normal response walk (no

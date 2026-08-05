@@ -243,7 +243,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **NodeRequestHook** _(type)_ - `type NodeRequestHook = ( request: NodeRequestContext, platform?: Platform, ) => MaybePromise<Response | undefined>`
   Native equivalent of a paired `onRequest` hook. It may short-circuit, but cannot rewrite a request.
 - **NodeResponseContext** _(interface)_ - `interface NodeResponseContext`
-  Header-only response view used by Node-direct middleware. It intentionally has no body or status mutator: a native hook may add/replace transport headers, but body/status transformations must stay on the Web Response path where their semantics are fully observable.
+  Response view used by Node-direct middleware. Header hooks mutate `headers`; a BODY hook (adapted from the portable `onResponseBody`) may replace `body` - the already-serialized bytes the direct writer is about to send. `status` stays read-only: status transformations keep the full Web Response pat…
 - **NodeResponseHook** _(type)_ - `type NodeResponseHook = ( response: NodeResponseContext, req: NodeRequestContext, ) => MaybePromise<void>`
   Native equivalent of a paired `onResponse` hook. It must preserve the Web hook's header semantics.
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
@@ -262,6 +262,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Tunes redaction. Key-name redaction always runs; the rest is **opt-in**: - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the…
 - **Registry** _(type)_ - `type Registry = Record<string, Record<string, RouteInfo>>`
   The accumulated, type-level map of every route on a Server: path → method → RouteInfo.
+- **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | undefined>`
+  A portable post-serialization body hook - the Fastify-`onSend`-shaped tier. The hook receives the FINAL framework-serialized bytes plus the header view, and may return replacement bytes (`undefined` keeps the body unchanged). It runs at the framework's cheapest point on every runtime: the bytes are…
 - **ResponseControls** _(interface)_ - `interface ResponseControls`
   Mutable response controls a handler may write to before returning.
 - **ResponseFinalization** _(interface)_ - `interface ResponseFinalization`
@@ -1061,7 +1063,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **NodeRequestHook** _(type)_ - `type NodeRequestHook = ( request: NodeRequestContext, platform?: Platform, ) => MaybePromise<Response | undefined>`
   Native equivalent of a paired `onRequest` hook. It may short-circuit, but cannot rewrite a request.
 - **NodeResponseContext** _(interface)_ - `interface NodeResponseContext`
-  Header-only response view used by Node-direct middleware. It intentionally has no body or status mutator: a native hook may add/replace transport headers, but body/status transformations must stay on the Web Response path where their semantics are fully observable.
+  Response view used by Node-direct middleware. Header hooks mutate `headers`; a BODY hook (adapted from the portable `onResponseBody`) may replace `body` - the already-serialized bytes the direct writer is about to send. `status` stays read-only: status transformations keep the full Web Response pat…
 - **NodeResponseHook** _(type)_ - `type NodeResponseHook = ( response: NodeResponseContext, req: NodeRequestContext, ) => MaybePromise<void>`
   Native equivalent of a paired `onResponse` hook. It must preserve the Web hook's header semantics.
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
@@ -1080,6 +1082,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Tunes redaction. Key-name redaction always runs; the rest is **opt-in**: - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the…
 - **Registry** _(type)_ - `type Registry = Record<string, Record<string, RouteInfo>>`
   The accumulated, type-level map of every route on a Server: path → method → RouteInfo.
+- **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | undefined>`
+  A portable post-serialization body hook - the Fastify-`onSend`-shaped tier. The hook receives the FINAL framework-serialized bytes plus the header view, and may return replacement bytes (`undefined` keeps the body unchanged). It runs at the framework's cheapest point on every runtime: the bytes are…
 - **ResponseControls** _(interface)_ - `interface ResponseControls`
   Mutable response controls a handler may write to before returning.
 - **ResponseFinalization** _(interface)_ - `interface ResponseFinalization`
@@ -3572,7 +3576,7 @@ _No named exports (side-effect entrypoint)._
 - **NodeRequestHook** _(type)_ - `type NodeRequestHook = ( request: NodeRequestContext, platform?: Platform, ) => MaybePromise<Response | undefined>`
   Native equivalent of a paired `onRequest` hook. It may short-circuit, but cannot rewrite a request.
 - **NodeResponseContext** _(interface)_ - `interface NodeResponseContext`
-  Header-only response view used by Node-direct middleware. It intentionally has no body or status mutator: a native hook may add/replace transport headers, but body/status transformations must stay on the Web Response path where their semantics are fully observable.
+  Response view used by Node-direct middleware. Header hooks mutate `headers`; a BODY hook (adapted from the portable `onResponseBody`) may replace `body` - the already-serialized bytes the direct writer is about to send. `status` stays read-only: status transformations keep the full Web Response pat…
 - **NodeResponseHook** _(type)_ - `type NodeResponseHook = ( response: NodeResponseContext, req: NodeRequestContext, ) => MaybePromise<void>`
   Native equivalent of a paired `onResponse` hook. It must preserve the Web hook's header semantics.
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
@@ -3591,6 +3595,8 @@ _No named exports (side-effect entrypoint)._
   Tunes redaction. Key-name redaction always runs; the rest is **opt-in**: - `keyParts` - extra case-insensitive key fragments, added to the built-in denylist. - `valuePatterns` - regexes matched against string **values** *and* the log message; each match is replaced with the placeholder. This is the…
 - **Registry** _(type)_ - `type Registry = Record<string, Record<string, RouteInfo>>`
   The accumulated, type-level map of every route on a Server: path → method → RouteInfo.
+- **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | undefined>`
+  A portable post-serialization body hook - the Fastify-`onSend`-shaped tier. The hook receives the FINAL framework-serialized bytes plus the header view, and may return replacement bytes (`undefined` keeps the body unchanged). It runs at the framework's cheapest point on every runtime: the bytes are…
 - **ResponseControls** _(interface)_ - `interface ResponseControls`
   Mutable response controls a handler may write to before returning.
 - **ResponseFinalization** _(interface)_ - `interface ResponseFinalization`
