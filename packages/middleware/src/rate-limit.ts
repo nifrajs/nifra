@@ -1,5 +1,6 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import type { Middleware } from "@nifrajs/core/server"
+import { withHeaders } from "./_utils.ts"
 
 export interface RateLimitResult {
   /** Hits recorded in the current window, including this one. */
@@ -239,11 +240,11 @@ export function rateLimit(options: RateLimitOptions): Middleware {
       const info = quota.get(req)
       if (info === undefined) return res
       quota.delete(req)
-      const headers = new Headers(res.headers)
-      headers.set("RateLimit-Limit", String(max))
-      headers.set("RateLimit-Remaining", String(info.remaining))
-      headers.set("RateLimit-Reset", String(info.resetSeconds))
-      return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
+      return withHeaders(res, (headers) => {
+        headers.set("RateLimit-Limit", String(max))
+        headers.set("RateLimit-Remaining", String(info.remaining))
+        headers.set("RateLimit-Reset", String(info.resetSeconds))
+      })
     },
   }
   return withRouteAssurance(middleware, {

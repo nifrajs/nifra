@@ -1,5 +1,5 @@
 import type { Middleware } from "@nifrajs/core/server"
-import { withHeaders } from "./_utils.ts"
+import { withHeaders, withNodeHeaders } from "./_utils.ts"
 
 export interface CorsOptions {
   /** Allowed origin(s): `"*"`, an exact origin, a list, or a predicate. Default `"*"`. */
@@ -73,6 +73,18 @@ export function cors(options: CorsOptions = {}): Middleware {
       // Allow-Origin / Allow-Credentials are added by onResponse (runs on every response).
       return new Response(null, { status: 204, headers })
     },
+    onNodeRequest(req) {
+      const isPreflight =
+        req.method === "OPTIONS" && req.header("access-control-request-method") !== null
+      if (!isPreflight) return undefined
+      const headers: Record<string, string> = {
+        "Access-Control-Allow-Methods": methods,
+      }
+      const requested = allowedHeaders ?? req.header("access-control-request-headers")
+      if (requested) headers["Access-Control-Allow-Headers"] = requested
+      if (maxAge !== undefined) headers["Access-Control-Max-Age"] = String(maxAge)
+      return new Response(null, { status: 204, headers })
+    },
     onResponse(res, req) {
       const allowOrigin = resolveAllowOrigin(origin, req.headers.get("origin"))
       if (allowOrigin === null) return res
@@ -83,6 +95,21 @@ export function cors(options: CorsOptions = {}): Middleware {
         if (credentials) headers.set("Access-Control-Allow-Credentials", "true")
         if (exposedHeaders !== undefined) {
           headers.set("Access-Control-Expose-Headers", exposedHeaders)
+        }
+      })
+    },
+    onNodeResponse(res, req) {
+      const allowOrigin = resolveAllowOrigin(origin, req.header("origin"))
+      if (allowOrigin === null) return
+      withNodeHeaders(res, (headers) => {
+        headers["access-control-allow-origin"] = allowOrigin
+        if (allowOrigin !== "*") {
+          const vary = headers.vary
+          headers.vary = typeof vary === "string" && vary.length > 0 ? `${vary}, Origin` : "Origin"
+        }
+        if (credentials) headers["access-control-allow-credentials"] = "true"
+        if (exposedHeaders !== undefined) {
+          headers["access-control-expose-headers"] = exposedHeaders
         }
       })
     },

@@ -166,6 +166,10 @@ export class RequestContext implements RawContext {
     return requestOf(this.source)
   }
 
+  header(name: string): string | null {
+    return headerOf(this.source, name)
+  }
+
   json(body: unknown, init?: ResponseInit | number): Response {
     return Response.json(body, statusInit(init))
   }

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
+import { nodeDirect } from "@nifrajs/core/node-direct"
 import { cacheControl } from "@nifrajs/middleware"
 
 const cc = (res: Response) => res.headers.get("cache-control")
@@ -62,5 +63,16 @@ describe("cacheControl()", () => {
       .use(cacheControl("private", { methods: ["POST"], status: (s) => s === 201 }))
       .post("/", () => new Response("made", { status: 201 }))
     expect(cc(await app.fetch(new Request("http://x/", { method: "POST" })))).toBe("private")
+  })
+
+  test("fixed directives stay on the Node-direct outcome lane", async () => {
+    const app = server()
+      .use(nodeDirect())
+      .use(cacheControl("public, max-age=60"))
+      .get("/", () => ({ ok: true }))
+    const outcome = await app.resolveNode(new Request("http://x/"))
+    expect(outcome.kind).toBe("json")
+    if (outcome.kind !== "json") throw new Error("unreachable")
+    expect(outcome.headers?.["cache-control"]).toBe("public, max-age=60")
   })
 })

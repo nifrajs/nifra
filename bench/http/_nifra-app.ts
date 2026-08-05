@@ -3,10 +3,19 @@
  * `.listen()`) and the Node server (serve-node-nifra.ts, via `@nifrajs/node`'s `serve()`),
  * so the nifra row in BOTH runtime sections measures the identical app. Same routes +
  * validation as every other framework's bench server.
+ *
+ * The `server` value import below deliberately points at the built `dist/` output, not the
+ * `@nifrajs/core` package specifier. `@nifrajs/core`'s package.json resolves a "bun" export
+ * condition straight to `src/server.ts` - correct for local app development, but it means a naive
+ * `bun run serve.ts` benchmarks live TypeScript source, not what `bun add @nifrajs/core` actually
+ * installs and runs. Measured: source ran ~2-4% faster than dist across three A/B rounds on a bare
+ * GET (small, but consistent direction) - this is the number people rerun to check us, so it has to
+ * measure the same artifact a real install gets. Type-only imports are unaffected (the "types"
+ * condition already always points at `dist/*.d.ts`).
  */
 
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "@nifrajs/core/server"
-import { server } from "@nifrajs/core/server"
+import { server } from "../../packages/core/dist/server.js"
 
 function isUser(v: unknown): v is { name: string; age: number } {
   return (

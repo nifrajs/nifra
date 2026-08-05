@@ -220,8 +220,15 @@ function resolve<T>(
   params: Record<string, string>,
 ): RouterMatch<T> {
   if (terminal.staticMatches !== undefined && params === EMPTY_PARAMS) {
+    // Real requests arrive pre-uppercased (HTTP methods are canonically uppercase; every runtime and
+    // client normalizes this) - try the cache under the raw method first so that overwhelmingly common
+    // case skips `toUpperCase()` entirely, matching the same already-uppercase fast path
+    // `resolveDirect` takes below. Falls back to the uppercase key (computed once) for a lowercase or
+    // mixed-case caller, so behavior is unchanged - only the common case gets cheaper.
+    const direct = terminal.staticMatches.get(method)
+    if (direct !== undefined) return direct
     const upper = method.toUpperCase()
-    const cached = terminal.staticMatches.get(upper)
+    const cached = upper === method ? undefined : terminal.staticMatches.get(upper)
     if (cached !== undefined) return cached
     if (!terminal.handlers.has(upper)) return resolveDirect(terminal, method, params)
 

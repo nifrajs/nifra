@@ -1,4 +1,10 @@
-import { definePlugin } from "@nifrajs/core/server"
+import {
+  definePlugin,
+  type Middleware,
+  type NodeRequestContext,
+  type NodeResponseContext,
+} from "@nifrajs/core/server"
+import { hasNodeHeader, withHeaders, withNodeHeaders } from "./_utils.ts"
 
 export interface CacheControlOptions {
   /** Methods whose responses get the header. Default `["GET", "HEAD"]`. */
@@ -30,16 +36,30 @@ export function cacheControl(
   const statusOk = options.status ?? ((status: number) => status >= 200 && status < 300)
   const respectExisting = options.respectExisting !== false
   const resolve = typeof value === "function" ? value : () => value
-  return definePlugin("cacheControl", (app) =>
-    app.onResponse((res, req) => {
-      if (!methods.has(req.method)) return res
-      if (!statusOk(res.status)) return res
-      if (respectExisting && res.headers.has("cache-control")) return res
-      const directive = resolve(req)
-      if (directive === undefined) return res
-      const headers = new Headers(res.headers)
-      headers.set("cache-control", directive)
-      return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
-    }),
-  )
+  return definePlugin("cacheControl", (app) => {
+    // A fixed directive has no request-dependent work, so the Node adapter can apply it directly to
+    // plain outcomes. Dynamic directives keep the full Request contract and use the adaptive Web lane.
+    const middleware: Middleware = {
+      onResponse(res, req) {
+        if (!methods.has(req.method)) return res
+        if (!statusOk(res.status)) return res
+        if (respectExisting && res.headers.has("cache-control")) return res
+        const directive = resolve(req)
+        if (directive === undefined) return res
+        return withHeaders(res, (headers) => headers.set("cache-control", directive))
+      },
+      ...(typeof value === "string"
+        ? {
+            onNodeResponse: (res: NodeResponseContext, req: NodeRequestContext) => {
+              if (!methods.has(req.method) || !statusOk(res.status)) return
+              if (respectExisting && hasNodeHeader(res.headers, "cache-control")) return
+              withNodeHeaders(res, (headers) => {
+                headers["cache-control"] = value
+              })
+            },
+          }
+        : {}),
+    }
+    return app.use(middleware)
+  })
 }

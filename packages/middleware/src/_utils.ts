@@ -1,5 +1,8 @@
 export type MaybePromise<T> = T | Promise<T>
 
+import type { NodeResponseContext } from "@nifrajs/core/server"
+import { parseCookies as parseCoreCookies } from "@nifrajs/core/server"
+
 export const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"])
 
 const TEXT = new TextEncoder()
@@ -15,28 +18,8 @@ export function jsonError(
   )
 }
 
-export function parseCookies(header: string | null | undefined): Record<string, string> {
-  // Null-prototype: an untrusted cookie name (`constructor`/`__proto__`/…) is an inert own key,
-  // never a prototype-member shadow. Mirrors core's parseCookies + the query/form parsers.
-  const out: Record<string, string> = Object.create(null)
-  if (!header) return out
-  for (const part of header.split(";")) {
-    const eq = part.indexOf("=")
-    if (eq < 1) continue
-    const name = part.slice(0, eq).trim()
-    if (name === "") continue
-    let value = part.slice(eq + 1).trim()
-    if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
-      value = value.slice(1, -1)
-    }
-    try {
-      out[name] = decodeURIComponent(value)
-    } catch {
-      out[name] = value
-    }
-  }
-  return out
-}
+/** Shared with core so auth/CSRF middleware gets the allocation-light cookie scanner too. */
+export const parseCookies = parseCoreCookies
 
 export function quotedHeaderValue(value: string): string {
   let out = ""
@@ -160,4 +143,26 @@ export function withHeaders(res: Response, apply: (headers: Headers) => void): R
     apply(headers)
     return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
   }
+}
+
+/** Mutate Node-direct response headers without constructing a Web Response. */
+export function withNodeHeaders(
+  res: NodeResponseContext,
+  apply: (headers: Record<string, string | readonly string[]>) => void,
+): void {
+  res.headers ??= {}
+  apply(res.headers)
+}
+
+/** Case-insensitive lookup for the plain header record used by the Node-direct response lane. */
+export function hasNodeHeader(
+  headers: Readonly<Record<string, string | readonly string[]>> | undefined,
+  name: string,
+): boolean {
+  if (headers === undefined) return false
+  const wanted = name.toLowerCase()
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === wanted) return true
+  }
+  return false
 }

@@ -9,6 +9,7 @@ import type { Method } from "../router/router.ts"
 import type { ClientIpTrust } from "./client-ip.ts"
 import type { Context, Platform, RouteSchema } from "./context.ts"
 import type { Logger } from "./logger.ts"
+import type { NodeRequestHook, NodeResponseHook } from "./node-outcome-hook.ts"
 import type { MaybePromise, OnRequestResult } from "./server.ts"
 
 /**
@@ -187,10 +188,18 @@ export interface RunningServer {
 export interface Middleware {
   readonly name?: string
   readonly onRequest?: (req: Request, platform?: Platform) => MaybePromise<OnRequestResult>
+  /** Allocation-light Node equivalent of `onRequest` for header-only hooks. */
+  readonly onNodeRequest?: NodeRequestHook
   readonly around?: <T>(context: Context, next: () => MaybePromise<T>) => MaybePromise<T>
   readonly beforeHandle?: (context: Context) => MaybePromise<unknown>
   readonly afterHandle?: (result: unknown, context: Context) => MaybePromise<unknown>
   readonly onResponse?: (response: Response, req: Request) => MaybePromise<Response>
+  /**
+   * Header-only equivalent of `onResponse` for the Node-direct serializer. It is used only when every
+   * response hook in the app supplies this paired native implementation; arbitrary response transforms
+   * continue through the Web Response path.
+   */
+  readonly onNodeResponse?: NodeResponseHook
   readonly onResponseFinalized?: (outcome: ResponseFinalization, req: Request) => MaybePromise<void>
   readonly onError?: (error: unknown, context: Context) => MaybePromise<unknown>
 }

@@ -86,6 +86,7 @@
     "examples/launch-video",
     "bench/ssr",
     "bench/http/serve-deno.ts",
+    "bench/http-realworld/serve-deno.ts",
     "site",
     "packages/deno",
     "packages/web/src/client.ts",

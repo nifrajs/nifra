@@ -51,15 +51,30 @@ function maxBytesOf(options: TransportDecodeOptions): number {
   return maxBytes
 }
 
+const BYTE_ENCODER = new TextEncoder()
+
 function byteLength(text: string): number {
-  return new TextEncoder().encode(text).byteLength
+  return BYTE_ENCODER.encode(text).byteLength
 }
 
-function assertBounded(text: string, options: TransportDecodeOptions): void {
-  if (byteLength(text) > maxBytesOf(options)) {
+/**
+ * Enforce the transport byte cap on already-read text - the same limit (and the same error) the
+ * streaming reader applies during a bounded read. Exported for callers that read a body through a
+ * native, non-streaming path (the typed client's in-process branch) and still owe the cap contract.
+ */
+export function assertTransportTextBounded(text: string, options: TransportDecodeOptions): void {
+  const maxBytes = maxBytesOf(options)
+  // Fast accept: UTF-8 emits at most 3 bytes per UTF-16 code unit, so `length * 3` bounds the
+  // encoded size from above - a body comfortably under the cap (the overwhelmingly common case
+  // against the 16 MB default) never pays a full re-encode just to prove it fits. Only a string
+  // within 3x of the cap needs the exact count.
+  if (text.length * 3 <= maxBytes) return
+  if (byteLength(text) > maxBytes) {
     throw new TransportCodecError("transport payload exceeds maxBytes")
   }
 }
+
+const assertBounded = assertTransportTextBounded
 
 export const plainJsonCodec: TransportCodec = Object.freeze({
   id: "json",
@@ -112,17 +127,23 @@ export function createTransportCodecRegistry(
   }
   if (!byId.has(`${fallback.id}@${fallback.version}`))
     throw new TypeError("transport fallback must be registered")
+  const jsonCodec = byId.get("json@1")
 
   const forContentType = (contentType: string | null): TransportCodec => {
     if (contentType === null || contentType.trim() === "") return fallback
+    // Direct probe before canonicalizing: a server-emitted content type is already lowercase with
+    // no stray spacing (nifra's own always is), so the common case skips the split/trim/join walk.
+    // The charset-suffixed JSON string is what `Response.json` (and nifra's respond path) emits on
+    // every JSON response - it resolves to the same `json@1` the parameter-stripping walk below
+    // would reach, just without paying the walk.
+    const exact = byMedia.get(contentType)
+    if (exact !== undefined) return exact
+    if (contentType === "application/json;charset=utf-8" && jsonCodec !== undefined)
+      return jsonCodec
     const canonical = canonicalMediaType(contentType)
     const direct = byMedia.get(canonical)
     if (direct !== undefined) return direct
-    const base = canonical.split(";")[0]
-    if (base === "application/json") {
-      const json = byId.get("json@1")
-      if (json !== undefined) return json
-    }
+    if (canonical.split(";")[0] === "application/json" && jsonCodec !== undefined) return jsonCodec
     throw new TransportCodecError(`unsupported transport content type: ${contentType}`)
   }
 
@@ -236,14 +257,38 @@ export async function readBoundedBytes(
   return bytes
 }
 
+// Shared decoder: `TextDecoder.decode` on a whole buffer is stateless, so one instance serves every
+// call (constructing one costs ~115ns - it was previously built per response).
+const FATAL_UTF8 = new TextDecoder("utf-8", { fatal: true })
+
 async function readBoundedText(
   response: Response,
   options: TransportDecodeOptions,
 ): Promise<string> {
   const bytes = await readBoundedBytes(response, options)
+  return decodeOrThrow(() => FATAL_UTF8.decode(bytes), "transport payload is not valid UTF-8")
+}
+
+/**
+ * Decode an ALREADY-READ transport body. The counterpart to {@link decodeTransportResponse} for a
+ * caller that obtained the text through its own bounded read - notably the typed client's
+ * in-process path, where the response body is same-process memory that was fully resident before
+ * the read, so the native `Response.text()` is safe and the streaming byte-cap loop would protect
+ * nothing while costing ~23x. The byte cap is still enforced here (identical error), just after
+ * the read instead of during it.
+ */
+export function decodeTransportText(
+  text: string,
+  contentType: string | null,
+  registry: TransportCodecRegistry = defaultTransportCodecs,
+  options: TransportDecodeOptions = {},
+): unknown {
+  assertBounded(text, options)
+  if (text === "") return undefined
+  const codec = registry.forContentType(contentType)
   return decodeOrThrow(
-    () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
-    "transport payload is not valid UTF-8",
+    () => codec.decode(text),
+    `malformed transport body for codec ${codec.id}@${codec.version}`,
   )
 }
 

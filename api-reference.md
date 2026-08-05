@@ -238,6 +238,14 @@ Every public export of every package and documented subpath - name, kind, signat
   A nifra **plugin**: a function that augments an app - calling `use`/`derive`/`decorate` and/or registering routes - and returns it. Because `derive`/`decorate` are type-threaded, an **inline** `app.use((a) => a.derive(...).decorate(...))` carries the added context to handlers defined after it (the …
 - **NifraWebSocket** _(interface)_ - `interface NifraWebSocket<Data = unknown>`
   The portable socket handed to WS lifecycle callbacks. Each adapter wraps its native socket.
+- **NodeRequestContext** _(interface)_ - `interface NodeRequestContext`
+  Allocation-light request view used by Node-native header middleware.
+- **NodeRequestHook** _(type)_ - `type NodeRequestHook = ( request: NodeRequestContext, platform?: Platform, ) => MaybePromise<Response | undefined>`
+  Native equivalent of a paired `onRequest` hook. It may short-circuit, but cannot rewrite a request.
+- **NodeResponseContext** _(interface)_ - `interface NodeResponseContext`
+  Header-only response view used by Node-direct middleware. It intentionally has no body or status mutator: a native hook may add/replace transport headers, but body/status transformations must stay on the Web Response path where their semantics are fully observable.
+- **NodeResponseHook** _(type)_ - `type NodeResponseHook = ( response: NodeResponseContext, req: NodeRequestContext, ) => MaybePromise<void>`
+  Native equivalent of a paired `onResponse` hook. It must preserve the Web hook's header semantics.
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
   What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes to the socket directly (`kind: "json"` - status + headers + cookies + a pre-stringified body, **no** undici `Response` built or drained), a marked buffered response body (`kind: "body"` - e.g.
 - **OnRequestResult** _(type)_ - `type OnRequestResult = Response | Request | undefined`
@@ -1044,6 +1052,14 @@ Every public export of every package and documented subpath - name, kind, signat
   A nifra **plugin**: a function that augments an app - calling `use`/`derive`/`decorate` and/or registering routes - and returns it. Because `derive`/`decorate` are type-threaded, an **inline** `app.use((a) => a.derive(...).decorate(...))` carries the added context to handlers defined after it (the …
 - **NifraWebSocket** _(interface)_ - `interface NifraWebSocket<Data = unknown>`
   The portable socket handed to WS lifecycle callbacks. Each adapter wraps its native socket.
+- **NodeRequestContext** _(interface)_ - `interface NodeRequestContext`
+  Allocation-light request view used by Node-native header middleware.
+- **NodeRequestHook** _(type)_ - `type NodeRequestHook = ( request: NodeRequestContext, platform?: Platform, ) => MaybePromise<Response | undefined>`
+  Native equivalent of a paired `onRequest` hook. It may short-circuit, but cannot rewrite a request.
+- **NodeResponseContext** _(interface)_ - `interface NodeResponseContext`
+  Header-only response view used by Node-direct middleware. It intentionally has no body or status mutator: a native hook may add/replace transport headers, but body/status transformations must stay on the Web Response path where their semantics are fully observable.
+- **NodeResponseHook** _(type)_ - `type NodeResponseHook = ( response: NodeResponseContext, req: NodeRequestContext, ) => MaybePromise<void>`
+  Native equivalent of a paired `onResponse` hook. It must preserve the Web hook's header semantics.
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
   What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes to the socket directly (`kind: "json"` - status + headers + cookies + a pre-stringified body, **no** undici `Response` built or drained), a marked buffered response body (`kind: "body"` - e.g.
 - **OnRequestResult** _(type)_ - `type OnRequestResult = Response | Request | undefined`
@@ -1169,9 +1185,13 @@ Every public export of every package and documented subpath - name, kind, signat
 - **TransportCodecError** _(class)_ - `class TransportCodecError`
 - **TransportCodecRegistry** _(interface)_ - `interface TransportCodecRegistry`
 - **TransportDecodeOptions** _(interface)_ - `interface TransportDecodeOptions`
+- **assertTransportTextBounded** _(function)_ - `assertTransportTextBounded: (text: string, options: TransportDecodeOptions) => void`
+  Enforce the transport byte cap on already-read text - the same limit (and the same error) the streaming reader applies during a bounded read. Exported for callers that read a body through a native, non-streaming path (the typed client's in-process branch) and still owe the cap contract.
 - **createTransportCodecRegistry** _(function)_ - `createTransportCodecRegistry: (codecs: readonly TransportCodec[], fallback?: TransportCodec) => TransportCodecRegistry`
 - **decodeTransportFrame** _(function)_ - `decodeTransportFrame: (frame: string, registry?: TransportCodecRegistry, options?: TransportDecodeOptions) => unknown`
 - **decodeTransportResponse** _(function)_ - `decodeTransportResponse: (response: Response, registry?: TransportCodecRegistry, options?: TransportDecodeOptions) => Promise<unknown>`
+- **decodeTransportText** _(function)_ - `decodeTransportText: (text: string, contentType: string | null, registry?: TransportCodecRegistry, options?: TransportDecodeOptions) => unknown`
+  Decode an ALREADY-READ transport body. The counterpart to {@link decodeTransportResponse} for a caller that obtained the text through its own bounded read - notably the typed client's in-process path, where the response body is same-process memory that was fully resident before the read, so the nat…
 - **defaultTransportCodecs** _(const)_ - `defaultTransportCodecs: TransportCodecRegistry`
 - **encodeTransportFrame** _(function)_ - `encodeTransportFrame: (value: unknown, codec?: TransportCodec) => string`
 - **encodeTransportResponse** _(function)_ - `encodeTransportResponse: (value: unknown, codec?: TransportCodec, init?: ResponseInit) => Response`
@@ -3539,6 +3559,14 @@ _No named exports (side-effect entrypoint)._
   A nifra **plugin**: a function that augments an app - calling `use`/`derive`/`decorate` and/or registering routes - and returns it. Because `derive`/`decorate` are type-threaded, an **inline** `app.use((a) => a.derive(...).decorate(...))` carries the added context to handlers defined after it (the …
 - **NifraWebSocket** _(interface)_ - `interface NifraWebSocket<Data = unknown>`
   The portable socket handed to WS lifecycle callbacks. Each adapter wraps its native socket.
+- **NodeRequestContext** _(interface)_ - `interface NodeRequestContext`
+  Allocation-light request view used by Node-native header middleware.
+- **NodeRequestHook** _(type)_ - `type NodeRequestHook = ( request: NodeRequestContext, platform?: Platform, ) => MaybePromise<Response | undefined>`
+  Native equivalent of a paired `onRequest` hook. It may short-circuit, but cannot rewrite a request.
+- **NodeResponseContext** _(interface)_ - `interface NodeResponseContext`
+  Header-only response view used by Node-direct middleware. It intentionally has no body or status mutator: a native hook may add/replace transport headers, but body/status transformations must stay on the Web Response path where their semantics are fully observable.
+- **NodeResponseHook** _(type)_ - `type NodeResponseHook = ( response: NodeResponseContext, req: NodeRequestContext, ) => MaybePromise<void>`
+  Native equivalent of a paired `onResponse` hook. It must preserve the Web hook's header semantics.
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
   What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes to the socket directly (`kind: "json"` - status + headers + cookies + a pre-stringified body, **no** undici `Response` built or drained), a marked buffered response body (`kind: "body"` - e.g.
 - **OnRequestResult** _(type)_ - `type OnRequestResult = Response | Request | undefined`

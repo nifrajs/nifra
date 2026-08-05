@@ -150,6 +150,7 @@ interface NodeContextSet {
 
 interface NodeOutcomeRuntime {
   toOutcome(result: unknown, set: NodeContextSet): NodeServeOutcome
+  toResponse(outcome: NodeServeOutcome): Response
   fromResponse(response: Response): NodeServeOutcome
   timeout(): NodeServeOutcome
 }
@@ -205,6 +206,7 @@ const NODE_OUTCOME_RUNTIME: NodeOutcomeRuntime = {
       body: result === undefined ? null : JSON.stringify(result),
     }
   },
+  toResponse: nodeOutcomeToResponse,
   fromResponse: nodeOutcomeFromResponse,
   timeout: () => ({
     kind: "response",
@@ -249,6 +251,33 @@ function nodeOutcomeFromResponse(response: Response): NodeServeOutcome {
     }
   }
   return { kind: "response", response }
+}
+
+/** Materialize only for a Web response hook; preserve the buffered marker for in-place transforms. */
+function nodeOutcomeToResponse(outcome: NodeServeOutcome): Response {
+  if (outcome.kind === "response") return outcome.response
+  const headers = new Headers()
+  if (outcome.headers !== undefined) {
+    for (const [name, value] of Object.entries(outcome.headers)) {
+      if (typeof value !== "string") {
+        for (const item of value) headers.append(name, item)
+      } else {
+        headers.set(name, value)
+      }
+    }
+  }
+  if (outcome.kind === "json") {
+    if (outcome.cookies !== undefined) {
+      for (const cookie of outcome.cookies) headers.append("set-cookie", cookie)
+    }
+    if (outcome.body !== null && headers.get("content-type") === null) {
+      headers.set("content-type", JSON_CONTENT_TYPE)
+    }
+  }
+  const body = outcome.body
+  const response = new Response(body, { status: outcome.status, headers })
+  if (body !== null) Object.defineProperty(response, NODE_RESPONSE_BODY, { value: body })
+  return response
 }
 
 function responseHeaders(
@@ -699,11 +728,12 @@ function writeJsonOutcome(
     for (const [key, value] of Object.entries(outcome.headers)) headers[key.toLowerCase()] = value
   }
   // A `null` body is a 204/no-content render - `new Response(null)` carries no Content-Type, so we add
-  // none either; a non-null body is JSON, matching `Response.json`'s Content-Type. The length is known,
-  // so declare it - without it Node falls back to chunked framing, which costs extra wire bytes and
-  // client parsing on every response (and no other runtime chunks a buffered JSON body).
+  // none either; a non-null body is JSON, matching `Response.json`'s Content-Type (a hook-supplied
+  // Content-Type wins). The length is known regardless of who set the type, so always declare it -
+  // without it Node falls back to chunked framing, which costs extra wire bytes and client parsing
+  // on every response (and no other runtime chunks a buffered JSON body).
   if (outcome.body !== null) {
-    headers["content-type"] = JSON_CONTENT_TYPE
+    if (headers["content-type"] === undefined) headers["content-type"] = JSON_CONTENT_TYPE
     headers["content-length"] = String(Buffer.byteLength(outcome.body))
   }
   if (outcome.cookies !== undefined && outcome.cookies.length > 0) {
@@ -1058,17 +1088,14 @@ function waitForDrain(nodeRes: ServerResponse): Promise<boolean> {
 }
 
 function writeNodeResponse(response: Response, nodeRes: ServerResponse): void | Promise<void> {
-  const headers: Record<string, string | string[]> = {}
-  response.headers.forEach((value, key) => {
-    headers[key] = value
-  })
-  // `Headers.forEach` comma-joins repeated `Set-Cookie` into one value - wrong, since a cookie's
-  // `Expires` attribute itself contains a comma (so a client can't safely split it back). Emit one
-  // header line per cookie via the un-joined `getSetCookie()` array (a response can set several:
-  // e.g. a session cookie + a CSRF cookie).
-  const setCookies = response.headers.getSetCookie?.()
-  if (setCookies !== undefined && setCookies.length > 0) headers["set-cookie"] = setCookies
-  nodeRes.writeHead(response.status, headers)
+  // `ServerResponse.setHeaders` (Node 18.14+) takes the Headers object directly and iterates its
+  // native Symbol.iterator, which - unlike `Headers.forEach`/`.get()` - never comma-joins repeated
+  // `Set-Cookie` values (Node's own implementation carries the identical correctness note this
+  // function used to hand-implement via `getSetCookie()`). One native call instead of a manual
+  // forEach into a fresh plain object plus a second cookie-specific pass. Must run before
+  // `writeHead`: headers are already flushed by the time `writeHead` returns.
+  nodeRes.setHeaders(response.headers)
+  nodeRes.writeHead(response.status)
   const directBody = nodeResponseBody(response)
   if (directBody !== undefined) {
     nodeRes.end(directBody)

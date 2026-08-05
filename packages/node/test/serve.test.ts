@@ -118,6 +118,77 @@ test("JSON responses carry the application/json content-type (node-direct fast p
   expect(await res.json()).toEqual({ id: "7" })
 })
 
+test("node-direct JSON preserves an explicit content-type override", async () => {
+  const app = server().get("/custom-type", (c) => {
+    c.set.headers["content-type"] = "application/vnd.api+json"
+    return { ok: true }
+  })
+  running = await serve(app, { port: 0 })
+  const res = await fetch(`http://localhost:${running.port}/custom-type`)
+  expect(res.headers.get("content-type")).toBe("application/vnd.api+json")
+  expect(await res.json()).toEqual({ ok: true })
+})
+
+test("native response middleware keeps JSON on the Node-direct path", async () => {
+  const app = server()
+    .use({
+      name: "native-headers",
+      onResponse: (response) => {
+        response.headers.set("x-web-hook", "1")
+        return response
+      },
+      onNodeResponse: (response) => {
+        response.headers ??= {}
+        response.headers["x-web-hook"] = "1"
+      },
+    })
+    .get("/native-headers", () => ({ ok: true }))
+
+  running = await serve(app, { port: 0 })
+  const res = await fetch(`http://localhost:${running.port}/native-headers`)
+  expect(res.headers.get("x-web-hook")).toBe("1")
+  expect(await res.json()).toEqual({ ok: true })
+
+  const outcome = await app.resolveNode(new Request("http://x/native-headers"))
+  expect(outcome.kind).toBe("json")
+})
+
+test("native request middleware and c.header avoid the Web request path", async () => {
+  let nativeCalls = 0
+  const app = server()
+    .use({
+      name: "native-request-async",
+      onRequest: () => undefined,
+      onNodeRequest: async () => {
+        nativeCalls += 1
+        return undefined
+      },
+    })
+    .use({
+      name: "native-request-sync",
+      onRequest: () => undefined,
+      onNodeRequest: (request) => {
+        nativeCalls += 1
+        if (request.header("x-gate") !== "open") return new Response("blocked", { status: 403 })
+        return undefined
+      },
+    })
+    .get("/header", (c) => ({ authorization: c.header("authorization") }))
+
+  running = await serve(app, { port: 0 })
+  const res = await fetch(`http://localhost:${running.port}/header`, {
+    headers: { authorization: "Bearer test", "x-gate": "open" },
+  })
+  expect(await res.json()).toEqual({ authorization: "Bearer test" })
+  expect(nativeCalls).toBe(2)
+
+  const blocked = await fetch(`http://localhost:${running.port}/header`, {
+    headers: { "x-gate": "closed" },
+  })
+  expect(blocked.status).toBe(403)
+  expect(nativeCalls).toBe(4)
+})
+
 test("serve() installs node-direct on the app - app.resolveNode() works with no user .use()", async () => {
   // Node-direct is adapter plumbing, not a user opt-in: serving on Node enables it, so a direct
   // `app.resolveNode()` call (e.g. a custom integration) renders the plain-data fast path.

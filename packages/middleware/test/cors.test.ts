@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { server, silentLogger } from "@nifrajs/core"
+import type { NodeResponseContext } from "@nifrajs/core/server"
 import { cors } from "../src/index.ts"
 
 const origin = (value: string) => ({ headers: { origin: value } })
@@ -117,5 +118,27 @@ describe("cors", () => {
     const res = await app.fetch(new Request("http://x/boom", origin("https://app.com")))
     expect(res.status).toBe(500)
     expect(res.headers.get("access-control-allow-origin")).toBe("*")
+  })
+
+  test("native Node hooks preserve preflight and response headers", async () => {
+    const middleware = cors({ origin: "https://app.com", credentials: true, maxAge: 60 })
+    const request = {
+      method: "OPTIONS",
+      header: (name: string) =>
+        ({
+          origin: "https://app.com",
+          "access-control-request-method": "POST",
+          "access-control-request-headers": "authorization",
+        })[name] ?? null,
+    }
+    const preflight = await middleware.onNodeRequest!(request)
+    expect(preflight?.status).toBe(204)
+    expect(preflight?.headers.get("access-control-allow-headers")).toBe("authorization")
+    expect(preflight?.headers.get("access-control-max-age")).toBe("60")
+
+    const response: NodeResponseContext = { status: 200, headers: undefined, cookies: undefined }
+    await middleware.onNodeResponse!(response, request)
+    expect(response.headers?.["access-control-allow-origin"]).toBe("https://app.com")
+    expect(response.headers?.["access-control-allow-credentials"]).toBe("true")
   })
 })

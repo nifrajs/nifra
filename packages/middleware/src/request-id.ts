@@ -22,7 +22,7 @@ export function requestId(options: RequestIdOptions = {}) {
   const generate = options.generate ?? (() => crypto.randomUUID())
   return definePlugin("requestId", (app) =>
     app.derive((c) => {
-      const id = c.req.headers.get(header) ?? generate()
+      const id = c.header(header) ?? generate()
       c.set.headers[header] = id // echo on the response (route handlers)
       return { requestId: id }
     }),

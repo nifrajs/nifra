@@ -68,6 +68,45 @@ export function toNodeOutcome(result: HandlerResult, set: CtxSet): NodeServeOutc
 
 const NODE_RESPONSE_BODY = Symbol.for("nifra.response.body")
 
+/**
+ * Materialize a buffered node outcome only when a Web `onResponse` hook needs to see a real
+ * `Response`. The marker lets an in-place hook (`response.headers.set(...); return response`) go back
+ * to the direct socket writer without draining the body through a Web stream. A hook that replaces,
+ * consumes, or otherwise changes the response naturally loses the marker and stays on the portable
+ * response path.
+ */
+export function nodeOutcomeToResponse(outcome: NodeServeOutcome): Response {
+  if (outcome.kind === "response") return outcome.response
+  const headers = new Headers()
+  if (outcome.headers !== undefined) {
+    for (const [name, value] of Object.entries(outcome.headers)) {
+      if (typeof value !== "string") {
+        for (const item of value) headers.append(name, item)
+      } else {
+        headers.set(name, value as string)
+      }
+    }
+  }
+  if (outcome.kind === "json") {
+    if (outcome.cookies !== undefined) {
+      for (const cookie of outcome.cookies) headers.append("set-cookie", cookie)
+    }
+    if (outcome.body !== null && headers.get("content-type") === null) {
+      headers.set("content-type", "application/json;charset=utf-8")
+    }
+  }
+  const body = outcome.body
+  // `Uint8Array<ArrayBufferLike>` vs the lib's body-init generic - runtime-accepted everywhere,
+  // only the type narrows wrong under the DOM-free lib set (same idiom as the Headers cast in
+  // transport-codec.ts).
+  const response = new Response(body as ConstructorParameters<typeof Response>[0], {
+    status: outcome.status,
+    headers,
+  })
+  if (body !== null) Object.defineProperty(response, NODE_RESPONSE_BODY, { value: body })
+  return response
+}
+
 export function nodeOutcomeFromResponse(response: Response): NodeServeOutcome {
   const body = nodeResponseBody(response)
   return body === undefined

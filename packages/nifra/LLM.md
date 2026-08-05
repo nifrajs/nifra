@@ -25,7 +25,7 @@ The nifra full-stack framework - unscoped meta-entry that re-exports @nifrajs/co
 - **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`
 - **FrameworkError** _(class)_ - `class FrameworkError`
 
-_…and 67 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
+_…and 71 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
 
 ## Footguns
 

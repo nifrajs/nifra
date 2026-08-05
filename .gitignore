@@ -28,6 +28,7 @@ packages/web/test/.tmp-*
 # bench/README.md). The benchmark CODE under bench/ stays tracked.
 /BENCHMARKS.md
 /SSR-BENCHMARKS.md
+/BENCHMARKS-REALWORLD.md
 /PLAN.md
 /*-PLAN.md
 /*-PARITY.md

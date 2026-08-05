@@ -28,6 +28,7 @@ import {
 import { type CatalogRoute, RouteCatalog } from "../internal/route-catalog.ts"
 import type {
   ContextRouteRunner,
+  FusedBodyRunner,
   FusedWebRunner,
   InternalHandler,
   RawAfterHandle,
@@ -54,7 +55,13 @@ import { type ClientIpTrust, resolveClientIp } from "./client-ip.ts"
 import type { Context, Platform, ResponseControls, RouteSchema } from "./context.ts"
 import { jsonError, pathnameOf, type UrlParts, urlPartsOf } from "./http.ts"
 import type { NodeServeOutcome } from "./node-outcome.ts"
-import type { NodeOutcomeRuntime } from "./node-outcome-hook.ts"
+import type {
+  NodeOutcomeRuntime,
+  NodeRequestContext,
+  NodeRequestHook,
+  NodeResponseContext,
+  NodeResponseHook,
+} from "./node-outcome-hook.ts"
 import {
   isUrlEncodedForm,
   type QueryValue,
@@ -80,7 +87,13 @@ import {
 
 // NodeServeOutcome (the nifra<->node bridge render form) now lives in `./node-outcome.ts`; re-exported
 // so existing importers keep resolving it from the server module.
-export type { NodeServeOutcome }
+export type {
+  NodeRequestContext,
+  NodeRequestHook,
+  NodeResponseContext,
+  NodeResponseHook,
+  NodeServeOutcome,
+}
 
 import type { IdempotencyRuntime } from "./idempotency-lane.ts"
 import {
@@ -439,9 +452,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private readonly onErrorHooks: RawErrorHandler[]
   private readonly aroundHooks: RawAround[]
   private readonly onRequestHooks: RawOnRequest[]
+  private readonly onNodeRequestHooks: Array<NodeRequestHook | undefined>
   private readonly onResponseHooks: RawOnResponse[]
+  private readonly onNodeResponseHooks: Array<NodeResponseHook | undefined>
   private readonly onResponseFinalizedHooks: RawOnResponseFinalized[]
   private readonly responseRequests: WeakMap<Request, Request>
+  /** Original source → request observed by generic request hooks, including in-place mutations. */
+  private readonly responseSources: WeakMap<object, Request>
   /** Names of plugins/middleware already applied via `use` - for idempotent dedupe. */
   private readonly appliedPlugins: Set<string>
   /** Order-scoped evidence captured by routes registered after an assured plugin. */
@@ -499,9 +516,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.onErrorHooks = []
     this.aroundHooks = []
     this.onRequestHooks = []
+    this.onNodeRequestHooks = []
     this.onResponseHooks = []
+    this.onNodeResponseHooks = []
     this.onResponseFinalizedHooks = []
     this.responseRequests = new WeakMap()
+    this.responseSources = new WeakMap()
     this.appliedPlugins = new Set()
     this.activeAssurance = []
     this.globalAssurance = []
@@ -541,6 +561,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   ): this {
     this.assertConfigurable("onRequest()")
     this.onRequestHooks.push(fn as RawOnRequest)
+    this.onNodeRequestHooks.push(undefined)
     return this
   }
 
@@ -614,6 +635,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   onResponse(fn: (response: Response, req: Request) => MaybePromise<Response>): this {
     this.assertConfigurable("onResponse()")
     this.onResponseHooks.push(fn)
+    this.onNodeResponseHooks.push(undefined)
     return this
   }
 
@@ -682,11 +704,23 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
     this.globalAssurance.push(...evidence.filter((item) => item.scope === "global"))
     this.activeAssurance.push(...evidence.filter((item) => item.scope === "subsequent"))
-    if (arg.onRequest !== undefined) this.onRequest(arg.onRequest)
+    if (arg.onRequest !== undefined) {
+      this.assertConfigurable("onRequest()")
+      this.onRequestHooks.push(arg.onRequest as RawOnRequest)
+      this.onNodeRequestHooks.push(arg.onNodeRequest)
+    } else if (arg.onNodeRequest !== undefined) {
+      throw new TypeError("onNodeRequest() requires a paired onRequest() hook")
+    }
     if (arg.around !== undefined) this.around(arg.around)
     if (arg.beforeHandle !== undefined) this.beforeHandle(arg.beforeHandle)
     if (arg.afterHandle !== undefined) this.afterHandle(arg.afterHandle)
-    if (arg.onResponse !== undefined) this.onResponse(arg.onResponse)
+    if (arg.onResponse !== undefined) {
+      this.assertConfigurable("onResponse()")
+      this.onResponseHooks.push(arg.onResponse)
+      this.onNodeResponseHooks.push(arg.onNodeResponse)
+    } else if (arg.onNodeResponse !== undefined) {
+      throw new TypeError("onNodeResponse() requires a paired onResponse() hook")
+    }
     if (arg.onResponseFinalized !== undefined) this.onResponseFinalized(arg.onResponseFinalized)
     if (arg.onError !== undefined) this.onError(arg.onError)
     return this
@@ -1140,10 +1174,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       idempotent === undefined &&
       ledgered === undefined &&
       this.aroundHooks.length === 0
-    // Body-only routes still need an async body read, but they can use the same fused responder as
-    // bare/query routes once validation succeeds. This keeps the body cap + framing checks in the
-    // established runBodyOnly lane while avoiding the slower generic JSON response path on Bun/Deno.
-    let registeredEntry!: RouteEntry
+    // Body-only routes still need an async body read, but eligible routes can compile the validation +
+    // handler continuation once. The runner keeps the bounded parser and all error semantics while
+    // avoiding the generic entry/schema/lifecycle dispatch on Bun, Deno, and Node-direct.
+    const fusedBodyRunner = fusedBody
+      ? this.buildFusedBodyRunner(
+          handler as unknown as InternalHandler,
+          schema.body as StandardSchemaV1,
+          hasDecorations ? routeDecorations : undefined,
+        )
+      : undefined
     const fusedWeb =
       bare && this.aroundHooks.length === 0
         ? this.buildFusedWeb(
@@ -1158,7 +1198,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
               schema.query as StandardSchemaV1,
             )
           : fusedBody
-            ? this.buildFusedBodyWeb(() => registeredEntry)
+            ? this.buildFusedBodyWeb(fusedBodyRunner as FusedBodyRunner)
             : undefined
     const contextless = bare && this.aroundHooks.length === 0 && isContextlessNoArgArrow(handler)
     // The body and query lanes finalize the handler's result themselves, so a contracted route takes
@@ -1183,9 +1223,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       this.aroundHooks.length > 0,
       ledgered !== undefined,
       fusedWeb,
+      fusedBodyRunner,
       fusedWeb === undefined ? undefined : fusedQuery ? "query" : fusedBody ? "body" : "bare",
     )
-    registeredEntry = {
+    const registeredEntry: RouteEntry = {
       // (context: never) => unknown -> InternalHandler: the framework invokes it
       // with the concrete RawContext the typed handler expects, so this is sound.
       handler: handler as unknown as InternalHandler,
@@ -1259,6 +1300,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     hasAround: boolean,
     hasLedger: boolean,
     fusedWeb: FusedWebRunner | undefined,
+    fusedBody: FusedBodyRunner | undefined,
     fusedLane: "bare" | "body" | "query" | undefined,
   ): RouteExecutionPlan {
     if (contextless) {
@@ -1285,7 +1327,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           finalize,
           wrapResponse,
         )
-      return Object.freeze({ run, fusedWeb, fusedLane })
+      return Object.freeze({ run, fusedWeb, fusedBody, fusedLane })
     }
 
     let inner: ContextRouteRunner
@@ -1357,7 +1399,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       }
       return outcome
     }
-    return Object.freeze({ run, fusedWeb, fusedLane })
+    return Object.freeze({ run, fusedWeb, fusedBody, fusedLane })
   }
 
   /** The idempotency lane's bridge back into the normal matched lanes, resolved to a concrete Response
@@ -1462,7 +1504,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.sseRuntime ??= source.sseRuntime
     this.wsRuntime ??= source.wsRuntime
     this.onRequestHooks.push(...source.onRequestHooks)
+    this.onNodeRequestHooks.push(...source.onNodeRequestHooks)
     this.onResponseHooks.push(...source.onResponseHooks)
+    this.onNodeResponseHooks.push(...source.onNodeResponseHooks)
     this.onResponseFinalizedHooks.push(...source.onResponseFinalizedHooks)
     this.globalAssurance.push(...source.globalAssurance)
     this.mcpResourceList.push(...source.mcpResourceList)
@@ -1477,9 +1521,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     if (entry.execution.fusedWeb === undefined) return route
     // Rebuild with the SAME builder that produced the closure - rebinding a query-fused route as
     // bare would silently drop its validation.
+    const fusedBody =
+      entry.execution.fusedLane === "body"
+        ? this.buildFusedBodyRunner(
+            entry.handler,
+            entry.schema?.body as StandardSchemaV1,
+            entry.hasDecorations ? entry.decorations : undefined,
+          )
+        : undefined
     const fusedWeb =
       entry.execution.fusedLane === "body"
-        ? this.buildFusedBodyWeb(() => entry)
+        ? this.buildFusedBodyWeb(fusedBody as FusedBodyRunner)
         : entry.execution.fusedLane === "query"
           ? this.buildFusedQueryWeb(
               entry.handler,
@@ -1495,7 +1547,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       ...route,
       entry: {
         ...entry,
-        execution: Object.freeze({ ...entry.execution, fusedWeb }),
+        execution: Object.freeze({ ...entry.execution, fusedWeb, fusedBody }),
       },
     }
   }
@@ -1643,10 +1695,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * Like {@link fetch}, but renders a plain-data result **without** building a Web `Response` - the
    * `@nifrajs/node` adapter serializes the returned primitives straight to the socket, skipping the undici
    * `Response` build + body drain (the bulk of the Node bridge cost, measured ≈4µs/req). A handler that
-   * returns a `Response`, an error/short-circuit, or any registered `onResponse` hook falls back to the
-   * full Web path (`{ kind: "response" }`), so behavior is identical - only the common JSON-data case is
-   * faster. Same lifecycle as {@link fetch} (body cap, validation, hooks all run); only the final
-   * render differs.
+   * returns a `Response`, an error/short-circuit, or a response hook that replaces/consumes the buffered
+   * body stays on the full Web path; an in-place response hook can still use the direct writer. Same
+   * lifecycle as {@link fetch} (body cap, validation, hooks all run); only the final render differs.
    */
   resolveNode(req: Request, platform?: Platform<EnvOf<Ctx>>): MaybePromise<NodeServeOutcome> {
     return this.resolveNodeSource(req, platform)
@@ -1657,13 +1708,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     platform?: Platform<EnvOf<Ctx>>,
     suppliedRuntime?: NodeOutcomeRuntime,
   ): MaybePromise<NodeServeOutcome> {
-    // onResponse hooks transform a Response, and the capacity gate wraps the Web response path - both
-    // force the Web path here (the gated `fetchSource` admits/sheds/releases); wrap its result.
-    if (
-      this.onResponseHooks.length > 0 ||
-      this.onResponseFinalizedHooks.length > 0 ||
-      this.capacityGate !== undefined
-    ) {
+    // A paired header-only native hook can preserve the Node-direct JSON/body outcome for successful
+    // responses. Arbitrary onResponse transforms need a real Web Response, but a buffered outcome can
+    // be materialized with a direct-write marker and return to the socket path when the hook mutates
+    // it in place. Finalization observers and the capacity gate still wrap the complete Web path.
+    const nativeResponseHooks = this.canUseNodeResponseHooks()
+    const webResponseHooks = this.onResponseHooks.length > 0 && !nativeResponseHooks
+    if (this.onResponseFinalizedHooks.length > 0 || this.capacityGate !== undefined) {
       const response = this.fetchSource(source, platform)
       return response instanceof Promise
         ? response.then((settled) => ({ kind: "response", response: settled }))
@@ -1679,7 +1730,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         "resolveNode() needs the Node-direct renderer. Normal @nifrajs/node serving installs it automatically; direct callers should add `.use(nodeDirect())` (from `@nifrajs/core/node-direct`).",
       )
     }
-    return this.dispatch<NodeServeOutcome>(
+    const outcome = this.dispatch<NodeServeOutcome>(
       source,
       platform,
       runtime.toOutcome,
@@ -1687,6 +1738,105 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       runtime.timeout,
       false,
     )
+    if (webResponseHooks) {
+      return outcome instanceof Promise
+        ? outcome.then((settled) => this.finishNodeWebResponse(settled, source, runtime))
+        : this.finishNodeWebResponse(outcome, source, runtime)
+    }
+    if (!nativeResponseHooks) return outcome
+    return outcome instanceof Promise
+      ? outcome.then((settled) => this.finishNodeResponse(settled, source, runtime))
+      : this.finishNodeResponse(outcome, source, runtime)
+  }
+
+  /** Run generic Web response middleware while retaining direct writes for untouched buffered bodies. */
+  private finishNodeWebResponse(
+    outcome: NodeServeOutcome,
+    source: RequestSource,
+    runtime: NodeOutcomeRuntime,
+  ): MaybePromise<NodeServeOutcome> {
+    const req = this.takeResponseRequest(source)
+    const response = runtime.toResponse(outcome)
+    const transformed = this.applyOnResponseAndFinalize(response, req)
+    return transformed instanceof Promise
+      ? transformed.then(runtime.fromResponse)
+      : runtime.fromResponse(transformed)
+  }
+
+  /** True only when every transforming Web response hook has a header-only Node equivalent. */
+  private canUseNodeResponseHooks(): boolean {
+    if (this.onResponseHooks.length === 0) return false
+    if (this.onNodeResponseHooks.length !== this.onResponseHooks.length) return false
+    for (const hook of this.onNodeResponseHooks) {
+      if (hook === undefined) return false
+    }
+    return true
+  }
+
+  /** Apply paired native hooks to data outcomes; preserve the complete Web hook pipeline for Response outcomes. */
+  private finishNodeResponse(
+    outcome: NodeServeOutcome,
+    source: RequestSource,
+    runtime: NodeOutcomeRuntime,
+  ): MaybePromise<NodeServeOutcome> {
+    if (outcome.kind === "response") {
+      const req = this.takeResponseRequest(source)
+      const transformed = this.applyOnResponseAndFinalize(outcome.response, req)
+      return transformed instanceof Promise
+        ? transformed.then(runtime.fromResponse)
+        : runtime.fromResponse(transformed)
+    }
+
+    const context: NodeResponseContext = {
+      status: outcome.status,
+      headers: outcome.headers as Record<string, string | readonly string[]> | undefined,
+      cookies: outcome.kind === "json" ? outcome.cookies : undefined,
+    }
+    const applied = this.applyNodeResponseHooks(context, this.takeNodeResponseRequest(source))
+    if (applied instanceof Promise) {
+      return applied.then(() => this.withNodeResponseHeaders(outcome, context))
+    }
+    return this.withNodeResponseHeaders(outcome, context)
+  }
+
+  private withNodeResponseHeaders(
+    outcome: Exclude<NodeServeOutcome, { kind: "response" }>,
+    context: NodeResponseContext,
+  ): NodeServeOutcome {
+    const outcomeCookies = outcome.kind === "json" ? outcome.cookies : undefined
+    if (context.headers === outcome.headers && context.cookies === outcomeCookies) return outcome
+    if (outcome.kind === "json") {
+      return {
+        ...outcome,
+        headers: context.headers as Readonly<Record<string, string>> | undefined,
+        cookies: context.cookies,
+      }
+    }
+    return { ...outcome, headers: context.headers }
+  }
+
+  /** Synchronous until a native response hook actually returns a Promise. */
+  private applyNodeResponseHooks(
+    response: NodeResponseContext,
+    req: NodeRequestContext,
+  ): MaybePromise<void> {
+    for (let i = 0; i < this.onNodeResponseHooks.length; i++) {
+      const hook = this.onNodeResponseHooks[i] as NodeResponseHook
+      const result = hook(response, req)
+      if (result instanceof Promise)
+        return result.then(() => this.continueNodeResponseHooks(i + 1, response, req))
+    }
+  }
+
+  private async continueNodeResponseHooks(
+    start: number,
+    response: NodeResponseContext,
+    req: NodeRequestContext,
+  ): Promise<void> {
+    for (let i = start; i < this.onNodeResponseHooks.length; i++) {
+      const hook = this.onNodeResponseHooks[i] as NodeResponseHook
+      await hook(response, req)
+    }
   }
 
   /**
@@ -1817,7 +1967,72 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     if (this.onRequestHooks.length === 0) {
       return this.routeAndRun(source, resolved, finalize, wrapResponse, onTimeout, webFast)
     }
+    if (!webFast && this.canUseNodeRequestHooks()) {
+      return this.runWithNodeRequest(source, resolved, finalize, wrapResponse, onTimeout)
+    }
     return this.runWithOnRequest(source, resolved, finalize, wrapResponse, onTimeout, webFast)
+  }
+
+  /** Node-native request hook walk. A header-only hook can inspect the lazy source without forcing a
+   * Web `Request`; arbitrary request rewrites and full Web hooks use {@link runWithOnRequest}. */
+  private runWithNodeRequest<T>(
+    source: RequestSource,
+    platform: Platform | undefined,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+    onTimeout: () => T,
+  ): MaybePromise<T> {
+    const hooks = this.onNodeRequestHooks
+    const request = source as unknown as NodeRequestContext
+    for (let i = 0; i < hooks.length; i++) {
+      const hook = hooks[i] as NodeRequestHook
+      const outcome = hook(request, platform)
+      if (outcome instanceof Promise) {
+        return outcome.then((early) =>
+          this.continueNodeRequest(
+            early,
+            i + 1,
+            request,
+            source,
+            platform,
+            finalize,
+            wrapResponse,
+            onTimeout,
+          ),
+        )
+      }
+      if (outcome !== undefined) return wrapResponse(outcome)
+    }
+    return this.routeAndRun(source, platform, finalize, wrapResponse, onTimeout, false)
+  }
+
+  private async continueNodeRequest<T>(
+    first: Response | undefined,
+    nextIndex: number,
+    request: NodeRequestContext,
+    source: RequestSource,
+    platform: Platform | undefined,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+    onTimeout: () => T,
+  ): Promise<T> {
+    if (first !== undefined) return wrapResponse(first)
+    for (let i = nextIndex; i < this.onNodeRequestHooks.length; i++) {
+      const hook = this.onNodeRequestHooks[i] as NodeRequestHook
+      const outcome = hook(request, platform)
+      const early = outcome instanceof Promise ? await outcome : outcome
+      if (early !== undefined) return wrapResponse(early)
+    }
+    return this.routeAndRun(source, platform, finalize, wrapResponse, onTimeout, false)
+  }
+
+  private canUseNodeRequestHooks(): boolean {
+    if (this.onRequestHooks.length === 0) return false
+    if (this.onNodeRequestHooks.length !== this.onRequestHooks.length) return false
+    for (const hook of this.onNodeRequestHooks) {
+      if (hook === undefined) return false
+    }
+    return true
   }
 
   /**
@@ -1837,6 +2052,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   ): MaybePromise<T> {
     const hooks = this.onRequestHooks
     const originalRequest = requestOf(source)
+    this.responseSources.set(source as object, originalRequest)
     let current: RequestSource = source
     for (let i = 0; i < hooks.length; i++) {
       const outcome = (hooks[i] as RawOnRequest)(requestOf(current), platform)
@@ -1897,11 +2113,38 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   }
 
   private takeResponseRequest(source: RequestSource): Request {
+    const tracked = this.responseSources.get(source as object)
+    if (tracked !== undefined) {
+      this.responseSources.delete(source as object)
+      const rewritten = this.responseRequests.get(tracked)
+      if (rewritten !== undefined) {
+        this.responseRequests.delete(tracked)
+        return rewritten
+      }
+      return tracked
+    }
     const request = requestOf(source)
     const rewritten = this.responseRequests.get(request)
     if (rewritten === undefined) return request
     this.responseRequests.delete(request)
     return rewritten
+  }
+
+  /** Preserve the request visible to generic onRequest hooks for paired native response hooks. */
+  private takeNodeResponseRequest(source: RequestSource): NodeRequestContext {
+    const tracked = this.responseSources.get(source as object)
+    if (tracked !== undefined) {
+      this.responseSources.delete(source as object)
+      const rewritten = this.responseRequests.get(tracked)
+      if (rewritten !== undefined) {
+        this.responseRequests.delete(tracked)
+        return { method: rewritten.method, header: (name) => rewritten.headers.get(name) }
+      }
+      return { method: tracked.method, header: (name) => tracked.headers.get(name) }
+    }
+    if (source.header !== undefined) return source as unknown as NodeRequestContext
+    const request = requestOf(source)
+    return { method: request.method, header: (name) => request.headers.get(name) }
   }
 
   /**
@@ -2050,18 +2293,30 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
             platform,
             false,
           ) as MaybePromise<T>)
-        : plan.run(
-            this,
-            entry,
-            source,
-            params,
-            search,
-            signal,
-            budget,
-            platform,
-            finalize,
-            wrapResponse,
-          )
+        : !webFast && plan.fusedBody !== undefined
+          ? plan.fusedBody(
+              source,
+              params,
+              search,
+              signal,
+              budget,
+              platform,
+              false,
+              finalize,
+              wrapResponse,
+            )
+          : plan.run(
+              this,
+              entry,
+              source,
+              params,
+              search,
+              signal,
+              budget,
+              platform,
+              finalize,
+              wrapResponse,
+            )
     // The request timeout only bounds work that is actually pending - a synchronous (bare) result is
     // already complete and can't time out, so it's returned as-is (no 503 race, no promise).
     if (controller !== undefined && outcome instanceof Promise) {
@@ -2272,23 +2527,130 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
   }
 
-  /** The fused Web body lane keeps bounded parsing + Standard Schema validation in the established
-   * body-only implementation, but finalizes successful handler values with the native fused
-   * responder. Node-direct deliberately does not use this lane; it has its own socket serializer. */
-  private buildFusedBodyWeb(entryOf: () => RouteEntry): FusedWebRunner {
-    return (source, params, search, signal, budget, platform, nativeContext) => {
+  /** Compile the eligible body-only route's parser → validator → handler continuation once. The
+   * bounded parser remains shared with the generic lane; only the route-invariant entry lookups and
+   * lifecycle dispatch disappear from the common synchronous-validator/synchronous-handler case. */
+  private buildFusedBodyRunner(
+    handler: InternalHandler,
+    bodySchema: StandardSchemaV1,
+    decorations: Record<PropertyKey, unknown> | undefined,
+  ): FusedBodyRunner {
+    const logError = <T>(
+      err: unknown,
+      ctx: RawContext,
+      wrapResponse: (response: Response) => T,
+    ): T => this.bareError(err, ctx, wrapResponse)
+
+    const runHandler = <T>(
+      ctx: RawContext,
+      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+      wrapResponse: (response: Response) => T,
+    ): MaybePromise<T> => {
+      if (decorations !== undefined) Object.assign(ctx, decorations)
+      let output: MaybePromise<HandlerResult>
+      try {
+        output = handler(ctx)
+      } catch (err) {
+        return logError(err, ctx, wrapResponse)
+      }
+      if (output instanceof Promise) {
+        return output.then(
+          (result) => {
+            try {
+              return finalize(result, responseSet(ctx), ctx)
+            } catch (err) {
+              return logError(err, ctx, wrapResponse)
+            }
+          },
+          (err) => logError(err, ctx, wrapResponse),
+        )
+      }
+      try {
+        return finalize(output, responseSet(ctx), ctx)
+      } catch (err) {
+        return logError(err, ctx, wrapResponse)
+      }
+    }
+
+    const runValidated = <T>(
+      result: StandardResult<unknown>,
+      ctx: RawContext,
+      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+      wrapResponse: (response: Response) => T,
+    ): MaybePromise<T> => {
+      if (result.issues !== undefined) return wrapResponse(validationError(result.issues))
+      ctx.body = result.value
+      return runHandler(ctx, finalize, wrapResponse)
+    }
+
+    const runParsed = <T>(
+      parsed: unknown,
+      ctx: RawContext,
+      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+      wrapResponse: (response: Response) => T,
+    ): MaybePromise<T> => {
+      let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
+      try {
+        validation = bodySchema["~standard"].validate(parsed)
+      } catch (err) {
+        return logError(err, ctx, wrapResponse)
+      }
+      if (validation instanceof Promise) {
+        return validation.then(
+          (settled) => {
+            try {
+              return runValidated(settled, ctx, finalize, wrapResponse)
+            } catch (err) {
+              return logError(err, ctx, wrapResponse)
+            }
+          },
+          (err) => logError(err, ctx, wrapResponse),
+        )
+      }
+      try {
+        return runValidated(validation, ctx, finalize, wrapResponse)
+      } catch (err) {
+        return logError(err, ctx, wrapResponse)
+      }
+    }
+
+    return <T>(
+      source: RequestSource,
+      params: Record<string, string>,
+      search: string | undefined,
+      signal: AbortSignal,
+      budget: RequestBudget,
+      platform: Platform | undefined,
+      nativeContext: boolean,
+      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+      wrapResponse: (response: Response) => T,
+    ): MaybePromise<T> => {
       const ctx = nativeContext
         ? RequestContext.native(source, params, this.maxBodyBytes)
         : new RequestContext(source, params, search, signal, budget, platform, this.maxBodyBytes)
-      const entry = entryOf()
-      return this.runBodyOnly(
-        entry,
-        source,
-        ctx,
-        (result) => fusedRespond(result, ctx),
-        IDENTITY_RESPONSE,
+      const finish = (value: unknown): MaybePromise<T> =>
+        runParsed(value, ctx, finalize, wrapResponse)
+      return this.readBodyInput(source, finish, wrapResponse, (err) =>
+        logError(err, ctx, wrapResponse),
       )
     }
+  }
+
+  /** Web adapter wrapper for the shared body runner. Node passes its native finalizer directly through
+   * the execution plan, while Web needs the live context to preserve lazy `c.set` controls. */
+  private buildFusedBodyWeb(body: FusedBodyRunner): FusedWebRunner {
+    return (source, params, search, signal, budget, platform, nativeContext) =>
+      body(
+        source,
+        params,
+        search,
+        signal,
+        budget,
+        platform,
+        nativeContext,
+        (result, _set, ctx) => fusedRespond(result, ctx),
+        IDENTITY_RESPONSE,
+      ) as MaybePromise<Response>
   }
 
   /** The fused Web lane for a route whose only lifecycle step is a query schema: parse + validate +
@@ -2398,25 +2760,35 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     finalize: (result: unknown, set: CtxSet) => T,
     wrapResponse: (response: Response) => T,
   ): Promise<T> {
+    return this.readBodyInput(
+      source,
+      (parsed) => this.finishBodyOnly(entry, parsed, ctx, finalize, wrapResponse),
+      wrapResponse,
+      (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+    )
+  }
+
+  /** Shared bounded body framing/parser. Both body lanes use the same trust-boundary checks; only
+   * the validation + handler continuation differs. */
+  private readBodyInput<T>(
+    source: RequestSource,
+    onParsed: (parsed: unknown) => MaybePromise<T>,
+    wrapResponse: (response: Response) => T,
+    onError: (err: unknown) => MaybePromise<T>,
+  ): Promise<T> {
     const contentType = headerOf(source, "content-type") ?? ""
     if (contentType !== "application/json" && !contentType.includes("application/json")) {
       if (isUrlEncodedForm(contentType)) {
-        // HTML form posts validate through the same schema as JSON (parity with Elysia/Hono).
-        // Off the JSON inline lane on purpose: forms are a fraction of API traffic, and the
-        // bounded form reader shares the streaming guard. JSON requests are untouched.
-        return readBoundedForm(source, this.maxBodyBytes).then((form) => {
-          if (form instanceof Response) return wrapResponse(form)
-          return this.finishBodyOnly(entry, form, ctx, finalize, wrapResponse) as Promise<T> | T
-        }) as Promise<T>
+        return readBoundedForm(source, this.maxBodyBytes).then(
+          (form) => (form instanceof Response ? wrapResponse(form) : onParsed(form)),
+          onError,
+        ) as Promise<T>
       }
       return Promise.resolve(wrapResponse(jsonError(415, "unsupported_media_type")))
     }
 
-    // Inline fast path (profiled): a framed, in-cap, non-chunked body parses with the native
-    // `req.json()` directly - one promise, one `.then` closure per request. The generic
-    // `readBoundedJson` (an extra async-fn frame + per-request `finish`/`applyValidation`
-    // closures) is kept for the chunked / length-less / oversized cases it exists for.
-    // Semantics are identical to readBoundedJsonSource - same checks, same error codes.
+    // A framed, in-cap, non-chunked body can use native json() directly. Chunked or length-less
+    // bodies use readBoundedJson, which enforces the streaming cap before parsing.
     const declared = headerOf(source, "content-length")
     if (declared !== null) {
       const length = parseContentLength(declared)
@@ -2427,25 +2799,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         return Promise.resolve(wrapResponse(jsonError(413, "payload_too_large")))
       }
       if (headerOf(source, "transfer-encoding") === null) {
-        return source.json().then(
-          (parsed) => this.finishBodyOnly(entry, parsed, ctx, finalize, wrapResponse),
-          // Native json() rejection = malformed JSON; anything past parse goes through
-          // finishBodyOnly's own error handling.
-          () => wrapResponse(jsonError(400, "invalid_json")),
-        )
+        return source.json().then(onParsed, () => wrapResponse(jsonError(400, "invalid_json")))
       }
     }
 
     try {
       return this.readBoundedJson(source).then(
-        (parsed) => {
-          if (parsed instanceof Response) return wrapResponse(parsed)
-          return this.finishBodyOnly(entry, parsed, ctx, finalize, wrapResponse)
-        },
-        (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+        (parsed) => (parsed instanceof Response ? wrapResponse(parsed) : onParsed(parsed)),
+        onError,
       )
     } catch (err) {
-      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
+      return Promise.resolve(onError(err))
     }
   }
 
@@ -2719,14 +3083,18 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     response: Response,
     error: unknown,
     req: Request,
-  ): Promise<never> | never {
+  ): Promise<never> {
     const notified = this.notifyResponseFinalized({ response, error }, req)
     if (notified instanceof Promise) {
       return notified.then(() => {
         throw error
       })
     }
-    throw error
+    // A hook failure must surface as a REJECTION even when every prior step ran synchronously:
+    // `fetch()` may now resolve without a promise, but its failure contract stays promise-shaped -
+    // a synchronous throw here would escape `Promise.resolve(app.fetch(...))` bridges and
+    // `.then()`-style callers entirely instead of reaching their rejection handling.
+    return Promise.reject(error)
   }
 
   /** Notify terminal observers in order while isolating both sync and async failures. */
@@ -2797,107 +3165,425 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * Generic over the render: a success value goes through `finalize(result, set)` (a Web `Response`, or
    * node-direct primitives); an early/error `Response` (validation, thrown, 500) through `wrapResponse`.
    */
-  private async runLifecycle<T>(
+  /** Synchronous until a validator, lifecycle hook, handler, or contract check actually returns a Promise. */
+  private runLifecycle<T>(
     entry: RouteEntry,
     source: RequestSource,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
     wrapResponse: (response: Response) => T,
-  ): Promise<T> {
+  ): MaybePromise<T> {
     try {
-      if (entry.schema?.params !== undefined) {
-        // Path params arrive as strings from routing; validate (and coerce) them at the boundary, before
-        // the body/query, so a malformed `:id` is a 422 before any work runs. Raw `.validate` (no wrapper
-        // alloc), same recovery-hook path as body/query.
-        const validation = entry.schema.params["~standard"].validate(ctx.params)
-        const result = validation instanceof Promise ? await validation : validation
-        const paramsError = await this.applyLifecycleValidation(entry, result, ctx, "params")
-        if (paramsError !== undefined) return wrapResponse(paramsError)
-      }
-      if (entry.schema?.body !== undefined) {
-        const bodyError = await this.readAndValidateBody(source, entry, ctx)
-        if (bodyError !== undefined) return wrapResponse(bodyError)
-      }
-      if (entry.schema?.query !== undefined) {
-        // Repeated query keys promote to `string[]` (so an array schema validates `?a=1&a=2`); a
-        // single occurrence stays a string. Raw `.validate` (read `.issues`/`.value`) skips the
-        // validateStandard wrapper alloc.
-        const validation = entry.schema.query["~standard"].validate(
-          queryObjectOf(ctx[CONTEXT_SEARCH]),
+      const paramsSchema = entry.schema?.params
+      if (paramsSchema !== undefined) {
+        const validation = paramsSchema["~standard"].validate(ctx.params)
+        if (validation instanceof Promise) {
+          return validation.then(
+            (result) =>
+              this.runLifecycleAfterParamsResult(
+                entry,
+                source,
+                ctx,
+                finalize,
+                wrapResponse,
+                result,
+              ),
+            (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+          )
+        }
+        return this.runLifecycleAfterParamsResult(
+          entry,
+          source,
+          ctx,
+          finalize,
+          wrapResponse,
+          validation,
         )
-        const result = validation instanceof Promise ? await validation : validation
-        const queryError = await this.applyLifecycleValidation(entry, result, ctx, "query")
-        if (queryError !== undefined) return wrapResponse(queryError)
       }
-
-      // Context extensions: static decorations, then per-request derives.
-      // Each hook below only awaits when it actually returns a Promise - a sync hook
-      // skips the microtask tick (a fast-path; ~64 ns/hook).
-      if (entry.hasDecorations) Object.assign(ctx, entry.decorations) // skip the no-op on bare routes
-      // The `.length` guards skip iterator setup for the common no-hook route (most
-      // routes have neither derives nor before/after hooks); a hooked route pays only
-      // the length check.
-      if (entry.derives.length > 0) {
-        for (const derive of entry.derives) {
-          const extension = derive(ctx)
-          Object.assign(ctx, extension instanceof Promise ? await extension : extension)
-        }
+      // Registration already knows whether this route has body/params/query validation. Most real
+      // read routes have no body or params schema, so skip the generic stage ladder and go straight to
+      // query validation + lifecycle hooks. The fallback below remains the complete path for routes
+      // with body/params combinations and validation recovery.
+      if (entry.schema?.body === undefined) {
+        return this.runQueryAndLifecycle(entry, ctx, finalize, wrapResponse)
       }
-
-      // beforeHandle: a non-undefined return short-circuits, skipping the handler.
-      if (entry.beforeHandle.length > 0) {
-        for (const hook of entry.beforeHandle) {
-          const outcome = hook(ctx)
-          const early = outcome instanceof Promise ? await outcome : outcome
-          if (early !== undefined) return finalize(early, responseSet(ctx))
-        }
-      }
-
-      const handlerOutput = entry.handler(ctx)
-      let result = handlerOutput instanceof Promise ? await handlerOutput : handlerOutput
-
-      // afterHandle: transform the result before serialization.
-      if (entry.afterHandle.length > 0) {
-        for (const hook of entry.afterHandle) {
-          const transformed = hook(result, ctx)
-          result = transformed instanceof Promise ? await transformed : transformed
-        }
-      }
-
-      // The response contract is checked LAST, after afterHandle, so it holds what actually ships
-      // rather than what the handler happened to return. Only reached by a contracted route: the
-      // registration decision above kept those off the fused/native lanes for exactly this step.
-      const contract = entry.responseContract
-      if (contract !== undefined) {
-        const checked = contract.runtime.check(contract.schema, result)
-        const outcome = checked instanceof Promise ? await checked : checked
-        if (outcome.kind === "violation") {
-          // The handler broke a contract it declared itself, so this is a server fault, not the
-          // caller's. Fail closed: the undeclared payload is never sent, and the detail goes to the
-          // (redacting) logger rather than to the client.
-          this.logger.error("response contract violation", {
-            method: ctx.req.method,
-            path: pathnameOf(ctx.req.url),
-            // `detail`, not `message`: the logger uses `message` for its own first argument, so a
-            // field of that name is silently overwritten and the diagnosis disappears.
-            detail: outcome.message,
-          })
-          return wrapResponse(jsonError(500, "internal_error"))
-        }
-        if (outcome.kind === "warn") {
-          this.logger.warn("response contract", {
-            method: ctx.req.method,
-            path: pathnameOf(ctx.req.url),
-            detail: outcome.message,
-          })
-        }
-        result = outcome.value
-      }
-
-      return finalize(result, responseSet(ctx))
+      return this.runLifecycleAfterParams(entry, source, ctx, finalize, wrapResponse, undefined)
     } catch (err) {
       return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
     }
+  }
+
+  /** Registration-specialized no-body lifecycle: query validation (if present) → derives/hooks. */
+  private runQueryAndLifecycle<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+  ): MaybePromise<T> {
+    const querySchema = entry.schema?.query
+    if (querySchema === undefined) return this.runLifecycleHooks(entry, ctx, finalize, wrapResponse)
+    const validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
+    if (validation instanceof Promise) {
+      return validation.then(
+        (result) => {
+          try {
+            return this.runQueryAndLifecycleResult(entry, ctx, finalize, wrapResponse, result)
+          } catch (err) {
+            return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
+          }
+        },
+        (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+      )
+    }
+    return this.runQueryAndLifecycleResult(entry, ctx, finalize, wrapResponse, validation)
+  }
+
+  private runQueryAndLifecycleResult<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+    result: StandardResult<unknown>,
+  ): MaybePromise<T> {
+    const queryError = this.applyLifecycleValidation(entry, result, ctx, "query")
+    if (queryError instanceof Promise) {
+      return queryError.then(
+        (error) =>
+          error === undefined
+            ? this.runLifecycleHooks(entry, ctx, finalize, wrapResponse)
+            : wrapResponse(error),
+        (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+      )
+    }
+    if (queryError !== undefined) return wrapResponse(queryError)
+    return this.runLifecycleHooks(entry, ctx, finalize, wrapResponse)
+  }
+
+  private runLifecycleAfterParamsResult<T>(
+    entry: RouteEntry,
+    source: RequestSource,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+    result: StandardResult<unknown>,
+  ): MaybePromise<T> {
+    try {
+      return this.runLifecycleAfterParams(
+        entry,
+        source,
+        ctx,
+        finalize,
+        wrapResponse,
+        this.applyLifecycleValidation(entry, result, ctx, "params"),
+      )
+    } catch (err) {
+      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
+    }
+  }
+
+  private runLifecycleAfterParams<T>(
+    entry: RouteEntry,
+    source: RequestSource,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+    paramsError: MaybePromise<Response | undefined>,
+  ): MaybePromise<T> {
+    if (paramsError instanceof Promise) {
+      return paramsError.then(
+        (error) =>
+          this.runLifecycleAfterParamsSettled(entry, source, ctx, finalize, wrapResponse, error),
+        (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+      )
+    }
+    return this.runLifecycleAfterParamsSettled(
+      entry,
+      source,
+      ctx,
+      finalize,
+      wrapResponse,
+      paramsError,
+    )
+  }
+
+  private runLifecycleAfterParamsSettled<T>(
+    entry: RouteEntry,
+    source: RequestSource,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+    paramsError: Response | undefined,
+  ): MaybePromise<T> {
+    if (paramsError !== undefined) return wrapResponse(paramsError)
+    if (entry.schema?.body !== undefined) {
+      return this.readAndValidateBody(source, entry, ctx).then(
+        (bodyError) => this.runLifecycleAfterBody(entry, ctx, finalize, wrapResponse, bodyError),
+        (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+      )
+    }
+    return this.runLifecycleAfterBody(entry, ctx, finalize, wrapResponse, undefined)
+  }
+
+  private runLifecycleAfterBody<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+    bodyError: Response | undefined,
+  ): MaybePromise<T> {
+    if (bodyError !== undefined) return wrapResponse(bodyError)
+    const querySchema = entry.schema?.query
+    if (querySchema === undefined) return this.runLifecycleHooks(entry, ctx, finalize, wrapResponse)
+    const validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
+    if (validation instanceof Promise) {
+      return validation.then(
+        (result) => this.runLifecycleAfterQueryResult(entry, ctx, finalize, wrapResponse, result),
+        (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+      )
+    }
+    return this.runLifecycleAfterQueryResult(entry, ctx, finalize, wrapResponse, validation)
+  }
+
+  private runLifecycleAfterQueryResult<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+    result: StandardResult<unknown>,
+  ): MaybePromise<T> {
+    try {
+      const queryError = this.applyLifecycleValidation(entry, result, ctx, "query")
+      if (queryError instanceof Promise) {
+        return queryError.then(
+          (error) => this.runLifecycleAfterQuery(entry, ctx, finalize, wrapResponse, error),
+          (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+        )
+      }
+      return this.runLifecycleAfterQuery(entry, ctx, finalize, wrapResponse, queryError)
+    } catch (err) {
+      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
+    }
+  }
+
+  private runLifecycleAfterQuery<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+    queryError: Response | undefined,
+  ): MaybePromise<T> {
+    if (queryError !== undefined) return wrapResponse(queryError)
+    return this.runLifecycleHooks(entry, ctx, finalize, wrapResponse)
+  }
+
+  private runLifecycleHooks<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+  ): MaybePromise<T> {
+    try {
+      if (entry.hasDecorations) Object.assign(ctx, entry.decorations)
+      for (let i = 0; i < entry.derives.length; i++) {
+        const extension = entry.derives[i]!(ctx)
+        if (extension instanceof Promise) {
+          return this.continueLifecycleAfterDerive(entry, ctx, finalize, wrapResponse, i, extension)
+        }
+        Object.assign(ctx, extension)
+      }
+      for (let i = 0; i < entry.beforeHandle.length; i++) {
+        const outcome = entry.beforeHandle[i]!(ctx)
+        if (outcome instanceof Promise) {
+          return this.continueLifecycleAfterBefore(entry, ctx, finalize, wrapResponse, i, outcome)
+        }
+        if (outcome !== undefined) return finalize(outcome, responseSet(ctx))
+      }
+      const result = entry.handler(ctx)
+      if (result instanceof Promise) {
+        return result.then(
+          (value) => this.finishLifecycleResult(entry, ctx, finalize, wrapResponse, value),
+          (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+        )
+      }
+      return this.finishLifecycleResult(entry, ctx, finalize, wrapResponse, result)
+    } catch (err) {
+      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
+    }
+  }
+
+  private async continueLifecycleAfterDerive<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+    firstIndex: number,
+    first: Promise<unknown>,
+  ): Promise<T> {
+    try {
+      Object.assign(ctx, await first)
+      for (let i = firstIndex + 1; i < entry.derives.length; i++) {
+        const extension = entry.derives[i]!(ctx)
+        Object.assign(ctx, extension instanceof Promise ? await extension : extension)
+      }
+      return await this.runLifecycleHooksAsync(entry, ctx, finalize, wrapResponse)
+    } catch (err) {
+      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
+    }
+  }
+
+  private async runLifecycleHooksAsync<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+  ): Promise<T> {
+    try {
+      for (const hook of entry.beforeHandle) {
+        const outcome = hook(ctx)
+        const early = outcome instanceof Promise ? await outcome : outcome
+        if (early !== undefined) return finalize(early, responseSet(ctx))
+      }
+      return await this.runLifecycleHandlerAsync(entry, ctx, finalize, wrapResponse)
+    } catch (err) {
+      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
+    }
+  }
+
+  private async continueLifecycleAfterBefore<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+    firstIndex: number,
+    first: Promise<unknown>,
+  ): Promise<T> {
+    try {
+      const firstOutcome = await first
+      if (firstOutcome !== undefined) return finalize(firstOutcome, responseSet(ctx))
+      for (let i = firstIndex + 1; i < entry.beforeHandle.length; i++) {
+        const outcome = entry.beforeHandle[i]!(ctx)
+        const early = outcome instanceof Promise ? await outcome : outcome
+        if (early !== undefined) return finalize(early, responseSet(ctx))
+      }
+      return await this.runLifecycleHandlerAsync(entry, ctx, finalize, wrapResponse)
+    } catch (err) {
+      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
+    }
+  }
+
+  private async runLifecycleHandlerAsync<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+  ): Promise<T> {
+    try {
+      const output = entry.handler(ctx)
+      const result = output instanceof Promise ? await output : output
+      return await this.finishLifecycleResult(entry, ctx, finalize, wrapResponse, result)
+    } catch (err) {
+      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
+    }
+  }
+
+  private finishLifecycleResult<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+    initial: unknown,
+  ): MaybePromise<T> {
+    try {
+      let result = initial
+      for (let i = 0; i < entry.afterHandle.length; i++) {
+        const transformed = entry.afterHandle[i]!(result, ctx)
+        if (transformed instanceof Promise) {
+          return this.continueLifecycleAfterHandle(
+            entry,
+            ctx,
+            finalize,
+            wrapResponse,
+            i,
+            transformed,
+          )
+        }
+        result = transformed
+      }
+      return this.finishLifecycleContract(entry, ctx, finalize, wrapResponse, result)
+    } catch (err) {
+      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
+    }
+  }
+
+  private async continueLifecycleAfterHandle<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+    firstIndex: number,
+    first: Promise<unknown>,
+  ): Promise<T> {
+    try {
+      let result = await first
+      for (let i = firstIndex + 1; i < entry.afterHandle.length; i++) {
+        const transformed = entry.afterHandle[i]!(result, ctx)
+        result = transformed instanceof Promise ? await transformed : transformed
+      }
+      return await this.finishLifecycleContract(entry, ctx, finalize, wrapResponse, result)
+    } catch (err) {
+      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
+    }
+  }
+
+  private finishLifecycleContract<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+    result: unknown,
+  ): MaybePromise<T> {
+    try {
+      const contract = entry.responseContract
+      if (contract === undefined) return finalize(result, responseSet(ctx))
+      const checked = contract.runtime.check(contract.schema, result)
+      if (checked instanceof Promise) {
+        return checked.then(
+          (outcome) => this.finishContractOutcome(ctx, finalize, wrapResponse, outcome),
+          (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+        )
+      }
+      return this.finishContractOutcome(ctx, finalize, wrapResponse, checked)
+    } catch (err) {
+      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
+    }
+  }
+
+  private finishContractOutcome<T>(
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+    outcome: {
+      readonly kind: "ok" | "warn" | "violation"
+      readonly value?: unknown
+      readonly message?: string
+    },
+  ): T {
+    if (outcome.kind === "violation") {
+      this.logger.error("response contract violation", {
+        method: ctx.req.method,
+        path: pathnameOf(ctx.req.url),
+        detail: outcome.message,
+      })
+      return wrapResponse(jsonError(500, "internal_error"))
+    }
+    if (outcome.kind === "warn") {
+      this.logger.warn("response contract", {
+        method: ctx.req.method,
+        path: pathnameOf(ctx.req.url),
+        detail: outcome.message,
+      })
+    }
+    return finalize(outcome.value, responseSet(ctx))
   }
 
   private async handleLifecycleError<T>(
@@ -2966,12 +3652,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
 
   /** Apply validation and its recovery hook on the generic lifecycle lane. Recovery is completed
    * before derives/beforeHandle run, matching the body-only and query-only execution lanes. */
-  private async applyLifecycleValidation(
+  private applyLifecycleValidation(
     entry: RouteEntry,
     result: StandardResult<unknown>,
     ctx: RawContext,
     kind: "body" | "query" | "params",
-  ): Promise<Response | undefined> {
+  ): MaybePromise<Response | undefined> {
     const assign = (value: unknown): void => {
       if (kind === "body") ctx.body = value
       else if (kind === "query") ctx.query = value
@@ -2984,8 +3670,22 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     const hook = entry.schema?.onValidationError ?? this.defaultOnValidationError
     if (hook === undefined) return validationError(result.issues)
     const attempted = hook(result.issues, ctx as unknown as Context, kind)
-    const recovery = attempted instanceof Promise ? await attempted : attempted
-    if (recovery === undefined) return validationError(result.issues)
+    if (attempted instanceof Promise) {
+      return attempted.then((recovery) =>
+        this.finishLifecycleValidationRecovery(entry, kind, result.issues!, recovery, assign),
+      )
+    }
+    return this.finishLifecycleValidationRecovery(entry, kind, result.issues, attempted, assign)
+  }
+
+  private finishLifecycleValidationRecovery(
+    entry: RouteEntry,
+    kind: "body" | "query" | "params",
+    issues: ReadonlyArray<StandardIssue>,
+    recovery: unknown,
+    assign: (value: unknown) => void,
+  ): MaybePromise<Response | undefined> {
+    if (recovery === undefined) return validationError(issues)
     if (recovery instanceof Response) return recovery
     const schema =
       kind === "body"
@@ -2994,9 +3694,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           ? entry.schema?.query
           : entry.schema?.params
     const retried = schema!["~standard"].validate(recovery)
-    const settled = retried instanceof Promise ? await retried : retried
-    if (settled.issues !== undefined) return validationError(settled.issues)
-    assign(settled.value)
+    if (retried instanceof Promise) {
+      return retried.then((settled) => {
+        if (settled.issues !== undefined) return validationError(settled.issues)
+        assign(settled.value)
+        return undefined
+      })
+    }
+    if (retried.issues !== undefined) return validationError(retried.issues)
+    assign(retried.value)
     return undefined
   }
 

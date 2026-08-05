@@ -62,6 +62,7 @@ export type ContextRouteRunner = <T, R extends Registry, Ctx>(
 export interface RouteExecutionPlan {
   readonly run: RouteExecutionRunner
   readonly fusedWeb: FusedWebRunner | undefined
+  readonly fusedBody: FusedBodyRunner | undefined
   /** Which builder produced {@link fusedWeb} - a merge rebinds the closure to the executing server
    * and must rebuild it with the SAME semantics (a query-fused route rebuilt as bare would skip its
    * validation). `undefined` iff `fusedWeb` is. */
@@ -108,3 +109,17 @@ export type FusedWebRunner = (
   platform: Platform | undefined,
   nativeContext: boolean,
 ) => MaybePromise<Response>
+
+/** Registration-compiled body lane. The finalizer receives the live context so Web can preserve lazy
+ * response controls while Node can emit its native outcome directly. */
+export type FusedBodyRunner = <T>(
+  source: RequestSource,
+  params: Record<string, string>,
+  search: string | undefined,
+  signal: AbortSignal,
+  budget: RequestBudget,
+  platform: Platform | undefined,
+  nativeContext: boolean,
+  finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
+  wrapResponse: (response: Response) => T,
+) => MaybePromise<T>

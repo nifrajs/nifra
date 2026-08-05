@@ -1,5 +1,5 @@
 import type { Middleware } from "@nifrajs/core/server"
-import type { MaybePromise } from "./_utils.ts"
+import { type MaybePromise, withHeaders } from "./_utils.ts"
 
 export interface CachedResponse {
   readonly status: number
@@ -174,9 +174,7 @@ function withStatusHeader(
   status: "HIT" | "MISS" | "BYPASS",
 ): Response {
   if (header === false) return res
-  const headers = new Headers(res.headers)
-  headers.set(header, status)
-  return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
+  return withHeaders(res, (headers) => headers.set(header, status))
 }
 
 /**

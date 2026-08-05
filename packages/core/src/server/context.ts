@@ -213,6 +213,8 @@ export interface Context<Path extends string = string, S extends RouteSchema = R
    * everywhere (no more `c.req` vs `ctx.request` mismatch).
    */
   readonly request: Request
+  /** Read one request header without materializing a Web `Request` on the Node adapter hot path. */
+  readonly header: (name: string) => string | null
   readonly params: ParamsOf<S, Path>
   readonly query: QueryOf<S>
   readonly body: BodyOf<S>

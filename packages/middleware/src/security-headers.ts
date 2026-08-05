@@ -1,6 +1,6 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import type { Middleware } from "@nifrajs/core/server"
-import { withHeaders } from "./_utils.ts"
+import { withHeaders, withNodeHeaders } from "./_utils.ts"
 
 export interface SecurityHeadersOptions {
   /** `Strict-Transport-Security`. Off by default - opt in once you're sure you're HTTPS-only. */
@@ -48,6 +48,14 @@ export function securityHeaders(options: SecurityHeadersOptions = {}): Middlewar
           headers.set("Referrer-Policy", referrerPolicy)
           if (hstsValue !== undefined) headers.set("Strict-Transport-Security", hstsValue)
           if (csp !== undefined) headers.set("Content-Security-Policy", csp)
+        }),
+      onNodeResponse: (res) =>
+        withNodeHeaders(res, (headers) => {
+          headers["x-content-type-options"] = "nosniff"
+          headers["x-frame-options"] = frameOptions
+          headers["referrer-policy"] = referrerPolicy
+          if (hstsValue !== undefined) headers["strict-transport-security"] = hstsValue
+          if (csp !== undefined) headers["content-security-policy"] = csp
         }),
     },
     {

@@ -6,8 +6,11 @@ import {
   NIFRA_BACKEND_MOUNT,
 } from "@nifrajs/core/mount"
 import {
+  assertTransportTextBounded,
   createTransportCodecRegistry,
   decodeTransportResponse,
+  decodeTransportText,
+  defaultTransportCodecs,
   plainJsonCodec,
   readBoundedBytes,
   type TransportCodec,
@@ -28,6 +31,9 @@ const HTTP_VERBS: ReadonlySet<string> = new Set([
   "options",
 ])
 const BODY_VERBS: ReadonlySet<string> = new Set(["post", "put", "patch"])
+
+/** Marks a fetcher whose responses are same-process objects (see {@link inProcessClient}). */
+const LOCAL_FETCH = Symbol("nifra.local-fetch")
 
 /**
  * The fetch shape the client needs - looser than `typeof fetch` so an in-process bridge or a
@@ -103,8 +109,14 @@ export interface ClientOptions {
   }
 }
 
-const DEFAULT_RETRY_STATUSES: readonly number[] = [502, 503, 504]
-const IDEMPOTENT_METHODS: readonly string[] = ["GET", "HEAD", "OPTIONS", "PUT", "DELETE"]
+const DEFAULT_RETRY_STATUS_SET: ReadonlySet<number> = new Set([502, 503, 504])
+const DEFAULT_IDEMPOTENT_SET: ReadonlySet<string> = new Set([
+  "GET",
+  "HEAD",
+  "OPTIONS",
+  "PUT",
+  "DELETE",
+])
 
 function defaultBackoff(attempt: number): number {
   return Math.min(300 * 2 ** (attempt - 1), 3000) + Math.random() * 100
@@ -118,6 +130,8 @@ function delay(ms: number): Promise<void> {
 
 /** Combine a per-call signal with a timeout into one signal; also returns the timeout signal so the
  * caller can tell a timeout abort from a caller abort. */
+const NO_SIGNAL: { signal?: AbortSignal | undefined; timeout?: AbortSignal | undefined } = {}
+
 function buildSignal(
   userSignal: AbortSignal | undefined,
   timeoutMs: number | undefined,
@@ -126,10 +140,13 @@ function buildSignal(
     timeoutMs !== undefined && typeof AbortSignal.timeout === "function"
       ? AbortSignal.timeout(timeoutMs)
       : undefined
-  const parts = [userSignal, timeout].filter((s): s is AbortSignal => s !== undefined)
-  if (parts.length === 0) return {}
-  if (parts.length === 1) return { signal: parts[0], timeout }
-  const signal = typeof AbortSignal.any === "function" ? AbortSignal.any(parts) : parts[0]
+  if (timeout === undefined) {
+    // The no-signal, no-timeout call is the overwhelming default; it shares one frozen-shape result.
+    return userSignal === undefined ? NO_SIGNAL : { signal: userSignal, timeout }
+  }
+  if (userSignal === undefined) return { signal: timeout, timeout }
+  const signal =
+    typeof AbortSignal.any === "function" ? AbortSignal.any([userSignal, timeout]) : userSignal
   return { signal, timeout }
 }
 
@@ -206,6 +223,11 @@ export function inProcessClient<
   // is the platform-aware auto-mount path.
   const direct: FetchFn = (url, init) => Promise.resolve(app.fetch(new Request(url, init)))
   const bridge = options?.validateResponses === true ? withResponseValidation(app, direct) : direct
+  // Mark the bridge as same-process: its response bodies are memory the app already holds, so
+  // `parseBody` may use the native `Response.text()` read (measured ~23x cheaper than the streaming
+  // byte-cap reader) - the cap itself is still enforced on the result. Network fetchers are never
+  // marked; they keep the bounded-while-streaming read.
+  ;(bridge as { [LOCAL_FETCH]?: true })[LOCAL_FETCH] = true
   const mount: BackendMountHandler = (request, platform) =>
     Promise.resolve((app.fetch as BackendMountHandler)(request, platform))
   // NO_SOCKET marks the options so a typed `.ws()` call fails with a real explanation - an
@@ -242,39 +264,27 @@ export function inProcessClient<
  */
 export const testClient = inProcessClient
 
-function createProxy(base: string, path: string, options: ClientOptions): unknown {
+function createProxy(
+  base: string,
+  path: string,
+  options: ClientOptions,
+  cacheable = true,
+): unknown {
   const target = (): void => {}
+  // Every get-trap result is a pure function of (base, path, key, options), so a STATIC node
+  // memoizes them - `api.users` stops allocating a fresh Proxy (or verb closure) per lookup. A node
+  // below a param call (the apply trap) is created fresh per call, so caching on it would only add
+  // a Map nobody reads twice; those nodes (and their children) skip the cache entirely.
+  const children = cacheable ? new Map<string, unknown>() : undefined
   return new Proxy(target, {
     get(_target, key) {
       // `then` guard: keep an un-awaited node proxy from looking like a thenable.
       if (typeof key !== "string" || key === "then") return undefined
-      if (HTTP_VERBS.has(key.toLowerCase())) {
-        return (...args: unknown[]): Promise<Result<unknown>> =>
-          execute(base, path, key.toLowerCase(), args, options)
-      }
-      // Typed SSE subscription for `app.sse()` routes. Like `fetch` on the in-process client,
-      // `subscribe` is a reserved proxy key - a literal `/subscribe` path segment is unreachable
-      // through the typed proxy (no nifra app defines one reached this way).
-      if (key === "subscribe") {
-        return (onEvent: (event: unknown) => void, subscribeOptions?: SubscribeCallOptions) =>
-          subscribeSse(base, path, onEvent, subscribeOptions, options)
-      }
-      // Typed WebSocket handle for `app.ws()` routes - `ws` is a reserved proxy key like `subscribe`.
-      if (key === "ws") {
-        return (wsOptions?: Parameters<typeof openWebSocket>[2]) =>
-          openWebSocket(
-            base,
-            path,
-            {
-              headers: options.headers,
-              ...wsOptions,
-              ...(options.transport === undefined ? {} : { transport: options.transport }),
-            },
-            NO_SOCKET in options,
-          )
-      }
-      // `index` addresses the root path "/" and adds no segment.
-      return createProxy(base, key === "index" ? path : `${path}/${key}`, options)
+      const cached = children?.get(key)
+      if (cached !== undefined) return cached
+      const value = resolveSegment(base, path, key, options, cacheable)
+      children?.set(key, value)
+      return value
     },
     apply(_target, _thisArg, args) {
       // A param call (`api.users({ id })`): append the single value, encoded - encoding "/"
@@ -288,10 +298,47 @@ function createProxy(base: string, path: string, options: ClientOptions): unknow
         first !== null && typeof first === "object"
           ? Object.values(first as Record<string, unknown>)[0]
           : first
-      if (value === undefined || value === null) return createProxy(base, path, options)
-      return createProxy(base, `${path}/${encodeURIComponent(String(value))}`, options)
+      if (value === undefined || value === null) return createProxy(base, path, options, false)
+      return createProxy(base, `${path}/${encodeURIComponent(String(value))}`, options, false)
     },
   })
+}
+
+/** Resolve one get-trap key on a proxy node - the (memoizable) body of the `get` trap above. */
+function resolveSegment(
+  base: string,
+  path: string,
+  key: string,
+  options: ClientOptions,
+  cacheable: boolean,
+): unknown {
+  if (HTTP_VERBS.has(key.toLowerCase())) {
+    return (...args: unknown[]): Promise<Result<unknown>> =>
+      execute(base, path, key.toLowerCase(), args, options)
+  }
+  // Typed SSE subscription for `app.sse()` routes. Like `fetch` on the in-process client,
+  // `subscribe` is a reserved proxy key - a literal `/subscribe` path segment is unreachable
+  // through the typed proxy (no nifra app defines one reached this way).
+  if (key === "subscribe") {
+    return (onEvent: (event: unknown) => void, subscribeOptions?: SubscribeCallOptions) =>
+      subscribeSse(base, path, onEvent, subscribeOptions, options)
+  }
+  // Typed WebSocket handle for `app.ws()` routes - `ws` is a reserved proxy key like `subscribe`.
+  if (key === "ws") {
+    return (wsOptions?: Parameters<typeof openWebSocket>[2]) =>
+      openWebSocket(
+        base,
+        path,
+        {
+          headers: options.headers,
+          ...wsOptions,
+          ...(options.transport === undefined ? {} : { transport: options.transport }),
+        },
+        NO_SOCKET in options,
+      )
+  }
+  // `index` addresses the root path "/" and adds no segment.
+  return createProxy(base, key === "index" ? path : `${path}/${key}`, options, cacheable)
 }
 
 async function execute(
@@ -327,11 +374,16 @@ async function execute(
 
   // Safe retry: only when configured, only for idempotent methods + transient statuses, so a retry
   // can never duplicate a side effect (a POST is never retried unless the app opts its method in).
+  // The default sets are shared module singletons; per-call Sets are built only for a custom policy.
   const retry = options.retry
   const maxRetries = retry === undefined ? 0 : (retry.attempts ?? 2)
-  const retryStatuses = new Set(retry?.on ?? DEFAULT_RETRY_STATUSES)
-  const retryMethods = new Set((retry?.methods ?? IDEMPOTENT_METHODS).map((m) => m.toUpperCase()))
-  const methodRetryable = retryMethods.has(method)
+  const methodRetryable =
+    maxRetries > 0 &&
+    (retry?.methods === undefined
+      ? DEFAULT_IDEMPOTENT_SET.has(method)
+      : retry.methods.some((m) => m.toUpperCase() === method))
+  const retryStatuses: ReadonlySet<number> =
+    methodRetryable && retry?.on !== undefined ? new Set(retry.on) : DEFAULT_RETRY_STATUS_SET
   const backoff = retry?.backoff ?? defaultBackoff
   const doFetch = options.fetch ?? fetch
 
@@ -584,12 +636,20 @@ function buildQuery(query: Record<string, unknown>): string {
   return params.toString()
 }
 
+// A registry is immutable once built, so a custom codec's registry is built once per client and
+// reused - constructing one per response paid Map building and validation on every parse.
+const CUSTOM_REGISTRIES = new WeakMap<TransportCodec, TransportCodecRegistry>()
+
 function transportRegistry(options: ClientOptions): TransportCodecRegistry {
   if (options.transport?.registry !== undefined) return options.transport.registry
   const codec = options.transport?.codec
-  return codec === undefined || codec === plainJsonCodec
-    ? createTransportCodecRegistry([plainJsonCodec])
-    : createTransportCodecRegistry([plainJsonCodec, codec])
+  if (codec === undefined || codec === plainJsonCodec) return defaultTransportCodecs
+  let registry = CUSTOM_REGISTRIES.get(codec)
+  if (registry === undefined) {
+    registry = createTransportCodecRegistry([plainJsonCodec, codec])
+    CUSTOM_REGISTRIES.set(codec, registry)
+  }
+  return registry
 }
 
 /**
@@ -640,6 +700,10 @@ function isPayloadTooLarge(cause: unknown): boolean {
   )
 }
 
+// Shared lenient decoder for the streamed textual path (whole-buffer decode is stateless; building
+// a TextDecoder per response cost ~115ns).
+const LENIENT_UTF8 = new TextDecoder()
+
 async function parseBody(response: Response, options: ClientOptions): Promise<unknown> {
   if (response.status === 204) return undefined
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? ""
@@ -651,10 +715,24 @@ async function parseBody(response: Response, options: ClientOptions): Promise<un
   // the transport path, so an app that set it there keeps the number it chose.
   const decodedBytes = options.transport?.maxBytes ?? options.maxDecodedBytes
   const bound = decodedBytes === undefined ? {} : { maxBytes: decodedBytes }
+  // In-process responses (the marked fetcher) hold their body as same-process memory the app
+  // already allocated, so the streaming byte-cap reader protects nothing there - the native read
+  // is ~23x cheaper and the SAME cap is enforced on the result (identical error). A network
+  // fetcher is never marked and keeps the bounded-while-streaming read.
+  const local =
+    (options.fetch as { readonly [LOCAL_FETCH]?: true } | undefined)?.[LOCAL_FETCH] === true
   if (
     contentType.startsWith("application/json") ||
     contentType.startsWith("application/vnd.nifra.")
   ) {
+    if (local) {
+      return decodeTransportText(
+        await response.text(),
+        response.headers.get("content-type"),
+        transportRegistry(options),
+        bound,
+      )
+    }
     return await decodeTransportResponse(response, transportRegistry(options), bound)
   }
   // A binary body comes back as a Blob rather than through `.text()`. Decoding bytes as UTF-8 does not
@@ -666,7 +744,13 @@ async function parseBody(response: Response, options: ClientOptions): Promise<un
   // Bounded with the same reader JSON uses, but decoded leniently: `.text()` substitutes U+FFFD for a
   // malformed sequence and callers have always seen that, so tightening to a fatal decode here would
   // turn working text responses into failures for a reason nobody asked about.
-  const text = new TextDecoder().decode(await readBoundedBytes(response, bound))
+  let text: string
+  if (local) {
+    text = await response.text() // native lenient decode - same U+FFFD substitution semantics
+    assertTransportTextBounded(text, bound)
+  } else {
+    text = LENIENT_UTF8.decode(await readBoundedBytes(response, bound))
+  }
   if (text === "") return undefined
   try {
     return JSON.parse(text)

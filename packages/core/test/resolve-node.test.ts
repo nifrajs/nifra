@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { cacheControl } from "@nifrajs/middleware"
 import { server, silentLogger } from "../src/index.ts"
 import { nodeDirect } from "../src/node-direct.ts"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "../src/schema/standard.ts"
@@ -9,7 +10,8 @@ import type { StandardResult, StandardSchemaV1, StandardTypes } from "../src/sch
  * (`{ kind: "json" }`) instead of building + draining an undici `Response`. The `@nifrajs/node` adapter
  * writes those primitives straight to the socket. Everything that isn't the common JSON-data case -
  * a handler-returned `Response`, 404/405, validation/malformed error, thrown Response, 500, timeout,
- * or any `onResponse` hook - falls back to a `{ kind: "response" }` the adapter writes the Web way.
+ * or a response hook that replaces/consumes the body - falls back to a `{ kind: "response" }` the
+ * adapter writes the Web way. In-place header hooks retain the direct buffered writer.
  *
  * These tests pin (a) the discriminated outcome for each path and (b) byte-for-byte parity with
  * `app.fetch` - the fast path must be observably identical on the wire, only cheaper.
@@ -138,6 +140,67 @@ describe("resolveNode - JSON-data fast path", () => {
     expect(outcome.kind).toBe("json")
     if (outcome.kind !== "json") throw new Error("unreachable")
     expect(outcome.body).toBe(JSON.stringify({ created: "Ada" }))
+  })
+
+  test("a Web onRequest hook that continues keeps the Node-direct response renderer", async () => {
+    let seen: Request | undefined
+    const app = server()
+      .use(nodeDirect())
+      .onRequest((request) => {
+        seen = request
+        expect(request.headers.get("authorization")).toBe("Bearer test")
+        return undefined
+      })
+      .get("/data", () => ({ ok: true }))
+
+    const request = req("/data", { headers: { authorization: "Bearer test" } })
+    const outcome = await app.resolveNode(request)
+    expect(seen).toBe(request)
+    expect(outcome.kind).toBe("json")
+    if (outcome.kind !== "json") throw new Error("unreachable")
+    expect(outcome.body).toBe(JSON.stringify({ ok: true }))
+  })
+
+  test("a Web onRequest rewrite still reaches the Node-direct renderer", async () => {
+    const app = server()
+      .use(nodeDirect())
+      .onRequest((request) => new Request(request, { method: "PATCH" }))
+      .patch("/data", (context) => ({ method: context.req.method }))
+
+    const outcome = await app.resolveNode(req("/data", { method: "POST" }))
+    expect(outcome.kind).toBe("json")
+    if (outcome.kind !== "json") throw new Error("unreachable")
+    expect(outcome.body).toBe(JSON.stringify({ method: "PATCH" }))
+  })
+
+  test("a rewritten request remains visible to an in-place response hook", async () => {
+    const app = server()
+      .use(nodeDirect())
+      .onRequest((request) => new Request(request, { method: "PUT" }))
+      .onResponse((response, request) => {
+        response.headers.set("x-seen-method", request.method)
+        return response
+      })
+      .put("/data", () => ({ ok: true }))
+
+    const outcome = await app.resolveNode(req("/data", { method: "POST" }))
+    expect(outcome.kind).toBe("body")
+    if (outcome.kind !== "body") throw new Error("unreachable")
+    expect(outcome.headers?.["x-seen-method"]).toBe("PUT")
+    expect(outcome.body).toBe(JSON.stringify({ ok: true }))
+  })
+
+  test("a native response hook sees a Web onRequest method rewrite", async () => {
+    const app = server()
+      .use(nodeDirect())
+      .onRequest((request) => new Request(request, { method: "PUT" }))
+      .use(cacheControl("private", { methods: ["PUT"] }))
+      .put("/data", () => ({ ok: true }))
+
+    const outcome = await app.resolveNode(req("/data", { method: "POST" }))
+    expect(outcome.kind).toBe("json")
+    if (outcome.kind !== "json") throw new Error("unreachable")
+    expect(outcome.headers?.["cache-control"]).toBe("private")
   })
 })
 
@@ -331,7 +394,7 @@ describe("resolveNode - fallback to a Response", () => {
     expect(await outcome.response.json()).toEqual({ ok: false, error: "request_timeout" })
   })
 
-  test("an onResponse hook forces the Web path even for plain JSON data", async () => {
+  test("a response-replacing onResponse hook stays on the Web path", async () => {
     let ran = false
     const app = server()
       .use(nodeDirect())
@@ -348,6 +411,22 @@ describe("resolveNode - fallback to a Response", () => {
     if (outcome.kind !== "response") throw new Error("unreachable")
     expect(outcome.response.headers.get("x-app")).toBe("seen")
     expect(await outcome.response.json()).toEqual({ ok: true })
+  })
+
+  test("an in-place Web onResponse hook keeps a buffered body on the Node path", async () => {
+    const app = server()
+      .use(nodeDirect())
+      .onResponse((response) => {
+        response.headers.set("x-app", "seen")
+        return response
+      })
+      .get("/data", () => ({ ok: true }))
+
+    const outcome = await app.resolveNode(req("/data"))
+    expect(outcome.kind).toBe("body")
+    if (outcome.kind !== "body") throw new Error("unreachable")
+    expect(outcome.headers?.["x-app"]).toBe("seen")
+    expect(outcome.body).toBe(JSON.stringify({ ok: true }))
   })
 })
 

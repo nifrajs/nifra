@@ -6,13 +6,18 @@
  * `resolveNode()` callers do. Same `.use()` install seam as `mcp()` / `idempotency()`.
  */
 import { INSTALL_NODE_DIRECT } from "./server/install.ts"
-import { nodeOutcomeFromResponse, toNodeOutcome } from "./server/node-outcome.ts"
+import {
+  nodeOutcomeFromResponse,
+  nodeOutcomeToResponse,
+  toNodeOutcome,
+} from "./server/node-outcome.ts"
 import type { NodeOutcomeRuntime } from "./server/node-outcome-hook.ts"
 import type { IdentityPlugin } from "./server/plugin.ts"
 import type { AnyServer } from "./server/server.ts"
 
 const NODE_OUTCOME_RUNTIME: NodeOutcomeRuntime = {
   toOutcome: toNodeOutcome,
+  toResponse: nodeOutcomeToResponse,
   fromResponse: nodeOutcomeFromResponse,
   timeout: () => ({
     kind: "response",
