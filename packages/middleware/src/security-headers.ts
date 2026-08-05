@@ -1,6 +1,5 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import type { Middleware } from "@nifrajs/core/server"
-import { withHeaders, withNodeHeaders } from "./_utils.ts"
 
 export interface SecurityHeadersOptions {
   /** `Strict-Transport-Security`. Off by default - opt in once you're sure you're HTTPS-only. */
@@ -39,24 +38,15 @@ export function securityHeaders(options: SecurityHeadersOptions = {}): Middlewar
   return withRouteAssurance<Middleware>(
     {
       name: "security-headers",
-      // Mutate in place on the common (mutable-headers) response; clone only for an immutable one
-      // (see withHeaders - the old always-clone was ~3% of a realistic request).
-      onResponse: (res) =>
-        withHeaders(res, (headers) => {
-          headers.set("X-Content-Type-Options", "nosniff")
-          headers.set("X-Frame-Options", frameOptions)
-          headers.set("Referrer-Policy", referrerPolicy)
-          if (hstsValue !== undefined) headers.set("Strict-Transport-Security", hstsValue)
-          if (csp !== undefined) headers.set("Content-Security-Policy", csp)
-        }),
-      onNodeResponse: (res) =>
-        withNodeHeaders(res, (headers) => {
-          headers["x-content-type-options"] = "nosniff"
-          headers["x-frame-options"] = frameOptions
-          headers["referrer-policy"] = referrerPolicy
-          if (hstsValue !== undefined) headers["strict-transport-security"] = hstsValue
-          if (csp !== undefined) headers["content-security-policy"] = csp
-        }),
+      // One portable header hook: runs against the response's own Headers on Web runtimes and the
+      // outcome record on the Node direct writer - no clone, no per-runtime twin.
+      onResponseHeaders: (headers) => {
+        headers.set("x-content-type-options", "nosniff")
+        headers.set("x-frame-options", frameOptions)
+        headers.set("referrer-policy", referrerPolicy)
+        if (hstsValue !== undefined) headers.set("strict-transport-security", hstsValue)
+        if (csp !== undefined) headers.set("content-security-policy", csp)
+      },
     },
     {
       id: NIFRA_ASSURANCE.SECURITY_HEADERS,

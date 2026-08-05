@@ -1,10 +1,5 @@
-import {
-  definePlugin,
-  type Middleware,
-  type NodeRequestContext,
-  type NodeResponseContext,
-} from "@nifrajs/core/server"
-import { hasNodeHeader, withHeaders, withNodeHeaders } from "./_utils.ts"
+import { definePlugin, type Middleware } from "@nifrajs/core/server"
+import { withHeaders } from "./_utils.ts"
 
 export interface CacheControlOptions {
   /** Methods whose responses get the header. Default `["GET", "HEAD"]`. */
@@ -37,29 +32,28 @@ export function cacheControl(
   const respectExisting = options.respectExisting !== false
   const resolve = typeof value === "function" ? value : () => value
   return definePlugin("cacheControl", (app) => {
-    // A fixed directive has no request-dependent work, so the Node adapter can apply it directly to
-    // plain outcomes. Dynamic directives keep the full Request contract and use the adaptive Web lane.
-    const middleware: Middleware = {
-      onResponse(res, req) {
-        if (!methods.has(req.method)) return res
-        if (!statusOk(res.status)) return res
-        if (respectExisting && res.headers.has("cache-control")) return res
-        const directive = resolve(req)
-        if (directive === undefined) return res
-        return withHeaders(res, (headers) => headers.set("cache-control", directive))
-      },
-      ...(typeof value === "string"
+    // A fixed directive needs nothing from the request beyond the method, so it ships as one
+    // portable header hook. A dynamic directive's resolver takes a real `Request`, which only the
+    // Web response walk carries - it keeps the full `onResponse` contract (and its cost).
+    const middleware: Middleware =
+      typeof value === "string"
         ? {
-            onNodeResponse: (res: NodeResponseContext, req: NodeRequestContext) => {
-              if (!methods.has(req.method) || !statusOk(res.status)) return
-              if (respectExisting && hasNodeHeader(res.headers, "cache-control")) return
-              withNodeHeaders(res, (headers) => {
-                headers["cache-control"] = value
-              })
+            onResponseHeaders(headers, req, status) {
+              if (!methods.has(req.method) || !statusOk(status)) return
+              if (respectExisting && headers.has("cache-control")) return
+              headers.set("cache-control", value)
             },
           }
-        : {}),
-    }
+        : {
+            onResponse(res, req) {
+              if (!methods.has(req.method)) return res
+              if (!statusOk(res.status)) return res
+              if (respectExisting && res.headers.has("cache-control")) return res
+              const directive = resolve(req)
+              if (directive === undefined) return res
+              return withHeaders(res, (headers) => headers.set("cache-control", directive))
+            },
+          }
     return app.use(middleware)
   })
 }

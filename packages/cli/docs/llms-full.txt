@@ -1578,72 +1578,58 @@ const app = server()
   .use(rateLimit({ store: new MemoryStore(), max: 100, windowMs: 60_000 }))
 ```
 
-### Node twins: keep header middleware on the direct writer
+### Header middleware: one portable hook, fast everywhere
 
-On Bun and Deno, `Request`/`Response` are the runtime's native objects,
-so Web hooks are free. On Node, running a Web hook means **materializing those objects per
-request** just so the hook can call `.headers.get()`. A middleware whose hook only
-reads or writes **headers** can ship a paired _Node twin_ -
-`onNodeRequest` / `onNodeResponse` - that runs against the raw request
-and the plain outcome record instead, keeping the Node adapter on its direct socket writer:
+Most response middleware only reads or writes **headers** - security headers, CORS
+reflection, cache directives, negotiation. For that shape, prefer
+`onResponseHeaders` over `onResponse`: it receives a mutable
+case-insensitive header view, a minimal request view (`{ method, url, header(name) }`),
+and the status. One implementation runs on every runtime - on Bun/Deno inside the normal
+response walk against the response's own `Headers` (in place, no clone), and on
+Node against the outcome's plain header record on the **direct socket writer**, without
+ever materializing Web `Request`/`Response` objects:
 
 ```ts
 import type { Middleware } from "@nifrajs/core/server"
 
-// A header-only middleware, portable everywhere - with a Node twin so the Node
-// adapter can apply it without building Web Request/Response objects.
+// ONE implementation, fast on every runtime: on Bun/Deno it mutates the
+// response's own Headers in place; on Node it writes the outcome record on the
+// direct socket writer - no Web Request/Response is ever built for it.
 export function serverName(value: string): Middleware {
   return {
-    onResponse(res) {
-      res.headers.set("server", value)
-      return res
-    },
-    // Same header semantics against the plain outcome record. Used only on Node,
-    // and only when EVERY response hook in the app ships a twin.
-    onNodeResponse(res) {
-      res.headers ??= {}
-      res.headers.server = value
+    onResponseHeaders(headers, req, status) {
+      if (status < 500) headers.set("server", value)
     },
   }
 }
 ```
 
--
-**The Web hook stays the source of truth.** A twin is only valid _paired_ with its
-Web hook (registering one alone throws), Bun/Deno/tests always run the Web version, and the
-two must be semantically identical - the twin is an optimization, never a fork.
+Why this matters on Node: a full `onResponse(res: Response)` hook needs real Web
+objects, and building them costs several microseconds per request - registering even one
+drops a realistic Node app from ~95% to ~70% of a raw `node:http` server's
+throughput (it was worse before the lazy bridge below). `onResponseHeaders` never
+pays that: the built-ins that use it (`cors`, `securityHeaders`,
+`poweredBy`, static `cacheControl`, `language`) keep the
+direct writer at full speed.
 
 -
-`onNodeRequest(req)` sees `{ method, header(name) }`. It may
-short-circuit with a `Response` (e.g. a CORS preflight `204`) but
-cannot rewrite the request.
+**It cannot replace the response or touch the body.** Middleware that must (an ETag
+hash, compression, a body rewrite) keeps the full `onResponse` contract and its
+cost - on Node, such a response is bridged through a lazy spec-shaped Response that
+materializes headers and body machinery only when the hook actually touches them.
 
 -
-`onNodeResponse(res, req)` sees `{ status, headers, cookies }` and
-may only add or change **headers** (write lowercase names). Body or status transforms
-belong on the Web hook - a middleware that needs them simply ships no twin.
+**Advanced - native twins:** a middleware that needs per-request state or a native
+preflight short-circuit can pair its Web hooks with
+`onNodeRequest`/`onNodeResponse` twins (that is how
+`rateLimit` and `logger` stay native: the same context object reaches
+both twins, so a `WeakMap` keyed on it carries state across the request). Twins
+are all-or-nothing per app on Node and must stay semantically identical to their Web
+hooks; `onResponseHeaders` needs none of this.
 
 -
-**All-or-nothing per app:** Node uses the twins only when _every_
-`onResponse` hook in the app carries one. One twin-less hook and the whole app
-takes the Web materialization path - on the realistic Node benchmark that is the difference
-between ~95% and ~60% of a raw `node:http` server's throughput, so if your app is
-Node-hot, give your custom header middleware a twin.
-
--
-**Per-request state:** the same context object is passed to a middleware's request twin
-and its response twin, so twins carry state across the request with a
-`WeakMap` keyed on it - that is how `rateLimit` hands its quota from
-the request side to the response headers.
-
--
-Built-ins shipping twins today: `cors`, `securityHeaders`,
-`poweredBy`, `cacheControl` (static directive), `rateLimit`
-(built-in key derivation; a custom `key` callback needs a real
-`Request`), `logger`, and `language`. Body-transforming
-middleware (`etag`, `compression`, `prettyJson`,
-`cache`) cannot twin by design, and `timing` stays Web-only for now
-(its `c.timing` metric channel crosses the handler lifecycle).
+`timing` stays Web-only for now (its `c.timing` metric channel
+crosses the handler lifecycle).
 
 ### Official plugins
 
@@ -7743,17 +7729,17 @@ const app = server()
 - **`requestId()` / `logger()` / `etag()` / `compression()` / `cacheControl()` /
   `idempotency()` / `healthcheck()` / `openapi()`** - additional operational middleware for APIs.
 
-## Node twins (`onNodeRequest` / `onNodeResponse`)
+## Header middleware: `onResponseHeaders`
 
-A middleware whose hook only reads/writes **headers** can pair its Web hook with a Node twin, letting
-the Node adapter apply it on the direct socket writer instead of materializing Web
-`Request`/`Response` objects per request. `cors`, `securityHeaders`, `poweredBy`, static
-`cacheControl`, `rateLimit` (built-in key derivation), `logger`, and `language` ship twins;
-body-transforming middleware (`etag`, `compression`, `prettyJson`, `cache`) cannot by design, and
-`timing` stays Web-only for now. Twins are all-or-nothing per app on Node - one twin-less
-`onResponse` hook and every response takes the Web path - so if your app is Node-hot, give custom
-header middleware a twin too (see the [plugins guide](https://nifra.dev/docs/plugins) for the
-contract, including the per-request state pattern the same-context identity enables).
+A middleware whose response hook only reads/writes **headers** should use the portable
+`onResponseHeaders` hook - one implementation, fast on every runtime: it mutates the response's own
+`Headers` on Bun/Deno and the outcome record on Node's direct socket writer, never materializing Web
+`Request`/`Response` objects. `cors`, `securityHeaders`, `poweredBy`, static `cacheControl`, and
+`language` are built on it. Stateful middleware (`rateLimit` with the built-in key derivation,
+`logger`) pairs full native twins (`onNodeRequest`/`onNodeResponse`) instead; body-transforming
+middleware (`etag`, `compression`, `prettyJson`, `cache`) keeps the full `onResponse` contract, and
+`timing` stays Web-only for now. See the [plugins guide](https://nifra.dev/docs/plugins) for the
+contracts.
 
 Request timeouts are configured at the core server boundary so they can abort `c.signal` and race the
 whole lifecycle:

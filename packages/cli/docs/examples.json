@@ -276,12 +276,6 @@
     "code": "import { server } from \"@nifrajs/core/server\"\nimport { cors, rateLimit, securityHeaders, MemoryStore } from \"@nifrajs/middleware\"\n\n// Hardening middleware is a hook bundle (context-agnostic) - same app.use():\nconst app = server()\n  .use(securityHeaders())\n  .use(cors({ origin: [\"https://app.example\"] }))\n  // MemoryStore is dev/single-instance only - use a shared store (Redis, etc.) in production.\n  .use(rateLimit({ store: new MemoryStore(), max: 100, windowMs: 60_000 }))"
   },
   {
-    "name": "NODE_TWIN",
-    "topic": "Nifra - Plugins & middleware",
-    "slug": "plugins",
-    "code": "import type { Middleware } from \"@nifrajs/core/server\"\n\n// A header-only middleware, portable everywhere - with a Node twin so the Node\n// adapter can apply it without building Web Request/Response objects.\nexport function serverName(value: string): Middleware {\n  return {\n    onResponse(res) {\n      res.headers.set(\"server\", value)\n      return res\n    },\n    // Same header semantics against the plain outcome record. Used only on Node,\n    // and only when EVERY response hook in the app ships a twin.\n    onNodeResponse(res) {\n      res.headers ??= {}\n      res.headers.server = value\n    },\n  }\n}"
-  },
-  {
     "name": "OFFICIAL",
     "topic": "Nifra - Plugins & middleware",
     "slug": "plugins",
@@ -292,6 +286,12 @@
     "topic": "Nifra - Plugins & middleware",
     "slug": "plugins",
     "code": "import { server } from \"@nifrajs/core/server\"\nimport { compression, cacheControl } from \"@nifrajs/middleware\"\n\nconst app = server()\n  .use(compression())                                  // gzip compressible responses (Accept-Encoding)\n  .use(cacheControl(\"public, max-age=60\"))             // Cache-Control on GET/HEAD 2xx (won't clobber)\n  // …or a per-path policy - return undefined to leave a response untouched:\n  .use(cacheControl((req) =>\n    new URL(req.url).pathname.startsWith(\"/assets/\")\n      ? \"public, max-age=31536000, immutable\"\n      : undefined))"
+  },
+  {
+    "name": "PORTABLE_HOOK",
+    "topic": "Nifra - Plugins & middleware",
+    "slug": "plugins",
+    "code": "import type { Middleware } from \"@nifrajs/core/server\"\n\n// ONE implementation, fast on every runtime: on Bun/Deno it mutates the\n// response's own Headers in place; on Node it writes the outcome record on the\n// direct socket writer - no Web Request/Response is ever built for it.\nexport function serverName(value: string): Middleware {\n  return {\n    onResponseHeaders(headers, req, status) {\n      if (status < 500) headers.set(\"server\", value)\n    },\n  }\n}"
   },
   {
     "name": "RELIABILITY",

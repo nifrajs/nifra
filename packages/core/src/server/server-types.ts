@@ -9,7 +9,7 @@ import type { Method } from "../router/router.ts"
 import type { ClientIpTrust } from "./client-ip.ts"
 import type { Context, Platform, RouteSchema } from "./context.ts"
 import type { Logger } from "./logger.ts"
-import type { NodeRequestHook, NodeResponseHook } from "./node-outcome-hook.ts"
+import type { NodeRequestHook, NodeResponseHook, ResponseHeadersHook } from "./node-outcome-hook.ts"
 import type { MaybePromise, OnRequestResult } from "./server.ts"
 
 /**
@@ -200,6 +200,14 @@ export interface Middleware {
    * continue through the Web Response path.
    */
   readonly onNodeResponse?: NodeResponseHook
+  /**
+   * PORTABLE header-only response hook - the recommended shape when the middleware only reads or
+   * writes headers. One implementation runs on every runtime: inside the Web `onResponse` walk
+   * against the response's own `Headers`, and on Node as a self-paired native hook against the
+   * outcome record - so it never forces the Node adapter off its direct writer. Use `onResponse` +
+   * an optional `onNodeResponse` twin only when the hook must see a real `Response`.
+   */
+  readonly onResponseHeaders?: ResponseHeadersHook
   readonly onResponseFinalized?: (outcome: ResponseFinalization, req: Request) => MaybePromise<void>
   readonly onError?: (error: unknown, context: Context) => MaybePromise<unknown>
 }

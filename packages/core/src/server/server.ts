@@ -55,12 +55,15 @@ import { type ClientIpTrust, resolveClientIp } from "./client-ip.ts"
 import type { Context, Platform, ResponseControls, RouteSchema } from "./context.ts"
 import { jsonError, pathnameOf, type UrlParts, urlPartsOf } from "./http.ts"
 import type { NodeServeOutcome } from "./node-outcome.ts"
-import type {
-  NodeOutcomeRuntime,
-  NodeRequestContext,
-  NodeRequestHook,
-  NodeResponseContext,
-  NodeResponseHook,
+import {
+  type NodeOutcomeRuntime,
+  type NodeRequestContext,
+  type NodeRequestHook,
+  type NodeResponseContext,
+  type NodeResponseHook,
+  type ResponseHeadersHook,
+  type ResponseHeadersView,
+  recordHeadersView,
 } from "./node-outcome-hook.ts"
 import {
   isUrlEncodedForm,
@@ -93,6 +96,37 @@ export type {
   NodeResponseContext,
   NodeResponseHook,
   NodeServeOutcome,
+  ResponseHeadersHook,
+  ResponseHeadersView,
+}
+
+/** Minimal request view over a Web `Request` for portable header hooks on the Web serving paths. */
+function webRequestView(req: Request): NodeRequestContext {
+  return { method: req.method, url: req.url, header: (name) => req.headers.get(name) }
+}
+
+/**
+ * Adapt a portable {@link ResponseHeadersHook} into the Web `onResponse` walk: run it against the
+ * response's own `Headers` in place (no clone). A response whose headers are GUARDED (a raw
+ * `fetch()`ed Response returned by a handler) throws on the FIRST mutation, so nothing was applied
+ * yet - rerun once against a mutable copy. Async hooks should perform their mutations before their
+ * first await for the guard fallback to cover them.
+ */
+function webResponseHeadersHook(
+  fn: ResponseHeadersHook,
+): (response: Response, req: Request) => MaybePromise<Response> {
+  return (response, req) => {
+    const view = webRequestView(req)
+    try {
+      const out = fn(response.headers, view, response.status)
+      return out instanceof Promise ? out.then(() => response) : response
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error
+      const clone = new Response(response.body, response)
+      const out = fn(clone.headers, view, clone.status)
+      return out instanceof Promise ? out.then(() => clone) : clone
+    }
+  }
 }
 
 import type { IdempotencyRuntime } from "./idempotency-lane.ts"
@@ -642,6 +676,25 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return this
   }
 
+  /**
+   * Register a PORTABLE header-only response hook - one implementation, fast on every runtime.
+   *
+   * The hook receives a mutable case-insensitive header view, a minimal request view, and the
+   * status. On the Web serving paths it runs inside the normal `onResponse` walk against the
+   * response's own `Headers` (mutating in place - no clone). On Node it self-pairs as a native
+   * response hook against the outcome's plain header record, so registering one NEVER forces the
+   * Node adapter off its direct socket writer the way a full `onResponse(res: Response)` hook does.
+   * Prefer this over `onResponse` whenever the middleware only reads/writes headers.
+   */
+  onResponseHeaders(fn: ResponseHeadersHook): this {
+    this.assertConfigurable("onResponseHeaders()")
+    this.onResponseHooks.push(webResponseHeadersHook(fn))
+    this.onNodeResponseHooks.push((response, req) =>
+      fn(recordHeadersView(response), req, response.status),
+    )
+    return this
+  }
+
   /** Observe the terminal response after all transformations. Observers are ordered and fail-open. */
   onResponseFinalized(
     fn: (outcome: ResponseFinalization, req: Request) => MaybePromise<void>,
@@ -724,6 +777,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     } else if (arg.onNodeResponse !== undefined) {
       throw new TypeError("onNodeResponse() requires a paired onResponse() hook")
     }
+    if (arg.onResponseHeaders !== undefined) this.onResponseHeaders(arg.onResponseHeaders)
     if (arg.onResponseFinalized !== undefined) this.onResponseFinalized(arg.onResponseFinalized)
     if (arg.onError !== undefined) this.onError(arg.onError)
     return this

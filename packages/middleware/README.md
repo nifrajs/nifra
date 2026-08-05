@@ -69,17 +69,17 @@ const app = server()
 - **`requestId()` / `logger()` / `etag()` / `compression()` / `cacheControl()` /
   `idempotency()` / `healthcheck()` / `openapi()`** - additional operational middleware for APIs.
 
-## Node twins (`onNodeRequest` / `onNodeResponse`)
+## Header middleware: `onResponseHeaders`
 
-A middleware whose hook only reads/writes **headers** can pair its Web hook with a Node twin, letting
-the Node adapter apply it on the direct socket writer instead of materializing Web
-`Request`/`Response` objects per request. `cors`, `securityHeaders`, `poweredBy`, static
-`cacheControl`, `rateLimit` (built-in key derivation), `logger`, and `language` ship twins;
-body-transforming middleware (`etag`, `compression`, `prettyJson`, `cache`) cannot by design, and
-`timing` stays Web-only for now. Twins are all-or-nothing per app on Node - one twin-less
-`onResponse` hook and every response takes the Web path - so if your app is Node-hot, give custom
-header middleware a twin too (see the [plugins guide](https://nifra.dev/docs/plugins) for the
-contract, including the per-request state pattern the same-context identity enables).
+A middleware whose response hook only reads/writes **headers** should use the portable
+`onResponseHeaders` hook - one implementation, fast on every runtime: it mutates the response's own
+`Headers` on Bun/Deno and the outcome record on Node's direct socket writer, never materializing Web
+`Request`/`Response` objects. `cors`, `securityHeaders`, `poweredBy`, static `cacheControl`, and
+`language` are built on it. Stateful middleware (`rateLimit` with the built-in key derivation,
+`logger`) pairs full native twins (`onNodeRequest`/`onNodeResponse`) instead; body-transforming
+middleware (`etag`, `compression`, `prettyJson`, `cache`) keeps the full `onResponse` contract, and
+`timing` stays Web-only for now. See the [plugins guide](https://nifra.dev/docs/plugins) for the
+contracts.
 
 Request timeouts are configured at the core server boundary so they can abort `c.signal` and race the
 whole lifecycle:

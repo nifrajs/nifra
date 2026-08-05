@@ -20,6 +20,8 @@ import {
 import { extname, isAbsolute, relative, resolve, sep } from "node:path"
 import { type Duplex, Readable } from "node:stream"
 import { fileURLToPath } from "node:url"
+// srvx's lazy spec-shaped Response - see nodeOutcomeToResponse for why the bridge uses it.
+import { FastResponse } from "srvx/node"
 
 /** The runtime platform a nifra app accepts as `fetch`'s 2nd arg - here, the observed socket peer. */
 interface NodePlatform {
@@ -253,31 +255,46 @@ function nodeOutcomeFromResponse(response: Response): NodeServeOutcome {
   return { kind: "response", response }
 }
 
-/** Materialize only for a Web response hook; preserve the buffered marker for in-place transforms.
- * A prebuilt `Headers` on purpose: undici's Response constructor clones a `Headers` instance faster
- * than it fills a pairs list (pairs pay a webidl sequence conversion per entry - measured). */
+/**
+ * Materialize only for a Web response hook; preserve the buffered marker for in-place transforms.
+ *
+ * Built as a `FastResponse` (srvx): a LAZY spec-shaped Response that stores the body + init and
+ * materializes a real `Headers`/body stream only when a hook actually touches them - an undici
+ * `Response` here paid ~5μs of body-stream and webidl setup per request before any hook ran, the
+ * single largest cost of the twin-less fallback path. Headers ride as a PAIRS list in the init
+ * (repeated `Set-Cookie` lines stay un-joined) and become one real `Headers` on first access.
+ * Trade, documented: a `FastResponse` duck-types the full Response surface but is not
+ * `instanceof Response`.
+ */
 function nodeOutcomeToResponse(outcome: NodeServeOutcome): Response {
   if (outcome.kind === "response") return outcome.response
-  const headers = new Headers()
+  const pairs: Array<[string, string]> = []
+  let hasContentType = false
   if (outcome.headers !== undefined) {
     for (const [name, value] of Object.entries(outcome.headers)) {
       if (typeof value !== "string") {
-        for (const item of value) headers.append(name, item)
+        for (const item of value) pairs.push([name, item])
       } else {
-        headers.set(name, value)
+        pairs.push([name, value])
+      }
+      if (!hasContentType && name.length === 12 && name.toLowerCase() === "content-type") {
+        hasContentType = true
       }
     }
   }
   if (outcome.kind === "json") {
     if (outcome.cookies !== undefined) {
-      for (const cookie of outcome.cookies) headers.append("set-cookie", cookie)
+      for (const cookie of outcome.cookies) pairs.push(["set-cookie", cookie])
     }
-    if (outcome.body !== null && headers.get("content-type") === null) {
-      headers.set("content-type", JSON_CONTENT_TYPE)
+    if (outcome.body !== null && !hasContentType) {
+      pairs.push(["content-type", JSON_CONTENT_TYPE])
     }
   }
   const body = outcome.body
-  const response = new Response(body, { status: outcome.status, headers })
+  const response = new FastResponse(body, {
+    status: outcome.status,
+    headers: pairs,
+  }) as unknown as Response
   if (body !== null) Object.defineProperty(response, NODE_RESPONSE_BODY, { value: body })
   return response
 }

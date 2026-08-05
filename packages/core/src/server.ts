@@ -76,6 +76,8 @@ export {
   type PromptArgument,
   type PromptMessage,
   type ResponseFinalization,
+  type ResponseHeadersHook,
+  type ResponseHeadersView,
   type RouteDescriptor,
   type RunningServer,
   Server,

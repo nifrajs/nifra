@@ -1,5 +1,4 @@
 import type { Middleware } from "@nifrajs/core/server"
-import { withHeaders, withNodeHeaders } from "./_utils.ts"
 
 export interface CorsOptions {
   /** Allowed origin(s): `"*"`, an exact origin, a list, or a predicate. Default `"*"`. */
@@ -70,7 +69,7 @@ export function cors(options: CorsOptions = {}): Middleware {
       const requested = allowedHeaders ?? req.headers.get("access-control-request-headers")
       if (requested) headers.set("Access-Control-Allow-Headers", requested)
       if (maxAge !== undefined) headers.set("Access-Control-Max-Age", String(maxAge))
-      // Allow-Origin / Allow-Credentials are added by onResponse (runs on every response).
+      // Allow-Origin / Allow-Credentials are added by onResponseHeaders (runs on every response).
       return new Response(null, { status: 204, headers })
     },
     onNodeRequest(req) {
@@ -85,33 +84,16 @@ export function cors(options: CorsOptions = {}): Middleware {
       if (maxAge !== undefined) headers["Access-Control-Max-Age"] = String(maxAge)
       return new Response(null, { status: 204, headers })
     },
-    onResponse(res, req) {
-      const allowOrigin = resolveAllowOrigin(origin, req.headers.get("origin"))
-      if (allowOrigin === null) return res
-      // Mutate in place on the common (mutable-headers) response; clone only for an immutable one.
-      return withHeaders(res, (headers) => {
-        headers.set("Access-Control-Allow-Origin", allowOrigin)
-        if (allowOrigin !== "*") headers.append("Vary", "Origin")
-        if (credentials) headers.set("Access-Control-Allow-Credentials", "true")
-        if (exposedHeaders !== undefined) {
-          headers.set("Access-Control-Expose-Headers", exposedHeaders)
-        }
-      })
-    },
-    onNodeResponse(res, req) {
+    onResponseHeaders(headers, req) {
       const allowOrigin = resolveAllowOrigin(origin, req.header("origin"))
       if (allowOrigin === null) return
-      withNodeHeaders(res, (headers) => {
-        headers["access-control-allow-origin"] = allowOrigin
-        if (allowOrigin !== "*") {
-          const vary = headers.vary
-          headers.vary = typeof vary === "string" && vary.length > 0 ? `${vary}, Origin` : "Origin"
-        }
-        if (credentials) headers["access-control-allow-credentials"] = "true"
-        if (exposedHeaders !== undefined) {
-          headers["access-control-expose-headers"] = exposedHeaders
-        }
-      })
+      headers.set("access-control-allow-origin", allowOrigin)
+      if (allowOrigin !== "*") {
+        const vary = headers.get("vary")
+        headers.set("vary", vary === null || vary === "" ? "Origin" : `${vary}, Origin`)
+      }
+      if (credentials) headers.set("access-control-allow-credentials", "true")
+      if (exposedHeaders !== undefined) headers.set("access-control-expose-headers", exposedHeaders)
     },
   }
 }

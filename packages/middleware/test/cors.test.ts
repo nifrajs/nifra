@@ -120,7 +120,7 @@ describe("cors", () => {
     expect(res.headers.get("access-control-allow-origin")).toBe("*")
   })
 
-  test("native Node hooks preserve preflight and response headers", async () => {
+  test("native preflight hook and portable header hook preserve CORS headers", async () => {
     const middleware = cors({ origin: "https://app.com", credentials: true, maxAge: 60 })
     const request = {
       method: "OPTIONS",
@@ -137,9 +137,10 @@ describe("cors", () => {
     expect(preflight?.headers.get("access-control-allow-headers")).toBe("authorization")
     expect(preflight?.headers.get("access-control-max-age")).toBe("60")
 
-    const response: NodeResponseContext = { status: 200, headers: undefined, cookies: undefined }
-    await middleware.onNodeResponse!(response, request)
-    expect(response.headers?.["access-control-allow-origin"]).toBe("https://app.com")
-    expect(response.headers?.["access-control-allow-credentials"]).toBe("true")
+    // The portable hook runs against any ResponseHeadersView - a real Headers works verbatim.
+    const headers = new Headers()
+    await middleware.onResponseHeaders!(headers, request, 200)
+    expect(headers.get("access-control-allow-origin")).toBe("https://app.com")
+    expect(headers.get("access-control-allow-credentials")).toBe("true")
   })
 })

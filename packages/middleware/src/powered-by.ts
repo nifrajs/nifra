@@ -1,5 +1,4 @@
 import type { Middleware } from "@nifrajs/core/server"
-import { hasNodeHeader, withHeaders, withNodeHeaders } from "./_utils.ts"
 
 export interface PoweredByOptions {
   /** Header name. Default `"x-powered-by"`. */
@@ -23,15 +22,9 @@ export function poweredBy(options: PoweredByOptions = {}): Middleware {
 
   return {
     name: "powered-by",
-    onResponse(res) {
-      if (respectExisting && res.headers.has(header)) return res
-      return withHeaders(res, (headers) => headers.set(header, value))
-    },
-    onNodeResponse(res) {
-      if (respectExisting && hasNodeHeader(res.headers, header)) return
-      withNodeHeaders(res, (headers) => {
-        headers[header.toLowerCase()] = value
-      })
+    onResponseHeaders(headers) {
+      if (respectExisting && headers.has(header)) return
+      headers.set(header, value)
     },
   }
 }

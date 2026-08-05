@@ -526,3 +526,32 @@ describe("resolveNode - stateful native middleware twins", () => {
     expect(outcome.body).toBe(JSON.stringify({ lang: "hi" }))
   })
 })
+
+describe("resolveNode - portable onResponseHeaders", () => {
+  test("one hook implementation runs on the native Node lane AND the Web walk", async () => {
+    const app = server({ logger: silentLogger })
+      .use(nodeDirect())
+      .onResponseHeaders((headers, req, status) => {
+        headers.set("x-portable", `${req.method}:${status}`)
+        if (!headers.has("x-existing")) headers.append("x-multi", "a")
+      })
+      .get("/data", (c) => {
+        c.set.headers["X-Mixed-Case"] = "kept"
+        return { ok: true }
+      })
+
+    // Native lane: a portable hook self-pairs, so the outcome stays a direct "json" render.
+    const outcome = await app.resolveNode(req("/data"))
+    expect(outcome.kind).toBe("json")
+    if (outcome.kind !== "json") throw new Error("unreachable")
+    expect(outcome.headers?.["x-portable"]).toBe("GET:200")
+    expect(outcome.headers?.["x-multi"]).toBe("a")
+    expect(outcome.headers?.["X-Mixed-Case"]).toBe("kept")
+
+    // Web walk: the same registration mutates the response's own Headers.
+    const viaFetch = await app.fetch(req("/data"))
+    expect(viaFetch.headers.get("x-portable")).toBe("GET:200")
+    expect(viaFetch.headers.get("x-multi")).toBe("a")
+    expect(viaFetch.headers.get("x-mixed-case")).toBe("kept")
+  })
+})

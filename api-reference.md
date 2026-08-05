@@ -266,6 +266,10 @@ Every public export of every package and documented subpath - name, kind, signat
   Mutable response controls a handler may write to before returning.
 - **ResponseFinalization** _(interface)_ - `interface ResponseFinalization`
   The terminal response-pipeline outcome observed after every transforming `onResponse` hook.
+- **ResponseHeadersHook** _(type)_ - `type ResponseHeadersHook = ( headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<void>`
+  A portable header-only response hook - the recommended shape for response middleware that only reads or writes headers (security headers, CORS reflection, cache directives, negotiation). It runs on every runtime from one implementation: the server adapts it into the Web `onResponse` walk AND the No…
+- **ResponseHeadersView** _(interface)_ - `interface ResponseHeadersView`
+  The mutable, case-insensitive header surface a portable {@link ResponseHeadersHook} writes through. Deliberately the subset of the Web `Headers` interface every runtime can satisfy natively: on the Web paths the hook receives the response's own `Headers` object directly (which structurally implemen…
 - **RouteConfigError** _(class)_ - `class RouteConfigError`
   Thrown at route registration when a route is misconfigured. This is the boot-time rejection layer: loud and early, never deferred to the first request.
 - **RouteConfigErrorCode** _(type)_ - `type RouteConfigErrorCode = | "DUPLICATE_ROUTE" | "DUPLICATE_PARAM" | "PARAM_NAME_CONFLICT" | "INVALID_PATH" | "INVALID_PARAM_NAME" | "WILDCARD_NOT_LAST" | "INVALID_METHOD" | "INVALID_ASSURANCE" | "INVALID_IDEMPOTENCY"`
@@ -1080,6 +1084,10 @@ Every public export of every package and documented subpath - name, kind, signat
   Mutable response controls a handler may write to before returning.
 - **ResponseFinalization** _(interface)_ - `interface ResponseFinalization`
   The terminal response-pipeline outcome observed after every transforming `onResponse` hook.
+- **ResponseHeadersHook** _(type)_ - `type ResponseHeadersHook = ( headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<void>`
+  A portable header-only response hook - the recommended shape for response middleware that only reads or writes headers (security headers, CORS reflection, cache directives, negotiation). It runs on every runtime from one implementation: the server adapts it into the Web `onResponse` walk AND the No…
+- **ResponseHeadersView** _(interface)_ - `interface ResponseHeadersView`
+  The mutable, case-insensitive header surface a portable {@link ResponseHeadersHook} writes through. Deliberately the subset of the Web `Headers` interface every runtime can satisfy natively: on the Web paths the hook receives the response's own `Headers` object directly (which structurally implemen…
 - **RouteConfigError** _(class)_ - `class RouteConfigError`
   Thrown at route registration when a route is misconfigured. This is the boot-time rejection layer: loud and early, never deferred to the first request.
 - **RouteConfigErrorCode** _(type)_ - `type RouteConfigErrorCode = | "DUPLICATE_ROUTE" | "DUPLICATE_PARAM" | "PARAM_NAME_CONFLICT" | "INVALID_PATH" | "INVALID_PARAM_NAME" | "WILDCARD_NOT_LAST" | "INVALID_METHOD" | "INVALID_ASSURANCE" | "INVALID_IDEMPOTENCY"`
@@ -3587,6 +3595,10 @@ _No named exports (side-effect entrypoint)._
   Mutable response controls a handler may write to before returning.
 - **ResponseFinalization** _(interface)_ - `interface ResponseFinalization`
   The terminal response-pipeline outcome observed after every transforming `onResponse` hook.
+- **ResponseHeadersHook** _(type)_ - `type ResponseHeadersHook = ( headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<void>`
+  A portable header-only response hook - the recommended shape for response middleware that only reads or writes headers (security headers, CORS reflection, cache directives, negotiation). It runs on every runtime from one implementation: the server adapts it into the Web `onResponse` walk AND the No…
+- **ResponseHeadersView** _(interface)_ - `interface ResponseHeadersView`
+  The mutable, case-insensitive header surface a portable {@link ResponseHeadersHook} writes through. Deliberately the subset of the Web `Headers` interface every runtime can satisfy natively: on the Web paths the hook receives the response's own `Headers` object directly (which structurally implemen…
 - **RouteConfigError** _(class)_ - `class RouteConfigError`
   Thrown at route registration when a route is misconfigured. This is the boot-time rejection layer: loud and early, never deferred to the first request.
 - **RouteConfigErrorCode** _(type)_ - `type RouteConfigErrorCode = | "DUPLICATE_ROUTE" | "DUPLICATE_PARAM" | "PARAM_NAME_CONFLICT" | "INVALID_PATH" | "INVALID_PARAM_NAME" | "WILDCARD_NOT_LAST" | "INVALID_METHOD" | "INVALID_ASSURANCE" | "INVALID_IDEMPOTENCY"`

@@ -1,5 +1,4 @@
 import { definePlugin } from "@nifrajs/core/server"
-import { hasNodeHeader, withHeaders, withNodeHeaders } from "./_utils.ts"
 
 export interface LanguageMatch {
   readonly language: string
@@ -98,19 +97,11 @@ export function language<const L extends readonly string[]>(options: LanguageOpt
         return { language: match.language, languageMatch: match }
       })
       .use({
-        onResponse(res, req) {
-          if (!emitHeader) return res
-          if (res.headers.has("content-language")) return res
-          const match = pickLanguage(req.headers.get("accept-language"), supported, defaultLanguage)
-          return withHeaders(res, (headers) => headers.set("content-language", match.language))
-        },
-        onNodeResponse(res, req) {
+        onResponseHeaders(headers, req) {
           if (!emitHeader) return
-          if (hasNodeHeader(res.headers, "content-language")) return
+          if (headers.has("content-language")) return
           const match = pickLanguage(req.header("accept-language"), supported, defaultLanguage)
-          withNodeHeaders(res, (headers) => {
-            headers["content-language"] = match.language
-          })
+          headers.set("content-language", match.language)
         },
       }),
   )

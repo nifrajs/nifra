@@ -13,6 +13,12 @@ Node serving now keeps synchronous Web request middleware on the direct renderer
 response middleware back to direct buffered writes, and avoids redundant params/body lifecycle stages
 for common validated reads. Header-only built-ins (`cache-control`, `powered-by`, and related response
 mutators) no longer clone buffered responses on Node.
+New portable middleware hook: `onResponseHeaders(headers, req, status)` - the recommended shape for
+response middleware that only reads or writes headers. One implementation runs on every runtime: on
+the Web serving paths it mutates the response's own `Headers` inside the normal response walk (no
+clone), and on Node it self-pairs as a native hook against the outcome record, so registering one
+never forces the Node adapter off its direct socket writer the way a full `onResponse(res:
+Response)` hook does.
 Native Node hook lanes now engage as a unit - the response-side native hooks run only when the
 request side is native too - which makes the native request context's identity stable across a
 request; the context also carries `url`, and both are documented so middleware twins can key

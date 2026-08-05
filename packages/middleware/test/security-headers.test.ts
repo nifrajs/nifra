@@ -63,30 +63,33 @@ describe("securityHeaders", () => {
   })
 
   test("immutable-headers Response (proxied fetch on spec-correct runtimes) takes the clone path", async () => {
-    // Bun never marks headers immutable, so simulate the Workers/Deno case: a Response-like whose
-    // headers throw on mutation. The middleware must fall back to clone-and-set, not crash.
-    const immutable = {
-      body: null,
-      status: 204,
-      statusText: "No Content",
-      headers: new Proxy(new Headers({ "x-up": "1" }), {
-        get(target, prop) {
-          if (prop === "set") {
-            return () => {
-              throw new TypeError("immutable headers")
-            }
+    // Bun never marks headers immutable, so simulate the Workers/Deno case: a real Response whose
+    // headers throw on mutation. The portable header hook's Web adapter must fall back to
+    // clone-and-set, not crash - and the original must stay untouched.
+    const throwingHeaders = new Proxy(new Headers({ "x-up": "1" }), {
+      get(target, prop) {
+        if (prop === "set") {
+          return () => {
+            throw new TypeError("immutable headers")
           }
-          const v = Reflect.get(target, prop)
-          return typeof v === "function" ? v.bind(target) : v
-        },
-      }),
-    } as unknown as Response
-    const mw = securityHeaders()
-    const out = await mw.onResponse?.(immutable, new Request("http://x/"))
-    expect(out).toBeDefined()
-    expect(out).not.toBe(immutable) // cloned, not mutated
-    expect((out as Response).status).toBe(204)
-    expect((out as Response).headers.get("x-content-type-options")).toBe("nosniff")
-    expect((out as Response).headers.get("x-up")).toBe("1") // original headers carried over
+        }
+        const v = Reflect.get(target, prop)
+        return typeof v === "function" ? v.bind(target) : v
+      },
+    })
+    const immutable = new Proxy(new Response(null, { status: 204 }), {
+      get(target, prop) {
+        if (prop === "headers") return throwingHeaders
+        const v = Reflect.get(target, prop)
+        return typeof v === "function" ? v.bind(target) : v
+      },
+    })
+    const app = server({ logger: silentLogger })
+      .use(securityHeaders())
+      .get("/x", () => immutable)
+    const out = await app.fetch(new Request("http://t/x"))
+    expect(out.status).toBe(204)
+    expect(out.headers.get("x-content-type-options")).toBe("nosniff")
+    expect(out.headers.get("x-up")).toBe("1") // original headers carried over
   })
 })
