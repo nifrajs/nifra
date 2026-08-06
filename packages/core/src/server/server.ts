@@ -2050,9 +2050,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         headers !== undefined &&
         Object.keys(headers).some((key) => key.toLowerCase() === "content-type")
       if (!hasType) {
-        headers = {
-          ...headers,
-          "content-type": runtime.jsonContentType ?? "application/json;charset=utf-8",
+        const defaultContentType = runtime.jsonContentType ?? "application/json;charset=utf-8"
+        if (headers === undefined) {
+          headers = { "content-type": defaultContentType }
+        } else {
+          // The record belongs to this outcome. Add the implicit JSON type in place so the native
+          // header walk does not clone every c.set.headers record before it can run. A hook that
+          // replaces or deletes the type still takes the existing withNodeResponseHeaders path;
+          // the writer's final defaulting behavior remains unchanged.
+          headers["content-type"] = defaultContentType
         }
       }
     }

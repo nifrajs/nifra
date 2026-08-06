@@ -212,6 +212,14 @@ class RecordHeadersView implements ResponseHeadersView {
   set(name: string, value: string): void {
     const headers = this.#writable()
     const lower = name.toLowerCase()
+    // The common response record is already lowercase (framework middleware and c.set use the wire
+    // spelling). A set cannot need to replace a differently-cased key in that shape, so skip the
+    // own-property/alias lookup that reads and deletes pay for. Mixed-case records were indexed by
+    // #prepare and retain the full case-insensitive replacement semantics below.
+    if (this.#alias === undefined) {
+      RecordHeadersView.#store(headers, lower, value)
+      return
+    }
     const actual = this.#actual(lower)
     if (actual !== lower) {
       delete headers[actual]
@@ -223,6 +231,19 @@ class RecordHeadersView implements ResponseHeadersView {
   append(name: string, value: string): void {
     const headers = this.#writable()
     const lower = name.toLowerCase()
+    if (this.#alias === undefined) {
+      const current = Object.hasOwn(headers, lower) ? headers[lower] : undefined
+      if (current === undefined) {
+        RecordHeadersView.#store(headers, lower, value)
+        return
+      }
+      RecordHeadersView.#store(
+        headers,
+        lower,
+        typeof current === "string" ? [current, value] : [...current, value],
+      )
+      return
+    }
     const actual = this.#actual(lower)
     const current = Object.hasOwn(headers, actual) ? headers[actual] : undefined
     if (current === undefined) {
@@ -244,6 +265,10 @@ class RecordHeadersView implements ResponseHeadersView {
     const headers = this.#readable()
     if (headers === undefined) return
     const lower = name.toLowerCase()
+    if (this.#alias === undefined) {
+      delete headers[lower]
+      return
+    }
     const actual = this.#actual(lower)
     delete headers[actual]
     if (actual !== lower) this.#alias?.delete(lower)
