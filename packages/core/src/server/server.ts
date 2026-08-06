@@ -54,7 +54,7 @@ import { assertByteLimit, parseContentLength } from "./body.ts"
 import { type ClientIpTrust, resolveClientIp } from "./client-ip.ts"
 import type { Context, Platform, ResponseControls, RouteSchema } from "./context.ts"
 import { jsonError, pathnameOf, type UrlParts, urlPartsOf } from "./http.ts"
-import type { NodeServeOutcome } from "./node-outcome.ts"
+import { type NodeServeOutcome, withStaticNodeHeaders } from "./node-outcome.ts"
 import {
   type NodeOutcomeRuntime,
   type NodeRequestContext,
@@ -76,6 +76,8 @@ import {
 } from "./query.ts"
 import { RequestContext, readBoundedJsonSource } from "./request-context.ts"
 import {
+  applyStaticResponseHeaders,
+  buildStaticResponseHeaders,
   fusedRespond,
   fusedRespondNoSet,
   knownMutableHeaders,
@@ -98,6 +100,7 @@ import {
   headerOf,
   requestOf,
 } from "./runtime-core.ts"
+import { normalizeStaticResponseHeaders, type StaticResponseHeaders } from "./static-headers.ts"
 
 // NodeServeOutcome (the nifra<->node bridge render form) now lives in `./node-outcome.ts`; re-exported
 // so existing importers keep resolving it from the server module.
@@ -614,11 +617,22 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private readonly onResponseHooks: RawOnResponse[]
   private readonly onNodeResponseHooks: Array<NodeResponseHook | undefined>
   private readonly onResponseFinalizedHooks: RawOnResponseFinalized[]
+  /**
+   * Statically declared response headers, merged and prebuilt at registration; `undefined` (the
+   * default) leaves every render path in its original shape. These are NOT response hooks - they are
+   * folded into response construction - so declaring them keeps the fused native lanes an
+   * `onResponse` hook would have disabled.
+   */
+  private staticResponseHeaders: StaticResponseHeaders | undefined
+  /** `wrapResponse` for the Web lanes: identity until static headers exist to fold into the
+   * framework's own error/404/timeout renders, which are built outside the header init. */
+  private wrapWebResponse: (response: Response) => Response
+  private webResponseTimeout: () => Response
   /** Body/raw response hooks need a framework-payload marker; keep that decision per app. */
   private responseBodyTag: object | undefined
   private readonly responseBodyOwners: Set<object>
   private readonly finalizeResponse = (result: unknown, set: CtxSet): Response =>
-    toResponse(result as HandlerResult, set, this.responseBodyTag)
+    toResponse(result as HandlerResult, set, this.responseBodyTag, this.staticResponseHeaders)
   private readonly responseRequests: WeakMap<Request, Request>
   /** Original source → request observed by generic request hooks, including in-place mutations. */
   private readonly responseSources: WeakMap<object, Request>
@@ -685,6 +699,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.onResponseHooks = []
     this.onNodeResponseHooks = []
     this.onResponseFinalizedHooks = []
+    this.staticResponseHeaders = undefined
+    this.wrapWebResponse = IDENTITY_RESPONSE
+    this.webResponseTimeout = RESPONSE_TIMEOUT
     this.responseBodyTag = undefined
     this.responseBodyOwners = new Set()
     this.responseRequests = new WeakMap()
@@ -804,6 +821,55 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.assertConfigurable("onResponse()")
     this.onResponseHooks.push(fn)
     this.onNodeResponseHooks.push(undefined)
+    return this
+  }
+
+  /**
+   * Declare response headers with NO per-request decision behind them - and pay nothing for them on
+   * the request path.
+   *
+   * These are not a hook. Because the values are known at wire-up, they are folded into response
+   * construction (one prebuilt init for JSON renders, one record merge where the request set its own
+   * headers), so an app whose only response middleware is static keeps every fused and native lane -
+   * `onResponse`/`onResponseHeaders` disable Bun's fused native routes and, for a full `onResponse`,
+   * the Node direct writer. They apply to EVERY response, exactly as a response hook would: success,
+   * error, 404/405, timeout, and short-circuit alike.
+   *
+   *   app.responseHeaders({ "x-frame-options": "DENY", "referrer-policy": "no-referrer" })
+   *
+   * They are DEFAULTS: a value the request itself produced (`c.set.headers`, or a response hook)
+   * wins, whatever casing it used. Names are lowercased once here; a non-string value, an invalid
+   * name, `__proto__`, or a name the render owns (`content-type`, `content-length`,
+   * `transfer-encoding`, `set-cookie`) throws a `TypeError` at wire-up.
+   *
+   * ORDERING: declarations made before any response hook fold into one static record. One made AFTER
+   * a response hook cannot - the hook may already have written that name and must keep winning - so
+   * it registers as an ordinary `onResponseHeaders` hook instead, preserving registration order at
+   * the cost of the static tier's speed. Declare static headers first.
+   */
+  responseHeaders(record: Readonly<Record<string, string>>): this {
+    this.assertConfigurable("responseHeaders()")
+    return this.addStaticResponseHeaders(normalizeStaticResponseHeaders(record))
+  }
+
+  /** Wire an already-validated lowercase record into the static tier, or - once a dynamic response
+   * hook owns part of the header state - into a hook that runs in the right order. */
+  private addStaticResponseHeaders(record: Record<string, string>): this {
+    if (this.onResponseHooks.length > 0) {
+      return this.onResponseHeaders((headers) => {
+        for (const name of Object.keys(record)) {
+          if (!headers.has(name)) headers.set(name, record[name] as string)
+        }
+      })
+    }
+    const merged =
+      this.staticResponseHeaders === undefined
+        ? record
+        : { ...this.staticResponseHeaders.record, ...record }
+    this.staticResponseHeaders = buildStaticResponseHeaders(merged)
+    const statics = this.staticResponseHeaders
+    this.wrapWebResponse = (response) => applyStaticResponseHeaders(response, statics)
+    this.webResponseTimeout = () => applyStaticResponseHeaders(RESPONSE_TIMEOUT(), statics)
     return this
   }
 
@@ -954,6 +1020,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     } else if (arg.onNodeResponse !== undefined) {
       throw new TypeError("onNodeResponse() requires a paired onResponse() hook")
     }
+    // Before the bundle's own hooks: a bundle declaring both means its static values are the
+    // defaults its hook may then override, which is the order a single bundle reads in.
+    if (arg.responseHeaders !== undefined) this.responseHeaders(arg.responseHeaders)
     if (arg.onResponseHeaders !== undefined) this.onResponseHeaders(arg.onResponseHeaders)
     if (arg.onResponseBody !== undefined) this.onResponseBody(arg.onResponseBody)
     if (arg.onResponseRaw !== undefined) this.onResponseRaw(arg.onResponseRaw)
@@ -1657,8 +1726,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         params,
         search,
         this.finalizeResponse,
-        IDENTITY_RESPONSE,
-        RESPONSE_TIMEOUT,
+        this.wrapWebResponse,
+        this.webResponseTimeout,
         false,
       ),
     )
@@ -1743,6 +1812,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.wsRuntime ??= source.wsRuntime
     this.onRequestHooks.push(...source.onRequestHooks)
     this.onNodeRequestHooks.push(...source.onNodeRequestHooks)
+    // The group's static declarations came before its own response hooks, so they are folded in
+    // first - and fold themselves into a hook here if this server already has one (same ordering
+    // rule as a direct `responseHeaders()` call).
+    if (source.staticResponseHeaders !== undefined) {
+      this.addStaticResponseHeaders({ ...source.staticResponseHeaders.record })
+    }
     this.onResponseHooks.push(...source.onResponseHooks)
     this.onNodeResponseHooks.push(...source.onNodeResponseHooks)
     this.onResponseFinalizedHooks.push(...source.onResponseFinalizedHooks)
@@ -1844,8 +1919,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       source,
       platform,
       this.finalizeResponse,
-      IDENTITY_RESPONSE,
-      RESPONSE_TIMEOUT,
+      this.wrapWebResponse,
+      this.webResponseTimeout,
       true,
     )
     if (this.onResponseHooks.length === 0 && this.onResponseFinalizedHooks.length === 0) {
@@ -1883,8 +1958,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       params,
       undefined,
       this.finalizeResponse,
-      IDENTITY_RESPONSE,
-      RESPONSE_TIMEOUT,
+      this.wrapWebResponse,
+      this.webResponseTimeout,
       true,
     )
     if (this.onResponseHooks.length === 0 && this.onResponseFinalizedHooks.length === 0) {
@@ -1981,7 +2056,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         "resolveNode() needs the Node-direct renderer. Normal @nifrajs/node serving installs it automatically; direct callers should add `.use(nodeDirect())` (from `@nifrajs/core/node-direct`).",
       )
     }
-    const outcome = this.dispatch<NodeServeOutcome>(
+    const resolved = this.dispatch<NodeServeOutcome>(
       source,
       platform,
       runtime.toOutcome,
@@ -1989,6 +2064,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       runtime.timeout,
       false,
     )
+    // Fold declared static headers into the record ONCE, here: before any native twin runs (so a
+    // header or body hook reads them through its view), and on the no-hook path too (which returns
+    // the outcome straight to the writer without the finish step below).
+    const statics = this.staticResponseHeaders
+    const outcome =
+      statics === undefined
+        ? resolved
+        : resolved instanceof Promise
+          ? resolved.then((settled) => withStaticNodeHeaders(settled, statics))
+          : withStaticNodeHeaders(resolved, statics)
     if (webResponseHooks) {
       return outcome instanceof Promise
         ? outcome.then((settled) => this.finishNodeWebResponse(settled, source, runtime))
@@ -2833,10 +2918,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     decorations: Record<PropertyKey, unknown> | undefined,
     contextless: boolean,
   ): FusedWebRunner {
+    // The fused lanes return to the runtime directly, so the framework's own error renders fold in
+    // static headers here rather than through the shared `wrapResponse` seam.
     const logError = (err: unknown, ctx: RawContext): Response => {
-      if (err instanceof Response) return err
+      if (err instanceof Response) return this.wrapWebResponse(err)
       this.logRequestError(err, ctx)
-      return jsonError(500, "internal_error")
+      return this.wrapWebResponse(jsonError(500, "internal_error"))
     }
     if (contextless && decorations === undefined) {
       // `() => ...` can't observe the context - skip allocating one entirely (errors still build
@@ -2864,7 +2951,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         }
         if (result instanceof Promise) {
           return result.then(
-            (value) => fusedRespondNoSet(value, this.responseBodyTag),
+            (value) => fusedRespondNoSet(value, this.responseBodyTag, this.staticResponseHeaders),
             (err) =>
               logError(
                 err,
@@ -2882,7 +2969,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
               ),
           )
         }
-        return fusedRespondNoSet(result, this.responseBodyTag)
+        return fusedRespondNoSet(result, this.responseBodyTag, this.staticResponseHeaders)
       }
     }
     return (source, params, search, signal, budget, platform, nativeContext) => {
@@ -2898,11 +2985,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       }
       if (result instanceof Promise) {
         return result.then(
-          (value) => fusedRespond(value, ctx, this.responseBodyTag),
+          (value) => fusedRespond(value, ctx, this.responseBodyTag, this.staticResponseHeaders),
           (err) => logError(err, ctx),
         )
       }
-      return fusedRespond(result, ctx, this.responseBodyTag)
+      return fusedRespond(result, ctx, this.responseBodyTag, this.staticResponseHeaders)
     }
   }
 
@@ -3027,8 +3114,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         budget,
         platform,
         nativeContext,
-        (result, _set, ctx) => fusedRespond(result, ctx, this.responseBodyTag),
-        IDENTITY_RESPONSE,
+        (result, _set, ctx) =>
+          fusedRespond(result, ctx, this.responseBodyTag, this.staticResponseHeaders),
+        this.wrapWebResponse,
       ) as MaybePromise<Response>
   }
 
@@ -3044,10 +3132,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     decorations: Record<PropertyKey, unknown> | undefined,
     querySchema: StandardSchemaV1,
   ): FusedWebRunner {
+    // The fused lanes return to the runtime directly, so the framework's own error renders fold in
+    // static headers here rather than through the shared `wrapResponse` seam.
     const logError = (err: unknown, ctx: RawContext): Response => {
-      if (err instanceof Response) return err
+      if (err instanceof Response) return this.wrapWebResponse(err)
       this.logRequestError(err, ctx)
-      return jsonError(500, "internal_error")
+      return this.wrapWebResponse(jsonError(500, "internal_error"))
     }
     const runHandler = (ctx: RawContext, value: unknown): MaybePromise<Response> => {
       ctx.query = value
@@ -3059,11 +3149,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       }
       if (result instanceof Promise) {
         return result.then(
-          (settled) => fusedRespond(settled, ctx, this.responseBodyTag),
+          (settled) => fusedRespond(settled, ctx, this.responseBodyTag, this.staticResponseHeaders),
           (err) => logError(err, ctx),
         )
       }
-      return fusedRespond(result, ctx, this.responseBodyTag)
+      return fusedRespond(result, ctx, this.responseBodyTag, this.staticResponseHeaders)
     }
     return (source, params, search, signal, budget, platform, nativeContext) => {
       const ctx = nativeContext
@@ -3080,12 +3170,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         return validation.then(
           (settled) =>
             settled.issues !== undefined
-              ? validationError(settled.issues)
+              ? this.wrapWebResponse(validationError(settled.issues))
               : runHandler(ctx, settled.value),
           (err) => logError(err, ctx),
         )
       }
-      if (validation.issues !== undefined) return validationError(validation.issues)
+      if (validation.issues !== undefined)
+        return this.wrapWebResponse(validationError(validation.issues))
       return runHandler(ctx, validation.value)
     }
   }

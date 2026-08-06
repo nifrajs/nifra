@@ -253,3 +253,81 @@ Deno.test("portable response tiers serve end to end on the fetch path", async ()
     await running.stop({ drainMs: 0 })
   }
 })
+
+Deno.test("statically declared response headers match the equivalent hook on the wire", async () => {
+  // Deno reaches these through the Web render paths, so this is where the record-vs-prebuilt-init
+  // split gets exercised on a V8 runtime: a bare JSON render, one carrying c.set.headers, one whose
+  // casing collides with a declared name, cookies, a raw Response, an error, and a 404.
+  const declared: Record<string, string> = {
+    "x-frame-options": "DENY",
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer",
+  }
+  const routes = (app: ReturnType<typeof server>) =>
+    app
+      .get("/json", () => ({ ok: true }))
+      .get("/own", (c) => {
+        c.set.headers["x-own"] = "1"
+        return { ok: true }
+      })
+      .get("/collision", (c) => {
+        c.set.headers["X-Frame-Options"] = "SAMEORIGIN"
+        return { ok: true }
+      })
+      .get("/cookie", (c) => {
+        c.set.cookie("session", "abc", { path: "/" })
+        return { ok: true }
+      })
+      .get("/raw", () => new Response("<h1>hi</h1>", { headers: { "content-type": "text/html" } }))
+      .get("/boom", () => {
+        throw new Error("x")
+      })
+  const paths = ["/json", "/own", "/collision", "/cookie", "/raw", "/boom", "/missing"]
+
+  const dumpAll = async (app: ReturnType<typeof server>): Promise<unknown[]> => {
+    const running = await serve(app, { port: 0 })
+    try {
+      const out: unknown[] = []
+      for (const path of paths) {
+        const res = await fetch(`http://localhost:${running.port}${path}`)
+        const headers = [...res.headers]
+          .filter(([name]) => name !== "date" && name !== "vary")
+          .map(([name, value]) => [name, value])
+        headers.sort()
+        out.push({ path, status: res.status, headers, body: await res.text() })
+      }
+      return out
+    } finally {
+      await running.stop({ drainMs: 0 })
+    }
+  }
+
+  const viaStatic = await dumpAll(
+    routes(server({ logger: { error() {}, warn() {}, info() {} } as never })).responseHeaders(
+      declared,
+    ),
+  )
+  const viaHook = await dumpAll(
+    routes(server({ logger: { error() {}, warn() {}, info() {} } as never })).onResponseHeaders(
+      (headers) => {
+        for (const [name, value] of Object.entries(declared)) {
+          if (!headers.has(name)) headers.set(name, value)
+        }
+      },
+    ),
+  )
+  assertEquals(viaStatic, viaHook)
+  for (const entry of viaStatic as Array<{ headers: string[][] }>) {
+    assert(
+      entry.headers.some(([n, v]) => n === "referrer-policy" && v === "no-referrer"),
+      "declared header missing from a Deno response",
+    )
+  }
+  const collision = (viaStatic as Array<{ path: string; headers: string[][] }>).find(
+    (entry) => entry.path === "/collision",
+  )
+  assertEquals(
+    collision?.headers.filter(([name]) => name === "x-frame-options"),
+    [["x-frame-options", "SAMEORIGIN"]],
+  )
+})

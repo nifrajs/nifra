@@ -49,7 +49,8 @@ const app = server()
   404s included). Origin as `"*"` / exact / list / predicate. **Throws** if
   `credentials: true` is paired with `origin: "*"` (the browser rejects it).
 - **`securityHeaders(options)`** - `X-Content-Type-Options`, `X-Frame-Options`,
-  `Referrer-Policy` by default; opt-in HSTS and CSP.
+  `Referrer-Policy` by default; opt-in HSTS and CSP. Every value is fixed, so they are **declared**
+  (see below) rather than written by a hook - the app keeps its fused/native lanes.
 - **`rateLimit(options)`** - `429` + `Retry-After` + `RateLimit-*` headers, with a
   pluggable `RateLimitStore`. Configure a trusted `key`, trusted single-IP `header`, or
   `trustedProxies`; a missing key source fails closed instead of silently sharing one
@@ -69,13 +70,19 @@ const app = server()
 - **`requestId()` / `logger()` / `etag()` / `compression()` / `cacheControl()` /
   `idempotency()` / `healthcheck()` / `openapi()`** - additional operational middleware for APIs.
 
-## Header middleware: `onResponseHeaders`
+## Header middleware: declared headers and `onResponseHeaders`
 
-A middleware whose response hook only reads/writes **headers** should use the portable
-`onResponseHeaders` hook - one implementation, fast on every runtime: it mutates the response's own
-`Headers` on Bun/Deno and the outcome record on Node's direct socket writer, never materializing Web
-`Request`/`Response` objects. `cors`, `securityHeaders`, `poweredBy`, static `cacheControl`, and
-`language` are built on it. Stateful middleware (`rateLimit` with the built-in key derivation,
+A bundle whose headers are FIXED at construction should declare them (`responseHeaders`) rather than
+write them from a hook: declared headers register no hook at all, so they fold into response
+construction and the app keeps the fused/native lanes a response hook closes (measured +11% on a bare
+Bun GET, byte-identical on the wire). They are defaults - anything the request produced wins.
+`securityHeaders` and the default `poweredBy` ship this way.
+
+A middleware whose response hook only reads/writes **headers** but needs the request should use the
+portable `onResponseHeaders` hook - one implementation, fast on every runtime: it mutates the
+response's own `Headers` on Bun/Deno and the outcome record on Node's direct socket writer, never
+materializing Web `Request`/`Response` objects. `cors` (origin reflection), static `cacheControl`,
+`language`, and `poweredBy({ respectExisting: false })` are built on it. Stateful middleware (`rateLimit` with the built-in key derivation,
 `logger`) pairs full native twins (`onNodeRequest`/`onNodeResponse`) instead. Body-transforming
 middleware has its own portable tier, `onResponseBody` - the hook receives the final
 framework-serialized bytes on every runtime with no stream drained (raw handler `Response`s are

@@ -206,6 +206,14 @@ export interface Middleware {
    */
   readonly onNodeResponse?: NodeResponseHook
   /**
+   * Response headers with NO per-request decision behind them. Declared here instead of written by a
+   * hook, they are folded into response construction, so a bundle that only sets static headers does
+   * not cost the app its fused/native lanes (see {@link Server.responseHeaders}). They are defaults:
+   * anything the request produced wins. Reach for `onResponseHeaders` the moment a value depends on
+   * the request, the route, or the response.
+   */
+  readonly responseHeaders?: Readonly<Record<string, string>>
+  /**
    * PORTABLE header-only response hook - the recommended shape when the middleware only reads or
    * writes headers. One implementation runs on every runtime: inside the Web `onResponse` walk
    * against the response's own `Headers`, and on Node as a self-paired native hook against the

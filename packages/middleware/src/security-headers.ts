@@ -17,10 +17,14 @@ export interface SecurityHeadersOptions {
 }
 
 /**
- * A safe-by-default set of response security headers (`onResponse`, so they cover
- * errors and 404s too): `X-Content-Type-Options: nosniff`, `X-Frame-Options`, and
- * `Referrer-Policy` always; `Strict-Transport-Security` and `Content-Security-Policy`
- * only when configured (both are environment-/app-specific).
+ * A safe-by-default set of response security headers, covering errors and 404s too:
+ * `X-Content-Type-Options: nosniff`, `X-Frame-Options`, and `Referrer-Policy` always;
+ * `Strict-Transport-Security` and `Content-Security-Policy` only when configured (both are
+ * environment-/app-specific).
+ *
+ * Every value is fixed at construction, so these are declared statically rather than written by a
+ * response hook: an app whose response middleware is only this keeps the fused native lanes. A route
+ * that sets one of these names itself keeps its own value.
  */
 export function securityHeaders(options: SecurityHeadersOptions = {}): Middleware {
   const frameOptions = options.frameOptions ?? "DENY"
@@ -35,18 +39,18 @@ export function securityHeaders(options: SecurityHeadersOptions = {}): Middlewar
     hstsValue = parts.join("; ")
   }
 
+  const declared: Record<string, string> = {
+    "x-content-type-options": "nosniff",
+    "x-frame-options": frameOptions,
+    "referrer-policy": referrerPolicy,
+  }
+  if (hstsValue !== undefined) declared["strict-transport-security"] = hstsValue
+  if (csp !== undefined) declared["content-security-policy"] = csp
+
   return withRouteAssurance<Middleware>(
     {
       name: "security-headers",
-      // One portable header hook: runs against the response's own Headers on Web runtimes and the
-      // outcome record on the Node direct writer - no clone, no per-runtime twin.
-      onResponseHeaders: (headers) => {
-        headers.set("x-content-type-options", "nosniff")
-        headers.set("x-frame-options", frameOptions)
-        headers.set("referrer-policy", referrerPolicy)
-        if (hstsValue !== undefined) headers.set("strict-transport-security", hstsValue)
-        if (csp !== undefined) headers.set("content-security-policy", csp)
-      },
+      responseHeaders: declared,
     },
     {
       id: NIFRA_ASSURANCE.SECURITY_HEADERS,

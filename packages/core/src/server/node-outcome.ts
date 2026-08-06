@@ -5,6 +5,7 @@
  */
 import {
   appendCookiesToResponse,
+  applyStaticResponseHeaders,
   markTaggedResponse,
   normalizeBodylessResponse,
   rememberMutableHeaders,
@@ -12,6 +13,11 @@ import {
 } from "./respond.ts"
 import { type HandlerResult, isResponseResult } from "./runtime-core.ts"
 import type { CtxSet } from "./server.ts"
+import {
+  mergeStaticHeaderRecord,
+  type StaticResponseHeaders,
+  staticHeaderRecordCopy,
+} from "./static-headers.ts"
 
 function isBodylessStatus(status: number): boolean {
   return status === 204 || status === 205 || status === 304
@@ -120,6 +126,31 @@ export function nodeOutcomeToResponse(outcome: NodeServeOutcome): Response {
   if (body !== null) markTaggedResponse(response, body)
   rememberMutableHeaders(response.headers)
   return response
+}
+
+/**
+ * Fold declared static headers into a resolved outcome, ONCE, before any native response hook runs -
+ * so a header or body twin sees the declared values through its view exactly as it would see values
+ * a hook had written, and so the no-hook direct-writer path (which never calls the finish step) still
+ * ships them.
+ *
+ * The record handed over is always a fresh copy: the Node writers mutate the outcome's record in
+ * place (content-type, content-length, cookies), and the static record is shared by every request.
+ * Its names are already lowercase, so the writer's all-lowercase fast path still holds.
+ */
+export function withStaticNodeHeaders(
+  outcome: NodeServeOutcome,
+  statics: StaticResponseHeaders,
+): NodeServeOutcome {
+  if (outcome.kind === "response") {
+    return { kind: "response", response: applyStaticResponseHeaders(outcome.response, statics) }
+  }
+  const own = outcome.headers
+  const headers =
+    own === undefined
+      ? staticHeaderRecordCopy(statics)
+      : mergeStaticHeaderRecord(statics.record, own)
+  return { ...outcome, headers }
 }
 
 export function nodeOutcomeFromResponse(response: Response): NodeServeOutcome {

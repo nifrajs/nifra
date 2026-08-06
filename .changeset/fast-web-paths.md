@@ -90,3 +90,23 @@ record on the way in, which had made each fresh `set()` cost grow with the heade
 (measured +2.2% end to end on the realistic middleware-carrying Node GET row). Case-insensitive
 reads still cover the record as first seen plus everything written through the view; a native twin
 writing the record directly uses lowercase names - the wire form the record documents.
+New response tier: `app.responseHeaders(record)` (and `responseHeaders` on a middleware bundle) for
+response headers with no per-request decision behind them. Declaring them registers no response hook,
+so the values fold into response construction - one prebuilt init for JSON renders, one record merge
+where the request set its own headers - and an app whose response middleware is only static keeps the
+lanes a hook closes: Bun's fused native routes, and the Node direct socket writer that a full
+`onResponse` gives up. They still apply to every response a hook would cover (success, error,
+404/405, timeout, short-circuit), byte-identically to registering the same names as an
+`onResponseHeaders` hook, on every runtime - pinned by parity suites over `app.fetch`, the Node
+adapter's own socket writes, and the Deno serve path. Declared headers are DEFAULTS: a value the
+request produced (`c.set.headers`, or a response hook) wins, whatever casing it used, and one name
+spelled two ways still ships as one header line. Names are lowercased once at wire-up; a non-string
+value, an invalid name, `__proto__`, or a name the render owns (`content-type`, `content-length`,
+`transfer-encoding`, `set-cookie`) throws a `TypeError` there instead of surfacing on the wire.
+Declarations made before any response hook merge into one record; one made after a hook registers as
+an ordinary header hook so registration order is preserved.
+`securityHeaders()` and `poweredBy()` (in its default respect-existing configuration) now declare
+their headers instead of writing them from a hook: measured +11% on a bare Bun `GET` behind
+`securityHeaders()`, within noise on Node and Deno (where the per-response header writes, not the
+response walk, dominate). Middleware whose headers depend on the request keeps the hook - `cors`
+reflects an origin, and `cacheControl` gates on method and status.

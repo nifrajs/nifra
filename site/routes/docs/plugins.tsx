@@ -50,6 +50,14 @@ export function serverName(value: string): Middleware {
   }
 }`
 
+const STATIC_HEADERS = `// doc-check: skip - fragment: \`app\` is your application's server instance.
+// No hook is registered, so a bare route still takes Bun's fused native lane.
+app.responseHeaders({
+  "x-frame-options": "DENY",
+  "referrer-policy": "no-referrer",
+  "strict-transport-security": "max-age=31536000; includeSubDomains",
+})`
+
 const OFFICIAL = `import { server } from "@nifrajs/core/server"
 import { requestId, logger, etag } from "@nifrajs/middleware"
 
@@ -222,9 +230,36 @@ export default function Plugins() {
         objects, and building them costs several microseconds per request - registering even one
         drops a realistic Node app from ~95% to ~70% of a raw <code>node:http</code> server's
         throughput (it was worse before the lazy bridge below). <code>onResponseHeaders</code> never
-        pays that: the built-ins that use it (<code>cors</code>, <code>securityHeaders</code>,{" "}
-        <code>poweredBy</code>, static <code>cacheControl</code>, <code>language</code>) keep the
-        direct writer at full speed.
+        pays that: the built-ins that use it (<code>cors</code>, static <code>cacheControl</code>,{" "}
+        <code>language</code>) keep the direct writer at full speed.
+      </p>
+
+      <h2>Fixed headers: declare them, don't hook them</h2>
+      <p>
+        Some response headers have no per-request decision behind them at all - a frame policy, a
+        referrer policy, an HSTS directive. Declaring those with{" "}
+        <code>app.responseHeaders(record)</code> registers <b>no hook</b>: the values are folded into
+        response construction (one prebuilt init for JSON renders, one record merge when the route
+        set its own headers), so the app keeps the lanes a hook would close - Bun's fused native
+        routes, and the Node direct writer for a full <code>onResponse</code>. They still apply to
+        every response a hook would cover: success, error, 404/405, timeout, short-circuit.
+      </p>
+      <CodeBlock code={STATIC_HEADERS} />
+      <p>
+        Declared headers are <b>defaults</b>: a value the request itself produced -{" "}
+        <code>c.set.headers</code>, or a response hook - wins, whatever casing it used. Names are
+        lowercased once at wire-up, and a name the render owns (<code>content-type</code>,{" "}
+        <code>content-length</code>, <code>transfer-encoding</code>, <code>set-cookie</code>), an
+        invalid name, or a non-string value throws immediately. Declare them before your response
+        hooks: a declaration made after one cannot precede it, so it degrades to an ordinary{" "}
+        <code>onResponseHeaders</code> hook to keep registration order honest.
+      </p>
+      <p>
+        <code>securityHeaders()</code> and the default <code>poweredBy()</code> ship this way -{" "}
+        <b>measured +11% on a bare Bun GET</b> against the same headers written by a hook, byte-identical
+        on the wire (pinned by parity suites on Bun, Node, and Deno). A route whose headers depend on
+        the request keeps <code>onResponseHeaders</code>: that is why <code>cors</code> (origin
+        reflection) and conditional <code>cacheControl</code> are still hooks.
       </p>
       <ul>
         <li>

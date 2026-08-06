@@ -20,10 +20,15 @@ export function poweredBy(options: PoweredByOptions = {}): Middleware {
   if (header.trim() === "") throw new Error("poweredBy: header is empty")
   if (/[\r\n]/.test(value)) throw new Error("poweredBy: value contains a newline")
 
+  // Respecting an existing value IS the static tier's contract (declared headers are defaults), so
+  // the default configuration declares the header instead of writing it per response and leaves the
+  // app on its fused/native lanes. Overwriting is a decision about the response, so it stays a hook.
+  if (respectExisting) {
+    return { name: "powered-by", responseHeaders: { [header]: value } }
+  }
   return {
     name: "powered-by",
     onResponseHeaders(headers) {
-      if (respectExisting && headers.has(header)) return
       headers.set(header, value)
     },
   }

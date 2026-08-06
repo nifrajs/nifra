@@ -1830,7 +1830,7 @@ Every public export of every package and documented subpath - name, kind, signat
   A {@link definePlugin} plugin that gives every request a stable id: it reuses an inbound `x-request-id` (or generates one), exposes it on the handler context as **`c.requestId`** (typed, threaded by `derive`), and echoes it on the response header. Idempotent - applying it twice is a no-op.
 - **responseCache** _(const)_ - `responseCache: (options: CacheOptions) => Middleware`
 - **securityHeaders** _(function)_ - `securityHeaders: (options?: SecurityHeadersOptions) => Middleware`
-  A safe-by-default set of response security headers (`onResponse`, so they cover errors and 404s too): `X-Content-Type-Options: nosniff`, `X-Frame-Options`, and `Referrer-Policy` always; `Strict-Transport-Security` and `Content-Security-Policy` only when configured (both are environment-/app-specifi…
+  A safe-by-default set of response security headers, covering errors and 404s too: `X-Content-Type-Options: nosniff`, `X-Frame-Options`, and `Referrer-Policy` always; `Strict-Transport-Security` and `Content-Security-Policy` only when configured (both are environment-/app-specific).
 - **timing** _(function)_ - `timing: (options?: TimingOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").Server<any, any>>`
   Adds a `Server-Timing` response header and typed `c.timing` controls for custom metrics. Put request-rewriting middleware (for example `methodOverride`) before `timing()` so timing is attached to the final routed request.
 - **trimTrailingSlash** _(function)_ - `trimTrailingSlash: (options?: TrailingSlashOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").AnyServer>`
