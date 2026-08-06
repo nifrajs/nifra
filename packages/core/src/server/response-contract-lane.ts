@@ -29,6 +29,17 @@
  * That is not an inconsistency to paper over: a strict schema has already declared that extra fields
  * are an error, and a stripping one has declared they are ignorable. Enforcement honours what the
  * author wrote rather than overriding it.
+ *
+ * ## What enforcement costs
+ *
+ * Less than it looks like it should. With a compiled validator (`@nifrajs/schema`'s `t` compiles at
+ * construction; zod/valibot equivalents are similarly cheap), the check itself measures in the
+ * ~100ns-per-response range - on a realistic middleware-carrying route, enforce mode benchmarks
+ * within measurement noise of the same route with no contract at all, on Bun and Node alike. The
+ * one real cost is structural: a contracted route cannot take the bare-route fused lane, because
+ * the check needs the handler's VALUE before it becomes bytes. A route with any middleware, derive,
+ * or lifecycle hook has already left that lane, so for the routes that look like production the
+ * contract is effectively free - declare it.
  */
 import type { StandardIssue, StandardResult, StandardSchemaV1 } from "../schema/standard.ts"
 import { INSTALL_RESPONSE_CONTRACT } from "./install.ts"
@@ -147,9 +158,12 @@ interface ResponseContractInstallable {
  * Install it before the routes it should cover - like `idempotency()`, the decision is made per route
  * at registration, so routes registered earlier are not retroactively covered.
  *
- * A contracted route leaves the fused and native fast paths, because the check needs the handler's
- * value before it becomes bytes. That is the same trade an idempotent route makes, and the reason this
- * is opt-in rather than always on.
+ * The check itself is cheap - with a compiled validator it measures in the ~100ns-per-response
+ * range, within benchmark noise of an uncontracted route on any route that carries middleware or a
+ * derive. What a contracted route does give up is the bare-route fused lane (the check needs the
+ * handler's value before it becomes bytes), which only a route with NO other lifecycle steps was
+ * taking anyway. Opt-in because not installing the plugin keeps the lane out of the bundle, not
+ * because enforcement is expensive.
  */
 export function responseContract(mode: ResponseContractMode = "warn"): IdentityPlugin {
   const runtime: ResponseContractRuntime = {

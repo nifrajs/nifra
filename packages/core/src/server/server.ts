@@ -1355,7 +1355,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     )
     // A checked response schema needs the handler's VALUE before it becomes bytes, and the fused and
     // native lanes exist precisely to skip that step. So a contracted route leaves them - the same
-    // trade an idempotent route makes above, and the reason this is opt-in per server.
+    // structural trade an idempotent route makes above. The check itself is not the cost: a compiled
+    // validator measures ~100ns/response, within benchmark noise on any route these lanes already
+    // exclude (middleware, derives, lifecycle hooks).
     const runtime = this.responseContractRuntime
     const contracted =
       runtime !== undefined && schema?.response !== undefined

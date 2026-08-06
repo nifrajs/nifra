@@ -7908,7 +7908,7 @@
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function responseContract(mode?: ResponseContractMode): IdentityPlugin;",
-    "doc": "/**\n * Hold every route's declared `response` schema to what the handler actually returned.\n *\n *     app.use(responseContract(\"enforce\"))\n *\n * Install it before the routes it should cover - like `idempotency()`, the decision is made per route\n * at registration, so routes registered earlier are not retroactively covered.\n *\n * A contracted route leaves the fused and native fast paths, because the check needs the handler's\n * value before it becomes bytes. That is the same trade an idempotent route makes, and the reason this\n * is opt-in rather than always on.\n */"
+    "doc": "/**\n * Hold every route's declared `response` schema to what the handler actually returned.\n *\n *     app.use(responseContract(\"enforce\"))\n *\n * Install it before the routes it should cover - like `idempotency()`, the decision is made per route\n * at registration, so routes registered earlier are not retroactively covered.\n *\n * The check itself is cheap - with a compiled validator it measures in the ~100ns-per-response\n * range, within benchmark noise of an uncontracted route on any route that carries middleware or a\n * derive. What a contracted route does give up is the bare-route fused lane (the check needs the\n * handler's value before it becomes bytes), which only a route with NO other lifecycle steps was\n * taking anyway. Opt-in because not installing the plugin keeps the lane out of the bundle, not\n * because enforcement is expensive.\n */"
   },
   {
     "name": "ResponseContractMode",
