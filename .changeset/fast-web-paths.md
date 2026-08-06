@@ -9,6 +9,11 @@ validation/handler continuation shared by Web and Node-direct (about 9.6% faster
 body lane in-process), client route matching indexed on the core router instead of a linear scan
 (measured ~18x faster on a 100-route app), search-param parsing in one pass instead of O(keys²), and
 allocation-free fast paths for static asset URLs and safe SSR script serialization.
+Bare fused-lane Web requests with no active timeout or deadline now run on the lazy request
+context (the one the Node direct path already uses), with the platform - `c.env`, `c.clientIp`,
+`c.waitUntil` - carried through and `c.signal`/`c.budget`/`c.query` resolving lazily to identical
+values, pinned by a regression test. Measured +4.5% on a bare `GET /users/:id` on Deno. Routing
+also stops allocating a `{ pathname, search }` pair per request on the portable path.
 Node serving now keeps synchronous Web request middleware on the direct renderer, adapts in-place Web
 response middleware back to direct buffered writes, and avoids redundant params/body lifecycle stages
 for common validated reads. Header-only built-ins (`cache-control`, `powered-by`, and related response

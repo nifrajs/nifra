@@ -276,6 +276,30 @@ describe("fused web lane parity (bare routes)", () => {
     expect(res.headers.get("set-cookie")).toContain("a=b")
   })
 
+  test("fused bare routes preserve platform context on the lazy request context", async () => {
+    const app = server().get("/u/:id", (c) => ({
+      id: c.params.id,
+      env: c.env,
+      clientIp: c.clientIp,
+      signalAborted: c.signal.aborted,
+      unbounded: c.budget.remaining() === Number.POSITIVE_INFINITY,
+      waitUntil: typeof c.waitUntil,
+    }))
+    const res = await app.fetch(new Request("http://t/u/9"), {
+      env: { region: "test" },
+      clientIp: "127.0.0.1",
+      waitUntil: () => {},
+    })
+    expect(await res.json()).toEqual({
+      id: "9",
+      env: { region: "test" },
+      clientIp: "127.0.0.1",
+      signalAborted: false,
+      unbounded: true,
+      waitUntil: "function",
+    })
+  })
+
   test("around hooks force the generic lane (no fused bypass)", async () => {
     let wrapped = 0
     const app = server()

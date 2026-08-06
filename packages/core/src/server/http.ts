@@ -51,8 +51,21 @@ export function urlPartsOf(url: string): UrlParts {
   }
 }
 
-// Extract the pathname WITHOUT a full WHATWG `new URL(req.url)` parse. Kept as a public-ish helper
-// for tests and callers that only need the path; the request hot path uses `urlPartsOf()` once.
+// Extract the pathname WITHOUT a full WHATWG `new URL(req.url)` parse or a temporary `{ pathname,
+// search }` pair. The request hot path only needs the path for routing; query extraction remains
+// lazy in the request context.
 export function pathnameOf(url: string): string {
-  return urlPartsOf(url).pathname
+  const schemeEnd = url.indexOf("://")
+  const start = schemeEnd === -1 ? url.indexOf("/") : url.indexOf("/", schemeEnd + 3)
+  if (start === -1) return "/"
+
+  let end = url.length
+  for (let i = start; i < url.length; i++) {
+    const c = url.charCodeAt(i)
+    if (c === 63 /* ? */ || c === 35 /* # */) {
+      end = i
+      break
+    }
+  }
+  return url.slice(start, end)
 }

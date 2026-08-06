@@ -125,8 +125,11 @@ export class RequestContext implements RawContext {
     source: RequestSource,
     params: Record<string, string>,
     maxBodyBytes: number,
+    platform?: Platform,
   ): RequestContext {
-    return new RequestContext(source, params, maxBodyBytes)
+    const context = new RequestContext(source, params, maxBodyBytes)
+    if (platform !== undefined) context.platformValue = platform
+    return context
   }
 
   [CONTEXT_SET](): CtxSet | undefined {

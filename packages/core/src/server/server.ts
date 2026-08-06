@@ -2496,8 +2496,40 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     onTimeout: () => T,
     webFast: boolean,
   ): MaybePromise<T> {
-    const url = source.urlParts ?? urlPartsOf(source.url)
-    const match = this.catalog.find(source.method, url.pathname)
+    // Routing only needs the pathname. Scan the URL once but keep the two slices in locals instead
+    // of allocating the `{ pathname, search }` pair returned by the public helper on every request.
+    let pathname: string
+    let search: string
+    if (source.urlParts !== undefined) {
+      pathname = source.urlParts.pathname
+      search = source.urlParts.search
+    } else {
+      const rawUrl = source.url
+      const schemeEnd = rawUrl.indexOf("://")
+      const start = schemeEnd === -1 ? rawUrl.indexOf("/") : rawUrl.indexOf("/", schemeEnd + 3)
+      if (start === -1) {
+        pathname = "/"
+        search = ""
+      } else {
+        let pathEnd = rawUrl.length
+        let searchStart = -1
+        let searchEnd = rawUrl.length
+        for (let i = start; i < rawUrl.length; i++) {
+          const c = rawUrl.charCodeAt(i)
+          if (c === 63 /* ? */ && searchStart === -1) {
+            pathEnd = i
+            searchStart = i
+          } else if (c === 35 /* # */) {
+            if (searchStart === -1) pathEnd = i
+            searchEnd = i
+            break
+          }
+        }
+        pathname = rawUrl.slice(start, pathEnd)
+        search = searchStart === -1 ? "" : rawUrl.slice(searchStart, searchEnd)
+      }
+    }
+    const match = this.catalog.find(source.method, pathname)
     if (!match.found) {
       if (match.reason === "method-not-allowed") {
         return wrapResponse(
@@ -2519,7 +2551,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       platform,
       match.payload,
       params,
-      url.search,
+      search,
       finalize,
       wrapResponse,
       onTimeout,
@@ -2618,6 +2650,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         ? getUnboundedRequestBudget()
         : createRequestBudget({ deadline: admission!.deadline as number, signal })
     const plan = entry.execution
+    const nativeContext = webFast && plan.fusedLane === "bare" && controller === undefined
     const outcome: MaybePromise<T> =
       webFast && plan.fusedWeb !== undefined
         ? (plan.fusedWeb(
@@ -2627,7 +2660,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
             signal,
             budget,
             platform,
-            false,
+            nativeContext,
           ) as MaybePromise<T>)
         : !webFast && plan.fusedBody !== undefined
           ? plan.fusedBody(
@@ -2809,7 +2842,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           return logError(
             err,
             nativeContext
-              ? RequestContext.native(source, params, this.maxBodyBytes)
+              ? RequestContext.native(source, params, this.maxBodyBytes, platform)
               : new RequestContext(
                   source,
                   params,
@@ -2828,7 +2861,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
               logError(
                 err,
                 nativeContext
-                  ? RequestContext.native(source, params, this.maxBodyBytes)
+                  ? RequestContext.native(source, params, this.maxBodyBytes, platform)
                   : new RequestContext(
                       source,
                       params,
@@ -2846,7 +2879,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
     return (source, params, search, signal, budget, platform, nativeContext) => {
       const ctx = nativeContext
-        ? RequestContext.native(source, params, this.maxBodyBytes)
+        ? RequestContext.native(source, params, this.maxBodyBytes, platform)
         : new RequestContext(source, params, search, signal, budget, platform, this.maxBodyBytes)
       if (decorations !== undefined) Object.assign(ctx, decorations)
       let result: unknown
@@ -2964,7 +2997,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       wrapResponse: (response: Response) => T,
     ): MaybePromise<T> => {
       const ctx = nativeContext
-        ? RequestContext.native(source, params, this.maxBodyBytes)
+        ? RequestContext.native(source, params, this.maxBodyBytes, platform)
         : new RequestContext(source, params, search, signal, budget, platform, this.maxBodyBytes)
       const finish = (value: unknown): MaybePromise<T> =>
         runParsed(value, ctx, finalize, wrapResponse)
@@ -3026,7 +3059,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
     return (source, params, search, signal, budget, platform, nativeContext) => {
       const ctx = nativeContext
-        ? RequestContext.native(source, params, this.maxBodyBytes)
+        ? RequestContext.native(source, params, this.maxBodyBytes, platform)
         : new RequestContext(source, params, search, signal, budget, platform, this.maxBodyBytes)
       if (decorations !== undefined) Object.assign(ctx, decorations)
       let validation: MaybePromise<StandardResult<unknown>>
