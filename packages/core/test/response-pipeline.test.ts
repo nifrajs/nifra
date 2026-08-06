@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { type Middleware, server, silentLogger } from "../src/index.ts"
+import { taggedResponseBody } from "../src/server/respond.ts"
 
 /** Return a copy of `res` with an `x-app` header - onResponse can't mutate in place. */
 function tagged(res: Response, value: string): Response {
@@ -37,6 +38,17 @@ describe("onResponse", () => {
     expect(res.headers.get("x-app")).toBe("v")
   })
 
+  test("normalizes a body-bearing 304 before response hooks", async () => {
+    const app = server().get(
+      "/cached",
+      () => new Response("stale", { status: 304, headers: { "content-length": "5" } }),
+    )
+    const res = await app.fetch(new Request("http://x/cached"))
+    expect(res.status).toBe(304)
+    expect(res.headers.get("content-length")).toBeNull()
+    expect(await res.text()).toBe("")
+  })
+
   test("runs on an onRequest short-circuit", async () => {
     const app = server()
       .onRequest(() => new Response("blocked", { status: 403 }))
@@ -53,6 +65,66 @@ describe("onResponse", () => {
       .get("/", () => "ok")
     const res = await app.fetch(new Request("http://x/"))
     expect(res.headers.get("x-app")).toBe("12")
+  })
+
+  test("a user-thrown TypeError in a header hook is not retried", async () => {
+    let calls = 0
+    const app = server()
+      .onResponseHeaders(() => {
+        calls++
+        throw new TypeError("user hook failure")
+      })
+      .get("/", () => "ok")
+
+    await expect(app.fetch(new Request("http://x/"))).rejects.toThrow("user hook failure")
+    expect(calls).toBe(1)
+  })
+
+  test("body tagging is isolated per app", async () => {
+    const taggedApp = server()
+      .onResponseBody((body) => body)
+      .get("/", () => ({ app: "tagged" }))
+    const plainApp = server().get("/", () => ({ app: "plain" }))
+
+    expect(taggedResponseBody(await taggedApp.fetch(new Request("http://x/")))).toBe(
+      JSON.stringify({ app: "tagged" }),
+    )
+    expect(taggedResponseBody(await plainApp.fetch(new Request("http://x/")))).toBeUndefined()
+  })
+
+  test("preserves body hooks when routes are merged into another app", async () => {
+    const group = server()
+      .onResponseBody((body) => `${body}!`)
+      .get("/merged", () => ({ ok: true }))
+    const app = server().merge(group)
+
+    const res = await app.fetch(new Request("http://x/merged"))
+    expect(await res.text()).toBe('{"ok":true}!')
+  })
+
+  test("does not treat another app's tagged response as a local framework body", async () => {
+    const sourceApp = server()
+      .onResponseBody((body) => `${body}A`)
+      .get("/", () => ({ source: true }))
+    const foreignResponse = await sourceApp.fetch(new Request("http://x/"))
+    const app = server()
+      .onResponseBody((body) => `${body}B`)
+      .get("/", () => foreignResponse)
+
+    const res = await app.fetch(new Request("http://x/"))
+    expect(await res.text()).toBe('{"source":true}A')
+  })
+
+  test("does not treat a legacy unowned marker as a local framework body", async () => {
+    const response = new Response('{"source":true}')
+    Object.defineProperty(response, Symbol.for("nifra.response.body"), {
+      value: '{"source":true}',
+    })
+    const app = server()
+      .onResponseBody((body) => `${body}B`)
+      .get("/", () => response)
+
+    expect(await (await app.fetch(new Request("http://x/"))).text()).toBe('{"source":true}')
   })
 
   test("onResponseFinalized observes the response after every transformation", async () => {

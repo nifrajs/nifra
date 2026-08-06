@@ -3,6 +3,7 @@ import { ServerResponse as NodeServerResponse } from "node:http"
 import { connect } from "node:net"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "@nifrajs/core"
 import { server } from "@nifrajs/core"
+import { compression } from "@nifrajs/middleware"
 import { type NodeServer, serve } from "../src/index.ts"
 
 let running: NodeServer | undefined
@@ -572,6 +573,73 @@ test("passes a 204 (no body) through to Node correctly", async () => {
   running = await serve(demoApp(), { port: 0 })
   const res = await fetch(`http://localhost:${running.port}/empty`)
   expect(res.status).toBe(204)
+  expect(await res.text()).toBe("")
+})
+
+test("normalizes a body-hook 304 before the Node direct writer", async () => {
+  const app = server()
+    .onResponseBody(() => ({ status: 304 }))
+    .get("/doc", () => ({ body: "must not ship" }))
+  running = await serve(app, { port: 0 })
+  const res = await fetch(`http://localhost:${running.port}/doc`)
+  expect(res.status).toBe(304)
+  expect(await res.text()).toBe("")
+  // Node may synthesize `Content-Length: 0` for a bodyless 304, but the original JSON length must
+  // never survive the status replacement.
+  expect(res.headers.get("content-length")).not.toBe(
+    String(Buffer.byteLength('{"body":"must not ship"}')),
+  )
+})
+
+test("bodyless native JSON responses discard a hook-supplied content length", async () => {
+  const app = server()
+    .onResponseBody((_body, headers) => {
+      headers.set("content-length", "999")
+      return { status: 304 }
+    })
+    .get("/doc", () => ({ ok: true }))
+  running = await serve(app, { port: 0 })
+  const res = await fetch(`http://localhost:${running.port}/doc`)
+  expect(res.status).toBe(304)
+  expect(res.headers.get("content-length")).not.toBe("999")
+  expect(await res.text()).toBe("")
+})
+
+test("raw streamed compression works through the Node adapter", async () => {
+  const payload = "z".repeat(3000)
+  const app = server()
+    .use(compression())
+    .get(
+      "/raw",
+      () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(payload))
+              controller.close()
+            },
+          }),
+          { headers: { "content-type": "text/plain" } },
+        ),
+    )
+  running = await serve(app, { port: 0 })
+  const res = await fetch(`http://localhost:${running.port}/raw`, {
+    headers: { "accept-encoding": "gzip" },
+  })
+  expect(res.headers.get("content-encoding")).toBe("gzip")
+  // Undici transparently decodes a server response while retaining the content-encoding header.
+  expect(await res.text()).toBe(payload)
+})
+
+test("normalizes a body-bearing raw 304 before the Node response writer", async () => {
+  const app = server().get(
+    "/doc",
+    () => new Response("must not ship", { status: 304, headers: { "content-length": "12" } }),
+  )
+  running = await serve(app, { port: 0 })
+  const res = await fetch(`http://localhost:${running.port}/doc`)
+  expect(res.status).toBe(304)
+  expect(res.headers.get("content-length")).not.toBe("12")
   expect(await res.text()).toBe("")
 })
 

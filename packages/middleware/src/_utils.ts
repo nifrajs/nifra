@@ -135,14 +135,31 @@ export async function verifyHmacSha256(
  * - the first mutation throws before any partial change), so a mutation chain is safe to pass.
  */
 export function withHeaders(res: Response, apply: (headers: Headers) => void): Response {
+  const responseHeaders = res.headers
+  const probe = "x-nifra-header-probe"
+  let previous: string | null = null
+  let mutable = true
   try {
-    apply(res.headers)
-    return res
+    previous = responseHeaders.get(probe)
+    responseHeaders.set(probe, "1")
+    if (previous === null) responseHeaders.delete(probe)
+    else responseHeaders.set(probe, previous)
   } catch {
+    mutable = false
+    try {
+      if (previous === null) responseHeaders.delete(probe)
+      else responseHeaders.set(probe, previous)
+    } catch {
+      // The guarded response rejected cleanup; the clone below is authoritative.
+    }
+  }
+  if (!mutable) {
     const headers = new Headers(res.headers)
     apply(headers)
     return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
   }
+  apply(responseHeaders)
+  return res
 }
 
 /** Mutate Node-direct response headers without constructing a Web Response. */
@@ -150,7 +167,13 @@ export function withNodeHeaders(
   res: NodeResponseContext,
   apply: (headers: Record<string, string | readonly string[]>) => void,
 ): void {
-  res.headers ??= {}
+  if (res.headers === undefined) {
+    res.headers = Object.create(null) as Record<string, string | readonly string[]>
+  } else if (Object.getPrototypeOf(res.headers) !== null) {
+    const safe = Object.create(null) as Record<string, string | readonly string[]>
+    Object.assign(safe, res.headers)
+    res.headers = safe
+  }
   apply(res.headers)
 }
 

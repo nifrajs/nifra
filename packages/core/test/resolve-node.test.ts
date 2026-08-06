@@ -528,6 +528,21 @@ describe("resolveNode - stateful native middleware twins", () => {
 })
 
 describe("resolveNode - portable onResponseHeaders", () => {
+  test("native response hook failures are promise rejections", async () => {
+    const app = server({ logger: silentLogger })
+      .use(nodeDirect())
+      .onResponseHeaders(() => {
+        throw new TypeError("native hook failure")
+      })
+      .get("/data", () => ({ ok: true }))
+
+    let outcome: ReturnType<typeof app.resolveNode> | undefined
+    expect(() => {
+      outcome = app.resolveNode(req("/data"))
+    }).not.toThrow()
+    await expect(outcome!).rejects.toThrow("native hook failure")
+  })
+
   test("one hook implementation runs on the native Node lane AND the Web walk", async () => {
     const app = server({ logger: silentLogger })
       .use(nodeDirect())
@@ -597,6 +612,70 @@ describe("resolveNode - portable onResponseBody", () => {
     const viaFetch = await app.fetch(req("/raw"))
     expect(await viaFetch.text()).toBe("raw-bytes")
     expect(called).toBe(0)
+  })
+
+  test("bodyless status replacements drop the serialized body on Web and Node lanes", async () => {
+    for (const status of [204, 205, 304]) {
+      const app = server({ logger: silentLogger })
+        .use(nodeDirect())
+        .onResponseBody(() => ({ status }))
+        .get("/data", () => ({ still: "not sent" }))
+
+      const outcome = await app.resolveNode(req("/data"))
+      if (outcome.kind === "response") throw new Error("expected a direct outcome")
+      expect(outcome.status).toBe(status)
+      expect(outcome.body).toBeNull()
+
+      const response = await app.fetch(req("/data"))
+      expect(response.status).toBe(status)
+      expect(await response.text()).toBe("")
+    }
+  })
+
+  test("native header views treat prototype names as ordinary Web header names", async () => {
+    const app = server({ logger: silentLogger })
+      .use(nodeDirect())
+      .onResponseHeaders((headers) => {
+        headers.append("toString", "one")
+        headers.append("toString", "two")
+        headers.set("constructor", "ctor")
+        headers.set("__proto__", "proto")
+      })
+      .get("/data", () => ({ ok: true }))
+
+    const outcome = await app.resolveNode(req("/data"))
+    expect(outcome.kind).toBe("json")
+    if (outcome.kind !== "json") throw new Error("expected native JSON outcome")
+    const headers = outcome.headers as Readonly<Record<string, unknown>>
+    expect(Object.getOwnPropertyDescriptor(headers, "tostring")?.value).toEqual(["one", "two"])
+    expect(Object.getOwnPropertyDescriptor(headers, "constructor")?.value).toBe("ctor")
+    expect(Object.getOwnPropertyDescriptor(headers, "__proto__")?.value).toBe("proto")
+  })
+
+  test("response controls keep prototype-named headers as data", async () => {
+    const app = server({ logger: silentLogger })
+      .use(nodeDirect())
+      .get("/data", (c) => {
+        Object.defineProperty(c.set.headers, "__proto__", {
+          value: "proto",
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        })
+        Object.defineProperty(c.set.headers, "constructor", {
+          value: "ctor",
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        })
+        return { ok: true }
+      })
+
+    const outcome = await app.resolveNode(req("/data"))
+    expect(outcome.kind).toBe("json")
+    if (outcome.kind !== "json") throw new Error("expected native JSON outcome")
+    expect(Object.getOwnPropertyDescriptor(outcome.headers, "__proto__")?.value).toBe("proto")
+    expect(Object.getOwnPropertyDescriptor(outcome.headers, "constructor")?.value).toBe("ctor")
   })
 })
 

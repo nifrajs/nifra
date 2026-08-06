@@ -32,7 +32,10 @@ class LazyResponseControls implements CtxSet {
   _cookies?: string[]
 
   get headers(): Record<string, string> {
-    this._headers ??= {}
+    // Header names are attacker-controlled and `__proto__` is a valid Web header name. A
+    // null-prototype record keeps response header writes data-only instead of allowing a header
+    // assignment to mutate the record's prototype.
+    this._headers ??= Object.create(null) as Record<string, string>
     return this._headers
   }
 

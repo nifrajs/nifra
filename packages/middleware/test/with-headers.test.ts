@@ -49,4 +49,16 @@ describe("withHeaders", () => {
     expect(out.headers.get("x-up")).toBe("1") // original headers carried over
     expect(await out.text()).toBe("upstream")
   })
+
+  test("does not retry a callback that throws its own TypeError", () => {
+    let calls = 0
+    const res = new Response("body")
+    expect(() =>
+      withHeaders(res, () => {
+        calls++
+        throw new TypeError("callback failure")
+      }),
+    ).toThrow("callback failure")
+    expect(calls).toBe(1)
+  })
 })

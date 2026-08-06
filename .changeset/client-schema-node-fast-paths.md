@@ -26,10 +26,12 @@ Faster typed client, validation, and Node serving:
   responses. `etag`, `prettyJson`, and `compression` move to the portable `onResponseBody` payload
   tier: they receive the final framework-serialized bytes on every runtime (nothing drained, the
   Node direct writer stays engaged, and compressed responses now carry a known `Content-Length`).
-  Behavior notes: these three now apply to framework-serialized responses only - a handler-returned
-  raw `Response` (a stream, a proxied fetch) passes through untouched - and `prettyJson`'s
-  `enabled` predicate now receives the portable request view (`{ method, url, header(name) }`)
-  instead of a `Request`.
+  All three now ALSO handle raw responses through the new raw tier: `compression` gzips streamed
+  and proxied responses (buffering up to its threshold peek, honoring `Accept-Encoding` q-values so
+  `gzip;q=0` is respected), `etag` hashes and can `304` raw buffered bodies up to a size cap, and
+  `prettyJson` re-indents raw JSON bodies - while framework-serialized payloads stay on the payload
+  tier and Node's direct writer. `prettyJson`'s `enabled` predicate receives the portable request
+  view (`{ method, url, header(name) }`) instead of a `Request`.
 - `@nifrajs/node`: response headers are written with a single native `setHeaders` call (repeated
   `Set-Cookie` values stay un-joined), a hook-supplied `Content-Type` is preserved on buffered JSON
   writes, `Content-Length` is always declared for buffered bodies so responses never fall back to

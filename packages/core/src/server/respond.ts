@@ -33,31 +33,101 @@ const JSON_INIT_200: ResponseInit = { status: 200, headers: JSON_CT_HEADERS }
 
 // The framework-buffered-body marker shared with the Node adapter: a Response carrying it exposes
 // its already-serialized bytes without draining. On the Web serving paths it exists ONLY when a
-// registered `onResponseBody` hook needs it (the flag below), so hook-less apps pay nothing.
+// registered body/raw hook needs it, so hook-less apps pay nothing.
 const RESPONSE_BODY = Symbol.for("nifra.response.body")
-let tagResponseBodies = false
 
-/** Called once when the first `onResponseBody` hook registers (process-wide; the tag is inert). */
-export function enableResponseBodyTagging(): void {
-  tagResponseBodies = true
+function isBodylessStatus(status: number): boolean {
+  return status === 204 || status === 205 || status === 304
 }
+
+/** Normalize handler-produced bodyless responses before response middleware sees them. */
+export function normalizeBodylessResponse(response: Response): Response {
+  if (!isBodylessStatus(response.status)) return response
+  if (response.body === null && !response.headers.has("content-length")) return response
+  const headers = new Headers(response.headers)
+  headers.delete("content-length")
+  return new Response(null, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
+}
+
+type TaggedResponseMarker = {
+  readonly body: string | Uint8Array
+  readonly owner?: object
+}
+
+type ResponseBodyTagOption = false | true | object | undefined
 
 /** The framework-serialized bytes riding a tagged Response, or `undefined` for raw/streamed ones. */
-export function taggedResponseBody(response: Response): string | Uint8Array | undefined {
-  return (response as { [RESPONSE_BODY]?: string | Uint8Array })[RESPONSE_BODY]
+export function taggedResponseBody(
+  response: Response,
+  owners?: ReadonlySet<object>,
+): string | Uint8Array | undefined {
+  const marker = (response as { [RESPONSE_BODY]?: string | Uint8Array | TaggedResponseMarker })[
+    RESPONSE_BODY
+  ]
+  if (owners !== undefined) {
+    // A Web response is framework-buffered only when this app (or an intentionally merged app) put
+    // the marker on it. The legacy primitive marker remains readable by the Node bridge, but must
+    // not let an arbitrary response impersonate a local framework body on the Web hook path.
+    if (
+      typeof marker !== "object" ||
+      marker === null ||
+      marker instanceof Uint8Array ||
+      marker.owner === undefined ||
+      !owners.has(marker.owner)
+    ) {
+      return undefined
+    }
+    return marker.body
+  }
+  if (typeof marker === "string" || marker instanceof Uint8Array) return marker
+  return marker?.body
 }
 
-function tagged(response: Response, body: string): Response {
-  if (tagResponseBodies) {
-    Object.defineProperty(response, RESPONSE_BODY, { value: body })
-  }
+export function taggedResponseOwner(response: Response): object | undefined {
+  const marker = (response as { [RESPONSE_BODY]?: string | Uint8Array | TaggedResponseMarker })[
+    RESPONSE_BODY
+  ]
+  return typeof marker === "object" && marker !== null && "owner" in marker
+    ? marker.owner
+    : undefined
+}
+
+export function markTaggedResponse(
+  response: Response,
+  body: string | Uint8Array,
+  owner?: object,
+): Response {
+  Object.defineProperty(response, RESPONSE_BODY, {
+    value: owner === undefined ? body : ({ body, owner } satisfies TaggedResponseMarker),
+  })
   return response
+}
+
+function tagged(
+  response: Response,
+  body: string,
+  tagResponseBody: ResponseBodyTagOption,
+): Response {
+  return tagResponseBody === false || tagResponseBody === undefined
+    ? response
+    : markTaggedResponse(
+        response,
+        body,
+        typeof tagResponseBody === "object" ? tagResponseBody : undefined,
+      )
 }
 
 /** Fused-lane respond when `c.set` is untouched. Bun 1.3's native `Response.json` now beats the
  * older hand-inlined stringify + Response construction on this lane while preserving the exact
  * body/content-type contract; keep the generic fallback for non-JSON values. */
-export function fusedRespondNoSet(result: unknown): Response {
+export function fusedRespondNoSet(
+  result: unknown,
+  tagResponseBody: ResponseBodyTagOption = false,
+): Response {
   if (
     result !== undefined &&
     !(result instanceof Response) &&
@@ -65,9 +135,10 @@ export function fusedRespondNoSet(result: unknown): Response {
     result !== null &&
     !isResponseResult(result)
   ) {
-    if (tagResponseBodies) {
+    if (tagResponseBody) {
       const body = JSON.stringify(result) as string | undefined
-      if (body !== undefined) return tagged(new Response(body, JSON_INIT_200), body)
+      if (body !== undefined)
+        return tagged(new Response(body, JSON_INIT_200), body, tagResponseBody)
     }
     return Response.json(result)
   }
@@ -76,21 +147,32 @@ export function fusedRespondNoSet(result: unknown): Response {
 
 /** Fused-lane respond with a context: read `c.set` once; untouched (the common case) -> the fast
  * JSON respond; touched -> the generic `toResponse` with those controls (statuses, headers, cookies). */
-export function fusedRespond(result: unknown, ctx: RawContext): Response {
+export function fusedRespond(
+  result: unknown,
+  ctx: RawContext,
+  tagResponseBody: ResponseBodyTagOption = false,
+): Response {
   const set = ctx[CONTEXT_SET]()
-  if (set === undefined) return fusedRespondNoSet(result)
-  return toResponse(result as HandlerResult, set)
+  if (set === undefined) return fusedRespondNoSet(result, tagResponseBody)
+  return toResponse(result as HandlerResult, set, tagResponseBody)
 }
 
-export function toResponse(result: HandlerResult, set: CtxSet): Response {
+export function toResponse(
+  result: HandlerResult,
+  set: CtxSet,
+  tagResponseBody: ResponseBodyTagOption = false,
+): Response {
   if (isResponseResult(result)) {
-    return appendCookiesToResponse(result.toResponse(), set)
+    return appendCookiesToResponse(normalizeBodylessResponse(result.toResponse()), set)
   }
   if (result instanceof Response) {
-    return appendCookiesToResponse(result, set)
+    return appendCookiesToResponse(normalizeBodylessResponse(result), set)
   }
   const headers = headersInit(set)
   const status = set.status ?? (result === undefined ? 204 : 200)
+  if (status === 204 || status === 205 || status === 304) {
+    return new Response(null, headers === undefined ? { status } : { status, headers })
+  }
   if (headers === undefined && result !== undefined) {
     // Fast respond (profiled ~50 ns/req faster on every plain-JSON return): `JSON.stringify` + a
     // prebuilt init beats `Response.json`'s internal init handling. Output is byte-identical -
@@ -101,15 +183,20 @@ export function toResponse(result: HandlerResult, set: CtxSet): Response {
       return tagged(
         new Response(body, status === 200 ? JSON_INIT_200 : { status, headers: JSON_CT_HEADERS }),
         body,
+        tagResponseBody,
       )
     }
   }
   const init: ResponseInit = headers === undefined ? { status } : { status, headers }
   if (result === undefined) return new Response(null, init)
-  if (tagResponseBodies) {
+  if (tagResponseBody) {
     const body = JSON.stringify(result) as string | undefined
     if (body !== undefined) {
-      return tagged(new Response(body, { status, headers: withJsonContentType(headers) }), body)
+      return tagged(
+        new Response(body, { status, headers: withJsonContentType(headers) }),
+        body,
+        typeof tagResponseBody === "object" ? tagResponseBody : undefined,
+      )
     }
   }
   return Response.json(result, init)
@@ -130,7 +217,7 @@ function withJsonContentType(
     if (!headers.has("content-type")) headers.set("content-type", "application/json;charset=utf-8")
     return headers
   }
-  return "content-type" in headers
+  return Object.hasOwn(headers, "content-type")
     ? headers
     : { ...headers, "content-type": "application/json;charset=utf-8" }
 }

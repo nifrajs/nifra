@@ -220,6 +220,11 @@ export interface Middleware {
    * (proxies, SSE, streamed SSR) are skipped by contract - transforming those needs `onResponse`.
    */
   readonly onResponseBody?: ResponseBodyHook
+  /**
+   * Response transform for untagged/raw responses (streams, proxied fetches, and framework errors).
+   * Framework-serialized payloads use `onResponseBody` and remain on the Node direct lane.
+   */
+  readonly onResponseRaw?: (response: Response, req: Request) => MaybePromise<Response>
   readonly onResponseFinalized?: (outcome: ResponseFinalization, req: Request) => MaybePromise<void>
   readonly onError?: (error: unknown, context: Context) => MaybePromise<unknown>
 }

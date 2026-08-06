@@ -120,7 +120,7 @@ type NodeServeOutcome =
   | {
       readonly kind: "json"
       readonly status: number
-      readonly headers: Readonly<Record<string, string>> | undefined
+      readonly headers: Readonly<Record<string, string | readonly string[]>> | undefined
       readonly cookies: readonly string[] | undefined
       readonly body: string | null
     }
@@ -185,6 +185,22 @@ const EMPTY_BUFFER = Buffer.alloc(0)
 const NODE_RESPONSE_BODY = Symbol.for("nifra.response.body")
 const RESPONSE_RESULT = Symbol.for("nifra.response.result")
 
+function isBodylessStatus(status: number): boolean {
+  return status === 204 || status === 205 || status === 304
+}
+
+function normalizeBodylessResponse(response: Response): Response {
+  if (!isBodylessStatus(response.status)) return response
+  if (response.body === null && !response.headers.has("content-length")) return response
+  const headers = new Headers(response.headers)
+  headers.delete("content-length")
+  return new Response(null, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
+}
+
 const NODE_OUTCOME_RUNTIME: NodeOutcomeRuntime = {
   toOutcome(result, set) {
     if (isResponseResult(result)) {
@@ -194,7 +210,7 @@ const NODE_OUTCOME_RUNTIME: NodeOutcomeRuntime = {
           kind: "body",
           status: body.status,
           headers: appendCookiesToNodeHeaders(body.headers, set._cookies),
-          body: body.body,
+          body: isBodylessStatus(body.status) ? new Uint8Array(0) : body.body,
         }
       }
       return nodeOutcomeFromResponse(appendCookiesToResponse(result.toResponse(), set._cookies))
@@ -207,7 +223,10 @@ const NODE_OUTCOME_RUNTIME: NodeOutcomeRuntime = {
       status: set.status ?? (result === undefined ? 204 : 200),
       headers: set._headers,
       cookies: set._cookies,
-      body: result === undefined ? null : JSON.stringify(result),
+      body:
+        result === undefined || isBodylessStatus(set.status ?? (result === undefined ? 204 : 200))
+          ? null
+          : JSON.stringify(result),
     }
   },
   toResponse: nodeOutcomeToResponse,
@@ -249,6 +268,7 @@ function appendCookiesToResponse(
 }
 
 function nodeOutcomeFromResponse(response: Response): NodeServeOutcome {
+  response = normalizeBodylessResponse(response)
   if (!response.bodyUsed) {
     const body = (response as { readonly [NODE_RESPONSE_BODY]?: unknown })[NODE_RESPONSE_BODY]
     if (typeof body === "string" || body instanceof Uint8Array) {
@@ -293,7 +313,12 @@ function nodeOutcomeToResponse(outcome: NodeServeOutcome): Response {
       pairs.push(["content-type", JSON_CONTENT_TYPE])
     }
   }
-  const body = outcome.body
+  if (isBodylessStatus(outcome.status)) {
+    for (let i = pairs.length - 1; i >= 0; i--) {
+      if (pairs[i]?.[0].toLowerCase() === "content-length") pairs.splice(i, 1)
+    }
+  }
+  const body = isBodylessStatus(outcome.status) ? null : outcome.body
   const response = new FastResponse(body, {
     status: outcome.status,
     headers: pairs,
@@ -307,12 +332,12 @@ function responseHeaders(
 ): Readonly<Record<string, string | readonly string[]>> | undefined {
   let headers: Record<string, string | readonly string[]> | undefined
   response.headers.forEach((value, key) => {
-    headers ??= {}
+    headers ??= Object.create(null) as Record<string, string | readonly string[]>
     headers[key] = value
   })
   const cookies = response.headers.getSetCookie?.()
   if (cookies !== undefined && cookies.length > 0) {
-    headers ??= {}
+    headers ??= Object.create(null) as Record<string, string | readonly string[]>
     headers["set-cookie"] = cookies
   }
   return headers
@@ -323,8 +348,8 @@ function appendCookiesToNodeHeaders(
   cookies: readonly string[] | undefined,
 ): Readonly<Record<string, string | readonly string[]>> | undefined {
   if (cookies === undefined || cookies.length === 0) return headers
-  const out: Record<string, string | readonly string[]> =
-    headers === undefined ? {} : { ...headers }
+  const out = Object.create(null) as Record<string, string | readonly string[]>
+  if (headers !== undefined) Object.assign(out, headers)
   const existing = out["set-cookie"]
   const setCookies =
     existing === undefined ? [] : typeof existing === "string" ? [existing] : [...existing]
@@ -738,7 +763,7 @@ function writeInternalError(nodeRes: ServerResponse): void {
 /** True when every header name in the record is already free of ASCII uppercase - the gate for
  * skipping the per-request lowercase normalization copy in {@link writeJsonOutcome}. */
 function allHeaderKeysLowercase(record: Readonly<Record<string, unknown>>): boolean {
-  for (const key in record) {
+  for (const key of Object.keys(record)) {
     for (let i = 0; i < key.length; i++) {
       const c = key.charCodeAt(i)
       if (c >= 65 && c <= 90) return false
@@ -766,11 +791,11 @@ function writeJsonOutcome(
   let headers: Record<string, string | string[]>
   const source = outcome.headers
   if (source === undefined) {
-    headers = {}
+    headers = Object.create(null) as Record<string, string | string[]>
   } else if (allHeaderKeysLowercase(source)) {
     headers = source as Record<string, string | string[]>
   } else {
-    headers = {}
+    headers = Object.create(null) as Record<string, string | string[]>
     for (const [key, value] of Object.entries(source)) {
       headers[key.toLowerCase()] = value as string | string[]
     }
@@ -783,6 +808,10 @@ function writeJsonOutcome(
   if (outcome.body !== null) {
     if (headers["content-type"] === undefined) headers["content-type"] = JSON_CONTENT_TYPE
     headers["content-length"] = String(Buffer.byteLength(outcome.body))
+  } else if (isBodylessStatus(outcome.status)) {
+    // 204/205/304 never carry a payload; discard a user/native-hook length even when the body is
+    // already represented as null so the direct writer cannot advertise bytes that will not ship.
+    delete headers["content-length"]
   }
   if (outcome.cookies !== undefined && outcome.cookies.length > 0) {
     headers["set-cookie"] = [...outcome.cookies]
@@ -806,13 +835,24 @@ function writeBodyOutcome(
   // array on the hot SSR path. The readonly type is an ownership guarantee from the producer, not a
   // runtime value Node mutates.
   const headers = outcome.headers as Record<string, string | string[]> | undefined
+  if (isBodylessStatus(outcome.status)) {
+    const lengthKey =
+      headers === undefined
+        ? undefined
+        : Object.keys(headers).find((key) => key.toLowerCase() === "content-length")
+    if (headers !== undefined && lengthKey !== undefined) delete headers[lengthKey]
+    nodeRes.writeHead(outcome.status, headers)
+    nodeRes.end()
+    return
+  }
   // The body is buffered, so its length is known - declare it unless the producer already did.
   // Without a length Node falls back to chunked framing (extra wire bytes on every SSR response).
   if (headers === undefined) {
     nodeRes.setHeader("content-length", byteLengthOf(outcome.body))
     nodeRes.writeHead(outcome.status)
   } else {
-    if (headers["content-length"] === undefined) {
+    const lengthKey = Object.keys(headers).find((key) => key.toLowerCase() === "content-length")
+    if (lengthKey === undefined) {
       headers["content-length"] = String(byteLengthOf(outcome.body))
     }
     nodeRes.writeHead(outcome.status, headers)
@@ -1102,7 +1142,7 @@ function headersFromNode(input: IncomingHttpHeaders): Headers {
  * everything a second time.
  */
 function headerRecordFromNode(input: IncomingHttpHeaders): Record<string, string> {
-  const record: Record<string, string> = {}
+  const record = Object.create(null) as Record<string, string>
   for (const [key, value] of Object.entries(input)) {
     if (value === undefined) continue
     record[key] = Array.isArray(value) ? value.join(", ") : value

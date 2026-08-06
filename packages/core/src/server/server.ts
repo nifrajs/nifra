@@ -76,10 +76,11 @@ import {
 } from "./query.ts"
 import { RequestContext, readBoundedJsonSource } from "./request-context.ts"
 import {
-  enableResponseBodyTagging,
   fusedRespond,
   fusedRespondNoSet,
+  markTaggedResponse,
   taggedResponseBody,
+  taggedResponseOwner,
   toResponse,
 } from "./respond.ts"
 // Type-only: erased, so the kernel never pulls the lane's implementation into a bundle that does not
@@ -110,7 +111,9 @@ export type {
   ResponseHeadersView,
 }
 
-const RESPONSE_BODY_TAG = Symbol.for("nifra.response.body")
+function isBodylessStatus(status: number): boolean {
+  return status === 204 || status === 205 || status === 304
+}
 
 /** Apply a body hook's return to the native response context (bytes, or a structured replacement). */
 function applyBodyReplacement(
@@ -119,11 +122,12 @@ function applyBodyReplacement(
 ): void {
   if (replaced === undefined) return
   if (typeof replaced === "string" || replaced instanceof Uint8Array) {
-    response.body = replaced
+    response.body = isBodylessStatus(response.status) ? null : replaced
     return
   }
   if (replaced.body !== undefined) response.body = replaced.body
   if (replaced.status !== undefined) response.status = replaced.status
+  if (isBodylessStatus(response.status)) response.body = null
 }
 
 /** Swap a tagged Response's body for a hook's replacement, re-tagging so later body hooks (and the
@@ -134,25 +138,60 @@ function withReplacedBody(
   replaced: string | Uint8Array | ResponseBodyReplacement | undefined,
 ): Response {
   if (replaced === undefined) return response
+  const originalBody = taggedResponseBody(response)
   let body: string | Uint8Array | null
   let status = response.status
   if (typeof replaced === "string" || replaced instanceof Uint8Array) {
     body = replaced
   } else {
-    body = replaced.body !== undefined ? replaced.body : (taggedResponseBody(response) ?? null)
+    body = replaced.body !== undefined ? replaced.body : (originalBody ?? null)
     if (replaced.status !== undefined) status = replaced.status
-    if (body === (taggedResponseBody(response) ?? null) && status === response.status) {
+    if (body === (originalBody ?? null) && status === response.status) {
       return response
     }
   }
+  if (isBodylessStatus(status)) body = null
   const headers = new Headers(response.headers)
   headers.delete("content-length")
   const next = new Response(body as ConstructorParameters<typeof Response>[0], {
     status,
     headers,
   })
-  if (body !== null) Object.defineProperty(next, RESPONSE_BODY_TAG, { value: body })
+  if (body !== null) markTaggedResponse(next, body, taggedResponseOwner(response))
   return next
+}
+
+const HEADER_MUTABILITY_PROBE = "x-nifra-header-probe"
+const MUTABLE_RESPONSE_HEADERS = new WeakSet<Headers>()
+const GUARDED_RESPONSE_HEADERS = new WeakSet<Headers>()
+
+/**
+ * Detect a guarded Web Headers object before invoking user code. Retrying after catching any
+ * TypeError is observably wrong: user hooks are allowed to throw TypeError themselves, and a retry
+ * runs those hooks twice. The probe uses a valid private header name and restores a pre-existing
+ * value, so the fallback is limited to the actual immutable/guarded-header case.
+ */
+function hasMutableResponseHeaders(headers: Headers): boolean {
+  if (MUTABLE_RESPONSE_HEADERS.has(headers)) return true
+  if (GUARDED_RESPONSE_HEADERS.has(headers)) return false
+  let previous: string | null = null
+  try {
+    previous = headers.get(HEADER_MUTABILITY_PROBE)
+    headers.set(HEADER_MUTABILITY_PROBE, "1")
+    if (previous === null) headers.delete(HEADER_MUTABILITY_PROBE)
+    else headers.set(HEADER_MUTABILITY_PROBE, previous)
+    MUTABLE_RESPONSE_HEADERS.add(headers)
+    return true
+  } catch {
+    try {
+      if (previous === null) headers.delete(HEADER_MUTABILITY_PROBE)
+      else headers.set(HEADER_MUTABILITY_PROBE, previous)
+    } catch {
+      // The guarded object rejected the cleanup too; the clone below is authoritative.
+    }
+    GUARDED_RESPONSE_HEADERS.add(headers)
+    return false
+  }
 }
 
 /** Adapt a portable {@link ResponseBodyHook} into the Web `onResponse` walk. Only a Response
@@ -160,9 +199,10 @@ function withReplacedBody(
  * contract, never drained. */
 function webResponseBodyHook(
   fn: ResponseBodyHook,
+  owners: ReadonlySet<object>,
 ): (response: Response, req: Request) => MaybePromise<Response> {
   return (response, req) => {
-    const body = taggedResponseBody(response)
+    const body = taggedResponseBody(response, owners)
     if (body === undefined) return response
     const out = fn(body, response.headers, webRequestView(req), response.status)
     if (out instanceof Promise) return out.then((replaced) => withReplacedBody(response, replaced))
@@ -187,15 +227,25 @@ function webResponseHeadersHook(
 ): (response: Response, req: Request) => MaybePromise<Response> {
   return (response, req) => {
     const view = webRequestView(req)
-    try {
-      const out = fn(response.headers, view, response.status)
-      return out instanceof Promise ? out.then(() => response) : response
-    } catch (error) {
-      if (!(error instanceof TypeError)) throw error
+    if (!hasMutableResponseHeaders(response.headers)) {
       const clone = new Response(response.body, response)
       const out = fn(clone.headers, view, clone.status)
       return out instanceof Promise ? out.then(() => clone) : clone
     }
+    const out = fn(response.headers, view, response.status)
+    return out instanceof Promise ? out.then(() => response) : response
+  }
+}
+
+/** Adapt a raw-response fallback hook. Tagged framework payloads already ran through the body tier,
+ * while untagged Responses include streams, proxied fetches, and framework-generated error responses. */
+function webResponseRawHook(
+  fn: (response: Response, req: Request) => MaybePromise<Response>,
+  owners: ReadonlySet<object>,
+): (response: Response, req: Request) => MaybePromise<Response> {
+  return (response, req) => {
+    if (taggedResponseBody(response, owners) !== undefined) return response
+    return fn(response, req)
   }
 }
 
@@ -560,6 +610,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private readonly onResponseHooks: RawOnResponse[]
   private readonly onNodeResponseHooks: Array<NodeResponseHook | undefined>
   private readonly onResponseFinalizedHooks: RawOnResponseFinalized[]
+  /** Body/raw response hooks need a framework-payload marker; keep that decision per app. */
+  private responseBodyTag: object | undefined
+  private readonly responseBodyOwners: Set<object>
+  private readonly finalizeResponse = (result: unknown, set: CtxSet): Response =>
+    toResponse(result as HandlerResult, set, this.responseBodyTag)
   private readonly responseRequests: WeakMap<Request, Request>
   /** Original source → request observed by generic request hooks, including in-place mutations. */
   private readonly responseSources: WeakMap<object, Request>
@@ -626,6 +681,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.onResponseHooks = []
     this.onNodeResponseHooks = []
     this.onResponseFinalizedHooks = []
+    this.responseBodyTag = undefined
+    this.responseBodyOwners = new Set()
     this.responseRequests = new WeakMap()
     this.responseSources = new WeakMap()
     this.nodeContexts = new WeakMap()
@@ -746,6 +803,27 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return this
   }
 
+  private enableResponseBodyTagging(): object {
+    if (this.responseBodyTag === undefined) {
+      this.responseBodyTag = Object.freeze({})
+      this.responseBodyOwners.add(this.responseBodyTag)
+    }
+    return this.responseBodyTag
+  }
+
+  /**
+   * Register a response transform for raw/streamed Responses. Framework-serialized payloads stay on
+   * the body tier; this hook is only entered for untagged Responses (streams, proxied fetches, and
+   * framework-generated error responses). A no-op native twin keeps buffered JSON on the direct lane.
+   */
+  onResponseRaw(fn: (response: Response, req: Request) => MaybePromise<Response>): this {
+    this.assertConfigurable("onResponseRaw()")
+    this.enableResponseBodyTagging()
+    this.onResponseHooks.push(webResponseRawHook(fn, this.responseBodyOwners))
+    this.onNodeResponseHooks.push(() => undefined)
+    return this
+  }
+
   /**
    * Register a PORTABLE header-only response hook - one implementation, fast on every runtime.
    *
@@ -776,8 +854,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    */
   onResponseBody(fn: ResponseBodyHook): this {
     this.assertConfigurable("onResponseBody()")
-    enableResponseBodyTagging()
-    this.onResponseHooks.push(webResponseBodyHook(fn))
+    this.enableResponseBodyTagging()
+    this.onResponseHooks.push(webResponseBodyHook(fn, this.responseBodyOwners))
     this.onNodeResponseHooks.push((response, req) => {
       const body = response.body
       if (body === null) return undefined
@@ -874,6 +952,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
     if (arg.onResponseHeaders !== undefined) this.onResponseHeaders(arg.onResponseHeaders)
     if (arg.onResponseBody !== undefined) this.onResponseBody(arg.onResponseBody)
+    if (arg.onResponseRaw !== undefined) this.onResponseRaw(arg.onResponseRaw)
     if (arg.onResponseFinalized !== undefined) this.onResponseFinalized(arg.onResponseFinalized)
     if (arg.onError !== undefined) this.onError(arg.onError)
     return this
@@ -1571,7 +1650,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         entry,
         params,
         search,
-        toResponse,
+        this.finalizeResponse,
         IDENTITY_RESPONSE,
         RESPONSE_TIMEOUT,
         false,
@@ -1661,6 +1740,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.onResponseHooks.push(...source.onResponseHooks)
     this.onNodeResponseHooks.push(...source.onNodeResponseHooks)
     this.onResponseFinalizedHooks.push(...source.onResponseFinalizedHooks)
+    if (source.responseBodyTag !== undefined) {
+      const owner = this.enableResponseBodyTagging()
+      this.responseBodyOwners.add(source.responseBodyTag)
+      source.responseBodyOwners.add(owner)
+    }
     this.globalAssurance.push(...source.globalAssurance)
     this.mcpResourceList.push(...source.mcpResourceList)
     this.mcpPromptList.push(...source.mcpPromptList)
@@ -1753,7 +1837,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     const outcome = this.dispatch<Response>(
       source,
       platform,
-      toResponse,
+      this.finalizeResponse,
       IDENTITY_RESPONSE,
       RESPONSE_TIMEOUT,
       true,
@@ -1792,7 +1876,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       entry,
       params,
       undefined,
-      toResponse,
+      this.finalizeResponse,
       IDENTITY_RESPONSE,
       RESPONSE_TIMEOUT,
       true,
@@ -1905,9 +1989,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         : this.finishNodeWebResponse(outcome, source, runtime)
     }
     if (!nativeResponseHooks) return outcome
-    return outcome instanceof Promise
-      ? outcome.then((settled) => this.finishNodeResponse(settled, source, runtime))
-      : this.finishNodeResponse(outcome, source, runtime)
+    try {
+      return outcome instanceof Promise
+        ? outcome.then((settled) => this.finishNodeResponse(settled, source, runtime))
+        : this.finishNodeResponse(outcome, source, runtime)
+    } catch (error) {
+      // Keep resolveNode's failure shape promise-based, matching app.fetch and the adapter bridge.
+      return Promise.reject(error)
+    }
   }
 
   /** Run generic Web response middleware while retaining direct writes for untouched buffered bodies. */
@@ -2005,7 +2094,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       if (bodyChanged && context.body !== null && typeof context.body !== "string") {
         // A binary replacement can't ride the json render - switch to the buffered-body render,
         // folding queued cookies into explicit set-cookie lines so nothing is dropped.
-        const record = { ...(headers ?? {}) } as Record<string, string | readonly string[]>
+        const record = Object.create(null) as Record<string, string | readonly string[]>
+        if (headers !== undefined) Object.assign(record, headers)
         if (context.cookies !== undefined && context.cookies.length > 0) {
           record["set-cookie"] = [...context.cookies]
         }
@@ -2014,7 +2104,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       return {
         ...outcome,
         status: context.status,
-        headers: headers as Readonly<Record<string, string>> | undefined,
+        headers,
         cookies: context.cookies,
         body: bodyChanged ? (context.body as string | null) : outcome.body,
       }
@@ -2023,7 +2113,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       ...outcome,
       status: context.status,
       headers,
-      body: bodyChanged ? ((context.body ?? "") as string | Uint8Array) : outcome.body,
+      body: bodyChanged
+        ? ((context.body ?? new Uint8Array(0)) as string | Uint8Array)
+        : outcome.body,
     }
   }
 
@@ -2726,24 +2818,26 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           )
         }
         if (result instanceof Promise) {
-          return result.then(fusedRespondNoSet, (err) =>
-            logError(
-              err,
-              nativeContext
-                ? RequestContext.native(source, params, this.maxBodyBytes)
-                : new RequestContext(
-                    source,
-                    params,
-                    search,
-                    signal,
-                    budget,
-                    platform,
-                    this.maxBodyBytes,
-                  ),
-            ),
+          return result.then(
+            (value) => fusedRespondNoSet(value, this.responseBodyTag),
+            (err) =>
+              logError(
+                err,
+                nativeContext
+                  ? RequestContext.native(source, params, this.maxBodyBytes)
+                  : new RequestContext(
+                      source,
+                      params,
+                      search,
+                      signal,
+                      budget,
+                      platform,
+                      this.maxBodyBytes,
+                    ),
+              ),
           )
         }
-        return fusedRespondNoSet(result)
+        return fusedRespondNoSet(result, this.responseBodyTag)
       }
     }
     return (source, params, search, signal, budget, platform, nativeContext) => {
@@ -2759,11 +2853,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       }
       if (result instanceof Promise) {
         return result.then(
-          (value) => fusedRespond(value, ctx),
+          (value) => fusedRespond(value, ctx, this.responseBodyTag),
           (err) => logError(err, ctx),
         )
       }
-      return fusedRespond(result, ctx)
+      return fusedRespond(result, ctx, this.responseBodyTag)
     }
   }
 
@@ -2888,7 +2982,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         budget,
         platform,
         nativeContext,
-        (result, _set, ctx) => fusedRespond(result, ctx),
+        (result, _set, ctx) => fusedRespond(result, ctx, this.responseBodyTag),
         IDENTITY_RESPONSE,
       ) as MaybePromise<Response>
   }
@@ -2920,11 +3014,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       }
       if (result instanceof Promise) {
         return result.then(
-          (settled) => fusedRespond(settled, ctx),
+          (settled) => fusedRespond(settled, ctx, this.responseBodyTag),
           (err) => logError(err, ctx),
         )
       }
-      return fusedRespond(result, ctx)
+      return fusedRespond(result, ctx, this.responseBodyTag)
     }
     return (source, params, search, signal, budget, platform, nativeContext) => {
       const ctx = nativeContext

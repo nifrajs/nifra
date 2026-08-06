@@ -29,13 +29,13 @@ describe("compression()", () => {
     expect(JSON.parse(await gunzip(res))).toEqual({ data: big }) // decompresses to the original
   })
 
-  test("a handler-returned raw Response (a stream) passes through UNcompressed by contract", async () => {
+  test("compresses a handler-returned raw streamed Response without buffering it", async () => {
     const app = server()
       .use(compression())
       .get("/", () => new Response(streamOf(big), { headers: { "content-type": "text/html" } }))
     const res = await app.fetch(new Request("http://x/", { headers: GZIP }))
-    expect(res.headers.get("content-encoding")).toBeNull()
-    expect(await res.text()).toBe(big)
+    expect(res.headers.get("content-encoding")).toBe("gzip")
+    expect(await gunzip(res)).toBe(big)
   })
 
   test("skips when the client does not accept gzip", async () => {
@@ -45,6 +45,17 @@ describe("compression()", () => {
     const res = await app.fetch(new Request("http://x/")) // no Accept-Encoding
     expect(res.headers.get("content-encoding")).toBeNull()
     expect(await res.text()).toBe(big)
+  })
+
+  test("honors an explicit gzip q=0 exclusion", async () => {
+    const app = server()
+      .use(compression())
+      .get("/", () => ({ data: big }))
+    const res = await app.fetch(
+      new Request("http://x/", { headers: { "accept-encoding": "gzip;q=0, *;q=1" } }),
+    )
+    expect(res.headers.get("content-encoding")).toBeNull()
+    expect(await res.json()).toEqual({ data: big })
   })
 
   test("skips non-compressible content types (already-compressed media)", async () => {
@@ -116,6 +127,33 @@ describe("compression()", () => {
         "content-encoding",
       ),
     ).toBeNull()
+
+    const similarDirective = server()
+      .use(compression())
+      .get(
+        "/",
+        () =>
+          new Response(big, {
+            headers: { "content-type": "text/plain", "cache-control": "x-no-transforming" },
+          }),
+      )
+    expect(
+      (await similarDirective.fetch(new Request("http://x/", { headers: GZIP }))).headers.get(
+        "content-encoding",
+      ),
+    ).toBe("gzip")
+
+    const frameworkNoTransform = server()
+      .use(compression())
+      .get("/", (c) => {
+        c.set.headers["cache-control"] = "No-Transform"
+        return { data: big }
+      })
+    expect(
+      (await frameworkNoTransform.fetch(new Request("http://x/", { headers: GZIP }))).headers.get(
+        "content-encoding",
+      ),
+    ).toBeNull()
   })
 
   test("skips bodyless responses (204) without throwing", async () => {
@@ -138,6 +176,25 @@ describe("compression()", () => {
     const vary = res.headers.get("vary")?.toLowerCase() ?? ""
     expect(vary).toContain("accept-language")
     expect(vary).toContain("accept-encoding")
+  })
+
+  test("does not duplicate a differently-cased Accept-Encoding Vary token", async () => {
+    const app = server()
+      .use(compression())
+      .get(
+        "/",
+        () =>
+          new Response(big, {
+            headers: { "content-type": "text/plain", vary: "Accept-Encoding" },
+          }),
+      )
+    const res = await app.fetch(new Request("http://x/", { headers: GZIP }))
+    const tokens = res.headers
+      .get("vary")
+      ?.toLowerCase()
+      .split(",")
+      .filter((value) => value.trim() === "accept-encoding")
+    expect(tokens).toHaveLength(1)
   })
 
   test("propagates a downstream cancel to the upstream reader (no leak on disconnect)", async () => {
@@ -170,5 +227,10 @@ describe("compression()", () => {
       })
     const res = await app.fetch(new Request("http://x/", { headers: GZIP }))
     expect(res.headers.get("content-encoding")).toBe("gzip")
+  })
+
+  test("validates the threshold", () => {
+    expect(() => compression({ threshold: -1 })).toThrow(/threshold/)
+    expect(() => compression({ threshold: 1.5 })).toThrow(/threshold/)
   })
 })

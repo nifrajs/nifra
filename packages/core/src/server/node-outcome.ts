@@ -3,9 +3,18 @@
  * conversion. Mirrors `respond.ts` but skips the undici `Response` build where the adapter can write a
  * plain-data render straight to the socket. Imports only runtime-core + respond + the spine types.
  */
-import { appendCookiesToResponse } from "./respond.ts"
+import {
+  appendCookiesToResponse,
+  markTaggedResponse,
+  normalizeBodylessResponse,
+  taggedResponseBody,
+} from "./respond.ts"
 import { type HandlerResult, isResponseResult } from "./runtime-core.ts"
 import type { CtxSet } from "./server.ts"
+
+function isBodylessStatus(status: number): boolean {
+  return status === 204 || status === 205 || status === 304
+}
 
 /**
  * What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes
@@ -19,8 +28,8 @@ export type NodeServeOutcome =
   | {
       readonly kind: "json"
       readonly status: number
-      /** `c.set.headers` backing, or `undefined` when the handler never set a header. */
-      readonly headers: Readonly<Record<string, string>> | undefined
+      /** Header record after native hooks; repeated values are retained as arrays. */
+      readonly headers: Readonly<Record<string, string | readonly string[]>> | undefined
       /** Queued `Set-Cookie` lines, or `undefined`; the adapter emits one header line each. */
       readonly cookies: readonly string[] | undefined
       /** The JSON body already stringified, or `null` for an empty (204) response. */
@@ -48,13 +57,15 @@ export function toNodeOutcome(result: HandlerResult, set: CtxSet): NodeServeOutc
         kind: "body",
         status: body.status,
         headers: appendCookiesToNodeHeaders(body.headers, set._cookies),
-        body: body.body,
+        body: isBodylessStatus(body.status) ? new Uint8Array(0) : body.body,
       }
     }
-    return nodeOutcomeFromResponse(appendCookiesToResponse(result.toResponse(), set))
+    return nodeOutcomeFromResponse(
+      appendCookiesToResponse(normalizeBodylessResponse(result.toResponse()), set),
+    )
   }
   if (result instanceof Response) {
-    return nodeOutcomeFromResponse(appendCookiesToResponse(result, set))
+    return nodeOutcomeFromResponse(appendCookiesToResponse(normalizeBodylessResponse(result), set))
   }
   const status = set.status ?? (result === undefined ? 204 : 200)
   return {
@@ -62,11 +73,9 @@ export function toNodeOutcome(result: HandlerResult, set: CtxSet): NodeServeOutc
     status,
     headers: set._headers,
     cookies: set._cookies,
-    body: result === undefined ? null : JSON.stringify(result),
+    body: result === undefined || isBodylessStatus(status) ? null : JSON.stringify(result),
   }
 }
-
-const NODE_RESPONSE_BODY = Symbol.for("nifra.response.body")
 
 /**
  * Materialize a buffered node outcome only when a Web `onResponse` hook needs to see a real
@@ -98,7 +107,8 @@ export function nodeOutcomeToResponse(outcome: NodeServeOutcome): Response {
       headers.set("content-type", "application/json;charset=utf-8")
     }
   }
-  const body = outcome.body
+  if (isBodylessStatus(outcome.status)) headers.delete("content-length")
+  const body = isBodylessStatus(outcome.status) ? null : outcome.body
   // `Uint8Array<ArrayBufferLike>` vs the lib's body-init generic - runtime-accepted everywhere,
   // only the type narrows wrong under the DOM-free lib set (same idiom as the Headers cast in
   // transport-codec.ts).
@@ -106,11 +116,12 @@ export function nodeOutcomeToResponse(outcome: NodeServeOutcome): Response {
     status: outcome.status,
     headers,
   })
-  if (body !== null) Object.defineProperty(response, NODE_RESPONSE_BODY, { value: body })
+  if (body !== null) markTaggedResponse(response, body)
   return response
 }
 
 export function nodeOutcomeFromResponse(response: Response): NodeServeOutcome {
+  response = normalizeBodylessResponse(response)
   const body = nodeResponseBody(response)
   return body === undefined
     ? { kind: "response", response }
@@ -119,8 +130,7 @@ export function nodeOutcomeFromResponse(response: Response): NodeServeOutcome {
 
 function nodeResponseBody(response: Response): string | Uint8Array | undefined {
   if (response.bodyUsed) return undefined
-  const body = (response as { readonly [NODE_RESPONSE_BODY]?: unknown })[NODE_RESPONSE_BODY]
-  return typeof body === "string" || body instanceof Uint8Array ? body : undefined
+  return taggedResponseBody(response)
 }
 
 function responseHeadersForNode(
@@ -128,12 +138,12 @@ function responseHeadersForNode(
 ): Readonly<Record<string, string | readonly string[]>> | undefined {
   let headers: Record<string, string | readonly string[]> | undefined
   response.headers.forEach((value, key) => {
-    headers ??= {}
+    headers ??= Object.create(null) as Record<string, string | readonly string[]>
     headers[key] = value
   })
   const setCookies = response.headers.getSetCookie?.()
   if (setCookies !== undefined && setCookies.length > 0) {
-    headers ??= {}
+    headers ??= Object.create(null) as Record<string, string | readonly string[]>
     headers["set-cookie"] = setCookies
   }
   return headers
@@ -144,8 +154,8 @@ function appendCookiesToNodeHeaders(
   cookies: readonly string[] | undefined,
 ): Readonly<Record<string, string | readonly string[]>> | undefined {
   if (cookies === undefined || cookies.length === 0) return headers
-  const out: Record<string, string | readonly string[]> =
-    headers === undefined ? {} : { ...headers }
+  const out = Object.create(null) as Record<string, string | readonly string[]>
+  if (headers !== undefined) Object.assign(out, headers)
   const existing = out["set-cookie"]
   const setCookies =
     existing === undefined ? [] : typeof existing === "string" ? [existing] : [...existing]

@@ -21,6 +21,26 @@ describe("prettyJson()", () => {
     expect(await (await app.fetch(new Request("http://x/?pretty"))).text()).toBe('{\n  "a": 1\n}\n')
   })
 
+  test("pretty-prints a raw streamed JSON response", async () => {
+    const app = server()
+      .use(prettyJson({ spaces: 2, newline: false }))
+      .get(
+        "/",
+        () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode('{"a":1,"b":2}'))
+                controller.close()
+              },
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+      )
+    const res = await app.fetch(new Request("http://x/"))
+    expect(await res.text()).toBe('{\n  "a": 1,\n  "b": 2\n}')
+  })
+
   test("leaves non-json, encoded, invalid, and oversized responses untouched", async () => {
     const app = server()
       .use(prettyJson({ maxBytes: 4 }))
@@ -48,6 +68,16 @@ describe("prettyJson()", () => {
     expect(await (await app.fetch(new Request("http://x/encoded"))).text()).toBe('{"a":1}')
     expect(await (await app.fetch(new Request("http://x/invalid"))).text()).toBe("nope")
     expect(await (await app.fetch(new Request("http://x/large"))).text()).toBe('{"abcdef":1}')
+  })
+
+  test("preserves invalid UTF-8 in a raw JSON response", async () => {
+    const bytes = new Uint8Array([0x6e, 0x6f, 0x70, 0x65, 0xff])
+    const app = server()
+      .use(prettyJson())
+      .get("/", () => new Response(bytes, { headers: { "content-type": "application/json" } }))
+
+    const res = await app.fetch(new Request("http://x/"))
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes)
   })
 
   test("validates construction", () => {

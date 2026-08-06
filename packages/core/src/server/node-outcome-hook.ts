@@ -96,20 +96,6 @@ export type NodeResponseHook = (
   req: NodeRequestContext,
 ) => MaybePromise<void>
 
-/** Find the actual stored key for `name` in a possibly mixed-case header record. */
-function recordKeyOf(
-  record: Record<string, string | readonly string[]>,
-  name: string,
-): string | undefined {
-  if (name in record) return name
-  const wanted = name.toLowerCase()
-  if (wanted in record) return wanted
-  for (const key of Object.keys(record)) {
-    if (key.toLowerCase() === wanted) return key
-  }
-  return undefined
-}
-
 /**
  * A {@link ResponseHeadersView} over a Node outcome's plain header record - the direct-writer
  * counterpart of handing a Web hook the response's `Headers`. Mutations write lowercase names (the
@@ -117,58 +103,133 @@ function recordKeyOf(
  * writers used; repeated values join with `", "` on read, matching `Headers.get`. A class with
  * prototype methods (not per-call closures), memoized per context, so a request running several
  * portable hooks allocates ONE small view total.
+ *
+ * Name resolution is prepared ONCE, the first time this view touches the record, rather than per
+ * operation. Resolving each name by scanning the record - the straightforward way to stay
+ * case-insensitive - allocates an `Object.keys` array and lowercases every stored key on every
+ * get/set, and that is paid per header, so a middleware writing a handful of them (security
+ * headers, CORS) paid it several times per request: profiling a realistic Node route put that scan
+ * at roughly a fifth of the framework's own CPU time. Instead one pass records an alias only for
+ * keys whose casing differs from their lowercase form - none, for the records the framework itself
+ * builds - after which every operation is a direct property access and the common all-lowercase
+ * record allocates no index at all. Stored casing is left exactly as the writer chose it.
  */
 class RecordHeadersView implements ResponseHeadersView {
   readonly #target: NodeResponseContext
+  #prepared = false
+  /** lowercase name -> the differently-cased key actually stored. Absent when none differ. */
+  #alias: Map<string, string> | undefined
 
   constructor(target: NodeResponseContext) {
     this.#target = target
   }
 
-  #record(): Record<string, string | readonly string[]> {
-    this.#target.headers ??= {}
-    return this.#target.headers
+  #prepare(record: Record<string, string | readonly string[]>): void {
+    this.#prepared = true
+    for (const key of Object.keys(record)) {
+      const lower = key.toLowerCase()
+      if (lower !== key) {
+        if (this.#alias === undefined) this.#alias = new Map()
+        this.#alias.set(lower, key)
+      }
+    }
+  }
+
+  /** The stored key for an already-lowercased name. */
+  #actual(lower: string): string {
+    const record = this.#target.headers
+    if (record !== undefined && Object.hasOwn(record, lower)) return lower
+    const known = this.#alias?.get(lower)
+    if (known !== undefined && record !== undefined && Object.hasOwn(record, known)) return known
+    if (record !== undefined) {
+      for (const key of Object.keys(record)) {
+        if (key.toLowerCase() !== lower) continue
+        if (this.#alias === undefined) this.#alias = new Map()
+        this.#alias.set(lower, key)
+        return key
+      }
+    }
+    return lower
+  }
+
+  /** The backing record if the outcome has one, prepared on first touch; `undefined` otherwise. */
+  #readable(): Record<string, string | readonly string[]> | undefined {
+    const existing = this.#target.headers
+    if (existing === undefined) return undefined
+    if (!this.#prepared) this.#prepare(existing)
+    return existing
+  }
+
+  /** As {@link #readable}, but creates the record when the outcome has none. */
+  #writable(): Record<string, string | readonly string[]> {
+    const existing = this.#target.headers
+    if (existing === undefined) {
+      const fresh = Object.create(null) as Record<string, string | readonly string[]>
+      this.#target.headers = fresh
+      this.#prepared = true
+      return fresh
+    }
+    if (Object.getPrototypeOf(existing) !== null) {
+      // Header names such as `__proto__`, `constructor`, and `toString` are valid Web Headers. A
+      // null-prototype backing record prevents those names from invoking Object.prototype setters
+      // or being mistaken for inherited properties when a middleware reflects user input.
+      const safe = Object.create(null) as Record<string, string | readonly string[]>
+      Object.assign(safe, existing)
+      this.#target.headers = safe
+      if (!this.#prepared) this.#prepare(safe)
+      return safe
+    }
+    if (!this.#prepared) this.#prepare(existing)
+    return existing
   }
 
   get(name: string): string | null {
-    const headers = this.#target.headers
+    const headers = this.#readable()
     if (headers === undefined) return null
-    const key = recordKeyOf(headers, name)
-    if (key === undefined) return null
-    const value = headers[key]
-    return typeof value === "string" ? value : (value?.join(", ") ?? null)
+    const value = headers[this.#actual(name.toLowerCase())]
+    if (value === undefined) return null
+    return typeof value === "string" ? value : (value.join(", ") ?? null)
   }
 
   has(name: string): boolean {
-    const headers = this.#target.headers
-    return headers !== undefined && recordKeyOf(headers, name) !== undefined
+    const headers = this.#readable()
+    return headers !== undefined && headers[this.#actual(name.toLowerCase())] !== undefined
   }
 
   set(name: string, value: string): void {
-    const headers = this.#record()
-    const existing = recordKeyOf(headers, name)
-    if (existing !== undefined) delete headers[existing]
-    headers[name.toLowerCase()] = value
+    const headers = this.#writable()
+    const lower = name.toLowerCase()
+    const actual = this.#actual(lower)
+    if (actual !== lower) {
+      delete headers[actual]
+      this.#alias?.delete(lower)
+    }
+    headers[lower] = value
   }
 
   append(name: string, value: string): void {
-    const headers = this.#record()
-    const existing = recordKeyOf(headers, name)
-    if (existing === undefined) {
-      headers[name.toLowerCase()] = value
+    const headers = this.#writable()
+    const lower = name.toLowerCase()
+    const actual = this.#actual(lower)
+    const current = headers[actual]
+    if (current === undefined) {
+      headers[lower] = value
       return
     }
-    const current = headers[existing]
-    delete headers[existing]
-    headers[name.toLowerCase()] =
-      typeof current === "string" ? [current, value] : [...(current ?? []), value]
+    if (actual !== lower) {
+      delete headers[actual]
+      this.#alias?.delete(lower)
+    }
+    headers[lower] = typeof current === "string" ? [current, value] : [...current, value]
   }
 
   delete(name: string): void {
-    const headers = this.#target.headers
+    const headers = this.#readable()
     if (headers === undefined) return
-    const key = recordKeyOf(headers, name)
-    if (key !== undefined) delete headers[key]
+    const lower = name.toLowerCase()
+    const actual = this.#actual(lower)
+    delete headers[actual]
+    if (actual !== lower) this.#alias?.delete(lower)
   }
 }
 

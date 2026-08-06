@@ -55,6 +55,39 @@ describe("etag", () => {
     expect(await res.json()).toEqual({ hello: "world" })
   })
 
+  test("adds an ETag to a raw streamed response and revalidates it", async () => {
+    const raw = server()
+      .use(etag())
+      .get(
+        "/",
+        () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode('{"raw":true}'))
+                controller.close()
+              },
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+      )
+    const first = await raw.fetch(new Request("http://x/"))
+    const tag = first.headers.get("etag")
+    expect(tag).not.toBeNull()
+    expect(await first.text()).toBe('{"raw":true}')
+    const second = await raw.fetch(new Request("http://x/", { headers: { "if-none-match": tag! } }))
+    expect(second.status).toBe(304)
+    expect(await second.text()).toBe("")
+  })
+
+  test("strong ETags use a collision-resistant digest", async () => {
+    const app = server()
+      .use(etag({ weak: false }))
+      .get("/", () => ({ stable: true }))
+    const res = await app.fetch(new Request("http://x/"))
+    expect(res.headers.get("etag")).toMatch(/^"[0-9a-f]{64}"$/)
+  })
+
   test("non-GET responses are untouched (no ETag)", async () => {
     const res = await app.fetch(new Request("http://x/", { method: "POST" }))
     expect(res.headers.get("etag")).toBeNull()
@@ -71,10 +104,9 @@ describe("etag", () => {
   })
 
   test("streams through a length-less body that exceeds maxBytes (no ETag, body intact)", async () => {
-    // No Content-Length ⇒ the cap can only be enforced mid-stream: readBytesCapped reads the clone,
-    // cancels once the running total passes maxBytes, and bails so the ORIGINAL body is returned
-    // untouched. The declared-length test above hits the early return, so this is the only path that
-    // exercises the streaming cancel + pass-through (and it fails on the old unconditional hash).
+    // No Content-Length ⇒ the cap can only be enforced mid-stream: readBytesCapped reads a prefix,
+    // replays it through the same reader, and bails so the body remains intact. The declared-length
+    // test above hits the early return, so this is the only path that exercises streaming replay.
     const large = server()
       .use(etag({ maxBytes: 4 }))
       .get(
