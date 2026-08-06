@@ -36,6 +36,29 @@ const JSON_INIT_200: ResponseInit = { status: 200, headers: JSON_CT_HEADERS }
 // registered body/raw hook needs it, so hook-less apps pay nothing.
 const RESPONSE_BODY = Symbol.for("nifra.response.body")
 
+/**
+ * Headers objects the framework itself constructed - guaranteed mutable, no guard. Response
+ * middleware adapters consult this before falling back to a mutability probe, so the hot path
+ * (every framework-rendered response) never pays per-request `Headers` operations to learn what
+ * construction already knew; only a handler-returned foreign `Response` (a raw `fetch()` result,
+ * whose headers are guarded immutable) reaches the probe.
+ */
+const MUTABLE_RESPONSE_HEADERS = new WeakSet<Headers>()
+
+export function knownMutableHeaders(headers: Headers): boolean {
+  return MUTABLE_RESPONSE_HEADERS.has(headers)
+}
+
+export function rememberMutableHeaders(headers: Headers): void {
+  MUTABLE_RESPONSE_HEADERS.add(headers)
+}
+
+/** Stamp a framework-constructed Response's headers as known-mutable, and return it. */
+function stamped(response: Response): Response {
+  MUTABLE_RESPONSE_HEADERS.add(response.headers)
+  return response
+}
+
 function isBodylessStatus(status: number): boolean {
   return status === 204 || status === 205 || status === 304
 }
@@ -46,11 +69,13 @@ export function normalizeBodylessResponse(response: Response): Response {
   if (response.body === null && !response.headers.has("content-length")) return response
   const headers = new Headers(response.headers)
   headers.delete("content-length")
-  return new Response(null, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  })
+  return stamped(
+    new Response(null, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    }),
+  )
 }
 
 type TaggedResponseMarker = {
@@ -112,6 +137,7 @@ function tagged(
   body: string,
   tagResponseBody: ResponseBodyTagOption,
 ): Response {
+  stamped(response)
   return tagResponseBody === false || tagResponseBody === undefined
     ? response
     : markTaggedResponse(
@@ -140,7 +166,7 @@ export function fusedRespondNoSet(
       if (body !== undefined)
         return tagged(new Response(body, JSON_INIT_200), body, tagResponseBody)
     }
-    return Response.json(result)
+    return stamped(Response.json(result))
   }
   return toResponse(result as HandlerResult, EMPTY_RESPONSE_CONTROLS)
 }
@@ -171,7 +197,7 @@ export function toResponse(
   const headers = headersInit(set)
   const status = set.status ?? (result === undefined ? 204 : 200)
   if (status === 204 || status === 205 || status === 304) {
-    return new Response(null, headers === undefined ? { status } : { status, headers })
+    return stamped(new Response(null, headers === undefined ? { status } : { status, headers }))
   }
   if (headers === undefined && result !== undefined) {
     // Fast respond (profiled ~50 ns/req faster on every plain-JSON return): `JSON.stringify` + a
@@ -188,7 +214,7 @@ export function toResponse(
     }
   }
   const init: ResponseInit = headers === undefined ? { status } : { status, headers }
-  if (result === undefined) return new Response(null, init)
+  if (result === undefined) return stamped(new Response(null, init))
   if (tagResponseBody) {
     const body = JSON.stringify(result) as string | undefined
     if (body !== undefined) {
@@ -199,7 +225,7 @@ export function toResponse(
       )
     }
   }
-  return Response.json(result, init)
+  return stamped(Response.json(result, init))
 }
 
 // Add a JSON content-type without pre-building a `Headers` instance just to check-and-set one key:

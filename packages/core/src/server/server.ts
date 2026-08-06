@@ -78,7 +78,9 @@ import { RequestContext, readBoundedJsonSource } from "./request-context.ts"
 import {
   fusedRespond,
   fusedRespondNoSet,
+  knownMutableHeaders,
   markTaggedResponse,
+  rememberMutableHeaders,
   taggedResponseBody,
   taggedResponseOwner,
   toResponse,
@@ -162,17 +164,19 @@ function withReplacedBody(
 }
 
 const HEADER_MUTABILITY_PROBE = "x-nifra-header-probe"
-const MUTABLE_RESPONSE_HEADERS = new WeakSet<Headers>()
 const GUARDED_RESPONSE_HEADERS = new WeakSet<Headers>()
 
 /**
  * Detect a guarded Web Headers object before invoking user code. Retrying after catching any
  * TypeError is observably wrong: user hooks are allowed to throw TypeError themselves, and a retry
- * runs those hooks twice. The probe uses a valid private header name and restores a pre-existing
- * value, so the fallback is limited to the actual immutable/guarded-header case.
+ * runs those hooks twice. The hot path never reaches the probe: every framework-constructed
+ * Response stamps its headers as known-mutable at construction (see respond.ts), so only a
+ * handler-returned foreign `Response` - the case that can actually be guarded - pays it, once per
+ * headers object. The probe uses a valid private header name and restores a pre-existing value, so
+ * the fallback is limited to the actual immutable/guarded-header case.
  */
 function hasMutableResponseHeaders(headers: Headers): boolean {
-  if (MUTABLE_RESPONSE_HEADERS.has(headers)) return true
+  if (knownMutableHeaders(headers)) return true
   if (GUARDED_RESPONSE_HEADERS.has(headers)) return false
   let previous: string | null = null
   try {
@@ -180,7 +184,7 @@ function hasMutableResponseHeaders(headers: Headers): boolean {
     headers.set(HEADER_MUTABILITY_PROBE, "1")
     if (previous === null) headers.delete(HEADER_MUTABILITY_PROBE)
     else headers.set(HEADER_MUTABILITY_PROBE, previous)
-    MUTABLE_RESPONSE_HEADERS.add(headers)
+    rememberMutableHeaders(headers)
     return true
   } catch {
     try {

@@ -42,7 +42,10 @@ scanning the record on every get/set (measured at roughly a fifth of the framewo
 realistic middleware-carrying route).
 Guarded response headers (a raw `fetch()`ed Response) are now detected with a reversible probe
 before any header hook runs, instead of catching the mutation `TypeError` and re-running the hook
-against a clone - a hook that itself throws `TypeError` no longer runs twice.
+against a clone - a hook that itself throws `TypeError` no longer runs twice. Framework-constructed
+responses stamp their headers as known-mutable at construction, so the hot path answers that
+question with a single weak-set lookup and only a handler-returned foreign `Response` ever pays the
+probe, once per headers object.
 New portable middleware hook: `onResponseHeaders(headers, req, status)` - the recommended shape for
 response middleware that only reads or writes headers. One implementation runs on every runtime: on
 the Web serving paths it mutates the response's own `Headers` inside the normal response walk (no

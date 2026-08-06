@@ -7,6 +7,7 @@ import {
   appendCookiesToResponse,
   markTaggedResponse,
   normalizeBodylessResponse,
+  rememberMutableHeaders,
   taggedResponseBody,
 } from "./respond.ts"
 import { type HandlerResult, isResponseResult } from "./runtime-core.ts"
@@ -117,6 +118,7 @@ export function nodeOutcomeToResponse(outcome: NodeServeOutcome): Response {
     headers,
   })
   if (body !== null) markTaggedResponse(response, body)
+  rememberMutableHeaders(response.headers)
   return response
 }
 
