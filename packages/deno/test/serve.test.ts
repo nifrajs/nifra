@@ -1,4 +1,5 @@
 import { server } from "@nifrajs/core"
+import { websocket } from "@nifrajs/core/ws"
 import { serve } from "../src/index.ts"
 
 // Minimal local assertions - keeps `deno test` offline + dependency-free.
@@ -117,4 +118,79 @@ Deno.test("app.listen() throws a clear, actionable error on non-Bun runtimes", (
     caught.message.includes("@nifrajs/node") && caught.message.includes("@nifrajs/deno"),
     `expected the error to point at the adapters, got: ${caught.message}`,
   )
+})
+
+// The adapter no longer pre-filters on the `Upgrade` header (that probe forced a per-request header
+// materialization for every plain HTTP request); it calls the core seam directly instead. These pin
+// the behavior that change could plausibly break: a real handshake still upgrades and round-trips,
+// an `upgrade()` guard's rejection is still returned as HTTP, and a WS-free app still serves HTTP
+// normally even when a client sends an `Upgrade` header.
+Deno.test("WebSocket: upgrades, echoes, and honors an upgrade() guard", async () => {
+  const app = server()
+    .use(websocket())
+    .ws("/echo", {
+      open: (ws) => ws.send("welcome"),
+      message: (ws, data) => ws.send(data),
+    })
+    .ws("/guarded", {
+      upgrade: (c) => {
+        if (new URL(c.req.url).searchParams.get("token") !== "secret") {
+          return new Response("unauthorized", { status: 401 })
+        }
+        return {}
+      },
+      open: (ws) => ws.send("allowed"),
+    })
+    .get("/health", () => ({ ok: true }))
+  const running = await serve(app, { port: 0 })
+  try {
+    const wsBase = `ws://localhost:${running.port}`
+
+    const frames = await new Promise<string[]>((resolve, reject) => {
+      const got: string[] = []
+      const socket = new WebSocket(`${wsBase}/echo`)
+      const timer = setTimeout(() => reject(new Error("ws timed out")), 5000)
+      socket.onmessage = (ev) => {
+        got.push(String(ev.data))
+        if (got.length === 1) socket.send("ping")
+        else {
+          clearTimeout(timer)
+          socket.close()
+          resolve(got)
+        }
+      }
+      socket.onerror = () => {
+        clearTimeout(timer)
+        reject(new Error("ws errored"))
+      }
+    })
+    assertEquals(frames, ["welcome", "ping"])
+
+    // A rejected upgrade comes back as a plain HTTP response, not a socket.
+    const denied = await fetch(`http://localhost:${running.port}/guarded?token=wrong`, {
+      headers: { upgrade: "websocket", connection: "Upgrade" },
+    })
+    await denied.body?.cancel()
+    assertEquals(denied.status, 401)
+
+    // Normal HTTP is unaffected on an app that also has WS routes.
+    assertEquals(await (await fetch(`http://localhost:${running.port}/health`)).json(), {
+      ok: true,
+    })
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+Deno.test("a WS-free app serves HTTP normally even when the client sends an Upgrade header", async () => {
+  const app = server().get("/health", () => ({ ok: true }))
+  const running = await serve(app, { port: 0 })
+  try {
+    const res = await fetch(`http://localhost:${running.port}/health`, {
+      headers: { upgrade: "websocket", connection: "Upgrade" },
+    })
+    assertEquals(await res.json(), { ok: true })
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
 })

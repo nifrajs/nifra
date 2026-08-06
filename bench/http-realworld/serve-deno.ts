@@ -363,7 +363,10 @@ if (framework === "nifra" || framework === "nifra-body") {
     )
   Deno.serve({ port, onListen() {} }, app.fetch)
 } else if (framework === "deno-raw") {
-  Deno.serve({ port, onListen() {} }, async (req) => {
+  // NOT an `async` handler: that would return a promise for every request including the GET
+  // workload, charging the ceiling a microtask the framework rows never pay and understating the
+  // number they are all measured against. Only the POST branch, which awaits a body, is async.
+  Deno.serve({ port, onListen() {} }, (req): Response | Promise<Response> => {
     const pathname = pathnameOf(req.url)
     if (!pathname.startsWith("/api/orders")) return new Response("not found", { status: 404 })
     const who = authOf(req)
@@ -386,12 +389,17 @@ if (framework === "nifra" || framework === "nifra-body") {
       )
     }
     if (req.method === "POST") {
-      const body: unknown = await req.json().catch(() => undefined)
-      if (!isOrderBody(body)) return new Response("invalid", { status: 400, headers })
-      return Response.json(
-        { ok: true, id: "ord_new", sku: body.sku, qty: body.qty, by: who.userId },
-        { headers },
-      )
+      return req
+        .json()
+        .catch(() => undefined)
+        .then((body: unknown) =>
+          isOrderBody(body)
+            ? Response.json(
+                { ok: true, id: "ord_new", sku: body.sku, qty: body.qty, by: who.userId },
+                { headers },
+              )
+            : new Response("invalid", { status: 400, headers }),
+        )
     }
     return new Response("not found", { status: 404, headers })
   })
@@ -408,7 +416,9 @@ if (framework === "nifra" || framework === "nifra-body") {
       headers: { ...headers, "content-type": "application/json", "x-body-hash": hash(body) },
     })
   }
-  Deno.serve({ port, onListen() {} }, async (req) => {
+  // Sync handler for the same reason as `deno-raw` above: the body-hash workload is a GET, so an
+  // async ceiling would pay a per-request microtask that no framework row pays.
+  Deno.serve({ port, onListen() {} }, (req): Response | Promise<Response> => {
     const pathname = pathnameOf(req.url)
     if (!pathname.startsWith("/api/orders")) return new Response("not found", { status: 404 })
     const who = authOf(req)
@@ -432,13 +442,18 @@ if (framework === "nifra" || framework === "nifra-body") {
       )
     }
     if (req.method === "POST") {
-      const body: unknown = await req.json().catch(() => undefined)
-      if (!isOrderBody(body)) return new Response("invalid", { status: 400, headers })
-      return jsonHashed(
-        { ok: true, id: "ord_new", sku: body.sku, qty: body.qty, by: who.userId },
-        200,
-        headers,
-      )
+      return req
+        .json()
+        .catch(() => undefined)
+        .then((body: unknown) =>
+          isOrderBody(body)
+            ? jsonHashed(
+                { ok: true, id: "ord_new", sku: body.sku, qty: body.qty, by: who.userId },
+                200,
+                headers,
+              )
+            : new Response("invalid", { status: 400, headers }),
+        )
     }
     return new Response("not found", { status: 404, headers })
   })

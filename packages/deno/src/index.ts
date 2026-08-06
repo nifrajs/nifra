@@ -95,6 +95,8 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
   // Aborting this signal force-closes the server - used when the drain deadline elapses.
   const controller = new AbortController()
   let closed = false
+  // Bound once: a plain `{ fetch }` handler leaves this undefined and skips the seam entirely.
+  const resolveWs = app.resolveWebSocketUpgrade?.bind(app)
 
   const httpServer = Deno.serve(
     {
@@ -107,37 +109,41 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
       // WebSocket upgrade for a registered `app.ws()` route → Deno.upgradeWebSocket. The shared
       // resolveWebSocketUpgrade seam runs the route's upgrade() guard; pass falls through to HTTP.
       //
-      // Gate on the `Upgrade: websocket` header first: a nifra app ALWAYS exposes
-      // resolveWebSocketUpgrade, so without this, every plain HTTP request would pay for the full
-      // upgrade resolution. Every real WS handshake carries this header (Deno.upgradeWebSocket
-      // requires it), and a non-upgrade request resolves to "pass" → HTTP anyway - so this only
-      // skips wasted work on the hot path, with no behavior change.
-      if (
-        app.resolveWebSocketUpgrade !== undefined &&
-        request.headers.get("upgrade")?.toLowerCase() === "websocket"
-      ) {
+      // Deliberately NOT gated on reading the `Upgrade` header here. That gate looks like a cheap
+      // pre-filter but is the opposite: the seam already returns `pass` on a WS-free app without
+      // touching headers (it checks its ws-route count first), whereas reading `upgrade` forces the
+      // runtime to materialize the request's header list on EVERY plain HTTP request. Deno bills
+      // that lazily, so the probe cost ~7% of throughput on a bare route under Deno 2.9 (~4.5% on
+      // 2.8) - i.e. the gate charged every request to save nothing. Calling the seam directly puts
+      // the adapter within a few percent of a hand-written `Deno.serve` handler.
+      if (resolveWs !== undefined) {
         let outcome: WsUpgradeOutcome | Promise<WsUpgradeOutcome>
         try {
-          outcome = app.resolveWebSocketUpgrade(request)
+          outcome = resolveWs(request)
         } catch {
           return internalError()
         }
-        const handleWs = (o: WsUpgradeOutcome): Response | Promise<Response> => {
-          if (o.kind === "reject") return o.response
-          if (o.kind === "upgrade") {
-            const { socket, response } = Deno.upgradeWebSocket(request)
-            attachDenoWebSocket(socket, o.handler, o.data, o.pubsub)
-            return response
-          }
-          return runFetch(request, info)
-        }
         return outcome instanceof Promise
-          ? outcome.then(handleWs).catch(() => internalError())
-          : handleWs(outcome)
+          ? outcome.then((o) => finishWs(o, request, info)).catch(() => internalError())
+          : finishWs(outcome, request, info)
       }
       return runFetch(request, info)
     },
   )
+
+  /** Resolve a settled upgrade outcome. Hoisted out of the request closure so the common `pass`
+   * (plain HTTP) case allocates nothing per request. */
+  function finishWs(
+    o: WsUpgradeOutcome,
+    request: Request,
+    info: { readonly remoteAddr?: { readonly hostname?: string } },
+  ): Response | Promise<Response> {
+    if (o.kind === "pass") return runFetch(request, info)
+    if (o.kind === "reject") return o.response
+    const { socket, response } = Deno.upgradeWebSocket(request)
+    attachDenoWebSocket(socket, o.handler, o.data, o.pubsub)
+    return response
+  }
 
   function runFetch(
     request: Request,

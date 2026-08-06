@@ -146,7 +146,12 @@ if (framework === "nifra") {
       port,
       onListen() {},
     },
-    async (req) => {
+    // Deliberately NOT an `async` handler. An async function returns a promise for EVERY request,
+    // including the GET workloads that need no await at all - which costs the ceiling a microtask
+    // per request that the frameworks (returning their Response synchronously) never pay, and so
+    // understates the very number every other row is measured against. Only the POST branch, which
+    // genuinely awaits the body, returns a promise.
+    (req): Response | Promise<Response> => {
       const pathname = pathnameOf(req.url)
       if (req.method === "GET") {
         if (pathname === "/") return Response.json({ hello: "world" })
@@ -161,9 +166,14 @@ if (framework === "nifra") {
           return new Response("invalid", { status: 400 })
         }
       } else if (req.method === "POST" && pathname === "/users") {
-        const body: unknown = await req.json().catch(() => undefined)
-        if (isUser(body)) return Response.json({ id: "1", name: body.name })
-        return new Response("invalid", { status: 400 })
+        return req
+          .json()
+          .catch(() => undefined)
+          .then((body: unknown) =>
+            isUser(body)
+              ? Response.json({ id: "1", name: body.name })
+              : new Response("invalid", { status: 400 }),
+          )
       }
       return new Response("not found", { status: 404 })
     },
