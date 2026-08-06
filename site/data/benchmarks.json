@@ -141,22 +141,22 @@
   "http": [
     {
       "name": "Nifra",
-      "reqs": 75174,
+      "reqs": 68363,
       "you": true
     },
     {
       "name": "Fastify",
-      "reqs": 74059,
-      "you": false
-    },
-    {
-      "name": "Express",
-      "reqs": 43961,
+      "reqs": 59817,
       "you": false
     },
     {
       "name": "Hono",
-      "reqs": 43905,
+      "reqs": 42844,
+      "you": false
+    },
+    {
+      "name": "Express",
+      "reqs": 41544,
       "you": false
     }
   ],
@@ -166,24 +166,24 @@
       "rows": [
         {
           "name": "Nifra",
-          "getUsers": "127,859",
-          "postUsers": "102,242",
+          "getUsers": "127,681",
+          "postUsers": "103,628",
           "nifra": true
         },
         {
           "name": "Elysia",
-          "getUsers": "126,488",
-          "postUsers": "97,268"
+          "getUsers": "127,394",
+          "postUsers": "97,462"
         },
         {
           "name": "bun-native",
-          "getUsers": "128,564",
-          "postUsers": "108,838"
+          "getUsers": "128,165",
+          "postUsers": "110,289"
         },
         {
           "name": "Hono",
-          "getUsers": "103,285",
-          "postUsers": "76,720"
+          "getUsers": "105,167",
+          "postUsers": "77,690"
         }
       ]
     },
@@ -192,34 +192,34 @@
       "rows": [
         {
           "name": "Nifra",
-          "getUsers": "75,174",
-          "postUsers": "60,518",
+          "getUsers": "68,363",
+          "postUsers": "56,088",
           "nifra": true
         },
         {
           "name": "node-raw",
-          "getUsers": "76,613",
-          "postUsers": "64,941"
+          "getUsers": "69,013",
+          "postUsers": "59,582"
         },
         {
           "name": "Fastify",
-          "getUsers": "74,059",
-          "postUsers": "53,601"
+          "getUsers": "59,817",
+          "postUsers": "46,246"
         },
         {
           "name": "Elysia",
-          "getUsers": "68,788",
-          "postUsers": "44,609"
+          "getUsers": "63,940",
+          "postUsers": "41,088"
         },
         {
           "name": "Express",
-          "getUsers": "43,961",
-          "postUsers": "36,754"
+          "getUsers": "41,544",
+          "postUsers": "35,054"
         },
         {
           "name": "Hono",
-          "getUsers": "43,905",
-          "postUsers": "32,458"
+          "getUsers": "42,844",
+          "postUsers": "29,947"
         }
       ]
     },
@@ -228,24 +228,24 @@
       "rows": [
         {
           "name": "deno-raw",
-          "getUsers": "118,486",
-          "postUsers": "93,154"
+          "getUsers": "124,631",
+          "postUsers": "113,758"
         },
         {
           "name": "Nifra",
-          "getUsers": "107,877",
-          "postUsers": "79,796",
+          "getUsers": "118,854",
+          "postUsers": "100,604",
           "nifra": true
         },
         {
           "name": "Elysia",
-          "getUsers": "107,669",
-          "postUsers": "70,979"
+          "getUsers": "120,446",
+          "postUsers": "84,599"
         },
         {
           "name": "Hono",
-          "getUsers": "86,877",
-          "postUsers": "65,353"
+          "getUsers": "111,750",
+          "postUsers": "84,198"
         }
       ]
     }
