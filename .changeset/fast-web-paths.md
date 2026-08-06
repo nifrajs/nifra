@@ -77,6 +77,13 @@ goes straight into the `Response` constructor. Deno/V8 charged far more for the 
 instance than Bun/JSC did - measured previously as the entire gap between the payload tier's Deno
 row and its own raw ceiling on the realistic-shape benchmark; that row now leads every peer
 framework and sits within a few percent of raw `Deno.serve` again.
+On Deno, JSON responses that carry caller-set headers are now built as a bare `Response` whose
+headers are set individually afterwards, instead of handing the header record to the constructor -
+Deno charges far more to ingest a header-record init than to mutate a built response's `Headers`.
+The runtime's own `Response.json` content-type is probed once and reused, so the wire contract is
+exactly what `Response.json` ships on that runtime, and Bun keeps the constructor path it measures
+faster on. Measured +7% on the realistic middleware GET row and +12.7% on its body-hash variant;
+with this, the realistic Deno rows lead the closest peer framework on both GET and POST.
 The native header view's one-time name index is now authoritative for every operation, including
 writes of names not yet present: setting a new header no longer walks and lowercases the whole
 record on the way in, which had made each fresh `set()` cost grow with the headers already written

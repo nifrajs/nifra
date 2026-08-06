@@ -211,6 +211,20 @@ describe("fast JSON respond path parity", () => {
     expect(withHeaders.headers.get("content-type")).toBe(reference.headers.get("content-type"))
   })
 
+  test("generic JSON responses keep all record headers and UTF-8 body bytes", async () => {
+    const app = server().get("/headers", (c) => {
+      c.set.headers["x-one"] = "1"
+      c.set.headers["X-Two"] = "2"
+      return { text: "café" }
+    })
+    const response = await app.fetch(new Request("http://t/headers"))
+
+    expect(response.headers.get("x-one")).toBe("1")
+    expect(response.headers.get("x-two")).toBe("2")
+    expect(response.headers.get("content-type")).toBe(Response.json({}).headers.get("content-type"))
+    expect(await response.text()).toBe(JSON.stringify({ text: "café" }))
+  })
+
   test("shared init never leaks mutations across responses", async () => {
     const app = server().get("/one", () => ({ n: 1 }))
     const a = await app.fetch(new Request("http://t/one"))

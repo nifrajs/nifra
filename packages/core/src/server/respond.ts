@@ -31,6 +31,40 @@ const JSON_CT_HEADERS = new Headers({
 })
 const JSON_INIT_200: ResponseInit = { status: 200, headers: JSON_CT_HEADERS }
 
+// Deno's Response/Headers implementation ingests a plain header record much more slowly than it
+// mutates an already-created response (the difference is material on realistic middleware routes
+// that add several security/CORS headers). Bun is faster on the record constructor, so keep the
+// portable constructor path there and select the Deno-specific shape only for Web responses that
+// carry a plain record. The first request lazily probes Deno's native JSON content-type so this
+// preserves the runtime's Response.json contract instead of baking in Bun's charset suffix.
+const IS_DENO = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined"
+let denoJsonContentType: string | undefined
+
+function responseJsonContentType(): string {
+  if (denoJsonContentType === undefined) {
+    denoJsonContentType = Response.json(0).headers.get("content-type") ?? "application/json"
+  }
+  return denoJsonContentType
+}
+
+function denoResponseWithJsonBody(
+  body: string,
+  status: number,
+  headers: Record<string, string>,
+  defaultContentType = responseJsonContentType(),
+): Response {
+  const response = new Response(body, { status })
+  let hasContentType = false
+  for (const [name, value] of Object.entries(headers)) {
+    response.headers.set(name, value)
+    if (name.toLowerCase() === "content-type") {
+      hasContentType = true
+    }
+  }
+  if (!hasContentType) response.headers.set("content-type", defaultContentType)
+  return response
+}
+
 // The framework-buffered-body marker shared with the Node adapter: a Response carrying it exposes
 // its already-serialized bytes without draining. On the Web serving paths it exists ONLY when a
 // registered body/raw hook needs it, so hook-less apps pay nothing.
@@ -218,12 +252,25 @@ export function toResponse(
   if (tagResponseBody) {
     const body = JSON.stringify(result) as string | undefined
     if (body !== undefined) {
+      const response =
+        IS_DENO && !(headers instanceof Headers)
+          ? denoResponseWithJsonBody(
+              body,
+              status,
+              headers as Record<string, string>,
+              JSON_CT_HEADERS.get("content-type") ?? "application/json;charset=utf-8",
+            )
+          : new Response(body, { status, headers: withJsonContentType(headers) })
       return tagged(
-        new Response(body, { status, headers: withJsonContentType(headers) }),
+        response,
         body,
         typeof tagResponseBody === "object" ? tagResponseBody : undefined,
       )
     }
+  }
+  if (IS_DENO && headers !== undefined && !(headers instanceof Headers)) {
+    const body = JSON.stringify(result) as string | undefined
+    if (body !== undefined) return stamped(denoResponseWithJsonBody(body, status, headers))
   }
   return stamped(Response.json(result, init))
 }
