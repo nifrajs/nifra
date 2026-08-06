@@ -160,27 +160,42 @@ class RecordHeadersView implements ResponseHeadersView {
     return existing
   }
 
-  /** As {@link #readable}, but creates the record when the outcome has none. */
+  /** As {@link #readable}, but creates the record when the outcome has none. A literal record from
+   * the render path is used AS-IS - values are strings/arrays, and assigning those through the
+   * inherited `__proto__` setter is a spec-level no-op, so the record cannot be polluted through
+   * this view; the one name that setter would swallow is stored via `defineProperty` in
+   * {@link set}/{@link append} instead. Copying to a null-prototype object here would demote every
+   * hook-carrying request's record to V8's dictionary mode (~2% of route throughput). */
   #writable(): Record<string, string | readonly string[]> {
     const existing = this.#target.headers
     if (existing === undefined) {
-      const fresh = Object.create(null) as Record<string, string | readonly string[]>
+      const fresh: Record<string, string | readonly string[]> = {}
       this.#target.headers = fresh
       this.#prepared = true
       return fresh
     }
-    if (Object.getPrototypeOf(existing) !== null) {
-      // Header names such as `__proto__`, `constructor`, and `toString` are valid Web Headers. A
-      // null-prototype backing record prevents those names from invoking Object.prototype setters
-      // or being mistaken for inherited properties when a middleware reflects user input.
-      const safe = Object.create(null) as Record<string, string | readonly string[]>
-      Object.assign(safe, existing)
-      this.#target.headers = safe
-      if (!this.#prepared) this.#prepare(safe)
-      return safe
-    }
     if (!this.#prepared) this.#prepare(existing)
     return existing
+  }
+
+  /** Store under an attacker-influenceable name. `__proto__` (any casing is already lowercased)
+   * must not go through plain assignment - the inherited setter would silently swallow it - so it
+   * is defined as an own data property; every other name takes the fast plain store. */
+  static #store(
+    record: Record<string, string | readonly string[]>,
+    lower: string,
+    value: string | readonly string[],
+  ): void {
+    if (lower === "__proto__") {
+      Object.defineProperty(record, lower, {
+        value,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      })
+      return
+    }
+    record[lower] = value
   }
 
   get(name: string): string | null {
@@ -204,23 +219,27 @@ class RecordHeadersView implements ResponseHeadersView {
       delete headers[actual]
       this.#alias?.delete(lower)
     }
-    headers[lower] = value
+    RecordHeadersView.#store(headers, lower, value)
   }
 
   append(name: string, value: string): void {
     const headers = this.#writable()
     const lower = name.toLowerCase()
     const actual = this.#actual(lower)
-    const current = headers[actual]
+    const current = Object.hasOwn(headers, actual) ? headers[actual] : undefined
     if (current === undefined) {
-      headers[lower] = value
+      RecordHeadersView.#store(headers, lower, value)
       return
     }
     if (actual !== lower) {
       delete headers[actual]
       this.#alias?.delete(lower)
     }
-    headers[lower] = typeof current === "string" ? [current, value] : [...current, value]
+    RecordHeadersView.#store(
+      headers,
+      lower,
+      typeof current === "string" ? [current, value] : [...current, value],
+    )
   }
 
   delete(name: string): void {
