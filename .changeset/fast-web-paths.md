@@ -77,3 +77,9 @@ goes straight into the `Response` constructor. Deno/V8 charged far more for the 
 instance than Bun/JSC did - measured previously as the entire gap between the payload tier's Deno
 row and its own raw ceiling on the realistic-shape benchmark; that row now leads every peer
 framework and sits within a few percent of raw `Deno.serve` again.
+The native header view's one-time name index is now authoritative for every operation, including
+writes of names not yet present: setting a new header no longer walks and lowercases the whole
+record on the way in, which had made each fresh `set()` cost grow with the headers already written
+(measured +2.2% end to end on the realistic middleware-carrying Node GET row). Case-insensitive
+reads still cover the record as first seen plus everything written through the view; a native twin
+writing the record directly uses lowercase names - the wire form the record documents.

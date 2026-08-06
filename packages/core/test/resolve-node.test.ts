@@ -569,6 +569,36 @@ describe("resolveNode - portable onResponseHeaders", () => {
     expect(viaFetch.headers.get("x-multi")).toBe("a")
     expect(viaFetch.headers.get("x-mixed-case")).toBe("kept")
   })
+
+  test("view ops resolve the record's initial mixed-case names through the prepared index", async () => {
+    const app = server({ logger: silentLogger })
+      .use(nodeDirect())
+      .onResponseHeaders((headers) => {
+        // Reads are case-insensitive over whatever casing the handler stored ...
+        expect(headers.get("x-frame-options")).toBe("DENY")
+        // ... a replacement collapses the differently-cased entry to one lowercase key ...
+        headers.set("x-frame-options", "SAMEORIGIN")
+        // ... and a delete removes the stored key regardless of its casing.
+        headers.delete("x-gone")
+      })
+      .get("/data", (c) => {
+        c.set.headers["X-Frame-Options"] = "DENY"
+        c.set.headers["X-Gone"] = "bye"
+        return { ok: true }
+      })
+
+    const outcome = await app.resolveNode(req("/data"))
+    expect(outcome.kind).toBe("json")
+    if (outcome.kind !== "json") throw new Error("unreachable")
+    expect(outcome.headers?.["x-frame-options"]).toBe("SAMEORIGIN")
+    expect(outcome.headers?.["X-Frame-Options"]).toBeUndefined()
+    expect(outcome.headers?.["X-Gone"]).toBeUndefined()
+    expect(outcome.headers?.["x-gone"]).toBeUndefined()
+
+    const viaFetch = await app.fetch(req("/data"))
+    expect(viaFetch.headers.get("x-frame-options")).toBe("SAMEORIGIN")
+    expect(viaFetch.headers.get("x-gone")).toBeNull()
+  })
 })
 
 describe("resolveNode - portable onResponseBody", () => {

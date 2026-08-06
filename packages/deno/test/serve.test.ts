@@ -194,3 +194,62 @@ Deno.test("a WS-free app serves HTTP normally even when the client sends an Upgr
     await running.stop({ drainMs: 0 })
   }
 })
+
+Deno.test("portable response tiers serve end to end on the fetch path", async () => {
+  // Pins the portable tiers' wire behavior on a non-Bun runtime: header tier (set/append/get),
+  // body tier (observe + conditional 304), queued cookies, and handler-returned raw Responses.
+  const app = server()
+    .onResponseHeaders((headers, _req, status) => {
+      headers.set("x-sec", "nosniff")
+      headers.set("x-status-seen", String(status))
+      headers.append("x-multi", "one")
+      headers.append("x-multi", "two")
+    })
+    .onResponseBody((body, headers, req) => {
+      const text = typeof body === "string" ? body : new TextDecoder().decode(body)
+      if (req.header("if-none-match") === '"tag"') return { body: null, status: 304 }
+      headers.set("x-body-len", String(text.length))
+      return undefined
+    })
+    .get("/json", (c) => {
+      c.set.headers["x-request-id"] = "rid-1"
+      return { ok: true }
+    })
+    .get("/cookie", (c) => {
+      c.set.cookie("session", "abc", { path: "/" })
+      return { ok: true }
+    })
+    .get("/raw", () => new Response("<h1>hi</h1>", { headers: { "content-type": "text/html" } }))
+  const running = await serve(app, { port: 0 })
+  try {
+    const base = `http://localhost:${running.port}`
+    const res = await fetch(`${base}/json`)
+    assertEquals(res.status, 200)
+    assertEquals(res.headers.get("x-request-id"), "rid-1")
+    assertEquals(res.headers.get("x-sec"), "nosniff")
+    assertEquals(res.headers.get("x-status-seen"), "200")
+    assertEquals(res.headers.get("x-multi"), "one, two")
+    assertEquals(res.headers.get("content-type"), "application/json;charset=utf-8")
+    const body = await res.text()
+    assertEquals(res.headers.get("x-body-len"), String(body.length))
+    assertEquals(JSON.parse(body), { ok: true })
+
+    const cached = await fetch(`${base}/json`, { headers: { "if-none-match": '"tag"' } })
+    assertEquals(cached.status, 304)
+    assertEquals(await cached.text(), "")
+    assertEquals(cached.headers.get("x-sec"), "nosniff")
+
+    const cookie = await fetch(`${base}/cookie`)
+    assertEquals(cookie.headers.getSetCookie(), [
+      "session=abc; Path=/; HttpOnly; Secure; SameSite=Lax",
+    ])
+    assertEquals((await cookie.json()).ok, true)
+
+    const raw = await fetch(`${base}/raw`)
+    assertEquals(raw.headers.get("content-type"), "text/html")
+    assertEquals(raw.headers.get("x-sec"), "nosniff")
+    assertEquals(await raw.text(), "<h1>hi</h1>")
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})

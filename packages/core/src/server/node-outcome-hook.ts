@@ -135,20 +135,18 @@ class RecordHeadersView implements ResponseHeadersView {
     }
   }
 
-  /** The stored key for an already-lowercased name. */
+  /** The stored key for an already-lowercased name. Resolution is the prepared index ONLY - a
+   * lowercase own-property check, then the alias map - never a per-operation key scan: a rescan on
+   * every miss (and setting a NEW header is always a miss) walked and lowercased the whole record
+   * per write, which measured as the single largest cost of a portable hook walk on JSC. The alias
+   * index is complete for the record as first touched and for every write made through this view;
+   * a raw record write from a custom native twin uses lowercase names (the wire form the record
+   * documents), so it stays visible without a scan. */
   #actual(lower: string): string {
     const record = this.#target.headers
     if (record !== undefined && Object.hasOwn(record, lower)) return lower
     const known = this.#alias?.get(lower)
     if (known !== undefined && record !== undefined && Object.hasOwn(record, known)) return known
-    if (record !== undefined) {
-      for (const key of Object.keys(record)) {
-        if (key.toLowerCase() !== lower) continue
-        if (this.#alias === undefined) this.#alias = new Map()
-        this.#alias.set(lower, key)
-        return key
-      }
-    }
     return lower
   }
 
