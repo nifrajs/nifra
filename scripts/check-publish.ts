@@ -25,6 +25,10 @@ const LIBRARIES = [
   "uploads",
   "storage",
   "node",
+  // Deno-consumed, but it ships built `dist/*.js` + `.d.ts` like every other package (Deno refuses
+  // to strip types under node_modules), so the Node/bundler type-resolution model applies to it.
+  // Loadability under Deno itself is gated separately by `bun run check:deno-tarball`.
+  "deno",
   "runner",
   "env",
   "cron",
@@ -106,12 +110,10 @@ for (const pkg of LIBRARIES) {
   }
 }
 
-// `@nifrajs/deno` (Deno-native, ships TS - no dist), `create-nifra` (bin-only CLI), and
-// `@nifrajs/web-svelte` get publint only: attw models Node/bundler type resolution, which doesn't apply
-// to a Deno-consumed TS package, a CLI with no library exports, or a Svelte package whose `.svelte`
-// components resolve through the consumer's Svelte toolchain (no `.d.ts` for `*.svelte`).
+// `create-nifra` (bin-only CLI) and `@nifrajs/web-svelte` get publint only: attw models Node/bundler
+// type resolution, which doesn't apply to a CLI with no library exports, or to a Svelte package whose
+// `.svelte` components resolve through the consumer's Svelte toolchain (no `.d.ts` for `*.svelte`).
 const PUBLINT_ONLY = [
-  { name: "@nifrajs/deno", dir: "packages/deno" },
   { name: "@nifrajs/workers", dir: "packages/workers" },
   { name: "@nifrajs/content", dir: "packages/content" },
   { name: "create-nifra", dir: "packages/create-nifra" },

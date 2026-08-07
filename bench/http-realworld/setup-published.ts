@@ -23,13 +23,12 @@
  * for the same reason: a BARE specifier still resolves through the root workspace map, which beats
  * this directory's node_modules. Verified with marker builds, not assumed.
  *
- * KNOWN GAP - the Deno arm cannot run in this mode today. `@nifrajs/deno` publishes only `src/*.ts`,
- * and Deno refuses to strip types for anything under `node_modules`
- * (ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING), so the installed package fails to import. This is
- * not a bench limitation: `import "npm:@nifrajs/deno@2.9.0"` fails the same way, which is the exact
- * form the package README documents. It reproduces on 2.8.2, so it predates this release. The Bun
- * and Node arms measure the published packages; Deno numbers still have to come from the default
- * workspace mode until the package ships a Deno-loadable artifact.
+ * The Deno arm could NOT run in this mode against 2.9.0 or earlier: `@nifrajs/deno` published only
+ * `src/*.ts`, and Deno refuses to strip types for anything under `node_modules`
+ * (ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING), so the installed package failed to import at all.
+ * The package now ships `dist/*.js`, and the rewrite below points the adapter import at it. Pinning
+ * a version at or below 2.9.0 will still fail on the Deno arm for that reason - `bun run
+ * check:deno-tarball` is the gate that keeps the shape loadable going forward.
  */
 import { spawnSync } from "node:child_process"
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
@@ -49,8 +48,9 @@ const REWRITES: ReadonlyArray<readonly [string, string]> = [
   ["../../packages/core/dist/", "./node_modules/@nifrajs/core/dist/"],
   ["../../packages/middleware/dist/", "./node_modules/@nifrajs/middleware/dist/"],
   ["../../packages/core/src/index.ts", "./node_modules/@nifrajs/core/dist/index.js"],
-  // `@nifrajs/deno` ships `src/`, so its published layout keeps that path.
-  ["../../packages/deno/src/", "./node_modules/@nifrajs/deno/src/"],
+  // The adapter is imported from `src/` in the workspace (Deno strips types there); an installed
+  // consumer resolves the `default` condition to `dist/index.js`, which is what must be measured.
+  ["../../packages/deno/src/index.ts", "./node_modules/@nifrajs/deno/dist/index.js"],
   // The Node adapter must become an explicit path too, for two reasons, both verified by marker
   // builds. A BARE `@nifrajs/node` here resolves through the ROOT workspace map - which wins over
   // this directory's node_modules and silently bundles the checkout, the exact failure this script

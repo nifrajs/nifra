@@ -72,7 +72,9 @@
     "examples/**/*"
   ],
   // Excluded from the root (DOM-free, types: ["bun"]) program:
-  //  - packages/deno: uses the `Deno` global; typechecked by `deno check`.
+  //  - packages/deno: uses the `Deno` global; typechecked by `deno check`. Its publishable
+  //    `dist/` is emitted by packages/deno/tsconfig.build.json, which supplies a build-only
+  //    ambient shim for those globals (`deno check` stays the typecheck authority).
   //  - bench/http/serve-deno.ts: Deno-only benchmark entry; typechecked by `deno check`.
   //  - packages/web-solid + examples/web-solid: frontend code needing DOM lib + Solid
   //    JSX; typechecked by packages/web-solid/tsconfig.json (see the `typecheck` script).

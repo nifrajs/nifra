@@ -1,0 +1,11 @@
+{
+  // Emits the `dist/` a published Deno consumer actually loads. Deno will not strip types under
+  // `node_modules`, so shipping `src/*.ts` alone makes `npm:@nifrajs/deno` unimportable - see
+  // build-types/deno-globals.d.ts for why this package needs a shim to compile under `tsc` at all.
+  "extends": "../../tsconfig.build.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src/**/*", "build-types/**/*.d.ts"]
+}

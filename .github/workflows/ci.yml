@@ -114,6 +114,13 @@ jobs:
       - name: Typecheck + test @nifrajs/deno on Deno
         run: bun run test:deno
 
+      # The suite above imports `packages/deno/src/index.ts` by workspace path, where Deno is
+      # allowed to strip types - so it cannot see the shape a published consumer gets. 2.9.0 and
+      # earlier shipped only `src/*.ts` and were unimportable from npm for exactly that reason.
+      # This packs the tarball, installs it, and imports it as a Deno user does.
+      - name: Published tarball installs + imports under Deno
+        run: bun run check:deno-tarball
+
   # The Node adapter exercised on Node, not on Bun. `bun run test` covers packages/node/test, which
   # proves the adapter's logic but runs it on the wrong runtime - and an HTTP adapter is precisely
   # where Bun and Node diverge (stream semantics, `node:` builtin behaviour, socket teardown). Deno
