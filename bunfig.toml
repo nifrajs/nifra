@@ -87,6 +87,21 @@ coveragePathIgnorePatterns = [
   # reactive scope; Preact/React register in an effect, so this file can't clear the floor without a
   # browser. Exclude it from the per-file gate (same rationale as web-react/query.ts); the tests still run.
   "**/web-preact/src/router.ts",
+  # `core/src/binary.ts` is excluded for a DIFFERENT reason than everything above: not code this
+  # harness cannot reach, but a measurement this reporter gets wrong. Bun 1.3.14 attributes the
+  # file's hits to the last 14 LINES rather than to the lines that ran. Three measurements, all
+  # reproducible:
+  #   - `DA:32,0` for `export const NIFRA_BINARY_HEADER`, a module-level constant that
+  #     `binary.test.ts` imports and asserts on twice. A module cannot load with that unexecuted.
+  #   - `FNH:2` of `FNF:5`, with `contentDisposition` among the unhit - while the tests assert on
+  #     `filename*=UTF-8''...` output that only `contentDisposition` produces.
+  #   - Copying the file and stripping its comments took it from 128 lines to 48, and the reported
+  #     hit block moved with the file end (114-127 -> 34-47). It tracks position, not execution.
+  # So the 14.58% line / 40% function reading is fiction: the file is covered by 11 tests and 23
+  # assertions spanning every export - hostile filenames, CRLF injection, CJK names, and the RFC
+  # 5987 `filename*` encoding. Excluded so a fictional number stops dragging the global floor and
+  # stops banking a meaningless baseline. Re-measure on a Bun upgrade and drop this if it is fixed.
+  "**/core/src/binary.ts",
   # The suite's own preload (`scripts/test-preload.ts`) - harness, not product code. Its wrapper only
   # runs on a LOOPBACK fetch, so a suite that drives no socket (the `mcp`/`mcp-db` run) reports 0%
   # function coverage on it and fails the per-file floor, while the same file sits well above the floor

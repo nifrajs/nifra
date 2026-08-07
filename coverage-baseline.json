@@ -75,10 +75,6 @@
     "functions": 100,
     "lines": 96.16724738675958
   },
-  "packages/core/src/binary.ts": {
-    "functions": 40,
-    "lines": 14.583333333333334
-  },
   "packages/core/src/budget.ts": {
     "functions": 94.44444444444444,
     "lines": 98.61111111111111
