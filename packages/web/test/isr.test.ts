@@ -627,6 +627,39 @@ describe("KVCacheStore", () => {
     expect(() => new KVCacheStore(new FakeKV(), { expirationTtl: 30 })).toThrow(/>= 60/)
     expect(() => new KVCacheStore(new FakeKV(), { expirationTtl: 60 })).not.toThrow()
   })
+
+  test("the 60s floor belongs to the binding, not to the store", async () => {
+    // KVNamespaceLike is structural, so Redis/Deno KV/Upstash satisfy it too - and they accept TTLs
+    // Cloudflare would reject. Their floor is theirs to declare.
+    expect(
+      () => new KVCacheStore(new FakeKV(), { expirationTtl: 30, minExpirationTtl: 30 }),
+    ).not.toThrow()
+    expect(
+      () => new KVCacheStore(new FakeKV(), { expirationTtl: 1, minExpirationTtl: 0 }),
+    ).not.toThrow()
+    // A declared floor is still enforced; lowering it is a statement about the backend, not a bypass.
+    expect(
+      () => new KVCacheStore(new FakeKV(), { expirationTtl: 5, minExpirationTtl: 10 }),
+    ).toThrow(/>= 10/)
+
+    // And the TTL still reaches the binding.
+    const kv = new FakeKV()
+    const store = new KVCacheStore(kv, { expirationTtl: 30, minExpirationTtl: 30 })
+    await store.set("/p", {
+      body: "<html>x</html>",
+      status: 200,
+      headers: {},
+      storedAt: 0,
+      revalidate: 1_000,
+    })
+    expect(kv.puts.at(-1)?.ttl).toBe(30)
+  })
+
+  test("a malformed expirationTtl or floor is rejected outright", () => {
+    expect(() => new KVCacheStore(new FakeKV(), { expirationTtl: 60.5 })).toThrow(/non-negative/)
+    expect(() => new KVCacheStore(new FakeKV(), { expirationTtl: -1 })).toThrow(/non-negative/)
+    expect(() => new KVCacheStore(new FakeKV(), { minExpirationTtl: -1 })).toThrow(/non-negative/)
+  })
 })
 
 describe("withISR over KVCacheStore (the production store path)", () => {

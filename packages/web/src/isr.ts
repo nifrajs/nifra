@@ -210,6 +210,16 @@ export interface KVCacheStoreOptions {
    * overwritten on regeneration or purged via `revalidateEndpoint`.
    */
   readonly expirationTtl?: number
+  /**
+   * Smallest `expirationTtl` this binding accepts (**seconds**). Defaults to 60, which is Cloudflare
+   * KV's floor - the common case, and worth rejecting at construction because Cloudflare fails the
+   * `put` at runtime instead, one deploy later.
+   *
+   * The floor belongs to the *binding*, not to this class. {@link KVNamespaceLike} is structural, so
+   * a Redis, Deno KV, Upstash, or in-memory binding satisfies it too, and those accept far shorter
+   * TTLs. Pass their real minimum, or `0` for a backend with none.
+   */
+  readonly minExpirationTtl?: number
 }
 
 /**
@@ -256,18 +266,37 @@ type StoredTaggedResponse = CachedResponse & {
  * hold *across* worker instances (unlike the per-instance {@link MemoryCacheStore}). Entries serialize
  * to JSON; every read is validated before it's trusted (a malformed/version-skewed entry is treated as
  * a miss). Construct it in your Workers `fetch` from the binding: `new KVCacheStore(env.ISR_CACHE)`.
+ *
+ * Cloudflare is the default, not a requirement: {@link KVNamespaceLike} is three structural methods,
+ * so a Redis, Deno KV, or Upstash binding satisfies it (pass `minExpirationTtl` for their TTL floor).
+ * A backend that *can* enumerate keys deserves its own {@link CacheStore} rather than this one - the
+ * epoch indirection in {@link KVCacheStore.invalidateTag} exists only because KV cannot list by tag.
  */
 export class KVCacheStore implements CacheStore {
   private readonly kv: KVNamespaceLike
   private readonly putOptions: { readonly expirationTtl?: number } | undefined
 
   constructor(kv: KVNamespaceLike, options: KVCacheStoreOptions = {}) {
-    if (options.expirationTtl !== undefined && options.expirationTtl < 60) {
-      throw new Error(
-        "[nifra/web] KVCacheStore expirationTtl must be >= 60 (Cloudflare KV's minimum), and should " +
-          "exceed your longest `revalidate` window so stale-while-revalidate isn't turned into a " +
-          "blocking miss by KV expiry.",
+    const floor = options.minExpirationTtl ?? 60
+    if (!Number.isSafeInteger(floor) || floor < 0) {
+      throw new RangeError(
+        "[nifra/web] KVCacheStore minExpirationTtl must be a non-negative integer",
       )
+    }
+    if (options.expirationTtl !== undefined) {
+      if (!Number.isSafeInteger(options.expirationTtl) || options.expirationTtl < 0) {
+        throw new RangeError(
+          "[nifra/web] KVCacheStore expirationTtl must be a non-negative integer (seconds)",
+        )
+      }
+      if (options.expirationTtl < floor) {
+        throw new Error(
+          `[nifra/web] KVCacheStore expirationTtl must be >= ${floor}, this binding's minimum. 60 is ` +
+            "Cloudflare KV's floor and the default; pass `minExpirationTtl` for a backend with a " +
+            "lower one. Whatever the floor, the TTL should exceed your longest `revalidate` window, " +
+            "or expiry turns a stale-while-revalidate into a blocking miss.",
+        )
+      }
     }
     this.kv = kv
     // Precompute the put options object once: omit it entirely when no TTL (KV then never expires).
