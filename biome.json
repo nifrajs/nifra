@@ -39,6 +39,7 @@
       "**",
       "!**/node_modules",
       "!**/.claude",
+      "!bench/.published",
       "!**/coverage",
       "!**/.tmp-dev-server-*",
       "!**/.tmp-doc-check",
