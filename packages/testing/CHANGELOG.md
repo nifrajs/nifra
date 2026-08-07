@@ -1,5 +1,15 @@
 # @nifrajs/testing
 
+## 2.9.0
+
+### Patch Changes
+
+- Updated dependencies [b006d07]
+- Updated dependencies [e05e56d]
+  - @nifrajs/client@2.9.0
+  - @nifrajs/core@2.9.0
+  - @nifrajs/mock@2.9.0
+
 ## 2.8.2
 
 ### Patch Changes
