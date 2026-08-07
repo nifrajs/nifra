@@ -179,4 +179,8 @@ app.get<{ Querystring: { limit: string } }>(
   },
 )
 
+// `--cpu-prof` writes its profile on process EXIT; a default SIGINT terminates without one, so the
+// profiling rig would get an empty directory. Exit gracefully instead (also makes teardown clean).
+for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => process.exit(0))
+
 await app.listen({ port })

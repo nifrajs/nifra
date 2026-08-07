@@ -33,10 +33,23 @@ import { cors, securityHeaders } from "../../packages/middleware/dist/index.js"
 const RUNGS = ["full", "nocors", "nosec", "noreqid", "noderive", "bare"] as const
 type Rung = (typeof RUNGS)[number]
 
-const rung = process.argv[2] as Rung
+const arg = process.argv[2]
 const port = Number(process.argv[3])
+// `corslite` sits between `full` and `nocors`: everything `full` has, but with cors swapped for a
+// middleware that writes the same three headers from an onResponseHeaders hook and does nothing
+// else - no origin resolution, no vary merge, no preflight onRequest. It splits the measured cors
+// stage in two: `full - corslite` is cors's own logic, `corslite - nocors` is what merely HAVING a
+// portable response-header hook costs. Optimizing the wrong half of that is the obvious trap.
+// `corsnoop` and `cors1` go further: an onResponseHeaders hook that writes nothing at all, and one
+// that writes a single header. Against `nocors` they separate the LANE cost (allocating the header
+// view and the request context, walking the hook list) from the PER-WRITE cost.
+const LITE_RUNGS = ["corslite", "cors1", "corsnoop"] as const
+const liteMode = (LITE_RUNGS as ReadonlyArray<string>).includes(arg)
+  ? (arg as (typeof LITE_RUNGS)[number])
+  : undefined
+const rung = (liteMode !== undefined ? "full" : arg) as Rung
 if (!RUNGS.includes(rung) || !Number.isInteger(port)) {
-  throw new Error(`usage: node ablate-nifra.js <${RUNGS.join("|")}> <port>`)
+  throw new Error(`usage: node ablate-nifra.js <${RUNGS.join("|")}|${LITE_RUNGS.join("|")}> <port>`)
 }
 
 // Rung n keeps every stage strictly above it in the ladder.
@@ -91,7 +104,23 @@ type AnyApp = any
 type AnyCtx = any
 let app: AnyApp = server()
 if (hasSec) app = app.use(securityHeaders())
-if (hasCors) app = app.use(cors({ origin: ["https://app.example.com"], credentials: true }))
+if (hasCors) {
+  if (liteMode === undefined) {
+    app = app.use(cors({ origin: ["https://app.example.com"], credentials: true }))
+  } else {
+    const writes = liteMode === "corsnoop" ? 0 : liteMode === "cors1" ? 1 : 3
+    app = app.use({
+      name: `cors-${liteMode}`,
+      onResponseHeaders: (headers: AnyCtx) => {
+        if (writes === 0) return
+        headers.set("access-control-allow-origin", "https://app.example.com")
+        if (writes === 1) return
+        headers.set("vary", "Origin")
+        headers.set("access-control-allow-credentials", "true")
+      },
+    })
+  }
+}
 if (hasReqId) {
   app = app.use({
     name: "request-id",
@@ -127,5 +156,9 @@ if (hasDerive) {
     return body(userId, c.cookies.theme ?? "light", 10)
   })
 }
+
+// `--cpu-prof` writes its profile on process EXIT; a default SIGINT terminates without one, so the
+// profiling rig would get an empty directory. Exit gracefully instead (also makes teardown clean).
+for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => process.exit(0))
 
 await serve(app, { port })

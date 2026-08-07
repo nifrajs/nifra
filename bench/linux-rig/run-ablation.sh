@@ -41,8 +41,10 @@ PORT=8825
 H1='authorization: Bearer abcdefghijklmnopqrstuvwxyz'
 H2='cookie: theme=dark'
 H3='origin: https://app.example.com'
-NIFRA_RUNGS="full nocors nosec noreqid noderive bare"
-FASTIFY_RUNGS="full-slow full nocors nosec noreqid noderive bare"
+# Overridable so a focused question (say, just full/corslite/nocors) does not pay for the whole
+# ladder: NIFRA_RUNGS="full corslite nocors" FASTIFY_RUNGS="" bash run-ablation.sh
+NIFRA_RUNGS="${NIFRA_RUNGS-full nocors nosec noreqid noderive bare}"
+FASTIFY_RUNGS="${FASTIFY_RUNGS-full-slow full nocors nosec noreqid noderive bare}"
 CLK=$(getconf CLK_TCK)
 cd /repo
 
