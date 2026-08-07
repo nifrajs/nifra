@@ -1,5 +1,33 @@
 # @nifrajs/examples
 
+## 2.9.0
+
+### Patch Changes
+
+- Updated dependencies [b006d07]
+- Updated dependencies [5f7fb33]
+- Updated dependencies [e05e56d]
+  - @nifrajs/client@2.9.0
+  - @nifrajs/schema@2.9.0
+  - @nifrajs/middleware@2.9.0
+  - @nifrajs/node@2.9.0
+  - @nifrajs/deno@2.9.0
+  - @nifrajs/core@2.9.0
+  - @nifrajs/web@2.9.0
+  - @nifrajs/cli@2.9.0
+  - @nifrajs/auth@2.9.0
+  - @nifrajs/web-preact@2.9.0
+  - @nifrajs/web-react@2.9.0
+  - @nifrajs/web-solid@2.9.0
+  - @nifrajs/web-svelte@2.9.0
+  - @nifrajs/web-vue@2.9.0
+  - @nifrajs/workers@2.9.0
+  - @nifrajs/content@2.9.0
+  - @nifrajs/i18n@2.9.0
+  - @nifrajs/image@2.9.0
+  - @nifrajs/mcp@2.9.0
+  - @nifrajs/web-vanilla@2.9.0
+
 ## 2.8.2
 
 ### Patch Changes
