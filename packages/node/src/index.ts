@@ -790,7 +790,13 @@ function writeJsonOutcome(
   let headers: Record<string, string | string[]>
   const source = outcome.headers
   if (source === undefined) {
-    headers = Object.create(null) as Record<string, string | string[]>
+    // A route that set no headers gets a record the FRAMEWORK alone fills - content-type,
+    // content-length, set-cookie - so no attacker-influenced name can reach it and the
+    // null-prototype guard the normalization branch needs buys nothing here. It does cost: a
+    // null-prototype object never enters V8's fast property mode, and Node's `_storeHeader` walks
+    // this record key by key on every response (measured at over twice fastify's share of the same
+    // frame on a bare route). A literal keeps it in fast mode.
+    headers = {}
   } else if (allHeaderKeysLowercase(source)) {
     headers = source as Record<string, string | string[]>
   } else {

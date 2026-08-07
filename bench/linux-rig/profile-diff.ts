@@ -28,8 +28,12 @@ interface CpuProfile {
 }
 
 const [basePath, targetPath] = process.argv.slice(2)
-if (basePath === undefined || targetPath === undefined) {
-  throw new Error("usage: bun run profile-diff.ts <baseline.cpuprofile> <target.cpuprofile>")
+if (basePath === undefined) {
+  throw new Error(
+    "usage: bun run profile-diff.ts <baseline.cpuprofile> [target.cpuprofile]\n" +
+      "  one file  -> top self-time frames, as a share of NON-IDLE samples\n" +
+      "  two files -> per-frame share delta from baseline to target",
+  )
 }
 
 /** functionName + a short file:line tag, so two same-named closures stay distinguishable. */
@@ -40,20 +44,40 @@ function labelOf(frame: CallFrame): string {
 }
 
 /** Self-time share per frame label, normalized to the profile's total samples. */
-async function sharesOf(path: string): Promise<{ shares: Map<string, number>; total: number }> {
+async function sharesOf(
+  path: string,
+  exclude?: ReadonlySet<string>,
+): Promise<{ shares: Map<string, number>; total: number }> {
   const profile = (await Bun.file(path).json()) as CpuProfile
   const byLabel = new Map<string, number>()
   let total = 0
   for (const node of profile.nodes) {
     const hits = node.hitCount ?? 0
     if (hits === 0) continue
-    total += hits
     const label = labelOf(node.callFrame)
+    if (exclude?.has(label)) continue
+    total += hits
     byLabel.set(label, (byLabel.get(label) ?? 0) + hits)
   }
   const shares = new Map<string, number>()
   for (const [label, hits] of byLabel) shares.set(label, (hits / total) * 100)
   return { shares, total }
+}
+
+// Idle samples are the profiler watching the event loop wait for the next request; including them
+// makes every share a function of load rather than of the code, and makes two profiles taken at
+// different throughputs incomparable. Everything below is a share of CPU actually spent.
+const IDLE = new Set(["(idle) [native]", "(program) [native]"])
+
+if (targetPath === undefined) {
+  const { shares, total } = await sharesOf(basePath, IDLE)
+  console.log(`${basePath}  (${total} non-idle samples)\n`)
+  const rows = [...shares].sort((a, b) => b[1] - a[1])
+  for (const [label, share] of rows.slice(0, 30)) {
+    if (share < 0.15) break
+    console.log(`  ${share.toFixed(2)}%  ${label}`)
+  }
+  process.exit(0)
 }
 
 const base = await sharesOf(basePath)

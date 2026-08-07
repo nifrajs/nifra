@@ -2641,9 +2641,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // of allocating the `{ pathname, search }` pair returned by the public helper on every request.
     let pathname: string
     let search: string
-    if (source.urlParts !== undefined) {
-      pathname = source.urlParts.pathname
-      search = source.urlParts.search
+    // Read the source's split ONCE. `urlParts` is an accessor on the Node request sources that
+    // rescans the target and allocates a fresh pair every time it is touched, so testing it and then
+    // reading each half through the accessor scanned the URL three times per request and threw two
+    // of the three pairs away immediately.
+    const parts = source.urlParts
+    if (parts !== undefined) {
+      pathname = parts.pathname
+      search = parts.search
     } else {
       const rawUrl = source.url
       const schemeEnd = rawUrl.indexOf("://")
