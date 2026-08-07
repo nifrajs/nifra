@@ -1,7 +1,8 @@
 FROM node:26-bookworm-slim
 
+# strace + linux-perf back the kernel-level rig (`run-syscalls.sh`); the rest is the throughput rig.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates unzip util-linux procps \
+    curl ca-certificates unzip util-linux procps strace linux-perf \
     && rm -rf /var/lib/apt/lists/*
 
 # bun (match host 1.3.14)
