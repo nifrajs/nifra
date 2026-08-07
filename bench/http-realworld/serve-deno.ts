@@ -10,8 +10,9 @@
  * Core's VALUE import points at the built `dist/` output: Deno's npm condition set has no "bun"
  * condition, so a real `npm:@nifrajs/core` install resolves the "default" export straight to
  * `dist/*.js` - importing `src/*.ts` here would benchmark an artifact no Deno user runs (the same
- * source-vs-dist trap _nifra-app.ts documents for Bun). `@nifrajs/deno` itself SHIPS `src/` (its
- * package exports point there), so the adapter import below already matches the published artifact.
+ * source-vs-dist trap _nifra-app.ts documents for Bun). The adapter's own `src` import below is the
+ * one place that stays TypeScript - a pure type-strip of the same code - and `setup-published.ts`
+ * rewrites it to the installed `dist/index.js` when measuring a release.
  *
  *   deno run --allow-net --allow-env --no-check bench/http-realworld/serve-deno.ts <nifra|hono|elysia|deno-raw|*-body> <port>
  */

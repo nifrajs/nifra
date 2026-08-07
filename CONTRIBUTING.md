@@ -118,6 +118,7 @@ Nifra uses Bun's built-in test runner. Tests are defined under `test/` subdirect
 - Run package tests: `bun run test`
 - Run all tests (including slow/smoke tests): `bun run test:all`
 - Run Deno-specific tests: `bun run test:deno`
+- Check the published `@nifrajs/deno` tarball installs and imports under Deno: `bun run check:deno-tarball`
 
 Write unit tests for any new features or bug fixes you contribute.
 

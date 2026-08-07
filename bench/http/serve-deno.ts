@@ -16,8 +16,10 @@ import { Hono } from "hono"
 import { validator } from "hono/validator"
 // Core's VALUE import points at built dist: Deno's npm condition set has no "bun" condition, so a
 // real `npm:@nifrajs/core` install resolves the "default" export to `dist/*.js` - importing src
-// here would benchmark an artifact no Deno user runs. `@nifrajs/deno` itself SHIPS `src/` (its
-// exports point there), so the adapter import already matches the published artifact.
+// here would benchmark an artifact no Deno user runs. The adapter's own `src` import below is the
+// one place that stays TypeScript: it is a pure type-strip of the same code (no bundler, no
+// conditions), and `setup-published.ts` rewrites it to the installed `dist/index.js` when measuring
+// a release.
 import { server } from "../../packages/core/dist/index.js"
 import type {
   StandardResult,
