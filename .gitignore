@@ -66,3 +66,8 @@ dv-*/
 /examples/launch-video
 /launch-assets
 /scratch
+
+# Local planning and editor state - never public. `/.planning` in particular carries private
+# roadmap notes, so the leak guard must never see it as committable content.
+/.planning
+/.vscode/
