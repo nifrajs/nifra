@@ -4447,7 +4447,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       )
       count += 1
     }
-    return count === 0 ? undefined : routes
+    if (count === 0) return undefined
+    // RFC 9110 §9.3.2: a GET route answers HEAD with identical status + headers (Bun strips the
+    // body on the wire). Alias the compiled GET handler under HEAD so HEAD stays on the native
+    // lane instead of falling through to the portable dispatcher; the router applies the same
+    // fallback there, so both lanes agree. An explicit HEAD registration wins via the ??=.
+    for (const path of Object.keys(routes)) {
+      const methods = routes[path]!
+      if (methods.GET !== undefined) methods.HEAD ??= methods.GET
+    }
+    return routes
   }
 
   /**

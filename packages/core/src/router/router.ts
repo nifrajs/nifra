@@ -230,7 +230,9 @@ function resolve<T>(
     const upper = method.toUpperCase()
     const cached = upper === method ? undefined : terminal.staticMatches.get(upper)
     if (cached !== undefined) return cached
-    if (!terminal.handlers.has(upper)) return resolveDirect(terminal, method, params)
+    const cacheable =
+      terminal.handlers.has(upper) || (upper === "HEAD" && terminal.handlers.has("GET"))
+    if (!cacheable) return resolveDirect(terminal, method, params)
 
     const res = resolveDirect(terminal, method, params)
     terminal.staticMatches.set(upper, res)
@@ -248,11 +250,20 @@ function resolveDirect<T>(
     return { found: true, payload: terminal.handlers.get(method)!, params }
   }
   const upper = method.toUpperCase()
-  if (upper === method || !terminal.handlers.has(upper)) {
-    return { found: false, reason: "method-not-allowed", allowed: [...terminal.handlers.keys()] }
+  if (upper !== method && terminal.handlers.has(upper)) {
+    return { found: true, payload: terminal.handlers.get(upper)!, params }
   }
-  const payload = terminal.handlers.get(upper)! // present by the has() check above
-  return { found: true, payload, params }
+  // RFC 9110 §9.3.2: HEAD is GET without the body. A route registered for GET answers HEAD with
+  // the GET handler; the serving runtime strips the body, so status + headers mirror GET exactly.
+  // An explicitly registered HEAD handler takes precedence via the has() checks above.
+  if (upper === "HEAD") {
+    const get = terminal.handlers.get("GET")
+    if (get !== undefined) return { found: true, payload: get, params }
+  }
+  const allowed = [...terminal.handlers.keys()]
+  // Advertise the implicit HEAD support granted above.
+  if (terminal.handlers.has("GET") && !terminal.handlers.has("HEAD")) allowed.push("HEAD")
+  return { found: false, reason: "method-not-allowed", allowed }
 }
 
 /**

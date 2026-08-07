@@ -88,8 +88,39 @@ describe("Server.fetch - errors (404/405/400/500)", () => {
       .post("/r", () => "p")
     const res = await app.fetch(request("DELETE", "/r"))
     expect(res.status).toBe(405)
-    expect(res.headers.get("Allow")).toBe("GET, POST")
+    // HEAD rides on the GET registration (RFC 9110), so Allow advertises it too.
+    expect(res.headers.get("Allow")).toBe("GET, POST, HEAD")
     expect(await res.json()).toEqual({ ok: false, error: "method_not_allowed" })
+  })
+
+  test("HEAD answers via the GET route with identical status and headers", async () => {
+    const app = server().get(
+      "/mirror",
+      () =>
+        new Response("Hi", {
+          headers: { "content-type": "text/plain", "x-powered-by": "nifra" },
+        }),
+    )
+    const res = await app.fetch(request("HEAD", "/mirror"))
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toBe("text/plain")
+    expect(res.headers.get("x-powered-by")).toBe("nifra")
+  })
+
+  test("an explicit HEAD registration wins over the GET fallback", async () => {
+    const app = server().get("/h", () => new Response("body", { headers: { "x-from-get": "1" } }))
+    app.register("HEAD", "/h", undefined, () => new Response(null, { headers: { "x-head": "1" } }))
+    const res = await app.fetch(request("HEAD", "/h"))
+    expect(res.status).toBe(200)
+    expect(res.headers.get("x-head")).toBe("1")
+    expect(res.headers.get("x-from-get")).toBeNull()
+  })
+
+  test("HEAD on a route without GET stays a 405", async () => {
+    const app = server().post("/p", () => "p")
+    const res = await app.fetch(request("HEAD", "/p"))
+    expect(res.status).toBe(405)
+    expect(res.headers.get("Allow")).toBe("POST")
   })
 
   test("400 malformed_path for an undecodable param", async () => {
@@ -164,6 +195,34 @@ describe("Server - verbs and listen", () => {
     }
   })
 
+  test("the Bun-native lane answers HEAD with the GET route's status and headers", async () => {
+    const app = server()
+      .get(
+        "/",
+        () =>
+          new Response("Hi", {
+            headers: { "content-type": "text/plain", "x-powered-by": "nifra" },
+          }),
+      )
+      .get("/u/:id", (c) => new Response(`u${c.params.id}`, { headers: { "x-kind": "param" } }))
+    const instance = app.listen(0)
+    const base = `http://127.0.0.1:${instance.port}`
+    try {
+      const head = await fetch(base, { method: "HEAD" })
+      expect(head.status).toBe(200)
+      expect(head.headers.get("content-type")).toBe("text/plain")
+      expect(head.headers.get("x-powered-by")).toBe("nifra")
+      // Same content-length as GET would carry; the body itself is stripped on the wire.
+      expect(head.headers.get("content-length")).toBe("2")
+
+      const param = await fetch(`${base}/u/9`, { method: "HEAD" })
+      expect(param.status).toBe(200)
+      expect(param.headers.get("x-kind")).toBe("param")
+    } finally {
+      instance.stop()
+    }
+  })
+
   test("listen keeps onRequest URL rewrites ahead of route selection", async () => {
     const app = server()
       .onRequest(
@@ -202,7 +261,7 @@ describe("Server - verbs and listen", () => {
 
       const wrongMethod = await fetch(url, { method: "POST" })
       expect(wrongMethod.status).toBe(405)
-      expect(wrongMethod.headers.get("allow")).toBe("GET")
+      expect(wrongMethod.headers.get("allow")).toBe("GET, HEAD")
     } finally {
       instance.stop()
     }
