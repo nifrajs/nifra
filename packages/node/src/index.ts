@@ -10,6 +10,7 @@
  * so this adapter just bridges Node's stream-based `(req, res)` to/from Web
  * `Request`/`Response`, plus a Bun-`listen()`-style graceful `stop()`.
  */
+import { AsyncLocalStorage } from "node:async_hooks"
 import { open, realpath } from "node:fs/promises"
 import {
   createServer,
@@ -561,7 +562,25 @@ function enableNodeDirect(app: FetchHandler): void {
   }
 }
 
+// Node's per-tick async-context bookkeeping (AsyncContextFrame, default since Node 24) activates
+// lazily, on the first `AsyncLocalStorage` construction - or, in a process that never constructs
+// one, on the first socket teardown's `clearTimeout`, which reads the same gate. That second path
+// makes activation inevitable for any http server, and mid-traffic is the worst possible moment:
+// V8 has already optimized the tick loop against the inactive no-op frame methods, and the
+// prototype swap leaves the per-tick exchange callsite polymorphic for the process lifetime
+// (~3% of per-request CPU on Node 26, measured). Constructing one storage before listening moves
+// the flip ahead of the loop's first optimization instead; the instance itself is never used.
+// Under --no-async-context-frame the constructor is inert (legacy ALS enables hooks on first
+// run()/enterWith(), not on construction), so this is a no-op there.
+let asyncContextFrameActivated = false
+function activateAsyncContextFrame(): void {
+  if (asyncContextFrameActivated) return
+  asyncContextFrameActivated = true
+  new AsyncLocalStorage()
+}
+
 export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeServer> {
+  activateAsyncContextFrame()
   enableNodeDirect(app)
   let inFlight = 0
   let closed = false
