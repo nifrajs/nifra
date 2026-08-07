@@ -47,6 +47,26 @@ export interface HttpWorkloadTable {
   readonly rows: readonly HttpWorkloadRow[]
 }
 
+/**
+ * A realistic-shape row: the same GET/POST split as `HttpWorkloadRow`, plus the body-middleware
+ * workload, on a route carrying security headers, CORS, a request-id hook, bearer auth and a cookie
+ * read. Kept separate from `httpWorkloads` rather than folded in, because the two answer different
+ * questions - the bare tables measure the framework floor (where nifra's fused lane applies), these
+ * measure a route shaped like one people deploy (where it does not, for any framework).
+ */
+export interface HttpRealworldRow {
+  readonly name: string
+  readonly get: string
+  readonly post: string
+  readonly body: string
+  readonly nifra?: boolean
+}
+
+export interface HttpRealworldTable {
+  readonly title: string
+  readonly rows: readonly HttpRealworldRow[]
+}
+
 /** A /benchmarks SSR table row (display-ready; `jsGzKb` = gzipped client JS in KB). */
 export interface SsrSiteRow {
   readonly name: string
@@ -76,6 +96,8 @@ export interface SiteBench {
   readonly http: readonly BenchRow[]
   /** Core GET/POST workload comparison used by the benchmarks page and articles. */
   readonly httpWorkloads?: readonly HttpWorkloadTable[]
+  /** The same matrix on an auth+middleware route - the shape no framework fast-lanes. */
+  readonly httpRealworld?: readonly HttpRealworldTable[]
   readonly bundle: readonly BundleRow[]
   readonly proof: readonly ProofStat[]
 }
@@ -162,6 +184,67 @@ export function httpWorkloadsFromResults(
         name: display[framework] ?? framework,
         getUsers: format(get),
         postUsers: format(post),
+        ...(framework === "nifra" ? { nifra: true } : {}),
+      })
+    }
+    if (rows.length > 0) tables.push({ title: runtime.title, rows })
+  }
+  return tables
+}
+
+/**
+ * Convert the realistic-shape matrix to its site slice. The body-middleware workload is served by
+ * the `*-body` targets, so a row pulls its third column from the suffixed framework key. A framework
+ * missing any of the three cells is dropped rather than published with a hole.
+ */
+export function httpRealworldFromResults(
+  results: Record<
+    string,
+    Record<string, Record<string, { readonly rps: number } | undefined> | undefined> | undefined
+  >,
+  workloads: { readonly get: string; readonly post: string; readonly body: string },
+): readonly HttpRealworldTable[] {
+  const runtimeConfig: ReadonlyArray<{
+    key: string
+    title: string
+    frameworks: readonly string[]
+  }> = [
+    { key: "bun", title: "Bun", frameworks: ["nifra", "elysia", "bun-native", "hono"] },
+    {
+      key: "node",
+      title: "Node",
+      frameworks: ["nifra", "node-raw", "fastify", "elysia", "express", "hono"],
+    },
+    { key: "deno", title: "Deno", frameworks: ["deno-raw", "nifra", "elysia", "hono"] },
+  ]
+  const display: Record<string, string> = {
+    nifra: "Nifra",
+    elysia: "Elysia",
+    "bun-native": "bun-native",
+    "node-raw": "node-raw",
+    "deno-raw": "deno-raw",
+    fastify: "Fastify",
+    express: "Express",
+    hono: "Hono",
+  }
+  const format = (rps: number): string => Math.round(rps).toLocaleString("en-US")
+  const ok = (n: number | undefined): n is number => n !== undefined && Number.isFinite(n) && n > 0
+
+  const tables: HttpRealworldTable[] = []
+  for (const runtime of runtimeConfig) {
+    const source = results[runtime.key]
+    if (source === undefined) continue
+    const rows: HttpRealworldRow[] = []
+    for (const framework of runtime.frameworks) {
+      const get = source[framework]?.[workloads.get]?.rps
+      const post = source[framework]?.[workloads.post]?.rps
+      const body = source[`${framework}-body`]?.[workloads.body]?.rps
+      if (!ok(get) || !ok(post) || !ok(body)) continue
+      rows.push({
+        name: display[framework] ?? framework,
+        get: format(get),
+        post: format(post),
+        body: format(body),
         ...(framework === "nifra" ? { nifra: true } : {}),
       })
     }

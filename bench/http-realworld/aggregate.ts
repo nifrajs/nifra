@@ -10,6 +10,7 @@
  */
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { httpRealworldFromResults, writeSiteBench } from "../site-bench.ts"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const RUN = join(HERE, "run.ts")
@@ -223,6 +224,18 @@ if (!write) {
   console.log(`\n${metaLine}\n`)
   for (const rt of runtimes) console.log(`### ${rt}\n\n${sectionBlock(rt, merged)}\n`)
   process.exit(0)
+}
+
+// Publish the realistic slice alongside the bare one. A single-runtime run must not erase the
+// other runtime tables in the canonical dataset, so this only writes when all three ran - the same
+// discipline bench/http/aggregate.ts applies to `httpWorkloads`.
+const realworld = httpRealworldFromResults(merged as never, {
+  get: WORKLOADS[0] as string,
+  post: WORKLOADS[1] as string,
+  body: BODY_WORKLOAD,
+})
+if (runtimes.length === 3 && realworld.length === 3) {
+  await writeSiteBench({ httpRealworld: realworld })
 }
 
 const benchFile = Bun.file(OUT)
