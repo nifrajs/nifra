@@ -218,15 +218,14 @@ const NODE_OUTCOME_RUNTIME: NodeOutcomeRuntime = {
     if (result instanceof Response) {
       return nodeOutcomeFromResponse(appendCookiesToResponse(result, set._cookies))
     }
+    const status = set.status ?? (result === undefined ? 204 : 200)
+    const body = result === undefined || isBodylessStatus(status) ? null : JSON.stringify(result)
     return {
       kind: "json",
-      status: set.status ?? (result === undefined ? 204 : 200),
+      status,
       headers: set._headers,
       cookies: set._cookies,
-      body:
-        result === undefined || isBodylessStatus(set.status ?? (result === undefined ? 204 : 200))
-          ? null
-          : JSON.stringify(result),
+      body,
     }
   },
   toResponse: nodeOutcomeToResponse,

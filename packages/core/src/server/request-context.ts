@@ -121,13 +121,21 @@ export class RequestContext implements RawContext {
     this.maxBodyBytes = maxBodyBytes as number
   }
 
+  /**
+   * The no-timeout context: `c.signal`/`c.budget` fall back to the never-abort signal and the
+   * unbounded budget, which is exactly what the request would have been handed, so the two slots
+   * are left unwritten instead of initialized. `search` carries the router's already-split query
+   * string when it has one; `undefined` leaves `c.query` to re-scan the URL lazily.
+   */
   static native(
     source: RequestSource,
     params: Record<string, string>,
+    search: string | undefined,
     maxBodyBytes: number,
     platform?: Platform,
   ): RequestContext {
     const context = new RequestContext(source, params, maxBodyBytes)
+    if (search !== undefined) context.searchValue = search
     if (platform !== undefined) context.platformValue = platform
     return context
   }

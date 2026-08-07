@@ -44,6 +44,7 @@ export type RouteExecutionRunner = <T, R extends Registry, Ctx>(
   signal: AbortSignal,
   budget: RequestBudget,
   platform: Platform | undefined,
+  nativeContext: boolean,
   finalize: (result: unknown, set: CtxSet) => T,
   wrapResponse: (response: Response) => T,
 ) => MaybePromise<T>
@@ -93,6 +94,8 @@ export interface RouteEntry {
   readonly beforeHandle: ReadonlyArray<RawBeforeHandle>
   readonly afterHandle: ReadonlyArray<RawAfterHandle>
   readonly onError: ReadonlyArray<RawErrorHandler>
+  /** Registration-specialized hook shape for the common derive + before middleware route. */
+  readonly lifecycleHookLane: "derive-before" | undefined
   /** Wraps the matched route lifecycle. Empty for the common no-around path. */
   readonly around: ReadonlyArray<RawAround>
   /** The single immutable execution decision consumed by portable, Node-direct, and Bun-native paths. */

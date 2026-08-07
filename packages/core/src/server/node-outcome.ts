@@ -75,12 +75,13 @@ export function toNodeOutcome(result: HandlerResult, set: CtxSet): NodeServeOutc
     return nodeOutcomeFromResponse(appendCookiesToResponse(normalizeBodylessResponse(result), set))
   }
   const status = set.status ?? (result === undefined ? 204 : 200)
+  const body = result === undefined || isBodylessStatus(status) ? null : JSON.stringify(result)
   return {
     kind: "json",
     status,
     headers: set._headers,
     cookies: set._cookies,
-    body: result === undefined || isBodylessStatus(status) ? null : JSON.stringify(result),
+    body,
   }
 }
 

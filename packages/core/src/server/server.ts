@@ -614,8 +614,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private readonly aroundHooks: RawAround[]
   private readonly onRequestHooks: RawOnRequest[]
   private readonly onNodeRequestHooks: Array<NodeRequestHook | undefined>
+  /** Registration-time eligibility for the Node request twin lane. */
+  private nodeRequestHooksComplete: boolean
   private readonly onResponseHooks: RawOnResponse[]
   private readonly onNodeResponseHooks: Array<NodeResponseHook | undefined>
+  /** Registration-time eligibility for the Node response twin lane. */
+  private nodeResponseHooksComplete: boolean
   private readonly onResponseFinalizedHooks: RawOnResponseFinalized[]
   /**
    * Statically declared response headers, merged and prebuilt at registration; `undefined` (the
@@ -696,8 +700,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.aroundHooks = []
     this.onRequestHooks = []
     this.onNodeRequestHooks = []
+    this.nodeRequestHooksComplete = true
     this.onResponseHooks = []
     this.onNodeResponseHooks = []
+    this.nodeResponseHooksComplete = true
     this.onResponseFinalizedHooks = []
     this.staticResponseHeaders = undefined
     this.wrapWebResponse = IDENTITY_RESPONSE
@@ -747,6 +753,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.assertConfigurable("onRequest()")
     this.onRequestHooks.push(fn as RawOnRequest)
     this.onNodeRequestHooks.push(undefined)
+    this.nodeRequestHooksComplete = false
     return this
   }
 
@@ -821,6 +828,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.assertConfigurable("onResponse()")
     this.onResponseHooks.push(fn)
     this.onNodeResponseHooks.push(undefined)
+    this.nodeResponseHooksComplete = false
     return this
   }
 
@@ -1007,6 +1015,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       this.assertConfigurable("onRequest()")
       this.onRequestHooks.push(arg.onRequest as RawOnRequest)
       this.onNodeRequestHooks.push(arg.onNodeRequest)
+      if (arg.onNodeRequest === undefined) this.nodeRequestHooksComplete = false
     } else if (arg.onNodeRequest !== undefined) {
       throw new TypeError("onNodeRequest() requires a paired onRequest() hook")
     }
@@ -1017,6 +1026,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       this.assertConfigurable("onResponse()")
       this.onResponseHooks.push(arg.onResponse)
       this.onNodeResponseHooks.push(arg.onNodeResponse)
+      if (arg.onNodeResponse === undefined) this.nodeResponseHooksComplete = false
     } else if (arg.onNodeResponse !== undefined) {
       throw new TypeError("onNodeResponse() requires a paired onResponse() hook")
     }
@@ -1524,11 +1534,40 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
             this.onErrorHooks.length === 0
           ? "query"
           : "lifecycle"
+    // Lifecycle routes with no params schema are the common middleware shape: a derive/before hook
+    // plus an optional query or body schema. Select their complete validation stage at registration
+    // so the request path never re-checks params/body presence. Parameter-schema routes retain the
+    // generic lifecycle runner until their more involved recovery matrix is selected explicitly.
+    const lifecycleLane =
+      lane !== "lifecycle" || schema?.params !== undefined
+        ? undefined
+        : schema?.body !== undefined
+          ? schema.query !== undefined
+            ? "body-query"
+            : "body"
+          : schema?.query !== undefined
+            ? "query"
+            : "hooks"
+    // The realistic middleware shape is commonly exactly one synchronous-or-async derive followed
+    // by one before hook. Keep the generic runner for every route that can observe decorations,
+    // after hooks, error hooks, or response contracts; this lane only removes the two per-request
+    // hook-loop dispatches and preserves the same async continuations and error handling.
+    const lifecycleHookLane =
+      lane === "lifecycle" &&
+      contracted === undefined &&
+      !hasDecorations &&
+      this.derives.length === 1 &&
+      this.beforeHandleHooks.length === 1 &&
+      this.afterHandleHooks.length === 0 &&
+      this.onErrorHooks.length === 0
+        ? "derive-before"
+        : undefined
     const execution = this.compileExecutionPlan(
       lane,
       contextless,
       this.aroundHooks.length > 0,
       ledgered !== undefined,
+      lifecycleLane,
       fusedWeb,
       fusedBodyRunner,
       fusedWeb === undefined ? undefined : fusedQuery ? "query" : fusedBody ? "body" : "bare",
@@ -1547,6 +1586,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       beforeHandle: [...this.beforeHandleHooks],
       afterHandle: [...this.afterHandleHooks],
       onError: [...this.onErrorHooks],
+      lifecycleHookLane,
       around: [...this.aroundHooks],
       execution,
     }
@@ -1606,6 +1646,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     contextless: boolean,
     hasAround: boolean,
     hasLedger: boolean,
+    lifecycleLane: "hooks" | "query" | "body" | "body-query" | undefined,
     fusedWeb: FusedWebRunner | undefined,
     fusedBody: FusedBodyRunner | undefined,
     fusedLane: "bare" | "body" | "query" | undefined,
@@ -1620,6 +1661,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         signal,
         budget,
         platform,
+        _nativeContext,
         finalize,
         wrapResponse,
       ) =>
@@ -1652,8 +1694,27 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           runtime.runQueryOnly(entry, ctx, finalize, wrapResponse)
         break
       default:
-        inner = (runtime, entry, source, ctx, finalize, wrapResponse) =>
-          runtime.runLifecycle(entry, source, ctx, finalize, wrapResponse)
+        switch (lifecycleLane) {
+          case "hooks":
+            inner = (runtime, entry, _source, ctx, finalize, wrapResponse) =>
+              runtime.runLifecycleHooks(entry, ctx, finalize, wrapResponse)
+            break
+          case "query":
+            inner = (runtime, entry, _source, ctx, finalize, wrapResponse) =>
+              runtime.runLifecycleQuery(entry, ctx, finalize, wrapResponse)
+            break
+          case "body":
+            inner = (runtime, entry, source, ctx, finalize, wrapResponse) =>
+              runtime.runLifecycleBody(entry, source, ctx, finalize, wrapResponse)
+            break
+          case "body-query":
+            inner = (runtime, entry, source, ctx, finalize, wrapResponse) =>
+              runtime.runLifecycleBodyQuery(entry, source, ctx, finalize, wrapResponse)
+            break
+          default:
+            inner = (runtime, entry, source, ctx, finalize, wrapResponse) =>
+              runtime.runLifecycle(entry, source, ctx, finalize, wrapResponse)
+        }
     }
     const execute: ContextRouteRunner = hasAround
       ? (runtime, entry, source, ctx, finalize, wrapResponse) =>
@@ -1674,18 +1735,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       signal,
       budget,
       platform,
+      nativeContext,
       finalize,
       wrapResponse,
     ) => {
-      const ctx = new RequestContext(
-        source,
-        params,
-        search,
-        signal,
-        budget,
-        platform,
-        runtime.maxBodyBytes,
-      )
+      const ctx = nativeContext
+        ? RequestContext.native(source, params, search, runtime.maxBodyBytes, platform)
+        : new RequestContext(source, params, search, signal, budget, platform, runtime.maxBodyBytes)
       let ledger: RequestLedger | undefined
       // The runtime is always present when a route resolved a ledger (enforced at registration).
       const ledgerRuntime = runtime.effectLedgerRuntime
@@ -1812,6 +1868,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.wsRuntime ??= source.wsRuntime
     this.onRequestHooks.push(...source.onRequestHooks)
     this.onNodeRequestHooks.push(...source.onNodeRequestHooks)
+    this.nodeRequestHooksComplete &&= source.nodeRequestHooksComplete
     // The group's static declarations came before its own response hooks, so they are folded in
     // first - and fold themselves into a hook here if this server already has one (same ordering
     // rule as a direct `responseHeaders()` call).
@@ -1820,6 +1877,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
     this.onResponseHooks.push(...source.onResponseHooks)
     this.onNodeResponseHooks.push(...source.onNodeResponseHooks)
+    this.nodeResponseHooksComplete &&= source.nodeResponseHooksComplete
     this.onResponseFinalizedHooks.push(...source.onResponseFinalizedHooks)
     if (source.responseBodyTag !== undefined) {
       const owner = this.enableResponseBodyTagging()
@@ -2106,12 +2164,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
 
   /** True only when every transforming Web response hook has a header-only Node equivalent. */
   private canUseNodeResponseHooks(): boolean {
-    if (this.onResponseHooks.length === 0) return false
-    if (this.onNodeResponseHooks.length !== this.onResponseHooks.length) return false
-    for (const hook of this.onNodeResponseHooks) {
-      if (hook === undefined) return false
-    }
-    return true
+    return this.onResponseHooks.length > 0 && this.nodeResponseHooksComplete
   }
 
   /** Apply paired native hooks to data outcomes; preserve the complete Web hook pipeline for Response outcomes. */
@@ -2428,12 +2481,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   }
 
   private canUseNodeRequestHooks(): boolean {
-    if (this.onRequestHooks.length === 0) return false
-    if (this.onNodeRequestHooks.length !== this.onRequestHooks.length) return false
-    for (const hook of this.onNodeRequestHooks) {
-      if (hook === undefined) return false
-    }
-    return true
+    return this.onRequestHooks.length > 0 && this.nodeRequestHooksComplete
   }
 
   /**
@@ -2743,7 +2791,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         ? getUnboundedRequestBudget()
         : createRequestBudget({ deadline: admission!.deadline as number, signal })
     const plan = entry.execution
-    const nativeContext = webFast && plan.fusedLane === "bare" && controller === undefined
+    const nativeContext = controller === undefined
     const outcome: MaybePromise<T> =
       webFast && plan.fusedWeb !== undefined
         ? (plan.fusedWeb(
@@ -2776,6 +2824,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
               signal,
               budget,
               platform,
+              nativeContext,
               finalize,
               wrapResponse,
             )
@@ -2937,7 +2986,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           return logError(
             err,
             nativeContext
-              ? RequestContext.native(source, params, this.maxBodyBytes, platform)
+              ? RequestContext.native(source, params, search, this.maxBodyBytes, platform)
               : new RequestContext(
                   source,
                   params,
@@ -2956,7 +3005,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
               logError(
                 err,
                 nativeContext
-                  ? RequestContext.native(source, params, this.maxBodyBytes, platform)
+                  ? RequestContext.native(source, params, search, this.maxBodyBytes, platform)
                   : new RequestContext(
                       source,
                       params,
@@ -2974,7 +3023,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
     return (source, params, search, signal, budget, platform, nativeContext) => {
       const ctx = nativeContext
-        ? RequestContext.native(source, params, this.maxBodyBytes, platform)
+        ? RequestContext.native(source, params, search, this.maxBodyBytes, platform)
         : new RequestContext(source, params, search, signal, budget, platform, this.maxBodyBytes)
       if (decorations !== undefined) Object.assign(ctx, decorations)
       let result: unknown
@@ -3092,7 +3141,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       wrapResponse: (response: Response) => T,
     ): MaybePromise<T> => {
       const ctx = nativeContext
-        ? RequestContext.native(source, params, this.maxBodyBytes, platform)
+        ? RequestContext.native(source, params, search, this.maxBodyBytes, platform)
         : new RequestContext(source, params, search, signal, budget, platform, this.maxBodyBytes)
       const finish = (value: unknown): MaybePromise<T> =>
         runParsed(value, ctx, finalize, wrapResponse)
@@ -3157,7 +3206,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
     return (source, params, search, signal, budget, platform, nativeContext) => {
       const ctx = nativeContext
-        ? RequestContext.native(source, params, this.maxBodyBytes, platform)
+        ? RequestContext.native(source, params, search, this.maxBodyBytes, platform)
         : new RequestContext(source, params, search, signal, budget, platform, this.maxBodyBytes)
       if (decorations !== undefined) Object.assign(ctx, decorations)
       let validation: MaybePromise<StandardResult<unknown>>
@@ -3683,6 +3732,71 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
   }
 
+  /** Registration-specialized query lifecycle: query validation (including recovery) → hooks. */
+  private runLifecycleQuery<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+  ): MaybePromise<T> {
+    try {
+      // The execution plan only selects this runner when the route has a query schema. Keeping the
+      // non-null access here removes the per-request schema-presence branch from realistic GETs.
+      const validation = entry.schema!.query!["~standard"].validate(
+        queryObjectOf(ctx[CONTEXT_SEARCH]),
+      )
+      if (validation instanceof Promise) {
+        return validation.then(
+          (result) => {
+            try {
+              return this.runQueryAndLifecycleResult(entry, ctx, finalize, wrapResponse, result)
+            } catch (err) {
+              return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
+            }
+          },
+          (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+        )
+      }
+      return this.runQueryAndLifecycleResult(entry, ctx, finalize, wrapResponse, validation)
+    } catch (err) {
+      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
+    }
+  }
+
+  /** Registration-specialized body lifecycle: bounded body validation (including recovery) → hooks. */
+  private runLifecycleBody<T>(
+    entry: RouteEntry,
+    source: RequestSource,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+  ): MaybePromise<T> {
+    return this.readAndValidateBody(source, entry, ctx).then(
+      (bodyError) =>
+        bodyError === undefined
+          ? this.runLifecycleHooks(entry, ctx, finalize, wrapResponse)
+          : wrapResponse(bodyError),
+      (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+    )
+  }
+
+  /** Registration-specialized body + query lifecycle: bounded body validation → query validation → hooks. */
+  private runLifecycleBodyQuery<T>(
+    entry: RouteEntry,
+    source: RequestSource,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+  ): MaybePromise<T> {
+    return this.readAndValidateBody(source, entry, ctx).then(
+      (bodyError) =>
+        bodyError === undefined
+          ? this.runLifecycleQuery(entry, ctx, finalize, wrapResponse)
+          : wrapResponse(bodyError),
+      (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+    )
+  }
+
   /** Registration-specialized no-body lifecycle: query validation (if present) → derives/hooks. */
   private runQueryAndLifecycle<T>(
     entry: RouteEntry,
@@ -3691,21 +3805,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     wrapResponse: (response: Response) => T,
   ): MaybePromise<T> {
     const querySchema = entry.schema?.query
-    if (querySchema === undefined) return this.runLifecycleHooks(entry, ctx, finalize, wrapResponse)
-    const validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
-    if (validation instanceof Promise) {
-      return validation.then(
-        (result) => {
-          try {
-            return this.runQueryAndLifecycleResult(entry, ctx, finalize, wrapResponse, result)
-          } catch (err) {
-            return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
-          }
-        },
-        (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
-      )
-    }
-    return this.runQueryAndLifecycleResult(entry, ctx, finalize, wrapResponse, validation)
+    return querySchema === undefined
+      ? this.runLifecycleHooks(entry, ctx, finalize, wrapResponse)
+      : this.runLifecycleQuery(entry, ctx, finalize, wrapResponse)
   }
 
   private runQueryAndLifecycleResult<T>(
@@ -3852,6 +3954,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     finalize: (result: unknown, set: CtxSet) => T,
     wrapResponse: (response: Response) => T,
   ): MaybePromise<T> {
+    if (entry.lifecycleHookLane === "derive-before") {
+      return this.runLifecycleDeriveBefore(entry, ctx, finalize, wrapResponse)
+    }
     try {
       if (entry.hasDecorations) Object.assign(ctx, entry.decorations)
       for (let i = 0; i < entry.derives.length; i++) {
@@ -3876,6 +3981,55 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         )
       }
       return this.finishLifecycleResult(entry, ctx, finalize, wrapResponse, result)
+    } catch (err) {
+      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
+    }
+  }
+
+  /** Registration-specialized derive → before → handler lifecycle. */
+  private runLifecycleDeriveBefore<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+  ): MaybePromise<T> {
+    try {
+      const extension = entry.derives[0]!(ctx)
+      if (extension instanceof Promise) {
+        return this.continueLifecycleAfterDerive(entry, ctx, finalize, wrapResponse, 0, extension)
+      }
+      Object.assign(ctx, extension)
+
+      const outcome = entry.beforeHandle[0]!(ctx)
+      if (outcome instanceof Promise) {
+        return this.continueLifecycleAfterBefore(entry, ctx, finalize, wrapResponse, 0, outcome)
+      }
+      if (outcome !== undefined)
+        return this.finishSimpleLifecycleResult(entry, ctx, finalize, wrapResponse, outcome)
+
+      const result = entry.handler(ctx)
+      if (result instanceof Promise) {
+        return result.then(
+          (value) => this.finishSimpleLifecycleResult(entry, ctx, finalize, wrapResponse, value),
+          (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+        )
+      }
+      return this.finishSimpleLifecycleResult(entry, ctx, finalize, wrapResponse, result)
+    } catch (err) {
+      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
+    }
+  }
+
+  /** Finalize the specialized lane without rechecking its registration-proven invariants. */
+  private finishSimpleLifecycleResult<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+    result: unknown,
+  ): MaybePromise<T> {
+    try {
+      return finalize(result, responseSet(ctx))
     } catch (err) {
       return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
     }

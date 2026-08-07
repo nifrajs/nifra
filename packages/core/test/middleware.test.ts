@@ -2,7 +2,106 @@ import { describe, expect, test } from "bun:test"
 import type { StandardSchemaV1 } from "@nifrajs/core"
 import { server, silentLogger } from "@nifrajs/core"
 
+const limitQuery: StandardSchemaV1<unknown, { limit: string }> = {
+  "~standard": {
+    version: 1,
+    vendor: "test",
+    validate: (value) =>
+      typeof value === "object" &&
+      value !== null &&
+      "limit" in value &&
+      typeof value.limit === "string"
+        ? { value: { limit: value.limit } }
+        : { issues: [{ message: "limit is required" }] },
+  },
+}
+
+const orderBody: StandardSchemaV1<unknown, { name: string }> = {
+  "~standard": {
+    version: 1,
+    vendor: "test",
+    validate: (value) =>
+      typeof value === "object" &&
+      value !== null &&
+      "name" in value &&
+      typeof value.name === "string"
+        ? { value: { name: value.name } }
+        : { issues: [{ message: "name is required" }] },
+  },
+}
+
 describe("lifecycle hooks", () => {
+  test("general lifecycle routes preserve GET and POST behavior across validation and middleware", async () => {
+    const app = server({ logger: silentLogger })
+      .derive((c) => {
+        const authorization = c.header("authorization")
+        if (authorization !== "Bearer test") {
+          throw new Response("unauthorized", { status: 401 })
+        }
+        return { user: "ada" }
+      })
+      .beforeHandle((c) => {
+        c.set.headers["x-before"] = "ran"
+      })
+      .afterHandle((result) => ({ result, wrapped: true }))
+      .get("/orders", { query: limitQuery }, (c) => ({ user: c.user, limit: c.query.limit }))
+      .post("/orders", { body: orderBody }, (c) => ({ user: c.user, name: c.body.name }))
+
+    const headers = { authorization: "Bearer test" }
+    const get = await app.fetch(new Request("http://x/orders?limit=10", { headers }))
+    expect(get.status).toBe(200)
+    expect(get.headers.get("x-before")).toBe("ran")
+    expect(await get.json()).toEqual({
+      result: { user: "ada", limit: "10" },
+      wrapped: true,
+    })
+
+    const post = await app.fetch(
+      new Request("http://x/orders", {
+        method: "POST",
+        headers: { ...headers, "content-type": "application/json" },
+        body: JSON.stringify({ name: "Ada" }),
+      }),
+    )
+    expect(post.status).toBe(200)
+    expect(post.headers.get("x-before")).toBe("ran")
+    expect(await post.json()).toEqual({
+      result: { user: "ada", name: "Ada" },
+      wrapped: true,
+    })
+
+    expect((await app.fetch(new Request("http://x/orders", { headers }))).status).toBe(422)
+    expect((await app.fetch(new Request("http://x/orders?limit=10"))).status).toBe(401)
+  })
+
+  test("general lifecycle keeps async hooks and finalization errors on the normal error path", async () => {
+    const app = server({ logger: silentLogger })
+      .derive(async () => {
+        await Promise.resolve()
+        return { user: "ada" }
+      })
+      .beforeHandle(async (c) => {
+        await Promise.resolve()
+        if (c.user !== "ada") return new Response("forbidden", { status: 403 })
+        return undefined
+      })
+      .get("/async", async (c) => {
+        await Promise.resolve()
+        return { user: c.user }
+      })
+
+    const ok = await app.fetch(new Request("http://x/async"))
+    expect(ok.status).toBe(200)
+    expect(await ok.json()).toEqual({ user: "ada" })
+
+    const bad = server({ logger: silentLogger })
+      .beforeHandle(() => undefined)
+      .get("/bad", () => 1n)
+    const error = await bad.fetch(new Request("http://x/bad"))
+    expect(error.status).toBe(500)
+    expect(await error.json()).toEqual({ ok: false, error: "internal_error" })
+  })
+
   test("onRequest short-circuits before routing", async () => {
     const app = server()
       .onRequest((req) =>
