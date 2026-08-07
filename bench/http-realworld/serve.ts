@@ -181,7 +181,7 @@ if (framework === "nifra") {
       set.headers["x-content-type-options"] = "nosniff"
       set.headers["x-frame-options"] = "DENY"
       set.headers["referrer-policy"] = "no-referrer"
-      set.headers["strict-transport-security"] = "max-age=15552000; includeSubDomains"
+      set.headers.vary = "Origin"
       set.headers["access-control-allow-origin"] = "https://app.example.com"
       set.headers["access-control-allow-credentials"] = "true"
       set.headers["x-request-id"] = request.headers.get("x-request-id") ?? crypto.randomUUID()
@@ -216,7 +216,7 @@ if (framework === "nifra") {
       set.headers["x-content-type-options"] = "nosniff"
       set.headers["x-frame-options"] = "DENY"
       set.headers["referrer-policy"] = "no-referrer"
-      set.headers["strict-transport-security"] = "max-age=15552000; includeSubDomains"
+      set.headers.vary = "Origin"
       set.headers["access-control-allow-origin"] = "https://app.example.com"
       set.headers["access-control-allow-credentials"] = "true"
       set.headers["x-request-id"] = request.headers.get("x-request-id") ?? crypto.randomUUID()
@@ -263,7 +263,7 @@ if (framework === "nifra") {
     "x-content-type-options": "nosniff",
     "x-frame-options": "DENY",
     "referrer-policy": "no-referrer",
-    "strict-transport-security": "max-age=15552000; includeSubDomains",
+    vary: "Origin",
     "access-control-allow-origin": "https://app.example.com",
     "access-control-allow-credentials": "true",
   }
@@ -331,7 +331,7 @@ if (framework === "nifra") {
     "x-content-type-options": "nosniff",
     "x-frame-options": "DENY",
     "referrer-policy": "no-referrer",
-    "strict-transport-security": "max-age=15552000; includeSubDomains",
+    vary: "Origin",
     "access-control-allow-origin": "https://app.example.com",
     "access-control-allow-credentials": "true",
   }

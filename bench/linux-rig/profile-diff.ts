@@ -83,3 +83,5 @@ for (const r of rows.slice(-8).reverse()) {
   if (r.delta >= -0.02) break
   console.log(fmt(r))
 }
+
+export {}

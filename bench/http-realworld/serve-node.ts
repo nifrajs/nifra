@@ -58,10 +58,12 @@ const SEC: Record<string, string> = {
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
   "referrer-policy": "no-referrer",
-  "strict-transport-security": "max-age=15552000; includeSubDomains",
+  vary: "Origin",
   "access-control-allow-origin": "https://app.example.com",
   "access-control-allow-credentials": "true",
 }
+
+const SEC_ENTRIES = Object.entries(SEC)
 
 function readCookie(header: string | undefined, name: string): string | undefined {
   if (header === undefined) return undefined
@@ -96,18 +98,19 @@ function sendJson(
 if (framework === "fastify") {
   const { default: Fastify } = await import("fastify")
   const app = Fastify()
-  app.addHook("onSend", async (req, reply, payload) => {
-    for (const [k, v] of Object.entries(SEC)) reply.header(k, v)
+  app.addHook("onSend", (req, reply, payload, done) => {
+    for (const [k, v] of SEC_ENTRIES) reply.header(k, v)
     reply.header("x-request-id", req.headers["x-request-id"] ?? crypto.randomUUID())
-    return payload
+    done(null, payload)
   })
-  app.addHook("preHandler", async (req, reply) => {
+  app.addHook("preHandler", (req, reply, done) => {
     const who = authOf(req.headers.authorization, req.headers.cookie)
     if (who === undefined) {
       reply.code(401).send({ ok: false, error: "unauthorized" })
       return
     }
     ;(req as unknown as { who: typeof who }).who = who
+    done()
   })
   app.get<{ Querystring: { limit: string } }>(
     "/api/orders",
@@ -155,19 +158,20 @@ if (framework === "fastify") {
   // Fastify's body-observing tier: onSend receives the serialized payload string.
   const { default: Fastify } = await import("fastify")
   const app = Fastify()
-  app.addHook("onSend", async (req, reply, payload) => {
-    for (const [k, v] of Object.entries(SEC)) reply.header(k, v)
+  app.addHook("onSend", (req, reply, payload, done) => {
+    for (const [k, v] of SEC_ENTRIES) reply.header(k, v)
     reply.header("x-request-id", req.headers["x-request-id"] ?? crypto.randomUUID())
     if (typeof payload === "string") reply.header("x-body-hash", hash(payload))
-    return payload
+    done(null, payload)
   })
-  app.addHook("preHandler", async (req, reply) => {
+  app.addHook("preHandler", (req, reply, done) => {
     const who = authOf(req.headers.authorization, req.headers.cookie)
     if (who === undefined) {
       reply.code(401).send({ ok: false, error: "unauthorized" })
       return
     }
     ;(req as unknown as { who: typeof who }).who = who
+    done()
   })
   app.get<{ Querystring: { limit: string } }>(
     "/api/orders",
@@ -427,7 +431,7 @@ if (framework === "fastify") {
       set.headers["x-content-type-options"] = "nosniff"
       set.headers["x-frame-options"] = "DENY"
       set.headers["referrer-policy"] = "no-referrer"
-      set.headers["strict-transport-security"] = "max-age=15552000; includeSubDomains"
+      set.headers.vary = "Origin"
       set.headers["access-control-allow-origin"] = "https://app.example.com"
       set.headers["access-control-allow-credentials"] = "true"
       set.headers["x-request-id"] = request.headers.get("x-request-id") ?? crypto.randomUUID()
@@ -463,7 +467,7 @@ if (framework === "fastify") {
       set.headers["x-content-type-options"] = "nosniff"
       set.headers["x-frame-options"] = "DENY"
       set.headers["referrer-policy"] = "no-referrer"
-      set.headers["strict-transport-security"] = "max-age=15552000; includeSubDomains"
+      set.headers.vary = "Origin"
       set.headers["access-control-allow-origin"] = "https://app.example.com"
       set.headers["access-control-allow-credentials"] = "true"
       set.headers["x-request-id"] = request.headers.get("x-request-id") ?? crypto.randomUUID()

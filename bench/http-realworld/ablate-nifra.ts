@@ -13,8 +13,16 @@
  *   nocors    - cors
  *   nosec     - securityHeaders            (declared, not hooked - the static tier)
  *   noreqid   - request-id beforeHandle
- *   noderive  - auth derive + cookie read  (folded into the handler)
+ *   noderive  - auth derive + cookie read  (folded into the handler; a no-op beforeHandle stays)
+ *   nohook    - the no-op beforeHandle     (this is where the LANE switches, see below)
  *   bare      - query schema               (limit fixed; nothing but router -> handler)
+ *
+ * The `noderive` rung keeps a no-op `beforeHandle` deliberately. Route registration picks the fused
+ * query lane only when a route has NO derives AND NO beforeHandle hooks (server.ts, `lane`), so
+ * dropping the derive from a hookless route silently switches lanes too - and a rung that changes
+ * two things at once prices neither. Keeping one no-op hook holds the route on the general
+ * lifecycle path, so `noreqid - noderive` is the derive and cookie read alone, and the separate
+ * `noderive - nohook` step is the lane switch by itself.
  *
  * The `full` rung is deliberately byte-identical in behavior to `_nifra-app.ts`, so its number is
  * comparable to every other realistic-shape row this repo publishes.
@@ -30,10 +38,10 @@ import { serve } from "@nifrajs/node"
 import { server } from "../../packages/core/dist/server.js"
 import { cors, securityHeaders } from "../../packages/middleware/dist/index.js"
 
-const RUNGS = ["full", "nocors", "nosec", "noreqid", "noderive", "bare"] as const
+const RUNGS = ["full", "nocors", "nosec", "noreqid", "noderive", "nohook", "bare"] as const
 type Rung = (typeof RUNGS)[number]
 
-const arg = process.argv[2]
+const arg = process.argv[2] ?? ""
 const port = Number(process.argv[3])
 // `corslite` sits between `full` and `nocors`: everything `full` has, but with cors swapped for a
 // middleware that writes the same three headers from an onResponseHeaders hook and does nothing
@@ -58,6 +66,10 @@ const hasCors = rank < RUNGS.indexOf("nocors")
 const hasSec = rank < RUNGS.indexOf("nosec")
 const hasReqId = rank < RUNGS.indexOf("noreqid")
 const hasDerive = rank < RUNGS.indexOf("noderive")
+// The lane-holding no-op hook: present on every rung above `nohook`. Below it the route has no
+// derives and no beforeHandle hooks, which is exactly the registration condition for the fused
+// query lane - so `nohook` is the rung that prices the lane switch.
+const hasLaneHook = rank < RUNGS.indexOf("nohook")
 const hasQuery = rank < RUNGS.indexOf("bare")
 
 const ORDERS = Array.from({ length: 25 }, (_, i) => ({
@@ -134,6 +146,10 @@ if (hasDerive) {
     userId: authOf(c.header("authorization")),
     theme: c.cookies.theme ?? "light",
   }))
+} else if (hasLaneHook) {
+  // Does nothing; exists only so the route keeps a beforeHandle and stays on the general lifecycle
+  // lane. Its own cost shows up as the `nohook` step, which is the point.
+  app = app.use({ name: "lane-hold", beforeHandle: () => undefined })
 }
 
 const body = (userId: string, theme: string, limit: number) => ({

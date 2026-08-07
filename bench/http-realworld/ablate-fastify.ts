@@ -33,7 +33,7 @@
 const RUNGS = ["full", "nocors", "nosec", "noreqid", "noderive", "bare"] as const
 type Rung = (typeof RUNGS)[number]
 
-const arg = process.argv[2]
+const arg = process.argv[2] ?? ""
 const port = Number(process.argv[3])
 // `full-slow` is `full` written the way the published arm writes it: async hooks + per-request
 // Object.entries + HSTS instead of vary. It exists only to price that authoring difference.
@@ -184,3 +184,5 @@ app.get<{ Querystring: { limit: string } }>(
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => process.exit(0))
 
 await app.listen({ port })
+
+export {}
