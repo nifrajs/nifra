@@ -152,15 +152,18 @@ export default server().post("/users", { body }, (c) => ({ name: c.body.name }))
 // lifecycle stages all live in the kernel so their dispatch is reachable from any route. The
 // middleware that USES the tiers stays out of these rows - this is the price of the seams
 // themselves being available by default on every runtime.
+// The RFC 9110 HEAD fallback (router resolves HEAD to the GET handler, and the Bun native table
+// aliases it) costs a few bytes in the kernel, so every core-based row moved a little. Two were
+// sitting within ~15 B of their ceiling and crossed it; the rest still clear.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
-  "nifra-bare": 22.1,
+  "nifra-bare": 22.3,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  "nifra-idempotency": 25.2,
-  "nifra-effect-ledger": 24.1,
-  "nifra-mcp": 22.3,
-  "nifra-sse": 22.8,
-  "nifra-valibot": 23.1,
-  "nifra-typebox-t": 52.3,
+  "nifra-idempotency": 25.4,
+  "nifra-effect-ledger": 24.3,
+  "nifra-mcp": 22.5,
+  "nifra-sse": 23.0,
+  "nifra-valibot": 23.3,
+  "nifra-typebox-t": 52.4,
 }
 
 const main = async (): Promise<void> => {
