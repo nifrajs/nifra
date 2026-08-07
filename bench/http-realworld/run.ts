@@ -16,7 +16,15 @@
  *
  *   bun run bench/http-realworld/run.ts            # every section this build knows
  *   bun run bench/http-realworld/run.ts bun        # one section only (bun | node | deno)
+ *
+ * `BENCH_APP_DIR` points the server files at a different directory. It exists so the same harness can
+ * measure the PUBLISHED packages instead of this checkout: `bench:published:setup` installs a pinned
+ * `@nifrajs/*` from npm into an isolated tree and writes servers that resolve there, and this runs
+ * them unchanged. The default is this directory, which imports the workspace `dist/` - already the
+ * built artifact rather than `src/` (see _nifra-app.ts), so the published mode closes the narrower
+ * gap between a local build and the tarball actually shipped.
  */
+const APP_DIR = Bun.env.BENCH_APP_DIR ?? "bench/http-realworld"
 const envInt = (name: string, dflt: number, min = 1): number => {
   const n = Bun.env[name] === undefined ? Number.NaN : Number(Bun.env[name])
   return Number.isInteger(n) && n >= min ? n : dflt
@@ -91,12 +99,12 @@ interface Section {
 
 const bunTarget = (framework: string): Target => ({
   framework,
-  spawn: (port) => ["bun", "bench/http-realworld/serve.ts", framework, String(port)],
+  spawn: (port) => ["bun", `${APP_DIR}/serve.ts`, framework, String(port)],
 })
 
 const nodeTarget = (framework: string): Target => ({
   framework,
-  spawn: (port) => ["node", "bench/http-realworld/serve-node.ts", framework, String(port)],
+  spawn: (port) => ["node", `${APP_DIR}/serve-node.ts`, framework, String(port)],
 })
 
 const denoTarget = (framework: string): Target => ({
@@ -106,19 +114,23 @@ const denoTarget = (framework: string): Target => ({
     "run",
     "--allow-net",
     "--allow-env",
+    "--allow-read",
     "--no-check",
-    "bench/http-realworld/serve-deno.ts",
+    `${APP_DIR}/serve-deno.ts`,
     framework,
     String(port),
   ],
 })
 
-const NIFRA_NODE_BUNDLE = `${import.meta.dir}/dist/serve-node-nifra.js`
+// Built from APP_DIR so the bundle inlines whichever `@nifrajs/*` that directory resolves - the
+// workspace by default, the installed tarballs under the published tree. The Node arm is bundled, so
+// its source choice is made here at build time rather than by a runtime switch.
+const NIFRA_NODE_BUNDLE = `${APP_DIR}/dist/serve-node-nifra.js`
 const buildNifraNodeBundle = async (): Promise<void> => {
   const result = await Bun.build({
-    entrypoints: [`${import.meta.dir}/serve-node-nifra.ts`],
+    entrypoints: [`${APP_DIR}/serve-node-nifra.ts`],
     target: "node",
-    outdir: `${import.meta.dir}/dist`,
+    outdir: `${APP_DIR}/dist`,
   })
   if (!result.success) {
     throw new Error(`nifra-node bundle failed: ${result.logs.map(String).join("; ")}`)

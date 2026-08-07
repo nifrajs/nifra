@@ -6,7 +6,7 @@
  * The single sample is already a median-of-3 oha runs; this medians *across whole-matrix runs* on top,
  * which is what tames the box's run-to-run swing. Read the same-run ratios, not the absolutes.
  *
- *   bun run bench/http/aggregate.ts                  # 5 runs, print tables to stdout
+ *   bun run bench/http/aggregate.ts                  # 3 runs, print tables to stdout
  *   bun run bench/http/aggregate.ts --runs 7 --write # 7 runs, rewrite BENCHMARKS.md in place
  *   bun run bench/http/aggregate.ts node --runs 3    # one section only (bun | node | deno)
  *
@@ -83,7 +83,7 @@ function parseArgs(argv: readonly string[]): { runtime?: string; runs: number; w
   const write = argv.includes("--write")
   const runsIdx = argv.indexOf("--runs")
   const runsRaw = runsIdx >= 0 ? argv[runsIdx + 1] : undefined
-  const runs = runsRaw !== undefined && /^\d+$/.test(runsRaw) ? Number(runsRaw) : 5
+  const runs = runsRaw !== undefined && /^\d+$/.test(runsRaw) ? Number(runsRaw) : 3
   const runtime = argv.find((a, i) => !a.startsWith("--") && argv[i - 1] !== "--runs")
   return runtime !== undefined ? { runtime, runs, write } : { runs, write }
 }

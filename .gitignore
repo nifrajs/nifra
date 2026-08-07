@@ -71,3 +71,6 @@ dv-*/
 # roadmap notes, so the leak guard must never see it as committable content.
 /.planning
 /.vscode/
+
+# Isolated tree of PUBLISHED @nifrajs packages for benchmarking a release (generated)
+/bench/.published

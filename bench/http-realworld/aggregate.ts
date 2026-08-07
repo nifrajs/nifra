@@ -4,7 +4,7 @@
  * the median across runs for every framework × workload cell, and writes the results table to
  * BENCHMARKS-REALWORLD.md (gitignored, same convention as BENCHMARKS.md).
  *
- *   bun run bench/http-realworld/aggregate.ts                  # 5 runs, print tables to stdout
+ *   bun run bench/http-realworld/aggregate.ts                  # 3 runs, print tables to stdout
  *   bun run bench/http-realworld/aggregate.ts --runs 7 --write # 7 runs, write BENCHMARKS-REALWORLD.md
  *   bun run bench/http-realworld/aggregate.ts node --runs 3    # one section only
  */
@@ -101,7 +101,7 @@ function parseArgs(argv: readonly string[]): { runtime?: string; runs: number; w
   const write = argv.includes("--write")
   const runsIdx = argv.indexOf("--runs")
   const runsRaw = runsIdx >= 0 ? argv[runsIdx + 1] : undefined
-  const runs = runsRaw !== undefined && /^\d+$/.test(runsRaw) ? Number(runsRaw) : 5
+  const runs = runsRaw !== undefined && /^\d+$/.test(runsRaw) ? Number(runsRaw) : 3
   const runtime = argv.find((a, i) => !a.startsWith("--") && argv[i - 1] !== "--runs")
   return runtime !== undefined ? { runtime, runs, write } : { runs, write }
 }
