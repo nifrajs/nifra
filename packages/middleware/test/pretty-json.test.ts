@@ -136,6 +136,16 @@ describe("prettyJson() streaming safety", () => {
     const res = await app.fetch(new Request("http://x/"))
     expect(res.status).toBe(200)
   })
+
+  // The framework-serialized tier has the same two ways out as the raw one: a body too big to
+  // hold, and bytes that are not actually JSON despite the content type.
+  test("leaves a framework-serialized body alone once it exceeds maxBytes", async () => {
+    const app = server()
+      .use(prettyJson({ maxBytes: 8 }))
+      .get("/", () => ({ a: 1, b: { c: 2 } }))
+    const res = await app.fetch(new Request("http://x/"))
+    expect(await res.text()).toBe('{"a":1,"b":{"c":2}}') // untouched, still compact
+  })
 })
 
 test("a client that disconnects mid-passthrough cancels the upstream body", async () => {

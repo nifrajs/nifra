@@ -230,7 +230,65 @@ describe("compression()", () => {
   })
 
   test("validates the threshold", () => {
-    expect(() => compression({ threshold: -1 })).toThrow(/threshold/)
     expect(() => compression({ threshold: 1.5 })).toThrow(/threshold/)
+    expect(() => compression({ threshold: -1 })).toThrow(/threshold/)
+  })
+
+  // An upstream that fails partway is the case the raw tier cannot buffer its way out of: the
+  // prefix has already been consumed off the reader and cannot be pushed back. These cover the
+  // replay path that hands that prefix (and the still-live reader) to the client unencoded.
+  describe("upstream failure during the threshold peek", () => {
+    // Emits `prefix`, then fails. With prefix under the threshold the failure lands inside the
+    // peek loop, so compression has to abandon gzip and replay what it already took.
+    const failsAfter = (prefix: string, error: Error): ReadableStream<Uint8Array> => {
+      let sent = false
+      return new ReadableStream({
+        pull(controller) {
+          if (sent) throw error
+          sent = true
+          controller.enqueue(new TextEncoder().encode(prefix))
+        },
+      })
+    }
+
+    test("replays the peeked prefix uncompressed when the upstream fails mid-peek", async () => {
+      const app = server()
+        .use(compression())
+        .get(
+          "/",
+          () =>
+            new Response(failsAfter("head", new Error("upstream failed")), {
+              headers: { "content-type": "text/plain" },
+            }),
+        )
+      const res = await app.fetch(new Request("http://x/", { headers: GZIP }))
+
+      // Never claim an encoding for bytes that were never gzipped.
+      expect(res.headers.get("content-encoding")).toBeNull()
+      expect(res.status).toBe(200)
+
+      // The prefix survives; the upstream's failure then surfaces rather than truncating silently.
+      const reader = (res.body as ReadableStream<Uint8Array>).getReader()
+      const first = await reader.read()
+      expect(new TextDecoder().decode(first.value)).toBe("head")
+      await expect(reader.read()).rejects.toThrow("upstream failed")
+    })
+
+    test("surfaces an upstream failure that arrives after the threshold is met", async () => {
+      // The peek succeeds here, so the response IS gzipped - the failure has to travel through
+      // CompressionStream instead of the replay path.
+      const app = server()
+        .use(compression())
+        .get(
+          "/",
+          () =>
+            new Response(failsAfter(big, new Error("upstream failed late")), {
+              headers: { "content-type": "text/plain" },
+            }),
+        )
+      const res = await app.fetch(new Request("http://x/", { headers: GZIP }))
+      expect(res.headers.get("content-encoding")).toBe("gzip")
+      await expect(gunzip(res)).rejects.toThrow()
+    })
   })
 })

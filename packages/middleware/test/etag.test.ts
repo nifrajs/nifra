@@ -142,4 +142,65 @@ describe("etag", () => {
   test("validates construction", () => {
     expect(() => etag({ maxBytes: -1 })).toThrow(/maxBytes/)
   })
+
+  // Hashing a raw body means reading it, and a read cannot be undone. When the upstream fails
+  // partway there is no digest to send, so the prefix already taken has to be replayed to the
+  // client instead of dropped.
+  test("replays a raw body whose upstream fails mid-read, without an ETag", async () => {
+    let sent = false
+    const upstream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent) throw new Error("upstream failed")
+        sent = true
+        controller.enqueue(new TextEncoder().encode("head"))
+      },
+    })
+    const failing = server()
+      .use(etag())
+      .get("/", () => new Response(upstream, { headers: { "content-type": "text/plain" } }))
+    const res = await failing.fetch(new Request("http://x/"))
+
+    // No digest exists for a body that was never fully read - sending one would be a lie.
+    expect(res.headers.get("etag")).toBeNull()
+
+    const reader = (res.body as ReadableStream<Uint8Array>).getReader()
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe("head")
+    await expect(reader.read()).rejects.toThrow("upstream failed")
+  })
+
+  test("replays a raw body that exceeds maxBytes instead of buffering it", async () => {
+    const capped = server()
+      .use(etag({ maxBytes: 8 }))
+      .get(
+        "/",
+        () =>
+          new Response("far longer than the cap allows", {
+            headers: { "content-type": "text/plain" },
+          }),
+      )
+    const res = await capped.fetch(new Request("http://x/"))
+    expect(res.headers.get("etag")).toBeNull()
+    expect(await res.text()).toBe("far longer than the cap allows")
+  })
+
+  test("propagates a client disconnect on the replayed body to the upstream reader", async () => {
+    let cancelled: unknown
+    const upstream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("far longer than the cap allows"))
+      },
+      cancel(reason) {
+        cancelled = reason
+      },
+    })
+    const capped = server()
+      .use(etag({ maxBytes: 8 }))
+      .get("/", () => new Response(upstream, { headers: { "content-type": "text/plain" } }))
+    const res = await capped.fetch(new Request("http://x/"))
+
+    // The cap put this body on the replay path with the upstream still healthy, so a disconnect
+    // has to reach it - otherwise the producer keeps running for a client that has gone.
+    await res.body?.cancel("client went away")
+    expect(cancelled).toBe("client went away")
+  })
 })
