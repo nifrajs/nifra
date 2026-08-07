@@ -367,7 +367,10 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
           return new Response(body, { headers })
         }
         // Static probe before routing; a miss returns undefined and falls through, so no route is
-        // shadowed and a page render never pays a filesystem stat (extension-less paths skip it).
+        // shadowed. Every GET/HEAD pays the probe, including page renders and API routes: the handler
+        // serves extension-less files too (an ACME challenge token is the reason), so there is no
+        // cheap prefilter to skip. Dev only - production serves `public/` from the CDN, and a caller
+        // mounting this handler itself can pass `files` to answer a miss without touching the disk.
         const staticFile = await servePublic(req)
         if (staticFile !== undefined) return staticFile
         try {
