@@ -60,6 +60,7 @@ describe("pathnameOf / searchOf - equivalent to `new URL`, without the parse [AU
     "?q=ada&limit=10",
     "?q=a?b&limit=10",
     "?a=1&a=2",
+    "?a=1&a=2&a=3", // a THIRD repeat appends to the existing array rather than creating one
     "?x",
     "?=empty",
     "?a=1&&b=2&",

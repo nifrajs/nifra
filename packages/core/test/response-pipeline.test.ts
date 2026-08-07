@@ -212,4 +212,34 @@ describe("use(middleware)", () => {
     const res = await app.fetch(new Request("http://x/"))
     expect(res.headers.get("x-app")).toBe("partial")
   })
+
+  // Queued cookies force the header init to a real `Headers` instead of the usual plain record, and
+  // a registered body hook makes the response carry its serialized bytes. Together they select the
+  // one JSON-building branch that has to add the content-type to a Headers it did not build.
+  test("a body hook plus queued cookies still yields JSON with a content-type", async () => {
+    const app = server()
+      .use({ onResponseBody: (body) => body })
+      .get("/", (c) => {
+        c.set.cookie("sid", "abc")
+        c.set.cookie("csrf", "xyz")
+        return { ok: true }
+      })
+    const res = await app.fetch(new Request("http://x/"))
+
+    expect(res.headers.get("content-type")).toContain("application/json")
+    expect(res.headers.getSetCookie()).toHaveLength(2)
+    expect(await res.json()).toEqual({ ok: true })
+  })
+
+  test("a body hook plus queued cookies preserves an explicit content-type", async () => {
+    const app = server()
+      .use({ onResponseBody: (body) => body })
+      .get("/", (c) => {
+        c.set.cookie("sid", "abc")
+        c.set.headers["content-type"] = "application/vnd.api+json"
+        return { ok: true }
+      })
+    const res = await app.fetch(new Request("http://x/"))
+    expect(res.headers.get("content-type")).toBe("application/vnd.api+json")
+  })
 })

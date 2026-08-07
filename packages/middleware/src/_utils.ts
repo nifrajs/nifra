@@ -176,16 +176,3 @@ export function withNodeHeaders(
   }
   apply(res.headers)
 }
-
-/** Case-insensitive lookup for the plain header record used by the Node-direct response lane. */
-export function hasNodeHeader(
-  headers: Readonly<Record<string, string | readonly string[]>> | undefined,
-  name: string,
-): boolean {
-  if (headers === undefined) return false
-  const wanted = name.toLowerCase()
-  for (const key of Object.keys(headers)) {
-    if (key.toLowerCase() === wanted) return true
-  }
-  return false
-}

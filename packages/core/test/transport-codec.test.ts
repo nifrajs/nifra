@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "../src/index.ts"
 import {
+  assertTransportTextBounded,
   createTransportCodecRegistry,
   decodeTransportFrame,
   decodeTransportResponse,
@@ -250,5 +251,71 @@ describe("transport lane edges", () => {
     )
     expect(response.status).toBe(413)
     expect(await response.json()).toMatchObject({ error: "payload_too_large" })
+  })
+})
+
+// The cap is enforced on already-read text for callers that never stream (the typed client's
+// in-process branch). A UTF-16 length check bounds the encoded size from above so the common case
+// skips re-encoding; only a string within 3x of the cap is measured exactly, and that exact count
+// is what decides accept vs reject for multi-byte text.
+describe("assertTransportTextBounded", () => {
+  test("accepts without measuring when the length bound already proves it fits", () => {
+    expect(() => assertTransportTextBounded("x".repeat(10), { maxBytes: 1000 })).not.toThrow()
+  })
+
+  test("accepts ASCII that only the exact byte count can clear", () => {
+    // 100 chars: length * 3 = 300 > 120, so the fast accept cannot decide - but 100 bytes fit.
+    expect(() => assertTransportTextBounded("x".repeat(100), { maxBytes: 120 })).not.toThrow()
+  })
+
+  test("rejects multi-byte text whose exact byte count exceeds the cap", () => {
+    // Each euro sign is 3 UTF-8 bytes, so 50 chars is 150 bytes against a 120-byte cap.
+    expect(() => assertTransportTextBounded("€".repeat(50), { maxBytes: 120 })).toThrow(
+      TransportCodecError,
+    )
+  })
+
+  test("rejects with the same error the streaming reader raises", () => {
+    expect(() => assertTransportTextBounded("x".repeat(100), { maxBytes: 10 })).toThrow(
+      /exceeds maxBytes/,
+    )
+  })
+})
+
+describe("Accept negotiation and Vary", () => {
+  const rich = richWireCodec()
+  const registry = () => createTransportCodecRegistry([plainJsonCodec, rich])
+
+  test("picks the highest q, not the first listed", () => {
+    // Listing order and preference order differ here, so a negotiator that ignored q would return
+    // the plain codec and silently downgrade every response.
+    const accept = `${plainJsonCodec.mediaType};q=0.3, ${rich.mediaType};q=0.9`
+    expect(registry().negotiate(accept)).toBe(rich)
+  })
+
+  test("ignores q=0 and out-of-range q values", () => {
+    // q=0 means "not acceptable"; anything above 1 is malformed. Neither may win a negotiation.
+    const accept = `${rich.mediaType};q=0, ${plainJsonCodec.mediaType};q=0.4`
+    expect(registry().negotiate(accept)).toBe(plainJsonCodec)
+  })
+
+  test("appends accept to an existing Vary instead of replacing it", () => {
+    const res = encodeTransportResponse({ ok: true }, plainJsonCodec, {
+      headers: { vary: "Accept-Encoding" },
+    })
+    const vary = res.headers.get("vary") ?? ""
+    expect(vary.toLowerCase()).toContain("accept-encoding")
+    expect(vary.toLowerCase()).toContain("accept")
+  })
+
+  test("does not duplicate accept when Vary already carries it", () => {
+    const res = encodeTransportResponse({ ok: true }, plainJsonCodec, {
+      headers: { vary: "accept" },
+    })
+    const tokens = (res.headers.get("vary") ?? "")
+      .toLowerCase()
+      .split(",")
+      .filter((token) => token.trim() === "accept")
+    expect(tokens).toHaveLength(1)
   })
 })

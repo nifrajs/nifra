@@ -201,4 +201,43 @@ describe("api.route.subscribe()", () => {
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(closed).toBe(true)
   })
+  test("parses the id and retry frame fields alongside the data payload", async () => {
+    // `retry:` re-times the client's own reconnect and `id:` seeds Last-Event-ID, so both are read
+    // off the wire even though neither reaches the event callback.
+    const app = server()
+      .use(streaming())
+      .sse("/timed", { sse: post }, (_c, stream) => {
+        stream.send({ id: 1, title: "hello" }, { id: "evt-1", retry: 250 })
+        stream.close()
+      })
+    const api = testClient<typeof app>(app)
+
+    const { events, push, done } = collect<{ id: number; title: string }>(1)
+    const subscription = api.timed.subscribe((event) => push(event), { reconnect: false })
+    await done
+    subscription.close()
+
+    expect(events).toEqual([{ id: 1, title: "hello" }])
+  })
+
+  test("ignores a malformed retry value rather than breaking the stream", async () => {
+    const app = server()
+      .use(streaming())
+      .sse("/bad-retry", { sse: post }, (_c, stream) => {
+        stream.send({ id: 1, title: "hello" }, { retry: Number.NaN })
+        stream.send({ id: 2, title: "world" })
+        stream.close()
+      })
+    const api = testClient<typeof app>(app)
+
+    const { events, push, done } = collect<{ id: number; title: string }>(2)
+    const subscription = api["bad-retry"].subscribe((event) => push(event), { reconnect: false })
+    await done
+    subscription.close()
+
+    expect(events).toEqual([
+      { id: 1, title: "hello" },
+      { id: 2, title: "world" },
+    ])
+  })
 })

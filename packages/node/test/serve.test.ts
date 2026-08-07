@@ -154,6 +154,60 @@ test("native response middleware keeps JSON on the Node-direct path", async () =
   expect(outcome.kind).toBe("json")
 })
 
+test("a Web-only onResponse hook bridges the buffered outcome without losing headers", async () => {
+  // With no `onNodeResponse` twin the hook can only run against a real Response, so the adapter has
+  // to materialize the buffered node outcome. Repeated Set-Cookie lines are the part a naive
+  // record-to-Headers bridge collapses into one, so they are what this asserts.
+  const app = server()
+    .use({
+      name: "web-only",
+      onResponse: (response) => {
+        response.headers.set("x-bridged", "1")
+        return response
+      },
+    })
+    .get("/bridged", (c) => {
+      c.set.cookie("sid", "abc")
+      c.set.cookie("csrf", "xyz", { sameSite: "strict" })
+      c.set.headers["x-custom"] = "kept"
+      return { ok: true }
+    })
+
+  running = await serve(app, { port: 0 })
+  const res = await fetch(`http://localhost:${running.port}/bridged`)
+
+  expect(res.headers.get("x-bridged")).toBe("1")
+  expect(res.headers.get("x-custom")).toBe("kept")
+  expect(res.headers.get("content-type")).toContain("application/json")
+  expect(await res.json()).toEqual({ ok: true })
+
+  const cookies = res.headers.getSetCookie()
+  expect(cookies).toHaveLength(2) // un-joined, one line each
+  expect(cookies.some((c) => c.startsWith("sid=abc"))).toBe(true)
+  expect(cookies.some((c) => c.startsWith("csrf=xyz"))).toBe(true)
+})
+
+test("a Web-only onResponse hook bridges a bodyless outcome", async () => {
+  const app = server()
+    .use({
+      name: "web-only-204",
+      onResponse: (response) => {
+        response.headers.set("x-bridged", "1")
+        return response
+      },
+    })
+    .get("/nothing", (c) => {
+      c.set.status = 204
+      return undefined
+    })
+
+  running = await serve(app, { port: 0 })
+  const res = await fetch(`http://localhost:${running.port}/nothing`)
+  expect(res.status).toBe(204)
+  expect(res.headers.get("x-bridged")).toBe("1")
+  expect(await res.text()).toBe("")
+})
+
 test("native request middleware and c.header avoid the Web request path", async () => {
   let nativeCalls = 0
   const app = server()

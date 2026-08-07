@@ -30,7 +30,6 @@ export function cacheControl(
   const methods = new Set((options.methods ?? ["GET", "HEAD"]).map((m) => m.toUpperCase()))
   const statusOk = options.status ?? ((status: number) => status >= 200 && status < 300)
   const respectExisting = options.respectExisting !== false
-  const resolve = typeof value === "function" ? value : () => value
   return definePlugin("cacheControl", (app) => {
     // A fixed directive needs nothing from the request beyond the method, so it ships as one
     // portable header hook. A dynamic directive's resolver takes a real `Request`, which only the
@@ -49,7 +48,7 @@ export function cacheControl(
               if (!methods.has(req.method)) return res
               if (!statusOk(res.status)) return res
               if (respectExisting && res.headers.has("cache-control")) return res
-              const directive = resolve(req)
+              const directive = value(req)
               if (directive === undefined) return res
               return withHeaders(res, (headers) => headers.set("cache-control", directive))
             },
