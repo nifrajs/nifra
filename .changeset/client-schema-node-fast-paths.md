@@ -36,7 +36,11 @@ Faster typed client, validation, and Node serving:
   `Set-Cookie` values stay un-joined), a hook-supplied `Content-Type` is preserved on buffered JSON
   writes, `Content-Length` is always declared for buffered bodies so responses never fall back to
   chunked framing, and the per-response header normalization copy is skipped when every name is
-  already lowercase (the common case - wire output is unchanged). When a full `onResponse` hook
+  already lowercase (the common case - wire output is unchanged). `serve()` also activates Node's
+  async-context tracking before listening: activation is otherwise triggered lazily by the first
+  connection teardown, after V8 has optimized the event-loop tick path against the inactive
+  bookkeeping, and that mid-traffic switch costs about 11% of per-request CPU for the life of the
+  process on Node 24+. When a full `onResponse` hook
   forces the Web path, the buffered outcome is now bridged through a lazy spec-shaped Response
   (srvx's `FastResponse`, a real `instanceof Response` via prototype chaining) that materializes
   headers and body machinery only when a hook touches them - measured ~20% more throughput on that
