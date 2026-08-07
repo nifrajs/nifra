@@ -139,3 +139,21 @@ describe("client links: timeout", () => {
     expect(res).toMatchObject({ ok: false, status: 0, error: { error: "timeout" } })
   })
 })
+
+describe("client links: default retry backoff", () => {
+  test("waits between attempts when no backoff is supplied", async () => {
+    // Every other retry test injects `backoff: () => 0` to stay fast, so the shipped default -
+    // exponential with jitter - is the one part of the retry policy nothing exercises. A retry that
+    // fired with no delay would hammer an already-failing upstream.
+    const scripted = scriptedFetch([503, 200])
+    const api = mk({ fetch: scripted.fetch, retry: { attempts: 2 } })
+
+    const started = performance.now()
+    const res = await api.thing.get()
+    const elapsed = performance.now() - started
+
+    expect(res.ok).toBe(true)
+    expect(scripted.calls).toBe(2)
+    expect(elapsed).toBeGreaterThanOrEqual(250) // first-attempt backoff is 300ms + jitter
+  })
+})

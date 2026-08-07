@@ -3,6 +3,7 @@ import { cacheControl } from "@nifrajs/middleware"
 import { server, silentLogger } from "../src/index.ts"
 import { nodeDirect } from "../src/node-direct.ts"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "../src/schema/standard.ts"
+import { nodeOutcomeToResponse } from "../src/server/node-outcome.ts"
 
 /**
  * `app.resolveNode` is the node-direct seam: it runs the *exact same* lifecycle as `app.fetch`
@@ -748,5 +749,64 @@ describe("resolveNode - migrated body-tier middleware stay native", () => {
       new Response(outcome.body as Uint8Array).body?.pipeThrough(new DecompressionStream("gzip")),
     ).text()
     expect(JSON.parse(text)).toEqual({ data: big })
+  })
+})
+
+// The bridge from a buffered node outcome to a real Response, used when a Web-only response hook
+// has to see one. The header record it starts from allows repeated values, which a Headers built by
+// assignment would silently collapse into a single comma-joined line - fatal for Set-Cookie.
+describe("nodeOutcomeToResponse", () => {
+  test("expands repeated header values into separate lines and appends cookies", () => {
+    const res = nodeOutcomeToResponse({
+      kind: "json",
+      status: 200,
+      headers: { "x-multi": ["a", "b"], "x-one": "solo" },
+      cookies: ["sid=abc", "csrf=xyz"],
+      body: '{"ok":true}',
+    })
+
+    expect(res.headers.get("x-one")).toBe("solo")
+    expect(res.headers.getSetCookie()).toEqual(["sid=abc", "csrf=xyz"])
+    // A repeated non-cookie header is joined for reading but was appended, not overwritten.
+    expect(res.headers.get("x-multi")).toBe("a, b")
+  })
+
+  test("defaults the JSON content-type only when the outcome did not set one", async () => {
+    const defaulted = nodeOutcomeToResponse({
+      kind: "json",
+      status: 200,
+      headers: undefined,
+      cookies: undefined,
+      body: '{"ok":true}',
+    })
+    expect(defaulted.headers.get("content-type")).toBe("application/json;charset=utf-8")
+    expect(await defaulted.text()).toBe('{"ok":true}')
+
+    const explicit = nodeOutcomeToResponse({
+      kind: "json",
+      status: 200,
+      headers: { "content-type": "application/vnd.api+json" },
+      cookies: undefined,
+      body: '{"ok":true}',
+    })
+    expect(explicit.headers.get("content-type")).toBe("application/vnd.api+json")
+  })
+
+  test("a bodyless status drops the body and its content-length", async () => {
+    const res = nodeOutcomeToResponse({
+      kind: "json",
+      status: 204,
+      headers: { "content-length": "11" },
+      cookies: undefined,
+      body: '{"ok":true}',
+    })
+    expect(res.status).toBe(204)
+    expect(res.headers.get("content-length")).toBeNull()
+    expect(await res.text()).toBe("")
+  })
+
+  test("a response outcome is handed back untouched", () => {
+    const original = new Response("hi", { status: 201 })
+    expect(nodeOutcomeToResponse({ kind: "response", response: original })).toBe(original)
   })
 })

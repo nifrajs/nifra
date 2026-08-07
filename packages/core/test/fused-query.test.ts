@@ -162,3 +162,65 @@ describe("fused query lane", () => {
     expect(order).toEqual(["before", "handler"])
   })
 })
+
+// Registration picks a specialized lifecycle per route shape. These two shapes each select a
+// distinct one, so without a route of that exact shape the specialization never runs at all.
+describe("registration-specialized lifecycles", () => {
+  test("a route with BOTH body and query schemas validates body first, then query", async () => {
+    const app = server({ logger: silentLogger }).post(
+      "/items",
+      { body: t.object({ name: t.string() }), query: t.object({ limit: t.string() }) },
+      (c) => ({ name: c.body.name, limit: c.query.limit }),
+    )
+
+    const ok = await app.fetch(
+      new Request("http://x/items?limit=5", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "widget" }),
+      }),
+    )
+    expect(ok.status).toBe(200)
+    expect(await ok.json()).toEqual({ name: "widget", limit: "5" })
+
+    // A bad body short-circuits before the query is ever looked at.
+    const badBody = await app.fetch(
+      new Request("http://x/items?limit=5", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: 42 }),
+      }),
+    )
+    expect(badBody.status).toBe(422)
+
+    // A valid body with a missing required query param still fails, at the later stage.
+    const badQuery = await app.fetch(
+      new Request("http://x/items", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "widget" }),
+      }),
+    )
+    expect(badQuery.status).toBe(422)
+  })
+
+  test("an async afterHandle continues the remaining chain and still catches", async () => {
+    const app = server({ logger: silentLogger })
+      .afterHandle(async (result) => ({ first: result }))
+      .afterHandle((result) => ({ second: result }))
+      .get("/chain", () => ({ id: 1 }))
+
+    expect(await (await app.fetch(new Request("http://x/chain"))).json()).toEqual({
+      second: { first: { id: 1 } },
+    })
+
+    // A throw after the chain resumed still lands on the error path rather than escaping.
+    const boom = server({ logger: silentLogger })
+      .afterHandle(async (result) => ({ first: result }))
+      .afterHandle(() => {
+        throw new Error("after-handle failed")
+      })
+      .get("/boom", () => ({ id: 1 }))
+    expect((await boom.fetch(new Request("http://x/boom"))).status).toBe(500)
+  })
+})
