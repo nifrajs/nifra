@@ -146,15 +146,21 @@ export default server().post("/users", { body }, (c) => ({ name: c.body.name }))
 // validation + handler continuation (shared by Web and Node-direct) adds ~0.2 KB gzip across the
 // matrix; the bounded parser and framing checks remain shared with the generic lane, so this is the
 // price of making the safe fast path available by default without weakening the trust boundary.
+// The portable response tiers moved every core row together by ~5.1 KB gzip: the onResponseHeaders
+// hook with its Node-direct header view, the onResponseBody payload tier, the raw-response tier
+// with per-app body tagging, the static response-header tier, and the registration-selected
+// lifecycle stages all live in the kernel so their dispatch is reachable from any route. The
+// middleware that USES the tiers stays out of these rows - this is the price of the seams
+// themselves being available by default on every runtime.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
-  "nifra-bare": 16.9,
+  "nifra-bare": 22.1,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  "nifra-idempotency": 19.9,
-  "nifra-effect-ledger": 18.8,
-  "nifra-mcp": 17.1,
-  "nifra-sse": 17.6,
-  "nifra-valibot": 17.9,
-  "nifra-typebox-t": 46.6,
+  "nifra-idempotency": 25.2,
+  "nifra-effect-ledger": 24.1,
+  "nifra-mcp": 22.3,
+  "nifra-sse": 22.8,
+  "nifra-valibot": 23.1,
+  "nifra-typebox-t": 52.3,
 }
 
 const main = async (): Promise<void> => {
