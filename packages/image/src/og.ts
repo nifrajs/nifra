@@ -1,9 +1,24 @@
 /**
  * Dependency-free Open Graph image generation.
  *
- * The default renderer produces a safe SVG, which is useful for crawlers and can be served on every
- * fetch runtime. Applications that require PNG/JPEG can inject a rasterizer (for example a Satori +
- * Resvg adapter) without making either dependency part of `@nifrajs/image` or its browser bundle.
+ * **The default SVG output does not work as a social card.** X, Facebook, LinkedIn, Slack, Discord
+ * and iMessage all refuse `image/svg+xml` for `og:image` and render nothing - the link preview is
+ * blank, and it is blank silently, which is the failure mode this package exists to prevent
+ * elsewhere. Serving SVG is only useful where you control the consumer: an internal dashboard, a
+ * docs thumbnail, a preview route you look at yourself.
+ *
+ * **For a card a crawler will actually render, pass `rasterizer`.** It receives the SVG and returns
+ * PNG/JPEG/WebP bytes - a Satori + Resvg pair is the usual choice. Keeping it injected rather than
+ * bundled is what keeps a WASM rasterizer out of `@nifrajs/image` and out of every browser bundle
+ * that imports this package for something else.
+ *
+ * ```ts
+ * import { ogImageResponse } from "@nifrajs/image/og"
+ *
+ * // Renders on X, Facebook, LinkedIn, Slack.
+ * export const GET = (request: Request) =>
+ *   ogImageResponse({ title: "Ship it", rasterizer: pngRasterizer }, request)
+ * ```
  */
 
 export interface OgImageRasterized {

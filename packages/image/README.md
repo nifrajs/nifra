@@ -1,6 +1,6 @@
 # @nifrajs/image
 
-Image optimization for nifra - a CLS-safe responsive <Image> + pluggable loaders (CDN or self-hosted) + pure-JS dimension reading. The zero-dependency core also includes safe, cacheable Open Graph SVG generation at `@nifrajs/image/og`; inject a rasterizer when crawlers require PNG/JPEG. The optional Bun.Image-backed resize endpoint lives at `@nifrajs/image/server`.
+Image optimization for nifra - a CLS-safe responsive <Image> + pluggable loaders (CDN or self-hosted) + pure-JS dimension reading. The zero-dependency core also includes safe, cacheable Open Graph SVG generation at `@nifrajs/image/og` - useful where you control the consumer, but no major crawler renders SVG for `og:image`, so a social card needs an injected PNG/JPEG rasterizer. The optional Bun.Image-backed resize endpoint lives at `@nifrajs/image/server`.
 
 Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one core, five UI libraries, every runtime. Scaffold a new app with `bun create nifra`.
 

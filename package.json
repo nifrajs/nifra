@@ -52,7 +52,7 @@
     "bench:http:realworld:update": "bun run bench/http-realworld/aggregate.ts --runs 3 --write",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "check": "bun run lint && bun run typecheck && bun run test && bun run check:docs && bun run check:api && bun run check:cards && bun run check:size",
+    "check": "bun run lint && bun run typecheck && bun run test && bun run check:docs && bun run check:api && bun run check:cards && bun run check:public-boundary && bun run check:size",
     "changeset": "changeset",
     "changeset:version": "bun run scripts/version.ts",
     "changeset:publish": "bun run build && bun run gen:llms && bun run scripts/resolve-workspace-deps.ts && changeset publish && bun run scripts/point-latest.ts",
