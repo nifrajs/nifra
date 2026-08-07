@@ -126,13 +126,34 @@ class RecordHeadersView implements ResponseHeadersView {
 
   #prepare(record: Record<string, string | readonly string[]>): void {
     this.#prepared = true
-    for (const key of Object.keys(record)) {
-      const lower = key.toLowerCase()
-      if (lower !== key) {
-        if (this.#alias === undefined) this.#alias = new Map()
-        this.#alias.set(lower, key)
-      }
+    // `Object.keys`, not `for...in`: the record is a `{}`-prototype literal on the render paths, and
+    // a for-in would let an enumerable `Object.prototype` property become a header on the wire.
+    const keys = Object.keys(record)
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i] as string
+      // `key.toLowerCase() !== key` answers this too, but pays a runtime call plus a string compare
+      // for EVERY key on EVERY request, and the answer is almost always "already lowercase" - the
+      // framework, `c.set`, and middleware twins all write the wire spelling. An inline ASCII scan
+      // answers the common case without leaving the loop, and only a genuinely mixed-case key (a
+      // hand-written `X-Foo`) pays for the lowercase copy and the alias entry.
+      if (!RecordHeadersView.#hasUpperAscii(key)) continue
+      if (this.#alias === undefined) this.#alias = new Map()
+      this.#alias.set(key.toLowerCase(), key)
     }
+  }
+
+  /** True when the name contains an ASCII `A`-`Z`, i.e. is not already the wire spelling. */
+  static #hasUpperAscii(name: string): boolean {
+    for (let i = 0; i < name.length; i++) {
+      const code = name.charCodeAt(i)
+      if (code >= 65 && code <= 90) return true
+    }
+    return false
+  }
+
+  /** The wire spelling of a header name, without paying `toLowerCase` when it already is one. */
+  static #lower(name: string): string {
+    return RecordHeadersView.#hasUpperAscii(name) ? name.toLowerCase() : name
   }
 
   /** The stored key for an already-lowercased name. Resolution is the prepared index ONLY - a
@@ -199,19 +220,21 @@ class RecordHeadersView implements ResponseHeadersView {
   get(name: string): string | null {
     const headers = this.#readable()
     if (headers === undefined) return null
-    const value = headers[this.#actual(name.toLowerCase())]
+    const value = headers[this.#actual(RecordHeadersView.#lower(name))]
     if (value === undefined) return null
     return typeof value === "string" ? value : (value.join(", ") ?? null)
   }
 
   has(name: string): boolean {
     const headers = this.#readable()
-    return headers !== undefined && headers[this.#actual(name.toLowerCase())] !== undefined
+    return (
+      headers !== undefined && headers[this.#actual(RecordHeadersView.#lower(name))] !== undefined
+    )
   }
 
   set(name: string, value: string): void {
     const headers = this.#writable()
-    const lower = name.toLowerCase()
+    const lower = RecordHeadersView.#lower(name)
     // The common response record is already lowercase (framework middleware and c.set use the wire
     // spelling). A set cannot need to replace a differently-cased key in that shape, so skip the
     // own-property/alias lookup that reads and deletes pay for. Mixed-case records were indexed by
@@ -230,7 +253,7 @@ class RecordHeadersView implements ResponseHeadersView {
 
   append(name: string, value: string): void {
     const headers = this.#writable()
-    const lower = name.toLowerCase()
+    const lower = RecordHeadersView.#lower(name)
     if (this.#alias === undefined) {
       const current = Object.hasOwn(headers, lower) ? headers[lower] : undefined
       if (current === undefined) {
@@ -264,7 +287,7 @@ class RecordHeadersView implements ResponseHeadersView {
   delete(name: string): void {
     const headers = this.#readable()
     if (headers === undefined) return
-    const lower = name.toLowerCase()
+    const lower = RecordHeadersView.#lower(name)
     if (this.#alias === undefined) {
       delete headers[lower]
       return
