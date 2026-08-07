@@ -3,12 +3,15 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import {
+  buildRouteGraph,
   buildRouteTable,
   clientCall,
   describeProject,
   describeRoutes,
   type RouteJson,
+  renderRouteGraph,
   renderRouteTable,
+  routeGraphToJson,
   routesToJson,
   routeTableToJson,
   tsTypeOf,
@@ -270,6 +273,43 @@ describe("renderRouteTable + routeTableToJson", () => {
       { kind: "page", path: "/", methods: ["GET"], file: "index.tsx" },
       { kind: "api", path: "/api/explain", methods: ["GET"], autoMounted: true },
     ])
+  })
+})
+
+describe("route graph", () => {
+  test("builds stable parent edges and renders Mermaid without private topology", () => {
+    const graph = buildRouteGraph(
+      buildRouteTable({
+        pages: [{ pattern: "/", file: "index.tsx", hasAction: false }],
+        api: [
+          { method: "GET", path: "/api" },
+          { method: "GET", path: "/api/orders" },
+        ],
+      }),
+    )
+
+    expect(graph.nodes.map((node) => node.id)).toEqual([
+      "root",
+      "page:/",
+      "api:/api",
+      "api:/api/orders",
+    ])
+    expect(graph.edges).toContainEqual({ from: "api:/api", to: "api:/api/orders" })
+    const mermaid = renderRouteGraph(graph)
+    expect(mermaid).toContain("flowchart TD")
+    expect(mermaid).toContain("api: GET /api/orders")
+  })
+
+  test("returns an independent stable JSON snapshot and escapes Mermaid label delimiters", () => {
+    const graph = buildRouteGraph([{ kind: "api", path: '/api/quoted/"x"', methods: ["GET"] }])
+    const snapshot = routeGraphToJson(graph)
+    expect(snapshot).toEqual(graph)
+    expect(snapshot).not.toBe(graph)
+    expect(snapshot.nodes).not.toBe(graph.nodes)
+    expect(snapshot.edges).not.toBe(graph.edges)
+    const mermaid = renderRouteGraph(graph)
+    expect(mermaid).not.toContain('api: GET /api/quoted/"x"')
+    expect(mermaid).not.toContain("\napi: GET")
   })
 })
 

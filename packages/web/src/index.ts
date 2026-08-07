@@ -27,7 +27,7 @@ import { isDraftEnabled } from "./draft.ts"
 import { trustedHeadAttributes } from "./internal/head-attributes.ts"
 import { jsStringLiteral } from "./internal/js-string.ts"
 import { EXECUTABLE_SCRIPT_TYPES, INERT_SCRIPT_TYPES } from "./internal/script-types.ts"
-import { ISR_REVALIDATE_HEADER } from "./isr.ts"
+import { ISR_REVALIDATE_HEADER, ISR_REVALIDATE_TAGS_HEADER, serializeISRTags } from "./isr.ts"
 import { generateLlmsTxt } from "./llms-txt.ts"
 import type {
   LayoutEntry,
@@ -83,6 +83,7 @@ export {
   type CachedResponse,
   type CacheStore,
   ISR_REVALIDATE_HEADER,
+  ISR_REVALIDATE_TAGS_HEADER,
   ISR_STATUS_HEADER,
   type ISRApp,
   type ISROptions,
@@ -427,6 +428,8 @@ export interface RenderPageOptions {
   /** ISR: route freshness in seconds, emitted as the `x-nifra-isr-revalidate` header for a `withISR`
    * wrapper to read. Omit ⇒ no header (the wrapper's default TTL applies). */
   readonly revalidate?: number
+  /** ISR invalidation tags emitted as a bounded `x-nifra-isr-tags` header. */
+  readonly revalidateTags?: readonly string[]
   /** Matched route id; written to `window.__NIFRA_ROUTE__` so the client hydrates this chain. */
   readonly routeId?: string
   /** The matched route's decoded path params - surfaced to the page as `params` (via {@link RenderProps})
@@ -541,6 +544,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     styles = [],
     prerenderedPaths = [],
     revalidate,
+    revalidateTags = [],
     routeId,
     status = 200,
     title = "nifra",
@@ -695,6 +699,8 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // dedicated header (not the action-revalidation `x-nifra-revalidate`) so the TTL channel never aliases
   // the client's path-list channel.
   if (revalidate !== undefined) headers[ISR_REVALIDATE_HEADER] = String(revalidate)
+  const serializedTags = serializeISRTags(revalidateTags)
+  if (serializedTags !== undefined) headers[ISR_REVALIDATE_TAGS_HEADER] = serializedTags
   const renderProps: RenderProps = {
     data: forComponent,
     actionData: actionSplit?.forComponent,
@@ -2225,6 +2231,7 @@ export function createWebApp<Env = unknown>(
           ...stylesOf(route.id),
           prerenderedPaths: options.prerenderedPaths ?? [],
           ...(mod.revalidate !== undefined ? { revalidate: mod.revalidate } : {}),
+          ...(mod.revalidateTags !== undefined ? { revalidateTags: mod.revalidateTags } : {}),
           ...(mod.islandScripts !== undefined ? { islandScripts: mod.islandScripts } : {}),
           ...titleOption,
           ...assemblyCacheFor(mod, chainLayoutModules),

@@ -58,6 +58,19 @@ describe("MemoryCacheStore", () => {
     expect((await store.get("/3"))?.body).toBe("3")
   })
 
+  test("tag invalidation makes every tagged entry miss without enumerating pages", async () => {
+    const store = new MemoryCacheStore()
+    await store.set("/products/1", { ...entry("one"), tags: ["products"] })
+    await store.set("/products/2", { ...entry("two"), tags: ["products", "featured"] })
+    await store.set("/about", { ...entry("about"), tags: ["marketing"] })
+
+    await store.invalidateTag("products")
+
+    expect(await store.get("/products/1")).toBeUndefined()
+    expect(await store.get("/products/2")).toBeUndefined()
+    expect((await store.get("/about"))?.body).toBe("about")
+  })
+
   describe("production guard", () => {
     const prev = process.env.NODE_ENV
     afterEach(() => {
@@ -190,6 +203,23 @@ describe("withISR", () => {
     await handler(new Request("http://x/p"))
     t = 1500 // past the 1s header TTL, under the default → header wins → stale
     expect((await handler(new Request("http://x/p"))).headers.get("x-nifra-isr")).toBe("stale")
+  })
+
+  test("tagged pages are invalidated independently of their freshness window", async () => {
+    const store = new MemoryCacheStore()
+    let body = "v1"
+    const { app, calls } = trackApp(() => html(body, { "x-nifra-isr-tags": "products, catalog" }))
+    const handler = withISR(app, { store, revalidate: 1000, now: () => 0 })
+
+    await handler(new Request("http://x/p"))
+    body = "v2"
+    await store.invalidateTag("products")
+    const freshAfterInvalidation = await handler(new Request("http://x/p"))
+
+    expect(freshAfterInvalidation.headers.get("x-nifra-isr")).toBe("miss")
+    expect(await freshAfterInvalidation.text()).toBe("v2")
+    expect(calls()).toBe(2)
+    expect((await store.get(pageKey("/p")))?.tags).toEqual(["products", "catalog"])
   })
 
   test("a non-numeric revalidate header falls back to the default TTL", async () => {
@@ -482,6 +512,27 @@ describe("revalidateEndpoint (on-demand purge)", () => {
     expect(res.status).toBe(200)
     expect(await store.get("page::/p")).toBeUndefined()
   })
+
+  test("tag purge invalidates every matching page", async () => {
+    const store = new MemoryCacheStore()
+    await store.set("/one", { ...entry("one"), tags: ["catalog"] })
+    await store.set("/two", { ...entry("two"), tags: ["catalog"] })
+    await store.set("/other", { ...entry("other"), tags: ["other"] })
+    const handler = revalidateEndpoint({ store, secret: "s3cret" })
+
+    const res = await handler(
+      new Request("http://x/__nifra/revalidate?tag=catalog", {
+        method: "POST",
+        headers: { "x-nifra-revalidate-token": "s3cret" },
+      }),
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ revalidatedTag: "catalog" })
+    expect(await store.get("/one")).toBeUndefined()
+    expect(await store.get("/two")).toBeUndefined()
+    expect((await store.get("/other"))?.body).toBe("other")
+  })
 })
 
 import { KVCacheStore, type KVNamespaceLike } from "../src/isr.ts"
@@ -557,6 +608,19 @@ describe("KVCacheStore", () => {
     const plain = new KVCacheStore(kv)
     await plain.set("/q", entry("y"))
     expect(kv.puts.at(-1)?.ttl).toBeUndefined()
+  })
+
+  test("tag invalidation uses a KV tag epoch and does not enumerate page keys", async () => {
+    const kv = new FakeKV()
+    const store = new KVCacheStore(kv)
+    await store.set("/one", { ...entry("one"), tags: ["catalog"] })
+    await store.set("/two", { ...entry("two"), tags: ["catalog"] })
+
+    await store.invalidateTag("catalog")
+
+    expect(await store.get("/one")).toBeUndefined()
+    expect(await store.get("/two")).toBeUndefined()
+    expect([...kv.store.keys()].some((key) => key === "/one" || key === "/two")).toBe(true)
   })
 
   test("rejects an expirationTtl below KV's 60s minimum", () => {

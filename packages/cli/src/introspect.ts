@@ -430,6 +430,106 @@ export function routeTableToJson(rows: readonly RouteTableEntry[]): {
   }
 }
 
+export interface RouteGraphNode {
+  readonly id: string
+  readonly kind: "root" | RouteKind
+  readonly path: string
+  readonly methods?: readonly string[]
+  readonly file?: string
+  readonly autoMounted?: boolean
+}
+
+export interface RouteGraphEdge {
+  readonly from: string
+  readonly to: string
+}
+
+export interface RouteGraph {
+  readonly nodes: readonly RouteGraphNode[]
+  readonly edges: readonly RouteGraphEdge[]
+}
+
+function parentPath(path: string): string | undefined {
+  if (path === "/") return undefined
+  const trimmed = path.replace(/\/$/, "")
+  const slash = trimmed.lastIndexOf("/")
+  return slash <= 0 ? "/" : trimmed.slice(0, slash)
+}
+
+/** Build a stable parent/child graph from the public route table. Pure and topology-neutral. */
+export function buildRouteGraph(rows: readonly RouteTableEntry[]): RouteGraph {
+  const sorted = [...rows].sort(
+    (a, b) => a.path.localeCompare(b.path) || a.kind.localeCompare(b.kind),
+  )
+  const nodes: RouteGraphNode[] = [
+    { id: "root", kind: "root", path: "/" },
+    ...sorted.map((row) => ({
+      id: `${row.kind}:${row.path}`,
+      kind: row.kind,
+      path: row.path,
+      methods: row.methods,
+      ...(row.file === undefined ? {} : { file: row.file }),
+      ...(row.kind === "api" ? { autoMounted: row.autoMounted === true } : {}),
+    })),
+  ]
+  const nodeIds = new Set(nodes.map((node) => node.id))
+  const edges: RouteGraphEdge[] = []
+  for (const row of sorted) {
+    let parent = parentPath(row.path)
+    let from = "root"
+    while (parent !== undefined) {
+      const candidate = `${row.kind}:${parent}`
+      if (nodeIds.has(candidate)) {
+        from = candidate
+        break
+      }
+      parent = parentPath(parent)
+    }
+    edges.push({ from, to: `${row.kind}:${row.path}` })
+  }
+  return { nodes, edges }
+}
+
+/** Stable JSON shape for agents and contract explorers. */
+export function routeGraphToJson(graph: RouteGraph): RouteGraph {
+  return {
+    nodes: graph.nodes.map((node) => ({
+      ...node,
+      ...(node.methods === undefined ? {} : { methods: [...node.methods] }),
+    })),
+    edges: graph.edges.map((edge) => ({ ...edge })),
+  }
+}
+
+function mermaidText(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll(/[\r\n]/g, " ")
+}
+
+function mermaidLabel(node: RouteGraphNode): string {
+  if (node.kind === "root") return "routes"
+  const methods = node.methods?.join(", ") ?? ""
+  const mounted = node.autoMounted === true ? " (auto-mounted)" : ""
+  return mermaidText(`${node.kind}: ${methods} ${node.path}${mounted}`)
+}
+
+/** Render a route graph as Mermaid for terminals, docs, and agent-facing previews. */
+export function renderRouteGraph(graph: RouteGraph): string {
+  const ids = new Map(graph.nodes.map((node, index) => [node.id, `n${index}`]))
+  const lines = ["flowchart TD"]
+  for (const node of graph.nodes) {
+    lines.push(`  ${ids.get(node.id)}["${mermaidLabel(node)}"]`)
+  }
+  for (const edge of graph.edges) {
+    lines.push(`  ${ids.get(edge.from)} --> ${ids.get(edge.to)}`)
+  }
+  return lines.join("\n")
+}
+
 /** A route module that may export an `action` (→ the page serves POST). */
 interface MaybeActionModule {
   readonly action?: unknown
@@ -441,10 +541,7 @@ interface MaybeActionModule {
  * text (default) or JSON (`--json`). The page-route load mirrors what SSR would do; a load failure
  * degrades to GET-only for that route (never throws the whole command).
  */
-export async function describeRoutes(
-  app: LoadedApp,
-  opts: { readonly json?: boolean } = {},
-): Promise<string> {
+async function collectRouteTable(app: LoadedApp): Promise<RouteTableEntry[]> {
   let manifest: Manifest | undefined
   try {
     manifest = discoverRoutes(app.routesDir)
@@ -463,5 +560,22 @@ export async function describeRoutes(
     pages.push({ pattern: route.pattern, file: route.file, hasAction })
   }
   const rows = buildRouteTable({ pages, api: backendRoutes(app.backend) })
+  return rows
+}
+
+export async function describeRoutes(
+  app: LoadedApp,
+  opts: { readonly json?: boolean } = {},
+): Promise<string> {
+  const rows = await collectRouteTable(app)
   return opts.json ? JSON.stringify(routeTableToJson(rows), null, 2) : renderRouteTable(rows)
+}
+
+/** Gather and render the public route graph for `nifra routes --graph`. */
+export async function describeRouteGraph(
+  app: LoadedApp,
+  opts: { readonly json?: boolean } = {},
+): Promise<string> {
+  const graph = buildRouteGraph(await collectRouteTable(app))
+  return opts.json ? JSON.stringify(routeGraphToJson(graph), null, 2) : renderRouteGraph(graph)
 }

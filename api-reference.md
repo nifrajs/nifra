@@ -560,6 +560,25 @@ Every public export of every package and documented subpath - name, kind, signat
 - **startCausality** _(function)_ - `startCausality: (nodeKind: CausalityKind, id: string, options: StartCausalityOptions) => CausalityStep`
   Start a root execution node at an ingress boundary.
 
+### `@nifrajs/core/channel`
+
+- **ChannelCloseReason** _(type)_ - `type ChannelCloseReason = "closed" | "backpressure" | "aborted"`
+- **ChannelContract** _(interface)_ - `interface ChannelContract<Name extends string, Message>`
+  Typed, runtime-neutral channel contracts. Durable replay, presence, fan-out, and tenant-aware routing belong in an adapter; the bundled hub provides only bounded process-local replay for tests and local development.
+- **ChannelEvent** _(interface)_ - `interface ChannelEvent<Message>`
+- **ChannelHub** _(interface)_ - `interface ChannelHub`
+- **ChannelResumeUnavailableError** _(class)_ - `class ChannelResumeUnavailableError`
+  A requested cursor is malformed, belongs to another channel, or fell outside retained history.
+- **ChannelSubscribeOptions** _(interface)_ - `interface ChannelSubscribeOptions`
+- **ChannelSubscription** _(interface)_ - `interface ChannelSubscription<Message>`
+- **MemoryChannelHubOptions** _(interface)_ - `interface MemoryChannelHubOptions`
+- **channelReadableStream** _(function)_ - `channelReadableStream: <Message>(subscription: ChannelSubscription<Message>) => ReadableStream<ChannelEvent<Message>>`
+  Adapt a channel subscription to a cancellable Web stream for SSE/HTTP adapters.
+- **defineChannel** _(function)_ - `defineChannel: <Name extends string, Message>(name: Name) => ChannelContract<Name, Message>`
+  Define a typed channel name. Message types are erased; adapters own validation at their boundary.
+- **memoryChannelHub** _(function)_ - `memoryChannelHub: (options?: MemoryChannelHubOptions) => ChannelHub`
+  A bounded in-memory hub suitable for tests and local development, never for durable fan-out.
+
 ### `@nifrajs/core/classification`
 
 - **ClassifiedSchema** _(type)_ - `type ClassifiedSchema<S extends object> = S & { readonly [CLASSIFICATION]: DataClassification }`
@@ -615,6 +634,47 @@ Every public export of every package and documented subpath - name, kind, signat
   Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies.
 - **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: string) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
+
+### `@nifrajs/core/data`
+
+- **BoundDataPort** _(interface)_ - `interface BoundDataPort<Contract extends DataContract>`
+  A data port bound to one request context; every operation emits capability evidence first.
+- **DATA_CAPABILITIES** _(const)_ - `DATA_CAPABILITIES: Readonly<{ readonly read: "db.read"; readonly write: "db.write"; }>`
+  Public, token-only data access contracts. Durable adapters and RLS policy enforcement stay outside this package; this subpath defines the typed seam they implement.
+- **DataAccess** _(type)_ - `type DataAccess = keyof typeof DATA_CAPABILITIES`
+- **DataCapability** _(type)_ - `type DataCapability = (typeof DATA_CAPABILITIES)[DataAccess]`
+- **DataCapabilityBeacon** _(type)_ - `type DataCapabilityBeacon = (context: object, capability: DataCapability) => void`
+  Runtime capability beacon used by a request-bound data port.
+- **DataContract** _(interface)_ - `interface DataContract<Operations extends DataOperationMap = DataOperationMap>`
+- **DataContractSnapshot** _(interface)_ - `interface DataContractSnapshot`
+- **DataDrift** _(interface)_ - `interface DataDrift`
+- **DataInput** _(type)_ - `type DataInput<Contract extends DataContract, Operation extends keyof Contract["operations"] & string> = Contract["operations"][Operation] extends infer Definition ? InputOf<Definition> : never`
+- **DataOperationMap** _(type)_ - `type DataOperationMap = Readonly<Record<string, DataOperationSpec>>`
+- **DataOperationSpec** _(interface)_ - `interface DataOperationSpec`
+- **DataOutput** _(type)_ - `type DataOutput<Contract extends DataContract, Operation extends keyof Contract["operations"] & string> = Contract["operations"][Operation] extends infer Definition ? OutputOf<Definition> : unknown`
+- **DataPort** _(interface)_ - `interface DataPort<Contract extends DataContract>`
+  Public factory for wiring a private data adapter into Nifra's capability evidence chain.
+- **DataPortOptions** _(interface)_ - `interface DataPortOptions`
+  Options for the public request-bound data port wrapper.
+- **DataRequest** _(interface)_ - `interface DataRequest<Operation extends string = string, Input = unknown>`
+- **DataRequestFor** _(type)_ - `type DataRequestFor<Contract extends DataContract, Operation extends keyof Contract["operations"] & string> = { readonly operation: Operation readonly scope: DataScope readonly capability: CapabilityOf<Contract["operati…`
+- **DataScope** _(type)_ - `type DataScope = RlsScope`
+  Backward-compatible name for the request scope carried by every data operation.
+- **RlsScope** _(interface)_ - `interface RlsScope`
+  Opaque request-local RLS (or equivalent data-policy) scope passed to an adapter.
+- **TypedDataPort** _(interface)_ - `interface TypedDataPort<Contract extends DataContract>`
+- **createDataPort** _(function)_ - `createDataPort: <Contract extends DataContract>(contract: Contract, adapter: TypedDataPort<Contract>, options?: DataPortOptions) => DataPort<Contract>`
+  Bind a private data adapter to request-local capability evidence.
+- **dataScope** _(function)_ - `dataScope: (token: string, digest?: string) => DataScope`
+  Backward-compatible constructor for {@link RlsScope}.
+- **defineDataContract** _(function)_ - `defineDataContract: <const Operations extends DataOperationMap>(input: { readonly version: string; readonly operations: Operations; }) => DataContract<Operations>`
+  Define and freeze a token-only data contract. Input/output types are erased at runtime.
+- **diffDataContract** _(function)_ - `diffDataContract: (declared: DataContract, observed: DataContractSnapshot | DataContract) => readonly DataDrift[]`
+  Compare a declared contract with an adapter-observed token-only snapshot.
+- **rlsScope** _(function)_ - `rlsScope: (token: string, digest?: string) => RlsScope`
+  Create a bounded, opaque RLS/equivalent policy scope for a data adapter.
+- **snapshotDataContract** _(function)_ - `snapshotDataContract: (contract: DataContract) => DataContractSnapshot`
+  Strip a contract to its token-only version/access snapshot for CI or adapter drift checks.
 
 ### `@nifrajs/core/diff`
 
@@ -937,6 +997,14 @@ Every public export of every package and documented subpath - name, kind, signat
   The regex source matching one segment's worth of a mixed pattern, with a capture per parameter.
 - **sortRoutesBySpecificity** _(function)_ - `sortRoutesBySpecificity: <T extends { readonly pattern: CompiledRoutePattern; }>(routes: T[]) => T[]`
   Sort compiled routes most-specific-first - a static segment beats a dynamic one, the order the router resolves a path in. The single home for that precedence: the web router, the mock server, and the editor plugin all order routes through this one comparator, so which file a path resolves to can ne…
+
+### `@nifrajs/core/range`
+
+- **ByteRange** _(interface)_ - `interface ByteRange`
+  `Range: bytes=...` parsing - the shared owner for every byte-range surface in the framework.
+- **ByteRangeResult** _(type)_ - `type ByteRangeResult = | { readonly kind: "none" } | { readonly kind: "unsatisfiable" } | { readonly kind: "satisfiable"; readonly ranges: readonly ByteRange[] }`
+- **parseByteRange** _(function)_ - `parseByteRange: (value: string | null, size: number) => ByteRangeResult`
+  Parse an HTTP `Range: bytes=...` header against a known representation size.
 
 ### `@nifrajs/core/reconciliation-worker`
 
@@ -1394,6 +1462,10 @@ Every public export of every package and documented subpath - name, kind, signat
 - **ImageLoader** _(type)_ - `type ImageLoader = (args: { src: string; width: number; quality?: number }) => string`
   Builds a variant URL for `src` at a target pixel `width` (and optional `quality`).
 - **ImageProps** _(interface)_ - `interface ImageProps`
+- **OgImageOptions** _(interface)_ - `interface OgImageOptions`
+- **OgImageRasterized** _(interface)_ - `interface OgImageRasterized`
+  Dependency-free Open Graph image generation.
+- **OgImageRasterizer** _(type)_ - `type OgImageRasterizer = (svg: string) => OgImageRasterized | Promise<OgImageRasterized>`
 - **ResolvedImage** _(interface)_ - `interface ResolvedImage`
 - **SelfHostedLoaderOptions** _(interface)_ - `interface SelfHostedLoaderOptions`
 - **SignImageUrlOptions** _(interface)_ - `interface SignImageUrlOptions`
@@ -1403,8 +1475,12 @@ Every public export of every package and documented subpath - name, kind, signat
   Default loader: return the source unchanged (no transform). Use when there's no image CDN - you still get CLS-safe sizing + lazy loading, just no responsive variants.
 - **imageDimensions** _(function)_ - `imageDimensions: (bytes: Uint8Array) => ImageInfo | null`
   Parse intrinsic dimensions + format from image header bytes, or `null` if unrecognized/too short.
+- **ogImageResponse** _(function)_ - `ogImageResponse: (options: OgImageOptions, request?: Request) => Promise<Response>`
+  Build a cacheable OG image response. GET and HEAD are supported; conditional requests short-circuit rasterization, so a crawler revalidation never repeats expensive codec work.
 - **readImageDimensions** _(function)_ - `readImageDimensions: (source: { arrayBuffer(): Promise<ArrayBuffer>; stream?: () => ReadableStream<Uint8Array>; }, maxBytes?: number) => Promise<ImageInfo | null>`
   Read just the leading bytes of an image file (via the platform `Bun.file`/`fetch` blob) and parse its dimensions. Build-time tooling: pre-read dimensions into a manifest so `<Image>` is CLS-safe without hardcoding sizes. Reads at most `maxBytes` (default 64 KB - enough for any header).
+- **renderOgImage** _(function)_ - `renderOgImage: (options: OgImageOptions) => string`
+  Render a bounded, deterministic SVG suitable for an `og:image` endpoint.
 - **resolveImage** _(function)_ - `resolveImage: (props: ImageProps, loader?: ImageLoader) => ResolvedImage`
   Resolve {@link ImageProps} + an {@link ImageLoader} into `<img>` attributes. CLS-safe (`width`/ `height` required + > 0, else a dev error), lazy + async-decoding by default, with a responsive `srcSet` built from `widths` via the loader. If every width produces the same URL (e.g. {@link identityLoad…
 - **selfHostedLoader** _(function)_ - `selfHostedLoader: (options: SelfHostedLoaderOptions) => ImageLoader`
@@ -1439,6 +1515,17 @@ Every public export of every package and documented subpath - name, kind, signat
   {@link ImageBackend} backed by [sharp](https://sharp.pixelplumbing.com) (libvips) for Node servers. Pass your `sharp` import - `@nifrajs/image` never imports it, so it stays dependency-free and you control the version:
 - **wasmImageBackend** _(function)_ - `wasmImageBackend: (codecs: WasmImageCodecs) => ImageBackend`
   {@link ImageBackend} backed by injected WASM codecs - the only backend that runs on the **edge** (Workers / Vercel-Edge / Deno-Deploy), where neither `Bun.Image` nor sharp exists. `probe` reads the source header via nifra's dependency-free reader (so decompression bombs are rejected before any deco…
+
+### `@nifrajs/image/og`
+
+- **OgImageOptions** _(interface)_ - `interface OgImageOptions`
+- **OgImageRasterized** _(interface)_ - `interface OgImageRasterized`
+  Dependency-free Open Graph image generation.
+- **OgImageRasterizer** _(type)_ - `type OgImageRasterizer = (svg: string) => OgImageRasterized | Promise<OgImageRasterized>`
+- **ogImageResponse** _(function)_ - `ogImageResponse: (options: OgImageOptions, request?: Request) => Promise<Response>`
+  Build a cacheable OG image response. GET and HEAD are supported; conditional requests short-circuit rasterization, so a crawler revalidation never repeats expensive codec work.
+- **renderOgImage** _(function)_ - `renderOgImage: (options: OgImageOptions) => string`
+  Render a bounded, deterministic SVG suitable for an `og:image` endpoint.
 
 ### `@nifrajs/image/server`
 
@@ -1694,11 +1781,16 @@ Every public export of every package and documented subpath - name, kind, signat
 - **BasicAuthVerifyOptions** _(interface)_ - `interface BasicAuthVerifyOptions<P>`
 - **BearerOptions** _(interface)_ - `interface BearerOptions<P>`
 - **BodyLimitOptions** _(interface)_ - `interface BodyLimitOptions`
+- **ByteRange** _(interface)_ - `interface ByteRange`
+  `Range: bytes=...` parsing - the shared owner for every byte-range surface in the framework.
+- **ByteRangeResult** _(type)_ - `type ByteRangeResult = | { readonly kind: "none" } | { readonly kind: "unsatisfiable" } | { readonly kind: "satisfiable"; readonly ranges: readonly ByteRange[] }`
 - **CacheControlOptions** _(interface)_ - `interface CacheControlOptions`
 - **CacheOptions** _(interface)_ - `interface CacheOptions`
 - **CachedResponse** _(interface)_ - `interface CachedResponse`
 - **Composable** _(type)_ - `type Composable = Middleware | NifraPlugin`
 - **CompressionOptions** _(interface)_ - `interface CompressionOptions`
+- **ConditionalResponseOptions** _(interface)_ - `interface ConditionalResponseOptions`
+- **ContentPreference** _(interface)_ - `interface ContentPreference`
 - **CorsOptions** _(interface)_ - `interface CorsOptions`
 - **CsrfOptions** _(interface)_ - `interface CsrfOptions`
 - **DurableCommandOptions** _(interface)_ - `interface DurableCommandOptions`
@@ -1737,6 +1829,10 @@ Every public export of every package and documented subpath - name, kind, signat
   In-process fixed-window store. Refuses to run in production unless explicitly allowed.
 - **MemoryStoreOptions** _(interface)_ - `interface MemoryStoreOptions`
 - **MethodOverrideOptions** _(interface)_ - `interface MethodOverrideOptions`
+- **MultipartBody** _(type)_ - `type MultipartBody = | string | Uint8Array | ArrayBuffer | ArrayBufferView | Blob | ReadableStream<Uint8Array>`
+- **MultipartHeadersInit** _(type)_ - `type MultipartHeadersInit = | Headers | Readonly<Record<string, string>> | ReadonlyArray<readonly [string, string]>`
+- **MultipartPart** _(interface)_ - `interface MultipartPart`
+- **MultipartResponseOptions** _(interface)_ - `interface MultipartResponseOptions`
 - **OpenApiInfo** _(interface)_ - `interface OpenApiInfo`
 - **OpenApiOptions** _(interface)_ - `interface OpenApiOptions`
 - **OpenApiServer** _(interface)_ - `interface OpenApiServer`
@@ -1745,6 +1841,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Scalar API-reference UI options.
 - **PoweredByOptions** _(interface)_ - `interface PoweredByOptions`
 - **PrettyJsonOptions** _(interface)_ - `interface PrettyJsonOptions`
+- **ProblemDetailsOptions** _(interface)_ - `interface ProblemDetailsOptions`
+- **RangeResponseOptions** _(interface)_ - `interface RangeResponseOptions`
 - **RateLimitOptions** _(interface)_ - `interface RateLimitOptions`
 - **RateLimitResult** _(interface)_ - `interface RateLimitResult`
 - **RateLimitStore** _(interface)_ - `interface RateLimitStore`
@@ -1787,6 +1885,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Compose middleware/plugins into one reusable bundle. Individual named plugins still dedupe.
 - **compression** _(function)_ - `compression: (options?: CompressionOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").AnyServer>`
   Transparently **gzip** responses when the client sends `Accept-Encoding: gzip` and the body is a compressible type larger than `threshold`. Uses the Web-standard `CompressionStream`, so it runs on every nifra runtime including the edge; gzip is the one encoding `CompressionStream` guarantees everyw…
+- **conditionalResponse** _(function)_ - `conditionalResponse: (request: Request, response: Response, options?: ConditionalResponseOptions) => Response`
+  Apply validators to a response and produce a standards-compliant 304 when it is fresh.
 - **cors** _(function)_ - `cors: (options?: CorsOptions) => Middleware`
   CORS as a {@link Middleware}. Preflight (`OPTIONS` + `Access-Control-Request-Method`) short-circuits to `204` via `onRequest`; the origin/credentials headers are added in `onResponse`, so they also land on errors, 404s, and the preflight itself.
 - **createAdmissionController** _(function)_ - `createAdmissionController: (options: AdmissionOptions) => AdmissionControllerHandle`
@@ -1814,16 +1914,28 @@ Every public export of every package and documented subpath - name, kind, signat
   A {@link definePlugin} plugin that logs one structured line per request - method, path, status, and duration - via `onRequest`/`onResponse` (so it covers 404s and errors too). The start time is paired to the request through a `WeakMap` (no per-request allocation leak). Idempotent.
 - **methodOverride** _(function)_ - `methodOverride: (options?: MethodOverrideOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").AnyServer>`
   HTTP method override for clients that can only send `POST`. The middleware rewrites the request before routing, so handlers, validation, and response hooks all see the overridden method.
+- **multipartResponse** _(function)_ - `multipartResponse: (parts: Iterable<MultipartPart> | AsyncIterable<MultipartPart>, options?: MultipartResponseOptions) => Response`
+  Stream a multipart response without buffering the parts. The part headers and bodies are emitted as supplied; this helper deliberately does not persist, inspect, or serialize payloads.
 - **namedCombine** _(function)_ - `namedCombine: (name: string, ...items: readonly Composable[]) => NifraPlugin`
   Compose middleware/plugins into one idempotent named bundle.
+- **negotiateContentType** _(function)_ - `negotiateContentType: (accept: string | null | Headers | Request, offered: readonly string[]) => string | undefined`
+  Select the best offered media type for an `Accept` header. The returned string is the original offered value, so parameters such as `profile` are preserved. An absent/empty header accepts the first offer; an explicit `q=0` or no matching offer returns `undefined`.
 - **openapi** _(function)_ - `openapi: (options?: OpenApiOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").AnyServer>`
   Serve an OpenAPI 3.1 document (a structural subset - see {@link buildOpenApiDocument}) at `options.path` (default `/openapi.json`), generated from the app's registered routes. Generation is **lazy + memoized**: it reads `app.routes()` on the first request, by which point every route is registered -…
+- **parseAcceptHeader** _(function)_ - `parseAcceptHeader: (value: string | null) => readonly ContentPreference[]`
+  Parse an `Accept` header, preserving quality and wildcard specificity.
+- **parseByteRange** _(function)_ - `parseByteRange: (value: string | null, size: number) => ByteRangeResult`
+  Parse an HTTP `Range: bytes=...` header against a known representation size.
 - **pickLanguage** _(function)_ - `pickLanguage: <const L extends readonly string[]>(header: string | null, supported: L, defaultLanguage: L[number]) => LanguageMatch`
   Pick the best supported language for an `Accept-Language` header. Exact tags win, then compatible base-language matches, then `*`, then the configured default.
 - **poweredBy** _(function)_ - `poweredBy: (options?: PoweredByOptions) => Middleware`
   Opt-in `X-Powered-By` style header. Nifra does not emit this by default; use it only when you want a public framework/product marker.
 - **prettyJson** _(function)_ - `prettyJson: (options?: PrettyJsonOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").AnyServer>`
   Pretty-print JSON responses for debugging and developer-facing APIs. It only touches JSON content, skips encoded responses, caps inspection size, and leaves invalid JSON untouched.
+- **problemDetails** _(function)_ - `problemDetails: (options?: ProblemDetailsOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").AnyServer>`
+  Opt-in RFC 9457 formatting for Nifra's structured error envelope.
+- **rangeResponse** _(function)_ - `rangeResponse: (request: Request, body: string | ArrayBuffer | ArrayBufferView | Uint8Array, options?: RangeResponseOptions) => Response`
+  Create a standards-shaped byte representation response with Range, If-Range, and conditional validator handling. The input is already caller-owned memory; this helper does not read or retain external state. Multiple ranges use `multipart/byteranges` and adjacent ranges are coalesced.
 - **rateLimit** _(function)_ - `rateLimit: (options: RateLimitOptions) => Middleware`
   Rate limiting as a {@link Middleware}. Runs in `onRequest` (before routing, so it also covers 404s); over the limit → `429` + `Retry-After`. Every response carries `RateLimit-Limit/Remaining/Reset` (added in `onResponse`, keyed off the request).
 - **requestId** _(function)_ - `requestId: (options?: RequestIdOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").Server<any, any>>`
@@ -2319,6 +2431,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Minimal platform shape `withISR` needs - just `waitUntil` (edge runtimes extend the response lifetime so background regeneration finishes). Off-edge it's absent and regen runs fire-and-forget.
 - **ISR_REVALIDATE_HEADER** _(const)_ - `ISR_REVALIDATE_HEADER: "x-nifra-isr-revalidate"`
   Response header a route uses to advertise its ISR freshness (**seconds**) to a {@link withISR} wrapper - `createWebApp` emits it from a route's `export const revalidate`. Deliberately distinct from the action-revalidation `x-nifra-revalidate` header (a CSV path list the *client* parses to refetch):…
+- **ISR_REVALIDATE_TAGS_HEADER** _(const)_ - `ISR_REVALIDATE_TAGS_HEADER: "x-nifra-isr-tags"`
+  Response header carrying bounded route tags into {@link withISR}.
 - **ISR_STATUS_HEADER** _(const)_ - `ISR_STATUS_HEADER: "x-nifra-isr"`
   Response header marking how an ISR response was served: a cache `hit` (fresh), `stale` (served + regenerating behind it), or `miss` (rendered now + stored). Useful for debugging + tests.
 - **InertScriptType** _(type)_ - `type InertScriptType = "application/ld+json" | "application/json"`
@@ -2530,7 +2644,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **revalidate** _(function)_ - `revalidate: <T>(paths: readonly string[], data: T) => RevalidateResult<T>`
   Return this from an action to declare which routes the mutation changed (alongside the action's `data`). `createWebApp` sets the `X-Nifra-Revalidate` response header; after the submit the client marks those cached routes stale - refetching the active one and any mounted fetcher showing them - so a …
 - **revalidateEndpoint** _(function)_ - `revalidateEndpoint: (options: RevalidateEndpointOptions) => (req: Request) => Promise<Response>`
-  An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops a path's cached entry so the next request re-renders. `POST` with the secret in the token header and the path as `?path=` or a JSON `{ "path": "/blog/x" }` body. The token is checked in **constant time** (wrong/missing → …
+  An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops a path's cached entry or invalidates every entry carrying a tag. `POST` with the secret in the token header and either `?path=/blog/x`, `?tag=products`, or a JSON `{ "path": "/blog/x" }` / `{ "tag": "products" }` body. Th…
 - **searchOf** _(function)_ - `searchOf: (searchSchema: StandardSchemaV1 | undefined, rawSearch: string) => Record<string, unknown>`
   The search a route sees for a raw URL query: parsed, then validated against a single `searchSchema` when the route declares one (failing closed to its defaults), or the raw parsed query otherwise. A one-link {@link searchOfChain}; use that directly for a layout+page chain. Both the server (`renderP…
 - **searchOfChain** _(function)_ - `searchOfChain: (schemas: readonly (StandardSchemaV1 | undefined)[], rawSearch: string) => Record<string, unknown>`
@@ -2924,7 +3038,7 @@ Every public export of every package and documented subpath - name, kind, signat
   One route's resolved behaviour.
 - **buildRouteManifest** _(function)_ - `buildRouteManifest: (manifest: Manifest, options?: { readonly target?: string; readonly prerendered?: Readonly<Record<string, readonly string[]>>; readonly capabilities?: readonly RouteCapability[]; }) => Promise<RouteM…`
   Build the route manifest for a discovered app, optionally resolved against a deploy target.
-- **deriveRouteEntry** _(function)_ - `deriveRouteEntry: (id: string, pattern: string, module: Pick<RouteModule, "prerender" | "getStaticPaths" | "revalidate" | "hydrate">, prerenderedPaths?: readonly string[]) => RouteManifestEntry`
+- **deriveRouteEntry** _(function)_ - `deriveRouteEntry: (id: string, pattern: string, module: Pick<RouteModule, "prerender" | "getStaticPaths" | "revalidate" | "revalidateTags" | "hydrate">, prerenderedPaths?: readonly string[]) => RouteManifestEntry`
   Derive one route's behaviour from its module exports.
 - **renderRouteManifest** _(function)_ - `renderRouteManifest: (manifest: RouteManifest) => string`
   Render the manifest as a readable report - the `nifra routes --modes` output.

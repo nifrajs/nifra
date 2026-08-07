@@ -26,6 +26,8 @@ available only from their explicit subpaths, so an ordinary HTTP server never ev
 import { defineContract, implement } from "@nifrajs/core/contract"
 import { startCausality } from "@nifrajs/core/causality"
 import { defineAssurancePolicy } from "@nifrajs/core/assurance"
+import { createDataPort, defineDataContract, diffDataContract } from "@nifrajs/core/data"
+import { defineChannel, memoryChannelHub } from "@nifrajs/core/channel"
 ```
 
 - **Inline or contract-first.** Write routes inline (types inferred from the
@@ -75,6 +77,16 @@ import { defineAssurancePolicy } from "@nifrajs/core/assurance"
   bounded HTTP representations and supplies the same frame/loader adapters for WebSockets and
   deferred data. Import `richWireCodec()` from `@nifrajs/core/transport-codec-rich`; the separate
   subpath keeps rich-wire code out of plain JSON bundles.
+- **Typed data seam (opt in).** `@nifrajs/core/data` defines token-only operation contracts,
+  `db.read`/`db.write` capability names, an opaque request-local `RlsScope`, typed adapter requests,
+  drift snapshots, and `createDataPort(contract, adapter, { beacon: useCapability })`, which emits the
+  operation's capability evidence - derived from the contract, never from the request - before the
+  private adapter runs. It contains no database driver, tenant identity, policy, row values, or durable
+  store; those belong in the adapter layer.
+- **Typed channels (opt in).** `@nifrajs/core/channel` defines typed message contracts, bounded
+  subscriptions, cancellation, per-channel resume cursors, bounded local replay, and a process-local
+  in-memory hub for tests. Durable replay, presence, rooms, and multi-instance fan-out remain adapter
+  concerns.
 
 ```ts
 import { defineAssurancePolicy, evaluateRouteAssurance, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"

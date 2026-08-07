@@ -229,3 +229,111 @@ test("a symlinked DIRECTORY inside publicDir cannot leak its contents either", a
     expect(await serve(get("/linked/secret.txt"))).toBeUndefined()
   })
 })
+
+// A media file under public/ is the whole reason byte ranges matter here: without Accept-Ranges and
+// a 206, a browser cannot seek a <video> and a download manager cannot resume.
+const ranged = (path: string, headers: Record<string, string>, method = "GET") =>
+  new Request(`http://x${path}`, { method, headers })
+
+test("serves a byte range as 206 with content-range", async () => {
+  await withDir(async (dir) => {
+    await writeFile(join(dir, "clip.bin"), "0123456789")
+    const serve = servePublicDir({ dir })
+
+    const full = await serve(get("/clip.bin"))
+    expect(full?.headers.get("accept-ranges")).toBe("bytes")
+
+    const partial = await serve(ranged("/clip.bin", { range: "bytes=2-5" }))
+    expect(partial?.status).toBe(206)
+    expect(partial?.headers.get("content-range")).toBe("bytes 2-5/10")
+    expect(partial?.headers.get("content-length")).toBe("4")
+    expect(await partial?.text()).toBe("2345")
+  })
+})
+
+test("a suffix range and an open-ended range both resolve against the real size", async () => {
+  await withDir(async (dir) => {
+    await writeFile(join(dir, "clip.bin"), "0123456789")
+    const serve = servePublicDir({ dir })
+
+    const suffix = await serve(ranged("/clip.bin", { range: "bytes=-3" }))
+    expect(suffix?.headers.get("content-range")).toBe("bytes 7-9/10")
+    expect(await suffix?.text()).toBe("789")
+
+    const open = await serve(ranged("/clip.bin", { range: "bytes=8-" }))
+    expect(open?.headers.get("content-range")).toBe("bytes 8-9/10")
+    expect(await open?.text()).toBe("89")
+  })
+})
+
+test("an unsatisfiable range is 416 and a malformed one is ignored", async () => {
+  await withDir(async (dir) => {
+    await writeFile(join(dir, "clip.bin"), "0123456789")
+    const serve = servePublicDir({ dir })
+
+    const unsatisfiable = await serve(ranged("/clip.bin", { range: "bytes=99-200" }))
+    expect(unsatisfiable?.status).toBe(416)
+    expect(unsatisfiable?.headers.get("content-range")).toBe("bytes */10")
+
+    // A header the parser cannot make sense of must be ignored, not turned into an error.
+    const malformed = await serve(ranged("/clip.bin", { range: "pages=1-2" }))
+    expect(malformed?.status).toBe(200)
+    expect(await malformed?.text()).toBe("0123456789")
+  })
+})
+
+test("multiple ranges fall back to the full body rather than buffering multipart", async () => {
+  await withDir(async (dir) => {
+    await writeFile(join(dir, "clip.bin"), "0123456789")
+    const serve = servePublicDir({ dir })
+
+    const multi = await serve(ranged("/clip.bin", { range: "bytes=0-1,8-9" }))
+    expect(multi?.status).toBe(200)
+    expect(await multi?.text()).toBe("0123456789")
+  })
+})
+
+test("HEAD reports the same headers GET does, including a ranged one", async () => {
+  await withDir(async (dir) => {
+    await writeFile(join(dir, "clip.txt"), "0123456789")
+    const serve = servePublicDir({ dir })
+
+    const getResponse = await serve(get("/clip.txt"))
+    const headResponse = await serve(get("/clip.txt", "HEAD"))
+    // The old handler built HEAD from a null body, which dropped the inferred content-type.
+    expect(headResponse?.headers.get("content-type")).toBe(getResponse?.headers.get("content-type"))
+    expect(headResponse?.headers.get("accept-ranges")).toBe("bytes")
+    expect(await headResponse?.text()).toBe("")
+
+    const headRange = await serve(ranged("/clip.txt", { range: "bytes=0-3" }, "HEAD"))
+    expect(headRange?.status).toBe(206)
+    expect(headRange?.headers.get("content-range")).toBe("bytes 0-3/10")
+    expect(await headRange?.text()).toBe("")
+  })
+})
+
+test("If-Modified-Since produces a 304 and If-Range guards partial answers", async () => {
+  await withDir(async (dir) => {
+    await writeFile(join(dir, "clip.bin"), "0123456789")
+    const serve = servePublicDir({ dir })
+    const lastModified = (await serve(get("/clip.bin")))?.headers.get("last-modified")
+    expect(lastModified).not.toBeNull()
+
+    const fresh = await serve(ranged("/clip.bin", { "if-modified-since": lastModified! }))
+    expect(fresh?.status).toBe(304)
+    expect(await fresh?.text()).toBe("")
+
+    // A matching validator keeps the 206.
+    const matched = await serve(
+      ranged("/clip.bin", { range: "bytes=0-1", "if-range": lastModified! }),
+    )
+    expect(matched?.status).toBe(206)
+
+    // A stale one means the client's byte offsets may no longer describe this file: send all of it.
+    const stale = await serve(
+      ranged("/clip.bin", { range: "bytes=0-1", "if-range": "Tue, 01 Jan 2019 00:00:00 GMT" }),
+    )
+    expect(stale?.status).toBe(200)
+    expect(await stale?.text()).toBe("0123456789")
+  })
+})

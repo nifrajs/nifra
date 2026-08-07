@@ -35,9 +35,14 @@ test("`prerender: true` on a static route is static, and needs nothing from the 
 })
 
 test("`revalidate` makes a route isr, requiring revalidation as well as a server", () => {
-  const entry = deriveRouteEntry("feed", "/feed", mod({ revalidate: 60 }))
+  const entry = deriveRouteEntry(
+    "feed",
+    "/feed",
+    mod({ revalidate: 60, revalidateTags: ["catalog", "products"] }),
+  )
   expect(entry.mode).toBe("isr")
   expect(entry.revalidate).toBe(60)
+  expect(entry.revalidateTags).toEqual(["catalog", "products"])
   expect(entry.requires).toEqual(["server", "revalidation"])
 })
 

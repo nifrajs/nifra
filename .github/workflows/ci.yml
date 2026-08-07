@@ -65,6 +65,14 @@ jobs:
       - name: Build + publish-readiness (publint + arethetypeswrong)
         run: bun run check:publish
 
+      # The names to scan for are themselves private, so they arrive as a repository secret rather
+      # than living in the tree. Unset, the step still enforces the structural half (seams exported,
+      # no runtime builtins in an edge seam).
+      - name: Public boundary (seam exports, edge portability, private markers)
+        run: bun run check:public-boundary
+        env:
+          PRIVATE_MARKERS: ${{ secrets.PRIVATE_MARKERS }}
+
       # attw and the workspace can resolve undeclared internal packages through hoisted siblings. Pack
       # selected public packages, install each one with npm's nested strategy, and typecheck its public
       # entry from a three-line external consumer so only declared dependencies are visible.

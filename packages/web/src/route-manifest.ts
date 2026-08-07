@@ -41,6 +41,8 @@ export interface RouteManifestEntry {
   readonly hydrate: boolean
   /** Revalidation window in seconds. Present only for `isr`. */
   readonly revalidate?: number
+  /** Bounded tags that can purge this route from a shared ISR store. */
+  readonly revalidateTags?: readonly string[]
   /**
    * Concrete paths prerendered at build. Present for `static` routes: a single path for a static route,
    * one per `getStaticPaths` entry for a dynamic one. Absent means "no path was enumerated", which for a
@@ -84,7 +86,10 @@ const isDynamic = (pattern: string): boolean => /[:*]/.test(pattern)
 export function deriveRouteEntry(
   id: string,
   pattern: string,
-  module: Pick<RouteModule, "prerender" | "getStaticPaths" | "revalidate" | "hydrate">,
+  module: Pick<
+    RouteModule,
+    "prerender" | "getStaticPaths" | "revalidate" | "revalidateTags" | "hydrate"
+  >,
   prerenderedPaths?: readonly string[],
 ): RouteManifestEntry {
   const wantsPrerender = module.prerender === true || module.getStaticPaths !== undefined
@@ -105,10 +110,14 @@ export function deriveRouteEntry(
     mode: RenderMode
     hydrate: boolean
     revalidate?: number
+    revalidateTags?: readonly string[]
     prerenderedPaths?: readonly string[]
     requires: readonly RouteCapability[]
   } = { id, pattern, mode, hydrate: module.hydrate !== false, requires }
   if (mode === "isr" && module.revalidate !== undefined) entry.revalidate = module.revalidate
+  if (mode === "isr" && module.revalidateTags !== undefined) {
+    entry.revalidateTags = module.revalidateTags
+  }
   if (prerenderedPaths !== undefined) entry.prerenderedPaths = prerenderedPaths
   return entry as RouteManifestEntry
 }

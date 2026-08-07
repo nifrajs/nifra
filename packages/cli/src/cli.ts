@@ -15,7 +15,7 @@ import { inProcessClient } from "@nifrajs/client"
 import { createWebApp, DEFAULT_DEV_PORT, type RenderAdapter } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import type { BunPlugin } from "bun"
-import { describeProject, describeRoutes } from "./introspect.ts"
+import { describeProject, describeRouteGraph, describeRoutes } from "./introspect.ts"
 import { type LoadedApp, loadApp } from "./load.ts"
 import { chooseBuildPipeline } from "./pipeline-guard.ts"
 
@@ -67,6 +67,8 @@ Usage:
                                          routes (routes/) + the in-process backend's API routes,
                                          marking which API routes are auto-mounted under apiPrefix.
                                          --json for agents (see POST /api/x is/isn't served, not via 405).
+  nifra routes  --graph [--json]         Render the public route surface as a Mermaid graph, or as
+                                         stable JSON for contract explorers.
   nifra routes --modes [--target <t>]    Show each page route's RENDER MODE (static | isr | ssr),
                                          hydration, and cache policy in one table. With --target, gate
                                          against it: a route the target can't honour (an ssr route on a
@@ -823,7 +825,9 @@ async function main(): Promise<void> {
   else if (command === "build") await buildForTarget(app, flags.target, flags)
   else if (command === "context") console.log(describeProject(app))
   else if (command === "routes") {
-    if (argv.includes("--modes")) {
+    if (argv.includes("--graph")) {
+      console.log(await describeRouteGraph(app, { json: argv.includes("--json") }))
+    } else if (argv.includes("--modes")) {
       // `--modes` answers a different question than the default table: not "what URLs exist" but "how
       // does each render, and can the target I'm about to deploy to actually honour that". Resolves
       // against `--target` when given, so a `static` build's server-needing route fails here, in one

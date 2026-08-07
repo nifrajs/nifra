@@ -10,7 +10,7 @@ Image optimization for nifra - a CLS-safe responsive <Image> + pluggable loaders
 
 ## Public entrypoints
 
-`@nifrajs/image` · `@nifrajs/image/backends` · `@nifrajs/image/server`
+`@nifrajs/image` · `@nifrajs/image/backends` · `@nifrajs/image/og` · `@nifrajs/image/server`
 
 ## Key exports
 
@@ -18,7 +18,9 @@ Image optimization for nifra - a CLS-safe responsive <Image> + pluggable loaders
 - **cloudflareLoader** _(function)_ - `cloudflareLoader: (options?: CloudflareLoaderOptions) => ImageLoader` · from `@nifrajs/image`
 - **createImageHandler** _(function)_ - `createImageHandler: (options?: ImageHandlerOptions) => (req: Request) => Promise<Response>` · from `@nifrajs/image/server`
 - **imageDimensions** _(function)_ - `imageDimensions: (bytes: Uint8Array) => ImageInfo | null` · from `@nifrajs/image`
+- **ogImageResponse** _(function)_ - `ogImageResponse: (options: OgImageOptions, request?: Request) => Promise<Response>` · from `@nifrajs/image`
 - **readImageDimensions** _(function)_ - `readImageDimensions: (source: { arrayBuffer(): Promise<ArrayBuffer>; stream?: () => ReadableStream<Uint8Array>; }, maxBytes?: number) => Pr…` · from `@nifrajs/image`
+- **renderOgImage** _(function)_ - `renderOgImage: (options: OgImageOptions) => string` · from `@nifrajs/image`
 - **resolveImage** _(function)_ - `resolveImage: (props: ImageProps, loader?: ImageLoader) => ResolvedImage` · from `@nifrajs/image`
 - **selfHostedLoader** _(function)_ - `selfHostedLoader: (options: SelfHostedLoaderOptions) => ImageLoader` · from `@nifrajs/image`
 - **sharpImageBackend** _(function)_ - `sharpImageBackend: (sharp: SharpLike) => ImageBackend` · from `@nifrajs/image/backends`
@@ -26,10 +28,8 @@ Image optimization for nifra - a CLS-safe responsive <Image> + pluggable loaders
 - **toHtmlAttrs** _(function)_ - `toHtmlAttrs: (resolved: ResolvedImage) => HtmlImageAttrs` · from `@nifrajs/image`
 - **wasmImageBackend** _(function)_ - `wasmImageBackend: (codecs: WasmImageCodecs) => ImageBackend` · from `@nifrajs/image/backends`
 - **ImageProcessingError** _(class)_ - `class ImageProcessingError` · from `@nifrajs/image/backends`
-- **CONTENT_TYPE** _(const)_ - `CONTENT_TYPE: Record<OutputFormat, string>` · from `@nifrajs/image/backends`
-- **identityLoader** _(const)_ - `identityLoader: ImageLoader` · from `@nifrajs/image`
 
-_…and 18 more - see [`api-reference.md`](../../api-reference.md#nifrajsimage) for the complete list._
+_…and 23 more - see [`api-reference.md`](../../api-reference.md#nifrajsimage) for the complete list._
 
 ## Footguns
 

@@ -14,6 +14,7 @@ import {
   bodyLimit,
   cors,
   MemoryStore,
+  problemDetails,
   rateLimit,
   securityHeaders,
   timing,
@@ -21,6 +22,7 @@ import {
 
 const app = server()
   .use(securityHeaders())
+  .use(problemDetails())
   .use(cors({ origin: ["https://app.example.com"], credentials: true }))
   .use(bodyLimit({ maxBytes: 1_000_000 }))
   .use(rateLimit({
@@ -60,6 +62,14 @@ const app = server()
   store, `Vary`-aware keys, `Age`, byte caps, and `Cache-Control` / `Set-Cookie` safety defaults.
   `MemoryResponseCache` is dev/single-instance only unless explicitly allowed in production.
 - **`timing()`** - `Server-Timing` plus typed `c.timing.metric/mark/measure` controls.
+- **`problemDetails()`** - opt-in RFC 9457 `application/problem+json` responses for framework
+  errors. The default `{ ok: false, error }` envelope remains unchanged unless installed; validation
+  issues are preserved, and `includeInstance` includes only the request pathname.
+- **`rangeResponse()` / `parseByteRange()`** - bounded byte-range responses with 206/416,
+  `If-Range`, multipart ranges, and conditional validators.
+- **`conditionalResponse()`** - reusable ETag/Last-Modified handling that emits a bodyless 304.
+- **`negotiateContentType()`** - RFC-style `Accept` matching with q-values, wildcards, and q=0.
+- **`multipartResponse()`** - cancellable streaming multipart output without buffering all parts.
 - **`prettyJson()`** - capped, JSON-only pretty printing for debugging and developer-facing APIs.
 - **`methodOverride()`** - header/query method tunneling for clients that can only send `POST`.
   Header override is on by default; query override is opt-in.

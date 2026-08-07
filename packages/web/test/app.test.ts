@@ -384,7 +384,11 @@ test("a route's `revalidate` rides the x-nifra-isr-revalidate header (ISR P3.3)"
         pattern: "/isr",
         layoutIds: [],
         file: "isr.tsx",
-        load: async () => ({ default: "isr", revalidate: 60 }),
+        load: async () => ({
+          default: "isr",
+          revalidate: 60,
+          revalidateTags: ["catalog", "products"],
+        }),
       },
       {
         id: "plain",
@@ -399,6 +403,7 @@ test("a route's `revalidate` rides the x-nifra-isr-revalidate header (ISR P3.3)"
   const app = createWebApp({ adapter: stub, manifest, clientEntry: "/c.js" })
   const isr = await app.fetch(new Request("http://x/isr"))
   expect(isr.headers.get("x-nifra-isr-revalidate")).toBe("60") // seconds, distinct channel
+  expect(isr.headers.get("x-nifra-isr-tags")).toBe("catalog,products")
   expect(isr.headers.get("x-nifra-revalidate")).toBeNull() // never aliases the action path-list header
   // A route without `revalidate` emits no header (the withISR default TTL applies).
   const plain = await app.fetch(new Request("http://x/plain"))

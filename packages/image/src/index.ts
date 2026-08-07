@@ -12,6 +12,13 @@ export {
 } from "./dimensions.ts"
 export { type HtmlImageAttrs, toHtmlAttrs } from "./html.ts"
 export {
+  type OgImageOptions,
+  type OgImageRasterized,
+  type OgImageRasterizer,
+  ogImageResponse,
+  renderOgImage,
+} from "./og.ts"
+export {
   type CloudflareLoaderOptions,
   cloudflareLoader,
   type ImageLoader,

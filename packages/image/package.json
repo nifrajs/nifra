@@ -30,6 +30,11 @@
       "bun": "./src/backend.ts",
       "types": "./dist/backend.d.ts",
       "default": "./dist/backend.js"
+    },
+    "./og": {
+      "bun": "./src/og.ts",
+      "types": "./dist/og.d.ts",
+      "default": "./dist/og.js"
     }
   },
   "files": [

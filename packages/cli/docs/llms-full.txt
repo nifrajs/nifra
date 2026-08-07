@@ -7116,6 +7116,8 @@ available only from their explicit subpaths, so an ordinary HTTP server never ev
 import { defineContract, implement } from "@nifrajs/core/contract"
 import { startCausality } from "@nifrajs/core/causality"
 import { defineAssurancePolicy } from "@nifrajs/core/assurance"
+import { createDataPort, defineDataContract, diffDataContract } from "@nifrajs/core/data"
+import { defineChannel, memoryChannelHub } from "@nifrajs/core/channel"
 ```
 
 - **Inline or contract-first.** Write routes inline (types inferred from the
@@ -7165,6 +7167,16 @@ import { defineAssurancePolicy } from "@nifrajs/core/assurance"
   bounded HTTP representations and supplies the same frame/loader adapters for WebSockets and
   deferred data. Import `richWireCodec()` from `@nifrajs/core/transport-codec-rich`; the separate
   subpath keeps rich-wire code out of plain JSON bundles.
+- **Typed data seam (opt in).** `@nifrajs/core/data` defines token-only operation contracts,
+  `db.read`/`db.write` capability names, an opaque request-local `RlsScope`, typed adapter requests,
+  drift snapshots, and `createDataPort(contract, adapter, { beacon: useCapability })`, which emits the
+  operation's capability evidence - derived from the contract, never from the request - before the
+  private adapter runs. It contains no database driver, tenant identity, policy, row values, or durable
+  store; those belong in the adapter layer.
+- **Typed channels (opt in).** `@nifrajs/core/channel` defines typed message contracts, bounded
+  subscriptions, cancellation, per-channel resume cursors, bounded local replay, and a process-local
+  in-memory hub for tests. Durable replay, presence, rooms, and multi-instance fan-out remain adapter
+  concerns.
 
 ```ts
 import { defineAssurancePolicy, evaluateRouteAssurance, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
@@ -7454,7 +7466,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/image
 
-Image optimization for nifra - a CLS-safe responsive <Image> + pluggable loaders (CDN or self-hosted) + pure-JS dimension reading. Zero-dependency core; optional Bun.Image-backed resize endpoint at @nifrajs/image/server.
+Image optimization for nifra - a CLS-safe responsive <Image> + pluggable loaders (CDN or self-hosted) + pure-JS dimension reading. The zero-dependency core also includes safe, cacheable Open Graph SVG generation at `@nifrajs/image/og`; inject a rasterizer when crawlers require PNG/JPEG. The optional Bun.Image-backed resize endpoint lives at `@nifrajs/image/server`.
 
 Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one core, five UI libraries, every runtime. Scaffold a new app with `bun create nifra`.
 
@@ -7720,6 +7732,7 @@ import {
   bodyLimit,
   cors,
   MemoryStore,
+  problemDetails,
   rateLimit,
   securityHeaders,
   timing,
@@ -7727,6 +7740,7 @@ import {
 
 const app = server()
   .use(securityHeaders())
+  .use(problemDetails())
   .use(cors({ origin: ["https://app.example.com"], credentials: true }))
   .use(bodyLimit({ maxBytes: 1_000_000 }))
   .use(rateLimit({
@@ -7766,6 +7780,14 @@ const app = server()
   store, `Vary`-aware keys, `Age`, byte caps, and `Cache-Control` / `Set-Cookie` safety defaults.
   `MemoryResponseCache` is dev/single-instance only unless explicitly allowed in production.
 - **`timing()`** - `Server-Timing` plus typed `c.timing.metric/mark/measure` controls.
+- **`problemDetails()`** - opt-in RFC 9457 `application/problem+json` responses for framework
+  errors. The default `{ ok: false, error }` envelope remains unchanged unless installed; validation
+  issues are preserved, and `includeInstance` includes only the request pathname.
+- **`rangeResponse()` / `parseByteRange()`** - bounded byte-range responses with 206/416,
+  `If-Range`, multipart ranges, and conditional validators.
+- **`conditionalResponse()`** - reusable ETag/Last-Modified handling that emits a bodyless 304.
+- **`negotiateContentType()`** - RFC-style `Accept` matching with q-values, wildcards, and q=0.
+- **`multipartResponse()`** - cancellable streaming multipart output without buffering all parts.
 - **`prettyJson()`** - capped, JSON-only pretty printing for debugging and developer-facing APIs.
 - **`methodOverride()`** - header/query method tunneling for clients that can only send `POST`.
   Header override is on by default; query override is opt-in.
@@ -8849,7 +8871,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/image
 
-`cloudflareLoader`, `CloudflareLoaderOptions`, `HtmlImageAttrs`, `identityLoader`, `imageDimensions`, `ImageFormat`, `ImageInfo`, `ImageLoader`, `ImageProps`, `readImageDimensions`, `ResolvedImage`, `resolveImage`, `selfHostedLoader`, `SelfHostedLoaderOptions`, `signImageUrl`, `SignImageUrlOptions`, `toHtmlAttrs`
+`cloudflareLoader`, `CloudflareLoaderOptions`, `HtmlImageAttrs`, `identityLoader`, `imageDimensions`, `ImageFormat`, `ImageInfo`, `ImageLoader`, `ImageProps`, `OgImageOptions`, `OgImageRasterized`, `OgImageRasterizer`, `ogImageResponse`, `readImageDimensions`, `renderOgImage`, `ResolvedImage`, `resolveImage`, `selfHostedLoader`, `SelfHostedLoaderOptions`, `signImageUrl`, `SignImageUrlOptions`, `toHtmlAttrs`
 
 ## @nifrajs/islets
 
@@ -8869,7 +8891,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/middleware
 
-`AdmissionControllerHandle`, `AdmissionEvidence`, `AdmissionOptions`, `AdmissionPolicy`, `AdmissionSnapshot`, `apiKey`, `ApiKeyStaticOptions`, `ApiKeyVerifyOptions`, `appendTrailingSlash`, `AuthPlugin`, `basicAuth`, `BasicAuthPlugin`, `BasicAuthStaticOptions`, `BasicAuthVerifyOptions`, `bearer`, `BearerOptions`, `bodyLimit`, `BodyLimitOptions`, `buildOpenApiDocument`, `cache`, `cacheControl`, `CacheControlOptions`, `CachedResponse`, `CacheOptions`, `combine`, `Composable`, `compression`, `CompressionOptions`, `cors`, `CorsOptions`, `createAdmissionController`, `createCsrfToken`, `createEventLoopLagSampler`, `csrf`, `CsrfOptions`, `durableCommand`, `DurableCommandOptions`, `etag`, `ETagOptions`, `healthcheck`, `HealthcheckOptions`, `idempotency`, `IdempotencyClaim`, `IdempotencyOptions`, `IdempotencyRecord`, `IdempotencyStore`, `IpMatcher`, `ipRestriction`, `IpRestrictionOptions`, `jwk`, `JwkKey`, `jwks`, `JwksOptions`, `jwt`, `JwtAlgorithm`, `JwtClaims`, `JwtHeader`, `JwtKeyResolver`, `JwtOptions`, `JwtPlugin`, `JwtVerificationKey`, `language`, `LanguageMatch`, `LanguageOptions`, `logger`, `LoggerOptions`, `LoopDelayHistogram`, `LoopDelayMonitor`, `MemoryIdempotencyStore`, `MemoryIdempotencyStoreOptions`, `MemoryResponseCache`, `MemoryResponseCacheOptions`, `MemoryStore`, `MemoryStoreOptions`, `methodOverride`, `MethodOverrideOptions`, `namedCombine`, `openapi`, `OpenApiInfo`, `OpenApiOptions`, `OpenApiServer`, `OpenApiTag`, `OpenApiUiOptions`, `pickLanguage`, `poweredBy`, `PoweredByOptions`, `prettyJson`, `PrettyJsonOptions`, `rateLimit`, `RateLimitOptions`, `RateLimitResult`, `RateLimitStore`, `requestId`, `RequestIdOptions`, `RequestLogFields`, `responseCache`, `ResponseCacheStore`, `RouteLike`, `securityHeaders`, `SecurityHeadersOptions`, `SecurityRequirement`, `ShedReason`, `timing`, `TimingControls`, `TimingMetric`, `TimingOptions`, `TrailingSlashOptions`, `trimTrailingSlash`, `tryVerifyJwt`, `VerifiedJwt`, `verifyCsrfToken`, `verifyJwt`, `VerifyJwtOptions`, `VerifyJwtResult`
+`AdmissionControllerHandle`, `AdmissionEvidence`, `AdmissionOptions`, `AdmissionPolicy`, `AdmissionSnapshot`, `apiKey`, `ApiKeyStaticOptions`, `ApiKeyVerifyOptions`, `appendTrailingSlash`, `AuthPlugin`, `basicAuth`, `BasicAuthPlugin`, `BasicAuthStaticOptions`, `BasicAuthVerifyOptions`, `bearer`, `BearerOptions`, `bodyLimit`, `BodyLimitOptions`, `buildOpenApiDocument`, `ByteRange`, `ByteRangeResult`, `cache`, `cacheControl`, `CacheControlOptions`, `CachedResponse`, `CacheOptions`, `combine`, `Composable`, `compression`, `CompressionOptions`, `conditionalResponse`, `ConditionalResponseOptions`, `ContentPreference`, `cors`, `CorsOptions`, `createAdmissionController`, `createCsrfToken`, `createEventLoopLagSampler`, `csrf`, `CsrfOptions`, `durableCommand`, `DurableCommandOptions`, `etag`, `ETagOptions`, `healthcheck`, `HealthcheckOptions`, `idempotency`, `IdempotencyClaim`, `IdempotencyOptions`, `IdempotencyRecord`, `IdempotencyStore`, `IpMatcher`, `ipRestriction`, `IpRestrictionOptions`, `jwk`, `JwkKey`, `jwks`, `JwksOptions`, `jwt`, `JwtAlgorithm`, `JwtClaims`, `JwtHeader`, `JwtKeyResolver`, `JwtOptions`, `JwtPlugin`, `JwtVerificationKey`, `language`, `LanguageMatch`, `LanguageOptions`, `logger`, `LoggerOptions`, `LoopDelayHistogram`, `LoopDelayMonitor`, `MemoryIdempotencyStore`, `MemoryIdempotencyStoreOptions`, `MemoryResponseCache`, `MemoryResponseCacheOptions`, `MemoryStore`, `MemoryStoreOptions`, `methodOverride`, `MethodOverrideOptions`, `MultipartBody`, `MultipartHeadersInit`, `MultipartPart`, `multipartResponse`, `MultipartResponseOptions`, `namedCombine`, `negotiateContentType`, `openapi`, `OpenApiInfo`, `OpenApiOptions`, `OpenApiServer`, `OpenApiTag`, `OpenApiUiOptions`, `parseAcceptHeader`, `parseByteRange`, `pickLanguage`, `poweredBy`, `PoweredByOptions`, `prettyJson`, `PrettyJsonOptions`, `problemDetails`, `ProblemDetailsOptions`, `rangeResponse`, `RangeResponseOptions`, `rateLimit`, `RateLimitOptions`, `RateLimitResult`, `RateLimitStore`, `requestId`, `RequestIdOptions`, `RequestLogFields`, `responseCache`, `ResponseCacheStore`, `RouteLike`, `securityHeaders`, `SecurityHeadersOptions`, `SecurityRequirement`, `ShedReason`, `timing`, `TimingControls`, `TimingMetric`, `TimingOptions`, `TrailingSlashOptions`, `trimTrailingSlash`, `tryVerifyJwt`, `VerifiedJwt`, `verifyCsrfToken`, `verifyJwt`, `VerifyJwtOptions`, `VerifyJwtResult`
 
 ## @nifrajs/mock
 
@@ -8913,7 +8935,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`Action`, `ACTION_GLOBAL`, `apiKey`, `assertRenderAdapterConformance`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `BrowserNavigate`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createMutation`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `DehydratedState`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `gate`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateRouteSearchTypes`, `GenerateRouteSearchTypesOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `getBrowserNavigate`, `GetStaticPaths`, `gone`, `hashQueryKey`, `IDLE_BLOCKER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `notFound`, `openGraph`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `previewEndpoint`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `registerBlocker`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderedPage`, `renderPage`, `RenderPageInput`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `RETAIN_HEADER`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `RouteSearch`, `routeStyles`, `ScriptDescriptor`, `searchOf`, `SearchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `ServePublicDirOptions`, `SERVER_FN_MODULE`, `SERVER_ONLY_MODULE`, `ServerOnly`, `setBlockerController`, `setBrowserNavigate`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `STATUS_HEADER`, `statusPage`, `StatusPageOptions`, `styles`, `Submission`, `SubmitOptions`, `unsafeInlineScript`, `UnsafeScriptDescriptor`, `withISR`
+`Action`, `ACTION_GLOBAL`, `apiKey`, `assertRenderAdapterConformance`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `BrowserNavigate`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createMutation`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `DehydratedState`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `gate`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateRouteSearchTypes`, `GenerateRouteSearchTypesOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `getBrowserNavigate`, `GetStaticPaths`, `gone`, `hashQueryKey`, `IDLE_BLOCKER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `notFound`, `openGraph`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `previewEndpoint`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `registerBlocker`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderedPage`, `renderPage`, `RenderPageInput`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `RETAIN_HEADER`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `RouteSearch`, `routeStyles`, `ScriptDescriptor`, `searchOf`, `SearchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `ServePublicDirOptions`, `SERVER_FN_MODULE`, `SERVER_ONLY_MODULE`, `ServerOnly`, `setBlockerController`, `setBrowserNavigate`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `STATUS_HEADER`, `statusPage`, `StatusPageOptions`, `styles`, `Submission`, `SubmitOptions`, `unsafeInlineScript`, `UnsafeScriptDescriptor`, `withISR`
 
 ## @nifrajs/web-preact
 

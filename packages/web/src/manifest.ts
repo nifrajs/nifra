@@ -227,6 +227,8 @@ export interface RouteModule {
    * default). Older-than-`revalidate` cached pages are served stale while regenerating.
    */
   readonly revalidate?: number
+  /** Optional bounded tags used by ISR on-demand invalidation (`?tag=...`). */
+  readonly revalidateTags?: readonly string[]
   /**
    * No-framework island bundles (`@nifrajs/web/islands`) to load on this route, as `<script
    * type="module">` in the document tail. Loaded **regardless of `hydrate`** - pair with

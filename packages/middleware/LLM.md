@@ -25,11 +25,11 @@ Composable middleware for nifra - auth, CSRF, JWT/JWKS, IP restriction, CORS, bo
 - **cacheControl** _(function)_ - `cacheControl: (value: string | ((request: Request) => string | undefined), options?: CacheControlOptions) => import("@nifrajs/core").NifraP…` · from `@nifrajs/middleware`
 - **combine** _(function)_ - `combine: (...items: readonly Composable[]) => NifraPlugin` · from `@nifrajs/middleware`
 - **compression** _(function)_ - `compression: (options?: CompressionOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core…` · from `@nifrajs/middleware`
+- **conditionalResponse** _(function)_ - `conditionalResponse: (request: Request, response: Response, options?: ConditionalResponseOptions) => Response` · from `@nifrajs/middleware`
 - **contextStorage** _(function)_ - `contextStorage: () => Middleware` · from `@nifrajs/middleware/context-storage`
 - **cors** _(function)_ - `cors: (options?: CorsOptions) => Middleware` · from `@nifrajs/middleware`
-- **createAdmissionController** _(function)_ - `createAdmissionController: (options: AdmissionOptions) => AdmissionControllerHandle` · from `@nifrajs/middleware`
 
-_…and 103 more - see [`api-reference.md`](../../api-reference.md#nifrajsmiddleware) for the complete list._
+_…and 120 more - see [`api-reference.md`](../../api-reference.md#nifrajsmiddleware) for the complete list._
 
 ## Footguns
 

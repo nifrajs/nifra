@@ -891,6 +891,13 @@
     "doc": "/** A boolean: `true`/`1`/`yes`/`on` → true; `false`/`0`/`no`/`off`/empty → false (case-insensitive). */"
   },
   {
+    "name": "BoundDataPort",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface BoundDataPort<Contract extends DataContract> extends TypedDataPort<Contract> {\n}",
+    "doc": "/** A data port bound to one request context; every operation emits capability evidence first. */"
+  },
+  {
     "name": "bridgeScript",
     "kind": "function",
     "package": "@nifrajs/mcp",
@@ -1101,6 +1108,32 @@
     "doc": "/**\n * {@link ImageBackend} backed by `Bun.Image` (libjpeg-turbo / libspng / libwebp, decoded off the main\n * thread). Requires the Bun runtime. The default backend of `createImageHandler`.\n */"
   },
   {
+    "name": "ByteRange",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ByteRange {\n    readonly start: number;\n    readonly end: number;\n}",
+    "doc": "/**\n * `Range: bytes=...` parsing - the shared owner for every byte-range surface in the framework.\n *\n * This lives in core rather than in the middleware package because two unrelated layers need the\n * exact same answer: `@nifrajs/middleware`'s `rangeResponse` for caller-owned buffers, and\n * `@nifrajs/web`'s `public/` static handler for files on disk. A second implementation that happens\n * to agree today is how a media server ends up serving byte 0 of a seek request in one code path and\n * byte N in the other.\n *\n * The input is request-controlled on every call, so the parser is bounded before it is clever: a\n * capped header length and a capped specifier count keep a malformed range-set from turning a sort\n * and merge into an allocation amplifier.\n */"
+  },
+  {
+    "name": "ByteRange",
+    "kind": "interface",
+    "package": "@nifrajs/middleware",
+    "signature": "export interface ByteRange {\n    readonly start: number;\n    readonly end: number;\n}",
+    "doc": "/**\n * `Range: bytes=...` parsing - the shared owner for every byte-range surface in the framework.\n *\n * This lives in core rather than in the middleware package because two unrelated layers need the\n * exact same answer: `@nifrajs/middleware`'s `rangeResponse` for caller-owned buffers, and\n * `@nifrajs/web`'s `public/` static handler for files on disk. A second implementation that happens\n * to agree today is how a media server ends up serving byte 0 of a seek request in one code path and\n * byte N in the other.\n *\n * The input is request-controlled on every call, so the parser is bounded before it is clever: a\n * capped header length and a capped specifier count keep a malformed range-set from turning a sort\n * and merge into an allocation amplifier.\n */"
+  },
+  {
+    "name": "ByteRangeResult",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type ByteRangeResult = {\n    readonly kind: \"none\";\n} | {\n    readonly kind: \"unsatisfiable\";\n} | {\n    readonly kind: \"satisfiable\";\n    readonly ranges: readonly ByteRange[];\n};"
+  },
+  {
+    "name": "ByteRangeResult",
+    "kind": "type",
+    "package": "@nifrajs/middleware",
+    "signature": "export type ByteRangeResult = {\n    readonly kind: \"none\";\n} | {\n    readonly kind: \"unsatisfiable\";\n} | {\n    readonly kind: \"satisfiable\";\n    readonly ranges: readonly ByteRange[];\n};"
+  },
+  {
     "name": "bytes",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -1155,7 +1188,7 @@
     "name": "CachedResponse",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface CachedResponse {\n    /** The rendered document (UTF-8 HTML, fully buffered). */\n    readonly body: string;\n    readonly status: number;\n    /** Response headers to replay (e.g. `content-type`). */\n    readonly headers: Readonly<Record<string, string>>;\n    /** When this entry was stored, via the injected clock (ms epoch). */\n    readonly storedAt: number;\n    /** Freshness window (ms): `now - storedAt >= revalidate` ⇒ stale (serve it, regenerate behind it). */\n    readonly revalidate: number;\n}",
+    "signature": "export interface CachedResponse {\n    /** The rendered document (UTF-8 HTML, fully buffered). */\n    readonly body: string;\n    readonly status: number;\n    /** Response headers to replay (e.g. `content-type`). */\n    readonly headers: Readonly<Record<string, string>>;\n    /** When this entry was stored, via the injected clock (ms epoch). */\n    readonly storedAt: number;\n    /** Freshness window (ms): `now - storedAt >= revalidate` ⇒ stale (serve it, regenerate behind it). */\n    readonly revalidate: number;\n    /** Public, bounded invalidation labels. A tag purge makes matching entries miss immediately. */\n    readonly tags?: readonly string[];\n}",
     "doc": "/** A cached SSR response - the bytes + metadata a {@link CacheStore} persists. */"
   },
   {
@@ -1181,7 +1214,7 @@
     "name": "CacheStore",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface CacheStore {\n    /** The cached entry for `key`, or `undefined` on a miss. */\n    get(key: string): Promise<CachedResponse | undefined>;\n    /** Store (or overwrite) the entry for `key`. */\n    set(key: string, value: CachedResponse): Promise<void>;\n    /** Drop `key` (on-demand revalidation / purge). A no-op if absent. */\n    delete(key: string): Promise<void>;\n}",
+    "signature": "export interface CacheStore {\n    /** The cached entry for `key`, or `undefined` on a miss. */\n    get(key: string): Promise<CachedResponse | undefined>;\n    /** Store (or overwrite) the entry for `key`. */\n    set(key: string, value: CachedResponse): Promise<void>;\n    /** Drop `key` (on-demand revalidation / purge). A no-op if absent. */\n    delete(key: string): Promise<void>;\n    /** Drop every cached response carrying `tag`, when the backend supports tag invalidation. */\n    readonly invalidateTag?: (tag: string) => Promise<void>;\n}",
     "doc": "/**\n * Pluggable ISR cache backend. **Production deploys MUST use a shared/durable store** (Workers KV,\n * Redis, the platform Cache API) so cached pages *and* revalidation hold across instances;\n * {@link MemoryCacheStore} is dev / single-instance only. Implementations are async so a network store\n * (KV/Redis) fits the same interface.\n */"
   },
   {
@@ -1726,6 +1759,57 @@
     "signature": "export declare function certifyAdapter<Adapter>(options: {\n    readonly profile: AdapterCertificationProfile<Adapter>;\n    readonly adapterId: string;\n    /** A fresh adapter per check prevents one failed check from contaminating the next. */\n    readonly createAdapter: () => Adapter | Promise<Adapter>;\n    readonly cleanup?: (adapter: Adapter) => void | Promise<void>;\n}): Promise<AdapterCertificationReport>;"
   },
   {
+    "name": "ChannelCloseReason",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type ChannelCloseReason = \"closed\" | \"backpressure\" | \"aborted\";"
+  },
+  {
+    "name": "ChannelContract",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ChannelContract<Name extends string, Message> {\n    readonly name: Name;\n    /** Type-only message witness; adapters never materialize it. */\n    readonly __message?: (value: Message) => Message;\n}",
+    "doc": "/** Typed, runtime-neutral channel contracts. Durable replay, presence, fan-out, and tenant-aware\n * routing belong in an adapter; the bundled hub provides only bounded process-local replay for tests\n * and local development. */"
+  },
+  {
+    "name": "ChannelEvent",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ChannelEvent<Message> {\n    /** Monotonic within one channel; adapters may use a different opaque cursor representation. */\n    readonly sequence: number;\n    readonly resumeToken: string;\n    readonly data: Message;\n}"
+  },
+  {
+    "name": "ChannelHub",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ChannelHub {\n    subscribe<Name extends string, Message>(channel: ChannelContract<Name, Message>, options?: ChannelSubscribeOptions): ChannelSubscription<Message>;\n    publish<Name extends string, Message>(channel: ChannelContract<Name, Message>, data: Message): ChannelEvent<Message>;\n}"
+  },
+  {
+    "name": "channelReadableStream",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function channelReadableStream<Message>(subscription: ChannelSubscription<Message>): ReadableStream<ChannelEvent<Message>>;",
+    "doc": "/** Adapt a channel subscription to a cancellable Web stream for SSE/HTTP adapters. */"
+  },
+  {
+    "name": "ChannelResumeUnavailableError",
+    "kind": "class",
+    "package": "@nifrajs/core",
+    "signature": "export declare class ChannelResumeUnavailableError extends Error {\n    readonly channel: string;\n    readonly resumeToken: string;\n    constructor(channel: string, resumeToken: string);\n}",
+    "doc": "/** A requested cursor is malformed, belongs to another channel, or fell outside retained history. */"
+  },
+  {
+    "name": "ChannelSubscribeOptions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ChannelSubscribeOptions {\n    /** Maximum undelivered events retained for this subscriber. Default 64. */\n    readonly maxQueue?: number;\n    /** Resume after this opaque cursor. The adapter must fail closed when the cursor is unavailable. */\n    readonly resumeFrom?: string;\n    readonly signal?: AbortSignal;\n}"
+  },
+  {
+    "name": "ChannelSubscription",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ChannelSubscription<Message> extends AsyncIterableIterator<ChannelEvent<Message>> {\n    readonly channel: string;\n    readonly closed: boolean;\n    readonly closeReason: ChannelCloseReason | undefined;\n    readonly resumeToken: string | undefined;\n    close(): void;\n}"
+  },
+  {
     "name": "checkResponseContract",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -2009,6 +2093,19 @@
     "doc": "/**\n * SHA-256 fingerprint binding a key to one request: method, path (+ query), and the raw body bytes.\n * A collision-resistant hash matters - a weak hash would let a crafted body replay another's response.\n */"
   },
   {
+    "name": "conditionalResponse",
+    "kind": "function",
+    "package": "@nifrajs/middleware",
+    "signature": "export declare function conditionalResponse(request: Request, response: Response, options?: ConditionalResponseOptions): Response;",
+    "doc": "/** Apply validators to a response and produce a standards-compliant 304 when it is fresh. */"
+  },
+  {
+    "name": "ConditionalResponseOptions",
+    "kind": "interface",
+    "package": "@nifrajs/middleware",
+    "signature": "export interface ConditionalResponseOptions {\n    /** Entity tag to attach and compare using HTTP weak comparison for GET/HEAD. */\n    readonly etag?: string;\n    /** Last-modified validator to attach and compare at one-second HTTP date precision. */\n    readonly lastModified?: Date;\n}"
+  },
+  {
     "name": "consoleAgentExporter",
     "kind": "function",
     "package": "@nifrajs/agent-telemetry",
@@ -2055,6 +2152,12 @@
     "kind": "const",
     "package": "@nifrajs/image",
     "signature": "export declare const CONTENT_TYPE: Record<OutputFormat, string>;"
+  },
+  {
+    "name": "ContentPreference",
+    "kind": "interface",
+    "package": "@nifrajs/middleware",
+    "signature": "export interface ContentPreference {\n    readonly type: string;\n    readonly subtype: string;\n    readonly q: number;\n    readonly specificity: 0 | 1 | 2;\n}"
   },
   {
     "name": "ContentProps",
@@ -2273,6 +2376,13 @@
     "kind": "function",
     "package": "@nifrajs/middleware",
     "signature": "export declare function createCsrfToken(secret: string | Uint8Array, nonce?: string): Promise<string>;"
+  },
+  {
+    "name": "createDataPort",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function createDataPort<Contract extends DataContract>(contract: Contract, adapter: TypedDataPort<Contract>, options?: DataPortOptions): DataPort<Contract>;",
+    "doc": "/**\n * Bind a private data adapter to request-local capability evidence.\n *\n * The adapter remains responsible for RLS enforcement and durable storage. This wrapper owns the\n * framework-side proof boundary: it emits exactly the operation's typed `db.read`/`db.write` token\n * before invoking the adapter, and refuses to run when no beacon is configured or the beacon denies\n * the operation. The context is never copied into the request or retained by the port.\n *\n * The emitted token is derived from the **contract**, never from `request.capability`. The typed\n * request narrows that field, but types are erased before this line runs, and a request assembled\n * from decoded input would otherwise let a write operation announce itself as `db.read` - evidence\n * that names the wrong capability is worse than no evidence, because the ledger looks satisfied. An\n * unknown operation, or a declared capability that disagrees with the contract, fails closed.\n */"
   },
   {
     "name": "createDevServer",
@@ -2615,6 +2725,13 @@
     "signature": "export declare const CURSOR_MCP_JSON_PATH = \".cursor/mcp.json\";"
   },
   {
+    "name": "DATA_CAPABILITIES",
+    "kind": "const",
+    "package": "@nifrajs/core",
+    "signature": "export declare const DATA_CAPABILITIES: Readonly<{\n    readonly read: \"db.read\";\n    readonly write: \"db.write\";\n}>;",
+    "doc": "/** Public, token-only data access contracts. Durable adapters and RLS policy enforcement stay outside\n * this package; this subpath defines the typed seam they implement. */"
+  },
+  {
     "name": "DATA_CLASSIFICATION_RANK",
     "kind": "const",
     "package": "@nifrajs/core",
@@ -2636,6 +2753,25 @@
     "doc": "/**\n * Request header that asks a nifra route's GET to return just the loader data as JSON (instead of\n * the full HTML document). Set by client-side navigation; read by `createWebApp`'s GET handler.\n */"
   },
   {
+    "name": "DataAccess",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type DataAccess = keyof typeof DATA_CAPABILITIES;"
+  },
+  {
+    "name": "DataCapability",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type DataCapability = (typeof DATA_CAPABILITIES)[DataAccess];"
+  },
+  {
+    "name": "DataCapabilityBeacon",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type DataCapabilityBeacon = (context: object, capability: DataCapability) => void;",
+    "doc": "/** Runtime capability beacon used by a request-bound data port. */"
+  },
+  {
     "name": "DataClassification",
     "kind": "type",
     "package": "@nifrajs/core",
@@ -2643,11 +2779,93 @@
     "doc": "/** Sensitivity of the data a response carries. Ordered `public` < `pii` < `secret`. */"
   },
   {
+    "name": "DataContract",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface DataContract<Operations extends DataOperationMap = DataOperationMap> {\n    readonly version: string;\n    readonly operations: Operations;\n}"
+  },
+  {
+    "name": "DataContractSnapshot",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface DataContractSnapshot {\n    readonly version: string;\n    readonly operations: Readonly<Record<string, {\n        readonly access: DataAccess;\n    }>>;\n}"
+  },
+  {
+    "name": "DataDrift",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface DataDrift {\n    readonly kind: \"version\" | \"added\" | \"removed\" | \"access-changed\";\n    readonly operation?: string;\n    readonly declaredAccess?: DataAccess;\n    readonly observedAccess?: DataAccess;\n    readonly declaredVersion?: string;\n    readonly observedVersion?: string;\n}"
+  },
+  {
     "name": "dataFileFor",
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function dataFileFor(pattern: string): string;",
     "doc": "/** The static loader-data file next to a route's `index.html`: `/` → `_data.json`, `/a/b` →\n * `a/b/_data.json`. The client fetches it on soft-nav into a prerendered route (no worker). */"
+  },
+  {
+    "name": "DataInput",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type DataInput<Contract extends DataContract, Operation extends keyof Contract[\"operations\"] & string> = Contract[\"operations\"][Operation] extends infer Definition ? InputOf<Definition> : never;"
+  },
+  {
+    "name": "DataOperationMap",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type DataOperationMap = Readonly<Record<string, DataOperationSpec>>;"
+  },
+  {
+    "name": "DataOperationSpec",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface DataOperationSpec {\n    readonly access: DataAccess;\n    readonly input?: unknown;\n    readonly output?: unknown;\n}"
+  },
+  {
+    "name": "DataOutput",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type DataOutput<Contract extends DataContract, Operation extends keyof Contract[\"operations\"] & string> = Contract[\"operations\"][Operation] extends infer Definition ? OutputOf<Definition> : unknown;"
+  },
+  {
+    "name": "DataPort",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface DataPort<Contract extends DataContract> {\n    for(context: object): BoundDataPort<Contract>;\n}",
+    "doc": "/** Public factory for wiring a private data adapter into Nifra's capability evidence chain. */"
+  },
+  {
+    "name": "DataPortOptions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface DataPortOptions {\n    /** Usually `useCapability` from `@nifrajs/core/capabilities`. */\n    readonly beacon?: DataCapabilityBeacon;\n}",
+    "doc": "/** Options for the public request-bound data port wrapper. */"
+  },
+  {
+    "name": "DataRequest",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface DataRequest<Operation extends string = string, Input = unknown> {\n    readonly operation: Operation;\n    readonly scope: DataScope;\n    readonly capability: DataCapability;\n    readonly input: Input;\n}"
+  },
+  {
+    "name": "DataRequestFor",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type DataRequestFor<Contract extends DataContract, Operation extends keyof Contract[\"operations\"] & string> = {\n    readonly operation: Operation;\n    readonly scope: DataScope;\n    readonly capability: CapabilityOf<Contract[\"operations\"][Operation]>;\n} & InputField<DataInput<Contract, Operation>>;"
+  },
+  {
+    "name": "dataScope",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function dataScope(token: string, digest?: string): DataScope;",
+    "doc": "/** Backward-compatible constructor for {@link RlsScope}. */"
+  },
+  {
+    "name": "DataScope",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type DataScope = RlsScope;",
+    "doc": "/** Backward-compatible name for the request scope carried by every data operation. */"
   },
   {
     "name": "DeadlineAdmission",
@@ -2817,6 +3035,13 @@
     "doc": "/** Define and validate a custom domain/provider profile at module initialization. */"
   },
   {
+    "name": "defineChannel",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function defineChannel<Name extends string, Message>(name: Name): ChannelContract<Name, Message>;",
+    "doc": "/** Define a typed channel name. Message types are erased; adapters own validation at their boundary. */"
+  },
+  {
     "name": "defineCollection",
     "kind": "function",
     "package": "@nifrajs/content",
@@ -2829,6 +3054,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function defineContract<const C extends ContractShape>(contract: C): C;",
     "doc": "/**\n * Define a standalone, versionable contract. Identity at runtime (it returns the\n * contract for type inference via the `const` type parameter, which preserves the\n * path/method literals) plus boot-time (L2) validation: each operation must use a\n * known method, a path starting with `/`, and no two operations may share a\n * `(method, path)`. Deeper path validation (param names, wildcard position) runs\n * when the contract is `implement`ed.\n */"
+  },
+  {
+    "name": "defineDataContract",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function defineDataContract<const Operations extends DataOperationMap>(input: {\n    readonly version: string;\n    readonly operations: Operations;\n}): DataContract<Operations>;",
+    "doc": "/** Define and freeze a token-only data contract. Input/output types are erased at runtime. */"
   },
   {
     "name": "defineEnv",
@@ -2946,7 +3178,7 @@
     "name": "deriveRouteEntry",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function deriveRouteEntry(id: string, pattern: string, module: Pick<RouteModule, \"prerender\" | \"getStaticPaths\" | \"revalidate\" | \"hydrate\">, prerenderedPaths?: readonly string[]): RouteManifestEntry;",
+    "signature": "export declare function deriveRouteEntry(id: string, pattern: string, module: Pick<RouteModule, \"prerender\" | \"getStaticPaths\" | \"revalidate\" | \"revalidateTags\" | \"hydrate\">, prerenderedPaths?: readonly string[]): RouteManifestEntry;",
     "doc": "/**\n * Derive one route's behaviour from its module exports.\n *\n * `prerender`/`getStaticPaths` win over `revalidate`: a page rendered at build time is not revalidated at\n * runtime, so if a route declares both, the build-time answer is the one that describes what ships. That\n * combination is worth surfacing rather than silently resolving, which is what `conflicts` is for once a\n * target is known.\n */"
   },
   {
@@ -3048,6 +3280,13 @@
     "package": "@nifrajs/web",
     "signature": "export interface DiagnosticFrame {\n    readonly raw: string;\n    readonly file?: string;\n    readonly line?: number;\n    readonly column?: number;\n}",
     "doc": "/** One parsed stack frame. `file`/`line`/`column` are present only when the frame could be located. */"
+  },
+  {
+    "name": "diffDataContract",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function diffDataContract(declared: DataContract, observed: DataContractSnapshot | DataContract): readonly DataDrift[];",
+    "doc": "/** Compare a declared contract with an adapter-observed token-only snapshot. */"
   },
   {
     "name": "diffManifestRoutes",
@@ -4909,6 +5148,13 @@
     "doc": "/**\n * Response header a route uses to advertise its ISR freshness (**seconds**) to a {@link withISR}\n * wrapper - `createWebApp` emits it from a route's `export const revalidate`. Deliberately distinct\n * from the action-revalidation `x-nifra-revalidate` header (a CSV path list the *client* parses to\n * refetch): this one is an integer TTL the *wrapper* reads, so the two channels never alias.\n */"
   },
   {
+    "name": "ISR_REVALIDATE_TAGS_HEADER",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const ISR_REVALIDATE_TAGS_HEADER = \"x-nifra-isr-tags\";",
+    "doc": "/** Response header carrying bounded route tags into {@link withISR}. */"
+  },
+  {
     "name": "ISR_STATUS_HEADER",
     "kind": "const",
     "package": "@nifrajs/web",
@@ -5146,7 +5392,7 @@
     "name": "KVCacheStore",
     "kind": "class",
     "package": "@nifrajs/web",
-    "signature": "export declare class KVCacheStore implements CacheStore {\n    private readonly kv;\n    private readonly putOptions;\n    constructor(kv: KVNamespaceLike, options?: KVCacheStoreOptions);\n    get(key: string): Promise<CachedResponse | undefined>;\n    set(key: string, value: CachedResponse): Promise<void>;\n    delete(key: string): Promise<void>;\n}",
+    "signature": "export declare class KVCacheStore implements CacheStore {\n    private readonly kv;\n    private readonly putOptions;\n    constructor(kv: KVNamespaceLike, options?: KVCacheStoreOptions);\n    get(key: string): Promise<CachedResponse | undefined>;\n    set(key: string, value: CachedResponse): Promise<void>;\n    delete(key: string): Promise<void>;\n    invalidateTag(tag: string): Promise<void>;\n    private tagKey;\n}",
     "doc": "/**\n * A {@link CacheStore} backed by a **Cloudflare Workers KV** namespace (or any {@link KVNamespaceLike}\n * binding) - the production-grade shared/durable store ISR wants: cached pages and on-demand purges\n * hold *across* worker instances (unlike the per-instance {@link MemoryCacheStore}). Entries serialize\n * to JSON; every read is validated before it's trusted (a malformed/version-skewed entry is treated as\n * a miss). Construct it in your Workers `fetch` from the binding: `new KVCacheStore(env.ISR_CACHE)`.\n */"
   },
   {
@@ -5687,7 +5933,7 @@
     "name": "MemoryCacheStore",
     "kind": "class",
     "package": "@nifrajs/web",
-    "signature": "export declare class MemoryCacheStore implements CacheStore {\n    private readonly cache;\n    private readonly max;\n    constructor(options?: MemoryCacheStoreOptions);\n    get(key: string): Promise<CachedResponse | undefined>;\n    set(key: string, value: CachedResponse): Promise<void>;\n    delete(key: string): Promise<void>;\n}",
+    "signature": "export declare class MemoryCacheStore implements CacheStore {\n    private readonly cache;\n    private readonly max;\n    private readonly tagEpoch;\n    constructor(options?: MemoryCacheStoreOptions);\n    get(key: string): Promise<CachedResponse | undefined>;\n    set(key: string, value: CachedResponse): Promise<void>;\n    delete(key: string): Promise<void>;\n    invalidateTag(tag: string): Promise<void>;\n    private pruneTagEpochs;\n}",
     "doc": "/**\n * In-process ISR cache. Refuses to run in production unless explicitly allowed (mirrors the\n * rate-limit `MemoryStore` - a per-instance cache is unsafe across instances). Bounded **LRU**: a\n * read or write bumps the entry, so the least-recently-used evicts past `max` (a hot, frequently-read\n * page survives a burst of new pages).\n */"
   },
   {
@@ -5701,6 +5947,19 @@
     "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface MemoryCausalityStoreOptions {\n    /** Global record bound. Default 10,000. */\n    readonly maxRecords?: number;\n    /** In-memory evidence disappears on restart and is rejected in production unless explicitly allowed. */\n    readonly allowInProduction?: boolean;\n}"
+  },
+  {
+    "name": "memoryChannelHub",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function memoryChannelHub(options?: MemoryChannelHubOptions): ChannelHub;",
+    "doc": "/** A bounded in-memory hub suitable for tests and local development, never for durable fan-out. */"
+  },
+  {
+    "name": "MemoryChannelHubOptions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface MemoryChannelHubOptions {\n    /** Default queue bound per subscriber. Default 64. */\n    readonly maxQueue?: number;\n    /** Maximum events retained per channel for local cursor replay. Default: the queue bound. */\n    readonly historySize?: number;\n}"
   },
   {
     "name": "MemoryDurableEffectStore",
@@ -6049,6 +6308,37 @@
     "doc": "/** Optional server-side copy/move capability. */"
   },
   {
+    "name": "MultipartBody",
+    "kind": "type",
+    "package": "@nifrajs/middleware",
+    "signature": "export type MultipartBody = string | Uint8Array | ArrayBuffer | ArrayBufferView | Blob | ReadableStream<Uint8Array>;"
+  },
+  {
+    "name": "MultipartHeadersInit",
+    "kind": "type",
+    "package": "@nifrajs/middleware",
+    "signature": "export type MultipartHeadersInit = Headers | Readonly<Record<string, string>> | ReadonlyArray<readonly [string, string]>;"
+  },
+  {
+    "name": "MultipartPart",
+    "kind": "interface",
+    "package": "@nifrajs/middleware",
+    "signature": "export interface MultipartPart {\n    readonly headers?: MultipartHeadersInit;\n    readonly body: MultipartBody;\n}"
+  },
+  {
+    "name": "multipartResponse",
+    "kind": "function",
+    "package": "@nifrajs/middleware",
+    "signature": "export declare function multipartResponse(parts: Iterable<MultipartPart> | AsyncIterable<MultipartPart>, options?: MultipartResponseOptions): Response;",
+    "doc": "/**\n * Stream a multipart response without buffering the parts. The part headers and bodies are emitted\n * as supplied; this helper deliberately does not persist, inspect, or serialize payloads.\n */"
+  },
+  {
+    "name": "MultipartResponseOptions",
+    "kind": "interface",
+    "package": "@nifrajs/middleware",
+    "signature": "export interface MultipartResponseOptions {\n    /** Boundary token. If omitted, a cryptographically random boundary is generated. */\n    readonly boundary?: string;\n    /** Multipart subtype. Defaults to `mixed`; use `form-data` when parts carry form names. */\n    readonly subtype?: \"mixed\" | \"form-data\";\n    /** HTTP response status. Defaults to 200. */\n    readonly status?: number;\n}"
+  },
+  {
     "name": "MutationCallbacks",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -6194,6 +6484,13 @@
     "package": "@nifrajs/web-react",
     "signature": "export interface NavLinkRenderProps {\n    /** True when the current location matches this link's `to` (prefix match, or exact when `end`). */\n    readonly isActive: boolean;\n    /** True while a client navigation to THIS link's target is in flight (matched like `isActive`).\n     * `false` on SSR and when idle. Use it to show a per-link spinner during the transition. */\n    readonly isPending: boolean;\n}",
     "doc": "/** The state a {@link NavLink}'s function-form `className`/`style`/`children` receive. */"
+  },
+  {
+    "name": "negotiateContentType",
+    "kind": "function",
+    "package": "@nifrajs/middleware",
+    "signature": "export declare function negotiateContentType(accept: string | null | Headers | Request, offered: readonly string[]): string | undefined;",
+    "doc": "/**\n * Select the best offered media type for an `Accept` header. The returned string is the original\n * offered value, so parameters such as `profile` are preserved. An absent/empty header accepts the\n * first offer; an explicit `q=0` or no matching offer returns `undefined`.\n */"
   },
   {
     "name": "negotiateLocale",
@@ -6503,6 +6800,32 @@
     "signature": "export interface ObservationParent {\n    readonly traceId: string;\n    readonly spanId: string;\n    readonly sampled: boolean;\n}"
   },
   {
+    "name": "OgImageOptions",
+    "kind": "interface",
+    "package": "@nifrajs/image",
+    "signature": "export interface OgImageOptions {\n    readonly title: string;\n    readonly description?: string;\n    readonly eyebrow?: string;\n    readonly width?: number;\n    readonly height?: number;\n    readonly background?: string;\n    readonly foreground?: string;\n    readonly accent?: string;\n    /** Optional PNG/JPEG/WebP backend. Omit to serve the generated SVG. */\n    readonly rasterizer?: OgImageRasterizer;\n    /** Browser/cache freshness in seconds. Default one year. */\n    readonly cacheMaxAge?: number;\n    /** Maximum bytes accepted from an injected rasterizer. Default 10 MiB. */\n    readonly maxBytes?: number;\n}"
+  },
+  {
+    "name": "OgImageRasterized",
+    "kind": "interface",
+    "package": "@nifrajs/image",
+    "signature": "export interface OgImageRasterized {\n    readonly bytes: Uint8Array;\n    readonly contentType: string;\n}",
+    "doc": "/**\n * Dependency-free Open Graph image generation.\n *\n * The default renderer produces a safe SVG, which is useful for crawlers and can be served on every\n * fetch runtime. Applications that require PNG/JPEG can inject a rasterizer (for example a Satori +\n * Resvg adapter) without making either dependency part of `@nifrajs/image` or its browser bundle.\n */"
+  },
+  {
+    "name": "OgImageRasterizer",
+    "kind": "type",
+    "package": "@nifrajs/image",
+    "signature": "export type OgImageRasterizer = (svg: string) => OgImageRasterized | Promise<OgImageRasterized>;"
+  },
+  {
+    "name": "ogImageResponse",
+    "kind": "function",
+    "package": "@nifrajs/image",
+    "signature": "export declare function ogImageResponse(options: OgImageOptions, request?: Request): Promise<Response>;",
+    "doc": "/**\n * Build a cacheable OG image response. GET and HEAD are supported; conditional requests short-circuit\n * rasterization, so a crawler revalidation never repeats expensive codec work.\n */"
+  },
+  {
     "name": "OnRequestResult",
     "kind": "type",
     "package": "@nifrajs/core",
@@ -6680,6 +7003,27 @@
     "package": "@nifrajs/core",
     "signature": "export declare function parse(text: string, limits?: WireDecodeLimits): unknown;",
     "doc": "/** `JSON.parse` + `decode` in one call - the rich-type equivalent of `JSON.parse`. */"
+  },
+  {
+    "name": "parseAcceptHeader",
+    "kind": "function",
+    "package": "@nifrajs/middleware",
+    "signature": "export declare function parseAcceptHeader(value: string | null): readonly ContentPreference[];",
+    "doc": "/** Parse an `Accept` header, preserving quality and wildcard specificity. */"
+  },
+  {
+    "name": "parseByteRange",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function parseByteRange(value: string | null, size: number): ByteRangeResult;",
+    "doc": "/**\n * Parse an HTTP `Range: bytes=...` header against a known representation size.\n *\n * Three outcomes, and the distinction matters to the caller's status code: `none` means the header\n * was absent or syntactically invalid and must be ignored (200), `unsatisfiable` means a well-formed\n * range-set selected nothing (416), `satisfiable` carries the coalesced ranges (206).\n */"
+  },
+  {
+    "name": "parseByteRange",
+    "kind": "function",
+    "package": "@nifrajs/middleware",
+    "signature": "export declare function parseByteRange(value: string | null, size: number): ByteRangeResult;",
+    "doc": "/**\n * Parse an HTTP `Range: bytes=...` header against a known representation size.\n *\n * Three outcomes, and the distinction matters to the caller's status code: `none` means the header\n * was absent or syntactically invalid and must be ignored (200), `unsatisfiable` means a well-formed\n * range-set selected nothing (416), `satisfiable` carries the coalesced ranges (206).\n */"
   },
   {
     "name": "parseCausalityContext",
@@ -7066,6 +7410,19 @@
     "doc": "/**\n * The principal type for a given `requireTenant` flag: `tenantId` narrows to a required `string` when\n * `requireTenant` is `true`, otherwise stays optional (`string | undefined`). The flag is captured as a\n * literal `const` type parameter at the call sites so `{ requireTenant: true }` selects the narrowed branch.\n */"
   },
   {
+    "name": "problemDetails",
+    "kind": "function",
+    "package": "@nifrajs/middleware",
+    "signature": "export declare function problemDetails(options?: ProblemDetailsOptions): import(\"@nifrajs/core/server\").NifraPlugin<import(\"@nifrajs/core/server\").AnyServer, import(\"@nifrajs/core/server\").AnyServer>;",
+    "doc": "/**\n * Opt-in RFC 9457 formatting for Nifra's structured error envelope.\n *\n * The default `{ ok: false, error }` response remains unchanged. This plugin only converts that\n * framework envelope, so custom JSON errors and already-formatted problem documents pass through.\n * Raw JSON error Responses are supported through a capped clone; encoded responses are never drained.\n */"
+  },
+  {
+    "name": "ProblemDetailsOptions",
+    "kind": "interface",
+    "package": "@nifrajs/middleware",
+    "signature": "export interface ProblemDetailsOptions {\n    /** Include only the request pathname as `instance`. Query strings are never included. Default false. */\n    readonly includeInstance?: boolean;\n    /** Prefix for code-specific problem types. Default `about:blank`. */\n    readonly typeBase?: string;\n    /** Maximum JSON error body inspected. Default 64 KiB. */\n    readonly maxBytes?: number;\n}"
+  },
+  {
     "name": "prompt",
     "kind": "function",
     "package": "@nifrajs/prompt",
@@ -7268,6 +7625,19 @@
     "package": "@nifrajs/core",
     "signature": "export declare function randomEffectDigestKey(): Uint8Array;",
     "doc": "/** Fresh random digest key (32 bytes). Per-process by default - persist one externally to correlate across restarts. */"
+  },
+  {
+    "name": "rangeResponse",
+    "kind": "function",
+    "package": "@nifrajs/middleware",
+    "signature": "export declare function rangeResponse(request: Request, body: string | ArrayBuffer | ArrayBufferView | Uint8Array, options?: RangeResponseOptions): Response;",
+    "doc": "/**\n * Create a standards-shaped byte representation response with Range, If-Range, and conditional\n * validator handling. The input is already caller-owned memory; this helper does not read or retain\n * external state. Multiple ranges use `multipart/byteranges` and adjacent ranges are coalesced.\n */"
+  },
+  {
+    "name": "RangeResponseOptions",
+    "kind": "interface",
+    "package": "@nifrajs/middleware",
+    "signature": "export interface RangeResponseOptions {\n    /** Media type for the complete representation and each single-range response. */\n    readonly contentType?: string;\n    /** Entity tag used for conditional requests and `If-Range`. */\n    readonly etag?: string;\n    /** Validator used for conditional requests and date-form `If-Range`. */\n    readonly lastModified?: Date;\n    /** Optional cache policy copied to the response. */\n    readonly cacheControl?: string;\n}"
   },
   {
     "name": "rateLimit",
@@ -7628,6 +7998,13 @@
     "doc": "/**\n * How a route produces its HTML.\n *\n * - `static`  - prerendered at build; served as a file, no server render at request time.\n * - `isr`     - server-rendered, then cached and revalidated on a timer (`export const revalidate`).\n * - `ssr`     - server-rendered per request. The default, and the only mode that needs a live server.\n */"
   },
   {
+    "name": "renderOgImage",
+    "kind": "function",
+    "package": "@nifrajs/image",
+    "signature": "export declare function renderOgImage(options: OgImageOptions): string;",
+    "doc": "/** Render a bounded, deterministic SVG suitable for an `og:image` endpoint. */"
+  },
+  {
     "name": "renderPage",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -7645,7 +8022,7 @@
     "name": "RenderPageOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RenderPageOptions {\n    readonly adapter: RenderAdapter;\n    /** The layout chain to render - outermost layout → page (opaque; the adapter renders it). */\n    readonly chain: readonly unknown[];\n    /** The loader output for this request. */\n    readonly data: unknown;\n    /** An action's data return (POST only) - surfaced to the page as `actionData` + serialized\n     * for the client so post-POST hydration matches. Omit on GETs. */\n    readonly actionData?: unknown;\n    /**\n     * URL of the built client entry (loaded as a module script).\n     *\n     * Optional ONLY on a `hydrate: false` page, where there is no client takeover to feed and this value\n     * reaches no output at all. The union below is what enforces that: omitting it on a hydrating page\n     * stays a compile error rather than rendering `src=\"\"`.\n     */\n    readonly clientEntry?: string;\n    /** Chunk URLs for the **matched** route (its layout chain + own chunk) to `modulepreload` in the\n     * shell - so the route code downloads in parallel with the entry instead of after it\n     * (`buildClient`'s per-route map). Empty/omitted ⇒ only the entry is preloaded (unchanged). */\n    readonly preload?: readonly string[];\n    /** Stylesheet URLs for the **matched** route (its layout chain + own CSS, from `buildClient`'s\n     * `BuildManifest.css`) - injected as `<link rel=\"stylesheet\">` in `<head>` so styles arrive with the\n     * first paint (no FOUC). Rendered even on non-hydrated pages. Empty/omitted ⇒ none (unchanged). */\n    readonly styles?: readonly string[];\n    /** SSG: the prerendered-path set, serialized to `window.__NIFRA_PRERENDERED__` so the client fetches\n     * a static `_data.json` on soft-nav into a prerendered route. Empty/omitted ⇒ not injected. */\n    readonly prerenderedPaths?: readonly string[];\n    /** ISR: route freshness in seconds, emitted as the `x-nifra-isr-revalidate` header for a `withISR`\n     * wrapper to read. Omit ⇒ no header (the wrapper's default TTL applies). */\n    readonly revalidate?: number;\n    /** Matched route id; written to `window.__NIFRA_ROUTE__` so the client hydrates this chain. */\n    readonly routeId?: string;\n    /** The matched route's decoded path params - surfaced to the page as `params` (via {@link RenderProps})\n     * so an adapter's `useParams` is SSR-correct. Omit ⇒ `{}` (a route with no dynamic segments, or an\n     * error/404 render). */\n    readonly params?: Readonly<Record<string, string>>;\n    /** The request's `pathname + search` - surfaced as `path` (via {@link RenderProps}) so an adapter's\n     * `useLocation`/`useSearchParams` render the right URL server-side and hydrate without drift. Omit ⇒\n     * `\"\"`. */\n    readonly path?: string;\n    /** The route's validated search (`searchOf(mod.searchSchema, url.search)`, the same value handed to\n     * the loader as `ctx.search`), surfaced as `search` (via {@link RenderProps}) so an adapter's\n     * `useSearch` is SSR-correct. Omit ⇒ `{}` (a render with no search context). */\n    readonly search?: Record<string, unknown>;\n    /** Per-layout loader data, forwarded to the adapter as `RenderProps.layoutData`. Aligned with the\n     * chain's layout prefix; omitted when no layout in the chain has a loader. */\n    readonly layoutData?: readonly unknown[];\n    /** HTTP status for the response (default 200; e.g. 404 for a not-found page). */\n    readonly status?: number;\n    /** Extra response headers - e.g. the `cache-control` a terminal status page wants. `content-type`\n     * is ignored (the document is always HTML) and the ISR freshness header is applied after these,\n     * so neither can be overridden from here. */\n    readonly headers?: HeadersLike;\n    /** Document title (fallback when `head.title` is unset). */\n    readonly title?: string;\n    /** Resolved route head - `title` overrides `title` above; `meta`/`link` render as managed\n     * (`data-nifra`) tags the client updates on navigation.\n     *\n     * **Head contract (the layout chain contributes).** `createWebApp` resolves this via\n     * {@link mergeHeads}: a route's head is its **layout chain's** `meta`/`head` exports merged with the\n     * page's. A `_layout.tsx` may `export const meta` (or `export function meta(args)`) - its tags land\n     * on every page below it (the home for `hreflang`, `preconnect`, a section-default `<title>`). The\n     * merge is **nearest-wins for scalars** (the page's `title` overrides an inner layout's, which\n     * overrides an outer one; an undefined page title keeps the layout's) and **concatenated for the\n     * `meta`/`link` arrays** (outermost layout first, page last). `<meta>`/`<link>` attributes pass a\n     * shared tag-specific allowlist (including inert `data-*` metadata) and values are escaped. */\n    readonly head?: Meta;\n    /** Id of the container wrapping the app markup (default `\"root\"`). A non-default id also gets\n     * {@link ROOT_ATTRIBUTE}, which is how the generated client entry finds the container to hydrate -\n     * the entry is built once and cannot know what a given render chose. */\n    readonly rootId?: string;\n    /** When `false`, emit a complete but **non-hydrated** document - no client entry script, data\n     * globals, or modulepreloads. Used for server-rendered `_error` pages: a terminal state that needs no\n     * client takeover, and it sidesteps an SSR/hydrate mismatch (the server rendered the boundary, not\n     * the page the client manifest maps this route id to). Default `true`. */\n    readonly hydrate?: boolean;\n    /** Island client bundles (`@nifrajs/web/islands`) to load as `<script type=\"module\">` in the document\n     * tail - emitted **regardless of `hydrate`**, so a static (`hydrate: false`) page can still mount\n     * no-framework islands. URLs are attribute-escaped. Empty/omitted ⇒ none (unchanged output). */\n    readonly islandScripts?: readonly string[];\n    /** CSP nonce applied to every framework-owned executable script in this document. */\n    readonly nonce?: string;\n    /**\n     * Advanced: a per-route slot the renderer fills with the request-invariant document pieces (shell\n     * prefix/suffix, tail statics) on the first render and reuses afterwards, skipping their re-assembly.\n     *\n     * Only pass a cache when every shell-shaping input is IDENTICAL across the requests sharing it:\n     * same `head` content (a static meta chain - never a `meta(data)` function), `title`, `styles`,\n     * `preload`, `islandScripts`, `clientEntry`, `rootId`, `hydrate`, and `prerenderedPaths`. Per-request\n     * values (`data`, `params`, `search`, `actionData`, `layoutData`, deferred state) are always assembled\n     * fresh and safe. A per-request `nonce` disables the cache automatically. `createWebApp` wires this\n     * per route, gated on the route + layout metas being static.\n     */\n    readonly assemblyCache?: RenderAssemblyCache;\n}"
+    "signature": "export interface RenderPageOptions {\n    readonly adapter: RenderAdapter;\n    /** The layout chain to render - outermost layout → page (opaque; the adapter renders it). */\n    readonly chain: readonly unknown[];\n    /** The loader output for this request. */\n    readonly data: unknown;\n    /** An action's data return (POST only) - surfaced to the page as `actionData` + serialized\n     * for the client so post-POST hydration matches. Omit on GETs. */\n    readonly actionData?: unknown;\n    /**\n     * URL of the built client entry (loaded as a module script).\n     *\n     * Optional ONLY on a `hydrate: false` page, where there is no client takeover to feed and this value\n     * reaches no output at all. The union below is what enforces that: omitting it on a hydrating page\n     * stays a compile error rather than rendering `src=\"\"`.\n     */\n    readonly clientEntry?: string;\n    /** Chunk URLs for the **matched** route (its layout chain + own chunk) to `modulepreload` in the\n     * shell - so the route code downloads in parallel with the entry instead of after it\n     * (`buildClient`'s per-route map). Empty/omitted ⇒ only the entry is preloaded (unchanged). */\n    readonly preload?: readonly string[];\n    /** Stylesheet URLs for the **matched** route (its layout chain + own CSS, from `buildClient`'s\n     * `BuildManifest.css`) - injected as `<link rel=\"stylesheet\">` in `<head>` so styles arrive with the\n     * first paint (no FOUC). Rendered even on non-hydrated pages. Empty/omitted ⇒ none (unchanged). */\n    readonly styles?: readonly string[];\n    /** SSG: the prerendered-path set, serialized to `window.__NIFRA_PRERENDERED__` so the client fetches\n     * a static `_data.json` on soft-nav into a prerendered route. Empty/omitted ⇒ not injected. */\n    readonly prerenderedPaths?: readonly string[];\n    /** ISR: route freshness in seconds, emitted as the `x-nifra-isr-revalidate` header for a `withISR`\n     * wrapper to read. Omit ⇒ no header (the wrapper's default TTL applies). */\n    readonly revalidate?: number;\n    /** ISR invalidation tags emitted as a bounded `x-nifra-isr-tags` header. */\n    readonly revalidateTags?: readonly string[];\n    /** Matched route id; written to `window.__NIFRA_ROUTE__` so the client hydrates this chain. */\n    readonly routeId?: string;\n    /** The matched route's decoded path params - surfaced to the page as `params` (via {@link RenderProps})\n     * so an adapter's `useParams` is SSR-correct. Omit ⇒ `{}` (a route with no dynamic segments, or an\n     * error/404 render). */\n    readonly params?: Readonly<Record<string, string>>;\n    /** The request's `pathname + search` - surfaced as `path` (via {@link RenderProps}) so an adapter's\n     * `useLocation`/`useSearchParams` render the right URL server-side and hydrate without drift. Omit ⇒\n     * `\"\"`. */\n    readonly path?: string;\n    /** The route's validated search (`searchOf(mod.searchSchema, url.search)`, the same value handed to\n     * the loader as `ctx.search`), surfaced as `search` (via {@link RenderProps}) so an adapter's\n     * `useSearch` is SSR-correct. Omit ⇒ `{}` (a render with no search context). */\n    readonly search?: Record<string, unknown>;\n    /** Per-layout loader data, forwarded to the adapter as `RenderProps.layoutData`. Aligned with the\n     * chain's layout prefix; omitted when no layout in the chain has a loader. */\n    readonly layoutData?: readonly unknown[];\n    /** HTTP status for the response (default 200; e.g. 404 for a not-found page). */\n    readonly status?: number;\n    /** Extra response headers - e.g. the `cache-control` a terminal status page wants. `content-type`\n     * is ignored (the document is always HTML) and the ISR freshness header is applied after these,\n     * so neither can be overridden from here. */\n    readonly headers?: HeadersLike;\n    /** Document title (fallback when `head.title` is unset). */\n    readonly title?: string;\n    /** Resolved route head - `title` overrides `title` above; `meta`/`link` render as managed\n     * (`data-nifra`) tags the client updates on navigation.\n     *\n     * **Head contract (the layout chain contributes).** `createWebApp` resolves this via\n     * {@link mergeHeads}: a route's head is its **layout chain's** `meta`/`head` exports merged with the\n     * page's. A `_layout.tsx` may `export const meta` (or `export function meta(args)`) - its tags land\n     * on every page below it (the home for `hreflang`, `preconnect`, a section-default `<title>`). The\n     * merge is **nearest-wins for scalars** (the page's `title` overrides an inner layout's, which\n     * overrides an outer one; an undefined page title keeps the layout's) and **concatenated for the\n     * `meta`/`link` arrays** (outermost layout first, page last). `<meta>`/`<link>` attributes pass a\n     * shared tag-specific allowlist (including inert `data-*` metadata) and values are escaped. */\n    readonly head?: Meta;\n    /** Id of the container wrapping the app markup (default `\"root\"`). A non-default id also gets\n     * {@link ROOT_ATTRIBUTE}, which is how the generated client entry finds the container to hydrate -\n     * the entry is built once and cannot know what a given render chose. */\n    readonly rootId?: string;\n    /** When `false`, emit a complete but **non-hydrated** document - no client entry script, data\n     * globals, or modulepreloads. Used for server-rendered `_error` pages: a terminal state that needs no\n     * client takeover, and it sidesteps an SSR/hydrate mismatch (the server rendered the boundary, not\n     * the page the client manifest maps this route id to). Default `true`. */\n    readonly hydrate?: boolean;\n    /** Island client bundles (`@nifrajs/web/islands`) to load as `<script type=\"module\">` in the document\n     * tail - emitted **regardless of `hydrate`**, so a static (`hydrate: false`) page can still mount\n     * no-framework islands. URLs are attribute-escaped. Empty/omitted ⇒ none (unchanged output). */\n    readonly islandScripts?: readonly string[];\n    /** CSP nonce applied to every framework-owned executable script in this document. */\n    readonly nonce?: string;\n    /**\n     * Advanced: a per-route slot the renderer fills with the request-invariant document pieces (shell\n     * prefix/suffix, tail statics) on the first render and reuses afterwards, skipping their re-assembly.\n     *\n     * Only pass a cache when every shell-shaping input is IDENTICAL across the requests sharing it:\n     * same `head` content (a static meta chain - never a `meta(data)` function), `title`, `styles`,\n     * `preload`, `islandScripts`, `clientEntry`, `rootId`, `hydrate`, and `prerenderedPaths`. Per-request\n     * values (`data`, `params`, `search`, `actionData`, `layoutData`, deferred state) are always assembled\n     * fresh and safe. A per-request `nonce` disables the cache automatically. `createWebApp` wires this\n     * per route, gated on the route + layout metas being static.\n     */\n    readonly assemblyCache?: RenderAssemblyCache;\n}"
   },
   {
     "name": "renderPageResult",
@@ -8054,7 +8431,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function revalidateEndpoint(options: RevalidateEndpointOptions): (req: Request) => Promise<Response>;",
-    "doc": "/**\n * An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops a path's cached entry\n * so the next request re-renders. `POST` with the secret in the token header and the path as `?path=`\n * or a JSON `{ \"path\": \"/blog/x\" }` body. The token is checked in **constant time** (wrong/missing →\n * `401`); a missing/relative path → `400`; non-POST → `405`. Mount it on a nifra route, e.g.\n * `app.post(\"/__nifra/revalidate\", (c) => handler(c.req))`.\n */"
+    "doc": "/**\n * An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops a path's cached entry\n * or invalidates every entry carrying a tag. `POST` with the secret in the token header and either\n * `?path=/blog/x`, `?tag=products`, or a JSON `{ \"path\": \"/blog/x\" }` / `{ \"tag\": \"products\" }` body.\n * The token is checked in **constant time** (wrong/missing → `401`); malformed targets → `400`;\n * non-POST → `405`. A store without tag support returns `501` for tag requests. Mount it on a nifra route, e.g.\n * `app.post(\"/__nifra/revalidate\", (c) => handler(c.req))`.\n */"
   },
   {
     "name": "RevalidateEndpointOptions",
@@ -8080,6 +8457,20 @@
     "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface RichWireCodecOptions {\n    readonly limits?: WireDecodeLimits;\n}"
+  },
+  {
+    "name": "rlsScope",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function rlsScope(token: string, digest?: string): RlsScope;",
+    "doc": "/** Create a bounded, opaque RLS/equivalent policy scope for a data adapter. */"
+  },
+  {
+    "name": "RlsScope",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface RlsScope {\n    /** Caller-owned scope token. The public seam never interprets, logs, or derives identity from it. */\n    readonly token: string;\n    /** Optional opaque digest for correlating a scope without exposing tenant or subject data. */\n    readonly digest?: string;\n}",
+    "doc": "/** Opaque request-local RLS (or equivalent data-policy) scope passed to an adapter. */"
   },
   {
     "name": "robots",
@@ -8242,7 +8633,7 @@
     "name": "RouteManifestEntry",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RouteManifestEntry {\n    /** The route's id (its key in the build manifest and in `routes`). */\n    readonly id: string;\n    /** The matching pattern, e.g. `/blog/:slug`. */\n    readonly pattern: string;\n    readonly mode: RenderMode;\n    /** Whether the full-document client is shipped. `false` means the page loads no framework JS. */\n    readonly hydrate: boolean;\n    /** Revalidation window in seconds. Present only for `isr`. */\n    readonly revalidate?: number;\n    /**\n     * Concrete paths prerendered at build. Present for `static` routes: a single path for a static route,\n     * one per `getStaticPaths` entry for a dynamic one. Absent means \"no path was enumerated\", which for a\n     * dynamic route is exactly the condition that makes it unprerenderable.\n     */\n    readonly prerenderedPaths?: readonly string[];\n    /** What this route needs from the host to behave as declared. */\n    readonly requires: readonly RouteCapability[];\n}",
+    "signature": "export interface RouteManifestEntry {\n    /** The route's id (its key in the build manifest and in `routes`). */\n    readonly id: string;\n    /** The matching pattern, e.g. `/blog/:slug`. */\n    readonly pattern: string;\n    readonly mode: RenderMode;\n    /** Whether the full-document client is shipped. `false` means the page loads no framework JS. */\n    readonly hydrate: boolean;\n    /** Revalidation window in seconds. Present only for `isr`. */\n    readonly revalidate?: number;\n    /** Bounded tags that can purge this route from a shared ISR store. */\n    readonly revalidateTags?: readonly string[];\n    /**\n     * Concrete paths prerendered at build. Present for `static` routes: a single path for a static route,\n     * one per `getStaticPaths` entry for a dynamic one. Absent means \"no path was enumerated\", which for a\n     * dynamic route is exactly the condition that makes it unprerenderable.\n     */\n    readonly prerenderedPaths?: readonly string[];\n    /** What this route needs from the host to behave as declared. */\n    readonly requires: readonly RouteCapability[];\n}",
     "doc": "/** One route's resolved behaviour. */"
   },
   {
@@ -8256,7 +8647,7 @@
     "name": "RouteModule",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RouteModule {\n    readonly default: unknown;\n    readonly loader?: Loader;\n    readonly action?: Action;\n    /** A Standard Schema validating this route's URL search params. When present, `ctx.search` is parsed +\n     * validated against it (failing closed to the schema's defaults on invalid input); type it into the\n     * loader with `LoaderArgs<Api, Env, typeof searchSchema>`. */\n    readonly searchSchema?: StandardSchemaV1<unknown, Record<string, unknown>>;\n    /** Search keys that are purely client-side UI (`\"tab\"`, a client-side `\"sort\"`, `\"modal\"`) and do NOT\n     * affect this route's loader. When a client navigation stays on the same route + pathname and changes\n     * ONLY these keys, the router updates the URL (so `useSearch` re-renders) WITHOUT re-running the loader.\n     * Any other key change revalidates as usual - so omitting a data-affecting key here can never serve\n     * stale data, it only forgoes the optimization. Client-only: the server always renders fresh. */\n    readonly searchClientKeys?: readonly string[];\n    readonly meta?: MetaInput;\n    /**\n     * Opt this route out of nifra's full-document client hydration. The server still renders the full\n     * HTML document, loaders/actions still run, and native links/forms still work; the generated app\n     * client, route chunks, and loader globals are omitted for hard navigations. Intended for static or\n     * island-hydrated pages where interactivity is mounted by smaller, explicit client entries.\n     */\n    readonly hydrate?: boolean;\n    /**\n     * Opt a **static** route (no `:param`/`*`) into build-time prerendering (SSG): `prerenderRoutes`\n     * (from `@nifrajs/web/build`) renders it to a static `index.html` at build. The loader runs at build\n     * with the in-process `api` (build-safe data only - no per-request cookies/secrets); `defer()` on a\n     * prerendered route resolves at build. For **dynamic** routes use {@link getStaticPaths} instead.\n     */\n    readonly prerender?: boolean;\n    /**\n     * Enumerate the concrete params to prerender for a **dynamic** (`:param`) route - the SSG path list\n     * (blogs/docs/etc.). Runs at build; `prerenderRoutes` renders one `index.html` per returned path.\n     */\n    readonly getStaticPaths?: GetStaticPaths;\n    /**\n     * ISR freshness for this route, in **seconds**. `createWebApp` emits it as an `x-nifra-revalidate`\n     * response header that `withISR` reads to set the page's cache TTL (overriding the wrapper's\n     * default). Older-than-`revalidate` cached pages are served stale while regenerating.\n     */\n    readonly revalidate?: number;\n    /**\n     * No-framework island bundles (`@nifrajs/web/islands`) to load on this route, as `<script\n     * type=\"module\">` in the document tail. Loaded **regardless of `hydrate`** - pair with\n     * `export const hydrate = false` for a static page that ships zero framework JS and mounts\n     * interactivity through `<Island>` markers + `mountIslands` enhancers instead.\n     */\n    readonly islandScripts?: readonly string[];\n}",
+    "signature": "export interface RouteModule {\n    readonly default: unknown;\n    readonly loader?: Loader;\n    readonly action?: Action;\n    /** A Standard Schema validating this route's URL search params. When present, `ctx.search` is parsed +\n     * validated against it (failing closed to the schema's defaults on invalid input); type it into the\n     * loader with `LoaderArgs<Api, Env, typeof searchSchema>`. */\n    readonly searchSchema?: StandardSchemaV1<unknown, Record<string, unknown>>;\n    /** Search keys that are purely client-side UI (`\"tab\"`, a client-side `\"sort\"`, `\"modal\"`) and do NOT\n     * affect this route's loader. When a client navigation stays on the same route + pathname and changes\n     * ONLY these keys, the router updates the URL (so `useSearch` re-renders) WITHOUT re-running the loader.\n     * Any other key change revalidates as usual - so omitting a data-affecting key here can never serve\n     * stale data, it only forgoes the optimization. Client-only: the server always renders fresh. */\n    readonly searchClientKeys?: readonly string[];\n    readonly meta?: MetaInput;\n    /**\n     * Opt this route out of nifra's full-document client hydration. The server still renders the full\n     * HTML document, loaders/actions still run, and native links/forms still work; the generated app\n     * client, route chunks, and loader globals are omitted for hard navigations. Intended for static or\n     * island-hydrated pages where interactivity is mounted by smaller, explicit client entries.\n     */\n    readonly hydrate?: boolean;\n    /**\n     * Opt a **static** route (no `:param`/`*`) into build-time prerendering (SSG): `prerenderRoutes`\n     * (from `@nifrajs/web/build`) renders it to a static `index.html` at build. The loader runs at build\n     * with the in-process `api` (build-safe data only - no per-request cookies/secrets); `defer()` on a\n     * prerendered route resolves at build. For **dynamic** routes use {@link getStaticPaths} instead.\n     */\n    readonly prerender?: boolean;\n    /**\n     * Enumerate the concrete params to prerender for a **dynamic** (`:param`) route - the SSG path list\n     * (blogs/docs/etc.). Runs at build; `prerenderRoutes` renders one `index.html` per returned path.\n     */\n    readonly getStaticPaths?: GetStaticPaths;\n    /**\n     * ISR freshness for this route, in **seconds**. `createWebApp` emits it as an `x-nifra-revalidate`\n     * response header that `withISR` reads to set the page's cache TTL (overriding the wrapper's\n     * default). Older-than-`revalidate` cached pages are served stale while regenerating.\n     */\n    readonly revalidate?: number;\n    /** Optional bounded tags used by ISR on-demand invalidation (`?tag=...`). */\n    readonly revalidateTags?: readonly string[];\n    /**\n     * No-framework island bundles (`@nifrajs/web/islands`) to load on this route, as `<script\n     * type=\"module\">` in the document tail. Loaded **regardless of `hydrate`** - pair with\n     * `export const hydrate = false` for a static page that ships zero framework JS and mounts\n     * interactivity through `<Island>` markers + `mountIslands` enhancers instead.\n     */\n    readonly islandScripts?: readonly string[];\n}",
     "doc": "/** A route module - the default component + optional loader / action / meta. */"
   },
   {
@@ -9397,6 +9788,13 @@
     "doc": "/** Deterministic, PII-free lockfile material. */"
   },
   {
+    "name": "snapshotDataContract",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function snapshotDataContract(contract: DataContract): DataContractSnapshot;",
+    "doc": "/** Strip a contract to its token-only version/access snapshot for CI or adapter drift checks. */"
+  },
+  {
     "name": "snapshotRoutes",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -10288,6 +10686,12 @@
     "kind": "function",
     "package": "@nifrajs/middleware",
     "signature": "export declare function tryVerifyJwt<C extends JwtClaims = JwtClaims>(token: string, options: VerifyJwtOptions): Promise<VerifyJwtResult<C>>;"
+  },
+  {
+    "name": "TypedDataPort",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface TypedDataPort<Contract extends DataContract> {\n    execute<Operation extends keyof Contract[\"operations\"] & string>(request: DataRequestFor<Contract, Operation>): Promise<DataOutput<Contract, Operation>>;\n}"
   },
   {
     "name": "typedSSEStream",

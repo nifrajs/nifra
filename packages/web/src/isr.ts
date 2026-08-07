@@ -20,6 +20,8 @@ export interface CachedResponse {
   readonly storedAt: number
   /** Freshness window (ms): `now - storedAt >= revalidate` ⇒ stale (serve it, regenerate behind it). */
   readonly revalidate: number
+  /** Public, bounded invalidation labels. A tag purge makes matching entries miss immediately. */
+  readonly tags?: readonly string[]
 }
 
 /**
@@ -35,6 +37,45 @@ export interface CacheStore {
   set(key: string, value: CachedResponse): Promise<void>
   /** Drop `key` (on-demand revalidation / purge). A no-op if absent. */
   delete(key: string): Promise<void>
+  /** Drop every cached response carrying `tag`, when the backend supports tag invalidation. */
+  readonly invalidateTag?: (tag: string) => Promise<void>
+}
+
+const ISR_TAG_PATTERN = /^[A-Za-z][A-Za-z0-9._:/-]{0,127}$/
+const MAX_ISR_TAGS = 32
+
+function normalizeTag(tag: string): string {
+  if (typeof tag !== "string" || !ISR_TAG_PATTERN.test(tag)) {
+    throw new TypeError("[nifra/web] ISR tag must be a bounded token")
+  }
+  return tag
+}
+
+function normalizeTags(tags: readonly string[] | undefined): readonly string[] {
+  if (tags === undefined) return []
+  if (!Array.isArray(tags) || tags.length > MAX_ISR_TAGS) {
+    throw new TypeError("[nifra/web] ISR tags must contain at most 32 bounded tokens")
+  }
+  const unique = new Set<string>()
+  for (const tag of tags) unique.add(normalizeTag(tag))
+  return Object.freeze([...unique])
+}
+
+function tagsFromHeader(value: string | null): readonly string[] {
+  if (value === null || value.trim() === "") return []
+  try {
+    return normalizeTags(value.split(",").map((tag) => tag.trim()))
+  } catch {
+    // A malformed response-controlled header must never accidentally create an unpurgeable cache
+    // entry. Treat it as untagged; route declarations are validated before they reach this path.
+    return []
+  }
+}
+
+/** Validate and serialize route-declared ISR tags for the internal response header. */
+export function serializeISRTags(tags: readonly string[]): string | undefined {
+  const normalized = normalizeTags(tags)
+  return normalized.length === 0 ? undefined : normalized.join(",")
 }
 
 export interface MemoryCacheStoreOptions {
@@ -52,8 +93,12 @@ export interface MemoryCacheStoreOptions {
  * page survives a burst of new pages).
  */
 export class MemoryCacheStore implements CacheStore {
-  private readonly cache = new Map<string, CachedResponse>()
+  private readonly cache = new Map<
+    string,
+    { readonly value: CachedResponse; readonly tagEpochs: Readonly<Record<string, string>> }
+  >()
   private readonly max: number
+  private readonly tagEpoch = new Map<string, string>()
 
   constructor(options: MemoryCacheStoreOptions = {}) {
     const isProd = typeof process !== "undefined" && process.env?.NODE_ENV === "production"
@@ -71,30 +116,74 @@ export class MemoryCacheStore implements CacheStore {
   }
 
   get(key: string): Promise<CachedResponse | undefined> {
-    const value = this.cache.get(key)
+    const row = this.cache.get(key)
+    if (row !== undefined) {
+      for (const [tag, epoch] of Object.entries(row.tagEpochs)) {
+        if ((this.tagEpoch.get(tag) ?? "0") !== epoch) {
+          this.cache.delete(key)
+          this.pruneTagEpochs()
+          return Promise.resolve(undefined)
+        }
+      }
+    }
+    const value = row?.value
     // LRU: a read bumps the entry to the tail so the bounded evict drops the LEAST-RECENTLY-USED,
     // not the oldest-written - otherwise a burst of new pages would evict a hot, frequently-read one.
     if (value !== undefined) {
       this.cache.delete(key)
-      this.cache.set(key, value)
+      this.cache.set(
+        key,
+        row as {
+          readonly value: CachedResponse
+          readonly tagEpochs: Readonly<Record<string, string>>
+        },
+      )
     }
     return Promise.resolve(value)
   }
 
   set(key: string, value: CachedResponse): Promise<void> {
+    const tags = normalizeTags(value.tags)
+    const tagEpochs: Record<string, string> = {}
+    for (const tag of tags) tagEpochs[tag] = this.tagEpoch.get(tag) ?? "0"
     this.cache.delete(key) // re-insert at the tail so Map order tracks recency (with get) for the LRU evict
-    this.cache.set(key, value)
+    this.cache.set(key, { value: tags.length === 0 ? value : { ...value, tags }, tagEpochs })
     while (this.cache.size > this.max) {
       const oldest = this.cache.keys().next().value
       if (oldest === undefined) break
       this.cache.delete(oldest)
     }
+    this.pruneTagEpochs()
     return Promise.resolve()
   }
 
   delete(key: string): Promise<void> {
     this.cache.delete(key)
+    this.pruneTagEpochs()
     return Promise.resolve()
+  }
+
+  invalidateTag(tag: string): Promise<void> {
+    normalizeTag(tag)
+    this.tagEpoch.set(tag, crypto.randomUUID())
+    // This store is bounded and local, so eagerly remove matching rows. It keeps invalidation
+    // immediate and lets us discard epoch keys that no retained entry references anymore.
+    for (const [key, row] of this.cache) {
+      if (Object.hasOwn(row.tagEpochs, tag)) this.cache.delete(key)
+    }
+    this.pruneTagEpochs()
+    return Promise.resolve()
+  }
+
+  private pruneTagEpochs(): void {
+    if (this.tagEpoch.size === 0) return
+    const used = new Set<string>()
+    for (const row of this.cache.values()) {
+      for (const tag of Object.keys(row.tagEpochs)) used.add(tag)
+    }
+    for (const tag of this.tagEpoch.keys()) {
+      if (!used.has(tag)) this.tagEpoch.delete(tag)
+    }
   }
 }
 
@@ -141,10 +230,24 @@ const isCachedResponse = (value: unknown): value is CachedResponse => {
   ) {
     return false
   }
+  if (v.tags !== undefined) {
+    if (!Array.isArray(v.tags)) return false
+    try {
+      normalizeTags(v.tags as string[])
+    } catch {
+      return false
+    }
+  }
   for (const headerValue of Object.values(v.headers as Record<string, unknown>)) {
     if (typeof headerValue !== "string") return false
   }
   return true
+}
+
+const KV_TAG_EPOCH_PREFIX = "__nifra_isr_tag_v1:"
+
+type StoredTaggedResponse = CachedResponse & {
+  readonly __nifraTagEpochs?: Readonly<Record<string, string>>
 }
 
 /**
@@ -182,15 +285,52 @@ export class KVCacheStore implements CacheStore {
       // A corrupt (non-JSON) entry: treat as a miss so the page re-renders; the next set overwrites it.
       return undefined
     }
-    return isCachedResponse(parsed) ? parsed : undefined
+    if (!isCachedResponse(parsed)) return undefined
+    const tags = normalizeTags(parsed.tags)
+    if (tags.length === 0) return parsed
+    const epochs = (parsed as StoredTaggedResponse).__nifraTagEpochs
+    if (epochs === undefined) return undefined
+    const current = await Promise.all(
+      tags.map(async (tag) => [tag, (await this.kv.get(this.tagKey(tag))) ?? "0"] as const),
+    )
+    if (current.some(([tag, epoch]) => epochs[tag] !== epoch)) return undefined
+    const { __nifraTagEpochs: _ignored, ...value } = parsed as StoredTaggedResponse
+    return value
   }
 
   async set(key: string, value: CachedResponse): Promise<void> {
-    await this.kv.put(key, JSON.stringify(value), this.putOptions)
+    const tags = normalizeTags(value.tags)
+    if (tags.length === 0) {
+      await this.kv.put(key, JSON.stringify(value), this.putOptions)
+      return
+    }
+    const epochs = Object.fromEntries(
+      await Promise.all(
+        tags.map(async (tag) => [tag, (await this.kv.get(this.tagKey(tag))) ?? "0"] as const),
+      ),
+    )
+    const stored: StoredTaggedResponse = {
+      ...value,
+      tags,
+      __nifraTagEpochs: epochs,
+    }
+    await this.kv.put(key, JSON.stringify(stored), this.putOptions)
   }
 
   async delete(key: string): Promise<void> {
     await this.kv.delete(key)
+  }
+
+  async invalidateTag(tag: string): Promise<void> {
+    normalizeTag(tag)
+    // Epoch invalidation avoids KV key enumeration and remains bounded for a tag with millions of
+    // pages. Epoch keys intentionally have no expiration: an expired epoch would resurrect entries
+    // written before the invalidation when their page key still exists.
+    await this.kv.put(this.tagKey(tag), crypto.randomUUID())
+  }
+
+  private tagKey(tag: string): string {
+    return `${KV_TAG_EPOCH_PREFIX}${encodeURIComponent(tag)}`
   }
 }
 
@@ -208,6 +348,9 @@ export interface ISRApp {
 /** Response header marking how an ISR response was served: a cache `hit` (fresh), `stale` (served +
  * regenerating behind it), or `miss` (rendered now + stored). Useful for debugging + tests. */
 export const ISR_STATUS_HEADER = "x-nifra-isr"
+
+/** Response header carrying bounded route tags into {@link withISR}. */
+export const ISR_REVALIDATE_TAGS_HEADER = "x-nifra-isr-tags"
 
 /**
  * Response header a route uses to advertise its ISR freshness (**seconds**) to a {@link withISR}
@@ -289,6 +432,9 @@ const CACHEABLE_RESPONSE_HEADERS = new Set([
   "link",
 ])
 
+const tagsOf = (res: Response): readonly string[] =>
+  tagsFromHeader(res.headers.get(ISR_REVALIDATE_TAGS_HEADER))
+
 const headersOf = (res: Response): Record<string, string> => {
   const out: Record<string, string> = {}
   res.headers.forEach((value, key) => {
@@ -349,12 +495,14 @@ export function withISR(
     const res = await app.fetch(req, platform)
     if (!isCacheablePage(req, res)) return res
     const body = await res.text()
+    const tags = tagsOf(res)
     const entry: CachedResponse = {
       body,
       status: res.status,
       headers: headersOf(res),
       storedAt: now(),
       revalidate: ttlMs(res),
+      ...(tags.length === 0 ? {} : { tags }),
     }
     await store.set(key, entry)
     return new Response(body, {
@@ -375,12 +523,14 @@ export function withISR(
     try {
       const res = await app.fetch(req, platform)
       if (isCacheablePage(req, res)) {
+        const tags = tagsOf(res)
         await store.set(key, {
           body: await res.text(),
           status: res.status,
           headers: headersOf(res),
           storedAt: now(),
           revalidate: ttlMs(res),
+          ...(tags.length === 0 ? {} : { tags }),
         })
       } else {
         await res.body?.cancel()
@@ -431,9 +581,10 @@ export interface RevalidateEndpointOptions {
 
 /**
  * An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops a path's cached entry
- * so the next request re-renders. `POST` with the secret in the token header and the path as `?path=`
- * or a JSON `{ "path": "/blog/x" }` body. The token is checked in **constant time** (wrong/missing →
- * `401`); a missing/relative path → `400`; non-POST → `405`. Mount it on a nifra route, e.g.
+ * or invalidates every entry carrying a tag. `POST` with the secret in the token header and either
+ * `?path=/blog/x`, `?tag=products`, or a JSON `{ "path": "/blog/x" }` / `{ "tag": "products" }` body.
+ * The token is checked in **constant time** (wrong/missing → `401`); malformed targets → `400`;
+ * non-POST → `405`. A store without tag support returns `501` for tag requests. Mount it on a nifra route, e.g.
  * `app.post("/__nifra/revalidate", (c) => handler(c.req))`.
  */
 export function revalidateEndpoint(
@@ -446,12 +597,29 @@ export function revalidateEndpoint(
     if (!timingSafeEqual(req.headers.get(tokenHeader) ?? "", options.secret)) {
       return jsonError(401, "unauthorized")
     }
-    let path = new URL(req.url).searchParams.get("path")
-    if (path === null) {
+    const url = new URL(req.url)
+    let path = url.searchParams.get("path")
+    let tag = url.searchParams.get("tag")
+    if (path === null && tag === null) {
       const body: unknown = await req.json().catch(() => null)
-      const candidate =
-        typeof body === "object" && body !== null ? (body as { path?: unknown }).path : undefined
-      path = typeof candidate === "string" ? candidate : null
+      if (typeof body === "object" && body !== null) {
+        const candidate = body as { path?: unknown; tag?: unknown }
+        path = typeof candidate.path === "string" ? candidate.path : null
+        tag = typeof candidate.tag === "string" ? candidate.tag : null
+      }
+    }
+    if (path !== null && tag !== null) return jsonError(400, "choose_path_or_tag")
+    if (tag !== null) {
+      try {
+        normalizeTag(tag)
+      } catch {
+        return jsonError(400, "invalid_tag")
+      }
+      if (options.store.invalidateTag === undefined) {
+        return jsonError(501, "tag_invalidation_not_supported")
+      }
+      await options.store.invalidateTag(tag)
+      return Response.json({ revalidatedTag: tag })
     }
     if (path === null || !path.startsWith("/")) return jsonError(400, "invalid_path")
     await options.store.delete(keyOf(path, req))

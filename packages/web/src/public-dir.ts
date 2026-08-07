@@ -14,6 +14,7 @@
  */
 import { realpath } from "node:fs/promises"
 import { normalize, resolve, sep } from "node:path"
+import { parseByteRange } from "@nifrajs/core/range"
 import { pathnameOf } from "@nifrajs/core/server"
 
 /** How long each subtree may be cached. Content-hashed bundle output can be immutable; a
@@ -37,6 +38,35 @@ export interface ServePublicDirOptions {
 
 const IMMUTABLE = "public, max-age=31536000, immutable"
 const ONE_DAY = "public, max-age=86400"
+
+/** HTTP dates carry second precision; comparing raw milliseconds makes every file look stale. */
+function seconds(time: number): number {
+  return Math.floor(time / 1000)
+}
+
+/**
+ * `If-Range` decides whether a range request is still safe to answer partially. The only validator
+ * this handler publishes is `last-modified`, so an entity-tag form can never match and the whole
+ * representation is sent instead - which is the conformant outcome, not a fallback. Dates use strong
+ * comparison (RFC 9110 13.1.5): a file modified since the client's copy invalidates its byte offsets.
+ */
+function ifRangeMatches(value: string | null, lastModified: number | undefined): boolean {
+  if (value === null) return true
+  if (lastModified === undefined) return false
+  const item = value.trim()
+  if (item.startsWith('"') || item.startsWith("W/")) return false
+  const parsed = Date.parse(item)
+  return Number.isFinite(parsed) && seconds(parsed) === seconds(lastModified)
+}
+
+/** `If-Modified-Since` freshness. No ETag is published, so there is no `If-None-Match` precedence. */
+function isNotModified(request: Request, lastModified: number | undefined): boolean {
+  if (lastModified === undefined) return false
+  const since = request.headers.get("if-modified-since")
+  if (since === null) return false
+  const parsed = Date.parse(since)
+  return Number.isFinite(parsed) && seconds(parsed) >= seconds(lastModified)
+}
 
 /**
  * Resolve a URL pathname to an absolute path **confined** to `root`, or `undefined` if it escapes.
@@ -101,12 +131,52 @@ export function servePublicDir(
     }
     const file = Bun.file(resolvedFile)
     if (!(await file.exists())) return undefined
+    const size = file.size
     const headers = new Headers({
       "cache-control": pathname.startsWith(hashedPrefix) ? hashed : assets,
+      // Advertised unconditionally: a client that never sees `accept-ranges` will not attempt a seek,
+      // so a video or audio file under `public/` is scrubbable only once this header is present.
+      "accept-ranges": "bytes",
     })
-    // HEAD must not carry a body, but must otherwise match GET's headers.
-    return request.method === "HEAD"
-      ? new Response(null, { headers })
-      : new Response(file, { headers })
+    // `new Response(file)` used to infer the media type, which meant HEAD - built from a null body -
+    // silently lost it. Setting it here is what makes the two methods agree.
+    if (file.type !== "") headers.set("content-type", file.type)
+    const lastModified =
+      Number.isFinite(file.lastModified) && file.lastModified > 0 ? file.lastModified : undefined
+    if (lastModified !== undefined) {
+      headers.set("last-modified", new Date(lastModified).toUTCString())
+    }
+    const head = request.method === "HEAD"
+
+    if (isNotModified(request, lastModified)) {
+      headers.delete("content-type")
+      return new Response(null, { status: 304, headers })
+    }
+
+    const rangeHeader = request.headers.get("range")
+    const range =
+      rangeHeader !== null && ifRangeMatches(request.headers.get("if-range"), lastModified)
+        ? parseByteRange(rangeHeader, size)
+        : ({ kind: "none" } as const)
+
+    if (range.kind === "unsatisfiable") {
+      headers.delete("content-type")
+      headers.set("content-range", `bytes */${size}`)
+      return new Response(null, { status: 416, headers })
+    }
+
+    if (range.kind === "satisfiable" && range.ranges.length === 1) {
+      const { start, end } = range.ranges[0]!
+      headers.set("content-range", `bytes ${start}-${end}/${size}`)
+      headers.set("content-length", String(end - start + 1))
+      // `slice` keeps the read lazy: only the selected window is ever pulled off disk.
+      return new Response(head ? null : file.slice(start, end + 1), { status: 206, headers })
+    }
+
+    // Multiple ranges would require assembling `multipart/byteranges`, and doing that for a file on
+    // disk means buffering the whole representation to serve a request that asked for less of it.
+    // RFC 9110 lets a server ignore Range entirely, so the full body is the conformant answer here.
+    if (head) headers.set("content-length", String(size))
+    return new Response(head ? null : file, { headers })
   }
 }

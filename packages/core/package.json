@@ -167,6 +167,21 @@
       "types": "./dist/classification.d.ts",
       "default": "./dist/classification.js"
     },
+    "./channel": {
+      "bun": "./src/channel.ts",
+      "types": "./dist/channel.d.ts",
+      "default": "./dist/channel.js"
+    },
+    "./data": {
+      "bun": "./src/data.ts",
+      "types": "./dist/data.d.ts",
+      "default": "./dist/data.js"
+    },
+    "./range": {
+      "bun": "./src/range.ts",
+      "types": "./dist/range.d.ts",
+      "default": "./dist/range.js"
+    },
     "./contract": {
       "bun": "./src/server/contract.ts",
       "types": "./dist/server/contract.d.ts",

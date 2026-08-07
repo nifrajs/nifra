@@ -12,6 +12,7 @@
       "@nifrajs/core/transport-codec": ["../core/src/transport-codec.ts"],
       "@nifrajs/core/server": ["../core/src/server.ts"],
       "@nifrajs/core/pattern": ["../core/src/router/pattern.ts"],
+      "@nifrajs/core/range": ["../core/src/range.ts"],
       "@nifrajs/core/reflection": ["../core/src/reflection.ts"],
       "@nifrajs/i18n": ["../i18n/src/index.ts"]
     }

@@ -37,6 +37,15 @@ export {
 export { type CacheControlOptions, cacheControl } from "./cache-control.ts"
 export { type Composable, combine, namedCombine } from "./combine.ts"
 export { type CompressionOptions, compression } from "./compression.ts"
+export {
+  type ConditionalResponseOptions,
+  conditionalResponse,
+} from "./conditional.ts"
+export {
+  type ContentPreference,
+  negotiateContentType,
+  parseAcceptHeader,
+} from "./content-negotiation.ts"
 export { type CorsOptions, cors } from "./cors.ts"
 export {
   type CsrfOptions,
@@ -85,6 +94,13 @@ export {
 export { type LoggerOptions, logger, type RequestLogFields } from "./logger.ts"
 export { type MethodOverrideOptions, methodOverride } from "./method-override.ts"
 export {
+  type MultipartBody,
+  type MultipartHeadersInit,
+  type MultipartPart,
+  type MultipartResponseOptions,
+  multipartResponse,
+} from "./multipart.ts"
+export {
   buildOpenApiDocument,
   type OpenApiInfo,
   type OpenApiOptions,
@@ -97,6 +113,14 @@ export {
 } from "./openapi.ts"
 export { type PoweredByOptions, poweredBy } from "./powered-by.ts"
 export { type PrettyJsonOptions, prettyJson } from "./pretty-json.ts"
+export { type ProblemDetailsOptions, problemDetails } from "./problem-details.ts"
+export {
+  type ByteRange,
+  type ByteRangeResult,
+  parseByteRange,
+  type RangeResponseOptions,
+  rangeResponse,
+} from "./range.ts"
 export {
   MemoryStore,
   type MemoryStoreOptions,
