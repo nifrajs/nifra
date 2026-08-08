@@ -4,6 +4,17 @@ Image optimization for nifra - a CLS-safe responsive <Image> + pluggable loaders
 
 Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one core, five UI libraries, every runtime. Scaffold a new app with `bun create nifra`.
 
+For crawler-compatible cards, adapt the renderer you choose to the public PNG seam:
+
+```ts
+import { createResvgRasterizer } from "@nifrajs/image/og-png"
+import { Resvg } from "@resvg/resvg-js"
+
+const rasterizer = createResvgRasterizer(Resvg)
+```
+
+The codec remains an application dependency; the package's default stays explicit SVG output.
+
 ## Install
 
 ```sh

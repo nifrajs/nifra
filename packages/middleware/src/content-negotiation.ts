@@ -41,6 +41,7 @@ function parseMediaType(value: string, qDefault = 1): ParsedMediaType | undefine
 
   let q = qDefault
   const parameters = new Map<string, string>()
+  let afterQuality = false
   for (const segment of segments) {
     const separator = segment.indexOf("=")
     if (separator < 1) continue
@@ -48,10 +49,12 @@ function parseMediaType(value: string, qDefault = 1): ParsedMediaType | undefine
     const raw = segment.slice(separator + 1).trim()
     const parameter = raw.startsWith('"') && raw.endsWith('"') ? raw.slice(1, -1) : raw
     if (key === "q") {
+      if (afterQuality) continue
       const parsed = Number(parameter)
       if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) return undefined
       q = parsed
-    } else {
+      afterQuality = true
+    } else if (!afterQuality) {
       parameters.set(key, parameter.toLowerCase())
     }
   }

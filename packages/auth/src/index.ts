@@ -3,6 +3,13 @@
  * pluggable-store + prod-guard discipline as the ISR cache. **Bring your own identity** (Better Auth,
  * Lucia, your own OAuth/password logic); nifra owns the session cookie, store, CSRF, and route guards.
  */
+
+export {
+  type AuthorizationRequest,
+  type Authorizer,
+  isAuthorized,
+  requireAuthorization,
+} from "./authorization.ts"
 export { type CsrfOptions, csrf } from "./csrf.ts"
 export { type GuardOptions, requireSession, requireUser } from "./guards.ts"
 export {

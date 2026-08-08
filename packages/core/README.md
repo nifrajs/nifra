@@ -4,6 +4,11 @@ The Bun-native, contract-first HTTP framework at the heart of [nifra](../../READ
 a radix router, a fully type-inferred server, versionable contracts, lifecycle
 middleware, and production hardening.
 
+The Web-standard app can be wrapped for Vercel Edge with `toVercelHandler`, Netlify Functions with
+`toNetlifyHandler`, or API Gateway v1/v2 with `toLambdaHandler` from `@nifrajs/core/server`. These are
+thin event-envelope adapters; application policy, persistence, and platform credentials stay outside
+the core.
+
 ```sh
 bun add @nifrajs/core
 ```

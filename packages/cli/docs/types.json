@@ -524,6 +524,19 @@
     "doc": "/**\n * Options for {@link requirePrincipal} / {@link authed}.\n */"
   },
   {
+    "name": "AuthorizationRequest",
+    "kind": "interface",
+    "package": "@nifrajs/auth",
+    "signature": "export interface AuthorizationRequest<Subject = unknown, Resource = unknown> {\n    readonly subject: Subject;\n    readonly action: string;\n    readonly resource?: Resource;\n}",
+    "doc": "/**\n * Public authorization seam. Nifra supplies the control-flow contract; the application or data layer\n * supplies the actual policy. No subject/resource data is persisted or interpreted here.\n */"
+  },
+  {
+    "name": "Authorizer",
+    "kind": "type",
+    "package": "@nifrajs/auth",
+    "signature": "export type Authorizer<Subject = unknown, Resource = unknown> = (request: AuthorizationRequest<Subject, Resource>) => boolean | Promise<boolean>;"
+  },
+  {
     "name": "AuthPlugin",
     "kind": "type",
     "package": "@nifrajs/middleware",
@@ -2533,6 +2546,13 @@
     "doc": "/** Creates an independent lifecycle factory. Adapters are always called fail-open. */"
   },
   {
+    "name": "createPngRasterizer",
+    "kind": "function",
+    "package": "@nifrajs/image",
+    "signature": "export declare function createPngRasterizer(render: PngRenderer): OgImageRasterizer;",
+    "doc": "/**\n * Adapt an injected SVG→PNG renderer to `ogImageResponse`.\n *\n * The renderer stays application-owned because codec/WASM choice is runtime-specific. For example:\n *\n * ```ts\n * import { Resvg } from \"@resvg/resvg-js\"\n * import { createPngRasterizer } from \"@nifrajs/image/og-png\"\n * const rasterizer = createPngRasterizer((svg) => new Resvg(svg).render().asPng())\n * ```\n *\n * This is the public reference adapter; the core package remains zero-dependency and keeps SVG as its\n * explicit default for callers that do not opt into a codec.\n */"
+  },
+  {
     "name": "createQuery",
     "kind": "function",
     "package": "@nifrajs/web-solid",
@@ -2584,6 +2604,13 @@
     "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface CreateRequestLedgerOptions {\n    /** HTTP method of the matched route. */\n    readonly method: string;\n    /** The registered route pattern - callers must never pass the concrete request URL. */\n    readonly path: string;\n    /** The route's declared capability tokens, surfaced verbatim on the sealed ledger. Default `[]`. */\n    readonly declared?: readonly string[];\n    /** Entry bound; exceeding it throws {@link EffectLedgerOverflowError}. Default {@link DEFAULT_MAX_ENTRIES}. */\n    readonly maxEntries?: number;\n    /** Compute the tamper-evident hash chain at seal. Default false. */\n    readonly chain?: boolean;\n    /** Injectable monotonic clock (ms) for deterministic tests. Default `performance.now`. */\n    readonly clock?: () => number;\n}"
+  },
+  {
+    "name": "createResvgRasterizer",
+    "kind": "function",
+    "package": "@nifrajs/image",
+    "signature": "export declare function createResvgRasterizer(Resvg: ResvgConstructor): OgImageRasterizer;",
+    "doc": "/** Reference adapter for Resvg-compatible constructors, without making the optional codec a dependency. */"
   },
   {
     "name": "createSagaEngine",
@@ -3958,6 +3985,18 @@
     "signature": "export interface FailureScenarioReport {\n    readonly name: string;\n    readonly ok: boolean;\n    readonly replay: FailureReplay;\n    readonly evidence: readonly FailureEvidence[];\n    /** Sanitized failure identity. Messages and stacks are deliberately excluded. */\n    readonly error?: {\n        readonly name: string;\n        readonly kind?: FailureInjectedError[\"kind\"];\n    };\n}"
   },
   {
+    "name": "FetchApp",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface FetchApp<Env = unknown> {\n    fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>;\n}"
+  },
+  {
+    "name": "FetchApp",
+    "kind": "interface",
+    "package": "nifra",
+    "signature": "export interface FetchApp<Env = unknown> {\n    fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>;\n}"
+  },
+  {
     "name": "Fetcher",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -5039,6 +5078,13 @@
     "doc": "/** `true` iff `raw` is an `https://fonts.gstatic.com/…` URL - the only host we'll download from. */"
   },
   {
+    "name": "isAuthorized",
+    "kind": "function",
+    "package": "@nifrajs/auth",
+    "signature": "export declare function isAuthorized<Subject, Resource>(authorizer: Authorizer<Subject, Resource>, request: AuthorizationRequest<Subject, Resource>): Promise<boolean>;",
+    "doc": "/** Evaluate a policy, failing closed for any non-true result. */"
+  },
+  {
     "name": "isBuildTarget",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -5393,13 +5439,13 @@
     "kind": "class",
     "package": "@nifrajs/web",
     "signature": "export declare class KVCacheStore implements CacheStore {\n    private readonly kv;\n    private readonly putOptions;\n    constructor(kv: KVNamespaceLike, options?: KVCacheStoreOptions);\n    get(key: string): Promise<CachedResponse | undefined>;\n    set(key: string, value: CachedResponse): Promise<void>;\n    delete(key: string): Promise<void>;\n    invalidateTag(tag: string): Promise<void>;\n    private tagKey;\n}",
-    "doc": "/**\n * A {@link CacheStore} backed by a **Cloudflare Workers KV** namespace (or any {@link KVNamespaceLike}\n * binding) - the production-grade shared/durable store ISR wants: cached pages and on-demand purges\n * hold *across* worker instances (unlike the per-instance {@link MemoryCacheStore}). Entries serialize\n * to JSON; every read is validated before it's trusted (a malformed/version-skewed entry is treated as\n * a miss). Construct it in your Workers `fetch` from the binding: `new KVCacheStore(env.ISR_CACHE)`.\n */"
+    "doc": "/**\n * A {@link CacheStore} backed by a **Cloudflare Workers KV** namespace (or any {@link KVNamespaceLike}\n * binding) - the production-grade shared/durable store ISR wants: cached pages and on-demand purges\n * hold *across* worker instances (unlike the per-instance {@link MemoryCacheStore}). Entries serialize\n * to JSON; every read is validated before it's trusted (a malformed/version-skewed entry is treated as\n * a miss). Construct it in your Workers `fetch` from the binding: `new KVCacheStore(env.ISR_CACHE)`.\n *\n * Cloudflare is the default, not a requirement: {@link KVNamespaceLike} is three structural methods,\n * so a Redis, Deno KV, or Upstash binding satisfies it (pass `minExpirationTtl` for their TTL floor).\n * A backend that *can* enumerate keys deserves its own {@link CacheStore} rather than this one - the\n * epoch indirection in {@link KVCacheStore.invalidateTag} exists only because KV cannot list by tag.\n */"
   },
   {
     "name": "KVCacheStoreOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface KVCacheStoreOptions {\n    /**\n     * GC backstop (**seconds**) written as the KV entry's `expirationTtl`, so abandoned entries\n     * eventually evict. MUST exceed your longest `revalidate` window - otherwise KV expiry turns a\n     * stale-while-revalidate into a *blocking* miss (the entry vanishes instead of being served stale\n     * while it regenerates) - and be ≥ 60 (Cloudflare KV's minimum). Omit ⇒ entries persist until\n     * overwritten on regeneration or purged via `revalidateEndpoint`.\n     */\n    readonly expirationTtl?: number;\n}"
+    "signature": "export interface KVCacheStoreOptions {\n    /**\n     * GC backstop (**seconds**) written as the KV entry's `expirationTtl`, so abandoned entries\n     * eventually evict. MUST exceed your longest `revalidate` window - otherwise KV expiry turns a\n     * stale-while-revalidate into a *blocking* miss (the entry vanishes instead of being served stale\n     * while it regenerates) - and be ≥ 60 (Cloudflare KV's minimum). Omit ⇒ entries persist until\n     * overwritten on regeneration or purged via `revalidateEndpoint`.\n     */\n    readonly expirationTtl?: number;\n    /**\n     * Smallest `expirationTtl` this binding accepts (**seconds**). Defaults to 60, which is Cloudflare\n     * KV's floor - the common case, and worth rejecting at construction because Cloudflare fails the\n     * `put` at runtime instead, one deploy later.\n     *\n     * The floor belongs to the *binding*, not to this class. {@link KVNamespaceLike} is structural, so\n     * a Redis, Deno KV, Upstash, or in-memory binding satisfies it too, and those accept far shorter\n     * TTLs. Pass their real minimum, or `0` for a backend with none.\n     */\n    readonly minExpirationTtl?: number;\n}"
   },
   {
     "name": "KVNamespaceLike",
@@ -5421,6 +5467,66 @@
     "package": "@nifrajs/auth",
     "signature": "export declare class KVSessionStore implements SessionStore {\n    private readonly kv;\n    constructor(kv: KVNamespaceLike);\n    get(id: string): Promise<SessionRecord | undefined>;\n    set(id: string, record: SessionRecord): Promise<void>;\n    delete(id: string): Promise<void>;\n}",
     "doc": "/**\n * A {@link SessionStore} backed by a **Cloudflare Workers KV** namespace (or any {@link KVNamespaceLike})\n * - the durable, shared production store: sessions hold across worker instances and survive restarts.\n * Records serialize to JSON; the entry's KV `expiration` is set from the record's `expiresAt` so KV\n * auto-evicts the session (a GC backstop - the manager still authoritatively checks expiry on read).\n * Every read is validated, so a corrupt/skewed entry reads as no session.\n */"
+  },
+  {
+    "name": "LambdaEvent",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type LambdaEvent = LambdaV2Event | LambdaV1Event;"
+  },
+  {
+    "name": "LambdaEvent",
+    "kind": "type",
+    "package": "nifra",
+    "signature": "export type LambdaEvent = LambdaV2Event | LambdaV1Event;"
+  },
+  {
+    "name": "LambdaHandler",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type LambdaHandler = (event: LambdaEvent, context?: unknown) => Promise<LambdaResponse>;"
+  },
+  {
+    "name": "LambdaHandler",
+    "kind": "type",
+    "package": "nifra",
+    "signature": "export type LambdaHandler = (event: LambdaEvent, context?: unknown) => Promise<LambdaResponse>;"
+  },
+  {
+    "name": "LambdaResponse",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type LambdaResponse = PlatformResponse;"
+  },
+  {
+    "name": "LambdaResponse",
+    "kind": "type",
+    "package": "nifra",
+    "signature": "export type LambdaResponse = PlatformResponse;"
+  },
+  {
+    "name": "LambdaV1Event",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface LambdaV1Event {\n    readonly httpMethod: string;\n    readonly path: string;\n    readonly headers?: HeaderRecord;\n    readonly multiValueHeaders?: HeaderRecord;\n    readonly queryStringParameters?: Readonly<Record<string, string | undefined>>;\n    readonly multiValueQueryStringParameters?: Readonly<Record<string, readonly string[] | undefined>>;\n    readonly body?: string | null;\n    readonly isBase64Encoded?: boolean;\n    readonly requestContext?: {\n        readonly domainName?: string;\n    };\n}"
+  },
+  {
+    "name": "LambdaV1Event",
+    "kind": "interface",
+    "package": "nifra",
+    "signature": "export interface LambdaV1Event {\n    readonly httpMethod: string;\n    readonly path: string;\n    readonly headers?: HeaderRecord;\n    readonly multiValueHeaders?: HeaderRecord;\n    readonly queryStringParameters?: Readonly<Record<string, string | undefined>>;\n    readonly multiValueQueryStringParameters?: Readonly<Record<string, readonly string[] | undefined>>;\n    readonly body?: string | null;\n    readonly isBase64Encoded?: boolean;\n    readonly requestContext?: {\n        readonly domainName?: string;\n    };\n}"
+  },
+  {
+    "name": "LambdaV2Event",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface LambdaV2Event {\n    readonly version?: \"2.0\";\n    readonly rawPath?: string;\n    readonly rawQueryString?: string;\n    readonly headers?: HeaderRecord;\n    readonly cookies?: readonly string[];\n    readonly body?: string | null;\n    readonly isBase64Encoded?: boolean;\n    readonly requestContext?: {\n        readonly domainName?: string;\n        readonly http?: {\n            readonly method: string;\n            readonly path?: string;\n        };\n    };\n}"
+  },
+  {
+    "name": "LambdaV2Event",
+    "kind": "interface",
+    "package": "nifra",
+    "signature": "export interface LambdaV2Event {\n    readonly version?: \"2.0\";\n    readonly rawPath?: string;\n    readonly rawQueryString?: string;\n    readonly headers?: HeaderRecord;\n    readonly cookies?: readonly string[];\n    readonly body?: string | null;\n    readonly isBase64Encoded?: boolean;\n    readonly requestContext?: {\n        readonly domainName?: string;\n        readonly http?: {\n            readonly method: string;\n            readonly path?: string;\n        };\n    };\n}"
   },
   {
     "name": "language",
@@ -6506,6 +6612,30 @@
     "signature": "export interface NegotiateOptions {\n    /** The locales the app supports, e.g. `[\"en\", \"fr\", \"de\"]`. Matched case-insensitively. */\n    readonly locales: readonly Locale[];\n    /** Returned when nothing matches. */\n    readonly defaultLocale: Locale;\n    /** A cookie name whose value (if a supported locale) wins over `Accept-Language` (a user's explicit\n     * choice). Omit to skip the cookie. */\n    readonly cookie?: string;\n}"
   },
   {
+    "name": "NetlifyEvent",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface NetlifyEvent {\n    readonly httpMethod: string;\n    readonly path: string;\n    readonly rawUrl?: string;\n    readonly rawQuery?: string;\n    readonly headers?: HeaderRecord;\n    readonly multiValueHeaders?: HeaderRecord;\n    readonly body?: string | null;\n    readonly isBase64Encoded?: boolean;\n    readonly cookies?: readonly string[];\n}"
+  },
+  {
+    "name": "NetlifyEvent",
+    "kind": "interface",
+    "package": "nifra",
+    "signature": "export interface NetlifyEvent {\n    readonly httpMethod: string;\n    readonly path: string;\n    readonly rawUrl?: string;\n    readonly rawQuery?: string;\n    readonly headers?: HeaderRecord;\n    readonly multiValueHeaders?: HeaderRecord;\n    readonly body?: string | null;\n    readonly isBase64Encoded?: boolean;\n    readonly cookies?: readonly string[];\n}"
+  },
+  {
+    "name": "NetlifyHandler",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type NetlifyHandler = (event: NetlifyEvent) => Promise<PlatformResponse>;"
+  },
+  {
+    "name": "NetlifyHandler",
+    "kind": "type",
+    "package": "nifra",
+    "signature": "export type NetlifyHandler = (event: NetlifyEvent) => Promise<PlatformResponse>;"
+  },
+  {
     "name": "nextRun",
     "kind": "function",
     "package": "@nifrajs/cron",
@@ -6810,7 +6940,7 @@
     "kind": "interface",
     "package": "@nifrajs/image",
     "signature": "export interface OgImageRasterized {\n    readonly bytes: Uint8Array;\n    readonly contentType: string;\n}",
-    "doc": "/**\n * Dependency-free Open Graph image generation.\n *\n * The default renderer produces a safe SVG, which is useful for crawlers and can be served on every\n * fetch runtime. Applications that require PNG/JPEG can inject a rasterizer (for example a Satori +\n * Resvg adapter) without making either dependency part of `@nifrajs/image` or its browser bundle.\n */"
+    "doc": "/**\n * Dependency-free Open Graph image generation.\n *\n * **The default SVG output does not work as a social card.** X, Facebook, LinkedIn, Slack, Discord\n * and iMessage all refuse `image/svg+xml` for `og:image` and render nothing - the link preview is\n * blank, and it is blank silently, which is the failure mode this package exists to prevent\n * elsewhere. Serving SVG is only useful where you control the consumer: an internal dashboard, a\n * docs thumbnail, a preview route you look at yourself.\n *\n * **For a card a crawler will actually render, pass `rasterizer`.** It receives the SVG and returns\n * PNG/JPEG/WebP bytes - a Satori + Resvg pair is the usual choice. Keeping it injected rather than\n * bundled is what keeps a WASM rasterizer out of `@nifrajs/image` and out of every browser bundle\n * that imports this package for something else.\n *\n * ```ts\n * import { ogImageResponse } from \"@nifrajs/image/og\"\n *\n * // Renders on X, Facebook, LinkedIn, Slack.\n * export const GET = (request: Request) =>\n *   ogImageResponse({ title: \"Ship it\", rasterizer: pngRasterizer }, request)\n * ```\n */"
   },
   {
     "name": "OgImageRasterizer",
@@ -7211,11 +7341,30 @@
     "doc": "/**\n * Runtime platform inputs, passed as `app.fetch(request, platform)`. Edge adapters (e.g.\n * Cloudflare Workers) supply `env` (bindings) + `waitUntil`; Bun/Node/Deno omit them. Optional +\n * runtime-neutral, so `app.fetch` stays a Web-standard handler.\n */"
   },
   {
+    "name": "PlatformResponse",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface PlatformResponse {\n    readonly statusCode: number;\n    /** Single-valued headers. `set-cookie` never appears here - see the two fields below. */\n    readonly headers: Readonly<Record<string, string>>;\n    /**\n     * Repeated headers, currently only `set-cookie`. Netlify Functions and API Gateway REST (v1) read\n     * this; omitted when the response sets no cookies.\n     */\n    readonly multiValueHeaders?: Readonly<Record<string, readonly string[]>>;\n    /** API Gateway HTTP API (v2) takes cookies here rather than in a header. Omitted when there are none. */\n    readonly cookies?: readonly string[];\n    readonly body: string;\n    readonly isBase64Encoded: true;\n}"
+  },
+  {
+    "name": "PlatformResponse",
+    "kind": "interface",
+    "package": "nifra",
+    "signature": "export interface PlatformResponse {\n    readonly statusCode: number;\n    /** Single-valued headers. `set-cookie` never appears here - see the two fields below. */\n    readonly headers: Readonly<Record<string, string>>;\n    /**\n     * Repeated headers, currently only `set-cookie`. Netlify Functions and API Gateway REST (v1) read\n     * this; omitted when the response sets no cookies.\n     */\n    readonly multiValueHeaders?: Readonly<Record<string, readonly string[]>>;\n    /** API Gateway HTTP API (v2) takes cookies here rather than in a header. Omitted when there are none. */\n    readonly cookies?: readonly string[];\n    readonly body: string;\n    readonly isBase64Encoded: true;\n}"
+  },
+  {
     "name": "PluginBuilder",
     "kind": "type",
     "package": "@nifrajs/web",
     "signature": "export type PluginBuilder = Parameters<BunPlugin[\"setup\"]>[0];",
     "doc": "/** The argument Bun passes to a plugin's `setup` - Bun doesn't export the type, so derive it. */"
+  },
+  {
+    "name": "PngRenderer",
+    "kind": "type",
+    "package": "@nifrajs/image",
+    "signature": "export type PngRenderer = (svg: string) => Uint8Array | Promise<Uint8Array>;",
+    "doc": "/** A dependency-free shape implemented by SVG→PNG codecs such as Resvg, Satori, or a WASM backend. */"
   },
   {
     "name": "port",
@@ -8125,6 +8274,13 @@
     "doc": "/** One request to drive through the app. */"
   },
   {
+    "name": "requireAuthorization",
+    "kind": "function",
+    "package": "@nifrajs/auth",
+    "signature": "export declare function requireAuthorization<Subject, Resource>(authorizer: Authorizer<Subject, Resource>, request: AuthorizationRequest<Subject, Resource>): Promise<void>;",
+    "doc": "/** Require an application/data-layer policy to allow an action; denied requests throw a 403 Response. */"
+  },
+  {
     "name": "requirePeer",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -8391,6 +8547,18 @@
     "package": "@nifrajs/client",
     "signature": "export type Result<Data, Errors = unknown> = {\n    readonly ok: true;\n    readonly status: number;\n    readonly data: Data;\n    readonly error: null;\n} | ([Errors] extends [Record<number, unknown>] ? DeclaredFailures<Errors> | {\n    readonly ok: false;\n    readonly status: Exclude<ErrorStatus, Extract<keyof Errors, number>> | 0;\n    readonly data: unknown;\n    readonly error: ApiError;\n} : {\n    readonly ok: false;\n    readonly status: number;\n    readonly data: Errors;\n    readonly error: ApiError;\n});",
     "doc": "/**\n * The outcome of a client call. The client never throws - inspect `ok` to branch.\n *\n * On success, `data` is the route's response type. On failure the union is DISCRIMINATED BY\n * `status` when the route declares an `errors` record: `status === 404` narrows `data` to the\n * declared 404 body; every undeclared status (plus `0` for a transport error with no response)\n * falls into a fallback arm whose `data` is `unknown`. A route with no `errors` contract keeps a\n * single failure arm with `data: Errors` (`unknown`). `error` is always the server's normalized\n * `{ error, issues? }` summary on failure, `null` on success.\n */"
+  },
+  {
+    "name": "ResvgConstructor",
+    "kind": "type",
+    "package": "@nifrajs/image",
+    "signature": "export type ResvgConstructor = new (svg: string) => ResvgRenderer;"
+  },
+  {
+    "name": "ResvgRenderer",
+    "kind": "interface",
+    "package": "@nifrajs/image",
+    "signature": "export interface ResvgRenderer {\n    render(): {\n        asPng(): Uint8Array | Promise<Uint8Array>;\n    };\n}"
   },
   {
     "name": "resyncServerManifestSource",
@@ -10542,6 +10710,34 @@
     "doc": "/**\n * Map a {@link ResolvedImage} to plain lowercase HTML `<img>` attribute names - `srcset` (not React's\n * `srcSet`), `fetchpriority` (not `fetchPriority`) - dropping unset optionals. For the adapters that\n * spread attributes straight onto a host element (Solid / Vue / Svelte / Preact); React consumes\n * `ResolvedImage` directly because it requires the camelCased prop names.\n */"
   },
   {
+    "name": "toLambdaHandler",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function toLambdaHandler<Env = unknown>(app: FetchApp<Env>): LambdaHandler;",
+    "doc": "/** Adapt API Gateway HTTP API (v2) and REST API (v1) events to a Web-standard app. */"
+  },
+  {
+    "name": "toLambdaHandler",
+    "kind": "function",
+    "package": "nifra",
+    "signature": "export declare function toLambdaHandler<Env = unknown>(app: FetchApp<Env>): LambdaHandler;",
+    "doc": "/** Adapt API Gateway HTTP API (v2) and REST API (v1) events to a Web-standard app. */"
+  },
+  {
+    "name": "toNetlifyHandler",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function toNetlifyHandler<Env = unknown>(app: FetchApp<Env>): NetlifyHandler;",
+    "doc": "/** Adapt a Web-standard app to a Netlify Functions event handler. */"
+  },
+  {
+    "name": "toNetlifyHandler",
+    "kind": "function",
+    "package": "nifra",
+    "signature": "export declare function toNetlifyHandler<Env = unknown>(app: FetchApp<Env>): NetlifyHandler;",
+    "doc": "/** Adapt a Web-standard app to a Netlify Functions event handler. */"
+  },
+  {
     "name": "ToolAnnotations",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -10581,6 +10777,20 @@
     "package": "@nifrajs/web",
     "signature": "export declare function topUserFrame(frames: readonly DiagnosticFrame[], root: string | undefined): DiagnosticFrame | undefined;",
     "doc": "/** The first frame that points at the user's own source - what the codeframe should show. */"
+  },
+  {
+    "name": "toVercelHandler",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function toVercelHandler<Env = unknown>(app: FetchApp<Env>): VercelHandler;",
+    "doc": "/** Adapt a Web-standard app to a Vercel Edge Function default export. */"
+  },
+  {
+    "name": "toVercelHandler",
+    "kind": "function",
+    "package": "nifra",
+    "signature": "export declare function toVercelHandler<Env = unknown>(app: FetchApp<Env>): VercelHandler;",
+    "doc": "/** Adapt a Web-standard app to a Vercel Edge Function default export. */"
   },
   {
     "name": "TraceContext",
@@ -11306,6 +11516,18 @@
     "package": "@nifrajs/web-vanilla",
     "signature": "export type VanillaComponent = (props: RenderProps & {\n    children?: Template;\n}) => Template;",
     "doc": "/**\n * A vanilla \"component\": a plain function from props to a {@link Template}. The page (innermost\n * chain element) receives the loader {@link RenderProps}; a layout receives `{ children }` - the\n * already-rendered inner fragment - plus the same render props, mirroring the React/Preact\n * adapters' `children` contract.\n */"
+  },
+  {
+    "name": "VercelHandler",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type VercelHandler = (request: Request) => MaybePromise<Response>;"
+  },
+  {
+    "name": "VercelHandler",
+    "kind": "type",
+    "package": "nifra",
+    "signature": "export type VercelHandler = (request: Request) => MaybePromise<Response>;"
   },
   {
     "name": "VerifiedJwt",

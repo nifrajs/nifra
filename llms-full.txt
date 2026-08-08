@@ -6680,6 +6680,9 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 Session primitives for nifra - signed-cookie + server-store sessions, CSRF, and route guards. Bring your own identity (Better Auth / Lucia / OAuth); nifra owns the session.
 
+`Authorizer`/`requireAuthorization` provide a small public policy seam. The application or data layer
+must decide ownership and permissions; Nifra stores no policy, tenant, or subject data.
+
 Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one core, five UI libraries, every runtime. Scaffold a new app with `bun create nifra`.
 
 ## Install
@@ -6884,6 +6887,7 @@ nifra assure  [--config <file>] [--json]  Gate reflected routes against enforcem
 nifra capabilities check [--json]        Gate effect provenance + the reviewed capability lockfile.
 nifra manifest emit [--sign <key-ref>]   Emit the hash-verified route trust artifact after assurance.
 nifra manifest diff <before> <after>      Block promotion on contract/governance regressions.
+nifra sdk     --lang <python|go>         Generate a deterministic non-TypeScript SDK from `backend.ts`.
 nifra doctor  [--json] [--auto-fix]       Catch undeclared imports and duplicate Nifra/React installs.
 ```
 
@@ -7093,6 +7097,11 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 The Bun-native, contract-first HTTP framework at the heart of [nifra](../../README.md):
 a radix router, a fully type-inferred server, versionable contracts, lifecycle
 middleware, and production hardening.
+
+The Web-standard app can be wrapped for Vercel Edge with `toVercelHandler`, Netlify Functions with
+`toNetlifyHandler`, or API Gateway v1/v2 with `toLambdaHandler` from `@nifrajs/core/server`. These are
+thin event-envelope adapters; application policy, persistence, and platform credentials stay outside
+the core.
 
 ```sh
 bun add @nifrajs/core
@@ -7466,9 +7475,20 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/image
 
-Image optimization for nifra - a CLS-safe responsive <Image> + pluggable loaders (CDN or self-hosted) + pure-JS dimension reading. The zero-dependency core also includes safe, cacheable Open Graph SVG generation at `@nifrajs/image/og`; inject a rasterizer when crawlers require PNG/JPEG. The optional Bun.Image-backed resize endpoint lives at `@nifrajs/image/server`.
+Image optimization for nifra - a CLS-safe responsive <Image> + pluggable loaders (CDN or self-hosted) + pure-JS dimension reading. The zero-dependency core also includes safe, cacheable Open Graph SVG generation at `@nifrajs/image/og` - useful where you control the consumer, but no major crawler renders SVG for `og:image`, so a social card needs an injected PNG/JPEG rasterizer. The optional Bun.Image-backed resize endpoint lives at `@nifrajs/image/server`.
 
 Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one core, five UI libraries, every runtime. Scaffold a new app with `bun create nifra`.
+
+For crawler-compatible cards, adapt the renderer you choose to the public PNG seam:
+
+```ts
+import { createResvgRasterizer } from "@nifrajs/image/og-png"
+import { Resvg } from "@resvg/resvg-js"
+
+const rasterizer = createResvgRasterizer(Resvg)
+```
+
+The codec remains an application dependency; the package's default stays explicit SVG output.
 
 ## Install
 
@@ -8823,7 +8843,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/auth
 
-`createSessions`, `csrf`, `CsrfOptions`, `GuardOptions`, `KVNamespaceLike`, `KVSessionStore`, `MemorySessionStore`, `MemorySessionStoreOptions`, `requireSession`, `requireUser`, `Session`, `SessionContext`, `SessionCookieOptions`, `SessionManager`, `SessionOptions`, `SessionRecord`, `SessionStore`
+`AuthorizationRequest`, `Authorizer`, `createSessions`, `csrf`, `CsrfOptions`, `GuardOptions`, `isAuthorized`, `KVNamespaceLike`, `KVSessionStore`, `MemorySessionStore`, `MemorySessionStoreOptions`, `requireAuthorization`, `requireSession`, `requireUser`, `Session`, `SessionContext`, `SessionCookieOptions`, `SessionManager`, `SessionOptions`, `SessionRecord`, `SessionStore`
 
 ## @nifrajs/better-auth
 
@@ -8871,7 +8891,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/image
 
-`cloudflareLoader`, `CloudflareLoaderOptions`, `HtmlImageAttrs`, `identityLoader`, `imageDimensions`, `ImageFormat`, `ImageInfo`, `ImageLoader`, `ImageProps`, `OgImageOptions`, `OgImageRasterized`, `OgImageRasterizer`, `ogImageResponse`, `readImageDimensions`, `renderOgImage`, `ResolvedImage`, `resolveImage`, `selfHostedLoader`, `SelfHostedLoaderOptions`, `signImageUrl`, `SignImageUrlOptions`, `toHtmlAttrs`
+`cloudflareLoader`, `CloudflareLoaderOptions`, `createPngRasterizer`, `createResvgRasterizer`, `HtmlImageAttrs`, `identityLoader`, `imageDimensions`, `ImageFormat`, `ImageInfo`, `ImageLoader`, `ImageProps`, `OgImageOptions`, `OgImageRasterized`, `OgImageRasterizer`, `ogImageResponse`, `PngRenderer`, `readImageDimensions`, `renderOgImage`, `ResolvedImage`, `resolveImage`, `ResvgConstructor`, `ResvgRenderer`, `selfHostedLoader`, `SelfHostedLoaderOptions`, `signImageUrl`, `SignImageUrlOptions`, `toHtmlAttrs`
 
 ## @nifrajs/islets
 

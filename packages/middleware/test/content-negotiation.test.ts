@@ -29,6 +29,13 @@ describe("negotiateContentType()", () => {
     expect(negotiateContentType("image/avif", ["text/html"])).toBeUndefined()
   })
 
+  test("ignores accept extensions after q", () => {
+    expect(negotiateContentType("text/html;q=0.9;profile=client-extension", ["text/html"])).toBe(
+      "text/html",
+    )
+    expect(negotiateContentType("text/html;profile=v1;q=0.9", ["text/html"])).toBeUndefined()
+  })
+
   test("rejects oversized or excessively fragmented Accept headers", () => {
     expect(parseAcceptHeader("text/plain,".repeat(129))).toEqual([])
     expect(negotiateContentType("text/plain,".repeat(129), ["text/plain"])).toBeUndefined()

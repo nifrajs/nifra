@@ -48,4 +48,28 @@ describe("conditionalResponse()", () => {
     const response = new Response("bad", { status: 400 })
     expect(conditionalResponse(new Request("http://x"), response, { etag: '"v1"' })).toBe(response)
   })
+
+  test("cancels a streaming body when returning 304", async () => {
+    let cancelled = false
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1]))
+        },
+        cancel() {
+          cancelled = true
+        },
+      }),
+    )
+
+    const notModified = conditionalResponse(
+      new Request("http://x/resource", { headers: { "if-none-match": '"v1"' } }),
+      response,
+      { etag: '"v1"' },
+    )
+
+    expect(notModified.status).toBe(304)
+    await Promise.resolve()
+    expect(cancelled).toBe(true)
+  })
 })

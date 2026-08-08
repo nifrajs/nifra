@@ -12,20 +12,20 @@ Session primitives for nifra - signed-cookie + server-store sessions, CSRF, and 
 
 - **createSessions** _(function)_ - `createSessions: <Data extends Record<string, unknown> = Record<string, unknown>>(options: SessionOptions) => SessionManager<Data>`
 - **csrf** _(function)_ - `csrf: (options?: CsrfOptions) => Middleware`
+- **isAuthorized** _(function)_ - `isAuthorized: <Subject, Resource>(authorizer: Authorizer<Subject, Resource>, request: AuthorizationRequest<Subject, Resource>) => Promise<b…`
+- **requireAuthorization** _(function)_ - `requireAuthorization: <Subject, Resource>(authorizer: Authorizer<Subject, Resource>, request: AuthorizationRequest<Subject, Resource>) => P…`
 - **requireSession** _(function)_ - `requireSession: <Data extends Record<string, unknown>>(session: Session<Data>, options?: GuardOptions) => Session<Data>`
 - **requireUser** _(function)_ - `requireUser: <Data extends Record<string, unknown>, K extends keyof Data>(session: Session<Data>, key: K, options?: GuardOptions) => NonNul…`
 - **KVSessionStore** _(class)_ - `class KVSessionStore`
 - **MemorySessionStore** _(class)_ - `class MemorySessionStore`
+- **AuthorizationRequest** _(interface)_ - `interface AuthorizationRequest<Subject = unknown, Resource = unknown>`
 - **CsrfOptions** _(interface)_ - `interface CsrfOptions`
 - **GuardOptions** _(interface)_ - `interface GuardOptions`
 - **KVNamespaceLike** _(interface)_ - `interface KVNamespaceLike`
 - **MemorySessionStoreOptions** _(interface)_ - `interface MemorySessionStoreOptions`
 - **Session** _(interface)_ - `interface Session<Data extends Record<string, unknown> = Record<string, unknown>>`
-- **SessionContext** _(interface)_ - `interface SessionContext`
-- **SessionManager** _(interface)_ - `interface SessionManager<Data extends Record<string, unknown> = Record<string, unknown>>`
-- **SessionOptions** _(interface)_ - `interface SessionOptions`
 
-_…and 3 more - see [`api-reference.md`](../../api-reference.md#nifrajsauth) for the complete list._
+_…and 7 more - see [`api-reference.md`](../../api-reference.md#nifrajsauth) for the complete list._
 
 ## Footguns
 

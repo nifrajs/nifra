@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { ogImageResponse, renderOgImage } from "../src/og.ts"
+import { createPngRasterizer, createResvgRasterizer } from "../src/og-png.ts"
 
 describe("renderOgImage", () => {
   test("renders a deterministic, escaped SVG at the requested dimensions", () => {
@@ -40,7 +41,7 @@ describe("ogImageResponse", () => {
     expect(response.headers.get("content-type")).toBe("image/svg+xml; charset=utf-8")
     expect(response.headers.get("cache-control")).toBe("public, max-age=31536000, immutable")
     const etag = response.headers.get("etag")!
-    expect(etag).toMatch(/^"[0-9a-f]+"$/)
+    expect(etag).toMatch(/^"[0-9a-f]{64}"$/)
     expect((await response.text()).startsWith("<svg")).toBe(true)
 
     const conditional = await ogImageResponse(
@@ -49,6 +50,14 @@ describe("ogImageResponse", () => {
     )
     expect(conditional.status).toBe(304)
     expect(await conditional.text()).toBe("")
+
+    const weakConditional = await ogImageResponse(
+      { title: "Nifra" },
+      new Request("https://example.test/og", {
+        headers: { "if-none-match": `W/${etag}` },
+      }),
+    )
+    expect(weakConditional.status).toBe(304)
 
     const head = await ogImageResponse(
       { title: "Nifra" },
@@ -72,6 +81,34 @@ describe("ogImageResponse", () => {
 
     expect(response.headers.get("content-type")).toBe("image/png")
     expect([...new Uint8Array(await response.arrayBuffer())]).toHaveLength(3)
+  })
+
+  test("provides a PNG reference adapter around an injected renderer", async () => {
+    const response = await ogImageResponse(
+      { title: "Nifra", rasterizer: createPngRasterizer(() => new Uint8Array([137, 80, 78, 71])) },
+      new Request("https://example.test/og"),
+    )
+    expect(response.headers.get("content-type")).toBe("image/png")
+    expect([...new Uint8Array(await response.arrayBuffer())]).toEqual([137, 80, 78, 71])
+  })
+
+  test("provides a Resvg-compatible reference adapter", async () => {
+    const response = await ogImageResponse(
+      {
+        title: "Nifra",
+        rasterizer: createResvgRasterizer(
+          class {
+            constructor(readonly svg: string) {}
+            render() {
+              return { asPng: () => new Uint8Array([this.svg.length]) }
+            }
+          },
+        ),
+      },
+      new Request("https://example.test/og"),
+    )
+    expect(response.headers.get("content-type")).toBe("image/png")
+    expect((await response.arrayBuffer()).byteLength).toBe(1)
   })
 
   test("ETags represent rasterized bytes, not only the source SVG", async () => {

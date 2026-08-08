@@ -12,6 +12,9 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ## @nifrajs/auth
 
+- **AuthorizationRequest** _(interface)_ - `interface AuthorizationRequest<Subject = unknown, Resource = unknown>`
+  Public authorization seam. Nifra supplies the control-flow contract; the application or data layer supplies the actual policy. No subject/resource data is persisted or interpreted here.
+- **Authorizer** _(type)_ - `type Authorizer<Subject = unknown, Resource = unknown> = ( request: AuthorizationRequest<Subject, Resource>, ) => boolean | Promise<boolean>`
 - **CsrfOptions** _(interface)_ - `interface CsrfOptions`
 - **GuardOptions** _(interface)_ - `interface GuardOptions`
   What a guard does when the check fails: 302 to `redirectTo` (a same-origin path), or - omitted - a 401 JSON (`{ ok: false, error: "unauthorized" }`).
@@ -36,6 +39,10 @@ Every public export of every package and documented subpath - name, kind, signat
   Pluggable session backend (store mode). Async so a network store (KV/Redis) fits the same shape. **Production needs a shared/durable store** so sessions hold across instances - {@link MemorySessionStore} prod-guards against the per-instance footgun.
 - **createSessions** _(function)_ - `createSessions: <Data extends Record<string, unknown> = Record<string, unknown>>(options: SessionOptions) => SessionManager<Data>`
 - **csrf** _(function)_ - `csrf: (options?: CsrfOptions) => Middleware`
+- **isAuthorized** _(function)_ - `isAuthorized: <Subject, Resource>(authorizer: Authorizer<Subject, Resource>, request: AuthorizationRequest<Subject, Resource>) => Promise<boolean>`
+  Evaluate a policy, failing closed for any non-true result.
+- **requireAuthorization** _(function)_ - `requireAuthorization: <Subject, Resource>(authorizer: Authorizer<Subject, Resource>, request: AuthorizationRequest<Subject, Resource>) => Promise<void>`
+  Require an application/data-layer policy to allow an action; denied requests throw a 403 Response.
 - **requireSession** _(function)_ - `requireSession: <Data extends Record<string, unknown>>(session: Session<Data>, options?: GuardOptions) => Session<Data>`
   Require a non-empty session. Returns it when present; otherwise throws a `Response` (302/401). Use at the top of a protected loader: `const session = requireSession(await sessions.get(c), { redirectTo: "/login" })`.
 - **requireUser** _(function)_ - `requireUser: <Data extends Record<string, unknown>, K extends keyof Data>(session: Session<Data>, key: K, options?: GuardOptions) => NonNullable<Data[K]>`
@@ -213,6 +220,7 @@ Every public export of every package and documented subpath - name, kind, signat
   A Cloudflare Workers-style execution context (the `fetch` 3rd arg). Structural - only `waitUntil` is used; declared here so `@nifrajs/core` needs no Workers type dependency.
 - **FRAMEWORK_NAME** _(const)_ - `FRAMEWORK_NAME: "Nifra"`
   Single source of truth for the framework's user-facing name.
+- **FetchApp** _(interface)_ - `interface FetchApp<Env = unknown>`
 - **FrameworkError** _(class)_ - `class FrameworkError`
   Base class for every error the framework throws. Carries a stable, string `code` so callers can branch on the failure programmatically rather than matching on message text. Messages are prefixed with the brand name.
 - **FrameworkName** _(type)_ - `type FrameworkName = typeof FRAMEWORK_NAME`
@@ -222,6 +230,11 @@ Every public export of every package and documented subpath - name, kind, signat
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ - `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
 - **InferOutput** _(type)_ - `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
+- **LambdaEvent** _(type)_ - `type LambdaEvent = LambdaV2Event | LambdaV1Event`
+- **LambdaHandler** _(type)_ - `type LambdaHandler = (event: LambdaEvent, context?: unknown) => Promise<LambdaResponse>`
+- **LambdaResponse** _(type)_ - `type LambdaResponse = PlatformResponse`
+- **LambdaV1Event** _(interface)_ - `interface LambdaV1Event`
+- **LambdaV2Event** _(interface)_ - `interface LambdaV2Event`
 - **LogFields** _(type)_ - `type LogFields = Record<string, unknown>`
   Structured, redacting logger. The framework logs through this interface so secrets/PII are scrubbed once, centrally (per the project's logging rule), not at each call site. Bring your own by passing `logger` to `server()`.
 - **Logger** _(interface)_ - `interface Logger`
@@ -234,6 +247,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **Method** _(type)_ - `type Method = (typeof METHODS)[number]`
 - **Middleware** _(interface)_ - `interface Middleware`
   A bundle of lifecycle hooks applied together via {@link Server.use} - the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware is context-agnostic (sees the base `Context`); `use` does no context-type merging - th…
+- **NetlifyEvent** _(interface)_ - `interface NetlifyEvent`
+- **NetlifyHandler** _(type)_ - `type NetlifyHandler = (event: NetlifyEvent) => Promise<PlatformResponse>`
 - **NifraPlugin** _(type)_ - `type NifraPlugin<In extends AnyServer = AnyServer, Out extends AnyServer = In> = (( app: In, ) => Out) & { readonly pluginName?: string }`
   A nifra **plugin**: a function that augments an app - calling `use`/`derive`/`decorate` and/or registering routes - and returns it. Because `derive`/`decorate` are type-threaded, an **inline** `app.use((a) => a.derive(...).decorate(...))` carries the added context to handlers defined after it (the …
 - **NifraWebSocket** _(interface)_ - `interface NifraWebSocket<Data = unknown>`
@@ -252,6 +267,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **Params** _(type)_ - `type Params<Path extends string> = Prettify<RawParams<Path>>`
 - **Platform** _(interface)_ - `interface Platform<Env = unknown>`
   Runtime platform inputs, passed as `app.fetch(request, platform)`. Edge adapters (e.g. Cloudflare Workers) supply `env` (bindings) + `waitUntil`; Bun/Node/Deno omit them. Optional + runtime-neutral, so `app.fetch` stays a Web-standard handler.
+- **PlatformResponse** _(interface)_ - `interface PlatformResponse`
 - **Prettify** _(type)_ - `type Prettify<T> = { [K in keyof T]: T[K] } & {}`
   Flattens an intersection into a single object type for readable hovers.
 - **PromptArgument** _(interface)_ - `interface PromptArgument`
@@ -319,6 +335,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **VERSION** _(const)_ - `VERSION: "2.9.1"`
   Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version.
 - **ValidationOutcome** _(type)_ - `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
+- **VercelHandler** _(type)_ - `type VercelHandler = (request: Request) => MaybePromise<Response>`
 - **Version** _(type)_ - `type Version = typeof VERSION`
 - **WebSocketContext** _(interface)_ - `interface WebSocketContext<Env = unknown>`
   The request-context subset the `upgrade()` guard sees - the same lazy accessors a route handler's `c` has (cookies/headers/env are read straight off the upgrade request). Structurally a slice of the core `RawContext`, so the real context object satisfies it.
@@ -355,6 +372,12 @@ Every public export of every package and documented subpath - name, kind, signat
   Discards everything - for tests, or when log output is handled elsewhere.
 - **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
   Adapt a nifra app to an edge "ExportedHandler" - use it as a Cloudflare Workers (or any `fetch(request, env, ctx)` runtime) default export. It threads `env` + `ctx.waitUntil` into the nifra Context, so handlers read `c.env` and schedule background work via `c.waitUntil`:
+- **toLambdaHandler** _(function)_ - `toLambdaHandler: <Env = unknown>(app: FetchApp<Env>) => LambdaHandler`
+  Adapt API Gateway HTTP API (v2) and REST API (v1) events to a Web-standard app.
+- **toNetlifyHandler** _(function)_ - `toNetlifyHandler: <Env = unknown>(app: FetchApp<Env>) => NetlifyHandler`
+  Adapt a Web-standard app to a Netlify Functions event handler.
+- **toVercelHandler** _(function)_ - `toVercelHandler: <Env = unknown>(app: FetchApp<Env>) => VercelHandler`
+  Adapt a Web-standard app to a Vercel Edge Function default export.
 - **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: string) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 - **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`
@@ -1103,6 +1126,7 @@ Every public export of every package and documented subpath - name, kind, signat
   A Cloudflare Workers-style execution context (the `fetch` 3rd arg). Structural - only `waitUntil` is used; declared here so `@nifrajs/core` needs no Workers type dependency.
 - **FRAMEWORK_NAME** _(const)_ - `FRAMEWORK_NAME: "Nifra"`
   Single source of truth for the framework's user-facing name.
+- **FetchApp** _(interface)_ - `interface FetchApp<Env = unknown>`
 - **FrameworkError** _(class)_ - `class FrameworkError`
   Base class for every error the framework throws. Carries a stable, string `code` so callers can branch on the failure programmatically rather than matching on message text. Messages are prefixed with the brand name.
 - **FrameworkName** _(type)_ - `type FrameworkName = typeof FRAMEWORK_NAME`
@@ -1112,6 +1136,11 @@ Every public export of every package and documented subpath - name, kind, signat
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ - `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
 - **InferOutput** _(type)_ - `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
+- **LambdaEvent** _(type)_ - `type LambdaEvent = LambdaV2Event | LambdaV1Event`
+- **LambdaHandler** _(type)_ - `type LambdaHandler = (event: LambdaEvent, context?: unknown) => Promise<LambdaResponse>`
+- **LambdaResponse** _(type)_ - `type LambdaResponse = PlatformResponse`
+- **LambdaV1Event** _(interface)_ - `interface LambdaV1Event`
+- **LambdaV2Event** _(interface)_ - `interface LambdaV2Event`
 - **LogFields** _(type)_ - `type LogFields = Record<string, unknown>`
   Structured, redacting logger. The framework logs through this interface so secrets/PII are scrubbed once, centrally (per the project's logging rule), not at each call site. Bring your own by passing `logger` to `server()`.
 - **Logger** _(interface)_ - `interface Logger`
@@ -1124,6 +1153,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **Method** _(type)_ - `type Method = (typeof METHODS)[number]`
 - **Middleware** _(interface)_ - `interface Middleware`
   A bundle of lifecycle hooks applied together via {@link Server.use} - the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware is context-agnostic (sees the base `Context`); `use` does no context-type merging - th…
+- **NetlifyEvent** _(interface)_ - `interface NetlifyEvent`
+- **NetlifyHandler** _(type)_ - `type NetlifyHandler = (event: NetlifyEvent) => Promise<PlatformResponse>`
 - **NifraPlugin** _(type)_ - `type NifraPlugin<In extends AnyServer = AnyServer, Out extends AnyServer = In> = (( app: In, ) => Out) & { readonly pluginName?: string }`
   A nifra **plugin**: a function that augments an app - calling `use`/`derive`/`decorate` and/or registering routes - and returns it. Because `derive`/`decorate` are type-threaded, an **inline** `app.use((a) => a.derive(...).decorate(...))` carries the added context to handlers defined after it (the …
 - **NifraWebSocket** _(interface)_ - `interface NifraWebSocket<Data = unknown>`
@@ -1142,6 +1173,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **Params** _(type)_ - `type Params<Path extends string> = Prettify<RawParams<Path>>`
 - **Platform** _(interface)_ - `interface Platform<Env = unknown>`
   Runtime platform inputs, passed as `app.fetch(request, platform)`. Edge adapters (e.g. Cloudflare Workers) supply `env` (bindings) + `waitUntil`; Bun/Node/Deno omit them. Optional + runtime-neutral, so `app.fetch` stays a Web-standard handler.
+- **PlatformResponse** _(interface)_ - `interface PlatformResponse`
 - **Prettify** _(type)_ - `type Prettify<T> = { [K in keyof T]: T[K] } & {}`
   Flattens an intersection into a single object type for readable hovers.
 - **PromptArgument** _(interface)_ - `interface PromptArgument`
@@ -1207,6 +1239,7 @@ Every public export of every package and documented subpath - name, kind, signat
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
 - **UrlParts** _(interface)_ - `interface UrlParts`
 - **ValidationOutcome** _(type)_ - `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
+- **VercelHandler** _(type)_ - `type VercelHandler = (request: Request) => MaybePromise<Response>`
 - **WebSocketContext** _(interface)_ - `interface WebSocketContext<Env = unknown>`
   The request-context subset the `upgrade()` guard sees - the same lazy accessors a route handler's `c` has (cookies/headers/env are read straight off the upgrade request). Structurally a slice of the core `RawContext`, so the real context object satisfies it.
 - **WebSocketData** _(type)_ - `type WebSocketData = string | Uint8Array`
@@ -1242,6 +1275,12 @@ Every public export of every package and documented subpath - name, kind, signat
   Discards everything - for tests, or when log output is handled elsewhere.
 - **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
   Adapt a nifra app to an edge "ExportedHandler" - use it as a Cloudflare Workers (or any `fetch(request, env, ctx)` runtime) default export. It threads `env` + `ctx.waitUntil` into the nifra Context, so handlers read `c.env` and schedule background work via `c.waitUntil`:
+- **toLambdaHandler** _(function)_ - `toLambdaHandler: <Env = unknown>(app: FetchApp<Env>) => LambdaHandler`
+  Adapt API Gateway HTTP API (v2) and REST API (v1) events to a Web-standard app.
+- **toNetlifyHandler** _(function)_ - `toNetlifyHandler: <Env = unknown>(app: FetchApp<Env>) => NetlifyHandler`
+  Adapt a Web-standard app to a Netlify Functions event handler.
+- **toVercelHandler** _(function)_ - `toVercelHandler: <Env = unknown>(app: FetchApp<Env>) => VercelHandler`
+  Adapt a Web-standard app to a Vercel Edge Function default export.
 - **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: string) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 - **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`
@@ -1466,11 +1505,19 @@ Every public export of every package and documented subpath - name, kind, signat
 - **OgImageRasterized** _(interface)_ - `interface OgImageRasterized`
   Dependency-free Open Graph image generation.
 - **OgImageRasterizer** _(type)_ - `type OgImageRasterizer = (svg: string) => OgImageRasterized | Promise<OgImageRasterized>`
+- **PngRenderer** _(type)_ - `type PngRenderer = (svg: string) => Uint8Array | Promise<Uint8Array>`
+  A dependency-free shape implemented by SVG→PNG codecs such as Resvg, Satori, or a WASM backend.
 - **ResolvedImage** _(interface)_ - `interface ResolvedImage`
+- **ResvgConstructor** _(type)_ - `type ResvgConstructor = new (svg: string) => ResvgRenderer`
+- **ResvgRenderer** _(interface)_ - `interface ResvgRenderer`
 - **SelfHostedLoaderOptions** _(interface)_ - `interface SelfHostedLoaderOptions`
 - **SignImageUrlOptions** _(interface)_ - `interface SignImageUrlOptions`
 - **cloudflareLoader** _(function)_ - `cloudflareLoader: (options?: CloudflareLoaderOptions) => ImageLoader`
   Cloudflare Images loader - builds `/cdn-cgi/image/<options>/<source>` URLs that the Cloudflare edge resizes on the fly (also emits `format=auto` for webp/avif negotiation). Works on Cloudflare Pages / Workers with Images enabled.
+- **createPngRasterizer** _(function)_ - `createPngRasterizer: (render: PngRenderer) => OgImageRasterizer`
+  Adapt an injected SVG→PNG renderer to `ogImageResponse`.
+- **createResvgRasterizer** _(function)_ - `createResvgRasterizer: (Resvg: ResvgConstructor) => OgImageRasterizer`
+  Reference adapter for Resvg-compatible constructors, without making the optional codec a dependency.
 - **identityLoader** _(const)_ - `identityLoader: ImageLoader`
   Default loader: return the source unchanged (no transform). Use when there's no image CDN - you still get CLS-safe sizing + lazy loading, just no responsive variants.
 - **imageDimensions** _(function)_ - `imageDimensions: (bytes: Uint8Array) => ImageInfo | null`
@@ -1526,6 +1573,17 @@ Every public export of every package and documented subpath - name, kind, signat
   Build a cacheable OG image response. GET and HEAD are supported; conditional requests short-circuit rasterization, so a crawler revalidation never repeats expensive codec work.
 - **renderOgImage** _(function)_ - `renderOgImage: (options: OgImageOptions) => string`
   Render a bounded, deterministic SVG suitable for an `og:image` endpoint.
+
+### `@nifrajs/image/og-png`
+
+- **PngRenderer** _(type)_ - `type PngRenderer = (svg: string) => Uint8Array | Promise<Uint8Array>`
+  A dependency-free shape implemented by SVG→PNG codecs such as Resvg, Satori, or a WASM backend.
+- **ResvgConstructor** _(type)_ - `type ResvgConstructor = new (svg: string) => ResvgRenderer`
+- **ResvgRenderer** _(interface)_ - `interface ResvgRenderer`
+- **createPngRasterizer** _(function)_ - `createPngRasterizer: (render: PngRenderer) => OgImageRasterizer`
+  Adapt an injected SVG→PNG renderer to `ogImageResponse`.
+- **createResvgRasterizer** _(function)_ - `createResvgRasterizer: (Resvg: ResvgConstructor) => OgImageRasterizer`
+  Reference adapter for Resvg-compatible constructors, without making the optional codec a dependency.
 
 ### `@nifrajs/image/server`
 
@@ -3664,6 +3722,7 @@ _No named exports (side-effect entrypoint)._
   A Cloudflare Workers-style execution context (the `fetch` 3rd arg). Structural - only `waitUntil` is used; declared here so `@nifrajs/core` needs no Workers type dependency.
 - **FRAMEWORK_NAME** _(const)_ - `FRAMEWORK_NAME: "Nifra"`
   Single source of truth for the framework's user-facing name.
+- **FetchApp** _(interface)_ - `interface FetchApp<Env = unknown>`
 - **FrameworkError** _(class)_ - `class FrameworkError`
   Base class for every error the framework throws. Carries a stable, string `code` so callers can branch on the failure programmatically rather than matching on message text. Messages are prefixed with the brand name.
 - **FrameworkName** _(type)_ - `type FrameworkName = typeof FRAMEWORK_NAME`
@@ -3673,6 +3732,11 @@ _No named exports (side-effect entrypoint)._
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ - `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
 - **InferOutput** _(type)_ - `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
+- **LambdaEvent** _(type)_ - `type LambdaEvent = LambdaV2Event | LambdaV1Event`
+- **LambdaHandler** _(type)_ - `type LambdaHandler = (event: LambdaEvent, context?: unknown) => Promise<LambdaResponse>`
+- **LambdaResponse** _(type)_ - `type LambdaResponse = PlatformResponse`
+- **LambdaV1Event** _(interface)_ - `interface LambdaV1Event`
+- **LambdaV2Event** _(interface)_ - `interface LambdaV2Event`
 - **LogFields** _(type)_ - `type LogFields = Record<string, unknown>`
   Structured, redacting logger. The framework logs through this interface so secrets/PII are scrubbed once, centrally (per the project's logging rule), not at each call site. Bring your own by passing `logger` to `server()`.
 - **Logger** _(interface)_ - `interface Logger`
@@ -3685,6 +3749,8 @@ _No named exports (side-effect entrypoint)._
 - **Method** _(type)_ - `type Method = (typeof METHODS)[number]`
 - **Middleware** _(interface)_ - `interface Middleware`
   A bundle of lifecycle hooks applied together via {@link Server.use} - the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware is context-agnostic (sees the base `Context`); `use` does no context-type merging - th…
+- **NetlifyEvent** _(interface)_ - `interface NetlifyEvent`
+- **NetlifyHandler** _(type)_ - `type NetlifyHandler = (event: NetlifyEvent) => Promise<PlatformResponse>`
 - **NifraPlugin** _(type)_ - `type NifraPlugin<In extends AnyServer = AnyServer, Out extends AnyServer = In> = (( app: In, ) => Out) & { readonly pluginName?: string }`
   A nifra **plugin**: a function that augments an app - calling `use`/`derive`/`decorate` and/or registering routes - and returns it. Because `derive`/`decorate` are type-threaded, an **inline** `app.use((a) => a.derive(...).decorate(...))` carries the added context to handlers defined after it (the …
 - **NifraWebSocket** _(interface)_ - `interface NifraWebSocket<Data = unknown>`
@@ -3703,6 +3769,7 @@ _No named exports (side-effect entrypoint)._
 - **Params** _(type)_ - `type Params<Path extends string> = Prettify<RawParams<Path>>`
 - **Platform** _(interface)_ - `interface Platform<Env = unknown>`
   Runtime platform inputs, passed as `app.fetch(request, platform)`. Edge adapters (e.g. Cloudflare Workers) supply `env` (bindings) + `waitUntil`; Bun/Node/Deno omit them. Optional + runtime-neutral, so `app.fetch` stays a Web-standard handler.
+- **PlatformResponse** _(interface)_ - `interface PlatformResponse`
 - **Prettify** _(type)_ - `type Prettify<T> = { [K in keyof T]: T[K] } & {}`
   Flattens an intersection into a single object type for readable hovers.
 - **PromptArgument** _(interface)_ - `interface PromptArgument`
@@ -3770,6 +3837,7 @@ _No named exports (side-effect entrypoint)._
 - **VERSION** _(const)_ - `VERSION: "2.9.1"`
   Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version.
 - **ValidationOutcome** _(type)_ - `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
+- **VercelHandler** _(type)_ - `type VercelHandler = (request: Request) => MaybePromise<Response>`
 - **Version** _(type)_ - `type Version = typeof VERSION`
 - **WebSocketContext** _(interface)_ - `interface WebSocketContext<Env = unknown>`
   The request-context subset the `upgrade()` guard sees - the same lazy accessors a route handler's `c` has (cookies/headers/env are read straight off the upgrade request). Structurally a slice of the core `RawContext`, so the real context object satisfies it.
@@ -3806,6 +3874,12 @@ _No named exports (side-effect entrypoint)._
   Discards everything - for tests, or when log output is handled elsewhere.
 - **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
   Adapt a nifra app to an edge "ExportedHandler" - use it as a Cloudflare Workers (or any `fetch(request, env, ctx)` runtime) default export. It threads `env` + `ctx.waitUntil` into the nifra Context, so handlers read `c.env` and schedule background work via `c.waitUntil`:
+- **toLambdaHandler** _(function)_ - `toLambdaHandler: <Env = unknown>(app: FetchApp<Env>) => LambdaHandler`
+  Adapt API Gateway HTTP API (v2) and REST API (v1) events to a Web-standard app.
+- **toNetlifyHandler** _(function)_ - `toNetlifyHandler: <Env = unknown>(app: FetchApp<Env>) => NetlifyHandler`
+  Adapt a Web-standard app to a Netlify Functions event handler.
+- **toVercelHandler** _(function)_ - `toVercelHandler: <Env = unknown>(app: FetchApp<Env>) => VercelHandler`
+  Adapt a Web-standard app to a Vercel Edge Function default export.
 - **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: string) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 - **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`

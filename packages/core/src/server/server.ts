@@ -2501,7 +2501,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   ): MaybePromise<T> {
     const hooks = this.onRequestHooks
     const originalRequest = requestOf(source)
-    this.responseSources.set(source as object, originalRequest)
+    // A Web Request is already the exact object visible to the hooks and the response walk. Only
+    // adapter sources need the source→request mapping; avoiding the WeakMap write keeps the common
+    // Bun/Deno/edge lifecycle allocation-light while preserving Node's lazy Request identity.
+    if (source !== originalRequest) this.responseSources.set(source as object, originalRequest)
     let current: RequestSource = source
     for (let i = 0; i < hooks.length; i++) {
       const outcome = (hooks[i] as RawOnRequest)(requestOf(current), platform)

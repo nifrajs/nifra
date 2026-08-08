@@ -35,6 +35,11 @@
       "bun": "./src/og.ts",
       "types": "./dist/og.d.ts",
       "default": "./dist/og.js"
+    },
+    "./og-png": {
+      "bun": "./src/og-png.ts",
+      "types": "./dist/og-png.d.ts",
+      "default": "./dist/og-png.js"
     }
   },
   "files": [

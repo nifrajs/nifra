@@ -107,6 +107,8 @@ Usage:
                                          request field or a removed response field breaks; widening a
                                          request enum or adding a response field doesn't) and fails
                                          closed. Exits non-zero on any breaking change - run it in CI.
+  nifra sdk     --lang <python|go> [--out <file>]
+                                         Generate a deterministic non-TypeScript SDK from backend.ts.
   nifra assure  [--config <file>] [--json]  Route-assurance gate: load nifra.assurance.ts, classify every
                                          reflected backend route, and fail when required enforcement
                                          evidence is missing/forbidden or a route is unclassified.
@@ -615,6 +617,30 @@ async function main(): Promise<void> {
       if (!(await runDiff(process.cwd(), baseline, { json: argv.includes("--json") }))) {
         process.exitCode = 1
       }
+    } catch (err) {
+      console.error(formatCliError(err))
+      process.exitCode = 1
+    }
+    return
+  }
+  if (command === "sdk") {
+    const languageIndex = argv.indexOf("--lang")
+    const language = languageIndex === -1 ? undefined : argv[languageIndex + 1]
+    const outIndex = argv.indexOf("--out")
+    const out = outIndex === -1 ? undefined : argv[outIndex + 1]
+    if (language !== "python" && language !== "go") {
+      console.error("[nifra] sdk needs --lang python or --lang go")
+      process.exitCode = 1
+      return
+    }
+    if (outIndex !== -1 && (out === undefined || out.startsWith("-"))) {
+      console.error("[nifra] --out needs a file path")
+      process.exitCode = 1
+      return
+    }
+    try {
+      const { runSdk } = await import("./sdk.ts")
+      await runSdk(process.cwd(), { language, ...(out !== undefined ? { out } : {}) })
     } catch (err) {
       console.error(formatCliError(err))
       process.exitCode = 1

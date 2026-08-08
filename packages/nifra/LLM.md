@@ -21,11 +21,11 @@ The nifra full-stack framework - unscoped meta-entry that re-exports @nifrajs/co
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
 - **signValue** _(function)_ - `signValue: (value: string, secret: string) => Promise<string>`
 - **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(…`
-- **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: string) => Promise<string | null>`
-- **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`
-- **FrameworkError** _(class)_ - `class FrameworkError`
+- **toLambdaHandler** _(function)_ - `toLambdaHandler: <Env = unknown>(app: FetchApp<Env>) => LambdaHandler`
+- **toNetlifyHandler** _(function)_ - `toNetlifyHandler: <Env = unknown>(app: FetchApp<Env>) => NetlifyHandler`
+- **toVercelHandler** _(function)_ - `toVercelHandler: <Env = unknown>(app: FetchApp<Env>) => VercelHandler`
 
-_…and 75 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
+_…and 88 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
 
 ## Footguns
 

@@ -53,6 +53,21 @@ export {
   redactLogFields,
   silentLogger,
 } from "./server/logger.ts"
+export {
+  type FetchApp,
+  type LambdaEvent,
+  type LambdaHandler,
+  type LambdaResponse,
+  type LambdaV1Event,
+  type LambdaV2Event,
+  type NetlifyEvent,
+  type NetlifyHandler,
+  type PlatformResponse,
+  toLambdaHandler,
+  toNetlifyHandler,
+  toVercelHandler,
+  type VercelHandler,
+} from "./server/platform-adapters.ts"
 export type { Registry, RouteInfo } from "./server/registry.ts"
 export {
   type AdmissionController,

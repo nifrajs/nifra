@@ -163,19 +163,25 @@ export function renderOgImage(options: OgImageOptions): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(title)}"><rect width="${width}" height="${height}" fill="${background}"/><rect x="84" y="${height - 70}" width="180" height="8" rx="4" fill="${accent}"/>${eyebrowMarkup}${textLines(titleLines, 84, titleY, 52, foreground)}${descriptionMarkup}</svg>`
 }
 
-function fnv1a(value: Uint8Array): string {
-  let hash = 0x811c9dc5
-  for (let index = 0; index < value.length; index++) {
-    hash ^= value[index]!
-    hash = Math.imul(hash, 0x01000193)
-  }
-  return (hash >>> 0).toString(16)
+async function sha256(value: Uint8Array): Promise<string> {
+  const input = new Uint8Array(value.byteLength)
+  input.set(value)
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", input))
+  return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")
+}
+
+function weakTag(value: string): string {
+  const trimmed = value.trim()
+  return trimmed.startsWith("W/") ? trimmed.slice(2).trim() : trimmed
 }
 
 function ifNoneMatch(request: Request | undefined, etag: string): boolean {
   const value = request?.headers.get("if-none-match")
   if (value === null || value === undefined) return false
-  return value.trim() === "*" || value.split(",").some((candidate) => candidate.trim() === etag)
+  return (
+    value.trim() === "*" ||
+    value.split(",").some((candidate) => weakTag(candidate) === weakTag(etag))
+  )
 }
 
 function contentType(value: string): string {
@@ -217,7 +223,7 @@ export async function ogImageResponse(
   // Hash the bytes actually sent. A rasterizer may produce different pixels for the same SVG
   // (for example after a backend/font update), so hashing only the source would make a conditional
   // request incorrectly return 304 for a changed representation.
-  const etag = `"${fnv1a(bytes)}"`
+  const etag = `"${await sha256(bytes)}"`
   const headers = new Headers({
     "cache-control": `public, max-age=${cacheMaxAge}, immutable`,
     "content-type": `${mediaType}${mediaType === "image/svg+xml" ? "; charset=utf-8" : ""}`,

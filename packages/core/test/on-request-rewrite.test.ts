@@ -33,6 +33,28 @@ describe("onRequest request rewrite", () => {
     expect(await res.json()).toEqual({ method: "PUT", body: { ok: true } })
   })
 
+  test("preserves the original Web Request identity when no hook rewrites it", async () => {
+    let seenByRequestHook: Request | undefined
+    let seenByResponseHook: Request | undefined
+    const app = server()
+      .onRequest((request) => {
+        seenByRequestHook = request
+        return undefined
+      })
+      .onResponse((response, request) => {
+        seenByResponseHook = request
+        return response
+      })
+      .get("/identity", () => ({ ok: true }))
+
+    const request = new Request("http://x/identity")
+    const response = await app.fetch(request)
+
+    expect(response.status).toBe(200)
+    expect(seenByRequestHook).toBe(request)
+    expect(seenByResponseHook).toBe(request)
+  })
+
   test("still short-circuits when an onRequest hook returns a response", async () => {
     const app = server()
       .onRequest(() => new Response("blocked", { status: 418 }))

@@ -2,6 +2,9 @@
 
 Session primitives for nifra - signed-cookie + server-store sessions, CSRF, and route guards. Bring your own identity (Better Auth / Lucia / OAuth); nifra owns the session.
 
+`Authorizer`/`requireAuthorization` provide a small public policy seam. The application or data layer
+must decide ownership and permissions; Nifra stores no policy, tenant, or subject data.
+
 Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one core, five UI libraries, every runtime. Scaffold a new app with `bun create nifra`.
 
 ## Install

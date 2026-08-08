@@ -10,13 +10,15 @@ Image optimization for nifra - a CLS-safe responsive <Image> + pluggable loaders
 
 ## Public entrypoints
 
-`@nifrajs/image` · `@nifrajs/image/backends` · `@nifrajs/image/og` · `@nifrajs/image/server`
+`@nifrajs/image` · `@nifrajs/image/backends` · `@nifrajs/image/og` · `@nifrajs/image/og-png` · `@nifrajs/image/server`
 
 ## Key exports
 
 - **bunImageBackend** _(function)_ - `bunImageBackend: () => ImageBackend` · from `@nifrajs/image/backends`
 - **cloudflareLoader** _(function)_ - `cloudflareLoader: (options?: CloudflareLoaderOptions) => ImageLoader` · from `@nifrajs/image`
 - **createImageHandler** _(function)_ - `createImageHandler: (options?: ImageHandlerOptions) => (req: Request) => Promise<Response>` · from `@nifrajs/image/server`
+- **createPngRasterizer** _(function)_ - `createPngRasterizer: (render: PngRenderer) => OgImageRasterizer` · from `@nifrajs/image`
+- **createResvgRasterizer** _(function)_ - `createResvgRasterizer: (Resvg: ResvgConstructor) => OgImageRasterizer` · from `@nifrajs/image`
 - **imageDimensions** _(function)_ - `imageDimensions: (bytes: Uint8Array) => ImageInfo | null` · from `@nifrajs/image`
 - **ogImageResponse** _(function)_ - `ogImageResponse: (options: OgImageOptions, request?: Request) => Promise<Response>` · from `@nifrajs/image`
 - **readImageDimensions** _(function)_ - `readImageDimensions: (source: { arrayBuffer(): Promise<ArrayBuffer>; stream?: () => ReadableStream<Uint8Array>; }, maxBytes?: number) => Pr…` · from `@nifrajs/image`
@@ -26,10 +28,8 @@ Image optimization for nifra - a CLS-safe responsive <Image> + pluggable loaders
 - **sharpImageBackend** _(function)_ - `sharpImageBackend: (sharp: SharpLike) => ImageBackend` · from `@nifrajs/image/backends`
 - **signImageUrl** _(function)_ - `signImageUrl: (endpoint: string, image: { src: string; width: number; quality?: number; }, options: SignImageUrlOptions) => string` · from `@nifrajs/image`
 - **toHtmlAttrs** _(function)_ - `toHtmlAttrs: (resolved: ResolvedImage) => HtmlImageAttrs` · from `@nifrajs/image`
-- **wasmImageBackend** _(function)_ - `wasmImageBackend: (codecs: WasmImageCodecs) => ImageBackend` · from `@nifrajs/image/backends`
-- **ImageProcessingError** _(class)_ - `class ImageProcessingError` · from `@nifrajs/image/backends`
 
-_…and 23 more - see [`api-reference.md`](../../api-reference.md#nifrajsimage) for the complete list._
+_…and 28 more - see [`api-reference.md`](../../api-reference.md#nifrajsimage) for the complete list._
 
 ## Footguns
 

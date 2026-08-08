@@ -15,6 +15,7 @@ nifra assure  [--config <file>] [--json]  Gate reflected routes against enforcem
 nifra capabilities check [--json]        Gate effect provenance + the reviewed capability lockfile.
 nifra manifest emit [--sign <key-ref>]   Emit the hash-verified route trust artifact after assurance.
 nifra manifest diff <before> <after>      Block promotion on contract/governance regressions.
+nifra sdk     --lang <python|go>         Generate a deterministic non-TypeScript SDK from `backend.ts`.
 nifra doctor  [--json] [--auto-fix]       Catch undeclared imports and duplicate Nifra/React installs.
 ```
 

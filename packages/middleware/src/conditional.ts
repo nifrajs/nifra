@@ -65,5 +65,6 @@ export function conditionalResponse(
   if (modified !== undefined) headers.set("last-modified", modified)
   headers.delete("content-length")
   headers.delete("content-type")
+  void response.body?.cancel().catch(() => {})
   return new Response(null, { status: 304, headers })
 }
