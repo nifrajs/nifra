@@ -8,7 +8,7 @@ import { transformAsync } from "@babel/core"
 // @ts-expect-error - no type declarations published
 import presetTypeScript from "@babel/preset-typescript"
 import type { RenderAdapter } from "@nifrajs/web"
-import { devServerCompile } from "@nifrajs/web/plugins/kit"
+import { devServerCompile, rewriteSsrImports } from "@nifrajs/web/plugins/kit"
 // @ts-expect-error - no type declarations published
 import presetSolid from "babel-preset-solid"
 import type { BunPlugin } from "bun"
@@ -78,7 +78,7 @@ export function solidBunPlugin(generate: "dom" | "ssr"): BunPlugin {
             ? { plugins: [[await refresh.babel(), REFRESH_OPTIONS], solidRefreshBunHot] }
             : {}),
         })
-        return { contents: result?.code ?? "", loader: "js" }
+        return { contents: rewriteSsrImports(result?.code ?? "", path, generate), loader: "js" }
       })
     },
   }

@@ -3050,6 +3050,8 @@ Every public export of every package and documented subpath - name, kind, signat
   A **package-root-relative**, forward-slashed form of an absolute path - the input to {@link hash8} for any build-stable identifier (e.g. CSS-module scoped names). Anchoring on the file's nearest `package.json` (not the absolute path, not `process.cwd()`) makes the result independent of BOTH the mac…
 - **requirePeer** _(function)_ - `requirePeer: <T>(specifier: string, hint: { readonly feature: string; readonly install: string; }) => Promise<T>`
   Load an optional peer compiler at build time, throwing a consistent, actionable install-hint error if it's absent - the `@vue/compiler-sfc` peer pattern, centralized. Build-time only, so the dynamic `import` (which keeps the peer out of the package's hard dependencies) is correct here.
+- **rewriteSsrImports** _(function)_ - `rewriteSsrImports: (contents: string, path: string, generate: "dom" | "ssr") => string`
+  Re-key the app-owned imports of a module a **server-side** plugin just compiled. A plugin that claims a file extension is the only code that sees that file's source, so it is the only place its imports can be versioned; without this call every component in that language stays on the code it had at …
 
 ### `@nifrajs/web/plugins/postcss`
 

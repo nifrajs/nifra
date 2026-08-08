@@ -8656,6 +8656,13 @@
     "doc": "/** The wrapper `revalidate()` returns: the action's `data` plus the paths it changed. A plain tagged\n * shape (not a class) so `@nifrajs/client`'s `ActionData` can unwrap it structurally without importing\n * from `@nifrajs/web`. `createWebApp` strips the wrapper - the client receives `data` as the body and\n * the paths via the `X-Nifra-Revalidate` header. */"
   },
   {
+    "name": "rewriteSsrImports",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function rewriteSsrImports(contents: string, path: string, generate: \"dom\" | \"ssr\"): string;",
+    "doc": "/**\n * Re-key the app-owned imports of a module a **server-side** plugin just compiled. A plugin that claims a\n * file extension is the only code that sees that file's source, so it is the only place its imports can\n * be versioned; without this call every component in that language stays on the code it had at startup.\n *\n * A no-op outside a Bun dev server, and on the client half of a plugin - the client is bundled, and a\n * bundle has no import cache to bust.\n */"
+  },
+  {
     "name": "richWireCodec",
     "kind": "function",
     "package": "@nifrajs/core",

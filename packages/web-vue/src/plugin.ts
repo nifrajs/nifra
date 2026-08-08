@@ -1,4 +1,9 @@
-import { devServerCompile, hash8, reproduciblePath } from "@nifrajs/web/plugins/kit"
+import {
+  devServerCompile,
+  hash8,
+  reproduciblePath,
+  rewriteSsrImports,
+} from "@nifrajs/web/plugins/kit"
 import {
   type BindingMetadata,
   compileScript,
@@ -197,7 +202,7 @@ export function vueBunPlugin(generate: "dom" | "ssr"): BunPlugin {
             }
           }
         }
-        return { contents: js, loader: "ts" }
+        return { contents: rewriteSsrImports(js, path, generate), loader: "ts" }
       })
       // Virtual CSS module: `<file>.vue?vue-css` → the compiled (scoped) stylesheet (css loader).
       build.onResolve({ filter: /\?vue-css$/ }, (args) => ({

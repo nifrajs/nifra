@@ -38,7 +38,10 @@
  * production, which reads CSS from the build manifest, is perfectly fine.
  *
  * SSR invalidation is Bun's import cache rather than Vite's module graph, so route modules are re-imported
- * under a changing query on each change - which is what `discoverRoutes({ importQuery })` exists for.
+ * under a changing query on each change - which is what `discoverRoutes({ importQuery })` exists for. That
+ * query stops at the route file, so everything BELOW it - components, helpers, `*.server` modules - is
+ * tracked and re-keyed per module by `./dev-ssr-graph.ts`, or SSR would render the code that was on disk
+ * when the server started.
  *
  * Bun-only + build-time; never imported by the edge runtime.
  */
@@ -56,6 +59,7 @@ import { type BuildClientOptions, buildClient } from "./build.ts"
 import { type DevEntryMatch, resolveDevEntry } from "./bun-dev-entry.ts"
 import { createDevDiagnostics } from "./dev-diagnostics.ts"
 import { explainBindFailure } from "./dev-port.ts"
+import { createSsrGraph, type SsrGraph } from "./dev-ssr-graph.ts"
 import { discoverRoutes } from "./fs.ts"
 import { DEFAULT_DEV_PORT, generateClientEntry } from "./index.ts"
 import { DEV_HMR_ENV, DEV_ROOT_ENV, DEV_ROUTES_ENV } from "./plugins/kit.ts"
@@ -269,6 +273,15 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
   // LAST_ERROR_PATH so an agent driving the dev server reads the exact failure (code, codeframe, fix) as
   // JSON instead of scraping the overlay. Shared with the Vite adapter so the endpoint can't drift.
   const devDiagnostics = createDevDiagnostics(root)
+  // SSR freshness BELOW the route module. The route-level `importQuery` only ever reloaded the route
+  // itself; everything it imports is tracked here and re-keyed when it changes. Registered now because a
+  // Bun runtime plugin only affects modules loaded after it, and the first route import is `appFor`
+  // below - the CLI's own plugins (CSS Modules, the app's `serverPlugins`) register earlier still, and
+  // being earlier is what gives them first refusal on the specifiers and file types they own. That
+  // ordering is deliberate: a framework plugin compiling `.vue`/`.svelte`/`.tsx` keeps its loader, and
+  // re-keys the imports of what it compiled by handing its output through `rewriteSsrImports`.
+  const ssrGraph = createSsrGraph({ root })
+  ;(await import("bun")).plugin(ssrGraph.plugin)
   const devDir = resolve(root, DEV_DIR)
   const entryPath = resolve(devDir, "entry.tsx")
   const htmlPath = resolve(devDir, "entry.html")
@@ -289,9 +302,9 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
   let server: BunServerHandle
   // The last resolved entry, with the time it was resolved. Deliberately short-lived - see `currentEntry`.
   let cache: { readonly entry: DevEntryMatch; readonly at: number } | undefined
-  // The app, tagged with the entry hash it was built against - see `appFor`.
-  let built: { readonly entry: string; readonly app: FetchApp } | undefined
-  let building: { readonly entry: string; readonly promise: Promise<FetchApp> } | undefined
+  // The app, tagged with the build it was made for - see `appFor`.
+  let built: { readonly key: string; readonly app: FetchApp } | undefined
+  let building: { readonly key: string; readonly promise: Promise<FetchApp> } | undefined
   let version = 0
 
   /**
@@ -339,25 +352,36 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
    *
    * The watcher still runs: it regenerates the entry when routes are added or removed, and re-checks for
    * client leaks. It is no longer what keeps SSR correct.
+   *
+   * The entry hash is not the whole marker, though, because it only covers the CLIENT graph. A module
+   * the browser never receives - a `*.server` file, a loader's helper - can change without moving it, so
+   * the key also carries {@link SsrGraph} generation, which counts changes on the SERVER side. Either
+   * one moving rebuilds the app, which is what re-imports the route modules under a fresh query.
    */
-  const appFor = (entrySrc: string): Promise<FetchApp> => {
-    if (built?.entry === entrySrc) return Promise.resolve(built.app)
-    if (building?.entry === entrySrc) return building.promise
+  const appFor = (key: string): Promise<FetchApp> => {
+    if (built?.key === key) return Promise.resolve(built.app)
+    if (building?.key === key) return building.promise
     version += 1
     const promise = Promise.resolve(createApp(CLIENT_ENTRY_PATH, `v=${version}`))
-    building = { entry: entrySrc, promise }
+    building = { key, promise }
     void promise
       .then((next) => {
-        if (building?.entry === entrySrc) {
-          built = { entry: entrySrc, app: next }
+        if (building?.key === key) {
+          built = { key, app: next }
           building = undefined
         }
       })
       .catch(() => {
         // Clear the in-flight marker so the next request retries instead of re-awaiting a failed build.
-        if (building?.entry === entrySrc) building = undefined
+        if (building?.key === key) building = undefined
       })
     return promise
+  }
+
+  /** Check the server-side graph for changes, then hand back the app for what is on disk right now. */
+  const appForRequest = (entrySrc: string): Promise<FetchApp> => {
+    ssrGraph.sweep()
+    return appFor(`${entrySrc}#${ssrGraph.generation()}`)
   }
 
   try {
@@ -395,7 +419,7 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
           // One fresh probe per request: it is both the freshness check for SSR and the stylesheet list,
           // so the page cannot be rendered against a build the browser is not about to load.
           const entry = await currentEntry(true)
-          const res = await (await appFor(entry.src)).fetch(req)
+          const res = await (await appForRequest(entry.src)).fetch(req)
           if (!(res.headers.get("content-type") ?? "").includes("text/html")) return res
           if (entry.styles.length === 0) return res
           const headers = new Headers(res.headers)
@@ -426,7 +450,7 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
   try {
     // Build once up front so a dev server that cannot find the entry, or whose app fails to construct,
     // fails at startup with a real diagnosis instead of on the first page request.
-    await appFor((await currentEntry()).src)
+    await appForRequest((await currentEntry()).src)
   } catch (err) {
     // Leaving the server up would answer 500s forever, which presents as a running server rather than as
     // the startup failure it is.
@@ -502,6 +526,7 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
       if (timer) clearTimeout(timer)
       clearInterval(topologyTimer)
       for (const file of watched) unwatchFile(file)
+      ssrGraph.dispose()
       server.stop(true)
       rmSync(devDir, { recursive: true, force: true })
     },

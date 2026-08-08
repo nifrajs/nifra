@@ -1,3 +1,4 @@
+import { rewriteSsrImports } from "@nifrajs/web/plugins/kit"
 import type { BunPlugin } from "bun"
 import { compile } from "svelte/compiler"
 
@@ -57,7 +58,7 @@ export function svelteMdxBunPlugin(generate: "dom" | "ssr"): BunPlugin {
             loader: "js",
           }
         }
-        return { contents: js.code, loader: "js" }
+        return { contents: rewriteSsrImports(js.code, path, generate), loader: "js" }
       })
       build.onResolve({ filter: /\?svelte-mdx-css$/ }, (args) => ({
         path: args.path,

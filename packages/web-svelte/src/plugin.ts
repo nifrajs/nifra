@@ -1,4 +1,4 @@
-import { devHotComponent, devServerCompile } from "@nifrajs/web/plugins/kit"
+import { devHotComponent, devServerCompile, rewriteSsrImports } from "@nifrajs/web/plugins/kit"
 import type { BunPlugin } from "bun"
 import { compile } from "svelte/compiler"
 
@@ -93,7 +93,7 @@ export function svelteBunPlugin(generate: "dom" | "ssr"): BunPlugin {
             loader: "js",
           }
         }
-        return { contents: js.code, loader: "js" }
+        return { contents: rewriteSsrImports(js.code, path, generate), loader: "js" }
       })
       // Virtual CSS module: `<file>.svelte?svelte-css` → the compiled scoped stylesheet (css loader).
       build.onResolve({ filter: /\?svelte-css$/ }, (args) => ({

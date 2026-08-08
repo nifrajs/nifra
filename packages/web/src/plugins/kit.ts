@@ -11,6 +11,16 @@ import type { BunPlugin } from "bun"
 /** The argument Bun passes to a plugin's `setup` - Bun doesn't export the type, so derive it. */
 export type PluginBuilder = Parameters<BunPlugin["setup"]>[0]
 
+/**
+ * Re-keys the app-owned imports of a module the SERVER half of a plugin just compiled, so an edit below
+ * a route reaches SSR instead of being served from Bun's import cache. A plugin that claims a file
+ * extension is the only code that ever sees that file's source, so it is the only place its imports can
+ * be versioned - every `generate: "ssr"` loader should return its output through this.
+ *
+ * A no-op on the client half and outside a dev server. See `../dev-ssr-graph.ts` for the whole design.
+ */
+export { rewriteSsrImports } from "../dev-ssr-graph.ts"
+
 const packageRootCache = new Map<string, string>()
 
 /** The nearest ancestor directory of `startDir` that holds a `package.json` (the file's package root),
