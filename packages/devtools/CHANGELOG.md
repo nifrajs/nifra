@@ -1,5 +1,11 @@
 # @nifrajs/devtools
 
+## 2.10.0
+
+### Patch Changes
+
+- @nifrajs/otel@2.10.0
+
 ## 2.9.1
 
 ### Patch Changes

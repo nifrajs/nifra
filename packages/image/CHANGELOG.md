@@ -1,5 +1,13 @@
 # @nifrajs/image
 
+## 2.10.0
+
+### Minor Changes
+
+- 15bffdd: Add request-bound data capability evidence, resumable bounded channel subscriptions, ISR tag
+  invalidation for memory and KV stores, and dependency-free Open Graph image responses with an
+  optional rasterizer seam.
+
 ## 2.9.1
 
 ## 2.9.0

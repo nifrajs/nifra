@@ -1,5 +1,16 @@
 # @nifrajs/middleware
 
+## 2.10.0
+
+### Minor Changes
+
+- 15bffdd: Add opt-in RFC 9457 Problem Details responses for Nifra framework errors while preserving the default error envelope.
+- 15bffdd: Add standards-shaped range, conditional, content-negotiation, and multipart response helpers, plus public token-only data contracts and typed in-memory channel seams.
+
+### Patch Changes
+
+- @nifrajs/schema@2.10.0
+
 ## 2.9.1
 
 ### Patch Changes

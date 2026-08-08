@@ -3,7 +3,7 @@
   "name": "io.github.nifrajs/nifra-docs",
   "title": "Nifra docs",
   "description": "Nifra docs, runnable examples, and API types as an MCP server for any AI assistant.",
-  "version": "2.9.1",
+  "version": "2.10.0",
   "repository": {
     "url": "https://github.com/nifrajs/nifra",
     "source": "github"
