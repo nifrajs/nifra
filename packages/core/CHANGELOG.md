@@ -1,5 +1,15 @@
 # @nifrajs/core
 
+## 2.10.0
+
+### Minor Changes
+
+- 15bffdd: Serve `public/` with byte ranges. Static files now advertise `accept-ranges`, answer a single-range request with `206` and `content-range`, return `416` for an unsatisfiable range, and publish `last-modified` with `if-modified-since` and `if-range` handling. HEAD reports the same `content-type` and length metadata GET does. `parseByteRange` moves to `@nifrajs/core/range` so the static handler and `@nifrajs/middleware`'s `rangeResponse` share one parser; the middleware export is unchanged.
+- 15bffdd: Add request-bound data capability evidence, resumable bounded channel subscriptions, ISR tag
+  invalidation for memory and KV stores, and dependency-free Open Graph image responses with an
+  optional rasterizer seam.
+- 15bffdd: Add standards-shaped range, conditional, content-negotiation, and multipart response helpers, plus public token-only data contracts and typed in-memory channel seams.
+
 ## 2.9.1
 
 ### Patch Changes

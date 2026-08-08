@@ -1,5 +1,7 @@
 # @nifrajs/deno
 
+## 2.10.0
+
 ## 2.9.1
 
 ### Patch Changes

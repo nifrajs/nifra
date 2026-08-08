@@ -1,5 +1,22 @@
 # @nifrajs/web
 
+## 2.10.0
+
+### Minor Changes
+
+- 5263c4e: `KVCacheStore` accepts a `minExpirationTtl`. The 60-second floor is Cloudflare KV's, and it stays the default, but `KVNamespaceLike` is three structural methods that Redis, Deno KV and Upstash satisfy too - and those accept far shorter TTLs. Declare the binding's real minimum, or `0` for a backend without one. A non-integer or negative TTL is now rejected at construction rather than reaching the binding.
+- 15bffdd: Serve `public/` with byte ranges. Static files now advertise `accept-ranges`, answer a single-range request with `206` and `content-range`, return `416` for an unsatisfiable range, and publish `last-modified` with `if-modified-since` and `if-range` handling. HEAD reports the same `content-type` and length metadata GET does. `parseByteRange` moves to `@nifrajs/core/range` so the static handler and `@nifrajs/middleware`'s `rangeResponse` share one parser; the middleware export is unchanged.
+- 15bffdd: Add request-bound data capability evidence, resumable bounded channel subscriptions, ISR tag
+  invalidation for memory and KV stores, and dependency-free Open Graph image responses with an
+  optional rasterizer seam.
+
+### Patch Changes
+
+- Updated dependencies [15bffdd]
+- Updated dependencies [15bffdd]
+- Updated dependencies [15bffdd]
+  - @nifrajs/core@2.10.0
+
 ## 2.9.1
 
 ### Patch Changes

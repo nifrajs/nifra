@@ -1,5 +1,25 @@
 # @nifrajs/cli
 
+## 2.10.0
+
+### Patch Changes
+
+- 15bffdd: Add request-bound data capability evidence, resumable bounded channel subscriptions, ISR tag
+  invalidation for memory and KV stores, and dependency-free Open Graph image responses with an
+  optional rasterizer seam.
+- Updated dependencies [5263c4e]
+- Updated dependencies [15bffdd]
+- Updated dependencies [15bffdd]
+- Updated dependencies [15bffdd]
+  - @nifrajs/web@2.10.0
+  - @nifrajs/core@2.10.0
+  - @nifrajs/client@2.10.0
+  - @nifrajs/schema@2.10.0
+  - @nifrajs/testing@2.10.0
+  - @nifrajs/mcp@2.10.0
+  - @nifrajs/runner@2.10.0
+  - create-nifra@2.10.0
+
 ## 2.9.1
 
 ### Patch Changes
