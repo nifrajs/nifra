@@ -31,8 +31,16 @@ export { svelteBunPlugin } from "./plugin.ts"
  * synchronous branch below and allocates no promise - awaiting on the hot path measured as a real 3%
  * throughput loss on the SSR benchmark, which is not a price worth paying for a one-time import.
  */
-/** What `Chain.svelte` destructures from `$props()`. */
-interface ChainProps {
+/**
+ * What `Chain.svelte` destructures from `$props()`.
+ *
+ * A type alias rather than an `interface` on purpose. `.svelte` files are compiled by a bundler, not
+ * by tsc, so they arrive through the ambient shim as `Component<Record<string, unknown>>` and the load
+ * below narrows that to this shape. An interface has no implicit index signature, so that narrowing is
+ * a comparison between two unrelated types and `svelte-check` rejects it; a type alias does have one,
+ * which makes the narrowing legal to state directly instead of laundering it through `unknown`.
+ */
+type ChainProps = {
   readonly chain: readonly unknown[]
   readonly props: RenderProps
   /** Explicitly `| undefined`: the adapter always passes the key, and `RenderProps.layoutData` is
