@@ -206,10 +206,10 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
   // project cannot end up bundled by one toolchain in dev and the other in production. An earlier
   // version of this kept apps declaring `vitePlugins` on Vite for dev even when they also shipped Bun
   // equivalents, on the theory that the framework plugins were the safer HMR path. Measurement killed
-  // it: Vue and Solid render correctly on the Bun pipeline, and Svelte renders ONLY there - the Vite
-  // pipeline externalizes the adapter package, so its `Chain.svelte` and the app's routes compile
-  // against two different Svelte runtimes (see the note at the Vite branch). The hedge was routing the
-  // one framework that needs Bun to the one pipeline that cannot serve it.
+  // it: Vue, Solid and Svelte all render correctly on the Bun pipeline, so the hedge bought nothing
+  // and cost an app the guarantee that dev and production bundle the same way. (Svelte used to render
+  // ONLY on Bun, which made the hedge actively harmful; it now renders on either - see the note at the
+  // Vite branch for what the adapter had to be given to make that true.)
   const decision = chooseBuildPipeline(
     app.resolvedPlugins,
     flags.vite ? "vite" : flags.bun ? "bun" : undefined,
@@ -237,7 +237,20 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
       }
       const { bunfigPath, launchToken } = await writeBunDevConfig(app.cwd, app.configPath)
       const child = Bun.spawn(
-        [process.execPath, `--config=${bunfigPath}`, ...process.argv.slice(1)],
+        [
+          process.execPath,
+          `--config=${bunfigPath}`,
+          // The app's `conditions` reach SSR here or nowhere: bunfig has no key for them (a top-level,
+          // `[run]`, `[serve.static]` or `[bundle]` `conditions` is parsed and ignored), and the re-exec
+          // is the only point where this process's resolver is still configurable. Without it a package
+          // with an `exports` map resolves to a DIFFERENT file on the server than in the client bundle,
+          // which is the two-toolchains-one-module failure the pipeline guard exists to prevent.
+          //
+          // One flag per condition. `--conditions=a,b` is accepted and matches nothing: Bun takes the
+          // whole string as a single condition name, so the comma form fails silently.
+          ...(app.framework.conditions ?? []).map((condition) => `--conditions=${condition}`),
+          ...process.argv.slice(1),
+        ],
         {
           stdio: ["inherit", "inherit", "inherit"],
           env: {
@@ -330,15 +343,17 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
   // made an app's hand-written React alias fail to reach SSR, and it is the condition being removed -
   // not a redundancy worth keeping "just in case".
   //
-  // This is also why the Vite pipeline cannot serve a Svelte app, and the attempts are recorded so they
-  // are not retried. The adapter package is deliberately `ssr.external` (its `RouterContext` must be the
-  // ONE instance the Bun-imported adapter provides), so BUN loads it - and `@nifrajs/web-svelte` renders
-  // through its own `Chain.svelte`, which needs a compiler. Registering the app's `serverPlugins` here,
-  // scoped to that package's directory, compiles it against a second Svelte runtime and the first
-  // `setContext` dies (`context.function` null). Also externalizing the adapter's framework peer fixes
-  // that and gets further, only to die on `context.function[FILENAME]`: `svelteBunPlugin` and
-  // `vite-plugin-svelte` do not emit the same dev-mode component shape. Two compilers, one component
-  // tree, no fix short of one toolchain owning both - which is the Bun pipeline, where Svelte works.
+  // Svelte is the case that proves the rule, and the discarded attempts are recorded so they are not
+  // retried. The adapter package stays `ssr.external` (its context must be the ONE instance the
+  // Bun-imported adapter provides), so BUN loads it - and `@nifrajs/web-svelte` renders through its own
+  // `Chain.svelte`, which needs a compiler that this pipeline does not put in the runtime. Registering
+  // the app's `serverPlugins` here, scoped to that package's directory, compiles it against a SECOND
+  // Svelte runtime and the first `setContext` dies (`context.function` null); externalizing the
+  // adapter's framework peer as well gets further and then dies on `context.function[FILENAME]`,
+  // because `svelteBunPlugin` and `vite-plugin-svelte` do not emit the same dev-mode component shape.
+  // Both attempts add a compiler. The fix removes one instead: `createViteDevServer` publishes its
+  // `ssrLoadModule` via `setSsrModuleLoader`, and the adapter loads `Chain.svelte` AND `svelte/server`
+  // through it - one toolchain, one runtime, context intact across the whole tree.
   const server = await createViteDevServer({
     root: cwd,
     routesDir,

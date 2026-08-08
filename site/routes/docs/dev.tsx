@@ -107,6 +107,29 @@ declare module "*.css" {}
 // Vue / Svelte SFCs - <style scoped> just works. The framework compiler scopes the selectors
 // (#page[data-v-…] for Vue, .page.svelte-… for Svelte) and folds them into the same app stylesheet.`
 
+const CONFIG_SPLIT = `// doc-check: skip - fragment: two files from one app, shown together.
+// framework.ts - imported by your SERVER and edge entries. Adapter only, nothing else.
+import { svelteAdapter } from "@nifrajs/web-svelte"
+export const adapter = svelteAdapter
+
+// nifra.config.ts - imported ONLY by the CLI, which runs on Bun. Compilers and Vite plugins
+// belong here. Re-export the adapter; never define it here, or the dev toolchain it pulls in
+// (Vite, the SFC compiler, their native bindings) is bundled into your production server.
+import { svelte } from "@sveltejs/vite-plugin-svelte"
+export { adapter } from "./framework"
+export const clientModule = "@nifrajs/web-svelte/client"
+export const vitePlugins = [svelte()]`
+
+const CONDITIONS_FLAG = `# Resolve conditions on the Bun dev pipeline.
+# SSR honours \`conditions\` - nifra passes them to the runtime when it re-execs.
+# The CLIENT bundle does not: Bun's dev-server bundler takes no resolve conditions,
+# from bunfig.toml or anywhere else. nifra warns once at startup when it matters.
+nifra dev --vite            # exact dev/prod client resolution, if your app needs it
+
+# If you invoke bun yourself: ONE FLAG PER CONDITION.
+bun --conditions=browser --conditions=development ./app.ts   # correct
+bun --conditions=browser,development ./app.ts                # ONE condition named "browser,development"`
+
 export default function Dev() {
   return (
     <div className="prose">
@@ -371,6 +394,88 @@ export default function Dev() {
         own stylesheet. Pass <code>manifest.routeStyles</code> to <code>createWebApp</code> alongside{" "}
         <code>styles</code>, and Nifra links the matched route's CSS during SSR. In{" "}
         <strong>dev</strong>, Vite injects per-module CSS.
+      </p>
+
+      <h2>Gotchas</h2>
+      <p>
+        The rule "one toolchain owns a whole phase" is what keeps the two loops honest, and most of
+        what follows is a consequence of it. None of these are things you have to memorise before you
+        start - they are the edges you can hit later, collected in one place.
+      </p>
+
+      <h3>Keep the adapter out of your config file</h3>
+      <p>
+        Split <code>framework.ts</code> (the adapter, imported by your server and edge entries) from{" "}
+        <code>nifra.config.ts</code> (the CLI's config, where the Vite plugins and SFC compilers live).
+        If your server entry reaches the adapter <em>through</em> the config, everything the config
+        imports is bundled into your production server - the Vite plugin, the framework compiler, and
+        their native bindings. It builds without complaint and then fails at startup with a missing
+        native binding, which reads like a broken install rather than a config-shape problem.
+      </p>
+      <CodeBlock code={CONFIG_SPLIT} />
+
+      <h3>Plugins go in the slot that matches the pipeline</h3>
+      <p>
+        <code>vitePlugins</code> run on the Vite pipeline; <code>clientPlugins</code> and{" "}
+        <code>serverPlugins</code> run on the Bun one. A plugin in the wrong slot is not an error, it
+        is a <em>no-op</em> - your transform silently does not run. Nifra classifies each plugin by its
+        hook shape and refuses a mismatch rather than letting the build succeed without it. The same
+        check is why <code>--bun</code> throws for an app whose only transforms are{" "}
+        <code>vitePlugins</code>, instead of building without them.
+      </p>
+
+      <h3><code>conditions</code> does not reach the Bun dev client bundle</h3>
+      <p>
+        On the Bun pipeline, <code>conditions</code> governs SSR - <code>nifra dev</code> passes them
+        to the runtime when it re-execs - and it governs the production client bundle. It cannot govern
+        the client bundle the dev server serves: Bun's dev-server bundler accepts no resolve
+        conditions, and there is no <code>bunfig.toml</code> key for them either (a top-level{" "}
+        <code>conditions</code>, or one under <code>[run]</code>, <code>[serve.static]</code> or{" "}
+        <code>[bundle]</code>, parses and is ignored). So a package with an <code>exports</code> map
+        can resolve to one file in dev and another in <code>nifra build</code>. Nifra says so once at
+        startup rather than letting you find out in production. If your app depends on exact dev/prod
+        client resolution, run <code>nifra dev --vite</code>.
+      </p>
+      <p>
+        Related, if you ever pass the flag to <code>bun</code> yourself: it takes{" "}
+        <strong>one condition per flag</strong>. The comma form is accepted and matches nothing,
+        because Bun reads the whole string as a single condition name.
+      </p>
+      <CodeBlock code={CONDITIONS_FLAG} />
+
+      <h3>Editing a non-route file updates SSR too</h3>
+      <p>
+        On the Bun pipeline the dev server tracks the module graph your routes import, so editing a
+        component, a helper, or a server module several levels down is reflected in the next SSR
+        render - not just in the browser bundle. Modules you did <em>not</em> touch keep their
+        identity, so a module-level singleton stays single across the reload. Two limits are
+        deliberate: files under <code>node_modules</code> are not tracked (they are dependencies, not
+        your source), and a specifier only participates if it is relative and written literally - a
+        computed or aliased specifier is invisible to a static graph. A third-party Bun plugin that
+        rewrites imports needs to call <code>rewriteSsrImports</code> for its output to stay tracked.
+      </p>
+
+      <h3>An adapter with a compiled asset needs the dev server's loader</h3>
+      <p>
+        This one matters only if you are writing a render adapter. On the Vite pipeline Vite owns SSR
+        resolution, which is what lets <code>resolve.dedupe</code> reach the server and keeps your app
+        on one copy of the framework. Adapter packages themselves stay external to that graph, because
+        the adapter's context object has to be the one instance your app imported. If such an adapter
+        must load a <em>compiled</em> asset on the server - Svelte's chain component is one - a plain{" "}
+        <code>import</code> reaches a runtime with no compiler for it, and registering a second
+        compiler in the runtime is worse: the tree then holds two copies of the framework runtime, and
+        context written by one half is invisible to the other. Load it through{" "}
+        <code>ssrModuleLoader()</code> instead, and take the framework's <em>server renderer</em> from
+        there as well - a component compiled by one toolchain has to render through the renderer that
+        toolchain resolved.
+      </p>
+
+      <h3>Scoped class names are identical across pipelines</h3>
+      <p>
+        A CSS Modules class hashes to the same scoped name whichever pipeline produced it, and across
+        machines - the hash is keyed on the class name plus the module's <em>package-relative</em>
+        path, never an absolute one. A selector written against a generated name behaves the same under{" "}
+        <code>nifra dev</code>, <code>nifra dev --bun</code>, and <code>nifra build</code>.
       </p>
     </div>
   )

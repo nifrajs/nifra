@@ -9255,6 +9255,13 @@
     "doc": "/** One schema position in a snapshot: JSON Schema metadata only, no validator. */"
   },
   {
+    "name": "scopedName",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function scopedName(filePath: string, className: string): string;",
+    "doc": "/**\n * The scoped name for a class. Keyed by `filePath` + `className` (NUL-separated so `\"a\"+\"bc\"` can't\n * collide with `\"ab\"+\"c\"`), so the same class name in two different files gets two different scoped\n * names - cross-file collision resistance - while staying stable across builds.\n *\n * Exported because it is the definition of the name, and the OTHER pipeline has to be able to produce\n * it: Vite ships its own CSS-Modules naming, so without handing Vite this function a class is called\n * one thing under `nifra dev --vite` and another after `nifra build`. `filePath` must be the\n * package-relative form from `reproduciblePath`, never an absolute path, or the name stops being\n * reproducible across machines.\n */"
+  },
+  {
     "name": "ScriptDescriptor",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -9847,6 +9854,13 @@
     "doc": "/** Set the query string. Accepts a `URLSearchParams`, a record, a raw string, or an updater of the\n * current params; navigates to the same pathname with the new query (push, or replace via options). */"
   },
   {
+    "name": "setSsrModuleLoader",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function setSsrModuleLoader(load: SsrModuleLoader | undefined): void;",
+    "doc": "/**\n * Publishes the dev server's SSR module loader. Called by a dev server that owns SSR resolution\n * itself; pass `undefined` to clear it on shutdown.\n */"
+  },
+  {
     "name": "shapeOf",
     "kind": "function",
     "package": "@nifrajs/testing",
@@ -10162,6 +10176,20 @@
     "package": "nifra",
     "signature": "export interface SSEStream {\n    /** Enqueue an event frame. No-op once the stream is closed. */\n    send(message: SSEMessage): void;\n    /** End the stream now. */\n    close(): void;\n    /** Aborts when the client disconnects - use it to tear down subscriptions/loops. */\n    readonly signal: AbortSignal;\n}",
     "doc": "/** The stream handed to the `run` callback. */"
+  },
+  {
+    "name": "ssrModuleLoader",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function ssrModuleLoader(): SsrModuleLoader | undefined;",
+    "doc": "/**\n * The dev server's SSR module loader, or `undefined` when nothing owns SSR resolution but the runtime\n * - the Bun dev pipeline, and every production build, where the adapter's assets are compiled ahead\n * of time and a plain `import` is already the right thing.\n *\n * An adapter that must load a COMPILED asset at runtime (a `.svelte` component, say) has to prefer\n * this over a bare `import`, and has to take the framework's SERVER RENDERER from it as well, not\n * just the component. A component compiled by the dev server renders through the renderer the dev\n * server resolved; mixing the two puts two copies of the framework runtime in one component tree,\n * where context written by one half is invisible to the other.\n */"
+  },
+  {
+    "name": "SsrModuleLoader",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type SsrModuleLoader = (id: string) => Promise<unknown>;",
+    "doc": "/**\n * Loads a module through the DEV SERVER'S module graph rather than the runtime's. Takes an absolute\n * file path or a bare specifier; resolution, compilation and caching are the dev server's.\n */"
   },
   {
     "name": "StandardFailure",

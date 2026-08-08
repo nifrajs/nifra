@@ -4170,6 +4170,105 @@ own stylesheet. Pass `manifest.routeStyles` to `createWebApp` alongside
 `styles`, and Nifra links the matched route's CSS during SSR. In
 **dev**, Vite injects per-module CSS.
 
+### Gotchas
+
+The rule "one toolchain owns a whole phase" is what keeps the two loops honest, and most of
+what follows is a consequence of it. None of these are things you have to memorise before you
+start - they are the edges you can hit later, collected in one place.
+
+#### Keep the adapter out of your config file
+
+Split `framework.ts` (the adapter, imported by your server and edge entries) from
+`nifra.config.ts` (the CLI's config, where the Vite plugins and SFC compilers live).
+If your server entry reaches the adapter _through_ the config, everything the config
+imports is bundled into your production server - the Vite plugin, the framework compiler, and
+their native bindings. It builds without complaint and then fails at startup with a missing
+native binding, which reads like a broken install rather than a config-shape problem.
+
+```ts
+// doc-check: skip - fragment: two files from one app, shown together.
+// framework.ts - imported by your SERVER and edge entries. Adapter only, nothing else.
+import { svelteAdapter } from "@nifrajs/web-svelte"
+export const adapter = svelteAdapter
+
+// nifra.config.ts - imported ONLY by the CLI, which runs on Bun. Compilers and Vite plugins
+// belong here. Re-export the adapter; never define it here, or the dev toolchain it pulls in
+// (Vite, the SFC compiler, their native bindings) is bundled into your production server.
+import { svelte } from "@sveltejs/vite-plugin-svelte"
+export { adapter } from "./framework"
+export const clientModule = "@nifrajs/web-svelte/client"
+export const vitePlugins = [svelte()]
+```
+
+#### Plugins go in the slot that matches the pipeline
+
+`vitePlugins` run on the Vite pipeline; `clientPlugins` and
+`serverPlugins` run on the Bun one. A plugin in the wrong slot is not an error, it
+is a _no-op_ - your transform silently does not run. Nifra classifies each plugin by its
+hook shape and refuses a mismatch rather than letting the build succeed without it. The same
+check is why `--bun` throws for an app whose only transforms are
+`vitePlugins`, instead of building without them.
+
+#### `conditions` does not reach the Bun dev client bundle
+
+On the Bun pipeline, `conditions` governs SSR - `nifra dev` passes them
+to the runtime when it re-execs - and it governs the production client bundle. It cannot govern
+the client bundle the dev server serves: Bun's dev-server bundler accepts no resolve
+conditions, and there is no `bunfig.toml` key for them either (a top-level
+`conditions`, or one under `[run]`, `[serve.static]` or
+`[bundle]`, parses and is ignored). So a package with an `exports` map
+can resolve to one file in dev and another in `nifra build`. Nifra says so once at
+startup rather than letting you find out in production. If your app depends on exact dev/prod
+client resolution, run `nifra dev --vite`.
+
+Related, if you ever pass the flag to `bun` yourself: it takes
+**one condition per flag**. The comma form is accepted and matches nothing,
+because Bun reads the whole string as a single condition name.
+
+```ts
+# Resolve conditions on the Bun dev pipeline.
+# SSR honours `conditions` - nifra passes them to the runtime when it re-execs.
+# The CLIENT bundle does not: Bun's dev-server bundler takes no resolve conditions,
+# from bunfig.toml or anywhere else. nifra warns once at startup when it matters.
+nifra dev --vite            # exact dev/prod client resolution, if your app needs it
+
+# If you invoke bun yourself: ONE FLAG PER CONDITION.
+bun --conditions=browser --conditions=development ./app.ts   # correct
+bun --conditions=browser,development ./app.ts                # ONE condition named "browser,development"
+```
+
+#### Editing a non-route file updates SSR too
+
+On the Bun pipeline the dev server tracks the module graph your routes import, so editing a
+component, a helper, or a server module several levels down is reflected in the next SSR
+render - not just in the browser bundle. Modules you did _not_ touch keep their
+identity, so a module-level singleton stays single across the reload. Two limits are
+deliberate: files under `node_modules` are not tracked (they are dependencies, not
+your source), and a specifier only participates if it is relative and written literally - a
+computed or aliased specifier is invisible to a static graph. A third-party Bun plugin that
+rewrites imports needs to call `rewriteSsrImports` for its output to stay tracked.
+
+#### An adapter with a compiled asset needs the dev server's loader
+
+This one matters only if you are writing a render adapter. On the Vite pipeline Vite owns SSR
+resolution, which is what lets `resolve.dedupe` reach the server and keeps your app
+on one copy of the framework. Adapter packages themselves stay external to that graph, because
+the adapter's context object has to be the one instance your app imported. If such an adapter
+must load a _compiled_ asset on the server - Svelte's chain component is one - a plain
+`import` reaches a runtime with no compiler for it, and registering a second
+compiler in the runtime is worse: the tree then holds two copies of the framework runtime, and
+context written by one half is invisible to the other. Load it through
+`ssrModuleLoader()` instead, and take the framework's _server renderer_ from
+there as well - a component compiled by one toolchain has to render through the renderer that
+toolchain resolved.
+
+#### Scoped class names are identical across pipelines
+
+A CSS Modules class hashes to the same scoped name whichever pipeline produced it, and across
+machines - the hash is keyed on the class name plus the module's _package-relative_
+path, never an absolute one. A selector written against a generated name behaves the same under
+`nifra dev`, `nifra dev --bun`, and `nifra build`.
+
 ## Nifra - Troubleshooting
 
 > Fixes keyed on the literal error strings Nifra prints: `reached the client bundle` (a node:/native import in the browser bundle), `server-only module reached the client bundle` (the server-only marker), and `resolveDispatcher` / `Invalid hook call` (duplicate React).
@@ -8964,7 +9063,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`Action`, `ACTION_GLOBAL`, `apiKey`, `assertRenderAdapterConformance`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `BrowserNavigate`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createMutation`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `DehydratedState`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `gate`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateRouteSearchTypes`, `GenerateRouteSearchTypesOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `getBrowserNavigate`, `GetStaticPaths`, `gone`, `hashQueryKey`, `IDLE_BLOCKER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `notFound`, `openGraph`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `previewEndpoint`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `registerBlocker`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderedPage`, `renderPage`, `RenderPageInput`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `RETAIN_HEADER`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `RouteSearch`, `routeStyles`, `ScriptDescriptor`, `searchOf`, `SearchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `ServePublicDirOptions`, `SERVER_FN_MODULE`, `SERVER_ONLY_MODULE`, `ServerOnly`, `setBlockerController`, `setBrowserNavigate`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `STATUS_HEADER`, `statusPage`, `StatusPageOptions`, `styles`, `Submission`, `SubmitOptions`, `unsafeInlineScript`, `UnsafeScriptDescriptor`, `withISR`
+`Action`, `ACTION_GLOBAL`, `apiKey`, `assertRenderAdapterConformance`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `BrowserNavigate`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `clientEntry`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createMutation`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `DehydratedState`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `enableDraft`, `EnableDraftOptions`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `gate`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateRouteSearchTypes`, `GenerateRouteSearchTypesOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `getBrowserNavigate`, `GetStaticPaths`, `gone`, `hashQueryKey`, `IDLE_BLOCKER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `manifest`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `mergeHeads`, `meta`, `Meta`, `MetaArgs`, `MetaInput`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `notFound`, `openGraph`, `OpenGraphInput`, `PRE_HYDRATION_GUARD`, `previewEndpoint`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `registerBlocker`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderedPage`, `renderPage`, `RenderPageInput`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `RETAIN_HEADER`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `RouteSearch`, `routeStyles`, `ScriptDescriptor`, `searchOf`, `SearchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `ServePublicDirOptions`, `SERVER_FN_MODULE`, `SERVER_ONLY_MODULE`, `ServerOnly`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `SsrModuleLoader`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `STATUS_HEADER`, `statusPage`, `StatusPageOptions`, `styles`, `Submission`, `SubmitOptions`, `unsafeInlineScript`, `UnsafeScriptDescriptor`, `withISR`
 
 ## @nifrajs/web-preact
 

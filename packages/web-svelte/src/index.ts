@@ -6,9 +6,11 @@
  * Svelte components compile from `.svelte` files, so this adapter ships a build plugin (like
  * `@nifrajs/web-solid`'s Babel plugin) - there is no callable-component runtime.
  */
+import { fileURLToPath } from "node:url"
 import type { RenderAdapter, RenderProps } from "@nifrajs/web"
+import { ssrModuleLoader } from "@nifrajs/web"
 import type { Component } from "svelte"
-import { render } from "svelte/server"
+import { render as runtimeRender } from "svelte/server"
 
 // Re-export the compiler plugin for convenience.
 export { svelteBunPlugin } from "./plugin.ts"
@@ -39,12 +41,35 @@ interface ChainProps {
 }
 let chainComponent: Component<ChainProps> | undefined
 let chainPromise: Promise<Component<ChainProps>> | undefined
+/**
+ * Svelte's server renderer. Normally the runtime's, but it is swapped for the dev server's copy when
+ * `Chain` comes from there - a component compiled by one toolchain has to render through the renderer
+ * that toolchain resolved, or `setContext` writes into a renderer the children never read.
+ */
+let render: typeof runtimeRender = runtimeRender
 /** Resolved `Chain`, or the in-flight load on the very first call. */
 const loadChain = (): Component<ChainProps> | Promise<Component<ChainProps>> => {
   if (chainComponent !== undefined) return chainComponent
-  chainPromise ??= import("./Chain.svelte").then((m) => {
-    chainComponent = m.default as Component<ChainProps>
-    return chainComponent
+  // A dev server that owns SSR resolution compiles the app's `.svelte` routes itself, and `Chain` has
+  // to come from that same graph: the runtime has no `.svelte` loader on that pipeline, so a plain
+  // `import` yields the file PATH and SSR dies at `component is not a function`. Registering a second
+  // compiler in the runtime instead is the trap - it gives the tree two Svelte runtimes, and the
+  // renderer `Chain` sets context on is not the one the routes read it from. Taking BOTH the component
+  // and `svelte/server` from the dev server keeps it at one compiler and one runtime.
+  const load = ssrModuleLoader()
+  chainPromise ??= (
+    load !== undefined
+      ? Promise.all([
+          load(fileURLToPath(new URL("./Chain.svelte", import.meta.url))),
+          load("svelte/server"),
+        ]).then(([mod, server]) => {
+          render = (server as { render: typeof runtimeRender }).render
+          return (mod as { default: Component<ChainProps> }).default
+        })
+      : import("./Chain.svelte").then((m) => m.default as Component<ChainProps>)
+  ).then((c) => {
+    chainComponent = c
+    return c
   })
   return chainPromise
 }

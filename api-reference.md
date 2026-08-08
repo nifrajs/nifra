@@ -2619,6 +2619,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **ServePublicDirOptions** _(interface)_ - `interface ServePublicDirOptions`
 - **ServerOnly** _(type)_ - `type ServerOnly<T> = T & { readonly [SERVER_ONLY_BRAND]?: never }`
   Type-level intent marker for a value that must only exist on the server - a secret, a DB handle, a server-only client. `ServerOnly<T>` is structurally `T` (the brand is an optional phantom field, so existing code keeps type-checking), but it advertises to readers + the compiler that the value is no…
+- **SsrModuleLoader** _(type)_ - `type SsrModuleLoader = (id: string) => Promise<unknown>`
+  Loads a module through the DEV SERVER'S module graph rather than the runtime's. Takes an absolute file path or a bare specifier; resolution, compilation and caching are the dev server's.
 - **StaticPath** _(interface)_ - `interface StaticPath`
   One concrete parameterization of a dynamic route, returned by {@link GetStaticPaths}.
 - **StaticPaths** _(interface)_ - `interface StaticPaths`
@@ -2717,6 +2719,10 @@ Every public export of every package and documented subpath - name, kind, signat
   Register (or clear, with `undefined`) the blocker controller - called by `installHistory`. Not for app use.
 - **setBrowserNavigate** _(function)_ - `setBrowserNavigate: (navigate: BrowserNavigate | undefined) => void`
   Register (or clear, with `undefined`) the browser navigate - called by `installHistory`. Not for app use.
+- **setSsrModuleLoader** _(function)_ - `setSsrModuleLoader: (load: SsrModuleLoader | undefined) => void`
+  Publishes the dev server's SSR module loader. Called by a dev server that owns SSR resolution itself; pass `undefined` to clear it on shutdown.
+- **ssrModuleLoader** _(function)_ - `ssrModuleLoader: () => SsrModuleLoader | undefined`
+  The dev server's SSR module loader, or `undefined` when nothing owns SSR resolution but the runtime - the Bun dev pipeline, and every production build, where the adapter's assets are compiled ahead of time and a plain `import` is already the right thing.
 - **statusPage** _(function)_ - `statusPage: (status: number, options?: StatusPageOptions) => never`
   Render a terminal page at any 4xx/5xx status - the escape hatch behind {@link notFound} and {@link gone} (402, 451, …). Uses `_<status>.tsx` if present, otherwise `_404`.
 - **unsafeInlineScript** _(function)_ - `unsafeInlineScript: (content: string, options: { readonly nonce: string; readonly type?: "module" | "text/javascript"; }) => UnsafeScriptDescriptor`
@@ -3024,6 +3030,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The transform result: the `{ original: scoped }` export map + the rewritten (scoped) stylesheet.
 - **cssModulesBunPlugin** _(function)_ - `cssModulesBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
   The CSS Modules Bun plugin. `"dom"` → the `.module.css` import becomes the class map AND emits the scoped stylesheet as a virtual `?nifra-css-module` module that `Bun.build`'s CSS bundler folds into the app stylesheet. `"ssr"` → the class map only (no CSS; the scoped names match the client build). …
+- **scopedName** _(function)_ - `scopedName: (filePath: string, className: string) => string`
+  The scoped name for a class. Keyed by `filePath` + `className` (NUL-separated so `"a"+"bc"` can't collide with `"ab"+"c"`), so the same class name in two different files gets two different scoped names - cross-file collision resistance - while staying stable across builds.
 - **transformCssModule** _(function)_ - `transformCssModule: (source: string, filePath: string) => CssModuleResult`
   Pure core (no I/O): scope a CSS-module source. Same `(source, filePath)` in → byte-identical out, so the `"dom"` and `"ssr"` plugin forms produce the same class map. Exposed for direct testing.
 

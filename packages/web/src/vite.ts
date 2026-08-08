@@ -20,10 +20,11 @@ import { relative, resolve as resolvePath } from "node:path"
 import { createDevDiagnostics } from "./dev-diagnostics.ts"
 import { listenOrExplain } from "./dev-port.ts"
 import { discoverRoutes } from "./fs.ts"
-import { DEFAULT_DEV_PORT, generateClientEntry } from "./index.ts"
+import { DEFAULT_DEV_PORT, generateClientEntry, setSsrModuleLoader } from "./index.ts"
 import { vitePublicEnvPrefix } from "./internal/server-boundary.ts"
 import { importVite } from "./internal/vite-import.ts"
-import { DEV_ROOT_ENV, DEV_ROUTES_ENV } from "./plugins/kit.ts"
+import { scopedName } from "./plugins/css-modules.ts"
+import { DEV_ROOT_ENV, DEV_ROUTES_ENV, reproduciblePath } from "./plugins/kit.ts"
 import { viteServerFnStub } from "./plugins/vite-server-fn.ts"
 import { viteServerOnlyEmpty } from "./plugins/vite-server-only.ts"
 
@@ -449,10 +450,26 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
         externalConditions: ssrConditions,
       },
     },
+    css: {
+      modules: {
+        // Vite ships its own CSS-Modules naming (`_name_<base64>`); the Bun pipeline and every
+        // `nifra build` use `scopedName`. Left alone, one class is called two different things
+        // depending on which pipeline served it, so a selector written against a generated name works
+        // in dev and vanishes in production - and the two dev pipelines disagree with each other. The
+        // name is defined once, in the plugin, and Vite is handed that definition.
+        generateScopedName: (name: string, filename: string): string =>
+          scopedName(reproduciblePath(filename), name),
+      },
+    },
     ...(options.define ? { define: options.define } : {}),
   })
 
   const ssrLoad = (absolutePath: string): Promise<unknown> => vite.ssrLoadModule(absolutePath)
+  // Published so an ADAPTER can reach this graph too. Route modules already load through it; an
+  // adapter that has to load a compiled asset of its own on the server (`@nifrajs/web-svelte` and its
+  // `Chain.svelte`) would otherwise take it from the runtime, which has no compiler for it and no
+  // reason to agree with Vite about which copy of the framework runtime it renders through.
+  setSsrModuleLoader(ssrLoad)
   app = await options.createApp(entryUrl, ssrLoad)
 
   // Re-create the app on change so a hard reload picks up a route ADD/REMOVE (the manifest comes
@@ -493,6 +510,10 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   return {
     port: typeof address === "object" && address !== null ? address.port : port,
     stop: async () => {
+      // Cleared with the server that owns it: the slot is process-global, so a stopped server leaving
+      // its loader behind would hand the next one's adapter a graph that is closed (tests start and
+      // stop several dev servers in one process).
+      setSsrModuleLoader(undefined)
       server.close()
       await vite.close()
     },

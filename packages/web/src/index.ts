@@ -315,6 +315,43 @@ export interface RenderAdapter {
   hydrationHead(nonce?: string): string
 }
 
+/**
+ * Loads a module through the DEV SERVER'S module graph rather than the runtime's. Takes an absolute
+ * file path or a bare specifier; resolution, compilation and caching are the dev server's.
+ */
+export type SsrModuleLoader = (id: string) => Promise<unknown>
+
+/* A `globalThis` singleton for the same reason `@nifrajs/web-react`'s router context is one: in dev
+ * this module is evaluated twice in one process (the CLI's copy under Bun, and the app's copy), and a
+ * module-level `let` would leave the adapter reading a slot the dev server set on the other copy. */
+const SSR_MODULE_LOADER_SLOT = Symbol.for("nifra.web.ssr-module-loader")
+/* Explicitly `| undefined`: clearing the slot is part of the contract (a dev server clears it on
+ * stop), and under `exactOptionalPropertyTypes` "absent" and "set to undefined" are separate types. */
+const loaderSlot = globalThis as { [SSR_MODULE_LOADER_SLOT]?: SsrModuleLoader | undefined }
+
+/**
+ * Publishes the dev server's SSR module loader. Called by a dev server that owns SSR resolution
+ * itself; pass `undefined` to clear it on shutdown.
+ */
+export function setSsrModuleLoader(load: SsrModuleLoader | undefined): void {
+  loaderSlot[SSR_MODULE_LOADER_SLOT] = load
+}
+
+/**
+ * The dev server's SSR module loader, or `undefined` when nothing owns SSR resolution but the runtime
+ * - the Bun dev pipeline, and every production build, where the adapter's assets are compiled ahead
+ * of time and a plain `import` is already the right thing.
+ *
+ * An adapter that must load a COMPILED asset at runtime (a `.svelte` component, say) has to prefer
+ * this over a bare `import`, and has to take the framework's SERVER RENDERER from it as well, not
+ * just the component. A component compiled by the dev server renders through the renderer the dev
+ * server resolved; mixing the two puts two copies of the framework runtime in one component tree,
+ * where context written by one half is invisible to the other.
+ */
+export function ssrModuleLoader(): SsrModuleLoader | undefined {
+  return loaderSlot[SSR_MODULE_LOADER_SLOT]
+}
+
 /** Global the server serializes loader data into; the client reads it to hydrate. */
 export const DATA_GLOBAL = "__NIFRA_DATA__"
 /** Per-layout loader data for hydration. Emitted ONLY when some layout in the chain has a loader, so

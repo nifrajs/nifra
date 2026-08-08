@@ -44,6 +44,7 @@ test("__proto__ through the portable header view: stored as data, never pollutes
 
 test("__proto__ assigned into c.set.headers cannot pollute Object.prototype", async () => {
   const app = server({ logger: silentLogger }).get("/", (c) => {
+    // biome-ignore lint/complexity/useLiteralKeys: the literal key IS the attack; `.__proto__` reads as a prototype write
     ;(c.set.headers as Record<string, string>)["__proto__"] = "polluted"
     c.set.headers["x-after"] = "yes"
     return { ok: true }

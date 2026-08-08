@@ -17,6 +17,12 @@
   import Chain from "./Chain.svelte"
   let { router, routes, searchSchemas } = $props()
 
+  // Capturing the INITIAL `router` is the intent, not an oversight: one router instance is created
+  // once per page and mounted here, so it never changes identity for this component's lifetime, and
+  // the reactivity that matters is the subscription below - the store pushes, this does not re-read.
+  // Wrapping it in a `$derived` would re-run `snapshot()` and hand `$state` a fresh object on every
+  // change, discarding the very state the subscription is maintaining.
+  // svelte-ignore state_referenced_locally
   let snapshot = $state(router.snapshot())
   $effect(() => router.subscribe(() => { snapshot = router.snapshot() }))
 

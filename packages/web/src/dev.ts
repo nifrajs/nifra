@@ -262,6 +262,21 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
   // a framework runtime imported through the config has already read the flag by the time this line
   // runs. This is the floor for a dev server started programmatically. `??=`, so a pinned value stands.
   process.env.NODE_ENV ??= "development"
+  // `conditions` governs the production client bundle but CANNOT govern the one served here: Bun's
+  // dev-server bundler takes no resolve conditions, from `bunfig.toml` or anywhere else, so a package
+  // with an `exports` map can resolve to a different file in dev than in `nifra build`. SSR is fine -
+  // `nifra dev` passes these to the runtime as `--conditions` when it re-execs - which is exactly why
+  // this is worth a line: the halves of the dev process no longer agree, and the drift is invisible
+  // until production picks the other file. Said once at startup rather than swallowed.
+  if (options.conditions !== undefined && options.conditions.length > 0) {
+    console.warn(
+      `\n[nifra/web/dev] \`conditions: [${options.conditions.map((c) => `"${c}"`).join(", ")}]\` ` +
+        "does not reach the client bundle on the Bun dev pipeline.\n" +
+        "  Bun's dev-server bundler accepts no resolve conditions, so a package with an `exports` map\n" +
+        "  may resolve differently here than in `nifra build`. SSR does honour them.\n" +
+        "  Run `nifra dev --vite` if this app needs exact dev/prod client resolution.\n",
+    )
+  }
   // The app root. `routesDir` is `<app>/routes` by convention, so its parent is the project - the one
   // place a generated entry can sit and still resolve the app's imports.
   const root = resolve(routesDir, "..")

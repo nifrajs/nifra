@@ -20,6 +20,16 @@ import {
  * module body - the leak the old refusal guarded against.
  */
 
+/**
+ * The fixture server every bundling test spawns: import the HTML bundle, serve it on an ephemeral
+ * port, print the port. This is EMITTED SOURCE, not code that runs here - the `${s.port}` inside it
+ * belongs to the template literal in the file being written, which is why it is a plain string.
+ */
+const SERVE_FIXTURE = `import html from "./index.html"
+const s = Bun.serve({ port: 0, routes: { "/": html }, development: true })
+console.log(\`PORT=\${s.port}\`)
+`
+
 /** Read the `PORT=<n>` banner a spawned fixture server prints. The fixtures listen on port 0 so
  * concurrent runs (and anything already bound on this machine) can never collide. */
 async function readPort(proc: ReturnType<typeof Bun.spawn>): Promise<number> {
@@ -146,14 +156,7 @@ test(
         join(root, "index.html"),
         '<!doctype html><html><body><script type="module" src="./client.ts"></script></body></html>\n',
       )
-      writeFileSync(
-        join(root, "serve.ts"),
-        [
-          'import html from "./index.html"',
-          'const s = Bun.serve({ port: 0, routes: { "/": html }, development: true })',
-          "console.log(`PORT=${s.port}`)",
-        ].join("\n"),
-      )
+      writeFileSync(join(root, "serve.ts"), SERVE_FIXTURE)
 
       const { bunfigPath } = await writeBunDevConfig(root)
       proc = Bun.spawn(["bun", `--config=${bunfigPath}`, join(root, "serve.ts")], {
@@ -201,14 +204,7 @@ test(
         join(root, "index.html"),
         '<!doctype html><html><body><script type="module" src="./client.ts"></script></body></html>\n',
       )
-      writeFileSync(
-        join(root, "serve.ts"),
-        [
-          'import html from "./index.html"',
-          'const s = Bun.serve({ port: 0, routes: { "/": html }, development: true })',
-          "console.log(`PORT=${s.port}`)",
-        ].join("\n"),
-      )
+      writeFileSync(join(root, "serve.ts"), SERVE_FIXTURE)
 
       const { bunfigPath } = await writeBunDevConfig(root)
       proc = Bun.spawn(["bun", `--config=${bunfigPath}`, join(root, "serve.ts")], {
@@ -286,14 +282,7 @@ test(
         join(root, "index.html"),
         '<!doctype html><html><body><script type="module" src="./client.ts"></script></body></html>\n',
       )
-      writeFileSync(
-        join(root, "serve.ts"),
-        [
-          'import html from "./index.html"',
-          'const s = Bun.serve({ port: 0, routes: { "/": html }, development: true })',
-          "console.log(`PORT=${s.port}`)",
-        ].join("\n"),
-      )
+      writeFileSync(join(root, "serve.ts"), SERVE_FIXTURE)
 
       const { bunfigPath } = await writeBunDevConfig(root, configPath)
       proc = Bun.spawn(["bun", `--config=${bunfigPath}`, join(root, "serve.ts")], {
