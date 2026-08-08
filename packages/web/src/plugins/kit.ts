@@ -58,6 +58,67 @@ export function hash8(input: string): string {
 }
 
 /**
+ * Env flag a nifra dev server sets for its own lifetime, so a framework compiler plugin can tell a dev
+ * compile from a `nifra build` one. Exported for the dev server that sets it; plugins ask
+ * {@link devServerCompile} instead of reading it.
+ */
+export const DEV_HMR_ENV = "NIFRA_DEV_HMR"
+
+/**
+ * True while a nifra dev server is running, i.e. the compile may emit HMR wiring (and, where the
+ * framework couples the two, dev-mode runtime output).
+ *
+ * The phase cannot be a plugin constructor argument: an app builds its `clientPlugins` once in
+ * `nifra.config.ts` and the same plugin objects serve both `nifra dev` and `nifra build`. Guarding the
+ * emitted code with `if (import.meta.hot)` is not sufficient either - `Bun.build` keeps the branch, so
+ * the HMR calls were measured shipping in production client chunks. The dev server announces itself in
+ * the environment instead, and `nifra build` never sets it. Read per compile (not captured at
+ * registration) so the flag is honoured however late the server sets it.
+ */
+export function devServerCompile(): boolean {
+  return process.env[DEV_HMR_ENV] === "1"
+}
+
+/**
+ * The app root and the routes directory of the running dev server, for plugins that need to tell one of
+ * the app's own components from a dependency or a route module. Set alongside {@link DEV_HMR_ENV}; read
+ * through {@link devHotComponent}.
+ */
+export const DEV_ROOT_ENV = "NIFRA_DEV_ROOT"
+export const DEV_ROUTES_ENV = "NIFRA_DEV_ROUTES"
+
+const under = (path: string, dir: string | undefined): boolean =>
+  dir !== undefined &&
+  dir !== "" &&
+  (path === dir || path.startsWith(dir.endsWith("/") ? dir : `${dir}/`))
+
+/**
+ * Whether a dev compile of `path` may wrap the module in component-level hot-patching - i.e. whether it
+ * is one of the app's OWN components rather than a dependency or a route module.
+ *
+ * The exclusions are not caution, they are two things such a wrapper cannot survive:
+ *
+ *   - a **dependency**, whose components are the framework's own composition machinery. An adapter folds
+ *     a layout chain through them, so they are entered from a snippet or as a dynamic component - and a
+ *     wrapper there sits between the SSR markup and the component that is supposed to claim it.
+ *   - a **route module**, for the same reason one level down: a route or layout IS a chain member, so it
+ *     is always the dynamic child. It is also the wrong boundary to patch - a route module carries the
+ *     loader and meta the server ran, and re-running those is a navigation, not a patch. Editing one
+ *     finds no accepting module and reloads the page, which is the correct outcome.
+ *
+ * Both cost nothing in practice: the components an edit loop actually touches are the views, and a view
+ * that wants to hot-patch lives outside the routes directory. Where the split is unknown (no dev server,
+ * or a root that was never announced), the answer is `false` - a full reload is always correct, a
+ * mispatched tree is not.
+ */
+export function devHotComponent(path: string): boolean {
+  const root = process.env[DEV_ROOT_ENV]
+  if (!under(path, root)) return false
+  if (path.includes("/node_modules/")) return false
+  return !under(path, process.env[DEV_ROUTES_ENV])
+}
+
+/**
  * Records compiled CSS and wires it into the client bundle through a virtual `?<namespace>` module -
  * the idiom the Vue plugin established (`?vue-css`). Register one per plugin `setup`; call `emit` per
  * file to stash its CSS and get back the `import` line to append to the JS module.

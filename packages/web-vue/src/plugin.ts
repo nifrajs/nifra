@@ -1,4 +1,4 @@
-import { hash8, reproduciblePath } from "@nifrajs/web/plugins/kit"
+import { devServerCompile, hash8, reproduciblePath } from "@nifrajs/web/plugins/kit"
 import {
   type BindingMetadata,
   compileScript,
@@ -88,7 +88,57 @@ export function compileVue(source: string, filename: string, generate: "dom" | "
   }
   if (scopeAttr !== undefined) code += `${COMPONENT}.__scopeId = ${JSON.stringify(scopeAttr)}\n`
 
-  return `${code}\nexport default ${COMPONENT}\n`
+  return `${code}${hmrEnabled(generate) ? hmrBlock(descriptor, filename, id) : ""}\nexport default ${COMPONENT}\n`
+}
+
+/**
+ * Emit HMR wiring only for a DEV SERVER's client compile - `devServerCompile()` carries the reasoning
+ * for why the phase is an environment flag rather than a plugin argument. The SSR half never gets it:
+ * there is no `import.meta.hot` on the server, and the markup it produces is thrown away per request.
+ */
+const hmrEnabled = (generate: "dom" | "ssr"): boolean => generate === "dom" && devServerCompile()
+
+/**
+ * The script half of the last compile, per file - how a recompile knows whether the `<template>` alone
+ * changed. Only the `"dom"` compile records here; the SSR one never emits HMR code.
+ */
+const lastScript = new Map<string, string>()
+
+/**
+ * Client-only HMR wiring, using Vue's OWN runtime rather than a refresh library.
+ *
+ * `@vue/runtime-dom`'s dev build publishes `__VUE_HMR_RUNTIME__`, and it takes two updates:
+ * `rerender(id, render)` swaps only the render function - component state survives - and `reload(id,
+ * component)` re-creates the component, which resets that component's state but still leaves the rest
+ * of the page, the route, and scroll position alone. Which one is right depends on whether the
+ * `<script>` changed, and the module that KNOWS is the newly compiled one, so it says so with an
+ * export the previous module's accept callback reads.
+ *
+ * Without this the update bubbles past every `.vue` module to the generated entry, which accepts
+ * nothing, and Bun does a full page reload. That is correct but loses all client state on every save.
+ */
+function hmrBlock(
+  descriptor: { script: { content: string } | null; scriptSetup: { content: string } | null },
+  filename: string,
+  id: string,
+): string {
+  const script = (descriptor.script?.content ?? "") + (descriptor.scriptSetup?.content ?? "")
+  const rerenderOnly = lastScript.get(filename) === script
+  lastScript.set(filename, script)
+  return (
+    `\n${COMPONENT}.__hmrId = ${JSON.stringify(id)}\n` +
+    `export const _rerender_only = ${rerenderOnly}\n` +
+    "if (import.meta.hot) {\n" +
+    `  if (typeof __VUE_HMR_RUNTIME__ !== "undefined") __VUE_HMR_RUNTIME__.createRecord(${COMPONENT}.__hmrId, ${COMPONENT})\n` +
+    "  import.meta.hot.accept((mod) => {\n" +
+    // No module (a compile error upstream) means there is nothing to swap in; leaving the old one
+    // mounted is better than tearing the tree down, and the next good save updates it.
+    '    if (!mod || !mod.default || typeof __VUE_HMR_RUNTIME__ === "undefined") return\n' +
+    `    if (mod._rerender_only) __VUE_HMR_RUNTIME__.rerender(${JSON.stringify(id)}, mod.default.render)\n` +
+    `    else __VUE_HMR_RUNTIME__.reload(${JSON.stringify(id)}, mod.default)\n` +
+    "  })\n" +
+    "}\n"
+  )
 }
 
 /**

@@ -300,7 +300,7 @@ const FOOTGUNS: Record<string, readonly string[]> = {
   ],
   "@nifrajs/cli": [
     "`nifra check` (`--json` for agents) is the **done-gate**: typecheck + typed-client drift + server-only-import-in-a-route (with the transitive import chain) + raw-`Response`-from-a-route + undeclared dependency.",
-    "`nifra dev` uses Vite for HMR; `nifra build` emits a complete deploy and defaults to Bun (`--target` selects node/deno/cf-pages/vercel/static). Keep the deploy-safe adapter in `framework.ts` and Vite/compiler tooling in CLI-only `nifra.config.ts`.",
+    "One rule picks the bundler for BOTH `nifra dev` and `nifra build`: Bun, unless `vitePlugins` are the app's ONLY transforms (the Bun pipeline cannot run those), in which case Vite - so dev and prod never disagree. `--vite`/`--bun` force it. `nifra build` emits a complete deploy (`--target` selects node/deno/cf-pages/vercel/static). Keep the deploy-safe adapter in `framework.ts` and Vite/compiler tooling in CLI-only `nifra.config.ts`.",
     "`nifra mcp` exposes live project tools (`nifra_docs`, `nifra_example`, `nifra_check`) to an agent.",
   ],
   nifra: [

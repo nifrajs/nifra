@@ -93,6 +93,10 @@ export interface ResolvedPlugins {
 
 export interface LoadedApp {
   readonly cwd: string
+  /** Absolute path of the config this app was loaded from - `nifra.config.ts`, or `framework.ts` as the
+   * fallback. `nifra dev`'s Bun pipeline re-imports it from a GENERATED module so the app's own
+   * `clientPlugins` reach Bun's dev-server bundler, which takes plugins only as module paths. */
+  readonly configPath: string
   readonly routesDir: string
   /** Build output dir (also where `nifra start` reads `manifest.json` + serves `/assets/*`). */
   readonly outDir: string
@@ -222,6 +226,7 @@ export async function loadApp(
 
   return {
     cwd,
+    configPath,
     routesDir: resolve(cwd, "routes"),
     outDir: resolve(cwd, outDirName),
     framework: { ...fw, clientModule } as NifraFramework,

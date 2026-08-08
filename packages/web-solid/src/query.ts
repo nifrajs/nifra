@@ -1,4 +1,7 @@
-import { createQueryClient, type QueryClient, type QueryState } from "@nifrajs/web"
+import type { QueryClient, QueryState } from "@nifrajs/web"
+// `/client`, not the root - these are DOM values, and the root's graph carries the
+// server, which Vite's dev server evaluates rather than tree-shakes.
+import { createQueryClient } from "@nifrajs/web/client"
 /**
  * `@nifrajs/web-solid/query` - Solid bindings for the keyed query-cache. `createQuery(key, fn)` bridges a
  * query's `subscribe`/`snapshot` store into a Solid signal and fetches on mount; `useQueryClient`

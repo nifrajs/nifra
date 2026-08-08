@@ -1,4 +1,7 @@
-import { type MountRouterOptions, type RenderProps, searchOfChain } from "@nifrajs/web"
+import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
+// `/client`, not the root: the root's graph carries the server, and Vite's dev server evaluates it
+// instead of tree-shaking it - which broke hydration before the browser ran a line of app code.
+import { searchOfChain } from "@nifrajs/web/client"
 /**
  * @nifrajs/web-solid/client - Solid client runtime. `hydrate` hydrates a single SSR'd route;
  * `mountRouter` hydrates the initial route then drives navigation through a Solid signal - so a

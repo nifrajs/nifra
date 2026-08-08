@@ -44,6 +44,8 @@
       "!**/.tmp-dev-server-*",
       "!**/.tmp-doc-check",
       "!**/.nifra-vite-entry.tsx",
+      "!**/.nifra-bun",
+      "!**/.nifra",
       "!**/*.svelte",
       "!**/*.vue",
       "!**/dist",

@@ -230,9 +230,8 @@ export const adapter = reactAdapter
     "@nifrajs/cli": "^2.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "@vitejs/plugin-react": "^4.3.0",
     "typescript": "^6.0.3",
-    "vite": "^8.0.0"
+    "vite": "^8.2.1"
   }
 }
 
@@ -515,9 +514,8 @@ export const adapter = preactAdapter
   },
   "devDependencies": {
     "@nifrajs/cli": "^2.10.0",
-    "@preact/preset-vite": "^2.9.0",
     "typescript": "^6.0.3",
-    "vite": "^8.0.0"
+    "vite": "^8.2.1"
   }
 }
 
@@ -832,7 +830,7 @@ export const adapter = solidAdapter
     "@nifrajs/cli": "^2.10.0",
     "vite-plugin-solid": "^2.10.0",
     "typescript": "^6.0.3",
-    "vite": "^8.0.0"
+    "vite": "^8.2.1"
   }
 }
 
@@ -1142,7 +1140,7 @@ export const adapter = svelteAdapter
     "@nifrajs/cli": "^2.10.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "typescript": "^6.0.3",
-    "vite": "^8.0.0"
+    "vite": "^8.2.1"
   }
 }
 
@@ -1482,7 +1480,7 @@ export const adapter = vueAdapter
     "@vitejs/plugin-vue": "^5.2.0",
     "@vue/compiler-sfc": "^3.5.0",
     "typescript": "^6.0.3",
-    "vite": "^8.0.0"
+    "vite": "^8.2.1"
   }
 }
 

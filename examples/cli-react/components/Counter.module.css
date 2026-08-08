@@ -1,4 +1,4 @@
-/* A CSS Module: class names are locally scoped + hashed at build (Bun) and in dev (Vite). Imported as
+/* A CSS Module: class names are locally scoped + hashed at build and in Bun dev. Imported as
    a typed object - `styles.box` → "box_<hash>". Bundled into the same stylesheet nifra links. */
 .box {
   padding: 12px;

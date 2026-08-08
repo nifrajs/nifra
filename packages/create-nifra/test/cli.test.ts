@@ -328,12 +328,13 @@ describe("scaffold - --framework", () => {
   })
 
   test("site templates ship a nifra.config.ts + a `nifra dev` script (CLI inner loop)", async () => {
-    // React (everything in nifra.config.ts) + Vue (compiler framework: also clientPlugins/serverPlugins).
-    const cases: Array<[string | undefined, string]> = [
-      [undefined, "@nifrajs/web-react/client"],
-      ["vue", "@nifrajs/web-vue/client"],
+    // React needs no Vite plugin because JSX is Bun-native. Vue keeps its official Vite plugin plus
+    // clientPlugins/serverPlugins for the two supported production/dev paths.
+    const cases: Array<[string | undefined, string, boolean]> = [
+      [undefined, "@nifrajs/web-react/client", false],
+      ["vue", "@nifrajs/web-vue/client", true],
     ]
-    for (const [framework, clientModule] of cases) {
+    for (const [framework, clientModule, hasVitePlugins] of cases) {
       const dir = await freshDir(`cli-${framework ?? "react"}`)
       await scaffold({ target: dir, template: "site", ...(framework ? { framework } : {}) })
 
@@ -341,7 +342,8 @@ describe("scaffold - --framework", () => {
       const config = await readFile(join(dir, "nifra.config.ts"), "utf8")
       expect(config).toContain('export { adapter } from "./framework"')
       expect(config).toContain(`export const clientModule = "${clientModule}"`)
-      expect(config).toContain("vitePlugins")
+      if (hasVitePlugins) expect(config).toContain("vitePlugins")
+      else expect(config).not.toContain("vitePlugins")
 
       // framework.ts stays minimal (adapter only) so it doesn't drag dev/compiler deps into the worker.
       expect(await readFile(join(dir, "framework.ts"), "utf8")).not.toContain("vitePlugins")

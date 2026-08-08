@@ -20,6 +20,34 @@ import {
 } from "./navigation.ts"
 import type { ClientRouter } from "./router.ts"
 
+/**
+ * Everything the generated client entry needs, re-exported here so that entry imports ONE module and
+ * that module is DOM-only. It used to take these from `@nifrajs/web`, whose graph includes `renderPage`
+ * and the static-file server: bundled builds tree-shook the server half away, but Vite's dev server
+ * serves modules as written, so the browser evaluated `public-dir.ts` and died on `node:fs/promises`
+ * before hydrating. The fix is for the entry not to name the server module in the first place.
+ */
+export { mergeHeads, resolveMeta } from "./internal/head-merge.ts"
+export {
+  getBrowserNavigate,
+  IDLE_BLOCKER,
+  registerBlocker,
+  resolveNavigate,
+} from "./navigation.ts"
+export { createMutation, createQueryClient } from "./query.ts"
+export { createClientRouter, createMatcher } from "./router.ts"
+// Same reason, for the ADAPTER packages (`@nifrajs/web-react` and friends). Every one of them reaches
+// for these from the root - `searchOfChain` in its `/client` entry, the navigation and query values in
+// its router/query modules - and every one of those modules is in the browser graph. They are defined
+// in DOM-safe modules already; the only thing wrong was the specifier they were imported through.
+export { searchOf, searchOfChain } from "./search.ts"
+// Types are deliberately NOT re-exported here. `RouteSearch` is augmented by generated code through
+// `declare module "@nifrajs/web"`, and an interface augmentation lands on the module it names - so a
+// type taken from this path would be the un-augmented one and typed `navigate({ to, search })` would
+// silently go loose. Adapters keep sourcing types from the root; what they must avoid is the
+// `export type { X } from "@nifrajs/web"` FORM, which leaves a bare `import "@nifrajs/web"` behind for
+// its side effects. `import type` + a local `export type` erases completely.
+
 export interface InstallHistoryOptions {
   /** Full-page fallback when a client navigation can't proceed (default: `location.assign`). */
   readonly fallback?: (path: string) => void

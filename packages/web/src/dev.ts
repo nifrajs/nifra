@@ -2,9 +2,9 @@
  * `@nifrajs/web/dev` - the **Bun pipeline's** dev server: one toolchain, no Vite in the process.
  *
  * nifra ships two dev pipelines and the rule between them is that a pipeline owns a whole phase. The
- * Vite server (`@nifrajs/web/vite`) is the default - mature framework plugins, and it resolves SSR as
- * well as the client so both halves agree on every specifier. This is the other one: `Bun.serve` bundles
- * and hot-reloads the client while Bun's runtime resolves SSR. Only one toolchain is present, so the two
+ * Vite server (`@nifrajs/web/vite`) is the Vite-only escape hatch - mature framework plugins, and it
+ * resolves SSR as well as the client so both halves agree on every specifier. This is the other one:
+ * `Bun.serve` bundles and hot-reloads the client while Bun's runtime resolves SSR. Only one toolchain is present, so the two
  * cannot disagree.
  *
  * What you get: React Fast Refresh WITH state preserved - Bun's dev server applies it natively, no plugin
@@ -14,9 +14,9 @@
  * not, and saving it does a clean full reload. Plus no Vite dependency and ONE bundler across dev and
  * production, which is the real prize - the dev/prod seam disappears.
  *
- * What you give up: `*.module.css`. Bun's DEV-server bundler has no CSS-Modules transform (its production
- * `Bun.build` does), so the import compiles to a dangling reference. Plain CSS and Tailwind are fine. The
- * CLI refuses `nifra dev --bun` for a CSS-Modules app rather than serving a broken client.
+ * CSS Modules, server functions, and `*.server` modules use the same production transforms through the
+ * generated Bun config. The CLI owns that config because Bun's HTML dev server accepts plugins only from
+ * `[serve.static] plugins`; direct callers should pass the equivalent plugin through their Bun config.
  *
  * ## How the two halves meet
  *
@@ -58,6 +58,7 @@ import { createDevDiagnostics } from "./dev-diagnostics.ts"
 import { explainBindFailure } from "./dev-port.ts"
 import { discoverRoutes } from "./fs.ts"
 import { DEFAULT_DEV_PORT, generateClientEntry } from "./index.ts"
+import { DEV_HMR_ENV, DEV_ROOT_ENV, DEV_ROUTES_ENV } from "./plugins/kit.ts"
 import { servePublicDir } from "./public-dir.ts"
 
 export { LAST_ERROR_PATH } from "./diagnostic.ts"
@@ -244,9 +245,26 @@ export function injectStyles(html: string, styles: readonly string[]): string {
 export async function createDevServer(options: DevServerOptions): Promise<DevServer> {
   const { createApp, port = DEFAULT_DEV_PORT, routesDir, clientModule } = options
   const serve = bunServe()
+  // Tell the framework compiler plugins they are compiling for a DEV SERVER, so they may emit HMR
+  // wiring. It cannot be a plugin constructor argument: an app builds its `clientPlugins` once in
+  // `nifra.config.ts` and the same objects serve dev and `nifra build`. Guarding the emitted code with
+  // `if (import.meta.hot)` is not sufficient either - `Bun.build` keeps the branch, so the HMR calls
+  // ship to production. This flag is the phase signal; `nifra build` never sets it.
+  process.env[DEV_HMR_ENV] = "1"
+  // Dev-shaped runtimes for SSR, matching what the client bundle gets: a library ships its dev build
+  // behind the `development` export condition with a `NODE_ENV` fallback for resolvers that set no
+  // conditions, and Bun's runtime (where SSR runs) is one of those. `nifra dev` sets this on the server
+  // process before it reads the app config, which is earlier than this and is the point that matters -
+  // a framework runtime imported through the config has already read the flag by the time this line
+  // runs. This is the floor for a dev server started programmatically. `??=`, so a pinned value stands.
+  process.env.NODE_ENV ??= "development"
   // The app root. `routesDir` is `<app>/routes` by convention, so its parent is the project - the one
   // place a generated entry can sit and still resolve the app's imports.
   const root = resolve(routesDir, "..")
+  // Which files are the app's own components, for the plugins that hot-patch at component granularity
+  // (`devHotComponent`). Announced here rather than passed, for the same reason the flag above is.
+  process.env[DEV_ROOT_ENV] = root
+  process.env[DEV_ROUTES_ENV] = resolve(routesDir)
   // The most recent SSR failure as a structured Diagnostic, scoped to THIS server. Served at
   // LAST_ERROR_PATH so an agent driving the dev server reads the exact failure (code, codeframe, fix) as
   // JSON instead of scraping the overlay. Shared with the Vite adapter so the endpoint can't drift.

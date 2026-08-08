@@ -7,6 +7,7 @@ import { renderOpenApi } from "../src/openapi-tool.ts"
 function loaded(backend: unknown): LoadedApp {
   return {
     cwd: "/tmp/nifra-openapi-app",
+    configPath: "/tmp/nifra-openapi-app/nifra.config.ts",
     routesDir: "/tmp/nifra-openapi-app/routes",
     outDir: "/tmp/nifra-openapi-app/dist",
     framework: { adapter: {}, clientModule: "@nifrajs/web-react/client" },

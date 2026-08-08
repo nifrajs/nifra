@@ -25,6 +25,10 @@ import {
 } from "./deferred.ts"
 import { isDraftEnabled } from "./draft.ts"
 import { trustedHeadAttributes } from "./internal/head-attributes.ts"
+// Head resolution/merging. Defined in an internal module so `@nifrajs/web/client` can export the same
+// two functions to the generated client entry without dragging THIS module (and its server code) into
+// the browser graph - see internal/head-merge.ts. Re-exported here so the public API is unchanged.
+import { mergeHeads, resolveMeta } from "./internal/head-merge.ts"
 import { jsStringLiteral } from "./internal/js-string.ts"
 import { EXECUTABLE_SCRIPT_TYPES, INERT_SCRIPT_TYPES } from "./internal/script-types.ts"
 import { ISR_REVALIDATE_HEADER, ISR_REVALIDATE_TAGS_HEADER, serializeISRTags } from "./isr.ts"
@@ -195,7 +199,7 @@ export {
   type SubmitOptions,
 } from "./router.ts"
 // Deferred loader data (`defer()` + the `Deferred<T>` type) - consumed by the adapter's `<Await>`.
-export { type Deferred, defer }
+export { type Deferred, defer, mergeHeads, resolveMeta }
 
 /** Phantom brand key for {@link ServerOnly}. A unique symbol so the brand can't be forged by a plain
  * object literal; `unique symbol` keys never appear in the emitted JS, so the brand is purely
@@ -1287,12 +1291,6 @@ function headTags(head: Meta | undefined): string {
   return out
 }
 
-/** Resolve a route's `meta` (static or a function of the loader data + params) to a {@link Meta}. */
-export function resolveMeta(meta: MetaInput | undefined, args: MetaArgs): Meta {
-  if (meta === undefined) return {}
-  return typeof meta === "function" ? meta(args) : meta
-}
-
 /**
  * A `<link rel="canonical">` descriptor for a route's `meta.link`. The canonical URL tells search
  * engines which URL is authoritative for a page (deduping query-string / tracking variants).
@@ -1377,68 +1375,6 @@ export function unsafeInlineScript(
     nonce: options.nonce,
     content,
   }
-}
-
-/**
- * Merge a route's `<head>` contributions from its layout chain + the page into one {@link Meta}.
- *
- * The head contract (see {@link CreateWebAppOptions} and `LayoutEntry`): a `_layout.tsx` may export
- * `meta` to put sitewide tags (`hreflang`, `preconnect`, a default `<title>`, …) on every page below
- * it. `heads` is passed **outermost layout → … → innermost layout → page** (the same order as the
- * render chain), and merges:
- *  - **`title`** - *nearest-wins*: the last defined value across the list, so the page overrides an
- *    inner layout, which overrides an outer one. A layout `title` is the section default; an undefined
- *    page `title` keeps it.
- *  - **`meta` / `link`** - *concatenated* in list order (outermost first, page last). Duplicate-tag
- *    de-duplication is the caller's concern; the framework emits exactly what's declared so a layout
- *    can ship N `<link rel="alternate" hreflang>` tags and a page can add its own canonical.
- *
- * Returns a fresh object whose identity is stable per `heads` *content* only when every entry is a
- * static (by-reference) `Meta` and there is exactly one - otherwise a new object each call. That is
- * fine: {@link headTags}'s memo is keyed on identity, so a per-request merge simply recomputes (its
- * content can vary with loader data anyway).
- */
-export function mergeHeads(heads: readonly Meta[]): Meta {
-  // Single-head fast path (a route with no layout `meta`, by far the common case) - return the
-  // resolved object by reference so headTags' identity-keyed memo hits across requests for static meta.
-  if (heads.length === 1) return heads[0] as Meta
-  let title: string | undefined
-  let lang: string | undefined
-  let dir: Meta["dir"]
-  const meta: MetaDescriptor[] = []
-  const link: LinkDescriptor[] = []
-  const script: ScriptDescriptor[] = []
-  const unsafeScript: UnsafeScriptDescriptor[] = []
-  for (const h of heads) {
-    if (h.title !== undefined) title = h.title // nearest-wins: later (more specific) overrides
-    if (h.lang !== undefined) lang = h.lang // nearest-wins, like title
-    if (h.dir !== undefined) dir = h.dir
-    if (h.meta !== undefined) meta.push(...h.meta)
-    if (h.link !== undefined) link.push(...h.link)
-    if (h.script !== undefined) script.push(...h.script) // concatenated like meta/link (outermost first)
-    if (h.unsafeScript !== undefined) unsafeScript.push(...h.unsafeScript)
-  }
-  // Build the result with only the fields that were actually contributed - an empty `meta`/`link`/
-  // `script` array would otherwise be a spurious (if harmless) key. A mutable local; the cast to `Meta`
-  // is sound because a key is assigned only when defined (so `exactOptionalPropertyTypes` never sees
-  // `undefined`).
-  const merged: {
-    title?: string
-    meta?: Meta["meta"]
-    link?: Meta["link"]
-    script?: Meta["script"]
-    unsafeScript?: Meta["unsafeScript"]
-    lang?: string
-    dir?: Meta["dir"]
-  } = {}
-  if (title !== undefined) merged.title = title
-  if (meta.length > 0) merged.meta = meta
-  if (link.length > 0) merged.link = link
-  if (script.length > 0) merged.script = script
-  if (unsafeScript.length > 0) merged.unsafeScript = unsafeScript
-  if (lang !== undefined) merged.lang = lang
-  if (dir !== undefined) merged.dir = dir
-  return merged as Meta
 }
 
 export interface CreateWebAppOptions {
@@ -2447,7 +2383,9 @@ export function generateClientEntry(
   }
 
   return `${[
-    'import { createClientRouter, createMatcher, mergeHeads, resolveMeta } from "@nifrajs/web"',
+    // `/client`, never the root: the root's graph carries the server (renderPage, the static-file
+    // server), and Vite's dev server evaluates what it is given instead of tree-shaking it.
+    'import { createClientRouter, createMatcher, mergeHeads, resolveMeta } from "@nifrajs/web/client"',
     'import { applyHead, installForms, installHistory, signalHydrated } from "@nifrajs/web/client"',
     // Namespace import: `errorBoundary` is optional (an adapter may not export it). A namespace member
     // access yields `undefined` if absent - unlike a named import, which would be a link error.
@@ -2464,6 +2402,16 @@ export function generateClientEntry(
         '`/client` entry (e.g. "@nifrajs/web-react/client"), or re-export mountRouter from it.',
     )})`,
     "const errorBoundary = __adapter.errorBoundary",
+    // A hot update that the framework cannot actually apply must end in a reload, not in nothing.
+    //
+    // Bun's dev server applies React Fast Refresh to JSX modules. For React that patches the component
+    // and preserves state. For Preact it does not - the module still LOOKS Fast-Refresh-able, so the
+    // update is accepted and then swallowed: `bun:beforeUpdate`/`bun:afterUpdate` both fire, the server
+    // logs a rebuild, and the page silently keeps rendering the old code. An edit that appears to do
+    // nothing is the worst failure mode in a dev loop - worse than a reload, because there is no signal
+    // to act on. An adapter that knows its framework is in that position says so, and the entry turns
+    // the swallowed update into an honest full reload.
+    'if (import.meta.hot && __adapter.hotUpdateNeedsReload) import.meta.hot.on("bun:afterUpdate", () => location.reload())',
     `const errorRouteIds = new Set(${JSON.stringify(errorRouteIds)})`,
     // Each route is a lazy loader: dynamic imports → Bun.build (splitting) emits one chunk per
     // route, shared layouts/deps deduped into shared chunks, so a route's code loads only when

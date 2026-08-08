@@ -3230,6 +3230,33 @@
     "doc": "/**\n * Scan a build's metafile for any module that opts into the `server-only` marker (a side-effect\n * `import \"@nifrajs/web/server-only\"`) yet landed in a CLIENT output chunk, returning a sorted, deduped\n * list of {@link ServerOnlyFinding}s. Mirrors {@link detectNodeBuiltinsInClient}: it reads the SAME\n * graph facts - which inputs import the marker (the \"marked\" modules), which chunk each landed in (the\n * per-output `inputs`), and the shortest import chain from a user entry to it. The marker module ITSELF\n * (which imports nothing) is excluded - only the modules that *opt in* are flagged. Pure + exported for\n * unit testing. Empty ⇒ clean.\n */"
   },
   {
+    "name": "DEV_HMR_ENV",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const DEV_HMR_ENV = \"NIFRA_DEV_HMR\";",
+    "doc": "/**\n * Env flag a nifra dev server sets for its own lifetime, so a framework compiler plugin can tell a dev\n * compile from a `nifra build` one. Exported for the dev server that sets it; plugins ask\n * {@link devServerCompile} instead of reading it.\n */"
+  },
+  {
+    "name": "DEV_ROOT_ENV",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const DEV_ROOT_ENV = \"NIFRA_DEV_ROOT\";",
+    "doc": "/**\n * The app root and the routes directory of the running dev server, for plugins that need to tell one of\n * the app's own components from a dependency or a route module. Set alongside {@link DEV_HMR_ENV}; read\n * through {@link devHotComponent}.\n */"
+  },
+  {
+    "name": "DEV_ROUTES_ENV",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const DEV_ROUTES_ENV = \"NIFRA_DEV_ROUTES\";"
+  },
+  {
+    "name": "devHotComponent",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function devHotComponent(path: string): boolean;",
+    "doc": "/**\n * Whether a dev compile of `path` may wrap the module in component-level hot-patching - i.e. whether it\n * is one of the app's OWN components rather than a dependency or a route module.\n *\n * The exclusions are not caution, they are two things such a wrapper cannot survive:\n *\n *   - a **dependency**, whose components are the framework's own composition machinery. An adapter folds\n *     a layout chain through them, so they are entered from a snippet or as a dynamic component - and a\n *     wrapper there sits between the SSR markup and the component that is supposed to claim it.\n *   - a **route module**, for the same reason one level down: a route or layout IS a chain member, so it\n *     is always the dynamic child. It is also the wrong boundary to patch - a route module carries the\n *     loader and meta the server ran, and re-running those is a navigation, not a patch. Editing one\n *     finds no accepting module and reloads the page, which is the correct outcome.\n *\n * Both cost nothing in practice: the components an edit loop actually touches are the views, and a view\n * that wants to hot-patch lives outside the routes directory. Where the split is unknown (no dev server,\n * or a root that was never announced), the answer is `false` - a full reload is always correct, a\n * mispatched tree is not.\n */"
+  },
+  {
     "name": "devHtml",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -3241,6 +3268,13 @@
     "kind": "interface",
     "package": "@nifrajs/web",
     "signature": "export interface DevServer {\n    readonly port: number;\n    /**\n     * The URL pages point their client entry at - always {@link CLIENT_ENTRY_PATH}, never Bun's hashed\n     * chunk. Deliberately not the underlying chunk URL: that one moves on every rebuild, and anything\n     * holding onto it is holding onto a URL that will stop working.\n     */\n    readonly clientEntry: string;\n    stop(): void;\n}"
+  },
+  {
+    "name": "devServerCompile",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function devServerCompile(): boolean;",
+    "doc": "/**\n * True while a nifra dev server is running, i.e. the compile may emit HMR wiring (and, where the\n * framework couples the two, dev-mode runtime output).\n *\n * The phase cannot be a plugin constructor argument: an app builds its `clientPlugins` once in\n * `nifra.config.ts` and the same plugin objects serve both `nifra dev` and `nifra build`. Guarding the\n * emitted code with `if (import.meta.hot)` is not sufficient either - `Bun.build` keeps the branch, so\n * the HMR calls were measured shipping in production client chunks. The dev server announces itself in\n * the environment instead, and `nifra build` never sets it. Read per compile (not captured at\n * registration) so the flag is honoured however late the server sets it.\n */"
   },
   {
     "name": "DevServerOptions",
@@ -4519,6 +4553,13 @@
     "package": "@nifrajs/otel",
     "signature": "export declare class Histogram {\n    readonly name: string;\n    readonly help: string;\n    private readonly series;\n    private readonly buckets;\n    constructor(name: string, help: string, buckets: readonly number[]);\n    observe(value: number, labels?: Labels): void;\n    render(): string;\n}",
     "doc": "/** Latency-style distribution over fixed buckets (seconds). Renders Prometheus cumulative buckets. */"
+  },
+  {
+    "name": "hotUpdateNeedsReload",
+    "kind": "const",
+    "package": "@nifrajs/web-preact",
+    "signature": "export declare const hotUpdateNeedsReload = true;",
+    "doc": "/**\n * Preact cannot apply Bun's hot updates, so the generated client entry reloads instead.\n *\n * Bun's dev server runs React Fast Refresh over JSX modules. A Preact component compiles to JSX that\n * looks the same, so the update is ACCEPTED - and then dropped, because Preact's refresh runtime\n * (prefresh) is not the one Bun installs. Measured: `bun:beforeUpdate` and `bun:afterUpdate` both fire,\n * the server logs the rebuild, the browser keeps rendering the old component and never reloads. The\n * edit simply appears not to happen.\n *\n * Reloading loses component state, which React keeps here. That is the honest trade until Bun's dev\n * server can install prefresh: a visible reload beats an edit that silently does nothing.\n */"
   },
   {
     "name": "html",
@@ -6186,7 +6227,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function mergeHeads(heads: readonly Meta[]): Meta;",
-    "doc": "/**\n * Merge a route's `<head>` contributions from its layout chain + the page into one {@link Meta}.\n *\n * The head contract (see {@link CreateWebAppOptions} and `LayoutEntry`): a `_layout.tsx` may export\n * `meta` to put sitewide tags (`hreflang`, `preconnect`, a default `<title>`, …) on every page below\n * it. `heads` is passed **outermost layout → … → innermost layout → page** (the same order as the\n * render chain), and merges:\n *  - **`title`** - *nearest-wins*: the last defined value across the list, so the page overrides an\n *    inner layout, which overrides an outer one. A layout `title` is the section default; an undefined\n *    page `title` keeps it.\n *  - **`meta` / `link`** - *concatenated* in list order (outermost first, page last). Duplicate-tag\n *    de-duplication is the caller's concern; the framework emits exactly what's declared so a layout\n *    can ship N `<link rel=\"alternate\" hreflang>` tags and a page can add its own canonical.\n *\n * Returns a fresh object whose identity is stable per `heads` *content* only when every entry is a\n * static (by-reference) `Meta` and there is exactly one - otherwise a new object each call. That is\n * fine: {@link headTags}'s memo is keyed on identity, so a per-request merge simply recomputes (its\n * content can vary with loader data anyway).\n */"
+    "doc": "/**\n * Merge a layout chain's heads, outermost first: `title`/`lang`/`dir` are nearest-wins, and\n * `meta`/`link`/`script` concatenate in chain order.\n *\n * Returns a fresh object whose identity is stable per `heads` *content* only when every entry is a\n * static (by-reference) `Meta` and there is exactly one - otherwise a new object each call. That is\n * fine: `headTags`'s memo is keyed on identity, so a per-request merge simply recomputes (its\n * content can vary with loader data anyway).\n */"
   },
   {
     "name": "Messages",
@@ -8352,7 +8393,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function resolveMeta(meta: MetaInput | undefined, args: MetaArgs): Meta;",
-    "doc": "/** Resolve a route's `meta` (static or a function of the loader data + params) to a {@link Meta}. */"
+    "doc": "/** Resolve a route's `meta` export - a static object, or a function of the route's data/params. */"
   },
   {
     "name": "resolveNavigate",
@@ -9981,7 +10022,7 @@
     "kind": "function",
     "package": "@nifrajs/web-solid",
     "signature": "export declare function solidBunPlugin(generate: \"dom\" | \"ssr\"): BunPlugin;",
-    "doc": "/**\n * Bun build/runtime plugin that compiles Solid components with Babel - `generate: \"ssr\"`\n * for the server, `\"dom\"` for the client, `hydratable` so SSR and hydrate align. Solid's\n * reactive-JSX compiler ships only as a Babel plugin (no swc/native port); this runs at\n * build time, on `.tsx` files only.\n */"
+    "doc": "/**\n * Bun build/runtime plugin that compiles Solid components with Babel - `generate: \"ssr\"`\n * for the server, `\"dom\"` for the client, `hydratable` so SSR and hydrate align. Solid's\n * reactive-JSX compiler ships only as a Babel plugin (no swc/native port); this runs at\n * build time, on `.tsx` files only.\n *\n * Under a dev server the client half additionally runs `solid-refresh`, which is what makes an edit\n * patch the running component tree instead of reloading the page - see {@link setupSolidRefresh}.\n */"
   },
   {
     "name": "solidMdxBunPlugin",
@@ -10540,6 +10581,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare const svelteDedupePlugin: (from: string) => BunPlugin;",
     "doc": "/**\n * Dedupe Svelte to a single copy - the Svelte analogue of `reactDedupePlugin`/`preactDedupePlugin`, closing\n * the same class of bug for Svelte (which had NO build-time dedup before). A workspace- or file-linked\n * `@nifrajs/web-svelte` can resolve its OWN `svelte` (e.g. a sibling repo's install store) while the app's\n * components resolve another - SAME version, two physical copies. Svelte 5's client runtime\n * (`svelte/internal/client`) holds module-level component-context state, so two copies means the compiled\n * components register on one runtime while `hydrate` runs on the other → hydration throws\n * `Cannot read properties of undefined (reading 'call')` and the server-rendered markup is wiped.\n *\n * Pin every `svelte` + `svelte/internal/*` import to the ONE copy resolvable from `from` (the app root) so\n * the renderer (`hydrate`/`mount`) and the compiled components share one runtime. Unlike react/preact (a\n * fixed subpath list), Svelte has many internal subpaths, so each matched import is resolved dynamically.\n * `svelte/compiler` (build-time only, not in the bundle) doesn't match the filter and is left alone. No-op\n * when Svelte isn't used / isn't resolvable from `from`.\n */"
+  },
+  {
+    "name": "svelteHmrBoundary",
+    "kind": "function",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export declare function svelteHmrBoundary({ filename }: {\n    filename: string;\n}): {\n    hmr: boolean;\n};",
+    "doc": "/**\n * The same hot-patch boundary as the Bun pipeline's, in the shape `@sveltejs/vite-plugin-svelte` takes:\n *\n * ```ts\n * svelte({ dynamicCompileOptions: svelteHmrBoundary })\n * ```\n *\n * Svelte's HMR wrapper resolves the component through a signal, which survives hydration only where\n * the component is a plain child in a template. A layout or a page is not: the adapter's `Chain` enters\n * chain members as dynamic components and through snippets, so a wrapper on one leaves the hydration\n * cursor pointing at markup the wrapped component never claims. Svelte then throws the server's tree\n * away and re-renders on the client - `hydration_mismatch` in the console, on first load, before any\n * edit. Left on, the dev server quietly stops exercising hydration at all.\n *\n * Views keep hot-patching; route modules fall back to a full reload, which is what they want anyway\n * (a route module carries the loader and meta the server ran, and re-running those is a navigation).\n * Outside a nifra dev server nothing is announced and the answer is \"no boundary\" - a full reload is\n * always correct, a mispatched tree is not.\n */"
   },
   {
     "name": "svelteMdxBunPlugin",

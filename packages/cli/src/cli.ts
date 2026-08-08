@@ -3,7 +3,7 @@
  * `nifra` - the zero-config CLI for a nifra app. Reads `framework.ts` + `backend.ts` + `routes/` from
  * the project root (see {@link loadApp}) and wires the right `@nifrajs/web` entrypoint:
  *
- *   nifra dev      true-HMR dev server (Vite middleware + nifra SSR)        - @nifrajs/web/vite
+ *   nifra dev      true-HMR dev server (Bun native HMR + nifra SSR)         - @nifrajs/web/dev
  *   nifra build    emit a complete target-specific deploy directory        - @nifrajs/web/build
  *   nifra start    run the default Bun build                               - dist/server.js
  *
@@ -30,9 +30,8 @@ export interface Flags {
   /** `nifra build --vite`: force the client + server through Vite/Rollup. Without a flag the pipeline is
    * chosen per app (`chooseBuildPipeline`) - Bun unless the app's only transforms are `vitePlugins`. */
   readonly vite: boolean
-  /** `nifra dev --bun`: run the Bun-pipeline dev server (Bun.serve native HMR - including React Fast
-   * Refresh with state preserved - and no Vite in the process). Default stays Vite for its plugin
-   * ecosystem; `--bun` trades that for one bundler across dev and prod. Refuses CSS-Modules apps.
+  /** `nifra dev --bun`: force the Bun-pipeline dev server. Rarely needed - `dev` and `build` share one
+   * rule, so Bun is already the default unless `vitePlugins` are the app's ONLY transforms.
    *
    * `nifra build --bun`: force the Bun build. Refuses when that would drop the app's `vitePlugins`. */
   readonly bun: boolean
@@ -41,11 +40,14 @@ export interface Flags {
 const HELP = `nifra - zero-config dev/build/start for a nifra app
 
 Usage:
-  nifra dev     [--port <n>] [--poll]    Start the true-HMR dev server (Vite). Default port ${DEFAULT_DEV_PORT}.
-                [--bun]                  Run the BUN pipeline instead: Bun.serve native HMR (React Fast
-                                         Refresh included, state preserved), no Vite in the process - one
-                                         bundler across dev and prod. Plain CSS/Tailwind work; refuses an
-                                         app using *.module.css (Bun's dev bundler can't transform it).
+  nifra dev     [--port <n>] [--poll]    Start the true-HMR dev server (Bun). Default port ${DEFAULT_DEV_PORT}.
+                                         An app whose ONLY transforms are \`vitePlugins\` uses Vite (the
+                                         Bun pipeline cannot run them); everything else uses Bun.
+                [--vite]                 Force the Vite middleware/HMR pipeline.
+                [--bun]                  Force Bun.serve native HMR (React Fast Refresh included, state
+                                         preserved), no Vite in the process. CSS Modules, plain CSS,
+                                         Tailwind and the app's own \`clientPlugins\`/\`serverPlugins\` run
+                                         through the same Bun transforms production uses.
   nifra build   [--out <dir>] [--report]  Emit a complete deploy directory.
                 [--target <t>]             Target a FULL deploy dir for <t>:
                                          bun | node | deno | cf-pages | vercel | static. Packages
@@ -194,52 +196,26 @@ export function formatCliError(err: unknown): string {
   return String(err)
 }
 
-/**
- * Refuse `nifra dev --bun` for an app Bun's DEV-server bundler cannot compile.
- *
- * Bun's dev server and `Bun.build` are not the same bundler. `Bun.build` transforms `*.module.css` into a
- * scoped class map (the Bun production build of a CSS-Modules app works, verified), but the dev server's
- * bundler does not: the import compiles to a dangling reference and the browser throws
- * `ReferenceError: import_X_module is not defined` from inside the component - a message that names
- * neither CSS Modules nor the dev server, so the cause is invisible.
- *
- * A silently-broken client is the one outcome worth failing the command over, so this checks up front and
- * names the trade plus both ways out. Narrow by design: only the transform proven missing is refused, so
- * an app without CSS Modules still gets the Bun dev loop.
- */
-export async function assertBunDevSupportsApp(app: LoadedApp): Promise<void> {
-  // Server functions and `*.server` modules are handled: the generated bunfig (dev-bun-config.ts)
-  // delivers the SAME serverFnStubPlugin/serverOnlyEmptyPlugin the production build uses to Bun's
-  // dev-server bundler via `[serve.static] plugins` - the one channel that bundler accepts plugins
-  // through (a runtime `Bun.plugin` never reaches it; programmatic ask: oven-sh/bun#36830). The old
-  // fail-closed refusal for those modules is gone because the leak it guarded is gone.
-  //
-  // CSS Modules remain gated: the `*.module.css` plugin rests on an `onResolve` virtual-module
-  // stylesheet emitter that is not yet verified under `[serve.static]`, and its failure mode is a
-  // broken client rather than a leak - refuse loudly until it is proven there.
-  const { Glob } = await import("bun")
-  const offenders: string[] = []
-  for await (const file of new Glob("**/*.module.css").scan({ cwd: app.cwd, dot: false })) {
-    if (/(^|\/)(node_modules|dist|\.nifra|\.git)\//.test(file)) continue
-    offenders.push(file)
-    if (offenders.length >= 5) break
-  }
-  if (offenders.length === 0) return
-  throw new Error(
-    "[nifra] `nifra dev --bun` can't compile CSS Modules: Bun's DEV-server bundler has no `*.module.css` " +
-      "transform (its production `Bun.build` does, so `nifra build` is unaffected). The client would load " +
-      "with a bare `ReferenceError: import_… is not defined` instead of your component.\n" +
-      `  CSS Modules found: ${offenders.join(", ")}\n` +
-      "  Use `nifra dev` (the Vite pipeline handles them), or drop the CSS Modules to use the Bun dev loop.",
-  )
-}
-
 async function dev(app: LoadedApp, flags: Flags): Promise<void> {
-  // `--bun`: the Bun-pipeline dev server - Bun.serve's native HMR bundles + hot-reloads the client while
-  // Bun's runtime resolves SSR, with no Vite in the process at all. The mirror of `nifra build --vite`:
-  // each pipeline is selectable in BOTH phases, and neither ever runs inside the other.
-  if (flags.bun) {
-    await assertBunDevSupportsApp(app)
+  if (flags.vite && flags.bun) {
+    throw new Error("[nifra] `nifra dev` takes `--vite` or `--bun`, not both.")
+  }
+  // Default to Bun for the dev phase too. An app whose only transforms are Vite plugins stays on Vite so
+  // its transform is never silently dropped; `--vite`/`--bun` make that choice explicit.
+  // ONE rule for both phases - `chooseBuildPipeline` decides `dev` exactly as it decides `build`, so a
+  // project cannot end up bundled by one toolchain in dev and the other in production. An earlier
+  // version of this kept apps declaring `vitePlugins` on Vite for dev even when they also shipped Bun
+  // equivalents, on the theory that the framework plugins were the safer HMR path. Measurement killed
+  // it: Vue and Solid render correctly on the Bun pipeline, and Svelte renders ONLY there - the Vite
+  // pipeline externalizes the adapter package, so its `Chain.svelte` and the app's routes compile
+  // against two different Svelte runtimes (see the note at the Vite branch). The hedge was routing the
+  // one framework that needs Bun to the one pipeline that cannot serve it.
+  const decision = chooseBuildPipeline(
+    app.resolvedPlugins,
+    flags.vite ? "vite" : flags.bun ? "bun" : undefined,
+    "dev",
+  )
+  if (decision.pipeline === "bun") {
     // Bun's dev-server bundler takes plugins only via bunfig `[serve.static]`, read at process
     // start - so the boundary plugins (server-fn stubs, server-only emptying) are delivered by
     // generating a config and re-execing this same command once with `--config=`. The child proves
@@ -259,7 +235,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
             "launches; refusing to serve without the client-boundary plugins.",
         )
       }
-      const { bunfigPath, launchToken } = await writeBunDevConfig(app.cwd)
+      const { bunfigPath, launchToken } = await writeBunDevConfig(app.cwd, app.configPath)
       const child = Bun.spawn(
         [process.execPath, `--config=${bunfigPath}`, ...process.argv.slice(1)],
         {
@@ -268,6 +244,14 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
             ...process.env,
             NIFRA_BUN_DEV_TOKEN: launchToken,
             NIFRA_BUN_DEV_DEPTH: String(depth + 1),
+            // The child is the process that renders, so it is the one that needs dev-shaped runtimes.
+            // A library ships its dev build behind the `development` export condition with a `NODE_ENV`
+            // fallback for resolvers that set no conditions - which is Bun's runtime, where SSR runs,
+            // so on the server that fallback is the only signal there is. It has to be in place before
+            // the app's config is read, because reading it imports the adapter and through it the
+            // framework runtime; setting it inside the dev server would already be a step too late.
+            // Preserved if the caller pinned one.
+            NODE_ENV: process.env.NODE_ENV ?? "development",
           },
         },
       )
@@ -276,6 +260,27 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
       process.on("SIGTERM", forward)
       process.exit(await child.exited)
     }
+    // SSR runs in THIS process, on Bun's runtime - a different loader from the dev-server bundler the
+    // bunfig above configures. Both halves have to agree, so the runtime gets the same transforms:
+    //
+    //   - CSS Modules. The scoped name is a pure function of file path + class name, so the `"ssr"` form
+    //     produces the identical map the client bundle emits (and no stylesheet - that ships from the
+    //     client build). Without it `styles.box` is `undefined` on the server: the SSR markup carries no
+    //     class, the page paints unstyled, and hydration then reports a className mismatch.
+    //   - the app's `serverPlugins` - the SSR counterpart of the `clientPlugins` the generated bunfig
+    //     delivers, exactly as `nifra build`'s prerender pass registers them.
+    //
+    // Registered BEFORE `createDevServer`, because a Bun runtime plugin only affects modules loaded
+    // after it - and `createApp` imports the route modules.
+    const { plugin } = await import("bun")
+    const { cssModulesBunPlugin } = await import("@nifrajs/web/plugins/css-modules")
+    plugin(cssModulesBunPlugin("ssr"))
+    for (const p of asBunPlugins(app.resolvedPlugins.serverPlugins)) plugin(p)
+    // "After" has one consequence an adapter has to respect. Reading the app's config is what PRODUCES
+    // these plugins, so the config's import graph - which includes the adapter - is already loaded when
+    // they register. An adapter must therefore not import an asset its own plugin compiles at module
+    // scope; it has to defer to first render, which happens after this point. `@nifrajs/web-svelte`
+    // loads its `Chain.svelte` that way for exactly this reason, and says so at the import.
     const { createDevServer } = await import("@nifrajs/web/dev")
     const { framework: fw, routesDir, outDir, backend } = app
     const server = await createDevServer({
@@ -283,8 +288,10 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
       outDir,
       clientModule: fw.clientModule,
       port: flags.port,
-      // The Bun pipeline's own plugins (SFC compilers etc.) - never `vitePlugins`, which belong to the
-      // other pipeline; `assertPipelineSeparation` already refuses a plugin sitting in the wrong slot.
+      // For the background client-leak guard, which re-runs `buildClient` on change - the SERVED client
+      // bundle gets these same plugins through the generated bunfig, since Bun's dev-server bundler takes
+      // plugins only as module paths. Never `vitePlugins`, which belong to the other pipeline;
+      // `assertPipelineSeparation` already refuses a plugin sitting in the wrong slot.
       plugins: asBunPlugins(app.resolvedPlugins.clientPlugins),
       ...(fw.publicDir !== undefined ? { publicDir: fw.publicDir } : {}),
       ...(fw.conditions ? { conditions: fw.conditions } : {}),
@@ -300,7 +307,8 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
     console.log(`nifra dev (bun) → http://localhost:${server.port}`)
     return
   }
-  // Preflight: `nifra dev` needs `vite` resolvable from the project. Run via `bunx @nifrajs/cli dev` the CLI
+  if (decision.reason !== undefined) console.log(`  ${decision.reason}`)
+  // Preflight: the Vite fallback needs `vite` resolvable from the project. Run via `bunx @nifrajs/cli dev` the CLI
   // sits in an isolated install where the project's peer deps don't resolve, so the vite import below fails
   // with an opaque ERR_MODULE_NOT_FOUND. Surface the real fix instead.
   try {
@@ -321,6 +329,16 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
   // same file in one process, with only one of them governed by Vite's `resolve.dedupe`. That is what
   // made an app's hand-written React alias fail to reach SSR, and it is the condition being removed -
   // not a redundancy worth keeping "just in case".
+  //
+  // This is also why the Vite pipeline cannot serve a Svelte app, and the attempts are recorded so they
+  // are not retried. The adapter package is deliberately `ssr.external` (its `RouterContext` must be the
+  // ONE instance the Bun-imported adapter provides), so BUN loads it - and `@nifrajs/web-svelte` renders
+  // through its own `Chain.svelte`, which needs a compiler. Registering the app's `serverPlugins` here,
+  // scoped to that package's directory, compiles it against a second Svelte runtime and the first
+  // `setContext` dies (`context.function` null). Also externalizing the adapter's framework peer fixes
+  // that and gets further, only to die on `context.function[FILENAME]`: `svelteBunPlugin` and
+  // `vite-plugin-svelte` do not emit the same dev-mode component shape. Two compilers, one component
+  // tree, no fix short of one toolchain owning both - which is the Bun pipeline, where Svelte works.
   const server = await createViteDevServer({
     root: cwd,
     routesDir,

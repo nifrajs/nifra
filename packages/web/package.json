@@ -191,7 +191,7 @@
     "@nifrajs/test-utils": "workspace:*",
     "@nifrajs/web-react": "workspace:*",
     "sass": "^1.77.0",
-    "vite": "^8.0.0"
+    "vite": "^8.2.1"
   },
   "repository": {
     "type": "git",

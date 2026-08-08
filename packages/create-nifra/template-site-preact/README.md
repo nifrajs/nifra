@@ -6,7 +6,7 @@ is Web-standard, so only the server entry + build target differ per platform.
 
 ```sh
 bun install
-bun run dev        # nifra dev → true-HMR dev server (Vite + nifra SSR) at http://localhost:3000
+bun run dev        # nifra dev → true-HMR dev server (Bun + nifra SSR) at http://localhost:3000
 bun run preview    # wrangler pages dev dist → preview the built Cloudflare bundle (run `bun run build` first)
 ```
 
@@ -33,7 +33,7 @@ configs (`Dockerfile`, `deno.json`, `wrangler.toml`, Vercel Build Output API); y
 ```
 routes/        index.tsx (landing), _layout.tsx (chrome), _404.tsx
 framework.ts   the adapter (preactAdapter) - imported by the server entries (edge-bundlable)
-nifra.config.ts the nifra CLI's dev/build config (adapter + clientModule + Vite plugin) - read by `nifra dev`
+nifra.config.ts the nifra CLI's dev/build config (adapter + clientModule) - read by `nifra dev`
 backend.ts     your contract (loaders/actions call it in-process)
 server-bun.ts  Bun entry (Bun.serve)         build-bun.ts    → dist-bun/
 _worker.ts     Cloudflare Pages entry        build.ts        → dist/

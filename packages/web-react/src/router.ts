@@ -12,17 +12,25 @@
  */
 
 import type { InferOutput, StandardSchemaV1 } from "@nifrajs/core/server"
+// `import type` + a local re-export, NOT `export type { … } from "@nifrajs/web"`: that form leaves a
+// bare `import "@nifrajs/web"` in the output, which pulls the server graph into the browser under
+// Vite's dev server. Sourced from the ROOT so the generated `RouteSearch` augmentation applies.
+import type {
+  Blocker,
+  BlockerFunction,
+  BlockerState,
+  NavigateFunction,
+  NavigateOptions,
+  NavigateTargetInput,
+} from "@nifrajs/web"
+// `/client`, not the root - these are DOM values, and the root's graph carries the
+// server, which Vite's dev server evaluates rather than tree-shakes.
 import {
-  type Blocker,
-  type BlockerFunction,
   getBrowserNavigate,
   IDLE_BLOCKER,
-  type NavigateFunction,
-  type NavigateOptions,
-  type NavigateTargetInput,
   registerBlocker,
   resolveNavigate,
-} from "@nifrajs/web"
+} from "@nifrajs/web/client"
 import {
   type AnchorHTMLAttributes,
   type CSSProperties,
@@ -39,7 +47,7 @@ import {
   useState,
 } from "react"
 
-export type { Blocker, BlockerFunction, BlockerState, NavigateFunction } from "@nifrajs/web"
+export type { Blocker, BlockerFunction, BlockerState, NavigateFunction }
 
 /** The current route the routing hooks read. Provided by `compose` on SSR + client mount alike. */
 export interface RouterContextValue {

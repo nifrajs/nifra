@@ -74,7 +74,6 @@ export const FRAMEWORK_SPECS: Readonly<Record<string, FrameworkSpec>> = {
     devDependencies: {
       "@types/react": "^19.0.0",
       "@types/react-dom": "^19.0.0",
-      "@vitejs/plugin-react": "^4.3.0",
     },
     typescript: { jsx: "react-jsx", types: ["react", "react-dom"] },
   },
@@ -83,7 +82,7 @@ export const FRAMEWORK_SPECS: Readonly<Record<string, FrameworkSpec>> = {
     adapter: "preactAdapter",
     package: "@nifrajs/web-preact",
     runtimeDependencies: { preact: "^10.25.0" },
-    devDependencies: { "@preact/preset-vite": "^2.9.0" },
+    devDependencies: {},
     typescript: { jsx: "react-jsx", jsxImportSource: "preact" },
   },
   solid: {

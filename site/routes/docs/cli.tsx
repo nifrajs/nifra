@@ -11,13 +11,15 @@ export const meta = pageMeta(
   "/docs/cli",
 )
 
-const COMMANDS = `nifra dev      # true-HMR dev server (Vite middleware + Nifra SSR) - http://localhost:4321
+const COMMANDS = `nifra dev      # true-HMR dev server (Bun native HMR + Nifra SSR) - http://localhost:4321
+nifra dev --vite   # the Vite middleware pipeline instead (automatic when vitePlugins are your ONLY transforms)
 nifra build    # full Bun deploy → dist/server.js + content-hashed dist/assets/ (default target: bun)
 nifra start    # run dist/server.js on Bun
 nifra build --target cf-pages  # also: node | deno | vercel | static; add --report for chunk sizes
 
 # dev + start share the default port 4321. Override per run: --port <n> (alias -p) or the PORT env var.
-# flags: --port <n> (dev/start) · --out <dir> (build/start) · --target <t> (build) · --poll (dev)`
+# flags: --port <n> (dev/start) · --out <dir> (build/start) · --target <t> (build) · --poll (dev)
+#        --vite | --bun (dev/build) force the pipeline`
 
 const FRAMEWORK = `// framework.ts - deploy-safe; generated server entries import this file.
 import { reactAdapter } from "@nifrajs/web-react"
@@ -56,11 +58,19 @@ export default function Cli() {
 
       <h2>The conventions</h2>
       <p>
-        Four conventions at the project root. <code>nifra dev</code> runs the Vite-backed{" "}
+        Four conventions at the project root. <code>nifra dev</code> runs the Bun-native{" "}
         <a href="/docs/dev">HMR dev server</a>; <code>nifra build</code> runs the Bun-native production
         build (content-hashed client assets plus a target-specific server); <code>nifra start</code>
         runs the default Bun output. The generated server serves assets and SSR with matched-route
         chunks preloaded and route CSS linked in each <code>&lt;head&gt;</code>.
+      </p>
+      <p>
+        <strong>One rule picks the bundler, and it is the same rule in both phases</strong> - so a
+        project can never be bundled by one toolchain in dev and the other in production. Bun runs
+        everything, except an app whose <em>only</em> transforms are <code>vitePlugins</code>: the Bun
+        pipeline cannot run those, so that app gets Vite for dev and build alike, and says so.{" "}
+        <code>--vite</code> / <code>--bun</code> force the choice; <code>--bun</code> is refused on a
+        Vite-only app rather than dropping its transforms silently.
       </p>
       <CodeBlock code={STRUCTURE} />
       <p>

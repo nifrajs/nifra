@@ -35,7 +35,9 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
     resolve: (file) => `/routes/${file}`,
   })
   expect(code).toContain(
-    'import { createClientRouter, createMatcher, mergeHeads, resolveMeta } from "@nifrajs/web"',
+    // `/client`, not the root: the root drags the server graph into the browser (see
+    // client-graph-boundary.test.ts).
+    'import { createClientRouter, createMatcher, mergeHeads, resolveMeta } from "@nifrajs/web/client"',
   )
   expect(code).toContain(
     'import { applyHead, installForms, installHistory, signalHydrated } from "@nifrajs/web/client"',

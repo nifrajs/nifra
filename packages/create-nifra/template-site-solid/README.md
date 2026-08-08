@@ -6,7 +6,7 @@ is Web-standard, so only the server entry + build target differ per platform.
 
 ```sh
 bun install
-bun run dev        # nifra dev → true-HMR dev server (Vite + nifra SSR) at http://localhost:3000
+bun run dev        # nifra dev → true-HMR dev server (Bun + nifra SSR) at http://localhost:3000
 bun run preview    # wrangler pages dev dist → preview the built Cloudflare bundle (run `bun run build` first)
 ```
 

@@ -326,6 +326,7 @@ describe("describeRoutes (cwd integration)", () => {
       )
       const app: LoadedApp = {
         cwd: dir,
+        configPath: `${dir}/nifra.config.ts`,
         routesDir,
         outDir: join(dir, "dist"),
         framework: { adapter: {}, clientModule: "x" },
@@ -364,6 +365,7 @@ describe("describeRoutes (cwd integration)", () => {
     try {
       const app: LoadedApp = {
         cwd: dir,
+        configPath: `${dir}/nifra.config.ts`,
         routesDir: resolve(dir, "routes"), // doesn't exist
         outDir: join(dir, "dist"),
         framework: { adapter: {}, clientModule: "x" },

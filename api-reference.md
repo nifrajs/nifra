@@ -2679,7 +2679,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **jsonLd** _(function)_ - `jsonLd: (data: Record<string, unknown>) => ScriptDescriptor`
   Build a JSON-LD `<script type="application/ld+json">` entry for a route's `meta.script` from a plain object. `JSON.stringify` produces the body; the head renderer breakout-escapes it (see `escapeScriptContent`), so a string field containing `</script>` is embedded safely.
 - **mergeHeads** _(function)_ - `mergeHeads: (heads: readonly Meta[]) => Meta`
-  Merge a route's `<head>` contributions from its layout chain + the page into one {@link Meta}.
+  Merge a layout chain's heads, outermost first: `title`/`lang`/`dir` are nearest-wins, and `meta`/`link`/`script` concatenate in chain order.
 - **notFound** _(function)_ - `notFound: (options?: StatusPageOptions) => never`
   Render the nearest `_404` page at status **404**. `throw` it from a loader when the record does not exist.
 - **openGraph** _(function)_ - `openGraph: (input: OpenGraphInput) => MetaDescriptor[]`
@@ -2694,7 +2694,7 @@ Every public export of every package and documented subpath - name, kind, signat
   Server: render a full HTML document for a page - the adapter's hydration head + the SSR markup (**streamed**) + the serialized loader data + the client module - as a `Response`. The shell (`<head>` + the open container) flushes first, the adapter's app stream follows, then the tail (data globals + …
 - **renderPageResult** _(function)_ - `renderPageResult: (options: RenderPageInput) => MaybePromise<RenderedPage>`
 - **resolveMeta** _(function)_ - `resolveMeta: (meta: MetaInput | undefined, args: MetaArgs) => Meta`
-  Resolve a route's `meta` (static or a function of the loader data + params) to a {@link Meta}.
+  Resolve a route's `meta` export - a static object, or a function of the route's data/params.
 - **resolveNavigate** _(function)_ - `resolveNavigate: (to: string | number | NavigateTargetInput, options?: NavigateOptions) => { readonly to: string | number; readonly options: NavigateOptions | undefined; }`
   Normalize a navigate argument to the bridge's `(to, options)`: a string path or history-delta passes through; an object target has its `search` serialized onto `to` and its `replace` folded into the options. The one place the object form becomes a URL, so every adapter's `navigate` resolves it iden…
 - **resolvePublicPath** _(function)_ - `resolvePublicPath: (root: string, pathname: string) => string | undefined`
@@ -2846,12 +2846,34 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ### `@nifrajs/web/client`
 
+- **IDLE_BLOCKER** _(const)_ - `IDLE_BLOCKER: Blocker`
+  The idle blocker - a stable reference (no needless adapter re-renders while unblocked).
 - **InstallHistoryOptions** _(interface)_ - `interface InstallHistoryOptions`
 - **applyHead** _(function)_ - `applyHead: (head: Meta) => void`
   Sync the document head to a route's resolved {@link Meta} on client navigation. Sets the title (when provided) and replaces the **managed** (`data-nifra`) `<meta>`/`<link>` tags - static head content (charset, hand-written tags) is never touched. SSR injects the same `data-nifra` tags, so the first…
+- **createClientRouter** _(function)_ - `createClientRouter: (options: ClientRouterOptions) => ClientRouter`
+- **createMatcher** _(function)_ - `createMatcher: (patterns: readonly RoutePattern[]) => (path: string) => RouteMatch | null`
+  Build a matcher from route patterns (built from the SAME manifest the server routes from, so client and server agree). Returns the first matching route + decoded params, or null. The query string is ignored for matching (it is not part of the route pattern).
+- **createMutation** _(function)_ - `createMutation: <TData, TVariables>(fn: (variables: TVariables) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => MutationHandle<TData, TVariables>`
+  Create a standalone mutation state machine - framework-agnostic, so a per-adapter `useMutation` binding just subscribes to it. Single-flight by a monotonic token: overlapping `mutate` calls each run their `fn`, but only the latest publishes state (an older, slower response can't clobber a newer one…
+- **createQueryClient** _(function)_ - `createQueryClient: (options: QueryClientOptions) => QueryClient`
+- **getBrowserNavigate** _(function)_ - `getBrowserNavigate: () => BrowserNavigate | undefined`
+  The active browser navigate, or `undefined` on the server / before `installHistory` has run. A binding calls it when present and falls back to native navigation otherwise.
 - **installForms** _(function)_ - `installForms: (router: ClientRouter) => () => void`
 - **installHistory** _(function)_ - `installHistory: (router: ClientRouter, options?: InstallHistoryOptions) => () => void`
   Attach history + link interception to a router. Returns a teardown function that removes the listeners. A data-fetch failure during a client navigation falls back to a full-page load, so navigation degrades gracefully rather than leaving the user stuck.
+- **mergeHeads** _(function)_ - `mergeHeads: (heads: readonly Meta[]) => Meta`
+  Merge a layout chain's heads, outermost first: `title`/`lang`/`dir` are nearest-wins, and `meta`/`link`/`script` concatenate in chain order.
+- **registerBlocker** _(function)_ - `registerBlocker: (shouldBlock: BlockerFunction, onChange: (blocker: Blocker) => void) => () => void`
+  Register a navigation guard, returning an unregister function. `onChange` is called with the current {@link Blocker} whenever its state changes (so the adapter can re-render its confirmation UI). Before `installHistory` has run (SSR, pre-hydration), there's no controller: registration is a no-op an…
+- **resolveMeta** _(function)_ - `resolveMeta: (meta: MetaInput | undefined, args: MetaArgs) => Meta`
+  Resolve a route's `meta` export - a static object, or a function of the route's data/params.
+- **resolveNavigate** _(function)_ - `resolveNavigate: (to: string | number | NavigateTargetInput, options?: NavigateOptions) => { readonly to: string | number; readonly options: NavigateOptions | undefined; }`
+  Normalize a navigate argument to the bridge's `(to, options)`: a string path or history-delta passes through; an object target has its `search` serialized onto `to` and its `replace` folded into the options. The one place the object form becomes a URL, so every adapter's `navigate` resolves it iden…
+- **searchOf** _(function)_ - `searchOf: (searchSchema: StandardSchemaV1 | undefined, rawSearch: string) => Record<string, unknown>`
+  The search a route sees for a raw URL query: parsed, then validated against a single `searchSchema` when the route declares one (failing closed to its defaults), or the raw parsed query otherwise. A one-link {@link searchOfChain}; use that directly for a layout+page chain. Both the server (`renderP…
+- **searchOfChain** _(function)_ - `searchOfChain: (schemas: readonly (StandardSchemaV1 | undefined)[], rawSearch: string) => Record<string, unknown>`
+  The search for a route whose effective schema is a CHAIN - a `_layout` may declare `searchSchema` for shared keys (`?org`, `?theme`) and each page declares its own. The raw query is validated against every schema in the chain (outermost layout first, page last) and their outputs are merged, page-wi…
 - **signalHydrated** _(function)_ - `signalHydrated: () => void`
   Mark the document interactive once the client has hydrated: sets `data-nifra-hydrated` on `<html>` and fires a one-shot `nifra:hydrated` event. The generated client entry calls this on the next frame after the adapter mounts (so every framework binding gets it), letting apps gate a custom JS-only i…
 
@@ -3007,12 +3029,21 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ### `@nifrajs/web/plugins/kit`
 
+- **DEV_HMR_ENV** _(const)_ - `DEV_HMR_ENV: "NIFRA_DEV_HMR"`
+  Env flag a nifra dev server sets for its own lifetime, so a framework compiler plugin can tell a dev compile from a `nifra build` one. Exported for the dev server that sets it; plugins ask {@link devServerCompile} instead of reading it.
+- **DEV_ROOT_ENV** _(const)_ - `DEV_ROOT_ENV: "NIFRA_DEV_ROOT"`
+  The app root and the routes directory of the running dev server, for plugins that need to tell one of the app's own components from a dependency or a route module. Set alongside {@link DEV_HMR_ENV}; read through {@link devHotComponent}.
+- **DEV_ROUTES_ENV** _(const)_ - `DEV_ROUTES_ENV: "NIFRA_DEV_ROUTES"`
 - **PluginBuilder** _(type)_ - `type PluginBuilder = Parameters<BunPlugin["setup"]>[0]`
   The argument Bun passes to a plugin's `setup` - Bun doesn't export the type, so derive it.
 - **StylesheetEmitter** _(interface)_ - `interface StylesheetEmitter`
   Records compiled CSS and wires it into the client bundle through a virtual `?<namespace>` module - the idiom the Vue plugin established (`?vue-css`). Register one per plugin `setup`; call `emit` per file to stash its CSS and get back the `import` line to append to the JS module.
 - **createStylesheetEmitter** _(function)_ - `createStylesheetEmitter: (build: PluginBuilder, namespace: string) => StylesheetEmitter`
   Wire the virtual-CSS-module handlers onto `build` for `namespace`, returning an {@link StylesheetEmitter}. The `namespace` must be a plain identifier (letters/`-`); it's used verbatim as the import suffix and the Bun namespace. Only the `"dom"` build should emit CSS - the `"ssr"` build ships no sty…
+- **devHotComponent** _(function)_ - `devHotComponent: (path: string) => boolean`
+  Whether a dev compile of `path` may wrap the module in component-level hot-patching - i.e. whether it is one of the app's OWN components rather than a dependency or a route module.
+- **devServerCompile** _(function)_ - `devServerCompile: () => boolean`
+  True while a nifra dev server is running, i.e. the compile may emit HMR wiring (and, where the framework couples the two, dev-mode runtime output).
 - **hash8** _(function)_ - `hash8: (input: string) => string`
   Deterministic 8-hex hash (djb2/xor). Stable across builds - no `Date.now`/`Math.random` - so build output is reproducible. The single hash implementation behind CSS-module scoped names (and a drop-in for any SFC scope id).
 - **reproduciblePath** _(function)_ - `reproduciblePath: (absolutePath: string) => string`
@@ -3147,6 +3178,8 @@ _No named exports (side-effect entrypoint)._
 
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown`
   Build an error-boundary chain element bound to `fallback` (a route's `_error` component). nifra's client codegen inserts it before the page in the matched chain; a render error in the subtree renders `fallback` with `{ data: { name, message } }` instead of crashing the app. DOM-transparent (it rend…
+- **hotUpdateNeedsReload** _(const)_ - `hotUpdateNeedsReload: true`
+  Preact cannot apply Bun's hot updates, so the generated client entry reloads instead.
 - **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void`
   Hydrate a server-rendered Preact layout `chain` (with the loader `props`) inside `container`.
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void`
@@ -3517,6 +3550,8 @@ _No named exports (side-effect entrypoint)._
 ### `@nifrajs/web-svelte/plugin`
 
 - **svelteBunPlugin** _(function)_ - `svelteBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
+- **svelteHmrBoundary** _(function)_ - `svelteHmrBoundary: ({ filename }: { filename: string; }) => { hmr: boolean; }`
+  The same hot-patch boundary as the Bun pipeline's, in the shape `@sveltejs/vite-plugin-svelte` takes:
 
 ### `@nifrajs/web-svelte/query`
 

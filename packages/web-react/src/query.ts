@@ -10,20 +10,21 @@
  * client-only app - the `typeof window` guard means the server has none, so hooks render idle/pending
  * and the first client render matches for a clean hydration).
  */
-import {
-  createMutation,
-  createQueryClient,
-  type DehydratedState,
-  type InfiniteData,
-  type InfiniteQueryOptions,
-  type MutationCallbacks,
-  type MutationHandle,
-  type MutationState,
-  type QueryClient,
-  type QueryHandle,
-  type QueryOptions,
-  type QueryState,
+import type {
+  DehydratedState,
+  InfiniteData,
+  InfiniteQueryOptions,
+  MutationCallbacks,
+  MutationHandle,
+  MutationState,
+  QueryClient,
+  QueryHandle,
+  QueryOptions,
+  QueryState,
 } from "@nifrajs/web"
+// `/client`, not the root - these are DOM values, and the root's graph carries the
+// server, which Vite's dev server evaluates rather than tree-shakes.
+import { createMutation, createQueryClient } from "@nifrajs/web/client"
 import {
   createContext,
   createElement,
@@ -35,7 +36,8 @@ import {
   useSyncExternalStore,
 } from "react"
 
-export type { DehydratedState } from "@nifrajs/web"
+// See the note in router.ts: the `export type { … } from` form would keep a side-effect import.
+export type { DehydratedState }
 
 // The lazily-created client-side singleton (used when no QueryClientProvider is present). SSR-guarded:
 // the server has no singleton, so provider-less hooks render idle there.

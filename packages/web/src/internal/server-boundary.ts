@@ -3,8 +3,7 @@
  *
  * The client build must never ship server-only code, or server-only config, to a browser. Three
  * conventions enforce that, and each has to mean the SAME thing in every pipeline that builds the client
- * - the Bun client build, the Vite dev server, the Vite production build, and `nifra dev --bun`'s refusal
- * (which cannot transform, so it refuses to start instead):
+ * - the Bun client build, the Vite dev server, the Vite production build, and `nifra dev --bun`:
  *
  *   - `*.server` modules - emptied, so a secret / `node:` / native import subtree never reaches the client.
  *   - `*.fn` modules     - replaced with HTTP stubs, so the function bodies (and their imports) stay server-side.

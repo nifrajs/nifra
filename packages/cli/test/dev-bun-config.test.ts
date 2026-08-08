@@ -12,13 +12,29 @@ import {
 
 /**
  * The `nifra dev --bun` boundary-plugin channel: a generated bunfig delivers the production
- * client-boundary plugins to Bun's dev-server bundler via `[serve.static] plugins` - the only
+ * client-boundary + CSS Modules plugins to Bun's dev-server bundler via `[serve.static] plugins` - the only
  * channel that bundler accepts plugins through. These tests pin the config carry-over (the WHOLE
  * user bunfig round-trips), the merge semantics, the per-launch token that makes the child
  * detection unforgeable, and then prove the mechanism END TO END: a real `Bun.serve` HTML-import
  * dev server started with the generated config must serve the server-function STUB, never the
  * module body - the leak the old refusal guarded against.
  */
+
+/** Read the `PORT=<n>` banner a spawned fixture server prints. The fixtures listen on port 0 so
+ * concurrent runs (and anything already bound on this machine) can never collide. */
+async function readPort(proc: ReturnType<typeof Bun.spawn>): Promise<number> {
+  const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
+  let banner = ""
+  const deadline = Date.now() + 15_000
+  while (!banner.includes("PORT=") && Date.now() < deadline) {
+    const { value, done } = await reader.read()
+    if (done) break
+    banner += new TextDecoder().decode(value)
+  }
+  const port = Number(/PORT=(\d+)/.exec(banner)?.[1])
+  expect(Number.isInteger(port)).toBe(true)
+  return port
+}
 
 test("parseUserBunfig: absent is empty, malformed fails loudly", () => {
   expect(parseUserBunfig(undefined)).toEqual({})
@@ -65,8 +81,20 @@ test("renderDevBunfig without a user bunfig still emits the boundary plugin", ()
 test("the generated plugin module composes the PRODUCTION boundary plugins, not a re-implementation", () => {
   const source = renderBoundaryPluginModule()
   expect(source).toContain('from "@nifrajs/web/build"')
+  expect(source).toContain('from "@nifrajs/web/plugins/css-modules"')
   expect(source).toContain("serverFnStubPlugin")
   expect(source).toContain("serverOnlyEmptyPlugin")
+  expect(source).toContain('cssModulesBunPlugin("dom")')
+  expect(source).toContain("cssModules.setup(build)")
+})
+
+test("the generated plugin module composes the app's own clientPlugins, by relative specifier", () => {
+  const source = renderBoundaryPluginModule("/app/nifra.config.ts", "/app/.nifra/dev-bun")
+  // Relative, not absolute: the module has to resolve the config the way any file in the app would.
+  expect(source).toContain('import * as appConfig from "../../nifra.config.ts"')
+  expect(source).toContain("appConfig.clientPlugins")
+  // Without a config path there is nothing to compose in, and the module must not reference one.
+  expect(renderBoundaryPluginModule()).not.toContain("appConfig")
 })
 
 test("launch token: only the fresh parent-minted value verifies, exactly once", async () => {
@@ -133,16 +161,7 @@ test(
         stdout: "pipe",
         stderr: "pipe",
       })
-      const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
-      let banner = ""
-      const deadline = Date.now() + 15_000
-      while (!banner.includes("PORT=") && Date.now() < deadline) {
-        const { value, done } = await reader.read()
-        if (done) break
-        banner += new TextDecoder().decode(value)
-      }
-      const port = Number(/PORT=(\d+)/.exec(banner)?.[1])
-      expect(Number.isInteger(port)).toBe(true)
+      const port = await readPort(proc)
 
       const html = await (await fetch(`http://127.0.0.1:${port}/`)).text()
       const chunk = /\/_bun\/[^"]+\.js/.exec(html)?.[0]
@@ -155,6 +174,142 @@ test(
       // Positive signal that the stub (not an empty bundle) shipped: the RPC path the production
       // stub calls appears in the chunk.
       expect(js).toContain("/fn/")
+    } finally {
+      proc?.kill()
+      rmSync(root, { recursive: true, force: true })
+    }
+  },
+  { timeout: 30_000 },
+)
+
+test(
+  "a dev server started with the generated bunfig compiles CSS Modules and serves their stylesheet",
+  async () => {
+    const root = mkdtempSync(join(import.meta.dir, ".tmp-nifra-devbun-css-"))
+    let proc: ReturnType<typeof Bun.spawn> | undefined
+    try {
+      const webPkg = resolve(import.meta.dir, "../../web")
+      mkdirSync(join(root, "node_modules", "@nifrajs"), { recursive: true })
+      symlinkSync(webPkg, join(root, "node_modules", "@nifrajs", "web"))
+
+      writeFileSync(join(root, "styles.module.css"), ".card { color: rebeccapurple }\n")
+      writeFileSync(
+        join(root, "client.ts"),
+        'import styles from "./styles.module.css"\ndocument.body.dataset.className = styles.card\n',
+      )
+      writeFileSync(
+        join(root, "index.html"),
+        '<!doctype html><html><body><script type="module" src="./client.ts"></script></body></html>\n',
+      )
+      writeFileSync(
+        join(root, "serve.ts"),
+        [
+          'import html from "./index.html"',
+          'const s = Bun.serve({ port: 0, routes: { "/": html }, development: true })',
+          "console.log(`PORT=${s.port}`)",
+        ].join("\n"),
+      )
+
+      const { bunfigPath } = await writeBunDevConfig(root)
+      proc = Bun.spawn(["bun", `--config=${bunfigPath}`, join(root, "serve.ts")], {
+        cwd: root,
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const port = await readPort(proc)
+
+      const page = await (await fetch(`http://127.0.0.1:${port}/`)).text()
+      const script = /<script[^>]+src="([^"]+\.js)"/.exec(page)?.[1]
+      const stylesheet = /<link[^>]+rel="stylesheet"[^>]+href="([^"]+\.css)"/.exec(page)?.[1]
+      expect(script).toBeDefined()
+      expect(stylesheet).toBeDefined()
+      const js = await (await fetch(`http://127.0.0.1:${port}${script}`)).text()
+      const css = await (await fetch(`http://127.0.0.1:${port}${stylesheet}`)).text()
+      expect(js).toContain("card_")
+      expect(css).toContain(".card_")
+      expect(css).toMatch(/(?:rebeccapurple|#639)/)
+    } finally {
+      proc?.kill()
+      rmSync(root, { recursive: true, force: true })
+    }
+  },
+  { timeout: 30_000 },
+)
+
+test(
+  "a dev server started with the generated bunfig runs the APP's own clientPlugins",
+  async () => {
+    // The CLI holds `clientPlugins` as plugin OBJECTS, and bunfig accepts only module PATHS - so the
+    // generated module re-imports the app's config to compose them in. Without this an app whose only
+    // transforms are `clientPlugins` had no Bun dev loop at all. This proves the whole chain works
+    // through `[serve.static]`, including the async `setup` the thunk form needs.
+    const root = mkdtempSync(join(import.meta.dir, ".tmp-nifra-devbun-appplugin-"))
+    let proc: ReturnType<typeof Bun.spawn> | undefined
+    try {
+      const webPkg = resolve(import.meta.dir, "../../web")
+      mkdirSync(join(root, "node_modules", "@nifrajs"), { recursive: true })
+      symlinkSync(webPkg, join(root, "node_modules", "@nifrajs", "web"))
+
+      const configPath = join(root, "nifra.config.ts")
+      writeFileSync(
+        configPath,
+        [
+          "const marker = {",
+          '  name: "app-marker",',
+          "  setup(build) {",
+          "    build.onLoad({ filter: /marker\\.ts$/ }, () => ({",
+          '      loader: "ts",',
+          "      contents: 'export const M = \"TRANSFORMED_BY_APP_PLUGIN\"',",
+          "    }))",
+          // A hostile/careless app plugin claiming a `*.server` module too. The boundary registers
+          // first, so it wins the load and this never gets to put the secret back in the bundle.
+          "    build.onLoad({ filter: /\\.server\\.ts$/ }, () => ({",
+          '      loader: "ts",',
+          "      contents: 'export const API_KEY = \"SERVER_ONLY_SECRET_ABC\"',",
+          "    }))",
+          "  },",
+          "}",
+          // The thunk form, deliberately: it is the one that needs `setup` to be able to await.
+          "export const clientPlugins = () => [marker]",
+        ].join("\n"),
+      )
+      writeFileSync(join(root, "marker.ts"), 'export const M = "ORIGINAL_UNTRANSFORMED"\n')
+      writeFileSync(
+        join(root, "config.server.ts"),
+        'export const API_KEY = "SERVER_ONLY_SECRET_ABC"\n',
+      )
+      writeFileSync(
+        join(root, "client.ts"),
+        'import { M } from "./marker.ts"\nimport * as cfg from "./config.server.ts"\nconsole.log(M, cfg)\n',
+      )
+      writeFileSync(
+        join(root, "index.html"),
+        '<!doctype html><html><body><script type="module" src="./client.ts"></script></body></html>\n',
+      )
+      writeFileSync(
+        join(root, "serve.ts"),
+        [
+          'import html from "./index.html"',
+          'const s = Bun.serve({ port: 0, routes: { "/": html }, development: true })',
+          "console.log(`PORT=${s.port}`)",
+        ].join("\n"),
+      )
+
+      const { bunfigPath } = await writeBunDevConfig(root, configPath)
+      proc = Bun.spawn(["bun", `--config=${bunfigPath}`, join(root, "serve.ts")], {
+        cwd: root,
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const port = await readPort(proc)
+      const page = await (await fetch(`http://127.0.0.1:${port}/`)).text()
+      const script = /<script[^>]+src="([^"]+\.js)"/.exec(page)?.[1]
+      expect(script).toBeDefined()
+      const js = await (await fetch(`http://127.0.0.1:${port}${script}`)).text()
+      expect(js).toContain("TRANSFORMED_BY_APP_PLUGIN")
+      expect(js).not.toContain("ORIGINAL_UNTRANSFORMED")
+      // The boundary is not negotiable: an app plugin cannot re-introduce a `*.server` module's body.
+      expect(js).not.toContain("SERVER_ONLY_SECRET_ABC")
     } finally {
       proc?.kill()
       rmSync(root, { recursive: true, force: true })

@@ -1,9 +1,7 @@
-import {
-  createQueryClient,
-  type QueryClient,
-  type QueryHandle,
-  type QueryState,
-} from "@nifrajs/web"
+import type { QueryClient, QueryHandle, QueryState } from "@nifrajs/web"
+// `/client`, not the root - these are DOM values, and the root's graph carries the
+// server, which Vite's dev server evaluates rather than tree-shakes.
+import { createQueryClient } from "@nifrajs/web/client"
 /**
  * `@nifrajs/web-vue/query` - Vue bindings for the keyed query-cache. `useQuery(key, fn)` subscribes a
  * component to a query (a `shallowRef` fed by `handle.subscribe`) and fetches on mount; `useQueryClient`

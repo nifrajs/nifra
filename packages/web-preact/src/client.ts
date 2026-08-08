@@ -1,4 +1,7 @@
-import { type MountRouterOptions, type RenderProps, searchOfChain } from "@nifrajs/web"
+import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
+// `/client`, not the root: the root's graph carries the server, and Vite's dev server evaluates it
+// instead of tree-shaking it - which broke hydration before the browser ran a line of app code.
+import { searchOfChain } from "@nifrajs/web/client"
 /**
  * @nifrajs/web-preact/client - Preact client runtime. `hydrate` hydrates a single SSR'd route;
  * `mountRouter` hydrates a stateful Router that subscribes to the agnostic store (via
@@ -14,6 +17,20 @@ import { setMountedRouter } from "./fetcher.ts"
 // The `_error` boundary chain element - defined in its own (DOM-free) module, re-exported here so
 // nifra's client codegen resolves it from `@nifrajs/web-preact/client` alongside `mountRouter`.
 export { errorBoundary } from "./error.ts"
+
+/**
+ * Preact cannot apply Bun's hot updates, so the generated client entry reloads instead.
+ *
+ * Bun's dev server runs React Fast Refresh over JSX modules. A Preact component compiles to JSX that
+ * looks the same, so the update is ACCEPTED - and then dropped, because Preact's refresh runtime
+ * (prefresh) is not the one Bun installs. Measured: `bun:beforeUpdate` and `bun:afterUpdate` both fire,
+ * the server logs the rebuild, the browser keeps rendering the old component and never reloads. The
+ * edit simply appears not to happen.
+ *
+ * Reloading loses component state, which React keeps here. That is the honest trade until Bun's dev
+ * server can install prefresh: a visible reload beats an edit that silently does nothing.
+ */
+export const hotUpdateNeedsReload = true
 
 /** Hydrate a server-rendered Preact layout `chain` (with the loader `props`) inside `container`. */
 export function hydrate(chain: readonly unknown[], props: RenderProps, container: unknown): void {

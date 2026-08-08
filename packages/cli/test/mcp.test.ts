@@ -344,6 +344,7 @@ describe("createCachedAppLoader", () => {
     const calls: Array<{ outDirName: string | undefined; importQuery: string | undefined }> = []
     const app = (id: number): LoadedApp => ({
       cwd: "/tmp/app",
+      configPath: "/tmp/app/nifra.config.ts",
       routesDir: "/tmp/app/routes",
       outDir: `/tmp/app/dist-${id}`,
       framework: { adapter: {}, clientModule: "@nifrajs/web-react/client" },

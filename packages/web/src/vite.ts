@@ -23,6 +23,7 @@ import { discoverRoutes } from "./fs.ts"
 import { DEFAULT_DEV_PORT, generateClientEntry } from "./index.ts"
 import { vitePublicEnvPrefix } from "./internal/server-boundary.ts"
 import { importVite } from "./internal/vite-import.ts"
+import { DEV_ROOT_ENV, DEV_ROUTES_ENV } from "./plugins/kit.ts"
 import { viteServerFnStub } from "./plugins/vite-server-fn.ts"
 import { viteServerOnlyEmpty } from "./plugins/vite-server-only.ts"
 
@@ -295,6 +296,12 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   const root = resolvePath(options.root ?? process.cwd())
   const routesDir = resolvePath(options.routesDir)
   const port = options.port ?? DEFAULT_DEV_PORT
+
+  // Which files are the app's own components, for framework plugins that hot-patch at component
+  // granularity (`devHotComponent`). Announced in the environment rather than passed, because the
+  // plugin that reads it is constructed by the app, in its own config, before this server exists.
+  process.env[DEV_ROOT_ENV] = root
+  process.env[DEV_ROUTES_ENV] = routesDir
 
   // Codegen the client entry with Vite-servable, root-relative specifiers (e.g. `/routes/index.tsx`).
   const toUrl = (file: string): string => `/${relative(root, `${routesDir}/${file}`)}`

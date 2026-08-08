@@ -9,7 +9,11 @@
   reactive root is a component, not a function in `client.ts`.
 -->
 <script>
-  import { searchOfChain } from "@nifrajs/web"
+  // `/client`, not the package root: the root's module graph reaches server-only code (the public-dir
+  // reader and friends), and a bundler that externalizes node builtins for the browser turns that into
+  // a runtime `Module "node:fs/promises" has been externalized` on the first import. `/client` is the
+  // browser-safe half, and it is where every other adapter takes this from.
+  import { searchOfChain } from "@nifrajs/web/client"
   import Chain from "./Chain.svelte"
   let { router, routes, searchSchemas } = $props()
 

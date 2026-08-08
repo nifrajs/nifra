@@ -1,15 +1,23 @@
 import type { InferOutput, StandardSchemaV1 } from "@nifrajs/core/server"
+// `import type` + a local re-export, NOT `export type { … } from "@nifrajs/web"`: that form leaves a
+// bare `import "@nifrajs/web"` in the output, which pulls the server graph into the browser under
+// Vite's dev server. Sourced from the ROOT so the generated `RouteSearch` augmentation applies.
+import type {
+  Blocker,
+  BlockerFunction,
+  BlockerState,
+  NavigateFunction,
+  NavigateOptions,
+  NavigateTargetInput,
+} from "@nifrajs/web"
+// `/client`, not the root - these are DOM values, and the root's graph carries the
+// server, which Vite's dev server evaluates rather than tree-shakes.
 import {
-  type Blocker,
-  type BlockerFunction,
   getBrowserNavigate,
   IDLE_BLOCKER,
-  type NavigateFunction,
-  type NavigateOptions,
-  type NavigateTargetInput,
   registerBlocker,
   resolveNavigate,
-} from "@nifrajs/web"
+} from "@nifrajs/web/client"
 /**
  * `@nifrajs/web-preact/router` - Preact routing bindings over the agnostic `@nifrajs/web` history layer:
  * `useNavigate` (programmatic navigation), `useBlocker` (the unsaved-changes guard), and `useSearch`
@@ -20,7 +28,7 @@ import {
 import { createContext } from "preact"
 import { useCallback, useContext, useEffect, useRef, useState } from "preact/compat"
 
-export type { Blocker, BlockerFunction, BlockerState, NavigateFunction } from "@nifrajs/web"
+export type { Blocker, BlockerFunction, BlockerState, NavigateFunction }
 
 // Frozen empty search so the default context value has a stable reference.
 const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})

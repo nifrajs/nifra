@@ -5,7 +5,7 @@ The `nifra` CLI - zero-config dev/build/start for a nifra app, plus the agent su
 `routes/`).
 
 ```
-nifra dev     [--port <n>] [--poll]       True-HMR dev server (Vite + nifra SSR).
+nifra dev     [--port <n>] [--poll]       True-HMR dev server (Bun + nifra SSR; Vite for a Vite-only app).
 nifra build   [--out <dir>] [--target <t>]  Complete deploy directory; target defaults to Bun.
 nifra start   [--port <n>] [--out <dir>]   Run the generated Bun server at <out>/server.js.
 nifra context                             Print this project's API + page routes + conventions.
