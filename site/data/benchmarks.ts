@@ -43,6 +43,22 @@ export interface HttpWorkloadTable {
   readonly rows: readonly HttpWorkloadRow[]
 }
 
+/** A realistic-shape HTTP row: the same route carrying what a real API route carries. */
+export interface HttpRealworldRow {
+  readonly name: string
+  readonly get: string
+  readonly post: string
+  /** The GET again, plus one body-observing middleware. */
+  readonly body: string
+  readonly nifra?: boolean
+}
+
+/** Per-runtime realistic-shape HTTP table from the canonical benchmark dataset. */
+export interface HttpRealworldTable {
+  readonly title: string
+  readonly rows: readonly HttpRealworldRow[]
+}
+
 /** A gzipped server-bundle size row (lower is better). */
 export interface BundleRow {
   readonly name: string
@@ -83,5 +99,9 @@ export const MULTIPLIERS = data.multipliers as readonly Multiplier[]
 export const HTTP_RUNTIME = data.httpRuntime as readonly HttpRuntimeRow[]
 export const HTTP_BENCH = data.http as readonly BenchRow[]
 export const HTTP_WORKLOADS = data.httpWorkloads as readonly HttpWorkloadTable[]
+// The realistic-shape slice. Defaulted like SSR_TABLES_B: the aggregate only writes it when all
+// three runtimes ran, so a dataset from a partial run legitimately has no key here.
+export const HTTP_REALWORLD = ((data as { httpRealworld?: readonly HttpRealworldTable[] })
+  .httpRealworld ?? []) as readonly HttpRealworldTable[]
 export const BUNDLE = data.bundle as readonly BundleRow[]
 export const PROOF = data.proof as readonly ProofStat[]

@@ -1,5 +1,7 @@
 import {
+  HTTP_REALWORLD,
   HTTP_WORKLOADS,
+  type HttpRealworldTable,
   type HttpWorkloadTable,
   MULTIPLIERS,
   SSR_TABLES,
@@ -63,6 +65,47 @@ const HTTP: ReadonlyArray<RuntimeTable> = HTTP_WORKLOADS
 function geoMean(row: HttpRow): number {
   const values = [row.getUsers, row.postUsers].map((v) => Number(v.replaceAll(",", "")))
   return Math.exp(values.reduce((sum, v) => sum + Math.log(v), 0) / values.length)
+}
+
+// ---- Backend: the same routes, carrying what a real API route carries ----
+// The bare tables above are the number every framework publishes; this is the one that survives
+// contact with an application. Same GET and POST, but the route has security headers, CORS, a
+// request-id hook, bearer auth through a derive, and a cookie read - which on nifra specifically
+// disqualifies it from every fused fast lane, so this is the pessimistic side of our own numbers.
+type RealworldRow = HttpRealworldTable["rows"][number]
+
+function realworldGeoMean(row: RealworldRow): number {
+  const values = [row.get, row.post, row.body].map((v) => Number(v.replaceAll(",", "")))
+  return Math.exp(values.reduce((sum, v) => sum + Math.log(v), 0) / values.length)
+}
+
+function RealworldTable({ table }: { table: HttpRealworldTable }) {
+  const ranked = [...table.rows].sort((a, b) => realworldGeoMean(b) - realworldGeoMean(a))
+  return (
+    <section className="bench-block">
+      <h2>{table.title}</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Framework</th>
+            <th className="num">GET /api/orders</th>
+            <th className="num">POST /api/orders</th>
+            <th className="num">GET + body hash</th>
+          </tr>
+        </thead>
+        <tbody>
+          {ranked.map((row) => (
+            <tr key={row.name} className={row.nifra ? "hl" : undefined}>
+              <td>{row.name}</td>
+              <td className="num">{row.get}</td>
+              <td className="num">{row.post}</td>
+              <td className="num">{row.body}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  )
 }
 
 function HttpTable({ table }: { table: RuntimeTable }) {
@@ -165,9 +208,29 @@ export default function Benchmarks() {
         ))}
       </div>
 
+      {HTTP_REALWORLD.length > 0 && (
+        <>
+          <h2 style={{ marginTop: 48 }}>Backend - the same routes with a real route's work</h2>
+          <p className="lead">
+            The tables above are the shape every framework publishes: a bare route doing nothing but
+            routing. This is the same GET and POST after the route gains what an actual API route
+            has - security headers, CORS, a request-id hook, bearer auth through a derive, and a
+            cookie read. That combination disqualifies the route from every one of Nifra's fused
+            fast lanes, so these are the pessimistic numbers, not the flattering ones. The third
+            column adds one body-observing middleware to the same GET.
+          </p>
+          <div className="bench-grid">
+            {HTTP_REALWORLD.map((table) => (
+              <RealworldTable key={table.title} table={table} />
+            ))}
+          </div>
+        </>
+      )}
+
       <p className="lead" style={{ marginTop: 32 }}>
-        Reproduce locally with <code>bun run bench:http:update</code> and{" "}
-        <code>bun run bench:ssr</code>. Same-run ratios matter more than absolute req/s.
+        Reproduce locally with <code>bun run bench:http:update</code>,{" "}
+        <code>bun run bench:http:realworld:update</code>, and <code>bun run bench:ssr</code>.
+        Same-run ratios matter more than absolute req/s.
       </p>
     </div>
   )
