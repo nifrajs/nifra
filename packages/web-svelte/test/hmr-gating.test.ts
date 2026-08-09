@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { svelteBunPlugin } from "../src/plugin.ts"
+import { svelteBunPlugin, svelteHmrBoundary } from "../src/plugin.ts"
 
 /**
  * Which `.svelte` compiles carry hot-patching, and which must not.
@@ -121,4 +121,22 @@ test("dev mode itself follows the phase, on both halves", async () => {
   devServer()
   expect(await compile(path, "dom")).toContain("$.add_locations")
   expect(await compile(path, "ssr")).toContain("push_element")
+})
+
+test("the Vite-shaped boundary answers with the same rule the Bun compile applies", async () => {
+  // `svelteHmrBoundary` is what an app passes as `dynamicCompileOptions`, so it decides the same
+  // question on the Vite pipeline that the compile above decides on Bun. Same file, same answer -
+  // or one pipeline hot-patches a route module the other correctly reloads.
+  const view = await write("boundary-view.svelte", SOURCE)
+  const route = await write("routes/boundary.svelte", SOURCE)
+  const dependency = await write("node_modules/dep/Boundary.svelte", SOURCE)
+
+  expect(svelteHmrBoundary({ filename: view })).toEqual({ hmr: false }) // no dev server announced
+
+  devServer()
+  process.env.NIFRA_DEV_ROOT = dir
+  process.env.NIFRA_DEV_ROUTES = `${dir}/routes`
+  expect(svelteHmrBoundary({ filename: view })).toEqual({ hmr: true })
+  expect(svelteHmrBoundary({ filename: route })).toEqual({ hmr: false })
+  expect(svelteHmrBoundary({ filename: dependency })).toEqual({ hmr: false })
 })

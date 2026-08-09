@@ -78,3 +78,29 @@ test("the SSR compile never emits refresh wiring, dev server or not", async () =
   const code = await compile(path, "ssr")
   for (const marker of REFRESH_MARKERS) expect(code).not.toContain(marker)
 })
+
+test("both refresh runtimes resolve from this package, not from the app", async () => {
+  // The transform emits `solid-refresh` and `nifra:solid-hot` INTO the app's own files, where a bare
+  // specifier resolves against the app - which depends on neither. The plugin pins both, so what the
+  // resolvers hand back has to be an absolute path inside this install, not the specifier again.
+  process.env.NIFRA_DEV_HMR = "1"
+  const resolvers: Array<{ filter: RegExp; cb: () => { path: string } }> = []
+  solidBunPlugin("dom").setup({
+    onLoad: () => undefined,
+    onResolve: (opts: { filter: RegExp }, cb: () => { path: string }) =>
+      resolvers.push({ filter: opts.filter, cb }),
+  } as never)
+
+  const resolve = (specifier: string): string | undefined =>
+    resolvers.find((r) => r.filter.test(specifier))?.cb().path
+
+  const refresh = resolve("solid-refresh")
+  expect(refresh).toBeDefined()
+  expect(refresh).toStartWith("/")
+  expect(refresh).toContain("solid-refresh")
+
+  const bridge = resolve("nifra:solid-hot")
+  expect(bridge).toBeDefined()
+  expect(bridge).toContain("refresh-hot")
+  expect(await Bun.file(bridge as string).exists()).toBe(true)
+})
