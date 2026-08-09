@@ -1,5 +1,41 @@
 # @nifrajs/web-svelte
 
+## 2.11.0
+
+### Minor Changes
+
+- ed5e91c: Vue, Solid and Svelte hot-patch a component edit in place on the Bun dev pipeline: the page keeps its scroll position, its open dialogs and the rest of its client state, and only the edited component re-renders. Route modules still full-reload on save, since a route carries the loader and meta the server ran. The wiring is emitted for a dev server's client compile only, so nothing reaches a production bundle.
+
+  `@nifrajs/web-svelte/plugin` adds `svelteHmrBoundary`, the same boundary for the Vite pipeline - pass it to `@sveltejs/vite-plugin-svelte` as `dynamicCompileOptions`. Svelte's hot-patch wrapper resolves a component through a signal, which reconciles against server markup only where the component is a plain child in a template; a layout or a page is neither, and wrapping one desyncs hydration on first load. The boundary keeps the wrapper on the app's own views. (Svelte recreates the patched component, so its own `$state` restarts - Vue and Solid preserve theirs.)
+
+  `Router.svelte` now takes `searchOfChain` from `@nifrajs/web/client` rather than the package root, so a client bundle no longer reaches server-only modules through it.
+
+### Patch Changes
+
+- 30f5ea3: SSR renders the code that is on disk on the Bun dev pipeline, not just for route files. An edit to anything a route imports - a component, a helper, a `*.server` module, at any depth - now reaches the server-rendered HTML on the next request, so a saved change no longer shows up on the client while the SSR pass still renders the version the server started with. All four frameworks, and both `import "./Counter"` and `import "./Counter.tsx"`.
+
+  A module nobody edited keeps its identity, so a database client or any other module-scope singleton shared between the backend and a route is still a single instance; editing that module deliberately gives the routes the new code. The Vite pipeline is unchanged - it already owned an SSR module graph.
+
+  `@nifrajs/web/plugins/kit` adds `rewriteSsrImports`, which a plugin that compiles its own file type passes its `generate: "ssr"` output through - the compiling plugin is the only code that sees that file's imports, so it is the only place they can be re-keyed.
+
+- c29e0d0: Svelte runs on the Vite pipeline. `nifra dev` and `nifra build` now serve and build a Svelte app on either bundler, so a Svelte app is no longer the one framework pinned to a single pipeline, and pages render with routing context, typed search and layout data intact on both.
+
+  `@nifrajs/web` adds `setSsrModuleLoader` / `ssrModuleLoader`, the seam that makes it work. A dev server that owns SSR resolution publishes its module loader; a render adapter that has to load a compiled asset on the server reads it and loads through it, so that asset is compiled by the same toolchain as the app's routes and renders through the same copy of the framework runtime. Adapters that ship no compiled assets are unaffected.
+
+  `conditions` on the Bun dev pipeline reaches SSR, and says so when it cannot reach the client bundle Bun's dev server serves - a one-line startup notice instead of a package that quietly resolves to one file in dev and another in `nifra build`.
+
+  CSS Modules class names are now identical on both pipelines. The same class hashes to the same scoped name under `nifra dev`, `nifra dev --bun` and `nifra build`, so a selector written against a generated name behaves the same everywhere.
+
+  The dev-and-HMR guide gains a Gotchas section covering the config/adapter file split, plugin slots, resolve conditions, non-route SSR freshness, and the adapter loader.
+
+- Updated dependencies [ed5e91c]
+- Updated dependencies [30f5ea3]
+- Updated dependencies [c29e0d0]
+  - @nifrajs/web@2.11.0
+  - @nifrajs/core@2.11.0
+  - @nifrajs/i18n@2.11.0
+  - @nifrajs/image@2.11.0
+
 ## 2.10.0
 
 ### Patch Changes

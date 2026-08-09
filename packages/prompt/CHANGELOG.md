@@ -1,5 +1,11 @@
 # @nifrajs/prompt
 
+## 2.11.0
+
+### Patch Changes
+
+- @nifrajs/core@2.11.0
+
 ## 2.10.0
 
 ### Patch Changes
