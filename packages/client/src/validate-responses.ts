@@ -14,6 +14,7 @@
  */
 
 import { type Method, Router } from "@nifrajs/core/router"
+import { formatStandardIssues } from "@nifrajs/core/schema"
 import type { FetchFn } from "./client.ts"
 
 /** The slice of a Standard Schema this wrapper runs. */
@@ -61,17 +62,6 @@ export class ResponseContractViolation extends Error {
   }
 }
 
-function formatIssues(issues: ReadonlyArray<IssueLike>): string {
-  return issues
-    .map((issue) => {
-      const path = (issue.path ?? [])
-        .map((seg) => String(typeof seg === "object" && seg !== null ? seg.key : seg))
-        .join(".")
-      return path === "" ? issue.message : `${path}: ${issue.message}`
-    })
-    .join("; ")
-}
-
 /**
  * Wrap the in-process bridge so every response is checked against its route's declared contract.
  * Throws at wrap time when the app cannot enumerate routes - a misconfiguration, not a soft skip.
@@ -113,7 +103,7 @@ export function withResponseValidation(app: unknown, bridge: FetchFn): FetchFn {
     const result = await declared["~standard"].validate(body)
     if (result.issues !== undefined) {
       throw new ResponseContractViolation(
-        `response contract violation: ${method} ${new URL(url).pathname} → ${status}: ${formatIssues(result.issues)}`,
+        `response contract violation: ${method} ${new URL(url).pathname} → ${status}: ${formatStandardIssues(result.issues)}`,
       )
     }
     return response

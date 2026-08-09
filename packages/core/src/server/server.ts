@@ -26,22 +26,19 @@ import {
   validEvidenceId,
 } from "../internal/route-assurance.ts"
 import { type CatalogRoute, RouteCatalog } from "../internal/route-catalog.ts"
-import type {
-  ContextRouteRunner,
-  FusedBodyRunner,
-  FusedWebRunner,
-  InternalHandler,
-  RawAfterHandle,
-  RawAround,
-  RawBeforeHandle,
-  RawDerive,
-  RawErrorHandler,
-  RouteEntry,
-  RouteExecutionPlan,
-  RouteExecutionRunner,
+import {
+  compileRouteExecutionPlan,
+  type FusedBodyRunner,
+  type FusedWebRunner,
+  type InternalHandler,
+  type RawAfterHandle,
+  type RawAround,
+  type RawBeforeHandle,
+  type RawDerive,
+  type RawErrorHandler,
+  type RouteEntry,
 } from "../internal/route-execution.ts"
 import { isSameOriginRequest } from "../internal/same-origin.ts"
-import type { RequestLedger } from "../ledger.ts"
 import { compileRoutePattern, decodeRouteParams } from "../router/pattern.ts"
 import { EMPTY_PARAMS, type Method, Router } from "../router/router.ts"
 import type {
@@ -281,15 +278,18 @@ import type {
 import type {
   AdmissionController,
   AdmissionDecision,
+  FetchHandler,
   McpPromptDescriptor,
   McpResourceDescriptor,
   Middleware,
+  MountFetchOptions,
   PromptArgument,
   PromptMessage,
   ResponseFinalization,
   RouteDescriptor,
   RunningServer,
   ServerOptions,
+  StopHook,
   ToolAnnotations,
 } from "./server-types.ts"
 import type { SSEInit, TypedSSEStream } from "./sse.ts"
@@ -386,6 +386,14 @@ interface BunUpgradeServer {
   requestIP(request: Request): { readonly address: string } | null
 }
 
+type MountedFetchHandler = (request: Request, platform?: Platform) => MaybePromise<Response>
+
+interface FetchMount {
+  readonly path: string
+  readonly handler: MountedFetchHandler
+  readonly stripPrefix: boolean
+}
+
 /** The socket peer Bun observed, as a `Platform` for the request lifecycle (`undefined` if unknown).
  * Typed structurally on `requestIP` alone so any Bun `Server` (WS or not) satisfies it. */
 function bunPeerPlatform(
@@ -470,15 +478,18 @@ export type Handler<
 export type {
   AdmissionController,
   AdmissionDecision,
+  FetchHandler,
   McpPromptDescriptor,
   McpResourceDescriptor,
   Middleware,
+  MountFetchOptions,
   PromptArgument,
   PromptMessage,
   ResponseFinalization,
   RouteDescriptor,
   RunningServer,
   ServerOptions,
+  StopHook,
   ToolAnnotations,
 }
 
@@ -500,6 +511,7 @@ export type { IdentityPlugin }
 const DEFAULT_MAX_BODY_BYTES = 1_000_000
 const DEFAULT_DRAIN_MS = 10_000
 const DRAIN_POLL_MS = 10
+const STOP_HOOK_TIMEOUT_MS = 5_000
 
 /** Same-origin check for a WebSocket handshake (CSWSH default). {@link isSameOriginRequest} is the one
  * owner, shared with the server-function mount in `@nifrajs/web` - the two used to answer differently
@@ -526,6 +538,32 @@ function hasReplacementParam(params: Record<string, string>): boolean {
     if (params[key]!.includes("\uFFFD")) return true
   }
   return false
+}
+
+function normalizeMountPrefix(path: string): string {
+  if (!path.startsWith("/") || path.includes("?") || path.includes("#")) {
+    throw new TypeError("mountFetch path must be an absolute pathname without a query or hash")
+  }
+  const withoutWildcard = path.endsWith("/*") ? path.slice(0, -2) : path
+  if (withoutWildcard.includes("*") || withoutWildcard.includes(":")) {
+    throw new TypeError("mountFetch path must be a literal prefix, optionally ending in /*")
+  }
+  if (withoutWildcard.length === 0) return "/"
+  return withoutWildcard.length > 1 && withoutWildcard.endsWith("/")
+    ? withoutWildcard.slice(0, -1)
+    : withoutWildcard
+}
+
+function underMountPrefix(pathname: string, prefix: string): boolean {
+  return prefix === "/" || pathname === prefix || pathname.startsWith(`${prefix}/`)
+}
+
+function stripMountPrefix(request: Request, prefix: string): Request {
+  if (prefix === "/") return request
+  const url = new URL(request.url)
+  const rest = url.pathname.slice(prefix.length)
+  url.pathname = rest === "" ? "/" : rest
+  return new Request(url.href, request)
 }
 
 /** `ctx.set` carrying the lazy backings (`_headers`, `_cookies`) so `toResponse` can skip allocating
@@ -582,6 +620,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private readonly maxInboundDeadlineMs: number
   private readonly deadlineAdmissionOptions: DeadlineAdmissionOptions
   private readonly gracefulSignals: boolean
+  private readonly stopHooks: StopHook[]
+  private readonly fetchMounts: FetchMount[]
   /** Capacity-admission gate; `undefined` = off (the request path pays nothing). */
   private readonly capacityGate: AdmissionController | undefined
   private readonly onCapabilityUse: ((event: CapabilityUseEvent) => void) | undefined
@@ -677,6 +717,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       throw new RangeError("maxInboundDeadlineMs must be a finite positive number")
     }
     this.gracefulSignals = options.gracefulSignals ?? false
+    this.stopHooks = []
+    this.fetchMounts = []
     this.capacityGate = options.admission
     this.onCapabilityUse = options.onCapabilityUse
     this.capabilityInterceptors = []
@@ -727,6 +769,36 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         `server configuration is sealed after listen(); call ${operation} before listen()`,
       )
     }
+  }
+
+  /** Register a callback awaited after graceful drain and server stop. Hung callbacks are bounded. */
+  onStop(fn: StopHook): this {
+    this.assertConfigurable("onStop()")
+    if (typeof fn !== "function") throw new TypeError("onStop callback must be a function")
+    this.stopHooks.push(fn)
+    return this
+  }
+
+  /**
+   * Mount a legacy fetch handler under a literal path prefix. Mounted handlers sit behind typed
+   * routes, so routes can move one at a time while the remaining legacy surface stays live.
+   * Mounted responses are outside Nifra's typed route and response-contract checks.
+   */
+  mountFetch(
+    path: string,
+    handler: FetchHandler<EnvOf<Ctx>>,
+    options: MountFetchOptions = {},
+  ): this {
+    this.assertConfigurable("mountFetch()")
+    if (typeof handler !== "function") throw new TypeError("mountFetch handler must be a function")
+    const mount: FetchMount = {
+      path: normalizeMountPrefix(path),
+      handler: handler as MountedFetchHandler,
+      stripPrefix: options.stripPrefix === true,
+    }
+    this.fetchMounts.push(mount)
+    this.fetchMounts.sort((a, b) => b.path.length - a.path.length)
+    return this
   }
 
   /** Add a per-request, computed context extension for subsequent routes. */
@@ -1562,16 +1634,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       this.onErrorHooks.length === 0
         ? "derive-before"
         : undefined
-    const execution = this.compileExecutionPlan(
+    const execution = compileRouteExecutionPlan({
       lane,
       contextless,
-      this.aroundHooks.length > 0,
-      ledgered !== undefined,
+      hasAround: this.aroundHooks.length > 0,
+      hasLedger: ledgered !== undefined,
       lifecycleLane,
       fusedWeb,
-      fusedBodyRunner,
-      fusedWeb === undefined ? undefined : fusedQuery ? "query" : fusedBody ? "body" : "bare",
-    )
+      fusedBody: fusedBodyRunner,
+      fusedLane:
+        fusedWeb === undefined ? undefined : fusedQuery ? "query" : fusedBody ? "body" : "bare",
+    })
     const registeredEntry: RouteEntry = {
       // (context: never) => unknown -> InternalHandler: the framework invokes it
       // with the concrete RawContext the typed handler expects, so this is sound.
@@ -1637,132 +1710,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       descriptor,
       assurance: Object.freeze(routeAssurance),
     }
-  }
-
-  /** Collapse route-invariant lifecycle decisions into one runner at registration. The request path
-   * performs no eligibility ladder: it supplies request state to this already-selected plan. */
-  private compileExecutionPlan(
-    lane: "bare" | "body" | "query" | "lifecycle",
-    contextless: boolean,
-    hasAround: boolean,
-    hasLedger: boolean,
-    lifecycleLane: "hooks" | "query" | "body" | "body-query" | undefined,
-    fusedWeb: FusedWebRunner | undefined,
-    fusedBody: FusedBodyRunner | undefined,
-    fusedLane: "bare" | "body" | "query" | undefined,
-  ): RouteExecutionPlan {
-    if (contextless) {
-      const run: RouteExecutionRunner = (
-        runtime,
-        entry,
-        source,
-        params,
-        search,
-        signal,
-        budget,
-        platform,
-        _nativeContext,
-        finalize,
-        wrapResponse,
-      ) =>
-        runtime.runContextlessBare(
-          entry,
-          source,
-          params,
-          search,
-          signal,
-          budget,
-          platform,
-          finalize,
-          wrapResponse,
-        )
-      return Object.freeze({ run, fusedWeb, fusedBody, fusedLane })
-    }
-
-    let inner: ContextRouteRunner
-    switch (lane) {
-      case "bare":
-        inner = (runtime, entry, _source, ctx, finalize, wrapResponse) =>
-          runtime.runBare(entry, ctx, finalize, wrapResponse)
-        break
-      case "body":
-        inner = (runtime, entry, source, ctx, finalize, wrapResponse) =>
-          runtime.runBodyOnly(entry, source, ctx, finalize, wrapResponse)
-        break
-      case "query":
-        inner = (runtime, entry, _source, ctx, finalize, wrapResponse) =>
-          runtime.runQueryOnly(entry, ctx, finalize, wrapResponse)
-        break
-      default:
-        switch (lifecycleLane) {
-          case "hooks":
-            inner = (runtime, entry, _source, ctx, finalize, wrapResponse) =>
-              runtime.runLifecycleHooks(entry, ctx, finalize, wrapResponse)
-            break
-          case "query":
-            inner = (runtime, entry, _source, ctx, finalize, wrapResponse) =>
-              runtime.runLifecycleQuery(entry, ctx, finalize, wrapResponse)
-            break
-          case "body":
-            inner = (runtime, entry, source, ctx, finalize, wrapResponse) =>
-              runtime.runLifecycleBody(entry, source, ctx, finalize, wrapResponse)
-            break
-          case "body-query":
-            inner = (runtime, entry, source, ctx, finalize, wrapResponse) =>
-              runtime.runLifecycleBodyQuery(entry, source, ctx, finalize, wrapResponse)
-            break
-          default:
-            inner = (runtime, entry, source, ctx, finalize, wrapResponse) =>
-              runtime.runLifecycle(entry, source, ctx, finalize, wrapResponse)
-        }
-    }
-    const execute: ContextRouteRunner = hasAround
-      ? (runtime, entry, source, ctx, finalize, wrapResponse) =>
-          runtime.runWithAround(
-            entry,
-            ctx,
-            () => inner(runtime, entry, source, ctx, finalize, wrapResponse),
-            finalize,
-            wrapResponse,
-          )
-      : inner
-    const run: RouteExecutionRunner = (
-      runtime,
-      entry,
-      source,
-      params,
-      search,
-      signal,
-      budget,
-      platform,
-      nativeContext,
-      finalize,
-      wrapResponse,
-    ) => {
-      const ctx = nativeContext
-        ? RequestContext.native(source, params, search, runtime.maxBodyBytes, platform)
-        : new RequestContext(source, params, search, signal, budget, platform, runtime.maxBodyBytes)
-      let ledger: RequestLedger | undefined
-      // The runtime is always present when a route resolved a ledger (enforced at registration).
-      const ledgerRuntime = runtime.effectLedgerRuntime
-      if (hasLedger && ledgerRuntime !== undefined) {
-        const resolved = entry.ledgered as ResolvedEffectLedger
-        ledger = ledgerRuntime.create(resolved)
-        ledgerRuntime.attach(ctx, ledger)
-      }
-      let outcome = execute(runtime, entry, source, ctx, finalize, wrapResponse)
-      if (ledger !== undefined && ledgerRuntime !== undefined) {
-        const active = ledger
-        const resolved = entry.ledgered as ResolvedEffectLedger
-        outcome = (outcome instanceof Promise ? outcome : Promise.resolve(outcome)).then((value) =>
-          ledgerRuntime.settle(active, resolved, value, (fields) =>
-            runtime.logger.error("effect ledger sink failed", fields),
-          ),
-        )
-      }
-      return outcome
-    }
-    return Object.freeze({ run, fusedWeb, fusedBody, fusedLane })
   }
 
   /** The idempotency lane's bridge back into the normal matched lanes, resolved to a concrete Response
@@ -2680,6 +2627,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
     const match = this.catalog.find(source.method, pathname)
     if (!match.found) {
+      const mounted = this.fetchMount(pathname, source, platform)
+      if (mounted !== undefined) {
+        return mounted instanceof Promise
+          ? mounted.then((response) => wrapResponse(response))
+          : wrapResponse(mounted)
+      }
       if (match.reason === "method-not-allowed") {
         return wrapResponse(
           jsonError(405, "method_not_allowed", { Allow: match.allowed.join(", ") }),
@@ -2706,6 +2659,22 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       onTimeout,
       webFast,
     )
+  }
+
+  private fetchMount(
+    pathname: string,
+    source: RequestSource,
+    platform: Platform | undefined,
+  ): MaybePromise<Response> | undefined {
+    for (const mount of this.fetchMounts) {
+      if (!underMountPrefix(pathname, mount.path)) continue
+      const request = requestOf(source)
+      return mount.handler(
+        mount.stripPrefix ? stripMountPrefix(request, mount.path) : request,
+        platform,
+      )
+    }
+    return undefined
   }
 
   /** Run a route that has already been matched by the runtime or Nifra's portable router. */
@@ -2861,6 +2830,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
 
   /** The narrowest bare route: a syntactic `() => ...` handler cannot observe the context argument, so
    * successful requests can skip allocating `RequestContext`. Errors still allocate one for logging. */
+  // @ts-expect-error TS6133 -- invoked structurally by compiled plans (internal/route-execution.ts)
+  // biome-ignore lint/correctness/noUnusedPrivateClassMembers: invoked structurally by compiled plans (internal/route-execution.ts)
   private runContextlessBare<T>(
     entry: RouteEntry,
     source: RequestSource,
@@ -2938,6 +2909,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * (a thrown `Response` is control flow; anything else is a logged flat 500). This is where nifra skips
    * the per-request async-frame tax - the same win codegen routers get, but without `eval`.
    */
+  // @ts-expect-error TS6133 -- invoked structurally by compiled plans (internal/route-execution.ts)
+  // biome-ignore lint/correctness/noUnusedPrivateClassMembers: invoked structurally by compiled plans (internal/route-execution.ts)
   private runBare<T>(
     entry: RouteEntry,
     ctx: RawContext,
@@ -3244,6 +3217,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return wrapResponse(jsonError(500, "internal_error"))
   }
 
+  // @ts-expect-error TS6133 -- invoked structurally by compiled plans (internal/route-execution.ts)
+  // biome-ignore lint/correctness/noUnusedPrivateClassMembers: invoked structurally by compiled plans (internal/route-execution.ts)
   private runWithAround<T>(
     entry: RouteEntry,
     ctx: RawContext,
@@ -3280,6 +3255,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return dispatch(0)
   }
 
+  // @ts-expect-error TS6133 -- invoked structurally by compiled plans (internal/route-execution.ts)
+  // biome-ignore lint/correctness/noUnusedPrivateClassMembers: invoked structurally by compiled plans (internal/route-execution.ts)
   private runBodyOnly<T>(
     entry: RouteEntry,
     source: RequestSource,
@@ -3487,6 +3464,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return this.executeHandler(entry, ctx, finalize)
   }
 
+  // @ts-expect-error TS6133 -- invoked structurally by compiled plans (internal/route-execution.ts)
+  // biome-ignore lint/correctness/noUnusedPrivateClassMembers: invoked structurally by compiled plans (internal/route-execution.ts)
   private runQueryOnly<T>(
     entry: RouteEntry,
     ctx: RawContext,
@@ -3693,6 +3672,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * node-direct primitives); an early/error `Response` (validation, thrown, 500) through `wrapResponse`.
    */
   /** Synchronous until a validator, lifecycle hook, handler, or contract check actually returns a Promise. */
+  // @ts-expect-error TS6133 -- invoked structurally by compiled plans (internal/route-execution.ts)
+  // biome-ignore lint/correctness/noUnusedPrivateClassMembers: invoked structurally by compiled plans (internal/route-execution.ts)
   private runLifecycle<T>(
     entry: RouteEntry,
     source: RequestSource,
@@ -3772,6 +3753,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   }
 
   /** Registration-specialized body lifecycle: bounded body validation (including recovery) → hooks. */
+  // @ts-expect-error TS6133 -- invoked structurally by compiled plans (internal/route-execution.ts)
+  // biome-ignore lint/correctness/noUnusedPrivateClassMembers: invoked structurally by compiled plans (internal/route-execution.ts)
   private runLifecycleBody<T>(
     entry: RouteEntry,
     source: RequestSource,
@@ -3789,6 +3772,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   }
 
   /** Registration-specialized body + query lifecycle: bounded body validation → query validation → hooks. */
+  // @ts-expect-error TS6133 -- invoked structurally by compiled plans (internal/route-execution.ts)
+  // biome-ignore lint/correctness/noUnusedPrivateClassMembers: invoked structurally by compiled plans (internal/route-execution.ts)
   private runLifecycleBodyQuery<T>(
     entry: RouteEntry,
     source: RequestSource,
@@ -4562,6 +4547,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       await Bun.sleep(DRAIN_POLL_MS)
     }
     server.stop(server.pendingRequests > 0) // force-close iff stragglers remain past the deadline
+    if (this.stopHooks.length === 0) return
+    const callbacks = this.stopHooks.map((hook) => Promise.resolve().then(hook))
+    const settled = Promise.allSettled(callbacks)
+    await Promise.race([
+      settled,
+      new Promise<void>((resolve) => setTimeout(resolve, STOP_HOOK_TIMEOUT_MS)),
+    ])
   }
 
   private installSignalHandlers(): void {

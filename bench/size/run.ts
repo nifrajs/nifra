@@ -155,15 +155,22 @@ export default server().post("/users", { body }, (c) => ({ name: c.body.name }))
 // The RFC 9110 HEAD fallback (router resolves HEAD to the GET handler, and the Bun native table
 // aliases it) costs a few bytes in the kernel, so every core-based row moved a little. Two were
 // sitting within ~15 B of their ceiling and crossed it; the rest still clear.
+// The legacy-mount and shutdown seams (`mountFetch` prefix dispatch on the unmatched path plus
+// `onStop` hooks settled with a bounded timeout at `stop()`) moved every core row together by
+// ~0.6 KB gzip (bare 22.1 -> 22.7 measured against the pre-seam baseline). Matched routes never
+// touch the mount table - the dispatch lives in the `!match.found` branch - and the admission gate
+// wraps mounts too, so the cost is availability of the seams, not a hot-path tax. Squeezed first:
+// the plan compiler's runner adapter table was deleted outright (the compiler now types the kernel
+// through an erased structural cast), which gave ~0.1 KB back before repricing.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
-  "nifra-bare": 22.3,
+  "nifra-bare": 22.9,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  "nifra-idempotency": 25.4,
-  "nifra-effect-ledger": 24.3,
-  "nifra-mcp": 22.5,
-  "nifra-sse": 23.0,
-  "nifra-valibot": 23.3,
-  "nifra-typebox-t": 52.4,
+  "nifra-idempotency": 26.0,
+  "nifra-effect-ledger": 24.8,
+  "nifra-mcp": 23.1,
+  "nifra-sse": 23.6,
+  "nifra-valibot": 23.9,
+  "nifra-typebox-t": 52.9,
 }
 
 const main = async (): Promise<void> => {

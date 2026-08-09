@@ -53,6 +53,25 @@ describe("graceful shutdown", () => {
     await expect(server().stop()).resolves.toBeUndefined()
   })
 
+  test("onStop callbacks run after the server stops", async () => {
+    const events: string[] = []
+    const app = server()
+      .onStop(() => {
+        events.push("stopped")
+      })
+      .get("/", () => "ok")
+    let stopped = false
+    ;(app as unknown as { bunServer: { pendingRequests: number; stop(): void } }).bunServer = {
+      pendingRequests: 0,
+      stop() {
+        stopped = true
+      },
+    }
+    await app.stop()
+    expect(stopped).toBe(true)
+    expect(events).toEqual(["stopped"])
+  })
+
   test("gracefulSignals installs a SIGTERM/SIGINT handler that stops the server", async () => {
     const beforeTerm = process.listenerCount("SIGTERM")
     const beforeInt = process.listenerCount("SIGINT")

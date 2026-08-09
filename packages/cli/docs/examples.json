@@ -252,6 +252,12 @@
     "code": "import { server } from \"@nifrajs/core/server\"\n\nserver()\n  .get(\"/\", () => ({ hello: \"world\" }))\n  .get(\"/users/:id\", (c) => ({ id: c.params.id }))\n  .listen(3000)"
   },
   {
+    "name": "HONO",
+    "topic": "Nifra - Migrate route by route",
+    "slug": "migrate-route-by-route",
+    "code": "import { Hono } from \"hono\"\nimport { server } from \"@nifrajs/core/server\"\nimport { t } from \"@nifrajs/schema\"\n\nconst legacy = new Hono()\nlegacy.get(\"/users\", (c) => c.json({ source: \"hono\", users: [] }))\nlegacy.post(\"/users\", async (c) => c.json(await c.req.json()))\n\nexport const app = server()\n  // The wildcard is a literal mount prefix, not a typed Nifra route.\n  .mountFetch(\"/legacy/*\", legacy.fetch, { stripPrefix: true })\n  // Typed routes take precedence, so move one route out of Hono at a time.\n  .get(\"/legacy/users/:id\", (c) => ({ id: c.params.id, source: \"nifra\" }))\n  .post(\n    \"/users\",\n    { body: t.object({ name: t.string() }) },\n    (c) => ({ id: crypto.randomUUID(), name: c.body.name }),\n  )"
+  },
+  {
     "name": "CACHING",
     "topic": "Nifra - Plugins & middleware",
     "slug": "plugins",

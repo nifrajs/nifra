@@ -53,6 +53,22 @@ export type ValidationOutcome<Output> =
   | { readonly ok: true; readonly value: Output }
   | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }
 
+/** Format Standard Schema issues consistently across server and client contract diagnostics. */
+export function formatStandardIssues(issues: ReadonlyArray<StandardIssue>): string {
+  return issues
+    .map((issue) => {
+      const path = Array.isArray(issue.path)
+        ? issue.path
+            .map((segment) =>
+              String(typeof segment === "object" && segment !== null ? segment.key : segment),
+            )
+            .join(".")
+        : ""
+      return path === "" ? issue.message : `${path}: ${issue.message}`
+    })
+    .join("; ")
+}
+
 function normalizeStandardResult<Output>(
   result: StandardResult<Output>,
 ): ValidationOutcome<Output> {

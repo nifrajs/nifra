@@ -41,7 +41,11 @@
  * or lifecycle hook has already left that lane, so for the routes that look like production the
  * contract is effectively free - declare it.
  */
-import type { StandardIssue, StandardResult, StandardSchemaV1 } from "../schema/standard.ts"
+import {
+  formatStandardIssues,
+  type StandardResult,
+  type StandardSchemaV1,
+} from "../schema/standard.ts"
 import { INSTALL_RESPONSE_CONTRACT } from "./install.ts"
 import type { IdentityPlugin } from "./plugin.ts"
 import type { AnyServer } from "./server.ts"
@@ -75,21 +79,6 @@ function droppedKeys(result: unknown, value: unknown): string[] {
   return Object.keys(result).filter((k) => !(k in value))
 }
 
-function describeIssues(issues: ReadonlyArray<StandardIssue>): string {
-  return issues
-    .map((issue) => {
-      const path = Array.isArray(issue.path)
-        ? issue.path
-            .map((seg) =>
-              String(typeof seg === "object" && seg !== null ? (seg as { key: unknown }).key : seg),
-            )
-            .join(".")
-        : ""
-      return path === "" ? issue.message : `${path}: ${issue.message}`
-    })
-    .join("; ")
-}
-
 /**
  * Check one result against the route's declared response schema.
  *
@@ -116,7 +105,7 @@ function interpret(
   mode: "warn" | "enforce",
 ): ResponseContractOutcome {
   if (settled.issues !== undefined) {
-    const message = `response does not satisfy its declared contract: ${describeIssues(settled.issues)}`
+    const message = `response does not satisfy its declared contract: ${formatStandardIssues(settled.issues)}`
     // `warn` never changes what is served - it reports and gets out of the way, so switching it on can
     // never be the thing that broke production.
     return mode === "warn"

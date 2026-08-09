@@ -101,6 +101,21 @@ export interface ServerOptions {
   readonly onValidationError?: RouteSchema["onValidationError"]
 }
 
+/** A fetch-compatible handler used by {@link Server.mountFetch}. */
+export type FetchHandler<Env = unknown> = (
+  request: Request,
+  platform?: Platform<Env>,
+) => MaybePromise<Response>
+
+/** Options for a legacy fetch-handler mount. */
+export interface MountFetchOptions {
+  /** Remove the mount prefix before invoking the legacy handler. Default: false. */
+  readonly stripPrefix?: boolean
+}
+
+/** A callback awaited after the Bun server has drained and stopped. */
+export type StopHook = () => MaybePromise<void>
+
 /**
  * MCP tool safety hints, surfaced in `tools/list`, that tell an agent how risky a `.tool()` call is - so it
  * can decide whether to auto-invoke or confirm first. All optional; an omitted hint means "unknown". Mirrors

@@ -17,11 +17,13 @@
  * The `Server` import is type-only and erased, so there is no runtime cycle back into the kernel.
  */
 import type { RequestBudget } from "../budget.ts"
+import type { RequestLedger } from "../ledger.ts"
 import type { StandardSchemaV1 } from "../schema/standard.ts"
 import type { Platform, RouteSchema } from "../server/context.ts"
 import type { ResolvedIdempotency } from "../server/idempotency-lane.ts"
-import type { ResolvedEffectLedger } from "../server/ledger-lane.ts"
+import type { EffectLedgerRuntime, ResolvedEffectLedger } from "../server/ledger-lane.ts"
 import type { Registry } from "../server/registry.ts"
+import { RequestContext } from "../server/request-context.ts"
 import type { ResponseContractRuntime } from "../server/response-contract-lane.ts"
 import type { HandlerResult } from "../server/runtime-core.ts"
 import type { CtxSet, MaybePromise, RawContext, RequestSource, Server } from "../server/server.ts"
@@ -57,6 +59,265 @@ export type ContextRouteRunner = <T, R extends Registry, Ctx>(
   finalize: (result: unknown, set: CtxSet) => T,
   wrapResponse: (response: Response) => T,
 ) => MaybePromise<T>
+
+/** The kernel's private execution surface, mirrored structurally. The runner methods are private on
+ * `Server` by design; this compiler lives outside the class, so it reaches them through a type-level
+ * mirror of their exact signatures. The `as unknown as` at each use is erased by compilation - the
+ * request path calls the kernel methods directly, with no adapter object and no extra hop. The mirror
+ * is not exported: it is this module's view of the kernel, not vocabulary anyone else may bind to. */
+interface RouteExecutionRuntime {
+  runContextlessBare<T>(
+    entry: RouteEntry,
+    source: RequestSource,
+    params: Record<string, string>,
+    search: string | undefined,
+    signal: AbortSignal,
+    budget: RequestBudget,
+    platform: Platform | undefined,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+  ): MaybePromise<T>
+  runBare<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+  ): MaybePromise<T>
+  runBodyOnly<T>(
+    entry: RouteEntry,
+    source: RequestSource,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+  ): MaybePromise<T>
+  runQueryOnly<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+  ): MaybePromise<T>
+  runLifecycleHooks<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+  ): MaybePromise<T>
+  runLifecycleQuery<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+  ): MaybePromise<T>
+  runLifecycleBody<T>(
+    entry: RouteEntry,
+    source: RequestSource,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+  ): MaybePromise<T>
+  runLifecycleBodyQuery<T>(
+    entry: RouteEntry,
+    source: RequestSource,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+  ): MaybePromise<T>
+  runLifecycle<T>(
+    entry: RouteEntry,
+    source: RequestSource,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+  ): MaybePromise<T>
+  runWithAround<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    run: () => MaybePromise<T>,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+  ): MaybePromise<T>
+  readonly maxBodyBytes: number
+  readonly effectLedgerRuntime: EffectLedgerRuntime | undefined
+  readonly logger: {
+    error(message: string, fields: { method: string; path: string; name: string }): void
+  }
+}
+
+export type RouteExecutionLane = "bare" | "body" | "query" | "lifecycle"
+export type LifecycleExecutionLane = "hooks" | "query" | "body" | "body-query" | undefined
+
+/** Compile the one immutable route decision at registration time. The request path only invokes the
+ * selected closure; it never repeats this eligibility ladder. The closures reach the kernel's private
+ * runners through the {@link RouteExecutionRuntime} mirror - a compile-time cast, not a dispatch
+ * object, so the emitted request path is a direct method call on the server. */
+export function compileRouteExecutionPlan(options: {
+  readonly lane: RouteExecutionLane
+  readonly contextless: boolean
+  readonly hasAround: boolean
+  readonly hasLedger: boolean
+  readonly lifecycleLane: LifecycleExecutionLane
+  readonly fusedWeb: FusedWebRunner | undefined
+  readonly fusedBody: FusedBodyRunner | undefined
+  readonly fusedLane: "bare" | "body" | "query" | undefined
+}): RouteExecutionPlan {
+  const { lane, contextless, hasAround, hasLedger, lifecycleLane, fusedWeb, fusedBody, fusedLane } =
+    options
+
+  if (contextless) {
+    const run: RouteExecutionRunner = (
+      runtime,
+      entry,
+      source,
+      params,
+      search,
+      signal,
+      budget,
+      platform,
+      _nativeContext,
+      finalize,
+      wrapResponse,
+    ) =>
+      (runtime as unknown as RouteExecutionRuntime).runContextlessBare(
+        entry,
+        source,
+        params,
+        search,
+        signal,
+        budget,
+        platform,
+        finalize,
+        wrapResponse,
+      )
+    return Object.freeze({ run, fusedWeb, fusedBody, fusedLane })
+  }
+
+  let inner: ContextRouteRunner
+  switch (lane) {
+    case "bare":
+      inner = (runtime, entry, _source, ctx, finalize, wrapResponse) =>
+        (runtime as unknown as RouteExecutionRuntime).runBare(entry, ctx, finalize, wrapResponse)
+      break
+    case "body":
+      inner = (runtime, entry, source, ctx, finalize, wrapResponse) =>
+        (runtime as unknown as RouteExecutionRuntime).runBodyOnly(
+          entry,
+          source,
+          ctx,
+          finalize,
+          wrapResponse,
+        )
+      break
+    case "query":
+      inner = (runtime, entry, _source, ctx, finalize, wrapResponse) =>
+        (runtime as unknown as RouteExecutionRuntime).runQueryOnly(
+          entry,
+          ctx,
+          finalize,
+          wrapResponse,
+        )
+      break
+    default:
+      switch (lifecycleLane) {
+        case "hooks":
+          inner = (runtime, entry, _source, ctx, finalize, wrapResponse) =>
+            (runtime as unknown as RouteExecutionRuntime).runLifecycleHooks(
+              entry,
+              ctx,
+              finalize,
+              wrapResponse,
+            )
+          break
+        case "query":
+          inner = (runtime, entry, _source, ctx, finalize, wrapResponse) =>
+            (runtime as unknown as RouteExecutionRuntime).runLifecycleQuery(
+              entry,
+              ctx,
+              finalize,
+              wrapResponse,
+            )
+          break
+        case "body":
+          inner = (runtime, entry, source, ctx, finalize, wrapResponse) =>
+            (runtime as unknown as RouteExecutionRuntime).runLifecycleBody(
+              entry,
+              source,
+              ctx,
+              finalize,
+              wrapResponse,
+            )
+          break
+        case "body-query":
+          inner = (runtime, entry, source, ctx, finalize, wrapResponse) =>
+            (runtime as unknown as RouteExecutionRuntime).runLifecycleBodyQuery(
+              entry,
+              source,
+              ctx,
+              finalize,
+              wrapResponse,
+            )
+          break
+        default:
+          inner = (runtime, entry, source, ctx, finalize, wrapResponse) =>
+            (runtime as unknown as RouteExecutionRuntime).runLifecycle(
+              entry,
+              source,
+              ctx,
+              finalize,
+              wrapResponse,
+            )
+      }
+  }
+
+  const execute: ContextRouteRunner = hasAround
+    ? (runtime, entry, source, ctx, finalize, wrapResponse) =>
+        (runtime as unknown as RouteExecutionRuntime).runWithAround(
+          entry,
+          ctx,
+          () => inner(runtime, entry, source, ctx, finalize, wrapResponse),
+          finalize,
+          wrapResponse,
+        )
+    : inner
+
+  const run: RouteExecutionRunner = (
+    runtime,
+    entry,
+    source,
+    params,
+    search,
+    signal,
+    budget,
+    platform,
+    nativeContext,
+    finalize,
+    wrapResponse,
+  ) => {
+    const server = runtime as unknown as RouteExecutionRuntime
+    const ctx = nativeContext
+      ? RequestContext.native(source, params, search, server.maxBodyBytes, platform)
+      : new RequestContext(source, params, search, signal, budget, platform, server.maxBodyBytes)
+    let ledger: RequestLedger | undefined
+    // The runtime is always present when a route resolved a ledger (enforced at registration).
+    const ledgerRuntime = server.effectLedgerRuntime
+    if (hasLedger && ledgerRuntime !== undefined) {
+      const resolved = entry.ledgered as ResolvedEffectLedger
+      ledger = ledgerRuntime.create(resolved)
+      ledgerRuntime.attach(ctx, ledger)
+    }
+    let outcome = execute(runtime, entry, source, ctx, finalize, wrapResponse)
+    if (ledger !== undefined && ledgerRuntime !== undefined) {
+      const active = ledger
+      const resolved = entry.ledgered as ResolvedEffectLedger
+      outcome = (outcome instanceof Promise ? outcome : Promise.resolve(outcome)).then((value) =>
+        ledgerRuntime.settle(active, resolved, value, (fields) =>
+          server.logger.error("effect ledger sink failed", fields),
+        ),
+      )
+    }
+    return outcome
+  }
+  return Object.freeze({ run, fusedWeb, fusedBody, fusedLane })
+}
 
 /** Registration-compiled route behavior. Every adapter invokes the same runner; the optional fused
  * renderer is only a response-format specialization of that same selected route semantics. */

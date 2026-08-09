@@ -1094,6 +1094,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **StandardSuccess** _(interface)_ - `interface StandardSuccess<Output>`
 - **StandardTypes** _(interface)_ - `interface StandardTypes<Input = unknown, Output = Input>`
 - **ValidationOutcome** _(type)_ - `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
+- **formatStandardIssues** _(function)_ - `formatStandardIssues: (issues: ReadonlyArray<StandardIssue>) => string`
+  Format Standard Schema issues consistently across server and client contract diagnostics.
 - **validateStandard** _(function)_ - `validateStandard: <Schema extends StandardSchemaV1>(schema: Schema, value: unknown) => ValidationOutcome<InferOutput<Schema>> | Promise<ValidationOutcome<InferOutput<Schema>>>`
   Run a Standard Schema and normalize the result. Sync validators stay sync; async validators are awaited.
 
