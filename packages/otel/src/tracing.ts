@@ -55,6 +55,10 @@ export interface TracingOptions {
   }
 }
 
+type ShutdownCapableAdapter = ObservationAdapter & {
+  readonly shutdown?: () => void | Promise<void>
+}
+
 /** Spread into an outgoing `fetch`/`ctx.api` call's headers to continue the trace downstream:
  * `fetch(url, { headers: traceHeaders(c.trace) })`. */
 export function traceHeaders(
@@ -94,12 +98,17 @@ export function tracing(options: TracingOptions = {}) {
     ...(options.adapters ?? []),
   ]
   const lifecycle = createObservationLifecycle({ adapters })
+  const stopHooks = [...new Set(adapters)].flatMap((adapter) => {
+    const shutdown = (adapter as ShutdownCapableAdapter).shutdown
+    return typeof shutdown === "function" ? [() => Promise.resolve(shutdown.call(adapter))] : []
+  })
   const serviceName = options.serviceName
   // A WeakMap so an abandoned request cannot leak its active observation.
   const inFlight = new WeakMap<Request, ActiveObservation>()
 
-  return definePlugin("tracing", (app) =>
-    app
+  return definePlugin("tracing", (app) => {
+    for (const stop of stopHooks) app.onStop(stop)
+    return app
       .derive((c) => {
         const path = pathOf(c.req.url)
         const observation = lifecycle.start({
@@ -183,6 +192,6 @@ export function tracing(options: TracingOptions = {}) {
             },
           })
         },
-      }),
-  )
+      })
+  })
 }

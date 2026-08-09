@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import { server } from "@nifrajs/core"
 import type { NifraSpan } from "../src/index.ts"
-import { otlpExporter } from "../src/index.ts"
+import { otlpExporter, tracing } from "../src/index.ts"
 
 function span(overrides: Partial<NifraSpan> = {}): NifraSpan {
   return {
@@ -219,5 +220,32 @@ describe("otlpExporter", () => {
     exp.onEnd(span())
     await exp.shutdown()
     expect(calls).toHaveLength(1)
+  })
+
+  test("tracing shuts down the OTLP exporter with the server lifecycle", async () => {
+    let exports = 0
+    const exp = otlpExporter({
+      url: "http://collector/v1/traces",
+      batch: { maxBatch: 100 },
+      fetch: async () => {
+        exports++
+        return { ok: true, status: 200 }
+      },
+    })
+    const app = server()
+      .use(tracing({ exporter: exp }))
+      .get("/ping", () => ({ ok: true }))
+    await app.fetch(new Request("http://test/ping"))
+    expect(exports).toBe(0)
+    let stopped = false
+    ;(app as unknown as { bunServer: { pendingRequests: number; stop(): void } }).bunServer = {
+      pendingRequests: 0,
+      stop() {
+        stopped = true
+      },
+    }
+    await app.stop()
+    expect(stopped).toBe(true)
+    expect(exports).toBe(1)
   })
 })
