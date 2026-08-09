@@ -2,7 +2,6 @@
 
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
-import { evaluateRouteAssurance } from "@nifrajs/core/assurance"
 import {
   buildNifraManifest,
   diffNifraManifests,
@@ -12,8 +11,7 @@ import {
   serializeNifraManifestSignature,
   signNifraManifest,
 } from "@nifrajs/core/manifest"
-import { loadAssuranceConfig } from "./assure.ts"
-import { collectCapabilityProjectReport } from "./capabilities-tool.ts"
+import { collectProjectVerification } from "./verification.ts"
 
 export const DEFAULT_MANIFEST_FILE = "nifra.manifest.json"
 
@@ -45,14 +43,21 @@ export async function runManifestEmit(
   cwd: string,
   options: { readonly config?: string; readonly out?: string; readonly sign?: string } = {},
 ): Promise<boolean> {
-  const config = await loadAssuranceConfig(cwd, options.config)
-  const assurance = evaluateRouteAssurance(config.source, config.policy, {
-    ...(config.capabilities !== undefined ? { definitions: config.capabilities.definitions } : {}),
+  const verification = await collectProjectVerification(cwd, {
+    ...(options.config !== undefined ? { config: options.config } : {}),
   })
-  const capabilityProject =
-    config.capabilities === undefined
-      ? undefined
-      : await collectCapabilityProjectReport(cwd, config.source, config.capabilities)
+  if (verification.config === undefined) {
+    throw (
+      verification.configError ??
+      new Error("[nifra] assurance config could not be loaded for manifest emission")
+    )
+  }
+  const config = verification.config
+  const assurance = verification.routeAssurance
+  const capabilityProject = verification.capability
+  if (assurance === undefined) {
+    throw new Error("[nifra] assurance evaluation was unavailable for manifest emission")
+  }
   if (!assurance.ok || (capabilityProject !== undefined && !capabilityProject.report.ok)) {
     console.error("[nifra] refusing to emit a manifest from failing assurance")
     return false
