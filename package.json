@@ -26,6 +26,7 @@
     "check:consumers": "bun run scripts/check-consumer-matrix.ts",
     "check:cold-start": "bun run scripts/check-cold-start.ts",
     "check:size": "bun run bench/size/run.ts --check",
+    "check:pipeline-parity": "bun scripts/check-pipeline-parity.ts",
     "smoke": "bun run scripts/smoke.ts",
     "bench": "bun run bench/index.ts",
     "bench:http": "bun run bench/http/run.ts",

@@ -35,6 +35,8 @@ import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
 import { vitePublicEnvPrefix } from "./internal/server-boundary.ts"
 import { importVite, isViteUnresolved } from "./internal/vite-import.ts"
+import { scopedName } from "./plugins/css-modules.ts"
+import { reproduciblePath } from "./plugins/kit.ts"
 import { viteLeakGuard } from "./plugins/vite-leak-guard.ts"
 import { viteServerFnStub } from "./plugins/vite-server-fn.ts"
 import { viteServerOnlyEmpty } from "./plugins/vite-server-only.ts"
@@ -197,6 +199,15 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
           // gets a second dispatcher. No-op when the app isn't React.
           dedupe: ["react", "react-dom"],
           ...(options.conditions ? { conditions: [...options.conditions] } : {}),
+        },
+        css: {
+          modules: {
+            // Keep production Vite builds on the same deterministic CSS Modules contract as the Bun
+            // build and the Vite dev server. A class name is private to the pipeline, but the map from
+            // local keys to scoped values must not change when an app switches its build pipeline.
+            generateScopedName: (name: string, filename: string): string =>
+              scopedName(reproduciblePath(filename), name),
+          },
         },
         plugins: [...(options.vitePlugins ?? [])],
         build: {

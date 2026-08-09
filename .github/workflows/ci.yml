@@ -161,3 +161,23 @@ jobs:
       # its own map - so without this step Node cannot resolve the packages at all.
       - name: Test @nifrajs/node on Node
         run: bun run test:node
+
+  # Opt-in evidence for the two production bundlers. The fixture deliberately contains routes, public
+  # files, shared CSS Modules, and a keyframe export so a dropped route or a pipeline-specific class map
+  # turns this job red. Hashed filenames are intentionally ignored by the checker.
+  pipeline-parity:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Compare Bun and Vite production pipelines on the fixture app
+        run: bun run check:pipeline-parity
