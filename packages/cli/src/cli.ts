@@ -131,8 +131,10 @@ Usage:
                                          assurance → L2 capability lockfile → L3 route manifest → L4
                                          invariant-tested); --min <n> fails the exit code below level n.
   nifra doctor  [--json] [--auto-fix]    Flag undeclared imports and multiple physical copies of
-                                         @nifrajs/core/React identity-sensitive dependencies;
-                                         --auto-fix writes safe local-version dependency fixes.
+                [--strict] [--target]     @nifrajs/core/React identity-sensitive dependencies;
+                                         print production readiness, with --strict making absent
+                                         applicable guarantees fail. --auto-fix writes safe local-
+                                         version dependency fixes.
   nifra upgrade <version>                Run the per-release upgrade recipe for <version>: sweep every
                 [--write] [--no-verify]  matching dependency pin (preserving ^/~/exact), move removed
                 [--list] [--json]        packages, apply exact imports, then verify with nifra check.
@@ -616,10 +618,19 @@ async function main(): Promise<void> {
   // so it runs on an API-only / not-yet-built project.
   if (command === "doctor") {
     const { runDoctor } = await import("./doctor.ts")
+    const targetIdx = argv.indexOf("--target")
+    const target = targetIdx !== -1 ? argv[targetIdx + 1] : undefined
+    if (targetIdx !== -1 && (target === undefined || target.startsWith("-"))) {
+      console.error("[nifra] --target needs a value: bun | node | deno | cf-pages | vercel")
+      process.exitCode = 1
+      return
+    }
     if (
       !(await runDoctor(process.cwd(), {
         json: argv.includes("--json"),
         autoFix: argv.includes("--auto-fix") || argv.includes("--fix"),
+        strict: argv.includes("--strict"),
+        ...(target === undefined ? {} : { target }),
       }))
     )
       process.exitCode = 1

@@ -22,6 +22,7 @@ import { builtinModules } from "node:module"
 import { dirname, join, relative, sep } from "node:path"
 import { codePositionMask, type SourceFinding, stripComments, walkSource } from "./check.ts"
 import { collectPipelineReport, type PipelineReport } from "./pipeline-report.ts"
+import { type ResolvedTarget, resolveTarget } from "./port.ts"
 
 // Runtime-provided modules that are never an npm dependency: Node core (bare + `node:` form) and Bun's
 // own `bun` module. `node:`/`bun:`-prefixed specifiers are filtered in packageOf by prefix.
@@ -136,6 +137,8 @@ export interface DoctorResult {
    * Advisory (never folded into `ok`): while actively editing a linked package its dist is always
    * momentarily behind - the finding matters when a dev server starts against it. */
   readonly staleDists: readonly StaleDistFinding[]
+  /** Static production-readiness evidence for the selected deploy target. */
+  readonly readiness?: DoctorReadiness
   /**
    * Which bundler this app's `dev`/`build` phases run on, read statically, plus the config hazards
    * that exist only because there are two. Absent when the directory is not a nifra app.
@@ -149,6 +152,30 @@ export interface DoctorResult {
   readonly fixed?: readonly DoctorAppliedFix[]
   /** Findings that were safe to report but not safe to write automatically. */
   readonly skippedFixes?: readonly DoctorSkippedFix[]
+}
+
+export type DoctorReadinessStatus = "configured" | "absent" | "not-applicable"
+
+export interface DoctorReadinessItem {
+  readonly id:
+    | "request-timeout"
+    | "admission"
+    | "request-id-tracing"
+    | "health-route"
+    | "log-redaction"
+    | "graceful-lifecycle"
+  readonly label: string
+  readonly status: DoctorReadinessStatus
+  readonly evidence?: string
+}
+
+export interface DoctorReadiness {
+  readonly target: string
+  readonly targetSource: ResolvedTarget["source"] | null
+  readonly strict: boolean
+  /** True when every applicable rule has static evidence. */
+  readonly ok: boolean
+  readonly items: readonly DoctorReadinessItem[]
 }
 
 export interface DuplicateInstallCopy {
@@ -631,6 +658,99 @@ export async function collectStaleWorkspaceDists(
   return findings.sort((a, b) => a.package.localeCompare(b.package))
 }
 
+interface ReadinessSource {
+  readonly file: string
+  readonly code: string
+  readonly source: string
+}
+
+function sourceLineAt(source: string, index: number): number {
+  let line = 1
+  for (let i = 0; i < index && i < source.length; i++) if (source[i] === "\n") line++
+  return line
+}
+
+function readinessEvidence(
+  files: readonly ReadinessSource[],
+  pattern: RegExp,
+  source = "code",
+): string | undefined {
+  for (const file of files) {
+    const content = source === "source" ? file.source : file.code
+    const match = pattern.exec(content)
+    if (match !== null) return `${file.file}:${sourceLineAt(content, match.index)}`
+  }
+  return undefined
+}
+
+/** Read only source shapes used to report production readiness. Values and secrets are never loaded. */
+async function collectDoctorReadiness(
+  cwd: string,
+  opts: { readonly target?: string; readonly strict?: boolean },
+): Promise<DoctorReadiness> {
+  const resolved = await resolveTarget(cwd, opts.target)
+  const files: ReadinessSource[] = []
+  await walkSource(cwd, (file, source) => {
+    files.push({ file, source, code: codePositionMask(source) })
+  })
+  const edgeTarget = /^(?:cf-pages|vercel|workers|edge|static)$/.test(resolved?.target ?? "")
+  const configured = (
+    id: DoctorReadinessItem["id"],
+    label: string,
+    pattern: RegExp,
+    sourcePattern?: RegExp,
+  ): DoctorReadinessItem => {
+    const evidence = readinessEvidence(files, pattern)
+    const routeEvidence =
+      evidence === undefined && sourcePattern !== undefined
+        ? readinessEvidence(files, sourcePattern, "source")
+        : undefined
+    const found = evidence ?? routeEvidence
+    return found === undefined
+      ? { id, label, status: "absent" }
+      : { id, label, status: "configured", evidence: found }
+  }
+
+  const items: DoctorReadinessItem[] = [
+    configured(
+      "request-timeout",
+      "request timeout or budget",
+      /\b(?:requestTimeoutMs|createRequestBudget|admitDeadline)\s*[:(]/,
+    ),
+    configured("admission", "capacity admission", /\badmission\s*:/),
+    configured(
+      "request-id-tracing",
+      "request id or tracing middleware",
+      /\b(?:requestId|tracing)\s*\(/,
+    ),
+    configured(
+      "health-route",
+      "health route",
+      /\bhealthcheck\s*\(/,
+      /\.(?:get|head)\s*\(\s*["']\/health(?:["']|\/)/,
+    ),
+    configured(
+      "log-redaction",
+      "log redaction",
+      /\b(?:jsonLogger|redactLogFields)\s*\(|\blogger\s*:/,
+    ),
+    edgeTarget
+      ? { id: "graceful-lifecycle", label: "graceful lifecycle", status: "not-applicable" }
+      : configured(
+          "graceful-lifecycle",
+          "graceful lifecycle",
+          /\bgracefulSignals\s*:\s*true\b|\bonStop\s*\(/,
+        ),
+  ]
+  return {
+    target: resolved?.target ?? "unknown",
+    targetSource: resolved?.source ?? null,
+    strict: opts.strict === true,
+    ok: items.every((item) => item.status !== "absent"),
+    items,
+  }
+}
+
 function depRecord(
   pkg: Record<string, unknown>,
   field: string,
@@ -687,7 +807,10 @@ async function inferDependencyFix(
 }
 
 /** Run doctor against the project at `cwd`: diff source imports vs declared deps. */
-export async function collectDoctorResult(cwd: string): Promise<DoctorResult> {
+export async function collectDoctorResult(
+  cwd: string,
+  opts: { readonly target?: string; readonly strict?: boolean } = {},
+): Promise<DoctorResult> {
   const pkg = await readJson(join(cwd, "package.json"))
   if (pkg === undefined)
     return { ok: true, ran: false, findings: [], duplicateInstalls: [], staleDists: [] }
@@ -713,20 +836,29 @@ export async function collectDoctorResult(cwd: string): Promise<DoctorResult> {
   const staleDists = await collectStaleWorkspaceDists(cwd, pkg)
   const pipeline = await collectPipelineReport(cwd)
   const pipelineErrors = pipeline.findings.filter((f) => f.severity === "error")
+  const readiness = await collectDoctorReadiness(cwd, opts)
   // `staleDists` is advisory (see DoctorResult): it never fails `ok`.
   return {
-    ok: findings.length === 0 && duplicateInstalls.length === 0 && pipelineErrors.length === 0,
+    ok:
+      findings.length === 0 &&
+      duplicateInstalls.length === 0 &&
+      pipelineErrors.length === 0 &&
+      (opts.strict !== true || readiness.ok),
     ran: true,
     findings,
     duplicateInstalls,
     staleDists,
+    readiness,
     ...(pipeline.ran ? { pipeline } : {}),
   }
 }
 
 /** Safely add undeclared imports to package.json when the version can be inferred without network I/O. */
-export async function applyDoctorAutoFix(cwd: string): Promise<DoctorResult> {
-  const before = await collectDoctorResult(cwd)
+export async function applyDoctorAutoFix(
+  cwd: string,
+  opts: { readonly target?: string; readonly strict?: boolean } = {},
+): Promise<DoctorResult> {
+  const before = await collectDoctorResult(cwd, opts)
   if (!before.ran || before.findings.length === 0) return before
 
   const rootPackage = await readJson(join(cwd, "package.json"))
@@ -787,7 +919,7 @@ export async function applyDoctorAutoFix(cwd: string): Promise<DoctorResult> {
     if (changed) await Bun.write(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`)
   }
 
-  const after = fixed.length > 0 ? await collectDoctorResult(cwd) : before
+  const after = fixed.length > 0 ? await collectDoctorResult(cwd, opts) : before
   return {
     ...after,
     ...(fixed.length > 0 ? { fixed } : {}),
@@ -798,9 +930,16 @@ export async function applyDoctorAutoFix(cwd: string): Promise<DoctorResult> {
 /** Run doctor; print a report (`--json` for machine output) and return whether it passed. */
 export async function runDoctor(
   cwd: string,
-  opts: { readonly json?: boolean; readonly autoFix?: boolean } = {},
+  opts: {
+    readonly json?: boolean
+    readonly autoFix?: boolean
+    readonly strict?: boolean
+    readonly target?: string
+  } = {},
 ): Promise<boolean> {
-  const result = opts.autoFix ? await applyDoctorAutoFix(cwd) : await collectDoctorResult(cwd)
+  const result = opts.autoFix
+    ? await applyDoctorAutoFix(cwd, opts)
+    : await collectDoctorResult(cwd, opts)
   if (opts.json) {
     console.log(JSON.stringify(result, null, 2))
     return result.ok
@@ -854,6 +993,22 @@ export async function runDoctor(
     }
     console.log("")
   }
+  if (result.readiness !== undefined) {
+    const readiness = result.readiness
+    console.log(
+      `production readiness (${readiness.target}${readiness.targetSource === null ? "" : `, detected from ${readiness.targetSource}`}):\n`,
+    )
+    for (const item of readiness.items) {
+      const marker =
+        item.status === "configured" ? "✓" : item.status === "not-applicable" ? "-" : "✗"
+      const evidence = item.evidence === undefined ? "" : ` (${item.evidence})`
+      console.log(`  ${marker} ${item.label}: ${item.status}${evidence}`)
+    }
+    if (readiness.strict && !readiness.ok) {
+      console.log("\n  --strict: every applicable readiness rule must be configured")
+    }
+    console.log("")
+  }
   if (result.ok) {
     console.log(
       "✓ every imported package is declared and identity-sensitive installs are deduplicated",
@@ -895,6 +1050,9 @@ export async function runDoctor(
     console.log(
       "\n  Align dependency ranges and reinstall from the workspace root; doctor never deletes installs.",
     )
+  }
+  if (result.readiness?.strict === true && result.readiness.ok === false) {
+    console.log("\n✗ production readiness is incomplete under --strict")
   }
   if (byPkg.size > 0)
     console.log(

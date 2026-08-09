@@ -464,6 +464,59 @@ describe("collectDoctorResult - project-level import vs declared-deps diff", () 
   })
 })
 
+describe("doctor production readiness", () => {
+  test("reports the table and only strict mode fails an unconfigured app", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-readiness-"))
+    try {
+      await writeFile(join(dir, "package.json"), JSON.stringify({ name: "app" }))
+      await writeFile(
+        join(dir, "backend.ts"),
+        'const app = server().get("/users", () => ({ ok: true }))\nexport { app }\n',
+      )
+      const advisory = await collectDoctorResult(dir, { target: "cf-pages" })
+      expect(advisory.ok).toBe(true)
+      expect(advisory.readiness?.items.filter((item) => item.status === "absent")).toHaveLength(5)
+      expect(
+        advisory.readiness?.items.find((item) => item.id === "graceful-lifecycle")?.status,
+      ).toBe("not-applicable")
+
+      const strict = await collectDoctorResult(dir, { target: "cf-pages", strict: true })
+      expect(strict.ok).toBe(false)
+      expect(strict.readiness?.ok).toBe(false)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("passes strict mode when all applicable rules have static evidence", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-readiness-complete-"))
+    try {
+      await writeFile(join(dir, "package.json"), JSON.stringify({ name: "app" }))
+      await writeFile(
+        join(dir, "backend.ts"),
+        `const app = server({
+  requestTimeoutMs: 1000,
+  admission: gate,
+  logger: jsonLogger,
+  gracefulSignals: true,
+})
+  .use(requestId())
+  .use(tracing())
+  .use(healthcheck())
+  .get("/health", () => ({ ok: true }))
+export { app }
+`,
+      )
+      const result = await collectDoctorResult(dir, { target: "bun", strict: true })
+      expect(result.ok).toBe(true)
+      expect(result.readiness?.ok).toBe(true)
+      expect(result.readiness?.items.every((item) => item.status === "configured")).toBe(true)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe("collectDuplicateInstalls - discovery anchored at the workspace root", () => {
   test("finds a sibling package's duplicate when run from an app subdirectory", async () => {
     // The configuration the check was blind in, and the normal one: you run `nifra check` from the
