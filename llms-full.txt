@@ -3569,7 +3569,10 @@ project can never be bundled by one toolchain in dev and the other in production
 everything, except an app whose _only_ transforms are `vitePlugins`: the Bun
 pipeline cannot run those, so that app gets Vite for dev and build alike, and says so.
 `--vite` / `--bun` force the choice; `--bun` is refused on a
-Vite-only app rather than dropping its transforms silently.
+Vite-only app rather than dropping its transforms silently. Every `dev` and
+`build` run prints which bundler it picked and why, and `nifra check`
+answers the same question without starting a server - see
+[which pipeline runs, when](/docs/dev) for the full table.
 
 ```ts
 my-app/
@@ -4094,10 +4097,12 @@ a component-only module swaps its markup with `useState` state intact, no reload
 boundary rule is the same as Vite's (see below). The real prize is that dev and production use
 the _same bundler_, so the dev/prod seam disappears.
 
-One gap: **CSS Modules**. Bun's dev-server bundler has no
-`*.module.css` transform (its production `Bun.build` does), so the CLI
-refuses `--bun` for a CSS-Modules app rather than serving a broken client. Plain CSS
-and Tailwind work normally.
+**CSS Modules included.** Bun's dev-server bundler has no
+`*.module.css` transform of its own, so the CLI hands it the same one the
+production `Bun.build` uses - and a class hashes to the same scoped name on every
+pipeline. Calling `createDevServer` as a library instead of through the CLI, you
+supply that plugin yourself through your own `bunfig.toml`; plain CSS and Tailwind
+need nothing either way.
 
 **
 Server functions and `*.server` modules work under `--bun`
@@ -4126,7 +4131,8 @@ source. A divergence between the loops is treated as a bug, not a caveat.
 import { createDevServer } from "@nifrajs/web/dev"
 // Bun.serve bundles + hot-reloads the client; Bun's runtime resolves SSR. An edit reloads the
 // changed module graph - with React Fast Refresh (state preserved) applied natively by Bun, no plugin.
-// CSS + the entry URL come from Bun. Plain CSS/Tailwind work; *.module.css does not (Bun's dev bundler).
+// CSS + the entry URL come from Bun. Plain CSS/Tailwind work as-is; for *.module.css as a library
+// caller, pass the production CSS Modules plugin through your own bunfig (nifra dev --bun does it for you).
 const server = await createDevServer({ routesDir, outDir, clientModule, createApp })
 ```
 

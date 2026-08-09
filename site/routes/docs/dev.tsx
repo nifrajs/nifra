@@ -16,7 +16,8 @@ const BUN_DEV = `// doc-check: skip - fragment: routesDir/outDir/clientModule/cr
 import { createDevServer } from "@nifrajs/web/dev"
 // Bun.serve bundles + hot-reloads the client; Bun's runtime resolves SSR. An edit reloads the
 // changed module graph - with React Fast Refresh (state preserved) applied natively by Bun, no plugin.
-// CSS + the entry URL come from Bun. Plain CSS/Tailwind work; *.module.css does not (Bun's dev bundler).
+// CSS + the entry URL come from Bun. Plain CSS/Tailwind work as-is; for *.module.css as a library
+// caller, pass the production CSS Modules plugin through your own bunfig (nifra dev --bun does it for you).
 const server = await createDevServer({ routesDir, outDir, clientModule, createApp })`
 
 const VITE_DEV = `// doc-check: skip - needs the third-party @vitejs/plugin-react + your ./backend; install it to run this.
@@ -382,10 +383,12 @@ export default function Dev() {
         the <em>same bundler</em>, so the dev/prod seam disappears.
       </p>
       <p>
-        One gap: <strong>CSS Modules</strong>. Bun's dev-server bundler has no{" "}
-        <code>*.module.css</code> transform (its production <code>Bun.build</code> does), so the CLI
-        refuses <code>--bun</code> for a CSS-Modules app rather than serving a broken client. Plain CSS
-        and Tailwind work normally.
+        <strong>CSS Modules included.</strong> Bun's dev-server bundler has no{" "}
+        <code>*.module.css</code> transform of its own, so the CLI hands it the same one the
+        production <code>Bun.build</code> uses - and a class hashes to the same scoped name on every
+        pipeline. Calling <code>createDevServer</code> as a library instead of through the CLI, you
+        supply that plugin yourself through your own <code>bunfig.toml</code>; plain CSS and Tailwind
+        need nothing either way.
       </p>
       <p>
         <strong>

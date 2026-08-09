@@ -70,7 +70,10 @@ export default function Cli() {
         everything, except an app whose <em>only</em> transforms are <code>vitePlugins</code>: the Bun
         pipeline cannot run those, so that app gets Vite for dev and build alike, and says so.{" "}
         <code>--vite</code> / <code>--bun</code> force the choice; <code>--bun</code> is refused on a
-        Vite-only app rather than dropping its transforms silently.
+        Vite-only app rather than dropping its transforms silently. Every <code>dev</code> and{" "}
+        <code>build</code> run prints which bundler it picked and why, and <code>nifra check</code>{" "}
+        answers the same question without starting a server - see{" "}
+        <a href="/docs/dev">which pipeline runs, when</a> for the full table.
       </p>
       <CodeBlock code={STRUCTURE} />
       <p>
