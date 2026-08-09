@@ -16,8 +16,8 @@
  * anything fails. Pure scanners (`scanFetchText`, `scanServerOnlyImports`) are unit-tested.
  */
 
-import { existsSync, readFileSync } from "node:fs"
-import { dirname, isAbsolute, join, resolve } from "node:path"
+import { existsSync, readFileSync, realpathSync } from "node:fs"
+import { dirname, isAbsolute, join, resolve, sep } from "node:path"
 import type { AssuranceConfig, AssuranceReport } from "@nifrajs/core/assurance"
 import { Glob } from "bun"
 import type * as TSApi from "typescript"
@@ -522,21 +522,228 @@ interface SqlExpressionShape {
 /** Module-scope `const` initializers by name - the one binding form the SQL scanner resolves. */
 type ModuleConsts = ReadonlyMap<string, TSApi.Expression>
 
-/** Collect the file's top-level `const NAME = <initializer>` declarations. Destructured names, `let`,
- * `var`, and anything nested stay out on purpose: a module-scope `const` is the only form that
- * provably cannot carry request data. */
-function moduleConstsOf(ts: TypeScriptApi, source: TSApi.SourceFile): ModuleConsts {
-  const map = new Map<string, TSApi.Expression>()
+/** A name some other module exports, named exactly as the edge that reaches it writes it. */
+interface ExportEdge {
+  readonly specifier: string
+  readonly exported: string
+}
+
+/**
+ * One module's provable module-scope bindings: its top-level `const` initializers plus the exact
+ * import/export edges this scan is allowed to follow.
+ *
+ * Everything absent from these maps stays unresolved, and an unresolved interpolation keeps flagging.
+ * That is the whole safety argument: resolution can only ever make this rule QUIETER, so a form the
+ * scan cannot prove must fall out as "unknown" rather than be guessed at. Deliberately absent:
+ * `export default`, `export let`/`var`, destructured or computed names, default and namespace imports,
+ * `export * as ns`, `require`, and dynamic `import()`.
+ */
+interface SqlModuleScope {
+  /** The module's identity - an absolute path from the loader, or the entry file's path as given. Keys
+   * the parsed-scope cache and the cycle guard, and is the base its own specifiers resolve against. */
+  readonly id: string
+  readonly consts: ModuleConsts
+  /** Local name bound by `import { X as local }` → the edge that provides it. */
+  readonly imports: ReadonlyMap<string, ExportEdge>
+  /** Exported name → the local name it reads (`export { a as b }` → `b` → `a`). */
+  readonly localExports: ReadonlyMap<string, string>
+  /** Exported name → another module's export (`export { a as b } from "./m"`). */
+  readonly reExports: ReadonlyMap<string, ExportEdge>
+  /** `export * from "./m"` specifiers, in source order. */
+  readonly starExports: readonly string[]
+}
+
+/** Read one module's top-level `const` bindings and its import/export edges. Pure syntax - no checker,
+ * no filesystem. Destructured names, `let`, `var`, and anything nested stay out on purpose: a
+ * module-scope `const` is the only form that provably cannot carry request data. */
+function sqlModuleScope(ts: TypeScriptApi, id: string, source: TSApi.SourceFile): SqlModuleScope {
+  const consts = new Map<string, TSApi.Expression>()
+  const imports = new Map<string, ExportEdge>()
+  const localExports = new Map<string, string>()
+  const reExports = new Map<string, ExportEdge>()
+  const starExports: string[] = []
   for (const statement of source.statements) {
-    if (!ts.isVariableStatement(statement)) continue
-    if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) continue
-    for (const declaration of statement.declarationList.declarations) {
-      if (ts.isIdentifier(declaration.name) && declaration.initializer !== undefined) {
-        map.set(declaration.name.text, declaration.initializer)
+    if (ts.isVariableStatement(statement)) {
+      if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) continue
+      const exported =
+        statement.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) === true
+      for (const declaration of statement.declarationList.declarations) {
+        if (!ts.isIdentifier(declaration.name) || declaration.initializer === undefined) continue
+        consts.set(declaration.name.text, declaration.initializer)
+        if (exported) localExports.set(declaration.name.text, declaration.name.text)
       }
+      continue
+    }
+    if (ts.isImportDeclaration(statement)) {
+      const clause = statement.importClause
+      if (clause === undefined || clause.isTypeOnly) continue
+      if (!ts.isStringLiteral(statement.moduleSpecifier)) continue
+      const bindings = clause.namedBindings
+      // Only `import { X }` / `import { X as local }`. A default or namespace import binds a value
+      // whose contents this scan cannot prove, so it stays unbound and every use of it flags.
+      if (bindings === undefined || !ts.isNamedImports(bindings)) continue
+      for (const element of bindings.elements) {
+        if (element.isTypeOnly) continue
+        imports.set(element.name.text, {
+          specifier: statement.moduleSpecifier.text,
+          exported: element.propertyName?.text ?? element.name.text,
+        })
+      }
+      continue
+    }
+    if (!ts.isExportDeclaration(statement) || statement.isTypeOnly) continue
+    const from = statement.moduleSpecifier
+    if (from !== undefined && !ts.isStringLiteral(from)) continue
+    const clause = statement.exportClause
+    if (clause === undefined) {
+      // No clause and a specifier is `export * from "./m"`. `export * as ns from "./m"` carries a
+      // NamespaceExport clause instead and falls out below, unresolved, which is what we want.
+      if (from !== undefined) starExports.push(from.text)
+      continue
+    }
+    if (!ts.isNamedExports(clause)) continue
+    for (const element of clause.elements) {
+      if (element.isTypeOnly) continue
+      const local = element.propertyName?.text ?? element.name.text
+      if (from === undefined) localExports.set(element.name.text, local)
+      else reExports.set(element.name.text, { specifier: from.text, exported: local })
     }
   }
-  return map
+  return { id, consts, imports, localExports, reExports, starExports }
+}
+
+/** A module's identity + source, as resolved from a specifier. `id` must be stable and absolute: it
+ * keys the parsed-scope cache, seeds the cycle guard, and is what the module's own relative specifiers
+ * resolve against. */
+export interface SqlModuleSource {
+  readonly id: string
+  readonly content: string
+}
+
+/**
+ * Resolves a specifier written in the module `fromModule` to the target's identity + source, or
+ * `undefined` when it cannot be resolved, read, or proved to be in-project source.
+ *
+ * Injected rather than built in, for the same reason {@link ModuleResolver} is: it keeps
+ * {@link scanInterpolatedSql} pure and filesystem-free, so the resolution rules can be unit-tested
+ * against a virtual module graph. {@link createProjectSqlImports} is the on-disk implementation.
+ */
+export type SqlModuleLoader = (fromModule: string, specifier: string) => SqlModuleSource | undefined
+
+/** Cross-module resolution state for one run: the loader plus a parsed-scope cache, so a fragments
+ * module imported by fifty callers is read and parsed once. A cached `undefined` is a REFUSAL (the
+ * module did not parse), cached so it is not re-attempted. Build with {@link createSqlImports}. */
+export interface SqlImports {
+  readonly load: SqlModuleLoader
+  readonly scopes: Map<string, SqlModuleScope | undefined>
+}
+
+export const createSqlImports = (load: SqlModuleLoader): SqlImports => ({
+  load,
+  scopes: new Map(),
+})
+
+/** Where an expression's identifiers are read: the module the expression physically lives in, plus the
+ * run's cross-module state. `imports === undefined` is same-file-only resolution - the behavior before
+ * imported fragments were followed, and still what an unconfigured `scanInterpolatedSql` call does. */
+interface SqlScope {
+  readonly module: SqlModuleScope
+  readonly imports: SqlImports | undefined
+}
+
+/** Parse a module for the SQL scan, or `undefined` when it does not parse. Malformed source is already
+ * a typecheck failure; parser recovery nodes are not evidence of anything, so a file that fails to
+ * parse contributes no findings and proves no constant. */
+function parseSqlSource(
+  ts: TypeScriptApi,
+  file: string,
+  content: string,
+): TSApi.SourceFile | undefined {
+  const kind = /\.[cm]?tsx?$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.JS
+  const source = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true, kind)
+  const parseDiagnostics = (
+    source as TSApi.SourceFile & { readonly parseDiagnostics?: readonly TSApi.Diagnostic[] }
+  ).parseDiagnostics
+  return parseDiagnostics !== undefined && parseDiagnostics.length > 0 ? undefined : source
+}
+
+/** Module-boundary hops one name may cross. Barrels are why it is not 1: `route → index → fragments`
+ * already spends two, and the third leaves room for one more layer without letting the scan wander the
+ * module graph. Past the cap the name is unresolved, so the interpolation flags. */
+const SQL_IMPORT_HOPS = 3
+
+/** Load + parse the module a specifier names, through the run's cache. */
+function loadSqlModuleScope(
+  ts: TypeScriptApi,
+  imports: SqlImports,
+  fromModule: string,
+  specifier: string,
+): SqlModuleScope | undefined {
+  const loaded = imports.load(fromModule, specifier)
+  if (loaded === undefined) return undefined
+  if (imports.scopes.has(loaded.id)) return imports.scopes.get(loaded.id)
+  const source = parseSqlSource(ts, loaded.id, loaded.content)
+  const scope = source === undefined ? undefined : sqlModuleScope(ts, loaded.id, source)
+  imports.scopes.set(loaded.id, scope)
+  return scope
+}
+
+/** One exported name resolved to the `const` initializer behind it, together with the scope that
+ * initializer's OWN identifiers must be read in. */
+interface ResolvedExport {
+  readonly expression: TSApi.Expression
+  readonly scope: SqlModuleScope
+}
+
+/**
+ * Follow an exported name to its `const` initializer, across re-export hops.
+ *
+ * Handles the three forms a fragments module actually uses: `export const NAME = …`, the two-statement
+ * `const NAME = …; export { NAME }` (including the pass-through `import { A } …; export { A }`), and
+ * barrels - `export { X } from "./m"` and `export * from "./m"`. Bounded by {@link SQL_IMPORT_HOPS} and
+ * a per-chain visited set, so a cyclic barrel terminates instead of recursing.
+ *
+ * Two `export *` sources providing the same name is a conflict, and the scan refuses rather than
+ * picking one: guessing here would silence a real finding.
+ */
+function resolveExportedConst(
+  ts: TypeScriptApi,
+  imports: SqlImports,
+  scope: SqlModuleScope,
+  name: string,
+  hops: number,
+  seen: ReadonlySet<string>,
+): ResolvedExport | undefined {
+  if (hops > SQL_IMPORT_HOPS) return undefined
+  const key = `${scope.id}#${name}`
+  if (seen.has(key)) return undefined
+  const nextSeen = new Set(seen).add(key)
+  const follow = (edge: ExportEdge): ResolvedExport | undefined => {
+    const target = loadSqlModuleScope(ts, imports, scope.id, edge.specifier)
+    return target === undefined
+      ? undefined
+      : resolveExportedConst(ts, imports, target, edge.exported, hops + 1, nextSeen)
+  }
+  const local = scope.localExports.get(name)
+  if (local !== undefined) {
+    const initializer = scope.consts.get(local)
+    if (initializer !== undefined) return { expression: initializer, scope }
+    // `import { A } from "./a"; export { A }` - the same pass-through as `export { A } from "./a"`,
+    // written in two statements. Anything else the name could be (a `let`, a function, a class) has no
+    // initializer in `consts` and no import edge, so it lands on `undefined` and flags.
+    const via = scope.imports.get(local)
+    return via === undefined ? undefined : follow(via)
+  }
+  const reExported = scope.reExports.get(name)
+  if (reExported !== undefined) return follow(reExported)
+  let found: ResolvedExport | undefined
+  for (const specifier of scope.starExports) {
+    const hit = follow({ specifier, exported: name })
+    if (hit === undefined) continue
+    if (found !== undefined) return undefined
+    found = hit
+  }
+  return found
 }
 
 /** Whether `name`, read at `at`, might be re-declared by anything between the read and module scope.
@@ -588,46 +795,67 @@ const CONST_RESOLUTION_DEPTH = 5
  * data. Pure syntax, no type checker - the same honest limit the rule already documents. What
  * resolves: string/number literals, no-substitution templates, templates whose every span resolves,
  * ternaries with both branches resolvable (BOTH branch texts are returned, so a hostile keyword in
- * either still feeds the keyword scan), `as`/`satisfies` wrappers, and a same-file module-scope
- * `const` whose initializer resolves (recursively, depth-capped). Everything else - an imported
- * name, `let`, a parameter, a call, a member access, a shadowed name - stays unresolved and the
+ * either still feeds the keyword scan), `as`/`satisfies` wrappers, a module-scope `const` whose
+ * initializer resolves (recursively, depth-capped), and - when `scope.imports` is configured - such a
+ * `const` imported by name from another in-project module. Everything else - `let`, a parameter, a
+ * call, a member access, a shadowed name, a bare-specifier import - stays unresolved and the
  * interpolation is flagged exactly as before.
  */
 function resolveStaticSqlText(
   ts: TypeScriptApi,
   node: TSApi.Expression,
-  consts: ModuleConsts,
+  scope: SqlScope,
   depth: number,
 ): string | undefined {
   if (depth > CONST_RESOLUTION_DEPTH) return undefined
   if (ts.isParenthesizedExpression(node)) {
-    return resolveStaticSqlText(ts, node.expression, consts, depth)
+    return resolveStaticSqlText(ts, node.expression, scope, depth)
   }
   if (ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) {
-    return resolveStaticSqlText(ts, node.expression, consts, depth)
+    return resolveStaticSqlText(ts, node.expression, scope, depth)
   }
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text
   if (ts.isNumericLiteral(node)) return node.text
   if (ts.isTemplateExpression(node)) {
     let text = node.head.text
     for (const span of node.templateSpans) {
-      const part = resolveStaticSqlText(ts, span.expression, consts, depth + 1)
+      const part = resolveStaticSqlText(ts, span.expression, scope, depth + 1)
       if (part === undefined) return undefined
       text += part + span.literal.text
     }
     return text
   }
   if (ts.isConditionalExpression(node)) {
-    const whenTrue = resolveStaticSqlText(ts, node.whenTrue, consts, depth + 1)
-    const whenFalse = resolveStaticSqlText(ts, node.whenFalse, consts, depth + 1)
+    const whenTrue = resolveStaticSqlText(ts, node.whenTrue, scope, depth + 1)
+    const whenFalse = resolveStaticSqlText(ts, node.whenFalse, scope, depth + 1)
     if (whenTrue === undefined || whenFalse === undefined) return undefined
     return `${whenTrue} ${whenFalse}`
   }
   if (ts.isIdentifier(node)) {
-    const initializer = consts.get(node.text)
-    if (initializer === undefined) return undefined
+    const initializer = scope.module.consts.get(node.text)
+    const edge = initializer === undefined ? scope.module.imports.get(node.text) : undefined
+    // Membership first: `isShadowedAt` walks a subtree, and most identifiers in a query are neither a
+    // module const nor an import binding.
+    if (initializer === undefined && edge === undefined) return undefined
+    // Shadowing is a property of where the identifier is WRITTEN, so one check is right on both sides
+    // of an import hop: an initializer in the imported module sits at module scope with nothing above
+    // it to shadow it, while a use inside a function in this file is still refused.
     if (isShadowedAt(ts, node, node.text)) return undefined
-    return resolveStaticSqlText(ts, initializer, consts, depth + 1)
+    if (initializer !== undefined) return resolveStaticSqlText(ts, initializer, scope, depth + 1)
+    if (edge === undefined || scope.imports === undefined) return undefined
+    const target = loadSqlModuleScope(ts, scope.imports, scope.module.id, edge.specifier)
+    if (target === undefined) return undefined
+    const exported = resolveExportedConst(ts, scope.imports, target, edge.exported, 1, new Set())
+    if (exported === undefined) return undefined
+    // The imported initializer's own identifiers read THAT module's consts, never this file's. A
+    // caller that happens to have its own `const DIR` must not silently supply the fragment's `DIR`,
+    // which is the one way cross-module resolution could resolve to text nobody wrote.
+    return resolveStaticSqlText(
+      ts,
+      exported.expression,
+      { module: exported.scope, imports: scope.imports },
+      depth + 1,
+    )
   }
   return undefined
 }
@@ -637,13 +865,13 @@ function resolveStaticSqlText(
 function templateShape(
   ts: TypeScriptApi,
   template: TSApi.TemplateExpression,
-  consts: ModuleConsts | undefined,
+  scope: SqlScope | undefined,
 ): { staticText: string; dynamic: boolean } {
   let staticText = template.head.text
   let dynamic = false
   for (const span of template.templateSpans) {
     const resolved =
-      consts === undefined ? undefined : resolveStaticSqlText(ts, span.expression, consts, 0)
+      scope === undefined ? undefined : resolveStaticSqlText(ts, span.expression, scope, 0)
     if (resolved === undefined) dynamic = true
     else staticText += resolved
     staticText += span.literal.text
@@ -655,9 +883,9 @@ function templateShape(
 function sqlExpressionShape(
   ts: TypeScriptApi,
   node: TSApi.Expression,
-  consts?: ModuleConsts,
+  scope?: SqlScope,
 ): SqlExpressionShape {
-  if (ts.isParenthesizedExpression(node)) return sqlExpressionShape(ts, node.expression, consts)
+  if (ts.isParenthesizedExpression(node)) return sqlExpressionShape(ts, node.expression, scope)
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
     return {
       staticText: node.text,
@@ -674,7 +902,7 @@ function sqlExpressionShape(
       (ts.isPropertyAccessExpression(tag) && tag.getText() === "Prisma.sql")
     const template = node.template
     const templated = ts.isTemplateExpression(template)
-      ? templateShape(ts, template, parameterizedTag ? undefined : consts)
+      ? templateShape(ts, template, parameterizedTag ? undefined : scope)
       : { staticText: template.text, dynamic: false }
     const staticText = templated.staticText
     // Only the ecosystem's binding tags are trusted, by NAME - which is the honest limit of a scanner
@@ -699,7 +927,7 @@ function sqlExpressionShape(
     }
   }
   if (ts.isTemplateExpression(node)) {
-    const templated = templateShape(ts, node, consts)
+    const templated = templateShape(ts, node, scope)
     return {
       staticText: templated.staticText,
       dynamic: templated.dynamic,
@@ -709,8 +937,8 @@ function sqlExpressionShape(
     }
   }
   if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-    const left = sqlExpressionShape(ts, node.left, consts)
-    const right = sqlExpressionShape(ts, node.right, consts)
+    const left = sqlExpressionShape(ts, node.left, scope)
+    const right = sqlExpressionShape(ts, node.right, scope)
     return {
       staticText: left.staticText + right.staticText,
       // A resolved const operand is static text, not a dynamic part - so the old `!literal` test
@@ -724,11 +952,11 @@ function sqlExpressionShape(
   }
   // A resolvable expression (a module-`const` name, a literal ternary) contributes its compile-time
   // text and stays non-dynamic - this is what lets `"SELECT " + COLS + " FROM t"` and
-  // `db.query(`${COLS} FROM t WHERE id = $1`)` pass while an imported or mutable name still flags.
+  // `db.query(`${COLS} FROM t WHERE id = $1`)` pass while a mutable or unprovable name still flags.
   // `literal` stays false: the named escape hatches (`unsafe`, `$queryRawUnsafe`) keep flagging a
   // resolved const, because taking statement text from ANY variable is what their rule warns about.
-  if (consts !== undefined) {
-    const resolved = resolveStaticSqlText(ts, node, consts, 0)
+  if (scope !== undefined) {
+    const resolved = resolveStaticSqlText(ts, node, scope, 0)
     if (resolved !== undefined) {
       return {
         staticText: resolved,
@@ -773,32 +1001,35 @@ function sqlMethod(
 
 const SQL_RECEIVER = /(?:^|\.)(?:db|sql|prisma|drizzle|database|conn|connection|client|tx)$/i
 
-/** Scan one file's text for SQL assembled by interpolation. Pure + line-accurate. */
+/**
+ * Scan one file's text for SQL assembled by interpolation. Pure + line-accurate.
+ *
+ * `imports` opts into following a fragment `const` into another module. Without it the scan is
+ * same-file only, which is what the unit tests exercise and what any caller that has no module graph
+ * to offer gets. With it, only what {@link createProjectSqlImports} will hand back is followed.
+ */
 export function scanInterpolatedSql(
   file: string,
   content: string,
   ts: TypeScriptApi,
+  imports?: SqlImports,
 ): SourceFinding[] {
   const out: SourceFinding[] = []
   const lines = content.split("\n")
-  const kind = /\.[cm]?tsx?$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.JS
-  const source = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true, kind)
   // Malformed source is already a typecheck failure. Do not turn parser recovery nodes into a second,
   // misleading SQL diagnostic (notably an unterminated template recovered as an interpolation).
-  const parseDiagnostics = (
-    source as TSApi.SourceFile & { readonly parseDiagnostics?: readonly TSApi.Diagnostic[] }
-  ).parseDiagnostics
-  if (parseDiagnostics !== undefined && parseDiagnostics.length > 0) return out
-  // Module-scope consts, resolved once per file: an interpolated same-file `const` cannot carry
-  // request data, so the shared-projection idiom (`const COLS = "id, name"` … `${COLS}`) stays quiet
-  // while imported, mutable, parameter, and shadowed names flag exactly as before.
-  const consts = moduleConstsOf(ts, source)
+  const source = parseSqlSource(ts, file, content)
+  if (source === undefined) return out
+  // Module-scope bindings, read once per file: an interpolated `const` that resolves to compile-time
+  // text cannot carry request data, so the shared-projection idiom (`const COLS = "id, name"` …
+  // `${COLS}`) stays quiet while mutable, parameter, shadowed, and unprovable names flag as before.
+  const scope: SqlScope = { module: sqlModuleScope(ts, file, source), imports }
   const visit = (node: TSApi.Node): void => {
     if (ts.isCallExpression(node)) {
       const sink = sqlMethod(ts, node)
       const argument = node.arguments[0]
       if (sink !== undefined && argument !== undefined) {
-        const shape = sqlExpressionShape(ts, argument, consts)
+        const shape = sqlExpressionShape(ts, argument, scope)
         const unsafeEscape =
           ALWAYS_UNSAFE.has(sink.method) && !shape.literal && !shape.parameterizedTag
         const assembledSql =
@@ -830,8 +1061,58 @@ export async function scanProjectSql(cwd: string): Promise<SourceFinding[] | und
   const ts = await importTypeScript()
   if (ts === undefined) return undefined
   const out: SourceFinding[] = []
-  await walkSource(cwd, (rel, content) => out.push(...scanInterpolatedSql(rel, content, ts)))
+  const imports = createProjectSqlImports(cwd)
+  await walkSource(cwd, (rel, content) =>
+    out.push(...scanInterpolatedSql(rel, content, ts, imports)),
+  )
   return out.sort(bySite)
+}
+
+/** A declaration file. Excluded from cross-module resolution: `declare const X: string` has no
+ * initializer to read, so following one could only ever produce a "proved" the source never wrote. */
+const SQL_DECLARATION_FILE = /\.d\.[cm]?ts$/
+/** The extensions the SQL scan will parse - the same set {@link walkSource} globs. */
+const SQL_SOURCE_FILE = /\.[cm]?tsx?$/
+
+/**
+ * The on-disk loader for cross-module `const` resolution, scoped to one project.
+ *
+ * Deliberately narrow, because every widening here is a way for a real finding to go quiet:
+ *
+ * - **Relative specifiers only.** A bare specifier names a dependency whose exports can change without
+ *   this project changing, so "provably a `const` string" is not a property the project owns.
+ * - **Inside `cwd`, outside the ignored trees.** The resolved path is realpath'd and must still sit
+ *   under the project root: a symlink pointing out of the tree is not source this scan reads. The
+ *   `node_modules` / `dist` / build exclusions are the same ones the walk applies.
+ * - **Real source only.** A `.d.ts` carries no initializer, and a non-TS file is not parsed.
+ *
+ * A miss on any of those returns `undefined`, which leaves the name unresolved and the interpolation
+ * flagged - the pre-feature answer.
+ */
+export function createProjectSqlImports(cwd: string): SqlImports {
+  const root = (() => {
+    try {
+      return realpathSync(resolve(cwd))
+    } catch {
+      return resolve(cwd)
+    }
+  })()
+  return createSqlImports((fromModule, specifier) => {
+    if (!isRelativeSpecifier(specifier)) return undefined
+    try {
+      // `fromModule` is the cwd-RELATIVE path the walk supplies for an entry file, and ABSOLUTE for
+      // every module reached through a hop (their ids are the resolved paths).
+      const fromAbs = isAbsolute(fromModule) ? fromModule : join(root, fromModule)
+      const resolved = realpathSync(Bun.resolveSync(specifier, dirname(fromAbs)))
+      if (!resolved.startsWith(root + sep)) return undefined
+      const rel = resolved.slice(root.length + 1)
+      if (IGNORED_DIR.test(rel)) return undefined
+      if (SQL_DECLARATION_FILE.test(resolved) || !SQL_SOURCE_FILE.test(resolved)) return undefined
+      return { id: resolved, content: readFileSync(resolved, "utf8") }
+    } catch {
+      return undefined // unresolvable, unreadable, or outside the project
+    }
+  })
 }
 
 // `client("` / `client('` / `client(\`` - a URL-first call WITHOUT the `<typeof app>` generic:
@@ -1700,6 +1981,9 @@ export async function collectCheckResult(
   // once, before the walk, so a project without it is told the rule did not run rather than being
   // handed a clean report the rule never produced.
   const sqlCompiler = await (opts.loadTypeScript ?? importTypeScript)()
+  // One loader + parse cache for the whole walk, so a shared `sql-fragments.ts` is read once no matter
+  // how many route modules import a fragment out of it.
+  const sqlImports = sqlCompiler === undefined ? undefined : createProjectSqlImports(cwd)
   // lintsOnly: skip the tsc pass (seconds on a big project) and run just the near-instant source
   // lints - the agent inner-loop mode; the full gate stays the definition of done.
   const [tc, _, dr, manifestDrift] = await Promise.all([
@@ -1714,7 +1998,7 @@ export async function collectCheckResult(
       if (ROUTE_FILE.test(rel)) routeModules.push({ rel, content })
       responseRoutes.push(...scanResponseRoutes(rel, content))
       if (sqlCompiler !== undefined)
-        interpolatedSql.push(...scanInterpolatedSql(rel, content, sqlCompiler))
+        interpolatedSql.push(...scanInterpolatedSql(rel, content, sqlCompiler, sqlImports))
     }),
     import("./doctor.ts").then((m) => m.collectDoctorResult(cwd)),
     scanServerManifestDrift(cwd),

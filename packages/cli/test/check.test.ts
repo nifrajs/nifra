@@ -6,6 +6,7 @@ import { join } from "node:path"
 import ts from "typescript"
 import {
   collectCheckResult,
+  createSqlImports,
   type ModuleReader,
   type ModuleResolver,
   parseStaticImports,
@@ -13,6 +14,7 @@ import {
   scanFetchText,
   scanInterpolatedSql,
   scanProject,
+  scanProjectSql,
   scanResponseRoutes,
   scanServerManifestDrift,
   scanServerOnlyImports,
@@ -996,6 +998,357 @@ describe("scanInterpolatedSql", () => {
     test("a const into a named escape hatch still flags - statement-from-variable is their whole warning", () => {
       const src = ['const Q = "SELECT 1"', "sql.unsafe(Q)"].join("\n")
       expect(scanInterpolatedSql("a.ts", src, ts)).toHaveLength(1)
+    })
+  })
+
+  /**
+   * Cross-module `const` resolution, driven by a VIRTUAL module graph - no filesystem, so these pin the
+   * resolution rules themselves rather than a temp directory's layout. The on-disk rules (relative-only,
+   * inside the project, real source) get their own tests against `scanProjectSql` below.
+   *
+   * Every case here is the same question asked twice: does the scan stay quiet only when it can PROVE
+   * the fragment is a module-scope `const` string, and does it go straight back to flagging the moment
+   * anything about that is unprovable? Resolution can only make this rule quieter, so a form the scan
+   * does not understand has to fall out as "unknown", never as "fine".
+   */
+  describe("imported const resolution", () => {
+    /** A loader over an in-memory `{ id: source }` map, resolving `./x` → `x.ts` / `x/index.ts` the way
+     * the on-disk loader does, and refusing everything the map does not hold. */
+    const virtualImports = (modules: Readonly<Record<string, string>>) =>
+      createSqlImports((fromModule, specifier) => {
+        if (!specifier.startsWith("./") && !specifier.startsWith("../")) return undefined
+        const stack = fromModule.split("/").slice(0, -1)
+        for (const part of specifier.split("/")) {
+          if (part === "" || part === ".") continue
+          if (part === "..") stack.pop()
+          else stack.push(part)
+        }
+        const base = stack.join("/")
+        for (const id of [base, `${base}.ts`, `${base}/index.ts`]) {
+          const content = modules[id]
+          if (content !== undefined) return { id, content }
+        }
+        return undefined
+      })
+
+    const scanWith = (src: string, modules: Readonly<Record<string, string>>): number =>
+      scanInterpolatedSql("routes/a.ts", src, ts, virtualImports(modules)).length
+
+    test("an `export const` fragment imported by name stays quiet", () => {
+      const src = [
+        'import { ORDER_CLAUSE } from "./sql-fragments.ts"',
+        "db.query(`SELECT id FROM t ${ORDER_CLAUSE}`)",
+      ].join("\n")
+      expect(
+        scanWith(src, { "routes/sql-fragments.ts": 'export const ORDER_CLAUSE = "ORDER BY id"' }),
+      ).toBe(0)
+    })
+
+    test("an aliased import resolves to the exported name", () => {
+      const src = [
+        'import { ORDER_CLAUSE as ORDER } from "./sql-fragments.ts"',
+        "db.query(`SELECT id FROM t ${ORDER}`)",
+      ].join("\n")
+      expect(
+        scanWith(src, { "routes/sql-fragments.ts": 'export const ORDER_CLAUSE = "ORDER BY id"' }),
+      ).toBe(0)
+    })
+
+    test("the two-statement `const X = …; export { X }` form resolves", () => {
+      const src = [
+        'import { COLS } from "./sql-fragments.ts"',
+        "db.query(`SELECT ${COLS} FROM t WHERE id = $1`)",
+      ].join("\n")
+      expect(
+        scanWith(src, {
+          "routes/sql-fragments.ts": ['const COLS = "id, name"', "export { COLS }"].join("\n"),
+        }),
+      ).toBe(0)
+    })
+
+    test("a barrel re-export resolves - `export { X } from` and the two-statement pass-through", () => {
+      const src = [
+        'import { COLS } from "./sql/index.ts"',
+        "db.query(`SELECT ${COLS} FROM t WHERE id = $1`)",
+      ].join("\n")
+      expect(
+        scanWith(src, {
+          "routes/sql/index.ts": 'export { COLS } from "./fragments.ts"',
+          "routes/sql/fragments.ts": 'export const COLS = "id, name"',
+        }),
+      ).toBe(0)
+      expect(
+        scanWith(src, {
+          "routes/sql/index.ts": ['import { COLS } from "./fragments.ts"', "export { COLS }"].join(
+            "\n",
+          ),
+          "routes/sql/fragments.ts": 'export const COLS = "id, name"',
+        }),
+      ).toBe(0)
+    })
+
+    test("`export * from` resolves, and two sources for one name refuse to guess", () => {
+      const src = [
+        'import { COLS } from "./sql/index.ts"',
+        "db.query(`SELECT ${COLS} FROM t WHERE id = $1`)",
+      ].join("\n")
+      expect(
+        scanWith(src, {
+          "routes/sql/index.ts": 'export * from "./fragments.ts"',
+          "routes/sql/fragments.ts": 'export const COLS = "id, name"',
+        }),
+      ).toBe(0)
+      // Two star sources exporting the same name is a conflict. Picking one would be a guess, and a
+      // guess here silences a finding - so it stays unresolved.
+      expect(
+        scanWith(src, {
+          "routes/sql/index.ts": [
+            'export * from "./fragments.ts"',
+            'export * from "./other.ts"',
+          ].join("\n"),
+          "routes/sql/fragments.ts": 'export const COLS = "id, name"',
+          "routes/sql/other.ts": 'export const COLS = "id"',
+        }),
+      ).toBe(1)
+    })
+
+    test("the fragment's identifiers read ITS module, not the importing file's", () => {
+      // The structural point of the whole feature. Both files declare `DIR`; the importer's is
+      // unresolvable. Reading the fragment's initializer against the importer's const map would fail
+      // to resolve and flag - and, worse, in the mirror case would resolve to text nobody wrote.
+      const src = [
+        "const DIR = readDir()",
+        'import { ORDER } from "./sql-fragments.ts"',
+        "db.query(`SELECT id FROM t ORDER BY name ${ORDER}`)",
+      ].join("\n")
+      expect(
+        scanWith(src, {
+          "routes/sql-fragments.ts": ['const DIR = "ASC"', "export const ORDER = `${DIR}`"].join(
+            "\n",
+          ),
+        }),
+      ).toBe(0)
+    })
+
+    test("an imported const still feeds the keyword scan", () => {
+      // The keyword lives ONLY in the imported fragment; the dynamic span carries none. A flag here
+      // proves the cross-module text reached the keyword scan rather than vanishing into silence.
+      const src = [
+        'import { TAIL } from "./sql-fragments.ts"',
+        "db.run(`${TAIL} ${req.query.q}`)",
+      ].join("\n")
+      expect(
+        scanWith(src, {
+          "routes/sql-fragments.ts": `export const TAIL = 'UNION SELECT secret FROM keys'`,
+        }),
+      ).toBe(1)
+    })
+
+    test("a default export is not resolved", () => {
+      const src = [
+        'import COLS from "./sql-fragments.ts"',
+        "db.query(`SELECT ${COLS} FROM t`)",
+      ].join("\n")
+      expect(scanWith(src, { "routes/sql-fragments.ts": 'export default "id, name"' })).toBe(1)
+    })
+
+    test("a namespace import is not resolved", () => {
+      const src = [
+        'import * as frag from "./sql-fragments.ts"',
+        "db.query(`SELECT ${frag.COLS} FROM t`)",
+      ].join("\n")
+      expect(scanWith(src, { "routes/sql-fragments.ts": 'export const COLS = "id, name"' })).toBe(1)
+    })
+
+    test("an exported `let` is not resolved - it can be reassigned after import", () => {
+      const src = [
+        'import { COLS } from "./sql-fragments.ts"',
+        "db.query(`SELECT ${COLS} FROM t`)",
+      ].join("\n")
+      expect(scanWith(src, { "routes/sql-fragments.ts": 'export let COLS = "id, name"' })).toBe(1)
+      expect(
+        scanWith(src, {
+          "routes/sql-fragments.ts": ['let COLS = "id, name"', "export { COLS }"].join("\n"),
+        }),
+      ).toBe(1)
+    })
+
+    test("an exported const whose initializer is a call is not resolved", () => {
+      const src = [
+        'import { COLS } from "./sql-fragments.ts"',
+        "db.query(`SELECT ${COLS} FROM t`)",
+      ].join("\n")
+      expect(scanWith(src, { "routes/sql-fragments.ts": "export const COLS = readCols()" })).toBe(1)
+    })
+
+    test("a bare specifier is never followed - the dependency's exports are not ours to prove", () => {
+      const src = [
+        'import { COLS } from "@your-scope/sql-fragments"',
+        "db.query(`SELECT ${COLS} FROM t`)",
+      ].join("\n")
+      // The virtual loader refuses non-relative specifiers exactly as the on-disk one does.
+      expect(scanWith(src, { "@your-scope/sql-fragments": 'export const COLS = "id, name"' })).toBe(
+        1,
+      )
+    })
+
+    test("a module the loader cannot supply leaves the name unresolved", () => {
+      const src = ['import { COLS } from "./missing.ts"', "db.query(`SELECT ${COLS} FROM t`)"].join(
+        "\n",
+      )
+      expect(scanWith(src, {})).toBe(1)
+    })
+
+    test("a fragment module that does not parse proves nothing", () => {
+      const src = [
+        'import { COLS } from "./sql-fragments.ts"',
+        "db.query(`SELECT ${COLS} FROM t`)",
+      ].join("\n")
+      expect(scanWith(src, { "routes/sql-fragments.ts": 'export const COLS = "id, name' })).toBe(1)
+    })
+
+    test("a re-export cycle terminates instead of recursing", () => {
+      const src = ['import { COLS } from "./sql/a.ts"', "db.query(`SELECT ${COLS} FROM t`)"].join(
+        "\n",
+      )
+      expect(
+        scanWith(src, {
+          "routes/sql/a.ts": 'export { COLS } from "./b.ts"',
+          "routes/sql/b.ts": 'export { COLS } from "./a.ts"',
+        }),
+      ).toBe(1)
+    })
+
+    test("a re-export chain past the hop cap is not resolved", () => {
+      const src = [
+        'import { COLS } from "./sql/a.ts"',
+        "db.query(`SELECT ${COLS} FROM t WHERE id = $1`)",
+      ].join("\n")
+      // a → b → c is inside the cap; a → b → c → d is not.
+      expect(
+        scanWith(src, {
+          "routes/sql/a.ts": 'export { COLS } from "./b.ts"',
+          "routes/sql/b.ts": 'export { COLS } from "./c.ts"',
+          "routes/sql/c.ts": 'export const COLS = "id, name"',
+        }),
+      ).toBe(0)
+      expect(
+        scanWith(src, {
+          "routes/sql/a.ts": 'export { COLS } from "./b.ts"',
+          "routes/sql/b.ts": 'export { COLS } from "./c.ts"',
+          "routes/sql/c.ts": 'export { COLS } from "./d.ts"',
+          "routes/sql/d.ts": 'export const COLS = "id, name"',
+        }),
+      ).toBe(1)
+    })
+
+    test("a local binding that shadows the import still flags", () => {
+      const src = [
+        'import { COLS } from "./sql-fragments.ts"',
+        "function run(COLS: string) {",
+        "  return db.query(`SELECT ${COLS} FROM t`)",
+        "}",
+      ].join("\n")
+      expect(scanWith(src, { "routes/sql-fragments.ts": 'export const COLS = "id, name"' })).toBe(1)
+    })
+
+    test("a type-only import is not a value binding", () => {
+      const src = [
+        'import type { COLS } from "./sql-fragments.ts"',
+        "db.query(`SELECT ${COLS} FROM t`)",
+      ].join("\n")
+      expect(scanWith(src, { "routes/sql-fragments.ts": 'export const COLS = "id, name"' })).toBe(1)
+    })
+
+    test("without a loader an imported name flags - resolution is opt-in", () => {
+      const src = [
+        'import { COLS } from "./sql-fragments.ts"',
+        "db.query(`SELECT ${COLS} FROM t`)",
+      ].join("\n")
+      expect(scanInterpolatedSql("routes/a.ts", src, ts)).toHaveLength(1)
+    })
+  })
+
+  /** The on-disk half: the rules that only exist once a specifier has to become a real path. */
+  describe("imported const resolution - on disk", () => {
+    const withProject = async (
+      files: Readonly<Record<string, string>>,
+      run: (root: string) => Promise<void>,
+    ): Promise<void> => {
+      const root = await mkdtemp(join(tmpdir(), "nifra-sqlimports-"))
+      try {
+        for (const [rel, content] of Object.entries(files)) {
+          const abs = join(root, rel)
+          await mkdir(join(abs, ".."), { recursive: true })
+          await writeFile(abs, content)
+        }
+        await run(root)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+
+    test("resolves a real relative fragment, extensionless and through a barrel", async () => {
+      await withProject(
+        {
+          "app/sql/fragments.ts": 'export const COLS = "id, name"',
+          "app/sql/index.ts": 'export * from "./fragments.ts"',
+          // Extensionless, `.js`-style (what NodeNext source actually writes), and via the barrel's
+          // directory - each has to land on the same file.
+          "app/a.ts": [
+            'import { COLS } from "./sql/fragments"',
+            "db.query(`SELECT ${COLS} FROM t WHERE id = $1`)",
+          ].join("\n"),
+          "app/b.ts": [
+            'import { COLS } from "./sql/fragments.js"',
+            "db.query(`SELECT ${COLS} FROM t WHERE id = $1`)",
+          ].join("\n"),
+          "app/c.ts": [
+            'import { COLS } from "./sql"',
+            "db.query(`SELECT ${COLS} FROM t WHERE id = $1`)",
+          ].join("\n"),
+        },
+        async (root) => {
+          expect(await scanProjectSql(root)).toEqual([])
+        },
+      )
+    })
+
+    test("a fragment outside the project root is not followed", async () => {
+      const outer = await mkdtemp(join(tmpdir(), "nifra-sqloutside-"))
+      try {
+        await mkdir(join(outer, "vendor"), { recursive: true })
+        await writeFile(join(outer, "vendor", "fragments.ts"), 'export const COLS = "id, name"')
+        await mkdir(join(outer, "app"), { recursive: true })
+        await writeFile(
+          join(outer, "app", "a.ts"),
+          [
+            'import { COLS } from "../vendor/fragments.ts"',
+            "db.query(`SELECT ${COLS} FROM t WHERE id = $1`)",
+          ].join("\n"),
+        )
+        // The project root is `app/`, so the fragment resolves to a real file that sits OUTSIDE it -
+        // source this scan will not read, let alone treat as proof.
+        const found = await scanProjectSql(join(outer, "app"))
+        expect(found).toHaveLength(1)
+      } finally {
+        await rm(outer, { recursive: true, force: true })
+      }
+    })
+
+    test("a declaration file is not followed - it has no initializer to read", async () => {
+      await withProject(
+        {
+          "app/fragments.d.ts": "export declare const COLS: string",
+          "app/a.ts": [
+            'import { COLS } from "./fragments"',
+            "db.query(`SELECT ${COLS} FROM t WHERE id = $1`)",
+          ].join("\n"),
+        },
+        async (root) => {
+          expect(await scanProjectSql(root)).toHaveLength(1)
+        },
+      )
     })
   })
 
