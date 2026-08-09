@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 
 /**
@@ -20,6 +20,18 @@ test(
     let proc: ReturnType<typeof Bun.spawn> | undefined
     try {
       mkdirSync(join(root, "routes"), { recursive: true })
+      // The fixture app declares its own `@nifrajs/*`, rather than letting the specifier walk up into
+      // the monorepo's root `node_modules`. A root-level `@nifrajs/` link farm is not something an
+      // install guarantees: `bun install --frozen-lockfile` links a workspace package into the
+      // `node_modules` of the packages that DEPEND on it, and a root entry only appears where a tree
+      // has accumulated one. So the walk-up finds the adapter on a developer machine with a lived-in
+      // checkout, and finds nothing on a fresh clone - the app dies before it can print its banner,
+      // and only on the machine nobody is watching.
+      const nodeModules = join(root, "node_modules", "@nifrajs")
+      mkdirSync(nodeModules, { recursive: true })
+      for (const pkg of ["web", "web-react"]) {
+        symlinkSync(resolve(import.meta.dir, "..", "..", pkg), join(nodeModules, pkg), "dir")
+      }
       writeFileSync(join(root, "styles.module.css"), ".card { color: rebeccapurple }\n")
       writeFileSync(
         join(root, "nifra.config.ts"),
@@ -54,7 +66,16 @@ test(
         if (done) break
         banner += new TextDecoder().decode(value)
       }
-      expect(banner).toContain("nifra dev (bun)")
+      // A dev server that dies before printing anything asserts on an empty string, and the reason it
+      // died is on the stderr nobody read - "Expected to contain … Received: ''" and no other evidence.
+      // Fold stderr into the failure instead: this spawns a whole toolchain, and the interesting
+      // failures are the ones that happen on a machine that is not this one.
+      if (!banner.includes("nifra dev (bun)")) {
+        const stderr = await new Response(proc.stderr as ReadableStream<Uint8Array>).text()
+        throw new Error(
+          `nifra dev printed no banner (exit ${await proc.exited}).\n--- stdout ---\n${banner}\n--- stderr ---\n${stderr}`,
+        )
+      }
       const port = Number(/http:\/\/localhost:(\d+)/.exec(banner)?.[1])
       expect(Number.isInteger(port)).toBe(true)
 
