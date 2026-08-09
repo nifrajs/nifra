@@ -84,6 +84,24 @@ jobs:
           # commenting this line out is the safe fallback.
           NPM_CONFIG_PROVENANCE: "true"
 
+      # Verify the bytes npm serves after propagation. This cannot roll back a publish, so it is an
+      # alerting gate: a failed registry smoke turns the release red and leaves the published version
+      # intact for investigation.
+      - name: Smoke test published registry packages
+        if: steps.changesets.outputs.published == 'true'
+        run: |
+          version=$(node -p "require('./packages/core/package.json').version")
+          for attempt in 1 2 3; do
+            if bun scripts/smoke.ts registry "$version"; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              sleep 30
+            fi
+          done
+          echo "Registry smoke failed for @nifrajs/*@$version after 3 attempts" >&2
+          exit 1
+
       # After a REAL publish (not the Version-Packages-PR path), rebuild the site against the just-released
       # workspace and deploy it to Cloudflare Pages. `changesets` sets `published: 'true'` only when it
       # actually published to npm, so day-to-day pushes and the PR-open path never redeploy. The root
@@ -103,3 +121,22 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Probe production site
+        if: steps.changesets.outputs.published == 'true'
+        run: |
+          for attempt in 1 2 3; do
+            if body=$(curl --fail --silent --show-error https://nifra.dev/); then
+              case "$body" in
+                *"<title>Nifra - the TypeScript framework for AI-edited codebases</title>"*)
+                  echo "Production health probe passed"
+                  exit 0
+                  ;;
+              esac
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              sleep 20
+            fi
+          done
+          echo "Production health probe failed: expected the stable homepage marker" >&2
+          exit 1

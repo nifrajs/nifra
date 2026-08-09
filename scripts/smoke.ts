@@ -7,6 +7,7 @@
  *   • under Node → resolves `default`/`types` (built `dist`)
  *
  *   bun run scripts/smoke.ts
+ *   bun run scripts/smoke.ts registry 2.11.0
  */
 import { mkdtemp, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -14,32 +15,48 @@ import { join } from "node:path"
 import { $ } from "bun"
 
 const LIBS = ["core", "client", "schema", "middleware"] as const
+type InstallSource = "tarballs" | "registry"
 
-console.log("• building all packages")
-await $`bun scripts/build-no-run.ts`.quiet()
+const args = Bun.argv.slice(2)
+const source = (args[0] ?? "tarballs") as InstallSource
+const version = args[1]
+if (source !== "tarballs" && source !== "registry") {
+  throw new Error("usage: bun scripts/smoke.ts [tarballs | registry <version>]")
+}
+if (source === "registry" && (version === undefined || version.length === 0)) {
+  throw new Error("usage: bun scripts/smoke.ts registry <version>")
+}
 
-console.log("• packing tarballs (npm pack mirrors the published package layout)")
 const tarballs: string[] = []
 const deps: Record<string, string> = {}
-for (const lib of LIBS) {
-  await $`npm pack`.cwd(`packages/${lib}`).quiet()
-  const [tgz] = await Array.fromAsync(
-    new Bun.Glob("*.tgz").scan({ cwd: `packages/${lib}`, absolute: true }),
-  )
-  if (tgz === undefined) throw new Error(`no tarball produced for @nifrajs/${lib}`)
-  tarballs.push(tgz)
-  // Install all four as direct `file:` deps so sibling dependencies and peers are
-  // satisfied locally. (Installing tarballs by path alone makes bun resolve the peer
-  // from the npm registry - a 404, since nothing is published yet.)
-  deps[`@nifrajs/${lib}`] = `file:${tgz}`
+if (source === "tarballs") {
+  console.log("• building all packages")
+  await $`bun scripts/build-no-run.ts`.quiet()
+
+  console.log("• packing tarballs (npm pack mirrors the published package layout)")
+  for (const lib of LIBS) {
+    await $`npm pack`.cwd(`packages/${lib}`).quiet()
+    const [tgz] = await Array.fromAsync(
+      new Bun.Glob("*.tgz").scan({ cwd: `packages/${lib}`, absolute: true }),
+    )
+    if (tgz === undefined) throw new Error(`no tarball produced for @nifrajs/${lib}`)
+    tarballs.push(tgz)
+    // Install all four as direct file deps so sibling dependencies and peers are
+    // satisfied locally. Installing tarballs by path alone makes Bun resolve the peer
+    // from the npm registry - a 404, since nothing is published yet.
+    deps[`@nifrajs/${lib}`] = `file:${tgz}`
+  }
+} else {
+  console.log(`• installing published registry packages at ${version}`)
+  for (const lib of LIBS) deps[`@nifrajs/${lib}`] = version as string
 }
 
 const app = await mkdtemp(join(tmpdir(), "nifra-smoke-"))
 console.log(`• clean consumer dir → ${app}`)
 await writeFile(
   join(app, "package.json"),
-  // `overrides` forces the @nifrajs/core peer (and any transitive ref) to the local
-  // tarball instead of the unpublished registry name.
+  // `overrides` keeps every internal package on the same source during both local and
+  // registry smoke runs.
   `${JSON.stringify({ name: "smoke", private: true, type: "module", dependencies: deps, overrides: deps }, null, 2)}\n`,
 )
 await $`bun install`.cwd(app).quiet()
