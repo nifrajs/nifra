@@ -9,6 +9,7 @@ import { type ReflectedRoute, reflectRoutes, type SchemaReflection } from "@nifr
 import type { Manifest } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import type { LoadedApp } from "./load.ts"
+import { chooseBuildPipeline, describePipeline } from "./pipeline-guard.ts"
 
 /** Read the backend's registered routes, if it's a `server()` with a `.routes()` method. */
 export function backendRoutes(backend: unknown): ReflectedRoute[] {
@@ -232,6 +233,11 @@ export function describeProject(app: LoadedApp, filter?: ContextFilter): string 
       // Point agents at the verified surface, not recalled APIs - nifra is young, so training data is the
       // wrong source. The MCP tools (nifra_docs / nifra_example) are checked against the installed version.
       "> **Build against THIS surface + the verified tools - do not write nifra APIs from memory** (the\n> framework is young; recalled APIs drift). For framework code, call `nifra_example` (snippets\n> typechecked against the installed version) or `nifra_docs`; verify edits with `nifra_run` + `nifra_check`.",
+      // The authoritative answer, not the static reading `nifra_check`/`nifra_doctor` give: this runs on
+      // the LOADED config, so it is the same decision `nifra dev` and `nifra build` make. Stated in the
+      // index because it governs where a plugin goes and which toolchain compiles a component - an edit
+      // put in the other pipeline's slot is accepted and then silently never runs.
+      `**Bundler**: ${describePipeline(chooseBuildPipeline(app.resolvedPlugins))}. \`vitePlugins\` feed Vite; \`clientPlugins\`/\`serverPlugins\` feed Bun.build. Both phases (dev and build) use the same one.`,
     )
   }
   if (filter?.kind !== "pages") {

@@ -117,6 +117,13 @@ export type BuildPipeline = "bun" | "vite"
 export interface PipelineDecision {
   readonly pipeline: BuildPipeline
   /**
+   * How the pipeline was arrived at. Always set, because "which bundler am I on" is a question every
+   * `dev`/`build` run should answer without the user reading this source: `default` is the plain Bun
+   * default, `auto` means the config forced nifra's hand (see {@link reason}), `forced` is `--vite` /
+   * `--bun`.
+   */
+  readonly why: "default" | "auto" | "forced"
+  /**
    * Why this pipeline, for the `nifra build` log line - so an auto-selected Vite build never looks
    * like the user got the default. `undefined` when the choice was the plain default or was forced.
    */
@@ -177,12 +184,33 @@ export function chooseBuildPipeline(
         `  Drop the flag to use Vite, or add the Bun equivalents to \`clientPlugins\`/\`serverPlugins\`.`,
     )
   }
-  if (forced !== undefined) return { pipeline: forced }
+  if (forced !== undefined) return { pipeline: forced, why: "forced" }
   if (viteOnly) {
     return {
       pipeline: "vite",
+      why: "auto",
       reason: `auto: this app's only transforms are \`vitePlugins\` (${pluginNames(vitePlugins)}), which the Bun build cannot run`,
     }
   }
-  return { pipeline: "bun" }
+  return { pipeline: "bun", why: "default" }
+}
+
+/**
+ * The one-line "which bundler, and why" note `nifra dev` and `nifra build` print under their banner.
+ *
+ * Printed on EVERY run, not only the surprising ones. A pipeline that announces itself only when it
+ * deviates teaches nobody which pipeline they are normally on, and every gotcha in the dev docs -
+ * plugin slots, resolve conditions, which compiler owns a `.svelte` file - is answerable only once you
+ * know that. The line also names the flag that switches, so the answer to "can I try the other one"
+ * is on screen rather than in the docs.
+ */
+export function describePipeline(decision: PipelineDecision): string {
+  const other = decision.pipeline === "bun" ? "--vite" : "--bun"
+  const detail =
+    decision.why === "forced"
+      ? `forced by --${decision.pipeline}`
+      : decision.why === "auto"
+        ? (decision.reason ?? "auto")
+        : `default; ${other} to switch`
+  return `bundler: ${decision.pipeline} (${detail})`
 }

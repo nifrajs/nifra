@@ -3853,9 +3853,9 @@ distinct.
 
 Nifra gives you two local development loops, and the rule between them is that one
 toolchain owns a whole phase. **Both** give you React Fast Refresh with state
-preserved. Use `nifra dev` (Vite) for the plugin ecosystem, or
-`nifra dev --bun` for one bundler across dev and prod with no Vite dependency.
-Both serve your real SSR app locally, and neither mixes the two bundlers in one process.
+preserved. Bun is the default; Vite takes over automatically when your config's only
+transforms are `vitePlugins`. Both serve your real SSR app locally, and neither
+mixes the two bundlers in one process.
 
 ### Two loops, same app
 
@@ -3868,7 +3868,7 @@ use when
 
 Bun HMR + Fast Refresh (native)
 none (Bun only)
-one bundler dev+prod; no Vite dep (no CSS Modules)
+one bundler dev+prod, no Vite dep; CSS Modules included
 
 `@nifrajs/web/vite`
 
@@ -3877,6 +3877,79 @@ true HMR (Fast Refresh / framework HMR)
 `vite` + your framework's plugin
 
 state-preserving UI iteration
+
+### Which pipeline runs, when
+
+One rule decides the bundler, and it decides it the same way for `nifra dev` and
+`nifra build` - your dev loop and your production build are never on different
+toolchains.
+
+your config
+command
+pipeline
+why
+
+no plugins at all
+
+`nifra dev` / `nifra build`
+
+Bun
+the default: no Vite dependency, one bundler across dev and prod
+
+`clientPlugins` and/or `serverPlugins`
+
+`nifra dev` / `nifra build`
+
+Bun
+those slots are Bun.build plugins; Vite would never call them
+
+`vitePlugins` only
+
+`nifra dev` / `nifra build`
+
+Vite (automatic)
+the Bun build cannot run them, so staying on Bun would silently drop your transforms
+
+`vitePlugins` only
+
+`--bun`
+
+error
+nifra refuses rather than build an app with its compiler switched off
+
+any
+
+`--vite`
+
+Vite (forced)
+
+exact dev/prod client resolution for `conditions`, or a Vite-only plugin
+
+any
+
+`--bun`
+
+Bun (forced)
+allowed whenever no transform would be lost
+
+You never have to work this out from the table. Every `nifra dev` and
+`nifra build` run prints the answer under its banner, and
+`nifra check` and `nifra doctor` report it - with the config hazards
+below - without starting a server:
+
+```ts
+# doc-check: skip - fragment: terminal output, not source.
+$ nifra dev
+nifra dev (bun) → http://localhost:3000
+  bundler: bun (default; --vite to switch)
+
+$ nifra build
+nifra build (node, vite) → dist/server/server.js
+  bundler: vite (auto: this app's only transforms are `vitePlugins` (svelte), which the Bun build cannot run)
+
+$ nifra check
+• bundler: vite (auto: this app's only transforms are `vitePlugins` (svelte), which the Bun build cannot run)
+```
 
 ### State-preserving HMR
 

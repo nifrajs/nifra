@@ -12,6 +12,7 @@ exports[`verification golden output: nifra check full assurance project: human r
 ✓ undeclared dependency in package.json: none
 ✓ duplicate identity-sensitive dependency install: none
 ✓ workspace-linked dist older than its source: none
+✓ bundler pipeline (Vite/Bun) config: none
 ✓ server-manifest.ts drifted from routes/: none
 ✓ versioned trust manifest drift: none
 ✓ effect/capability assurance: none
@@ -43,6 +44,7 @@ exports[`verification golden output: nifra check plain project (no config): huma
 ✓ undeclared dependency in package.json: none
 ✓ duplicate identity-sensitive dependency install: none
 ✓ workspace-linked dist older than its source: none
+✓ bundler pipeline (Vite/Bun) config: none
 ✓ server-manifest.ts drifted from routes/: none
 ✓ versioned trust manifest drift: none
 ✓ effect/capability assurance: none
@@ -76,6 +78,7 @@ exports[`verification golden output: nifra check dirty project: human report wit
 ✓ undeclared dependency in package.json: none
 ✓ duplicate identity-sensitive dependency install: none
 ✓ workspace-linked dist older than its source: none
+✓ bundler pipeline (Vite/Bun) config: none
 ✓ server-manifest.ts drifted from routes/: none
 ✓ versioned trust manifest drift: none
 ✓ effect/capability assurance: none

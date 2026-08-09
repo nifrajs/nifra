@@ -30,6 +30,8 @@ const projectWith = (routes: unknown[]): LoadedApp =>
     routesDir: "/tmp/nifra-context-app/routes",
     outDir: "/tmp/nifra-context-app/dist",
     framework: { adapter: {}, clientModule: "@nifrajs/web-react/client" },
+    // The index states which bundler the app runs on, so the plugin slots have to be there.
+    resolvedPlugins: { vitePlugins: [], clientPlugins: [], serverPlugins: [] },
     backend: { routes: () => routes },
   }) as unknown as LoadedApp
 

@@ -120,6 +120,18 @@ export { adapter } from "./framework"
 export const clientModule = "@nifrajs/web-svelte/client"
 export const vitePlugins = [svelte()]`
 
+const PIPELINE_BANNER = `# doc-check: skip - fragment: terminal output, not source.
+$ nifra dev
+nifra dev (bun) → http://localhost:3000
+  bundler: bun (default; --vite to switch)
+
+$ nifra build
+nifra build (node, vite) → dist/server/server.js
+  bundler: vite (auto: this app's only transforms are \`vitePlugins\` (svelte), which the Bun build cannot run)
+
+$ nifra check
+• bundler: vite (auto: this app's only transforms are \`vitePlugins\` (svelte), which the Bun build cannot run)`
+
 const CONDITIONS_FLAG = `# Resolve conditions on the Bun dev pipeline.
 # SSR honours \`conditions\` - nifra passes them to the runtime when it re-execs.
 # The CLIENT bundle does not: Bun's dev-server bundler takes no resolve conditions,
@@ -137,9 +149,9 @@ export default function Dev() {
       <p className="lead">
         Nifra gives you two local development loops, and the rule between them is that one
         toolchain owns a whole phase. <strong>Both</strong> give you React Fast Refresh with state
-        preserved. Use <code>nifra dev</code> (Vite) for the plugin ecosystem, or{" "}
-        <code>nifra dev --bun</code> for one bundler across dev and prod with no Vite dependency.
-        Both serve your real SSR app locally, and neither mixes the two bundlers in one process.
+        preserved. Bun is the default; Vite takes over automatically when your config's only
+        transforms are <code>vitePlugins</code>. Both serve your real SSR app locally, and neither
+        mixes the two bundlers in one process.
       </p>
 
       <h2>Two loops, same app</h2>
@@ -159,7 +171,7 @@ export default function Dev() {
             </td>
             <td>Bun HMR + Fast Refresh (native)</td>
             <td>none (Bun only)</td>
-            <td>one bundler dev+prod; no Vite dep (no CSS Modules)</td>
+            <td>one bundler dev+prod, no Vite dep; CSS Modules included</td>
           </tr>
           <tr>
             <td>
@@ -173,6 +185,88 @@ export default function Dev() {
           </tr>
         </tbody>
       </table>
+
+      <h2>Which pipeline runs, when</h2>
+      <p>
+        One rule decides the bundler, and it decides it the same way for <code>nifra dev</code> and{" "}
+        <code>nifra build</code> - your dev loop and your production build are never on different
+        toolchains.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>your config</th>
+            <th>command</th>
+            <th>pipeline</th>
+            <th>why</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>no plugins at all</td>
+            <td>
+              <code>nifra dev</code> / <code>nifra build</code>
+            </td>
+            <td>Bun</td>
+            <td>the default: no Vite dependency, one bundler across dev and prod</td>
+          </tr>
+          <tr>
+            <td>
+              <code>clientPlugins</code> and/or <code>serverPlugins</code>
+            </td>
+            <td>
+              <code>nifra dev</code> / <code>nifra build</code>
+            </td>
+            <td>Bun</td>
+            <td>those slots are Bun.build plugins; Vite would never call them</td>
+          </tr>
+          <tr>
+            <td>
+              <code>vitePlugins</code> only
+            </td>
+            <td>
+              <code>nifra dev</code> / <code>nifra build</code>
+            </td>
+            <td>Vite (automatic)</td>
+            <td>the Bun build cannot run them, so staying on Bun would silently drop your transforms</td>
+          </tr>
+          <tr>
+            <td>
+              <code>vitePlugins</code> only
+            </td>
+            <td>
+              <code>--bun</code>
+            </td>
+            <td>error</td>
+            <td>nifra refuses rather than build an app with its compiler switched off</td>
+          </tr>
+          <tr>
+            <td>any</td>
+            <td>
+              <code>--vite</code>
+            </td>
+            <td>Vite (forced)</td>
+            <td>
+              exact dev/prod client resolution for <code>conditions</code>, or a Vite-only plugin
+            </td>
+          </tr>
+          <tr>
+            <td>any</td>
+            <td>
+              <code>--bun</code>
+            </td>
+            <td>Bun (forced)</td>
+            <td>allowed whenever no transform would be lost</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        You never have to work this out from the table. Every <code>nifra dev</code> and{" "}
+        <code>nifra build</code> run prints the answer under its banner, and{" "}
+        <code>nifra check</code> and <code>nifra doctor</code> report it - with the config hazards
+        below - without starting a server:
+      </p>
+      <CodeBlock code={PIPELINE_BANNER} />
 
       <h2>State-preserving HMR</h2>
       <p>

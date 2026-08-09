@@ -17,7 +17,7 @@ import { discoverRoutes } from "@nifrajs/web/fs"
 import type { BunPlugin } from "bun"
 import { describeProject, describeRouteGraph, describeRoutes } from "./introspect.ts"
 import { type LoadedApp, loadApp } from "./load.ts"
-import { chooseBuildPipeline } from "./pipeline-guard.ts"
+import { chooseBuildPipeline, describePipeline } from "./pipeline-guard.ts"
 
 export interface Flags {
   readonly port: number
@@ -318,9 +318,9 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
         }),
     })
     console.log(`nifra dev (bun) → http://localhost:${server.port}`)
+    console.log(`  ${describePipeline(decision)}`)
     return
   }
-  if (decision.reason !== undefined) console.log(`  ${decision.reason}`)
   // Preflight: the Vite fallback needs `vite` resolvable from the project. Run via `bunx @nifrajs/cli dev` the CLI
   // sits in an isolated install where the project's peer deps don't resolve, so the vite import below fails
   // with an opaque ERR_MODULE_NOT_FOUND. Surface the real fix instead.
@@ -376,7 +376,8 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
         ...apiOf(backend),
       }),
   })
-  console.log(`nifra dev → http://localhost:${server.port}`)
+  console.log(`nifra dev (vite) → http://localhost:${server.port}`)
+  console.log(`  ${describePipeline(decision)}`)
 }
 
 /**
@@ -444,10 +445,10 @@ async function buildForTarget(app: LoadedApp, target: string, flags: Flags): Pro
     // The static target needs a built app to drive prerendering - only build it when targeting static.
     ...(target === "static" ? { prerenderApp: await buildPrerenderApp(app) } : {}),
   })
-  console.log(`nifra build (${target}${useVite ? ", vite" : ""}) → ${result.run}`)
-  // An auto-selected pipeline is stated, never silent: the user asked for the default and got something
-  // else, and the reason is the thing that makes that legible instead of surprising.
-  if (decision.reason !== undefined) console.log(`  ${decision.reason}`)
+  console.log(`nifra build (${target}, ${decision.pipeline}) → ${result.run}`)
+  // The pipeline is stated on every build, not only the surprising ones - an auto-selected Vite build
+  // must never look like the default, and a default Bun build must not leave the question open either.
+  console.log(`  ${describePipeline(decision)}`)
   if (flags.report) console.log(`\n${renderSizeReport(result.size)}`)
 }
 

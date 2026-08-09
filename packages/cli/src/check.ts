@@ -23,6 +23,9 @@ import { Glob } from "bun"
 import type * as TSApi from "typescript"
 import type { CapabilityProjectReport } from "./capabilities-tool.ts"
 import { importTypeScript, type TypeScriptApi } from "./internal/typescript-import.ts"
+// Type-only: `pipeline-report.ts` imports this module's source scanners, so a value import here would
+// close a cycle. Doctor is what actually runs the collector (see the `pipeline` rule below).
+import type { PipelineReport } from "./pipeline-report.ts"
 
 export interface SourceFinding {
   readonly file: string
@@ -1396,6 +1399,7 @@ export interface CheckDiagnostic {
     | "undeclared-dependency"
     | "duplicate-install"
     | "stale-workspace-dist"
+    | "pipeline"
     | "server-manifest-drift"
     | "manifest-drift"
     | "capability-assurance"
@@ -1443,6 +1447,13 @@ export interface CheckResult {
   readonly ok: boolean
   readonly typecheck: "pass" | "fail" | "skipped"
   readonly diagnostics: readonly CheckDiagnostic[]
+  /**
+   * Which bundler this app's phases run on, read statically from the config, and how nifra concluded
+   * it. Returned even when nothing is wrong: an agent reading this project has to know which plugin
+   * slot is live and which toolchain compiles a component before its next edit, and every `pipeline`
+   * diagnostic below is only interpretable against it. Absent when the directory is not a nifra app.
+   */
+  readonly pipeline?: PipelineReport
   /** Intentional non-typed mount prefixes declared in `nifra.check.json` (e.g. `/auth` for a mounted
    * better-auth). Echoed here so `--json` / the MCP tool / the report can show what the typed-client scan
    * deliberately skipped - a suppressed prefix stays auditable instead of silently hiding real drift. */
@@ -1507,6 +1518,8 @@ const SERVER_IMPORT_HINT =
   "server-only import in a route module (bundled for the browser) - reach it via c.db / ctx.api inside a loader, never a top-level import"
 const RESPONSE_ROUTE_HINT =
   "route handler returns a raw Response - the typed client infers `data: never`, so drift detection is lost for this route. Return a plain object (it's serialized for you); for a stream use a typed SSE route (`app.sse(...)`), which keeps typed events; or, if a raw Response is intended (file/redirect), add `{ response: t.… }` or a `// nifra-expect raw-response` comment to mark it and silence this"
+const PIPELINE_DOC_HINT =
+  "nifra runs one bundler per phase - `vitePlugins` feed Vite, `clientPlugins`/`serverPlugins` feed Bun, and the file `nifra build` imports the adapter from is bundled into the server. See the Gotchas section of the Dev & HMR guide."
 const UNDECLARED_DEP_HINT =
   "imported package is not declared in package.json dependencies - run bun add to declare it"
 const SQL_COMPILER_MISSING_HINT =
@@ -1944,6 +1957,21 @@ export async function collectCheckResult(
       })
     }
   }
+  // The two-pipeline rule, read from the config as TEXT (doctor collects it - see ./pipeline-report.ts).
+  // `loadApp` already refuses a misplaced plugin, but only when something loads the app; a check that
+  // never executes project code, and CI that never starts a dev server, would otherwise meet these for
+  // the first time as a production server that built cleanly and died at startup.
+  for (const f of dr.pipeline?.findings ?? []) {
+    diagnostics.push({
+      rule: "pipeline",
+      severity: f.severity,
+      file: f.file,
+      ...(f.line !== undefined ? { line: f.line } : {}),
+      message: f.message,
+      fix: f.fix,
+      suggestion: { kind: "manual", title: f.fix, steps: [PIPELINE_DOC_HINT] },
+    })
+  }
   // #7: a committed server-manifest.ts that drifted from routes/ - name the exact missing/extra routes.
   for (const f of manifestDrift) {
     const parts: string[] = []
@@ -2117,6 +2145,7 @@ export async function collectCheckResult(
     ok: !diagnostics.some((diagnostic) => diagnostic.severity === "error"),
     typecheck: tc.ran ? (tc.ok ? "pass" : "fail") : "skipped",
     diagnostics: shown,
+    ...(dr.pipeline !== undefined ? { pipeline: dr.pipeline } : {}),
     ...(checkConfig.externalMounts.length > 0
       ? { externalMounts: checkConfig.externalMounts }
       : {}),
@@ -2146,6 +2175,16 @@ export async function runCheck(
         ? "✗ typecheck failed - the frontend/backend contract is broken"
         : "• typecheck skipped (no tsconfig / typescript not installed)",
   )
+  // Stated on every run, passing or not. "Which bundler is this app on" decides which plugin slot is
+  // live and which toolchain compiles a component, so it belongs in the report rather than only in the
+  // dev server's banner - where CI never sees it.
+  if (result.pipeline !== undefined) {
+    console.log(
+      result.pipeline.pipeline === "unknown"
+        ? `• bundler: not readable from ${result.pipeline.configFile} - ${result.pipeline.reason}`
+        : `• bundler: ${result.pipeline.pipeline} (${result.pipeline.reason})`,
+    )
+  }
   if (result.externalMounts !== undefined && result.externalMounts.length > 0) {
     console.log(
       `• intentional external mounts (not typed-client checked): ${result.externalMounts.join(", ")}`,
@@ -2163,6 +2202,7 @@ export async function runCheck(
     ["undeclared-dependency", "undeclared dependency in package.json"],
     ["duplicate-install", "duplicate identity-sensitive dependency install"],
     ["stale-workspace-dist", "workspace-linked dist older than its source"],
+    ["pipeline", "bundler pipeline (Vite/Bun) config"],
     ["server-manifest-drift", "server-manifest.ts drifted from routes/"],
     ["manifest-drift", "versioned trust manifest drift"],
     ["capability-assurance", "effect/capability assurance"],
@@ -2170,11 +2210,20 @@ export async function runCheck(
     ["check-config", "nifra.check.json"],
   ] as const) {
     const ds = counts(rule)
-    if (rule === "response-route" || rule === "stale-workspace-dist") {
-      // Advisory: surfaced with ⚠, never folded into pass/fail.
-      console.log(ds.length === 0 ? `✓ ${label}: none` : `⚠ ${label}: ${ds.length} (advisory)`)
-    } else if (rule !== "typecheck") {
-      console.log(ds.length === 0 ? `✓ ${label}: none` : `✗ ${label}: ${ds.length}`)
+    if (rule !== "typecheck") {
+      // Marked by SEVERITY, not by rule name. `response-route` and `stale-workspace-dist` are advisory
+      // in whole; `pipeline` is the first rule that is advisory in part (a misplaced plugin fails, a
+      // resolve condition the Bun dev bundler can't take does not), so the counts are split rather than
+      // rounded up to the worse of the two.
+      const errors = ds.filter((d) => d.severity === "error").length
+      const advisory = ds.length - errors
+      console.log(
+        ds.length === 0
+          ? `✓ ${label}: none`
+          : errors === 0
+            ? `⚠ ${label}: ${advisory} (advisory)`
+            : `✗ ${label}: ${errors}${advisory > 0 ? ` (+${advisory} advisory)` : ""}`,
+      )
     }
     for (const d of ds) {
       console.log(`    ${d.file ?? ""}${d.line ? `:${d.line}` : ""}  ${d.message}`)

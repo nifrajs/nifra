@@ -21,6 +21,7 @@ import { readdir, realpath, stat } from "node:fs/promises"
 import { builtinModules } from "node:module"
 import { dirname, join, relative, sep } from "node:path"
 import { codePositionMask, type SourceFinding, stripComments, walkSource } from "./check.ts"
+import { collectPipelineReport, type PipelineReport } from "./pipeline-report.ts"
 
 // Runtime-provided modules that are never an npm dependency: Node core (bare + `node:` form) and Bun's
 // own `bun` module. `node:`/`bun:`-prefixed specifiers are filtered in packageOf by prefix.
@@ -135,6 +136,15 @@ export interface DoctorResult {
    * Advisory (never folded into `ok`): while actively editing a linked package its dist is always
    * momentarily behind - the finding matters when a dev server starts against it. */
   readonly staleDists: readonly StaleDistFinding[]
+  /**
+   * Which bundler this app's `dev`/`build` phases run on, read statically, plus the config hazards
+   * that exist only because there are two. Absent when the directory is not a nifra app.
+   *
+   * Reported by doctor rather than only by `dev`/`build` because the answer governs how the rest of a
+   * project is read - which plugin slot is live, whether `conditions` reach the client bundle, which
+   * toolchain compiles a component - and asking for it should not require starting a server.
+   */
+  readonly pipeline?: PipelineReport
   /** Dependencies written by `--auto-fix` / MCP `autoFix:true`. */
   readonly fixed?: readonly DoctorAppliedFix[]
   /** Findings that were safe to report but not safe to write automatically. */
@@ -701,13 +711,16 @@ export async function collectDoctorResult(cwd: string): Promise<DoctorResult> {
   findings.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)
   const duplicateInstalls = await collectDuplicateInstalls(cwd, pkg)
   const staleDists = await collectStaleWorkspaceDists(cwd, pkg)
+  const pipeline = await collectPipelineReport(cwd)
+  const pipelineErrors = pipeline.findings.filter((f) => f.severity === "error")
   // `staleDists` is advisory (see DoctorResult): it never fails `ok`.
   return {
-    ok: findings.length === 0 && duplicateInstalls.length === 0,
+    ok: findings.length === 0 && duplicateInstalls.length === 0 && pipelineErrors.length === 0,
     ran: true,
     findings,
     duplicateInstalls,
     staleDists,
+    ...(pipeline.ran ? { pipeline } : {}),
   }
 }
 
@@ -810,6 +823,20 @@ export async function runDoctor(
       console.log(`  ${f.package} - ${f.reason}; run \`${f.command.join(" ")}\``)
     }
     console.log("")
+  }
+  // Printed before the findings and regardless of ok: which bundler owns this app is the frame the
+  // rest of the report is read in, not a footnote to it.
+  if (result.pipeline !== undefined) {
+    const p = result.pipeline
+    console.log(
+      p.pipeline === "unknown"
+        ? `• bundler: could not be read from ${p.configFile} - ${p.reason}\n`
+        : `• bundler: ${p.pipeline} (${p.reason})\n`,
+    )
+    for (const f of p.findings) {
+      console.log(`${f.severity === "error" ? "✗" : "⚠"} ${f.file}:${f.line ?? 0}  ${f.message}`)
+      console.log(`      fix: ${f.fix}\n`)
+    }
   }
   // Advisory, printed regardless of ok: a stale linked dist doesn't fail doctor, but silently eating
   // it costs an hour of misdiagnosis when the dev server 500s inside the package.

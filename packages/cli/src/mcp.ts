@@ -1124,7 +1124,7 @@ export function projectTools(
     {
       name: "nifra_check",
       description:
-        'Run the project\'s drift gate and return a structured result { ok, typecheck, diagnostics[] }: typecheck (the frontend↔backend contract), plus lints for hand-rolled fetch() to your own API, untyped client("…") calls missing <typeof app>, and server-only imports in routes/. Pass lintsOnly:true for a near-instant lint pass while iterating; run the full gate (default) to confirm the work is done - fix every diagnostic before finishing.',
+        'Run the project\'s drift gate and return a structured result { ok, typecheck, diagnostics[], pipeline? }: typecheck (the frontend↔backend contract), plus lints for hand-rolled fetch() to your own API, untyped client("…") calls missing <typeof app>, and server-only imports in routes/. `pipeline` answers "which bundler does this app run on" (bun|vite, for dev AND build alike) without starting a server, and its `pipeline` diagnostics catch the hazards of having two: a plugin in the slot the other bundler reads (accepted, then never called), a dev toolchain imported by the file `nifra build` bundles into the production server, and `conditions` that cannot reach Bun\'s dev client bundle. Read it before adding a plugin or a compiler. Pass lintsOnly:true for a near-instant lint pass while iterating; run the full gate (default) to confirm the work is done - fix every diagnostic before finishing.',
       inputSchema: {
         type: "object",
         properties: {
@@ -1323,7 +1323,7 @@ export function projectTools(
     {
       name: "nifra_doctor",
       description:
-        "Check this project for packages imported in source but NOT declared in package.json - the Bun-workspace trap where an import resolves at runtime (hoisting/workspace) so tests pass and `bun install` says no changes, yet tsc fails and a fresh/standalone install can't resolve it. Returns { ok, ran, findings[], fixed?, skippedFixes? }. Pass autoFix:true to update package.json only when the dependency version can be inferred locally from an ancestor package.json or installed package metadata; otherwise the tool returns the exact bun add command to run.",
+        "Check this project for packages imported in source but NOT declared in package.json - the Bun-workspace trap where an import resolves at runtime (hoisting/workspace) so tests pass and `bun install` says no changes, yet tsc fails and a fresh/standalone install can't resolve it. Also reports `pipeline`: which bundler (bun|vite) this app's dev AND build phases run on and why, plus config hazards that only exist because there are two - a plugin sitting in the slot the other bundler reads (accepted, then never called), a dev toolchain imported by the file `nifra build` bundles into the production server (builds clean, dies at startup), and `conditions` that cannot reach the client bundle Bun's dev server serves. Returns { ok, ran, findings[], pipeline?, fixed?, skippedFixes? }. Pass autoFix:true to update package.json only when the dependency version can be inferred locally from an ancestor package.json or installed package metadata; otherwise the tool returns the exact bun add command to run.",
       inputSchema: {
         type: "object",
         properties: {
