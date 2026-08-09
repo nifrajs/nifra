@@ -6455,6 +6455,72 @@ backend you can also ship on its own. Start with [Getting started](/docs).
 Moving a backend (Express, Hono, Fastify, Elysia) instead? See
 [Migrating a backend](/docs/migrate-backend).
 
+## Nifra - Migrate route by route
+
+> Keep an existing Hono, Elysia, Express, or Workers app running while moving routes into typed Nifra handlers one at a time.
+
+Keep the old app live while you move its surface into Nifra. Mount the legacy fetch handler at
+a prefix, add typed Nifra routes as they are ready, then delete the mount when the prefix is
+empty.
+
+[!WARNING] Mounted handlers are an escape hatch. Their request and response shapes are outside
+Nifra's typed route contract, response schemas, and response-contract enforcement. Keep the
+mount small and temporary, and use typed routes for every migrated endpoint.
+
+### 1. Mount the existing app
+
+`mountFetch` accepts any handler with the Web fetch shape. Use a path ending in
+`/*` for a subtree. By default the legacy app sees the original URL. Set
+`stripPrefix: true` when the legacy app declares paths relative to its mount point.
+The platform object is forwarded as the second argument when the runtime supplies one.
+
+```ts
+import { Hono } from "hono"
+import { server } from "@nifrajs/core/server"
+import { t } from "@nifrajs/schema"
+
+const legacy = new Hono()
+legacy.get("/users", (c) => c.json({ source: "hono", users: [] }))
+legacy.post("/users", async (c) => c.json(await c.req.json()))
+
+export const app = server()
+  // The wildcard is a literal mount prefix, not a typed Nifra route.
+  .mountFetch("/legacy/*", legacy.fetch, { stripPrefix: true })
+  // Typed routes take precedence, so move one route out of Hono at a time.
+  .get("/legacy/users/:id", (c) => ({ id: c.params.id, source: "nifra" }))
+  .post(
+    "/users",
+    { body: t.object({ name: t.string() }) },
+    (c) => ({ id: crypto.randomUUID(), name: c.body.name }),
+  )
+```
+
+### 2. Move the routes
+
+- Choose one legacy endpoint and add it as a typed Nifra route.
+
+- Keep the mount in place for the remaining endpoints.
+
+- Add a body, query, or params schema so the trust boundary is explicit.
+
+- Run `nifra check` and the route tests, then repeat.
+
+Typed routes win when both surfaces match. That lets a new Nifra route replace its legacy
+counterpart without changing the mount prefix or adding a second server.
+
+### 3. Remove the escape hatch
+
+When the legacy prefix has no remaining routes, remove `mountFetch` and delete the
+old app. The remaining routes now have typed params, validated inputs, reflected contracts,
+and the end-to-end typed client.
+
+### Other legacy handlers
+
+The same seam works with Elysia, an Express app exposed through an adapter, or a raw Workers
+handler. Pass its fetch-compatible function directly. For a Workers-style handler, the
+platform argument carries bindings and `waitUntil`; mounted code remains responsible
+for its own framework-specific request and response conventions.
+
 ## Nifra - Contract-derived adversarial testing
 
 > Turn route schemas into hostile input, response-conformance, replay, shrinking, and runtime-matrix tests with @nifrajs/testing.
