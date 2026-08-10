@@ -85,10 +85,11 @@ function diagnostic(
   message: string,
   file?: string,
   evidence?: readonly string[],
+  severity: "error" | "info" = "error",
 ): import("./diagnostics.ts").Diagnostic {
   return Object.freeze({
     code,
-    severity: "error" as const,
+    severity,
     message,
     ...(file === undefined ? {} : { file }),
     ...(evidence === undefined ? {} : { evidence }),
@@ -462,12 +463,15 @@ async function runHydrationProof(cwd: string, options: HydrationOptions): Promis
     if (!sourceBranch(file.content)) continue
     const replay = await writeReplay(cwd, file.file, seed, { framework, source: file.file })
     replays.push(replay)
+    // Advisory only: `typeof window` guards are the standard SSR-safe idiom and most of them never
+    // touch render output. The DOM before/after comparison below is the authoritative mismatch proof.
     diagnostics.push(
       diagnostic(
         "NF-H001",
-        "SSR and client rendering branch on window state; render output must be identical before hydration",
+        "source branches on window state; confirm render output is identical before hydration",
         file.file,
         [framework, replay],
+        "info",
       ),
     )
   }

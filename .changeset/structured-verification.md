@@ -2,6 +2,7 @@
 "@nifrajs/cli": minor
 "@nifrajs/core": minor
 "@nifrajs/testing": minor
+"@nifrajs/web": patch
 "@nifrajs/web-react": patch
 "@nifrajs/web-vue": patch
 "@nifrajs/web-svelte": patch

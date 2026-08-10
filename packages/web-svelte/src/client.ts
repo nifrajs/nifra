@@ -38,11 +38,14 @@ export function hydrate(
   const warning = options?.onWarning ?? assuranceWarning()
   const originalWarn = console.warn
   if (warning !== undefined) console.warn = (...args) => warning(args.map(String).join(" "))
-  svelteHydrate(Chain, {
-    target: container as Element,
-    props: { chain, props, layoutData: props.layoutData },
-  })
-  if (warning !== undefined) console.warn = originalWarn
+  try {
+    svelteHydrate(Chain, {
+      target: container as Element,
+      props: { chain, props, layoutData: props.layoutData },
+    })
+  } finally {
+    if (warning !== undefined) console.warn = originalWarn
+  }
 }
 
 /** Testing hook used by verification runners to observe Svelte warnings and identity. */

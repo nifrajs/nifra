@@ -91,6 +91,8 @@ registerFixRecipe({
     const packageName = diagnostic.evidence?.[0]
     if (packageName === undefined || !/^@?[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)?$/.test(packageName))
       return []
+    // The segment regex above admits "." and "..", which would resolve outside node_modules.
+    if (packageName.split("/").some((segment) => segment === "." || segment === "..")) return []
     const packageDir = resolve(root, "node_modules", packageName)
     const packageJson = resolve(packageDir, "package.json")
     if (!existsSync(packageJson)) return []

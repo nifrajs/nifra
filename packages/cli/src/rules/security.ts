@@ -21,6 +21,21 @@ function nameOf(ts: typeof TSApi, node: TSApi.Node): string | undefined {
   return undefined
 }
 
+/**
+ * Presence checks (`token === undefined`, `secret == null`, `apiKey !== ""`) and `typeof` guards are
+ * not equality over secret material - rewriting them to a timing-safe comparison would break the code.
+ */
+function isPresenceComparison(ts: typeof TSApi, node: TSApi.BinaryExpression): boolean {
+  for (const side of [node.left, node.right]) {
+    if (ts.isIdentifier(side) && side.text === "undefined") return true
+    if (side.kind === ts.SyntaxKind.NullKeyword) return true
+    if (ts.isStringLiteralLike(side) && side.text === "") return true
+    if (ts.isTypeOfExpression(side)) return true
+    if (ts.isVoidExpression(side)) return true
+  }
+  return false
+}
+
 function parse(ts: typeof TSApi, file: string, source: string): TSApi.SourceFile {
   const kind = /\.tsx?$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.JS
   return ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind)
@@ -45,7 +60,8 @@ export const secretComparisonRule: CheckRule = {
             ts.SyntaxKind.ExclamationEqualsEqualsToken,
             ts.SyntaxKind.EqualsEqualsToken,
             ts.SyntaxKind.ExclamationEqualsToken,
-          ].includes(node.operatorToken.kind)
+          ].includes(node.operatorToken.kind) &&
+          !isPresenceComparison(ts, node)
         ) {
           const left = nameOf(ts, node.left)
           const right = nameOf(ts, node.right)

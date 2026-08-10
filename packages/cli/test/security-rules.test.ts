@@ -30,6 +30,19 @@ describe("built-in security rules", () => {
     )
   })
 
+  test("skips presence and typeof checks on secret-like names", async () => {
+    const findings = await scan(
+      "routes/presence.ts",
+      [
+        "if (token === undefined) return",
+        "if (secret == null) return",
+        'if (apiKey !== "") load(apiKey)',
+        'if (typeof password === "string") load(password)',
+      ].join("\n"),
+    )
+    expect(findings.filter((finding) => finding.code === "NF-S002")).toEqual([])
+  })
+
   test("keeps reviewed overrides visible without failing", async () => {
     const findings = await scan(
       "routes/security.ts",
