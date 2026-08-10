@@ -66,6 +66,16 @@ export {
   runFailureScenario,
 } from "./failure-lab.ts"
 export {
+  defineFaultProfile,
+  type FaultProfile,
+  type FaultProfileReport,
+  type FaultProfileScenario,
+  type FaultProfileScenarioReport,
+  type RunFaultProfileOptions,
+  referenceFaultProfile,
+  runFaultProfile,
+} from "./fault-profile.ts"
+export {
   type EffectLedger,
   type IdempotencyDivergence,
   type IdempotencyProof,

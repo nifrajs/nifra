@@ -2369,6 +2369,11 @@ Every public export of every package and documented subpath - name, kind, signat
 - **FailureReplay** _(interface)_ - `interface FailureReplay`
 - **FailureScenario** _(interface)_ - `interface FailureScenario<Output>`
 - **FailureScenarioReport** _(interface)_ - `interface FailureScenarioReport`
+- **FaultProfile** _(interface)_ - `interface FaultProfile`
+  A named adapter profile composed from the deterministic failure laboratory.
+- **FaultProfileReport** _(interface)_ - `interface FaultProfileReport`
+- **FaultProfileScenario** _(interface)_ - `interface FaultProfileScenario`
+- **FaultProfileScenarioReport** _(interface)_ - `interface FaultProfileScenarioReport`
 - **GenerateRegressionTestOptions** _(interface)_ - `interface GenerateRegressionTestOptions`
 - **IdempotencyDivergence** _(interface)_ - `interface IdempotencyDivergence`
 - **IdempotencyProof** _(interface)_ - `interface IdempotencyProof`
@@ -2376,6 +2381,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **IncidentReplayError** _(class)_ - `class IncidentReplayError`
 - **IncidentReplayResult** _(interface)_ - `interface IncidentReplayResult`
 - **ReplayIncidentOptions** _(interface)_ - `interface ReplayIncidentOptions`
+- **RunFaultProfileOptions** _(interface)_ - `interface RunFaultProfileOptions`
 - **TestSession** _(interface)_ - `interface TestSession<App>`
 - **TestSessionOptions** _(interface)_ - `interface TestSessionOptions`
 - **assertAdapterCertification** _(function)_ - `assertAdapterCertification: (report: AdapterCertificationReport) => void`
@@ -2393,6 +2399,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Build one isolated deterministic controller. Construct a fresh lab for every replay.
 - **defineCertificationProfile** _(function)_ - `defineCertificationProfile: <Adapter>(profile: AdapterCertificationProfile<Adapter>) => AdapterCertificationProfile<Adapter>`
   Define and validate a custom domain/provider profile at module initialization.
+- **defineFaultProfile** _(function)_ - `defineFaultProfile: (profile: FaultProfile) => FaultProfile`
+  Validate and freeze a reusable fault profile.
 - **eventDeliveryCertificationProfile** _(function)_ - `eventDeliveryCertificationProfile: () => AdapterCertificationProfile<CertifiableEventDeliveryAdapter>`
 - **generateRegressionTest** _(function)_ - `generateRegressionTest: (capsule: IncidentCapsule, options?: GenerateRegressionTestOptions) => string`
   Emit a committable regression test from a capsule. Request string values are redacted BY DEFAULT with a sanitize banner - replace the `<redacted>` placeholders with safe, reproducing values before you commit. The test asserts the response contract via {@link assertIncidentReplays}.
@@ -2401,12 +2409,16 @@ Every public export of every package and documented subpath - name, kind, signat
   Run a token-only effect workload repeatedly and report the first stable replay differences.
 - **redactForEmission** _(function)_ - `redactForEmission: (value: unknown, allow: ReadonlySet<string>, path?: string) => unknown`
   Redact leaf string values by default (unless the dotted key path is allow-listed). Non-strings are kept - they carry the structure that makes the fixture reproduce - so review the emitted file. This is intentionally aggressive: a committed fixture must not leak PII/secrets.
+- **referenceFaultProfile** _(const)_ - `referenceFaultProfile: FaultProfile`
+  A small smoke profile for consumers that only need to verify the harness wiring.
 - **replayIncident** _(function)_ - `replayIncident: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<IncidentReplayResult>`
   Replay a captured incident against the current app and report whether it reproduces.
 - **runAdversarialContract** _(function)_ - `runAdversarialContract: (app: ContractTestApp, options?: AdversarialContractOptions) => Promise<AdversarialContractReport>`
   Execute contract-derived hostile inputs and declared-response conformance against a runtime matrix. Runtime/request failures are captured in the report; inspect `report.ok`, `failures`, and `gaps` (or use {@link assertAdversarialContract} for a throwing test assertion).
 - **runFailureScenario** _(function)_ - `runFailureScenario: <Output>(scenario: FailureScenario<Output>, options: FailureLabOptions) => Promise<FailureScenarioReport>`
   Run one scenario and evaluate its post-failure invariant without leaking its result or error text.
+- **runFaultProfile** _(function)_ - `runFaultProfile: (profile: FaultProfile, options?: RunFaultProfileOptions) => Promise<FaultProfileReport>`
+  Run every profile scenario with the same deterministic seed and failure schedule.
 - **runtimeAdapterCertificationProfile** _(function)_ - `runtimeAdapterCertificationProfile: () => AdapterCertificationProfile<CertifiableRuntimeAdapter>`
 - **shapeOf** _(function)_ - `shapeOf: (value: unknown) => unknown`
   A stable structural fingerprint: keys + value *types*, not values. Used for the optional shape check.

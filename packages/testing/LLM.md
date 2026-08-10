@@ -23,13 +23,13 @@ Contract-derived adversarial tests, runtime-matrix response conformance, and coo
 - **cookieJar** _(function)_ - `cookieJar: () => CookieJar` · from `@nifrajs/testing`
 - **createFailureLab** _(function)_ - `createFailureLab: (options: FailureLabOptions) => FailureLab` · from `@nifrajs/testing`
 - **defineCertificationProfile** _(function)_ - `defineCertificationProfile: <Adapter>(profile: AdapterCertificationProfile<Adapter>) => AdapterCertificationProfile<Adapter>` · from `@nifrajs/testing`
+- **defineFaultProfile** _(function)_ - `defineFaultProfile: (profile: FaultProfile) => FaultProfile` · from `@nifrajs/testing`
 - **eventDeliveryCertificationProfile** _(function)_ - `eventDeliveryCertificationProfile: () => AdapterCertificationProfile<CertifiableEventDeliveryAdapter>` · from `@nifrajs/testing`
 - **generateRegressionTest** _(function)_ - `generateRegressionTest: (capsule: IncidentCapsule, options?: GenerateRegressionTestOptions) => string` · from `@nifrajs/testing`
 - **jobStoreCertificationProfile** _(function)_ - `jobStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableJobStore>` · from `@nifrajs/testing`
 - **proveIdempotency** _(function)_ - `proveIdempotency: (options: { readonly run: () => Promise<EffectLedger> | EffectLedger; readonly runs?: number; }) => Promise<IdempotencyPr…` · from `@nifrajs/testing`
-- **redactForEmission** _(function)_ - `redactForEmission: (value: unknown, allow: ReadonlySet<string>, path?: string) => unknown` · from `@nifrajs/testing`
 
-_…and 64 more - see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
+_…and 72 more - see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
 
 ## Footguns
 

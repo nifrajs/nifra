@@ -3177,6 +3177,13 @@
     "doc": "/** Define a portable, versioned event contract. */"
   },
   {
+    "name": "defineFaultProfile",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function defineFaultProfile(profile: FaultProfile): FaultProfile;",
+    "doc": "/** Validate and freeze a reusable fault profile. */"
+  },
+  {
     "name": "defineIdentityPlugin",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -4114,6 +4121,31 @@
     "kind": "interface",
     "package": "@nifrajs/testing",
     "signature": "export interface FailureScenarioReport {\n    readonly name: string;\n    readonly ok: boolean;\n    readonly replay: FailureReplay;\n    readonly evidence: readonly FailureEvidence[];\n    /** Sanitized failure identity. Messages and stacks are deliberately excluded. */\n    readonly error?: {\n        readonly name: string;\n        readonly kind?: FailureInjectedError[\"kind\"];\n    };\n}"
+  },
+  {
+    "name": "FaultProfile",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface FaultProfile {\n    readonly name: string;\n    readonly scenarios: readonly FaultProfileScenario[];\n}",
+    "doc": "/** A named adapter profile composed from the deterministic failure laboratory. */"
+  },
+  {
+    "name": "FaultProfileReport",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface FaultProfileReport {\n    readonly name: string;\n    readonly ok: boolean;\n    readonly scenarios: readonly FaultProfileScenarioReport[];\n}"
+  },
+  {
+    "name": "FaultProfileScenario",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface FaultProfileScenario extends FailureScenario<unknown> {\n    readonly id: string;\n    readonly description: string;\n}"
+  },
+  {
+    "name": "FaultProfileScenarioReport",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface FaultProfileScenarioReport {\n    readonly id: string;\n    readonly description: string;\n    readonly ok: boolean;\n    readonly replay: FailureReplay;\n    readonly evidence: readonly FailureEvidence[];\n    readonly error?: {\n        readonly name: string;\n        readonly kind?: string;\n    };\n}"
   },
   {
     "name": "FetchApp",
@@ -8307,6 +8339,13 @@
     "doc": "/** Options for {@link redirect}. */"
   },
   {
+    "name": "referenceFaultProfile",
+    "kind": "const",
+    "package": "@nifrajs/testing",
+    "signature": "export declare const referenceFaultProfile: FaultProfile;",
+    "doc": "/** A small smoke profile for consumers that only need to verify the harness wiring. */"
+  },
+  {
     "name": "reflectClassification",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -9311,6 +9350,19 @@
     "package": "@nifrajs/testing",
     "signature": "export declare function runFailureScenario<Output>(scenario: FailureScenario<Output>, options: FailureLabOptions): Promise<FailureScenarioReport>;",
     "doc": "/** Run one scenario and evaluate its post-failure invariant without leaking its result or error text. */"
+  },
+  {
+    "name": "runFaultProfile",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function runFaultProfile(profile: FaultProfile, options?: RunFaultProfileOptions): Promise<FaultProfileReport>;",
+    "doc": "/** Run every profile scenario with the same deterministic seed and failure schedule. */"
+  },
+  {
+    "name": "RunFaultProfileOptions",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface RunFaultProfileOptions {\n    readonly seed?: number;\n    readonly schedule?: readonly FailureDirective[];\n}"
   },
   {
     "name": "RunningServer",
