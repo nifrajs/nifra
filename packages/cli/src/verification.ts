@@ -28,6 +28,8 @@ import { type CheckAssuranceContext, type CheckResult, collectCheckResult } from
 export interface CollectProjectVerificationOptions {
   /** Assurance config path, default `nifra.assurance.ts`. Honored by the assurance + levels views. */
   readonly config?: string
+  /** A config already loaded by the caller, avoiding a second cache-busted import. */
+  readonly preloaded?: { readonly config: AssuranceConfig } | { readonly error: unknown }
   /** Skip the `tsc` pass in the check view (the agent inner-loop mode). */
   readonly lintsOnly?: boolean
   /** Cancels the check view's typecheck. */
@@ -75,7 +77,12 @@ export async function collectProjectVerification(
   // One try mirrors `check`'s single catch: any failure to load or reflect the config becomes the
   // `configError` each view then renders in its own idiom (a diagnostic, a throw, a failed rung).
   try {
-    config = await loadAssuranceConfig(cwd, options.config)
+    if (options.preloaded !== undefined) {
+      if ("config" in options.preloaded) config = options.preloaded.config
+      else throw options.preloaded.error
+    } else {
+      config = await loadAssuranceConfig(cwd, options.config)
+    }
     routeAssurance = evaluateRouteAssurance(config.source, config.policy, {
       ...(config.capabilities !== undefined
         ? { definitions: config.capabilities.definitions }

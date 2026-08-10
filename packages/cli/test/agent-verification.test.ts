@@ -59,6 +59,40 @@ describe("agent verification surfaces", () => {
     expect(bundle.verdict).toBe("green")
   })
 
+  test("assurance bundle evaluates its config once", async () => {
+    const dir = join(ROOT, "single-assurance-load")
+    const key = Symbol.for("nifra.test.assurance-load-count")
+    const globals = globalThis as unknown as Record<PropertyKey, unknown>
+    globals[key] = 0
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, "backend.ts"), "export const backend = { routes: () => [] }\n")
+    await writeFile(
+      join(dir, "nifra.assurance.ts"),
+      [
+        `const key = Symbol.for("nifra.test.assurance-load-count")`,
+        `const globals = globalThis as unknown as Record<PropertyKey, unknown>`,
+        `globals[key] = Number(globals[key] ?? 0) + 1`,
+        `import { defineAssuranceConfig } from "@nifrajs/core/assurance"`,
+        `import { backend } from "./backend.ts"`,
+        `export default defineAssuranceConfig({ source: backend, policy: { rules: [], unmatched: "ignore", allowEmpty: true } })`,
+        "",
+      ].join("\n"),
+    )
+    await collectAssureBundle(dir)
+    expect(globals[key]).toBe(1)
+  })
+
+  test("missing assurance config preserves the check gate behavior", async () => {
+    const dir = join(ROOT, "missing-assurance")
+    await mkdir(dir, { recursive: true })
+    const bundle = await collectAssureBundle(dir)
+    const check = bundle.gates.find((gate) => gate.gate === "check")
+    expect(check?.status).toBe("pass")
+    expect(
+      check?.diagnostics.some((item) => item.message.includes("route assurance config not found")),
+    ).toBe(false)
+  })
+
   test("mechanical fix recipes are registered and apply timing-safe comparison", async () => {
     const dir = join(ROOT, "fixes")
     await mkdir(dir, { recursive: true })

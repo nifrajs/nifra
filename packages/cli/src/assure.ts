@@ -193,7 +193,13 @@ export async function collectAssureBundle(
 ): Promise<AssureBundle> {
   const strict = options.strict === true
   const gates: GateResult[] = []
-  const assuranceConfig = await loadAssuranceConfig(cwd, options.config).catch(() => undefined)
+  let assuranceConfig: AssuranceConfig | undefined
+  let assuranceConfigError: unknown
+  try {
+    assuranceConfig = await loadAssuranceConfig(cwd, options.config)
+  } catch (error) {
+    assuranceConfigError = error
+  }
   const addGate = async (
     gate: GateResult["gate"],
     run: () => Promise<{ diagnostics: Diagnostic[]; skipReason?: string; replay?: string }>,
@@ -228,6 +234,10 @@ export async function collectAssureBundle(
     const { collectProjectVerification } = await import("./verification.ts")
     const verification = await collectProjectVerification(cwd, {
       ...(options.config !== undefined ? { config: options.config } : {}),
+      preloaded:
+        assuranceConfig !== undefined
+          ? { config: assuranceConfig }
+          : { error: assuranceConfigError },
     })
     const result = await verification.check()
     const diagnostics = (result.structuredDiagnostics ?? []).map((item) => item)
