@@ -10,26 +10,26 @@ The nifra CLI - zero-config dev/build/start for a nifra app (`nifra dev`, `nifra
 
 ## Public entrypoints
 
-`@nifrajs/cli/assure` · `@nifrajs/cli/diagnostics` · `@nifrajs/cli/fix-recipes` · `@nifrajs/cli/mcp` · `@nifrajs/cli/rules`
+`@nifrajs/cli/assure` · `@nifrajs/cli/diagnostics` · `@nifrajs/cli/fix-recipes` · `@nifrajs/cli/mcp` · `@nifrajs/cli/rules` · `@nifrajs/cli/work-graph`
 
 ## Key exports
 
 - **applyDiagnosticRecipe** _(function)_ - `applyDiagnosticRecipe: (root: string, diagnostic: Diagnostic) => Promise<readonly string[]>` · from `@nifrajs/cli/fix-recipes`
+- **buildProjectWorkGraph** _(function)_ - `buildProjectWorkGraph: (input: WorkGraphBuildInput, options?: { readonly changedFiles?: readonly string[]; readonly minLevel?: number; }) =…` · from `@nifrajs/cli/work-graph`
+- **buildWorkGraph** _(function)_ - `buildWorkGraph: (input: WorkGraphBuildInput) => Promise<WorkGraph>` · from `@nifrajs/cli/work-graph`
 - **collectAssuranceReport** _(function)_ - `collectAssuranceReport: (cwd: string, configPath?: string) => Promise<AssuranceReport>` · from `@nifrajs/cli/assure`
 - **collectAssureBundle** _(function)_ - `collectAssureBundle: (cwd: string, options?: { readonly config?: string; readonly strict?: boolean; readonly hydration?: boolean; readonly …` · from `@nifrajs/cli/assure`
+- **collectProjectWorkGraph** _(function)_ - `collectProjectWorkGraph: (cwd: string, options?: { readonly changedFiles?: readonly string[]; readonly minLevel?: number; }) => Promise<Pro…` · from `@nifrajs/cli/work-graph`
+- **createEvidenceBundle** _(function)_ - `createEvidenceBundle: (graph: WorkGraph, impact: ImpactReport, plan: ProofPlan, proofs?: readonly ProofEvidence[]) => EvidenceBundle` · from `@nifrajs/cli/work-graph`
 - **createMemoryAssureSink** _(function)_ - `createMemoryAssureSink: () => MemoryAssureSink` · from `@nifrajs/cli/assure`
 - **docsTools** _(function)_ - `docsTools: (loadDocs: () => Promise<string | undefined>, loadExamples: () => Promise<Example[] | undefined>, loadTypes: () => Promise<TypeE…` · from `@nifrajs/cli/mcp`
+- **evaluateBuildFreshness** _(function)_ - `evaluateBuildFreshness: (input: { readonly hasArtifact: boolean; readonly newestSourceMs: number; readonly newestBuildMs: number; readonly …` · from `@nifrajs/cli/work-graph`
 - **examplesAppTool** _(function)_ - `examplesAppTool: (loadExamples: () => Promise<Example[] | undefined>) => McpTool` · from `@nifrajs/cli/mcp`
 - **formatAssuranceReport** _(function)_ - `formatAssuranceReport: (report: AssuranceReport) => string` · from `@nifrajs/cli/assure`
 - **getFixRecipe** _(function)_ - `getFixRecipe: (id: string) => FixRecipe | undefined` · from `@nifrajs/cli/fix-recipes`
 - **handleMcpHttp** _(function)_ - `handleMcpHttp: (request: Request) => Promise<Response>` · from `@nifrajs/cli/mcp`
-- **listFixRecipes** _(function)_ - `listFixRecipes: () => readonly FixRecipe[]` · from `@nifrajs/cli/fix-recipes`
-- **loadAssuranceConfig** _(function)_ - `loadAssuranceConfig: (cwd: string, configPath?: string) => Promise<AssuranceConfig>` · from `@nifrajs/cli/assure`
-- **normalizeSeverity** _(function)_ - `normalizeSeverity: (value: "error" | "warning" | "warn" | "info") => Severity` · from `@nifrajs/cli/diagnostics`
-- **parseRulePacks** _(function)_ - `parseRulePacks: (value: unknown) => readonly RulePack[]` · from `@nifrajs/cli/rules`
-- **publicDocsTools** _(function)_ - `publicDocsTools: () => McpTool[]` · from `@nifrajs/cli/mcp`
 
-_…and 28 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) for the complete list._
+_…and 56 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) for the complete list._
 
 ## Footguns
 

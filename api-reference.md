@@ -2,6 +2,54 @@
 
 Every public export of every package and documented subpath - name, kind, signature, and doc summary - extracted from each package's `exports` map with the TypeScript compiler API, so it cannot drift from the code. For HTTP route shapes (request/response bodies), see the OpenAPI + Scalar reference your app serves at `/reference`. For prose guides, see `llms-full.txt`.
 
+## @nifrajs/agent
+
+- **AgentApprovalPort** _(interface)_ - `interface AgentApprovalPort`
+- **AgentApprovalResult** _(type)_ - `type AgentApprovalResult = | { readonly status: "approved"; readonly approval: ToolApproval } | { readonly status: "denied"; readonly reason?: string } | { readonly status: "pending"; readonly effectId: string }`
+- **AgentDefinition** _(interface)_ - `interface AgentDefinition<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>`
+- **AgentModelPort** _(interface)_ - `interface AgentModelPort`
+- **AgentModelRequest** _(interface)_ - `interface AgentModelRequest`
+- **AgentModelResponse** _(type)_ - `type AgentModelResponse = | { readonly kind: "output"; readonly value: unknown } | { readonly kind: "tool"; readonly name: string; readonly input: unknown }`
+- **AgentPendingContinuation** _(interface)_ - `interface AgentPendingContinuation`
+- **AgentPendingKind** _(type)_ - `type AgentPendingKind = "approval" | "budget" | "model" | "cancelled"`
+- **AgentPorts** _(interface)_ - `interface AgentPorts`
+- **AgentRunResult** _(type)_ - `type AgentRunResult<Output> = | AgentTurnResult<Output> | (AgentTurnBaseResult & { readonly status: "suspended" readonly pending: AgentPendingContinuation readonly reason: "max_turns" })`
+- **AgentStateStore** _(interface)_ - `interface AgentStateStore`
+- **AgentStatus** _(type)_ - `type AgentStatus = "continue" | "completed" | "suspended"`
+- **AgentStepEvidence** _(interface)_ - `interface AgentStepEvidence`
+- **AgentTelemetryPort** _(interface)_ - `interface AgentTelemetryPort`
+- **AgentToolContract** _(type)_ - `type AgentToolContract = ToolContract<any, any>`
+  Heterogeneous tool collection used by an agent definition. Runtime schemas remain authoritative.
+- **AgentToolDescriptor** _(interface)_ - `interface AgentToolDescriptor`
+- **AgentToolResult** _(interface)_ - `interface AgentToolResult`
+- **AgentTranscript** _(interface)_ - `interface AgentTranscript`
+- **AgentTurnBaseResult** _(interface)_ - `interface AgentTurnBaseResult`
+- **AgentTurnError** _(interface)_ - `interface AgentTurnError`
+- **AgentTurnInput** _(interface)_ - `interface AgentTurnInput`
+- **AgentTurnResult** _(type)_ - `type AgentTurnResult<Output>`
+- **AgentTurnState** _(interface)_ - `interface AgentTurnState`
+- **ExecutionPolicy** _(interface)_ - `interface ExecutionPolicy`
+  A public, token-only execution policy. It describes a required capability; it is not an isolation mechanism by itself.
+- **ExecutionPolicyAdapter** _(interface)_ - `interface ExecutionPolicyAdapter`
+  An adapter that can prove whether it satisfies a contract's execution policy.
+- **LOCAL_PROCESS_LIMITATION** _(const)_ - `LOCAL_PROCESS_LIMITATION: "The local adapter is NOT a security boundary."`
+  This statement is intentionally repeated in the API and runtime result.
+- **LocalProcessAdapter** _(interface)_ - `interface LocalProcessAdapter`
+- **LocalProcessAdapterOptions** _(interface)_ - `interface LocalProcessAdapterOptions`
+- **LocalProcessPolicyError** _(class)_ - `class LocalProcessPolicyError`
+- **LocalProcessRequest** _(interface)_ - `interface LocalProcessRequest`
+- **LocalProcessResult** _(interface)_ - `interface LocalProcessResult`
+- **MemoryAgentStateStore** _(class)_ - `class MemoryAgentStateStore`
+- **RunAgentOptions** _(interface)_ - `interface RunAgentOptions`
+- **createAgentState** _(function)_ - `createAgentState: (turnId: string) => AgentTurnState`
+- **createLocalProcessAdapter** _(function)_ - `createLocalProcessAdapter: (options?: LocalProcessAdapterOptions) => LocalProcessAdapter`
+  Run a command with the host controls available to a normal child process. The local adapter is NOT a security boundary. Without OS-level sandboxing it contains crashes and accidents, not hostile code.
+- **replayAgent** _(function)_ - `replayAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>, input: AgentTurnInput, ports: Omit<AgentPorts, "model">, transcript: Age…`
+- **resumeAgent** _(function)_ - `resumeAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>, turnId: string, input: AgentTurnInput, ports: AgentPorts, options?: Omit…`
+  Load a saved token-only state record and continue a bounded run.
+- **runAgent** _(function)_ - `runAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>, input: AgentTurnInput, ports: AgentPorts, options: RunAgentOptions) => Prom…`
+- **turn** _(function)_ - `turn: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>, state: AgentTurnState, input: AgentTurnInput, ports: AgentPorts) => Promise<Age…`
+
 ## @nifrajs/agent-telemetry
 
 - **AgentTelemetryOptions** _(interface)_ - `interface AgentTelemetryOptions`
@@ -163,6 +211,37 @@ Every public export of every package and documented subpath - name, kind, signat
 - **runRuleRegistry** _(function)_ - `runRuleRegistry: (ctx: RuleContext, builtIns: readonly CheckRule[], packs?: readonly RulePack[]) => Promise<Diagnostic[]>`
 - **sourceIndex** _(function)_ - `sourceIndex: (files: readonly SourceFile[]) => SourceIndex`
 - **validateRulePacks** _(function)_ - `validateRulePacks: (packs: readonly RulePack[] | undefined) => readonly RulePack[]`
+
+### `@nifrajs/cli/work-graph`
+
+- **BuildFreshness** _(interface)_ - `interface BuildFreshness`
+- **EvidenceBundle** _(interface)_ - `interface EvidenceBundle`
+- **ImpactReport** _(interface)_ - `interface ImpactReport`
+- **ProjectWorkGraphResult** _(interface)_ - `interface ProjectWorkGraphResult`
+- **ProofEvidence** _(interface)_ - `interface ProofEvidence`
+- **ProofKind** _(type)_ - `type ProofKind = "typecheck" | "contract" | "assurance" | "suite"`
+- **ProofPlan** _(interface)_ - `interface ProofPlan`
+- **ProofStatus** _(type)_ - `type ProofStatus = "pass" | "fail" | "skip" | "pending"`
+- **ProofStep** _(interface)_ - `interface ProofStep`
+- **StaleBuildError** _(class)_ - `class StaleBuildError`
+- **WorkGraph** _(interface)_ - `interface WorkGraph`
+- **WorkGraphBuildInput** _(interface)_ - `interface WorkGraphBuildInput`
+- **WorkGraphEdge** _(interface)_ - `interface WorkGraphEdge`
+- **WorkGraphNode** _(interface)_ - `interface WorkGraphNode`
+- **WorkGraphNodeKind** _(type)_ - `type WorkGraphNodeKind = | "route" | "schema" | "capability" | "assurance" | "test" | "file" | "manifest"`
+- **WorkGraphSourceFile** _(interface)_ - `interface WorkGraphSourceFile`
+- **buildProjectWorkGraph** _(function)_ - `buildProjectWorkGraph: (input: WorkGraphBuildInput, options?: { readonly changedFiles?: readonly string[]; readonly minLevel?: number; }) => Promise<ProjectWorkGraphResult>`
+- **buildWorkGraph** _(function)_ - `buildWorkGraph: (input: WorkGraphBuildInput) => Promise<WorkGraph>`
+- **collectProjectWorkGraph** _(function)_ - `collectProjectWorkGraph: (cwd: string, options?: { readonly changedFiles?: readonly string[]; readonly minLevel?: number; }) => Promise<ProjectWorkGraphResult>`
+- **createEvidenceBundle** _(function)_ - `createEvidenceBundle: (graph: WorkGraph, impact: ImpactReport, plan: ProofPlan, proofs?: readonly ProofEvidence[]) => EvidenceBundle`
+- **evaluateBuildFreshness** _(function)_ - `evaluateBuildFreshness: (input: { readonly hasArtifact: boolean; readonly newestSourceMs: number; readonly newestBuildMs: number; readonly buildDir?: string; }) => BuildFreshness`
+- **inspectBuildFreshness** _(function)_ - `inspectBuildFreshness: (cwd: string) => Promise<BuildFreshness>`
+- **planProofs** _(function)_ - `planProofs: (graph: WorkGraph, impact: ImpactReport, targetLevel?: number) => ProofPlan`
+- **queryImpact** _(function)_ - `queryImpact: (graph: WorkGraph, changedFiles: readonly string[]) => ImpactReport`
+- **recordProof** _(function)_ - `recordProof: (bundle: EvidenceBundle, proof: ProofEvidence) => EvidenceBundle`
+- **renderWorkGraphJson** _(function)_ - `renderWorkGraphJson: (result: ProjectWorkGraphResult) => string`
+- **renderWorkGraphText** _(function)_ - `renderWorkGraphText: (result: ProjectWorkGraphResult) => string`
+- **runWorkGraph** _(function)_ - `runWorkGraph: (cwd: string, options?: { readonly changedFiles?: readonly string[]; readonly minLevel?: number; readonly json?: boolean; }) => Promise<boolean>`
 
 ## @nifrajs/client
 
@@ -884,6 +963,18 @@ Every public export of every package and documented subpath - name, kind, signat
   Lightweight aggregate evidence shared by request idempotency and full owned-effect runners.
 - **createEffectScope** _(function)_ - `createEffectScope: (options?: EffectScopeOptions, evidenceScope?: EffectEvidenceScope) => EffectScope`
 
+### `@nifrajs/core/execution-policy`
+
+- **ExecutionFilesystemScope** _(type)_ - `type ExecutionFilesystemScope = "none" | "cwd" | "declared"`
+  The filesystem access a child process is expected to have.
+- **ExecutionNetworkAccess** _(type)_ - `type ExecutionNetworkAccess = "deny" | "allow"`
+  Network access requested by an execution policy.
+- **ExecutionPolicy** _(interface)_ - `interface ExecutionPolicy`
+  A public, token-only execution policy. It describes a required capability; it is not an isolation mechanism by itself.
+- **ExecutionPolicyAdapter** _(interface)_ - `interface ExecutionPolicyAdapter`
+  An adapter that can prove whether it satisfies a contract's execution policy.
+- **defineExecutionPolicy** _(function)_ - `defineExecutionPolicy: (policy: ExecutionPolicy) => ExecutionPolicy`
+
 ### `@nifrajs/core/idempotency`
 
 - **DEFAULT_IDEMPOTENCY_HEADER** _(const)_ - `DEFAULT_IDEMPOTENCY_HEADER: "idempotency-key"`
@@ -1369,6 +1460,43 @@ Every public export of every package and documented subpath - name, kind, signat
 - **typedSSEStream** _(function)_ - `typedSSEStream: <Event>(stream: SSEStream) => TypedSSEStream<Event>`
   Wrap a raw {@link SSEStream} in the typed, JSON-serializing surface `app.sse()` hands out.
 
+### `@nifrajs/core/tool-contract`
+
+- **CreateToolBudgetOptions** _(interface)_ - `interface CreateToolBudgetOptions`
+- **MemoryToolIdempotencyStore** _(class)_ - `class MemoryToolIdempotencyStore`
+- **MemoryToolIdempotencyStoreOptions** _(interface)_ - `interface MemoryToolIdempotencyStoreOptions`
+- **ToolAdapter** _(interface)_ - `interface ToolAdapter`
+- **ToolAdapterResult** _(type)_ - `type ToolAdapterResult<Output = unknown>`
+- **ToolAnnotations** _(interface)_ - `interface ToolAnnotations`
+- **ToolApproval** _(type)_ - `type ToolApproval = | { readonly granted: true; readonly level?: number } | { readonly granted: false; readonly reason?: string }`
+- **ToolApprovalPolicy** _(type)_ - `type ToolApprovalPolicy = | { readonly kind: "none" } | { readonly kind: "required" } | { readonly kind: "threshold"; readonly level: number }`
+- **ToolBudget** _(interface)_ - `interface ToolBudget`
+- **ToolCallOptions** _(interface)_ - `interface ToolCallOptions`
+- **ToolCallResult** _(type)_ - `type ToolCallResult<Output>`
+- **ToolConformanceResult** _(interface)_ - `interface ToolConformanceResult`
+- **ToolContract** _(interface)_ - `interface ToolContract<Input = unknown, Output = unknown>`
+- **ToolContractOptions** _(interface)_ - `interface ToolContractOptions<Input, Output, InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>`
+- **ToolError** _(interface)_ - `interface ToolError`
+- **ToolEvidence** _(interface)_ - `interface ToolEvidence`
+- **ToolEvidenceOutcome** _(type)_ - `type ToolEvidenceOutcome = | "passed" | "denied" | "failed" | "skipped" | "committed" | "dry-run"`
+- **ToolEvidenceStage** _(type)_ - `type ToolEvidenceStage = | "input" | "capability" | "policy" | "approval" | "idempotency" | "budget" | "execution" | "output"`
+- **ToolExecutionContext** _(interface)_ - `interface ToolExecutionContext`
+- **ToolHttpOptions** _(interface)_ - `interface ToolHttpOptions`
+- **ToolIdempotencyBeginInput** _(interface)_ - `interface ToolIdempotencyBeginInput`
+- **ToolIdempotencyBeginResult** _(type)_ - `type ToolIdempotencyBeginResult = | { readonly state: "new"; readonly reservation: string } | { readonly state: "duplicate" } | { readonly state: "in-flight" } | { readonly state: "capacity" }`
+- **ToolIdempotencyPolicy** _(interface)_ - `interface ToolIdempotencyPolicy<Input = unknown>`
+- **ToolIdempotencyStore** _(interface)_ - `interface ToolIdempotencyStore`
+- **ToolSensitivity** _(type)_ - `type ToolSensitivity = "public" | "internal" | "sensitive" | "secret"`
+- **createToolBudget** _(function)_ - `createToolBudget: (options: CreateToolBudgetOptions) => ToolBudget`
+- **createToolHttpHandler** _(function)_ - `createToolHttpHandler: <Input, Output>(tool: ToolContract<Input, Output>, options?: ToolHttpOptions) => (request: Request) => Promise<Response>`
+  Mount one contract behind a Web-standard handler. The handler accepts one JSON request body.
+- **defineTool** _(function)_ - `defineTool: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(options: ToolContractOptions<InferOutput<InputSchema>, InferOutput<OutputSchema>, InputSchema, OutputSchema>) => ToolContract<Inf…`
+- **executeTool** _(function)_ - `executeTool: <Input, Output>(tool: ToolContract<Input, Output>, input: unknown, options?: ToolCallOptions) => Promise<ToolCallResult<Output>>`
+- **runToolContractConformance** _(function)_ - `runToolContractConformance: (adapter: ToolAdapter, options: { readonly input: unknown; readonly capability: string; readonly approval: ToolApproval; readonly dryRun: ToolCallOptions; }) => Promise<ToolConformanceResult>`
+  Shared conformance assertions for adapters. It intentionally checks only public, token-only behavior.
+- **toolHttpResult** _(function)_ - `toolHttpResult: <Output>(result: ToolCallResult<Output>) => Response`
+- **toolInputJsonSchema** _(function)_ - `toolInputJsonSchema: <Input, Output>(tool: ToolContract<Input, Output>) => Record<string, unknown>`
+
 ### `@nifrajs/core/transport-codec`
 
 - **TransportCodec** _(interface)_ - `interface TransportCodec`
@@ -1788,6 +1916,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **McpToolAnnotations** _(interface)_ - `interface McpToolAnnotations`
   MCP tool safety hints (`readOnlyHint`/`destructiveHint`/…) surfaced in `tools/list`, per the MCP spec.
 - **McpToolContext** _(interface)_ - `interface McpToolContext`
+- **McpToolContractOptions** _(interface)_ - `interface McpToolContractOptions`
 - **McpToolHandlerResult** _(type)_ - `type McpToolHandlerResult`
   The ergonomic result an MCP-tool handler may return (coerced to the protocol's {@link McpToolResult}).
 - **McpToolResult** _(interface)_ - `interface McpToolResult`
@@ -1820,6 +1949,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → JSON-RPC response; GET → a plain-text health page; OPTIONS → CORS preflight. Never throws - a bad body becomes a JSON-RPC parse error. Dual-era: a modern (2026-07-28) POST that mirrors its method/name/vers…
 - **rpcError** _(const)_ - `rpcError: (id: JsonRpcId, code: number, message: string, data?: unknown) => JsonRpcResponse`
 - **rpcResult** _(const)_ - `rpcResult: (id: JsonRpcId, value: unknown) => JsonRpcResponse`
+- **toMcpTool** _(function)_ - `toMcpTool: <Input, Output>(tool: ToolContract<Input, Output>, options?: McpToolContractOptions) => McpTool`
+  Adapt a contract to MCP without creating a second validation or enforcement path.
 - **uiResourceMeta** _(function)_ - `uiResourceMeta: (uri: string) => Record<string, unknown>`
   The MCP Apps `_meta.ui.resourceUri` link.
 - **widgetDocument** _(function)_ - `widgetDocument: (opts: DefineMcpWidgetOptions) => string`
@@ -2358,6 +2489,7 @@ Every public export of every package and documented subpath - name, kind, signat
   A known-good request. Missing body/query values are synthesized from inspectable JSON Schema.
 - **CookieJar** _(interface)_ - `interface CookieJar`
   A tiny cookie jar for in-process tests - parses `Set-Cookie` off responses and emits a `Cookie` request header, so a login → authenticated-request flow works without threading headers by hand. It honours removal (`Max-Age=0` / a past `Expires`) so logout clears the cookie; other attributes (Domain/…
+- **CreateTrajectoryTranscriptOptions** _(interface)_ - `interface CreateTrajectoryTranscriptOptions`
 - **EffectLedger** _(type)_ - `type EffectLedger = SealedEffectLedger`
 - **FailureDirective** _(type)_ - `type FailureDirective`
 - **FailureEvidence** _(interface)_ - `interface FailureEvidence`
@@ -2371,6 +2503,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **FailureScenarioReport** _(interface)_ - `interface FailureScenarioReport`
 - **FaultProfile** _(interface)_ - `interface FaultProfile`
   A named adapter profile composed from the deterministic failure laboratory.
+- **FaultProfileFault** _(interface)_ - `interface FaultProfileFault`
+- **FaultProfileFaultKind** _(type)_ - `type FaultProfileFaultKind = | "tool-error" | "malformed-model-output" | "budget-pressure" | "approval-denial" | "cancellation"`
 - **FaultProfileReport** _(interface)_ - `interface FaultProfileReport`
 - **FaultProfileScenario** _(interface)_ - `interface FaultProfileScenario`
 - **FaultProfileScenarioReport** _(interface)_ - `interface FaultProfileScenarioReport`
@@ -2381,22 +2515,33 @@ Every public export of every package and documented subpath - name, kind, signat
 - **IncidentReplayError** _(class)_ - `class IncidentReplayError`
 - **IncidentReplayResult** _(interface)_ - `interface IncidentReplayResult`
 - **ReplayIncidentOptions** _(interface)_ - `interface ReplayIncidentOptions`
+- **ReplayTrajectoryOptions** _(interface)_ - `interface ReplayTrajectoryOptions`
 - **RunFaultProfileOptions** _(interface)_ - `interface RunFaultProfileOptions`
 - **TestSession** _(interface)_ - `interface TestSession<App>`
 - **TestSessionOptions** _(interface)_ - `interface TestSessionOptions`
+- **TrajectoryInvariantId** _(type)_ - `type TrajectoryInvariantId = | "ledger-evidence" | "capability-admission" | "budget-monotonic" | "bounded-stop" | "resumable-suspension"`
+- **TrajectoryInvariantOptions** _(interface)_ - `interface TrajectoryInvariantOptions`
+- **TrajectoryInvariantResult** _(interface)_ - `interface TrajectoryInvariantResult`
+- **TrajectoryReplayResult** _(interface)_ - `interface TrajectoryReplayResult<Output>`
+- **TrajectoryRun** _(interface)_ - `interface TrajectoryRun<Output>`
+- **TrajectoryTranscript** _(interface)_ - `interface TrajectoryTranscript`
 - **assertAdapterCertification** _(function)_ - `assertAdapterCertification: (report: AdapterCertificationReport) => void`
 - **assertAdversarialContract** _(function)_ - `assertAdversarialContract: (app: ContractTestApp, options?: AdversarialContractOptions) => Promise<AdversarialContractReport>`
   Run the contract laboratory and throw an {@link AdversarialContractError} unless it is fully green.
 - **assertIncidentReplays** _(function)_ - `assertIncidentReplays: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<void>`
   Assert a captured incident still reproduces against the current app. Throws {@link IncidentReplayError}.
+- **assertTrajectoryInvariants** _(function)_ - `assertTrajectoryInvariants: (result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions) => void`
 - **cacheStoreCertificationProfile** _(function)_ - `cacheStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableCacheStore>`
 - **captureIncident** _(function)_ - `captureIncident: (request: Request | CapturedRequestInput, response: Response | { status: number; body?: unknown; }, options?: CaptureIncidentOptions) => Promise<IncidentCapsule>`
   Build a capsule from a real `Request`+`Response`, or from plain captured fields.
 - **certifyAdapter** _(function)_ - `certifyAdapter: <Adapter>(options: { readonly profile: AdapterCertificationProfile<Adapter>; readonly adapterId: string; readonly createAdapter: () => Adapter | Promise<Adapter>; readonly cleanup?: (adapter: Adapter) =>…`
+- **checkTrajectoryInvariants** _(function)_ - `checkTrajectoryInvariants: (result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions) => readonly TrajectoryInvariantResult[]`
 - **cookieJar** _(function)_ - `cookieJar: () => CookieJar`
   Create an empty cookie jar.
 - **createFailureLab** _(function)_ - `createFailureLab: (options: FailureLabOptions) => FailureLab`
   Build one isolated deterministic controller. Construct a fresh lab for every replay.
+- **createTrajectoryTranscript** _(function)_ - `createTrajectoryTranscript: (transcript: AgentTranscript, options?: CreateTrajectoryTranscriptOptions) => Promise<TrajectoryTranscript>`
+  Record the transcript emitted by a turn without adding a second execution recording path.
 - **defineCertificationProfile** _(function)_ - `defineCertificationProfile: <Adapter>(profile: AdapterCertificationProfile<Adapter>) => AdapterCertificationProfile<Adapter>`
   Define and validate a custom domain/provider profile at module initialization.
 - **defineFaultProfile** _(function)_ - `defineFaultProfile: (profile: FaultProfile) => FaultProfile`
@@ -2404,27 +2549,38 @@ Every public export of every package and documented subpath - name, kind, signat
 - **eventDeliveryCertificationProfile** _(function)_ - `eventDeliveryCertificationProfile: () => AdapterCertificationProfile<CertifiableEventDeliveryAdapter>`
 - **generateRegressionTest** _(function)_ - `generateRegressionTest: (capsule: IncidentCapsule, options?: GenerateRegressionTestOptions) => string`
   Emit a committable regression test from a capsule. Request string values are redacted BY DEFAULT with a sanitize banner - replace the `<redacted>` placeholders with safe, reproducing values before you commit. The test asserts the response contract via {@link assertIncidentReplays}.
+- **httpToolAdapter** _(function)_ - `httpToolAdapter: <Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: Omit<ToolCallOptions, "signal" | "ledger">) => ToolAdapter`
+  Exercise the Web adapter while returning the same normalized result shape as direct calls.
+- **inProcessToolAdapter** _(function)_ - `inProcessToolAdapter: <Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: ToolCallOptions) => ToolAdapter`
 - **jobStoreCertificationProfile** _(function)_ - `jobStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableJobStore>`
+- **mcpToolAdapter** _(function)_ - `mcpToolAdapter: <Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: Omit<ToolCallOptions, "signal" | "ledger">) => ToolAdapter`
 - **proveIdempotency** _(function)_ - `proveIdempotency: (options: { readonly run: () => Promise<EffectLedger> | EffectLedger; readonly runs?: number; }) => Promise<IdempotencyProof>`
   Run a token-only effect workload repeatedly and report the first stable replay differences.
+- **recordTrajectory** _(const)_ - `recordTrajectory: (transcript: AgentTranscript, options?: CreateTrajectoryTranscriptOptions) => Promise<TrajectoryTranscript>`
+  Alias that reads naturally at a call site which has just completed a run.
 - **redactForEmission** _(function)_ - `redactForEmission: (value: unknown, allow: ReadonlySet<string>, path?: string) => unknown`
   Redact leaf string values by default (unless the dotted key path is allow-listed). Non-strings are kept - they carry the structure that makes the fixture reproduce - so review the emitted file. This is intentionally aggressive: a committed fixture must not leak PII/secrets.
 - **referenceFaultProfile** _(const)_ - `referenceFaultProfile: FaultProfile`
   A small smoke profile for consumers that only need to verify the harness wiring.
 - **replayIncident** _(function)_ - `replayIncident: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<IncidentReplayResult>`
   Replay a captured incident against the current app and report whether it reproduces.
+- **replayTrajectory** _(function)_ - `replayTrajectory: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>, input: AgentTurnInput, ports: Omit<AgentPorts, "model">, transcript…`
+  Replay a recorded run with local model decisions and dry-run tools. The supplied model port is never called. Fault schedules use the existing deterministic failure-lab controller.
 - **runAdversarialContract** _(function)_ - `runAdversarialContract: (app: ContractTestApp, options?: AdversarialContractOptions) => Promise<AdversarialContractReport>`
   Execute contract-derived hostile inputs and declared-response conformance against a runtime matrix. Runtime/request failures are captured in the report; inspect `report.ok`, `failures`, and `gaps` (or use {@link assertAdversarialContract} for a throwing test assertion).
 - **runFailureScenario** _(function)_ - `runFailureScenario: <Output>(scenario: FailureScenario<Output>, options: FailureLabOptions) => Promise<FailureScenarioReport>`
   Run one scenario and evaluate its post-failure invariant without leaking its result or error text.
 - **runFaultProfile** _(function)_ - `runFaultProfile: (profile: FaultProfile, options?: RunFaultProfileOptions) => Promise<FaultProfileReport>`
   Run every profile scenario with the same deterministic seed and failure schedule.
+- **runTrajectory** _(function)_ - `runTrajectory: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>, input: AgentTurnInput, ports: AgentPorts, options: { readonly state: A…`
 - **runtimeAdapterCertificationProfile** _(function)_ - `runtimeAdapterCertificationProfile: () => AdapterCertificationProfile<CertifiableRuntimeAdapter>`
 - **shapeOf** _(function)_ - `shapeOf: (value: unknown) => unknown`
   A stable structural fingerprint: keys + value *types*, not values. Used for the optional shape check.
 - **storageAdapterCertificationProfile** _(function)_ - `storageAdapterCertificationProfile: (options?: { readonly paging?: boolean; readonly presign?: boolean; readonly move?: boolean; }) => AdapterCertificationProfile<CertifiableStorageAdapter>`
 - **testSession** _(function)_ - `testSession: <App extends AppLike>(app: App, options?: TestSessionOptions) => TestSession<App>`
   Create a cookie-persisting in-process test client for `app`.
+- **testToolAdapter** _(function)_ - `testToolAdapter: <Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: ToolCallOptions) => ToolAdapter`
+- **trajectoryRegressionId** _(function)_ - `trajectoryRegressionId: (transcript: TrajectoryTranscript, faultProfile: string, invariant: TrajectoryInvariantId) => Promise<string>`
 - **verifyAdapterCertification** _(function)_ - `verifyAdapterCertification: (report: AdapterCertificationReport) => Promise<boolean>`
   Recompute the portable evidence hash. Consumers should verify before trusting a stored report.
 

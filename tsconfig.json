@@ -56,6 +56,7 @@
       "@nifrajs/prompt": ["./packages/prompt/src/index.ts"],
       "@nifrajs/mcp-db": ["./packages/mcp-db/src/index.ts"],
       "@nifrajs/agent-telemetry": ["./packages/agent-telemetry/src/index.ts"],
+      "@nifrajs/agent": ["./packages/agent/src/index.ts"],
       "@nifrajs/devtools": ["./packages/devtools/src/index.ts"],
       "@nifrajs/devtools/client": ["./packages/devtools/src/client.ts"],
       "@nifrajs/test-utils": ["./internal/test-utils/src/index.ts"],

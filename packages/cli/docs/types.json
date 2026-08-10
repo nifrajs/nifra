@@ -143,11 +143,71 @@
     "signature": "export interface AdversarialContractResult {\n    readonly id: string;\n    readonly route: string;\n    readonly runtime: string;\n    readonly kind: ContractCaseKind;\n    readonly target: ContractTarget;\n    readonly mutation?: string;\n    readonly ok: boolean;\n    readonly status?: number;\n    readonly message: string;\n    /** Number of successful greedy reductions applied to a failing hostile input. */\n    readonly shrinkSteps?: number;\n    readonly replay: ContractReplay;\n}"
   },
   {
+    "name": "AgentApprovalPort",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentApprovalPort {\n    request(input: {\n        readonly turnId: string;\n        readonly effectId: string;\n        readonly tool: string;\n        readonly capability: string;\n        readonly signal: AbortSignal;\n    }): AgentApprovalResult | PromiseLike<AgentApprovalResult>;\n}"
+  },
+  {
+    "name": "AgentApprovalResult",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type AgentApprovalResult = {\n    readonly status: \"approved\";\n    readonly approval: ToolApproval;\n} | {\n    readonly status: \"denied\";\n    readonly reason?: string;\n} | {\n    readonly status: \"pending\";\n    readonly effectId: string;\n};"
+  },
+  {
+    "name": "AgentDefinition",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentDefinition<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1> {\n    readonly name: string;\n    readonly instruction: string;\n    readonly input: InputSchema;\n    readonly output: OutputSchema;\n    readonly tools: readonly AgentToolContract[];\n    /** Dimensionless counters charged once per model decision. */\n    readonly modelCost?: EffectCost;\n}"
+  },
+  {
     "name": "AgentFileSpec",
     "kind": "interface",
     "package": "create-nifra",
     "signature": "export interface AgentFileSpec {\n    /** Path relative to the project root (POSIX-style; the caller joins onto the cwd). */\n    readonly path: string;\n    /** A human label for the \"wrote/skipped\" report. */\n    readonly label: string;\n}",
     "doc": "/** Identifies a generated agent-discovery file: where it goes (relative to the project root) and how to\n * produce its content. `merge` is for files that augment an existing one (AGENTS.md) rather than own it. */"
+  },
+  {
+    "name": "AgentModelPort",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentModelPort {\n    /** Provider output is unknown until the response parser accepts it. */\n    complete(request: AgentModelRequest): unknown | PromiseLike<unknown>;\n}"
+  },
+  {
+    "name": "AgentModelRequest",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentModelRequest {\n    readonly agent: string;\n    readonly instruction: string;\n    readonly input: unknown;\n    readonly state: AgentTurnState;\n    readonly tools: readonly AgentToolDescriptor[];\n    readonly toolResult?: AgentToolResult;\n    readonly previousOutput?: unknown;\n    readonly signal: AbortSignal;\n}"
+  },
+  {
+    "name": "AgentModelResponse",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type AgentModelResponse = {\n    readonly kind: \"output\";\n    readonly value: unknown;\n} | {\n    readonly kind: \"tool\";\n    readonly name: string;\n    readonly input: unknown;\n};"
+  },
+  {
+    "name": "AgentPendingContinuation",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentPendingContinuation {\n    readonly kind: AgentPendingKind;\n    readonly tool?: string;\n    readonly input?: unknown;\n    readonly effectId: string;\n}"
+  },
+  {
+    "name": "AgentPendingKind",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type AgentPendingKind = \"approval\" | \"budget\" | \"model\" | \"cancelled\";"
+  },
+  {
+    "name": "AgentPorts",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentPorts {\n    readonly model: AgentModelPort;\n    readonly capabilities: readonly string[];\n    readonly budget?: ToolBudget;\n    readonly idempotency?: ToolIdempotencyStore;\n    readonly state?: AgentStateStore;\n    readonly approval?: AgentApprovalPort;\n    readonly telemetry?: AgentTelemetryPort;\n    readonly clock?: () => number;\n    /** Adapter used to satisfy execution policies declared by tool contracts. */\n    readonly executionPolicy?: ExecutionPolicyAdapter;\n    /** Injectable token generator for deterministic replay and tests. */\n    readonly idFactory?: () => string;\n    readonly signal?: AbortSignal;\n    /** Replay mode skips every tool executor and marks the call dry-run. */\n    readonly dryRun?: boolean;\n}"
+  },
+  {
+    "name": "AgentRunResult",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type AgentRunResult<Output> = AgentTurnResult<Output> | (AgentTurnBaseResult & {\n    readonly status: \"suspended\";\n    readonly pending: AgentPendingContinuation;\n    readonly reason: \"max_turns\";\n});"
   },
   {
     "name": "AGENTS_MD_PATH",
@@ -163,6 +223,24 @@
     "doc": "/**\n * The \"## MCP server\" section appended to a scaffolded (or retrofitted) `AGENTS.md`, so non-Claude\n * agents (Cursor, and anything that reads `AGENTS.md`) also learn the MCP exists and what to prefer.\n * Mirrors the CLAUDE.md preamble's guidance without the Claude-specific `@import`.\n */"
   },
   {
+    "name": "AgentStateStore",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentStateStore {\n    load(turnId: string): AgentTurnState | undefined | PromiseLike<AgentTurnState | undefined>;\n    save(state: AgentTurnState): void | PromiseLike<void>;\n}"
+  },
+  {
+    "name": "AgentStatus",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type AgentStatus = \"continue\" | \"completed\" | \"suspended\";"
+  },
+  {
+    "name": "AgentStepEvidence",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentStepEvidence {\n    readonly seq: number;\n    readonly at: number;\n    readonly kind: \"model\" | \"tool\" | \"approval\" | \"budget\" | \"state\";\n    readonly outcome: \"started\" | \"passed\" | \"failed\" | \"denied\" | \"suspended\" | \"committed\";\n    readonly name?: string;\n    readonly effectId?: string;\n    readonly code?: string;\n    readonly ledgerHead?: string;\n}"
+  },
+  {
     "name": "agentTelemetry",
     "kind": "function",
     "package": "@nifrajs/agent-telemetry",
@@ -174,6 +252,67 @@
     "kind": "interface",
     "package": "@nifrajs/agent-telemetry",
     "signature": "export interface AgentTelemetryOptions {\n    /** Exporter that receives completed tool-call spans. */\n    readonly exporter: ObservationAdapter;\n    /** Path prefix for nifra tool routes (default `\"/_nifra/tool/\"`). */\n    readonly toolPathPrefix?: string | undefined;\n    /** Path for the MCP endpoint (default `\"/mcp\"`). */\n    readonly mcpPath?: string | undefined;\n}"
+  },
+  {
+    "name": "AgentTelemetryPort",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentTelemetryPort {\n    step(evidence: AgentStepEvidence): void | PromiseLike<void>;\n}"
+  },
+  {
+    "name": "AgentToolContract",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type AgentToolContract = ToolContract<any, any>;",
+    "doc": "/** Heterogeneous tool collection used by an agent definition. Runtime schemas remain authoritative. */"
+  },
+  {
+    "name": "AgentToolDescriptor",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentToolDescriptor {\n    readonly name: string;\n    readonly description: string;\n    readonly inputSchema: Record<string, unknown>;\n    readonly capability: string;\n}"
+  },
+  {
+    "name": "AgentToolResult",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentToolResult {\n    readonly name: string;\n    readonly ok: boolean;\n    readonly output?: unknown;\n    readonly error?: ToolError | {\n        readonly code: \"unknown_tool\" | \"invalid_model_response\";\n        readonly stage: \"execution\";\n    };\n}"
+  },
+  {
+    "name": "AgentTranscript",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentTranscript {\n    readonly version: 1;\n    readonly turnId: string;\n    readonly responses: readonly AgentModelResponse[];\n    readonly evidence: readonly AgentStepEvidence[];\n}"
+  },
+  {
+    "name": "AgentTurnBaseResult",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentTurnBaseResult {\n    readonly state: AgentTurnState;\n    readonly evidence: readonly AgentStepEvidence[];\n    readonly transcript: AgentTranscript;\n}"
+  },
+  {
+    "name": "AgentTurnError",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentTurnError {\n    readonly code: \"input_invalid\" | \"output_invalid\" | \"model_failed\";\n    readonly issues?: readonly StandardIssue[];\n}"
+  },
+  {
+    "name": "AgentTurnInput",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentTurnInput {\n    readonly value: unknown;\n    readonly toolResult?: AgentToolResult;\n    readonly previousOutput?: unknown;\n    readonly resume?: {\n        readonly continuation: AgentPendingContinuation;\n        readonly approval?: ToolApproval;\n    };\n}"
+  },
+  {
+    "name": "AgentTurnResult",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type AgentTurnResult<Output> = (AgentTurnBaseResult & {\n    readonly status: \"completed\";\n    readonly output: Output;\n    readonly error?: never;\n}) | (AgentTurnBaseResult & {\n    readonly status: \"completed\";\n    readonly error: AgentTurnError;\n    readonly output?: never;\n}) | (AgentTurnBaseResult & {\n    readonly status: \"continue\";\n    readonly toolResult: AgentToolResult;\n}) | (AgentTurnBaseResult & {\n    readonly status: \"suspended\";\n    readonly pending: AgentPendingContinuation;\n    readonly reason: \"approval\" | \"budget\" | \"model\" | \"cancelled\";\n});"
+  },
+  {
+    "name": "AgentTurnState",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentTurnState {\n    readonly version: 1;\n    readonly turnId: string;\n    readonly step: number;\n    readonly status: \"ready\" | \"suspended\" | \"completed\";\n    readonly evidence: readonly AgentStepEvidence[];\n    readonly pending?: {\n        readonly kind: AgentPendingKind;\n        readonly tool?: string;\n        readonly effectId: string;\n    };\n}"
   },
   {
     "name": "aggregateSizeReport",
@@ -398,6 +537,12 @@
     "package": "@nifrajs/storage",
     "signature": "export declare function assertStorageAdapterConformance(options: StorageAdapterConformanceOptions): Promise<void>;",
     "doc": "/**\n * Execute the observable {@link StorageAdapter} contract without depending on a test runner.\n *\n * The adapter must be isolated because this writes deterministic conformance keys. The promise resolves\n * only after proving byte + metadata round-trips, overwrite, missing/delete semantics, prefix/limit listing,\n * and uniform unsafe-key rejection across every key-taking method. When the adapter also implements an\n * optional capability ({@link PagedStorageAdapter}, {@link PresignableStorageAdapter},\n * {@link MovableStorageAdapter}), that capability's contract is proven too - implementing a capability\n * partially or unsafely fails conformance rather than silently escaping it.\n */"
+  },
+  {
+    "name": "assertTrajectoryInvariants",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function assertTrajectoryInvariants(result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions): void;"
   },
   {
     "name": "assertTransportTextBounded",
@@ -1024,6 +1169,12 @@
     "doc": "/**\n * Format a client-build rejection for the guard's report. Bun.build rejects with an AggregateError\n * whose message is just \"Bundle failed\" - the actionable part (which file, which import) lives in\n * `.errors`. Surface it, or the guard reports a failure while hiding the reason.\n */"
   },
   {
+    "name": "BuildFreshness",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface BuildFreshness {\n    readonly ok: boolean;\n    readonly buildDir?: string;\n    readonly newestSourceMs?: number;\n    readonly newestBuildMs?: number;\n    readonly reason?: string;\n}"
+  },
+  {
     "name": "buildManifest",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -1055,6 +1206,12 @@
     "package": "@nifrajs/middleware",
     "signature": "export declare function buildOpenApiDocument(routes: readonly RouteLike[], options?: OpenApiOptions): Record<string, unknown>;",
     "doc": "/**\n * Build an OpenAPI 3.1 document from a route list. Delegates to `@nifrajs/schema`'s `toOpenAPI`, so a\n * route validated with `t` (TypeBox) emits full field-level request/query/response schemas plus\n * `$ref`-reused `components.schemas`; a BYO Standard Schema (zod/valibot/arktype) exposes no portable\n * JSON-Schema form, so its body/response is omitted (supply it via `options.operations`). Path params,\n * wildcards, tags, security, and servers always emit. Exported so you can also generate the doc at\n * build time (write it to disk in CI) without booting the server.\n */"
+  },
+  {
+    "name": "buildProjectWorkGraph",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function buildProjectWorkGraph(input: WorkGraphBuildInput, options?: {\n    readonly changedFiles?: readonly string[];\n    readonly minLevel?: number;\n}): Promise<ProjectWorkGraphResult>;"
   },
   {
     "name": "buildRouteManifest",
@@ -1129,6 +1286,12 @@
     "package": "@nifrajs/web",
     "signature": "export declare function buildTargetWith(target: BuildTarget, options: BuildTargetOptions, bundler: Bundler): Promise<BuildTargetResult>;",
     "doc": "/**\n * The bundler-agnostic deploy orchestrator: everything `buildTarget` does EXCEPT the two bundling steps,\n * which come from `bundler`. `buildTarget` passes {@link bunBundler}; `buildTargetVite`\n * (`@nifrajs/web/build-vite`) passes the Vite strategy. One orchestrator, so the deploy-dir shape,\n * server-entry codegen, prerender and size report are identical across pipelines.\n */"
+  },
+  {
+    "name": "buildWorkGraph",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function buildWorkGraph(input: WorkGraphBuildInput): Promise<WorkGraph>;"
   },
   {
     "name": "bunBundler",
@@ -1867,6 +2030,12 @@
     "signature": "export interface CheckRule {\n    readonly code: string;\n    readonly title: string;\n    scan(ctx: RuleContext): Promise<Diagnostic[]>;\n}"
   },
   {
+    "name": "checkTrajectoryInvariants",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function checkTrajectoryInvariants(result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions): readonly TrajectoryInvariantResult[];"
+  },
+  {
     "name": "ChunkSize",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -2036,6 +2205,12 @@
     "kind": "interface",
     "package": "@nifrajs/content",
     "signature": "export interface CollectionConfig<S extends StandardSchemaV1> {\n    /** Directory of content files, relative to the process cwd (or absolute). */\n    readonly dir: string;\n    /** Standard Schema validating each file's frontmatter. */\n    readonly schema: S;\n    /** File extensions to include (default `[\".md\", \".markdown\"]`). */\n    readonly extensions?: readonly string[];\n}"
+  },
+  {
+    "name": "collectProjectWorkGraph",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function collectProjectWorkGraph(cwd: string, options?: {\n    readonly changedFiles?: readonly string[];\n    readonly minLevel?: number;\n}): Promise<ProjectWorkGraphResult>;"
   },
   {
     "name": "combine",
@@ -2421,6 +2596,12 @@
     "doc": "/**\n * Build a capacity-admission controller. Pass the returned handle as the server's `admission` option.\n */"
   },
   {
+    "name": "createAgentState",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function createAgentState(turnId: string): AgentTurnState;"
+  },
+  {
     "name": "createApprovalCoordinator",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -2499,6 +2680,12 @@
     "doc": "/** Build a registry from a set of contracts. Throws on a duplicate `type@version`. */"
   },
   {
+    "name": "createEvidenceBundle",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function createEvidenceBundle(graph: WorkGraph, impact: ImpactReport, plan: ProofPlan, proofs?: readonly ProofEvidence[]): EvidenceBundle;"
+  },
+  {
     "name": "createFailureLab",
     "kind": "function",
     "package": "@nifrajs/testing",
@@ -2525,6 +2712,13 @@
     "package": "@nifrajs/image",
     "signature": "export declare function createImageHandler(options?: ImageHandlerOptions): (req: Request) => Promise<Response>;",
     "doc": "/**\n * Build the resize request handler. Mount its return value at the `selfHostedLoader` endpoint:\n *\n * ```ts\n * const image = createImageHandler({ root: \"./public\", allowedOrigins: [\"https://cdn.example\"] })\n * // inside your router: if (url.pathname === \"/_image\") return image(req)\n * ```\n */"
+  },
+  {
+    "name": "createLocalProcessAdapter",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function createLocalProcessAdapter(options?: LocalProcessAdapterOptions): LocalProcessAdapter;",
+    "doc": "/**\n * Run a command with the host controls available to a normal child process. The local adapter is NOT\n * a security boundary. Without OS-level sandboxing it contains crashes and accidents, not hostile code.\n */"
   },
   {
     "name": "createMatcher",
@@ -2705,6 +2899,38 @@
     "package": "@nifrajs/web",
     "signature": "export declare function createStylesheetEmitter(build: PluginBuilder, namespace: string): StylesheetEmitter;",
     "doc": "/**\n * Wire the virtual-CSS-module handlers onto `build` for `namespace`, returning an {@link StylesheetEmitter}.\n * The `namespace` must be a plain identifier (letters/`-`); it's used verbatim as the import suffix and\n * the Bun namespace. Only the `\"dom\"` build should emit CSS - the `\"ssr\"` build ships no stylesheet.\n */"
+  },
+  {
+    "name": "createToolBudget",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function createToolBudget(options: CreateToolBudgetOptions): ToolBudget;"
+  },
+  {
+    "name": "CreateToolBudgetOptions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface CreateToolBudgetOptions {\n    readonly limits: EffectCost;\n    readonly initial?: EffectCost;\n}"
+  },
+  {
+    "name": "createToolHttpHandler",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function createToolHttpHandler<Input, Output>(tool: ToolContract<Input, Output>, options?: ToolHttpOptions): (request: Request) => Promise<Response>;",
+    "doc": "/** Mount one contract behind a Web-standard handler. The handler accepts one JSON request body. */"
+  },
+  {
+    "name": "createTrajectoryTranscript",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function createTrajectoryTranscript(transcript: AgentTranscript, options?: CreateTrajectoryTranscriptOptions): Promise<TrajectoryTranscript>;",
+    "doc": "/** Record the transcript emitted by a turn without adding a second execution recording path. */"
+  },
+  {
+    "name": "CreateTrajectoryTranscriptOptions",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface CreateTrajectoryTranscriptOptions {\n    readonly faultProfile?: string;\n    readonly seed?: number;\n}"
   },
   {
     "name": "createTransportCodecRegistry",
@@ -3177,6 +3403,12 @@
     "doc": "/** Define a portable, versioned event contract. */"
   },
   {
+    "name": "defineExecutionPolicy",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function defineExecutionPolicy(policy: ExecutionPolicy): ExecutionPolicy;"
+  },
+  {
     "name": "defineFaultProfile",
     "kind": "function",
     "package": "@nifrajs/testing",
@@ -3260,6 +3492,12 @@
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function defineSaga<I, C extends Record<string, unknown>>(definition: SagaDefinition<I, C>): SagaDefinition<I, C>;"
+  },
+  {
+    "name": "defineTool",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function defineTool<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(options: ToolContractOptions<InferOutput<InputSchema>, InferOutput<OutputSchema>, InputSchema, OutputSchema>): ToolContract<InferOutput<InputSchema>, InferOutput<OutputSchema>>;"
   },
   {
     "name": "DehydratedState",
@@ -3961,6 +4199,12 @@
     "signature": "export interface ETagOptions {\n    /** Emit a weak validator (`W/\"…\"`). Default `true` - it's a content hash, not a byte-for-byte promise. */\n    readonly weak?: boolean;\n    /** Maximum response bytes to hash. Default `1_000_000`; larger responses pass through unchanged. */\n    readonly maxBytes?: number;\n}"
   },
   {
+    "name": "evaluateBuildFreshness",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function evaluateBuildFreshness(input: {\n    readonly hasArtifact: boolean;\n    readonly newestSourceMs: number;\n    readonly newestBuildMs: number;\n    readonly buildDir?: string;\n}): BuildFreshness;"
+  },
+  {
     "name": "evaluateCapabilityAssurance",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -4013,6 +4257,12 @@
     "signature": "export interface EventRegistry {\n    readonly contracts: readonly EventContract[];\n    /** Look up a contract by type + version (defaults to version 0). */\n    get(type: string, version?: number): EventContract | undefined;\n    /** Dispatch untrusted input to its contract by `type`/`version` and parse. Never throws. */\n    parse(input: unknown): RegistryParseResult;\n}"
   },
   {
+    "name": "EvidenceBundle",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface EvidenceBundle {\n    readonly version: 1;\n    readonly graphDigest: string;\n    readonly changedFiles: readonly string[];\n    readonly targetLevel: number;\n    readonly plan: ProofPlan;\n    readonly proofs: readonly ProofEvidence[];\n    readonly stop: {\n        readonly done: boolean;\n        readonly missing: readonly string[];\n        readonly next?: ProofStep;\n    };\n}"
+  },
+  {
     "name": "Example",
     "kind": "interface",
     "package": "@nifrajs/cli",
@@ -4041,6 +4291,12 @@
     "doc": "/**\n * Execute one owned effect behind a fail-closed capability boundary. The boundary assigns a stable\n * effect id, records intent before execution, and records exactly one terminal outcome automatically.\n * The callback result and errors never enter the token-only ledger.\n */"
   },
   {
+    "name": "executeTool",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function executeTool<Input, Output>(tool: ToolContract<Input, Output>, input: unknown, options?: ToolCallOptions): Promise<ToolCallResult<Output>>;"
+  },
+  {
     "name": "ExecutionContext",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -4053,6 +4309,48 @@
     "package": "nifra",
     "signature": "export interface ExecutionContext {\n    waitUntil(promise: Promise<unknown>): void;\n}",
     "doc": "/** A Cloudflare Workers-style execution context (the `fetch` 3rd arg). Structural - only\n * `waitUntil` is used; declared here so `@nifrajs/core` needs no Workers type dependency. */"
+  },
+  {
+    "name": "ExecutionFilesystemScope",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type ExecutionFilesystemScope = \"none\" | \"cwd\" | \"declared\";",
+    "doc": "/** The filesystem access a child process is expected to have. */"
+  },
+  {
+    "name": "ExecutionNetworkAccess",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type ExecutionNetworkAccess = \"deny\" | \"allow\";",
+    "doc": "/** Network access requested by an execution policy. */"
+  },
+  {
+    "name": "ExecutionPolicy",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface ExecutionPolicy {\n    readonly filesystem: ExecutionFilesystemScope;\n    readonly network: ExecutionNetworkAccess;\n    readonly timeMs: number;\n    readonly capabilityCeiling: readonly string[];\n}",
+    "doc": "/**\n * A public, token-only execution policy. It describes a required capability; it is not an\n * isolation mechanism by itself.\n */"
+  },
+  {
+    "name": "ExecutionPolicy",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ExecutionPolicy {\n    readonly filesystem: ExecutionFilesystemScope;\n    readonly network: ExecutionNetworkAccess;\n    readonly timeMs: number;\n    readonly capabilityCeiling: readonly string[];\n}",
+    "doc": "/**\n * A public, token-only execution policy. It describes a required capability; it is not an\n * isolation mechanism by itself.\n */"
+  },
+  {
+    "name": "ExecutionPolicyAdapter",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface ExecutionPolicyAdapter {\n    readonly name: string;\n    canSatisfy(policy: ExecutionPolicy): boolean | PromiseLike<boolean>;\n    /** Token-only limitations are suitable for evidence and diagnostics. */\n    limitations(policy: ExecutionPolicy): readonly string[];\n}",
+    "doc": "/** An adapter that can prove whether it satisfies a contract's execution policy. */"
+  },
+  {
+    "name": "ExecutionPolicyAdapter",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ExecutionPolicyAdapter {\n    readonly name: string;\n    canSatisfy(policy: ExecutionPolicy): boolean | PromiseLike<boolean>;\n    /** Token-only limitations are suitable for evidence and diagnostics. */\n    limitations(policy: ExecutionPolicy): readonly string[];\n}",
+    "doc": "/** An adapter that can prove whether it satisfies a contract's execution policy. */"
   },
   {
     "name": "exponentialBackoff",
@@ -4126,8 +4424,20 @@
     "name": "FaultProfile",
     "kind": "interface",
     "package": "@nifrajs/testing",
-    "signature": "export interface FaultProfile {\n    readonly name: string;\n    readonly scenarios: readonly FaultProfileScenario[];\n}",
+    "signature": "export interface FaultProfile {\n    readonly name: string;\n    readonly scenarios: readonly FaultProfileScenario[];\n    /** Optional trajectory faults consumed by the agent trajectory harness. */\n    readonly faults?: readonly FaultProfileFault[];\n    /** Existing deterministic failure-lab schedule shared by trajectory runs. */\n    readonly schedule?: readonly FailureDirective[];\n}",
     "doc": "/** A named adapter profile composed from the deterministic failure laboratory. */"
+  },
+  {
+    "name": "FaultProfileFault",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface FaultProfileFault {\n    readonly point: \"model\" | \"tool\" | \"effect\";\n    readonly kind: FaultProfileFaultKind;\n    readonly occurrence?: number;\n}"
+  },
+  {
+    "name": "FaultProfileFaultKind",
+    "kind": "type",
+    "package": "@nifrajs/testing",
+    "signature": "export type FaultProfileFaultKind = \"tool-error\" | \"malformed-model-output\" | \"budget-pressure\" | \"approval-denial\" | \"cancellation\";"
   },
   {
     "name": "FaultProfileReport",
@@ -4750,6 +5060,13 @@
     "doc": "/** What an interpolation may be: escaped primitives, nested templates/raw, arrays of the same.\n * `null`/`undefined`/`false` render as nothing (conditional rendering: `cond && html\\`…\\``). */"
   },
   {
+    "name": "httpToolAdapter",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function httpToolAdapter<Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: Omit<ToolCallOptions, \"signal\" | \"ledger\">): ToolAdapter;",
+    "doc": "/** Exercise the Web adapter while returning the same normalized result shape as direct calls. */"
+  },
+  {
     "name": "hydrate",
     "kind": "function",
     "package": "@nifrajs/web-preact",
@@ -5159,6 +5476,12 @@
     "doc": "/** The slice of `@nifrajs/image`'s `ImageBackend` this needs - `probe` for dims/format, `transform` to re-encode. */"
   },
   {
+    "name": "ImpactReport",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface ImpactReport {\n    readonly changedFiles: readonly string[];\n    readonly impactedNodes: readonly string[];\n    readonly impactedRoutes: readonly string[];\n}"
+  },
+  {
     "name": "implement",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -5282,6 +5605,18 @@
     "kind": "interface",
     "package": "@nifrajs/client",
     "signature": "export interface InProcessClientOptions extends Omit<ClientOptions, \"fetch\"> {\n    /**\n     * Assert every JSON response against the route's declared contract - `schema.response` for 2xx,\n     * `schema.errors[status]` for declared failures - and THROW on mismatch, so a handler whose real\n     * output drifts from its schema fails the test instead of passing silently. Statuses with no\n     * declared schema, non-JSON bodies, and 204/205/HEAD pass through unchecked. Test-focused: the\n     * check parses a clone of each JSON body, a cost that belongs in tests, not production hot paths.\n     */\n    readonly validateResponses?: boolean;\n}"
+  },
+  {
+    "name": "inProcessToolAdapter",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function inProcessToolAdapter<Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: ToolCallOptions): ToolAdapter;"
+  },
+  {
+    "name": "inspectBuildFreshness",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function inspectBuildFreshness(cwd: string): Promise<BuildFreshness>;"
   },
   {
     "name": "installForms",
@@ -5941,11 +6276,48 @@
     "signature": "export interface LoadGoogleFontResult {\n    readonly family: string;\n    /** A self-hosted `@font-face` stylesheet (one rule per written file). Import it from your app. */\n    readonly css: string;\n    /** Every file written to `outDir`. */\n    readonly assets: readonly FontAsset[];\n    /** `fontPreload()` link-attribute sets - spread the ones you want into a layout's `meta.link`.\n     * Preloading *every* weight/subset is wasteful; usually preload just the primary subset + weight. */\n    readonly preloads: readonly LinkDescriptor[];\n}"
   },
   {
+    "name": "LOCAL_PROCESS_LIMITATION",
+    "kind": "const",
+    "package": "@nifrajs/agent",
+    "signature": "export declare const LOCAL_PROCESS_LIMITATION = \"The local adapter is NOT a security boundary.\";",
+    "doc": "/** This statement is intentionally repeated in the API and runtime result. */"
+  },
+  {
     "name": "Locale",
     "kind": "type",
     "package": "@nifrajs/i18n",
     "signature": "export type Locale = string;",
     "doc": "/**\n * Locale negotiation - pick the best supported locale for a request, from (in priority order) an\n * explicit cookie, then the `Accept-Language` header (quality-ranked, with a base-tag fallback so\n * `fr-CA` matches a supported `fr`). Pure + runtime-agnostic.\n */"
+  },
+  {
+    "name": "LocalProcessAdapter",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface LocalProcessAdapter extends ExecutionPolicyAdapter {\n    run(request: LocalProcessRequest): Promise<LocalProcessResult>;\n}"
+  },
+  {
+    "name": "LocalProcessAdapterOptions",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface LocalProcessAdapterOptions {\n    readonly cwd?: string;\n    /** Only these inherited environment names are copied. Default: PATH, LANG, and LC_ALL. */\n    readonly envAllowlist?: readonly string[];\n    readonly maxOutputBytes?: number;\n}"
+  },
+  {
+    "name": "LocalProcessPolicyError",
+    "kind": "class",
+    "package": "@nifrajs/agent",
+    "signature": "export declare class LocalProcessPolicyError extends Error {\n    readonly code: \"policy_unsatisfied\" | \"invalid_request\" | \"cancelled\";\n    constructor(code: \"policy_unsatisfied\" | \"invalid_request\" | \"cancelled\");\n}"
+  },
+  {
+    "name": "LocalProcessRequest",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface LocalProcessRequest {\n    readonly command: string;\n    readonly args?: readonly string[];\n    readonly cwd?: string;\n    readonly env?: Readonly<Record<string, string | undefined>>;\n    readonly capability?: string;\n    readonly policy: ExecutionPolicy;\n    readonly signal?: AbortSignal;\n}"
+  },
+  {
+    "name": "LocalProcessResult",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface LocalProcessResult {\n    readonly ok: boolean;\n    readonly exitCode: number | null;\n    readonly signal?: string;\n    readonly stdout: string;\n    readonly stderr: string;\n    readonly timedOut: boolean;\n    readonly cancelled: boolean;\n    readonly limitations: readonly string[];\n}"
   },
   {
     "name": "Location",
@@ -6248,6 +6620,12 @@
     "signature": "export interface McpTool {\n    readonly name: string;\n    readonly description: string;\n    readonly inputSchema: Record<string, unknown>;\n    readonly annotations?: McpToolAnnotations;\n    readonly _meta?: Record<string, unknown>;\n    readonly handler: (args: Record<string, unknown>, context: McpToolContext) => Promise<string | McpToolResult>;\n}"
   },
   {
+    "name": "mcpToolAdapter",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function mcpToolAdapter<Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: Omit<ToolCallOptions, \"signal\" | \"ledger\">): ToolAdapter;"
+  },
+  {
     "name": "McpToolAnnotations",
     "kind": "interface",
     "package": "@nifrajs/mcp",
@@ -6259,6 +6637,12 @@
     "kind": "interface",
     "package": "@nifrajs/mcp",
     "signature": "export interface McpToolContext {\n    readonly signal: AbortSignal;\n    readonly requestId: JsonRpcId;\n    readonly progressToken?: ProgressToken;\n    readonly reportProgress: (progress: number, total?: number) => void;\n}"
+  },
+  {
+    "name": "McpToolContractOptions",
+    "kind": "interface",
+    "package": "@nifrajs/mcp",
+    "signature": "export interface McpToolContractOptions extends Omit<ToolCallOptions, \"signal\" | \"ledger\"> {\n    readonly capabilities?: readonly string[];\n}"
   },
   {
     "name": "McpToolHandlerResult",
@@ -6300,6 +6684,12 @@
     "kind": "interface",
     "package": "@nifrajs/content",
     "signature": "export interface MdxPluginOptions {\n    /** JSX runtime source the compiled MDX imports from - `\"react\"` (default), `\"preact\"`, `\"solid-js\"`. */\n    readonly jsxImportSource?: string;\n    /** Emit development JSX (line numbers, `jsxDEV`). Default `false`. */\n    readonly development?: boolean;\n    /** Extra `@mdx-js/mdx` `compile` options - e.g. `remarkPlugins`/`rehypePlugins` (GFM, slugs, …). */\n    readonly compileOptions?: Record<string, unknown>;\n    /** Advanced: override the compiler module specifier (default `\"@mdx-js/mdx\"`) - e.g. to use a fork. */\n    readonly moduleName?: string;\n}"
+  },
+  {
+    "name": "MemoryAgentStateStore",
+    "kind": "class",
+    "package": "@nifrajs/agent",
+    "signature": "export declare class MemoryAgentStateStore implements AgentStateStore {\n    private readonly states;\n    load(turnId: string): AgentTurnState | undefined;\n    save(state: AgentTurnState): void;\n}"
   },
   {
     "name": "MemoryApprovalStore",
@@ -6470,6 +6860,18 @@
     "kind": "interface",
     "package": "@nifrajs/middleware",
     "signature": "export interface MemoryStoreOptions {\n    /** Allow the in-memory store in production. Off by default - a per-instance limiter is unsafe across instances. */\n    readonly allowInProduction?: boolean;\n    /** Hard cap on tracked client keys; expired keys are evicted first, then oldest active keys. Default `100_000`.\n     * Bounds memory against an unbounded key space (bot scans, per-IP buckets). */\n    readonly maxKeys?: number;\n    /** Minimum interval (ms) between amortized sweeps of expired windows. Default `30_000`. */\n    readonly sweepIntervalMs?: number;\n}"
+  },
+  {
+    "name": "MemoryToolIdempotencyStore",
+    "kind": "class",
+    "package": "@nifrajs/core",
+    "signature": "export declare class MemoryToolIdempotencyStore implements ToolIdempotencyStore {\n    readonly durability: \"memory\";\n    private readonly entries;\n    private readonly maxEntries;\n    private readonly ttlMs;\n    private readonly now;\n    constructor(options?: MemoryToolIdempotencyStoreOptions);\n    begin(input: ToolIdempotencyBeginInput): ToolIdempotencyBeginResult;\n    complete(input: {\n        readonly namespace: string;\n        readonly key: string;\n        readonly reservation: string;\n    }): boolean;\n    abandon(input: {\n        readonly namespace: string;\n        readonly key: string;\n        readonly reservation: string;\n    }): boolean;\n    sweep(): void;\n}"
+  },
+  {
+    "name": "MemoryToolIdempotencyStoreOptions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface MemoryToolIdempotencyStoreOptions {\n    readonly maxEntries?: number;\n    readonly ttlMs?: number;\n    readonly now?: () => number;\n}"
   },
   {
     "name": "mergeHeads",
@@ -7642,6 +8044,12 @@
     "signature": "export declare const plainJsonCodec: TransportCodec;"
   },
   {
+    "name": "planProofs",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function planProofs(graph: WorkGraph, impact: ImpactReport, targetLevel?: number): ProofPlan;"
+  },
+  {
     "name": "Platform",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -7893,6 +8301,12 @@
     "signature": "export interface ProjectFacts {\n    readonly [key: string]: unknown;\n}"
   },
   {
+    "name": "ProjectWorkGraphResult",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface ProjectWorkGraphResult {\n    readonly graph: WorkGraph;\n    readonly impact: ImpactReport;\n    readonly plan: ProofPlan;\n    readonly evidence: EvidenceBundle;\n}"
+  },
+  {
     "name": "prompt",
     "kind": "function",
     "package": "@nifrajs/prompt",
@@ -7969,6 +8383,36 @@
     "doc": "/** The structured-output format handed to the provider (OpenAI `json_schema` shape; trivially\n * adaptable to Anthropic tool-input or Gemini `responseSchema`). */"
   },
   {
+    "name": "ProofEvidence",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface ProofEvidence {\n    readonly id: string;\n    readonly status: ProofStatus;\n    readonly level: number;\n    readonly nodeIds: readonly string[];\n    readonly command: string;\n    readonly fix?: string;\n}"
+  },
+  {
+    "name": "ProofKind",
+    "kind": "type",
+    "package": "@nifrajs/cli",
+    "signature": "export type ProofKind = \"typecheck\" | \"contract\" | \"assurance\" | \"suite\";"
+  },
+  {
+    "name": "ProofPlan",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface ProofPlan {\n    readonly steps: readonly ProofStep[];\n    readonly targetLevel: number;\n}"
+  },
+  {
+    "name": "ProofStatus",
+    "kind": "type",
+    "package": "@nifrajs/cli",
+    "signature": "export type ProofStatus = \"pass\" | \"fail\" | \"skip\" | \"pending\";"
+  },
+  {
+    "name": "ProofStep",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface ProofStep {\n    readonly id: string;\n    readonly kind: ProofKind;\n    readonly level: number;\n    readonly cost: number;\n    readonly command: string;\n    readonly nodeIds: readonly string[];\n    readonly fix?: string;\n}"
+  },
+  {
     "name": "PROTOCOL_VERSION",
     "kind": "const",
     "package": "@nifrajs/mcp",
@@ -8035,6 +8479,12 @@
     "package": "@nifrajs/web",
     "signature": "export interface QueryHandle<T = unknown> {\n    snapshot: () => QueryState<T>;\n    subscribe: (listener: () => void) => () => void;\n    /** Fetch when stale or absent (fresh ⇒ no-op); joins an in-flight fetch (dedup). Resolves to the\n     * data, or rejects if the fetch threw. */\n    fetch: () => Promise<T>;\n    /** Refetch regardless of staleness (still joins an in-flight fetch). */\n    refetch: () => Promise<T>;\n}",
     "doc": "/** A stable per-key handle: subscribe to its state, read a snapshot, trigger a fetch/refetch. */"
+  },
+  {
+    "name": "queryImpact",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function queryImpact(graph: WorkGraph, changedFiles: readonly string[]): ImpactReport;"
   },
   {
     "name": "QueryOptions",
@@ -8281,6 +8731,19 @@
     "package": "@nifrajs/core",
     "signature": "export declare function recordCapabilityOutcome(context: object, capability: string, options: CapabilityOutcomeOptions): void;",
     "doc": "/** Record the terminal outcome of an already-admitted capability without debiting admission twice. */"
+  },
+  {
+    "name": "recordProof",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function recordProof(bundle: EvidenceBundle, proof: ProofEvidence): EvidenceBundle;"
+  },
+  {
+    "name": "recordTrajectory",
+    "kind": "const",
+    "package": "@nifrajs/testing",
+    "signature": "export declare const recordTrajectory: typeof createTrajectoryTranscript;",
+    "doc": "/** Alias that reads naturally at a call site which has just completed a run. */"
   },
   {
     "name": "redactForEmission",
@@ -8542,6 +9005,24 @@
     "doc": "/**\n * Render a {@link SizeReport} as a terse aligned table (biggest first) with a totals row - the text\n * `nifra build --report` prints. Pure (string in, string out) so the formatting is unit-testable.\n */"
   },
   {
+    "name": "renderWorkGraphJson",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function renderWorkGraphJson(result: ProjectWorkGraphResult): string;"
+  },
+  {
+    "name": "renderWorkGraphText",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function renderWorkGraphText(result: ProjectWorkGraphResult): string;"
+  },
+  {
+    "name": "replayAgent",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function replayAgent<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>, input: AgentTurnInput, ports: Omit<AgentPorts, \"model\">, transcript: AgentTranscript, options: RunAgentOptions): Promise<AgentRunResult<NonNullable<OutputSchema[\"~standard\"][\"types\"]>[\"output\"]>>;"
+  },
+  {
     "name": "ReplayFile",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -8560,6 +9041,19 @@
     "kind": "interface",
     "package": "@nifrajs/testing",
     "signature": "export interface ReplayIncidentOptions {\n    readonly origin?: string;\n    /** Also require the response body SHAPE to match the captured shape (not just status). Default false. */\n    readonly assertShape?: boolean;\n}"
+  },
+  {
+    "name": "replayTrajectory",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function replayTrajectory<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>, input: AgentTurnInput, ports: Omit<AgentPorts, \"model\">, transcript: TrajectoryTranscript, options: ReplayTrajectoryOptions): Promise<TrajectoryReplayResult<NonNullable<OutputSchema[\"~standard\"][\"types\"]>[\"output\"]>>;",
+    "doc": "/**\n * Replay a recorded run with local model decisions and dry-run tools. The supplied model port is\n * never called. Fault schedules use the existing deterministic failure-lab controller.\n */"
+  },
+  {
+    "name": "ReplayTrajectoryOptions",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface ReplayTrajectoryOptions {\n    readonly state: AgentTurnState;\n    readonly maxTurns?: number;\n    readonly goal?: (output: unknown) => boolean;\n    readonly faultProfile?: FaultProfile;\n    readonly seed?: number;\n}"
   },
   {
     "name": "reproduciblePath",
@@ -8895,6 +9389,13 @@
     "package": "@nifrajs/client",
     "signature": "export type Result<Data, Errors = unknown> = {\n    readonly ok: true;\n    readonly status: number;\n    readonly data: Data;\n    readonly error: null;\n} | ([Errors] extends [Record<number, unknown>] ? DeclaredFailures<Errors> | {\n    readonly ok: false;\n    readonly status: Exclude<ErrorStatus, Extract<keyof Errors, number>> | 0;\n    readonly data: unknown;\n    readonly error: ApiError;\n} : {\n    readonly ok: false;\n    readonly status: number;\n    readonly data: Errors;\n    readonly error: ApiError;\n});",
     "doc": "/**\n * The outcome of a client call. The client never throws - inspect `ok` to branch.\n *\n * On success, `data` is the route's response type. On failure the union is DISCRIMINATED BY\n * `status` when the route declares an `errors` record: `status === 404` narrows `data` to the\n * declared 404 body; every undeclared status (plus `0` for a transport error with no response)\n * falls into a fallback arm whose `data` is `unknown`. A route with no `errors` contract keeps a\n * single failure arm with `data: Errors` (`unknown`). `error` is always the server's normalized\n * `{ error, issues? }` summary on failure, `null` on success.\n */"
+  },
+  {
+    "name": "resumeAgent",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function resumeAgent<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>, turnId: string, input: AgentTurnInput, ports: AgentPorts, options?: Omit<RunAgentOptions, \"state\">): Promise<AgentRunResult<NonNullable<OutputSchema[\"~standard\"][\"types\"]>[\"output\"]>>;",
+    "doc": "/** Load a saved token-only state record and continue a bounded run. */"
   },
   {
     "name": "ResvgConstructor",
@@ -9319,6 +9820,18 @@
     "doc": "/**\n * Execute contract-derived hostile inputs and declared-response conformance against a runtime matrix.\n * Runtime/request failures are captured in the report; inspect `report.ok`, `failures`, and `gaps`\n * (or use {@link assertAdversarialContract} for a throwing test assertion).\n */"
   },
   {
+    "name": "runAgent",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function runAgent<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>, input: AgentTurnInput, ports: AgentPorts, options: RunAgentOptions): Promise<AgentRunResult<NonNullable<OutputSchema[\"~standard\"][\"types\"]>[\"output\"]>>;"
+  },
+  {
+    "name": "RunAgentOptions",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface RunAgentOptions {\n    readonly state: AgentTurnState;\n    readonly maxTurns?: number;\n    readonly goal?: (output: unknown) => boolean;\n}"
+  },
+  {
     "name": "runApp",
     "kind": "function",
     "package": "@nifrajs/runner",
@@ -9433,6 +9946,25 @@
     "kind": "function",
     "package": "@nifrajs/testing",
     "signature": "export declare function runtimeAdapterCertificationProfile(): AdapterCertificationProfile<CertifiableRuntimeAdapter>;"
+  },
+  {
+    "name": "runToolContractConformance",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function runToolContractConformance(adapter: ToolAdapter, options: {\n    readonly input: unknown;\n    readonly capability: string;\n    readonly approval: ToolApproval;\n    readonly dryRun: ToolCallOptions;\n}): Promise<ToolConformanceResult>;",
+    "doc": "/** Shared conformance assertions for adapters. It intentionally checks only public, token-only behavior. */"
+  },
+  {
+    "name": "runTrajectory",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function runTrajectory<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>, input: AgentTurnInput, ports: AgentPorts, options: {\n    readonly state: AgentTurnState;\n    readonly maxTurns?: number;\n    readonly goal?: (output: unknown) => boolean;\n}): Promise<TrajectoryRun<NonNullable<OutputSchema[\"~standard\"][\"types\"]>[\"output\"]>>;"
+  },
+  {
+    "name": "runWorkGraph",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function runWorkGraph(cwd: string, options?: {\n    readonly changedFiles?: readonly string[];\n    readonly minLevel?: number;\n    readonly json?: boolean;\n}): Promise<boolean>;"
   },
   {
     "name": "SagaAmbiguityResolution",
@@ -10567,6 +11099,12 @@
     "doc": "/**\n * Loads a module through the DEV SERVER'S module graph rather than the runtime's. Takes an absolute\n * file path or a bare specifier; resolution, compilation and caching are the dev server's.\n */"
   },
   {
+    "name": "StaleBuildError",
+    "kind": "class",
+    "package": "@nifrajs/cli",
+    "signature": "export declare class StaleBuildError extends Error {\n    readonly freshness: BuildFreshness;\n    constructor(freshness: BuildFreshness);\n}"
+  },
+  {
     "name": "StandardFailure",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -11115,6 +11653,12 @@
     "signature": "export interface TestSessionOptions extends Omit<ClientOptions, \"fetch\"> {\n    /** Origin used to resolve relative paths. Default `\"http://nifra.internal\"`. */\n    readonly origin?: string;\n    /** Reuse an existing jar (e.g. seed a session cookie, or share one across sessions). */\n    readonly cookies?: CookieJar;\n}"
   },
   {
+    "name": "testToolAdapter",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function testToolAdapter<Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: ToolCallOptions): ToolAdapter;"
+  },
+  {
     "name": "timing",
     "kind": "function",
     "package": "@nifrajs/middleware",
@@ -11182,6 +11726,13 @@
     "doc": "/** Adapt API Gateway HTTP API (v2) and REST API (v1) events to a Web-standard app. */"
   },
   {
+    "name": "toMcpTool",
+    "kind": "function",
+    "package": "@nifrajs/mcp",
+    "signature": "export declare function toMcpTool<Input, Output>(tool: ToolContract<Input, Output>, options?: McpToolContractOptions): McpTool;",
+    "doc": "/** Adapt a contract to MCP without creating a second validation or enforcement path. */"
+  },
+  {
     "name": "toNetlifyHandler",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -11196,6 +11747,18 @@
     "doc": "/** Adapt a Web-standard app to a Netlify Functions event handler. */"
   },
   {
+    "name": "ToolAdapter",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ToolAdapter {\n    readonly name: string;\n    call(input: unknown, options?: ToolCallOptions): Promise<ToolAdapterResult>;\n}"
+  },
+  {
+    "name": "ToolAdapterResult",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type ToolAdapterResult<Output = unknown> = {\n    readonly ok: true;\n    readonly output?: Output;\n    readonly dryRun: boolean;\n    readonly evidence: readonly ToolEvidence[];\n} | {\n    readonly ok: false;\n    readonly dryRun: boolean;\n    readonly error: ToolError;\n    readonly evidence: readonly ToolEvidence[];\n};"
+  },
+  {
     "name": "ToolAnnotations",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -11208,6 +11771,132 @@
     "package": "nifra",
     "signature": "export interface ToolAnnotations {\n    /** Human-readable display title for the tool, distinct from the machine `name`. */\n    readonly title?: string;\n    /** The tool does not modify its environment (a pure read). */\n    readonly readOnlyHint?: boolean;\n    /** The tool may perform destructive updates - only meaningful when `readOnlyHint` is not `true`. */\n    readonly destructiveHint?: boolean;\n    /** Repeated calls with the same arguments have no additional effect beyond the first. */\n    readonly idempotentHint?: boolean;\n    /** The tool interacts with external entities (an \"open world\" beyond this server). */\n    readonly openWorldHint?: boolean;\n}",
     "doc": "/**\n * MCP tool safety hints, surfaced in `tools/list`, that tell an agent how risky a `.tool()` call is - so it\n * can decide whether to auto-invoke or confirm first. All optional; an omitted hint means \"unknown\". Mirrors\n * the MCP spec's tool `annotations`.\n */"
+  },
+  {
+    "name": "ToolApproval",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type ToolApproval = {\n    readonly granted: true;\n    readonly level?: number;\n} | {\n    readonly granted: false;\n    readonly reason?: string;\n};"
+  },
+  {
+    "name": "ToolApprovalPolicy",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type ToolApprovalPolicy = {\n    readonly kind: \"none\";\n} | {\n    readonly kind: \"required\";\n} | {\n    readonly kind: \"threshold\";\n    readonly level: number;\n};"
+  },
+  {
+    "name": "ToolBudget",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ToolBudget {\n    readonly consume: (cost: EffectCost | undefined) => boolean;\n    readonly snapshot: () => EffectCost;\n}"
+  },
+  {
+    "name": "ToolCallOptions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ToolCallOptions {\n    readonly effectId?: string;\n    readonly clock?: () => number;\n    readonly signal?: AbortSignal;\n    readonly capabilities?: readonly string[];\n    readonly approval?: ToolApproval;\n    readonly budget?: ToolBudget;\n    readonly idempotency?: ToolIdempotencyStore;\n    readonly namespace?: string;\n    readonly dryRun?: boolean;\n    readonly ledger?: RequestLedger;\n    readonly executionPolicy?: ExecutionPolicyAdapter;\n}"
+  },
+  {
+    "name": "ToolCallResult",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type ToolCallResult<Output> = {\n    readonly ok: true;\n    readonly output?: Output;\n    readonly dryRun: boolean;\n    readonly evidence: readonly ToolEvidence[];\n    readonly ledger: SealedEffectLedger;\n} | {\n    readonly ok: false;\n    readonly dryRun: boolean;\n    readonly output?: undefined;\n    readonly error: ToolError;\n    readonly evidence: readonly ToolEvidence[];\n    readonly ledger: SealedEffectLedger;\n};"
+  },
+  {
+    "name": "ToolConformanceResult",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ToolConformanceResult {\n    readonly adapter: string;\n    readonly checks: readonly string[];\n}"
+  },
+  {
+    "name": "ToolContract",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ToolContract<Input = unknown, Output = unknown> {\n    readonly name: string;\n    readonly description: string;\n    readonly input: StandardSchemaV1<unknown, Input>;\n    readonly output: StandardSchemaV1<unknown, Output>;\n    readonly capability: string;\n    readonly approval: ToolApprovalPolicy;\n    readonly idempotency?: ToolIdempotencyPolicy<Input>;\n    readonly cost?: EffectCost;\n    readonly sensitivity: ToolSensitivity;\n    readonly annotations: ToolAnnotations;\n    readonly policy?: ExecutionPolicy;\n    readonly execute: (input: Input, context: ToolExecutionContext) => Output | PromiseLike<Output>;\n}"
+  },
+  {
+    "name": "ToolContractOptions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ToolContractOptions<Input, Output, InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1> {\n    readonly name: string;\n    readonly description: string;\n    readonly input: InputSchema;\n    readonly output: OutputSchema;\n    readonly capability?: string;\n    readonly approval?: ToolApprovalPolicy;\n    readonly idempotency?: ToolIdempotencyPolicy<Input>;\n    /** Dimensionless counters such as `{ calls: 1, ms: 20 }`; never prices. */\n    readonly cost?: EffectCost;\n    readonly sensitivity?: ToolSensitivity;\n    readonly annotations?: ToolAnnotations;\n    readonly policy?: ExecutionPolicy;\n    readonly execute: (input: Input, context: ToolExecutionContext) => Output | PromiseLike<Output>;\n}"
+  },
+  {
+    "name": "ToolError",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ToolError {\n    readonly code: \"input_invalid\" | \"capability_denied\" | \"execution_policy_unsatisfied\" | \"approval_required\" | \"approval_denied\" | \"idempotency_store_missing\" | \"idempotency_durability\" | \"idempotency_duplicate\" | \"idempotency_in_flight\" | \"idempotency_capacity\" | \"budget_exceeded\" | \"cancelled\" | \"execution_failed\" | \"output_invalid\" | \"ledger_failed\";\n    readonly stage: ToolEvidenceStage;\n    readonly issues?: readonly StandardIssue[];\n}"
+  },
+  {
+    "name": "ToolEvidence",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ToolEvidence {\n    readonly seq: number;\n    readonly stage: ToolEvidenceStage;\n    readonly outcome: ToolEvidenceOutcome;\n    readonly code?: string;\n}"
+  },
+  {
+    "name": "ToolEvidenceOutcome",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type ToolEvidenceOutcome = \"passed\" | \"denied\" | \"failed\" | \"skipped\" | \"committed\" | \"dry-run\";"
+  },
+  {
+    "name": "ToolEvidenceStage",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type ToolEvidenceStage = \"input\" | \"capability\" | \"policy\" | \"approval\" | \"idempotency\" | \"budget\" | \"execution\" | \"output\";"
+  },
+  {
+    "name": "ToolExecutionContext",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ToolExecutionContext {\n    readonly effectId: string;\n    readonly signal: AbortSignal;\n    readonly dryRun: boolean;\n    readonly policy?: ExecutionPolicy;\n}"
+  },
+  {
+    "name": "ToolHttpOptions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ToolHttpOptions extends Omit<ToolCallOptions, \"signal\" | \"ledger\"> {\n    readonly method?: string;\n}"
+  },
+  {
+    "name": "toolHttpResult",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function toolHttpResult<Output>(result: ToolCallResult<Output>): Response;"
+  },
+  {
+    "name": "ToolIdempotencyBeginInput",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ToolIdempotencyBeginInput {\n    readonly namespace: string;\n    readonly key: string;\n}"
+  },
+  {
+    "name": "ToolIdempotencyBeginResult",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type ToolIdempotencyBeginResult = {\n    readonly state: \"new\";\n    readonly reservation: string;\n} | {\n    readonly state: \"duplicate\";\n} | {\n    readonly state: \"in-flight\";\n} | {\n    readonly state: \"capacity\";\n};"
+  },
+  {
+    "name": "ToolIdempotencyPolicy",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ToolIdempotencyPolicy<Input = unknown> {\n    readonly scope: Exclude<IdempotencyScope, \"none\">;\n    /** Return an opaque bounded key. The key must not contain a request body or secret. */\n    readonly key: (input: Input) => string | PromiseLike<string>;\n}"
+  },
+  {
+    "name": "ToolIdempotencyStore",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ToolIdempotencyStore {\n    readonly durability?: \"memory\" | \"durable\";\n    begin(input: ToolIdempotencyBeginInput): ToolIdempotencyBeginResult | PromiseLike<ToolIdempotencyBeginResult>;\n    complete(input: {\n        readonly namespace: string;\n        readonly key: string;\n        readonly reservation: string;\n    }): boolean | PromiseLike<boolean>;\n    abandon(input: {\n        readonly namespace: string;\n        readonly key: string;\n        readonly reservation: string;\n    }): boolean | PromiseLike<boolean>;\n}"
+  },
+  {
+    "name": "toolInputJsonSchema",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function toolInputJsonSchema<Input, Output>(tool: ToolContract<Input, Output>): Record<string, unknown>;"
+  },
+  {
+    "name": "ToolSensitivity",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type ToolSensitivity = \"public\" | \"internal\" | \"sensitive\" | \"secret\";"
   },
   {
     "name": "toOpenAPI",
@@ -11284,6 +11973,48 @@
     "signature": "export interface TrailingSlashOptions {\n    /** Redirect (default) or route internally with a rewritten URL. */\n    readonly mode?: \"redirect\" | \"rewrite\";\n    /** Redirect status. Default `308` (method-preserving permanent redirect). */\n    readonly status?: 301 | 302 | 307 | 308;\n    /** Methods affected. Default `[\"GET\", \"HEAD\"]`; add write methods only when you want 308 redirects. */\n    readonly methods?: readonly string[];\n    /** Skip paths whose last segment looks like a file (`/app.css`). Default `true` for append mode. */\n    readonly ignoreFileExtensions?: boolean;\n    /** App-specific skip predicate. */\n    readonly ignore?: (path: string, request: Request) => boolean;\n}"
   },
   {
+    "name": "TrajectoryInvariantId",
+    "kind": "type",
+    "package": "@nifrajs/testing",
+    "signature": "export type TrajectoryInvariantId = \"ledger-evidence\" | \"capability-admission\" | \"budget-monotonic\" | \"bounded-stop\" | \"resumable-suspension\";"
+  },
+  {
+    "name": "TrajectoryInvariantOptions",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface TrajectoryInvariantOptions {\n    readonly maxSteps?: number;\n    /** Remaining budget snapshots, used when the caller owns a budget adapter. */\n    readonly budgetSnapshots?: readonly Readonly<Record<string, number>>[];\n}"
+  },
+  {
+    "name": "TrajectoryInvariantResult",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface TrajectoryInvariantResult {\n    readonly id: TrajectoryInvariantId;\n    readonly ok: boolean;\n    readonly code?: string;\n}"
+  },
+  {
+    "name": "trajectoryRegressionId",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function trajectoryRegressionId(transcript: TrajectoryTranscript, faultProfile: string, invariant: TrajectoryInvariantId): Promise<string>;"
+  },
+  {
+    "name": "TrajectoryReplayResult",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface TrajectoryReplayResult<Output> {\n    readonly result: AgentRunResult<Output>;\n    readonly transcript: TrajectoryTranscript;\n    readonly faults: readonly FailureEvidence[];\n    readonly invariants: readonly TrajectoryInvariantResult[];\n    readonly regressionIds: readonly string[];\n}"
+  },
+  {
+    "name": "TrajectoryRun",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface TrajectoryRun<Output> {\n    readonly result: AgentRunResult<Output>;\n    readonly transcript: TrajectoryTranscript;\n}"
+  },
+  {
+    "name": "TrajectoryTranscript",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface TrajectoryTranscript {\n    readonly version: 1;\n    readonly digest: string;\n    readonly turn: AgentTranscript;\n    readonly faultProfile?: string;\n    readonly seed?: number;\n}"
+  },
+  {
     "name": "transformCssModule",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -11354,6 +12085,12 @@
     "kind": "function",
     "package": "@nifrajs/middleware",
     "signature": "export declare function tryVerifyJwt<C extends JwtClaims = JwtClaims>(token: string, options: VerifyJwtOptions): Promise<VerifyJwtResult<C>>;"
+  },
+  {
+    "name": "turn",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function turn<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>, state: AgentTurnState, input: AgentTurnInput, ports: AgentPorts): Promise<AgentTurnResult<NonNullable<OutputSchema[\"~standard\"][\"types\"]>[\"output\"]>>;"
   },
   {
     "name": "TypedDataPort",
@@ -12342,6 +13079,43 @@
     "kind": "interface",
     "package": "@nifrajs/jobs",
     "signature": "export interface WorkerOptions {\n    /** Max jobs in flight at once. Default 1. */\n    readonly concurrency?: number;\n    /** How often to poll the store for due jobs (ms). Default 250. */\n    readonly pollIntervalMs?: number;\n    /** How long a leased job is hidden before it's considered abandoned and re-leased (ms). Default 30_000. */\n    readonly leaseMs?: number;\n}"
+  },
+  {
+    "name": "WorkGraph",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface WorkGraph {\n    readonly version: 1;\n    readonly digest: string;\n    readonly nodes: readonly WorkGraphNode[];\n    readonly edges: readonly WorkGraphEdge[];\n    readonly freshness: BuildFreshness;\n}"
+  },
+  {
+    "name": "WorkGraphBuildInput",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface WorkGraphBuildInput {\n    readonly source: unknown;\n    readonly files?: readonly WorkGraphSourceFile[];\n    readonly freshness?: BuildFreshness;\n}"
+  },
+  {
+    "name": "WorkGraphEdge",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface WorkGraphEdge {\n    readonly from: string;\n    readonly to: string;\n    readonly relation: \"contains\" | \"declares\" | \"enforces\" | \"implements\" | \"tests\" | \"describes\";\n}"
+  },
+  {
+    "name": "WorkGraphNode",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface WorkGraphNode {\n    readonly id: string;\n    readonly kind: WorkGraphNodeKind;\n    readonly label: string;\n    readonly digest: string;\n    readonly files: readonly string[];\n}"
+  },
+  {
+    "name": "WorkGraphNodeKind",
+    "kind": "type",
+    "package": "@nifrajs/cli",
+    "signature": "export type WorkGraphNodeKind = \"route\" | \"schema\" | \"capability\" | \"assurance\" | \"test\" | \"file\" | \"manifest\";",
+    "doc": "/**\n * Static verification work graph for agents.\n *\n * The graph is intentionally a compact, token-only description of project structure. It connects\n * reflected routes to schemas, capabilities, assurance evidence, source/test files, and static\n * manifests. It never probes a running application and never persists payloads.\n */"
+  },
+  {
+    "name": "WorkGraphSourceFile",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface WorkGraphSourceFile {\n    readonly path: string;\n    readonly content: string;\n    readonly kind?: \"source\" | \"test\" | \"manifest\";\n}"
   },
   {
     "name": "WrapOptions",

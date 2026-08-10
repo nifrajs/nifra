@@ -10,6 +10,23 @@ import {
 export interface FaultProfile {
   readonly name: string
   readonly scenarios: readonly FaultProfileScenario[]
+  /** Optional trajectory faults consumed by the agent trajectory harness. */
+  readonly faults?: readonly FaultProfileFault[]
+  /** Existing deterministic failure-lab schedule shared by trajectory runs. */
+  readonly schedule?: readonly FailureDirective[]
+}
+
+export type FaultProfileFaultKind =
+  | "tool-error"
+  | "malformed-model-output"
+  | "budget-pressure"
+  | "approval-denial"
+  | "cancellation"
+
+export interface FaultProfileFault {
+  readonly point: "model" | "tool" | "effect"
+  readonly kind: FaultProfileFaultKind
+  readonly occurrence?: number
 }
 
 export interface FaultProfileScenario extends FailureScenario<unknown> {
@@ -46,6 +63,35 @@ function validateProfile(profile: FaultProfile): FaultProfile {
   if (!Array.isArray(profile.scenarios) || profile.scenarios.length === 0) {
     throw new TypeError("fault profile: at least one scenario is required")
   }
+  if (profile.faults !== undefined) {
+    const seenFaults = new Set<string>()
+    for (const fault of profile.faults) {
+      if (fault.point !== "model" && fault.point !== "tool" && fault.point !== "effect") {
+        throw new TypeError("fault profile: invalid trajectory fault point")
+      }
+      if (
+        ![
+          "tool-error",
+          "malformed-model-output",
+          "budget-pressure",
+          "approval-denial",
+          "cancellation",
+        ].includes(fault.kind)
+      ) {
+        throw new TypeError("fault profile: invalid trajectory fault kind")
+      }
+      if (
+        fault.occurrence !== undefined &&
+        (!Number.isSafeInteger(fault.occurrence) || fault.occurrence < 1)
+      ) {
+        throw new RangeError("fault profile: trajectory fault occurrence must be positive")
+      }
+      const identity = `${fault.point}:${fault.kind}:${fault.occurrence ?? 1}`
+      if (seenFaults.has(identity))
+        throw new Error(`fault profile: duplicate trajectory fault ${identity}`)
+      seenFaults.add(identity)
+    }
+  }
   const ids = new Set<string>()
   const scenarios = profile.scenarios.map((scenario) => {
     if (!PROFILE_NAME.test(scenario.id)) {
@@ -71,6 +117,10 @@ function validateProfile(profile: FaultProfile): FaultProfile {
   return Object.freeze({
     name: profile.name,
     scenarios: Object.freeze(scenarios),
+    ...(profile.faults === undefined
+      ? {}
+      : { faults: Object.freeze(profile.faults.map((fault) => Object.freeze({ ...fault }))) }),
+    ...(profile.schedule === undefined ? {} : { schedule: Object.freeze([...profile.schedule]) }),
   })
 }
 

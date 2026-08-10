@@ -45,6 +45,11 @@
       "bun": "./src/assure.ts",
       "types": "./dist/assure.d.ts",
       "default": "./dist/assure.js"
+    },
+    "./work-graph": {
+      "bun": "./src/work-graph.ts",
+      "types": "./dist/work-graph.d.ts",
+      "default": "./dist/work-graph.js"
     }
   },
   "files": [

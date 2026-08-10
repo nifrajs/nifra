@@ -68,6 +68,8 @@ export {
 export {
   defineFaultProfile,
   type FaultProfile,
+  type FaultProfileFault,
+  type FaultProfileFaultKind,
   type FaultProfileReport,
   type FaultProfileScenario,
   type FaultProfileScenarioReport,
@@ -98,3 +100,26 @@ export {
   shapeOf,
 } from "./incident.ts"
 export { type AppLike, type TestSession, type TestSessionOptions, testSession } from "./session.ts"
+export {
+  httpToolAdapter,
+  inProcessToolAdapter,
+  mcpToolAdapter,
+  testToolAdapter,
+} from "./tool-contract.ts"
+export {
+  assertTrajectoryInvariants,
+  type CreateTrajectoryTranscriptOptions,
+  checkTrajectoryInvariants,
+  createTrajectoryTranscript,
+  type ReplayTrajectoryOptions,
+  recordTrajectory,
+  replayTrajectory,
+  runTrajectory,
+  type TrajectoryInvariantId,
+  type TrajectoryInvariantOptions,
+  type TrajectoryInvariantResult,
+  type TrajectoryReplayResult,
+  type TrajectoryRun,
+  type TrajectoryTranscript,
+  trajectoryRegressionId,
+} from "./trajectory.ts"

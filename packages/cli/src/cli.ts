@@ -137,6 +137,10 @@ Usage:
                                          Compute the verification ladder (L0 typed contract → L1 route
                                          assurance → L2 capability lockfile → L3 route manifest → L4
                                          invariant-tested); --min <n> fails the exit code below level n.
+  nifra prove    [--json] [--file <path>] [--min <n>]
+                                         Build the static verification work graph, plan the cheapest
+                                         proofs for changed files, and report a machine-checkable stop
+                                         condition. Requires a fresh build; never probes a running app.
   nifra doctor  [--json] [--auto-fix]    Flag undeclared imports and multiple physical copies of
                 [--strict] [--target]     @nifrajs/core/React identity-sensitive dependencies;
                                          print production readiness, with --strict making absent
@@ -906,6 +910,45 @@ async function main(): Promise<void> {
           json: argv.includes("--json"),
           ...(config !== undefined ? { config } : {}),
           ...(min !== undefined ? { min } : {}),
+        }))
+      )
+        process.exitCode = 1
+    } catch (err) {
+      console.error(formatCliError(err))
+      process.exitCode = 1
+    }
+    return
+  }
+  if (command === "prove") {
+    const valueAfter = (flag: string): string | undefined => {
+      const index = argv.indexOf(flag)
+      const value = index === -1 ? undefined : argv[index + 1]
+      if (index !== -1 && (value === undefined || value.startsWith("-"))) {
+        throw new Error(`[nifra] ${flag} needs a value`)
+      }
+      return value
+    }
+    try {
+      const minRaw = valueAfter("--min")
+      const min = minRaw === undefined ? undefined : Number(minRaw)
+      if (min !== undefined && (!Number.isInteger(min) || min < 0 || min > 4)) {
+        throw new Error("[nifra] --min must be an integer level between 0 and 4")
+      }
+      const changedFiles: string[] = []
+      for (let index = 0; index < argv.length; index++) {
+        if (argv[index] !== "--file") continue
+        const file = argv[index + 1]
+        if (file === undefined || file.startsWith("-"))
+          throw new Error("[nifra] --file needs a path")
+        changedFiles.push(file)
+        index++
+      }
+      const { runWorkGraph } = await import("./work-graph.ts")
+      if (
+        !(await runWorkGraph(process.cwd(), {
+          json: argv.includes("--json"),
+          ...(changedFiles.length === 0 ? {} : { changedFiles }),
+          ...(min === undefined ? {} : { minLevel: min }),
         }))
       )
         process.exitCode = 1

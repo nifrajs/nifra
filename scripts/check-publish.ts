@@ -35,6 +35,7 @@ const LIBRARIES = [
   "jobs",
   "otel",
   "agent-telemetry",
+  "agent",
   "devtools",
   "mock",
   "prompt",

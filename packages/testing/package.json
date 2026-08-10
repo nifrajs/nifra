@@ -43,7 +43,9 @@
   "license": "MIT",
   "dependencies": {
     "@nifrajs/client": "workspace:*",
+    "@nifrajs/agent": "workspace:*",
     "@nifrajs/core": "workspace:*",
+    "@nifrajs/mcp": "workspace:*",
     "@nifrajs/mock": "workspace:*"
   },
   "peerDependencies": {

@@ -6903,6 +6903,33 @@ level that regressed comes back with the reason it broke.
 
 # Package reference (READMEs)
 
+## @nifrajs/agent
+
+Provider-neutral, typed, resumable agent turns over Nifra tool contracts.
+
+The package owns one bounded turn at a time. Model providers, state, approvals, budgets, idempotency,
+and telemetry are ports. The package never imports a model vendor and its state adapter stores only
+token-only turn evidence.
+
+```ts
+import { createAgentState, runAgent } from "@nifrajs/agent"
+
+const result = await runAgent(definition, { value: input }, ports, {
+  state: createAgentState("support-1"),
+  maxTurns: 8,
+})
+```
+
+The public in-memory adapters are for local development and tests. Durable state, provider
+credentials, and operated policy remain adapter concerns.
+
+Execution policies can be required by a tool contract. `createLocalProcessAdapter` applies cwd and
+environment filtering, timeouts, and cancellation to child processes. The local adapter is NOT a
+security boundary. Without OS-level sandboxing it contains crashes and accidents, not hostile code.
+
+For the compact agent contract, see [`LLM.md`](./LLM.md). The full machine-readable corpus is
+[`../../llms-full.txt`](../../llms-full.txt).
+
 ## @nifrajs/agent-telemetry
 
 Child-span telemetry for AI tool calls made through Nifra tool and MCP endpoints.
@@ -9097,6 +9124,10 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 # Complete export index (generated from each package's src/index.ts)
 
+## @nifrajs/agent
+
+`AgentApprovalPort`, `AgentApprovalResult`, `AgentDefinition`, `AgentModelPort`, `AgentModelRequest`, `AgentModelResponse`, `AgentPendingContinuation`, `AgentPendingKind`, `AgentPorts`, `AgentRunResult`, `AgentStateStore`, `AgentStatus`, `AgentStepEvidence`, `AgentTelemetryPort`, `AgentToolContract`, `AgentToolDescriptor`, `AgentToolResult`, `AgentTranscript`, `AgentTurnBaseResult`, `AgentTurnError`, `AgentTurnInput`, `AgentTurnResult`, `AgentTurnState`, `createAgentState`, `createLocalProcessAdapter`, `ExecutionPolicy`, `ExecutionPolicyAdapter`, `LOCAL_PROCESS_LIMITATION`, `LocalProcessAdapter`, `LocalProcessAdapterOptions`, `LocalProcessPolicyError`, `LocalProcessRequest`, `LocalProcessResult`, `MemoryAgentStateStore`, `replayAgent`, `resumeAgent`, `runAgent`, `RunAgentOptions`, `turn`
+
 ## @nifrajs/agent-telemetry
 
 `agentTelemetry`, `AgentTelemetryOptions`, `consoleAgentExporter`
@@ -9163,7 +9194,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/mcp
 
-`bridgeScript`, `createMcpServer`, `CreateMcpServerOptions`, `defineMcpTool`, `DefineMcpToolOptions`, `defineMcpWidget`, `DefineMcpWidgetOptions`, `InferOutput`, `McpAppBridge`, `McpHttpOptions`, `McpServer`, `McpToolHandlerResult`, `McpUiIntent`, `McpWidget`, `respondMcpHttp`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `uiResourceMeta`, `widgetDocument`
+`bridgeScript`, `createMcpServer`, `CreateMcpServerOptions`, `defineMcpTool`, `DefineMcpToolOptions`, `defineMcpWidget`, `DefineMcpWidgetOptions`, `InferOutput`, `McpAppBridge`, `McpHttpOptions`, `McpServer`, `McpToolContractOptions`, `McpToolHandlerResult`, `McpUiIntent`, `McpWidget`, `respondMcpHttp`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `toMcpTool`, `uiResourceMeta`, `widgetDocument`
 
 ## @nifrajs/mcp-db
 
@@ -9203,7 +9234,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/testing
 
-`AdapterCertificationError`, `AdapterCertificationProfile`, `AdapterCertificationReport`, `AdversarialContractError`, `AdversarialContractOptions`, `AdversarialContractReport`, `AdversarialContractResult`, `AppLike`, `assertAdapterCertification`, `assertAdversarialContract`, `assertIncidentReplays`, `cacheStoreCertificationProfile`, `CapturedRequest`, `CapturedRequestInput`, `captureIncident`, `CaptureIncidentOptions`, `CertifiableCacheEntry`, `CertifiableCacheStore`, `CertifiableDomainEvent`, `CertifiableEventDeliveryAdapter`, `CertifiableEventRecord`, `CertifiableJobStore`, `CertifiableRuntimeAdapter`, `CertifiableRuntimeServer`, `CertifiableStorageAdapter`, `CertificationCapabilityEvidence`, `CertificationCheck`, `CertificationCheckEvidence`, `certifyAdapter`, `ContractCaseContext`, `ContractCaseKind`, `ContractCoverageGap`, `ContractCoverageGapCode`, `ContractReplay`, `ContractRuntime`, `ContractTarget`, `ContractTestApp`, `ContractWitness`, `cookieJar`, `CookieJar`, `createFailureLab`, `defineCertificationProfile`, `defineFaultProfile`, `EffectLedger`, `eventDeliveryCertificationProfile`, `FailureDirective`, `FailureEvidence`, `FailureInjectedError`, `FailureKind`, `FailureLab`, `FailureLabOptions`, `FailureReplay`, `FailureScenario`, `FailureScenarioReport`, `FaultProfile`, `FaultProfileReport`, `FaultProfileScenario`, `FaultProfileScenarioReport`, `generateRegressionTest`, `GenerateRegressionTestOptions`, `IdempotencyDivergence`, `IdempotencyProof`, `IncidentCapsule`, `IncidentReplayError`, `IncidentReplayResult`, `jobStoreCertificationProfile`, `proveIdempotency`, `redactForEmission`, `referenceFaultProfile`, `replayIncident`, `ReplayIncidentOptions`, `runAdversarialContract`, `runFailureScenario`, `runFaultProfile`, `RunFaultProfileOptions`, `runtimeAdapterCertificationProfile`, `shapeOf`, `storageAdapterCertificationProfile`, `testSession`, `TestSession`, `TestSessionOptions`, `verifyAdapterCertification`
+`AdapterCertificationError`, `AdapterCertificationProfile`, `AdapterCertificationReport`, `AdversarialContractError`, `AdversarialContractOptions`, `AdversarialContractReport`, `AdversarialContractResult`, `AppLike`, `assertAdapterCertification`, `assertAdversarialContract`, `assertIncidentReplays`, `assertTrajectoryInvariants`, `cacheStoreCertificationProfile`, `CapturedRequest`, `CapturedRequestInput`, `captureIncident`, `CaptureIncidentOptions`, `CertifiableCacheEntry`, `CertifiableCacheStore`, `CertifiableDomainEvent`, `CertifiableEventDeliveryAdapter`, `CertifiableEventRecord`, `CertifiableJobStore`, `CertifiableRuntimeAdapter`, `CertifiableRuntimeServer`, `CertifiableStorageAdapter`, `CertificationCapabilityEvidence`, `CertificationCheck`, `CertificationCheckEvidence`, `certifyAdapter`, `checkTrajectoryInvariants`, `ContractCaseContext`, `ContractCaseKind`, `ContractCoverageGap`, `ContractCoverageGapCode`, `ContractReplay`, `ContractRuntime`, `ContractTarget`, `ContractTestApp`, `ContractWitness`, `cookieJar`, `CookieJar`, `createFailureLab`, `createTrajectoryTranscript`, `CreateTrajectoryTranscriptOptions`, `defineCertificationProfile`, `defineFaultProfile`, `EffectLedger`, `eventDeliveryCertificationProfile`, `FailureDirective`, `FailureEvidence`, `FailureInjectedError`, `FailureKind`, `FailureLab`, `FailureLabOptions`, `FailureReplay`, `FailureScenario`, `FailureScenarioReport`, `FaultProfile`, `FaultProfileFault`, `FaultProfileFaultKind`, `FaultProfileReport`, `FaultProfileScenario`, `FaultProfileScenarioReport`, `generateRegressionTest`, `GenerateRegressionTestOptions`, `httpToolAdapter`, `IdempotencyDivergence`, `IdempotencyProof`, `IncidentCapsule`, `IncidentReplayError`, `IncidentReplayResult`, `inProcessToolAdapter`, `jobStoreCertificationProfile`, `mcpToolAdapter`, `proveIdempotency`, `recordTrajectory`, `redactForEmission`, `referenceFaultProfile`, `replayIncident`, `ReplayIncidentOptions`, `replayTrajectory`, `ReplayTrajectoryOptions`, `runAdversarialContract`, `runFailureScenario`, `runFaultProfile`, `RunFaultProfileOptions`, `runtimeAdapterCertificationProfile`, `runTrajectory`, `shapeOf`, `storageAdapterCertificationProfile`, `testSession`, `TestSession`, `TestSessionOptions`, `testToolAdapter`, `TrajectoryInvariantId`, `TrajectoryInvariantOptions`, `TrajectoryInvariantResult`, `trajectoryRegressionId`, `TrajectoryReplayResult`, `TrajectoryRun`, `TrajectoryTranscript`, `verifyAdapterCertification`
 
 ## @nifrajs/ts-plugin
 

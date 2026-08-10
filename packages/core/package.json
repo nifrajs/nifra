@@ -231,6 +231,16 @@
       "bun": "./src/server/response-contract-lane.ts",
       "types": "./dist/server/response-contract-lane.d.ts",
       "default": "./dist/server/response-contract-lane.js"
+    },
+    "./tool-contract": {
+      "bun": "./src/tool-contract.ts",
+      "types": "./dist/tool-contract.d.ts",
+      "default": "./dist/tool-contract.js"
+    },
+    "./execution-policy": {
+      "bun": "./src/execution-policy.ts",
+      "types": "./dist/execution-policy.d.ts",
+      "default": "./dist/execution-policy.js"
     }
   },
   "files": [
