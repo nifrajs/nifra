@@ -23,6 +23,7 @@ import {
   validMethod,
   withRouteAssurance,
 } from "./internal/route-assurance.ts"
+import type { SealedEffectLedger } from "./ledger.ts"
 import type { NifraManifestSigner } from "./manifest.ts"
 import { type ReflectedRoute, reflectRoutes } from "./reflection.ts"
 import type { Method } from "./router/router.ts"
@@ -161,6 +162,23 @@ export interface AssuranceReport {
   readonly capabilities?: CapabilityAssuranceReport
 }
 
+/** Application-supplied verification rules. The CLI validates the executable rule shape at runtime. */
+export interface AssuranceRulePack {
+  readonly name: string
+  readonly rules: readonly unknown[]
+}
+
+export interface IdempotencyWorkload {
+  readonly name: string
+  readonly run: () => Promise<SealedEffectLedger> | SealedEffectLedger
+}
+
+export interface AssuranceSizeBudget {
+  readonly outDir?: string
+  readonly maxBytes?: number
+  readonly maxGzipBytes?: number
+}
+
 export interface AssuranceConfig {
   readonly source: unknown
   readonly policy: AssurancePolicy
@@ -176,6 +194,14 @@ export interface AssuranceConfig {
   readonly invariants?: {
     readonly executor: InvariantExecutor
   }
+  /** Optional application-supplied rule packs appended after built-in verification rules. */
+  readonly rulePacks?: readonly AssuranceRulePack[]
+  /** Optional sink for an assurance bundle. The CLI validates the callable shape at runtime. */
+  readonly assureSink?: unknown
+  /** Optional deterministic effect workloads for the tests gate. */
+  readonly idempotency?: readonly IdempotencyWorkload[]
+  /** Optional output-size budget for the assurance bundle's size gate. */
+  readonly size?: AssuranceSizeBudget
 }
 
 const nonEmpty = (value: string): boolean => value.trim() !== ""
@@ -312,6 +338,57 @@ export function defineAssuranceConfig(config: AssuranceConfig): AssuranceConfig 
   if (config.invariants !== undefined && typeof config.invariants.executor !== "function") {
     throw new Error("route assurance: invariant executor must be a function")
   }
+  if (config.rulePacks !== undefined) {
+    if (!Array.isArray(config.rulePacks))
+      throw new TypeError("route assurance: rulePacks must be an array")
+    const names = new Set<string>()
+    for (const pack of config.rulePacks) {
+      if (typeof pack.name !== "string" || pack.name.trim() === "")
+        throw new TypeError("route assurance: rule pack name must be non-empty")
+      if (names.has(pack.name)) throw new Error(`route assurance: duplicate rule pack ${pack.name}`)
+      names.add(pack.name)
+      if (!Array.isArray(pack.rules))
+        throw new TypeError(`route assurance: invalid rules in ${pack.name}`)
+    }
+  }
+  if (config.assureSink !== undefined) {
+    if (
+      typeof config.assureSink !== "object" ||
+      config.assureSink === null ||
+      Array.isArray(config.assureSink)
+    )
+      throw new TypeError("route assurance: assureSink must be an object")
+    const record = Object.fromEntries(Object.entries(config.assureSink))
+    if (typeof record.record !== "function")
+      throw new TypeError("route assurance: assureSink.record must be a function")
+  }
+  if (config.idempotency !== undefined) {
+    if (!Array.isArray(config.idempotency))
+      throw new TypeError("route assurance: idempotency must be an array")
+    for (const workload of config.idempotency) {
+      if (
+        typeof workload.name !== "string" ||
+        workload.name.trim() === "" ||
+        typeof workload.run !== "function"
+      )
+        throw new TypeError("route assurance: idempotency workloads require name and run")
+    }
+  }
+  if (config.size !== undefined) {
+    if (typeof config.size !== "object" || config.size === null || Array.isArray(config.size))
+      throw new TypeError("route assurance: size must be an object")
+    for (const [name, value] of Object.entries(config.size)) {
+      if (name !== "outDir" && name !== "maxBytes" && name !== "maxGzipBytes")
+        throw new TypeError(`route assurance: unknown size key ${name}`)
+      if (name === "outDir" && typeof value !== "string")
+        throw new TypeError("route assurance: size.outDir must be a string")
+      if (
+        (name === "maxBytes" || name === "maxGzipBytes") &&
+        (typeof value !== "number" || !Number.isFinite(value) || value < 0)
+      )
+        throw new TypeError(`route assurance: size.${name} must be a non-negative number`)
+    }
+  }
   const policy = defineAssurancePolicy(config.policy)
   const capabilities =
     config.capabilities !== undefined ? defineCapabilityPolicy(config.capabilities) : undefined
@@ -344,6 +421,12 @@ export function defineAssuranceConfig(config: AssuranceConfig): AssuranceConfig 
     ...(config.invariants !== undefined
       ? { invariants: Object.freeze({ executor: config.invariants.executor }) }
       : {}),
+    ...(config.rulePacks !== undefined ? { rulePacks: Object.freeze([...config.rulePacks]) } : {}),
+    ...(config.assureSink !== undefined ? { assureSink: config.assureSink } : {}),
+    ...(config.idempotency !== undefined
+      ? { idempotency: Object.freeze([...config.idempotency]) }
+      : {}),
+    ...(config.size !== undefined ? { size: Object.freeze({ ...config.size }) } : {}),
   })
 }
 

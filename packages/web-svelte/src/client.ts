@@ -16,12 +16,40 @@ import Router from "./Router.svelte"
 export { errorBoundary } from "./error.ts"
 
 /** Hydrate a server-rendered Svelte layout `chain` (with the loader `props`) inside `container`. */
-export function hydrate(chain: readonly unknown[], props: RenderProps, container: unknown): void {
+export interface HydrationAssuranceOptions {
+  readonly onWarning?: (message: string) => void
+}
+
+function assuranceWarning(): ((message: string) => void) | undefined {
+  const value = (globalThis as unknown as Record<PropertyKey, unknown>)[
+    Symbol.for("nifra.hydration.assurance")
+  ]
+  if (typeof value !== "object" || value === null) return undefined
+  const callback = (value as { onWarning?: unknown }).onWarning
+  return typeof callback === "function" ? (callback as (message: string) => void) : undefined
+}
+
+export function hydrate(
+  chain: readonly unknown[],
+  props: RenderProps,
+  container: unknown,
+  options?: HydrationAssuranceOptions,
+): void {
+  const warning = options?.onWarning ?? assuranceWarning()
+  const originalWarn = console.warn
+  if (warning !== undefined) console.warn = (...args) => warning(args.map(String).join(" "))
   svelteHydrate(Chain, {
     target: container as Element,
     props: { chain, props, layoutData: props.layoutData },
   })
+  if (warning !== undefined) console.warn = originalWarn
 }
+
+/** Testing hook used by verification runners to observe Svelte warnings and identity. */
+export const hydrationAssuranceHook = Object.freeze({
+  framework: "svelte" as const,
+  runtimeIdentity: (): object => svelteHydrate,
+})
 
 /**
  * Hydrate a stateful Svelte Router. The `Router` component holds the store snapshot in `$state` and
@@ -32,5 +60,15 @@ export function hydrate(chain: readonly unknown[], props: RenderProps, container
 export function mountRouter(options: MountRouterOptions): void {
   const { router, routes, searchSchemas, container } = options
   setMountedRouter(router) // expose it to useFetcher/useFetchers (same page, client-only)
-  svelteHydrate(Router, { target: container as Element, props: { router, routes, searchSchemas } })
+  const warning = assuranceWarning()
+  const originalWarn = console.warn
+  if (warning !== undefined) console.warn = (...args) => warning(args.map(String).join(" "))
+  try {
+    svelteHydrate(Router, {
+      target: container as Element,
+      props: { router, routes, searchSchemas },
+    })
+  } finally {
+    if (warning !== undefined) console.warn = originalWarn
+  }
 }

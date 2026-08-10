@@ -66,6 +66,12 @@ export {
   runFailureScenario,
 } from "./failure-lab.ts"
 export {
+  type EffectLedger,
+  type IdempotencyDivergence,
+  type IdempotencyProof,
+  proveIdempotency,
+} from "./idempotency.ts"
+export {
   assertIncidentReplays,
   type CapturedRequest,
   type CapturedRequestInput,

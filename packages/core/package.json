@@ -72,6 +72,11 @@
       "types": "./dist/assurance.d.ts",
       "default": "./dist/assurance.js"
     },
+    "./replay": {
+      "bun": "./src/replay.ts",
+      "types": "./dist/replay.d.ts",
+      "default": "./dist/replay.js"
+    },
     "./binary": {
       "bun": "./src/binary.ts",
       "types": "./dist/binary.d.ts",

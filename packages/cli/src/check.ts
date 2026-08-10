@@ -22,10 +22,14 @@ import type { AssuranceConfig, AssuranceReport } from "@nifrajs/core/assurance"
 import { Glob } from "bun"
 import type * as TSApi from "typescript"
 import type { CapabilityProjectReport } from "./capabilities-tool.ts"
+import { type Diagnostic, diagnostic } from "./diagnostics.ts"
 import { importTypeScript, type TypeScriptApi } from "./internal/typescript-import.ts"
 // Type-only: `pipeline-report.ts` imports this module's source scanners, so a value import here would
 // close a cycle. Doctor is what actually runs the collector (see the `pipeline` rule below).
 import type { PipelineReport } from "./pipeline-report.ts"
+import { parseRulePacks, type RuleContext, runRuleRegistry, sourceIndex } from "./rules/index.ts"
+import { legacyRules } from "./rules/legacy.ts"
+import { securityRules } from "./rules/security.ts"
 
 export interface SourceFinding {
   readonly file: string
@@ -1669,27 +1673,13 @@ const TSC_LINE = /^(.+?)\((\d+),\d+\):\s*(?:error|warning)\s+TS\d+:\s*(.+)$/
 
 /** A single machine-readable check failure - the unit an agent (or CI) acts on. */
 export interface CheckDiagnostic {
-  readonly rule:
-    | "typecheck"
-    | "typed-client"
-    | "untyped-client"
-    | "server-only-import"
-    | "removed-import"
-    | "interpolated-sql"
-    | "response-route"
-    | "undeclared-dependency"
-    | "duplicate-install"
-    | "stale-workspace-dist"
-    | "pipeline"
-    | "server-manifest-drift"
-    | "manifest-drift"
-    | "capability-assurance"
-    | "capability-config"
-    | "check-config"
+  readonly rule: string
   /** `error` fails the gate (a real contract break); `warning` is advisory - surfaced to the agent but
    * does NOT fail `nifra check`, for patterns that are sometimes intentional (a route returning a raw
    * `Response`, which silently drops the typed client to `data: never` but is valid for files/redirects). */
-  readonly severity: "error" | "warning"
+  readonly severity: "error" | "warning" | "info"
+  /** Stable diagnostic protocol code. The legacy `rule` remains for compatibility. */
+  readonly code?: string
   readonly file?: string
   readonly line?: number
   readonly message: string
@@ -1712,6 +1702,8 @@ export interface CheckDiagnostic {
    * edge rather than fabricating a deeper path - never a lie.
    */
   readonly chain?: readonly string[]
+  readonly evidence?: readonly string[]
+  readonly verify?: string
 }
 
 export interface CheckSuggestion {
@@ -1728,6 +1720,8 @@ export interface CheckResult {
   readonly ok: boolean
   readonly typecheck: "pass" | "fail" | "skipped"
   readonly diagnostics: readonly CheckDiagnostic[]
+  /** Normalized diagnostics with stable codes for agents and external renderers. */
+  readonly structuredDiagnostics?: readonly Diagnostic[]
   /**
    * Which bundler this app's phases run on, read statically from the config, and how nifra concluded
    * it. Returned even when nothing is wrong: an agent reading this project has to know which plugin
@@ -1974,6 +1968,7 @@ export async function collectCheckResult(
   // Route modules (rel + content) collected during the walk, so the TRANSITIVE server-only resolution
   // (#4.4) - which needs fs-backed import resolution, not just per-file text - runs after the walk.
   const routeModules: Array<{ rel: string; content: string }> = []
+  const sourceFiles: Array<{ file: string; content: string }> = []
   // Load the optional check config first - the typed-client scan needs the external-mount allowlist as it
   // walks. It's a tiny pure-JSON read; a malformed file surfaces as a warning below, never blocking.
   const { config: checkConfig, error: checkConfigError } = await loadCheckConfig(cwd)
@@ -1991,6 +1986,7 @@ export async function collectCheckResult(
       ? Promise.resolve<TypecheckResult>({ ran: false, ok: true, note: "skipped (lintsOnly)" })
       : typecheck(cwd, opts.signal),
     walkSource(cwd, (rel, content) => {
+      sourceFiles.push({ file: rel, content })
       fetches.push(...scanFetchText(rel, content, checkConfig.externalMounts))
       staticRoutes.push(...scanStaticRouteText(rel, content))
       untypedClients.push(...scanUntypedClient(rel, content))
@@ -2031,6 +2027,7 @@ export async function collectCheckResult(
   }
 
   const diagnostics: CheckDiagnostic[] = []
+  const structuredExtras: Diagnostic[] = []
   if (checkConfigError !== undefined) {
     diagnostics.push({
       rule: "check-config",
@@ -2230,6 +2227,7 @@ export async function collectCheckResult(
           ? `${f.package} was never built - ${f.distFile} is missing, but its export map serves it to Vite SSR/node consumers while Bun reads src - rebuild ${f.package}`
           : `${f.package} has a stale build artifact - ${f.distFile} is ${f.behindSeconds}s older than ${f.sourceFile}, and Vite SSR/node consumers read the artifact while Bun reads src - rebuild ${f.package}`,
         fix: `rebuild ${f.package}`,
+        evidence: [f.package, f.distFile, f.sourceFile],
         suggestion: {
           kind: "manual",
           title: `Rebuild ${f.package}`,
@@ -2267,6 +2265,7 @@ export async function collectCheckResult(
       file: f.file,
       message: `${f.file} drifted from routes/ (${parts.join("; ")}) - ${MANIFEST_DRIFT_HINT}`,
       fix: MANIFEST_DRIFT_HINT,
+      evidence: [...f.missing, ...f.extra],
       suggestion: {
         kind: "manual",
         title: "Regenerate the committed server manifest",
@@ -2282,6 +2281,7 @@ export async function collectCheckResult(
   // provenance firewall as well as the typed-contract gate. Loading is explicit/config-owned; projects
   // without nifra.assurance.ts retain the historical scan and hot path unchanged.
   const provided = opts.assurance
+  let applicationRulePacks: readonly import("./rules/index.ts").RulePack[] = []
   const assuranceConfigPath = join(cwd, "nifra.assurance.ts")
   if (provided !== undefined ? provided.present : existsSync(assuranceConfigPath)) {
     try {
@@ -2305,6 +2305,7 @@ export async function collectCheckResult(
           project = await collectCapabilityProjectReport(cwd, config.source, config.capabilities)
         }
       }
+      applicationRulePacks = parseRulePacks(config.rulePacks)
       const capabilityReport = project?.report
       if (config.capabilities !== undefined && project !== undefined) {
         for (const finding of project.report.findings) {
@@ -2420,12 +2421,100 @@ export async function collectCheckResult(
     }
   }
 
+  try {
+    const { checkContractsLock } = await import("./contracts.ts")
+    if (!existsSync(join(cwd, "backend.ts")) && !existsSync(join(cwd, "contracts.lock.json"))) {
+      throw new Error("contract source not configured")
+    }
+    const contract = await checkContractsLock(cwd)
+    if (!contract.present) {
+      structuredExtras.push(
+        diagnostic({
+          code: "NF-K001",
+          severity: "info",
+          message: "no contract lock; run `nifra contracts snapshot` to enable drift detection",
+          verify: "nifra contracts snapshot",
+        }),
+      )
+    } else {
+      for (const finding of contract.diagnostics) {
+        diagnostics.push({
+          rule: "contract-drift",
+          severity: "error",
+          code: "NF-K001",
+          ...(finding.route !== undefined ? { evidence: [finding.route] } : {}),
+          message: finding.message,
+          fix: "run `nifra contracts snapshot` after reviewing the contract change",
+          verify: "nifra check --lints-only",
+        })
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === "contract source not configured") {
+      // API-only source scans have no contract surface to snapshot.
+    } else {
+      diagnostics.push({
+        rule: "contract-drift",
+        severity: "error",
+        code: "NF-K001",
+        message: `contract lock could not be checked: ${error instanceof Error ? error.message : String(error)}`,
+        verify: "nifra contracts snapshot",
+      })
+    }
+  }
+
+  const ruleContext: RuleContext = {
+    root: cwd,
+    sources: sourceIndex(sourceFiles),
+    project: {
+      legacyDiagnostics: diagnostics,
+      assurance: opts.assurance,
+    },
+  }
+  const structuredDiagnostics = [...structuredExtras]
+  let registryDiagnostics: Diagnostic[] = []
+  try {
+    registryDiagnostics = await runRuleRegistry(
+      ruleContext,
+      [...legacyRules, ...securityRules],
+      applicationRulePacks,
+    )
+    structuredDiagnostics.push(...registryDiagnostics)
+  } catch (error) {
+    registryDiagnostics = [
+      diagnostic({
+        code: "NF-C017",
+        severity: "error",
+        message: `rule registry failed closed: ${error instanceof Error ? error.message : String(error)}`,
+        fix: { recipe: "rule-pack.repair", command: "nifra check --lints-only" },
+        verify: "nifra check --lints-only",
+      }),
+    ]
+    structuredDiagnostics.push(...registryDiagnostics)
+  }
+  for (const item of registryDiagnostics) {
+    // The legacy adapters publish stable structured findings; the human compatibility view already
+    // contains their original rule names. Security rules and application packs still need a legacy-view
+    // row because they have no pre-registry diagnostic.
+    if (legacyRules.some((rule) => rule.code === item.code)) continue
+    diagnostics.push({
+      rule: item.code,
+      severity: item.severity === "error" ? "error" : "warning",
+      code: item.code,
+      ...(item.file !== undefined ? { file: item.file } : {}),
+      ...(item.line !== undefined ? { line: item.line } : {}),
+      message: item.message,
+      ...(item.evidence !== undefined ? { evidence: item.evidence } : {}),
+      ...(item.verify !== undefined ? { verify: item.verify } : {}),
+    })
+  }
+
   // Cap the diagnostics when asked (the MCP path), so a project with thousands of findings can't return a
   // message that breaks the stdio transport. `ok` reflects the FULL set - truncation never flips it.
   const total = diagnostics.length
   const max = opts.maxDiagnostics
   const shown = max !== undefined && total > max ? diagnostics.slice(0, max) : diagnostics
-  return {
+  const result: CheckResult = {
     ok: !diagnostics.some((diagnostic) => diagnostic.severity === "error"),
     typecheck: tc.ran ? (tc.ok ? "pass" : "fail") : "skipped",
     diagnostics: shown,
@@ -2435,19 +2524,36 @@ export async function collectCheckResult(
       : {}),
     ...(shown.length < total ? { truncated: { shown: shown.length, total } } : {}),
   }
+  Object.defineProperty(result, "structuredDiagnostics", {
+    value: structuredDiagnostics.slice(0, shown.length + structuredExtras.length),
+    enumerable: false,
+  })
+  return result
 }
 
 /** Run the full check; print a report (`--json` for machine output) and return whether it passed. */
 export async function runCheck(
   cwd: string,
-  opts: { readonly json?: boolean; readonly lintsOnly?: boolean } = {},
+  opts: {
+    readonly json?: boolean
+    readonly lintsOnly?: boolean
+    readonly structured?: boolean
+  } = {},
 ): Promise<boolean> {
   // The check view over the one project verification: the same collector `assure` and `levels` read.
   const { collectProjectVerification } = await import("./verification.ts")
   const verification = await collectProjectVerification(cwd, { lintsOnly: opts.lintsOnly ?? false })
   const result = await verification.check()
   if (opts.json) {
-    console.log(JSON.stringify(result, null, 2))
+    console.log(
+      JSON.stringify(
+        opts.structured === true && result.structuredDiagnostics !== undefined
+          ? { ...result, diagnostics: result.structuredDiagnostics }
+          : result,
+        null,
+        2,
+      ),
+    )
     return result.ok
   }
 

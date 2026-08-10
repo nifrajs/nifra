@@ -17,7 +17,7 @@ React render adapter for @nifrajs/web - SSR + hydration (Bun-native JSX, no Babe
 - **Await** _(function)_ - `Await: <T>(props: AwaitProps<T>) => ReactNode` · from `@nifrajs/web-react/await`
 - **Content** _(function)_ - `Content: ({ html, as, ...rest }: ContentProps) => ReactElement` · from `@nifrajs/web-react/content`
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-react/client`
-- **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void` · from `@nifrajs/web-react/client`
+- **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown, options?: HydrationAssuranceOptions) => void` · from `@nifrajs/web-react/client`
 - **HydrationBoundary** _(function)_ - `HydrationBoundary: (props: { readonly state: DehydratedState | undefined; readonly children?: ReactNode; }) => ReactNode` · from `@nifrajs/web-react/query`
 - **I18nProvider** _(function)_ - `I18nProvider: (props: I18nProviderProps) => ReactNode` · from `@nifrajs/web-react/i18n`
 - **Image** _(function)_ - `Image: (props: ImageComponentProps) => ReactElement` · from `@nifrajs/web-react/image`
@@ -29,7 +29,7 @@ React render adapter for @nifrajs/web - SSR + hydration (Bun-native JSX, no Babe
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Blocker` · from `@nifrajs/web-react/router`
 - **useFetcher** _(function)_ - `useFetcher: (key: string) => FetcherHandle` · from `@nifrajs/web-react/fetcher`
 
-_…and 44 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
+_…and 46 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
 
 ## Footguns
 

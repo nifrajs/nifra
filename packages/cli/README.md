@@ -143,6 +143,12 @@ Claude Code:
 claude mcp add nifra -- nifra mcp
 ```
 
+## Structured verification
+
+`nifra check --json` returns stable diagnostic codes and machine-actionable evidence. `nifra assure --json --strict` returns one versioned bundle with explicit pass, fail, and skip gate results plus a `green` or `red` verdict. Use `nifra fix --code NF-...` for a registered fix recipe, and `nifra contracts snapshot` to opt into route contract drift detection.
+
+Assurance configs may append application-supplied rule packs. Pack codes must not use the reserved `NF-` prefix. Rules are pure source scans and run after the built-in rules.
+
 Run the client from (or point it at) your project root. The protocol is hand-rolled
 (newline-delimited JSON-RPC 2.0) - no SDK dependency.
 

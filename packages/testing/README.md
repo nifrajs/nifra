@@ -190,6 +190,7 @@ that every call carries and captures cookies via a shared jar.
 - `testSession<App>(app, { origin?, cookies? })` → `{ client: Treaty<App>, cookies: CookieJar }`.
 - `cookieJar()` → `CookieJar` - `header()` · `applyTo(headers)` · `store(response)` · `set` · `get` · `clear` · `size`.
   Honours removal (`Max-Age=0` / past `Expires`); other cookie attributes are ignored (in-process, same-origin).
+- `proveIdempotency({ run, runs? })` → a token-only proof that canonical effect ledgers replay identically.
 
 For a **stateless** request (no cookies), use `testClient` from `@nifrajs/client` directly.
 

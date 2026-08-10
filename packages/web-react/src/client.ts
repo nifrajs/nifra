@@ -8,6 +8,7 @@ import { searchOfChain } from "@nifrajs/web/client"
  * `useSyncExternalStore`) and re-renders the matched chain on every client navigation (no full
  * reload). Kept in its own entry so server code stays out of the client bundle.
  */
+import * as React from "react"
 import { createElement, type FunctionComponent, useSyncExternalStore } from "react"
 import { hydrateRoot } from "react-dom/client"
 import { compose } from "./compose.ts"
@@ -18,9 +19,37 @@ import { setMountedRouter } from "./fetcher.ts"
 export { errorBoundary } from "./error.ts"
 
 /** Hydrate a server-rendered React layout `chain` (with the loader `props`) inside `container`. */
-export function hydrate(chain: readonly unknown[], props: RenderProps, container: unknown): void {
-  hydrateRoot(container as Element, compose(chain, props))
+export interface HydrationAssuranceOptions {
+  readonly onRecoverableError?: (error: unknown, info?: unknown) => void
 }
+
+function assuranceError(): HydrationAssuranceOptions["onRecoverableError"] {
+  const value = (globalThis as unknown as Record<PropertyKey, unknown>)[
+    Symbol.for("nifra.hydration.assurance")
+  ]
+  if (typeof value !== "object" || value === null) return undefined
+  const callback = (value as { onRecoverableError?: unknown }).onRecoverableError
+  return typeof callback === "function"
+    ? (callback as HydrationAssuranceOptions["onRecoverableError"])
+    : undefined
+}
+
+export function hydrate(
+  chain: readonly unknown[],
+  props: RenderProps,
+  container: unknown,
+  options?: HydrationAssuranceOptions,
+): void {
+  const onRecoverableError = options?.onRecoverableError ?? assuranceError()
+  if (onRecoverableError === undefined) hydrateRoot(container as Element, compose(chain, props))
+  else hydrateRoot(container as Element, compose(chain, props), { onRecoverableError })
+}
+
+/** Testing hook used by verification runners to observe React's recoverable errors and identity. */
+export const hydrationAssuranceHook = Object.freeze({
+  framework: "react" as const,
+  runtimeIdentity: (): object => React,
+})
 
 /**
  * Hydrate a stateful React Router. `useSyncExternalStore` subscribes to the agnostic store and
@@ -52,5 +81,10 @@ export function mountRouter(options: MountRouterOptions): void {
       ...(state.submission ? { submission: state.submission } : {}),
     })
   }
-  hydrateRoot(container as Element, createElement(Router))
+  const onRecoverableError = assuranceError()
+  hydrateRoot(
+    container as Element,
+    createElement(Router),
+    ...(onRecoverableError === undefined ? [] : [{ onRecoverableError }]),
+  )
 }

@@ -8,18 +8,28 @@ The nifra CLI - zero-config dev/build/start for a nifra app (`nifra dev`, `nifra
 > reference see [`api-reference.md`](../../api-reference.md) (every export + signature) and
 > [`llms-full.txt`](../../llms-full.txt) (the prose guides). One cheap read instead of the whole corpus.
 
+## Public entrypoints
+
+`@nifrajs/cli/assure` · `@nifrajs/cli/diagnostics` · `@nifrajs/cli/fix-recipes` · `@nifrajs/cli/mcp` · `@nifrajs/cli/rules`
+
 ## Key exports
 
-- **docsTools** _(function)_ - `docsTools: (loadDocs: () => Promise<string | undefined>, loadExamples: () => Promise<Example[] | undefined>, loadTypes: () => Promise<TypeE…`
-- **examplesAppTool** _(function)_ - `examplesAppTool: (loadExamples: () => Promise<Example[] | undefined>) => McpTool`
-- **handleMcpHttp** _(function)_ - `handleMcpHttp: (request: Request) => Promise<Response>`
-- **publicDocsTools** _(function)_ - `publicDocsTools: () => McpTool[]`
-- **respondMcpHttp** _(function)_ - `respondMcpHttp: (request: Request, tools: McpTool[], options?: McpHttpOptions) => Promise<Response>`
-- **default** _(const)_ - `default: { port: number; fetch: (request: Request) => Promise<Response>; }`
-- **examplesWidget** _(const)_ - `examplesWidget: import("@nifrajs/mcp").McpWidget`
-- **Example** _(interface)_ - `interface Example`
-- **McpHttpOptions** _(interface)_ - `interface McpHttpOptions`
-- **TypeEntry** _(interface)_ - `interface TypeEntry`
+- **applyDiagnosticRecipe** _(function)_ - `applyDiagnosticRecipe: (root: string, diagnostic: Diagnostic) => Promise<readonly string[]>` · from `@nifrajs/cli/fix-recipes`
+- **collectAssuranceReport** _(function)_ - `collectAssuranceReport: (cwd: string, configPath?: string) => Promise<AssuranceReport>` · from `@nifrajs/cli/assure`
+- **collectAssureBundle** _(function)_ - `collectAssureBundle: (cwd: string, options?: { readonly config?: string; readonly strict?: boolean; readonly hydration?: boolean; readonly …` · from `@nifrajs/cli/assure`
+- **createMemoryAssureSink** _(function)_ - `createMemoryAssureSink: () => MemoryAssureSink` · from `@nifrajs/cli/assure`
+- **docsTools** _(function)_ - `docsTools: (loadDocs: () => Promise<string | undefined>, loadExamples: () => Promise<Example[] | undefined>, loadTypes: () => Promise<TypeE…` · from `@nifrajs/cli/mcp`
+- **examplesAppTool** _(function)_ - `examplesAppTool: (loadExamples: () => Promise<Example[] | undefined>) => McpTool` · from `@nifrajs/cli/mcp`
+- **formatAssuranceReport** _(function)_ - `formatAssuranceReport: (report: AssuranceReport) => string` · from `@nifrajs/cli/assure`
+- **getFixRecipe** _(function)_ - `getFixRecipe: (id: string) => FixRecipe | undefined` · from `@nifrajs/cli/fix-recipes`
+- **handleMcpHttp** _(function)_ - `handleMcpHttp: (request: Request) => Promise<Response>` · from `@nifrajs/cli/mcp`
+- **listFixRecipes** _(function)_ - `listFixRecipes: () => readonly FixRecipe[]` · from `@nifrajs/cli/fix-recipes`
+- **loadAssuranceConfig** _(function)_ - `loadAssuranceConfig: (cwd: string, configPath?: string) => Promise<AssuranceConfig>` · from `@nifrajs/cli/assure`
+- **normalizeSeverity** _(function)_ - `normalizeSeverity: (value: "error" | "warning" | "warn" | "info") => Severity` · from `@nifrajs/cli/diagnostics`
+- **parseRulePacks** _(function)_ - `parseRulePacks: (value: unknown) => readonly RulePack[]` · from `@nifrajs/cli/rules`
+- **publicDocsTools** _(function)_ - `publicDocsTools: () => McpTool[]` · from `@nifrajs/cli/mcp`
+
+_…and 28 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) for the complete list._
 
 ## Footguns
 

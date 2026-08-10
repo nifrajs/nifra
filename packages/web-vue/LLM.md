@@ -17,7 +17,7 @@ Vue render adapter for @nifrajs/web - streaming SSR + hydration, with a .vue SFC
 - **compileVue** _(function)_ - `compileVue: (source: string, filename: string, generate: "dom" | "ssr") => string` · from `@nifrajs/web-vue/plugin`
 - **compileVueStyles** _(function)_ - `compileVueStyles: (source: string, filename: string) => string` · from `@nifrajs/web-vue/plugin`
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-vue/client`
-- **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void` · from `@nifrajs/web-vue/client`
+- **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown, options?: HydrationAssuranceOptions) => void` · from `@nifrajs/web-vue/client`
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-vue/client`
 - **setMountedRouter** _(function)_ - `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-vue/fetcher`
 - **svgToVueSfc** _(function)_ - `svgToVueSfc: (xml: string) => string` · from `@nifrajs/web-vue/svg`
@@ -29,7 +29,7 @@ Vue render adapter for @nifrajs/web - streaming SSR + hydration, with a .vue SFC
 - **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">` · from `@nifrajs/web-vue/query`
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Readonly<Ref<Schema extends StandardSchemaV1 ? InferOutput<Schema…` · from `@nifrajs/web-vue/router`
 
-_…and 17 more - see [`api-reference.md`](../../api-reference.md#nifrajswebvue) for the complete list._
+_…and 19 more - see [`api-reference.md`](../../api-reference.md#nifrajswebvue) for the complete list._
 
 ## Footguns
 

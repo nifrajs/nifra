@@ -248,6 +248,12 @@
     "doc": "/** The minimal shape a nifra `server()` app satisfies - its own `fetch`. */"
   },
   {
+    "name": "applyDiagnosticRecipe",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function applyDiagnosticRecipe(root: string, diagnostic: Diagnostic): Promise<readonly string[]>;"
+  },
+  {
     "name": "applyHead",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -404,7 +410,7 @@
     "name": "AssuranceConfig",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface AssuranceConfig {\n    readonly source: unknown;\n    readonly policy: AssurancePolicy;\n    readonly capabilities?: CapabilityPolicy;\n    /** Off-request-path manifest artifact/signing integration. Private keys remain behind `signer`. */\n    readonly manifest?: {\n        /** Default `nifra.manifest.json`. */\n        readonly path?: string;\n        /** Resolve an operator key reference to a signer (KMS/HSM/local WebCrypto). */\n        readonly signer?: (keyRef: string) => NifraManifestSigner | Promise<NifraManifestSigner>;\n    };\n    /** Dynamic invariant execution is opt-in and must use a disposable/sandboxed target. */\n    readonly invariants?: {\n        readonly executor: InvariantExecutor;\n    };\n}"
+    "signature": "export interface AssuranceConfig {\n    readonly source: unknown;\n    readonly policy: AssurancePolicy;\n    readonly capabilities?: CapabilityPolicy;\n    /** Off-request-path manifest artifact/signing integration. Private keys remain behind `signer`. */\n    readonly manifest?: {\n        /** Default `nifra.manifest.json`. */\n        readonly path?: string;\n        /** Resolve an operator key reference to a signer (KMS/HSM/local WebCrypto). */\n        readonly signer?: (keyRef: string) => NifraManifestSigner | Promise<NifraManifestSigner>;\n    };\n    /** Dynamic invariant execution is opt-in and must use a disposable/sandboxed target. */\n    readonly invariants?: {\n        readonly executor: InvariantExecutor;\n    };\n    /** Optional application-supplied rule packs appended after built-in verification rules. */\n    readonly rulePacks?: readonly AssuranceRulePack[];\n    /** Optional sink for an assurance bundle. The CLI validates the callable shape at runtime. */\n    readonly assureSink?: unknown;\n    /** Optional deterministic effect workloads for the tests gate. */\n    readonly idempotency?: readonly IdempotencyWorkload[];\n    /** Optional output-size budget for the assurance bundle's size gate. */\n    readonly size?: AssuranceSizeBudget;\n}"
   },
   {
     "name": "AssuranceDeclaration",
@@ -464,11 +470,30 @@
     "signature": "export interface AssuranceRule {\n    /** Stable human-readable classification included in diagnostics. */\n    readonly name: string;\n    readonly match: AssuranceRouteSelector;\n    /** Evidence ids the route must carry. */\n    readonly require?: readonly string[];\n    /** Evidence ids the route must not carry (useful for public webhooks and health routes). */\n    readonly forbid?: readonly string[];\n}"
   },
   {
+    "name": "AssuranceRulePack",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface AssuranceRulePack {\n    readonly name: string;\n    readonly rules: readonly unknown[];\n}",
+    "doc": "/** Application-supplied verification rules. The CLI validates the executable rule shape at runtime. */"
+  },
+  {
     "name": "AssuranceScope",
     "kind": "type",
     "package": "@nifrajs/core",
     "signature": "export type AssuranceScope = \"global\" | \"subsequent\" | \"plugin\";",
     "doc": "/** Where enforcement evidence follows Nifra's route-registration semantics. */"
+  },
+  {
+    "name": "AssuranceSizeBudget",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface AssuranceSizeBudget {\n    readonly outDir?: string;\n    readonly maxBytes?: number;\n    readonly maxGzipBytes?: number;\n}"
+  },
+  {
+    "name": "AssureBundle",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface AssureBundle {\n    readonly version: 1;\n    readonly createdAt: string;\n    readonly commit: string;\n    readonly gates: readonly GateResult[];\n    readonly verdict: \"green\" | \"red\";\n}"
   },
   {
     "name": "AssuredCapabilityRoute",
@@ -481,6 +506,12 @@
     "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface AssuredRoute {\n    readonly method: string;\n    readonly path: string;\n    readonly rule?: string;\n    readonly evidence: readonly AssuranceEvidence[];\n    readonly missing: readonly string[];\n    readonly forbidden: readonly string[];\n}"
+  },
+  {
+    "name": "AssureSink",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface AssureSink {\n    record(bundle: AssureBundle): Promise<void>;\n}"
   },
   {
     "name": "attachCapabilityJournal",
@@ -1830,6 +1861,12 @@
     "doc": "/**\n * Check one result against the route's declared response schema.\n *\n * Returns synchronously when the schema does (the common case), so an app that opts in does not pay a\n * microtask per response for a check that had no work to do.\n */"
   },
   {
+    "name": "CheckRule",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface CheckRule {\n    readonly code: string;\n    readonly title: string;\n    scan(ctx: RuleContext): Promise<Diagnostic[]>;\n}"
+  },
+  {
     "name": "ChunkSize",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -1976,6 +2013,18 @@
     "doc": "/** A source window around the offending line. `caret` marks the exact line the top frame points at. */"
   },
   {
+    "name": "collectAssuranceReport",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function collectAssuranceReport(cwd: string, configPath?: string): Promise<AssuranceReport>;"
+  },
+  {
+    "name": "collectAssureBundle",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function collectAssureBundle(cwd: string, options?: {\n    readonly config?: string;\n    readonly strict?: boolean;\n    readonly hydration?: boolean;\n    readonly interact?: boolean;\n}): Promise<AssureBundle>;"
+  },
+  {
     "name": "Collection",
     "kind": "interface",
     "package": "@nifrajs/content",
@@ -2029,6 +2078,12 @@
     "package": "@nifrajs/core",
     "signature": "export declare function compareRoutePatternSpecificity(left: CompiledRoutePattern, right: CompiledRoutePattern): number;",
     "doc": "/** Core precedence: static > mixed > param > wildcard at the first differing segment, independent of\n * registration order. */"
+  },
+  {
+    "name": "CompatibleReplayFile",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type CompatibleReplayFile = ReplayFile | LegacyContractReplayFile | LegacyFailureReplayFile;"
   },
   {
     "name": "CompiledRoutePattern",
@@ -2495,6 +2550,12 @@
     "kind": "interface",
     "package": "@nifrajs/mcp",
     "signature": "export interface CreateMcpServerOptions {\n    readonly name: string;\n    readonly version: string;\n    readonly tools?: readonly McpTool[];\n    /** MCP Apps widgets - their resources are registered and the UI capability is advertised. */\n    readonly widgets?: readonly McpWidget[];\n    /** Extra (non-widget) resources to expose. */\n    readonly resources?: readonly McpResource[];\n    readonly prompts?: readonly McpPrompt[];\n    /** GET health-page text. */\n    readonly health?: string;\n    /** Max JSON-RPC body size in bytes (default 1 MB). */\n    readonly maxBodyBytes?: number;\n    /** Natural-language guidance for LLMs, surfaced in the modern `server/discover` result (2026-07-28). */\n    readonly instructions?: string;\n    /** Origin allowlist for the DNS-rebinding guard. Omit to allow any origin; set it to reject other\n     * browser origins with 403 (e.g. a hardened, non-public mount). */\n    readonly allowedOrigins?: readonly string[];\n}"
+  },
+  {
+    "name": "createMemoryAssureSink",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function createMemoryAssureSink(): MemoryAssureSink;"
   },
   {
     "name": "createMemoryCausalityStore",
@@ -2980,6 +3041,12 @@
     "doc": "/**\n * Decode an ALREADY-READ transport body. The counterpart to {@link decodeTransportResponse} for a\n * caller that obtained the text through its own bounded read - notably the typed client's\n * in-process path, where the response body is same-process memory that was fully resident before\n * the read, so the native `Response.text()` is safe and the streaming byte-cap loop would protect\n * nothing while costing ~23x. The byte cap is still enforced here (identical error), just after\n * the read instead of during it.\n */"
   },
   {
+    "name": "DEFAULT_ASSURANCE_CONFIG",
+    "kind": "const",
+    "package": "@nifrajs/cli",
+    "signature": "export declare const DEFAULT_ASSURANCE_CONFIG = \"nifra.assurance.ts\";"
+  },
+  {
     "name": "DEFAULT_DEV_PORT",
     "kind": "const",
     "package": "@nifrajs/web",
@@ -3162,6 +3229,12 @@
     "doc": "/**\n * Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)`\n * applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each\n * other without double-registering hooks.\n *\n * ```ts\n * export const requestId = definePlugin(\"requestId\", (app) => app.derive(() => ({ requestId: uuid() })))\n * app.use(requestId)   // downstream handlers see c.requestId\n * ```\n *\n * FOOTGUN: only use this for a plugin that adds context. For a plugin that **mounts routes/hooks but adds\n * NO context** (an auth router, an audit logger), use {@link defineRouterPlugin} ({@link defineIdentityPlugin}).\n * `definePlugin((app) => app.get(...))` infers `app: Server<any, any>`, so `.use()` returns `Server<any, any>`\n * and your whole typed client silently collapses to `any` - no type error, no runtime error.\n */"
   },
   {
+    "name": "defineReplayFile",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function defineReplayFile(input: Omit<ReplayFile, \"version\">): ReplayFile;"
+  },
+  {
     "name": "defineRouterPlugin",
     "kind": "const",
     "package": "@nifrajs/core",
@@ -3322,6 +3395,18 @@
     "doc": "/** Query for a DevTools state snapshot: an optional `path` prefix and a most-recent-`limit`. */"
   },
   {
+    "name": "diagnostic",
+    "kind": "const",
+    "package": "@nifrajs/cli",
+    "signature": "export declare const diagnostic: (value: Diagnostic) => Diagnostic;"
+  },
+  {
+    "name": "Diagnostic",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface Diagnostic {\n    /** Stable forever. Never renumber or reuse. */\n    readonly code: string;\n    readonly severity: Severity;\n    readonly message: string;\n    readonly file?: string;\n    readonly line?: number;\n    /** Short evidence strings that help an agent act without exposing payloads. */\n    readonly evidence?: readonly string[];\n    readonly fix?: DiagnosticFix;\n    /** Command that proves the fix worked. */\n    readonly verify?: string;\n}"
+  },
+  {
     "name": "Diagnostic",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -3334,6 +3419,12 @@
     "package": "@nifrajs/web",
     "signature": "export declare const DIAGNOSTIC_CATALOG: readonly CatalogEntry[];",
     "doc": "/**\n * The recognised-failure catalog. Seeded with the highest-signal nifra failures; extend it as new\n * classes of error earn a stable code. Order matters only in that the first match wins.\n */"
+  },
+  {
+    "name": "DiagnosticFix",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface DiagnosticFix {\n    readonly recipe: string;\n    readonly command?: string;\n}"
   },
   {
     "name": "DiagnosticFrame",
@@ -3570,6 +3661,12 @@
     "package": "@nifrajs/core",
     "signature": "export declare function effectLedger(options: EffectLedgerOptions): IdentityPlugin;",
     "doc": "/**\n * Enable the per-request effect ledger. Each route that declares `schema.capabilities` gets a bounded,\n * token-only ledger; `useCapability(c, id, …)` appends one entry per effect, and the sink receives the\n * sealed ledger when the response settles (only when it recorded entries). Token-only by construction -\n * capability ids, phases, counters, digests; never payloads, values, or the concrete URL (the route\n * pattern is recorded). Without this plugin, capability-declaring routes simply carry no ledger.\n */"
+  },
+  {
+    "name": "EffectLedger",
+    "kind": "type",
+    "package": "@nifrajs/testing",
+    "signature": "export type EffectLedger = SealedEffectLedger;"
   },
   {
     "name": "effectLedgerOf",
@@ -4176,6 +4273,12 @@
     "doc": "/** Fixed delay before every retry. */"
   },
   {
+    "name": "FixRecipe",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface FixRecipe {\n    readonly id: string;\n    readonly description: string;\n    apply(root: string, diagnostic: Diagnostic): Promise<readonly string[]>;\n    readonly verify: string;\n}"
+  },
+  {
     "name": "FontAsset",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -4226,6 +4329,12 @@
     "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface ForbiddenCapabilityImport {\n    /** Exact module specifier, or a trailing `/*` prefix rule. */\n    readonly specifier: string;\n    readonly reason: string;\n}"
+  },
+  {
+    "name": "formatAssuranceReport",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function formatAssuranceReport(report: AssuranceReport): string;"
   },
   {
     "name": "formatBytes",
@@ -4343,6 +4452,12 @@
     "doc": "/**\n * Wrap a TypeBox schema as a `NifraSchema`.\n *\n * **Validation is fast where it can be, and works everywhere.** The first `validate`\n * builds a compiled `TypeCompiler` validator (codegen via `new Function`) and memoizes\n * it - composing schemas (`t.object({ a: t.string() })`) never compiles the inner\n * pieces; only a schema actually used to validate a request pays the one-time codegen\n * cost. On Bun and Node this is the only path and it is untouched.\n *\n * Edge runtimes (Cloudflare Workers, Vercel Edge, Deno Deploy) **forbid dynamic code\n * generation**, so that first compile throws there. We catch it once per schema and\n * fall back to TypeBox's eval-free `Value` checker - same semantics (and same global\n * `FormatRegistry`, so `t.string({ format })` behaves identically), no `new Function`.\n * The branch is decided once and memoized, so the hot path is a single check either way.\n *\n * Exposed (not just used internally by `t`) so a TypeBox schema authored directly can\n * be adapted without leaving the Standard Schema world.\n *\n * `options.coerce` runs TypeBox's `Value.Convert` (string→number/integer/boolean, per the schema)\n * BEFORE validating. Query values always arrive as strings (`?limit=20` → `\"20\"`), so a query schema\n * with a numeric field can't validate without this - it's how `t.pageQuery` yields a real `number`.\n * Leave it OFF (the default) for body/JSON schemas: a JSON number is already a number, and coercing\n * would silently accept `\"20\"` where the contract said `20`.\n */"
   },
   {
+    "name": "GateResult",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface GateResult {\n    readonly gate: \"check\" | \"doctor\" | \"render\" | \"hydration\" | \"contracts\" | \"size\" | \"tests\" | string;\n    readonly status: \"pass\" | \"fail\" | \"skip\";\n    readonly skipReason?: string;\n    readonly durationMs: number;\n    readonly diagnostics: readonly Diagnostic[];\n    readonly replay?: string;\n}"
+  },
+  {
     "name": "Gauge",
     "kind": "class",
     "package": "@nifrajs/otel",
@@ -4449,6 +4564,12 @@
     "package": "@nifrajs/middleware",
     "signature": "export declare function getContext<C extends Context = Context>(): C;",
     "doc": "/** Return the current request context, or throw when no context-storage wrapper is active. */"
+  },
+  {
+    "name": "getFixRecipe",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function getFixRecipe(id: string): FixRecipe | undefined;"
   },
   {
     "name": "getSession",
@@ -4607,8 +4728,7 @@
     "name": "hydrate",
     "kind": "function",
     "package": "@nifrajs/web-react",
-    "signature": "export declare function hydrate(chain: readonly unknown[], props: RenderProps, container: unknown): void;",
-    "doc": "/** Hydrate a server-rendered React layout `chain` (with the loader `props`) inside `container`. */"
+    "signature": "export declare function hydrate(chain: readonly unknown[], props: RenderProps, container: unknown, options?: HydrationAssuranceOptions): void;"
   },
   {
     "name": "hydrate",
@@ -4621,14 +4741,54 @@
     "name": "hydrate",
     "kind": "function",
     "package": "@nifrajs/web-svelte",
-    "signature": "export declare function hydrate(chain: readonly unknown[], props: RenderProps, container: unknown): void;",
-    "doc": "/** Hydrate a server-rendered Svelte layout `chain` (with the loader `props`) inside `container`. */"
+    "signature": "export declare function hydrate(chain: readonly unknown[], props: RenderProps, container: unknown, options?: HydrationAssuranceOptions): void;"
   },
   {
     "name": "hydrate",
     "kind": "function",
     "package": "@nifrajs/web-vue",
-    "signature": "export declare function hydrate(chain: readonly unknown[], props: RenderProps, container: unknown): void;",
+    "signature": "export declare function hydrate(chain: readonly unknown[], props: RenderProps, container: unknown, options?: HydrationAssuranceOptions): void;"
+  },
+  {
+    "name": "hydrationAssuranceHook",
+    "kind": "const",
+    "package": "@nifrajs/web-react",
+    "signature": "export declare const hydrationAssuranceHook: Readonly<{\n    framework: \"react\";\n    runtimeIdentity: () => object;\n}>;",
+    "doc": "/** Testing hook used by verification runners to observe React's recoverable errors and identity. */"
+  },
+  {
+    "name": "hydrationAssuranceHook",
+    "kind": "const",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export declare const hydrationAssuranceHook: Readonly<{\n    framework: \"svelte\";\n    runtimeIdentity: () => object;\n}>;",
+    "doc": "/** Testing hook used by verification runners to observe Svelte warnings and identity. */"
+  },
+  {
+    "name": "hydrationAssuranceHook",
+    "kind": "const",
+    "package": "@nifrajs/web-vue",
+    "signature": "export declare const hydrationAssuranceHook: Readonly<{\n    framework: \"vue\";\n    runtimeIdentity: () => object;\n}>;",
+    "doc": "/** Testing hook used by verification runners to observe Vue warnings and identity. */"
+  },
+  {
+    "name": "HydrationAssuranceOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web-react",
+    "signature": "export interface HydrationAssuranceOptions {\n    readonly onRecoverableError?: (error: unknown, info?: unknown) => void;\n}",
+    "doc": "/** Hydrate a server-rendered React layout `chain` (with the loader `props`) inside `container`. */"
+  },
+  {
+    "name": "HydrationAssuranceOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export interface HydrationAssuranceOptions {\n    readonly onWarning?: (message: string) => void;\n}",
+    "doc": "/** Hydrate a server-rendered Svelte layout `chain` (with the loader `props`) inside `container`. */"
+  },
+  {
+    "name": "HydrationAssuranceOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web-vue",
+    "signature": "export interface HydrationAssuranceOptions {\n    readonly onWarning?: (message: string) => void;\n}",
     "doc": "/** Hydrate a server-rendered Vue layout `chain` (with the loader `props`) inside `container`. */"
   },
   {
@@ -4735,6 +4895,12 @@
     "signature": "export interface IdempotencyCompletionInput extends IdempotencyEntryKey {\n    /** Opaque ownership token returned by `begin(state:\"new\")`. */\n    readonly reservation: string;\n    readonly response: StoredResponse;\n}"
   },
   {
+    "name": "IdempotencyDivergence",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface IdempotencyDivergence {\n    readonly step: number;\n    readonly field: string;\n    readonly first: unknown;\n    readonly second: unknown;\n}"
+  },
+  {
     "name": "IdempotencyEntryKey",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -4753,6 +4919,12 @@
     "package": "@nifrajs/core",
     "signature": "export interface IdempotencyPluginOptions {\n    readonly store?: IdempotencyStore | undefined;\n}",
     "doc": "/**\n * Enable request idempotency. Routes that declare `schema.idempotency` get the dedupe lane: a repeat\n * `Idempotency-Key` replays the stored response instead of re-running the handler. Without this plugin,\n * declaring `schema.idempotency` is a registration error (the safety gate can never be silently\n * dropped). `store` is the app-wide default backing routes that do not pin their own; omit it for a\n * shared in-process store (development/tests only - inject a durable store in production).\n */"
+  },
+  {
+    "name": "IdempotencyProof",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface IdempotencyProof {\n    readonly ok: boolean;\n    readonly divergences: readonly IdempotencyDivergence[];\n}"
   },
   {
     "name": "IdempotencyRecord",
@@ -4787,6 +4959,12 @@
     "package": "@nifrajs/middleware",
     "signature": "export interface IdempotencyStore {\n    /**\n     * Atomically claim `key`: `\"replay\"` if a completed response is stored, `\"in_flight\"` if another\n     * request holds the lock, else `\"new\"` (the caller now owns the lock and must `complete`/`release`).\n     * The in-flight lock expires after `lockTtlMs` so a crashed handler can't wedge the key forever.\n     */\n    begin(key: string, lockTtlMs: number): Promise<IdempotencyClaim>;\n    /** Store the completed response and release the lock (kept for `ttlMs`). */\n    complete(key: string, record: IdempotencyRecord, ttlMs: number): Promise<void>;\n    /** Release the lock without storing (handler errored / response not cacheable). */\n    release(key: string): Promise<void>;\n}",
     "doc": "/**\n * Store backing the idempotency guarantee. Production deploys MUST use a shared store so the key holds\n * across instances; `begin` MUST be **atomic** (e.g. Redis `SET key NX PX lockTtlMs`) or two concurrent\n * retries can both see `\"new\"`. {@link MemoryIdempotencyStore} is for dev / single-instance only.\n */"
+  },
+  {
+    "name": "IdempotencyWorkload",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface IdempotencyWorkload {\n    readonly name: string;\n    readonly run: () => Promise<SealedEffectLedger> | SealedEffectLedger;\n}"
   },
   {
     "name": "IDEMPOTENT_REPLAY_HEADER",
@@ -5631,6 +5809,20 @@
     "doc": "/**\n * Receives each sealed ledger once per request (only when it has entries). Implementations must not\n * assume a payload: the ledger is token-only. A durable/tenant-scoped sink lives behind this seam.\n */"
   },
   {
+    "name": "LegacyContractReplayFile",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface LegacyContractReplayFile {\n    readonly seed: number;\n    readonly caseId: string;\n    readonly runtime: string;\n}",
+    "doc": "/** Existing adversarial contract replay metadata. Kept as a compatibility envelope. */"
+  },
+  {
+    "name": "LegacyFailureReplayFile",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface LegacyFailureReplayFile {\n    readonly seed: number;\n    readonly schedule: readonly Record<string, unknown>[];\n}",
+    "doc": "/** Existing deterministic failure-lab replay metadata. Kept as a compatibility envelope. */"
+  },
+  {
     "name": "Link",
     "kind": "const",
     "package": "@nifrajs/web-react",
@@ -5652,10 +5844,22 @@
     "doc": "/** {@link Link} props: every `<a>` attribute except `href` (set from `to`), plus `to` + `replace`. */"
   },
   {
+    "name": "listFixRecipes",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function listFixRecipes(): readonly FixRecipe[];"
+  },
+  {
     "name": "ListOptions",
     "kind": "interface",
     "package": "@nifrajs/storage",
     "signature": "export interface ListOptions {\n    /** Only keys starting with this prefix. */\n    readonly prefix?: string;\n    /** Cap the number of keys returned. */\n    readonly limit?: number;\n}"
+  },
+  {
+    "name": "loadAssuranceConfig",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function loadAssuranceConfig(cwd: string, configPath?: string): Promise<AssuranceConfig>;"
   },
   {
     "name": "Loader",
@@ -6070,6 +6274,12 @@
     "kind": "class",
     "package": "@nifrajs/core",
     "signature": "export declare class MemoryApprovalStore implements ApprovalStore {\n    readonly durability: \"memory\";\n    private readonly records;\n    create(record: ApprovalRecord): boolean;\n    get(approvalId: string): ApprovalRecord | undefined;\n    decide(input: Parameters<ApprovalStore[\"decide\"]>[0]): boolean;\n    consume(input: Parameters<ApprovalStore[\"consume\"]>[0]): ApprovalConsumeResult;\n    list(): readonly ApprovalRecord[];\n}"
+  },
+  {
+    "name": "MemoryAssureSink",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface MemoryAssureSink extends AssureSink {\n    readonly bundles: readonly AssureBundle[];\n    clear(): void;\n}"
   },
   {
     "name": "MemoryCache",
@@ -6920,6 +7130,12 @@
     "doc": "/**\n * Strip `optimizeDeps.rollupOptions.jsx` from a plugin's `config` hook output when running under\n * rolldown-vite - the source of the scary, harmless `Warning: Invalid input options … \"jsx\" Invalid\n * key: Expected never but received \"jsx\"` on `nifra dev`.\n *\n * Why it happens: `@vitejs/plugin-react@4.x` (and peers) target an *older* rolldown-vite optimizeDeps\n * API - they inject `optimizeDeps.rollupOptions.jsx` to tell the dep pre-bundler to transform JSX. Vite\n * 8's rolldown dep-optimizer renamed that surface to `optimizeDeps.rolldownOptions` (and moved jsx under\n * `transform.jsx`), so the stale `rollupOptions.jsx` is an unrecognized input option → the warning. It's\n * a version-skew artifact, not a real misconfig: the route source JSX transform runs through the\n * plugin's own `transform` hook (untouched here), and node_modules deps that get pre-bundled almost\n * never contain raw JSX - so dropping the dead key changes no behavior and keeps HMR/Fast Refresh\n * intact. We *strip* (rather than translate to `rolldownOptions`) so the fix is version-agnostic: a\n * plugin already emitting the correct `rolldownOptions` is left untouched, and a future plugin bump that\n * stops emitting `rollupOptions.jsx` makes this a no-op.\n *\n * Scoped narrowly: only the `optimizeDeps.rollupOptions.jsx` key is removed, only under rolldown-vite,\n * and only from the value a plugin's `config` hook returns. Non-rolldown Vite is passed through verbatim.\n *\n * FLATTEN FIRST: a Vite plugin factory may return an ARRAY of plugins - `@vitejs/plugin-react`'s `react()`\n * returns `[vite:react-babel, vite:react-refresh]`, and it's `react:react-babel`'s `config` hook that emits\n * the offending `optimizeDeps.rollupOptions.jsx`. `nifra.config.ts` writes `vitePlugins = [react()]`, so the\n * plugin list arrives NESTED (`[[babel, refresh]]`). Without flattening, `.map` sees the inner array (which\n * has no `config`), leaves it untouched, and Vite - which flattens plugin arrays itself before running them\n * - then executes the un-stripped babel hook, so the warning survives. Flattening here (Vite accepts a flat\n * list identically) is what lets the strip reach every real plugin.\n */"
   },
   {
+    "name": "normalizeSeverity",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function normalizeSeverity(value: \"error\" | \"warning\" | \"warn\" | \"info\"): Severity;"
+  },
+  {
     "name": "notFound",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -7218,6 +7434,13 @@
     "doc": "/** Parse an untrusted durable graph record. Unknown fields fail closed at every nesting level. */"
   },
   {
+    "name": "parseCompatibleReplayFile",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function parseCompatibleReplayFile(value: unknown): CompatibleReplayFile;",
+    "doc": "/** Parse the unified format while preserving the two pre-existing token-only replay shapes. */"
+  },
+  {
     "name": "parseCookies",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -7334,6 +7557,18 @@
     "package": "@nifrajs/core",
     "signature": "export declare function parseNifraManifestSignature(content: string, source?: string): NifraManifestSignature;",
     "doc": "/** Parse the detached sidecar before selecting its operator-controlled public key. */"
+  },
+  {
+    "name": "parseReplayFile",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function parseReplayFile(value: unknown): ReplayFile;"
+  },
+  {
+    "name": "parseRulePacks",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function parseRulePacks(value: unknown): readonly RulePack[];"
   },
   {
     "name": "parseTraceparent",
@@ -7620,6 +7855,12 @@
     "signature": "export interface ProblemDetailsOptions {\n    /** Include only the request pathname as `instance`. Query strings are never included. Default false. */\n    readonly includeInstance?: boolean;\n    /** Prefix for code-specific problem types. Default `about:blank`. */\n    readonly typeBase?: string;\n    /** Maximum JSON error body inspected. Default 64 KiB. */\n    readonly maxBytes?: number;\n}"
   },
   {
+    "name": "ProjectFacts",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface ProjectFacts {\n    readonly [key: string]: unknown;\n}"
+  },
+  {
     "name": "prompt",
     "kind": "function",
     "package": "@nifrajs/prompt",
@@ -7701,6 +7942,13 @@
     "package": "@nifrajs/mcp",
     "signature": "export declare const PROTOCOL_VERSION = \"2025-06-18\";",
     "doc": "/** The protocol revision this server advertises by default. A handshake-era version - the HTTP transport\n * still uses `initialize`; current clients reach it through their backward-compatibility fallback.\n * `initialize` echoes the client's own requested version instead when it's one this server also speaks\n * ({@link SUPPORTED_PROTOCOL_VERSIONS}). */"
+  },
+  {
+    "name": "proveIdempotency",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function proveIdempotency(options: {\n    readonly run: () => Promise<EffectLedger> | EffectLedger;\n    readonly runs?: number;\n}): Promise<IdempotencyProof>;",
+    "doc": "/** Run a token-only effect workload repeatedly and report the first stable replay differences. */"
   },
   {
     "name": "PublicDirCache",
@@ -8106,6 +8354,12 @@
     "doc": "/**\n * Register a navigation guard, returning an unregister function. `onChange` is called with the current\n * {@link Blocker} whenever its state changes (so the adapter can re-render its confirmation UI). Before\n * `installHistory` has run (SSR, pre-hydration), there's no controller: registration is a no-op and the\n * caller stays on {@link IDLE_BLOCKER}, degrading to native navigation. Called by an adapter's\n * `useBlocker`, not by app code directly.\n */"
   },
   {
+    "name": "registerFixRecipe",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function registerFixRecipe(recipe: FixRecipe): void;"
+  },
+  {
     "name": "registerFormat",
     "kind": "function",
     "package": "@nifrajs/schema",
@@ -8247,6 +8501,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function renderSizeReport(report: SizeReport): string;",
     "doc": "/**\n * Render a {@link SizeReport} as a terse aligned table (biggest first) with a totals row - the text\n * `nifra build --report` prints. Pure (string in, string out) so the formatting is unit-testable.\n */"
+  },
+  {
+    "name": "ReplayFile",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ReplayFile {\n    readonly version: 1;\n    readonly gate: string;\n    readonly case: string;\n    readonly seed: string;\n    readonly inputsDigest: string;\n    readonly meta: Readonly<Record<string, unknown>>;\n}",
+    "doc": "/** Versioned, token-only replay metadata shared by verification tools. */"
   },
   {
     "name": "replayIncident",
@@ -9000,6 +9261,18 @@
     "signature": "export declare const rpcResult: (id: JsonRpcId, value: unknown) => JsonRpcResponse;"
   },
   {
+    "name": "RuleContext",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface RuleContext {\n    readonly root: string;\n    readonly sources: SourceIndex;\n    readonly project: ProjectFacts;\n}"
+  },
+  {
+    "name": "RulePack",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface RulePack {\n    readonly name: string;\n    readonly rules: readonly CheckRule[];\n}"
+  },
+  {
     "name": "runAdversarialContract",
     "kind": "function",
     "package": "@nifrajs/testing",
@@ -9012,6 +9285,12 @@
     "package": "@nifrajs/runner",
     "signature": "export declare function runApp(app: AppLike, requests: readonly RequestSpec[], options?: RunOptions): Promise<RunResult[]>;",
     "doc": "/**\n * Run a batch of requests through the app, in order, and return a result per request. Never throws:\n * an app crash on any request is captured as that result's `error` and the run continues.\n */"
+  },
+  {
+    "name": "runAssurance",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function runAssurance(cwd: string, options?: {\n    readonly json?: boolean;\n    readonly config?: string;\n    readonly bundle?: boolean;\n    readonly strict?: boolean;\n    readonly out?: string;\n    readonly hydration?: boolean;\n    readonly interact?: boolean;\n}): Promise<boolean>;"
   },
   {
     "name": "runDurableExecutionAdapterConformance",
@@ -9084,6 +9363,12 @@
     "package": "@nifrajs/runner",
     "signature": "export interface RunResult {\n    readonly label?: string;\n    readonly method: string;\n    readonly path: string;\n    /** `true` when the app returned a 2xx response. `false` for non-2xx, or when `app.fetch` threw. */\n    readonly ok: boolean;\n    /** HTTP status - present when the app returned a response (absent when it threw). */\n    readonly status?: number;\n    readonly statusText?: string;\n    readonly headers?: Readonly<Record<string, string>>;\n    /** Parsed JSON when the response is JSON; otherwise the (possibly truncated) text. */\n    readonly body?: unknown;\n    /** The response body as text, truncated to `maxBodyChars`. */\n    readonly bodyText?: string;\n    /** `true` when `bodyText` was cut to the cap. */\n    readonly truncated?: boolean;\n    /** Wall-clock time for this request, milliseconds. */\n    readonly durationMs: number;\n    /** Set when `app.fetch` threw (the app crashed) rather than returning a response. */\n    readonly error?: {\n        readonly name: string;\n        readonly message: string;\n        readonly stack?: string;\n    };\n}",
     "doc": "/** The captured outcome of one request. */"
+  },
+  {
+    "name": "runRuleRegistry",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function runRuleRegistry(ctx: RuleContext, builtIns: readonly CheckRule[], packs?: readonly RulePack[]): Promise<Diagnostic[]>;"
   },
   {
     "name": "runSagaReconciliationWorker",
@@ -9868,6 +10153,19 @@
     "doc": "/**\n * Publishes the dev server's SSR module loader. Called by a dev server that owns SSR resolution\n * itself; pass `undefined` to clear it on shutdown.\n */"
   },
   {
+    "name": "Severity",
+    "kind": "type",
+    "package": "@nifrajs/cli",
+    "signature": "export type Severity = \"error\" | \"warn\" | \"info\";",
+    "doc": "/** Stable, machine-actionable diagnostics shared by CLI gates and MCP renderers. */"
+  },
+  {
+    "name": "severityFails",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function severityFails(severity: Severity, strict?: boolean): boolean;"
+  },
+  {
     "name": "shapeOf",
     "kind": "function",
     "package": "@nifrajs/testing",
@@ -10072,6 +10370,24 @@
     "package": "@nifrajs/core",
     "signature": "export declare function sortRoutesBySpecificity<T extends {\n    readonly pattern: CompiledRoutePattern;\n}>(routes: T[]): T[];",
     "doc": "/**\n * Sort compiled routes most-specific-first - a static segment beats a dynamic one, the order the router\n * resolves a path in. The single home for that precedence: the web router, the mock server, and the\n * editor plugin all order routes through this one comparator, so which file a path resolves to can never\n * diverge between runtime, client, and editor. Sorts in place and returns the same array.\n */"
+  },
+  {
+    "name": "SourceFile",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface SourceFile {\n    readonly file: string;\n    readonly content: string;\n}"
+  },
+  {
+    "name": "sourceIndex",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function sourceIndex(files: readonly SourceFile[]): SourceIndex;"
+  },
+  {
+    "name": "SourceIndex",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface SourceIndex {\n    readonly files: readonly string[];\n    read(file: string): string | undefined;\n}"
   },
   {
     "name": "SourceReader",
@@ -11540,6 +11856,12 @@
     "package": "@nifrajs/web-vue",
     "signature": "export declare function useT(): Formatter;",
     "doc": "/** Read the current {@link Formatter} (`{ locale, t, n, d }`). Throws if no `<I18nProvider>` is above. */"
+  },
+  {
+    "name": "validateRulePacks",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function validateRulePacks(packs: readonly RulePack[] | undefined): readonly RulePack[];"
   },
   {
     "name": "validateStandard",

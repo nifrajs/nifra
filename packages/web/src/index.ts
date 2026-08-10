@@ -2428,6 +2428,16 @@ export function generateClientEntry(
     // access yields `undefined` if absent - unlike a named import, which would be a link error.
     `import * as __adapter from ${JSON.stringify(clientModule)}`,
     "const { mountRouter } = __adapter",
+    // The assurance hook is optional: ordinary client entries pay only for the namespace lookup, while
+    // hydration runners get a runtime identity from the exact adapter module that mounted the page. The
+    // registry is token-only and lives on a Symbol.for key so it cannot collide with app data.
+    "const __hydrationHook = __adapter.hydrationAssuranceHook",
+    'if (__hydrationHook && typeof __hydrationHook.runtimeIdentity === "function") {',
+    '  const __runtimeKey = Symbol.for("nifra.hydration.runtime")',
+    "  const __runtimeState = globalThis[__runtimeKey]",
+    "  const __identities = __runtimeState && Array.isArray(__runtimeState.identities) ? __runtimeState.identities : []",
+    "  globalThis[__runtimeKey] = { framework: __hydrationHook.framework, identities: [...__identities, __hydrationHook.runtimeIdentity()] }",
+    "}",
     // The `clientModule` contract is a string specifier, so nothing type-checks that the module it
     // names actually exports `mountRouter`. Without this the miss surfaces as
     // "mountRouter is not a function" from inside a bundled chunk, at first paint, naming neither the

@@ -20,10 +20,37 @@ export { errorBoundary } from "./error.ts"
 const rootFor = (render: () => unknown): Component =>
   defineComponent({ setup: () => () => render() })
 
-/** Hydrate a server-rendered Vue layout `chain` (with the loader `props`) inside `container`. */
-export function hydrate(chain: readonly unknown[], props: RenderProps, container: unknown): void {
-  createSSRApp(rootFor(() => compose(chain, props))).mount(container as Element)
+function assuranceWarning(): ((message: string) => void) | undefined {
+  const value = (globalThis as unknown as Record<PropertyKey, unknown>)[
+    Symbol.for("nifra.hydration.assurance")
+  ]
+  if (typeof value !== "object" || value === null) return undefined
+  const callback = (value as { onWarning?: unknown }).onWarning
+  return typeof callback === "function" ? (callback as (message: string) => void) : undefined
 }
+
+/** Hydrate a server-rendered Vue layout `chain` (with the loader `props`) inside `container`. */
+export interface HydrationAssuranceOptions {
+  readonly onWarning?: (message: string) => void
+}
+
+export function hydrate(
+  chain: readonly unknown[],
+  props: RenderProps,
+  container: unknown,
+  options?: HydrationAssuranceOptions,
+): void {
+  const warning = options?.onWarning ?? assuranceWarning()
+  const app = createSSRApp(rootFor(() => compose(chain, props)))
+  if (warning !== undefined) app.config.warnHandler = (message) => warning(message)
+  app.mount(container as Element)
+}
+
+/** Testing hook used by verification runners to observe Vue warnings and identity. */
+export const hydrationAssuranceHook = Object.freeze({
+  framework: "vue" as const,
+  runtimeIdentity: (): object => createSSRApp,
+})
 
 /**
  * Hydrate a stateful Vue Router. A `shallowRef` holds the store snapshot; `router.subscribe` writes
@@ -56,5 +83,8 @@ export function mountRouter(options: MountRouterOptions): void {
       }
     },
   })
-  createSSRApp(Root).mount(container as Element)
+  const app = createSSRApp(Root)
+  const warning = assuranceWarning()
+  if (warning !== undefined) app.config.warnHandler = (message) => warning(message)
+  app.mount(container as Element)
 }

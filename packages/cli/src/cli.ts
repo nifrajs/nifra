@@ -96,6 +96,8 @@ Usage:
   nifra check   [--json] [--lints-only]  Gate: typecheck + lints (hand-rolled fetch(), untyped client("…"),
                                          server-only imports in routes/). Run as "done"; --json for agents;
                                          --lints-only skips tsc for a near-instant inner-loop pass.
+  nifra fix     [--code <NF-code>]       Apply a registered diagnostic recipe, then print the remaining
+                                         structured diagnostics.
   nifra sync-manifest                    Regenerate a committed web server-manifest.ts from routes/ WITHOUT
                                          a full build - clears server-manifest drift after a route add/rename
                                          (a new hydrating component still needs a full build).
@@ -111,9 +113,14 @@ Usage:
                                          closed. Exits non-zero on any breaking change - run it in CI.
   nifra sdk     --lang <python|go> [--out <file>]
                                          Generate a deterministic non-TypeScript SDK from backend.ts.
-  nifra assure  [--config <file>] [--json]  Route-assurance gate: load nifra.assurance.ts, classify every
-                                         reflected backend route, and fail when required enforcement
-                                         evidence is missing/forbidden or a route is unclassified.
+  nifra assure  [--config <file>] [--json] [--strict] [--out <file>] [--hydration] [--interact]
+                                         Emit one structured assurance bundle. The bundle records every
+                                         applicable gate as pass, fail, or skip and exits non-zero unless
+                                         its verdict is green. Without these bundle flags, the legacy
+                                         route-assurance report remains available.
+  nifra contracts snapshot [--out <file>] Write the deterministic route contract lock.
+  nifra contracts check [--json]          Check the current routes against contracts.lock.json.
+  nifra replay <file>                     Replay a token-only verification metadata file.
   nifra capabilities snapshot [--out <file>] [--config <file>]
                                          Write the deterministic, token-only capability lockfile, but
                                          only after provenance + idempotency assurance passes.
@@ -582,10 +589,34 @@ async function main(): Promise<void> {
     if (
       !(await runCheck(process.cwd(), {
         json: argv.includes("--json"),
+        structured: argv.includes("--json"),
         lintsOnly: argv.includes("--lints-only"),
       }))
     )
       process.exitCode = 1
+    return
+  }
+  if (command === "fix") {
+    const codeIndex = argv.indexOf("--code")
+    const code = codeIndex === -1 ? undefined : argv[codeIndex + 1]
+    try {
+      const { collectCheckResult } = await import("./check.ts")
+      const { applyDiagnosticRecipe } = await import("./fix-recipes.ts")
+      const result = await collectCheckResult(process.cwd(), { lintsOnly: true })
+      const changed: string[] = []
+      for (const diagnostic of result.structuredDiagnostics ?? []) {
+        if (code !== undefined && diagnostic.code !== code) continue
+        changed.push(...(await applyDiagnosticRecipe(process.cwd(), diagnostic)))
+      }
+      const final = await collectCheckResult(process.cwd(), { lintsOnly: true })
+      console.log(
+        JSON.stringify({ changed, diagnostics: final.structuredDiagnostics ?? [] }, null, 2),
+      )
+      if (final.ok === false) process.exitCode = 1
+    } catch (err) {
+      console.error(formatCliError(err))
+      process.exitCode = 1
+    }
     return
   }
   // `init-agents` retrofits the agent-discovery files (.mcp.json, CLAUDE.md, …) into the cwd. It's a
@@ -707,10 +738,63 @@ async function main(): Promise<void> {
       if (
         !(await runAssurance(process.cwd(), {
           json: argv.includes("--json"),
+          bundle:
+            argv.includes("--json") ||
+            argv.includes("--strict") ||
+            argv.includes("--hydration") ||
+            argv.includes("--interact") ||
+            argv.includes("--out"),
+          strict: argv.includes("--strict"),
+          hydration: argv.includes("--hydration"),
+          interact: argv.includes("--interact"),
+          ...(argv.includes("--out") ? { out: argv[argv.indexOf("--out") + 1] } : {}),
           ...(config !== undefined ? { config } : {}),
         }))
       )
         process.exitCode = 1
+    } catch (err) {
+      console.error(formatCliError(err))
+      process.exitCode = 1
+    }
+    return
+  }
+  if (command === "contracts") {
+    const action = argv[1]
+    const outIndex = argv.indexOf("--out")
+    const out = outIndex === -1 ? undefined : argv[outIndex + 1]
+    try {
+      const { checkContractsLock, snapshotContracts } = await import("./contracts.ts")
+      if (action === "snapshot") {
+        const lock = await snapshotContracts(process.cwd(), out)
+        if (argv.includes("--json")) console.log(JSON.stringify(lock, null, 2))
+        else console.log(`[nifra] wrote ${Object.keys(lock.routes).length} contract digests`)
+      } else if (action === "check") {
+        const result = await checkContractsLock(process.cwd())
+        const output = { ok: result.present && result.diagnostics.length === 0, ...result }
+        console.log(JSON.stringify(output, null, 2))
+        if (!output.ok) process.exitCode = 1
+      } else {
+        console.error("[nifra] contracts needs snapshot or check")
+        process.exitCode = 1
+      }
+    } catch (err) {
+      console.error(formatCliError(err))
+      process.exitCode = 1
+    }
+    return
+  }
+  if (command === "replay") {
+    const file = argv[1]
+    if (file === undefined || file.startsWith("-")) {
+      console.error("[nifra] replay needs a file path")
+      process.exitCode = 1
+      return
+    }
+    try {
+      const { runReplay } = await import("./replay.ts")
+      const result = await runReplay(process.cwd(), file)
+      console.log(JSON.stringify(result, null, 2))
+      if (!result.ok) process.exitCode = 1
     } catch (err) {
       console.error(formatCliError(err))
       process.exitCode = 1

@@ -99,6 +99,40 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ## @nifrajs/cli
 
+### `@nifrajs/cli/assure`
+
+- **AssureBundle** _(interface)_ - `interface AssureBundle`
+- **AssureSink** _(interface)_ - `interface AssureSink`
+- **DEFAULT_ASSURANCE_CONFIG** _(const)_ - `DEFAULT_ASSURANCE_CONFIG: "nifra.assurance.ts"`
+- **GateResult** _(interface)_ - `interface GateResult`
+- **MemoryAssureSink** _(interface)_ - `interface MemoryAssureSink`
+- **collectAssuranceReport** _(function)_ - `collectAssuranceReport: (cwd: string, configPath?: string) => Promise<AssuranceReport>`
+- **collectAssureBundle** _(function)_ - `collectAssureBundle: (cwd: string, options?: { readonly config?: string; readonly strict?: boolean; readonly hydration?: boolean; readonly interact?: boolean; }) => Promise<AssureBundle>`
+- **createMemoryAssureSink** _(function)_ - `createMemoryAssureSink: () => MemoryAssureSink`
+- **formatAssuranceReport** _(function)_ - `formatAssuranceReport: (report: AssuranceReport) => string`
+- **loadAssuranceConfig** _(function)_ - `loadAssuranceConfig: (cwd: string, configPath?: string) => Promise<AssuranceConfig>`
+- **runAssurance** _(function)_ - `runAssurance: (cwd: string, options?: { readonly json?: boolean; readonly config?: string; readonly bundle?: boolean; readonly strict?: boolean; readonly out?: string; readonly hydration?: boolean; readonly interact?: b…`
+
+### `@nifrajs/cli/diagnostics`
+
+- **Diagnostic** _(interface)_ - `interface Diagnostic`
+- **DiagnosticFix** _(interface)_ - `interface DiagnosticFix`
+- **Severity** _(type)_ - `type Severity = "error" | "warn" | "info"`
+  Stable, machine-actionable diagnostics shared by CLI gates and MCP renderers.
+- **diagnostic** _(const)_ - `diagnostic: (value: Diagnostic) => Diagnostic`
+- **normalizeSeverity** _(function)_ - `normalizeSeverity: (value: "error" | "warning" | "warn" | "info") => Severity`
+- **severityFails** _(function)_ - `severityFails: (severity: Severity, strict?: boolean) => boolean`
+
+### `@nifrajs/cli/fix-recipes`
+
+- **FixRecipe** _(interface)_ - `interface FixRecipe`
+- **applyDiagnosticRecipe** _(function)_ - `applyDiagnosticRecipe: (root: string, diagnostic: Diagnostic) => Promise<readonly string[]>`
+- **getFixRecipe** _(function)_ - `getFixRecipe: (id: string) => FixRecipe | undefined`
+- **listFixRecipes** _(function)_ - `listFixRecipes: () => readonly FixRecipe[]`
+- **registerFixRecipe** _(function)_ - `registerFixRecipe: (recipe: FixRecipe) => void`
+
+### `@nifrajs/cli/mcp`
+
 - **Example** _(interface)_ - `interface Example`
 - **McpHttpOptions** _(interface)_ - `interface McpHttpOptions`
 - **TypeEntry** _(interface)_ - `interface TypeEntry`
@@ -116,6 +150,19 @@ Every public export of every package and documented subpath - name, kind, signat
   The project-independent tools, reading the package's bundled corpus from disk (CLI use): the text docs tools plus the `nifra_gallery` MCP Apps widget tool.
 - **respondMcpHttp** _(function)_ - `respondMcpHttp: (request: Request, tools: McpTool[], options?: McpHttpOptions) => Promise<Response>`
   Handle one MCP request against the given `tools` with the docs server identity. A thin docs-flavored wrapper over the shared {@link respondMcpHttpCore} so the `@nifrajs/cli/mcp` self-host surface keeps its `(request, tools, options?)` shape (the site's edge worker calls it with two args).
+
+### `@nifrajs/cli/rules`
+
+- **CheckRule** _(interface)_ - `interface CheckRule`
+- **ProjectFacts** _(interface)_ - `interface ProjectFacts`
+- **RuleContext** _(interface)_ - `interface RuleContext`
+- **RulePack** _(interface)_ - `interface RulePack`
+- **SourceFile** _(interface)_ - `interface SourceFile`
+- **SourceIndex** _(interface)_ - `interface SourceIndex`
+- **parseRulePacks** _(function)_ - `parseRulePacks: (value: unknown) => readonly RulePack[]`
+- **runRuleRegistry** _(function)_ - `runRuleRegistry: (ctx: RuleContext, builtIns: readonly CheckRule[], packs?: readonly RulePack[]) => Promise<Diagnostic[]>`
+- **sourceIndex** _(function)_ - `sourceIndex: (files: readonly SourceFile[]) => SourceIndex`
+- **validateRulePacks** _(function)_ - `validateRulePacks: (packs: readonly RulePack[] | undefined) => readonly RulePack[]`
 
 ## @nifrajs/client
 
@@ -397,9 +444,13 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AssuranceReport** _(interface)_ - `interface AssuranceReport`
 - **AssuranceRouteSelector** _(interface)_ - `interface AssuranceRouteSelector`
 - **AssuranceRule** _(interface)_ - `interface AssuranceRule`
+- **AssuranceRulePack** _(interface)_ - `interface AssuranceRulePack`
+  Application-supplied verification rules. The CLI validates the executable rule shape at runtime.
 - **AssuranceScope** _(type)_ - `type AssuranceScope = "global" | "subsequent" | "plugin"`
   Where enforcement evidence follows Nifra's route-registration semantics.
+- **AssuranceSizeBudget** _(interface)_ - `interface AssuranceSizeBudget`
 - **AssuredRoute** _(interface)_ - `interface AssuredRoute`
+- **IdempotencyWorkload** _(interface)_ - `interface IdempotencyWorkload`
 - **InvariantExecutor** _(type)_ - `type InvariantExecutor = (request: Request) => Response | Promise<Response>`
   Isolated request executor used by adversarial contract verification.
 - **NIFRA_ASSURANCE** _(const)_ - `NIFRA_ASSURANCE: Readonly<{ readonly AUTHENTICATED: "nifra.authenticated"; readonly BODY_BOUNDED: "nifra.body-bounded"; readonly CSRF: "nifra.csrf"; readonly DURABLE_COMMAND: "nifra.durable-command"; readonly IDEMPOTENC…`
@@ -1055,6 +1106,20 @@ Every public export of every package and documented subpath - name, kind, signat
   Safely enumerate and normalize route descriptors from an app or descriptor array. Invalid entries are ignored; a missing/throwing `routes()` method yields an empty array.
 - **reflectSchema** _(function)_ - `reflectSchema: (value: unknown) => SchemaReflection`
   Reflect a Standard Schema, Nifra/TypeBox schema carrier, or raw JSON Schema. Never throws. Validation-only schemas have `standard` but no `jsonSchema`; raw JSON Schema has the reverse.
+
+### `@nifrajs/core/replay`
+
+- **CompatibleReplayFile** _(type)_ - `type CompatibleReplayFile = ReplayFile | LegacyContractReplayFile | LegacyFailureReplayFile`
+- **LegacyContractReplayFile** _(interface)_ - `interface LegacyContractReplayFile`
+  Existing adversarial contract replay metadata. Kept as a compatibility envelope.
+- **LegacyFailureReplayFile** _(interface)_ - `interface LegacyFailureReplayFile`
+  Existing deterministic failure-lab replay metadata. Kept as a compatibility envelope.
+- **ReplayFile** _(interface)_ - `interface ReplayFile`
+  Versioned, token-only replay metadata shared by verification tools.
+- **defineReplayFile** _(function)_ - `defineReplayFile: (input: Omit<ReplayFile, "version">) => ReplayFile`
+- **parseCompatibleReplayFile** _(function)_ - `parseCompatibleReplayFile: (value: unknown) => CompatibleReplayFile`
+  Parse the unified format while preserving the two pre-existing token-only replay shapes.
+- **parseReplayFile** _(function)_ - `parseReplayFile: (value: unknown) => ReplayFile`
 
 ### `@nifrajs/core/response-contract`
 
@@ -2293,6 +2358,7 @@ Every public export of every package and documented subpath - name, kind, signat
   A known-good request. Missing body/query values are synthesized from inspectable JSON Schema.
 - **CookieJar** _(interface)_ - `interface CookieJar`
   A tiny cookie jar for in-process tests - parses `Set-Cookie` off responses and emits a `Cookie` request header, so a login → authenticated-request flow works without threading headers by hand. It honours removal (`Max-Age=0` / a past `Expires`) so logout clears the cookie; other attributes (Domain/…
+- **EffectLedger** _(type)_ - `type EffectLedger = SealedEffectLedger`
 - **FailureDirective** _(type)_ - `type FailureDirective`
 - **FailureEvidence** _(interface)_ - `interface FailureEvidence`
 - **FailureInjectedError** _(class)_ - `class FailureInjectedError`
@@ -2304,6 +2370,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **FailureScenario** _(interface)_ - `interface FailureScenario<Output>`
 - **FailureScenarioReport** _(interface)_ - `interface FailureScenarioReport`
 - **GenerateRegressionTestOptions** _(interface)_ - `interface GenerateRegressionTestOptions`
+- **IdempotencyDivergence** _(interface)_ - `interface IdempotencyDivergence`
+- **IdempotencyProof** _(interface)_ - `interface IdempotencyProof`
 - **IncidentCapsule** _(interface)_ - `interface IncidentCapsule`
 - **IncidentReplayError** _(class)_ - `class IncidentReplayError`
 - **IncidentReplayResult** _(interface)_ - `interface IncidentReplayResult`
@@ -2329,6 +2397,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **generateRegressionTest** _(function)_ - `generateRegressionTest: (capsule: IncidentCapsule, options?: GenerateRegressionTestOptions) => string`
   Emit a committable regression test from a capsule. Request string values are redacted BY DEFAULT with a sanitize banner - replace the `<redacted>` placeholders with safe, reproducing values before you commit. The test asserts the response contract via {@link assertIncidentReplays}.
 - **jobStoreCertificationProfile** _(function)_ - `jobStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableJobStore>`
+- **proveIdempotency** _(function)_ - `proveIdempotency: (options: { readonly run: () => Promise<EffectLedger> | EffectLedger; readonly runs?: number; }) => Promise<IdempotencyProof>`
+  Run a token-only effect workload repeatedly and report the first stable replay differences.
 - **redactForEmission** _(function)_ - `redactForEmission: (value: unknown, allow: ReadonlySet<string>, path?: string) => unknown`
   Redact leaf string values by default (unless the dotted key path is allow-listed). Non-strings are kept - they carry the structure that makes the fixture reproduce - so review the emitted file. This is intentionally aggressive: a committed fixture must not leak PII/secrets.
 - **replayIncident** _(function)_ - `replayIncident: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<IncidentReplayResult>`
@@ -3277,10 +3347,13 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-react/client`
 
+- **HydrationAssuranceOptions** _(interface)_ - `interface HydrationAssuranceOptions`
+  Hydrate a server-rendered React layout `chain` (with the loader `props`) inside `container`.
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown`
   Build an error-boundary chain element bound to `fallback` (a route's `_error` component). nifra's client codegen inserts it before the page in the matched chain; a render error in the subtree renders `fallback` with `{ data: { name, message } }` instead of crashing the app. DOM-transparent (it rend…
-- **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void`
-  Hydrate a server-rendered React layout `chain` (with the loader `props`) inside `container`.
+- **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown, options?: HydrationAssuranceOptions) => void`
+- **hydrationAssuranceHook** _(const)_ - `hydrationAssuranceHook: Readonly<{ framework: "react"; runtimeIdentity: () => object; }>`
+  Testing hook used by verification runners to observe React's recoverable errors and identity.
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void`
   Hydrate a stateful React Router. `useSyncExternalStore` subscribes to the agnostic store and re-renders the matched layout chain on each store change - so client navigations swap routes without a full reload. `getServerSnapshot` (3rd arg) returns the initial state, matching the SSR markup on hydrat…
 
@@ -3521,10 +3594,13 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-svelte/client`
 
+- **HydrationAssuranceOptions** _(interface)_ - `interface HydrationAssuranceOptions`
+  Hydrate a server-rendered Svelte layout `chain` (with the loader `props`) inside `container`.
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => NifraSvelteErrorBoundary`
   Wrap a route's `_error` component as a boundary marker for `Chain.svelte` to render.
-- **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void`
-  Hydrate a server-rendered Svelte layout `chain` (with the loader `props`) inside `container`.
+- **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown, options?: HydrationAssuranceOptions) => void`
+- **hydrationAssuranceHook** _(const)_ - `hydrationAssuranceHook: Readonly<{ framework: "svelte"; runtimeIdentity: () => object; }>`
+  Testing hook used by verification runners to observe Svelte warnings and identity.
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void`
   Hydrate a stateful Svelte Router. The `Router` component holds the store snapshot in `$state` and re-renders the matched layout chain on each store change - so client navigations swap routes without a full reload. Its initial render matches the SSR markup (the server rendered `Chain` for the same m…
 
@@ -3631,10 +3707,13 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-vue/client`
 
+- **HydrationAssuranceOptions** _(interface)_ - `interface HydrationAssuranceOptions`
+  Hydrate a server-rendered Vue layout `chain` (with the loader `props`) inside `container`.
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown`
   Build an error-boundary chain element bound to `fallback` (a route's `_error` component). nifra's client codegen inserts it before the page in the matched chain; a render error in the subtree is captured (`onErrorCaptured`) and renders `fallback` with `{ data: { name, message } }` instead of crashi…
-- **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown) => void`
-  Hydrate a server-rendered Vue layout `chain` (with the loader `props`) inside `container`.
+- **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown, options?: HydrationAssuranceOptions) => void`
+- **hydrationAssuranceHook** _(const)_ - `hydrationAssuranceHook: Readonly<{ framework: "vue"; runtimeIdentity: () => object; }>`
+  Testing hook used by verification runners to observe Vue warnings and identity.
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void`
   Hydrate a stateful Vue Router. A `shallowRef` holds the store snapshot; `router.subscribe` writes each new snapshot into it, so the root re-renders the matched layout chain on every store change - client navigations swap routes without a full reload. The initial snapshot matches the SSR markup.
 

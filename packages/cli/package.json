@@ -25,6 +25,26 @@
       "bun": "./src/mcp-http.ts",
       "types": "./dist/mcp-http.d.ts",
       "default": "./dist/mcp-http.js"
+    },
+    "./diagnostics": {
+      "bun": "./src/diagnostics.ts",
+      "types": "./dist/diagnostics.d.ts",
+      "default": "./dist/diagnostics.js"
+    },
+    "./rules": {
+      "bun": "./src/rules/index.ts",
+      "types": "./dist/rules/index.d.ts",
+      "default": "./dist/rules/index.js"
+    },
+    "./fix-recipes": {
+      "bun": "./src/fix-recipes.ts",
+      "types": "./dist/fix-recipes.d.ts",
+      "default": "./dist/fix-recipes.js"
+    },
+    "./assure": {
+      "bun": "./src/assure.ts",
+      "types": "./dist/assure.d.ts",
+      "default": "./dist/assure.js"
     }
   },
   "files": [

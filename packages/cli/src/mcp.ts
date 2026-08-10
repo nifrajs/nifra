@@ -1145,15 +1145,18 @@ export function projectTools(
         const opts = args as { lintsOnly?: boolean; dir?: string }
         const target = resolveProjectDir(cwd, opts.dir)
         if (target === null) return dirError(opts.dir)
+        const result = await collectCheckResult(target, {
+          lintsOnly: opts.lintsOnly ?? false,
+          signal: context.signal,
+          // Bound the result so a large project can't emit an MCP message big enough to break the stdio
+          // transport (`-32000: Connection closed`). If `truncated` comes back, fix the shown diagnostics
+          // and re-run. The scan already skips gitignored trees (walkSource), so this is the safety net.
+          maxDiagnostics: 100,
+        })
         return JSON.stringify(
-          await collectCheckResult(target, {
-            lintsOnly: opts.lintsOnly ?? false,
-            signal: context.signal,
-            // Bound the result so a large project can't emit an MCP message big enough to break the stdio
-            // transport (`-32000: Connection closed`). If `truncated` comes back, fix the shown diagnostics
-            // and re-run. The scan already skips gitignored trees (walkSource), so this is the safety net.
-            maxDiagnostics: 100,
-          }),
+          result.structuredDiagnostics === undefined
+            ? result
+            : { ...result, diagnostics: result.structuredDiagnostics },
           null,
           2,
         )
@@ -1165,11 +1168,18 @@ export function projectTools(
         "Automatically fix diagnostic lints (such as rewriting hand-rolled fetch() calls to the typed nifra client, adding generic types to client factory calls, and resolving dependency drift in package.json). Runs diagnostics, applies all mechanical edit suggestions, applies doctor dependency fixes, and returns the remaining unresolved diagnostics.",
       inputSchema: {
         type: "object",
-        properties: {},
+        properties: {
+          code: {
+            type: "string",
+            description:
+              "Apply the registered recipe for one stable diagnostic code when available.",
+          },
+        },
         additionalProperties: false,
       },
-      handler: async (_args, context) => {
+      handler: async (args, context) => {
         const { collectCheckResult } = await import("./check.ts")
+        const { applyDiagnosticRecipe } = await import("./fix-recipes.ts")
         const { applyDoctorAutoFix } = await import("./doctor.ts")
         const { writeFile, readFile } = await import("node:fs/promises")
         const { resolve } = await import("node:path")
@@ -1186,6 +1196,15 @@ export function projectTools(
           signal: context.signal,
           maxDiagnostics: 100,
         })
+
+        const requestedCode = (args as { code?: unknown }).code
+        const recipeFixed: string[] = []
+        if (typeof requestedCode === "string") {
+          for (const diagnostic of checkResult.structuredDiagnostics ?? []) {
+            if (diagnostic.code !== requestedCode) continue
+            recipeFixed.push(...(await applyDiagnosticRecipe(cwd, diagnostic)))
+          }
+        }
 
         const fixed: Array<{ file: string; line: number; title: string }> = []
 
@@ -1226,6 +1245,7 @@ export function projectTools(
           {
             ok: finalResult.ok,
             fixed,
+            recipeFixed,
             doctorFixed: doctorResult?.fixed ?? [],
             remainingDiagnostics: finalResult.diagnostics,
           },
@@ -1246,6 +1266,22 @@ export function projectTools(
             description:
               "Config path relative to the selected project directory. Default: nifra.assurance.ts.",
           },
+          bundle: {
+            type: "boolean",
+            description: "Return the single gate bundle with verdict and explicit skipped gates.",
+          },
+          strict: {
+            type: "boolean",
+            description: "Treat warning diagnostics as failures in the bundle.",
+          },
+          hydration: {
+            type: "boolean",
+            description: "Run the hydration assurance gate.",
+          },
+          interact: {
+            type: "boolean",
+            description: "Run declared hydration probes after the client mounts.",
+          },
           dir: {
             type: "string",
             description:
@@ -1255,7 +1291,14 @@ export function projectTools(
         additionalProperties: false,
       },
       handler: async (args) => {
-        const opts = args as { config?: string; dir?: string }
+        const opts = args as {
+          config?: string
+          dir?: string
+          bundle?: boolean
+          strict?: boolean
+          hydration?: boolean
+          interact?: boolean
+        }
         const target = resolveProjectDir(cwd, opts.dir)
         if (target === null) return dirError(opts.dir)
         const config = opts.config === undefined ? undefined : resolve(target, opts.config)
@@ -1266,8 +1309,70 @@ export function projectTools(
             2,
           )
         }
-        const { collectAssuranceReport } = await import("./assure.ts")
+        const { collectAssuranceReport, collectAssureBundle } = await import("./assure.ts")
+        if (opts.bundle === true || opts.strict === true || opts.hydration === true) {
+          return JSON.stringify(
+            await collectAssureBundle(target, {
+              ...(config === undefined ? {} : { config }),
+              ...(opts.strict === undefined ? {} : { strict: opts.strict }),
+              ...(opts.hydration === undefined ? {} : { hydration: opts.hydration }),
+              ...(opts.interact === undefined ? {} : { interact: opts.interact }),
+            }),
+            null,
+            2,
+          )
+        }
         return JSON.stringify(await collectAssuranceReport(target, config), null, 2)
+      },
+    },
+    {
+      name: "nifra_hydrate",
+      description: "Run the hydration assurance gate and return stable NF-H diagnostics.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          dir: { type: "string", description: "Project subdirectory to inspect." },
+          interact: { type: "boolean", description: "Run declared hydration probes." },
+        },
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const opts = args as { dir?: string; interact?: boolean }
+        const target = resolveProjectDir(cwd, opts.dir)
+        if (target === null) return dirError(opts.dir)
+        const { runHydrationAssurance } = await import("./assure-hydration.ts")
+        return JSON.stringify(
+          await runHydrationAssurance(target, { interact: opts.interact === true }),
+          null,
+          2,
+        )
+      },
+    },
+    {
+      name: "nifra_replay",
+      description: "Validate and dispatch a token-only replay metadata file.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          file: { type: "string", description: "Replay file relative to the project root." },
+        },
+        required: ["file"],
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const file = (args as { file?: unknown }).file
+        if (typeof file !== "string" || file.trim() === "")
+          return JSON.stringify({ ok: false, error: "file is required" })
+        const { runReplay } = await import("./replay.ts")
+        try {
+          return JSON.stringify(await runReplay(cwd, file), null, 2)
+        } catch (error) {
+          return JSON.stringify(
+            { ok: false, error: error instanceof Error ? error.message : String(error) },
+            null,
+            2,
+          )
+        }
       },
     },
     {

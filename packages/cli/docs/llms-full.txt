@@ -7268,6 +7268,12 @@ Claude Code:
 claude mcp add nifra -- nifra mcp
 ```
 
+## Structured verification
+
+`nifra check --json` returns stable diagnostic codes and machine-actionable evidence. `nifra assure --json --strict` returns one versioned bundle with explicit pass, fail, and skip gate results plus a `green` or `red` verdict. Use `nifra fix --code NF-...` for a registered fix recipe, and `nifra contracts snapshot` to opt into route contract drift detection.
+
+Assurance configs may append application-supplied rule packs. Pack codes must not use the reserved `NF-` prefix. Rules are pure source scans and run after the built-in rules.
+
 Run the client from (or point it at) your project root. The protocol is hand-rolled
 (newline-delimited JSON-RPC 2.0) - no SDK dependency.
 
@@ -8717,6 +8723,7 @@ that every call carries and captures cookies via a shared jar.
 - `testSession<App>(app, { origin?, cookies? })` → `{ client: Treaty<App>, cookies: CookieJar }`.
 - `cookieJar()` → `CookieJar` - `header()` · `applyTo(headers)` · `store(response)` · `set` · `get` · `clear` · `size`.
   Honours removal (`Max-Age=0` / past `Expires`); other cookie attributes are ignored (in-process, same-origin).
+- `proveIdempotency({ run, runs? })` → a token-only proof that canonical effect ledgers replay identically.
 
 For a **stateless** request (no cookies), use `testClient` from `@nifrajs/client` directly.
 
@@ -9196,7 +9203,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/testing
 
-`AdapterCertificationError`, `AdapterCertificationProfile`, `AdapterCertificationReport`, `AdversarialContractError`, `AdversarialContractOptions`, `AdversarialContractReport`, `AdversarialContractResult`, `AppLike`, `assertAdapterCertification`, `assertAdversarialContract`, `assertIncidentReplays`, `cacheStoreCertificationProfile`, `CapturedRequest`, `CapturedRequestInput`, `captureIncident`, `CaptureIncidentOptions`, `CertifiableCacheEntry`, `CertifiableCacheStore`, `CertifiableDomainEvent`, `CertifiableEventDeliveryAdapter`, `CertifiableEventRecord`, `CertifiableJobStore`, `CertifiableRuntimeAdapter`, `CertifiableRuntimeServer`, `CertifiableStorageAdapter`, `CertificationCapabilityEvidence`, `CertificationCheck`, `CertificationCheckEvidence`, `certifyAdapter`, `ContractCaseContext`, `ContractCaseKind`, `ContractCoverageGap`, `ContractCoverageGapCode`, `ContractReplay`, `ContractRuntime`, `ContractTarget`, `ContractTestApp`, `ContractWitness`, `cookieJar`, `CookieJar`, `createFailureLab`, `defineCertificationProfile`, `eventDeliveryCertificationProfile`, `FailureDirective`, `FailureEvidence`, `FailureInjectedError`, `FailureKind`, `FailureLab`, `FailureLabOptions`, `FailureReplay`, `FailureScenario`, `FailureScenarioReport`, `generateRegressionTest`, `GenerateRegressionTestOptions`, `IncidentCapsule`, `IncidentReplayError`, `IncidentReplayResult`, `jobStoreCertificationProfile`, `redactForEmission`, `replayIncident`, `ReplayIncidentOptions`, `runAdversarialContract`, `runFailureScenario`, `runtimeAdapterCertificationProfile`, `shapeOf`, `storageAdapterCertificationProfile`, `testSession`, `TestSession`, `TestSessionOptions`, `verifyAdapterCertification`
+`AdapterCertificationError`, `AdapterCertificationProfile`, `AdapterCertificationReport`, `AdversarialContractError`, `AdversarialContractOptions`, `AdversarialContractReport`, `AdversarialContractResult`, `AppLike`, `assertAdapterCertification`, `assertAdversarialContract`, `assertIncidentReplays`, `cacheStoreCertificationProfile`, `CapturedRequest`, `CapturedRequestInput`, `captureIncident`, `CaptureIncidentOptions`, `CertifiableCacheEntry`, `CertifiableCacheStore`, `CertifiableDomainEvent`, `CertifiableEventDeliveryAdapter`, `CertifiableEventRecord`, `CertifiableJobStore`, `CertifiableRuntimeAdapter`, `CertifiableRuntimeServer`, `CertifiableStorageAdapter`, `CertificationCapabilityEvidence`, `CertificationCheck`, `CertificationCheckEvidence`, `certifyAdapter`, `ContractCaseContext`, `ContractCaseKind`, `ContractCoverageGap`, `ContractCoverageGapCode`, `ContractReplay`, `ContractRuntime`, `ContractTarget`, `ContractTestApp`, `ContractWitness`, `cookieJar`, `CookieJar`, `createFailureLab`, `defineCertificationProfile`, `EffectLedger`, `eventDeliveryCertificationProfile`, `FailureDirective`, `FailureEvidence`, `FailureInjectedError`, `FailureKind`, `FailureLab`, `FailureLabOptions`, `FailureReplay`, `FailureScenario`, `FailureScenarioReport`, `generateRegressionTest`, `GenerateRegressionTestOptions`, `IdempotencyDivergence`, `IdempotencyProof`, `IncidentCapsule`, `IncidentReplayError`, `IncidentReplayResult`, `jobStoreCertificationProfile`, `proveIdempotency`, `redactForEmission`, `replayIncident`, `ReplayIncidentOptions`, `runAdversarialContract`, `runFailureScenario`, `runtimeAdapterCertificationProfile`, `shapeOf`, `storageAdapterCertificationProfile`, `testSession`, `TestSession`, `TestSessionOptions`, `verifyAdapterCertification`
 
 ## @nifrajs/ts-plugin
 
