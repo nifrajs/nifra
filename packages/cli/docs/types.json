@@ -11797,6 +11797,12 @@
     "signature": "export interface ToolCallOptions {\n    readonly effectId?: string;\n    readonly clock?: () => number;\n    readonly signal?: AbortSignal;\n    readonly capabilities?: readonly string[];\n    readonly approval?: ToolApproval;\n    readonly budget?: ToolBudget;\n    readonly idempotency?: ToolIdempotencyStore;\n    readonly namespace?: string;\n    readonly dryRun?: boolean;\n    readonly ledger?: RequestLedger;\n    readonly executionPolicy?: ExecutionPolicyAdapter;\n}"
   },
   {
+    "name": "ToolCallOptions",
+    "kind": "interface",
+    "package": "@nifrajs/mcp",
+    "signature": "export interface ToolCallOptions {\n    readonly effectId?: string;\n    readonly clock?: () => number;\n    readonly signal?: AbortSignal;\n    readonly capabilities?: readonly string[];\n    readonly approval?: ToolApproval;\n    readonly budget?: ToolBudget;\n    readonly idempotency?: ToolIdempotencyStore;\n    readonly namespace?: string;\n    readonly dryRun?: boolean;\n    readonly ledger?: RequestLedger;\n    readonly executionPolicy?: ExecutionPolicyAdapter;\n}"
+  },
+  {
     "name": "ToolCallResult",
     "kind": "type",
     "package": "@nifrajs/core",
@@ -11812,6 +11818,12 @@
     "name": "ToolContract",
     "kind": "interface",
     "package": "@nifrajs/core",
+    "signature": "export interface ToolContract<Input = unknown, Output = unknown> {\n    readonly name: string;\n    readonly description: string;\n    readonly input: StandardSchemaV1<unknown, Input>;\n    readonly output: StandardSchemaV1<unknown, Output>;\n    readonly capability: string;\n    readonly approval: ToolApprovalPolicy;\n    readonly idempotency?: ToolIdempotencyPolicy<Input>;\n    readonly cost?: EffectCost;\n    readonly sensitivity: ToolSensitivity;\n    readonly annotations: ToolAnnotations;\n    readonly policy?: ExecutionPolicy;\n    readonly execute: (input: Input, context: ToolExecutionContext) => Output | PromiseLike<Output>;\n}"
+  },
+  {
+    "name": "ToolContract",
+    "kind": "interface",
+    "package": "@nifrajs/mcp",
     "signature": "export interface ToolContract<Input = unknown, Output = unknown> {\n    readonly name: string;\n    readonly description: string;\n    readonly input: StandardSchemaV1<unknown, Input>;\n    readonly output: StandardSchemaV1<unknown, Output>;\n    readonly capability: string;\n    readonly approval: ToolApprovalPolicy;\n    readonly idempotency?: ToolIdempotencyPolicy<Input>;\n    readonly cost?: EffectCost;\n    readonly sensitivity: ToolSensitivity;\n    readonly annotations: ToolAnnotations;\n    readonly policy?: ExecutionPolicy;\n    readonly execute: (input: Input, context: ToolExecutionContext) => Output | PromiseLike<Output>;\n}"
   },
   {

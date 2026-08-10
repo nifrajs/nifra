@@ -575,12 +575,25 @@ function filesForRoute(
   return [...new Set(matches)].sort()
 }
 
+/**
+ * A missing edge silently drops a test from the proof plan, so matching is recall-first: a literal
+ * path mention, or the static prefix of a parameterised path (tests call "/orders/123", not
+ * "/orders/:id"). Bare method words are never a signal on their own - "get" appears everywhere.
+ */
 function mentionsRoute(content: string, route: ReflectedRoute): boolean {
-  return (
-    content.includes(route.path) ||
-    (content.includes(route.method.toLowerCase()) &&
-      content.includes(route.path.replaceAll(":", "")))
-  )
+  if (route.path === "/") return /["'`]\/["'`]/.test(content)
+  if (content.includes(route.path)) return true
+  const prefix = staticPathPrefix(route.path)
+  return prefix !== undefined && content.includes(prefix)
+}
+
+function staticPathPrefix(path: string): string | undefined {
+  const staticSegments: string[] = []
+  for (const segment of path.split("/")) {
+    if (segment.startsWith(":") || segment.startsWith("*")) break
+    if (segment !== "") staticSegments.push(segment)
+  }
+  return staticSegments.length === 0 ? undefined : `/${staticSegments.join("/")}/`
 }
 
 function isTestFile(path: string): boolean {

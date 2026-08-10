@@ -25,7 +25,6 @@ export {
   type McpToolHandlerResult,
   type McpUiIntent,
 } from "./tool.ts"
-export { type McpToolContractOptions, toMcpTool } from "./tool-contract.ts"
 export {
   type DefineMcpWidgetOptions,
   defineMcpWidget,

@@ -10,7 +10,7 @@ import {
   type ToolError,
   type ToolEvidence,
 } from "@nifrajs/core/tool-contract"
-import { toMcpTool } from "@nifrajs/mcp"
+import { toMcpTool } from "@nifrajs/mcp/tool-contract"
 
 export function inProcessToolAdapter<Input, Output>(
   tool: ToolContract<Input, Output>,

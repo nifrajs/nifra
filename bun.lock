@@ -291,12 +291,16 @@
     "packages/mcp": {
       "name": "@nifrajs/mcp",
       "version": "2.11.0",
-      "dependencies": {
-        "@nifrajs/core": "workspace:*",
-      },
       "devDependencies": {
+        "@nifrajs/core": "workspace:*",
         "react": "19.2.7",
       },
+      "peerDependencies": {
+        "@nifrajs/core": "workspace:^",
+      },
+      "optionalPeers": [
+        "@nifrajs/core",
+      ],
     },
     "packages/mcp-db": {
       "name": "@nifrajs/mcp-db",

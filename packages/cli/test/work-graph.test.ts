@@ -73,6 +73,38 @@ describe("verification work graph", () => {
     expect(complete.stop.done).toBe(true)
   })
 
+  test("route mention matching is path-anchored", async () => {
+    const paramBackend = server().get(
+      "/orders/:id",
+      { response: t.object({ ok: t.boolean() }) },
+      () => ({ ok: true }),
+    )
+    const paramFiles: readonly WorkGraphSourceFile[] = [
+      { path: "backend.ts", content: "export const backend = server()" },
+      {
+        path: "routes/orders-id.test.ts",
+        kind: "test",
+        content: 'const response = await app.fetch("/orders/123")',
+      },
+      {
+        path: "routes/unrelated.test.ts",
+        kind: "test",
+        content: 'test("widget target getUser", () => {})',
+      },
+    ]
+    const result = await buildProjectWorkGraph(
+      { source: paramBackend, files: paramFiles, freshness: { ok: true } },
+      { changedFiles: [] },
+    )
+    const edges = result.graph.edges.filter((edge) => edge.relation === "tests")
+    expect(edges).toContainEqual({
+      from: "test:routes/orders-id.test.ts",
+      to: "route:GET /orders/:id",
+      relation: "tests",
+    })
+    expect(edges.some((edge) => edge.from === "test:routes/unrelated.test.ts")).toBe(false)
+  })
+
   test("a higher-level proof never subsumes a lower-level step", async () => {
     const result = await buildProjectWorkGraph(
       { source: backend, files, freshness: { ok: true } },

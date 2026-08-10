@@ -30,6 +30,11 @@
       "types": "./dist/protocol.d.ts",
       "default": "./dist/protocol.js"
     },
+    "./tool-contract": {
+      "bun": "./src/tool-contract.ts",
+      "types": "./dist/tool-contract.d.ts",
+      "default": "./dist/tool-contract.js"
+    },
     "./http": {
       "bun": "./src/http.ts",
       "types": "./dist/http.d.ts",
@@ -53,10 +58,16 @@
   "publishConfig": {
     "access": "public"
   },
-  "dependencies": {
-    "@nifrajs/core": "workspace:*"
+  "peerDependencies": {
+    "@nifrajs/core": "workspace:^"
+  },
+  "peerDependenciesMeta": {
+    "@nifrajs/core": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@nifrajs/core": "workspace:*",
     "react": "19.2.7"
   },
   "repository": {

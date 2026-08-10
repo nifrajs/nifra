@@ -9194,7 +9194,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/mcp
 
-`bridgeScript`, `createMcpServer`, `CreateMcpServerOptions`, `defineMcpTool`, `DefineMcpToolOptions`, `defineMcpWidget`, `DefineMcpWidgetOptions`, `InferOutput`, `McpAppBridge`, `McpHttpOptions`, `McpServer`, `McpToolContractOptions`, `McpToolHandlerResult`, `McpUiIntent`, `McpWidget`, `respondMcpHttp`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `toMcpTool`, `uiResourceMeta`, `widgetDocument`
+`bridgeScript`, `createMcpServer`, `CreateMcpServerOptions`, `defineMcpTool`, `DefineMcpToolOptions`, `defineMcpWidget`, `DefineMcpWidgetOptions`, `InferOutput`, `McpAppBridge`, `McpHttpOptions`, `McpServer`, `McpToolHandlerResult`, `McpUiIntent`, `McpWidget`, `respondMcpHttp`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `uiResourceMeta`, `widgetDocument`
 
 ## @nifrajs/mcp-db
 

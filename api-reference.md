@@ -1916,7 +1916,6 @@ Every public export of every package and documented subpath - name, kind, signat
 - **McpToolAnnotations** _(interface)_ - `interface McpToolAnnotations`
   MCP tool safety hints (`readOnlyHint`/`destructiveHint`/…) surfaced in `tools/list`, per the MCP spec.
 - **McpToolContext** _(interface)_ - `interface McpToolContext`
-- **McpToolContractOptions** _(interface)_ - `interface McpToolContractOptions`
 - **McpToolHandlerResult** _(type)_ - `type McpToolHandlerResult`
   The ergonomic result an MCP-tool handler may return (coerced to the protocol's {@link McpToolResult}).
 - **McpToolResult** _(interface)_ - `interface McpToolResult`
@@ -1949,8 +1948,6 @@ Every public export of every package and documented subpath - name, kind, signat
   Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → JSON-RPC response; GET → a plain-text health page; OPTIONS → CORS preflight. Never throws - a bad body becomes a JSON-RPC parse error. Dual-era: a modern (2026-07-28) POST that mirrors its method/name/vers…
 - **rpcError** _(const)_ - `rpcError: (id: JsonRpcId, code: number, message: string, data?: unknown) => JsonRpcResponse`
 - **rpcResult** _(const)_ - `rpcResult: (id: JsonRpcId, value: unknown) => JsonRpcResponse`
-- **toMcpTool** _(function)_ - `toMcpTool: <Input, Output>(tool: ToolContract<Input, Output>, options?: McpToolContractOptions) => McpTool`
-  Adapt a contract to MCP without creating a second validation or enforcement path.
 - **uiResourceMeta** _(function)_ - `uiResourceMeta: (uri: string) => Record<string, unknown>`
   The MCP Apps `_meta.ui.resourceUri` link.
 - **widgetDocument** _(function)_ - `widgetDocument: (opts: DefineMcpWidgetOptions) => string`
@@ -2004,6 +2001,14 @@ Every public export of every package and documented subpath - name, kind, signat
 - **ReactWidgetOptions** _(interface)_ - `interface ReactWidgetOptions`
 - **reactWidget** _(function)_ - `reactWidget: (opts: ReactWidgetOptions) => Promise<McpWidget>`
   Build a {@link McpWidget} from a React component. Async - it bundles the component at definition time (a one-time cost at server start); pass the result to `createMcpServer({ widgets })` / a tool's `widget`.
+
+### `@nifrajs/mcp/tool-contract`
+
+- **McpToolContractOptions** _(interface)_ - `interface McpToolContractOptions`
+- **ToolCallOptions** _(interface)_ - `interface ToolCallOptions`
+- **ToolContract** _(interface)_ - `interface ToolContract<Input = unknown, Output = unknown>`
+- **toMcpTool** _(function)_ - `toMcpTool: <Input, Output>(tool: ToolContract<Input, Output>, options?: McpToolContractOptions) => McpTool`
+  Adapt a contract to MCP without creating a second validation or enforcement path.
 
 ## @nifrajs/mcp-db
 
