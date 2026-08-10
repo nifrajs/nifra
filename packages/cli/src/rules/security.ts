@@ -1,18 +1,21 @@
 import type * as TSApi from "typescript"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
-import type { CheckRule } from "./index.ts"
+import type { CheckRule, SourceIndex } from "./index.ts"
 
 const SECRET = /(?:token|secret|apiKey|api_key|signature|hmac|password)/i
 const PII = /(?:email|phone|ssn|password|token|authorization)/i
 const REVIEWED = "@nifra-gate-reviewed"
+const parseCache = new WeakMap<
+  SourceIndex,
+  Map<string, { readonly tree: TSApi.SourceFile; readonly lines: readonly string[] }>
+>()
 
-function hasReview(source: string, line: number): boolean {
-  const lines = source.split("\n")
+function hasReview(lines: readonly string[], line: number): boolean {
   return (lines[line - 1] ?? "").includes(REVIEWED) || (lines[line - 2] ?? "").includes(REVIEWED)
 }
 
-function reviewedEvidence(source: string, line: number): readonly string[] {
-  return hasReview(source, line) ? [REVIEWED] : []
+function reviewedEvidence(lines: readonly string[], line: number): readonly string[] {
+  return hasReview(lines, line) ? [REVIEWED] : []
 }
 
 function nameOf(ts: typeof TSApi, node: TSApi.Node): string | undefined {
@@ -41,6 +44,26 @@ function parse(ts: typeof TSApi, file: string, source: string): TSApi.SourceFile
   return ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind)
 }
 
+function parsedFile(
+  ts: typeof TSApi,
+  sources: SourceIndex,
+  file: string,
+): { readonly tree: TSApi.SourceFile; readonly lines: readonly string[] } | undefined {
+  let files = parseCache.get(sources)
+  if (files === undefined) {
+    files = new Map()
+    parseCache.set(sources, files)
+  }
+  const cached = files.get(file)
+  if (cached !== undefined) return cached
+  const source = sources.read(file)
+  if (source === undefined) return undefined
+  const tree = parse(ts, file, source)
+  const parsed = { tree, lines: tree.text.split("\n") }
+  files.set(file, parsed)
+  return parsed
+}
+
 export const secretComparisonRule: CheckRule = {
   code: "NF-S002",
   title: "Non-constant-time secret comparison",
@@ -49,9 +72,9 @@ export const secretComparisonRule: CheckRule = {
     if (ts === undefined) return []
     const findings: Diagnostic[] = []
     for (const file of ctx.sources.files) {
-      const source = ctx.sources.read(file)
-      if (source === undefined) continue
-      const tree = parse(ts, file, source)
+      const parsed = parsedFile(ts, ctx.sources, file)
+      if (parsed === undefined) continue
+      const { tree, lines } = parsed
       const visit = (node: TSApi.Node): void => {
         if (
           ts.isBinaryExpression(node) &&
@@ -69,8 +92,8 @@ export const secretComparisonRule: CheckRule = {
             (left !== undefined && SECRET.test(left)) ||
             (right !== undefined && SECRET.test(right))
           ) {
-            const line = source.slice(0, node.getStart(tree)).split("\n").length
-            const reviewed = hasReview(source, line)
+            const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
+            const reviewed = hasReview(lines, line)
             findings.push(
               diagnostic({
                 code: "NF-S002",
@@ -80,7 +103,7 @@ export const secretComparisonRule: CheckRule = {
                 message: reviewed
                   ? "secret comparison is explicitly marked as reviewed"
                   : "secret-like values must use a length check and timing-safe comparison",
-                evidence: [left ?? right ?? "secret comparison", ...reviewedEvidence(source, line)],
+                evidence: [left ?? right ?? "secret comparison", ...reviewedEvidence(lines, line)],
                 ...(reviewed
                   ? {}
                   : {
@@ -110,9 +133,9 @@ export const piiLogRule: CheckRule = {
     if (ts === undefined) return []
     const findings: Diagnostic[] = []
     for (const file of ctx.sources.files) {
-      const source = ctx.sources.read(file)
-      if (source === undefined) continue
-      const tree = parse(ts, file, source)
+      const parsed = parsedFile(ts, ctx.sources, file)
+      if (parsed === undefined) continue
+      const { tree, lines } = parsed
       const visit = (node: TSApi.Node): void => {
         if (ts.isCallExpression(node)) {
           const expression = node.expression
@@ -123,8 +146,8 @@ export const piiLogRule: CheckRule = {
             for (const arg of node.arguments) {
               const name = nameOf(ts, arg)
               if (name !== undefined && PII.test(name)) {
-                const line = source.slice(0, node.getStart(tree)).split("\n").length
-                const reviewed = hasReview(source, line)
+                const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
+                const reviewed = hasReview(lines, line)
                 findings.push(
                   diagnostic({
                     code: "NF-S003",
@@ -134,7 +157,7 @@ export const piiLogRule: CheckRule = {
                     message: reviewed
                       ? "sensitive value in log call is explicitly marked as reviewed"
                       : "PII-shaped values must not be passed directly to log calls",
-                    evidence: [name, ...reviewedEvidence(source, line)],
+                    evidence: [name, ...reviewedEvidence(lines, line)],
                     verify: "nifra check --lints-only",
                   }),
                 )
@@ -158,9 +181,9 @@ export const failOpenGateRule: CheckRule = {
     if (ts === undefined) return []
     const findings: Diagnostic[] = []
     for (const file of ctx.sources.files) {
-      const source = ctx.sources.read(file)
-      if (source === undefined) continue
-      const tree = parse(ts, file, source)
+      const parsed = parsedFile(ts, ctx.sources, file)
+      if (parsed === undefined) continue
+      const { tree, lines } = parsed
       const visit = (node: TSApi.Node): void => {
         if (ts.isCatchClause(node)) {
           let parent: TSApi.Node | undefined = node.parent
@@ -172,8 +195,8 @@ export const failOpenGateRule: CheckRule = {
           if (name !== undefined && /^(?:require|assert|can|authorize)/i.test(name)) {
             const text = node.block.getText(tree)
             if (!/\b(?:throw|return\s+(?:false|new\s+Response|deny))/s.test(text)) {
-              const line = source.slice(0, node.getStart(tree)).split("\n").length
-              const reviewed = hasReview(source, line)
+              const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
+              const reviewed = hasReview(lines, line)
               findings.push(
                 diagnostic({
                   code: "NF-S001",
@@ -186,7 +209,7 @@ export const failOpenGateRule: CheckRule = {
                   evidence: [
                     name,
                     "catch block has no denial or rethrow",
-                    ...reviewedEvidence(source, line),
+                    ...reviewedEvidence(lines, line),
                   ],
                   verify: "nifra check --lints-only",
                 }),

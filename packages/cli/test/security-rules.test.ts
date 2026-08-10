@@ -67,3 +67,28 @@ test("legacy replay metadata remains parseable", () => {
   })
   expect(parseCompatibleReplayFile({ seed: 7, schedule: [] })).toEqual({ seed: 7, schedule: [] })
 })
+
+test("shares source reads across built-in security rules", async () => {
+  let reads = 0
+  const content = [
+    "function requireAuth() { try { check() } catch { return } }",
+    "const token = input.token",
+    "if (token === expected) console.log(email)",
+  ].join("\n")
+  const findings = await runRuleRegistry(
+    {
+      root: "/tmp/project",
+      sources: {
+        files: ["routes/security.ts"],
+        read: () => {
+          reads += 1
+          return content
+        },
+      },
+      project: {},
+    },
+    securityRules,
+  )
+  expect(findings.map((finding) => finding.code)).toEqual(["NF-S001", "NF-S002", "NF-S003"])
+  expect(reads).toBe(1)
+})
