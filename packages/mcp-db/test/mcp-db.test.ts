@@ -1,5 +1,8 @@
 import { Database } from "bun:sqlite"
 import { describe, expect, test } from "bun:test"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { McpDbConfigError, serveDatabaseAsMcp } from "../src/index.ts"
 
 function seededDb(): Database {
@@ -253,7 +256,7 @@ describe("run_query (opt-in)", () => {
     expect(JSON.parse(result.text).total).toBeNull()
   })
 
-  test("rejects recursive CTEs with the bounded query error", async () => {
+  test("a recursive CTE is rejected by name, like any other unexposed relation", async () => {
     const result = await call(
       server,
       "run_query",
@@ -263,6 +266,85 @@ describe("run_query (opt-in)", () => {
       auth,
     )
     expect(result.isError).toBe(true)
+    expect(result.text).toBe('query touches "loop", which is not exposed')
+  })
+})
+
+describe("query execution lanes", () => {
+  const auth = { "x-key": "secret" }
+
+  test("a database with no interrupt and no file still serves queries", async () => {
+    // An embedder passing a structural shim must not be refused at construction.
+    const shim = {
+      prepare: (sql: string) => ({ all: () => (sql.startsWith("EXPLAIN") ? [] : [{ n: 1 }]) }),
+      run: () => undefined,
+    }
+    const served = serveDatabaseAsMcp(shim, {
+      tables: ["habits"],
+      runQuery: { authorize: () => true },
+    })
+    const result = await call(served, "run_query", { sql: "SELECT 1 AS n" })
+    expect(result.isError).toBe(false)
+    expect(JSON.parse(result.text).rows).toEqual([{ n: 1 }])
+  })
+
+  test("an in-process overrun is reported once the statement returns", async () => {
+    const shim = {
+      prepare: (sql: string) => ({
+        all: () => {
+          if (sql.startsWith("EXPLAIN")) return []
+          // A synchronous statement owns the thread; the deadline can only be seen after it ends.
+          const buffer = new Int32Array(new SharedArrayBuffer(4))
+          Atomics.wait(buffer, 0, 0, 30)
+          return [{ n: 1 }]
+        },
+      }),
+      run: () => undefined,
+    }
+    const served = serveDatabaseAsMcp(shim, {
+      tables: ["habits"],
+      runQuery: { authorize: () => true, queryTimeoutMs: 10 },
+    })
+    const result = await call(served, "run_query", { sql: "SELECT 1 AS n" })
+    expect(result.isError).toBe(true)
     expect(result.text).toBe("query exceeded the time limit")
+  })
+
+  test("a file-backed database runs off a reusable worker, never a per-call snapshot", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "nifra-mcp-db-"))
+    const path = join(directory, "app.db")
+    const db = new Database(path)
+    db.run("CREATE TABLE habits (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+    db.run("INSERT INTO habits (name) VALUES ('read'), ('run')")
+    // Snapshotting copies the WHOLE database per call; the lane must never reach for it.
+    let snapshots = 0
+    Object.defineProperty(db, "serialize", {
+      configurable: true,
+      value: () => {
+        snapshots += 1
+        return new Uint8Array()
+      },
+    })
+    const served = serveDatabaseAsMcp(db, {
+      tables: ["habits"],
+      runQuery: { authorize: (ctx) => ctx.request.headers.get("x-key") === "secret" },
+    })
+    try {
+      const first = await call(served, "run_query", { sql: "SELECT name FROM habits" }, auth)
+      const second = await call(
+        served,
+        "run_query",
+        { sql: "SELECT count(*) AS n FROM habits" },
+        auth,
+      )
+      expect(first.isError).toBe(false)
+      expect(JSON.parse(first.text).rows).toEqual([{ name: "read" }, { name: "run" }])
+      expect(second.isError).toBe(false)
+      expect(JSON.parse(second.text).rows).toEqual([{ n: 2 }])
+      expect(snapshots).toBe(0)
+    } finally {
+      db.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 })
