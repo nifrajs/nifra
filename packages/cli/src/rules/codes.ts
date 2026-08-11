@@ -30,6 +30,10 @@ export const RULE_CODES = Object.freeze({
   "NF-S001": "Fail-open gate",
   "NF-S002": "Non-constant-time secret comparison",
   "NF-S003": "Sensitive value in log call",
+  "NF-S004": "CORS origin predicate ignores the origin",
+  "NF-S005": "External redirect opt-out",
+  "NF-S006": "Security escape hatch enabled",
+  "NF-S007": "Secure cookie without a __Host-/__Secure- prefix",
 } as const)
 
 /** Codes that no longer fire but remain reserved forever. */

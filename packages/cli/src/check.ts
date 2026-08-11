@@ -2535,6 +2535,129 @@ export async function collectCheckResult(
   return result
 }
 
+/** The named rule sections of the human report, in print order. A rule absent from this list is NOT
+ * dropped: {@link renderCheckReport} renders every remaining diagnostic in a generic section keyed by
+ * its rule code, so a finding that can flip the exit code is never invisible in the default output. */
+const REPORT_SECTIONS = [
+  ["typecheck", "typecheck"],
+  ["typed-client", "hand-rolled fetch() to your own API"],
+  ["untyped-client", 'client("…") missing its <typeof app> type argument'],
+  ["server-only-import", "server-only import in a route module"],
+  ["interpolated-sql", "SQL built by interpolating a value into the statement"],
+  ["response-route", "route returns a raw Response (typed client → data: never)"],
+  ["undeclared-dependency", "undeclared dependency in package.json"],
+  ["duplicate-install", "duplicate identity-sensitive dependency install"],
+  ["stale-workspace-dist", "workspace-linked dist older than its source"],
+  ["pipeline", "bundler pipeline (Vite/Bun) config"],
+  ["server-manifest-drift", "server-manifest.ts drifted from routes/"],
+  ["manifest-drift", "versioned trust manifest drift"],
+  ["capability-assurance", "effect/capability assurance"],
+  ["capability-config", "capability assurance config"],
+  ["check-config", "nifra.check.json"],
+] as const
+
+/**
+ * Render the human-readable check report as lines. Pure (no I/O, no cwd) so tests can assert
+ * report/exit-code parity: every diagnostic in `result.diagnostics` appears in the output, and the
+ * trailer states the error/advisory counts that produced `ok`.
+ */
+export function renderCheckReport(result: CheckResult): string[] {
+  const lines: string[] = []
+  lines.push("nifra check", "")
+  lines.push(
+    result.typecheck === "pass"
+      ? "✓ typecheck passed"
+      : result.typecheck === "fail"
+        ? "✗ typecheck failed - the frontend/backend contract is broken"
+        : "• typecheck skipped (no tsconfig / typescript not installed)",
+  )
+  // Stated on every run, passing or not. "Which bundler is this app on" decides which plugin slot is
+  // live and which toolchain compiles a component, so it belongs in the report rather than only in the
+  // dev server's banner - where CI never sees it.
+  if (result.pipeline !== undefined) {
+    lines.push(
+      result.pipeline.pipeline === "unknown"
+        ? `• bundler: not readable from ${result.pipeline.configFile} - ${result.pipeline.reason}`
+        : `• bundler: ${result.pipeline.pipeline} (${result.pipeline.reason})`,
+    )
+  }
+  if (result.externalMounts !== undefined && result.externalMounts.length > 0) {
+    lines.push(
+      `• intentional external mounts (not typed-client checked): ${result.externalMounts.join(", ")}`,
+    )
+  }
+  const renderSection = (rule: string, label: string, ds: readonly CheckDiagnostic[]): void => {
+    if (rule !== "typecheck") {
+      // Marked by SEVERITY, not by rule name. `response-route` and `stale-workspace-dist` are advisory
+      // in whole; `pipeline` is the first rule that is advisory in part (a misplaced plugin fails, a
+      // resolve condition the Bun dev bundler can't take does not), so the counts are split rather than
+      // rounded up to the worse of the two.
+      const errors = ds.filter((d) => d.severity === "error").length
+      const advisory = ds.length - errors
+      lines.push(
+        ds.length === 0
+          ? `✓ ${label}: none`
+          : errors === 0
+            ? `⚠ ${label}: ${advisory} (advisory)`
+            : `✗ ${label}: ${errors}${advisory > 0 ? ` (+${advisory} advisory)` : ""}`,
+      )
+    }
+    for (const d of ds) {
+      lines.push(`    ${d.file ?? ""}${d.line ? `:${d.line}` : ""}  ${d.message}`)
+      if (d.suggestion !== undefined) {
+        lines.push(`      fix: ${d.suggestion.title}`)
+        if (d.suggestion.command !== undefined) {
+          lines.push(`      command: ${d.suggestion.command.join(" ")}`)
+        }
+        if (d.suggestion.diff !== undefined) {
+          for (const line of d.suggestion.diff.split("\n")) lines.push(`      ${line}`)
+        }
+        for (const step of d.suggestion.steps ?? []) lines.push(`      - ${step}`)
+      }
+    }
+  }
+  for (const [rule, label] of REPORT_SECTIONS) {
+    renderSection(
+      rule,
+      label,
+      result.diagnostics.filter((d) => d.rule === rule),
+    )
+  }
+  // Generic section: diagnostics whose rule has no named section above (registry rules publishing
+  // under their NF- code, application rule packs). These count toward `ok` exactly like the named
+  // ones, so they get the same severity-marked rendering - only "✓ …: none" is skipped, because
+  // the set of possible unlisted rules is open-ended.
+  const named = new Set<string>(REPORT_SECTIONS.map(([rule]) => rule))
+  const extraRules: string[] = []
+  for (const d of result.diagnostics) {
+    if (!named.has(d.rule) && !extraRules.includes(d.rule)) extraRules.push(d.rule)
+  }
+  for (const rule of extraRules) {
+    const title = (RULE_CODES as Record<string, string | undefined>)[rule]
+    renderSection(
+      rule,
+      title !== undefined ? `${title} (${rule})` : rule,
+      result.diagnostics.filter((d) => d.rule === rule),
+    )
+  }
+  if (result.truncated !== undefined) {
+    lines.push(
+      `• showing ${result.truncated.shown} of ${result.truncated.total} diagnostics (truncated)`,
+    )
+  }
+  const errors = result.diagnostics.filter((d) => d.severity === "error").length
+  const advisory = result.diagnostics.length - errors
+  lines.push(
+    "",
+    result.ok
+      ? advisory > 0
+        ? `✓ check passed (${advisory} advisory)`
+        : "✓ check passed"
+      : `✗ check failed: ${errors} error${errors === 1 ? "" : "s"}${advisory > 0 ? ` (+${advisory} advisory)` : ""}`,
+  )
+  return lines
+}
+
 /** Run the full check; print a report (`--json` for machine output) and return whether it passed. */
 export async function runCheck(
   cwd: string,

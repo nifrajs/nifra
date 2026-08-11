@@ -225,4 +225,244 @@ export const failOpenGateRule: CheckRule = {
   },
 }
 
-export const securityRules = Object.freeze([failOpenGateRule, secretComparisonRule, piiLogRule])
+/** True when `param` is referenced anywhere inside `body`. */
+function usesParam(ts: typeof TSApi, body: TSApi.Node, param: string): boolean {
+  let used = false
+  const walk = (n: TSApi.Node): void => {
+    if (used) return
+    if (ts.isIdentifier(n) && n.text === param) {
+      used = true
+      return
+    }
+    ts.forEachChild(n, walk)
+  }
+  walk(body)
+  return used
+}
+
+export const corsOriginPredicateRule: CheckRule = {
+  code: "NF-S004",
+  title: "CORS origin predicate ignores the origin",
+  async scan(ctx) {
+    const ts = await import("../internal/typescript-import.ts").then((m) => m.importTypeScript())
+    if (ts === undefined) return []
+    const findings: Diagnostic[] = []
+    for (const file of ctx.sources.files) {
+      const parsed = parsedFile(ts, ctx.sources, file)
+      if (parsed === undefined) continue
+      const { tree, lines } = parsed
+      const visit = (node: TSApi.Node): void => {
+        if (ts.isCallExpression(node) && nameOf(ts, node.expression) === "cors") {
+          const arg = node.arguments[0]
+          if (arg !== undefined && ts.isObjectLiteralExpression(arg)) {
+            for (const prop of arg.properties) {
+              if (
+                ts.isPropertyAssignment(prop) &&
+                nameOf(ts, prop.name) === "origin" &&
+                (ts.isArrowFunction(prop.initializer) || ts.isFunctionExpression(prop.initializer))
+              ) {
+                const fn = prop.initializer
+                const param = fn.parameters[0]?.name
+                // A predicate with no parameter, or one that never reads it, allows every origin -
+                // the guardrail the predicate form exists for is bypassed. A destructured parameter
+                // is left alone (can't cheaply prove non-use).
+                const ignoresOrigin =
+                  param === undefined
+                    ? true
+                    : ts.isIdentifier(param)
+                      ? !usesParam(ts, fn.body, param.text)
+                      : false
+                if (ignoresOrigin) {
+                  const line = tree.getLineAndCharacterOfPosition(prop.getStart(tree)).line + 1
+                  const reviewed = hasReview(lines, line)
+                  findings.push(
+                    diagnostic({
+                      code: "NF-S004",
+                      severity: reviewed ? "info" : "warn",
+                      file,
+                      line,
+                      message: reviewed
+                        ? "constant CORS origin predicate is explicitly marked as reviewed"
+                        : "CORS origin predicate never inspects the origin - it allows every origin; list explicit origins or use the argument",
+                      evidence: ["origin predicate", ...reviewedEvidence(lines, line)],
+                      verify: "nifra check --lints-only",
+                    }),
+                  )
+                }
+              }
+            }
+          }
+        }
+        ts.forEachChild(node, visit)
+      }
+      visit(tree)
+    }
+    return findings
+  },
+}
+
+export const externalRedirectRule: CheckRule = {
+  code: "NF-S005",
+  title: "External redirect opt-out",
+  async scan(ctx) {
+    const ts = await import("../internal/typescript-import.ts").then((m) => m.importTypeScript())
+    if (ts === undefined) return []
+    const findings: Diagnostic[] = []
+    for (const file of ctx.sources.files) {
+      const parsed = parsedFile(ts, ctx.sources, file)
+      if (parsed === undefined) continue
+      const { tree, lines } = parsed
+      const visit = (node: TSApi.Node): void => {
+        if (ts.isCallExpression(node) && nameOf(ts, node.expression) === "redirect") {
+          for (const arg of node.arguments) {
+            if (!ts.isObjectLiteralExpression(arg)) continue
+            for (const prop of arg.properties) {
+              if (
+                ts.isPropertyAssignment(prop) &&
+                nameOf(ts, prop.name) === "external" &&
+                prop.initializer.kind === ts.SyntaxKind.TrueKeyword
+              ) {
+                const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
+                const reviewed = hasReview(lines, line)
+                findings.push(
+                  diagnostic({
+                    code: "NF-S005",
+                    severity: reviewed ? "info" : "warn",
+                    file,
+                    line,
+                    message: reviewed
+                      ? "external redirect is explicitly marked as reviewed"
+                      : "redirect opts out of the same-origin default - verify the target can never be derived from request input (open-redirect risk)",
+                    evidence: ["external: true", ...reviewedEvidence(lines, line)],
+                    verify: "nifra check --lints-only",
+                  }),
+                )
+              }
+            }
+          }
+        }
+        ts.forEachChild(node, visit)
+      }
+      visit(tree)
+    }
+    return findings
+  },
+}
+
+const ESCAPE_HATCHES: Readonly<Record<string, string>> = {
+  allowLengthless:
+    "body-limit stops publishing BODY_BOUNDED evidence - lengthless (chunked) bodies bypass the Content-Length gate",
+  allowGlobalKey:
+    "rate limiting collapses to one shared bucket - any client can exhaust the global allowance for everyone",
+  allowInProduction:
+    "in-memory rate-limit store in production - counts are per-instance and reset on restart",
+}
+
+export const assuranceEscapeHatchRule: CheckRule = {
+  code: "NF-S006",
+  title: "Security escape hatch enabled",
+  async scan(ctx) {
+    const ts = await import("../internal/typescript-import.ts").then((m) => m.importTypeScript())
+    if (ts === undefined) return []
+    const findings: Diagnostic[] = []
+    for (const file of ctx.sources.files) {
+      const parsed = parsedFile(ts, ctx.sources, file)
+      if (parsed === undefined) continue
+      const { tree, lines } = parsed
+      const visit = (node: TSApi.Node): void => {
+        if (ts.isPropertyAssignment(node) && node.initializer.kind === ts.SyntaxKind.TrueKeyword) {
+          const name = nameOf(ts, node.name)
+          const consequence = name !== undefined ? ESCAPE_HATCHES[name] : undefined
+          if (name !== undefined && consequence !== undefined) {
+            const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
+            const reviewed = hasReview(lines, line)
+            findings.push(
+              diagnostic({
+                code: "NF-S006",
+                severity: reviewed ? "info" : "warn",
+                file,
+                line,
+                message: reviewed
+                  ? `${name} escape hatch is explicitly marked as reviewed`
+                  : `${name}: ${consequence}`,
+                evidence: [name, ...reviewedEvidence(lines, line)],
+                verify: "nifra check --lints-only",
+              }),
+            )
+          }
+        }
+        ts.forEachChild(node, visit)
+      }
+      visit(tree)
+    }
+    return findings
+  },
+}
+
+const COOKIE_PREFIX = /^__(?:Host|Secure)-/
+
+export const unprefixedSecureCookieRule: CheckRule = {
+  code: "NF-S007",
+  title: "Secure cookie without a __Host-/__Secure- prefix",
+  async scan(ctx) {
+    const ts = await import("../internal/typescript-import.ts").then((m) => m.importTypeScript())
+    if (ts === undefined) return []
+    const findings: Diagnostic[] = []
+    for (const file of ctx.sources.files) {
+      const parsed = parsedFile(ts, ctx.sources, file)
+      if (parsed === undefined) continue
+      const { tree, lines } = parsed
+      const visit = (node: TSApi.Node): void => {
+        if (ts.isCallExpression(node)) {
+          const callee = nameOf(ts, node.expression)
+          if (callee === "cookie" || callee === "serializeCookie") {
+            const nameArg = node.arguments[0]
+            const hasPrefix =
+              nameArg !== undefined &&
+              ts.isStringLiteralLike(nameArg) &&
+              COOKIE_PREFIX.test(nameArg.text)
+            const secure = node.arguments.some(
+              (arg) =>
+                ts.isObjectLiteralExpression(arg) &&
+                arg.properties.some(
+                  (prop) =>
+                    ts.isPropertyAssignment(prop) &&
+                    nameOf(ts, prop.name) === "secure" &&
+                    prop.initializer.kind === ts.SyntaxKind.TrueKeyword,
+                ),
+            )
+            // Only literal names are judged - a dynamic name can't be checked for a prefix.
+            if (secure && !hasPrefix && nameArg !== undefined && ts.isStringLiteralLike(nameArg)) {
+              const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
+              findings.push(
+                diagnostic({
+                  code: "NF-S007",
+                  severity: "info",
+                  file,
+                  line,
+                  message:
+                    "Secure cookie without a __Host-/__Secure- prefix - a prefix stops subdomains and insecure contexts from shadowing it",
+                  evidence: [nameArg.text],
+                  verify: "nifra check --lints-only",
+                }),
+              )
+            }
+          }
+        }
+        ts.forEachChild(node, visit)
+      }
+      visit(tree)
+    }
+    return findings
+  },
+}
+
+export const securityRules = Object.freeze([
+  failOpenGateRule,
+  secretComparisonRule,
+  piiLogRule,
+  corsOriginPredicateRule,
+  externalRedirectRule,
+  assuranceEscapeHatchRule,
+  unprefixedSecureCookieRule,
+])

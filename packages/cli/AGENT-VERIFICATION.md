@@ -30,4 +30,4 @@ Replay metadata contains only a version, gate, case id, seed, input digest and s
 
 ## Security rules
 
-The built-in AST checks emit `NF-S001` for narrow fail-open gate catches, `NF-S002` for direct secret comparisons, and `NF-S003` for PII-shaped values passed to log calls. Add `// @nifra-gate-reviewed` on the flagged line or the line above only after review; the resulting informational diagnostic keeps the override visible in evidence.
+The built-in AST checks emit `NF-S001` for narrow fail-open gate catches, `NF-S002` for direct secret comparisons, `NF-S003` for PII-shaped values passed to log calls, `NF-S004` for CORS origin predicates that never read the origin, `NF-S005` for `redirect(..., { external: true })` call sites, `NF-S006` for security escape hatches (`allowLengthless`, `allowGlobalKey`, `allowInProduction`) with the assurance claim each one weakens, and `NF-S007` (info) for Secure cookies set without a `__Host-`/`__Secure-` prefix. Add `// @nifra-gate-reviewed` on the flagged line or the line above only after review; the resulting informational diagnostic keeps the override visible in evidence.

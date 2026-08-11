@@ -59,6 +59,92 @@ describe("built-in security rules", () => {
   })
 })
 
+describe("configuration audit rules (NF-S004..007)", () => {
+  test("flags CORS origin predicates that never read the origin", async () => {
+    const findings = await scan(
+      "app.ts",
+      [
+        "app.use(cors({ origin: () => true }))",
+        "app.use(cors({ origin: (o) => true }))",
+        "app.use(cors({ origin: (o) => allowed.has(o) }))",
+        'app.use(cors({ origin: ["https://app.example"] }))',
+      ].join("\n"),
+    )
+    expect(findings.map((finding) => `${finding.code}:${finding.line}`)).toEqual([
+      "NF-S004:1",
+      "NF-S004:2",
+    ])
+    expect(findings.every((finding) => finding.severity === "warn")).toBe(true)
+  })
+
+  test("flags external redirects, not internal ones", async () => {
+    const findings = await scan(
+      "routes/out.ts",
+      [
+        "return redirect(target, { external: true })",
+        'return redirect("/home")',
+        "return redirect(url, { status: 302 })",
+      ].join("\n"),
+    )
+    expect(findings.map((finding) => `${finding.code}:${finding.line}`)).toEqual(["NF-S005:1"])
+    expect(findings[0]?.severity).toBe("warn")
+  })
+
+  test("flags assurance escape hatches and names the weakened claim", async () => {
+    const findings = await scan(
+      "app.ts",
+      [
+        "app.use(bodyLimit({ maxBytes: 1024, allowLengthless: true }))",
+        "app.use(rateLimit({ limit: 5, allowGlobalKey: true }))",
+        "const store = new MemoryStore({ allowInProduction: true })",
+        "app.use(bodyLimit({ maxBytes: 1024, allowLengthless: false }))",
+      ].join("\n"),
+    )
+    expect(findings.map((finding) => `${finding.code}:${finding.line}`)).toEqual([
+      "NF-S006:1",
+      "NF-S006:2",
+      "NF-S006:3",
+    ])
+    expect(findings[0]?.message).toContain("BODY_BOUNDED")
+    expect(findings[1]?.message).toContain("shared bucket")
+    expect(findings[2]?.message).toContain("per-instance")
+  })
+
+  test("nudges Secure cookies toward __Host-/__Secure- prefixes", async () => {
+    const findings = await scan(
+      "routes/login.ts",
+      [
+        'ctx.cookie("session", value, { secure: true, httpOnly: true })',
+        'ctx.cookie("__Host-session", value, { secure: true, httpOnly: true })',
+        'serializeCookie("theme", value, { path: "/" })',
+        "ctx.cookie(name, value, { secure: true })",
+      ].join("\n"),
+    )
+    expect(findings.map((finding) => `${finding.code}:${finding.line}`)).toEqual(["NF-S007:1"])
+    expect(findings[0]?.severity).toBe("info")
+  })
+
+  test("reviewed marker downgrades the audit rules", async () => {
+    const findings = await scan(
+      "app.ts",
+      [
+        "// @nifra-gate-reviewed",
+        "app.use(cors({ origin: () => true }))",
+        "// @nifra-gate-reviewed",
+        "return redirect(target, { external: true })",
+        "// @nifra-gate-reviewed",
+        "app.use(bodyLimit({ allowLengthless: true }))",
+      ].join("\n"),
+    )
+    expect(findings.map((finding) => finding.code).sort()).toEqual([
+      "NF-S004",
+      "NF-S005",
+      "NF-S006",
+    ])
+    expect(findings.every((finding) => finding.severity === "info")).toBe(true)
+  })
+})
+
 test("legacy replay metadata remains parseable", () => {
   expect(parseCompatibleReplayFile({ seed: 7, caseId: "GET /", runtime: "bun" })).toEqual({
     seed: 7,
