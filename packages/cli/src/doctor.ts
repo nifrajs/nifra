@@ -17,7 +17,7 @@
  * undeclared import there fails a clean `bun install --frozen-lockfile` build just the same.
  */
 import type { Dirent } from "node:fs"
-import { readdir, realpath, stat } from "node:fs/promises"
+import { lstat, readdir, realpath, stat } from "node:fs/promises"
 import { builtinModules } from "node:module"
 import { dirname, join, relative, sep } from "node:path"
 import { codePositionMask, type SourceFinding, stripComments, walkSource } from "./check.ts"
@@ -379,6 +379,66 @@ async function resolvedInstalledCopy(
   }
 }
 
+const MAX_LINKED_PACKAGES = 64
+const MAX_LINK_PROBES = 4_096
+
+/** Is `path` inside `root` (or `root` itself)? Both must already be real paths. */
+const isInside = (root: string, path: string): boolean =>
+  path === root || path.startsWith(root.endsWith(sep) ? root : `${root}${sep}`)
+
+/**
+ * The repo boundary for a linked package: the nearest ancestor holding a `.git`, so the upward
+ * `node_modules` walk inside a sibling checkout stops where that checkout does instead of climbing
+ * into a shared parent directory. Falls back to the package directory itself.
+ */
+async function linkedRepoBoundary(packageRoot: string): Promise<string> {
+  let dir = packageRoot
+  for (let depth = 0; depth < 8; depth++) {
+    if (await pathExists(join(dir, ".git"))) return dir
+    const parent = dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  return packageRoot
+}
+
+/**
+ * Dependency roots that are symlinks OUT of the scanned workspace - a sibling checkout linked in with
+ * `link:`/`file:`/`npm link`. Their own `node_modules` is a second physical install root, so a shared
+ * package (`@nifrajs/core`, React) resolves to a different directory there than it does here. That is
+ * a real duplicate: module identity is path-based, so registries, symbols, and hooks do not match
+ * across the two copies - the exact split that reads as "my types collapsed for no reason".
+ *
+ * One level deep and bounded: links inside a linked package are not followed.
+ */
+async function linkedPackageRoots(
+  importerRoots: readonly string[],
+  manifests: readonly Record<string, unknown>[],
+  scanRoot: string,
+): Promise<string[]> {
+  const realScanRoot = await realpath(scanRoot).catch(() => scanRoot)
+  const found = new Map<string, true>()
+  let probes = 0
+  for (const [index, importerRoot] of importerRoots.entries()) {
+    const pkg = manifests[index]
+    if (pkg === undefined) continue
+    const names = new Set<string>()
+    for (const field of DEPENDENCY_FIELDS) for (const name of depNames(pkg, field)) names.add(name)
+    for (const name of names) {
+      if (probes++ >= MAX_LINK_PROBES || found.size >= MAX_LINKED_PACKAGES) return [...found.keys()]
+      const candidate = join(importerRoot, "node_modules", ...name.split("/"))
+      // `lstat` first: on macOS `realpath` also rewrites symlinked ANCESTORS (`/tmp` ->
+      // `/private/tmp`), which would read as a link out of the workspace for every dependency.
+      const link = await lstat(candidate).catch(() => undefined)
+      if (link === undefined || !link.isSymbolicLink()) continue
+      const resolved = await realpath(candidate).catch(() => undefined)
+      if (resolved === undefined || isInside(realScanRoot, resolved)) continue
+      found.set(resolved, true)
+    }
+  }
+  return [...found.keys()]
+}
+
 const displayPath = (cwd: string, path: string): string => {
   const rel = relative(cwd, path)
   return rel === "" ? "." : rel
@@ -489,6 +549,28 @@ export async function collectDuplicateInstalls(
   for (const name of targets) {
     const copy = await resolvedInstalledCopy(scanRoot, scanRoot, name)
     if (copy !== undefined) record(name, copy, displayPath(cwd, scanRoot))
+  }
+
+  // Sibling checkouts linked in (`link:`/`file:`/`npm link`) install their own copies. Their
+  // resolution is what the runtime and `tsc` actually use for code that crosses the link, so a split
+  // there is as real as one inside this workspace - and invisible to a scan bounded by the workspace.
+  const linkedRoots = await linkedPackageRoots(
+    [...importers.map((importer) => importer.root), scanRoot],
+    [...importers.map((importer) => importer.package), workspace?.package ?? rootPackage],
+    scanRoot,
+  )
+  for (const linkedRoot of linkedRoots) {
+    const linkedPackage = await readJson(join(linkedRoot, "package.json"))
+    const boundary = await linkedRepoBoundary(linkedRoot)
+    const linkedTargets = new Set([
+      ...targets,
+      ...(linkedPackage === undefined ? [] : duplicateTargets(linkedPackage)),
+    ])
+    for (const name of linkedTargets) {
+      if (linkedPackage?.name === name) continue
+      const copy = await resolvedInstalledCopy(linkedRoot, boundary, name)
+      if (copy !== undefined) record(name, copy, displayPath(cwd, linkedRoot))
+    }
   }
 
   const findings: DuplicateInstallFinding[] = []
