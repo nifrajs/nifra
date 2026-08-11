@@ -51,6 +51,35 @@ describe("securityHeaders", () => {
     expect(res.headers.get("referrer-policy")).toBe("strict-origin-when-cross-origin")
   })
 
+  test("isolation headers are opt-in and off by default", async () => {
+    const app = server()
+      .use(securityHeaders())
+      .get("/", () => "ok")
+    const res = await app.fetch(new Request("http://x/"))
+    expect(res.headers.get("cross-origin-opener-policy")).toBeNull()
+    expect(res.headers.get("cross-origin-embedder-policy")).toBeNull()
+    expect(res.headers.get("cross-origin-resource-policy")).toBeNull()
+    expect(res.headers.get("permissions-policy")).toBeNull()
+  })
+
+  test("COOP/COEP/CORP/Permissions-Policy when configured", async () => {
+    const app = server()
+      .use(
+        securityHeaders({
+          crossOriginOpenerPolicy: "same-origin",
+          crossOriginEmbedderPolicy: "require-corp",
+          crossOriginResourcePolicy: "same-site",
+          permissionsPolicy: "camera=(), geolocation=()",
+        }),
+      )
+      .get("/", () => "ok")
+    const res = await app.fetch(new Request("http://x/"))
+    expect(res.headers.get("cross-origin-opener-policy")).toBe("same-origin")
+    expect(res.headers.get("cross-origin-embedder-policy")).toBe("require-corp")
+    expect(res.headers.get("cross-origin-resource-policy")).toBe("same-site")
+    expect(res.headers.get("permissions-policy")).toBe("camera=(), geolocation=()")
+  })
+
   test("headers land on a 500 too", async () => {
     const app = server({ logger: silentLogger })
       .use(securityHeaders())

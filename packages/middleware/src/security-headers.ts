@@ -14,6 +14,17 @@ export interface SecurityHeadersOptions {
   readonly frameOptions?: "DENY" | "SAMEORIGIN"
   /** `Referrer-Policy`. Default `"no-referrer"`. */
   readonly referrerPolicy?: string
+  /** `Cross-Origin-Opener-Policy`. Off by default - isolates the browsing context group; opt in
+   * when the app tolerates losing `window.opener` links from cross-origin pages. */
+  readonly crossOriginOpenerPolicy?: "same-origin" | "same-origin-allow-popups" | "unsafe-none"
+  /** `Cross-Origin-Embedder-Policy`. Off by default - `require-corp` breaks embedding of
+   * cross-origin resources that do not opt in, so this is a deliberate decision. */
+  readonly crossOriginEmbedderPolicy?: "require-corp" | "credentialless" | "unsafe-none"
+  /** `Cross-Origin-Resource-Policy`. Off by default (app-specific: assets meant for other
+   * origins need `cross-origin`). */
+  readonly crossOriginResourcePolicy?: "same-origin" | "same-site" | "cross-origin"
+  /** `Permissions-Policy` value, e.g. `"camera=(), geolocation=()"`. Off by default (app-specific). */
+  readonly permissionsPolicy?: string
 }
 
 /**
@@ -46,6 +57,18 @@ export function securityHeaders(options: SecurityHeadersOptions = {}): Middlewar
   }
   if (hstsValue !== undefined) declared["strict-transport-security"] = hstsValue
   if (csp !== undefined) declared["content-security-policy"] = csp
+  if (options.crossOriginOpenerPolicy !== undefined) {
+    declared["cross-origin-opener-policy"] = options.crossOriginOpenerPolicy
+  }
+  if (options.crossOriginEmbedderPolicy !== undefined) {
+    declared["cross-origin-embedder-policy"] = options.crossOriginEmbedderPolicy
+  }
+  if (options.crossOriginResourcePolicy !== undefined) {
+    declared["cross-origin-resource-policy"] = options.crossOriginResourcePolicy
+  }
+  if (options.permissionsPolicy !== undefined) {
+    declared["permissions-policy"] = options.permissionsPolicy
+  }
 
   return withRouteAssurance<Middleware>(
     {
