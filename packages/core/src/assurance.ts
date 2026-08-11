@@ -17,6 +17,7 @@ import {
   isDataClassification,
 } from "./classification.ts"
 import type {
+  AssuranceAttachment,
   AssuranceDeclaration,
   AssuranceEvidence,
   AssuranceScope,
@@ -24,6 +25,7 @@ import type {
 import {
   evidenceProvenance,
   NIFRA_ASSURANCE_IDS,
+  normalizeAssuranceDeclarations,
   routeGlob,
   validEvidenceId,
   validMethod,
@@ -34,7 +36,7 @@ import type { NifraManifestSigner } from "./manifest.ts"
 import { type ReflectedRoute, reflectRoutes } from "./reflection.ts"
 import type { Method } from "./router/router.ts"
 
-export type { AssuranceDeclaration, AssuranceEvidence, AssuranceScope }
+export type { AssuranceAttachment, AssuranceDeclaration, AssuranceEvidence, AssuranceScope }
 export { withRouteAssurance }
 
 /** Isolated request executor used by adversarial contract verification. */
@@ -42,6 +44,57 @@ export type InvariantExecutor = (request: Request) => Response | Promise<Respons
 
 /** Canonical evidence ids emitted by Nifra's official middleware modules. */
 export const NIFRA_ASSURANCE = NIFRA_ASSURANCE_IDS
+
+/** The seam `assure()` writes through: an evidence-only middleware bundle, applied like any other. */
+interface AssurableServer {
+  use(middleware: object): unknown
+}
+
+/**
+ * Publish enforcement evidence from OUTSIDE the plugin chain - the deployment shell that wraps the
+ * app, the mount site, or the call that hands it to `serve`. When the thing doing the enforcing is
+ * not a nifra plugin (a gateway, a service mesh, an outer framework), the alternative is switching
+ * the affected rules off; this records what covers the routes instead, so the policy keeps running.
+ *
+ *   const app = buildApp()                 // no assurance-bearing plugin in its .use() chain
+ *   assure(app, { id: NIFRA_ASSURANCE.AUTHENTICATED, source: "edge-gateway" })
+ *   serve(app)
+ *
+ * `scope` defaults to `global`: the shell runs after every route is registered, so the evidence is
+ * retroactive and app-wide. Narrow it with `methods`/`paths` (absolute globs), or pass
+ * `scope: "subsequent"` to cover only routes registered after the call.
+ *
+ * Provenance is always `declared` - nifra did not install this enforcement and cannot observe it, so
+ * a rule with `requireProvenance: "runtime"` still rejects the route, by design.
+ */
+export function assure(
+  app: unknown,
+  evidence: AssuranceAttachment | readonly AssuranceAttachment[],
+): void {
+  const values: readonly AssuranceAttachment[] = Array.isArray(evidence)
+    ? (evidence as readonly AssuranceAttachment[])
+    : [evidence as AssuranceAttachment]
+  const declarations = normalizeAssuranceDeclarations(
+    values.map((item) => ({
+      ...item,
+      scope: item.scope ?? "global",
+      provenance: "declared" as const,
+    })),
+  )
+  for (const declaration of declarations) {
+    if (declaration.scope === "plugin") {
+      throw new Error('assure(): scope "plugin" may only annotate a plugin function')
+    }
+  }
+  const target = app as Partial<AssurableServer>
+  if (typeof target.use !== "function") {
+    throw new TypeError("assure(): expected a nifra server")
+  }
+  // An evidence-only bundle: `use()` already reads declarations off what it applies, and a bundle
+  // with no hooks registers nothing on any lifecycle array - so the kernel needs no seam of its own,
+  // the request path is untouched, and an app that never calls `assure()` carries none of this.
+  target.use(withRouteAssurance({}, declarations))
+}
 
 export interface AssuranceRouteSelector {
   /** Omit for every method. */

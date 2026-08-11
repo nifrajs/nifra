@@ -24,12 +24,12 @@ Bun-native, contract-first HTTP framework - the router, server, and route descri
 - **admitDeadline** _(function)_ - `admitDeadline: (headers: Headers, options?: DeadlineAdmissionOptions) => DeadlineAdmission` · from `@nifrajs/core/budget`
 - **assertBudgetRemaining** _(function)_ - `assertBudgetRemaining: (budget: RequestBudget, requiredMs?: number) => void` · from `@nifrajs/core/budget`
 - **assertTransportTextBounded** _(function)_ - `assertTransportTextBounded: (text: string, options: TransportDecodeOptions) => void` · from `@nifrajs/core/transport-codec`
+- **assure** _(function)_ - `assure: (app: unknown, evidence: AssuranceAttachment | readonly AssuranceAttachment[]) => void` · from `@nifrajs/core/assurance`
 - **attachCapabilityJournal** _(function)_ - `attachCapabilityJournal: (context: object, journal: CapabilityExecutionJournal) => void` · from `@nifrajs/core/capabilities`
 - **attachEffectLedger** _(function)_ - `attachEffectLedger: (context: object, ledger: RequestLedger) => void` · from `@nifrajs/core/ledger`
 - **attachWebSocket** _(function)_ - `attachWebSocket: (socket: StandardWebSocket, handler: WebSocketHandler, data: unknown, options: { openNow: boolean; pubsub: TopicRegistry; …` · from `@nifrajs/core/ws`
-- **buildNifraManifest** _(function)_ - `buildNifraManifest: (input: BuildNifraManifestInput) => Promise<NifraManifest>` · from `@nifrajs/core/manifest`
 
-_…and 588 more - see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
+_…and 591 more - see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 
 ## Footguns
 

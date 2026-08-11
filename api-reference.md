@@ -413,6 +413,8 @@ Every public export of every package and documented subpath - name, kind, signat
   A bundle of lifecycle hooks applied together via {@link Server.use} - the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware is context-agnostic (sees the base `Context`); `use` does no context-type merging - th…
 - **NetlifyEvent** _(interface)_ - `interface NetlifyEvent`
 - **NetlifyHandler** _(type)_ - `type NetlifyHandler = (event: NetlifyEvent) => Promise<PlatformResponse>`
+- **NifraFeatureVersion** _(type)_ - `type NifraFeatureVersion = FeatureVersionOf<Version>`
+  The feature version of the `@nifrajs/core` copy that declared these types, derived from the single `VERSION` literal (type-only import - erased, so no runtime cycle with the package root).
 - **NifraPlugin** _(type)_ - `type NifraPlugin<In extends AnyServer = AnyServer, Out extends AnyServer = In> = (( app: In, ) => Out) & { readonly pluginName?: string }`
   A nifra **plugin**: a function that augments an app - calling `use`/`derive`/`decorate` and/or registering routes - and returns it. Because `derive`/`decorate` are type-threaded, an **inline** `app.use((a) => a.derive(...).decorate(...))` carries the added context to handlers defined after it (the …
 - **NifraWebSocket** _(interface)_ - `interface NifraWebSocket<Data = unknown>`
@@ -554,6 +556,8 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ### `@nifrajs/core/assurance`
 
+- **AssuranceAttachment** _(type)_ - `type AssuranceAttachment = Omit<AssuranceDeclaration, "scope" | "provenance"> & { readonly scope?: AssuranceScope }`
+  Evidence published from OUTSIDE the plugin chain - a deployment shell, a mount site, the call that hands the app to `serve`. `scope` defaults to `global` (retroactive, app-wide) because the shell runs after every route is registered, and `provenance` is always stamped `declared`: nifra did not inst…
 - **AssuranceConfig** _(interface)_ - `interface AssuranceConfig`
 - **AssuranceDeclaration** _(interface)_ - `interface AssuranceDeclaration`
   Metadata installed on a middleware/plugin by {@link withRouteAssurance}.
@@ -578,6 +582,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Isolated request executor used by adversarial contract verification.
 - **NIFRA_ASSURANCE** _(const)_ - `NIFRA_ASSURANCE: Readonly<{ readonly AUTHENTICATED: "nifra.authenticated"; readonly BODY_BOUNDED: "nifra.body-bounded"; readonly CSRF: "nifra.csrf"; readonly DURABLE_COMMAND: "nifra.durable-command"; readonly IDEMPOTENC…`
   Canonical evidence ids emitted by Nifra's official middleware modules.
+- **assure** _(function)_ - `assure: (app: unknown, evidence: AssuranceAttachment | readonly AssuranceAttachment[]) => void`
+  Publish enforcement evidence from OUTSIDE the plugin chain - the deployment shell that wraps the app, the mount site, or the call that hands it to `serve`. When the thing doing the enforcing is not a nifra plugin (a gateway, a service mesh, an outer framework), the alternative is switching the affe…
 - **defineAssuranceConfig** _(function)_ - `defineAssuranceConfig: (config: AssuranceConfig) => AssuranceConfig`
   Identity helper for a `nifra.assurance.ts` default export.
 - **defineAssurancePolicy** _(function)_ - `defineAssurancePolicy: (policy: AssurancePolicy) => AssurancePolicy`
@@ -1386,6 +1392,8 @@ Every public export of every package and documented subpath - name, kind, signat
   A bundle of lifecycle hooks applied together via {@link Server.use} - the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware is context-agnostic (sees the base `Context`); `use` does no context-type merging - th…
 - **NetlifyEvent** _(interface)_ - `interface NetlifyEvent`
 - **NetlifyHandler** _(type)_ - `type NetlifyHandler = (event: NetlifyEvent) => Promise<PlatformResponse>`
+- **NifraFeatureVersion** _(type)_ - `type NifraFeatureVersion = FeatureVersionOf<Version>`
+  The feature version of the `@nifrajs/core` copy that declared these types, derived from the single `VERSION` literal (type-only import - erased, so no runtime cycle with the package root).
 - **NifraPlugin** _(type)_ - `type NifraPlugin<In extends AnyServer = AnyServer, Out extends AnyServer = In> = (( app: In, ) => Out) & { readonly pluginName?: string }`
   A nifra **plugin**: a function that augments an app - calling `use`/`derive`/`decorate` and/or registering routes - and returns it. Because `derive`/`decorate` are type-threaded, an **inline** `app.use((a) => a.derive(...).decorate(...))` carries the added context to handlers defined after it (the …
 - **NifraWebSocket** _(interface)_ - `interface NifraWebSocket<Data = unknown>`
@@ -4172,6 +4180,8 @@ _No named exports (side-effect entrypoint)._
   A bundle of lifecycle hooks applied together via {@link Server.use} - the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware is context-agnostic (sees the base `Context`); `use` does no context-type merging - th…
 - **NetlifyEvent** _(interface)_ - `interface NetlifyEvent`
 - **NetlifyHandler** _(type)_ - `type NetlifyHandler = (event: NetlifyEvent) => Promise<PlatformResponse>`
+- **NifraFeatureVersion** _(type)_ - `type NifraFeatureVersion = FeatureVersionOf<Version>`
+  The feature version of the `@nifrajs/core` copy that declared these types, derived from the single `VERSION` literal (type-only import - erased, so no runtime cycle with the package root).
 - **NifraPlugin** _(type)_ - `type NifraPlugin<In extends AnyServer = AnyServer, Out extends AnyServer = In> = (( app: In, ) => Out) & { readonly pluginName?: string }`
   A nifra **plugin**: a function that augments an app - calling `use`/`derive`/`decorate` and/or registering routes - and returns it. Because `derive`/`decorate` are type-threaded, an **inline** `app.use((a) => a.derive(...).decorate(...))` carries the added context to handlers defined after it (the …
 - **NifraWebSocket** _(interface)_ - `interface NifraWebSocket<Data = unknown>`

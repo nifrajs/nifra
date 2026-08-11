@@ -8371,6 +8371,17 @@ await serve(app, {
 })
 ```
 
+By default, `request.url` reflects the inbound `Host` header. Do not use that value for
+security decisions unless the deployment validates it. Set `allowedHosts` to reject unknown
+host authorities, or set `canonicalHost` behind a trusted proxy to build URLs from a fixed
+authority. If neither option is set, treat the host in `request.url` as client-controlled.
+
+## Static files
+
+The optional `static` root is served before `app.fetch` for GET and HEAD requests. It is a
+public asset directory and must contain nothing private: no secrets, source maps, build
+metadata, or user uploads.
+
 ## Graceful shutdown on signals
 
 Opt in to SIGTERM/SIGINT handling so a `docker stop` / Ctrl-C drains in-flight requests

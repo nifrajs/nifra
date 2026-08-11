@@ -25,7 +25,7 @@ The nifra full-stack framework - unscoped meta-entry that re-exports @nifrajs/co
 - **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(…`
 - **toLambdaHandler** _(function)_ - `toLambdaHandler: <Env = unknown>(app: FetchApp<Env>) => LambdaHandler`
 
-_…and 94 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
+_…and 95 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
 
 ## Footguns
 

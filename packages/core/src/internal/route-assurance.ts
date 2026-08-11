@@ -21,6 +21,16 @@ export interface AssuranceDeclaration extends AssuranceEvidence {
   readonly paths?: readonly string[]
 }
 
+/**
+ * Evidence published from OUTSIDE the plugin chain - a deployment shell, a mount site, the call that
+ * hands the app to `serve`. `scope` defaults to `global` (retroactive, app-wide) because the shell
+ * runs after every route is registered, and `provenance` is always stamped `declared`: nifra did not
+ * install this enforcement and cannot see it, so a `requireProvenance: "runtime"` rule still rejects it.
+ */
+export type AssuranceAttachment = Omit<AssuranceDeclaration, "scope" | "provenance"> & {
+  readonly scope?: AssuranceScope
+}
+
 const EVIDENCE_ID = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/
 const METHOD_SET: ReadonlySet<string> = new Set(METHODS)
 const declarations = new WeakMap<object, readonly AssuranceDeclaration[]>()
@@ -117,13 +127,34 @@ function normalizeDeclaration(value: AssuranceDeclaration): AssuranceDeclaration
     routeGlob(path)
     return path
   })
+  if (
+    value.provenance !== undefined &&
+    value.provenance !== "runtime" &&
+    value.provenance !== "declared"
+  ) {
+    throw new Error(`route assurance: invalid provenance ${JSON.stringify(value.provenance)}`)
+  }
   return Object.freeze({
     id: value.id,
     source: value.source.trim(),
     scope: value.scope,
+    // Carried, not defaulted: evidence attached by an author (rather than installed by a running
+    // hook) must stay distinguishable so `requireProvenance: "runtime"` rules can still reject it.
+    ...(value.provenance !== undefined ? { provenance: value.provenance } : {}),
     ...(methods !== undefined ? { methods: Object.freeze(methods as Method[]) } : {}),
     ...(paths !== undefined ? { paths: Object.freeze(paths) } : {}),
   })
+}
+
+/** Validate and freeze declarations, one or many. */
+export function normalizeAssuranceDeclarations(
+  declaration: AssuranceDeclaration | readonly AssuranceDeclaration[],
+): readonly AssuranceDeclaration[] {
+  const values: readonly AssuranceDeclaration[] = Array.isArray(declaration)
+    ? (declaration as readonly AssuranceDeclaration[])
+    : [declaration as AssuranceDeclaration]
+  if (values.length === 0) throw new Error("route assurance: at least one declaration is required")
+  return Object.freeze(values.map((value) => normalizeDeclaration(value)))
 }
 
 /** Attach enforcement evidence to the middleware/plugin that installs it. */
@@ -131,12 +162,10 @@ export function withRouteAssurance<T extends object>(
   target: T,
   declaration: AssuranceDeclaration | readonly AssuranceDeclaration[],
 ): T {
-  const values = Array.isArray(declaration) ? declaration : [declaration]
-  if (values.length === 0) throw new Error("route assurance: at least one declaration is required")
   const previous = declarations.get(target) ?? []
   declarations.set(
     target,
-    Object.freeze([...previous, ...values.map((value) => normalizeDeclaration(value))]),
+    Object.freeze([...previous, ...normalizeAssuranceDeclarations(declaration)]),
   )
   return target
 }

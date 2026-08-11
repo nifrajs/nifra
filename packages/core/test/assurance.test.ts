@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
+  assure,
   defineAssuranceConfig,
   defineAssurancePolicy,
   evaluateRouteAssurance,
@@ -355,6 +356,79 @@ describe("inline route assurance (schema.assurance) - in-handler-guarded routes 
     const report = evaluateRouteAssurance(app, policy)
     expect(report.ok).toBe(false)
     expect(report.findings[0]?.message).toContain("runtime evidence")
+  })
+})
+
+describe("assure() - evidence published from outside the plugin chain", () => {
+  const policy = defineAssurancePolicy({
+    rules: [
+      { name: "admin", match: { paths: ["/admin"] }, require: [NIFRA_ASSURANCE.AUTHENTICATED] },
+    ],
+  })
+
+  test("a deployment shell can attach evidence after the app is built", () => {
+    // The gateway in front of this app authenticates; no nifra plugin can prove it, and the shell
+    // wrapping the app is nowhere near the `.use()` chain.
+    const app = server().get("/admin", () => ({ ok: true }))
+    expect(evaluateRouteAssurance(app, policy).ok).toBe(false)
+
+    assure(app, { id: NIFRA_ASSURANCE.AUTHENTICATED, source: "edge-gateway" })
+    expect(evaluateRouteAssurance(app, policy)).toMatchObject({ ok: true, findings: [] })
+    expect(evidence(app, "/admin")).toEqual([NIFRA_ASSURANCE.AUTHENTICATED])
+  })
+
+  test("attached evidence is `declared`, so a runtime-provenance rule still rejects it", () => {
+    const app = server().get("/admin", () => ({ ok: true }))
+    assure(app, { id: NIFRA_ASSURANCE.AUTHENTICATED, source: "edge-gateway" })
+    const strict = defineAssurancePolicy({
+      rules: [
+        {
+          name: "admin",
+          match: { paths: ["/admin"] },
+          require: [NIFRA_ASSURANCE.AUTHENTICATED],
+          requireProvenance: "runtime",
+        },
+      ],
+    })
+    const report = evaluateRouteAssurance(app, strict)
+    expect(report.ok).toBe(false)
+    expect(report.findings[0]?.message).toContain("runtime evidence")
+  })
+
+  test("method and path narrowing applies, and `subsequent` covers only later routes", () => {
+    const app = server().get("/admin", () => ({ ok: true }))
+    assure(app, [
+      { id: NIFRA_ASSURANCE.CSRF, source: "gateway", methods: ["POST"], paths: ["/admin/**"] },
+      { id: NIFRA_ASSURANCE.RATE_LIMITED, source: "gateway", scope: "subsequent" },
+    ])
+    app.get("/later", () => ({ ok: true }))
+    expect(evidence(app, "/admin")).toEqual([])
+    expect(evidence(app, "/later")).toEqual([NIFRA_ASSURANCE.RATE_LIMITED])
+  })
+
+  test("an invalid id or a plugin scope fails closed", () => {
+    const app = server()
+    expect(() => assure(app, { id: "NOT VALID", source: "gateway" })).toThrow("invalid evidence id")
+    expect(() =>
+      assure(app, { id: NIFRA_ASSURANCE.AUTHENTICATED, source: "gateway", scope: "plugin" }),
+    ).toThrow('scope "plugin"')
+  })
+
+  test("a target that is not a server, and an invalid provenance, fail closed", () => {
+    expect(() => assure({}, { id: NIFRA_ASSURANCE.AUTHENTICATED, source: "gateway" })).toThrow(
+      "expected a nifra server",
+    )
+    expect(() =>
+      withRouteAssurance(
+        {},
+        {
+          id: NIFRA_ASSURANCE.AUTHENTICATED,
+          source: "gateway",
+          scope: "global",
+          provenance: "asserted" as never,
+        },
+      ),
+    ).toThrow("invalid provenance")
   })
 })
 
