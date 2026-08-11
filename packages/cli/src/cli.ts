@@ -87,8 +87,11 @@ Usage:
                                          and a "## MCP server" section in AGENTS.md. No-clobber by
                                          default (skips a file you've customized); --force overwrites the
                                          owned files. AGENTS.md is only appended to, never overwritten.
-  nifra mcp                              Start an MCP server (stdio) exposing this project to a coding
-                                         agent: nifra_context, nifra_routes (routes+schemas as JSON),
+  nifra mcp [dir]                        Start an MCP server (stdio) exposing this project to a coding
+                                         agent. The project root is [dir] when given, else resolved from
+                                         cwd (marker walk-up + the client's MCP roots); tools refuse
+                                         with a fix when no nifra project is found - never a silent
+                                         wrong-project answer. Tools: nifra_context, nifra_routes,
                                          nifra_run (backend), nifra_render (SSR a page), nifra_docs,
                                          nifra_example (verified snippets), nifra_scaffold (route→file),
                                          nifra_check (drift gate + fixes), nifra_levels (verification
@@ -601,7 +604,10 @@ async function main(): Promise<void> {
   // the eager `loadApp` below (which would fail fast on a project that's API-only / not yet built).
   if (command === "mcp") {
     const { runMcpServer } = await import("./mcp.ts")
-    await runMcpServer(process.cwd(), CLI_VERSION)
+    // `nifra mcp [dir]` - an explicit project directory pins the root (for clients configured outside
+    // the project); otherwise the server resolves it from cwd + the client's MCP roots.
+    const dirArg = argv[1] !== undefined && !argv[1].startsWith("-") ? argv[1] : undefined
+    await runMcpServer(process.cwd(), CLI_VERSION, dirArg)
     return
   }
   // `docs-mcp` runs the PUBLIC docs MCP over HTTP - project-independent (serves the bundled corpus), so

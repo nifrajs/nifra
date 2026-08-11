@@ -960,7 +960,10 @@ describe("runMcpServer starts on a project it cannot load", () => {
     // Deliberately NO nifra.config.ts, framework.ts or routes/ - just an app module, as the
     // default template ships it.
     await mkdir(join(dir, "src"), { recursive: true })
-    await writeFile(join(dir, "package.json"), JSON.stringify({ name: "x", type: "module" }))
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "x", type: "module", dependencies: { "@nifrajs/core": "0.0.0" } }),
+    )
     await writeFile(join(dir, "src", "app.ts"), "export const app = null\n")
 
     const res = await rpc(
@@ -991,7 +994,10 @@ describe("runMcpServer starts on a project it cannot load", () => {
 
   test("a tool that genuinely needs the app fails per call, without ending the session", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-mcp-backend-only-"))
-    await writeFile(join(dir, "package.json"), JSON.stringify({ name: "x", type: "module" }))
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "x", type: "module", dependencies: { "@nifrajs/core": "0.0.0" } }),
+    )
 
     const res = await rpc(
       dir,

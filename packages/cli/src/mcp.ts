@@ -25,8 +25,11 @@
  *   - `nifra_inspect` - read the running dev server's recent request traces (method/path/status/
  *     duration/ISR) from the DevTools plugin: what your requests ACTUALLY did, not a guess.
  *
- * Wire it into a client (e.g. Claude Desktop / Cursor) as: command `nifra`, args `["mcp"]`, run in the
- * project root. The protocol is hand-rolled (newline-delimited JSON-RPC 2.0 over stdio), including
+ * Wire it into a client (e.g. Claude Desktop / Cursor) as: command `nifra`, args `["mcp"]` (or
+ * `["mcp", "<dir>"]` to pin the project directory explicitly). The server does NOT silently trust its
+ * spawn directory: the root is resolved via `./mcp-root.ts` (marker walk-up, the client's MCP `roots`,
+ * fail-closed tools when no nifra project is found) and announced in `initialize` + on every project
+ * tool result. The protocol is hand-rolled (newline-delimited JSON-RPC 2.0 over stdio), including
  * standard MCP progress notifications and request cancellation - no SDK dependency, the same
  * minimal-surface choice as the rest of nifra. The pure dispatch lives in `./mcp-protocol.ts`; this
  * module is the I/O shell (stdin loop, tool wiring, the run subprocess).
@@ -50,6 +53,7 @@ import {
   type JsonRpcNotification,
   type JsonRpcRequest,
   type JsonRpcResponse,
+  type McpContentBlock,
   type McpPrompt,
   type McpPromptMessage,
   type McpResource,
@@ -59,6 +63,17 @@ import {
   type McpToolResult,
   rpcError,
 } from "./mcp-protocol.ts"
+import {
+  applyClientRoots,
+  detectToolingDrift,
+  driftNote,
+  type McpRootVerdict,
+  pathsFromRootsResult,
+  resolveRootState,
+  rootInstructions,
+  rootVerdict,
+  type ToolingDrift,
+} from "./mcp-root.ts"
 import { loadTypesCorpus } from "./types-search.ts"
 import { collectProjectWorkGraph } from "./work-graph.ts"
 
@@ -1767,13 +1782,27 @@ async function appDeclaredTools(loader: () => Promise<LoadedApp>): Promise<McpTo
   }
 }
 
-/** Run the stdio MCP server: read newline-delimited JSON-RPC from stdin, write responses to stdout. */
-export async function runMcpServer(cwd: string, version: string): Promise<void> {
-  let features: McpServerFeatures
+/** Tool names that never touch the project - they serve the bundled docs/examples/types corpus, so
+ * they stay available (and unstamped) whatever the root state is. */
+const PROJECT_FREE_TOOLS = new Set(["nifra_docs", "nifra_example", "nifra_types", "nifra_learn"])
 
-  const monorepo = await detectMonorepo(cwd)
+/** The id of this server's own `roots/list` request to the client. A fixed, namespaced string: the
+ * server only ever has one roots request in flight, and no response to a CLIENT-initiated request can
+ * carry it (clients pick their own ids; this one is recognisably ours). */
+const ROOTS_REQUEST_ID = "nifra:roots/list"
+
+/** Everything derived from the project root - rebuilt wholesale when the root changes (adoption of a
+ * client workspace root), so no per-tool state can keep pointing at the old directory. */
+interface ProjectContext {
+  readonly monorepo: Awaited<ReturnType<typeof detectMonorepo>>
+  readonly features: McpServerFeatures
+  readonly loadAppCached: () => Promise<LoadedApp>
+}
+
+async function createProjectContext(root: string): Promise<ProjectContext> {
+  const monorepo = await detectMonorepo(root)
   if (monorepo) {
-    const appEntries = await loadMonorepoApps(cwd, monorepo)
+    const appEntries = await loadMonorepoApps(root, monorepo)
     const allResources: McpResource[] = []
     const allPrompts: McpPrompt[] = []
     for (const { name, cwd: appCwd } of appEntries) {
@@ -1786,21 +1815,130 @@ export async function runMcpServer(cwd: string, version: string): Promise<void> 
       allResources.push(...(ns.features.resources ?? []))
       allPrompts.push(...(ns.features.prompts ?? []))
     }
-    features = { resources: allResources, prompts: allPrompts }
-  } else {
-    const loadAppCached = createCachedAppLoader(cwd)
-    features = await backendFeatures(loadAppCached, projectFeatures(cwd, loadAppCached))
+    return {
+      monorepo,
+      features: { resources: allResources, prompts: allPrompts },
+      loadAppCached: createCachedAppLoader(root),
+    }
   }
-  const loadAppCached = createCachedAppLoader(cwd)
+  const loadAppCached = createCachedAppLoader(root)
+  return {
+    monorepo,
+    features: await backendFeatures(loadAppCached, projectFeatures(root, loadAppCached)),
+    loadAppCached,
+  }
+}
+
+/**
+ * Wrap every project-scoped tool with the root guard: a bad root ({@link rootVerdict} `blocked`) makes
+ * the tool refuse with the remediation message instead of answering about whatever directory the
+ * server happened to start in; a good root stamps the result with `[nifra] project root: …` so the
+ * agent (and the human reading its transcript) can see WHICH project answered. Docs tools pass
+ * through untouched - they serve the bundled corpus, not the project.
+ */
+export function guardTools(tools: McpTool[], verdict: McpRootVerdict): McpTool[] {
+  return tools.map((tool) => {
+    if (PROJECT_FREE_TOOLS.has(tool.name)) return tool
+    return {
+      ...tool,
+      handler: async (
+        args: Record<string, unknown>,
+        context: McpToolContext,
+      ): Promise<McpToolResult> => {
+        if (verdict.blocked !== undefined) {
+          return { content: [{ type: "text", text: verdict.blocked }], isError: true }
+        }
+        const result = await tool.handler(args, context)
+        const note: McpContentBlock = { type: "text", text: verdict.note }
+        if (typeof result === "string") {
+          return { content: [{ type: "text", text: result }, note] }
+        }
+        return { ...result, content: [...(result.content ?? []), note] }
+      },
+    }
+  })
+}
+
+/** Whether the client's `initialize` params declare the `roots` capability - the precondition for
+ * this server sending it a `roots/list` request. */
+export function clientSupportsRoots(params: Record<string, unknown> | undefined): boolean {
+  const capabilities = params?.capabilities
+  if (typeof capabilities !== "object" || capabilities === null) return false
+  const roots = (capabilities as { roots?: unknown }).roots
+  return typeof roots === "object" && roots !== null
+}
+
+/**
+ * Run the stdio MCP server: read newline-delimited JSON-RPC from stdin, write responses to stdout.
+ *
+ * The project root is resolved defensively rather than assumed (`./mcp-root.ts`): explicit
+ * `nifra mcp <dir>` beats a cwd guess, a cwd guess walks up to the nearest nifra marker, the client's
+ * MCP `roots` (requested after the handshake, re-requested on `roots/list_changed`) can correct an
+ * unambiguous wrong guess, and anything still unresolved fails closed per tool call. The effective
+ * root is announced in the `initialize` instructions and stamped on every project tool result.
+ */
+export async function runMcpServer(
+  cwd: string,
+  version: string,
+  explicitDir?: string,
+): Promise<void> {
+  const requested = explicitDir !== undefined ? resolve(cwd, explicitDir) : cwd
+  if (explicitDir !== undefined && !(await stat(requested).catch(() => null))?.isDirectory()) {
+    throw new Error(`nifra mcp: directory not found: ${requested}`)
+  }
+  let rootState = await resolveRootState(requested, explicitDir !== undefined)
+  let ctx = await createProjectContext(rootState.root)
+  // The CLI answering may not be the nifra the project builds with (a globally installed server, a
+  // stale agent config). Recomputed whenever the root moves, since a different project can install a
+  // different version.
+  let drift: ToolingDrift | undefined = await detectToolingDrift(rootState.root, version)
+
   const serverInfo = { name: "nifra", version }
   const state = createMcpProtocolState()
   const send = (message: JsonRpcResponse | JsonRpcNotification): void => {
     process.stdout.write(`${JSON.stringify(message)}\n`)
   }
+  let rootsSupported = false
+  const requestRoots = (): void => {
+    if (!rootsSupported) return
+    process.stdout.write(
+      `${JSON.stringify({ jsonrpc: "2.0", id: ROOTS_REQUEST_ID, method: "roots/list" })}\n`,
+    )
+  }
+  const onRootsAnswer = async (message: JsonRpcRequest): Promise<void> => {
+    const result = (message as { result?: unknown }).result
+    // An error response (or a malformed one) carries no roots: keep the current state - the absence
+    // of workspace data is not a mismatch, and never a reason to move the root.
+    if (result === undefined) return
+    const next = await applyClientRoots(rootState, pathsFromRootsResult(result))
+    if (next.root !== rootState.root) {
+      ctx = await createProjectContext(next.root)
+      drift = await detectToolingDrift(next.root, version)
+    }
+    rootState = next
+  }
+
+  // Root updates are serialized against tool dispatch: a message read AFTER the client's roots answer
+  // must see the adopted root, even though dispatches themselves run concurrently.
+  let rootsUpdate: Promise<void> = Promise.resolve()
+
   const dispatch = async (message: JsonRpcRequest): Promise<void> => {
+    // The client's answer to OUR `roots/list` request - a response (id, no method), which the pure
+    // dispatch would reject as an unknown method. Intercept it before handleRpc ever sees it.
+    if (message.method === undefined && message.id === ROOTS_REQUEST_ID) {
+      // Swallow failures: a bad answer must not poison the chain and 500 every later dispatch.
+      rootsUpdate = onRootsAnswer(message).catch(() => {})
+      await rootsUpdate
+      return
+    }
+    await rootsUpdate
+    if (message.method === "initialize") {
+      rootsSupported = clientSupportsRoots(message.params)
+    }
+
     let activeTools: McpTool[]
-    if (monorepo) {
-      const appEntries = await loadMonorepoApps(cwd, monorepo)
+    if (ctx.monorepo) {
+      const appEntries = await loadMonorepoApps(rootState.root, ctx.monorepo)
       const allTools: McpTool[] = []
       for (const { name, cwd: appCwd } of appEntries) {
         const loader = createCachedAppLoader(appCwd)
@@ -1811,16 +1949,35 @@ export async function runMcpServer(cwd: string, version: string): Promise<void> 
       activeTools = [...docsTools(loadDocsCorpus, loadExamplesCorpus, loadTypesCorpus), ...allTools]
     } else {
       activeTools = [
-        ...projectTools(cwd, loadAppCached),
-        ...(await appDeclaredTools(loadAppCached)),
+        ...projectTools(rootState.root, ctx.loadAppCached),
+        ...(await appDeclaredTools(ctx.loadAppCached)),
       ]
     }
+    const verdict = await rootVerdict(rootState)
+    activeTools = guardTools(
+      activeTools,
+      drift === undefined || verdict.blocked !== undefined
+        ? verdict
+        : { ...verdict, note: `${verdict.note}\n${driftNote(drift)}` },
+    )
 
+    const features: McpServerFeatures = {
+      ...ctx.features,
+      instructions: rootInstructions(rootState, drift),
+    }
     const response = await handleRpc(message, activeTools, serverInfo, features, {
       state,
       sendNotification: send,
     })
     if (response) send(response)
+    // Ask for the client's workspace roots once the handshake completes, and again whenever the
+    // client says they changed. The answer comes back through the interception above.
+    if (
+      message.method === "notifications/initialized" ||
+      message.method === "notifications/roots/list_changed"
+    ) {
+      requestRoots()
+    }
   }
 
   const decoder = new TextDecoder()
