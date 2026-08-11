@@ -35,6 +35,7 @@ import {
   type StandardSchemaV1,
   validateStandard,
 } from "./schema/standard.ts"
+import { assertByteLimit, readBoundedBytes } from "./server/body.ts"
 import { type ProtoPoisoning, parseJsonGuarded } from "./server/proto-guard.ts"
 
 const TOOL_NAME = /^[a-z][a-z0-9._-]{0,63}$/
@@ -643,13 +644,41 @@ export interface ToolHttpOptions extends Omit<ToolCallOptions, "signal" | "ledge
   /** Prototype-poisoning policy for the JSON request body - mirrors the server option (this
    * handler is standalone, so it carries its own). Default `"reject"`. */
   readonly protoPoisoning?: ProtoPoisoning
+  /** Transport body cap in bytes for the JSON request body. Default {@link DEFAULT_TOOL_MAX_BYTES}
+   * (1 MiB). `"unlimited"` removes the cap and requires a written {@link maxBytesReason}: the
+   * mounting platform then owns the limit, and the exemption is reviewable rather than implicit. */
+  readonly maxBytes?: number | "unlimited"
+  /** Why this handler runs uncapped. Required with `maxBytes: "unlimited"`, rejected without it. */
+  readonly maxBytesReason?: string
+}
+
+/** Default transport body cap for {@link createToolHttpHandler}: 1 MiB. */
+export const DEFAULT_TOOL_MAX_BYTES = 1_048_576
+
+/** Validate the handler's body cap at construction, so a misdeclared limit is a startup error
+ * rather than a request-time surprise. `undefined` means the caller opted out with a reason. */
+function resolveToolMaxBytes(name: string, options: ToolHttpOptions): number | undefined {
+  const { maxBytes, maxBytesReason } = options
+  if (maxBytes === "unlimited") {
+    if (typeof maxBytesReason !== "string" || maxBytesReason.trim().length === 0) {
+      throw new Error(`tool ${name}: maxBytes: "unlimited" requires a non-empty maxBytesReason`)
+    }
+    return undefined
+  }
+  if (maxBytesReason !== undefined) {
+    throw new Error(`tool ${name}: maxBytesReason is only valid with maxBytes: "unlimited"`)
+  }
+  if (maxBytes === undefined) return DEFAULT_TOOL_MAX_BYTES
+  assertByteLimit(maxBytes, "tool maxBytes")
+  return maxBytes
 }
 
 /**
  * Mount one contract behind a Web-standard handler. The handler accepts one JSON request body.
  * A body carrying a poisoned key (own `__proto__`, or `constructor.prototype`) is rejected with
- * the same `input_invalid` result as malformed JSON. The body is read unbounded - cap request
- * size at the platform/server mounting this handler.
+ * the same `input_invalid` result as malformed JSON. The body is capped at
+ * {@link ToolHttpOptions.maxBytes} (1 MiB by default); over-cap answers a flat `413` and a
+ * malformed `Content-Length` a flat `400`, before any parse.
  */
 export function createToolHttpHandler<Input, Output>(
   tool: ToolContract<Input, Output>,
@@ -657,16 +686,26 @@ export function createToolHttpHandler<Input, Output>(
 ): (request: Request) => Promise<Response> {
   const method = (options.method ?? "POST").toUpperCase()
   const protoPoisoning = options.protoPoisoning ?? "reject"
+  const maxBytes = resolveToolMaxBytes(tool.name, options)
+  const decoder = new TextDecoder()
   return async (request) => {
     if (request.method.toUpperCase() !== method) {
       return new Response(null, { status: 405, headers: { allow: method } })
     }
+    let text: string
+    if (maxBytes === undefined) {
+      text = await request.text()
+    } else {
+      // The cap is enforced BEFORE the parse, so an oversized payload is never materialized as a
+      // JS value. A flat status carries no tool ledger: nothing was admitted to produce one.
+      const read = await readBoundedBytes(request, maxBytes)
+      if (!read.ok) return new Response(null, { status: read.status })
+      text = decoder.decode(read.bytes)
+    }
     let input: unknown
     try {
       input =
-        protoPoisoning === "ignore"
-          ? await request.json()
-          : parseJsonGuarded(await request.text(), protoPoisoning)
+        protoPoisoning === "ignore" ? JSON.parse(text) : parseJsonGuarded(text, protoPoisoning)
     } catch {
       return toolHttpResult({
         ok: false,

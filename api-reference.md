@@ -1549,6 +1549,8 @@ Every public export of every package and documented subpath - name, kind, signat
 ### `@nifrajs/core/tool-contract`
 
 - **CreateToolBudgetOptions** _(interface)_ - `interface CreateToolBudgetOptions`
+- **DEFAULT_TOOL_MAX_BYTES** _(const)_ - `DEFAULT_TOOL_MAX_BYTES: 1048576`
+  Default transport body cap for {@link createToolHttpHandler}: 1 MiB.
 - **MemoryToolIdempotencyStore** _(class)_ - `class MemoryToolIdempotencyStore`
 - **MemoryToolIdempotencyStoreOptions** _(interface)_ - `interface MemoryToolIdempotencyStoreOptions`
 - **ToolAdapter** _(interface)_ - `interface ToolAdapter`
@@ -1575,7 +1577,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **ToolSensitivity** _(type)_ - `type ToolSensitivity = "public" | "internal" | "sensitive" | "secret"`
 - **createToolBudget** _(function)_ - `createToolBudget: (options: CreateToolBudgetOptions) => ToolBudget`
 - **createToolHttpHandler** _(function)_ - `createToolHttpHandler: <Input, Output>(tool: ToolContract<Input, Output>, options?: ToolHttpOptions) => (request: Request) => Promise<Response>`
-  Mount one contract behind a Web-standard handler. The handler accepts one JSON request body. A body carrying a poisoned key (own `__proto__`, or `constructor.prototype`) is rejected with the same `input_invalid` result as malformed JSON. The body is read unbounded - cap request size at the platform…
+  Mount one contract behind a Web-standard handler. The handler accepts one JSON request body. A body carrying a poisoned key (own `__proto__`, or `constructor.prototype`) is rejected with the same `input_invalid` result as malformed JSON. The body is capped at {@link ToolHttpOptions.maxBytes} (1 MiB…
 - **defineTool** _(function)_ - `defineTool: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(options: ToolContractOptions<InferOutput<InputSchema>, InferOutput<OutputSchema>, InputSchema, OutputSchema>) => ToolContract<Inf…`
 - **executeTool** _(function)_ - `executeTool: <Input, Output>(tool: ToolContract<Input, Output>, input: unknown, options?: ToolCallOptions) => Promise<ToolCallResult<Output>>`
 - **runToolContractConformance** _(function)_ - `runToolContractConformance: (adapter: ToolAdapter, options: { readonly input: unknown; readonly capability: string; readonly approval: ToolApproval; readonly dryRun: ToolCallOptions; }) => Promise<ToolConformanceResult>`

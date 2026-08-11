@@ -3,6 +3,7 @@ import { t } from "@nifrajs/schema"
 import {
   createToolBudget,
   createToolHttpHandler,
+  DEFAULT_TOOL_MAX_BYTES,
   defineTool,
   executeTool,
   MemoryToolIdempotencyStore,
@@ -245,6 +246,71 @@ describe("typed tool contracts", () => {
       new Request("http://test/tool", { method: "POST", body: JSON.stringify({ name: "a" }) }),
     )
     expect(denied.status).toBe(403)
+  })
+
+  test("HTTP handler caps the request body at 1 MiB by default", async () => {
+    let executions = 0
+    const tool = defineTool({
+      name: "orders.capped",
+      description: "Cap target.",
+      input,
+      output,
+      capability: "orders.capped",
+      execute: () => {
+        executions += 1
+        return { ok: true }
+      },
+    })
+    const handler = createToolHttpHandler(tool, { capabilities: ["orders.capped"] })
+    const oversized = JSON.stringify({ name: "a".repeat(DEFAULT_TOOL_MAX_BYTES) })
+    const rejected = await handler(
+      new Request("http://test/tool", { method: "POST", body: oversized }),
+    )
+    // Flat 413 before the parse: nothing was admitted, so there is no ledger to seal.
+    expect(rejected.status).toBe(413)
+    expect(await rejected.text()).toBe("")
+    expect(executions).toBe(0)
+
+    // A malformed Content-Length is refused too - the streaming guard is an UPPER bound only, so a
+    // lying smaller length would otherwise be read in full.
+    const malformedLength = await handler(
+      new Request("http://test/tool", {
+        method: "POST",
+        body: JSON.stringify({ name: "a" }),
+        headers: { "content-length": "-1" },
+      }),
+    )
+    expect(malformedLength.status).toBe(400)
+
+    // Under the cap still executes.
+    const ok = await handler(
+      new Request("http://test/tool", { method: "POST", body: JSON.stringify({ name: "a" }) }),
+    )
+    expect(ok.status).toBe(200)
+    expect(executions).toBe(1)
+  })
+
+  test("HTTP handler cap is configurable, and uncapped needs a written reason", () => {
+    const tool = defineTool({
+      name: "orders.cap-config",
+      description: "Cap config target.",
+      input,
+      output,
+      capability: "orders.cap-config",
+      execute: () => ({ ok: true }),
+    })
+    expect(() => createToolHttpHandler(tool, { maxBytes: "unlimited" })).toThrow(
+      /requires a non-empty maxBytesReason/,
+    )
+    expect(() => createToolHttpHandler(tool, { maxBytes: 1024, maxBytesReason: "why" })).toThrow(
+      /only valid with maxBytes/,
+    )
+    expect(() => createToolHttpHandler(tool, { maxBytes: -1 })).toThrow(
+      /must be a non-negative safe integer/,
+    )
+    expect(() =>
+      createToolHttpHandler(tool, { maxBytes: "unlimited", maxBytesReason: "streamed uploads" }),
+    ).not.toThrow()
   })
 
   test("HTTP handler rejects a proto-poisoned body exactly like malformed JSON", async () => {
