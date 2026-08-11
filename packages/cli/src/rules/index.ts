@@ -24,7 +24,7 @@ export interface RuleContext {
 export interface CheckRule {
   readonly code: string
   readonly title: string
-  scan(ctx: RuleContext): Promise<Diagnostic[]>
+  scan(ctx: RuleContext): Promise<readonly Diagnostic[]>
 }
 
 export interface RulePack {

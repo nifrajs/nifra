@@ -3,7 +3,7 @@
 exports[`verification golden output: nifra check full assurance project: human report 1`] = `
 "nifra check
 
-• typecheck skipped (no tsconfig / typescript not installed)
+⚠ typecheck SKIPPED - no tsconfig.json (the contract gate did not run)
 ✓ hand-rolled fetch() to your own API: none
 ✓ client("…") missing its <typeof app> type argument: none
 ✓ server-only import in a route module: none
@@ -28,6 +28,7 @@ exports[`verification golden output: nifra check full assurance project: --json 
 "{
   "ok": true,
   "typecheck": "skipped",
+  "typecheckNote": "no tsconfig.json",
   "diagnostics": []
 }"
 `;
@@ -35,7 +36,7 @@ exports[`verification golden output: nifra check full assurance project: --json 
 exports[`verification golden output: nifra check plain project (no config): human report with tips 1`] = `
 "nifra check
 
-• typecheck skipped (no tsconfig / typescript not installed)
+⚠ typecheck SKIPPED - no tsconfig.json (the contract gate did not run)
 ✓ hand-rolled fetch() to your own API: none
 ✓ client("…") missing its <typeof app> type argument: none
 ✓ server-only import in a route module: none
@@ -59,7 +60,7 @@ tip: no .mcp.json here - run \`nifra init-agents\` to wire this project's MCP + 
 exports[`verification golden output: nifra check dirty project: human report with failing lints + advisory 1`] = `
 "nifra check
 
-• typecheck skipped (no tsconfig / typescript not installed)
+⚠ typecheck SKIPPED - no tsconfig.json (the contract gate did not run)
 ✗ hand-rolled fetch() to your own API: 1
     routes/notes.tsx:3  const res = await fetch("/notes") - hand-rolled fetch() to your own API - call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift
       fix: Replace own-API fetch with the typed nifra client
@@ -85,7 +86,7 @@ exports[`verification golden output: nifra check dirty project: human report wit
 ✓ capability assurance config: none
 ✓ nifra.check.json: none
 
-✗ check failed
+✗ check failed: 2 errors
 
 tip: no .mcp.json here - run \`nifra init-agents\` to wire this project's MCP + agent files (no-clobber)."
 `;
@@ -94,6 +95,7 @@ exports[`verification golden output: nifra check dirty project: --json 1`] = `
 "{
   "ok": false,
   "typecheck": "skipped",
+  "typecheckNote": "no tsconfig.json",
   "diagnostics": [
     {
       "rule": "typed-client",

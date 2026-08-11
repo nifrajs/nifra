@@ -1,6 +1,25 @@
 import type * as TSApi from "typescript"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
+import { importProjectTypeScript } from "../internal/typescript-import.ts"
+import { commentBlockHasMarker } from "./comment-markers.ts"
 import type { CheckRule, SourceIndex } from "./index.ts"
+
+/**
+ * A security rule that cannot run says so as an advisory finding instead of silently returning no
+ * findings - a report that skipped a scanner reads as "scanned and safe", which is a lie. Same
+ * contract the interpolated-SQL rule already keeps.
+ */
+function didNotRun(code: string, title: string): readonly Diagnostic[] {
+  return [
+    diagnostic({
+      code,
+      severity: "warn",
+      message: `${title} (${code}) did NOT run - TypeScript is not installed, so this report says nothing about it`,
+      fix: { recipe: "toolchain.install-typescript", command: "bun add -d typescript" },
+      verify: "nifra check --lints-only",
+    }),
+  ]
+}
 
 const SECRET = /(?:token|secret|apiKey|api_key|signature|hmac|password)/i
 const PII = /(?:email|phone|ssn|password|token|authorization)/i
@@ -10,12 +29,30 @@ const parseCache = new WeakMap<
   Map<string, { readonly tree: TSApi.SourceFile; readonly lines: readonly string[] }>
 >()
 
+// The marker counts anywhere in the contiguous comment block above the finding (or trailing on its
+// line) - a human writing the multi-line justification the hatch asks for must not un-suppress the
+// finding by growing the comment past two lines.
 function hasReview(lines: readonly string[], line: number): boolean {
-  return (lines[line - 1] ?? "").includes(REVIEWED) || (lines[line - 2] ?? "").includes(REVIEWED)
+  return commentBlockHasMarker(lines, line, REVIEWED)
 }
 
 function reviewedEvidence(lines: readonly string[], line: number): readonly string[] {
   return hasReview(lines, line) ? [REVIEWED] : []
+}
+
+/**
+ * NF-S002 severity by file role. Server-side code compares real secret material - a timing oracle
+ * there is exploitable, so it fails the gate. Client-bundled code (route modules, .tsx/.jsx)
+ * compares values the client already holds, so the same shape is advisory rather than a gate
+ * failure. A server marker beats a client marker (`routes/x.server.ts` is server), and a plain .ts
+ * that cannot be classified is treated as server - fail closed.
+ */
+function secretComparisonSeverity(file: string): "error" | "warn" {
+  const path = file.replaceAll("\\", "/")
+  if (/\.server\.[cm]?[tj]sx?$/.test(path)) return "error"
+  if (/(?:^|\/)server\//.test(path) || /(?:^|\/)backend\.[cm]?[tj]s$/.test(path)) return "error"
+  if (/\.[tj]sx$/.test(path) || /(?:^|\/)routes\//.test(path)) return "warn"
+  return "error"
 }
 
 function nameOf(ts: typeof TSApi, node: TSApi.Node): string | undefined {
@@ -68,8 +105,8 @@ export const secretComparisonRule: CheckRule = {
   code: "NF-S002",
   title: "Non-constant-time secret comparison",
   async scan(ctx) {
-    const ts = await import("../internal/typescript-import.ts").then((m) => m.importTypeScript())
-    if (ts === undefined) return []
+    const ts = await importProjectTypeScript(ctx.root)
+    if (ts === undefined) return didNotRun("NF-S002", "Non-constant-time secret comparison scan")
     const findings: Diagnostic[] = []
     for (const file of ctx.sources.files) {
       const parsed = parsedFile(ts, ctx.sources, file)
@@ -97,7 +134,7 @@ export const secretComparisonRule: CheckRule = {
             findings.push(
               diagnostic({
                 code: "NF-S002",
-                severity: reviewed ? "info" : "error",
+                severity: reviewed ? "info" : secretComparisonSeverity(file),
                 file,
                 line,
                 message: reviewed
@@ -129,8 +166,8 @@ export const piiLogRule: CheckRule = {
   code: "NF-S003",
   title: "Sensitive value in log call",
   async scan(ctx) {
-    const ts = await import("../internal/typescript-import.ts").then((m) => m.importTypeScript())
-    if (ts === undefined) return []
+    const ts = await importProjectTypeScript(ctx.root)
+    if (ts === undefined) return didNotRun("NF-S003", "Sensitive-value-in-log scan")
     const findings: Diagnostic[] = []
     for (const file of ctx.sources.files) {
       const parsed = parsedFile(ts, ctx.sources, file)
@@ -177,8 +214,8 @@ export const failOpenGateRule: CheckRule = {
   code: "NF-S001",
   title: "Fail-open gate",
   async scan(ctx) {
-    const ts = await import("../internal/typescript-import.ts").then((m) => m.importTypeScript())
-    if (ts === undefined) return []
+    const ts = await importProjectTypeScript(ctx.root)
+    if (ts === undefined) return didNotRun("NF-S001", "Fail-open gate scan")
     const findings: Diagnostic[] = []
     for (const file of ctx.sources.files) {
       const parsed = parsedFile(ts, ctx.sources, file)
@@ -244,8 +281,8 @@ export const corsOriginPredicateRule: CheckRule = {
   code: "NF-S004",
   title: "CORS origin predicate ignores the origin",
   async scan(ctx) {
-    const ts = await import("../internal/typescript-import.ts").then((m) => m.importTypeScript())
-    if (ts === undefined) return []
+    const ts = await importProjectTypeScript(ctx.root)
+    if (ts === undefined) return didNotRun("NF-S004", "CORS origin predicate scan")
     const findings: Diagnostic[] = []
     for (const file of ctx.sources.files) {
       const parsed = parsedFile(ts, ctx.sources, file)
@@ -305,8 +342,8 @@ export const externalRedirectRule: CheckRule = {
   code: "NF-S005",
   title: "External redirect opt-out",
   async scan(ctx) {
-    const ts = await import("../internal/typescript-import.ts").then((m) => m.importTypeScript())
-    if (ts === undefined) return []
+    const ts = await importProjectTypeScript(ctx.root)
+    if (ts === undefined) return didNotRun("NF-S005", "External redirect opt-out scan")
     const findings: Diagnostic[] = []
     for (const file of ctx.sources.files) {
       const parsed = parsedFile(ts, ctx.sources, file)
@@ -362,8 +399,8 @@ export const assuranceEscapeHatchRule: CheckRule = {
   code: "NF-S006",
   title: "Security escape hatch enabled",
   async scan(ctx) {
-    const ts = await import("../internal/typescript-import.ts").then((m) => m.importTypeScript())
-    if (ts === undefined) return []
+    const ts = await importProjectTypeScript(ctx.root)
+    if (ts === undefined) return didNotRun("NF-S006", "Security escape hatch scan")
     const findings: Diagnostic[] = []
     for (const file of ctx.sources.files) {
       const parsed = parsedFile(ts, ctx.sources, file)
@@ -405,13 +442,13 @@ export const unprefixedSecureCookieRule: CheckRule = {
   code: "NF-S007",
   title: "Secure cookie without a __Host-/__Secure- prefix",
   async scan(ctx) {
-    const ts = await import("../internal/typescript-import.ts").then((m) => m.importTypeScript())
-    if (ts === undefined) return []
+    const ts = await importProjectTypeScript(ctx.root)
+    if (ts === undefined) return didNotRun("NF-S007", "Secure cookie prefix scan")
     const findings: Diagnostic[] = []
     for (const file of ctx.sources.files) {
       const parsed = parsedFile(ts, ctx.sources, file)
       if (parsed === undefined) continue
-      const { tree, lines } = parsed
+      const { tree } = parsed
       const visit = (node: TSApi.Node): void => {
         if (ts.isCallExpression(node)) {
           const callee = nameOf(ts, node.expression)

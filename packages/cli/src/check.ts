@@ -23,12 +23,13 @@ import { Glob } from "bun"
 import type * as TSApi from "typescript"
 import type { CapabilityProjectReport } from "./capabilities-tool.ts"
 import { type Diagnostic, diagnostic } from "./diagnostics.ts"
-import { importTypeScript, type TypeScriptApi } from "./internal/typescript-import.ts"
+import { importProjectTypeScript, type TypeScriptApi } from "./internal/typescript-import.ts"
 // Type-only: `pipeline-report.ts` imports this module's source scanners, so a value import here would
 // close a cycle. Doctor is what actually runs the collector (see the `pipeline` rule below).
 import type { PipelineReport } from "./pipeline-report.ts"
+import { RULE_CODES } from "./rules/codes.ts"
 import { parseRulePacks, type RuleContext, runRuleRegistry, sourceIndex } from "./rules/index.ts"
-import { legacyRules } from "./rules/legacy.ts"
+import { LEGACY_RULE_CODES, legacyRules } from "./rules/legacy.ts"
 import { routeRules } from "./rules/routes.ts"
 import { securityRules } from "./rules/security.ts"
 
@@ -1063,7 +1064,7 @@ export function scanInterpolatedSql(
  * answer a security rule must never give when it did not run.
  */
 export async function scanProjectSql(cwd: string): Promise<SourceFinding[] | undefined> {
-  const ts = await importTypeScript()
+  const ts = await importProjectTypeScript(cwd)
   if (ts === undefined) return undefined
   const out: SourceFinding[] = []
   const imports = createProjectSqlImports(cwd)
@@ -1623,16 +1624,42 @@ interface TypecheckResult {
   readonly note?: string
   readonly output?: string
   readonly cancelled?: boolean
+  /** tsconfig.json exists but no `typescript` install was found walking up from cwd. The contract
+   * gate could not run - the caller surfaces this as a FAILING diagnostic, never a silent skip. */
+  readonly missingTypeScript?: boolean
+}
+
+/**
+ * Find the project's `tsc` the way module resolution would: `node_modules/typescript/bin/tsc` in
+ * cwd, then each parent directory up to the filesystem root. A workspace package in a monorepo has
+ * its TypeScript hoisted to the workspace root, so the literal `join(cwd, "node_modules", …)` probe
+ * this replaces reported "typescript not installed" - and silently skipped the gate - whenever
+ * `nifra check` ran from the package directory instead of the repo root.
+ */
+function resolveTscBin(cwd: string): string | undefined {
+  let dir = cwd
+  while (true) {
+    const candidate = join(dir, "node_modules", "typescript", "bin", "tsc")
+    if (existsSync(candidate)) return candidate
+    const parent = dirname(dir)
+    if (parent === dir) return undefined
+    dir = parent
+  }
 }
 
 /** Run the project's own `tsc --noEmit`, if TypeScript + a tsconfig are present. Never auto-installs. */
 async function typecheck(cwd: string, signal?: AbortSignal): Promise<TypecheckResult> {
   const tsconfig = join(cwd, "tsconfig.json")
-  const tscBin = join(cwd, "node_modules", "typescript", "bin", "tsc")
   if (!(await Bun.file(tsconfig).exists()))
     return { ran: false, ok: true, note: "no tsconfig.json" }
-  if (!(await Bun.file(tscBin).exists())) {
-    return { ran: false, ok: true, note: "typescript not installed (run: bun add -d typescript)" }
+  const tscBin = resolveTscBin(cwd)
+  if (tscBin === undefined) {
+    return {
+      ran: false,
+      ok: false,
+      missingTypeScript: true,
+      note: "typescript not installed (run: bun add -d typescript)",
+    }
   }
   if (signal?.aborted) return { ran: true, ok: false, cancelled: true, output: "cancelled" }
   const proc = Bun.spawn(["bun", tscBin, "--noEmit", "-p", tsconfig], {
@@ -1720,6 +1747,9 @@ export interface CheckSuggestion {
 export interface CheckResult {
   readonly ok: boolean
   readonly typecheck: "pass" | "fail" | "skipped"
+  /** Why `typecheck` is `"skipped"` (no tsconfig.json, typescript not installed, lints-only mode).
+   * Absent when the typecheck ran. Echoed in the human report so a skip is never a dim mystery. */
+  readonly typecheckNote?: string
   readonly diagnostics: readonly CheckDiagnostic[]
   /** Normalized diagnostics with stable codes for agents and external renderers. */
   readonly structuredDiagnostics?: readonly Diagnostic[]
@@ -1734,6 +1764,10 @@ export interface CheckResult {
    * better-auth). Echoed here so `--json` / the MCP tool / the report can show what the typed-client scan
    * deliberately skipped - a suppressed prefix stays auditable instead of silently hiding real drift. */
   readonly externalMounts?: readonly string[]
+  /** Active per-rule overrides from `nifra.check.json` `rules`, echoed verbatim so a retagged or
+   * suppressed finding stays auditable in `--json`, the MCP tool, and the human report - config can
+   * lower (or raise) the gate, but never invisibly. */
+  readonly ruleOverrides?: Readonly<Record<string, RuleOverride>>
   /** Set only when the caller passed `maxDiagnostics` and there were more - `diagnostics` then holds the
    * first `shown` of `total`. It caps the serialized size so the `nifra_check` MCP tool can't emit a
    * message large enough to break the stdio transport; fix the shown diagnostics and re-run for the rest. */
@@ -1763,25 +1797,95 @@ export interface CheckAssuranceContext {
  * the app is built or even importable, preserving check's pre-`loadApp` invariant. */
 interface CheckConfig {
   readonly externalMounts: readonly string[]
+  readonly rules: Readonly<Record<string, RuleOverride>>
 }
 
-/** Load `nifra.check.json` if present. Fail-open + total: absent → empty; malformed → empty plus a parse
- * `error` the caller surfaces as a `warning` diagnostic (never throws, never blocks the gate). Mount
- * entries are normalized to bare path prefixes (`/auth/**` and `/auth/` both become `/auth`). */
-async function loadCheckConfig(cwd: string): Promise<{ config: CheckConfig; error?: string }> {
+/**
+ * One entry of `nifra.check.json` `rules`, keyed by legacy rule name (`response-route`) or stable
+ * NF- code (`NF-S002`) - one key retags the finding in both diagnostic views. `severity: "off"`
+ * drops the rule's findings; `ignore` drops findings whose file matches any of the globs. Overrides
+ * are applied centrally BEFORE `ok` is computed and echoed in the result and the human report -
+ * configuration can lower (or raise) the gate, but never invisibly.
+ */
+export interface RuleOverride {
+  readonly severity?: "error" | "warn" | "info" | "off"
+  readonly ignore?: readonly string[]
+}
+
+const OVERRIDE_SEVERITIES: readonly string[] = ["error", "warn", "info", "off"]
+
+/** Load `nifra.check.json` if present. Fail-open + total: absent → empty; malformed JSON → empty plus a
+ * parse `error`; an invalid entry → skipped plus a `warnings` note the caller surfaces as a `warning`
+ * diagnostic (never throws, never blocks the gate). Mount entries are normalized to bare path prefixes
+ * (`/auth/**` and `/auth/` both become `/auth`). */
+async function loadCheckConfig(
+  cwd: string,
+): Promise<{ config: CheckConfig; error?: string; warnings: readonly string[] }> {
   const path = join(cwd, "nifra.check.json")
-  if (!existsSync(path)) return { config: { externalMounts: [] } }
+  const empty: CheckConfig = { externalMounts: [], rules: {} }
+  if (!existsSync(path)) return { config: empty, warnings: [] }
   try {
-    const parsed = JSON.parse(await Bun.file(path).text()) as { externalMounts?: unknown }
+    const parsed = JSON.parse(await Bun.file(path).text()) as {
+      externalMounts?: unknown
+      rules?: unknown
+    }
     const raw = Array.isArray(parsed.externalMounts) ? parsed.externalMounts : []
     const externalMounts = raw
       .filter((m): m is string => typeof m === "string" && m.startsWith("/"))
       .map((m) => m.replace(/\/\*+$/, "").replace(/\/+$/, "") || "/")
-    return { config: { externalMounts } }
+    const warnings: string[] = []
+    const rules: Record<string, RuleOverride> = {}
+    if (parsed.rules !== undefined) {
+      if (
+        typeof parsed.rules !== "object" ||
+        parsed.rules === null ||
+        Array.isArray(parsed.rules)
+      ) {
+        warnings.push('`rules` must be an object of { "<rule>": { severity?, ignore? } } - ignored')
+      } else {
+        for (const [rule, value] of Object.entries(parsed.rules)) {
+          if (typeof value !== "object" || value === null || Array.isArray(value)) {
+            warnings.push(`rules["${rule}"] must be an object - ignored`)
+            continue
+          }
+          const entry = value as { severity?: unknown; ignore?: unknown }
+          const override: {
+            severity?: NonNullable<RuleOverride["severity"]>
+            ignore?: readonly string[]
+          } = {}
+          if (entry.severity !== undefined) {
+            if (
+              typeof entry.severity === "string" &&
+              OVERRIDE_SEVERITIES.includes(entry.severity)
+            ) {
+              override.severity = entry.severity as NonNullable<RuleOverride["severity"]>
+            } else {
+              warnings.push(
+                `rules["${rule}"].severity must be "error" | "warn" | "info" | "off" - ignored`,
+              )
+            }
+          }
+          if (entry.ignore !== undefined) {
+            if (
+              Array.isArray(entry.ignore) &&
+              entry.ignore.every((g): g is string => typeof g === "string")
+            ) {
+              if (entry.ignore.length > 0) override.ignore = entry.ignore
+            } else {
+              warnings.push(`rules["${rule}"].ignore must be an array of file globs - ignored`)
+            }
+          }
+          if (override.severity !== undefined || override.ignore !== undefined)
+            rules[rule] = override
+        }
+      }
+    }
+    return { config: { externalMounts, rules }, warnings }
   } catch (error) {
     return {
-      config: { externalMounts: [] },
+      config: empty,
       error: error instanceof Error ? error.message : String(error),
+      warnings: [],
     }
   }
 }
@@ -1972,11 +2076,15 @@ export async function collectCheckResult(
   const sourceFiles: Array<{ file: string; content: string }> = []
   // Load the optional check config first - the typed-client scan needs the external-mount allowlist as it
   // walks. It's a tiny pure-JSON read; a malformed file surfaces as a warning below, never blocking.
-  const { config: checkConfig, error: checkConfigError } = await loadCheckConfig(cwd)
+  const {
+    config: checkConfig,
+    error: checkConfigError,
+    warnings: checkConfigWarnings,
+  } = await loadCheckConfig(cwd)
   // The interpolated-SQL rule parses with the TypeScript compiler, which is an optional peer. Resolved
   // once, before the walk, so a project without it is told the rule did not run rather than being
   // handed a clean report the rule never produced.
-  const sqlCompiler = await (opts.loadTypeScript ?? importTypeScript)()
+  const sqlCompiler = await (opts.loadTypeScript ?? (() => importProjectTypeScript(cwd)))()
   // One loader + parse cache for the whole walk, so a shared `sql-fragments.ts` is read once no matter
   // how many route modules import a fragment out of it.
   const sqlImports = sqlCompiler === undefined ? undefined : createProjectSqlImports(cwd)
@@ -1984,7 +2092,7 @@ export async function collectCheckResult(
   // lints - the agent inner-loop mode; the full gate stays the definition of done.
   const [tc, _, dr, manifestDrift] = await Promise.all([
     opts.lintsOnly
-      ? Promise.resolve<TypecheckResult>({ ran: false, ok: true, note: "skipped (lintsOnly)" })
+      ? Promise.resolve<TypecheckResult>({ ran: false, ok: true, note: "lints-only mode" })
       : typecheck(cwd, opts.signal),
     walkSource(cwd, (rel, content) => {
       sourceFiles.push({ file: rel, content })
@@ -2036,6 +2144,32 @@ export async function collectCheckResult(
       file: "nifra.check.json",
       message: `nifra.check.json could not be parsed (${checkConfigError}) - its external-mount allowlist was ignored`,
       fix: "Fix the JSON syntax in nifra.check.json",
+    })
+  }
+  for (const warning of checkConfigWarnings) {
+    diagnostics.push({
+      rule: "check-config",
+      severity: "warning",
+      file: "nifra.check.json",
+      message: `nifra.check.json: ${warning}`,
+      fix: "Fix the entry in nifra.check.json",
+    })
+  }
+  if (tc.missingTypeScript === true) {
+    // A tsconfig with no reachable `typescript` install is a broken gate, not a benign skip: the
+    // contract check the project asked for (by having a tsconfig) silently didn't run. Fail closed.
+    diagnostics.push({
+      rule: "typecheck",
+      severity: "error",
+      file: "tsconfig.json",
+      message:
+        "tsconfig.json is present but no `typescript` install was found from this directory upward - the typecheck gate did NOT run",
+      fix: "bun add -d typescript",
+      suggestion: {
+        kind: "command",
+        title: "Install TypeScript so the contract gate can run",
+        command: ["bun", "add", "-d", "typescript"],
+      },
     })
   }
   if (tc.ran && !tc.ok) {
@@ -2513,23 +2647,64 @@ export async function collectCheckResult(
     })
   }
 
+  // Per-rule overrides from `nifra.check.json` `rules`, applied centrally to BOTH diagnostic views
+  // before `ok` is computed - never inside individual rules, so no rule can dodge (or double-apply)
+  // them. A key matches the legacy rule name or the stable NF- code.
+  const overrideFor = (...keys: (string | undefined)[]): RuleOverride | undefined => {
+    for (const key of keys) {
+      if (key !== undefined && checkConfig.rules[key] !== undefined) return checkConfig.rules[key]
+    }
+    return undefined
+  }
+  const ignoreGlobs = new Map<RuleOverride, Glob[]>()
+  const dropped = (override: RuleOverride, file: string | undefined): boolean => {
+    if (override.severity === "off") return true
+    if (override.ignore === undefined || file === undefined) return false
+    let globs = ignoreGlobs.get(override)
+    if (globs === undefined) {
+      globs = override.ignore.map((pattern) => new Glob(pattern))
+      ignoreGlobs.set(override, globs)
+    }
+    return globs.some((glob) => glob.match(file))
+  }
+  const codeToLegacy = new Map(
+    Object.entries(LEGACY_RULE_CODES).map(([name, code]) => [code, name]),
+  )
+  const finalDiagnostics = diagnostics.flatMap<CheckDiagnostic>((d) => {
+    const override = overrideFor(d.rule, d.code, LEGACY_RULE_CODES[d.rule])
+    if (override === undefined) return [d]
+    if (dropped(override, d.file)) return []
+    // "off" is fully handled by `dropped` above - only real severities reach the retag.
+    if (override.severity === undefined || override.severity === "off") return [d]
+    return [{ ...d, severity: override.severity === "warn" ? "warning" : override.severity }]
+  })
+  const finalStructured = structuredDiagnostics.flatMap<Diagnostic>((d) => {
+    const override = overrideFor(d.code, codeToLegacy.get(d.code))
+    if (override === undefined) return [d]
+    if (dropped(override, d.file)) return []
+    if (override.severity === undefined || override.severity === "off") return [d]
+    return [Object.freeze({ ...d, severity: override.severity })]
+  })
+
   // Cap the diagnostics when asked (the MCP path), so a project with thousands of findings can't return a
   // message that breaks the stdio transport. `ok` reflects the FULL set - truncation never flips it.
-  const total = diagnostics.length
+  const total = finalDiagnostics.length
   const max = opts.maxDiagnostics
-  const shown = max !== undefined && total > max ? diagnostics.slice(0, max) : diagnostics
+  const shown = max !== undefined && total > max ? finalDiagnostics.slice(0, max) : finalDiagnostics
   const result: CheckResult = {
-    ok: !diagnostics.some((diagnostic) => diagnostic.severity === "error"),
+    ok: !finalDiagnostics.some((diagnostic) => diagnostic.severity === "error"),
     typecheck: tc.ran ? (tc.ok ? "pass" : "fail") : "skipped",
+    ...(!tc.ran && tc.note !== undefined ? { typecheckNote: tc.note } : {}),
     diagnostics: shown,
     ...(dr.pipeline !== undefined ? { pipeline: dr.pipeline } : {}),
     ...(checkConfig.externalMounts.length > 0
       ? { externalMounts: checkConfig.externalMounts }
       : {}),
+    ...(Object.keys(checkConfig.rules).length > 0 ? { ruleOverrides: checkConfig.rules } : {}),
     ...(shown.length < total ? { truncated: { shown: shown.length, total } } : {}),
   }
   Object.defineProperty(result, "structuredDiagnostics", {
-    value: structuredDiagnostics.slice(0, shown.length + structuredExtras.length),
+    value: finalStructured.slice(0, shown.length + structuredExtras.length),
     enumerable: false,
   })
   return result
@@ -2569,7 +2744,7 @@ export function renderCheckReport(result: CheckResult): string[] {
       ? "✓ typecheck passed"
       : result.typecheck === "fail"
         ? "✗ typecheck failed - the frontend/backend contract is broken"
-        : "• typecheck skipped (no tsconfig / typescript not installed)",
+        : `⚠ typecheck SKIPPED - ${result.typecheckNote ?? "no tsconfig / typescript not installed"} (the contract gate did not run)`,
   )
   // Stated on every run, passing or not. "Which bundler is this app on" decides which plugin slot is
   // live and which toolchain compiles a component, so it belongs in the report rather than only in the
@@ -2585,6 +2760,15 @@ export function renderCheckReport(result: CheckResult): string[] {
     lines.push(
       `• intentional external mounts (not typed-client checked): ${result.externalMounts.join(", ")}`,
     )
+  }
+  if (result.ruleOverrides !== undefined) {
+    const active = Object.entries(result.ruleOverrides).map(([rule, override]) => {
+      const parts: string[] = []
+      if (override.severity !== undefined) parts.push(`severity=${override.severity}`)
+      if (override.ignore !== undefined) parts.push(`ignore=${override.ignore.join(",")}`)
+      return `${rule} (${parts.join(", ")})`
+    })
+    lines.push(`• rule overrides from nifra.check.json: ${active.join("; ")}`)
   }
   const renderSection = (rule: string, label: string, ds: readonly CheckDiagnostic[]): void => {
     if (rule !== "typecheck") {
@@ -2684,84 +2868,7 @@ export async function runCheck(
     return result.ok
   }
 
-  console.log("nifra check\n")
-  console.log(
-    result.typecheck === "pass"
-      ? "✓ typecheck passed"
-      : result.typecheck === "fail"
-        ? "✗ typecheck failed - the frontend/backend contract is broken"
-        : "• typecheck skipped (no tsconfig / typescript not installed)",
-  )
-  // Stated on every run, passing or not. "Which bundler is this app on" decides which plugin slot is
-  // live and which toolchain compiles a component, so it belongs in the report rather than only in the
-  // dev server's banner - where CI never sees it.
-  if (result.pipeline !== undefined) {
-    console.log(
-      result.pipeline.pipeline === "unknown"
-        ? `• bundler: not readable from ${result.pipeline.configFile} - ${result.pipeline.reason}`
-        : `• bundler: ${result.pipeline.pipeline} (${result.pipeline.reason})`,
-    )
-  }
-  if (result.externalMounts !== undefined && result.externalMounts.length > 0) {
-    console.log(
-      `• intentional external mounts (not typed-client checked): ${result.externalMounts.join(", ")}`,
-    )
-  }
-  const counts = (rule: CheckDiagnostic["rule"]): CheckDiagnostic[] =>
-    result.diagnostics.filter((d) => d.rule === rule)
-  for (const [rule, label] of [
-    ["typecheck", "typecheck"],
-    ["typed-client", "hand-rolled fetch() to your own API"],
-    ["untyped-client", 'client("…") missing its <typeof app> type argument'],
-    ["server-only-import", "server-only import in a route module"],
-    ["interpolated-sql", "SQL built by interpolating a value into the statement"],
-    ["response-route", "route returns a raw Response (typed client → data: never)"],
-    ["undeclared-dependency", "undeclared dependency in package.json"],
-    ["duplicate-install", "duplicate identity-sensitive dependency install"],
-    ["stale-workspace-dist", "workspace-linked dist older than its source"],
-    ["pipeline", "bundler pipeline (Vite/Bun) config"],
-    ["server-manifest-drift", "server-manifest.ts drifted from routes/"],
-    ["manifest-drift", "versioned trust manifest drift"],
-    ["capability-assurance", "effect/capability assurance"],
-    ["capability-config", "capability assurance config"],
-    ["check-config", "nifra.check.json"],
-  ] as const) {
-    const ds = counts(rule)
-    if (rule !== "typecheck") {
-      // Marked by SEVERITY, not by rule name. `response-route` and `stale-workspace-dist` are advisory
-      // in whole; `pipeline` is the first rule that is advisory in part (a misplaced plugin fails, a
-      // resolve condition the Bun dev bundler can't take does not), so the counts are split rather than
-      // rounded up to the worse of the two.
-      const errors = ds.filter((d) => d.severity === "error").length
-      const advisory = ds.length - errors
-      console.log(
-        ds.length === 0
-          ? `✓ ${label}: none`
-          : errors === 0
-            ? `⚠ ${label}: ${advisory} (advisory)`
-            : `✗ ${label}: ${errors}${advisory > 0 ? ` (+${advisory} advisory)` : ""}`,
-      )
-    }
-    for (const d of ds) {
-      console.log(`    ${d.file ?? ""}${d.line ? `:${d.line}` : ""}  ${d.message}`)
-      if (d.suggestion !== undefined) {
-        console.log(`      fix: ${d.suggestion.title}`)
-        if (d.suggestion.command !== undefined) {
-          console.log(`      command: ${d.suggestion.command.join(" ")}`)
-        }
-        if (d.suggestion.diff !== undefined) {
-          console.log(
-            d.suggestion.diff
-              .split("\n")
-              .map((line) => `      ${line}`)
-              .join("\n"),
-          )
-        }
-        for (const step of d.suggestion.steps ?? []) console.log(`      - ${step}`)
-      }
-    }
-  }
-  console.log(result.ok ? "\n✓ check passed" : "\n✗ check failed")
+  console.log(renderCheckReport(result).join("\n"))
   // Discoverability nudge: a project with no `.mcp.json` hasn't wired its nifra MCP for coding agents.
   // `nifra init-agents` writes it (+ .cursor/mcp.json + a CLAUDE.md preamble), no-clobber. A non-fatal
   // one-line tip in the human report only (the `--json` path returns above, unaffected).

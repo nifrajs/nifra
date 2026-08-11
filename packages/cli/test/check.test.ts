@@ -1478,3 +1478,131 @@ describe("interpolated-sql without the compiler", () => {
     expect(sql[0]?.file).toBeUndefined()
   })
 })
+
+describe("typecheck gate - project TypeScript resolution", () => {
+  test("tsconfig present but no typescript install reachable → failing diagnostic, never a silent skip", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))
+    await writeFile(join(dir, "tsconfig.json"), "{}")
+    const result = await collectCheckResult(dir)
+    expect(result.typecheck).toBe("skipped")
+    expect(result.typecheckNote).toContain("typescript not installed")
+    const tc = result.diagnostics.filter((d) => d.rule === "typecheck")
+    expect(tc).toHaveLength(1)
+    expect(tc[0]?.severity).toBe("error")
+    expect(tc[0]?.message).toContain("did NOT run")
+    expect(tc[0]?.suggestion?.command).toEqual(["bun", "add", "-d", "typescript"])
+    expect(result.ok).toBe(false)
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("typescript hoisted to a PARENT directory is found (monorepo package cwd)", async () => {
+    // The literal join(cwd, "node_modules", …) probe this pins down used to skip the gate whenever
+    // check ran from a workspace package dir with TypeScript hoisted to the workspace root.
+    const root = await mkdtemp(join(tmpdir(), "nifra-check-"))
+    const pkg = join(root, "packages", "app")
+    await mkdir(join(root, "node_modules", "typescript", "bin"), { recursive: true })
+    // Stub tsc (exits 0) - the test verifies RESOLUTION, not the compiler itself.
+    await writeFile(join(root, "node_modules", "typescript", "bin", "tsc"), "process.exit(0)\n")
+    await mkdir(pkg, { recursive: true })
+    await writeFile(join(pkg, "tsconfig.json"), "{}")
+    const result = await collectCheckResult(pkg)
+    expect(result.typecheck).toBe("pass")
+    expect(result.diagnostics.filter((d) => d.rule === "typecheck")).toHaveLength(0)
+    await rm(root, { recursive: true, force: true })
+  })
+})
+
+describe("nifra.check.json rule overrides", () => {
+  async function project(rules: unknown): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))
+    await mkdir(join(dir, "src"), { recursive: true })
+    await writeFile(join(dir, "src", "users.ts"), 'const res = await fetch("/users")\n')
+    await writeFile(join(dir, "nifra.check.json"), JSON.stringify({ rules }))
+    return dir
+  }
+
+  test("severity: off drops the finding from both views and flips ok", async () => {
+    const dir = await project({ "typed-client": { severity: "off" } })
+    const result = await collectCheckResult(dir, { lintsOnly: true })
+    expect(result.diagnostics.filter((d) => d.rule === "typed-client")).toHaveLength(0)
+    expect(result.structuredDiagnostics?.filter((d) => d.code === "NF-C002")).toHaveLength(0)
+    expect(result.ok).toBe(true)
+    expect(result.ruleOverrides).toEqual({ "typed-client": { severity: "off" } })
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("an override keyed by NF- code retags the LEGACY view too (one key, both views)", async () => {
+    const dir = await project({ "NF-C002": { severity: "warn" } })
+    const result = await collectCheckResult(dir, { lintsOnly: true })
+    const legacy = result.diagnostics.find((d) => d.rule === "typed-client")
+    expect(legacy?.severity).toBe("warning")
+    expect(result.structuredDiagnostics?.find((d) => d.code === "NF-C002")?.severity).toBe("warn")
+    expect(result.ok).toBe(true)
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("ignore globs drop only matching files; non-matching findings keep failing", async () => {
+    const dir = await project({ "typed-client": { ignore: ["src/**"] } })
+    await mkdir(join(dir, "app"), { recursive: true })
+    await writeFile(join(dir, "app", "other.ts"), 'const r = await fetch("/users")\n')
+    const result = await collectCheckResult(dir, { lintsOnly: true })
+    const files = result.diagnostics.filter((d) => d.rule === "typed-client").map((d) => d.file)
+    expect(files).toEqual(["app/other.ts"])
+    expect(result.ok).toBe(false)
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("an invalid entry is skipped with a check-config warning, never silently applied", async () => {
+    const dir = await project({ "typed-client": { severity: "silent" } })
+    const result = await collectCheckResult(dir, { lintsOnly: true })
+    // The bogus severity did NOT suppress or retag the finding.
+    expect(result.diagnostics.find((d) => d.rule === "typed-client")?.severity).toBe("error")
+    const warning = result.diagnostics.find((d) => d.rule === "check-config")
+    expect(warning?.severity).toBe("warning")
+    expect(warning?.message).toContain('rules["typed-client"].severity')
+    expect(result.ok).toBe(false)
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("severity can also be RAISED - an advisory rule becomes a gate failure", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-"))
+    await writeFile(join(dir, "backend.ts"), "export const x = 1\n")
+    await mkdir(join(dir, "src"), { recursive: true })
+    await writeFile(join(dir, "src", "users.ts"), 'const res = await fetch("/users")\n')
+    await writeFile(
+      join(dir, "nifra.check.json"),
+      JSON.stringify({ rules: { "typed-client": { severity: "info" } } }),
+    )
+    const result = await collectCheckResult(dir, { lintsOnly: true })
+    expect(result.diagnostics.find((d) => d.rule === "typed-client")?.severity).toBe("info")
+    expect(result.ok).toBe(true)
+    await rm(dir, { recursive: true, force: true })
+  })
+})
+
+describe("cwd invariance", () => {
+  test("verdicts are a function of the project dir, never of the process cwd", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nifra-check-"))
+    const pkg = join(root, "packages", "app")
+    await mkdir(join(root, "node_modules", "typescript", "bin"), { recursive: true })
+    await writeFile(join(root, "node_modules", "typescript", "bin", "tsc"), "process.exit(0)\n")
+    await mkdir(join(pkg, "src"), { recursive: true })
+    await writeFile(join(pkg, "tsconfig.json"), "{}")
+    await writeFile(join(pkg, "src", "users.ts"), 'const res = await fetch("/users")\n')
+    const before = process.cwd()
+    try {
+      process.chdir(root)
+      const fromRoot = await collectCheckResult(pkg)
+      process.chdir(tmpdir())
+      const fromElsewhere = await collectCheckResult(pkg)
+      expect(fromRoot.ok).toBe(fromElsewhere.ok)
+      expect(fromRoot.typecheck).toBe(fromElsewhere.typecheck)
+      expect(fromRoot.typecheck).toBe("pass")
+      expect(fromRoot.diagnostics).toEqual(fromElsewhere.diagnostics)
+      expect(fromRoot.diagnostics.map((d) => d.rule)).toEqual(["typed-client"])
+    } finally {
+      process.chdir(before)
+    }
+    await rm(root, { recursive: true, force: true })
+  })
+})

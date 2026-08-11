@@ -178,3 +178,41 @@ test("shares source reads across built-in security rules", async () => {
   expect(findings.map((finding) => finding.code)).toEqual(["NF-S001", "NF-S002", "NF-S003"])
   expect(reads).toBe(1)
 })
+
+describe("NF-S002 severity by file role", () => {
+  const compare = "if (token === expected) deny()"
+
+  test("server-side comparisons fail the gate", async () => {
+    for (const file of ["auth.server.ts", "server/verify.ts", "backend.ts", "lib/hmac.ts"]) {
+      const findings = await scan(file, compare)
+      expect(findings.find((f) => f.code === "NF-S002")?.severity).toBe("error")
+    }
+  })
+
+  test("client-bundled comparisons are advisory", async () => {
+    for (const file of ["routes/login.ts", "components/Login.tsx", "app/Form.jsx"]) {
+      const findings = await scan(file, compare)
+      expect(findings.find((f) => f.code === "NF-S002")?.severity).toBe("warn")
+    }
+  })
+
+  test("a server marker beats a client location (routes/x.server.ts is server)", async () => {
+    const findings = await scan("routes/session.server.ts", compare)
+    expect(findings.find((f) => f.code === "NF-S002")?.severity).toBe("error")
+  })
+})
+
+test("reviewed marker counts anywhere in the comment block above, not only 2 lines up", async () => {
+  const findings = await scan(
+    "server/auth.ts",
+    [
+      "// @nifra-gate-reviewed: this compares a public webhook echo, not secret material.",
+      "// The upstream signs with a per-delivery nonce; equality here is a routing hint only,",
+      "// and the real verification happens in verifySignature() below.",
+      "if (token === expected) deny()",
+    ].join("\n"),
+  )
+  const s002 = findings.find((f) => f.code === "NF-S002")
+  expect(s002?.severity).toBe("info")
+  expect(s002?.evidence).toContain("@nifra-gate-reviewed")
+})

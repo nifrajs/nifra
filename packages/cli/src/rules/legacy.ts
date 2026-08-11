@@ -2,7 +2,9 @@ import type { CheckDiagnostic } from "../check.ts"
 import type { Diagnostic, Severity } from "../diagnostics.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
 
-const CODES: Readonly<Record<string, string>> = Object.freeze({
+/** Legacy rule name → stable NF- code. Exported so `nifra.check.json` rule overrides can be keyed
+ * by either name and still hit both diagnostic views. */
+export const LEGACY_RULE_CODES: Readonly<Record<string, string>> = Object.freeze({
   typecheck: "NF-C001",
   "typed-client": "NF-C002",
   "untyped-client": "NF-C003",
@@ -71,7 +73,7 @@ function toDiagnostic(finding: CheckDiagnostic, code: string): Diagnostic {
 function findingsFor(ctx: RuleContext, rule: string): Diagnostic[] {
   const findings = ctx.project.legacyDiagnostics
   if (!Array.isArray(findings)) return []
-  const code = CODES[rule]
+  const code = LEGACY_RULE_CODES[rule]
   if (code === undefined) return []
   return findings
     .filter((finding): finding is CheckDiagnostic => finding?.rule === rule)
@@ -79,7 +81,7 @@ function findingsFor(ctx: RuleContext, rule: string): Diagnostic[] {
 }
 
 function makeRule(rule: string): CheckRule {
-  const code = CODES[rule]
+  const code = LEGACY_RULE_CODES[rule]
   const title = TITLES[rule]
   if (code === undefined || title === undefined) throw new Error(`unknown legacy rule ${rule}`)
   return Object.freeze({ code, title, scan: async (ctx: RuleContext) => findingsFor(ctx, rule) })
@@ -87,5 +89,5 @@ function makeRule(rule: string): CheckRule {
 
 /** Stable registry adapters for the existing source scanners. */
 export const legacyRules: readonly CheckRule[] = Object.freeze(
-  Object.keys(CODES).map((name) => makeRule(name)),
+  Object.keys(LEGACY_RULE_CODES).map((name) => makeRule(name)),
 )
