@@ -1,5 +1,5 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
-import { definePlugin, type NifraPlugin } from "@nifrajs/core/server"
+import { defineIdentityPlugin, type IdentityPlugin } from "@nifrajs/core/server"
 
 type MaybePromise<T> = T | Promise<T>
 
@@ -19,7 +19,7 @@ type MaybePromise<T> = T | Promise<T>
  * const app = server().use(auth).get("/me", (c) => auth.requirePrincipal(c.req))
  * ```
  */
-export type AuthPlugin<P> = NifraPlugin & {
+export type AuthPlugin<P> = IdentityPlugin & {
   /** The verified principal for this request, or `null` (no/invalid token in `optional` mode). */
   principal(request: Request): P | null
   /** The verified principal, or **throws a `401` `Response`** when absent. */
@@ -48,7 +48,7 @@ function createTokenAuth<P>(config: TokenAuthConfig<P>): AuthPlugin<P> {
         headers: config.challenge !== undefined ? { "www-authenticate": config.challenge } : {},
       },
     )
-  const plugin = definePlugin(config.name, (app) =>
+  const plugin = defineIdentityPlugin(config.name, (app) =>
     app.beforeHandle(async (c: { readonly req: Request }) => {
       const token = config.extract(c.req)
       // Empty string is treated as "no credential" - never passed to verify.

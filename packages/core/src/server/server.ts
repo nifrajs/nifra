@@ -47,9 +47,10 @@ import type {
   StandardResult,
   StandardSchemaV1,
 } from "../schema/standard.ts"
-import { assertByteLimit } from "./body.ts"
+import { assertByteLimit, markTransportCap } from "./body.ts"
 import { type ClientIpTrust, resolveClientIp } from "./client-ip.ts"
 import type { Context, Platform, ResponseControls, RouteSchema } from "./context.ts"
+import { headerObjectOf } from "./headers.ts"
 import { jsonError, pathnameOf, type UrlParts, urlPartsOf } from "./http.ts"
 import { type NodeServeOutcome, withStaticNodeHeaders } from "./node-outcome.ts"
 import {
@@ -78,15 +79,14 @@ import {
   fusedRespond,
   fusedRespondNoSet,
   knownMutableHeaders,
-  markTaggedResponse,
   rememberMutableHeaders,
   taggedResponseBody,
-  taggedResponseOwner,
   toResponse,
 } from "./respond.ts"
 // Type-only: erased, so the kernel never pulls the lane's implementation into a bundle that does not
 // install the plugin. The value side arrives through the symbol-keyed install seam.
 import type { ResponseContractRuntime } from "./response-contract-lane.ts"
+import { applyBodyReplacement, withReplacedBody } from "./response-hooks.ts"
 import {
   CONTEXT_SEARCH,
   CONTEXT_SET,
@@ -111,56 +111,6 @@ export type {
   ResponseBodyReplacement,
   ResponseHeadersHook,
   ResponseHeadersView,
-}
-
-function isBodylessStatus(status: number): boolean {
-  return status === 204 || status === 205 || status === 304
-}
-
-/** Apply a body hook's return to the native response context (bytes, or a structured replacement). */
-function applyBodyReplacement(
-  response: NodeResponseContext,
-  replaced: string | Uint8Array | ResponseBodyReplacement | undefined,
-): void {
-  if (replaced === undefined) return
-  if (typeof replaced === "string" || replaced instanceof Uint8Array) {
-    response.body = isBodylessStatus(response.status) ? null : replaced
-    return
-  }
-  if (replaced.body !== undefined) response.body = replaced.body
-  if (replaced.status !== undefined) response.status = replaced.status
-  if (isBodylessStatus(response.status)) response.body = null
-}
-
-/** Swap a tagged Response's body for a hook's replacement, re-tagging so later body hooks (and the
- * Node fallback's direct writer) see the new bytes; explicit lengths are dropped so framing is
- * re-derived from what actually ships. */
-function withReplacedBody(
-  response: Response,
-  replaced: string | Uint8Array | ResponseBodyReplacement | undefined,
-): Response {
-  if (replaced === undefined) return response
-  const originalBody = taggedResponseBody(response)
-  let body: string | Uint8Array | null
-  let status = response.status
-  if (typeof replaced === "string" || replaced instanceof Uint8Array) {
-    body = replaced
-  } else {
-    body = replaced.body !== undefined ? replaced.body : (originalBody ?? null)
-    if (replaced.status !== undefined) status = replaced.status
-    if (body === (originalBody ?? null) && status === response.status) {
-      return response
-    }
-  }
-  if (isBodylessStatus(status)) body = null
-  const headers = new Headers(response.headers)
-  headers.delete("content-length")
-  const next = new Response(body as ConstructorParameters<typeof Response>[0], {
-    status,
-    headers,
-  })
-  if (body !== null) markTaggedResponse(next, body, taggedResponseOwner(response))
-  return next
 }
 
 const HEADER_MUTABILITY_PROBE = "x-nifra-header-probe"
@@ -352,6 +302,7 @@ export interface RawContext {
   // Writable: the lifecycle replaces it with the validated/coerced value when a `params` schema is
   // declared (handlers still see it `readonly` via the public `Context` interface).
   params: Record<string, string>
+  headers: Record<string, string>
   query: unknown
   readonly cookies: Readonly<Record<string, string>>
   body: unknown
@@ -502,11 +453,13 @@ export type AnyServer = Server<any, any>
 // existing importers keep resolving them from the server module.
 export {
   type ContextPlugin,
+  type DefinePluginResult,
   defineContextPlugin,
   defineIdentityPlugin,
   definePlugin,
   defineRouterPlugin,
   type NifraPlugin,
+  type PluginTypeCollapsed,
 } from "./plugin.ts"
 export type { IdentityPlugin }
 
@@ -1467,6 +1420,29 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     handler: (context: never) => unknown,
   ): CatalogRoute {
     const pattern = compileRoutePattern(path)
+    let bodyLimit: number | undefined = this.maxBodyBytes
+    const invalidBodyLimit = (message: string): never => {
+      throw new RouteConfigError("INVALID_BODY_LIMIT", `route ${method} ${path}: ${message}`)
+    }
+    if (schema?.bodyLimitReason !== undefined && schema.bodyLimit !== "unlimited") {
+      invalidBodyLimit('bodyLimitReason is only valid with bodyLimit: "unlimited"')
+    }
+    if (schema?.bodyLimit === "unlimited") {
+      if (
+        typeof schema.bodyLimitReason !== "string" ||
+        schema.bodyLimitReason.trim().length === 0
+      ) {
+        invalidBodyLimit('bodyLimit: "unlimited" requires a non-empty bodyLimitReason')
+      }
+      bodyLimit = undefined
+    } else if (schema?.bodyLimit !== undefined) {
+      try {
+        assertByteLimit(schema.bodyLimit, "route bodyLimit")
+      } catch {
+        invalidBodyLimit('bodyLimit must be a non-negative safe integer or "unlimited"')
+      }
+      bodyLimit = schema.bodyLimit
+    }
     const capabilities = normalizeRouteCapabilities(schema?.capabilities)
     const handlerAssurance = assuranceDeclarationsOf(handler as unknown as object)
     const invalidHandlerScope = handlerAssurance.find(
@@ -1528,6 +1504,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         : undefined
     const bare =
       schema?.params === undefined &&
+      schema?.headers === undefined &&
       schema?.body === undefined &&
       schema?.query === undefined &&
       idempotent === undefined &&
@@ -1549,6 +1526,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       schema?.query !== undefined &&
       schema.body === undefined &&
       schema.params === undefined &&
+      schema.headers === undefined &&
       schema.onValidationError === undefined &&
       this.defaultOnValidationError === undefined &&
       idempotent === undefined &&
@@ -1563,6 +1541,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       schema?.body !== undefined &&
       schema.query === undefined &&
       schema.params === undefined &&
+      schema.headers === undefined &&
       this.derives.length === 0 &&
       this.beforeHandleHooks.length === 0 &&
       this.afterHandleHooks.length === 0 &&
@@ -1583,6 +1562,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           handler as unknown as InternalHandler,
           schema.body as StandardSchemaV1,
           hasDecorations ? routeDecorations : undefined,
+          bodyLimit ?? this.maxBodyBytes,
         )
       : undefined
     const fusedWeb =
@@ -1591,12 +1571,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
             handler as unknown as InternalHandler,
             hasDecorations ? routeDecorations : undefined,
             isContextlessNoArgArrow(handler),
+            bodyLimit ?? this.maxBodyBytes,
           )
         : fusedQuery
           ? this.buildFusedQueryWeb(
               handler as unknown as InternalHandler,
               hasDecorations ? routeDecorations : undefined,
               schema.query as StandardSchemaV1,
+              bodyLimit ?? this.maxBodyBytes,
             )
           : fusedBody
             ? this.buildFusedBodyWeb(fusedBodyRunner as FusedBodyRunner)
@@ -1612,6 +1594,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
             schema?.body === undefined &&
             schema?.query !== undefined &&
             schema.params === undefined &&
+            schema.headers === undefined &&
             this.derives.length === 0 &&
             this.beforeHandleHooks.length === 0 &&
             this.afterHandleHooks.length === 0 &&
@@ -1623,7 +1606,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // so the request path never re-checks params/body presence. Parameter-schema routes retain the
     // generic lifecycle runner until their more involved recovery matrix is selected explicitly.
     const lifecycleLane =
-      lane !== "lifecycle" || schema?.params !== undefined
+      lane !== "lifecycle" || schema?.params !== undefined || schema?.headers !== undefined
         ? undefined
         : schema?.body !== undefined
           ? schema.query !== undefined
@@ -1662,6 +1645,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       // with the concrete RawContext the typed handler expects, so this is sound.
       handler: handler as unknown as InternalHandler,
       schema,
+      bodyLimit,
       idempotent,
       ledgered,
       responseContract: contracted,
@@ -1683,6 +1667,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       ...(schema?.family === true ? { family: true } : {}),
     }
     const routeAssurance: AssuranceDeclaration[] = [...this.activeAssurance, ...handlerAssurance]
+    if (contracted?.runtime.mode === "enforce" && schema?.response !== undefined) {
+      routeAssurance.push(
+        Object.freeze({
+          id: NIFRA_ASSURANCE_IDS.RESPONSE_CONTRACT,
+          source: "response-contract",
+          scope: "plugin",
+        }),
+      )
+    }
     // Inline `schema.assurance`: the route DECLARES its enforcement evidence adjacent to the handler, so an
     // in-handler-guarded route satisfies a policy `require:` clause without a `withRouteAssurance` middleware
     // rewrite. Each id becomes route-scoped `declared` evidence (invalid ids fail closed at registration).
@@ -1692,7 +1685,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           `route assurance: invalid evidence id ${JSON.stringify(id)} on ${method} ${path} (use lowercase dot/dash segments)`,
         )
       }
-      routeAssurance.push(Object.freeze({ id, source: "declared", scope: "plugin" }))
+      const declared = { id, source: "declared", scope: "plugin" } as AssuranceDeclaration
+      Object.defineProperty(declared, "provenance", {
+        value: "declared",
+        enumerable: false,
+        configurable: false,
+        writable: false,
+      })
+      routeAssurance.push(Object.freeze(declared))
     }
     if (schema?.body !== undefined) {
       routeAssurance.push(
@@ -1796,10 +1796,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    *
    * Semantics: merged routes keep the chains captured where they were DEFINED - the group's
    * `derive`/`decorate`/`beforeHandle`/`afterHandle`/`onError`/`around` apply to its routes
-   * exactly as they did standalone, so a group wires its own plugins. The group's request-level
-   * hooks (`onRequest`/`onResponse`/`onResponseFinalized`) are appended to this server's. This
-   * server's route-scoped chains do NOT retroactively wrap merged routes (order-scoped, like
-   * routes registered before a `derive`). Fail closed: a path+method collision throws
+   * exactly as they did standalone, so a group wires its own plugins. The same locality rule
+   * covers the group's `onRequest` hooks: they run only for requests that route to the GROUP's
+   * routes (a `bodyLimit()` mounted on an uploads group must not start gating the whole app
+   * because the app composed it in), and the group's global assurance follows its hooks onto
+   * exactly those routes. A group with hooks but NO routes is a middleware bundle - its hooks
+   * can only mean app-wide intent, so they are appended globally, unchanged. Response-side hooks
+   * (`onResponse`/`onResponseFinalized`) are appended to this server's. This server's
+   * route-scoped chains do NOT retroactively wrap merged routes (order-scoped, like routes
+   * registered before a `derive`). Fail closed: a path+method collision throws
    * `RouteConfigError` at merge time, and a group with WebSocket routes is refused (register
    * those on the parent).
    */
@@ -1812,7 +1817,23 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         "merge() does not carry WebSocket routes - register .ws() routes on the parent server",
       )
     }
-    this.catalog.addBatch(source.catalog.entries().map((route) => this.bindFusedRuntime(route)))
+    const sourceRoutes = source.catalog.entries()
+    // Hooks and global assurance stay LOCAL to a group that has routes; a route-less group is a
+    // middleware bundle whose hooks can only mean app-wide intent, so it keeps the global append.
+    const scoped = sourceRoutes.length > 0
+    // A group's global assurance rides its (route-scoped) hooks: folded into each merged route's
+    // own evidence rather than the parent's global list, so `routes()` never claims the group's
+    // enforcement for parent routes the group's hooks do not see.
+    const foldedAssurance =
+      scoped && source.globalAssurance.length > 0
+        ? (route: CatalogRoute): CatalogRoute => ({
+            ...route,
+            assurance: [...route.assurance, ...source.globalAssurance],
+          })
+        : (route: CatalogRoute): CatalogRoute => route
+    this.catalog.addBatch(
+      sourceRoutes.map((route) => this.bindFusedRuntime(foldedAssurance(route))),
+    )
     // Resolved idempotency/ledger route entries carry their own store/sink configuration, while the
     // runtime object supplies the generic execution machinery. Preserve a group's installed runtime
     // when the parent has none so merging cannot silently disable a safety lane. If the parent already
@@ -1825,8 +1846,33 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.nodeOutcomeRuntime ??= source.nodeOutcomeRuntime
     this.sseRuntime ??= source.sseRuntime
     this.wsRuntime ??= source.wsRuntime
-    this.onRequestHooks.push(...source.onRequestHooks)
-    this.onNodeRequestHooks.push(...source.onNodeRequestHooks)
+    if (scoped && source.onRequestHooks.length > 0) {
+      // Snapshot the group's routes into a dedicated matcher: the guard must reflect what was
+      // MERGED, not whatever the group's own catalog grows into afterwards. One probe against it
+      // gates each group hook to requests the group would serve; everything else passes untouched.
+      const scope = new RouteCatalog()
+      scope.addBatch(sourceRoutes)
+      this.onRequestHooks.push(
+        ...source.onRequestHooks.map(
+          (hook): RawOnRequest =>
+            (req, platform) =>
+              scope.find(req.method, pathnameOf(req.url)).found ? hook(req, platform) : undefined,
+        ),
+      )
+      // An `undefined` slot marks an unpaired hook (position-aligned with `onRequestHooks`) and
+      // must stay `undefined` - wrapping it would fabricate a Node twin that never existed.
+      this.onNodeRequestHooks.push(
+        ...source.onNodeRequestHooks.map((hook): NodeRequestHook | undefined =>
+          hook === undefined
+            ? undefined
+            : (req, platform) =>
+                scope.find(req.method, pathnameOf(req.url)).found ? hook(req, platform) : undefined,
+        ),
+      )
+    } else {
+      this.onRequestHooks.push(...source.onRequestHooks)
+      this.onNodeRequestHooks.push(...source.onNodeRequestHooks)
+    }
     this.nodeRequestHooksComplete &&= source.nodeRequestHooksComplete
     // The group's static declarations came before its own response hooks, so they are folded in
     // first - and fold themselves into a hook here if this server already has one (same ordering
@@ -1843,7 +1889,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       this.responseBodyOwners.add(source.responseBodyTag)
       source.responseBodyOwners.add(owner)
     }
-    this.globalAssurance.push(...source.globalAssurance)
+    if (!scoped) this.globalAssurance.push(...source.globalAssurance)
     this.mcpResourceList.push(...source.mcpResourceList)
     this.mcpPromptList.push(...source.mcpPromptList)
     return this as unknown as Server<R & R2, Ctx>
@@ -1862,6 +1908,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
             entry.handler,
             entry.schema?.body as StandardSchemaV1,
             entry.hasDecorations ? entry.decorations : undefined,
+            entry.bodyLimit ?? this.maxBodyBytes,
           )
         : undefined
     const fusedWeb =
@@ -1872,11 +1919,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
               entry.handler,
               entry.hasDecorations ? entry.decorations : undefined,
               entry.schema?.query as StandardSchemaV1,
+              entry.bodyLimit ?? this.maxBodyBytes,
             )
           : this.buildFusedWeb(
               entry.handler,
               entry.hasDecorations ? entry.decorations : undefined,
               isContextlessNoArgArrow(entry.handler),
+              entry.bodyLimit ?? this.maxBodyBytes,
             )
     return {
       ...route,
@@ -2702,6 +2751,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     onTimeout: () => T,
     webFast: boolean,
   ): MaybePromise<T> {
+    // The route's transport byte cap: one property write here; the capped shadowing of direct
+    // `c.req` body readers happens lazily at `c.req` access (`applyTransportCap`), so a route that
+    // never direct-reads pays nothing. Framework readers bypass the shadow (`rawBodySourceOf`) and
+    // keep their own caps, so `c.boundedBody(explicit)` still overrides upward.
+    // `bodyLimit: "unlimited"` (undefined here) skips the cap entirely.
+    if (entry.bodyLimit !== undefined) {
+      const method = source.method
+      if (method !== "GET" && method !== "HEAD") markTransportCap(source, entry.bodyLimit)
+    }
     // An idempotency route runs its dedupe lane first; on a fresh key it delegates to the normal lanes
     // (with the body buffered). All non-idempotent routes skip straight to the lanes - no added cost.
     // The runtime is always present when a route resolved idempotency (enforced at registration).
@@ -2715,7 +2773,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         search,
         wrapResponse,
         {
-          maxBodyBytes: this.maxBodyBytes,
+          maxBodyBytes: entry.bodyLimit ?? this.maxBodyBytes,
           runLanes: (buffered, plat, ent, prm, srch) =>
             this.idempotencyRunLanes(buffered, plat, ent as RouteEntry, prm, srch),
         },
@@ -2961,6 +3019,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     handler: InternalHandler,
     decorations: Record<PropertyKey, unknown> | undefined,
     contextless: boolean,
+    maxBodyBytes: number,
   ): FusedWebRunner {
     // The fused lanes return to the runtime directly, so the framework's own error renders fold in
     // static headers here rather than through the shared `wrapResponse` seam.
@@ -2985,7 +3044,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
                   source,
                   params,
                   search,
-                  this.maxBodyBytes,
+                  maxBodyBytes,
                   platform,
                   this.protoPoisoning,
                 )
@@ -2996,7 +3055,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
                   signal,
                   budget,
                   platform,
-                  this.maxBodyBytes,
+                  maxBodyBytes,
                   this.protoPoisoning,
                 ),
           )
@@ -3012,7 +3071,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
                       source,
                       params,
                       search,
-                      this.maxBodyBytes,
+                      maxBodyBytes,
                       platform,
                       this.protoPoisoning,
                     )
@@ -3023,7 +3082,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
                       signal,
                       budget,
                       platform,
-                      this.maxBodyBytes,
+                      maxBodyBytes,
                       this.protoPoisoning,
                     ),
               ),
@@ -3034,14 +3093,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
     return (source, params, search, signal, budget, platform, nativeContext) => {
       const ctx = nativeContext
-        ? RequestContext.native(
-            source,
-            params,
-            search,
-            this.maxBodyBytes,
-            platform,
-            this.protoPoisoning,
-          )
+        ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
         : new RequestContext(
             source,
             params,
@@ -3049,7 +3101,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
             signal,
             budget,
             platform,
-            this.maxBodyBytes,
+            maxBodyBytes,
             this.protoPoisoning,
           )
       if (decorations !== undefined) Object.assign(ctx, decorations)
@@ -3076,6 +3128,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     handler: InternalHandler,
     bodySchema: StandardSchemaV1,
     decorations: Record<PropertyKey, unknown> | undefined,
+    maxBodyBytes: number,
   ): FusedBodyRunner {
     const logError = <T>(
       err: unknown,
@@ -3168,14 +3221,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       wrapResponse: (response: Response) => T,
     ): MaybePromise<T> => {
       const ctx = nativeContext
-        ? RequestContext.native(
-            source,
-            params,
-            search,
-            this.maxBodyBytes,
-            platform,
-            this.protoPoisoning,
-          )
+        ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
         : new RequestContext(
             source,
             params,
@@ -3183,12 +3229,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
             signal,
             budget,
             platform,
-            this.maxBodyBytes,
+            maxBodyBytes,
             this.protoPoisoning,
           )
       const finish = (value: unknown): MaybePromise<T> =>
         runParsed(value, ctx, finalize, wrapResponse)
-      return this.readBodyInput(source, finish, wrapResponse, (err) =>
+      return this.readBodyInput(source, maxBodyBytes, finish, wrapResponse, (err) =>
         logError(err, ctx, wrapResponse),
       )
     }
@@ -3223,6 +3269,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     handler: InternalHandler,
     decorations: Record<PropertyKey, unknown> | undefined,
     querySchema: StandardSchemaV1,
+    maxBodyBytes: number,
   ): FusedWebRunner {
     // The fused lanes return to the runtime directly, so the framework's own error renders fold in
     // static headers here rather than through the shared `wrapResponse` seam.
@@ -3249,14 +3296,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
     return (source, params, search, signal, budget, platform, nativeContext) => {
       const ctx = nativeContext
-        ? RequestContext.native(
-            source,
-            params,
-            search,
-            this.maxBodyBytes,
-            platform,
-            this.protoPoisoning,
-          )
+        ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
         : new RequestContext(
             source,
             params,
@@ -3264,7 +3304,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
             signal,
             budget,
             platform,
-            this.maxBodyBytes,
+            maxBodyBytes,
             this.protoPoisoning,
           )
       if (decorations !== undefined) Object.assign(ctx, decorations)
@@ -3344,6 +3384,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   ): Promise<T> {
     return this.readBodyInput(
       source,
+      entry.bodyLimit ?? this.maxBodyBytes,
       (parsed) => this.finishBodyOnly(entry, parsed, ctx, finalize, wrapResponse),
       wrapResponse,
       (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
@@ -3354,6 +3395,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * the validation + handler continuation differs. */
   private readBodyInput<T>(
     source: RequestSource,
+    maxBodyBytes: number,
     onParsed: (parsed: unknown) => MaybePromise<T>,
     wrapResponse: (response: Response) => T,
     onError: (err: unknown) => MaybePromise<T>,
@@ -3361,7 +3403,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     const contentType = headerOf(source, "content-type") ?? ""
     if (contentType !== "application/json" && !contentType.includes("application/json")) {
       if (isUrlEncodedForm(contentType)) {
-        return readBoundedForm(source, this.maxBodyBytes).then(
+        return readBoundedForm(source, maxBodyBytes).then(
           (form) => (form instanceof Response ? wrapResponse(form) : onParsed(form)),
           onError,
         ) as Promise<T>
@@ -3373,7 +3415,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // fast path (post-read byte re-check), the streaming cap, and the prototype-poisoning guard.
     // A separate inlined native-json() fast path here would fork the trust boundary in two.
     try {
-      return this.readBoundedJson(source).then(
+      return this.readBoundedJson(source, maxBodyBytes).then(
         (parsed) => (parsed instanceof Response ? wrapResponse(parsed) : onParsed(parsed)),
         onError,
       )
@@ -3747,6 +3789,32 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     wrapResponse: (response: Response) => T,
   ): MaybePromise<T> {
     try {
+      const headersSchema = entry.schema?.headers
+      if (headersSchema !== undefined) {
+        const validation = headersSchema["~standard"].validate(headerObjectOf(source.headers))
+        if (validation instanceof Promise) {
+          return validation.then(
+            (result) =>
+              this.runLifecycleAfterHeadersResult(
+                entry,
+                source,
+                ctx,
+                finalize,
+                wrapResponse,
+                result,
+              ),
+            (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+          )
+        }
+        return this.runLifecycleAfterHeadersResult(
+          entry,
+          source,
+          ctx,
+          finalize,
+          wrapResponse,
+          validation,
+        )
+      }
       const paramsSchema = entry.schema?.params
       if (paramsSchema !== undefined) {
         const validation = paramsSchema["~standard"].validate(ctx.params)
@@ -3784,6 +3852,64 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     } catch (err) {
       return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
     }
+  }
+
+  private runLifecycleAfterHeadersResult<T>(
+    entry: RouteEntry,
+    source: RequestSource,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+    result: StandardResult<unknown>,
+  ): MaybePromise<T> {
+    try {
+      const headersError = this.applyLifecycleValidation(entry, result, ctx, "headers")
+      if (headersError instanceof Promise) {
+        return headersError.then(
+          (error) =>
+            error === undefined
+              ? this.runLifecycleAfterHeaders(entry, source, ctx, finalize, wrapResponse)
+              : wrapResponse(error),
+          (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+        )
+      }
+      return headersError === undefined
+        ? this.runLifecycleAfterHeaders(entry, source, ctx, finalize, wrapResponse)
+        : wrapResponse(headersError)
+    } catch (err) {
+      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
+    }
+  }
+
+  private runLifecycleAfterHeaders<T>(
+    entry: RouteEntry,
+    source: RequestSource,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response) => T,
+  ): MaybePromise<T> {
+    const paramsSchema = entry.schema?.params
+    if (paramsSchema === undefined) {
+      if (entry.schema?.body === undefined)
+        return this.runQueryAndLifecycle(entry, ctx, finalize, wrapResponse)
+      return this.runLifecycleAfterParams(entry, source, ctx, finalize, wrapResponse, undefined)
+    }
+    const validation = paramsSchema["~standard"].validate(ctx.params)
+    if (validation instanceof Promise) {
+      return validation.then(
+        (result) =>
+          this.runLifecycleAfterParamsResult(entry, source, ctx, finalize, wrapResponse, result),
+        (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+      )
+    }
+    return this.runLifecycleAfterParamsResult(
+      entry,
+      source,
+      ctx,
+      finalize,
+      wrapResponse,
+      validation,
+    )
   }
 
   /** Registration-specialized query lifecycle: query validation (including recovery) → hooks. */
@@ -4315,11 +4441,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     const contentType = headerOf(req, "content-type") ?? ""
     let parsed: unknown
     if (contentType === "application/json" || contentType.includes("application/json")) {
-      const json = await this.readBoundedJson(req)
+      const json = await this.readBoundedJson(req, entry.bodyLimit ?? this.maxBodyBytes)
       if (json instanceof Response) return json
       parsed = json
     } else if (isUrlEncodedForm(contentType)) {
-      const form = await readBoundedForm(req, this.maxBodyBytes)
+      const form = await readBoundedForm(req, entry.bodyLimit ?? this.maxBodyBytes)
       if (form instanceof Response) return form
       parsed = form
     } else {
@@ -4338,11 +4464,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     entry: RouteEntry,
     result: StandardResult<unknown>,
     ctx: RawContext,
-    kind: "body" | "query" | "params",
+    kind: "body" | "query" | "params" | "headers",
   ): MaybePromise<Response | undefined> {
     const assign = (value: unknown): void => {
       if (kind === "body") ctx.body = value
       else if (kind === "query") ctx.query = value
+      else if (kind === "headers") ctx.headers = value as Record<string, string>
       else ctx.params = value as Record<string, string>
     }
     if (result.issues === undefined) {
@@ -4362,7 +4489,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
 
   private finishLifecycleValidationRecovery(
     entry: RouteEntry,
-    kind: "body" | "query" | "params",
+    kind: "body" | "query" | "params" | "headers",
     issues: ReadonlyArray<StandardIssue>,
     recovery: unknown,
     assign: (value: unknown) => void,
@@ -4374,7 +4501,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         ? entry.schema?.body
         : kind === "query"
           ? entry.schema?.query
-          : entry.schema?.params
+          : kind === "params"
+            ? entry.schema?.params
+            : entry.schema?.headers
     const retried = schema!["~standard"].validate(recovery)
     if (retried instanceof Promise) {
       return retried.then((settled) => {
@@ -4395,8 +4524,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * length-less body mid-stream once the running byte count exceeds the cap - so a lying
    * or absent length can't force us to buffer an oversized payload.
    */
-  private async readBoundedJson(req: RequestSource): Promise<unknown | Response> {
-    return readBoundedJsonSource(req, this.maxBodyBytes, this.protoPoisoning)
+  private async readBoundedJson(
+    req: RequestSource,
+    maxBodyBytes = this.maxBodyBytes,
+  ): Promise<unknown | Response> {
+    return readBoundedJsonSource(req, maxBodyBytes, this.protoPoisoning)
   }
 
   /** Adapt one route's compiled execution plan to Bun's already-matched request shape. Route
@@ -4408,24 +4540,38 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     signal: AbortSignal | undefined,
     budget: RequestBudget | undefined,
   ): BunNativeHandler {
+    // The fused native lane bypasses `runMatched`, so the route's transport byte cap must be
+    // marked here too - otherwise a Bun `listen()` fused route would leave direct `c.req` body
+    // reads uncapped. The non-fused branches go through `fetchMatched` -> `runMatched`, which marks.
+    const bodyLimit = entry.bodyLimit
+    const inner = fused
+    const capped: FusedWebRunner | undefined =
+      inner === undefined || bodyLimit === undefined
+        ? inner
+        : (source, params, search, fusedSignal, fusedBudget, platform, nativeContext) => {
+            const method = source.method
+            if (method !== "GET" && method !== "HEAD") markTransportCap(source, bodyLimit)
+            return inner(source, params, search, fusedSignal, fusedBudget, platform, nativeContext)
+          }
     if (paramNames.length === 0) {
-      if (fused === undefined) {
+      if (capped === undefined) {
         return (request) => this.fetchMatched(request, entry, EMPTY_PARAMS)
       }
       if (this.acceptInboundDeadlines) {
         return (request) =>
           request.headers.get(NIFRA_DEADLINE_HEADER) !== null
             ? this.fetchMatched(request, entry, EMPTY_PARAMS)
-            : fused(request, EMPTY_PARAMS, undefined, signal!, budget!, undefined, true)
+            : capped(request, EMPTY_PARAMS, undefined, signal!, budget!, undefined, true)
       }
-      return (request) => fused(request, EMPTY_PARAMS, undefined, signal!, budget!, undefined, true)
+      return (request) =>
+        capped(request, EMPTY_PARAMS, undefined, signal!, budget!, undefined, true)
     }
 
     const malformed =
       paramNames.length === 1
         ? (params: Record<string, string>) => params[paramNames[0]!]?.includes("\uFFFD") === true
         : hasReplacementParam
-    if (fused === undefined) {
+    if (capped === undefined) {
       return (request) => {
         const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
         if (malformed(params)) return this.fetchSource(request)
@@ -4438,13 +4584,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         if (malformed(params)) return this.fetchSource(request)
         return request.headers.get(NIFRA_DEADLINE_HEADER) !== null
           ? this.fetchMatched(request, entry, params)
-          : fused(request, params, undefined, signal!, budget!, undefined, true)
+          : capped(request, params, undefined, signal!, budget!, undefined, true)
       }
     }
     return (request) => {
       const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
       if (malformed(params)) return this.fetchSource(request)
-      return fused(request, params, undefined, signal!, budget!, undefined, true)
+      return capped(request, params, undefined, signal!, budget!, undefined, true)
     }
   }
 

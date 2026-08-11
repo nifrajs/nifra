@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
+import { withRouteAssurance } from "../src/assurance.ts"
 import { useCapability } from "../src/capabilities.ts"
 import { effectLedger } from "../src/effect-ledger.ts"
 import { idempotency } from "../src/idempotency-plugin.ts"
@@ -111,7 +112,7 @@ describe("merge - domain-group composition", () => {
     expect(ledgers).toHaveLength(1)
   })
 
-  test("a group's request-level hooks ride along; introspection sees every route", async () => {
+  test("a group's onRequest hooks are scoped to the group's routes; introspection sees every route", async () => {
     const seen: string[] = []
     const group = server()
       .use({
@@ -128,8 +129,66 @@ describe("merge - domain-group composition", () => {
 
     await app.fetch(new Request("http://x/own"))
     await app.fetch(new Request("http://x/grouped"))
-    expect(seen).toEqual(["/own", "/grouped"]) // onRequest is global - appended to the parent
+    // The hook runs where it was defined - the group's routes - never on the parent's.
+    expect(seen).toEqual(["/grouped"])
     expect(app.routes().map((r) => `${r.method} ${r.path}`)).toEqual(["GET /own", "GET /grouped"])
+  })
+
+  test("a scoped group hook still short-circuits its own routes", async () => {
+    const group = server()
+      .use({
+        name: "group-gate",
+        onRequest: (req) =>
+          req.headers.get("x-key") === null ? new Response(null, { status: 401 }) : undefined,
+      })
+      .get("/gated", () => ({ ok: true }))
+    const app = server()
+      .get("/open", () => ({ ok: true }))
+      .merge(group)
+
+    expect((await app.fetch(new Request("http://x/open"))).status).toBe(200)
+    expect((await app.fetch(new Request("http://x/gated"))).status).toBe(401)
+    expect(
+      (await app.fetch(new Request("http://x/gated", { headers: { "x-key": "k" } }))).status,
+    ).toBe(200)
+  })
+
+  test("a route-less group is a middleware bundle - its hooks apply app-wide, unchanged", async () => {
+    const seen: string[] = []
+    const bundle = server().use({
+      name: "bundle-hooks",
+      onRequest: (req) => {
+        seen.push(new URL(req.url).pathname)
+        return undefined
+      },
+    })
+    const app = server()
+      .get("/own", () => ({ ok: true }))
+      .merge(bundle)
+
+    await app.fetch(new Request("http://x/own"))
+    expect(seen).toEqual(["/own"])
+  })
+
+  test("a group's global assurance follows its scoped hooks onto exactly the group's routes", async () => {
+    const guard = withRouteAssurance(
+      {
+        name: "group-body-guard",
+        onRequest: () => undefined,
+      },
+      { id: "nifra.body-bounded", source: "body-limit", scope: "global", methods: ["POST"] },
+    )
+    const group = server()
+      .use(guard)
+      .post("/uploads", () => ({ ok: true }))
+    const app = server()
+      .post("/own", () => ({ ok: true }))
+      .merge(group)
+
+    const byPath = new Map(app.routes().map((r) => [r.path, r.assurance]))
+    expect(byPath.get("/uploads")?.some((e) => e.id === "nifra.body-bounded")).toBe(true)
+    // The parent's own route never gains evidence for enforcement that no longer covers it.
+    expect(byPath.get("/own")?.some((e) => e.id === "nifra.body-bounded") ?? false).toBe(false)
   })
 
   test("fail closed: route collisions and WebSocket groups are refused", () => {

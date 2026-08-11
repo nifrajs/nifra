@@ -13,7 +13,7 @@ import {
   readCausalityHeaders,
   startCausality,
 } from "@nifrajs/core/causality"
-import { definePlugin } from "@nifrajs/core/server"
+import { type ContextPlugin, defineContextPlugin } from "@nifrajs/core/server"
 import {
   type ActiveObservation,
   createObservationLifecycle,
@@ -23,6 +23,13 @@ import { consoleSpanExporter, type ObservationAdapter } from "./span.ts"
 
 /** The trace context exposed on the handler `c.trace` (typed, threaded via `derive`). */
 export type TraceContext = ObservationContext
+
+/** What `tracing()` adds to every handler context downstream of `.use(tracing())`. */
+export interface TracingContext {
+  readonly trace: TraceContext
+  readonly observation: ActiveObservation
+  readonly causality: CausalityContext
+}
 
 export interface TracingOptions {
   /** Where spans are sent. Default: {@link consoleSpanExporter}. */
@@ -88,7 +95,7 @@ const pathOf = (url: string): string => {
  * // in a handler: fetch(url, { headers: traceHeaders(c.trace) })  // continue the trace downstream
  * ```
  */
-export function tracing(options: TracingOptions = {}) {
+export function tracing(options: TracingOptions = {}): ContextPlugin<TracingContext> {
   const adapters: ObservationAdapter[] = [
     ...(options.exporter === undefined && options.adapters === undefined
       ? [consoleSpanExporter()]
@@ -106,7 +113,7 @@ export function tracing(options: TracingOptions = {}) {
   // A WeakMap so an abandoned request cannot leak its active observation.
   const inFlight = new WeakMap<Request, ActiveObservation>()
 
-  return definePlugin("tracing", (app) => {
+  return defineContextPlugin<TracingContext>("tracing", (app) => {
     for (const stop of stopHooks) app.onStop(stop)
     return app
       .derive((c) => {

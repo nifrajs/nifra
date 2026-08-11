@@ -9,9 +9,11 @@ import { server } from "../src/index.ts"
 
 type RegistryOf<S> = S extends Server<infer R> ? R : never
 
-// Declared (type-only) schemas - this file never runs.
-declare const nameBody: StandardSchemaV1<unknown, { name: string }>
-declare const pageQuery: StandardSchemaV1<unknown, { page: number }>
+// Declared (type-only) schemas - this file never runs. Input and output sides are declared
+// separately because the registry surfaces the INPUT side for `body`/`query` (what a caller sends)
+// and the OUTPUT side for handler-facing types.
+declare const nameBody: StandardSchemaV1<{ name: string }, { name: string }>
+declare const pageQuery: StandardSchemaV1<{ page: number }, { page: number }>
 
 const app = server()
   .get("/health", () => ({ ok: true }))
@@ -45,13 +47,25 @@ export type _ParamsNested = Expect<
 >
 export type _ParamsNone = Expect<Equal<keyof Reg["/users"]["GET"]["params"], never>>
 
-// --- body: validated schema output, or `never` when none ---
+// --- body: the schema's INPUT (wire) side, or `never` when none ---
 export type _BodyPost = Expect<Equal<Reg["/users"]["POST"]["body"], { name: string }>>
 export type _BodyNone = Expect<Equal<Reg["/users"]["GET"]["body"], never>>
 
-// --- query: validated schema output, or `never` when none ---
+// --- query: the schema's INPUT (wire) side, or `never` when none ---
 export type _Query = Expect<Equal<Reg["/search"]["GET"]["query"], { page: number }>>
 export type _QueryNone = Expect<Equal<Reg["/health"]["GET"]["query"], never>>
+
+// --- a defaulting/transforming schema: the registry's body/query is the PRE-validation input shape
+// (what a caller must send), not the parsed output - a `.default()`ed field stays optional for the
+// caller even though the handler always receives it. ---
+declare const draftBody: StandardSchemaV1<
+  { title: string; tags?: string[] },
+  { title: string; tags: string[] }
+>
+const draftApp = server().post("/drafts", { body: draftBody }, (c) => ({ n: c.body.tags.length }))
+export type _BodyIsInputSide = Expect<
+  Equal<RegistryOf<typeof draftApp>["/drafts"]["POST"]["body"], { title: string; tags?: string[] }>
+>
 
 // --- multiple methods on one path merge under that path ---
 export type _Methods = Expect<Equal<keyof Reg["/users/:id"], "GET" | "PUT" | "DELETE">>

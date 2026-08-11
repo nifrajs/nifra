@@ -10,14 +10,14 @@ Bun-native, contract-first HTTP framework - the router, server, and route descri
 
 ## Public entrypoints
 
-`@nifrajs/core` · `@nifrajs/core/assurance` · `@nifrajs/core/binary` · `@nifrajs/core/budget` · `@nifrajs/core/capabilities` · `@nifrajs/core/causality` · `@nifrajs/core/channel` · `@nifrajs/core/classification` · `@nifrajs/core/contract` · `@nifrajs/core/cookies` · `@nifrajs/core/data` · `@nifrajs/core/diff` · `@nifrajs/core/durable-adapters` · `@nifrajs/core/durable-execution` · `@nifrajs/core/effect-ledger` · `@nifrajs/core/effect-lifecycle` · `@nifrajs/core/effect-scope` · `@nifrajs/core/execution-policy` · `@nifrajs/core/idempotency` · `@nifrajs/core/idempotency-plugin` · `@nifrajs/core/ledger` · `@nifrajs/core/logger` · `@nifrajs/core/manifest` · `@nifrajs/core/mcp` · `@nifrajs/core/mount` · `@nifrajs/core/node-direct` · `@nifrajs/core/pattern` · `@nifrajs/core/range` · `@nifrajs/core/reconciliation-worker` · `@nifrajs/core/reflection` · `@nifrajs/core/replay` · `@nifrajs/core/response-contract` · `@nifrajs/core/router` · `@nifrajs/core/schema` · `@nifrajs/core/seo` · `@nifrajs/core/server` · `@nifrajs/core/sse` · `@nifrajs/core/tool-catalog` · `@nifrajs/core/tool-contract` · `@nifrajs/core/transport-codec` · `@nifrajs/core/transport-codec-rich` · `@nifrajs/core/transport-plugin` · `@nifrajs/core/webhook` · `@nifrajs/core/wire` · `@nifrajs/core/ws`
+`@nifrajs/core` · `@nifrajs/core/assurance` · `@nifrajs/core/binary` · `@nifrajs/core/budget` · `@nifrajs/core/capabilities` · `@nifrajs/core/causality` · `@nifrajs/core/channel` · `@nifrajs/core/classification` · `@nifrajs/core/contract` · `@nifrajs/core/cookies` · `@nifrajs/core/data` · `@nifrajs/core/diff` · `@nifrajs/core/durable-adapters` · `@nifrajs/core/durable-execution` · `@nifrajs/core/effect-ledger` · `@nifrajs/core/effect-lifecycle` · `@nifrajs/core/effect-scope` · `@nifrajs/core/evidence` · `@nifrajs/core/execution-policy` · `@nifrajs/core/idempotency` · `@nifrajs/core/idempotency-plugin` · `@nifrajs/core/ledger` · `@nifrajs/core/logger` · `@nifrajs/core/manifest` · `@nifrajs/core/mcp` · `@nifrajs/core/mount` · `@nifrajs/core/node-direct` · `@nifrajs/core/pattern` · `@nifrajs/core/range` · `@nifrajs/core/reconciliation-worker` · `@nifrajs/core/reflection` · `@nifrajs/core/replay` · `@nifrajs/core/response-contract` · `@nifrajs/core/router` · `@nifrajs/core/schema` · `@nifrajs/core/seo` · `@nifrajs/core/server` · `@nifrajs/core/sse` · `@nifrajs/core/tool-catalog` · `@nifrajs/core/tool-contract` · `@nifrajs/core/transport-codec` · `@nifrajs/core/transport-codec-rich` · `@nifrajs/core/transport-plugin` · `@nifrajs/core/webhook` · `@nifrajs/core/wire` · `@nifrajs/core/ws`
 
 ## Key exports
 
 - **server** _(function)_ - `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>` · from `@nifrajs/core`
 - **defineContract** _(function)_ - `defineContract: <const C extends ContractShape>(contract: C) => C` · from `@nifrajs/core/contract`
 - **implement** _(function)_ - `implement: <const C extends ContractShape, H extends HandlersFor<C, Ctx>, R extends Registry = {}, Ctx = {}>(contract: C, handlers: H, app?…` · from `@nifrajs/core/contract`
-- **definePlugin** _(function)_ - `definePlugin: <In extends AnyServer, Out extends AnyServer>(name: string, apply: (app: In) => Out) => NifraPlugin<In, Out>` · from `@nifrajs/core`
+- **definePlugin** _(function)_ - `definePlugin: <In extends AnyServer, Out extends AnyServer>(name: string, apply: (app: In) => Out) => DefinePluginResult<In, Out>` · from `@nifrajs/core`
 - **sse** _(function)_ - `sse: (c: SSEContext, run: (stream: SSEStream) => void | Promise<void>, init?: SSEInit) => Response` · from `@nifrajs/core/sse`
 - **idempotency** _(function)_ - `idempotency: (options?: IdempotencyPluginOptions) => IdentityPlugin` · from `@nifrajs/core/idempotency-plugin`
 - **effectLedger** _(function)_ - `effectLedger: (options: EffectLedgerOptions) => IdentityPlugin` · from `@nifrajs/core/effect-ledger`
@@ -29,7 +29,7 @@ Bun-native, contract-first HTTP framework - the router, server, and route descri
 - **attachWebSocket** _(function)_ - `attachWebSocket: (socket: StandardWebSocket, handler: WebSocketHandler, data: unknown, options: { openNow: boolean; pubsub: TopicRegistry; …` · from `@nifrajs/core/ws`
 - **buildNifraManifest** _(function)_ - `buildNifraManifest: (input: BuildNifraManifestInput) => Promise<NifraManifest>` · from `@nifrajs/core/manifest`
 
-_…and 572 more - see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
+_…and 587 more - see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 
 ## Footguns
 

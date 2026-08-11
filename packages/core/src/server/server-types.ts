@@ -40,13 +40,16 @@ export interface AdmissionController {
 
 export interface ServerOptions {
   /**
-   * Max request body size (bytes), enforced **only when a route declares a body schema** - the cap
-   * lives in the schema-validated read path. Default 1_000_000.
+   * Max request body size (bytes), the default transport cap for every route. Default 1_000_000.
+   * A route can choose a finite `schema.bodyLimit` of its own; an explicit `'unlimited'` route
+   * requires `schema.bodyLimitReason` and is intended only for a separately bounded streaming or
+   * upload integration.
    *
-   * A route WITHOUT a body schema (raw body, file upload, BYO-validation) that reads `c.req` directly
-   * is not auto-bounded - use **`c.boundedBody(maxBytes?)`** / **`c.boundedJson(maxBytes?)`**, which
-   * apply this same cap (override per route by passing `maxBytes` - larger for an upload endpoint,
-   * smaller to tighten one).
+   * Framework readers (the body-schema lane, `c.boundedJson`) enforce the cap when they read. A
+   * route WITHOUT a body schema (raw body, file upload, BYO-validation) is covered too: direct
+   * `c.req` reads (`json()`, `arrayBuffer()`, the raw `body` stream, ...) are capped in place -
+   * lazily, nothing is buffered until code actually reads - and answer 413 past the limit.
+   * `c.boundedBody(n)` states its own explicit per-read limit, above or below the route's cap.
    */
   readonly maxBodyBytes?: number
   /**

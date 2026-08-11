@@ -973,3 +973,23 @@ test("a half-close (FIN) mid-body rejects via the close signal (not just abort/e
 
   expect(readRejected).toBe(true)
 })
+
+test("boundedBody's explicit cap still overrides the route cap after a c.req touch", async () => {
+  // The transport cap shadows the materialized request's readers at the route cap, and the lazy
+  // Node source delegates its own readers to that request once it exists. The raw-reader stash
+  // mirrored onto the source keeps framework reads pre-shadow: an explicit c.boundedBody(1000)
+  // must read 100 bytes on a maxBodyBytes: 10 server even though c.req was touched first.
+  const app = server({ maxBodyBytes: 10 }).post("/upload", async (c) => {
+    const touched = c.req.headers.get("content-type")
+    return { len: (await c.boundedBody(1000)).byteLength, touched }
+  })
+  running = await serve(app, { port: 0 })
+
+  const res = await fetch(`http://localhost:${running.port}/upload`, {
+    method: "POST",
+    headers: { "content-type": "application/octet-stream" },
+    body: "x".repeat(100),
+  })
+  expect(res.status).toBe(200)
+  expect(await res.json()).toEqual({ len: 100, touched: "application/octet-stream" })
+})

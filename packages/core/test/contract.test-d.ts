@@ -8,8 +8,9 @@ import {
 } from "@nifrajs/core/contract"
 import type { Equal, Expect } from "@nifrajs/test-utils"
 
-declare const name: StandardSchemaV1<unknown, { name: string }>
-declare const page: StandardSchemaV1<unknown, { page: number }>
+// body/query input sides are concrete: the registry surfaces the INPUT (wire) side for them.
+declare const name: StandardSchemaV1<{ name: string }, { name: string }>
+declare const page: StandardSchemaV1<{ page: number }, { page: number }>
 declare const user: StandardSchemaV1<unknown, { id: string; name: string }>
 
 const contract = defineContract({

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { RouteConfigError, type StandardSchemaV1, server } from "@nifrajs/core"
+import { RouteConfigError, type StandardSchemaV1, type StandardTypes, server } from "@nifrajs/core"
 import {
   evaluateRouteAssurance,
   NIFRA_ASSURANCE,
@@ -9,6 +9,21 @@ import { defineContract, implement } from "@nifrajs/core/contract"
 
 const passThrough: StandardSchemaV1 = {
   "~standard": { version: 1, vendor: "test", validate: (value) => ({ value }) },
+}
+
+const apiKey: StandardSchemaV1<unknown, { "x-api-key": string }> = {
+  "~standard": {
+    version: 1,
+    vendor: "test",
+    validate: (value) => {
+      const record =
+        typeof value === "object" && value !== null ? (value as Record<string, unknown>) : undefined
+      return typeof record?.["x-api-key"] === "string"
+        ? { value: { "x-api-key": record["x-api-key"] } }
+        : { issues: [{ message: "x-api-key is required", path: ["x-api-key"] }] }
+    },
+    types: undefined as unknown as StandardTypes<unknown, { "x-api-key": string }>,
+  },
 }
 
 describe("defineContract - validation (L2)", () => {
@@ -62,6 +77,20 @@ describe("defineContract - validation (L2)", () => {
       expect((err as RouteConfigError).code).toBe("DUPLICATE_ROUTE")
     }
   })
+
+  test("rejects invalid operation body-limit exemptions at contract definition", () => {
+    expect(() =>
+      defineContract({ upload: { method: "POST", path: "/upload", bodyLimit: "unlimited" } }),
+    ).toThrow(RouteConfigError)
+    expect(() =>
+      defineContract({
+        upload: { method: "POST", path: "/upload", bodyLimit: 10, bodyLimitReason: "why" },
+      }),
+    ).toThrow(RouteConfigError)
+    expect(() =>
+      defineContract({ upload: { method: "POST", path: "/upload", bodyLimit: -1 } }),
+    ).toThrow(RouteConfigError)
+  })
 })
 
 describe("implement() - response contract on the descriptor", () => {
@@ -80,6 +109,26 @@ describe("implement() - response contract on the descriptor", () => {
     })
     // No body/query/response ⇒ no schema object at all ⇒ the sync fast path is preserved untouched.
     expect(app.routes()[0]?.schema).toBeUndefined()
+  })
+})
+
+describe("implement() - request header contract", () => {
+  test("carries and validates a contract op's header schema with typed c.headers", async () => {
+    const contract = defineContract({
+      lookup: { method: "GET", path: "/lookup", headers: apiKey },
+    })
+    const app = implement(contract, {
+      lookup: (c) => ({ key: c.headers["x-api-key"] }),
+    })
+
+    const ok = await app.fetch(
+      new Request("http://x/lookup", { headers: { "X-API-Key": "secret" } }),
+    )
+    expect(ok.status).toBe(200)
+    expect(await ok.json()).toEqual({ key: "secret" })
+
+    const missing = await app.fetch(new Request("http://x/lookup"))
+    expect(missing.status).toBe(422)
   })
 })
 

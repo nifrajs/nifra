@@ -83,16 +83,26 @@ function sweep(root: unknown, policy: "reject" | "strip"): unknown {
     const record = node as Record<string, unknown>
     if (Object.hasOwn(record, "__proto__")) {
       if (policy === "reject") throw POISONED
+      // biome-ignore lint/complexity/useLiteralKeys: bracket access keeps the guarded key an explicit string, never a prototype walk
       delete record["__proto__"]
     }
     if (Object.hasOwn(record, "constructor")) {
+      // biome-ignore lint/complexity/useLiteralKeys: bracket access keeps the guarded key an explicit string, never a prototype walk
       const value = record["constructor"]
       if (value !== null && typeof value === "object" && Object.hasOwn(value, "prototype")) {
         if (policy === "reject") throw POISONED
+        // biome-ignore lint/complexity/useLiteralKeys: bracket access keeps the guarded key an explicit string, never a prototype walk
         delete record["constructor"]
       }
     }
-    for (const key of Object.keys(record)) stack.push(record[key])
+    // `for-in`, not `Object.keys()`: the walk visits every object node, and the keys array is an
+    // allocation per node (~2x the whole walk on measured bodies, both engines, at realistic
+    // widths; V8 only prefers `Object.keys` on 200+-property dictionary-mode objects). On
+    // JSON.parse output the two are identical - own enumerable string keys, nothing enumerable on
+    // the prototype chain. A custom transport codec could hand `guardDecodedValue` an object with
+    // enumerable INHERITED properties; `for-in` sweeps those too, which only over-sweeps - a
+    // poisoned inherited subtree rejects rather than slips through.
+    for (const key in record) stack.push(record[key])
   }
   return root
 }

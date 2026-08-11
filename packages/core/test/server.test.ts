@@ -319,4 +319,23 @@ describe("Server - verbs and listen", () => {
       instance.stop()
     }
   })
+
+  test("the fused Bun-native lane caps direct c.req body reads at the route's transport limit", async () => {
+    // No hooks/timeout/admission → this schema-less POST takes the fused native lane on listen(),
+    // which bypasses the portable dispatcher - the cap must still hold there.
+    const app = server({ maxBodyBytes: 10 }).post("/echo", async (c) => ({
+      len: (await c.req.arrayBuffer()).byteLength,
+    }))
+    const instance = app.listen(0)
+    const url = `http://127.0.0.1:${instance.port}/echo`
+    try {
+      expect(await (await fetch(url, { method: "POST", body: "tiny" })).json()).toEqual({ len: 4 })
+
+      const over = await fetch(url, { method: "POST", body: "x".repeat(100) })
+      expect(over.status).toBe(413)
+      expect(await over.json()).toEqual({ ok: false, error: "payload_too_large" })
+    } finally {
+      instance.stop()
+    }
+  })
 })

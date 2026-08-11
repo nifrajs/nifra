@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { server } from "../src/index.ts"
+import { RouteConfigError, server } from "../src/index.ts"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "../src/schema/standard.ts"
 
 /**
@@ -31,6 +31,18 @@ const userBody = schema<{ name: string }>((value) => {
     return { value: { name: value.name } }
   }
   return { issues: [{ message: "name must be a string", path: ["name"] }] }
+})
+
+const apiHeaders = schema<{ "x-api-key": string }>((value) => {
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "x-api-key" in value &&
+    typeof value["x-api-key"] === "string"
+  ) {
+    return { value: { "x-api-key": value["x-api-key"] } }
+  }
+  return { issues: [{ message: "x-api-key is required", path: ["x-api-key"] }] }
 })
 
 function jsonRequest(method: string, path: string, body: unknown): Request {
@@ -73,6 +85,40 @@ function lengthedRequest(path: string, payload: string, declared?: number): Requ
 }
 
 describe("body validation", () => {
+  test("invalid route body limits fail closed at registration", () => {
+    for (const bodyLimit of [-1, Number.NaN, Number.POSITIVE_INFINITY, 1.5]) {
+      try {
+        server().post("/invalid-limit", { bodyLimit }, () => null)
+        throw new Error("expected route registration to fail")
+      } catch (error) {
+        expect(error).toBeInstanceOf(RouteConfigError)
+        expect((error as RouteConfigError).code).toBe("INVALID_BODY_LIMIT")
+      }
+    }
+    expect(() =>
+      server().post("/invalid-limit-type", { bodyLimit: "not-a-limit" as never }, () => null),
+    ).toThrow(RouteConfigError)
+  })
+
+  test("unlimited body routes require an explicit, exclusive reason", () => {
+    expect(() => server().post("/upload", { bodyLimit: "unlimited" }, () => null)).toThrow(
+      RouteConfigError,
+    )
+    expect(() =>
+      server().post("/upload", { bodyLimit: "unlimited", bodyLimitReason: "   " }, () => null),
+    ).toThrow(RouteConfigError)
+    expect(() =>
+      server().post("/bounded", { bodyLimit: 1024, bodyLimitReason: "not unlimited" }, () => null),
+    ).toThrow(RouteConfigError)
+    expect(() =>
+      server().post(
+        "/upload",
+        { bodyLimit: "unlimited", bodyLimitReason: 123 as never },
+        () => null,
+      ),
+    ).toThrow(RouteConfigError)
+  })
+
   test("valid body is typed and passed to the handler", async () => {
     // c.body.name only type-checks because the schema's output is inferred.
     const app = server().post("/users", { body: userBody }, (c) => ({ created: c.body.name }))
@@ -156,6 +202,19 @@ describe("body validation", () => {
     expect((await app.fetch(req)).status).toBe(413)
   })
 
+  test("a finite per-route body limit can intentionally exceed the app default", async () => {
+    const app = server({ maxBodyBytes: 10 }).post(
+      "/larger",
+      { body: userBody, bodyLimit: 100 },
+      (c) => c.body,
+    )
+    const res = await app.fetch(
+      jsonRequest("POST", "/larger", { name: "a longer but bounded name" }),
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ name: "a longer but bounded name" })
+  })
+
   test("a valid streamed body (no Content-Length) reads through the streaming path", async () => {
     const app = server().post("/users", { body: userBody }, (c) => c.body)
     const req = streamRequest("/users", JSON.stringify({ name: "Ada" }))
@@ -206,6 +265,29 @@ describe("c.boundedBody / c.boundedJson (schema-less body cap)", () => {
     expect(await res.json()).toEqual({ x: 7 })
   })
 
+  test("the transport cap protects direct c.req body reads on schema-less routes", async () => {
+    const app = server({ maxBodyBytes: 10 }).post("/raw-direct", async (c) => ({
+      len: (await c.req.arrayBuffer()).byteLength,
+    }))
+    const res = await app.fetch(streamRequest("/raw-direct", "x".repeat(100)))
+    expect(res.status).toBe(413)
+    expect(await res.json()).toEqual({ ok: false, error: "payload_too_large" })
+  })
+
+  test("a lying small Content-Length cannot bypass the transport cap", async () => {
+    const app = server({ maxBodyBytes: 100 }).post("/raw-lying", async (c) => ({
+      len: (await c.req.arrayBuffer()).byteLength,
+    }))
+    const res = await app.fetch(
+      new Request("http://localhost/raw-lying", {
+        method: "POST",
+        headers: { "content-length": "1" },
+        body: "x".repeat(101),
+      }),
+    )
+    expect(res.status).toBe(413)
+  })
+
   test("boundedBody rejects an over-cap streamed body with 413 (no Content-Length)", async () => {
     const app = server({ maxBodyBytes: 10 }).post("/raw", async (c) => ({
       len: (await c.boundedBody()).byteLength,
@@ -238,6 +320,20 @@ describe("c.boundedBody / c.boundedJson (schema-less body cap)", () => {
       len: (await c.boundedBody(1000)).byteLength,
     }))
     expect(await (await app.fetch(streamRequest("/upload", "x".repeat(100)))).json()).toEqual({
+      len: 100,
+    })
+  })
+
+  test("an unlimited route with a reason skips the transport cap for direct reads", async () => {
+    const app = server({ maxBodyBytes: 10 }).post(
+      "/ingest",
+      {
+        bodyLimit: "unlimited",
+        bodyLimitReason: "upload is bounded by the object-store streaming protocol",
+      },
+      async (c) => ({ len: (await c.req.arrayBuffer()).byteLength }),
+    )
+    expect(await (await app.fetch(streamRequest("/ingest", "x".repeat(100)))).json()).toEqual({
       len: 100,
     })
   })
@@ -278,6 +374,28 @@ describe("query validation", () => {
       error: "validation",
       issues: [{ message: "page is required", path: ["page"] }],
     })
+  })
+})
+
+describe("header validation", () => {
+  test("normalizes header names and exposes the validated value as c.headers", async () => {
+    const app = server().get("/header", { headers: apiHeaders }, (c) => c.headers["x-api-key"])
+    const res = await app.fetch(
+      new Request("http://localhost/header", { headers: { "X-API-KEY": "secret" } }),
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toBe("secret")
+  })
+
+  test("missing required headers are rejected before the handler", async () => {
+    let ran = false
+    const app = server().get("/header", { headers: apiHeaders }, () => {
+      ran = true
+      return "bad"
+    })
+    const res = await app.fetch(new Request("http://localhost/header"))
+    expect(res.status).toBe(422)
+    expect(ran).toBe(false)
   })
 })
 

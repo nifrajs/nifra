@@ -35,7 +35,7 @@ import {
   type StandardSchemaV1,
   validateStandard,
 } from "./schema/standard.ts"
-import { guardParsedValue, type ProtoPoisoning } from "./server/proto-guard.ts"
+import { type ProtoPoisoning, parseJsonGuarded } from "./server/proto-guard.ts"
 
 const TOOL_NAME = /^[a-z][a-z0-9._-]{0,63}$/
 const MAX_EVIDENCE = 64
@@ -663,7 +663,10 @@ export function createToolHttpHandler<Input, Output>(
     }
     let input: unknown
     try {
-      input = guardParsedValue(await request.json(), protoPoisoning)
+      input =
+        protoPoisoning === "ignore"
+          ? await request.json()
+          : parseJsonGuarded(await request.text(), protoPoisoning)
     } catch {
       return toolHttpResult({
         ok: false,

@@ -5,9 +5,16 @@
  * sits below the server module in the graph.
  */
 import type { RequestBudget } from "../budget.ts"
-import { drainCapped, parseContentLength, readBoundedBytes } from "./body.ts"
+import {
+  applyTransportCap,
+  drainCapped,
+  parseContentLength,
+  rawBodySourceOf,
+  readBoundedBytes,
+} from "./body.ts"
 import type { Platform } from "./context.ts"
 import { type CookieOptions, cookieNamePrefix, parseCookies, serializeCookie } from "./cookies.ts"
+import { headerObjectOf } from "./headers.ts"
 import { jsonError } from "./http.ts"
 import { guardParsedValue, type ProtoPoisoning, parseJsonGuarded } from "./proto-guard.ts"
 import { searchOf } from "./query.ts"
@@ -95,6 +102,7 @@ export class RequestContext implements RawContext {
   private declare setValue: CtxSet | undefined
   private declare queryValue: unknown
   private declare queryReady: boolean
+  private declare headersValue: Record<string, string> | undefined
   private declare cookiesValue: Readonly<Record<string, string>> | undefined
   private declare readonly source: RequestSource
   private declare readonly maxBodyBytes: number
@@ -199,15 +207,30 @@ export class RequestContext implements RawContext {
   }
 
   get req(): Request {
-    return requestOf(this.source)
+    // A dispatcher-marked source gets its route's transport byte cap applied here - at the moment
+    // user code reaches for the request - so routes that never direct-read the body pay nothing.
+    const request = requestOf(this.source)
+    applyTransportCap(this.source, request)
+    return request
   }
 
   get request(): Request {
-    return requestOf(this.source)
+    const request = requestOf(this.source)
+    applyTransportCap(this.source, request)
+    return request
   }
 
   header(name: string): string | null {
     return headerOf(this.source, name)
+  }
+
+  get headers(): Record<string, string> {
+    this.headersValue ??= headerObjectOf(this.source.headers)
+    return this.headersValue
+  }
+
+  set headers(value: Record<string, string>) {
+    this.headersValue = value
   }
 
   json(body: unknown, init?: ResponseInit | number): Response {
@@ -284,9 +307,16 @@ async function readBoundedJsonBodyOrThrow<T>(
  * Read a JSON body with the same byte cap used by schema validation and `c.boundedJson`, then
  * parse it through the prototype-poisoning guard (`protoPoisoning`, default `"reject"` - a
  * poisoned payload answers the same flat 400 as malformed JSON). Non-chunked, framed requests
- * with an in-cap `Content-Length` use the runtime's native `json()` and guard the parsed value;
- * chunked or length-less requests fall back to the streaming byte-cap guard.
+ * with an in-cap `Content-Length` split on size: small bodies use native `json()` and walk the
+ * parsed value, large ones buffer the text for the prescan-first two-tier guard; chunked or
+ * length-less requests fall back to the streaming byte-cap guard.
  */
+/** Framed bodies at or under this many declared bytes take native `json()` plus the parsed-value
+ * walk; larger bodies buffer text for the prescan lane. Measured crossover on Bun is ~1-2KB (the
+ * walk grows with node count, the prescan is ~flat in size); Node sits at parity on both sides,
+ * so the split never loses there. */
+const NATIVE_JSON_MAX_BYTES = 1024
+
 export async function readBoundedJsonSource(
   req: RequestSource,
   maxBytes: number,
@@ -297,6 +327,10 @@ export async function readBoundedJsonSource(
   // lane never sees. One symbol read; a miss on ordinary requests costs a cache-line, not a parse.
   const preDecoded = (req as { [PRE_DECODED_BODY]?: PreDecodedBody })[PRE_DECODED_BODY]
   if (preDecoded !== undefined) return preDecoded.value
+  // Read through the pre-cap readers when the request is transport-capped: this lane enforces its
+  // own `maxBytes` (which may exceed the route's transport cap), so the shadowed user-facing
+  // readers must not narrow it.
+  const raw = rawBodySourceOf(req)
   const declared = headerOf(req, "content-length")
   if (declared !== null) {
     // A present Content-Length must be a non-negative integer (HTTP grammar: `1*DIGIT`). A
@@ -310,25 +344,38 @@ export async function readBoundedJsonSource(
     if (length > maxBytes) return jsonError(413, "payload_too_large")
     const chunked = headerOf(req, "transfer-encoding") !== null
     if (!chunked) {
-      // Native `json()` keeps the runtime's fused decode+parse (measurably faster than
-      // buffering + a JS-side parse); the guard then walks the PARSED value, which needs no raw
-      // text - escapes are already resolved, so a `\u`-spelled `__proto__` is an own key like any
-      // other. The byte-exact delivered-size re-check lives in `readBoundedBytes` (the raw-bytes
-      // lane); here the declared length was already capped above and the runtime enforces framing.
-      let parsed: unknown
-      try {
-        parsed = await req.json()
-      } catch {
-        return jsonError(400, "invalid_json")
+      // Two guarded sub-lanes, split on the declared size. Small bodies keep the runtime's fused
+      // decode+parse `json()` and pay the per-node walk - at typical API sizes the walk (~150ns)
+      // is cheaper than leaving the fused path. Large bodies buffer the raw text so the two-tier
+      // guard can PRESCAN it (three substring `includes()` passes, ~flat in size) and walk only
+      // on a suspect hit - the walk grows with node count, and at 16KB it triples parse cost on
+      // Bun while the prescan lane halves it. `TEXT_DECODER` decodes exactly like native
+      // `json()` (UTF-8, BOM strip, replacement chars), so parse and error semantics match
+      // across the lanes. Under `"ignore"` no guard runs at any size, and `json()` is always the
+      // cheapest path. The byte-exact delivered-size re-check lives in `readBoundedBytes` (the
+      // raw-bytes lane); here the declared length was already capped above and the runtime
+      // enforces framing.
+      if (protoPoisoning === "ignore" || length <= NATIVE_JSON_MAX_BYTES) {
+        let parsed: unknown
+        try {
+          parsed = await raw.json()
+        } catch {
+          return jsonError(400, "invalid_json")
+        }
+        try {
+          return guardParsedValue(parsed, protoPoisoning)
+        } catch {
+          return jsonError(400, "invalid_json")
+        }
       }
       try {
-        return guardParsedValue(parsed, protoPoisoning)
+        return parseJsonGuarded(TEXT_DECODER.decode(await raw.arrayBuffer()), protoPoisoning)
       } catch {
         return jsonError(400, "invalid_json")
       }
     }
   }
-  const body = req.body
+  const body = raw.body
   if (body === null) return jsonError(400, "invalid_json")
   const drained = await drainCapped(body, maxBytes)
   if (!drained.ok) return jsonError(413, "payload_too_large")

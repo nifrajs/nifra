@@ -1,4 +1,4 @@
-import { definePlugin } from "@nifrajs/core/server"
+import { type ContextPlugin, defineContextPlugin } from "@nifrajs/core/server"
 
 export interface LanguageMatch {
   readonly language: string
@@ -83,7 +83,9 @@ export function pickLanguage<const L extends readonly string[]>(
  * `Accept-Language`, with optional cookie persistence - use `localeDetector()` from
  * `@nifrajs/i18n/detector`; use one or the other, not both.
  */
-export function language<const L extends readonly string[]>(options: LanguageOptions<L>) {
+export function language<const L extends readonly string[]>(
+  options: LanguageOptions<L>,
+): ContextPlugin<{ language: L[number]; languageMatch: LanguageMatch }> {
   const { supported, defaultLanguage } = options
   if (supported.length === 0) throw new Error("language: supported must not be empty")
   if (!supported.includes(defaultLanguage)) {
@@ -94,19 +96,23 @@ export function language<const L extends readonly string[]>(options: LanguageOpt
   // instead of pairing state through a WeakMap - that is what lets the Node twin exist at all (it
   // has no `Request` identity to key on), keeps both hooks trivially identical, and lets the derive
   // read the header without materializing a Web `Request` on the Node adapter.
-  return definePlugin("language", (app) =>
-    app
-      .derive((c) => {
-        const match = pickLanguage(c.header("accept-language"), supported, defaultLanguage)
-        return { language: match.language, languageMatch: match }
-      })
-      .use({
-        onResponseHeaders(headers, req) {
-          if (!emitHeader) return
-          if (headers.has("content-language")) return
-          const match = pickLanguage(req.header("accept-language"), supported, defaultLanguage)
-          headers.set("content-language", match.language)
-        },
-      }),
+  return defineContextPlugin<{ language: L[number]; languageMatch: LanguageMatch }>(
+    "language",
+    (app) =>
+      app
+        .derive((c) => {
+          const match = pickLanguage(c.header("accept-language"), supported, defaultLanguage)
+          // `pickLanguage` only ever returns a member of `supported` (or `defaultLanguage`), so the
+          // narrower literal union is the honest type for handlers to switch on.
+          return { language: match.language as L[number], languageMatch: match }
+        })
+        .use({
+          onResponseHeaders(headers, req) {
+            if (!emitHeader) return
+            if (headers.has("content-language")) return
+            const match = pickLanguage(req.header("accept-language"), supported, defaultLanguage)
+            headers.set("content-language", match.language)
+          },
+        }),
   )
 }

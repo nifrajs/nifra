@@ -125,7 +125,8 @@ export interface McpServerFeatures {
    * `mimeTypes` defaults to `[UI_MIME]`. */
   readonly ui?: { readonly mimeTypes?: readonly string[] }
   /** Natural-language guidance for LLMs on how to use this server. Surfaced in the modern
-   * `server/discover` result (2026-07-28); legacy `initialize` does not carry it. */
+   * `server/discover` result (2026-07-28) and in the legacy `initialize` result (`instructions` is an
+   * optional field of that result in every handshake-era revision this server speaks). */
   readonly instructions?: string
 }
 
@@ -333,6 +334,7 @@ export async function handleRpc(
             : {}),
         },
         serverInfo,
+        ...(features.instructions !== undefined ? { instructions: features.instructions } : {}),
       })
     }
     case "server/discover":

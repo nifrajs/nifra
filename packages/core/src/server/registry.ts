@@ -35,12 +35,16 @@ export type Registry = Record<string, Record<string, RouteInfo>>
 /** The empty registry (no routes). `NonNullable<unknown>` is `{}` without tripping noBannedTypes. */
 export type EmptyRegistry = NonNullable<unknown>
 
+/** The client-visible request inputs use the schema's INPUT side: the registry describes what a
+ * caller must SEND over the wire (pre-validation), not what the handler receives after parsing. With
+ * a Zod `.default()`/transform the two differ - `InferOutput` would force the client to supply
+ * fields the schema fills in. (Same rule as the WS `in` channel below.) */
 type RegistryBody<S extends RouteSchema> = S extends { body: infer B extends StandardSchemaV1 }
-  ? InferOutput<B>
+  ? InferInput<B>
   : never
 
 type RegistryQuery<S extends RouteSchema> = S extends { query: infer Q extends StandardSchemaV1 }
-  ? InferOutput<Q>
+  ? InferInput<Q>
   : never
 
 /** The client-visible output: the declared `response` contract when present (so the client sees the

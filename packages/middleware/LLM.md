@@ -16,15 +16,15 @@ Composable middleware for nifra - auth, CSRF, JWT/JWKS, IP restriction, CORS, bo
 
 - **idempotency** _(function)_ - `idempotency: (options: IdempotencyOptions) => Middleware` · from `@nifrajs/middleware`
 - **apiKey** _(function)_ - `apiKey: { (options: ApiKeyStaticOptions): AuthPlugin<string>; <P>(options: ApiKeyVerifyOptions<P>): AuthPlugin<P>; }` · from `@nifrajs/middleware`
-- **appendTrailingSlash** _(function)_ - `appendTrailingSlash: (options?: TrailingSlashOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@ni…` · from `@nifrajs/middleware`
+- **appendTrailingSlash** _(function)_ - `appendTrailingSlash: (options?: TrailingSlashOptions) => import("@nifrajs/core").IdentityPlugin` · from `@nifrajs/middleware`
 - **basicAuth** _(function)_ - `basicAuth: { (options: BasicAuthStaticOptions): BasicAuthPlugin<string>; <P>(options: BasicAuthStaticOptions<P>): BasicAuthPlugin<P>; <P>(o…` · from `@nifrajs/middleware`
 - **bearer** _(function)_ - `bearer: <P>(options: BearerOptions<P>) => AuthPlugin<P>` · from `@nifrajs/middleware`
 - **bodyLimit** _(function)_ - `bodyLimit: (options: BodyLimitOptions) => Middleware` · from `@nifrajs/middleware`
 - **buildOpenApiDocument** _(function)_ - `buildOpenApiDocument: (routes: readonly RouteLike[], options?: OpenApiOptions) => Record<string, unknown>` · from `@nifrajs/middleware`
 - **cache** _(function)_ - `cache: (options: CacheOptions) => Middleware` · from `@nifrajs/middleware`
-- **cacheControl** _(function)_ - `cacheControl: (value: string | ((request: Request) => string | undefined), options?: CacheControlOptions) => import("@nifrajs/core").NifraP…` · from `@nifrajs/middleware`
-- **combine** _(function)_ - `combine: (...items: readonly Composable[]) => NifraPlugin` · from `@nifrajs/middleware`
-- **compression** _(function)_ - `compression: (options?: CompressionOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core…` · from `@nifrajs/middleware`
+- **cacheControl** _(function)_ - `cacheControl: (value: string | ((request: Request) => string | undefined), options?: CacheControlOptions) => import("@nifrajs/core").Identi…` · from `@nifrajs/middleware`
+- **combine** _(function)_ - `combine: (...items: readonly Composable[]) => IdentityPlugin` · from `@nifrajs/middleware`
+- **compression** _(function)_ - `compression: (options?: CompressionOptions) => import("@nifrajs/core").IdentityPlugin` · from `@nifrajs/middleware`
 - **conditionalResponse** _(function)_ - `conditionalResponse: (request: Request, response: Response, options?: ConditionalResponseOptions) => Response` · from `@nifrajs/middleware`
 - **contextStorage** _(function)_ - `contextStorage: () => Middleware` · from `@nifrajs/middleware/context-storage`
 - **cors** _(function)_ - `cors: (options?: CorsOptions) => Middleware` · from `@nifrajs/middleware`

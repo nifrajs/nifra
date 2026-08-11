@@ -1,4 +1,4 @@
-import { definePlugin } from "@nifrajs/core/server"
+import { type ContextPlugin, defineContextPlugin } from "@nifrajs/core/server"
 import { withHeaders } from "./_utils.ts"
 
 export interface TimingMetric {
@@ -62,7 +62,7 @@ function formatMetric(metric: TimingMetric, precision: number): string {
  * Put request-rewriting middleware (for example `methodOverride`) before `timing()` so timing is
  * attached to the final routed request.
  */
-export function timing(options: TimingOptions = {}) {
+export function timing(options: TimingOptions = {}): ContextPlugin<{ timing: TimingControls }> {
   const totalName = options.total === undefined ? "total" : options.total
   if (totalName !== false) assertMetricName(totalName)
   const precision = options.precision ?? 1
@@ -104,7 +104,7 @@ export function timing(options: TimingOptions = {}) {
     },
   })
 
-  return definePlugin("timing", (app) =>
+  return defineContextPlugin<{ timing: TimingControls }>("timing", (app) =>
     app
       .onRequest((req) => {
         if (!isEnabled(req)) return undefined

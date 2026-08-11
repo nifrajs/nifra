@@ -1,5 +1,5 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
-import { definePlugin, type NifraPlugin } from "@nifrajs/core/server"
+import { defineIdentityPlugin, type IdentityPlugin } from "@nifrajs/core/server"
 import {
   decodeBase64,
   jsonError,
@@ -9,7 +9,7 @@ import {
   timingSafeEqualBytes,
 } from "./_utils.ts"
 
-export type BasicAuthPlugin<P> = NifraPlugin & {
+export type BasicAuthPlugin<P> = IdentityPlugin & {
   principal(request: Request): P | null
   requirePrincipal(request: Request): P
 }
@@ -87,7 +87,7 @@ export function basicAuth<P>(
       ? Promise.resolve(options.verify)
       : staticVerifier(options.username, options.password, options.principal ?? options.username)
 
-  const plugin = definePlugin("basicAuth", (app) =>
+  const plugin = defineIdentityPlugin("basicAuth", (app) =>
     app.beforeHandle(async (c: { readonly req: Request }) => {
       const parsed = credentials(c.req)
       const principal =

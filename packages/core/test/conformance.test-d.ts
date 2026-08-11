@@ -11,7 +11,7 @@ import { server } from "@nifrajs/core"
 import { defineContract, implement } from "@nifrajs/core/contract"
 import type { Expect } from "@nifrajs/test-utils"
 
-declare const nameBody: StandardSchemaV1<unknown, { name: string }>
+declare const nameBody: StandardSchemaV1<{ name: string }, { name: string }>
 
 const listUsers = () => [{ id: "1" }]
 const getUser = (c: Context<"/users/:id">) => ({ id: c.params.id })

@@ -1,4 +1,4 @@
-import { definePlugin, type ResponseHeadersView } from "@nifrajs/core/server"
+import { defineRouterPlugin, type ResponseHeadersView } from "@nifrajs/core/server"
 
 export interface CompressionOptions {
   /** Don't compress bodies smaller than this many bytes. Default `1024`. Enforced by peeking the body
@@ -234,7 +234,7 @@ export function compression(options: CompressionOptions = {}) {
     throw new Error("compression: threshold must be a non-negative safe integer")
   }
   const isCompressible = options.compressible ?? defaultCompressible
-  return definePlugin("compression", (app) =>
+  return defineRouterPlugin("compression", (app) =>
     app.use({
       onResponseBody(body, headers, req, status) {
         if (!acceptsGzip(req.header("accept-encoding"))) return undefined

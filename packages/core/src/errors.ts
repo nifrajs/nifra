@@ -26,6 +26,7 @@ export type RouteConfigErrorCode =
   | "INVALID_METHOD"
   | "INVALID_ASSURANCE"
   | "INVALID_IDEMPOTENCY"
+  | "INVALID_BODY_LIMIT"
 
 /**
  * Thrown at route registration when a route is misconfigured. This is the

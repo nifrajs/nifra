@@ -14,7 +14,7 @@
  * When not registered, routes stay `bare` and the SSE endpoint doesn't exist.
  */
 
-import { definePlugin } from "@nifrajs/core/server"
+import { defineRouterPlugin } from "@nifrajs/core/server"
 import {
   type ActiveObservation,
   type NifraSpan,
@@ -193,10 +193,13 @@ export function devtools(options?: DevToolsOptions | undefined) {
     },
   }
 
-  return definePlugin("devtools", (app) => {
+  return defineRouterPlugin("devtools", (app) => {
     // Disabled → wire nothing: no tracing pipeline, no SSE middleware, zero per-request overhead.
     if (!enabled) return app
-    return app.use(tracing({ adapters: [adapter] })).use({
+    // Mounted as side effects: DevTools stays a type identity, so `c.trace` is not threaded here.
+    // Apps that want the typed trace context add `.use(tracing())` themselves.
+    app.use(tracing({ adapters: [adapter] }))
+    app.use({
       name: "devtools-stream",
 
       async onRequest(request: Request): Promise<Response | undefined> {
@@ -291,6 +294,7 @@ export function devtools(options?: DevToolsOptions | undefined) {
         return undefined
       },
     })
+    return app
   })
 }
 

@@ -62,6 +62,13 @@ export type Params<Path extends string> = Prettify<RawParams<Path>>
 
 /** Per-route input schemas. Each is any Standard Schema (zod/valibot/arktype/…). */
 export interface RouteSchema {
+  /** Transport body cap for this route. Defaults to the server's maxBodyBytes. Use a finite
+   * smaller/larger limit for a specific endpoint. The 'unlimited' value is an explicit
+   * streaming/upload exemption and requires a non-empty bodyLimitReason for auditability. */
+  readonly bodyLimit?: number | "unlimited"
+  /** Required explanation when bodyLimit is 'unlimited' (for example, a streaming upload is
+   * bounded by an upstream object-store protocol). */
+  readonly bodyLimitReason?: string
   /** Declared effect tokens. Reflected for assurance; never read by validation or serialization. */
   readonly capabilities?: readonly string[]
   /**
@@ -106,6 +113,10 @@ export interface RouteSchema {
    * The schema must cover every path param; with the strict default an undeclared path param is rejected.
    * When omitted, `c.params` stays the path-inferred `Record<name, string>`. */
   readonly params?: StandardSchemaV1
+  /** Optional request-header schema. Header names are normalized to lower-case and the validated
+   * output is exposed as `c.headers`; use lower-case keys because HTTP header names are
+   * case-insensitive. */
+  readonly headers?: StandardSchemaV1
   readonly body?: StandardSchemaV1
   readonly query?: StandardSchemaV1
   /** Optional **response contract**. When declared: the handler's return is type-checked against it
@@ -130,8 +141,8 @@ export interface RouteSchema {
    */
   readonly sse?: StandardSchemaV1
   /**
-   * Hook fired when the request fails `body`/`query` validation, before the handler runs. `kind` says
-   * which input failed (`"body"` | `"query"`). Its return value selects one of three outcomes (may be async):
+   * Hook fired when the request fails `headers`/`params`/`body`/`query` validation, before the handler
+   * runs. `kind` says which input failed. Its return value selects one of three outcomes (may be async):
    *   - a **`Response`** → returned as-is, short-circuiting the route (custom error envelope, redirect, …).
    *   - **any other value** → treated as a repaired payload and **re-validated once** against the same
    *     schema. If it now passes, the handler runs with it; if it still fails, the original `422` stands.
@@ -145,7 +156,7 @@ export interface RouteSchema {
   readonly onValidationError?: (
     issues: ReadonlyArray<StandardIssue>,
     ctx: Context,
-    kind: "body" | "query" | "params",
+    kind: "body" | "query" | "params" | "headers",
   ) => Response | unknown | Promise<Response | unknown>
 }
 
@@ -158,6 +169,13 @@ type BodyOf<S extends RouteSchema> = S extends { body: infer B extends StandardS
 type QueryOf<S extends RouteSchema> = S extends { query: infer Q extends StandardSchemaV1 }
   ? InferOutput<Q>
   : URLSearchParams
+
+/** The validated request-header type when a header schema is declared, else a lower-case record. */
+type HeadersOf<S extends RouteSchema> = S extends {
+  headers: infer H extends StandardSchemaV1
+}
+  ? InferOutput<H>
+  : Readonly<Record<string, string>>
 
 /** The validated params type when a params schema is declared, else the path-inferred `Params<Path>`. */
 type ParamsOf<S extends RouteSchema, Path extends string> = S extends {
@@ -216,6 +234,8 @@ export interface Context<Path extends string = string, S extends RouteSchema = R
   /** Read one request header without materializing a Web `Request` on the Node adapter hot path. */
   readonly header: (name: string) => string | null
   readonly params: ParamsOf<S, Path>
+  /** Lower-case request headers, validated/coerced when `schema.headers` is declared. */
+  readonly headers: HeadersOf<S>
   readonly query: QueryOf<S>
   readonly body: BodyOf<S>
   /** The request's cookies, parsed from the `Cookie` header (values URL-decoded). Parsed lazily on

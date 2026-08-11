@@ -60,7 +60,7 @@ export interface ToOpenAPIOptions {
 
 interface OpenAPIParameter {
   readonly name: string
-  readonly in: "path" | "query"
+  readonly in: "path" | "query" | "header"
   readonly required: boolean
   readonly schema: JsonSchema
 }
@@ -207,10 +207,21 @@ function queryParameters(schema: SchemaReflection | undefined): OpenAPIParameter
   }))
 }
 
+function headerParameters(schema: SchemaReflection | undefined): OpenAPIParameter[] {
+  if (schema?.fields === undefined) return []
+  return schema.fields.map((field) => ({
+    name: field.name.toLowerCase(),
+    in: "header" as const,
+    required: field.required,
+    schema: field.schema,
+  }))
+}
+
 interface OperationInput {
   readonly path: string
   readonly body: SchemaReflection | undefined
   readonly query: SchemaReflection | undefined
+  readonly headers: SchemaReflection | undefined
   /** Reflected params schema - per-field constraints merge into path parameters. */
   readonly params: SchemaReflection | undefined
   readonly response: SchemaReflection | undefined
@@ -299,7 +310,11 @@ function buildOperation(input: OperationInput, store: SchemaStore): OpenAPIOpera
   if (input.deprecated === true) operation.deprecated = true
   if (input.security !== undefined) operation.security = input.security // `[]` ⇒ explicitly public
 
-  const parameters = [...pathParameters(input.path, input.params), ...queryParameters(input.query)]
+  const parameters = [
+    ...pathParameters(input.path, input.params),
+    ...queryParameters(input.query),
+    ...headerParameters(input.headers),
+  ]
   if (parameters.length > 0) operation.parameters = parameters
 
   if (input.body !== undefined) {
@@ -355,6 +370,7 @@ export function toOpenAPI(
           path: route.path,
           body: route.schema?.body,
           query: route.schema?.query,
+          headers: route.schema?.headers,
           params: route.schema?.params,
           // A route may now declare a `response` contract - emit it as the 200 body schema.
           response: route.schema?.response,
@@ -375,6 +391,7 @@ export function toOpenAPI(
           path: op.path,
           body: op.body === undefined ? undefined : reflectSchema(op.body),
           query: op.query === undefined ? undefined : reflectSchema(op.query),
+          headers: op.headers === undefined ? undefined : reflectSchema(op.headers),
           params: op.params === undefined ? undefined : reflectSchema(op.params),
           response: op.response === undefined ? undefined : reflectSchema(op.response),
           operationId: name,

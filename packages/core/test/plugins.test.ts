@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { definePlugin, defineRouterPlugin, type Middleware, server } from "@nifrajs/core"
+import {
+  defineContextPlugin,
+  definePlugin,
+  defineRouterPlugin,
+  type Middleware,
+  server,
+} from "@nifrajs/core"
 
 const GET = (path: string) => new Request(`http://x${path}`)
 
@@ -13,8 +19,10 @@ describe("plugin convention - use(fn)", () => {
     expect(await (await app.fetch(GET("/"))).json()).toEqual({ g: "hi", n: 7 })
   })
 
-  test("definePlugin applies; derived context is available at runtime + typed", async () => {
-    const auth = definePlugin("auth", (a) => a.derive(() => ({ user: { id: "u1" } })))
+  test("defineContextPlugin applies; derived context is available at runtime + typed", async () => {
+    const auth = defineContextPlugin<{ user: { id: string } }>("auth", (a) =>
+      a.derive(() => ({ user: { id: "u1" } })),
+    )
     const app = server()
       .use(auth)
       .get("/me", (c) => ({ id: c.user.id }))
@@ -22,8 +30,21 @@ describe("plugin convention - use(fn)", () => {
     expect(await (await app.fetch(GET("/me"))).json()).toEqual({ id: "u1" })
   })
 
+  test("definePlugin still applies when its input server type is pinned", async () => {
+    const base = server().get("/", () => ({ ok: true }))
+    const auth = definePlugin("auth-pinned", (a: typeof base) =>
+      a.derive(() => ({ user: { id: "u2" } })),
+    )
+    const app = base.use(auth).get("/me", (c) => ({ id: c.user.id }))
+
+    expect(await (await app.fetch(GET("/me"))).json()).toEqual({ id: "u2" })
+  })
+
   test("a plugin can register routes", async () => {
-    const health = definePlugin("health", (a) => a.get("/health", () => ({ ok: true })))
+    const health = defineRouterPlugin("health", (a) => {
+      a.get("/health", () => ({ ok: true }))
+      return a
+    })
     const app = server().use(health)
     expect(await (await app.fetch(GET("/health"))).json()).toEqual({ ok: true })
   })
@@ -51,7 +72,7 @@ describe("plugin convention - use(fn)", () => {
 describe("plugin dedupe (idempotent)", () => {
   test("a named plugin applied twice runs once", async () => {
     let applied = 0
-    const p = definePlugin("once", (a) => {
+    const p = defineContextPlugin<{ tag: number }>("once", (a) => {
       applied++
       return a.derive(() => ({ tag: applied }))
     })

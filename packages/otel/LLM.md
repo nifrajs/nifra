@@ -23,11 +23,11 @@ Distributed tracing for nifra - W3C traceparent/tracestate propagation + OpenTel
 - **formatTraceparent** _(function)_ - `formatTraceparent: (traceId: string, spanId: string, sampled: boolean) => string` · from `@nifrajs/otel`
 - **generateSpanId** _(function)_ - `generateSpanId: () => string` · from `@nifrajs/otel`
 - **generateTraceId** _(function)_ - `generateTraceId: () => string` · from `@nifrajs/otel`
-- **metrics** _(function)_ - `metrics: (options?: MetricsOptions) => NifraPlugin` · from `@nifrajs/otel/metrics`
+- **metrics** _(function)_ - `metrics: (options?: MetricsOptions) => IdentityPlugin` · from `@nifrajs/otel/metrics`
 - **otlpExporter** _(function)_ - `otlpExporter: (options: OtlpExporterOptions) => OtlpExporter` · from `@nifrajs/otel`
 - **parseTraceparent** _(function)_ - `parseTraceparent: (header: string | null | undefined) => ParsedTraceparent | null` · from `@nifrajs/otel`
 - **traceHeaders** _(function)_ - `traceHeaders: (trace: TraceContext, causality?: CausalityContext) => { readonly traceparent: string; } & Readonly<Record<string, string>>` · from `@nifrajs/otel`
-- **tracing** _(function)_ - `tracing: (options?: TracingOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").Serve…` · from `@nifrajs/otel`
+- **tracing** _(function)_ - `tracing: (options?: TracingOptions) => ContextPlugin<TracingContext>` · from `@nifrajs/otel`
 
 _…and 25 more - see [`api-reference.md`](../../api-reference.md#nifrajsotel) for the complete list._
 

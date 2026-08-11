@@ -14,7 +14,7 @@ Interactive DevTools overlay for nifra dev - loader traces, ISR status, route me
 
 ## Key exports
 
-- **devtools** _(function)_ - `devtools: (options?: DevToolsOptions | undefined) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifraj…` · from `@nifrajs/devtools`
+- **devtools** _(function)_ - `devtools: (options?: DevToolsOptions | undefined) => import("@nifrajs/core").IdentityPlugin` · from `@nifrajs/devtools`
 - **devtoolsClientScript** _(function)_ - `devtoolsClientScript: (options?: DevToolsClientOptions) => string` · from `@nifrajs/devtools`
 - **filterDevToolsEvents** _(function)_ - `filterDevToolsEvents: (events: readonly DevToolsEvent[], query?: DevToolsQuery) => DevToolsEvent[]` · from `@nifrajs/devtools`
 - **DevToolsClientOptions** _(interface)_ - `interface DevToolsClientOptions` · from `@nifrajs/devtools`

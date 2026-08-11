@@ -1,5 +1,5 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
-import { definePlugin, type NifraPlugin } from "@nifrajs/core/server"
+import { defineIdentityPlugin, type IdentityPlugin } from "@nifrajs/core/server"
 import {
   base64UrlDecode,
   jsonError,
@@ -76,7 +76,7 @@ export interface JwtOptions extends VerifyJwtOptions {
   readonly cookie?: string
 }
 
-export type JwtPlugin<C extends JwtClaims = JwtClaims> = NifraPlugin & {
+export type JwtPlugin<C extends JwtClaims = JwtClaims> = IdentityPlugin & {
   claims(request: Request): C | null
   requireClaims(request: Request): C
 }
@@ -306,7 +306,7 @@ export function jwt<C extends JwtClaims = JwtClaims>(options: JwtOptions): JwtPl
   const header = (options.header ?? "authorization").toLowerCase()
   const store = new WeakMap<Request, C>()
 
-  const plugin = definePlugin("jwt", (app) =>
+  const plugin = defineIdentityPlugin("jwt", (app) =>
     app.beforeHandle(async (c: { readonly req: Request }) => {
       const token = tokenFromRequest(c.req, header, options.cookie)
       if (token === null) return optional ? undefined : reject(realm)

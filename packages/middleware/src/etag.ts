@@ -1,4 +1,4 @@
-import { definePlugin, type ResponseBodyReplacement } from "@nifrajs/core/server"
+import { defineRouterPlugin, type ResponseBodyReplacement } from "@nifrajs/core/server"
 
 /** 32-bit FNV-1a over bytes → hex. A fast, dependency-free content fingerprint for ETags - not crypto. */
 function fnv1a(bytes: Uint8Array): string {
@@ -92,7 +92,7 @@ function replayFrom(res: Response, chunks: readonly Uint8Array[], reader: ChunkR
 }
 
 /**
- * A {@link definePlugin} plugin that adds a content-hash `ETag` to `GET` `200` responses and returns
+ * A {@link defineRouterPlugin} plugin that adds a content-hash `ETag` to `GET` `200` responses and returns
  * **`304 Not Modified`** when the client's `If-None-Match` matches - saving bandwidth on unchanged
  * responses. Built on the portable `onResponseBody` tier: the hook receives the final
  * framework-serialized bytes on every runtime with nothing drained, so the middleware stays on
@@ -106,7 +106,7 @@ export function etag(options: ETagOptions = {}) {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
     throw new Error("etag: maxBytes must be a non-negative safe integer")
   }
-  return definePlugin("etag", (app) =>
+  return defineRouterPlugin("etag", (app) =>
     app.use({
       onResponseBody(body, headers, req, status) {
         if (req.method !== "GET" || status !== 200) return undefined

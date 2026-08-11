@@ -1,4 +1,4 @@
-import { definePlugin, type Middleware } from "@nifrajs/core/server"
+import { defineRouterPlugin, type Middleware } from "@nifrajs/core/server"
 import { withHeaders } from "./_utils.ts"
 
 export interface CacheControlOptions {
@@ -30,7 +30,7 @@ export function cacheControl(
   const methods = new Set((options.methods ?? ["GET", "HEAD"]).map((m) => m.toUpperCase()))
   const statusOk = options.status ?? ((status: number) => status >= 200 && status < 300)
   const respectExisting = options.respectExisting !== false
-  return definePlugin("cacheControl", (app) => {
+  return defineRouterPlugin("cacheControl", (app) => {
     // A fixed directive needs nothing from the request beyond the method, so it ships as one
     // portable header hook. A dynamic directive's resolver takes a real `Request`, which only the
     // Web response walk carries - it keeps the full `onResponse` contract (and its cost).

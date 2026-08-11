@@ -1,4 +1,4 @@
-import { definePlugin, type NodeRequestContext } from "@nifrajs/core/server"
+import { defineRouterPlugin, type NodeRequestContext } from "@nifrajs/core/server"
 
 export interface PrettyJsonOptions {
   /** JSON indentation spaces. Default `2`. */
@@ -113,7 +113,7 @@ export function prettyJson(options: PrettyJsonOptions = {}) {
 
   const decoder = new TextDecoder()
   const encoder = new TextEncoder()
-  return definePlugin("prettyJson", (app) =>
+  return defineRouterPlugin("prettyJson", (app) =>
     app.use({
       onResponseBody(body, headers, req) {
         if (!isEnabled(req)) return undefined

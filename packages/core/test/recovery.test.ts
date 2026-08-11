@@ -237,7 +237,7 @@ describe("app-level default onValidationError", () => {
   })
 
   test("the hook receives which input failed via `kind`", async () => {
-    const kinds: Array<"body" | "query" | "params"> = []
+    const kinds: Array<"body" | "query" | "params" | "headers"> = []
     const app = server({
       onValidationError: (_issues, _ctx, kind) => {
         kinds.push(kind)

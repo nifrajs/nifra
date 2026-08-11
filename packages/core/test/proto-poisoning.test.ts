@@ -157,6 +157,32 @@ describe("protoPoisoning end to end (schema lane + c.boundedJson)", () => {
     expect((await app.fetch(streamRequest("/users", POISONED))).status).toBe(400)
   })
 
+  test("large framed bodies cross the prescan sub-lane with the same policy surface", async () => {
+    // Past the size split the framed path buffers text and prescans it instead of walking the
+    // parsed value - same flat 400 on poison, same clean passthrough as the small sub-lane.
+    const pad = "x".repeat(2000)
+    const app = server().post("/users", { body: anyBody }, (c) => ({
+      name: (c.body as { name?: unknown }).name,
+    }))
+    const poisoned = `{"pad": "${pad}", "name": "Ada", "__proto__": {"admin": true}}`
+    expect((await app.fetch(lengthedRequest("/users", poisoned))).status).toBe(400)
+    const clean = await app.fetch(lengthedRequest("/users", `{"pad": "${pad}", "name": "Ada"}`))
+    expect(clean.status).toBe(200)
+    expect(await clean.json()).toEqual({ name: "Ada" })
+  })
+
+  test("strip cleans a large framed body through the prescan sub-lane", async () => {
+    const pad = "x".repeat(2000)
+    const app = server({ protoPoisoning: "strip" }).post("/users", { body: anyBody }, (c) => {
+      const body = c.body as Record<string, unknown>
+      return { name: body.name, hasProto: Object.hasOwn(body, "__proto__") }
+    })
+    const payload = `{"pad": "${pad}", "name": "Ada", "__proto__": {"admin": true}}`
+    const res = await app.fetch(lengthedRequest("/users", payload))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ name: "Ada", hasProto: false })
+  })
+
   test("strip: the handler sees the cleaned value, data intact", async () => {
     const app = server({ protoPoisoning: "strip" }).post("/users", { body: anyBody }, (c) => {
       const body = c.body as Record<string, unknown>

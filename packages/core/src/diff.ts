@@ -32,6 +32,7 @@ export interface SchemaSnapshot {
 }
 
 export interface RouteSnapshotSchema {
+  readonly headers?: SchemaSnapshot
   readonly body?: SchemaSnapshot
   readonly query?: SchemaSnapshot
   readonly response?: SchemaSnapshot
@@ -53,7 +54,7 @@ export interface RouteChange {
   readonly method: string
   readonly path: string
   /** Which part of the contract changed; "route" for add/remove of the whole route. */
-  readonly section: "route" | "body" | "query" | "response" | "sse" | "errors"
+  readonly section: "route" | "headers" | "body" | "query" | "response" | "sse" | "errors"
   /** The top-level field (or error status) the change is about, when field-granular. */
   readonly field?: string
   readonly message: string
@@ -98,10 +99,12 @@ const snapshotRoute = (route: ReflectedRoute): RouteSnapshot => {
     if (snapped !== undefined) errors[status] = snapped
   }
   const body = schemaSnapshot(schema.body)
+  const headers = schemaSnapshot(schema.headers)
   const query = schemaSnapshot(schema.query)
   const response = schemaSnapshot(schema.response)
   const sse = schemaSnapshot(schema.sse)
   const snapped: RouteSnapshotSchema = {
+    ...(headers !== undefined ? { headers } : {}),
     ...(body !== undefined ? { body } : {}),
     ...(query !== undefined ? { query } : {}),
     ...(response !== undefined ? { response } : {}),
@@ -353,7 +356,7 @@ export function diffRouteSnapshots(
     const path = beforeRoute.path
     const beforeSchema = beforeRoute.schema ?? {}
     const afterSchema = afterRoute.schema ?? {}
-    for (const section of ["body", "query"] as const) {
+    for (const section of ["headers", "body", "query"] as const) {
       diffSchemaSection(
         { method, path, section, direction: "request", changes },
         beforeSchema[section],

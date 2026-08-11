@@ -1,4 +1,4 @@
-import { definePlugin, METHODS, type Method } from "@nifrajs/core/server"
+import { defineRouterPlugin, METHODS, type Method } from "@nifrajs/core/server"
 import { jsonError } from "./_utils.ts"
 
 export interface MethodOverrideOptions {
@@ -54,7 +54,7 @@ export function methodOverride(options: MethodOverrideOptions = {}) {
   if (header !== false && header.trim() === "") throw new Error("methodOverride: header is empty")
   if (query !== false && query.trim() === "") throw new Error("methodOverride: query is empty")
 
-  return definePlugin("methodOverride", (app) =>
+  return defineRouterPlugin("methodOverride", (app) =>
     app.onRequest((req) => {
       if (!sourceMethods.has(req.method.toUpperCase())) return undefined
 

@@ -23,6 +23,7 @@ import { type Duplex, Readable } from "node:stream"
 import { fileURLToPath } from "node:url"
 // srvx's lazy spec-shaped Response - see nodeOutcomeToResponse for why the bridge uses it.
 import { FastResponse } from "srvx/node"
+import type { NodeServeOutcome } from "./generated/node-outcome.ts"
 
 /** The runtime platform a nifra app accepts as `fetch`'s 2nd arg - here, the observed socket peer. */
 interface NodePlatform {
@@ -38,8 +39,8 @@ export interface FetchHandler {
   resolveWebSocketUpgrade?(request: Request): WsUpgradeOutcome | Promise<WsUpgradeOutcome>
 }
 
-// --- WebSocket types: structurally mirrored from @nifrajs/core (this adapter has no @nifrajs/core
-// dependency - see NodeServeOutcome above). Kept in lockstep by the WS integration test. ---
+// --- WebSocket types: structurally mirrored from @nifrajs/core. The adapter stays dependency-free;
+// the runtime outcome contract below is generated from core as a separate type-only artifact. ---
 
 /** A received frame, normalized: text → `string`, binary → `Uint8Array`. */
 type NifraWsData = string | Uint8Array
@@ -107,30 +108,7 @@ export type RequestProtocolOption =
   | ((request: IncomingMessage) => RequestProtocol)
 type RequestProtocolResolver = (request: IncomingMessage) => RequestProtocol
 
-/**
- * The node-direct render returned by a nifra app's `resolveNode` - structurally mirrored here so this
- * adapter stays decoupled from `@nifrajs/core` (it bridges *any* handler exposing this seam, and has no
- * runtime dependency on nifra). A `kind: "json"` outcome is a plain-data result we serialize straight to
- * the socket; a `kind: "body"` outcome is a marked buffered response body (notably @nifrajs/web's
- * non-deferred SSR HTML). Both skip undici/Web body draining. Everything else carries a `Response` we
- * write the usual Web way. Kept in lockstep with `@nifrajs/core`'s `NodeServeOutcome` by the integration
- * test (`serve.test.ts`), which runs a real nifra app end-to-end through this path.
- */
-type NodeServeOutcome =
-  | { readonly kind: "response"; readonly response: Response }
-  | {
-      readonly kind: "json"
-      readonly status: number
-      readonly headers: Readonly<Record<string, string | readonly string[]>> | undefined
-      readonly cookies: readonly string[] | undefined
-      readonly body: string | null
-    }
-  | {
-      readonly kind: "body"
-      readonly status: number
-      readonly headers: Readonly<Record<string, string | readonly string[]>> | undefined
-      readonly body: string | Uint8Array
-    }
+/** The node-direct render contract is generated from core at build time into `./generated`. */
 
 interface NodeRequestSource {
   readonly method: string

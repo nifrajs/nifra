@@ -1,4 +1,4 @@
-import { definePlugin } from "@nifrajs/core/server"
+import { defineRouterPlugin } from "@nifrajs/core/server"
 
 export interface TrailingSlashOptions {
   /** Redirect (default) or route internally with a rewritten URL. */
@@ -59,7 +59,7 @@ export function trimTrailingSlash(options: TrailingSlashOptions = {}) {
   validateStatus(status)
   const methods = methodsOf(options.methods)
 
-  return definePlugin("trimTrailingSlash", (app) =>
+  return defineRouterPlugin("trimTrailingSlash", (app) =>
     app.onRequest((req) => {
       if (!methods.has(req.method.toUpperCase())) return undefined
       const path = new URL(req.url).pathname
@@ -81,7 +81,7 @@ export function appendTrailingSlash(options: TrailingSlashOptions = {}) {
   validateStatus(status)
   const methods = methodsOf(options.methods)
 
-  return definePlugin("appendTrailingSlash", (app) =>
+  return defineRouterPlugin("appendTrailingSlash", (app) =>
     app.onRequest((req) => {
       if (!methods.has(req.method.toUpperCase())) return undefined
       const path = new URL(req.url).pathname

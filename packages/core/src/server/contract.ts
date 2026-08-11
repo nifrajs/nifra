@@ -2,7 +2,8 @@ import type { DataClassification } from "../classification.ts"
 import { RouteConfigError } from "../errors.ts"
 import { normalizeRouteCapabilities } from "../internal/capability-runtime.ts"
 import { METHODS, type Method } from "../router/router.ts"
-import type { InferOutput, StandardSchemaV1 } from "../schema/standard.ts"
+import type { InferInput, InferOutput, StandardSchemaV1 } from "../schema/standard.ts"
+import { assertByteLimit } from "./body.ts"
 import type { Context, IdempotencyConfig, Params, RouteSchema } from "./context.ts"
 import type { EmptyRegistry, OutputOf, Registry } from "./registry.ts"
 import { Server } from "./server.ts"
@@ -28,6 +29,8 @@ export interface OperationDef {
   readonly path: string
   /** Optional path-params schema (validated + coercible at the boundary; see {@link RouteSchema.params}). */
   readonly params?: StandardSchemaV1
+  /** Optional request-header schema (header names are normalized to lower-case). */
+  readonly headers?: StandardSchemaV1
   readonly body?: StandardSchemaV1
   readonly query?: StandardSchemaV1
   readonly response?: StandardSchemaV1
@@ -35,6 +38,9 @@ export interface OperationDef {
   readonly capabilities?: readonly string[]
   /** Dedupe retries of this operation on an `Idempotency-Key` header (see {@link RouteSchema.idempotency}). */
   readonly idempotency?: IdempotencyConfig
+  /** Per-route transport body cap; see RouteSchema.bodyLimit. */
+  readonly bodyLimit?: number | "unlimited"
+  readonly bodyLimitReason?: string
   /** Highest data-sensitivity the response carries (see {@link RouteSchema.classification}). */
   readonly classification?: DataClassification
   /** Inline route-assurance evidence this operation carries (see {@link RouteSchema.assurance}). */
@@ -62,11 +68,14 @@ export interface OperationDef {
 /** A contract: named operations. Names are the handler keys and OpenAPI operationIds. */
 export type ContractShape = Record<string, OperationDef>
 
+/** Client-visible request inputs use the schema's INPUT side (what a caller sends pre-validation,
+ * so a defaulted field stays optional on the wire) - mirroring the inline registry's
+ * `RegistryBody`/`RegistryQuery`. Handler-facing types (ContextForOp) still use the output side. */
 type OpBody<O extends OperationDef> = O extends { body: infer B extends StandardSchemaV1 }
-  ? InferOutput<B>
+  ? InferInput<B>
   : never
 type OpQuery<O extends OperationDef> = O extends { query: infer Q extends StandardSchemaV1 }
-  ? InferOutput<Q>
+  ? InferInput<Q>
   : never
 type OpResponse<O extends OperationDef> = O extends { response: infer R extends StandardSchemaV1 }
   ? InferOutput<R>
@@ -129,6 +138,9 @@ type SchemaForOp<O extends OperationDef> = (O extends { body: infer B extends St
   ? { body: B }
   : Record<never, never>) &
   (O extends { query: infer Q extends StandardSchemaV1 } ? { query: Q } : Record<never, never>) &
+  (O extends { headers: infer H extends StandardSchemaV1 }
+    ? { headers: H }
+    : Record<never, never>) &
   (O extends { params: infer P extends StandardSchemaV1 } ? { params: P } : Record<never, never>)
 
 /**
@@ -187,6 +199,29 @@ export function defineContract<const C extends ContractShape>(contract: C): C {
         "INVALID_PATH",
         `operation "${name}": path must start with "/": "${op.path}"`,
       )
+    }
+    if (op.bodyLimitReason !== undefined && op.bodyLimit !== "unlimited") {
+      throw new RouteConfigError(
+        "INVALID_BODY_LIMIT",
+        `operation "${name}": bodyLimitReason is only valid with bodyLimit: "unlimited"`,
+      )
+    }
+    if (op.bodyLimit === "unlimited") {
+      if (typeof op.bodyLimitReason !== "string" || op.bodyLimitReason.trim().length === 0) {
+        throw new RouteConfigError(
+          "INVALID_BODY_LIMIT",
+          `operation "${name}": bodyLimit: "unlimited" requires a non-empty bodyLimitReason`,
+        )
+      }
+    } else if (op.bodyLimit !== undefined) {
+      try {
+        assertByteLimit(op.bodyLimit, "operation bodyLimit")
+      } catch {
+        throw new RouteConfigError(
+          "INVALID_BODY_LIMIT",
+          `operation "${name}": bodyLimit must be a non-negative safe integer or "unlimited"`,
+        )
+      }
     }
     const key = `${method} ${op.path}`
     if (seen.has(key)) {
@@ -265,21 +300,26 @@ export function implement<
     // A response-less op still yields `undefined`, byte-identical to before.
     const schema: RouteSchema | undefined =
       op.params !== undefined ||
+      op.headers !== undefined ||
       op.body !== undefined ||
       op.query !== undefined ||
       op.response !== undefined ||
       op.capabilities !== undefined ||
       op.idempotency !== undefined ||
+      op.bodyLimit !== undefined ||
       op.classification !== undefined ||
       op.assurance !== undefined ||
       op.family !== undefined
         ? {
             ...(op.params !== undefined ? { params: op.params } : {}),
+            ...(op.headers !== undefined ? { headers: op.headers } : {}),
             ...(op.body !== undefined ? { body: op.body } : {}),
             ...(op.query !== undefined ? { query: op.query } : {}),
             ...(op.response !== undefined ? { response: op.response } : {}),
             ...(op.capabilities !== undefined ? { capabilities: op.capabilities } : {}),
             ...(op.idempotency !== undefined ? { idempotency: op.idempotency } : {}),
+            ...(op.bodyLimit !== undefined ? { bodyLimit: op.bodyLimit } : {}),
+            ...(op.bodyLimitReason !== undefined ? { bodyLimitReason: op.bodyLimitReason } : {}),
             ...(op.classification !== undefined ? { classification: op.classification } : {}),
             ...(op.assurance !== undefined ? { assurance: op.assurance } : {}),
             ...(op.family !== undefined ? { family: op.family } : {}),

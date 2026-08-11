@@ -1,4 +1,4 @@
-import { definePlugin, pathnameOf } from "@nifrajs/core/server"
+import { defineRouterPlugin, pathnameOf } from "@nifrajs/core/server"
 
 const JSON_TYPE = /^(?:application\/json|[^/]+\/[^;]+\+json)(?:\s*;|$)/i
 const DEFAULT_MAX_BYTES = 64 * 1024
@@ -144,7 +144,7 @@ export function problemDetails(options: ProblemDetailsOptions = {}) {
   const instance = options.includeInstance === true
   const typeBase = options.typeBase
 
-  return definePlugin("problemDetails", (app) =>
+  return defineRouterPlugin("problemDetails", (app) =>
     app.use({
       onResponseBody(body, headers, req, status) {
         if (

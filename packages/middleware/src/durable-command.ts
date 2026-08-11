@@ -3,7 +3,7 @@ import {
   attachCapabilityJournal,
   type CapabilityExecutionJournal,
 } from "@nifrajs/core/capabilities"
-import { definePlugin, type NifraPlugin } from "@nifrajs/core/server"
+import { defineIdentityPlugin, type IdentityPlugin } from "@nifrajs/core/server"
 
 export interface DurableCommandOptions {
   /** Where effect transitions are recorded. `createDurableEffectJournal` from
@@ -36,7 +36,7 @@ export interface DurableCommandOptions {
  * deliberately never proves this one: replaying a stored response after a crash mid-effect does not
  * make the effect exactly-once, and the journal is what survives the crash.
  */
-export function durableCommand(options: DurableCommandOptions): NifraPlugin {
+export function durableCommand(options: DurableCommandOptions): IdentityPlugin {
   const journal = options.journal
   if (journal === null || typeof journal !== "object") {
     throw new TypeError("durableCommand: journal must be a CapabilityExecutionJournal")
@@ -48,7 +48,7 @@ export function durableCommand(options: DurableCommandOptions): NifraPlugin {
       throw new TypeError(`durableCommand: journal.${method} must be a function`)
     }
   }
-  const plugin = definePlugin("nifra:durable-command", (app) =>
+  const plugin = defineIdentityPlugin("nifra:durable-command", (app) =>
     app.beforeHandle((c: object) => {
       attachCapabilityJournal(c, journal)
       return undefined

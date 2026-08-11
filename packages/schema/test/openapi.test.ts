@@ -404,3 +404,39 @@ describe("params schema → enriched path parameters", () => {
     })
   })
 })
+
+describe("header schema → header parameters", () => {
+  test("app route emits lower-case header parameters", () => {
+    const doc = toOpenAPI(
+      server().get(
+        "/private",
+        { headers: t.object({ "x-api-key": t.string() }) },
+        (c) => c.headers["x-api-key"],
+      ),
+    )
+    expect(doc.paths["/private"]?.get?.parameters).toContainEqual({
+      name: "x-api-key",
+      in: "header",
+      required: true,
+      schema: { type: "string" },
+    })
+  })
+
+  test("contract operation emits its headers schema as header parameters", () => {
+    const contract = defineContract({
+      getSecret: {
+        method: "GET",
+        path: "/secret",
+        headers: t.object({ "X-Api-Key": t.string() }),
+        response: t.object({ ok: t.boolean() }),
+      },
+    })
+    const doc = toOpenAPI(contract)
+    expect(doc.paths["/secret"]?.get?.parameters).toContainEqual({
+      name: "x-api-key",
+      in: "header",
+      required: true,
+      schema: { type: "string" },
+    })
+  })
+})

@@ -295,15 +295,9 @@ export function compileRouteExecutionPlan(options: {
     wrapResponse,
   ) => {
     const server = runtime as unknown as RouteExecutionRuntime
+    const maxBodyBytes = entry.bodyLimit ?? server.maxBodyBytes
     const ctx = nativeContext
-      ? RequestContext.native(
-          source,
-          params,
-          search,
-          server.maxBodyBytes,
-          platform,
-          server.protoPoisoning,
-        )
+      ? RequestContext.native(source, params, search, maxBodyBytes, platform, server.protoPoisoning)
       : new RequestContext(
           source,
           params,
@@ -311,7 +305,7 @@ export function compileRouteExecutionPlan(options: {
           signal,
           budget,
           platform,
-          server.maxBodyBytes,
+          maxBodyBytes,
           server.protoPoisoning,
         )
     let ledger: RequestLedger | undefined
@@ -352,6 +346,8 @@ export interface RouteExecutionPlan {
 export interface RouteEntry {
   readonly handler: InternalHandler
   readonly schema: RouteSchema | undefined
+  /** Effective transport body cap; `undefined` is an explicit streaming/upload exemption. */
+  readonly bodyLimit: number | undefined
   /** Resolved idempotency config; `undefined` = off (the dedupe lane is never entered). */
   readonly idempotent: ResolvedIdempotency | undefined
   /** Resolved effect-ledger wiring; `undefined` = off (no per-request ledger, no settle step). */

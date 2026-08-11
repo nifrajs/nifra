@@ -190,6 +190,17 @@ describe("handleRpc - MCP Apps extensions", () => {
     expect(caps.extensions).toEqual({ [UI_EXTENSION_KEY]: { mimeTypes: [UI_MIME] } })
   })
 
+  test("initialize carries features.instructions; omits the field when unset", async () => {
+    const withIt = await handleRpc({ id: 1, method: "initialize" }, [ordersTool], INFO, {
+      instructions: "serve /w/app",
+    })
+    expect((withIt as { result: { instructions?: string } }).result.instructions).toBe(
+      "serve /w/app",
+    )
+    const without = await handleRpc({ id: 1, method: "initialize" }, [ordersTool], INFO, {})
+    expect("instructions" in (without as { result: object }).result).toBe(false)
+  })
+
   test("tools/list surfaces the tool's _meta ui link", async () => {
     const res = await handleRpc({ id: 2, method: "tools/list" }, [ordersTool], INFO, features)
     const tool = (res as { result: { tools: Array<{ name: string; _meta?: unknown }> } }).result

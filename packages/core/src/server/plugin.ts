@@ -60,20 +60,58 @@ export function defineContextPlugin<D extends object>(
   return Object.assign(apply, { pluginName: name }) as ContextPlugin<D>
 }
 
+declare const COLLAPSED: unique symbol
+
+/**
+ * What {@link definePlugin} returns when its `apply` argument never pinned the input server type -
+ * the `definePlugin("x", (app) => ...)` arrow, where `app` falls back to `AnyServer`.
+ *
+ * It is deliberately **not callable**, so `app.use(thatPlugin)` is a type error at the call site
+ * instead of a silent widening to `Server<any, any>` that surfaces hundreds of lines away as
+ * `Property 'x' does not exist on type 'Promise<Result<unknown, unknown>>'` in the typed client.
+ *
+ * The plugin still works at runtime. To fix the type, pick the definer that matches what it does:
+ *
+ * - adds context via `derive`/`decorate` -> {@link defineContextPlugin}
+ * - mounts routes/hooks and adds NO context -> {@link defineRouterPlugin} ({@link defineIdentityPlugin})
+ * - genuinely needs `definePlugin`: annotate the parameter (`(app: typeof api) => ...`) or pass
+ *   explicit type arguments (`definePlugin<typeof api, typeof api>(...)`).
+ */
+export interface PluginTypeCollapsed {
+  readonly [COLLAPSED]: "definePlugin erased the caller's server type: use defineContextPlugin (adds context) or defineRouterPlugin (routes/hooks only), or pin the input type"
+}
+
+/**
+ * True when `S`'s route registry is `any` - i.e. nothing pinned the plugin's input server type, so
+ * every route type flowing through it is about to be widened away.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: matches any Server shape to inspect its Registry alone
+type ServerTypeUnpinned<S> = [S] extends [Server<infer R, any>]
+  ? 0 extends 1 & R
+    ? true
+    : false
+  : false
+
+export type DefinePluginResult<In extends AnyServer, Out extends AnyServer> =
+  ServerTypeUnpinned<In> extends true ? PluginTypeCollapsed : NifraPlugin<In, Out>
+
 /**
  * Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)`
  * applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each
  * other without double-registering hooks.
  *
  * ```ts
- * export const requestId = definePlugin("requestId", (app) => app.derive(() => ({ requestId: uuid() })))
+ * export const requestId = definePlugin("requestId", (app: typeof api) =>
+ *   app.derive(() => ({ requestId: uuid() })),
+ * )
  * app.use(requestId)   // downstream handlers see c.requestId
  * ```
  *
- * FOOTGUN: this helper only threads types when the caller pins `In`/`Out` explicitly. With the usual
- * `definePlugin("x", (app) => ...)` arrow, `app` infers as `AnyServer` and `.use()` returns
- * `Server<any, any>` - the whole typed client silently collapses to `any`, with no type error and no
- * runtime error. Prefer a definer that cannot do that:
+ * This helper only threads types when the caller pins the input server type - by annotating the
+ * parameter as above, or with explicit type arguments. With a bare `(app) => ...` arrow `app` infers as
+ * `AnyServer`, which would widen the caller's whole route registry to `any`; that case now returns
+ * {@link PluginTypeCollapsed}, so `.use()` fails to compile with one error at the call site rather than
+ * producing a typed client full of `any`. Prefer a definer that cannot collapse at all:
  *
  * - adds context via `derive`/`decorate` -> {@link defineContextPlugin}
  * - mounts routes/hooks and adds NO context -> {@link defineRouterPlugin} ({@link defineIdentityPlugin})
@@ -81,8 +119,12 @@ export function defineContextPlugin<D extends object>(
 export function definePlugin<In extends AnyServer, Out extends AnyServer>(
   name: string,
   apply: (app: In) => Out,
-): NifraPlugin<In, Out> {
-  return Object.assign(apply, { pluginName: name }) as NifraPlugin<In, Out>
+): DefinePluginResult<In, Out>
+export function definePlugin(
+  name: string,
+  apply: (app: AnyServer) => AnyServer,
+): NifraPlugin<AnyServer, AnyServer> {
+  return Object.assign(apply, { pluginName: name })
 }
 
 /**
