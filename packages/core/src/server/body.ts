@@ -1,9 +1,10 @@
 /**
  * Bounded request-body reading - the single source of truth for nifra's body-size cap. A lying or
  * absent `Content-Length` can't force us to buffer an oversized payload: a declared length over the
- * cap is rejected *before* buffering, and a chunked / length-less body is aborted mid-stream once the
- * running byte count exceeds the cap. Shared by the server's schema path, `c.boundedBody`, and
- * `verifyWebhook` so they all enforce the same guarantee.
+ * cap is rejected *before* buffering, a chunked / length-less body is aborted mid-stream once the
+ * running byte count exceeds the cap, and the fast path re-checks the real byte count after the
+ * read - the declared length is a hint, never the enforcement. Shared by the server's schema path,
+ * `c.boundedBody`, and `verifyWebhook` so they all enforce the same guarantee.
  */
 
 interface BodySource {
@@ -74,8 +75,9 @@ export async function drainCapped(
  * Read a request body as **bytes**, capped at `maxBytes`. Rejects a `Content-Length` over the cap
  * before buffering (`413`) and a malformed `Content-Length` (`400`); a chunked / length-less body
  * falls through to the streaming byte-cap guard. Fast path: a non-chunked request with a
- * `Content-Length` within the cap is read via native `arrayBuffer()` (framing-bounded by the runtime's
- * HTTP server), skipping the manual stream loop.
+ * `Content-Length` within the cap is read via native `arrayBuffer()`, then the **real** byte count
+ * is checked against the declared length - a source that delivers more than it declared (a lying
+ * or upstream-decoding adapter) is rejected with `413` even though its header passed the hint.
  */
 export async function readBoundedBytes(
   req: BodySource,
@@ -91,7 +93,14 @@ export async function readBoundedBytes(
     if (length === undefined) return { ok: false, status: 400 }
     if (length > maxBytes) return { ok: false, status: 413 }
     const chunked = req.headers.get("transfer-encoding") !== null
-    if (!chunked) return { ok: true, bytes: new Uint8Array(await req.arrayBuffer()) }
+    if (!chunked) {
+      const bytes = new Uint8Array(await req.arrayBuffer())
+      // Content-Length was the fast-reject hint, never the enforcement: a lying or buffering
+      // source (an adapter that decoded/expanded the body upstream) can hand over more bytes
+      // than it declared. `length <= maxBytes` held above, so one comparison seals the cap.
+      if (bytes.byteLength > length) return { ok: false, status: 413 }
+      return { ok: true, bytes }
+    }
   }
   const body = req.body
   if (body === null) return { ok: true, bytes: new Uint8Array(0) }

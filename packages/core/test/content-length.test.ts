@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { parseContentLength } from "../src/server/body.ts"
+import { parseContentLength, readBoundedBytes } from "../src/server/body.ts"
 
 /**
  * `parseContentLength` is the integer guard at the front of the body-size cap (it replaced a
@@ -69,5 +69,87 @@ describe("parseContentLength - body-cap integer guard", () => {
         expect(got).toBe(expected)
       }
     }
+  })
+})
+
+/**
+ * The fast path trusts `Content-Length` only as a fast-reject hint; the real byte count is checked
+ * after the read. A "lying source" here models a buffering adapter that decodes or expands the body
+ * upstream (the Hono GHSA-rv63-4mwf-qqc2 class: base64 decoded after the length was checked), so
+ * the cap must hold on what was actually delivered, never on what was declared. Wire matrix - one
+ * source shape, every framing case; adapters get no per-binding assertions of their own.
+ */
+describe("readBoundedBytes - the cap holds on real bytes (GHSA-rv63-4mwf-qqc2 class)", () => {
+  /** A BodySource whose header claims `declared` but whose buffer holds `real` bytes. */
+  const lyingSource = (declared: string | null, real: Uint8Array, chunked = false) => {
+    let buffered = false
+    const source = {
+      headers: {
+        get: (name: string) =>
+          name === "content-length"
+            ? declared
+            : name === "transfer-encoding" && chunked
+              ? "chunked"
+              : null,
+      },
+      body: new Response(real.slice()).body,
+      arrayBuffer: () => {
+        buffered = true
+        return Promise.resolve(real.slice().buffer as ArrayBuffer)
+      },
+    }
+    return { source, wasBuffered: () => buffered }
+  }
+  const bytes = (n: number): Uint8Array => new Uint8Array(n).fill(65)
+  const CAP = 1000
+
+  test("honest length within the cap passes with the bytes intact", async () => {
+    const { source } = lyingSource("8", bytes(8))
+    const r = await readBoundedBytes(source, CAP)
+    expect(r).toEqual({ ok: true, bytes: bytes(8) })
+  })
+
+  test("exact-cap boundary is allowed; one byte past the declaration is not", async () => {
+    const atCap = await readBoundedBytes(lyingSource(String(CAP), bytes(CAP)).source, CAP)
+    expect(atCap.ok).toBe(true)
+    const oneOver = await readBoundedBytes(lyingSource(String(CAP), bytes(CAP + 1)).source, CAP)
+    expect(oneOver).toEqual({ ok: false, status: 413 })
+  })
+
+  test("understated length: real bytes over the cap are rejected post-read", async () => {
+    const { source } = lyingSource("5", bytes(3000))
+    expect(await readBoundedBytes(source, CAP)).toEqual({ ok: false, status: 413 })
+  })
+
+  test("understated length: even under the cap, delivering more than declared is rejected", async () => {
+    const { source } = lyingSource("5", bytes(800))
+    expect(await readBoundedBytes(source, CAP)).toEqual({ ok: false, status: 413 })
+  })
+
+  test("overstated length is rejected before any buffering happens", async () => {
+    const { source, wasBuffered } = lyingSource("3000", bytes(3000))
+    expect(await readBoundedBytes(source, CAP)).toEqual({ ok: false, status: 413 })
+    expect(wasBuffered()).toBe(false)
+  })
+
+  test("malformed length is 400, not a fall-through to the streaming guard", async () => {
+    const { source, wasBuffered } = lyingSource("5; drop", bytes(5))
+    expect(await readBoundedBytes(source, CAP)).toEqual({ ok: false, status: 400 })
+    expect(wasBuffered()).toBe(false)
+  })
+
+  test("chunked bodies skip the fast path and the streaming guard counts real bytes", async () => {
+    const { source, wasBuffered } = lyingSource("5", bytes(3000), true)
+    expect(await readBoundedBytes(source, CAP)).toEqual({ ok: false, status: 413 })
+    expect(wasBuffered()).toBe(false) // enforced by drainCapped, never by arrayBuffer framing
+  })
+
+  test("no length + no body reads as zero bytes", async () => {
+    const source = {
+      headers: { get: () => null },
+      body: null,
+      arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+    }
+    expect(await readBoundedBytes(source, CAP)).toEqual({ ok: true, bytes: new Uint8Array(0) })
   })
 })
