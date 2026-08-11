@@ -1,4 +1,4 @@
-import type { RenderAdapter, RenderProps } from "./index.ts"
+import type { RenderAdapter, RenderProps } from "./render-seam.ts"
 
 /** Framework-specific values that let the shared conformance module exercise a render adapter. */
 export interface RenderAdapterConformanceFixture {

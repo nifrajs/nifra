@@ -48,6 +48,14 @@ import type {
   ScriptDescriptor,
   UnsafeScriptDescriptor,
 } from "./manifest.ts"
+import type { RenderAdapter, RenderProps } from "./render-seam.ts"
+import {
+  ACTION_GLOBAL,
+  DATA_GLOBAL,
+  LAYOUT_DATA_GLOBAL,
+  ROOT_ATTRIBUTE,
+  ROUTE_GLOBAL,
+} from "./render-seam.ts"
 import {
   createMatcher,
   DATA_HEADER,
@@ -57,7 +65,6 @@ import {
   RETAIN_HEADER,
   REVALIDATE_HEADER,
   STATUS_HEADER,
-  type Submission,
 } from "./router.ts"
 import { searchOf, searchOfChain } from "./search.ts"
 
@@ -117,6 +124,7 @@ export {
   type Manifest,
   type Meta,
   type MetaArgs,
+  type MetaDescriptor,
   type MetaInput,
   type RouteEntry,
   type RouteModule,
@@ -235,148 +243,24 @@ export {
   RenderAdapterConformanceError,
   type RenderAdapterConformanceFixture,
 } from "./conformance.ts"
+export {
+  ACTION_GLOBAL,
+  DATA_GLOBAL,
+  LAYOUT_DATA_GLOBAL,
+  type RenderAdapter,
+  type RenderProps,
+  ROOT_ATTRIBUTE,
+  ROUTE_GLOBAL,
+  type SsrModuleLoader,
+  setSsrModuleLoader,
+  ssrModuleLoader,
+} from "./render-seam.ts"
 
 // The search-derivation primitive: parse a URL query, validate it against a route's `searchSchema`
 // (fail-closed to defaults), or return the raw parsed query when there is none. Both the server (loader
 // ctx + `renderPage`) and a client adapter mount call this with the same URL + schema, so the two sides
 // produce the identical value by construction. An adapter's `useSearch` binding reads its result.
 export { type SearchOf, searchOf, searchOfChain, serializeSearch } from "./search.ts"
-
-/** The data handed to a route component. Opaque to the core. `actionData` is the return of a
- * route `action` after a POST (absent on plain GETs). `pending` + `submission` are client-only
- * (absent on SSR): they drive **optimistic UI** - render from `submission.formData` while `pending`. */
-export interface RenderProps {
-  readonly data: unknown
-  /**
-   * Per-layout loader data, aligned index-for-index with the layout prefix of `chain`.
-   *
-   * Absent when no layout in the chain exports a `loader`, so a page-only app is byte-identical to
-   * before. An adapter that does not read it renders exactly as it did; one that does passes
-   * `layoutData[i]` to `chain[i]`.
-   */
-  readonly layoutData?: readonly unknown[]
-  readonly actionData?: unknown
-  /** True while a client navigation or submit is in flight (client-only; absent/false on SSR). */
-  readonly pending?: boolean
-  /** The path a client navigation is transitioning TO while `pending` (client-only; absent on SSR and
-   * when idle). Lets an adapter tell a `NavLink` whether its own target is the one loading. */
-  readonly pendingPath?: string
-  /** The in-flight client submit, for optimistic UI (client-only; absent on SSR + when idle). */
-  readonly submission?: Submission
-  /** The matched route's decoded path params (`/users/:id` → `{ id: "7" }`). Threaded identically on
-   * SSR (from the request match) and on client navigation (from router state) so an adapter's
-   * `useParams` reads the same value on both, with no hydration mismatch. Absent ⇒ no params (`{}`). */
-  readonly params?: Readonly<Record<string, string>>
-  /** The current URL's `pathname + search` (no hash - the hash never reaches the server). Threaded on
-   * SSR and client alike so an adapter's `useLocation`/`useSearchParams` hydrate consistently. Absent
-   * on adapters/callers that don't supply it (treated as `""`). */
-  readonly path?: string
-  /** The route's typed, validated search params (the value the loader also gets as `ctx.search`),
-   * threaded to the adapter's `useSearch`. Derived identically on SSR (from the request) and on client
-   * navigation (adapter mount) via the shared `searchOf`, so a component reading it hydrates with no
-   * drift. Absent ⇒ no search context (`{}`). */
-  readonly search?: Record<string, unknown>
-}
-
-/**
- * The seam every render adapter implements. New adapters should prove these invariants with
- * {@link assertRenderAdapterConformance}; framework-specific behavior remains locally tested.
- */
-export interface RenderAdapter {
-  /**
-   * Server: render a route's layout `chain` (outermost layout → page) to a **stream** of HTML
-   * bytes, including the framework's hydration markers. The page (innermost) receives `props`
-   * (the loader data); each layout wraps the child via its `children`. Returns (or resolves to)
-   * a Web `ReadableStream<Uint8Array>`: a streaming renderer flushes the shell first and streams
-   * Suspense boundaries as they resolve; a non-streaming renderer may return a one-chunk stream.
-   * May be async - e.g. React resolves once the shell is renderable, so a shell-render throw can
-   * still map to an error status before any byte is sent.
-   */
-  renderToStream(
-    chain: readonly unknown[],
-    props: RenderProps,
-  ): ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>
-  /**
-   * Server (optional): render the chain to a complete HTML **string** in one pass, with the same
-   * hydration markers `renderToStream` produces. When provided, `renderPage` uses it for any page
-   * that does **not** `defer()` - buffering the document is faster than the streaming pipeline there,
-   * because the framework's synchronous renderer (React `renderToString`, Solid `renderToString`,
-   * Preact `render`, Vue `renderToString`, Svelte `render`) is markedly cheaper than its streaming
-   * renderer - most visibly on Bun, where React Fizz / Solid `renderToStream` are the heaviest. Pages
-   * that `defer()` keep the streaming path (progressive `<Await>` needs it). Markup MUST be
-   * hydration-equivalent to `renderToStream`; a throw surfaces like the streaming shell-readiness
-   * await (the `_error` boundary maps it to a status). Omit it to always stream.
-   */
-  renderToString?(chain: readonly unknown[], props: RenderProps): string | Promise<string>
-  /**
-   * Server: per-document bootstrap markup injected into `<head>` that the client
-   * `hydrate` requires (Solid: `generateHydrationScript()`). Empty string if none.
-   */
-  hydrationHead(nonce?: string): string
-}
-
-/**
- * Loads a module through the DEV SERVER'S module graph rather than the runtime's. Takes an absolute
- * file path or a bare specifier; resolution, compilation and caching are the dev server's.
- */
-export type SsrModuleLoader = (id: string) => Promise<unknown>
-
-/* A `globalThis` singleton for the same reason `@nifrajs/web-react`'s router context is one: in dev
- * this module is evaluated twice in one process (the CLI's copy under Bun, and the app's copy), and a
- * module-level `let` would leave the adapter reading a slot the dev server set on the other copy. */
-const SSR_MODULE_LOADER_SLOT = Symbol.for("nifra.web.ssr-module-loader")
-/* Explicitly `| undefined`: clearing the slot is part of the contract (a dev server clears it on
- * stop), and under `exactOptionalPropertyTypes` "absent" and "set to undefined" are separate types. */
-const loaderSlot = globalThis as { [SSR_MODULE_LOADER_SLOT]?: SsrModuleLoader | undefined }
-
-/**
- * Publishes the dev server's SSR module loader. Called by a dev server that owns SSR resolution
- * itself; pass `undefined` to clear it on shutdown.
- */
-export function setSsrModuleLoader(load: SsrModuleLoader | undefined): void {
-  loaderSlot[SSR_MODULE_LOADER_SLOT] = load
-}
-
-/**
- * The dev server's SSR module loader, or `undefined` when nothing owns SSR resolution but the runtime
- * - the Bun dev pipeline, and every production build, where the adapter's assets are compiled ahead
- * of time and a plain `import` is already the right thing.
- *
- * An adapter that must load a COMPILED asset at runtime (a `.svelte` component, say) has to prefer
- * this over a bare `import`, and has to take the framework's SERVER RENDERER from it as well, not
- * just the component. A component compiled by the dev server renders through the renderer the dev
- * server resolved; mixing the two puts two copies of the framework runtime in one component tree,
- * where context written by one half is invisible to the other.
- */
-export function ssrModuleLoader(): SsrModuleLoader | undefined {
-  return loaderSlot[SSR_MODULE_LOADER_SLOT]
-}
-
-/** Global the server serializes loader data into; the client reads it to hydrate. */
-export const DATA_GLOBAL = "__NIFRA_DATA__"
-/** Per-layout loader data for hydration. Emitted ONLY when some layout in the chain has a loader, so
- * a page-only app's HTML is byte-identical to before layout loaders existed. */
-export const LAYOUT_DATA_GLOBAL = "__NIFRA_LAYOUT_DATA__"
-
-/** Global the server writes the matched route id into; the client uses it to pick the chain. */
-export const ROUTE_GLOBAL = "__NIFRA_ROUTE__"
-
-/** Global the server serializes an action's data return into (absent on GETs); the client
- * reads it so hydration after a native form POST matches the server-rendered markup. */
-export const ACTION_GLOBAL = "__NIFRA_ACTION__"
-
-/**
- * Marker attribute on the app container, emitted ONLY when `rootId` is not the default.
- *
- * `rootId` is a per-RENDER option; the client entry is a per-BUILD artifact, so it cannot be
- * generated knowing which id a given render will use. The container therefore announces itself, and
- * the entry finds it by this attribute before falling back to `#root`. It has to be the DOM rather
- * than another `window.__NIFRA_*` global: a second copy of the id can drift from the markup, while
- * this is written by the same expression that writes the id and cannot.
- *
- * Absent on a default render, so an app that never sets `rootId` emits the same bytes it always has.
- */
-export const ROOT_ATTRIBUTE = "data-nifra-root"
 
 /**
  * Pre-hydration form guard - a tiny inline script flushed in `<head>` (it runs in the window between
@@ -1026,6 +910,20 @@ function withDuplicateInstanceHint(err: unknown): unknown {
   // stack with nothing on engines that always populate it.
   if (err.stack !== undefined) augmented.stack = err.stack
   return augmented
+}
+
+/**
+ * An action's `Response` passes straight through - except a redirect on a client-submit data
+ * request: fetch would follow the 3xx into HTML the client can't use, so the redirect rides the
+ * X-Nifra-Redirect header on a 204 and the client navigates. One conversion shared by the
+ * returned- and thrown-Response paths, so `return redirect()` and `throw redirect()` agree.
+ */
+function actionResponse(response: Response, isDataRequest: boolean): Response {
+  if (isDataRequest && response.status >= 300 && response.status < 400) {
+    const location = response.headers.get("location") ?? "/"
+    return new Response(null, { status: 204, headers: { [REDIRECT_HEADER]: location } })
+  }
+  return response
 }
 
 /** A loaded layout module. `loader`/`gate` are the layout-loader surface; `meta` predates it. */
@@ -2200,6 +2098,13 @@ export function createWebApp<Env = unknown>(
         }
         return renderError(route, errorId, withDuplicateInstanceHint(err))
       }
+      // A loader may RETURN its control-flow signal instead of throwing it - `return redirect(...)`
+      // reads naturally and must not silently serialize the `Response` as loader data. Mirror the
+      // catch above exactly: a status signal renders its boundary, any other `Response` (a
+      // redirect, a hand-rolled response) passes through to core verbatim - so return and throw
+      // are interchangeable.
+      if (isStatusSignal(data)) return renderStatusSignal(c.req, data)
+      if (data instanceof Response) return data
       // Client-side navigation asks (via the X-Nifra-Data header) for just the loader data - no full
       // document, no layout chain. A route with deferred data streams NDJSON (critical data first,
       // then each deferred value as it settles); otherwise one JSON (the fast path). Same loader,
@@ -2306,11 +2211,21 @@ export function createWebApp<Env = unknown>(
         draft,
         search: loaderSearch(mod.searchSchema, c.req),
       }
-      // A gate is an authorization boundary for everything beneath its layout, mutations included.
-      // Run only gates before the action; ordinary layout data loaders run after a native mutation.
-      const layoutModules = await runLayoutGates(route, actionContext)
-      const result = await mod.action(actionContext)
       const isDataRequest = c.req.headers.get(DATA_HEADER) !== null
+      let layoutModules: LoadedLayoutModules
+      let result: unknown
+      try {
+        // A gate is an authorization boundary for everything beneath its layout, mutations included.
+        // Run only gates before the action; ordinary layout data loaders run after a native mutation.
+        layoutModules = await runLayoutGates(route, actionContext)
+        result = await mod.action(actionContext)
+      } catch (err) {
+        // A THROWN Response is the same control-flow signal as a returned one (`throw redirect()`
+        // in a gate or an action) - route it through the same conversion as the returned-Response
+        // branch below, so throw and return are interchangeable on the mutation path too.
+        if (err instanceof Response) return actionResponse(err, isDataRequest)
+        throw err
+      }
       // An action may wrap its data in `revalidate(paths, data)` to declare which routes it changed.
       // Unwrap to the inner data; the paths ride the `X-Nifra-Revalidate` header on the data-mode
       // responses (the client acts on them - a full-page POST re-runs loaders inline, so no header).
@@ -2320,15 +2235,7 @@ export function createWebApp<Env = unknown>(
       const revalidateHeader: Record<string, string> = isRevalidate
         ? { [REVALIDATE_HEADER]: (result as RevalidateResult<unknown>).__nifraRevalidate.join(",") }
         : {}
-      if (actionResult instanceof Response) {
-        // Client submit can't read a 3xx Location (fetch follows it to HTML), so convey the
-        // redirect via a header on a 204 and let the client navigate. Native forms get the 3xx.
-        if (isDataRequest && actionResult.status >= 300 && actionResult.status < 400) {
-          const location = actionResult.headers.get("location") ?? "/"
-          return new Response(null, { status: 204, headers: { [REDIRECT_HEADER]: location } })
-        }
-        return actionResult
-      }
+      if (actionResult instanceof Response) return actionResponse(actionResult, isDataRequest)
       // Client submit wants just the action's data (it revalidates the loader itself); a native
       // form POST re-renders the full page (loader re-runs) with the action data.
       if (isDataRequest) {

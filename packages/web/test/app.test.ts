@@ -743,6 +743,56 @@ test("POST with X-Nifra-Data converts an action redirect into an X-Nifra-Redirec
   expect(res.headers.get("x-nifra-redirect")).toBe("/thanks")
 })
 
+test("a THROWN action redirect converts exactly like a returned one (throw/return symmetry)", async () => {
+  const manifest: Manifest = {
+    routes: [
+      {
+        id: "index",
+        pattern: "/",
+        layoutIds: [],
+        file: "index.tsx",
+        load: async () => ({
+          default: "page",
+          action: () => {
+            throw redirect("/thanks")
+          },
+        }),
+      },
+    ],
+    layouts: {},
+  }
+  const app = createWebApp({ adapter: stub, manifest, clientEntry: "/c.js" })
+  // Client submit (data request): the redirect rides the header on a 204.
+  const data = await app.fetch(
+    new Request("http://x/", { method: "POST", headers: { "x-nifra-data": "1" } }),
+  )
+  expect(data.status).toBe(204)
+  expect(data.headers.get("x-nifra-redirect")).toBe("/thanks")
+  // Native form POST: the 3xx passes straight through.
+  const native = await app.fetch(new Request("http://x/", { method: "POST" }))
+  expect(native.status).toBe(303)
+  expect(native.headers.get("location")).toBe("/thanks")
+})
+
+test("a RETURNED loader redirect passes through like a thrown one, never serialized as data", async () => {
+  const manifest: Manifest = {
+    routes: [
+      {
+        id: "index",
+        pattern: "/",
+        layoutIds: [],
+        file: "index.tsx",
+        load: async () => ({ default: "page", loader: () => redirect("/login") }),
+      },
+    ],
+    layouts: {},
+  }
+  const app = createWebApp({ adapter: stub, manifest, clientEntry: "/c.js" })
+  const res = await app.fetch(new Request("http://x/", { redirect: "manual" }))
+  expect(res.status).toBe(303)
+  expect(res.headers.get("location")).toBe("/login")
+})
+
 test("createWebApp modulepreloads the matched route's chunks when routePreload is given", async () => {
   const app = createWebApp({
     adapter: stub,
