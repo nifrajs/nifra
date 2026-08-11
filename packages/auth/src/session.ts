@@ -40,8 +40,11 @@ export interface Session<Data extends Record<string, unknown> = Record<string, u
 export type SessionCookieOptions = Pick<CookieOptions, "secure" | "sameSite" | "path" | "domain">
 
 export interface SessionOptions {
-  /** Signing secret (≥ 16 chars). Rotating it invalidates all existing sessions. */
-  readonly secret: string
+  /** Signing secret (≥ 32 bytes), or a rotation list: the **first** secret signs new cookies and
+   * any listed secret verifies, so rotating without invalidating live sessions is: prepend the new
+   * secret, drop the old one after `maxAge` has elapsed. A bare secret swap (no list) invalidates
+   * all existing sessions. */
+  readonly secret: string | readonly string[]
   /** Provide a store for **store mode**; omit for **cookie mode** (stateless). */
   readonly store?: SessionStore
   /** Cookie name. Default `nifra_session`. */
@@ -112,10 +115,16 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
   options: SessionOptions,
 ): SessionManager<Data> {
   const { secret, store } = options
-  if (SECRET_ENCODER.encode(secret).length < MIN_SECRET_BYTES) {
-    throw new Error(
-      `[nifra/auth] session secret must be at least ${MIN_SECRET_BYTES} bytes (256-bit). Generate one with: openssl rand -base64 32`,
-    )
+  const secretList = typeof secret === "string" ? [secret] : secret
+  if (secretList.length === 0) {
+    throw new Error("[nifra/auth] session secret list cannot be empty")
+  }
+  for (const s of secretList) {
+    if (SECRET_ENCODER.encode(s).length < MIN_SECRET_BYTES) {
+      throw new Error(
+        `[nifra/auth] session secret must be at least ${MIN_SECRET_BYTES} bytes (256-bit). Generate one with: openssl rand -base64 32`,
+      )
+    }
   }
   const cookieName = options.cookieName ?? "nifra_session"
   const maxAge = options.maxAge ?? 7 * DAY_SECONDS

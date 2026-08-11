@@ -2591,6 +2591,20 @@
     "doc": "/** Attributes for a `Set-Cookie`. `expires` is a `Date`; `maxAge` is in **seconds**. */"
   },
   {
+    "name": "CookieSecret",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type CookieSecret = string | readonly string[];",
+    "doc": "/**\n * A signing secret, or a rotation list of them. With a list, **the first secret signs** and\n * verification accepts **any** entry - so rotation is: prepend the new secret, keep the old one\n * until every cookie signed by it has expired, then drop it. An empty list throws.\n */"
+  },
+  {
+    "name": "CookieSecret",
+    "kind": "type",
+    "package": "nifra",
+    "signature": "export type CookieSecret = string | readonly string[];",
+    "doc": "/**\n * A signing secret, or a rotation list of them. With a list, **the first secret signs** and\n * verification accepts **any** entry - so rotation is: prepend the new secret, keep the old one\n * until every cookie signed by it has expired, then drop it. An empty list throws.\n */"
+  },
+  {
     "name": "copyPublicDir",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -2660,7 +2674,7 @@
     "name": "createCsrfToken",
     "kind": "function",
     "package": "@nifrajs/middleware",
-    "signature": "export declare function createCsrfToken(secret: string | Uint8Array, nonce?: string): Promise<string>;"
+    "signature": "export declare function createCsrfToken(secret: CsrfSecret, nonce?: string): Promise<string>;"
   },
   {
     "name": "createDataPort",
@@ -3052,7 +3066,7 @@
     "name": "CsrfOptions",
     "kind": "interface",
     "package": "@nifrajs/middleware",
-    "signature": "export interface CsrfOptions {\n    /** HMAC secret. Must be at least 32 bytes. */\n    readonly secret: string | Uint8Array;\n    /** Cookie carrying the signed token. Default `\"csrf-token\"`. */\n    readonly cookie?: string;\n    /** Header carrying the same signed token. Default `\"x-csrf-token\"`. */\n    readonly header?: string;\n    /** Unsafe methods to protect. Default: every method except GET/HEAD/OPTIONS/TRACE. */\n    readonly methods?: readonly string[];\n    /** Allowed request origins. Default: same-origin derived from the request URL. */\n    readonly origins?: readonly string[];\n    /** Check Origin/Referer on protected requests. Default true. */\n    readonly checkOrigin?: boolean;\n}"
+    "signature": "export interface CsrfOptions {\n    /** HMAC secret (≥ 32 bytes), or a rotation list - see {@link CsrfSecret}. */\n    readonly secret: CsrfSecret;\n    /** Cookie carrying the signed token. Default `\"csrf-token\"`. */\n    readonly cookie?: string;\n    /** Header carrying the same signed token. Default `\"x-csrf-token\"`. */\n    readonly header?: string;\n    /** Unsafe methods to protect. Default: every method except GET/HEAD/OPTIONS/TRACE. */\n    readonly methods?: readonly string[];\n    /** Allowed request origins. Default: same-origin derived from the request URL. */\n    readonly origins?: readonly string[];\n    /** Check Origin/Referer on protected requests. Default true. */\n    readonly checkOrigin?: boolean;\n}"
   },
   {
     "name": "CssModuleResult",
@@ -9124,7 +9138,7 @@
     "kind": "function",
     "package": "@nifrajs/middleware",
     "signature": "export declare function requestId(options?: RequestIdOptions): ContextPlugin<{\n    requestId: string;\n}>;",
-    "doc": "/**\n * A {@link defineContextPlugin} plugin that gives every request a stable id: it reuses an inbound\n * `x-request-id` (or generates one), exposes it on the handler context as **`c.requestId`** (typed,\n * threaded by `derive`), and echoes it on EVERY response leaving the app - handler-returned raw\n * `Response`s and redirects, `onRequest` short-circuits (an auth 401, an admission 429), and\n * framework-generated 404/405/422/timeout responses included. Core deliberately does not merge\n * `c.set.headers` onto a handler-returned `Response`, so the echo lives in app-global\n * `onRequest`/`onResponse` hooks (paired through a `WeakMap` keyed on the request, logger()'s\n * shape) with node twins, keeping the Node adapter on its direct writer. Idempotent - applying it\n * twice is a no-op.\n *\n * ```ts\n * app.use(requestId())          // c.requestId available downstream; X-Request-Id on responses\n * ```\n */"
+    "doc": "/**\n * A {@link defineContextPlugin} plugin that gives every request a stable id: it reuses an inbound\n * `x-request-id` (or generates one), exposes it on the handler context as **`c.requestId`** (typed,\n * threaded by `derive`), and echoes it on EVERY response leaving the app - handler-returned raw\n * `Response`s and redirects, `onRequest` short-circuits (an auth 401, an admission 429), and\n * framework-generated 404/405/422/timeout responses included. Core deliberately does not merge\n * `c.set.headers` onto a handler-returned `Response`, so the echo lives in an app-global\n * `onResponse` hook (paired with the derive through a `WeakMap` keyed on the request) with a node\n * twin, keeping the Node adapter on its direct writer with no request-walk cost. Idempotent -\n * applying it twice is a no-op.\n *\n * ```ts\n * app.use(requestId())          // c.requestId available downstream; X-Request-Id on responses\n * ```\n */"
   },
   {
     "name": "RequestIdOptions",
@@ -10271,7 +10285,7 @@
     "name": "SecurityHeadersOptions",
     "kind": "interface",
     "package": "@nifrajs/middleware",
-    "signature": "export interface SecurityHeadersOptions {\n    /** `Strict-Transport-Security`. Off by default - opt in once you're sure you're HTTPS-only. */\n    readonly hsts?: {\n        readonly maxAge: number;\n        readonly includeSubDomains?: boolean;\n        readonly preload?: boolean;\n    };\n    /** `Content-Security-Policy` value. Off by default (app-specific). */\n    readonly contentSecurityPolicy?: string;\n    /** `X-Frame-Options`. Default `\"DENY\"`. */\n    readonly frameOptions?: \"DENY\" | \"SAMEORIGIN\";\n    /** `Referrer-Policy`. Default `\"no-referrer\"`. */\n    readonly referrerPolicy?: string;\n}"
+    "signature": "export interface SecurityHeadersOptions {\n    /** `Strict-Transport-Security`. Off by default - opt in once you're sure you're HTTPS-only. */\n    readonly hsts?: {\n        readonly maxAge: number;\n        readonly includeSubDomains?: boolean;\n        readonly preload?: boolean;\n    };\n    /** `Content-Security-Policy` value. Off by default (app-specific). */\n    readonly contentSecurityPolicy?: string;\n    /** `X-Frame-Options`. Default `\"DENY\"`. */\n    readonly frameOptions?: \"DENY\" | \"SAMEORIGIN\";\n    /** `Referrer-Policy`. Default `\"no-referrer\"`. */\n    readonly referrerPolicy?: string;\n    /** `Cross-Origin-Opener-Policy`. Off by default - isolates the browsing context group; opt in\n     * when the app tolerates losing `window.opener` links from cross-origin pages. */\n    readonly crossOriginOpenerPolicy?: \"same-origin\" | \"same-origin-allow-popups\" | \"unsafe-none\";\n    /** `Cross-Origin-Embedder-Policy`. Off by default - `require-corp` breaks embedding of\n     * cross-origin resources that do not opt in, so this is a deliberate decision. */\n    readonly crossOriginEmbedderPolicy?: \"require-corp\" | \"credentialless\" | \"unsafe-none\";\n    /** `Cross-Origin-Resource-Policy`. Off by default (app-specific: assets meant for other\n     * origins need `cross-origin`). */\n    readonly crossOriginResourcePolicy?: \"same-origin\" | \"same-site\" | \"cross-origin\";\n    /** `Permissions-Policy` value, e.g. `\"camera=(), geolocation=()\"`. Off by default (app-specific). */\n    readonly permissionsPolicy?: string;\n}"
   },
   {
     "name": "SecurityRequirement",
@@ -10694,7 +10708,7 @@
     "name": "SessionOptions",
     "kind": "interface",
     "package": "@nifrajs/auth",
-    "signature": "export interface SessionOptions {\n    /** Signing secret (≥ 16 chars). Rotating it invalidates all existing sessions. */\n    readonly secret: string;\n    /** Provide a store for **store mode**; omit for **cookie mode** (stateless). */\n    readonly store?: SessionStore;\n    /** Cookie name. Default `nifra_session`. */\n    readonly cookieName?: string;\n    /** Session lifetime in **seconds**. Default 7 days. */\n    readonly maxAge?: number;\n    /** Slide the expiry forward on every commit (default `true`); `false` = fixed absolute expiry. */\n    readonly rolling?: boolean;\n    /** Extra cookie attributes (the session cookie is always HttpOnly; `Secure`/`SameSite=Lax`/`Path=/`\n     * default via `c.set.cookie`). Pass `{ secure: false }` for local http dev. */\n    readonly cookie?: SessionCookieOptions;\n    /** Clock (ms) - injected for testability; production passes `() => Date.now()` (the default). */\n    readonly now?: () => number;\n}"
+    "signature": "export interface SessionOptions {\n    /** Signing secret (≥ 32 bytes), or a rotation list: the **first** secret signs new cookies and\n     * any listed secret verifies, so rotating without invalidating live sessions is: prepend the new\n     * secret, drop the old one after `maxAge` has elapsed. A bare secret swap (no list) invalidates\n     * all existing sessions. */\n    readonly secret: string | readonly string[];\n    /** Provide a store for **store mode**; omit for **cookie mode** (stateless). */\n    readonly store?: SessionStore;\n    /** Cookie name. Default `nifra_session`. */\n    readonly cookieName?: string;\n    /** Session lifetime in **seconds**. Default 7 days. */\n    readonly maxAge?: number;\n    /** Slide the expiry forward on every commit (default `true`); `false` = fixed absolute expiry. */\n    readonly rolling?: boolean;\n    /** Extra cookie attributes (the session cookie is always HttpOnly; `Secure`/`SameSite=Lax`/`Path=/`\n     * default via `c.set.cookie`). Pass `{ secure: false }` for local http dev. */\n    readonly cookie?: SessionCookieOptions;\n    /** Clock (ms) - injected for testability; production passes `() => Date.now()` (the default). */\n    readonly now?: () => number;\n}"
   },
   {
     "name": "SessionRecord",
@@ -10892,15 +10906,15 @@
     "name": "signValue",
     "kind": "function",
     "package": "@nifrajs/core",
-    "signature": "export declare function signValue(value: string, secret: string): Promise<string>;",
-    "doc": "/** Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies. */"
+    "signature": "export declare function signValue(value: string, secret: CookieSecret): Promise<string>;",
+    "doc": "/** Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies.\n * With a {@link CookieSecret} rotation list, signs with the first secret. */"
   },
   {
     "name": "signValue",
     "kind": "function",
     "package": "nifra",
-    "signature": "export declare function signValue(value: string, secret: string): Promise<string>;",
-    "doc": "/** Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies. */"
+    "signature": "export declare function signValue(value: string, secret: CookieSecret): Promise<string>;",
+    "doc": "/** Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies.\n * With a {@link CookieSecret} rotation list, signs with the first secret. */"
   },
   {
     "name": "silentLogger",
@@ -12248,15 +12262,15 @@
     "name": "unsignValue",
     "kind": "function",
     "package": "@nifrajs/core",
-    "signature": "export declare function unsignValue(signed: string, secret: string): Promise<string | null>;",
-    "doc": "/**\n * Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the\n * signature is missing, malformed, or doesn't match. Verification is **constant-time**\n * (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.\n */"
+    "signature": "export declare function unsignValue(signed: string, secret: CookieSecret): Promise<string | null>;",
+    "doc": "/**\n * Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the\n * signature is missing, malformed, or doesn't match. Verification is **constant-time**\n * (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.\n *\n * With a {@link CookieSecret} rotation list, tries each secret in order and accepts the first\n * match. Every listed secret must meet the 32-byte floor - a weak entry throws even when an\n * earlier secret would have matched, so a rotation list can't quietly carry a weak key. (Which\n * rotation generation matched is not attacker-meaningful, so the early exit between secrets leaks\n * nothing useful; each individual comparison stays constant-time.)\n */"
   },
   {
     "name": "unsignValue",
     "kind": "function",
     "package": "nifra",
-    "signature": "export declare function unsignValue(signed: string, secret: string): Promise<string | null>;",
-    "doc": "/**\n * Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the\n * signature is missing, malformed, or doesn't match. Verification is **constant-time**\n * (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.\n */"
+    "signature": "export declare function unsignValue(signed: string, secret: CookieSecret): Promise<string | null>;",
+    "doc": "/**\n * Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the\n * signature is missing, malformed, or doesn't match. Verification is **constant-time**\n * (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.\n *\n * With a {@link CookieSecret} rotation list, tries each secret in order and accepts the first\n * match. Every listed secret must meet the 32-byte floor - a weak entry throws even when an\n * earlier secret would have matched, so a rotation list can't quietly carry a weak key. (Which\n * rotation generation matched is not attacker-meaningful, so the early exit between secrets leaks\n * nothing useful; each individual comparison stays constant-time.)\n */"
   },
   {
     "name": "UnsupportedMockSchemaError",
@@ -12823,7 +12837,7 @@
     "name": "verifyCsrfToken",
     "kind": "function",
     "package": "@nifrajs/middleware",
-    "signature": "export declare function verifyCsrfToken(token: string, secret: string | Uint8Array): Promise<boolean>;"
+    "signature": "export declare function verifyCsrfToken(token: string, secret: CsrfSecret): Promise<boolean>;"
   },
   {
     "name": "verifyDownloadUrl",

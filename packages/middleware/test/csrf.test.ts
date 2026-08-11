@@ -125,4 +125,19 @@ describe("csrf()", () => {
     await expect(createCsrfToken(SECRET, "short")).rejects.toThrow(/nonce/)
     expect(() => csrf({ secret: "short" })).toThrow(/secret/)
   })
+
+  test("secret rotation: old tokens verify against the list, first secret signs new ones", async () => {
+    const OLD = "old-csrf-secret-at-least-32-byte!"
+    const NEW = "new-csrf-secret-at-least-32-byte!"
+    const oldToken = await createCsrfToken(OLD, "abcdefghijklmnopqrstuv")
+
+    expect(await verifyCsrfToken(oldToken, [NEW, OLD])).toBe(true)
+    expect(await verifyCsrfToken(oldToken, [NEW])).toBe(false) // old secret dropped
+
+    const newToken = await createCsrfToken([NEW, OLD], "abcdefghijklmnopqrstuv")
+    expect(await verifyCsrfToken(newToken, NEW)).toBe(true) // signed by the first secret
+
+    expect(() => csrf({ secret: [] })).toThrow(/cannot be empty/)
+    expect(() => csrf({ secret: [NEW, "weak"] })).toThrow(/secret/) // floor holds per entry
+  })
 })

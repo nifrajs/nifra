@@ -354,6 +354,8 @@ Every public export of every package and documented subpath - name, kind, signat
   A named plugin built with {@link defineContextPlugin}: it adds the context `D` to every handler downstream while threading the caller's route registry and existing context UNCHANGED. This is the type {@link definePlugin} cannot express - `definePlugin` infers its parameter from an untyped `(app) =>…
 - **CookieOptions** _(interface)_ - `interface CookieOptions`
   Attributes for a `Set-Cookie`. `expires` is a `Date`; `maxAge` is in **seconds**.
+- **CookieSecret** _(type)_ - `type CookieSecret = string | readonly string[]`
+  A signing secret, or a rotation list of them. With a list, **the first secret signs** and verification accepts **any** entry - so rotation is: prepend the new secret, keep the old one until every cookie signed by it has expired, then drop it. An empty list throws.
 - **DurableObjectNamespaceLike** _(interface)_ - `interface DurableObjectNamespaceLike`
   Structural view of a Cloudflare Durable Object namespace binding - keeps `@cloudflare/workers-types` out of `@nifrajs/core`. The real `DurableObjectNamespace` satisfies it.
 - **ExecutionContext** _(interface)_ - `interface ExecutionContext`
@@ -508,8 +510,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, or an oversized result - a serialization bug shou…
 - **server** _(function)_ - `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
   Create a new {@link Server}. Pass an `Env` to type the platform bindings - `server<Env>()` makes `c.env: Env` in every handler + middleware, and types the `env` argument of `app.fetch` / `toFetchHandler`. Omit it and `c.env` is `unknown` (validate/cast before use).
-- **signValue** _(function)_ - `signValue: (value: string, secret: string) => Promise<string>`
-  Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies.
+- **signValue** _(function)_ - `signValue: (value: string, secret: CookieSecret) => Promise<string>`
+  Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies. With a {@link CookieSecret} rotation list, signs with the first secret.
 - **silentLogger** _(const)_ - `silentLogger: Logger`
   Discards everything - for tests, or when log output is handled elsewhere.
 - **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
@@ -520,7 +522,7 @@ Every public export of every package and documented subpath - name, kind, signat
   Adapt a Web-standard app to a Netlify Functions event handler.
 - **toVercelHandler** _(function)_ - `toVercelHandler: <Env = unknown>(app: FetchApp<Env>) => VercelHandler`
   Adapt a Web-standard app to a Vercel Edge Function default export.
-- **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: string) => Promise<string | null>`
+- **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: CookieSecret) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 - **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`
 
@@ -795,13 +797,15 @@ Every public export of every package and documented subpath - name, kind, signat
 
 - **CookieOptions** _(interface)_ - `interface CookieOptions`
   Attributes for a `Set-Cookie`. `expires` is a `Date`; `maxAge` is in **seconds**.
+- **CookieSecret** _(type)_ - `type CookieSecret = string | readonly string[]`
+  A signing secret, or a rotation list of them. With a list, **the first secret signs** and verification accepts **any** entry - so rotation is: prepend the new secret, keep the old one until every cookie signed by it has expired, then drop it. An empty list throws.
 - **parseCookies** _(function)_ - `parseCookies: (header: string | null | undefined) => Record<string, string>`
   Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are skipped rather than throwing - a junk `Cookie` header shouldn't fail the request.
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
   Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, or an oversized result - a serialization bug shou…
-- **signValue** _(function)_ - `signValue: (value: string, secret: string) => Promise<string>`
-  Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies.
-- **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: string) => Promise<string | null>`
+- **signValue** _(function)_ - `signValue: (value: string, secret: CookieSecret) => Promise<string>`
+  Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies. With a {@link CookieSecret} rotation list, signs with the first secret.
+- **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: CookieSecret) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 
 ### `@nifrajs/core/data`
@@ -1296,6 +1300,8 @@ Every public export of every package and documented subpath - name, kind, signat
   A named plugin built with {@link defineContextPlugin}: it adds the context `D` to every handler downstream while threading the caller's route registry and existing context UNCHANGED. This is the type {@link definePlugin} cannot express - `definePlugin` infers its parameter from an untyped `(app) =>…
 - **CookieOptions** _(interface)_ - `interface CookieOptions`
   Attributes for a `Set-Cookie`. `expires` is a `Date`; `maxAge` is in **seconds**.
+- **CookieSecret** _(type)_ - `type CookieSecret = string | readonly string[]`
+  A signing secret, or a rotation list of them. With a list, **the first secret signs** and verification accepts **any** entry - so rotation is: prepend the new secret, keep the old one until every cookie signed by it has expired, then drop it. An empty list throws.
 - **DurableObjectNamespaceLike** _(interface)_ - `interface DurableObjectNamespaceLike`
   Structural view of a Cloudflare Durable Object namespace binding - keeps `@cloudflare/workers-types` out of `@nifrajs/core`. The real `DurableObjectNamespace` satisfies it.
 - **ExecutionContext** _(interface)_ - `interface ExecutionContext`
@@ -1447,8 +1453,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, or an oversized result - a serialization bug shou…
 - **server** _(function)_ - `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
   Create a new {@link Server}. Pass an `Env` to type the platform bindings - `server<Env>()` makes `c.env: Env` in every handler + middleware, and types the `env` argument of `app.fetch` / `toFetchHandler`. Omit it and `c.env` is `unknown` (validate/cast before use).
-- **signValue** _(function)_ - `signValue: (value: string, secret: string) => Promise<string>`
-  Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies.
+- **signValue** _(function)_ - `signValue: (value: string, secret: CookieSecret) => Promise<string>`
+  Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies. With a {@link CookieSecret} rotation list, signs with the first secret.
 - **silentLogger** _(const)_ - `silentLogger: Logger`
   Discards everything - for tests, or when log output is handled elsewhere.
 - **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
@@ -1459,7 +1465,7 @@ Every public export of every package and documented subpath - name, kind, signat
   Adapt a Web-standard app to a Netlify Functions event handler.
 - **toVercelHandler** _(function)_ - `toVercelHandler: <Env = unknown>(app: FetchApp<Env>) => VercelHandler`
   Adapt a Web-standard app to a Vercel Edge Function default export.
-- **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: string) => Promise<string | null>`
+- **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: CookieSecret) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 - **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`
 
@@ -2179,7 +2185,7 @@ Every public export of every package and documented subpath - name, kind, signat
   CORS as a {@link Middleware}. Preflight (`OPTIONS` + `Access-Control-Request-Method`) short-circuits to `204` via `onRequest`; the origin/credentials headers are added in `onResponse`, so they also land on errors, 404s, and the preflight itself.
 - **createAdmissionController** _(function)_ - `createAdmissionController: (options: AdmissionOptions) => AdmissionControllerHandle`
   Build a capacity-admission controller. Pass the returned handle as the server's `admission` option.
-- **createCsrfToken** _(function)_ - `createCsrfToken: (secret: string | Uint8Array, nonce?: string) => Promise<string>`
+- **createCsrfToken** _(function)_ - `createCsrfToken: (secret: CsrfSecret, nonce?: string) => Promise<string>`
 - **createEventLoopLagSampler** _(function)_ - `createEventLoopLagSampler: (resolutionMs?: number, monitor?: LoopDelayMonitor) => () => number`
   Event-loop-lag sampler. By default it measures timer drift using only Web/JS runtime primitives, so it works under Node ESM, Bun, Deno, and workers without a hidden CommonJS `require` fallback. An injected histogram remains available for deterministic tests or a runtime-native monitor. Each read re…
 - **csrf** _(function)_ - `csrf: (options: CsrfOptions) => Middleware`
@@ -2236,7 +2242,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **trimTrailingSlash** _(function)_ - `trimTrailingSlash: (options?: TrailingSlashOptions) => import("@nifrajs/core").NifraPlugin<import("@nifrajs/core").AnyServer, import("@nifrajs/core").AnyServer>`
   Remove trailing slashes from non-root paths. Redirect mode is the production default because it canonicalizes URLs for clients and caches; rewrite mode is available for compatibility migrations.
 - **tryVerifyJwt** _(function)_ - `tryVerifyJwt: <C extends JwtClaims = JwtClaims>(token: string, options: VerifyJwtOptions) => Promise<VerifyJwtResult<C>>`
-- **verifyCsrfToken** _(function)_ - `verifyCsrfToken: (token: string, secret: string | Uint8Array) => Promise<boolean>`
+- **verifyCsrfToken** _(function)_ - `verifyCsrfToken: (token: string, secret: CsrfSecret) => Promise<boolean>`
 - **verifyJwt** _(function)_ - `verifyJwt: <C extends JwtClaims = JwtClaims>(token: string, options: VerifyJwtOptions) => Promise<VerifiedJwt<C>>`
 
 ### `@nifrajs/middleware/context-storage`
@@ -4044,6 +4050,8 @@ _No named exports (side-effect entrypoint)._
   A named plugin built with {@link defineContextPlugin}: it adds the context `D` to every handler downstream while threading the caller's route registry and existing context UNCHANGED. This is the type {@link definePlugin} cannot express - `definePlugin` infers its parameter from an untyped `(app) =>…
 - **CookieOptions** _(interface)_ - `interface CookieOptions`
   Attributes for a `Set-Cookie`. `expires` is a `Date`; `maxAge` is in **seconds**.
+- **CookieSecret** _(type)_ - `type CookieSecret = string | readonly string[]`
+  A signing secret, or a rotation list of them. With a list, **the first secret signs** and verification accepts **any** entry - so rotation is: prepend the new secret, keep the old one until every cookie signed by it has expired, then drop it. An empty list throws.
 - **DurableObjectNamespaceLike** _(interface)_ - `interface DurableObjectNamespaceLike`
   Structural view of a Cloudflare Durable Object namespace binding - keeps `@cloudflare/workers-types` out of `@nifrajs/core`. The real `DurableObjectNamespace` satisfies it.
 - **ExecutionContext** _(interface)_ - `interface ExecutionContext`
@@ -4198,8 +4206,8 @@ _No named exports (side-effect entrypoint)._
   Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, or an oversized result - a serialization bug shou…
 - **server** _(function)_ - `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
   Create a new {@link Server}. Pass an `Env` to type the platform bindings - `server<Env>()` makes `c.env: Env` in every handler + middleware, and types the `env` argument of `app.fetch` / `toFetchHandler`. Omit it and `c.env` is `unknown` (validate/cast before use).
-- **signValue** _(function)_ - `signValue: (value: string, secret: string) => Promise<string>`
-  Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies.
+- **signValue** _(function)_ - `signValue: (value: string, secret: CookieSecret) => Promise<string>`
+  Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies. With a {@link CookieSecret} rotation list, signs with the first secret.
 - **silentLogger** _(const)_ - `silentLogger: Logger`
   Discards everything - for tests, or when log output is handled elsewhere.
 - **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
@@ -4210,6 +4218,6 @@ _No named exports (side-effect entrypoint)._
   Adapt a Web-standard app to a Netlify Functions event handler.
 - **toVercelHandler** _(function)_ - `toVercelHandler: <Env = unknown>(app: FetchApp<Env>) => VercelHandler`
   Adapt a Web-standard app to a Vercel Edge Function default export.
-- **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: string) => Promise<string | null>`
+- **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: CookieSecret) => Promise<string | null>`
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 - **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`

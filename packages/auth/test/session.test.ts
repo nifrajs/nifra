@@ -36,6 +36,11 @@ test("a short secret is rejected", () => {
   expect(() => createSessions({ secret: "tooshort" })).toThrow(/at least 32 bytes/)
 })
 
+test("rotation list: every entry must meet the floor, empty list throws", () => {
+  expect(() => createSessions({ secret: [] })).toThrow(/cannot be empty/)
+  expect(() => createSessions({ secret: [SECRET, "tooshort"] })).toThrow(/at least 32 bytes/)
+})
+
 test("a non-finite maxAge is rejected at construction", () => {
   expect(() => createSessions({ secret: SECRET, maxAge: Number.NaN })).toThrow(/maxAge/)
 })
@@ -198,6 +203,31 @@ describe("session - cookie mode (stateless)", () => {
     expect(a.setCalls[0]?.value).toContain(".") // signed payload
     const loaded = await sessions.get(ctx({ nifra_session: lastCookie(a.setCalls) }).context)
     expect(loaded.get("userId")).toBe("u9")
+  })
+
+  test("secret rotation: a session signed by the old secret survives, dropped secret fails closed", async () => {
+    const OLD = "old-session-secret-32-bytes-min!!"
+    const NEW = "new-session-secret-32-bytes-min!!"
+    const before = createSessions<Data>({ secret: OLD, now: () => 1000, maxAge: 3600 })
+    const a = ctx()
+    const s = await before.get(a.context)
+    s.set("userId", "u9")
+    await before.commit(a.context, s)
+    const cookie = lastCookie(a.setCalls)
+
+    // Rotated deployment: [new, old] still reads the old cookie...
+    const rotated = createSessions<Data>({ secret: [NEW, OLD], now: () => 1000, maxAge: 3600 })
+    expect((await rotated.get(ctx({ nifra_session: cookie }).context)).get("userId")).toBe("u9")
+    // ...and writes new cookies under the NEW secret (verifiable without the old one).
+    const b = ctx({ nifra_session: cookie })
+    const rs = await rotated.get(b.context)
+    await rotated.commit(b.context, rs)
+    const after = createSessions<Data>({ secret: NEW, now: () => 1000, maxAge: 3600 })
+    expect(
+      (await after.get(ctx({ nifra_session: lastCookie(b.setCalls) }).context)).get("userId"),
+    ).toBe("u9")
+    // Old secret dropped entirely -> old cookie fails closed to anonymous.
+    expect((await after.get(ctx({ nifra_session: cookie }).context)).get("userId")).toBeUndefined()
   })
 
   test("a tampered or non-JSON-but-validly-signed payload fails closed", async () => {

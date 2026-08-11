@@ -11,9 +11,26 @@ import {
   verifyHmacSha256,
 } from "./_utils.ts"
 
+/**
+ * An HMAC secret, or a rotation list of them. With a list, the **first** secret signs new tokens
+ * and any listed secret verifies - rotate by prepending the new secret and dropping the old one
+ * once outstanding tokens have expired. Every entry must meet the 32-byte floor; an empty list
+ * throws.
+ */
+export type CsrfSecret = string | Uint8Array | ReadonlyArray<string | Uint8Array>
+
+/** Normalize to derived keys, validating every entry's 32-byte floor up front (fail loud at
+ * construction, not on the first request that happens to reach an old secret). */
+function csrfKeys(secret: CsrfSecret): ReadonlyArray<Uint8Array> {
+  const list: ReadonlyArray<string | Uint8Array> =
+    typeof secret === "string" || secret instanceof Uint8Array ? [secret] : secret
+  if (list.length === 0) throw new Error("csrf: secret list cannot be empty")
+  return list.map((s) => secretBytes(s, "csrf"))
+}
+
 export interface CsrfOptions {
-  /** HMAC secret. Must be at least 32 bytes. */
-  readonly secret: string | Uint8Array
+  /** HMAC secret (≥ 32 bytes), or a rotation list - see {@link CsrfSecret}. */
+  readonly secret: CsrfSecret
   /** Cookie carrying the signed token. Default `"csrf-token"`. */
   readonly cookie?: string
   /** Header carrying the same signed token. Default `"x-csrf-token"`. */
@@ -46,11 +63,8 @@ function originAllowed(req: Request, origins: Set<string> | undefined): boolean 
   }
 }
 
-export async function createCsrfToken(
-  secret: string | Uint8Array,
-  nonce?: string,
-): Promise<string> {
-  const key = secretBytes(secret, "csrf")
+export async function createCsrfToken(secret: CsrfSecret, nonce?: string): Promise<string> {
+  const key = csrfKeys(secret)[0] as Uint8Array
   const tokenNonce = nonce ?? base64UrlEncode(crypto.getRandomValues(new Uint8Array(32)))
   if (!/^[A-Za-z0-9_-]{22,}$/.test(tokenNonce)) {
     throw new Error("csrf: nonce must be base64url-like and at least 22 characters")
@@ -59,17 +73,19 @@ export async function createCsrfToken(
   return `${payload}.${await hmacSha256(payload, key)}`
 }
 
-export async function verifyCsrfToken(
-  token: string,
-  secret: string | Uint8Array,
-): Promise<boolean> {
-  const key = secretBytes(secret, "csrf")
+export async function verifyCsrfToken(token: string, secret: CsrfSecret): Promise<boolean> {
+  const keys = csrfKeys(secret)
   const parts = token.split(".")
   if (parts.length !== 3 || parts[0] !== TOKEN_PREFIX || parts[1] === "" || parts[2] === "") {
     return false
   }
   const [prefix, nonce, signature] = parts as [string, string, string]
-  return verifyHmacSha256(`${prefix}.${nonce}`, signature, key)
+  // Rotation: accept a token signed by any listed secret. Each comparison is constant-time; which
+  // generation matched is not attacker-meaningful, so the early exit between keys leaks nothing.
+  for (const key of keys) {
+    if (await verifyHmacSha256(`${prefix}.${nonce}`, signature, key)) return true
+  }
+  return false
 }
 
 /**
@@ -77,7 +93,7 @@ export async function verifyCsrfToken(
  * cookie and a header, and must come from an allowed Origin/Referer unless `checkOrigin:false` is set.
  */
 export function csrf(options: CsrfOptions): Middleware {
-  const key = secretBytes(options.secret, "csrf")
+  const keys = csrfKeys(options.secret)
   const cookie = options.cookie ?? "csrf-token"
   const header = (options.header ?? "x-csrf-token").toLowerCase()
   const methods =
@@ -97,7 +113,7 @@ export function csrf(options: CsrfOptions): Middleware {
       if (!(await timingSafeEqualString(cookieToken, headerToken))) {
         return jsonError(403, "csrf_failed")
       }
-      return (await verifyCsrfToken(cookieToken, key)) ? undefined : jsonError(403, "csrf_failed")
+      return (await verifyCsrfToken(cookieToken, keys)) ? undefined : jsonError(403, "csrf_failed")
     },
   }
   return withRouteAssurance(middleware, {

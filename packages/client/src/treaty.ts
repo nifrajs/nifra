@@ -139,6 +139,35 @@ type Methods<MethodMap> = {
 } & SseMethods<MethodMap> &
   WsMethods<MethodMap>
 
+// --- reserved proxy keys ---
+
+/**
+ * Property names the runtime proxy intercepts BEFORE path resolution (`resolveSegment` and the
+ * `then` guard in `createProxy`, ./client.ts). A route whose path contains a static segment
+ * spelling one of these can never be reached through the typed proxy: the property access
+ * resolves to the reserved behavior (verb call, `.subscribe()`, `.ws()`, root `index`, thenable
+ * guard) instead of extending the path. Verbs are intercepted case-insensitively; the rest match
+ * exactly. Kept in lockstep with the runtime's `HTTP_VERBS` set.
+ */
+type ReservedVerbKey = "get" | "post" | "put" | "patch" | "delete" | "head" | "options"
+type ReservedExactKey = "subscribe" | "ws" | "index" | "then"
+
+/**
+ * What a reserved-named segment resolves to instead of a route node, so the collision is a
+ * compile error whose message reads out the fix - not a runtime `TypeError` on a path the
+ * type system claimed was fine. `nifra check` reports the same collision at the route
+ * definition (NF-C018); this covers the call site.
+ */
+interface ReservedSegmentCollision<Seg extends string> {
+  readonly "~nifra-reserved-segment": `route segment '${Seg}' collides with a reserved client proxy key (get/post/put/patch/delete/head/options/subscribe/ws/index/then) and cannot be reached through the typed client - rename the route segment`
+}
+
+type IsReservedSeg<Seg extends string> = Seg extends ReservedExactKey
+  ? true
+  : Lowercase<Seg> extends ReservedVerbKey
+    ? true
+    : false
+
 // --- path-tree construction over the registry ---
 
 type Sub<R, Prefix extends string> = Extract<keyof R, `${Prefix}/${string}`>
@@ -169,7 +198,9 @@ type ParamSeg<R, Prefix extends string> = Extract<NextSegs<R, Prefix>, `:${strin
 type MethodsAt<R, Prefix extends string> = Prefix extends keyof R ? Methods<R[Prefix]> : unknown
 
 type StaticChildren<R, Prefix extends string> = {
-  [Seg in StaticSegs<R, Prefix> & string]: TreatyNode<R, `${Prefix}/${Seg}`>
+  [Seg in StaticSegs<R, Prefix> & string]: IsReservedSeg<Seg> extends true
+    ? ReservedSegmentCollision<Seg>
+    : TreatyNode<R, `${Prefix}/${Seg}`>
 }
 
 type ParamChild<R, Prefix extends string> = [ParamSeg<R, Prefix>] extends [never]

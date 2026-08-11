@@ -116,6 +116,49 @@ api.health.get({ query: { page: 1 } })
 // @ts-expect-error a bodyless POST takes no body argument
 api.ping.post({ data: 1 })
 
+// --- reserved-segment collisions are compile errors, not runtime TypeErrors ---
+
+// The runtime proxy intercepts verb names, `subscribe`, `ws`, `index`, and `then` before path
+// resolution, so a route whose path spells one is unreachable through the typed client. The type
+// must therefore reject the access with the collision brand instead of promising a callable.
+const collisionApp = server()
+  .post("/api/delete", () => ({ removed: true }))
+  .post("/api/assets/delete", () => ({ removed: true }))
+  .get("/Delete/status", () => ({ ok: true }))
+  .get("/jobs/subscribe", () => ({ ok: true }))
+  .get("/legal/index", () => ({ ok: true }))
+  .get("/promise/then", () => ({ ok: true }))
+  // Sibling routes with clean names stay fully typed.
+  .post("/api/remove", () => ({ removed: true }))
+  .delete("/api/assets", () => ({ removed: true }))
+
+const collisionApi = {} as Treaty<typeof collisionApp>
+
+// @ts-expect-error `delete` segment collides with the DELETE verb caller - `.post` does not exist on the branded collision
+collisionApi.api.delete.post()
+// @ts-expect-error nested `delete` segment collides the same way at any depth
+collisionApi.api.assets.delete.post()
+// @ts-expect-error verb interception is case-insensitive: `Delete` collides too
+collisionApi.Delete.status.get()
+// @ts-expect-error `subscribe` segment collides with the SSE subscription key
+collisionApi.jobs.subscribe.get()
+// @ts-expect-error `index` segment collides with the root-index convention
+collisionApi.legal.index.get()
+// @ts-expect-error `then` segment collides with the thenable guard
+collisionApi.promise.then.get()
+
+// The brand names the collision so the compile error reads out the fix.
+type DeleteCollision = (typeof collisionApi.api)["delete"]
+export type _CollisionBranded = Expect<
+  Equal<DeleteCollision extends { "~nifra-reserved-segment": string } ? true : false, true>
+>
+
+// Clean siblings are unaffected.
+const removed = collisionApi.api.remove.post()
+export type _CleanSibling = Expect<Equal<DataOf<typeof removed>, { removed: boolean }>>
+const assetsDeleted = collisionApi.api.assets.delete() // legitimate DELETE verb call still compiles
+export type _VerbCallStillWorks = Expect<Equal<DataOf<typeof assetsDeleted>, { removed: boolean }>>
+
 // --- status-discriminated error contracts ---
 
 declare const notFoundBody: StandardSchemaV1<unknown, { code: "not_found"; id: string }>

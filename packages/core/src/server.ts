@@ -31,6 +31,7 @@ export type {
 } from "./server/context.ts"
 export {
   type CookieOptions,
+  type CookieSecret,
   parseCookies,
   serializeCookie,
   signValue,

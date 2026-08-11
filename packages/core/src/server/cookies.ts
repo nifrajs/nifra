@@ -177,9 +177,24 @@ const fromBase64Url = (s: string): Uint8Array<ArrayBuffer> | null => {
   }
 }
 
-/** Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies. */
-export async function signValue(value: string, secret: string): Promise<string> {
-  const key = await importHmacKey(secret)
+/**
+ * A signing secret, or a rotation list of them. With a list, **the first secret signs** and
+ * verification accepts **any** entry - so rotation is: prepend the new secret, keep the old one
+ * until every cookie signed by it has expired, then drop it. An empty list throws.
+ */
+export type CookieSecret = string | readonly string[]
+
+const firstSecret = (secret: CookieSecret): string => {
+  if (typeof secret === "string") return secret
+  const first = secret[0]
+  if (first === undefined) throw new Error("[nifra] signed-cookie: secret list cannot be empty")
+  return first
+}
+
+/** Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies.
+ * With a {@link CookieSecret} rotation list, signs with the first secret. */
+export async function signValue(value: string, secret: CookieSecret): Promise<string> {
+  const key = await importHmacKey(firstSecret(secret))
   const sig = await crypto.subtle.sign("HMAC", key, TEXT.encode(value))
   return `${value}.${toBase64Url(sig)}`
 }
@@ -188,14 +203,31 @@ export async function signValue(value: string, secret: string): Promise<string> 
  * Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the
  * signature is missing, malformed, or doesn't match. Verification is **constant-time**
  * (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
+ *
+ * With a {@link CookieSecret} rotation list, tries each secret in order and accepts the first
+ * match. Every listed secret must meet the 32-byte floor - a weak entry throws even when an
+ * earlier secret would have matched, so a rotation list can't quietly carry a weak key. (Which
+ * rotation generation matched is not attacker-meaningful, so the early exit between secrets leaks
+ * nothing useful; each individual comparison stays constant-time.)
  */
-export async function unsignValue(signed: string, secret: string): Promise<string | null> {
+export async function unsignValue(signed: string, secret: CookieSecret): Promise<string | null> {
   const dot = signed.lastIndexOf(".")
   if (dot < 1) return null // no signature segment (or empty value)
   const value = signed.slice(0, dot)
   const sig = fromBase64Url(signed.slice(dot + 1))
   if (sig === null) return null
-  const key = await importHmacKey(secret)
-  const ok = await crypto.subtle.verify("HMAC", key, sig, TEXT.encode(value))
-  return ok ? value : null
+  const data = TEXT.encode(value)
+  if (typeof secret === "string") {
+    // Hot path (single secret) - identical to the pre-rotation behavior, no array allocation.
+    const key = await importHmacKey(secret)
+    const ok = await crypto.subtle.verify("HMAC", key, sig, data)
+    return ok ? value : null
+  }
+  if (secret.length === 0) throw new Error("[nifra] signed-cookie: secret list cannot be empty")
+  for (const s of secret) requireSecretBytes(s, "signed-cookie")
+  for (const s of secret) {
+    const key = await importHmacKey(s)
+    if (await crypto.subtle.verify("HMAC", key, sig, data)) return value
+  }
+  return null
 }

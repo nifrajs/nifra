@@ -93,6 +93,29 @@ describe("signValue / unsignValue", () => {
     expect(await unsignValue(".onlysig", secret)).toBeNull() // empty value (dot<1)
     expect(await unsignValue(`${value}.!!not-base64!!`, secret)).toBeNull() // bad base64 sig
   })
+
+  test("rotation list: first secret signs, any listed secret verifies", async () => {
+    const oldSecret = "old-secret-at-least-32-bytes-ok!!"
+    const newSecret = "new-secret-at-least-32-bytes-ok!!"
+    const signedByOld = await signValue("v", oldSecret)
+
+    // After rotation ([new, old]) the old cookie still verifies...
+    expect(await unsignValue(signedByOld, [newSecret, oldSecret])).toBe("v")
+    // ...and new cookies are signed by the first (new) secret.
+    const signedNow = await signValue("v", [newSecret, oldSecret])
+    expect(await unsignValue(signedNow, newSecret)).toBe("v")
+    // Once the old secret is dropped, its cookies stop verifying.
+    expect(await unsignValue(signedByOld, [newSecret])).toBeNull()
+  })
+
+  test("rotation list: empty list and weak entries throw", async () => {
+    await expect(signValue("v", [])).rejects.toThrow(/cannot be empty/)
+    await expect(unsignValue("v.sig", [])).rejects.toThrow(/cannot be empty/)
+    // A weak entry throws even when an earlier secret would match - a rotation list
+    // must not quietly carry a weak key.
+    const signed = await signValue("v", secret)
+    await expect(unsignValue(signed, [secret, "weak"])).rejects.toThrow(/32 bytes/)
+  })
 })
 
 describe("c.cookies (read) + c.set.cookie (write)", () => {
