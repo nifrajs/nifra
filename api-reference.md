@@ -108,6 +108,28 @@ Every public export of every package and documented subpath - name, kind, signat
 - **requireUser** _(function)_ - `requireUser: <Data extends Record<string, unknown>, K extends keyof Data>(session: Session<Data>, key: K, options?: GuardOptions) => NonNullable<Data[K]>`
   Require a specific session key (e.g. the `userId` a login set) to be present. Returns its value (narrowed non-nullish); otherwise throws like {@link requireSession}. The common "who is the user" guard: `const userId = requireUser(await sessions.get(c), "userId", { redirectTo: "/login" })`.
 
+## @nifrajs/aws-lambda
+
+- **FetchHandler** _(interface)_ - `interface FetchHandler`
+  Anything with a fetch-shaped entry point - a nifra `server()` app satisfies this.
+- **LambdaContext** _(interface)_ - `interface LambdaContext`
+  The Lambda invocation context. The adapter only forwards it; declare fields structurally.
+- **LambdaEnv** _(interface)_ - `interface LambdaEnv`
+  What handlers see as `c.env` (declare your app as `server<LambdaEnv>()` for typed access).
+- **LambdaEvent** _(interface)_ - `interface LambdaEvent`
+  The slice of an API Gateway HTTP API / Function URL payload-v2 event the adapter reads. Extra fields pass through untouched on `c.env.event`.
+- **LambdaOptions** _(interface)_ - `interface LambdaOptions`
+- **LambdaPlatform** _(interface)_ - `interface LambdaPlatform`
+  Platform fields the adapter feeds into `app.fetch` (mirrors nifra core's `Platform`).
+- **LambdaResult** _(interface)_ - `interface LambdaResult`
+  A payload-v2 result object, as API Gateway and Function URLs consume it.
+- **ResponseStream** _(interface)_ - `interface ResponseStream`
+  The Node `Writable`-shaped stream Lambda hands a streaming handler. Declared structurally.
+- **handle** _(function)_ - `handle: (app: FetchHandler, options?: LambdaOptions) => (event: LambdaEvent, context?: LambdaContext) => Promise<LambdaResult>`
+  A buffered Lambda handler for API Gateway HTTP APIs (payload v2) and Function URLs.
+- **streamHandle** _(function)_ - `streamHandle: (app: FetchHandler, options?: LambdaOptions) => (event: LambdaEvent, responseStream: ResponseStream, context?: LambdaContext) => Promise<void>`
+  A streaming Lambda handler for Function URLs with `InvokeMode: RESPONSE_STREAM`, via the runtime's `awslambda.streamifyResponse`. Response bytes flow as the app produces them - no buffering, no base64. Requires the managed AWS Lambda Node runtime (the `awslambda` global); API Gateway does not suppo…
+
 ## @nifrajs/better-auth
 
 - **AuthedOptions** _(interface)_ - `interface AuthedOptions<User>`

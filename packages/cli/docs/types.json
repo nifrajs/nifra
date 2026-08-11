@@ -4599,6 +4599,13 @@
   {
     "name": "FetchHandler",
     "kind": "interface",
+    "package": "@nifrajs/aws-lambda",
+    "signature": "export interface FetchHandler {\n    fetch(request: Request, platform?: LambdaPlatform): Response | Promise<Response>;\n}",
+    "doc": "/** Anything with a fetch-shaped entry point - a nifra `server()` app satisfies this. */"
+  },
+  {
+    "name": "FetchHandler",
+    "kind": "interface",
     "package": "@nifrajs/deno",
     "signature": "export interface FetchHandler {\n    fetch(request: Request, platform?: {\n        readonly clientIp?: string;\n    }): Response | Promise<Response>;\n    /** A nifra app also exposes this WS-upgrade seam; present → this adapter serves `app.ws()` routes\n     * via `Deno.upgradeWebSocket`. Absent (a plain `{ fetch }` handler) → HTTP only. */\n    resolveWebSocketUpgrade?(request: Request): WsUpgradeOutcome | Promise<WsUpgradeOutcome>;\n}",
     "doc": "/** Anything exposing a Web `fetch` handler - a nifra `app`, for instance. */"
@@ -5025,6 +5032,13 @@
     "package": "@nifrajs/auth",
     "signature": "export interface GuardOptions {\n    readonly redirectTo?: string;\n}",
     "doc": "/** What a guard does when the check fails: 302 to `redirectTo` (a same-origin path), or - omitted - a\n * 401 JSON (`{ ok: false, error: \"unauthorized\" }`). */"
+  },
+  {
+    "name": "handle",
+    "kind": "function",
+    "package": "@nifrajs/aws-lambda",
+    "signature": "export declare function handle(app: FetchHandler, options?: LambdaOptions): (event: LambdaEvent, context?: LambdaContext) => Promise<LambdaResult>;",
+    "doc": "/**\n * A buffered Lambda handler for API Gateway HTTP APIs (payload v2) and Function URLs.\n *\n * ```ts\n * import { handle } from \"@nifrajs/aws-lambda\"\n * import { app } from \"./app.js\" // built once per container, at module scope\n *\n * export const handler = handle(app)\n * ```\n */"
   },
   {
     "name": "handleMcpHttp",
@@ -6133,6 +6147,27 @@
     "doc": "/**\n * A {@link SessionStore} backed by a **Cloudflare Workers KV** namespace (or any {@link KVNamespaceLike})\n * - the durable, shared production store: sessions hold across worker instances and survive restarts.\n * Records serialize to JSON; the entry's KV `expiration` is set from the record's `expiresAt` so KV\n * auto-evicts the session (a GC backstop - the manager still authoritatively checks expiry on read).\n * Every read is validated, so a corrupt/skewed entry reads as no session.\n */"
   },
   {
+    "name": "LambdaContext",
+    "kind": "interface",
+    "package": "@nifrajs/aws-lambda",
+    "signature": "export interface LambdaContext {\n    readonly awsRequestId?: string;\n    readonly functionName?: string;\n    readonly [key: string]: unknown;\n}",
+    "doc": "/** The Lambda invocation context. The adapter only forwards it; declare fields structurally. */"
+  },
+  {
+    "name": "LambdaEnv",
+    "kind": "interface",
+    "package": "@nifrajs/aws-lambda",
+    "signature": "export interface LambdaEnv {\n    readonly event: LambdaEvent;\n    readonly context: LambdaContext | undefined;\n}",
+    "doc": "/** What handlers see as `c.env` (declare your app as `server<LambdaEnv>()` for typed access). */"
+  },
+  {
+    "name": "LambdaEvent",
+    "kind": "interface",
+    "package": "@nifrajs/aws-lambda",
+    "signature": "export interface LambdaEvent {\n    readonly rawPath?: string;\n    readonly rawQueryString?: string;\n    readonly headers?: Readonly<Record<string, string | undefined>>;\n    /** Payload v2 delivers cookies here, not in `headers` - this array is the canonical source. */\n    readonly cookies?: readonly string[];\n    readonly body?: string | null;\n    readonly isBase64Encoded?: boolean;\n    readonly requestContext?: {\n        readonly domainName?: string;\n        readonly http?: {\n            readonly method?: string;\n            readonly sourceIp?: string;\n        };\n    };\n}",
+    "doc": "/**\n * The slice of an API Gateway HTTP API / Function URL payload-v2 event the adapter reads.\n * Extra fields pass through untouched on `c.env.event`.\n */"
+  },
+  {
     "name": "LambdaEvent",
     "kind": "type",
     "package": "@nifrajs/core",
@@ -6157,6 +6192,19 @@
     "signature": "export type LambdaHandler = (event: LambdaEvent, context?: unknown) => Promise<LambdaResponse>;"
   },
   {
+    "name": "LambdaOptions",
+    "kind": "interface",
+    "package": "@nifrajs/aws-lambda",
+    "signature": "export interface LambdaOptions {\n    /**\n     * Reject request bodies whose *decoded* size exceeds this many bytes with a flat 413 before a\n     * `Request` is constructed. Defaults to 1,000,000 (nifra core's default). Set it to match your\n     * app's `maxBodyBytes` if you customized that.\n     */\n    readonly maxBodyBytes?: number;\n}"
+  },
+  {
+    "name": "LambdaPlatform",
+    "kind": "interface",
+    "package": "@nifrajs/aws-lambda",
+    "signature": "export interface LambdaPlatform {\n    readonly env: LambdaEnv;\n    readonly clientIp?: string | undefined;\n    readonly waitUntil?: (promise: Promise<unknown>) => void;\n}",
+    "doc": "/** Platform fields the adapter feeds into `app.fetch` (mirrors nifra core's `Platform`). */"
+  },
+  {
     "name": "LambdaResponse",
     "kind": "type",
     "package": "@nifrajs/core",
@@ -6167,6 +6215,13 @@
     "kind": "type",
     "package": "nifra",
     "signature": "export type LambdaResponse = PlatformResponse;"
+  },
+  {
+    "name": "LambdaResult",
+    "kind": "interface",
+    "package": "@nifrajs/aws-lambda",
+    "signature": "export interface LambdaResult {\n    statusCode: number;\n    headers: Record<string, string>;\n    /** `Set-Cookie` values travel here (payload v2), one entry per cookie - never comma-joined. */\n    cookies?: string[];\n    body: string;\n    isBase64Encoded: boolean;\n}",
+    "doc": "/** A payload-v2 result object, as API Gateway and Function URLs consume it. */"
   },
   {
     "name": "LambdaV1Event",
@@ -9522,6 +9577,13 @@
     "doc": "/**\n * The mutable, case-insensitive header surface a portable {@link ResponseHeadersHook} writes\n * through. Deliberately the subset of the Web `Headers` interface every runtime can satisfy\n * natively: on the Web paths the hook receives the response's own `Headers` object directly (which\n * structurally implements this), and on the Node direct-writer path it receives a thin view over\n * the outcome's plain header record - so ONE hook implementation is fast everywhere.\n */"
   },
   {
+    "name": "ResponseStream",
+    "kind": "interface",
+    "package": "@nifrajs/aws-lambda",
+    "signature": "export interface ResponseStream {\n    write(chunk: Uint8Array | string): unknown;\n    end(): unknown;\n    once?(event: string, listener: () => void): unknown;\n}",
+    "doc": "/** The Node `Writable`-shaped stream Lambda hands a streaming handler. Declared structurally. */"
+  },
+  {
     "name": "Result",
     "kind": "type",
     "package": "@nifrajs/client",
@@ -11566,6 +11628,13 @@
     "package": "@nifrajs/core",
     "signature": "export interface StoredResponse {\n    readonly status: number;\n    readonly headers: readonly (readonly [string, string])[];\n    /** Base64-encoded response body; `\"\"` when the response had no body. */\n    readonly body: string;\n}",
     "doc": "/** A serialized response held by a store. `body` is base64 so binary payloads round-trip intact. */"
+  },
+  {
+    "name": "streamHandle",
+    "kind": "function",
+    "package": "@nifrajs/aws-lambda",
+    "signature": "export declare function streamHandle(app: FetchHandler, options?: LambdaOptions): (event: LambdaEvent, responseStream: ResponseStream, context?: LambdaContext) => Promise<void>;",
+    "doc": "/**\n * A streaming Lambda handler for Function URLs with `InvokeMode: RESPONSE_STREAM`, via the\n * runtime's `awslambda.streamifyResponse`. Response bytes flow as the app produces them - no\n * buffering, no base64. Requires the managed AWS Lambda Node runtime (the `awslambda` global);\n * API Gateway does not support response streaming - use {@link handle} there.\n */"
   },
   {
     "name": "streaming",

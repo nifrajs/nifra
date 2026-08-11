@@ -141,6 +141,13 @@
         "@nifrajs/core": "workspace:^",
       },
     },
+    "packages/aws-lambda": {
+      "name": "@nifrajs/aws-lambda",
+      "version": "2.11.0",
+      "devDependencies": {
+        "@nifrajs/core": "workspace:*",
+      },
+    },
     "packages/better-auth": {
       "name": "@nifrajs/better-auth",
       "version": "2.11.0",
@@ -862,6 +869,8 @@
     "@nifrajs/agent-telemetry": ["@nifrajs/agent-telemetry@workspace:packages/agent-telemetry"],
 
     "@nifrajs/auth": ["@nifrajs/auth@workspace:packages/auth"],
+
+    "@nifrajs/aws-lambda": ["@nifrajs/aws-lambda@workspace:packages/aws-lambda"],
 
     "@nifrajs/bench": ["@nifrajs/bench@workspace:bench"],
 

@@ -53,6 +53,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - `@nifrajs/agent` - Provider-neutral, typed, resumable agent turns built on Nifra tool contracts.
 - `@nifrajs/agent-telemetry` - Agent telemetry plugin - child spans for AI tool calls on /_nifra/tool/* and MCP endpoints.
 - `@nifrajs/auth` - Session primitives for nifra - signed-cookie + server-store sessions, CSRF, and route guards. Bring your own identity (Better Auth / Lucia / OAuth); nifra owns the session.
+- `@nifrajs/aws-lambda` - AWS Lambda adapter for nifra - API Gateway HTTP API (payload v2) and Function URLs, buffered or streaming, with post-decode body limits and single-site header merging. Dependency-free.
 - `@nifrajs/better-auth` - Mount better-auth into a nifra app - one app.use() wires /api/auth/*, plus typed getSession/requireSession guards. Structural typing: no hard dependency on better-auth.
 - `@nifrajs/cache` - Typed KV cache for nifra - TTL, stale-while-revalidate, tag invalidation, and single-flight stampede protection on a pluggable store (in-memory default; bring CF KV / Redis). Dependency-free, runs on Bun/Node/Deno/Workers.
 - `@nifrajs/cli` - The nifra CLI - zero-config dev/build/start for a nifra app (`nifra dev`, `nifra build`, `nifra start`).

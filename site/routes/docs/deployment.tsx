@@ -43,6 +43,17 @@ export async function emitServiceWorker(manifest: {
   return serviceWorkerRegistration("/sw.js")
 }`
 
+const LAMBDA = `// handler.ts - one app per container, built at module scope
+import { handle, streamHandle, type LambdaEnv } from "@nifrajs/aws-lambda"
+import { server } from "@nifrajs/core"
+
+const app = server<LambdaEnv>()
+  .get("/", (c) => c.json({ ip: c.clientIp, requestId: c.env.context?.awsRequestId }))
+
+export const handler = handle(app) // API Gateway HTTP API (v2) + Function URLs
+// or, on a Function URL with InvokeMode: RESPONSE_STREAM:
+// export const handler = streamHandle(app)`
+
 const CF = `// _worker.ts - the edge SSR entry
 import { toFetchHandler } from "@nifrajs/core/server"
 import { createWebApp } from "@nifrajs/web"
@@ -226,6 +237,19 @@ export default function Deployment() {
         untouched: <code>serve(app, {'{ port, static: { dir: new URL("./assets/", import.meta.url) } }'})</code>.
         On Cloudflare/Vercel the platform serves assets, so you don't need it there.
       </p>
+
+      <h2>AWS Lambda</h2>
+      <p>
+        <code>@nifrajs/aws-lambda</code> - API Gateway HTTP APIs (payload v2) and Lambda Function
+        URLs. <code>handle(app)</code> is the buffered handler; <code>streamHandle(app)</code>{" "}
+        streams responses on Function URLs with <code>InvokeMode: RESPONSE_STREAM</code>. Build the
+        app at module scope (once per container). The adapter decodes the body and checks its real
+        size before a <code>Request</code> exists, assembles headers + the v2 <code>cookies</code>{" "}
+        array in one place, decides response base64 by what the bytes actually are, and feeds{" "}
+        <code>sourceIp</code> into <code>c.clientIp</code>. <code>waitUntil</code> work settles
+        before the container freezes. REST APIs (payload v1) and ALB are not supported.
+      </p>
+      <CodeBlock code={LAMBDA} />
 
       <h2>Cloudflare Workers / Pages (the edge)</h2>
       <p>
