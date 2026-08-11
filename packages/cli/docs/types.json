@@ -2862,7 +2862,7 @@
     "kind": "function",
     "package": "@nifrajs/proxy",
     "signature": "export declare function createProxy(options: ProxyOptions): ProxyHandler;",
-    "doc": "/**\n * Create a proxy handler bound to one upstream origin.\n *\n * ```ts\n * const upstream = createProxy({ upstream: \"http://127.0.0.1:8081\", stripPrefix: \"/api\" })\n * app.all(\"/api/*\", (c) => upstream(c))\n * ```\n *\n * Streams both directions, preserves method/path/query/status, strips hop-by-hop and\n * Connection-nominated headers both ways, never follows upstream redirects, and answers flat\n * errors: `502 bad_gateway` when the upstream is unreachable, `504 gateway_timeout` on deadline.\n * WebSocket upgrade is not proxied.\n */"
+    "doc": "/**\n * Create a proxy handler bound to one upstream origin.\n *\n * ```ts\n * const upstream = createProxy({ upstream: \"http://127.0.0.1:8081\" })\n * app.mountFetch(\"/api\", upstream, { stripPrefix: true })\n * ```\n *\n * Streams both directions, preserves method/path/query/status, strips hop-by-hop and\n * Connection-nominated headers both ways, never follows upstream redirects, and answers flat\n * errors: `502 bad_gateway` when the upstream is unreachable, `504 gateway_timeout` on deadline.\n * WebSocket upgrade is not proxied.\n */"
   },
   {
     "name": "createQuery",

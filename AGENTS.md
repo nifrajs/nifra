@@ -70,6 +70,12 @@ if (res.ok && "id" in res.data) res.data.id // narrows cleanly
 const local = inProcessClient(app) // SSR loaders / tests: same call, no network
 ```
 
+**Reserved proxy keys.** The client resolves `get`/`post`/`put`/`patch`/`delete`/`head`/`options`
+(any casing) plus `subscribe`, `ws`, `index`, and `then` (exact) BEFORE path segments. Never name a
+route's static segment one of these - `.post("/api/delete", …)` is unreachable through the typed
+client (`api.delete.post` calls the DELETE verb instead). The client type rejects the call site and
+`nifra check` flags the route (NF-C018); use a verb-free segment (`/api/remove`).
+
 ## 6 · Mount the backend in a web app (dev AND prod)
 
 ```ts

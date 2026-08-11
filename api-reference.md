@@ -1705,16 +1705,33 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ## @nifrajs/i18n
 
+### `@nifrajs/i18n`
+
 - **Formatter** _(interface)_ - `interface Formatter`
 - **Locale** _(type)_ - `type Locale = string`
-  Locale negotiation - pick the best supported locale for a request, from (in priority order) an explicit cookie, then the `Accept-Language` header (quality-ranked, with a base-tag fallback so `fr-CA` matches a supported `fr`). Pure + runtime-agnostic.
+  Locale negotiation - pick the best supported locale for a request, from (in priority order) an explicit query parameter, then a cookie, then the `Accept-Language` header (quality-ranked, with a base-tag fallback so `fr-CA` matches a supported `fr`). Pure + runtime-agnostic. The result is always a m…
+- **LocaleParts** _(interface)_ - `interface LocaleParts`
+  The slice of a request the negotiation reads. Pass a `Request`, or this structural shape where no `Request` object exists (e.g. inside an `onResponseHeaders` hook, which sees only `url` + `header`). `query`/`url` are consulted only when `queryParam` is configured; an already-parsed `query` is prefe…
+- **LocaleSource** _(type)_ - `type LocaleSource = "query" | "cookie" | "header" | "default"`
+  Which source produced the locale, in priority order.
 - **Messages** _(type)_ - `type Messages = Record<string, string>`
   A tiny ICU message formatter on the platform `Intl`. Supports interpolation (`{name}`), `plural` (`{n, plural, one {# item} other {# items}}`, with `=N` exact cases and `#` → the number), and `select` (`{kind, select, a {…} other {…}}`), nested arbitrarily. Parsed by a hand-written recursive descen…
 - **NegotiateOptions** _(interface)_ - `interface NegotiateOptions`
+- **ResolvedLocale** _(interface)_ - `interface ResolvedLocale`
 - **createFormatter** _(function)_ - `createFormatter: (locale: string, messages: Messages) => Formatter`
   Build (or reuse) a {@link Formatter} bound to a locale + its message catalog. Cheap to call per request/render - instances are cached per `(messages, locale)`, and parsed ASTs + `Intl.*` are memoized inside each. The catalog is the app's (import a JSON file); this only negotiates (see `negotiateLoc…
-- **negotiateLocale** _(function)_ - `negotiateLocale: (request: Request, options: NegotiateOptions) => Locale`
-  Negotiate the request's locale. Order: a valid {@link NegotiateOptions.cookie} value → `Accept-Language` (each `q`-ranked tag, exact then base-subtag) → `defaultLocale`.
+- **negotiateLocale** _(function)_ - `negotiateLocale: (request: Request | LocaleParts, options: NegotiateOptions) => Locale`
+  Negotiate the request's locale. Order: a valid {@link NegotiateOptions.queryParam} value → a valid {@link NegotiateOptions.cookie} value → `Accept-Language` (each `q`-ranked tag, exact then base-subtag) → `defaultLocale`. {@link resolveLocale} additionally reports the winning source.
+- **resolveLocale** _(function)_ - `resolveLocale: (request: Request | LocaleParts, options: NegotiateOptions) => ResolvedLocale`
+  Negotiate the request's locale and report which source chose it. Order: a valid {@link NegotiateOptions.queryParam} value → a valid {@link NegotiateOptions.cookie} value → `Accept-Language` (each `q`-ranked tag, exact then base-subtag) → `defaultLocale`.
+
+### `@nifrajs/i18n/detector`
+
+- **LocaleContext** _(interface)_ - `interface LocaleContext`
+  Context added by {@link localeDetector}.
+- **LocaleDetectorOptions** _(interface)_ - `interface LocaleDetectorOptions`
+- **localeDetector** _(function)_ - `localeDetector: (options: LocaleDetectorOptions) => import("@nifrajs/core").ContextPlugin<LocaleContext>`
+  Detect the request's locale and expose it as `c.locale` / `c.localeSource`.
 
 ## @nifrajs/image
 

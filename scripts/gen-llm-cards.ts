@@ -202,6 +202,7 @@ const FOOTGUNS: Record<string, readonly string[]> = {
     "**The client never throws.** Every call returns `{ ok, status, data, error }` - branch on `res.ok`, never `try/catch`. A network failure is `ok: false`, not an exception.",
     "Import the server's app **type-only**: `import type { app }` + `client<typeof app>(url)`. The value import would pull server code (and its `node:` deps) into the browser bundle.",
     "`inProcessClient(app)` is a **callable proxy** with the same shape as `client()` but no network - use it in SSR loaders and tests. It mutates/serves the real app in-process; it is not a mock.",
+    '**Reserved proxy keys:** the seven HTTP verbs (`get`/`post`/`put`/`patch`/`delete`/`head`/`options`, any casing) plus `subscribe`, `ws`, `index`, `then` (exact) resolve **before** path segments. A route path containing a static segment spelling one - `.post("/api/delete", …)` - is unreachable through the typed client (`api.delete.post` calls the DELETE verb). The type errors at the call site, `nifra check` flags the route (NF-C018); rename the segment.',
   ],
   "@nifrajs/testing": [
     "`assertAdversarialContract` executes one valid request for every declared response schema. Use an isolated test app/database; never point a contract laboratory at production.",
