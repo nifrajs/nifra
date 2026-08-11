@@ -2227,7 +2227,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **rateLimit** _(function)_ - `rateLimit: (options: RateLimitOptions) => Middleware`
   Rate limiting as a {@link Middleware}. Runs in `onRequest` (before routing, so it also covers 404s); over the limit → `429` + `Retry-After`. Every response carries `RateLimit-Limit/Remaining/Reset` (added in `onResponse`, keyed off the request).
 - **requestId** _(function)_ - `requestId: (options?: RequestIdOptions) => ContextPlugin<{ requestId: string; }>`
-  A {@link defineContextPlugin} plugin that gives every request a stable id: it reuses an inbound `x-request-id` (or generates one), exposes it on the handler context as **`c.requestId`** (typed, threaded by `derive`), and echoes it on the response header. Idempotent - applying it twice is a no-op.
+  A {@link defineContextPlugin} plugin that gives every request a stable id: it reuses an inbound `x-request-id` (or generates one), exposes it on the handler context as **`c.requestId`** (typed, threaded by `derive`), and echoes it on EVERY response leaving the app - handler-returned raw `Response`s…
 - **responseCache** _(const)_ - `responseCache: (options: CacheOptions) => Middleware`
 - **securityHeaders** _(function)_ - `securityHeaders: (options?: SecurityHeadersOptions) => Middleware`
   A safe-by-default set of response security headers, covering errors and 404s too: `X-Content-Type-Options: nosniff`, `X-Frame-Options`, and `Referrer-Policy` always; `Strict-Transport-Security` and `Content-Security-Policy` only when configured (both are environment-/app-specific).
@@ -3074,7 +3074,7 @@ Every public export of every package and documented subpath - name, kind, signat
   The build-failing message for `node:` builtins that reached the client bundle. `undefined` ⇒ clean.
 - **formatServerOnlyLeak** _(function)_ - `formatServerOnlyLeak: (findings: ReadonlyArray<ServerOnlyFinding>) => string | undefined`
   The build-failing message for `server-only`-marked modules that reached the client. `undefined` ⇒ clean.
-- **generateServerEntry** _(function)_ - `generateServerEntry: (options: { readonly target: BuildTarget; readonly adapterImport: string; readonly backendImport?: string; readonly title?: string; readonly publicFiles?: readonly string[]; }) => string`
+- **generateServerEntry** _(function)_ - `generateServerEntry: (options: { readonly target: BuildTarget; readonly adapterImport: string; readonly backendImport?: string; readonly useImport?: string; readonly title?: string; readonly publicFiles?: readonly strin…`
   Codegen the per-target **server entry** module (source text) for `buildServer` to bundle. It imports the app's `adapter` (from `framework.ts`), the optional `backend` (from `backend.ts`), and the generated `{ manifest, clientEntry }` (from `./server-manifest`), builds `createWebApp`, then wires the…
 - **htmlFileFor** _(function)_ - `htmlFileFor: (pattern: string) => string`
   Map a route path to its output file: `/` → `index.html`, `/a/b` → `a/b/index.html`.
