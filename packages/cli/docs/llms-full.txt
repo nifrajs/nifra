@@ -602,12 +602,16 @@ _before_ path segments: the seven HTTP verbs
 `head`/`options`, any casing) call the route, and
 `subscribe`, `ws`, `index`, and `then` (exact
 match) are the SSE, WebSocket, root-path, and thenable-guard keys. A route whose path
-contains a static segment spelling one of these - `.post("/api/delete", …)` - is
-**unreachable through the typed client**: `api.delete.post` resolves the
-`delete` verb, not the segment. The client type rejects the access at compile
-time and `nifra check` flags the route (`NF-C018`); rename the segment
-(e.g. `/api/remove`), or mark a route served only to non-typed-client consumers
-with `// nifra-expect reserved-segment` above its registration.
+contains a static segment spelling one of these - `.post("/api/delete", …)` -
+cannot be reached by **dot access**: `api.delete.post` resolves the
+`delete` verb, not the segment. The typed spelling is a **call on the parent
+node** - `api.api("delete").post()` sends `POST /api/delete` - the
+same call params use, accepting exactly the colliding segment names. The client type rejects
+the dot access at compile time with that guidance, and `nifra check` reports the
+collision (`NF-C018`, advisory). Prefer a verb-free segment
+(e.g. `/api/remove`) when you control the path; mark a route served only to
+non-typed-client consumers with `// nifra-expect reserved-segment` above its
+registration.
 
 ### Results never throw
 

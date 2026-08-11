@@ -261,3 +261,32 @@ describe("testClient", () => {
     expect(missing.ok).toBe(false)
   })
 })
+
+describe("collision escape - reserved-named segments via a call on the parent node", () => {
+  test("reaches verb-, subscribe-, index-, and then-named segments end to end", async () => {
+    const app = server()
+      .post("/api/delete", () => ({ removed: true }))
+      .get("/jobs/subscribe", () => ({ feed: true }))
+      .get("/promise/then", () => ({ settled: true }))
+      .get("/api/:id", (c) => ({ id: c.params.id }))
+    const api = testClient<typeof app>(app)
+
+    const removed = await api.api("delete").post()
+    expect(removed.ok && removed.data).toEqual({ removed: true })
+
+    const feed = await api.jobs("subscribe").get()
+    expect(feed.ok && feed.data).toEqual({ feed: true })
+
+    const settled = await api.promise("then").get()
+    expect(settled.ok && settled.data).toEqual({ settled: true })
+
+    // The param signature coexists on the same node: an object is a param bag, a string the segment.
+    const byId = await api.api({ id: "7" }).get()
+    expect(byId.ok && byId.data).toEqual({ id: "7" })
+
+    // Property access on the colliding name still resolves the reserved key, not the path -
+    // the DELETE verb caller here - so the escape and the verb do not shadow each other.
+    const verb = await (api.api as unknown as { delete: () => Promise<Result<unknown>> }).delete()
+    expect(verb.ok).toBe(false) // no DELETE /api route exists; graceful 404 Result, no throw
+  })
+})

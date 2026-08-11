@@ -31,8 +31,11 @@ describe("NF-C018 reserved client segment", () => {
     )
     const codes = findings.filter((f) => f.code === "NF-C018")
     expect(codes).toHaveLength(3)
-    expect(codes.every((f) => f.severity === "error")).toBe(true)
+    // Advisory, not blocking: the route IS reachable via the typed collision escape.
+    expect(codes.every((f) => f.severity === "warn")).toBe(true)
     expect(codes[0]?.message).toContain("reserved client proxy key 'delete'")
+    // The message teaches the typed escape spelling for this exact route.
+    expect(codes[0]?.message).toContain('api.api("delete")')
   })
 
   test("flags the exact-match reserved keys: subscribe, ws, index, then", async () => {

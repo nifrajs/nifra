@@ -24,9 +24,11 @@ import { NO_SOCKET, openWebSocket } from "./ws.ts"
 /**
  * The RESERVED proxy keys, resolved before path segments (see `resolveSegment` and the `then`
  * guard in `createProxy`): these seven verbs (case-insensitive) plus `subscribe`, `ws`, `index`,
- * and `then` (exact). A route path containing a static segment spelling one is unreachable through
- * the typed proxy - `treaty.ts` rejects the access at compile time (ReservedSegmentCollision) and
- * `nifra check` flags the route (NF-C018). Keep the three surfaces in lockstep when touching this.
+ * and `then` (exact). A route path containing a static segment spelling one is unreachable by
+ * PROPERTY ACCESS - `treaty.ts` rejects the access at compile time (ReservedSegmentCollision) and
+ * types the escape spelling instead: calling the parent node with the segment
+ * (`api.api("delete").post()`, the apply trap below) reaches it. `nifra check` reports the
+ * collision with the same guidance (NF-C018). Keep the three surfaces in lockstep.
  */
 const HTTP_VERBS: ReadonlySet<string> = new Set([
   "get",
@@ -294,9 +296,10 @@ function createProxy(
       return value
     },
     apply(_target, _thisArg, args) {
-      // A param call (`api.users({ id })`): append the single value, encoded - encoding "/"
-      // round-trips through the server's decode, so wildcards and params share this one path.
-      // The Treaty type requires the object, but the runtime must stay graceful: a no-arg call
+      // A param call (`api.users({ id })`) or a collision-escape call (`api.api("delete")`, the
+      // typed spelling for reserved-named segments): append the single value, encoded - encoding
+      // "/" round-trips through the server's decode, so wildcards and params share this one path.
+      // The Treaty type constrains the argument, but the runtime must stay graceful: a no-arg call
       // (`api.users()`) or empty object (`api.users({})`) must NOT throw - the client's contract is
       // to never throw - nor synthesize an `"undefined"` path segment. With no value, fall through
       // to the bare path, which the server resolves as an ordinary `{ ok: false }` (404) Result.

@@ -144,10 +144,11 @@ type Methods<MethodMap> = {
 /**
  * Property names the runtime proxy intercepts BEFORE path resolution (`resolveSegment` and the
  * `then` guard in `createProxy`, ./client.ts). A route whose path contains a static segment
- * spelling one of these can never be reached through the typed proxy: the property access
- * resolves to the reserved behavior (verb call, `.subscribe()`, `.ws()`, root `index`, thenable
- * guard) instead of extending the path. Verbs are intercepted case-insensitively; the rest match
- * exactly. Kept in lockstep with the runtime's `HTTP_VERBS` set.
+ * spelling one of these can never be reached by PROPERTY ACCESS: the access resolves to the
+ * reserved behavior (verb call, `.subscribe()`, `.ws()`, root `index`, thenable guard) instead of
+ * extending the path. The typed spelling for such a segment is a call on the parent node
+ * (`CollisionEscape` below). Verbs are intercepted case-insensitively; the rest match exactly.
+ * Kept in lockstep with the runtime's `HTTP_VERBS` set.
  */
 type ReservedVerbKey = "get" | "post" | "put" | "patch" | "delete" | "head" | "options"
 type ReservedExactKey = "subscribe" | "ws" | "index" | "then"
@@ -155,11 +156,12 @@ type ReservedExactKey = "subscribe" | "ws" | "index" | "then"
 /**
  * What a reserved-named segment resolves to instead of a route node, so the collision is a
  * compile error whose message reads out the fix - not a runtime `TypeError` on a path the
- * type system claimed was fine. `nifra check` reports the same collision at the route
- * definition (NF-C018); this covers the call site.
+ * type system claimed was fine. The typed spelling for the same route is a CALL on the parent
+ * node (see `CollisionEscape`); `nifra check` reports the collision at the route definition
+ * (NF-C018) with the same guidance.
  */
 interface ReservedSegmentCollision<Seg extends string> {
-  readonly "~nifra-reserved-segment": `route segment '${Seg}' collides with a reserved client proxy key (get/post/put/patch/delete/head/options/subscribe/ws/index/then) and cannot be reached through the typed client - rename the route segment`
+  readonly "~nifra-reserved-segment": `route segment '${Seg}' collides with a reserved client proxy key (get/post/put/patch/delete/head/options/subscribe/ws/index/then) and cannot be reached by property access - call the parent node with the segment instead, parent("${Seg}").verb(), or rename the segment`
 }
 
 type IsReservedSeg<Seg extends string> = Seg extends ReservedExactKey
@@ -213,9 +215,29 @@ type ParamChild<R, Prefix extends string> = [ParamSeg<R, Prefix>] extends [never
         ) => TreatyNode<R, `${Prefix}/*${Name}`>
       : unknown
 
+/** The reserved-named child segments under `Prefix`, if any. */
+type CollidingSegs<R, Prefix extends string> = {
+  [S in StaticSegs<R, Prefix> & string]: IsReservedSeg<S> extends true ? S : never
+}[StaticSegs<R, Prefix> & string]
+
+/**
+ * The typed spelling for reserved-named segments. Property access can never reach them (the
+ * proxy resolves the reserved key first), but the runtime's apply trap has always accepted a
+ * scalar argument as one literal path segment - the same call params use. This types that call
+ * for EXACTLY the colliding segments, so `api.api("delete").post()` sends `POST /api/delete`
+ * while non-colliding segments keep dot access as their only spelling. Placed after `ParamChild`
+ * in the node intersection, so on a node with both, an object argument resolves to the param
+ * signature and a string literal falls through to this one - matching the runtime, which treats
+ * an object as a param bag and a scalar as the segment itself.
+ */
+type CollisionEscape<R, Prefix extends string> = [CollidingSegs<R, Prefix>] extends [never]
+  ? unknown
+  : <S extends CollidingSegs<R, Prefix>>(segment: S) => TreatyNode<R, `${Prefix}/${S}`>
+
 type TreatyNode<R, Prefix extends string> = MethodsAt<R, Prefix> &
   StaticChildren<R, Prefix> &
-  ParamChild<R, Prefix>
+  ParamChild<R, Prefix> &
+  CollisionEscape<R, Prefix>
 
 // The root path "/" is reached as `api.index.get()` (Eden convention).
 type RootIndex<R> = "/" extends keyof R ? { readonly index: Methods<R["/"]> } : unknown

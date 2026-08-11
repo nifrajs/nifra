@@ -156,6 +156,24 @@ export default function Api() {
         and query are typed from the route's schema.
       </p>
       <CodeBlock code={CLIENT} />
+      <p className="caveat">
+        <b>Reserved proxy keys.</b> The client proxy resolves a fixed set of property names{" "}
+        <i>before</i> path segments: the seven HTTP verbs{" "}
+        (<code>get</code>/<code>post</code>/<code>put</code>/<code>patch</code>/<code>delete</code>/
+        <code>head</code>/<code>options</code>, any casing) call the route, and{" "}
+        <code>subscribe</code>, <code>ws</code>, <code>index</code>, and <code>then</code> (exact
+        match) are the SSE, WebSocket, root-path, and thenable-guard keys. A route whose path
+        contains a static segment spelling one of these - <code>.post("/api/delete", …)</code> -
+        cannot be reached by <b>dot access</b>: <code>api.delete.post</code> resolves the{" "}
+        <code>delete</code> verb, not the segment. The typed spelling is a <b>call on the parent
+        node</b> - <code>api.api("delete").post()</code> sends <code>POST /api/delete</code> - the
+        same call params use, accepting exactly the colliding segment names. The client type rejects
+        the dot access at compile time with that guidance, and <code>nifra check</code> reports the
+        collision (<code>NF-C018</code>, advisory). Prefer a verb-free segment
+        (e.g. <code>/api/remove</code>) when you control the path; mark a route served only to
+        non-typed-client consumers with <code>{"// nifra-expect reserved-segment"}</code> above its
+        registration.
+      </p>
 
       <h2>Results never throw</h2>
       <p>

@@ -131,6 +131,8 @@ const collisionApp = server()
   // Sibling routes with clean names stay fully typed.
   .post("/api/remove", () => ({ removed: true }))
   .delete("/api/assets", () => ({ removed: true }))
+  // A param sibling under the same prefix: the node carries BOTH call signatures.
+  .get("/api/:id", (c) => ({ id: c.params.id }))
 
 const collisionApi = {} as Treaty<typeof collisionApp>
 
@@ -158,6 +160,37 @@ const removed = collisionApi.api.remove.post()
 export type _CleanSibling = Expect<Equal<DataOf<typeof removed>, { removed: boolean }>>
 const assetsDeleted = collisionApi.api.assets.delete() // legitimate DELETE verb call still compiles
 export type _VerbCallStillWorks = Expect<Equal<DataOf<typeof assetsDeleted>, { removed: boolean }>>
+
+// --- the collision escape: colliding segments are reachable by CALLING the parent node ---
+
+// The runtime's apply trap has always appended a scalar argument as a literal path segment; the
+// escape types that spelling for exactly the colliding segments, so every reserved name -
+// including `then` - has a typed route to it.
+const escDelete = collisionApi.api("delete").post()
+export type _EscapeDelete = Expect<Equal<DataOf<typeof escDelete>, { removed: boolean }>>
+const escNested = collisionApi.api.assets("delete").post()
+export type _EscapeNested = Expect<Equal<DataOf<typeof escNested>, { removed: boolean }>>
+const escCased = collisionApi("Delete").status.get() // root-level, case-preserving
+export type _EscapeCased = Expect<Equal<DataOf<typeof escCased>, { ok: boolean }>>
+const escSubscribe = collisionApi.jobs("subscribe").get()
+export type _EscapeSubscribe = Expect<Equal<DataOf<typeof escSubscribe>, { ok: boolean }>>
+const escIndex = collisionApi.legal("index").get()
+export type _EscapeIndex = Expect<Equal<DataOf<typeof escIndex>, { ok: boolean }>>
+const escThen = collisionApi.promise("then").get()
+export type _EscapeThen = Expect<Equal<DataOf<typeof escThen>, { ok: boolean }>>
+
+// The escape accepts ONLY colliding segments - it is not a general string path builder.
+// @ts-expect-error `remove` doesn't collide, so dot access is its only spelling
+collisionApi.api("remove")
+// @ts-expect-error `delete` is not a colliding child of /jobs (only `subscribe` is)
+collisionApi.jobs("delete")
+// @ts-expect-error a node with no colliding children (and no params) is not callable
+collisionApi.api.remove("x")
+
+// A param sibling coexists with the escape on the same node: an object resolves the param
+// signature, a colliding string literal resolves the escape.
+const paramSibling = collisionApi.api({ id: "7" }).get()
+export type _ParamSibling = Expect<Equal<DataOf<typeof paramSibling>, { id: string }>>
 
 // --- status-discriminated error contracts ---
 

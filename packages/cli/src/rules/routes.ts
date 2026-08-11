@@ -9,10 +9,11 @@ import type { CheckRule, RuleContext } from "./index.ts"
  * NF-C018 exists because the typed client's proxy intercepts a fixed set of property names before
  * path resolution (`resolveSegment` + the thenable guard in @nifrajs/client): the seven HTTP verbs
  * (case-insensitively), `subscribe`, `ws`, `index`, and `then`. A route whose path contains a
- * static segment spelling one of these is UNREACHABLE through the typed client - `api.delete.post`
- * is a runtime TypeError while `tsc` and every other gate stay green. That silent contract hole is
- * the exact failure nifra promises cannot happen, so it is a blocking error at the route
- * definition (the client type rejects the call site with the same collision, see treaty.ts).
+ * static segment spelling one of these cannot be reached by DOT ACCESS - `api.delete.post` resolves
+ * the DELETE verb, not the path. The typed spelling is a call on the parent node
+ * (`api.api("delete").post()`, treaty.ts `CollisionEscape`), and the client type rejects the dot
+ * access with the same guidance - so the collision is a warning that teaches the escape spelling,
+ * not a blocking error: the route IS reachable, just not by the spelling its name suggests.
  */
 const RESERVED_VERB_SEGMENTS: ReadonlySet<string> = new Set([
   "get",
@@ -58,6 +59,17 @@ function routeFacts(ctx: RuleContext): StaticRouteFact[] {
   return out
 }
 
+/**
+ * The typed escape spelling for a colliding segment, e.g. `/api/delete` + `delete` →
+ * `api("delete").post()` shown as the chain up to the collision. Best-effort readability: earlier
+ * segments render as dot access, the colliding one as the parent-node call.
+ */
+function routeEscapeHint(path: string, colliding: string): string {
+  const segments = path.split("/").filter((segment) => segment !== "")
+  const before = segments.slice(0, Math.max(segments.indexOf(colliding), 0))
+  return `${["api", ...before].join(".")}("${colliding}")`
+}
+
 /** The reserved key a static path segment collides with, or undefined. Params/wildcards never collide. */
 function reservedCollision(segment: string): string | undefined {
   if (segment.startsWith(":") || segment.startsWith("*")) return undefined
@@ -86,10 +98,10 @@ export const reservedSegmentRule: CheckRule = {
         findings.push(
           diagnostic({
             code: "NF-C018",
-            severity: "error",
+            severity: "warn",
             file: route.file,
             line: route.line,
-            message: `${route.method} ${route.path} - segment '${segment}' collides with the reserved client proxy key '${collision}' (reserved: ${RESERVED_READOUT}); the route is unreachable through the typed client - rename the segment (e.g. '/${segment}' → '/${segment}-item' or a verb-free noun), or mark an intentionally non-typed-client route with \`// ${RESERVED_SEGMENT_PRAGMA}\` above the registration`,
+            message: `${route.method} ${route.path} - segment '${segment}' collides with the reserved client proxy key '${collision}' (reserved: ${RESERVED_READOUT}); dot access cannot reach it - call the parent node with the segment instead (\`${routeEscapeHint(route.path, segment)}\`), rename the segment, or mark an intentionally non-typed-client route with \`// ${RESERVED_SEGMENT_PRAGMA}\` above the registration`,
             evidence: [`${route.method} ${route.path}`, `segment: ${segment}`],
             verify: "nifra check --lints-only",
           }),
