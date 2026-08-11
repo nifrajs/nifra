@@ -344,6 +344,13 @@ export default function Plugins() {
         <code>cacheControl()</code> sets <code>Cache-Control</code> on matching responses without
         clobbering one a handler already set.
       </p>
+      <p>
+        <b>Security note (BREACH):</b> any HTTP compression makes the response size depend on its
+        content, so a response that mixes a secret with attacker-reflected request input can leak
+        the secret through the compressed length. Nifra's CSRF tokens are HMAC-signed per session
+        and safe to compress, but if a route reflects request input alongside a per-request secret,
+        exclude it via the <code>compressible</code> option or route scoping.
+      </p>
       <CodeBlock code={PERF} />
 
       <h2>Operations &amp; docs</h2>

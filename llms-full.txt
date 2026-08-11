@@ -596,6 +596,19 @@ await api.search.get({ query: { page: "3" } })              // query string
 await api.users({ id: "1" }).posts({ postId: "2" }).get()   // nested params
 ```
 
+**Reserved proxy keys.** The client proxy resolves a fixed set of property names
+_before_ path segments: the seven HTTP verbs
+(`get`/`post`/`put`/`patch`/`delete`/
+`head`/`options`, any casing) call the route, and
+`subscribe`, `ws`, `index`, and `then` (exact
+match) are the SSE, WebSocket, root-path, and thenable-guard keys. A route whose path
+contains a static segment spelling one of these - `.post("/api/delete", …)` - is
+**unreachable through the typed client**: `api.delete.post` resolves the
+`delete` verb, not the segment. The client type rejects the access at compile
+time and `nifra check` flags the route (`NF-C018`); rename the segment
+(e.g. `/api/remove`), or mark a route served only to non-typed-client consumers
+with `// nifra-expect reserved-segment` above its registration.
+
 ### Results never throw
 
 Every call resolves to a discriminated `Result`: branch on `ok` (or
@@ -1742,6 +1755,12 @@ does custom, typed verification.
 `Accept-Encoding: gzip`, peeking the body so tiny responses aren't enlarged.
 `cacheControl()` sets `Cache-Control` on matching responses without
 clobbering one a handler already set.
+
+**Security note (BREACH):** any HTTP compression makes the response size depend on its
+content, so a response that mixes a secret with attacker-reflected request input can leak
+the secret through the compressed length. Nifra's CSRF tokens are HMAC-signed per session
+and safe to compress, but if a route reflects request input alongside a per-request secret,
+exclude it via the `compressible` option or route scoping.
 
 ```ts
 import { server } from "@nifrajs/core/server"

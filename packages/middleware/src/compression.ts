@@ -217,6 +217,13 @@ function replayRawResponse(
  * types, and bodies below `threshold` (gzip's ~20-byte overhead would enlarge them). Adds
  * `Vary: Accept-Encoding`.
  *
+ * **Security (BREACH).** Compression makes the response length depend on its content, so a response
+ * that mixes a secret with attacker-reflected input leaks the secret through the compressed size
+ * (the BREACH class of attacks). This applies to any HTTP compression, not this middleware
+ * specifically. Nifra's own CSRF tokens are HMAC-signed per session and safe to compress, but if a
+ * response body reflects request input **and** carries a per-request secret, exclude that route via
+ * `compressible`/route scoping, or split the secret and the reflection into separate responses.
+ *
  * ```ts
  * app.use(compression())
  * ```
