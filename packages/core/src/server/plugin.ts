@@ -3,7 +3,8 @@
  * `use`/`derive`/`decorate` and/or registering routes) and returns it; these helpers attach a name
  * for idempotent dedupe and pin the type-threading so `.use()` preserves the caller's typed server.
  */
-import type { AnyServer } from "./server.ts"
+import type { Registry } from "./registry.ts"
+import type { AnyServer, Server } from "./server.ts"
 
 /**
  * A nifra **plugin**: a function that augments an app - calling `use`/`derive`/`decorate` and/or
@@ -27,6 +28,39 @@ export type IdentityPlugin = (<S extends AnyServer>(app: S) => S) & {
 }
 
 /**
+ * A named plugin built with {@link defineContextPlugin}: it adds the context `D` to every handler
+ * downstream while threading the caller's route registry and existing context UNCHANGED. This is the
+ * type {@link definePlugin} cannot express - `definePlugin` infers its parameter from an untyped
+ * `(app) => ...` arrow, which lands on `AnyServer`, so `use` returns `Server<any, any>`.
+ */
+export type ContextPlugin<D extends object> = (<R extends Registry, Ctx>(
+  app: Server<R, Ctx>,
+) => Server<R, Ctx & D>) & { readonly pluginName?: string }
+
+/**
+ * Define a named plugin that **adds typed context and nothing else** - the `derive` case - without
+ * collapsing the caller's types. `use` instantiates the generic signature against the concrete
+ * receiver, so `R` and `Ctx` come back unchanged with `D` intersected onto the context.
+ *
+ * Use this instead of {@link definePlugin} for every `(app) => app.derive(...)` plugin. `definePlugin`
+ * is only safe when the caller supplies `In`/`Out` explicitly; with the usual untyped arrow both
+ * default to `AnyServer` and the typed client silently collapses to `any`.
+ *
+ * ```ts
+ * export const requestId = defineContextPlugin<{ requestId: string }>("requestId", (app) =>
+ *   app.derive(() => ({ requestId: crypto.randomUUID() })),
+ * )
+ * const api = server().get("/a", h).use(requestId).get("/b", h) // /a AND /b stay typed; c.requestId typed
+ * ```
+ */
+export function defineContextPlugin<D extends object>(
+  name: string,
+  apply: <R extends Registry, Ctx>(app: Server<R, Ctx>) => Server<R, Ctx & D>,
+): ContextPlugin<D> {
+  return Object.assign(apply, { pluginName: name }) as ContextPlugin<D>
+}
+
+/**
  * Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)`
  * applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each
  * other without double-registering hooks.
@@ -36,10 +70,13 @@ export type IdentityPlugin = (<S extends AnyServer>(app: S) => S) & {
  * app.use(requestId)   // downstream handlers see c.requestId
  * ```
  *
- * FOOTGUN: only use this for a plugin that adds context. For a plugin that **mounts routes/hooks but adds
- * NO context** (an auth router, an audit logger), use {@link defineRouterPlugin} ({@link defineIdentityPlugin}).
- * `definePlugin((app) => app.get(...))` infers `app: Server<any, any>`, so `.use()` returns `Server<any, any>`
- * and your whole typed client silently collapses to `any` - no type error, no runtime error.
+ * FOOTGUN: this helper only threads types when the caller pins `In`/`Out` explicitly. With the usual
+ * `definePlugin("x", (app) => ...)` arrow, `app` infers as `AnyServer` and `.use()` returns
+ * `Server<any, any>` - the whole typed client silently collapses to `any`, with no type error and no
+ * runtime error. Prefer a definer that cannot do that:
+ *
+ * - adds context via `derive`/`decorate` -> {@link defineContextPlugin}
+ * - mounts routes/hooks and adds NO context -> {@link defineRouterPlugin} ({@link defineIdentityPlugin})
  */
 export function definePlugin<In extends AnyServer, Out extends AnyServer>(
   name: string,

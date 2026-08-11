@@ -13,7 +13,7 @@ import {
   type BackendMountHandler,
   NIFRA_BACKEND_MOUNT,
 } from "@nifrajs/core/mount"
-import { server, type UrlParts, urlPartsOf } from "@nifrajs/core/server"
+import { type ServerOptions, server, type UrlParts, urlPartsOf } from "@nifrajs/core/server"
 import {
   DEFERRED_ERROR_CODE,
   DEFERRED_RUNTIME,
@@ -1414,13 +1414,67 @@ export function unsafeInlineScript(
   }
 }
 
-export interface CreateWebAppOptions {
+export interface CreateWebAppOptions<Env = unknown> {
   readonly adapter: RenderAdapter
   readonly manifest: Manifest
   /** URL of the built client entry (module script) injected into every page. */
   readonly clientEntry: string
   /** Default document title for all pages. */
   readonly title?: string
+  /**
+   * Options for the underlying `server()` - `requestTimeoutMs`, `admission`, `gracefulSignals`, and
+   * the rest of {@link ServerOptions}.
+   *
+   * Needed because the `Server` is constructed in here, so a caller has no other way to reach its
+   * constructor: a page app could set no request timeout and no capacity gate, which are exactly the
+   * two knobs a production readiness check looks for. An SSR app wants them MORE than a backend does -
+   * a render is slow and allocation-heavy, so a burst that a JSON API would absorb is the one that
+   * exhausts the pod.
+   *
+   * Applies to the whole app, {@link mounts} and the {@link api} auto-mount included: the capacity gate
+   * sits at the fetch entry, ahead of the request hooks those are dispatched from.
+   */
+  readonly server?: ServerOptions
+  /**
+   * Runs against the app BEFORE any page route is registered - the seam for `securityHeaders()`,
+   * `requestId()`, `logger()`, a rate limit, or anything else applied with `use`.
+   *
+   * ```ts
+   * createWebApp({
+   *   …,
+   *   use: (app) => {
+   *     app.use(securityHeaders())
+   *     app.use(requestId())
+   *   },
+   * })
+   * ```
+   *
+   * A callback rather than an array because `use` is overloaded - `Middleware`, `IdentityPlugin`,
+   * `ContextPlugin` - and only the real call site instantiates the right overload. The return value
+   * is ignored: this is for cross-cutting concerns, not for declaring routes (declare those on the
+   * returned app, where they get their types).
+   *
+   * **Why the timing matters.** `beforeHandle`, `afterHandle`, `around`, `derive`/`decorate`, and
+   * `onError` are snapshotted into each route AS IT IS DECLARED, and `createWebApp` declares every
+   * page (plus the `/*` catch-all) before it returns - so a caller's `app.use(…)` afterwards binds
+   * them to nothing, silently. `requestId()` is exactly that case: it is a `derive`, so applied late
+   * it leaves every page without `c.requestId`. Route assurance evidence is order-scoped the same
+   * way, so a late `securityHeaders()` leaves the pages unable to PROVE the header to `nifra assure`
+   * even though it does still set it.
+   *
+   * `onRequest`/`onResponse` (and the response header/body hooks) are app-global arrays read at
+   * request time, so those alone DO work when added late. Using this seam for everything avoids
+   * having to remember which is which.
+   *
+   * Runs ahead of the {@link mounts} / {@link api} request hooks, so an `onRequest` middleware guards
+   * a mounted auth handler too.
+   *
+   * A `ContextPlugin` applied here takes runtime effect but cannot widen the declared return type of
+   * this function, so `c.requestId` is not typed on routes you declare afterwards. Named plugins are
+   * idempotent, so `app.use(requestId())` on the returned app recovers the TYPE without applying the
+   * plugin a second time.
+   */
+  readonly use?: (app: ReturnType<typeof server<Env>>) => void
   /** Injected into each loader's `ctx.api` - typically an `inProcessClient(app)` (typed
    * per-route via `@nifrajs/client`'s `createRoutes`). Opaque to the core.
    *
@@ -1573,7 +1627,7 @@ const urlPartsFor = (request: Request): UrlParts => {
  * secure default; validate at the trust boundary before use.
  */
 export function createWebApp<Env = unknown>(
-  options: CreateWebAppOptions,
+  options: CreateWebAppOptions<Env>,
 ): ReturnType<typeof server<Env>> {
   const { adapter, manifest, clientEntry, title, api } = options
   const titleOption = title === undefined ? {} : { title }
@@ -1599,7 +1653,11 @@ export function createWebApp<Env = unknown>(
   // Seed the context with the declared `Env` so `app.fetch(req, { env })` / `toFetchHandler(app)` type
   // the platform bindings (see the `createWebApp` doc). The runtime `env` still arrives per-request via
   // `app.fetch(req, { env })`; this is a compile-time-only seed (`server<Env>()` casts, doesn't store).
-  const app = server<Env>()
+  const app = server<Env>(options.server)
+  // Before the mount hooks and before every page route, so the order-scoped hooks (`derive`,
+  // `beforeHandle`, assurance evidence) actually bind to them - see the `use` option. A caller
+  // cannot do this after the fact: by the time this function returns, the routes are declared.
+  options.use?.(app)
   // Auto-mount the in-process backend over HTTP at `apiPrefix` (default `/api`), BEFORE page routing.
   // `onRequest` runs on the raw request ahead of the router, so this wins over the page wildcard `/*`
   // for every method (POST/GET/PUT/…) - not just the GET page routes - and a backend 404 (`/api/none`)

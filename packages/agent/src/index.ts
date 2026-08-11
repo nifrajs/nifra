@@ -6,9 +6,11 @@
  * input, tool input, and tool output remain transient caller data.
  */
 
+import { canAttempt, type RequestBudget } from "@nifrajs/core/budget"
 import type { ExecutionPolicyAdapter } from "@nifrajs/core/execution-policy"
 import type { EffectCost } from "@nifrajs/core/ledger"
 import { type StandardIssue, type StandardSchemaV1, validateStandard } from "@nifrajs/core/schema"
+import { type ToolCatalogEntry, toCatalogEntry } from "@nifrajs/core/tool-catalog"
 import {
   executeTool,
   type ToolApproval,
@@ -17,7 +19,6 @@ import {
   type ToolContract,
   type ToolError,
   type ToolIdempotencyStore,
-  toolInputJsonSchema,
 } from "@nifrajs/core/tool-contract"
 
 export {
@@ -52,12 +53,8 @@ export interface AgentDefinition<
 // biome-ignore lint/suspicious/noExplicitAny: a heterogeneous tool list is erased at this boundary; each contract validates at execution.
 export type AgentToolContract = ToolContract<any, any>
 
-export interface AgentToolDescriptor {
-  readonly name: string
-  readonly description: string
-  readonly inputSchema: Record<string, unknown>
-  readonly capability: string
-}
+/** The model-facing descriptor is the complete descriptive catalog entry. */
+export type AgentToolDescriptor = ToolCatalogEntry
 
 export interface AgentTurnState {
   readonly version: 1
@@ -92,6 +89,8 @@ export interface AgentModelRequest {
   readonly toolResult?: AgentToolResult
   readonly previousOutput?: unknown
   readonly signal: AbortSignal
+  /** Wall-clock budget shared with the parent request. Use withDeadlineHeader for outbound requests. */
+  readonly deadline?: RequestBudget
 }
 
 export type AgentModelResponse =
@@ -131,6 +130,8 @@ export interface AgentApprovalPort {
     readonly tool: string
     readonly capability: string
     readonly signal: AbortSignal
+    /** Wall-clock budget reserved for this approval hop and the following tool execution. */
+    readonly deadline?: RequestBudget
   }): AgentApprovalResult | PromiseLike<AgentApprovalResult>
 }
 
@@ -159,6 +160,8 @@ export interface AgentPorts {
   readonly model: AgentModelPort
   readonly capabilities: readonly string[]
   readonly budget?: ToolBudget
+  /** Wall-clock budget shared with the parent request. Distinct from `budget`, which is cost. */
+  readonly deadline?: RequestBudget
   readonly idempotency?: ToolIdempotencyStore
   readonly state?: AgentStateStore
   readonly approval?: AgentApprovalPort
@@ -243,6 +246,13 @@ export function createAgentState(turnId: string): AgentTurnState {
     status: "ready",
     evidence: Object.freeze([]),
   })
+}
+
+const AGENT_SETTLE_RESERVE_MS = 5
+
+function costMilliseconds(cost: EffectCost | undefined): number {
+  const value = cost?.ms
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0
 }
 
 export async function turn<
@@ -345,6 +355,14 @@ export async function turn<
         state.pending?.kind ?? "cancelled",
       )
   }
+  const modelMs = costMilliseconds(definition.modelCost)
+  if (
+    ports.deadline !== undefined &&
+    !canAttempt(ports.deadline, modelMs, AGENT_SETTLE_RESERVE_MS)
+  ) {
+    await add("budget", "denied", { code: "deadline_exceeded" })
+    return suspended(state, { kind: "budget", effectId: newId() }, "budget")
+  }
   if (ports.budget !== undefined && !ports.budget.consume(definition.modelCost)) {
     await add("budget", "denied", { code: "budget_exceeded" })
     return suspended(state, { kind: "budget", effectId: newId() }, "budget")
@@ -357,15 +375,13 @@ export async function turn<
       instruction: definition.instruction,
       input: inputResult.value,
       state,
-      tools: definition.tools.map((tool) => ({
-        name: tool.name,
-        description: tool.description,
-        inputSchema: toolInputJsonSchema(tool),
-        capability: tool.capability,
-      })),
+      tools: definition.tools.map((tool) => toCatalogEntry(tool)),
       ...(input.toolResult === undefined ? {} : { toolResult: input.toolResult }),
       ...(input.previousOutput === undefined ? {} : { previousOutput: input.previousOutput }),
       signal,
+      ...(ports.deadline === undefined
+        ? {}
+        : { deadline: ports.deadline.child(AGENT_SETTLE_RESERVE_MS) }),
     })
     response = parseModelResponse(rawResponse)
   } catch {
@@ -375,6 +391,10 @@ export async function turn<
       { kind: signal.aborted ? "cancelled" : "model", effectId: newId() },
       signal.aborted ? "cancelled" : "model",
     )
+  }
+  if (ports.deadline !== undefined && !canAttempt(ports.deadline, 0, AGENT_SETTLE_RESERVE_MS)) {
+    await add("budget", "denied", { code: "deadline_exceeded" })
+    return suspended(state, { kind: "budget", effectId: newId() }, "budget")
   }
   if (response === undefined) {
     await add("model", "failed", { code: "invalid_model_response" })
@@ -543,6 +563,18 @@ async function executeToolStep<OutputSchema extends StandardSchemaV1>(
   effectIdOverride?: string,
 ): Promise<AgentTurnResult<NonNullable<OutputSchema["~standard"]["types"]>["output"]>> {
   const effectId = effectIdOverride ?? (ports.idFactory ?? (() => crypto.randomUUID()))()
+  const toolMs = costMilliseconds(tool.cost)
+  if (
+    ports.deadline !== undefined &&
+    !canAttempt(ports.deadline, toolMs, AGENT_SETTLE_RESERVE_MS)
+  ) {
+    await add("budget", "denied", {
+      name: tool.name,
+      effectId,
+      code: "deadline_exceeded",
+    })
+    return suspended(state, { kind: "budget", tool: tool.name, input, effectId }, "budget")
+  }
   let approval: ToolApproval | undefined
   if (tool.approval.kind !== "none") {
     if (ports.approval === undefined)
@@ -553,6 +585,11 @@ async function executeToolStep<OutputSchema extends StandardSchemaV1>(
       tool: tool.name,
       capability: tool.capability,
       signal: ports.signal ?? new AbortController().signal,
+      ...(ports.deadline === undefined
+        ? {}
+        : {
+            deadline: ports.deadline.child(toolMs + AGENT_SETTLE_RESERVE_MS),
+          }),
     })
     if (result.status === "pending")
       return suspended(
@@ -572,6 +609,17 @@ async function executeToolStep<OutputSchema extends StandardSchemaV1>(
       ...(result.status === "denied" ? { code: "approval_denied" } : {}),
     })
   }
+  if (
+    ports.deadline !== undefined &&
+    !canAttempt(ports.deadline, toolMs, AGENT_SETTLE_RESERVE_MS)
+  ) {
+    await add("budget", "denied", {
+      name: tool.name,
+      effectId,
+      code: "deadline_exceeded",
+    })
+    return suspended(state, { kind: "budget", tool: tool.name, input, effectId }, "budget")
+  }
   const result = await executeTool(tool, input, {
     effectId,
     capabilities: ports.capabilities,
@@ -580,6 +628,9 @@ async function executeToolStep<OutputSchema extends StandardSchemaV1>(
     ...(ports.idempotency === undefined ? {} : { idempotency: ports.idempotency }),
     ...(ports.executionPolicy === undefined ? {} : { executionPolicy: ports.executionPolicy }),
     ...(ports.signal === undefined ? {} : { signal: ports.signal }),
+    ...(ports.deadline === undefined
+      ? {}
+      : { deadline: ports.deadline.child(AGENT_SETTLE_RESERVE_MS) }),
     ...(ports.dryRun === undefined ? {} : { dryRun: ports.dryRun }),
     ...(ports.clock === undefined ? {} : { clock: ports.clock }),
   })

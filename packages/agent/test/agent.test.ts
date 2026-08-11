@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { type BudgetClock, createRequestBudget } from "@nifrajs/core/budget"
 import {
   createToolBudget,
   defineTool,
@@ -43,6 +44,30 @@ function sequenceModel(responses: readonly unknown[], calls: { count: number }):
 }
 
 describe("agent turns", () => {
+  const deadlineClock = (): BudgetClock & { wallMs: number; monotonicMs: number } => {
+    const wallMs = 1_700_000_000_000
+    return {
+      wallMs,
+      monotonicMs: 100,
+      wall() {
+        return this.wallMs
+      },
+      monotonic() {
+        return this.monotonicMs
+      },
+    }
+  }
+
+  const requestDeadline = (
+    clock: BudgetClock & { wallMs: number; monotonicMs: number },
+    remainingMs: number,
+  ) =>
+    createRequestBudget({
+      deadline: clock.wallMs + remainingMs,
+      signal: new AbortController().signal,
+      clock,
+    })
+
   test("validates typed model output and completes", async () => {
     const calls = { count: 0 }
     const result = await turn(
@@ -251,6 +276,160 @@ describe("agent turns", () => {
     expect(
       result.evidence.some((item) => item.kind === "budget" && item.code === "budget_exceeded"),
     ).toBe(true)
+  })
+
+  test("passes child deadlines to model, approval, and tool execution", async () => {
+    const clock = deadlineClock()
+    const deadline = requestDeadline(clock, 100)
+    let modelDeadline: number | undefined
+    let approvalDeadline: number | undefined
+    let toolDeadline: number | undefined
+    const tool = defineTool({
+      name: "reference.deadline",
+      description: "Observe the request deadline.",
+      input: t.object({ value: t.string() }),
+      output: t.object({ ok: t.boolean() }),
+      capability: "reference.deadline",
+      approval: { kind: "required" },
+      cost: { ms: 20 },
+      execute: (_input, context) => {
+        toolDeadline = context.deadline?.deadline
+        return { ok: true }
+      },
+    })
+    const result = await turn(
+      { ...definition(tool), modelCost: { ms: 30 } },
+      createAgentState("deadline-hops"),
+      { value: { prompt: "deadline" } },
+      {
+        model: {
+          complete: (request) => {
+            modelDeadline = request.deadline?.deadline
+            return { kind: "tool", name: "reference.deadline", input: { value: "x" } }
+          },
+        },
+        capabilities: ["reference.deadline"],
+        approval: {
+          request: (request) => {
+            approvalDeadline = request.deadline?.deadline
+            return { status: "approved", approval: { granted: true } }
+          },
+        },
+        deadline,
+        clock: () => 1,
+      },
+    )
+    expect(result.status).toBe("continue")
+    expect(modelDeadline).toBe(deadline.deadline - 5)
+    expect(approvalDeadline).toBe(deadline.deadline - 25)
+    expect(toolDeadline).toBe(deadline.deadline - 5)
+  })
+
+  test("suspends before a model attempt when its deadline is exhausted", async () => {
+    const clock = deadlineClock()
+    let calls = 0
+    const result = await turn(
+      { ...definition(), modelCost: { ms: 1 } },
+      createAgentState("deadline-model"),
+      { value: { prompt: "deadline" } },
+      {
+        model: {
+          complete: () => {
+            calls += 1
+            return { kind: "output", value: { answer: "late" } }
+          },
+        },
+        capabilities: [],
+        deadline: requestDeadline(clock, 4),
+        clock: () => 1,
+      },
+    )
+    expect(result.status).toBe("suspended")
+    if (result.status === "suspended") {
+      expect(result.reason).toBe("budget")
+      expect(result.pending.kind).toBe("budget")
+    }
+    expect(calls).toBe(0)
+    expect(
+      result.evidence.some((item) => item.kind === "budget" && item.code === "deadline_exceeded"),
+    ).toBe(true)
+  })
+
+  test("suspends before a tool attempt when its deadline cannot fit", async () => {
+    const clock = deadlineClock()
+    let executions = 0
+    const tool = defineTool({
+      name: "reference.late-tool",
+      description: "A tool that cannot fit.",
+      input: t.object({ value: t.string() }),
+      output: t.object({ ok: t.boolean() }),
+      capability: "reference.late-tool",
+      cost: { ms: 10 },
+      execute: () => {
+        executions += 1
+        return { ok: true }
+      },
+    })
+    const result = await turn(
+      definition(tool),
+      createAgentState("deadline-tool"),
+      { value: { prompt: "deadline" } },
+      {
+        model: sequenceModel(
+          [{ kind: "tool", name: "reference.late-tool", input: { value: "x" } }],
+          { count: 0 },
+        ),
+        capabilities: ["reference.late-tool"],
+        deadline: requestDeadline(clock, 10),
+        clock: () => 1,
+      },
+    )
+    expect(result.status).toBe("suspended")
+    if (result.status === "suspended") expect(result.reason).toBe("budget")
+    expect(executions).toBe(0)
+    expect(
+      result.evidence.some((item) => item.kind === "budget" && item.code === "deadline_exceeded"),
+    ).toBe(true)
+  })
+
+  test("rechecks the deadline after a slow approval", async () => {
+    const clock = deadlineClock()
+    let executions = 0
+    const tool = defineTool({
+      name: "reference.slow-approval",
+      description: "A tool whose approval consumes the remaining time.",
+      input: t.object({ value: t.string() }),
+      output: t.object({ ok: t.boolean() }),
+      capability: "reference.slow-approval",
+      approval: { kind: "required" },
+      execute: () => {
+        executions += 1
+        return { ok: true }
+      },
+    })
+    const result = await turn(
+      definition(tool),
+      createAgentState("deadline-approval"),
+      { value: { prompt: "deadline" } },
+      {
+        model: sequenceModel(
+          [{ kind: "tool", name: "reference.slow-approval", input: { value: "x" } }],
+          { count: 0 },
+        ),
+        capabilities: ["reference.slow-approval"],
+        approval: {
+          request: () => {
+            clock.monotonicMs = 106
+            return { status: "approved", approval: { granted: true } }
+          },
+        },
+        deadline: requestDeadline(clock, 10),
+        clock: () => 1,
+      },
+    )
+    expect(result.status).toBe("suspended")
+    if (result.status === "suspended") expect(result.reason).toBe("budget")
+    expect(executions).toBe(0)
   })
 
   test("suspends a provider failure as a model suspension, not a budget one", async () => {

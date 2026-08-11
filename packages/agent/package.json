@@ -20,6 +20,11 @@
       "bun": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./events": {
+      "bun": "./src/events.ts",
+      "types": "./dist/events.d.ts",
+      "default": "./dist/events.js"
     }
   },
   "files": [

@@ -82,7 +82,7 @@ export function formatDiff(diff: RoutesDiff): string {
 }
 
 /** Import `backend.ts` from `cwd` and snapshot its routes. */
-async function snapshotBackend(cwd: string): Promise<readonly RouteSnapshot[]> {
+export async function snapshotBackend(cwd: string): Promise<readonly RouteSnapshot[]> {
   const backendPath = resolve(cwd, "backend.ts")
   if (!existsSync(backendPath)) {
     throw new Error(

@@ -266,7 +266,7 @@ import {
 import type { EffectLedgerRuntime, ResolvedEffectLedger } from "./ledger-lane.ts"
 import { jsonLogger, type Logger } from "./logger.ts"
 import type { McpRuntime } from "./mcp-hook.ts"
-import type { IdentityPlugin } from "./plugin.ts"
+import type { ContextPlugin, IdentityPlugin } from "./plugin.ts"
 import type {
   AddRoute,
   EmptyRegistry,
@@ -501,6 +501,8 @@ export type AnyServer = Server<any, any>
 // Plugin definers + their types now live in `./plugin.ts`; re-exported here so `.use()` callers and
 // existing importers keep resolving them from the server module.
 export {
+  type ContextPlugin,
+  defineContextPlugin,
   defineIdentityPlugin,
   definePlugin,
   defineRouterPlugin,
@@ -1035,6 +1037,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * defeat the generic inference of the transforming overload below and collapse the result to `any`.
    */
   use(plugin: IdentityPlugin): this
+  /**
+   * Apply a **context** plugin ({@link ContextPlugin}, from {@link defineContextPlugin}) - it adds `D`
+   * to the handler context and changes nothing else, so the route registry `R` and the existing context
+   * `Ctx` thread through untouched. Like the identity overload above, this exists because the generic
+   * `(app: this) => Out` overload below cannot infer through a *generic* plugin signature: it erases the
+   * plugin's own type parameters to their constraints, which silently widens `R` to `Registry`.
+   */
+  use<D extends object>(plugin: ContextPlugin<D>): Server<R, Ctx & D>
   /**
    * Apply a **plugin function** - `(app) => app`, typically built with {@link definePlugin}. It's
    * called with `this` and its result is returned, so an inline plugin's `derive`/`decorate` thread
@@ -4461,10 +4471,21 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * `"127.0.0.1"` to bind loopback only - an admin surface, a sidecar, or anything that must not be
    * reachable off the box. Omitting it when you meant to restrict is a real exposure, so it is a
    * first-class option rather than something a caller has to drop down to `Bun.serve` for.
+   *
+   * `idleTimeoutSec` is how long Bun tolerates a connection with no bytes moving before it closes
+   * the socket. Bun's default is **10 seconds**, and a request whose handler is still working sends
+   * nothing - so any endpoint slower than 10s (a render, an export, a long upstream call) has its
+   * connection cut mid-flight regardless of `requestTimeoutMs`. Apps with such endpoints must raise
+   * this above their slowest expected response, which is why it is a first-class option and not a
+   * reason to drop down to `Bun.serve`. `0` disables the timeout entirely; max 255.
    */
   listen(
     port: number,
-    options?: { readonly reusePort?: boolean; readonly hostname?: string },
+    options?: {
+      readonly reusePort?: boolean
+      readonly hostname?: string
+      readonly idleTimeoutSec?: number
+    },
   ): RunningServer {
     if (typeof Bun === "undefined") {
       // listen() is the one Bun-specific seam. Off Bun, fail loud + actionable rather
@@ -4494,12 +4515,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // Spread rather than pass `hostname: undefined` - Bun treats an explicit undefined as a value
     // on some option paths, and omitting is what selects its 0.0.0.0 default.
     const bind = options?.hostname === undefined ? {} : { hostname: options.hostname }
+    // Same reasoning as `bind`: omit rather than pass undefined, so Bun's own default applies.
+    const idle =
+      options?.idleTimeoutSec === undefined ? {} : { idleTimeout: options.idleTimeoutSec }
     const nativeRoutes = wsHandlers === undefined ? this.buildBunNativeRoutes() : undefined
     const running = (wsHandlers === undefined
       ? Bun.serve({
           port,
           reusePort,
           ...bind,
+          ...idle,
           ...(nativeRoutes === undefined ? {} : { routes: nativeRoutes }),
           fetch: (req: Request, server) =>
             this.fetch(req, bunPeerPlatform(server, req) as Platform<EnvOf<Ctx>>),
@@ -4508,6 +4533,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           port,
           reusePort,
           ...bind,
+          ...idle,
           fetch: (req, server) => this.bunFetchWithWebSocket(req, server),
           // Bun's `ServerWebSocket<BunWsData>` is runtime-compatible with the handlers' structural
           // `BunSocket` view (kept local so `Bun.*` types never leak into the published .d.ts); the

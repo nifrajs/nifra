@@ -8,24 +8,28 @@ Provider-neutral, typed, resumable agent turns built on Nifra tool contracts.
 > reference see [`api-reference.md`](../../api-reference.md) (every export + signature) and
 > [`llms-full.txt`](../../llms-full.txt) (the prose guides). One cheap read instead of the whole corpus.
 
+## Public entrypoints
+
+`@nifrajs/agent` · `@nifrajs/agent/events`
+
 ## Key exports
 
-- **createAgentState** _(function)_ - `createAgentState: (turnId: string) => AgentTurnState`
-- **createLocalProcessAdapter** _(function)_ - `createLocalProcessAdapter: (options?: LocalProcessAdapterOptions) => LocalProcessAdapter`
-- **replayAgent** _(function)_ - `replayAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputS…`
-- **resumeAgent** _(function)_ - `resumeAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputS…`
-- **runAgent** _(function)_ - `runAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSche…`
-- **turn** _(function)_ - `turn: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>,…`
-- **LocalProcessPolicyError** _(class)_ - `class LocalProcessPolicyError`
-- **MemoryAgentStateStore** _(class)_ - `class MemoryAgentStateStore`
-- **LOCAL_PROCESS_LIMITATION** _(const)_ - `LOCAL_PROCESS_LIMITATION: "The local adapter is NOT a security boundary."`
-- **AgentApprovalPort** _(interface)_ - `interface AgentApprovalPort`
-- **AgentDefinition** _(interface)_ - `interface AgentDefinition<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>`
-- **AgentModelPort** _(interface)_ - `interface AgentModelPort`
-- **AgentModelRequest** _(interface)_ - `interface AgentModelRequest`
-- **AgentPendingContinuation** _(interface)_ - `interface AgentPendingContinuation`
+- **createAgentEvidenceStream** _(function)_ - `createAgentEvidenceStream: (options?: AgentEvidenceStreamOptions) => AgentEvidenceStream` · from `@nifrajs/agent/events`
+- **createAgentState** _(function)_ - `createAgentState: (turnId: string) => AgentTurnState` · from `@nifrajs/agent`
+- **createLocalProcessAdapter** _(function)_ - `createLocalProcessAdapter: (options?: LocalProcessAdapterOptions) => LocalProcessAdapter` · from `@nifrajs/agent`
+- **replayAgent** _(function)_ - `replayAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputS…` · from `@nifrajs/agent`
+- **resumeAgent** _(function)_ - `resumeAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputS…` · from `@nifrajs/agent`
+- **runAgent** _(function)_ - `runAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSche…` · from `@nifrajs/agent`
+- **turn** _(function)_ - `turn: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>,…` · from `@nifrajs/agent`
+- **LocalProcessPolicyError** _(class)_ - `class LocalProcessPolicyError` · from `@nifrajs/agent`
+- **MemoryAgentStateStore** _(class)_ - `class MemoryAgentStateStore` · from `@nifrajs/agent`
+- **LOCAL_PROCESS_LIMITATION** _(const)_ - `LOCAL_PROCESS_LIMITATION: "The local adapter is NOT a security boundary."` · from `@nifrajs/agent`
+- **AgentApprovalPort** _(interface)_ - `interface AgentApprovalPort` · from `@nifrajs/agent`
+- **AgentDefinition** _(interface)_ - `interface AgentDefinition<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>` · from `@nifrajs/agent`
+- **AgentEvidenceStream** _(interface)_ - `interface AgentEvidenceStream` · from `@nifrajs/agent/events`
+- **AgentEvidenceStreamOptions** _(interface)_ - `interface AgentEvidenceStreamOptions` · from `@nifrajs/agent/events`
 
-_…and 25 more - see [`api-reference.md`](../../api-reference.md#nifrajsagent) for the complete list._
+_…and 28 more - see [`api-reference.md`](../../api-reference.md#nifrajsagent) for the complete list._
 
 ## Footguns
 

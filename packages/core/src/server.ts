@@ -73,6 +73,8 @@ export {
   type AdmissionController,
   type AdmissionDecision,
   type AnyServer,
+  type ContextPlugin,
+  defineContextPlugin,
   defineIdentityPlugin,
   definePlugin,
   defineRouterPlugin,

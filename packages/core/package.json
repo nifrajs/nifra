@@ -237,6 +237,11 @@
       "types": "./dist/tool-contract.d.ts",
       "default": "./dist/tool-contract.js"
     },
+    "./tool-catalog": {
+      "bun": "./src/tool-catalog.ts",
+      "types": "./dist/tool-catalog.d.ts",
+      "default": "./dist/tool-catalog.js"
+    },
     "./execution-policy": {
       "bun": "./src/execution-policy.ts",
       "types": "./dist/execution-policy.d.ts",

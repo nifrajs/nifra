@@ -37,6 +37,7 @@ import { basename, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import { type ReflectedRoute, reflectRoutes } from "@nifrajs/core/reflection"
 import { Glob } from "bun"
+import { collectContractProof } from "./contract-proof.ts"
 import { loadDocsCorpus } from "./docs-search.ts"
 import { loadExamplesCorpus } from "./examples.ts"
 import { describeProject } from "./introspect.ts"
@@ -712,6 +713,62 @@ export function projectTools(
   const warmRun = createWarmHandler("mcp-run", cwd, "run")
   const warmRender = createWarmHandler("mcp-render", cwd, "render")
   return [
+    {
+      name: "nifra_contract_proof",
+      description:
+        "Compare the current route contract with its snapshot and join each changed route to its route-assurance and capability evidence. Returns hasBreaking as the gate. The typed-contract check is lazy and runs only when check is true.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          baseline: {
+            type: "string",
+            description:
+              "Snapshot path relative to the selected project directory. Defaults to api-snapshot.json.",
+          },
+          check: {
+            type: "boolean",
+            description: "Also run the typed-contract check. Default false to keep the diff lazy.",
+          },
+          dir: {
+            type: "string",
+            description: "Project subdirectory to inspect.",
+          },
+        },
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const raw = args as { baseline?: unknown; check?: unknown; dir?: unknown }
+        if (raw.dir !== undefined && typeof raw.dir !== "string") {
+          return JSON.stringify({ ok: false, error: "dir must be a string" }, null, 2)
+        }
+        if (raw.baseline !== undefined && typeof raw.baseline !== "string") {
+          return JSON.stringify({ ok: false, error: "baseline must be a string" }, null, 2)
+        }
+        const dir = raw.dir as string | undefined
+        const baseline = raw.baseline as string | undefined
+        const target = resolveProjectDir(cwd, dir)
+        if (target === null) return dirError(dir)
+        if (baseline !== undefined && baseline.trim() === "") {
+          return JSON.stringify({ ok: false, error: "baseline must not be empty" }, null, 2)
+        }
+        try {
+          return JSON.stringify(
+            await collectContractProof(target, {
+              ...(baseline === undefined ? {} : { baselinePath: baseline }),
+              ...(raw.check === undefined ? {} : { check: raw.check === true }),
+            }),
+            null,
+            2,
+          )
+        } catch (error) {
+          return JSON.stringify(
+            { ok: false, error: error instanceof Error ? error.message : String(error) },
+            null,
+            2,
+          )
+        }
+      },
+    },
     {
       name: "nifra_prove",
       description:

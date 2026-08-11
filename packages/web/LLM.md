@@ -14,7 +14,7 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 
 ## Key exports
 
-- **createWebApp** _(function)_ - `createWebApp: <Env = unknown>(options: CreateWebAppOptions) => ReturnType<typeof server<Env>>` · from `@nifrajs/web`
+- **createWebApp** _(function)_ - `createWebApp: <Env = unknown>(options: CreateWebAppOptions<Env>) => ReturnType<typeof server<Env>>` · from `@nifrajs/web`
 - **aggregateSizeReport** _(function)_ - `aggregateSizeReport: (chunks: readonly ChunkSize[]) => SizeReport` · from `@nifrajs/web/build`
 - **applyHead** _(function)_ - `applyHead: (head: Meta) => void` · from `@nifrajs/web/client`
 - **applyResponseHeaders** _(function)_ - `applyResponseHeaders: (headers: Headers, res: NodeHeaderSink) => void` · from `@nifrajs/web/vite`

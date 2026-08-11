@@ -1,12 +1,8 @@
 /** MCP adapter for the public Nifra typed tool contract. */
 
-import {
-  executeTool,
-  type ToolCallOptions,
-  type ToolContract,
-  toolInputJsonSchema,
-} from "@nifrajs/core/tool-contract"
-import type { McpContentBlock, McpTool, McpToolAnnotations } from "./protocol.ts"
+import { toCatalogEntry } from "@nifrajs/core/tool-catalog"
+import { executeTool, type ToolCallOptions, type ToolContract } from "@nifrajs/core/tool-contract"
+import type { McpContentBlock, McpTool } from "./protocol.ts"
 
 export interface McpToolContractOptions extends Omit<ToolCallOptions, "signal" | "ledger"> {
   readonly capabilities?: readonly string[]
@@ -17,31 +13,28 @@ export function toMcpTool<Input, Output>(
   tool: ToolContract<Input, Output>,
   options: McpToolContractOptions = {},
 ): McpTool {
+  const entry = toCatalogEntry(tool)
   return {
-    name: tool.name,
-    description: tool.description,
-    inputSchema: toolInputJsonSchema(tool),
-    annotations: mcpAnnotations(tool),
+    name: entry.name,
+    description: entry.description,
+    inputSchema: entry.inputSchema,
+    annotations: {
+      ...(entry.annotations.title === undefined ? {} : { title: entry.annotations.title }),
+      ...(entry.annotations.readOnlyHint === undefined
+        ? {}
+        : { readOnlyHint: entry.annotations.readOnlyHint }),
+      ...(entry.annotations.destructiveHint === undefined
+        ? {}
+        : { destructiveHint: entry.annotations.destructiveHint }),
+      ...(entry.annotations.idempotentHint === undefined
+        ? { idempotentHint: entry.idempotent }
+        : { idempotentHint: entry.annotations.idempotentHint }),
+      ...(entry.annotations.openWorldHint === undefined
+        ? {}
+        : { openWorldHint: entry.annotations.openWorldHint }),
+    },
     handler: async (args, context) =>
       mcpResult(await executeTool(tool, args, { ...options, signal: context.signal })),
-  }
-}
-
-function mcpAnnotations<Input, Output>(tool: ToolContract<Input, Output>): McpToolAnnotations {
-  return {
-    ...(tool.annotations.title === undefined ? {} : { title: tool.annotations.title }),
-    ...(tool.annotations.readOnlyHint === undefined
-      ? {}
-      : { readOnlyHint: tool.annotations.readOnlyHint }),
-    ...(tool.annotations.destructiveHint === undefined
-      ? {}
-      : { destructiveHint: tool.annotations.destructiveHint }),
-    ...(tool.annotations.idempotentHint === undefined
-      ? { idempotentHint: tool.idempotency !== undefined }
-      : { idempotentHint: tool.annotations.idempotentHint }),
-    ...(tool.annotations.openWorldHint === undefined
-      ? {}
-      : { openWorldHint: tool.annotations.openWorldHint }),
   }
 }
 

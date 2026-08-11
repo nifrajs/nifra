@@ -604,6 +604,14 @@ describe("monorepo detection + tool namespacing", () => {
     }
   })
 
+  test("projectTools exposes the joined contract proof tool", () => {
+    const proof = projectTools("/fake").find((tool) => tool.name === "nifra_contract_proof")
+    expect(proof).toBeDefined()
+    expect(proof?.inputSchema).toMatchObject({
+      properties: { baseline: {}, check: {}, dir: {} },
+    })
+  })
+
   test("projectTools exposes route assurance as a structured project gate", async () => {
     const assure = projectTools("/fake").find((tool) => tool.name === "nifra_assure")
     expect(assure).toBeDefined()

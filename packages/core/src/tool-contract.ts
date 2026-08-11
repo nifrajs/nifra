@@ -9,6 +9,7 @@
  * tool arguments, results, request bodies, or business values.
  */
 
+import type { RequestBudget } from "./budget.ts"
 import {
   defineExecutionPolicy,
   type ExecutionPolicy,
@@ -104,6 +105,8 @@ export interface ToolContract<Input = unknown, Output = unknown> {
 export interface ToolExecutionContext {
   readonly effectId: string
   readonly signal: AbortSignal
+  /** Wall-clock budget shared with the parent request, when an agent supplies one. */
+  readonly deadline?: RequestBudget
   readonly dryRun: boolean
   readonly policy?: ExecutionPolicy
 }
@@ -323,6 +326,8 @@ export interface ToolCallOptions {
   readonly effectId?: string
   readonly clock?: () => number
   readonly signal?: AbortSignal
+  /** Wall-clock budget shared with the parent request, distinct from the cost `budget`. */
+  readonly deadline?: RequestBudget
   readonly capabilities?: readonly string[]
   readonly approval?: ToolApproval
   readonly budget?: ToolBudget
@@ -584,6 +589,7 @@ export async function executeTool<Input, Output>(
     const output = await tool.execute(validatedInput.value, {
       effectId,
       signal,
+      ...(options.deadline === undefined ? {} : { deadline: options.deadline }),
       dryRun,
       ...(tool.policy === undefined ? {} : { policy: tool.policy }),
     })

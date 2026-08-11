@@ -146,7 +146,7 @@
     "name": "AgentApprovalPort",
     "kind": "interface",
     "package": "@nifrajs/agent",
-    "signature": "export interface AgentApprovalPort {\n    request(input: {\n        readonly turnId: string;\n        readonly effectId: string;\n        readonly tool: string;\n        readonly capability: string;\n        readonly signal: AbortSignal;\n    }): AgentApprovalResult | PromiseLike<AgentApprovalResult>;\n}"
+    "signature": "export interface AgentApprovalPort {\n    request(input: {\n        readonly turnId: string;\n        readonly effectId: string;\n        readonly tool: string;\n        readonly capability: string;\n        readonly signal: AbortSignal;\n        /** Wall-clock budget reserved for this approval hop and the following tool execution. */\n        readonly deadline?: RequestBudget;\n    }): AgentApprovalResult | PromiseLike<AgentApprovalResult>;\n}"
   },
   {
     "name": "AgentApprovalResult",
@@ -159,6 +159,20 @@
     "kind": "interface",
     "package": "@nifrajs/agent",
     "signature": "export interface AgentDefinition<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1> {\n    readonly name: string;\n    readonly instruction: string;\n    readonly input: InputSchema;\n    readonly output: OutputSchema;\n    readonly tools: readonly AgentToolContract[];\n    /** Dimensionless counters charged once per model decision. */\n    readonly modelCost?: EffectCost;\n}"
+  },
+  {
+    "name": "AgentEvidenceStream",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentEvidenceStream extends AgentTelemetryPort, AsyncIterableIterator<AgentStepEvidence> {\n    complete(): void;\n}",
+    "doc": "/**\n * The existing step evidence as an async iterable. No second event vocabulary is introduced.\n *\n * Pass the stream as `ports.telemetry`, consume it with `for await`, and call `complete()` when the\n * runner finishes. The stream keeps queued evidence until it has been consumed, then terminates.\n */"
+  },
+  {
+    "name": "AgentEvidenceStreamOptions",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentEvidenceStreamOptions {\n    /** Maximum number of produced evidence items waiting for a consumer. Default 1024. */\n    readonly maxQueueSize?: number;\n}",
+    "doc": "/** Options for the lifecycle evidence stream. */"
   },
   {
     "name": "AgentFileSpec",
@@ -177,7 +191,7 @@
     "name": "AgentModelRequest",
     "kind": "interface",
     "package": "@nifrajs/agent",
-    "signature": "export interface AgentModelRequest {\n    readonly agent: string;\n    readonly instruction: string;\n    readonly input: unknown;\n    readonly state: AgentTurnState;\n    readonly tools: readonly AgentToolDescriptor[];\n    readonly toolResult?: AgentToolResult;\n    readonly previousOutput?: unknown;\n    readonly signal: AbortSignal;\n}"
+    "signature": "export interface AgentModelRequest {\n    readonly agent: string;\n    readonly instruction: string;\n    readonly input: unknown;\n    readonly state: AgentTurnState;\n    readonly tools: readonly AgentToolDescriptor[];\n    readonly toolResult?: AgentToolResult;\n    readonly previousOutput?: unknown;\n    readonly signal: AbortSignal;\n    /** Wall-clock budget shared with the parent request. Use withDeadlineHeader for outbound requests. */\n    readonly deadline?: RequestBudget;\n}"
   },
   {
     "name": "AgentModelResponse",
@@ -201,7 +215,7 @@
     "name": "AgentPorts",
     "kind": "interface",
     "package": "@nifrajs/agent",
-    "signature": "export interface AgentPorts {\n    readonly model: AgentModelPort;\n    readonly capabilities: readonly string[];\n    readonly budget?: ToolBudget;\n    readonly idempotency?: ToolIdempotencyStore;\n    readonly state?: AgentStateStore;\n    readonly approval?: AgentApprovalPort;\n    readonly telemetry?: AgentTelemetryPort;\n    readonly clock?: () => number;\n    /** Adapter used to satisfy execution policies declared by tool contracts. */\n    readonly executionPolicy?: ExecutionPolicyAdapter;\n    /** Injectable token generator for deterministic replay and tests. */\n    readonly idFactory?: () => string;\n    readonly signal?: AbortSignal;\n    /** Replay mode skips every tool executor and marks the call dry-run. */\n    readonly dryRun?: boolean;\n}"
+    "signature": "export interface AgentPorts {\n    readonly model: AgentModelPort;\n    readonly capabilities: readonly string[];\n    readonly budget?: ToolBudget;\n    /** Wall-clock budget shared with the parent request. Distinct from `budget`, which is cost. */\n    readonly deadline?: RequestBudget;\n    readonly idempotency?: ToolIdempotencyStore;\n    readonly state?: AgentStateStore;\n    readonly approval?: AgentApprovalPort;\n    readonly telemetry?: AgentTelemetryPort;\n    readonly clock?: () => number;\n    /** Adapter used to satisfy execution policies declared by tool contracts. */\n    readonly executionPolicy?: ExecutionPolicyAdapter;\n    /** Injectable token generator for deterministic replay and tests. */\n    readonly idFactory?: () => string;\n    readonly signal?: AbortSignal;\n    /** Replay mode skips every tool executor and marks the call dry-run. */\n    readonly dryRun?: boolean;\n}"
   },
   {
     "name": "AgentRunResult",
@@ -268,9 +282,10 @@
   },
   {
     "name": "AgentToolDescriptor",
-    "kind": "interface",
+    "kind": "type",
     "package": "@nifrajs/agent",
-    "signature": "export interface AgentToolDescriptor {\n    readonly name: string;\n    readonly description: string;\n    readonly inputSchema: Record<string, unknown>;\n    readonly capability: string;\n}"
+    "signature": "export type AgentToolDescriptor = ToolCatalogEntry;",
+    "doc": "/** The model-facing descriptor is the complete descriptive catalog entry. */"
   },
   {
     "name": "AgentToolResult",
@@ -2594,6 +2609,13 @@
     "package": "@nifrajs/middleware",
     "signature": "export declare function createAdmissionController(options: AdmissionOptions): AdmissionControllerHandle;",
     "doc": "/**\n * Build a capacity-admission controller. Pass the returned handle as the server's `admission` option.\n */"
+  },
+  {
+    "name": "createAgentEvidenceStream",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function createAgentEvidenceStream(options?: AgentEvidenceStreamOptions): AgentEvidenceStream;",
+    "doc": "/** Create an async iterable that yields the exact evidence values received by `step`. */"
   },
   {
     "name": "createAgentState",
@@ -11691,6 +11713,13 @@
     "doc": "/** Normalize any accepted payload to bytes. */"
   },
   {
+    "name": "toCatalogEntry",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function toCatalogEntry<Input, Output>(tool: ToolContract<Input, Output>): ToolCatalogEntry;",
+    "doc": "/** Build the single descriptive projection shared by agent, MCP, and test adapters. */"
+  },
+  {
     "name": "toFetchHandler",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -11794,19 +11823,26 @@
     "name": "ToolCallOptions",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface ToolCallOptions {\n    readonly effectId?: string;\n    readonly clock?: () => number;\n    readonly signal?: AbortSignal;\n    readonly capabilities?: readonly string[];\n    readonly approval?: ToolApproval;\n    readonly budget?: ToolBudget;\n    readonly idempotency?: ToolIdempotencyStore;\n    readonly namespace?: string;\n    readonly dryRun?: boolean;\n    readonly ledger?: RequestLedger;\n    readonly executionPolicy?: ExecutionPolicyAdapter;\n}"
+    "signature": "export interface ToolCallOptions {\n    readonly effectId?: string;\n    readonly clock?: () => number;\n    readonly signal?: AbortSignal;\n    /** Wall-clock budget shared with the parent request, distinct from the cost `budget`. */\n    readonly deadline?: RequestBudget;\n    readonly capabilities?: readonly string[];\n    readonly approval?: ToolApproval;\n    readonly budget?: ToolBudget;\n    readonly idempotency?: ToolIdempotencyStore;\n    readonly namespace?: string;\n    readonly dryRun?: boolean;\n    readonly ledger?: RequestLedger;\n    readonly executionPolicy?: ExecutionPolicyAdapter;\n}"
   },
   {
     "name": "ToolCallOptions",
     "kind": "interface",
     "package": "@nifrajs/mcp",
-    "signature": "export interface ToolCallOptions {\n    readonly effectId?: string;\n    readonly clock?: () => number;\n    readonly signal?: AbortSignal;\n    readonly capabilities?: readonly string[];\n    readonly approval?: ToolApproval;\n    readonly budget?: ToolBudget;\n    readonly idempotency?: ToolIdempotencyStore;\n    readonly namespace?: string;\n    readonly dryRun?: boolean;\n    readonly ledger?: RequestLedger;\n    readonly executionPolicy?: ExecutionPolicyAdapter;\n}"
+    "signature": "export interface ToolCallOptions {\n    readonly effectId?: string;\n    readonly clock?: () => number;\n    readonly signal?: AbortSignal;\n    /** Wall-clock budget shared with the parent request, distinct from the cost `budget`. */\n    readonly deadline?: RequestBudget;\n    readonly capabilities?: readonly string[];\n    readonly approval?: ToolApproval;\n    readonly budget?: ToolBudget;\n    readonly idempotency?: ToolIdempotencyStore;\n    readonly namespace?: string;\n    readonly dryRun?: boolean;\n    readonly ledger?: RequestLedger;\n    readonly executionPolicy?: ExecutionPolicyAdapter;\n}"
   },
   {
     "name": "ToolCallResult",
     "kind": "type",
     "package": "@nifrajs/core",
     "signature": "export type ToolCallResult<Output> = {\n    readonly ok: true;\n    readonly output?: Output;\n    readonly dryRun: boolean;\n    readonly evidence: readonly ToolEvidence[];\n    readonly ledger: SealedEffectLedger;\n} | {\n    readonly ok: false;\n    readonly dryRun: boolean;\n    readonly output?: undefined;\n    readonly error: ToolError;\n    readonly evidence: readonly ToolEvidence[];\n    readonly ledger: SealedEffectLedger;\n};"
+  },
+  {
+    "name": "ToolCatalogEntry",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface ToolCatalogEntry {\n    readonly name: string;\n    readonly description: string;\n    readonly inputSchema: Record<string, unknown>;\n    readonly capability: string;\n    readonly sensitivity: ToolSensitivity;\n    readonly approval: ToolApprovalPolicy;\n    readonly idempotent: boolean;\n    readonly annotations: ToolAnnotations;\n}",
+    "doc": "/**\n * A read-only, transport-neutral view of a tool contract.\n *\n * This module is descriptive only. It never validates input, checks capabilities, requests approval,\n * reserves idempotency, consumes cost, or executes the tool. Those policies stay in `executeTool`.\n */"
   },
   {
     "name": "ToolConformanceResult",
@@ -11860,7 +11896,7 @@
     "name": "ToolExecutionContext",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface ToolExecutionContext {\n    readonly effectId: string;\n    readonly signal: AbortSignal;\n    readonly dryRun: boolean;\n    readonly policy?: ExecutionPolicy;\n}"
+    "signature": "export interface ToolExecutionContext {\n    readonly effectId: string;\n    readonly signal: AbortSignal;\n    /** Wall-clock budget shared with the parent request, when an agent supplies one. */\n    readonly deadline?: RequestBudget;\n    readonly dryRun: boolean;\n    readonly policy?: ExecutionPolicy;\n}"
   },
   {
     "name": "ToolHttpOptions",

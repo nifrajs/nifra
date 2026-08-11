@@ -1,4 +1,4 @@
-import { definePlugin } from "@nifrajs/core/server"
+import { defineRouterPlugin, type IdentityPlugin } from "@nifrajs/core/server"
 
 type MaybePromise<T> = T | Promise<T>
 
@@ -26,12 +26,15 @@ const noStore = { "cache-control": "no-store" } as const
  * app.use(healthcheck({ checks: { db: () => db.ping() } })).use(bearer({ verify }))
  * ```
  */
-export function healthcheck(options: HealthcheckOptions = {}) {
+export function healthcheck(options: HealthcheckOptions = {}): IdentityPlugin {
   const path = options.path ?? "/health"
   const readyPath = options.readyPath ?? "/ready"
   const checks = options.checks ?? {}
   const checkNames = Object.keys(checks)
-  return definePlugin("healthcheck", (app) => {
+  // A router plugin: the probes are registered as a side effect and the app comes back with its type
+  // unchanged, so routes declared after `.use(healthcheck())` keep theirs. The probes are deliberately
+  // absent from the caller's typed registry - they are operational endpoints, not part of the contract.
+  return defineRouterPlugin("healthcheck", (app) => {
     app.register("GET", path, undefined, () =>
       Response.json({ status: "ok" }, { headers: noStore }),
     )

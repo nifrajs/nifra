@@ -1,4 +1,4 @@
-import { definePlugin } from "@nifrajs/core/server"
+import { defineRouterPlugin, type IdentityPlugin } from "@nifrajs/core/server"
 // The OpenAPI generator only - `@nifrajs/schema/openapi` is pure (no TypeBox runtime), so the openapi()
 // plugin gets full `t`-schema introspection without pulling the `t` builder into every consumer.
 import { toOpenAPI } from "@nifrajs/schema/openapi"
@@ -140,14 +140,16 @@ function scalarPage(specUrl: string, title: string, cdn: string): string {
  * app.use(openapi({ info: { title: "My API", version: "1.0.0" }, ui: true }))
  * ```
  */
-export function openapi(options: OpenApiOptions = {}) {
+export function openapi(options: OpenApiOptions = {}): IdentityPlugin {
   const docPath = options.path ?? "/openapi.json"
   const ui: OpenApiUiOptions | undefined =
     options.ui === true ? {} : options.ui === false ? undefined : options.ui
   const uiPath = ui !== undefined ? (ui.path ?? "/reference") : undefined
   let cached: string | undefined
   let uiCached: string | undefined
-  return definePlugin("openapi", (app) => {
+  // A router plugin: it serves the spec (and optionally the UI page) as a side effect and returns the
+  // app type-unchanged, so every route declared after `.use(openapi())` keeps its types.
+  return defineRouterPlugin("openapi", (app) => {
     // Capture `app` (the same mutable builder every later `.get()`/`.post()` registers on) and read its
     // routes lazily, at request time - so all routes exist regardless of where the plugin sits.
     app.register("GET", docPath, undefined, () => {

@@ -12,6 +12,7 @@ The nifra full-stack framework - unscoped meta-entry that re-exports @nifrajs/co
 
 - **server** _(function)_ - `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
 - **definePlugin** _(function)_ - `definePlugin: <In extends AnyServer, Out extends AnyServer>(name: string, apply: (app: In) => Out) => NifraPlugin<In, Out>`
+- **defineContextPlugin** _(function)_ - `defineContextPlugin: <D extends object>(name: string, apply: <R extends Registry, Ctx>(app: Server<R, Ctx>) => Server<R, Ctx & D>) => Conte…`
 - **defineIdentityPlugin** _(function)_ - `defineIdentityPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: Request) => boolean`
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
@@ -23,9 +24,8 @@ The nifra full-stack framework - unscoped meta-entry that re-exports @nifrajs/co
 - **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(…`
 - **toLambdaHandler** _(function)_ - `toLambdaHandler: <Env = unknown>(app: FetchApp<Env>) => LambdaHandler`
 - **toNetlifyHandler** _(function)_ - `toNetlifyHandler: <Env = unknown>(app: FetchApp<Env>) => NetlifyHandler`
-- **toVercelHandler** _(function)_ - `toVercelHandler: <Env = unknown>(app: FetchApp<Env>) => VercelHandler`
 
-_…and 88 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
+_…and 90 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
 
 ## Footguns
 
