@@ -20,11 +20,20 @@
  *
  * ## Usage
  *
- *   bun run check:coverage            # verify nothing regressed
- *   bun run check:coverage --update   # accept the current numbers as the new baseline
+ *   bun run check:coverage                       # verify nothing regressed
+ *   bun run check:coverage --update              # raise the baseline to the current numbers
+ *   bun run check:coverage --update --accept-drop  # …and lower the entries that regressed
  *
  * The baseline is committed. Updating it is a deliberate, reviewable act - a diff showing coverage
  * going DOWN is a decision someone made, which is the entire point.
+ *
+ * ## Why `--update` alone refuses to lower a number
+ *
+ * A ratchet whose escape hatch is one flag away from the failure message is not a ratchet: the fastest
+ * way past a red gate becomes rerunning it with `--update`, and the reduction lands in the same commit
+ * as the change that caused it, described as a baseline refresh. So `--update` is raise-only. It fails
+ * on exactly the drops the check would have failed on, and lowering one takes a second, differently
+ * named flag - `--accept-drop` - which prints every number it lowered so the act is named out loud.
  */
 
 import { readFile, writeFile } from "node:fs/promises"
@@ -150,6 +159,7 @@ export async function run(
   paths: RatchetPaths = {},
 ): Promise<RatchetOutcome> {
   const update = argv.includes("--update")
+  const acceptDrop = argv.includes("--accept-drop")
   const lcovPath = paths.lcov ?? process.env.COVERAGE_LCOV ?? DEFAULT_LCOV
   const baselinePath = paths.baseline ?? process.env.COVERAGE_BASELINE ?? DEFAULT_BASELINE
 
@@ -174,16 +184,29 @@ export async function run(
     }
   }
 
-  if (update) {
-    await writeFile(baselinePath, `${JSON.stringify(sortKeys(current), null, 2)}\n`)
+  if (acceptDrop && !update) {
     return {
-      code: 0,
-      report: [`[coverage-ratchet] baseline updated: ${fileCount} files -> ${baselinePath}`],
+      code: 2,
+      report: [
+        "[coverage-ratchet] --accept-drop does nothing without --update. Nothing was written.",
+      ],
     }
+  }
+
+  const write = async (): Promise<void> => {
+    await writeFile(baselinePath, `${JSON.stringify(sortKeys(current), null, 2)}\n`)
   }
 
   const baselineText = await readFile(baselinePath, "utf8").catch(() => undefined)
   if (baselineText === undefined) {
+    // No baseline yet: --update bootstraps it. There is nothing to lower, so nothing to refuse.
+    if (update) {
+      await write()
+      return {
+        code: 0,
+        report: [`[coverage-ratchet] baseline created: ${fileCount} files -> ${baselinePath}`],
+      }
+    }
     return {
       code: 2,
       report: [
@@ -194,6 +217,41 @@ export async function run(
   }
   const baseline = JSON.parse(baselineText) as Record<string, FileCoverage>
   const regressions = findRegressions(baseline, current)
+
+  if (update) {
+    // Raise-only. A drop the check would fail on is a drop `--update` refuses to bury: the same
+    // regressions, the same threshold, refused at the point someone tries to write them away.
+    if (regressions.length > 0 && !acceptDrop) {
+      return {
+        code: 1,
+        report: [
+          `[coverage-ratchet] refusing to lower the baseline in ${regressions.length} place(s):`,
+          "",
+          ...regressions.flatMap((r) => [
+            `  ${r.file}`,
+            `    ${r.metric}: ${pct(r.was)} -> ${pct(r.now)}`,
+          ]),
+          "",
+          "Add the tests. If the drop is intended, say so explicitly:",
+          "  bun run check:coverage --update --accept-drop",
+        ],
+      }
+    }
+    await write()
+    return {
+      code: 0,
+      report: [
+        `[coverage-ratchet] baseline updated: ${fileCount} files -> ${baselinePath}`,
+        ...(regressions.length > 0
+          ? [
+              "",
+              `[coverage-ratchet] lowered ${regressions.length} entry/entries under --accept-drop:`,
+              ...regressions.map((r) => `  ${r.file} ${r.metric}: ${pct(r.was)} -> ${pct(r.now)}`),
+            ]
+          : []),
+      ],
+    }
+  }
 
   if (regressions.length > 0) {
     return {

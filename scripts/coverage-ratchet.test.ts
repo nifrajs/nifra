@@ -165,6 +165,48 @@ describe("run", () => {
     expect(Object.keys(JSON.parse(written))).toEqual(["a.ts", "z.ts"])
   })
 
+  // The escape hatch is the thing most likely to be reached for at exactly the wrong moment: a red
+  // gate, a rerun with --update, and the reduction lands described as a baseline refresh.
+  test("--update refuses to lower a number, and leaves the baseline untouched", async () => {
+    const original = JSON.stringify({ "packages/a/src/one.ts": { functions: 100, lines: 50 } })
+    const f = await fixture({ "lcov.info": report, "baseline.json": original })
+    const outcome = await run(["--update"], { lcov: f["lcov.info"], baseline: f["baseline.json"] })
+    expect(outcome.code).toBe(1)
+    const text = outcome.report.join("\n")
+    expect(text).toContain("refusing to lower the baseline")
+    expect(text).toContain("functions: 100.00% -> 75.00%")
+    expect(text).toContain("--update --accept-drop")
+    // Nothing was written: a refused update must not half-apply the entries that did improve.
+    expect(await readFile(f["baseline.json"] as string, "utf8")).toBe(original)
+  })
+
+  test("--update --accept-drop writes the drop and names every number it lowered", async () => {
+    const f = await fixture({
+      "lcov.info": report,
+      "baseline.json": JSON.stringify({ "packages/a/src/one.ts": { functions: 100, lines: 50 } }),
+    })
+    const outcome = await run(["--update", "--accept-drop"], {
+      lcov: f["lcov.info"],
+      baseline: f["baseline.json"],
+    })
+    expect(outcome.code).toBe(0)
+    expect(outcome.report.join("\n")).toContain("lowered 1 entry/entries under --accept-drop")
+    const written = JSON.parse(await readFile(f["baseline.json"] as string, "utf8"))
+    expect(written["packages/a/src/one.ts"].functions).toBe(75)
+  })
+
+  test("--accept-drop without --update writes nothing and is an error", async () => {
+    const original = JSON.stringify({ "packages/a/src/one.ts": { functions: 100, lines: 50 } })
+    const f = await fixture({ "lcov.info": report, "baseline.json": original })
+    const outcome = await run(["--accept-drop"], {
+      lcov: f["lcov.info"],
+      baseline: f["baseline.json"],
+    })
+    expect(outcome.code).toBe(2)
+    expect(outcome.report.join("\n")).toContain("does nothing without --update")
+    expect(await readFile(f["baseline.json"] as string, "utf8")).toBe(original)
+  })
+
   // Code 2 is "the gate could not run", which must never be confused with a pass: a missing report is
   // exactly what a broken CI step leaves behind, and returning 0 there would green-light everything.
   test("a missing lcov report is an error, not a pass", async () => {
