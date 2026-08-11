@@ -717,7 +717,14 @@ async function collectDoctorReadiness(
       "request timeout or budget",
       /\b(?:requestTimeoutMs|createRequestBudget|admitDeadline)\s*[:(]/,
     ),
-    configured("admission", "capacity admission", /\badmission\s*:/),
+    // `admission: controller`, the shorthand `{ admission }` (trailing comma or closing brace), or
+    // the documented constructor call - shorthand is the idiomatic form when the controller is an
+    // import or module const.
+    configured(
+      "admission",
+      "capacity admission",
+      /\badmission\s*[:,}]|\bcreateAdmissionController\s*\(/,
+    ),
     configured(
       "request-id-tracing",
       "request id or tracing middleware",
@@ -727,13 +734,17 @@ async function collectDoctorReadiness(
       "health-route",
       "health route",
       /\bhealthcheck\s*\(/,
-      /\.(?:get|head)\s*\(\s*["']\/health(?:["']|\/)/,
+      // Conventional health paths: /health, /healthz (the k8s form healthcheck() is most often
+      // configured to serve), /health-check, and the underscore-prefixed variants, each also
+      // matching as a prefix (`/health/live`). `/healthy` etc. stay non-matches: the path must end
+      // (closing quote) or continue with a segment right after the recognized name.
+      /\.(?:get|head)\s*\(\s*["']\/_?health(?:z|-check)?(?:["']|\/)/,
     ),
-    configured(
-      "log-redaction",
-      "log redaction",
-      /\b(?:jsonLogger|redactLogFields)\s*\(|\blogger\s*:/,
-    ),
+    // Asserts "a redacting logger is INSTALLED", so only the call forms count: the redacting
+    // constructors, or @nifrajs/middleware's `logger()` structured request logger (which logs only
+    // method/path/status/duration - nothing redactable). A bare `logger:` property proves nothing:
+    // `logger: console` matches it and redacts nothing.
+    configured("log-redaction", "log redaction", /\b(?:jsonLogger|redactLogFields|logger)\s*\(/),
     edgeTarget
       ? { id: "graceful-lifecycle", label: "graceful lifecycle", status: "not-applicable" }
       : configured(

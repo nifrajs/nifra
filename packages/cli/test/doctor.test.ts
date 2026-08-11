@@ -497,7 +497,7 @@ describe("doctor production readiness", () => {
         `const app = server({
   requestTimeoutMs: 1000,
   admission: gate,
-  logger: jsonLogger,
+  logger: jsonLogger(),
   gracefulSignals: true,
 })
   .use(requestId())
@@ -514,6 +514,94 @@ export { app }
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+
+  // Each widened pattern gets a matching AND a deliberately-non-matching sample, so the next
+  // widening cannot silently turn a rule into "always configured".
+  const readinessItem = async (source: string, id: string) => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-readiness-item-"))
+    try {
+      await writeFile(join(dir, "package.json"), JSON.stringify({ name: "app" }))
+      await writeFile(join(dir, "backend.ts"), source)
+      const result = await collectDoctorResult(dir, { target: "bun" })
+      return result.readiness?.items.find((item) => item.id === id)?.status
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }
+
+  test("admission accepts the ES6 shorthand property forms", async () => {
+    expect(await readinessItem("const app = server({ admission })\n", "admission")).toBe(
+      "configured",
+    )
+    expect(await readinessItem("const app = server({ admission, logger })\n", "admission")).toBe(
+      "configured",
+    )
+    expect(await readinessItem("const app = server({ logger, admission })\n", "admission")).toBe(
+      "configured",
+    )
+    expect(
+      await readinessItem("const app = server({\n  admission,\n  logger,\n})\n", "admission"),
+    ).toBe("configured")
+  })
+
+  test("admission accepts the documented constructor call", async () => {
+    expect(
+      await readinessItem(
+        "const gate = createAdmissionController({ maxConcurrent: 64 })\n",
+        "admission",
+      ),
+    ).toBe("configured")
+  })
+
+  test("admission stays absent for near-miss identifiers", async () => {
+    // A longer identifier, a member access, and an unrelated app: none is wired admission.
+    expect(await readinessItem("const admissionless = true\n", "admission")).toBe("absent")
+    expect(await readinessItem("const x = admission.evaluate()\n", "admission")).toBe("absent")
+    expect(await readinessItem('const app = server().get("/", () => 1)\n', "admission")).toBe(
+      "absent",
+    )
+  })
+
+  test("log-redaction accepts the framework request logger and redacting constructors", async () => {
+    expect(await readinessItem("const app = server().use(logger())\n", "log-redaction")).toBe(
+      "configured",
+    )
+    expect(
+      await readinessItem("const app = server({ logger: jsonLogger() })\n", "log-redaction"),
+    ).toBe("configured")
+    expect(
+      await readinessItem("const log = redactLogFields(base, ['password'])\n", "log-redaction"),
+    ).toBe("configured")
+  })
+
+  test("log-redaction stays absent for a bare logger property that redacts nothing", async () => {
+    expect(await readinessItem("const app = server({ logger: console })\n", "log-redaction")).toBe(
+      "absent",
+    )
+    expect(await readinessItem("const app = server({ logger: myLogger })\n", "log-redaction")).toBe(
+      "absent",
+    )
+  })
+
+  test("health-route fallback accepts the conventional path variants", async () => {
+    for (const path of ["/health", "/healthz", "/health-check", "/_health", "/health/live"]) {
+      expect(
+        await readinessItem(
+          `const app = server().get("${path}", () => ({ ok: true }))\n`,
+          "health-route",
+        ),
+      ).toBe("configured")
+    }
+  })
+
+  test("health-route fallback stays absent for non-health paths", async () => {
+    expect(
+      await readinessItem('const app = server().get("/healthy", () => 1)\n', "health-route"),
+    ).toBe("absent")
+    expect(
+      await readinessItem('const app = server().get("/users", () => 1)\n', "health-route"),
+    ).toBe("absent")
   })
 })
 
