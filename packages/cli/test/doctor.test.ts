@@ -579,9 +579,9 @@ export { app }
     expect(await readinessItem("const app = server({ logger: console })\n", "log-redaction")).toBe(
       "absent",
     )
-    expect(
-      await readinessItem("const app = server({ logger: myLogger })\n", "log-redaction"),
-    ).toBe("absent")
+    expect(await readinessItem("const app = server({ logger: myLogger })\n", "log-redaction")).toBe(
+      "absent",
+    )
   })
 
   test("health-route fallback accepts the conventional path variants", async () => {
