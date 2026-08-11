@@ -48,6 +48,30 @@ function specifierMatches(pattern: string, specifier: string): boolean {
   return pattern.endsWith("/*") ? specifier.startsWith(pattern.slice(0, -1)) : specifier === pattern
 }
 
+const SPECIFIER_EXTENSION = /\.(?:[cm]?[jt]sx?)$/
+
+/** Reduce a specifier to the name a human would recognise: `./services/mail.ts` and `../mail/index.ts`
+ * both stem to `mail`, which is what makes a written-vs-actual mismatch suggestible. */
+function specifierStem(specifier: string): string {
+  const segments = specifier
+    .replace(SPECIFIER_EXTENSION, "")
+    .split("/")
+    .filter((segment) => segment !== "" && segment !== "." && segment !== "..")
+  const last = segments.at(-1)
+  if (last === undefined) return specifier
+  return last === "index" ? (segments.at(-2) ?? last) : last
+}
+
+const suggestionSuffix = (suggestions: readonly string[]): string =>
+  suggestions.length === 0 ? "" : ` - did you mean ${suggestions.map((s) => `"${s}"`).join(", ")}?`
+
+function nearestSpecifiers(pattern: string, candidates: Iterable<string>): string[] {
+  const stem = specifierStem(pattern.endsWith("/*") ? pattern.slice(0, -2) : pattern)
+  const near = new Set<string>()
+  for (const candidate of candidates) if (specifierStem(candidate) === stem) near.add(candidate)
+  return [...near].sort().slice(0, 3)
+}
+
 const routeKey = (method: string, path: string): string => `${method.toUpperCase()}\n${path}`
 
 export interface CapabilityImportViolation {
@@ -63,6 +87,20 @@ export interface CapabilityProjectReport {
   readonly report: CapabilityAssuranceReport
   readonly violations: readonly CapabilityImportViolation[]
   readonly truncations: readonly CapabilityProvenanceTruncation[]
+  readonly unmatchedSeams: readonly CapabilityUnmatchedSeam[]
+}
+
+/**
+ * A provenance rule that names something the project does not contain. Seam specifiers are matched
+ * as written, so `"./services/mail.ts"` against `import "./services/mail"` silently governs nothing -
+ * the effect stays invisible to assurance and every route using it still passes.
+ */
+export interface CapabilityUnmatchedSeam {
+  readonly kind: "import" | "route-module"
+  /** The specifier (import rule) or project-relative module path (routeModules entry) as written. */
+  readonly value: string
+  /** Closest specifiers/modules actually present, when one is recognisable. */
+  readonly suggestions: readonly string[]
 }
 
 export interface CapabilityProvenanceTruncation {
@@ -264,9 +302,40 @@ export async function collectCapabilityProjectReport(
     violations.push(...walked.violations)
     truncations.push(...walked.truncations)
   }
+
+  // A seam rule that matches nothing is a policy typo, not a passing project: the effect it was
+  // written to govern keeps executing, unwatched, and every route touching it still reports clean.
+  // Checked against every scanned source (not just route-reachable ones) so a seam used by a job or
+  // a script is not reported as missing.
+  const scannedSpecifiers = new Set<string>()
+  for (const content of sources.values())
+    for (const specifier of scanEffectImports(content)) scannedSpecifiers.add(specifier)
+  const unmatchedSeams: CapabilityUnmatchedSeam[] = []
+  for (const rule of policy.provenance.imports) {
+    if (rule.optional === true) continue
+    if ([...scannedSpecifiers].some((specifier) => specifierMatches(rule.specifier, specifier)))
+      continue
+    unmatchedSeams.push({
+      kind: "import",
+      value: rule.specifier,
+      suggestions: Object.freeze(nearestSpecifiers(rule.specifier, scannedSpecifiers)),
+    })
+  }
+  for (const association of policy.provenance.routeModules ?? []) {
+    for (const module of association.modules) {
+      const normalized = module.replaceAll("\\", "/")
+      if (sources.has(normalized) || existsSync(join(cwd, normalized))) continue
+      unmatchedSeams.push({
+        kind: "route-module",
+        value: module,
+        suggestions: Object.freeze(nearestSpecifiers(module, sources.keys())),
+      })
+    }
+  }
+
   const evaluated = evaluateCapabilityAssurance(source, policy, { routes: evidenceRoutes })
   const report: CapabilityAssuranceReport =
-    violations.length === 0 && truncations.length === 0
+    violations.length === 0 && truncations.length === 0 && unmatchedSeams.length === 0
       ? evaluated
       : Object.freeze({
           ...evaluated,
@@ -285,12 +354,22 @@ export async function collectCapabilityProjectReport(
               path: truncation.path,
               message: `${truncation.method} ${truncation.path} capability provenance hit the ${truncation.reason === "depth-limit" ? "import-depth" : "module-count"} safety limit via ${truncation.chain.join(" → ")}; assurance cannot prove the remaining graph`,
             })),
+            ...unmatchedSeams.map((seam) => ({
+              code: "unmatched-provenance-seam" as const,
+              method: "*",
+              path: "*",
+              message:
+                seam.kind === "import"
+                  ? `capabilities.provenance.imports "${seam.value}" matched no import in this project, so the effect it declares is ungoverned - specifiers are compared exactly (or as a trailing /* prefix), not resolved${suggestionSuffix(seam.suggestions)}`
+                  : `capabilities.provenance.routeModules "${seam.value}" is not a file in this project, so the routes it associates stay uncovered${suggestionSuffix(seam.suggestions)}`,
+            })),
           ]),
         })
   return Object.freeze({
     report,
     violations: Object.freeze(violations),
     truncations: Object.freeze(truncations),
+    unmatchedSeams: Object.freeze(unmatchedSeams),
   })
 }
 

@@ -91,6 +91,14 @@ export interface CapabilityImportRule {
   /** Exact module specifier, or a trailing `/*` prefix rule. */
   readonly specifier: string
   readonly capabilities: readonly string[]
+  /**
+   * Allow this seam to be absent. A rule that matches no import anywhere in the project is reported
+   * as `unmatched-provenance-seam` by default, because a specifier written differently from the
+   * import it means to govern (`"./db/client.ts"` vs `import "./db/client"`) governs nothing and
+   * every route touching that effect still passes. Set this only for a policy shared across projects
+   * where some of them genuinely do not use the seam.
+   */
+  readonly optional?: boolean
 }
 
 export interface ForbiddenCapabilityImport {
@@ -156,6 +164,7 @@ export type CapabilityFindingCode =
   | "missing-durable-idempotency"
   | "forbidden-effect-import"
   | "provenance-truncated"
+  | "unmatched-provenance-seam"
 
 export interface CapabilityFinding {
   readonly code: CapabilityFindingCode
@@ -270,7 +279,11 @@ export function defineCapabilityPolicy(policy: CapabilityPolicy): CapabilityPoli
     for (const id of capabilities) {
       if (!ids.has(id)) throw new Error(`capability assurance: import references unknown ${id}`)
     }
-    return Object.freeze({ specifier: rule.specifier, capabilities })
+    return Object.freeze({
+      specifier: rule.specifier,
+      capabilities,
+      ...(rule.optional === true ? { optional: true as const } : {}),
+    })
   })
   const forbiddenImports = policy.provenance.forbiddenImports.map(
     (rule): ForbiddenCapabilityImport => {
