@@ -6,6 +6,7 @@ import { clientSupportsRoots, guardTools } from "../src/mcp.ts"
 import type { McpTool, McpToolContext } from "../src/mcp-protocol.ts"
 import {
   applyClientRoots,
+  detectToolingDrift,
   findNifraRoot,
   isNifraProjectDir,
   type McpRootState,
