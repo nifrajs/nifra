@@ -140,6 +140,12 @@ describe("createProxy()", () => {
     expect(seen?.headers["x-forwarded-for"]).toBe("1.2.3.4, 203.0.113.9")
     expect(seen?.headers["x-forwarded-proto"]).toBe("http")
     expect(seen?.headers["x-forwarded-host"]).toBe("edge.test")
+
+    await createProxy({ upstream: ORIGIN, forwardClientIp: true })(
+      new Request("http://edge.test/x", { headers: forged }),
+    )
+    expect(seen?.headers["x-forwarded-for"]).toBeUndefined()
+    expect(seen?.headers["x-forwarded-host"]).toBeUndefined()
   })
 
   test("static headers override after hygiene", async () => {
@@ -148,6 +154,15 @@ describe("createProxy()", () => {
       new Request("http://edge.test/x", { headers: { "x-api-key": "client-supplied" } }),
     )
     expect(seen?.headers["x-api-key"]).toBe("k1")
+  })
+
+  test("rejects static hop-by-hop and forwarding headers at construction", () => {
+    expect(() => createProxy({ upstream: ORIGIN, headers: { connection: "keep-alive" } })).toThrow(
+      /connection/,
+    )
+    expect(() =>
+      createProxy({ upstream: ORIGIN, headers: { "x-forwarded-for": "1.2.3.4" } }),
+    ).toThrow(/x-forwarded-for/)
   })
 
   test("never follows upstream redirects", async () => {

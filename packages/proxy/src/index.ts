@@ -35,9 +35,9 @@ export interface ProxyOptions {
   /**
    * Forward caller metadata upstream. Default **false**: `Forwarded` and `X-Forwarded-*` headers
    * are stripped, so a client-forged chain never reaches the upstream. When true, the inbound
-   * `X-Forwarded-For` is kept with the observed caller IP appended (pass the context so `c.clientIp`
-   * - already filtered by the app's trust declaration - is what gets appended), and
-   * `X-Forwarded-Proto`/`X-Forwarded-Host` are set from the incoming request.
+   * `X-Forwarded-For` is kept with the observed caller IP appended (pass a `ProxyContext` so
+   * `c.clientIp` - already filtered by the app's trust declaration - is what gets appended). With a
+   * bare `Request`, forwarding metadata is suppressed rather than passed through.
    */
   readonly forwardClientIp?: boolean
   /** Upstream response deadline in milliseconds. Default `30_000`; expiry answers `504`. */
@@ -107,12 +107,9 @@ function upstreamRequestHeaders(
     if (FORWARDING.has(name)) continue
     out.append(name, value)
   }
-  if (options.forwardClientIp === true) {
+  if (options.forwardClientIp === true && clientIp !== undefined) {
     const prior = req.headers.get("x-forwarded-for")
-    const chain =
-      prior !== null && clientIp !== undefined
-        ? `${prior}, ${clientIp}`
-        : (clientIp ?? prior ?? undefined)
+    const chain = prior !== null ? `${prior}, ${clientIp}` : clientIp
     if (chain !== undefined) out.set("x-forwarded-for", chain)
     out.set("x-forwarded-proto", new URL(req.url).protocol.slice(0, -1))
     const host = req.headers.get("host")
@@ -176,6 +173,17 @@ export function createProxy(options: ProxyOptions): ProxyHandler {
   const timeoutMs = options.timeoutMs ?? 30_000
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new Error("[nifra/proxy] timeoutMs must be a positive number")
+  }
+  for (const name of Object.keys(options.headers ?? {})) {
+    const normalized = name.toLowerCase()
+    if (
+      normalized === "host" ||
+      HOP_BY_HOP.has(normalized) ||
+      normalized.startsWith("proxy-") ||
+      FORWARDING.has(normalized)
+    ) {
+      throw new TypeError(`[nifra/proxy] static header is not allowed: ${name}`)
+    }
   }
 
   return async (input) => {

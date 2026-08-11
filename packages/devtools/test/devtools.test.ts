@@ -156,6 +156,30 @@ describe("devtools server middleware", () => {
       401,
     )
   })
+
+  test("uses the socket peer for loopback access when the platform supplies one", async () => {
+    const app = server().use(devtools({ enabled: true }))
+    const remoteWithForgedHost = await app.fetch(new Request("http://localhost/_nifra/devtools"), {
+      clientIp: "203.0.113.5",
+    })
+    expect(remoteWithForgedHost.status).toBe(403)
+
+    const loopback = await app.fetch(new Request("http://example.com/_nifra/devtools"), {
+      clientIp: "127.0.0.1",
+    })
+    expect(loopback.status).toBe(200)
+    await loopback.body?.cancel()
+
+    const mappedLoopback = await app.fetch(new Request("http://example.com/_nifra/devtools"), {
+      clientIp: "[::ffff:127.0.0.1%lo0]",
+    })
+    expect(mappedLoopback.status).toBe(200)
+    await mappedLoopback.body?.cancel()
+
+    const edgeFallback = await app.fetch(new Request("http://localhost/_nifra/devtools"))
+    expect(edgeFallback.status).toBe(200)
+    await edgeFallback.body?.cancel()
+  })
 })
 
 describe("devtoolsClientScript", () => {

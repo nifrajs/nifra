@@ -74,6 +74,14 @@ export interface DevToolsClientOptions {
 
 const encoder = new TextEncoder()
 
+function isLoopbackPeer(address: string): boolean {
+  const normalized =
+    address.replace(/^\[/, "").replace(/\]$/, "").split("%", 1)[0]?.toLowerCase() ?? ""
+  return (
+    normalized === "::1" || normalized.startsWith("127.") || normalized.startsWith("::ffff:127.")
+  )
+}
+
 /**
  * DevTools plugin. Its observation adapter projects the single request span into a
  * `DevToolsEvent`; its middleware only owns the secured SSE transport.
@@ -202,18 +210,22 @@ export function devtools(options?: DevToolsOptions | undefined) {
     app.use({
       name: "devtools-stream",
 
-      async onRequest(request: Request): Promise<Response | undefined> {
+      async onRequest(request: Request, platform): Promise<Response | undefined> {
         const url = new URL(request.url)
         if (url.pathname !== endpoint && url.pathname !== statePath) return undefined
 
         // One access-control gate for BOTH the live stream and the one-shot snapshot: a read of the
         // buffer exposes the same request data as watching it live, so it is guarded identically -
         // loopback-only unless `allowRemote`, origin-checked, and an optional `authorize` hook.
+        // A serving adapter's platform clientIp is the raw socket peer and is authoritative. When
+        // no adapter can provide one, retain the URL-host fallback for edge runtimes without sockets.
         const loopback =
-          url.hostname === "localhost" ||
-          url.hostname === "127.0.0.1" ||
-          url.hostname === "[::1]" ||
-          url.hostname.endsWith(".localhost")
+          platform?.clientIp !== undefined
+            ? isLoopbackPeer(platform.clientIp)
+            : url.hostname === "localhost" ||
+              url.hostname === "127.0.0.1" ||
+              url.hostname === "[::1]" ||
+              url.hostname.endsWith(".localhost")
         if (!allowRemote && !loopback) {
           return new Response("Nifra DevTools is restricted to loopback hosts", { status: 403 })
         }
