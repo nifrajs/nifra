@@ -8,6 +8,8 @@ import {
 } from "../budget.ts"
 import type { EffectLifecycleObserver } from "../effect-lifecycle.ts"
 import { FrameworkError, RouteConfigError } from "../errors.ts"
+// Type-only (erased at build): the package root re-exports this module, so a value import would cycle.
+import type { Version } from "../index.ts"
 import {
   type AroundCapabilityOptions,
   CAPABILITY_GUARD,
@@ -542,6 +544,17 @@ function isContextlessNoArgArrow(handler: (context: never) => unknown): boolean 
   }
 }
 
+/** `major.minor` of a full version literal - patch releases never change the typed surface. */
+type FeatureVersionOf<V extends string> = V extends `${infer Major}.${infer Minor}.${string}`
+  ? `${Major}.${Minor}`
+  : V
+
+/**
+ * The feature version of the `@nifrajs/core` copy that declared these types, derived from the single
+ * `VERSION` literal (type-only import - erased, so no runtime cycle with the package root).
+ */
+export type NifraFeatureVersion = FeatureVersionOf<Version>
+
 // Stable module-level finalizers so `fetch`/`resolveNode` allocate no per-request closures.
 const IDENTITY_RESPONSE = (response: Response): Response => response
 const RESPONSE_TIMEOUT = (): Response => jsonError(503, "request_timeout")
@@ -555,6 +568,16 @@ const RESPONSE_TIMEOUT = (): Response => jsonError(503, "request_timeout")
  *      .get("/me", (c) => c.user)            // c.user + c.db are typed
  */
 export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
+  /**
+   * Which copy of `@nifrajs/core` declared this type. Two copies in one build (a linked sibling repo,
+   * a hoisting split) produce two unrelated `Server` types whose assignment error is a wall of
+   * missing internals; the brand puts the feature version in the type itself, so `typeof app` on
+   * hover - and `NifraFeatureVersion` in an assertion - says which core an app is talking to.
+   * `nifra doctor` is the diagnosis that names both install paths.
+   *
+   * `declare` = type-only: no field is emitted, nothing is allocated per server.
+   */
+  declare readonly __nifraCoreVersion: NifraFeatureVersion
   private readonly catalog: RouteCatalog
   /** WebSocket routes, matched separately at upgrade time (a GET + `Upgrade: websocket`). */
   private readonly wsRouter: Router<WsEntry>

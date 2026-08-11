@@ -86,6 +86,7 @@ export {
   type McpPromptDescriptor,
   type McpResourceDescriptor,
   type Middleware,
+  type NifraFeatureVersion,
   type NifraPlugin,
   type NodeRequestContext,
   type NodeRequestHook,
